@@ -410,22 +410,36 @@ impl Pass<'_, '_> {
 impl Pass<'_, '_> {
     /// `checkIdentifier`: 2815, 7005 7034.
     fn check_identifiers(&mut self) {
-        for i in 0..self.hir.exprs.len() {
-            let e = ExprId(i as u32);
-            let ExprKind::Ident(name) = self.hir.exprs[i].kind else {
-                continue;
-            };
-            if !self.is_bound(e) {
-                continue;
-            }
-            if self.bound.expr_symbol[i].is_none() {
-                if name == known::arguments && self.is_arguments_in_initializer(e) {
-                    self.report(self.hir.exprs[i].pos, 2815);
+        let has_auto_variables = self.no_implicit_any
+            && (0..self.hir.var_decls.len())
+                .any(|d| self.auto_kind_of_declaration(VarDeclId(d as u32)).is_some());
+        // Whether `auto_variable` makes something of each symbol, once it has been asked.
+        let mut asked: Vec<Option<bool>> = if has_auto_variables {
+            vec![None; self.bound.symbols.len()]
+        } else {
+            Vec::new()
+        };
+        let by_kind = self.c.exprs_by_kind(self.file);
+        for &e in by_kind.of(ExprTag::Ident) {
+            let symbol = self.bound.expr_symbol[e.idx()];
+            if symbol.is_none() {
+                if matches!(self.hir[e].kind, ExprKind::Ident(known::arguments))
+                    && self.is_bound(e)
+                    && self.is_arguments_in_initializer(e)
+                {
+                    self.report(self.hir[e].pos, 2815);
                 }
                 continue;
             }
-            self.steps = 0;
-            self.check_auto_reference(e);
+            if !has_auto_variables {
+                continue;
+            }
+            let is_auto =
+                *asked[symbol.idx()].get_or_insert_with(|| self.auto_variable(symbol).is_some());
+            if is_auto && self.is_bound(e) {
+                self.steps = 0;
+                self.check_auto_reference(e);
+            }
         }
     }
 
@@ -566,16 +580,15 @@ impl Pass<'_, '_> {
 
     /// `checkThisExpression`: 7041.
     fn check_this_expressions(&mut self) {
-        if !self.c.p.files.options.no_implicit_this {
+        // In a module no `this` is `globalThis`.
+        if !self.c.p.files.options.no_implicit_this || self.c.files().module(self.file).is_module()
+        {
             return;
         }
-        for i in 0..self.hir.exprs.len() {
-            let e = ExprId(i as u32);
-            if matches!(self.hir.exprs[i].kind, ExprKind::This)
-                && self.is_bound(e)
-                && self.global_this(e) == Some(true)
-            {
-                self.report(self.hir.exprs[i].pos, 7041);
+        let by_kind = self.c.exprs_by_kind(self.file);
+        for &e in by_kind.of(ExprTag::This) {
+            if self.is_bound(e) && self.global_this(e) == Some(true) {
+                self.report(self.hir[e].pos, 7041);
             }
         }
     }
@@ -761,28 +774,36 @@ impl Pass<'_, '_> {
         let PatParent::Var(d) = bound.pat_parent[pat.idx()] else {
             return None;
         };
+        Some((self.auto_kind_of_declaration(d)?, pat, d))
+    }
+
+    /// The part of `auto_variable` that goes by the declaration alone.
+    fn auto_kind_of_declaration(&self, d: VarDeclId) -> Option<AutoKind> {
+        let (hir, bound) = (self.hir, self.bound);
         let decl = &hir[d];
-        let stmt = bound.var_stmt[d.idx()];
-        if decl.ty.is_some()
-            || decl.flags.intersects(Flags::EXPORT | Flags::AMBIENT)
-            || stmt.is_none()
-            || !matches!(hir[stmt].kind, StmtKind::Var(_))
-            || self.is_loop_variable_statement(stmt)
-        {
+        if decl.ty.is_some() || decl.flags.intersects(Flags::EXPORT | Flags::AMBIENT) {
             return None;
         }
         let is_constant = matches!(
             decl.kind,
             VarKind::Const | VarKind::Using | VarKind::AwaitUsing
         );
-        if !is_constant && (decl.init.is_none() || self.is_null_or_undefined(decl.init)) {
-            return Some((AutoKind::Value, pat, d));
+        let kind = if !is_constant && (decl.init.is_none() || self.is_null_or_undefined(decl.init))
+        {
+            AutoKind::Value
+        } else if decl.init.is_some() && self.is_empty_array_literal(decl.init) {
+            AutoKind::Array
+        } else {
+            return None;
+        };
+        let stmt = bound.var_stmt[d.idx()];
+        if stmt.is_none()
+            || !matches!(hir[stmt].kind, StmtKind::Var(_))
+            || self.is_loop_variable_statement(stmt)
+        {
+            return None;
         }
-        (decl.init.is_some() && self.is_empty_array_literal(decl.init)).then_some((
-            AutoKind::Array,
-            pat,
-            d,
-        ))
+        Some(kind)
     }
 
     /// `isMutableLocalVariableDeclaration`
@@ -2751,12 +2772,30 @@ fn symbol_name_prefix(atoms: &crate::atom::Interner) -> &[u8] {
 impl Pass<'_, '_> {
     /// `checkPropertyAccessExpressionOrQualifiedName`, `checkElementAccessExpression`, `getFlowTypeOfAccessExpression`
     fn check_accesses(&mut self) {
-        for i in 0..self.hir.exprs.len() {
-            let e = ExprId(i as u32);
+        let by_kind = self.c.exprs_by_kind(self.file);
+        let (dots, indexes) = (by_kind.of(ExprTag::Dot), by_kind.of(ExprTag::Index));
+        let (mut next_dot, mut next_index) = (0, 0);
+        loop {
+            // Both kinds in the order they have in the file.
+            let e = match (dots.get(next_dot), indexes.get(next_index)) {
+                (Some(&dot), Some(&index)) if dot < index => {
+                    next_dot += 1;
+                    dot
+                }
+                (Some(&dot), None) => {
+                    next_dot += 1;
+                    dot
+                }
+                (_, Some(&index)) => {
+                    next_index += 1;
+                    index
+                }
+                (None, None) => break,
+            };
             if !self.is_bound(e) {
                 continue;
             }
-            match self.hir.exprs[i].kind {
+            match self.hir[e].kind {
                 ExprKind::Dot {
                     obj,
                     name,
@@ -3145,8 +3184,11 @@ impl Pass<'_, '_> {
         at: u32,
         index: ExprId,
     ) {
+        let may_be_a_field = self.c.p.files.options.strict_property_initialization
+            && matches!(self.hir[obj].kind, ExprKind::This);
         // `getFlowTypeOfReferenceEx` returns the declared type of a reference without a flow node.
         if !self.strict
+            || !may_be_a_field && !self.has_assignment_declarations()
             || self.bound.expr_flow[e.idx()] == UNREACHABLE
             || self.assignment_kind(e) == AssignmentKind::Definite
         {

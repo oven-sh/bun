@@ -7,6 +7,7 @@
 //! `checkGrammarBreakOrContinueStatement` of TypeScript 7.0.2's checker.go, flow.go and grammarchecks.go.
 
 use super::errors::Diagnostic;
+use super::errors_small::in_file_order;
 use super::*;
 use crate::bind::{ClassOwner, Flow, FlowId, FnOwner, MemberOwner, Parent, ScopeKind, UNREACHABLE};
 
@@ -75,7 +76,9 @@ impl Checker<'_> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         // `checkSignatureDeclaration` runs in declaration files too.
         for f in 0..hir.fns.len() {
-            if !matches!(bound.fns[f].owner, FnOwner::None) {
+            if hir.fns[f].flags.contains(Flags::GENERATOR)
+                && !matches!(bound.fns[f].owner, FnOwner::None)
+            {
                 self.check_generator_return_annotation(file, FnId(f as u32), out);
             }
         }
@@ -807,6 +810,7 @@ impl Checker<'_> {
                 | Parent::MemberInit(_)
                 | Parent::EnumInit(_) => return None,
                 Parent::Stmt(s) if s.is_none() => return None,
+                Parent::Stmt(s) => bound.stmt_parent[s.idx()],
                 other => self.outward(file, other),
             };
         }
@@ -815,13 +819,14 @@ impl Checker<'_> {
     /// `checkThisBeforeSuper`
     fn check_this_before_super(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        for i in 0..hir.exprs.len() {
-            let is_this = match hir.exprs[i].kind {
-                ExprKind::This => true,
-                ExprKind::Super => false,
-                _ => continue,
-            };
-            let e = ExprId(i as u32);
+        // Only what is in the constructor of a class is looked at.
+        if hir.classes.is_empty() {
+            return;
+        }
+        let index = self.exprs_by_kind(file);
+        for e in in_file_order([index.of(ExprTag::This), index.of(ExprTag::Super)]) {
+            let i = e.idx();
+            let is_this = matches!(hir.exprs[i].kind, ExprKind::This);
             if matches!(bound.expr_parent[i], Parent::None) {
                 continue;
             }
@@ -898,14 +903,14 @@ impl Checker<'_> {
     /// Where `this` cannot be written: 2331 2332 2465. `checkThisExpression`
     fn check_this_location(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        for i in 0..hir.exprs.len() {
-            if !matches!(hir.exprs[i].kind, ExprKind::This)
-                || matches!(bound.expr_parent[i], Parent::None)
-            {
+        let index = self.exprs_by_kind(file);
+        for &this in index.of(ExprTag::This) {
+            let i = this.idx();
+            if matches!(bound.expr_parent[i], Parent::None) {
                 continue;
             }
             let mut parent = bound.expr_parent[i];
-            let mut top = ExprId(i as u32);
+            let mut top = this;
             let code = loop {
                 match parent {
                     // Arrow functions have the `this` of what is around them.
@@ -960,6 +965,7 @@ impl Checker<'_> {
                         }
                     }
                     Parent::Stmt(s) if s.is_none() => break 0,
+                    Parent::Stmt(s) => parent = bound.stmt_parent[s.idx()],
                     Parent::Expr(x) => {
                         top = x;
                         parent = bound.expr_parent[x.idx()];
@@ -996,13 +1002,12 @@ impl Checker<'_> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         // The constructors that call it, not from a function inside, where, and the call.
         let mut calling: Vec<(FnId, u32, ExprId)> = Vec::new();
-        for i in 0..hir.exprs.len() {
-            if !matches!(hir.exprs[i].kind, ExprKind::Super)
-                || matches!(bound.expr_parent[i], Parent::None)
-            {
+        let index = self.exprs_by_kind(file);
+        for &e in index.of(ExprTag::Super) {
+            let i = e.idx();
+            if matches!(bound.expr_parent[i], Parent::None) {
                 continue;
             }
-            let e = ExprId(i as u32);
             let start = hir[e].pos;
             let is_call = matches!(bound.expr_parent[i], Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Call(c) if hir[c].callee == e));
             // `getSuperContainer`: the function or the member it is written in. Arrow functions are seen through, but not by a call.
@@ -1206,7 +1211,11 @@ impl Checker<'_> {
             }
         };
         for i in 0..hir.stmts.len() {
-            if matches!(bound.stmt_parent[i], Parent::None) {
+            if !matches!(
+                hir.stmts[i].kind,
+                StmtKind::Break(_) | StmtKind::Continue(_) | StmtKind::Labeled { .. }
+            ) || matches!(bound.stmt_parent[i], Parent::None)
+            {
                 continue;
             }
             let start = hir.stmts[i].pos;

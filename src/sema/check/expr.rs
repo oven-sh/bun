@@ -3,6 +3,31 @@
 use super::errors_order::Named;
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId};
+use smallvec::SmallVec;
+
+impl Slots {
+    /// `get` and `is_uncertain`, read together.
+    #[inline]
+    fn get_with_uncertainty(&self, file: FileId, index: usize) -> Option<(TypeId, bool)> {
+        let raw = self.0.raw((file, index as u32));
+        match raw & !Self::UNCERTAIN {
+            0 => None,
+            n => Some((TypeId(n - 1), raw & Self::UNCERTAIN != 0)),
+        }
+    }
+}
+
+/// `getAssignmentTargetKind`
+#[derive(Copy, Clone)]
+struct TargetKind {
+    /// `is_assignment_target`
+    assigned: bool,
+    /// `AssignmentKindDefinite`: given a value by `=` or in a pattern there, or by `&&=`, `||=` or `??=`. It is what it is declared
+    /// as, whatever has been found out about it on the way.
+    definite: bool,
+    /// `is_written`
+    written: bool,
+}
 
 impl<'p> Checker<'p> {
     /// The type of `e` where it stands, after narrowing. The entry point for questions from outside.
@@ -83,25 +108,42 @@ impl<'p> Checker<'p> {
     }
 
     /// `checkExpressionWorker`
+    #[inline]
     fn type_of_expr_as_written(&mut self, file: FileId, e: ExprId) -> TypeId {
         // Where something had to be written and nothing is.
         if e.is_none() {
             return TypeId::UNRESOLVED;
         }
+        if self.contextual_binding_patterns.is_empty()
+            && let Some((known, uncertain)) = self.p.expr_types.get_with_uncertainty(file, e.idx())
+        {
+            self.uncertain |= uncertain;
+            return known;
+        }
+        self.type_of_expr_not_kept(file, e)
+    }
+
+    /// The same, of an `e` that is there and whose type is not kept, or may be looked at afresh.
+    fn type_of_expr_not_kept(&mut self, file: FileId, e: ExprId) -> TypeId {
         // `getTypeFromBindingElement`: the defaults in a pattern are looked at afresh every time it is worked out what the pattern
         // implies its initializer to be. The names of the pattern are anything meanwhile.
-        let afresh = !self.contextual_binding_patterns.is_empty()
-            && self.is_within_contextual_pattern(file, e);
-        if !afresh && let Some(known) = self.p.expr_types.get(file, e.idx()) {
-            self.uncertain |= self.p.expr_types.is_uncertain(file, e.idx());
-            return known;
+        let mut afresh = false;
+        if !self.contextual_binding_patterns.is_empty() {
+            afresh = self.is_within_contextual_pattern(file, e);
+            if !afresh
+                && let Some((known, uncertain)) =
+                    self.p.expr_types.get_with_uncertainty(file, e.idx())
+            {
+                self.uncertain |= uncertain;
+                return known;
+            }
         }
         // Resolving the calls around it may well have settled it.
         if self.prepare_question_about_expr(file, e)
             && !afresh
-            && let Some(known) = self.p.expr_types.get(file, e.idx())
+            && let Some((known, uncertain)) = self.p.expr_types.get_with_uncertainty(file, e.idx())
         {
-            self.uncertain |= self.p.expr_types.is_uncertain(file, e.idx());
+            self.uncertain |= uncertain;
             return known;
         }
         if !self.reporting_nonexistent.is_empty()
@@ -114,13 +156,21 @@ impl<'p> Checker<'p> {
         {
             return ty;
         }
-        self.resolve_chain_from_the_inside(file, e);
+        if matches!(
+            self.hir(file)[e].kind,
+            ExprKind::Binary { .. } | ExprKind::Call(_)
+        ) {
+            self.resolve_chain_from_the_inside(file, e);
+        }
         if !self.enter(Query::Expr(file, e)) {
             return TypeId::UNRESOLVED;
         }
         let around = std::mem::replace(&mut self.uncertain, false);
         let ty = self.type_of_expr_uncached(file, e);
-        let ty = self.force(ty);
+        let ty = match self.data(ty) {
+            TypeData::LazyAlias { .. } | TypeData::NoInfer(_) => self.force(ty),
+            _ => ty,
+        };
         let uncertain = self.uncertain;
         self.uncertain |= around;
         if self.leave() && !afresh {
@@ -237,6 +287,7 @@ impl<'p> Checker<'p> {
     }
 
     /// Whether the type of `e`, which has been asked for, rests on something that could not be found out.
+    #[inline]
     pub(super) fn is_uncertain(&self, file: FileId, e: ExprId) -> bool {
         self.p.expr_types.is_uncertain(file, e.idx())
     }
@@ -287,25 +338,35 @@ impl<'p> Checker<'p> {
                 }
             }
             ExprKind::Call(_) => {
-                let mut at = e;
-                loop {
-                    at = match hir[at].kind {
-                        ExprKind::Call(c) => {
-                            if at != e {
-                                if self.p.expr_types.get(file, at.idx()).is_some() {
-                                    break;
-                                }
-                                chain.push(at);
-                            }
-                            hir[c].callee
+                // What `at` is got from, and whether `at` is a call before `e`. `None` where the chain begins, or at a call that
+                // is known.
+                let further = |c: &Self, at: ExprId| match hir[at].kind {
+                    ExprKind::Call(call) => {
+                        let is_link = at != e;
+                        if is_link && c.p.expr_types.get(file, at.idx()).is_some() {
+                            return None;
                         }
-                        ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj,
-                        ExprKind::NonNull(x) => x,
-                        _ => break,
-                    };
+                        Some((hir[call].callee, is_link))
+                    }
+                    ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => Some((obj, false)),
+                    ExprKind::NonNull(x) => Some((x, false)),
+                    _ => None,
+                };
+                let (mut at, mut len) = (e, 0usize);
+                while let Some((next, is_link)) = further(self, at) {
+                    len += usize::from(is_link);
+                    at = next;
                 }
-                if chain.len() < 16 {
+                if len < 16 {
                     return;
+                }
+                chain.reserve_exact(len);
+                at = e;
+                while let Some((next, is_link)) = further(self, at) {
+                    if is_link {
+                        chain.push(at);
+                    }
+                    at = next;
                 }
             }
             _ => return,
@@ -354,7 +415,7 @@ impl<'p> Checker<'p> {
         let bound = self.bound(file);
         let mut at = e;
         // The way from what encloses `e` down to it: a property, or `None` for an element.
-        let mut path: Vec<Option<Atom>> = Vec::new();
+        let mut path: SmallVec<[Option<Atom>; 8]> = SmallVec::new();
         // Under a key that is worked out and cannot be told: no matter below `as const`, which asks for no way down.
         let mut lost = false;
         // What a function on the way returns.
@@ -463,21 +524,21 @@ impl<'p> Checker<'p> {
         if depth >= 5 || !self.has_type_variables(ty) {
             return false;
         }
-        match self.data(ty).clone() {
-            TypeData::TypeParam(f, tp, ..) => self.hir(f)[tp].flags.contains(Flags::CONST),
+        match self.data(ty) {
+            &TypeData::TypeParam(f, tp, ..) => self.hir(f)[tp].flags.contains(Flags::CONST),
             TypeData::Union(parts) | TypeData::Intersection(parts) => {
                 parts.iter().any(|&p| self.is_const_type_variable(p, depth))
             }
-            TypeData::IndexedAccess { obj, .. } => self.is_const_type_variable(obj, depth + 1),
+            &TypeData::IndexedAccess { obj, .. } => self.is_const_type_variable(obj, depth + 1),
             // `getConstraintOfConditionalType`
             TypeData::Cond { .. } => match self.constraint_of(ty) {
                 Some(constraint) => self.is_const_type_variable(constraint, depth + 1),
                 None => false,
             },
             // A substitution type is as its base type is.
-            TypeData::NoInfer(base) => self.is_const_type_variable(base, depth),
+            &TypeData::NoInfer(base) => self.is_const_type_variable(base, depth),
             // `getHomomorphicTypeVariable`: `{ [K in keyof T]: .. }` is as `T` is.
-            TypeData::Anon {
+            &TypeData::Anon {
                 origin: Origin::Mapped(file, node),
                 mapper,
             } => {
@@ -739,8 +800,9 @@ impl<'p> Checker<'p> {
         if self.is_any(left) {
             return (left, stops);
         }
+        let target = self.target_kind(file, e);
         // `getWidenedType(leftType)`: what is written to or called is looked up in what a variable holding the object would be.
-        let receiver = if self.is_written_or_called(file, e) {
+        let receiver = if target.written || self.is_called(file, e) {
             self.regular_object(left)
         } else {
             left
@@ -748,8 +810,14 @@ impl<'p> Checker<'p> {
         let cycles_before = self.cycles;
         let is_private = self.files().atoms.bytes(name).first() == Some(&b'#');
         // `isThisPropertyAccessInConstructor`: the property is `autoType`, and `getTypeOfSymbol` is not called.
-        if !is_private && let Some(initial) = self.auto_this_property(file, e, receiver, name) {
-            return (self.flow_type_of_auto_access(file, e, initial), stops);
+        if hir.is_js
+            && !is_private
+            && let Some(initial) = self.auto_this_property(file, e, receiver, name)
+        {
+            return (
+                self.flow_type_of_auto_access(file, e, initial, target),
+                stops,
+            );
         }
         let found = if is_private && !self.is_private_name_in_reach(file, e, left, name) {
             None
@@ -761,13 +829,11 @@ impl<'p> Checker<'p> {
             None
         } else if matches!(hir[obj].kind, ExprKind::Super) {
             self.type_of_super_property(file, obj, receiver, name)
-        } else if self.is_written(file, e) {
+        } else if target.written {
             // `getWriteTypeOfSymbol`, for what is not read first. Read or not, nothing is written through an index signature of
             // what a type parameter extends.
             match self.write_type_of_property(receiver, name) {
-                Some(_) if !self.is_assignment_target(file, e) => {
-                    self.type_of_property(receiver, name)
-                }
+                Some(_) if !target.assigned => self.type_of_property(receiver, name),
                 to_write => to_write,
             }
         } else {
@@ -808,16 +874,23 @@ impl<'p> Checker<'p> {
             // What is not there is an error, and what is in error can be anything. It is not narrowed.
             return (TypeId::ANY, stops);
         };
-        (self.flow_type_of_access(file, e, declared), stops)
+        (self.flow_type_of_access(file, e, declared, target), stops)
     }
 
     /// `getFlowTypeOfAccessExpression`: what `=`, `&&=`, `||=` or `??=` gives a value to is what it is declared as, and that it may
     /// not be there so far does not count (`removeMissingType`; nor is `missingType` added to what an index signature gives).
-    fn flow_type_of_access(&mut self, file: FileId, e: ExprId, declared: TypeId) -> TypeId {
-        if !self.is_definite_target(file, e) {
+    /// `target`: the `target_kind` of `e`.
+    fn flow_type_of_access(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        declared: TypeId,
+        target: TargetKind,
+    ) -> TypeId {
+        if !target.definite {
             let narrowed = self.narrow_access(file, e, declared);
             // `getBaseTypeOfLiteralType(flowType)` for the target of a compound assignment, `++` or `--`.
-            return if self.is_written(file, e) {
+            return if target.written {
                 self.base_of_literal(narrowed)
             } else {
                 narrowed
@@ -826,10 +899,17 @@ impl<'p> Checker<'p> {
         self.filter(declared, |_, m| m != TypeId::MISSING)
     }
 
-    /// `getFlowTypeOfAccessExpression` for a property whose type is `autoType`. `initial` is the result of `auto_this_property`.
-    fn flow_type_of_auto_access(&mut self, file: FileId, e: ExprId, initial: TypeId) -> TypeId {
+    /// `getFlowTypeOfAccessExpression` for a property whose type is `autoType`. `initial` is the result of `auto_this_property`,
+    /// `target` the `target_kind` of `e`.
+    fn flow_type_of_auto_access(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        initial: TypeId,
+        target: TargetKind,
+    ) -> TypeId {
         // A definite assignment target keeps `autoType`, which accepts every value.
-        if self.is_definite_target(file, e) {
+        if target.definite {
             TypeId::ANY
         } else {
             self.flow_type_of_property(file, e, initial)
@@ -1037,8 +1117,9 @@ impl<'p> Checker<'p> {
         let (object, stops) = self.chain_receiver(file, obj, chain);
         let receiver = self.receiver_that_is_there(object);
         let is_in_error = self.is_any(receiver) && !self.is_any(object);
+        let target = self.target_kind(file, e);
         // `getWidenedType(exprType)`: what is written to or called is looked up in what a variable holding the object would be.
-        let receiver = if self.is_written_or_called(file, e) {
+        let receiver = if target.written || self.is_called(file, e) {
             self.regular_object(receiver)
         } else {
             receiver
@@ -1079,9 +1160,8 @@ impl<'p> Checker<'p> {
                 // Of `T & { a: 1 }`, what `T` extends and `{ a: 1 }`.
                 if let TypeData::Intersection(parts) = c.data(m) {
                     let parts: Vec<TypeId> = parts
-                        .to_vec()
-                        .into_iter()
-                        .map(|p| {
+                        .iter()
+                        .map(|&p| {
                             if c.is_deferred(p) {
                                 c.base_constraint(p)
                             } else {
@@ -1107,10 +1187,13 @@ impl<'p> Checker<'p> {
             && let Some(name) = self.property_name_of_type(key)
             && let Some(initial) = self.auto_this_property(file, e, receiver, name)
         {
-            return (self.flow_type_of_auto_access(file, e, initial), stops);
+            return (
+                self.flow_type_of_auto_access(file, e, initial, target),
+                stops,
+            );
         }
         // `AccessFlagsExpressionPosition`
-        let is_read = !self.is_definite_target(file, e);
+        let is_read = !target.definite;
         let of_super = if matches!(hir[obj].kind, ExprKind::Super) {
             self.property_name_of_type(key)
         } else {
@@ -1135,7 +1218,7 @@ impl<'p> Checker<'p> {
             }
             None => TypeId::UNRESOLVED,
         };
-        (self.flow_type_of_access(file, e, declared), stops)
+        (self.flow_type_of_access(file, e, declared, target), stops)
     }
 
     /// `checkIndexedAccessIndexType`, of the type `ty` of `e`: `T[K]` where `K` cannot be used to look into `T` is an error (2536,
@@ -1530,7 +1613,8 @@ impl<'p> Checker<'p> {
             let sym = files.sym(file, local);
             // `getSymbol`: an alias that stands for no value is not there where a value is wanted, and the search goes on further
             // out. Where that finds nothing it is an error, and the alias is all there is to go by.
-            if let Ok(i) = bound.alias_idents.binary_search_by_key(&e, |alias| alias.0)
+            if !files.flags(sym).intersects(SymFlags::VALUE)
+                && let Ok(i) = bound.alias_idents.binary_search_by_key(&e, |alias| alias.0)
                 && !files.means(sym, SymFlags::VALUE)
                 && let Some(outer) =
                     files.resolve_name(file, bound.alias_idents[i].1, name, SymFlags::VALUE)
@@ -1582,7 +1666,9 @@ impl<'p> Checker<'p> {
                 _ => TypeId::ANY,
             };
         };
-        if self.is_reference_within_contextual_pattern(file, e, sym) {
+        if !self.contextual_binding_patterns.is_empty()
+            && self.is_reference_within_contextual_pattern(file, e, sym)
+        {
             return TypeId::ANY;
         }
         let cycles_before = self.cycles;
@@ -1600,16 +1686,15 @@ impl<'p> Checker<'p> {
             declared
         };
         let flags = self.files().flags(sym);
+        let target = self.target_kind(file, e);
         // Only a variable that is no constant is given a value (2588, 2628 to 2632, 2539). What is in error can be anything.
         if (!flags.intersects(SymFlags::VARIABLE) || flags.contains(SymFlags::CONST))
-            && self.is_written(file, e)
+            && target.written
         {
             return TypeId::ANY;
         }
         // What is imported is narrowed like a variable.
-        if !flags.intersects(SymFlags::VARIABLE | SymFlags::ALIAS)
-            || self.is_definite_target(file, e)
-        {
+        if !flags.intersects(SymFlags::VARIABLE | SymFlags::ALIAS) || target.definite {
             return declared;
         }
         let is_variable_here = sym.file == file && flags.intersects(SymFlags::VARIABLE);
@@ -1620,7 +1705,7 @@ impl<'p> Checker<'p> {
         };
         let narrowed = self.narrow_reference(file, e, declared);
         // `getBaseTypeOfLiteralType(flowType)`, of what an operator reads first and then gives a value to, `++` and `--` too.
-        if self.is_written(file, e) {
+        if target.written {
             self.base_of_literal(narrowed)
         } else {
             narrowed
@@ -1646,6 +1731,7 @@ impl<'p> Checker<'p> {
     }
 
     /// Whether `e` is written to and not read: the left of `=`, or part of a pattern there.
+    #[inline]
     pub fn is_assignment_target(&self, file: FileId, e: ExprId) -> bool {
         let hir = self.hir(file);
         let bound = self.bound(file);
@@ -1653,24 +1739,10 @@ impl<'p> Checker<'p> {
         loop {
             match bound.expr_parent[at.idx()] {
                 Parent::Expr(parent) => match hir[parent].kind {
+                    // `[a = 1] = x`: the inner assignment is a default. In a pattern or not, it gives `a` a value.
                     ExprKind::Assign {
                         op: None, target, ..
-                    } => {
-                        if target != at {
-                            return false;
-                        }
-                        // `[a = 1] = x`: the inner assignment is a default, and is itself in a pattern or not.
-                        match bound.expr_parent[parent.idx()] {
-                            Parent::Expr(g) if matches!(hir[g].kind, ExprKind::Array(_)) => {
-                                at = parent
-                            }
-                            Parent::Prop(_) => at = parent,
-                            _ => return true,
-                        }
-                        if at == parent && !self.is_in_pattern(file, parent) {
-                            return true;
-                        }
-                    }
+                    } => return target == at,
                     ExprKind::Array(_) | ExprKind::Spread(_) | ExprKind::NonNull(_) => at = parent,
                     _ => return false,
                 },
@@ -1691,66 +1763,64 @@ impl<'p> Checker<'p> {
         }
     }
 
-    fn is_in_pattern(&self, file: FileId, e: ExprId) -> bool {
-        self.is_assignment_target(file, e)
-    }
-
-    /// `getAssignmentTargetKind(e) == AssignmentKindDefinite`: `e` is given a value by `=` or in a pattern there, or by `&&=`, `||=`
-    /// or `??=`. It is what it is declared as, whatever has been found out about it on the way.
-    pub(super) fn is_definite_target(&self, file: FileId, e: ExprId) -> bool {
+    /// `getAssignmentTargetKind`
+    fn target_kind(&self, file: FileId, e: ExprId) -> TargetKind {
         if self.is_assignment_target(file, e) {
-            return true;
+            return TargetKind {
+                assigned: true,
+                definite: true,
+                written: true,
+            };
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
+        let (mut definite, mut written) = (false, false);
         let mut at = e;
         while let Parent::Expr(parent) = bound.expr_parent[at.idx()] {
             match hir[parent].kind {
                 ExprKind::Assign {
-                    op: Some(BinOp::And | BinOp::Or | BinOp::Nullish),
+                    op: Some(op),
                     target,
                     ..
-                } => return target == at,
+                } => {
+                    written = target == at;
+                    definite = written && matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish);
+                    break;
+                }
+                ExprKind::Unary {
+                    op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
+                    ..
+                } => {
+                    written = true;
+                    break;
+                }
                 // `x!` is seen through.
                 ExprKind::NonNull(_) => at = parent,
-                _ => return false,
+                _ => break,
             }
         }
-        false
+        TargetKind {
+            assigned: false,
+            definite,
+            written,
+        }
     }
 
     /// `getAssignmentTargetKind(e) != AssignmentKindNone`: `e` is given a value, by `=` or in a pattern there, by an operator that
     /// reads it first, or by `++` and `--`.
     pub(super) fn is_written(&self, file: FileId, e: ExprId) -> bool {
-        if self.is_assignment_target(file, e) {
-            return true;
-        }
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let mut at = e;
-        while let Parent::Expr(parent) = bound.expr_parent[at.idx()] {
-            match hir[parent].kind {
-                ExprKind::Assign {
-                    op: Some(_),
-                    target,
-                    ..
-                } => return target == at,
-                ExprKind::Unary {
-                    op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
-                    ..
-                } => return true,
-                // `x!` is seen through.
-                ExprKind::NonNull(_) => at = parent,
-                _ => return false,
-            }
-        }
-        false
+        self.target_kind(file, e).written
     }
 
-    /// `getAssignmentTargetKind(e) != AssignmentKindNone || isMethodAccessForCall(e)`. A call does not see through `x!`.
-    pub(super) fn is_written_or_called(&self, file: FileId, e: ExprId) -> bool {
+    /// `isMethodAccessForCall`. A call does not see through `x!`.
+    fn is_called(&self, file: FileId, e: ExprId) -> bool {
         let hir = self.hir(file);
-        let is_called = matches!(self.bound(file).expr_parent[e.idx()], Parent::Expr(parent)
-            if matches!(hir[parent].kind, ExprKind::Call(c) | ExprKind::New(c) if hir[c].callee == e));
-        is_called || self.is_written(file, e)
+        matches!(self.bound(file).expr_parent[e.idx()], Parent::Expr(parent)
+            if matches!(hir[parent].kind, ExprKind::Call(c) | ExprKind::New(c) if hir[c].callee == e))
+    }
+
+    /// `getAssignmentTargetKind(e) != AssignmentKindNone || isMethodAccessForCall(e)`
+    pub(super) fn is_written_or_called(&self, file: FileId, e: ExprId) -> bool {
+        self.is_called(file, e) || self.is_written(file, e)
     }
 
     /// `isInPropertyInitializerOrClassStaticBlock(e, ignoreArrowFunctions = true)`
@@ -1901,6 +1971,7 @@ impl<'p> Checker<'p> {
         }
     }
 
+    #[inline]
     pub(super) fn class_sym(&self, file: FileId, c: ClassId) -> Sym {
         self.files()
             .sym(file, self.bound(file).class_symbol[c.idx()])
@@ -2460,8 +2531,8 @@ impl<'p> Checker<'p> {
         let exact = self.p.files.options.exact_optional_property_types;
         // `hasOmittedExpression`
         let mut has_hole = false;
-        let mut types = Vec::with_capacity(items.len());
-        let mut flags = Vec::with_capacity(items.len());
+        let mut types: SmallVec<[TypeId; 8]> = SmallVec::with_capacity(items.len());
+        let mut flags: SmallVec<[ElemFlags; 8]> = SmallVec::with_capacity(items.len());
         for item in hir.ids(items) {
             match hir[item].kind {
                 ExprKind::Spread(inner) => {
@@ -3014,6 +3085,13 @@ impl<'p> Checker<'p> {
             None
         };
         let mut shape = Shape::default();
+        shape.props.reserve_exact(props.len());
+        // The names of `shape.props`, of a literal with many members.
+        let has_many = props.len() > 16;
+        let mut names = crate::util::FxHashSet::<Atom>::default();
+        if has_many {
+            names.reserve(props.len());
+        }
         for p in props.iter() {
             let prop = &hir[p];
             // A name that is only known when it runs makes no property.
@@ -3073,7 +3151,9 @@ impl<'p> Checker<'p> {
                 }
             }
             let mut source = p;
-            if let Some(existing) = shape.props.iter().position(|x| x.name == name) {
+            let may_be_there = !has_many || !names.insert(name);
+            if may_be_there && let Some(existing) = shape.props.iter().position(|x| x.name == name)
+            {
                 if prop.kind == PropKind::Setter {
                     // A getter and a setter: the getter says what it is.
                     if !shape.props[existing].flags.contains(PropFlags::METHOD) {
@@ -3260,20 +3340,17 @@ impl<'p> Checker<'p> {
         match op {
             UnOp::Typeof => {
                 self.look_at(file, operand);
-                let names: [&[u8]; 8] = [
-                    b"string",
-                    b"number",
-                    b"bigint",
-                    b"boolean",
-                    b"symbol",
-                    b"undefined",
-                    b"object",
-                    b"function",
-                ];
-                let literals = names.map(|name| {
-                    let name = self.files().atoms.intern(name);
-                    self.string_literal(name, false)
-                });
+                let literals = [
+                    known::string,
+                    known::number,
+                    known::bigint,
+                    known::boolean,
+                    known::symbol,
+                    known::undefined,
+                    known::object,
+                    known::function,
+                ]
+                .map(|name| self.string_literal(name, false));
                 self.union(&literals)
             }
             // `checkVoidExpression`: the operand waits.

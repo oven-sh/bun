@@ -7,6 +7,7 @@
 use super::errors::Diagnostic;
 use super::*;
 use crate::bind::Decl;
+use smallvec::SmallVec;
 
 /// `NodeIsPresent(node.Body())`: a body written where none belongs is not kept, but it counts.
 fn has_body(func: &Func) -> bool {
@@ -167,21 +168,19 @@ impl Checker<'_> {
             })
             .collect();
         // All that go by one name, together.
-        let mut names: Vec<Atom> = functions
-            .iter()
-            .flatten()
-            .map(|&(f, _)| hir[f].name)
-            .filter(|n| n.is_some())
-            .collect();
-        names.sort_unstable();
-        names.dedup();
+        let mut named: Vec<(Atom, usize)> = Vec::new();
+        for (i, function) in functions.iter().enumerate() {
+            if let Some((f, _)) = *function
+                && hir[f].name.is_some()
+            {
+                named.push((hir[f].name, i));
+            }
+        }
+        named.sort_unstable();
         let mut group: Vec<usize> = Vec::new();
-        for name in names {
+        for same in named.chunk_by(|a, b| a.0 == b.0) {
             group.clear();
-            group.extend(
-                (0..functions.len())
-                    .filter(|&i| functions[i].is_some_and(|(f, _)| hir[f].name == name)),
-            );
+            group.extend(same.iter().map(|n| n.1));
             self.check_function_symbol(file, &functions, &group, out);
         }
         // Every `export default function` declares the export `default` as well, whatever it is called.
@@ -262,7 +261,11 @@ impl Checker<'_> {
         {
             report(last);
         }
-        let declarations: Vec<(FnId, u32)> = group.iter().filter_map(|&i| functions[i]).collect();
+        let declarations: SmallVec<[(FnId, u32, u32); 4]> = group
+            .iter()
+            .filter_map(|&i| functions[i])
+            .map(|(f, start)| (f, start, 0))
+            .collect();
         // A body in another block of the namespace, or in another file, is a body of the function as well.
         if declarations.iter().filter(|d| has_body(&hir[d.0])).count() < 2
             && let Some(all) =
@@ -278,8 +281,6 @@ impl Checker<'_> {
                 code: 2393,
             }));
         }
-        let declarations: Vec<(FnId, u32, u32)> =
-            declarations.iter().map(|d| (d.0, d.1, 0)).collect();
         self.check_overload_group(file, &declarations, 2393, out);
     }
 
@@ -399,17 +400,23 @@ impl Checker<'_> {
         if !group.is_empty() {
             self.check_member_symbol(file, c, &names, &group, out);
         }
-        let mut seen: Vec<(Atom, bool)> = Vec::new();
+        let mut methods: Vec<(Atom, bool, usize)> = (0..members.len())
+            .filter_map(|i| names[i].map(|name| (name, is_static(i), i)))
+            .collect();
+        methods.sort_unstable();
         for i in 0..members.len() {
             let Some(name) = names[i] else { continue };
-            if seen.contains(&(name, is_static(i))) {
+            let key = (name, is_static(i));
+            let first = methods.partition_point(|m| (m.0, m.1) < key);
+            if methods[first].2 != i {
                 continue;
             }
-            seen.push((name, is_static(i)));
             group.clear();
             group.extend(
-                (i..members.len())
-                    .filter(|&k| names[k] == Some(name) && is_static(k) == is_static(i)),
+                methods[first..]
+                    .iter()
+                    .take_while(|m| (m.0, m.1) == key)
+                    .map(|m| m.2),
             );
             self.check_member_symbol(file, c, &names, &group, out);
         }

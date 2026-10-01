@@ -9,6 +9,7 @@ use super::errors::Diagnostic;
 use super::errors_order::Named;
 use super::*;
 use crate::bind::{Decl, FnOwner, Parent, PatParent, SymbolId};
+use smallvec::SmallVec;
 
 const PROPERTY: u8 = 1 << 0;
 const METHOD: u8 = 1 << 1;
@@ -200,12 +201,16 @@ impl Checker<'_> {
             }
         };
         const NOWHERE: (PatId, ParamId) = (PatId::NONE, ParamId::NONE);
-        for i in 0..hir.exprs.len() {
+        // Around a statement are statements, and then a function, a namespace or the file.
+        let runs_in_place = self.has_function_run_in_place(file);
+        let index = self.exprs_by_kind(file);
+        for &id in index.of(ExprTag::Ident) {
+            let i = id.idx();
             let ExprKind::Ident(name) = hir.exprs[i].kind else {
                 continue;
             };
             let local = bound.expr_symbol[i];
-            if local.is_none() || bound.is_in_type_query(ExprId(i as u32)) {
+            if local.is_none() || bound.is_in_type_query(id) {
                 continue;
             }
             // `candidate.ValueDeclaration`: where it is, and the pattern that binds it if it is a parameter.
@@ -277,9 +282,9 @@ impl Checker<'_> {
                     Parent::MemberInit(m) if hir[m].flags.contains(Flags::STATIC) => {
                         self.parent_of(file, parent)
                     }
-                    Parent::Stmt(s) if s.is_none() => break NOWHERE,
+                    Parent::Stmt(s) if s.is_none() || !runs_in_place => break NOWHERE,
+                    Parent::Stmt(s) => bound.stmt_parent[s.idx()],
                     Parent::Prop(_)
-                    | Parent::Stmt(_)
                     | Parent::VarInit(_)
                     | Parent::Case(_)
                     | Parent::ClassExtends(_)
@@ -322,19 +327,24 @@ impl Checker<'_> {
         let hir = self.hir(file);
         let has_static =
             |members: Span<MemberId>| members.iter().any(|m| hir[m].flags.contains(Flags::STATIC));
-        if !hir
-            .classes
-            .iter()
-            .any(|c| !c.type_params.is_empty() && has_static(c.members))
-            && !hir
-                .interfaces
-                .iter()
-                .any(|i| !i.type_params.is_empty() && has_static(i.members))
-        {
+        // The names of the type parameters of what has a static member.
+        let mut names: SmallVec<[Atom; 8]> = SmallVec::new();
+        let classes = hir.classes.iter().map(|c| (c.type_params, c.members));
+        let interfaces = hir.interfaces.iter().map(|i| (i.type_params, i.members));
+        for (type_params, members) in classes.chain(interfaces) {
+            if !type_params.is_empty() && has_static(members) {
+                names.extend(type_params.iter().map(|p| hir[p].name));
+            }
+        }
+        if names.is_empty() {
             return;
         }
         for t in 0..hir.types.len() {
-            if self.is_class_type_parameter_in_static(file, TypeNodeId(t as u32)) {
+            if let TypeNodeKind::Ref { name, .. } = hir.types[t].kind
+                && name.len() == 1
+                && names.contains(&hir.id_at(name, 0))
+                && self.is_class_type_parameter_in_static(file, TypeNodeId(t as u32))
+            {
                 out.push(Diagnostic {
                     start: hir.types[t].pos,
                     code: 2302,
@@ -433,14 +443,18 @@ impl Checker<'_> {
         let bound = self.bound(file);
         for i in 0..bound.symbols.len() {
             let symbol = &bound.symbols[i];
-            if symbol.decls.len() < 2 && !symbol.flags.contains(SymFlags::MERGED) {
+            if symbol.decls.len() < 2 && !symbol.flags.contains(SymFlags::MERGED)
+                || !symbol
+                    .flags
+                    .intersects(SymFlags::CLASS | SymFlags::INTERFACE | SymFlags::ALIAS)
+            {
                 continue;
             }
             let sym = self.files().sym(file, SymbolId(i as u32));
             if sym.file == file && sym.id.idx() != i {
                 continue;
             }
-            let decls = self.files().decls(sym);
+            let decls = self.files().decls_of(sym);
             if symbol
                 .flags
                 .intersects(SymFlags::CLASS | SymFlags::INTERFACE)
@@ -551,7 +565,7 @@ impl Checker<'_> {
     /// property. In every class, interface and type literal of the file.
     fn check_subsequent_property_declarations(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let mut symbols: Vec<Sym> = bound
+        let mut symbols: SmallVec<[Sym; 8]> = bound
             .class_symbol
             .iter()
             .chain(&bound.interface_symbol)
@@ -563,7 +577,21 @@ impl Checker<'_> {
         let mut declared: Vec<DeclaredMember> = Vec::new();
         for sym in symbols {
             declared.clear();
-            let decls = self.files().decls(sym);
+            let decls = self.files().decls_of(sym);
+            if let [(of, decl)] = *decls {
+                let alone = match decl {
+                    Decl::Class(c) => Some((self.hir(of)[c].members, self.hir(of)[c].type_params)),
+                    Decl::Interface(i) => {
+                        Some((self.hir(of)[i].members, self.hir(of)[i].type_params))
+                    }
+                    _ => None,
+                };
+                if alone.is_none_or(|(members, params)| {
+                    params.is_empty() && declares_each_name_once(self.hir(of), members)
+                }) {
+                    continue;
+                }
+            }
             // The members of what is not put together with the rest are its own.
             let together = Self::declarations_put_together(&decls);
             for (of, decl) in decls {
@@ -587,6 +615,7 @@ impl Checker<'_> {
             if let TypeNodeKind::Object(members) = hir.types[t].kind
                 && members.len() > 1
                 && bound.type_scope[t].is_some()
+                && !declares_each_name_once(hir, members)
             {
                 declared.clear();
                 self.collect_declared_members(file, members, MapperId::IDENTITY, &mut declared);
@@ -1034,14 +1063,23 @@ impl Checker<'_> {
     /// `checkTypeForDuplicateIndexSignatures`: 2374, within each class, interface and type literal of the file.
     fn check_index_signatures(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let hir = self.hir(file);
+        if hir
+            .members
+            .iter()
+            .filter(|m| m.kind == MemberKind::IndexSignature)
+            .nth(1)
+            .is_none()
+        {
+            return;
+        }
         // The lists of members, and whether they are those of a class.
-        let mut lists: Vec<(Span<MemberId>, bool)> = Vec::new();
-        lists.extend(hir.classes.iter().map(|c| (c.members, true)));
-        lists.extend(hir.interfaces.iter().map(|i| (i.members, false)));
-        lists.extend(hir.types.iter().filter_map(|t| match t.kind {
+        let classes = hir.classes.iter().map(|c| (c.members, true));
+        let interfaces = hir.interfaces.iter().map(|i| (i.members, false));
+        let literals = hir.types.iter().filter_map(|t| match t.kind {
             TypeNodeKind::Object(members) => Some((members, false)),
             _ => None,
-        }));
+        });
+        let lists = classes.chain(interfaces).chain(literals);
         let mut seen = Vec::new();
         for (members, is_class) in lists {
             if members
@@ -1134,6 +1172,35 @@ impl Checker<'_> {
             }
         }
     }
+}
+
+/// Whether the names that `members` declare, parameter properties included, are all written out and all different.
+fn declares_each_name_once(hir: &hir::File, members: Span<MemberId>) -> bool {
+    let mut names: SmallVec<[Atom; 16]> = SmallVec::new();
+    for m in members.iter() {
+        let member = &hir[m];
+        match member.kind {
+            MemberKind::Property | MemberKind::Method | MemberKind::Getter | MemberKind::Setter => {
+                match member.key {
+                    PropKey::Name(name) | PropKey::Private(name) => names.push(name),
+                    PropKey::Computed(_) => return false,
+                    PropKey::None => {}
+                }
+            }
+            MemberKind::Constructor if member.func.is_some() => {
+                for p in hir[member.func].params.iter() {
+                    if hir[p].flags.contains(Flags::PARAMETER_PROPERTY)
+                        && let PatKind::Ident(name) = hir[hir[p].pat].kind
+                    {
+                        names.push(name);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    names.sort_unstable();
+    names.windows(2).all(|pair| pair[0] != pair[1])
 }
 
 /// `node.End()` of the import clause of `import`, which has a default import: that, and the `{ .. }` or `* as ns` after it.

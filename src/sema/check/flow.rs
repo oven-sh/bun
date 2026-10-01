@@ -3,6 +3,7 @@
 use super::decl::Predicate;
 use super::*;
 use crate::bind::{Decl, Flow, FlowId, FlowTarget, Parent, PatParent, SymbolId, UNREACHABLE};
+use smallvec::{SmallVec, smallvec};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum Root {
@@ -27,7 +28,7 @@ enum Root {
 pub(super) struct Reference {
     file: FileId,
     root: Root,
-    path: Vec<Atom>,
+    path: SmallVec<[Atom; 4]>,
     /// Where it is written, if it is. Two that are written in different places are the same reference.
     at: ExprId,
     /// `getFlowReferenceKey` has a key for it. It has none for what starts at `super`, `import.meta` or `new.target`, or goes
@@ -53,21 +54,71 @@ pub(super) enum Auto {
     Array,
 }
 
+/// Answers that hold whoever asks, kept by the checker that worked them out.
+#[derive(Default)]
+pub(super) struct FlowMemo {
+    /// `getEffectsSignature`, by call.
+    effects_signatures: FxHashMap<(FileId, ExprId), Option<SigId>>,
+    /// `getKeyPropertyName` and its map, by union and property name.
+    key_properties: FxHashMap<(TypeId, Atom), Option<std::rc::Rc<FxHashMap<TypeId, TypeId>>>>,
+    /// `getAssignmentReducedType`, by declared and assigned type.
+    assignment_reduced_types: FxHashMap<(TypeId, TypeId), TypeId>,
+    /// `getNarrowedType`, by type, candidate, `assumeTrue` and `checkDerived`.
+    narrowed_types: FxHashMap<(TypeId, TypeId, bool, bool), TypeId>,
+}
+
+/// Whether tests made outside a function still hold inside it.
+#[derive(Copy, Clone)]
+enum Crossing {
+    No,
+    Yes,
+    /// They do if the variable is not assigned to any more once the expression has been reached. That is looked into where a walk
+    /// gets to the start of a function.
+    PastLastAssignment(SymbolId, ExprId),
+}
+
+/// What was found at labels.
+#[derive(Default)]
+struct Labels {
+    few: SmallVec<[(FlowId, TypeId); 8]>,
+    /// Those that came when `few` was full.
+    many: FxHashMap<FlowId, TypeId>,
+}
+
+impl Labels {
+    fn get(&self, label: FlowId) -> Option<TypeId> {
+        match self.few.iter().find(|known| known.0 == label) {
+            Some(known) => Some(known.1),
+            None if self.many.is_empty() => None,
+            None => self.many.get(&label).copied(),
+        }
+    }
+
+    fn insert(&mut self, label: FlowId, ty: TypeId) {
+        if let Some(known) = self.few.iter_mut().find(|known| known.0 == label) {
+            known.1 = ty;
+        } else if self.few.len() < self.few.inline_size() {
+            self.few.push((label, ty));
+        } else {
+            self.many.insert(label, ty);
+        }
+    }
+}
+
 struct Walk {
     reference: Reference,
     declared: TypeId,
     /// What it is where the walk ends without having met an assignment.
     initial: TypeId,
     auto: Auto,
-    /// Whether tests made outside a function still hold inside it.
-    crosses_functions: bool,
-    labels: FxHashMap<FlowId, TypeId>,
+    crossing: Crossing,
+    labels: Labels,
     /// The `finally` blocks being gone back through: where each starts, and the label whose edges count instead.
     reduced: Vec<(FlowId, FlowId)>,
     /// Loops being worked out, and what has reached them so far.
-    loops: Vec<(FlowId, TypeId)>,
+    loops: SmallVec<[(FlowId, TypeId); 2]>,
     /// For each of `loops`: what was found at labels during this round, which holds as long as `loops` stays as it is.
-    round_labels: Vec<FxHashMap<FlowId, TypeId>>,
+    round_labels: Vec<Labels>,
     steps: u32,
     /// How many invocations of `getTypeAtFlowNode` would be under way, one inside the other.
     depth: u32,
@@ -195,10 +246,14 @@ impl Walk {
             declared,
             initial,
             auto,
-            crosses_functions,
-            labels: FxHashMap::default(),
+            crossing: if crosses_functions {
+                Crossing::Yes
+            } else {
+                Crossing::No
+            },
+            labels: Labels::default(),
             reduced: Vec::new(),
-            loops: Vec::new(),
+            loops: SmallVec::new(),
             round_labels: Vec::new(),
             steps: 0,
             depth: 0,
@@ -214,9 +269,8 @@ impl Walk {
         self.round_labels
             .iter()
             .rev()
-            .find_map(|round| round.get(&label))
-            .or_else(|| self.labels.get(&label))
-            .copied()
+            .find_map(|round| round.get(label))
+            .or_else(|| self.labels.get(label))
     }
 
     fn remember(&mut self, label: FlowId, ty: TypeId) {
@@ -240,6 +294,27 @@ struct Access {
 }
 
 impl<'p> Checker<'p> {
+    /// The result of `work`, and whether it can go into `FlowMemo`: it holds whoever asks, and working it out again would raise
+    /// none of the flags that relations, unions and intersections raise for their callers.
+    fn run_memoizable<T>(&mut self, work: impl FnOnce(&mut Self) -> T) -> (T, bool) {
+        let before = self.what_only_holds_for_now();
+        let gave_up = std::mem::take(&mut self.relation_gave_up);
+        let too_complex = std::mem::take(&mut self.relation_too_complex);
+        let union_too_complex = std::mem::take(&mut self.union_too_complex);
+        let reliability = std::mem::take(&mut self.reliability);
+        let result = work(self);
+        let is_memoizable = self.what_only_holds_for_now() == before
+            && !self.relation_gave_up
+            && !self.relation_too_complex
+            && !self.union_too_complex
+            && self.reliability == 0;
+        self.relation_gave_up |= gave_up;
+        self.relation_too_complex |= too_complex;
+        self.union_too_complex |= union_too_complex;
+        self.reliability |= reliability;
+        (result, is_memoizable)
+    }
+
     // ───────────────────────────── truthiness ─────────────────────────────
 
     /// What `getDefinitelyFalsyPartOfType` gives back as it is, `any` and `unknown` aside. `NaN` is not among it.
@@ -561,7 +636,7 @@ impl<'p> Checker<'p> {
 
     pub(super) fn reference_of(&mut self, file: FileId, e: ExprId) -> Option<Reference> {
         let hir = self.hir(file);
-        let mut path = Vec::new();
+        let mut path: SmallVec<[Atom; 4]> = SmallVec::new();
         let mut at = e;
         let mut has_key = true;
         let root = loop {
@@ -663,7 +738,7 @@ impl<'p> Checker<'p> {
         // `ValueDeclaration`: a type of the same name may be declared first.
         let is_value = |d: &Decl| matches!(d, Decl::Var(_) | Decl::EnumMember(_));
         let (of, decl) = if flags.contains(SymFlags::MERGED) {
-            files.decls(sym).into_iter().find(|(_, d)| is_value(d))?
+            files.decls_of(sym).into_iter().find(|(_, d)| is_value(d))?
         } else {
             (
                 sym.file,
@@ -745,11 +820,19 @@ impl<'p> Checker<'p> {
         {
             return None;
         }
-        Some(
-            self.files()
-                .atoms
-                .intern(format!("\0{}", symbol.0).as_bytes()),
-        )
+        // A zero byte, and the number of the symbol in decimal.
+        let mut key = [0u8; 11];
+        let mut from = key.len();
+        let mut number = symbol.0;
+        loop {
+            from -= 1;
+            key[from] = b'0' + (number % 10) as u8;
+            number /= 10;
+            if number == 0 {
+                break;
+            }
+        }
+        Some(self.files().atoms.intern(&key[from - 1..]))
     }
 
     /// Whether `e` is the first `len` steps of `reference`. `isMatchingReference`, with `e` for the target: `satisfies` is looked
@@ -880,22 +963,16 @@ impl<'p> Checker<'p> {
         ty: TypeId,
     ) -> Option<Access> {
         let declared = self.walk_declared;
-        if !self.is_union(declared) && !self.is_union(ty) {
+        let is_declared_union = self.is_union(declared);
+        if !is_declared_union && !self.is_union(ty) {
             return None;
         }
         let access = self.candidate_discriminant_access(reference, e, ty)?;
         // Going by the declared type keeps a property a discriminant after the members that made it one are gone.
-        let subset = ty == declared
-            || self.is_union(declared)
-                && self
-                    .parts(ty)
-                    .iter()
-                    .all(|m| self.parts(declared).contains(m));
-        let of = if self.is_union(declared) && subset {
-            declared
-        } else {
-            ty
-        };
+        let declared_parts = self.parts(declared);
+        let is_subset = is_declared_union
+            && (ty == declared || self.parts(ty).iter().all(|m| declared_parts.contains(m)));
+        let of = if is_subset { declared } else { ty };
         self.is_discriminant_property(of, access.name)
             .then_some(access)
     }
@@ -916,7 +993,7 @@ impl<'p> Checker<'p> {
     /// `isDiscriminantProperty`, of what `createUnionOrIntersectionProperty` makes of the properties the members have.
     fn is_discriminant_property_uncached(&mut self, ty: TypeId, name: Atom) -> bool {
         let parts = self.parts(ty);
-        let mut types: Vec<TypeId> = Vec::new();
+        let mut types: SmallVec<[TypeId; 8]> = SmallVec::new();
         let (mut literal, mut is_restricted) = (false, false);
         for &m in parts {
             let apparent = self.apparent_type(m);
@@ -924,13 +1001,13 @@ impl<'p> Checker<'p> {
             if self.is_never_intersection(apparent) {
                 continue;
             }
-            let Some((prop, mapper)) = self.prop_of(apparent, name) else {
+            let Some((prop, mapper)) = self.prop_ref(apparent, name) else {
                 continue;
             };
             is_restricted |= prop
                 .flags
                 .intersects(PropFlags::PRIVATE | PropFlags::PROTECTED);
-            let t = self.type_of_prop(&prop, mapper);
+            let t = self.type_of_prop(prop, mapper);
             literal |= t == TypeId::BOOLEAN
                 || t != TypeId::NEVER && self.every_type(t, |c, p| c.is_unit(p))
                 || self.is_pattern_literal(t);
@@ -1230,11 +1307,10 @@ impl<'p> Checker<'p> {
     /// `isReadonlySymbol` of the property `name` of `object`: in a union one member that says so will do.
     fn is_readonly_property(&mut self, object: TypeId, name: Atom) -> bool {
         if self.is_union(object) {
-            let parts = self.parts(object).to_vec();
             let (mut is_readonly, mut is_declared) = (false, false);
-            for part in parts {
+            for &part in self.parts(object) {
                 let part = self.apparent_type(part);
-                if let Some((prop, _)) = self.prop_of(part, name) {
+                if let Some((prop, _)) = self.prop_ref(part, name) {
                     is_declared = true;
                     is_readonly |= prop.flags.contains(PropFlags::READONLY);
                     continue;
@@ -1257,7 +1333,7 @@ impl<'p> Checker<'p> {
             }
             return is_declared && is_readonly;
         }
-        self.prop_of(object, name)
+        self.prop_ref(object, name)
             .is_some_and(|(prop, _)| prop.flags.contains(PropFlags::READONLY))
     }
 
@@ -1313,7 +1389,7 @@ impl<'p> Checker<'p> {
         let reference = Reference {
             file,
             root: Root::Pattern(parent),
-            path: Vec::new(),
+            path: SmallVec::new(),
             at: ExprId::NONE,
             has_key: true,
         };
@@ -1393,7 +1469,7 @@ impl<'p> Checker<'p> {
         let reference = Reference {
             file,
             root: Root::Params(func),
-            path: Vec::new(),
+            path: SmallVec::new(),
             at: ExprId::NONE,
             has_key: true,
         };
@@ -1417,13 +1493,28 @@ impl<'p> Checker<'p> {
         self.indexed_access(narrowed, index)
     }
 
+    fn crosses_functions(&mut self, walk: &Walk) -> bool {
+        match walk.crossing {
+            Crossing::No => false,
+            Crossing::Yes => true,
+            Crossing::PastLastAssignment(symbol, e) => {
+                self.is_past_last_assignment(walk.reference.file, symbol, e)
+            }
+        }
+    }
+
+    /// `crosses_functions`, found out once for the walk.
+    fn settle_crossing(&mut self, walk: &mut Walk) -> bool {
+        let crosses = self.crosses_functions(walk);
+        walk.crossing = if crosses { Crossing::Yes } else { Crossing::No };
+        crosses
+    }
+
     /// Whether control gets to `flow`, where `walk` found nothing that its reference can be. It goes out of the functions the walk
     /// goes out of.
     fn is_reachable_by_walk(&mut self, walk: &Walk, flow: FlowId) -> bool {
-        let outer = std::mem::replace(
-            &mut self.reachability_crosses_functions,
-            walk.crosses_functions,
-        );
+        let crosses_functions = self.crosses_functions(walk);
+        let outer = std::mem::replace(&mut self.reachability_crosses_functions, crosses_functions);
         let past = std::mem::replace(&mut self.reachability_past_exhaustive_switches, true);
         let is_this = walk.reference.root == Root::This && walk.reference.path.is_empty();
         let reachable = self.is_reachable_inner(
@@ -1455,7 +1546,7 @@ impl<'p> Checker<'p> {
             ty
         };
         // `getTypeOfPropertyOfType`, which for a union is what `createUnionOrIntersectionProperty` makes.
-        let mut prop_types = Vec::new();
+        let mut prop_types: SmallVec<[TypeId; 8]> = SmallVec::new();
         let (mut is_declared, mut has_never) = (false, false);
         for &m in self.parts(base) {
             // What nothing can be has no say in what the property is. (It stays in the union all the same.)
@@ -1466,7 +1557,7 @@ impl<'p> Checker<'p> {
             let apparent = self.apparent_type(m);
             if let TypeData::Tuple { elems, flags, .. } = self.data(apparent)
                 && self.is_numeric_name(name)
-                && self.prop_of(apparent, name).is_none()
+                && self.prop_ref(apparent, name).is_none()
             {
                 let fixed = flags
                     .iter()
@@ -1846,10 +1937,29 @@ impl<'p> Checker<'p> {
         &mut self,
         ty: TypeId,
         name: Atom,
-    ) -> Option<FxHashMap<TypeId, TypeId>> {
-        if !self.is_union(ty) {
+    ) -> Option<std::rc::Rc<FxHashMap<TypeId, TypeId>>> {
+        if !self.is_union(ty) || self.parts(ty).len() < 10 {
             return None;
         }
+        if let Some(known) = self.flow_memo.key_properties.get(&(ty, name)) {
+            return known.clone();
+        }
+        let (constituents, is_memoizable) =
+            self.run_memoizable(|c| c.constituents_by_key_property_uncached(ty, name));
+        let constituents = constituents.map(std::rc::Rc::new);
+        if is_memoizable {
+            self.flow_memo
+                .key_properties
+                .insert((ty, name), constituents.clone());
+        }
+        constituents
+    }
+
+    fn constituents_by_key_property_uncached(
+        &mut self,
+        ty: TypeId,
+        name: Atom,
+    ) -> Option<FxHashMap<TypeId, TypeId>> {
         let parts = self.parts(ty);
         // `TypeFlagsObject | TypeFlagsInstantiableNonPrimitive`
         let counts = |c: &Self, m: TypeId| {
@@ -1880,7 +1990,7 @@ impl<'p> Checker<'p> {
             return None;
         }
         // `mapTypesByKeyProperty`
-        let mut constituents = FxHashMap::default();
+        let mut constituents = FxHashMap::with_capacity_and_hasher(parts.len(), Default::default());
         let mut count = 0;
         for &m in parts {
             if !(counts(self, m) || self.is_intersection(m)) {
@@ -2281,8 +2391,8 @@ impl<'p> Checker<'p> {
             ..
         } = *self.data(constructor)
         {
-            let params = self.type_params_of_symbol(class);
-            let anys = vec![TypeId::ANY; params.len()];
+            let count = self.local_type_params_of_symbol(class).len();
+            let anys: SmallVec<[TypeId; 4]> = smallvec![TypeId::ANY; count];
             return self.type_reference(class, &anys);
         }
         if let Some(prototype) = self.type_of_property(constructor, known::prototype)
@@ -2352,8 +2462,31 @@ impl<'p> Checker<'p> {
         false
     }
 
-    /// `getNarrowedTypeWorker`: `ty`, knowing that the value is (or is not) a `candidate`.
+    /// `getNarrowedType`: `ty`, knowing that the value is (or is not) a `candidate`.
     pub(super) fn narrowed_to(
+        &mut self,
+        ty: TypeId,
+        candidate: TypeId,
+        sense: bool,
+        check_derived: bool,
+    ) -> TypeId {
+        if !self.is_union(ty) {
+            return self.narrowed_to_uncached(ty, candidate, sense, check_derived);
+        }
+        let key = (ty, candidate, sense, check_derived);
+        if let Some(&known) = self.flow_memo.narrowed_types.get(&key) {
+            return known;
+        }
+        let (narrowed, is_memoizable) =
+            self.run_memoizable(|c| c.narrowed_to_uncached(ty, candidate, sense, check_derived));
+        if is_memoizable {
+            self.flow_memo.narrowed_types.insert(key, narrowed);
+        }
+        narrowed
+    }
+
+    /// `getNarrowedTypeWorker`
+    fn narrowed_to_uncached(
         &mut self,
         ty: TypeId,
         candidate: TypeId,
@@ -2520,7 +2653,7 @@ impl<'p> Checker<'p> {
             let Some(members) = c.members(apparent) else {
                 return !present;
             };
-            match c.property_of_type(&members, name) {
+            match c.property_in(&members, name) {
                 Some((prop, _)) => present || prop.flags.contains(PropFlags::OPTIONAL),
                 None => {
                     c.applicable_index_info(&members, TypeId::STRING, Some(name))
@@ -2529,8 +2662,7 @@ impl<'p> Checker<'p> {
                 }
             }
         };
-        let parts = self.parts(ty).to_vec();
-        if parts.iter().any(|&m| may_be(self, m, true)) {
+        if self.parts(ty).iter().any(|&m| may_be(self, m, true)) {
             return self.filter(ty, |c, m| may_be(c, m, sense));
         }
         // Nothing declares it: if it is there all the same, that is all that is known of it.
@@ -2598,13 +2730,12 @@ impl<'p> Checker<'p> {
         if !sense && data.chain != Chain::No {
             return None;
         }
-        let args: Vec<ExprId> = hir.ids(data.args).collect();
         let receiver = match hir[data.callee].kind {
             ExprKind::Dot { obj, .. } => Some(obj),
             _ => None,
         };
         let mut concerned = false;
-        for &a in &args {
+        for a in hir.ids(data.args) {
             concerned |= self.matches(reference, a) || self.optional_chain_contains(reference, a);
         }
         if let Some(r) = receiver {
@@ -2642,7 +2773,7 @@ impl<'p> Checker<'p> {
         if predicate.asserts {
             return None;
         }
-        Some(self.apply_predicate(reference, ty, predicate, &args, receiver, sense))
+        Some(self.apply_predicate(reference, ty, predicate, data.args, receiver, sense))
     }
 
     fn apply_predicate(
@@ -2650,12 +2781,12 @@ impl<'p> Checker<'p> {
         reference: &Reference,
         ty: TypeId,
         predicate: Predicate,
-        args: &[ExprId],
+        args: IdList<ExprId>,
         receiver: Option<ExprId>,
         sense: bool,
     ) -> TypeId {
         let subject = match predicate.param {
-            Some(i) => args.get(i).copied(),
+            Some(i) => self.hir(reference.file).ids(args).nth(i),
             None => receiver,
         };
         let Some(subject) = subject else { return ty };
@@ -2934,7 +3065,7 @@ impl<'p> Checker<'p> {
         to: usize,
     ) -> TypeId {
         let hir = self.hir(file);
-        let mut all = Vec::with_capacity(cases.len());
+        let mut all: SmallVec<[Option<TypeId>; 8]> = SmallVec::with_capacity(cases.len());
         for c in cases.iter() {
             let test = hir[c].test;
             all.push(if test.is_none() {
@@ -2945,7 +3076,7 @@ impl<'p> Checker<'p> {
             });
         }
         let has_default = from == to || all[from..to].contains(&None);
-        let clause_types: Vec<TypeId> = all[from..to].iter().flatten().copied().collect();
+        let clause_types: SmallVec<[TypeId; 8]> = all[from..to].iter().flatten().copied().collect();
         if ty == TypeId::UNKNOWN && !has_default {
             // An object among the cases says that it is an object, not which.
             let mut ground = Vec::with_capacity(clause_types.len());
@@ -2971,7 +3102,7 @@ impl<'p> Checker<'p> {
             return case_type;
         }
         // What is one value goes if a case may be that value: `"a"` for `case E.a`, if that is what `E.a` is.
-        let tested: Vec<TypeId> = all.iter().flatten().copied().collect();
+        let tested: SmallVec<[TypeId; 8]> = all.iter().flatten().copied().collect();
         let default_type = self.filter(ty, |c, m| {
             if !c.is_unit_like(m) {
                 return true;
@@ -3049,9 +3180,8 @@ impl<'p> Checker<'p> {
     fn is_generic_with_union_constraint(&mut self, ty: TypeId) -> bool {
         if let TypeData::Intersection(parts) = self.data(ty) {
             return parts
-                .to_vec()
-                .into_iter()
-                .any(|p| self.is_generic_with_union_constraint(p));
+                .iter()
+                .any(|&p| self.is_generic_with_union_constraint(p));
         }
         if !self.is_instantiable(ty) {
             return false;
@@ -3064,9 +3194,8 @@ impl<'p> Checker<'p> {
     fn is_generic_without_nullable_constraint(&mut self, ty: TypeId) -> bool {
         if let TypeData::Intersection(parts) = self.data(ty) {
             return parts
-                .to_vec()
-                .into_iter()
-                .any(|p| self.is_generic_without_nullable_constraint(p));
+                .iter()
+                .any(|&p| self.is_generic_without_nullable_constraint(p));
         }
         if !self.is_instantiable(ty) {
             return false;
@@ -3088,9 +3217,8 @@ impl<'p> Checker<'p> {
             ExprKind::Index { obj, index, .. } if obj == e => {
                 if !self
                     .parts(ty)
-                    .to_vec()
-                    .into_iter()
-                    .any(|m| self.is_generic_without_nullable_constraint(m))
+                    .iter()
+                    .any(|&m| self.is_generic_without_nullable_constraint(m))
                 {
                     return true;
                 }
@@ -3119,9 +3247,8 @@ impl<'p> Checker<'p> {
         if !self.has_type_variables(declared)
             || !self
                 .parts(declared)
-                .to_vec()
-                .into_iter()
-                .any(|m| self.is_generic_with_union_constraint(m))
+                .iter()
+                .any(|&m| self.is_generic_with_union_constraint(m))
         {
             return declared;
         }
@@ -3171,12 +3298,9 @@ impl<'p> Checker<'p> {
         self.flow_type_of(file, e, declared)
     }
 
-    /// The type of the property or element access `e`, whose property is declared as `declared`.
+    /// The type of the property or element access `e`, which is no assignment target and whose property is declared as `declared`.
     pub(super) fn narrow_access(&mut self, file: FileId, e: ExprId, declared: TypeId) -> TypeId {
         if declared == TypeId::UNRESOLVED || declared == TypeId::NEVER {
-            return declared;
-        }
-        if self.is_assignment_target(file, e) {
             return declared;
         }
         let declared = self.narrowable_type(file, e, declared);
@@ -3211,7 +3335,7 @@ impl<'p> Checker<'p> {
         // Only where a type parameter can be mentioned is there one to keep.
         let scope = self.scope_of_expr(file, e);
         if !self
-            .outer_type_params(file, scope)
+            .type_params_in_scope(file, scope)
             .iter()
             .any(|&p| matches!(self.data(p), TypeData::TypeParam(..)))
         {
@@ -3302,7 +3426,8 @@ impl<'p> Checker<'p> {
     fn flow_type_of(&mut self, file: FileId, e: ExprId, declared: TypeId) -> TypeId {
         // It is said of this reference alone, not of what has to be asked about on the way.
         let starts_unassigned = std::mem::take(&mut self.starts_unassigned);
-        let flow = self.bound(file).expr_flow[e.idx()];
+        let bound = self.bound(file);
+        let flow = bound.expr_flow[e.idx()];
         if flow == UNREACHABLE {
             return declared;
         }
@@ -3320,10 +3445,8 @@ impl<'p> Checker<'p> {
         // by then. Not looking spares asking what is being put in it while working out what that is expected to be.
         if auto == Auto::Array
             && let Root::Symbol(s) = reference.root
-            && !self.bound(file).symbols[s.idx()]
-                .flags
-                .contains(SymFlags::ASSIGNED)
-            && self.bound(file).symbols[s.idx()].decls.len() == 1
+            && !bound.symbols[s.idx()].flags.contains(SymFlags::ASSIGNED)
+            && bound.symbols[s.idx()].decls.len() == 1
             && self.is_evolving_array_operation_target(file, e)
         {
             if self.is_flow_too_deep(&reference, flow) {
@@ -3333,24 +3456,35 @@ impl<'p> Checker<'p> {
             }
             return declared;
         }
-        let crosses_functions = match reference.root {
-            Root::Symbol(s) => {
-                let flags = self.bound(file).symbols[s.idx()].flags;
-                (flags.contains(SymFlags::CONST) && auto != Auto::Array)
-                    || flags.intersects(SymFlags::VARIABLE)
-                        && self.is_past_last_assignment(file, s, e)
-            }
-            Root::Global(_)
-            | Root::This
-            | Root::Super
-            | Root::ImportMeta
-            | Root::NewTarget
-            | Root::Pattern(_)
-            | Root::Params(_) => false,
-        } && reference.path.is_empty()
+        let crossing = if !reference.path.is_empty() {
             // `getTypeAtFlowNode` stops at the start of a function for a property or element access expression. `a.b` in `typeof a.b`
             // is a qualified name, and goes on.
-            || !reference.path.is_empty() && self.bound(file).is_in_type_query(e);
+            if bound.is_in_type_query(e) {
+                Crossing::Yes
+            } else {
+                Crossing::No
+            }
+        } else {
+            match reference.root {
+                Root::Symbol(s) => {
+                    let flags = bound.symbols[s.idx()].flags;
+                    if flags.contains(SymFlags::CONST) && auto != Auto::Array {
+                        Crossing::Yes
+                    } else if flags.intersects(SymFlags::VARIABLE) {
+                        Crossing::PastLastAssignment(s, e)
+                    } else {
+                        Crossing::No
+                    }
+                }
+                Root::Global(_)
+                | Root::This
+                | Root::Super
+                | Root::ImportMeta
+                | Root::NewTarget
+                | Root::Pattern(_)
+                | Root::Params(_) => Crossing::No,
+            }
+        };
         // `checkIdentifier`: in the function that declares it, it is `undefined` until something is assigned. In another one it is
         // whatever it was left as (`isOuterVariable`), unless nothing ever assigns to it (`isNeverInitialized`). For `x!` it is
         // `undefined` to begin with wherever that is written (`isAutomaticTypeInNonNull`).
@@ -3371,11 +3505,9 @@ impl<'p> Checker<'p> {
         if self.p.files.options.strict_null_checks
             && reference.path.is_empty()
             && let Root::Symbol(s) = reference.root
-            && self.bound(file).symbols[s.idx()]
-                .flags
-                .contains(SymFlags::PARAMETER)
-            && let &[Decl::Param(pat)] = &self.bound(file).symbols[s.idx()].decls[..]
-            && let PatParent::Param(p) = self.bound(file).pat_parent[pat.idx()]
+            && bound.symbols[s.idx()].flags.contains(SymFlags::PARAMETER)
+            && let &[Decl::Param(pat)] = &bound.symbols[s.idx()].decls[..]
+            && let PatParent::Param(p) = bound.pat_parent[pat.idx()]
             && self.hir(file)[p].default.is_some()
             && self.has_type_facts(declared, facts::IS_UNDEFINED)
             && !self.parameter_initializer_contains_undefined(file, p, pat)
@@ -3385,7 +3517,8 @@ impl<'p> Checker<'p> {
         if starts_unassigned {
             initial = self.optional(declared);
         }
-        let mut walk = Walk::new(reference, declared, initial, auto, crosses_functions);
+        let mut walk = Walk::new(reference, declared, initial, auto, false);
+        walk.crossing = crossing;
         self.flow_depth += 1;
         let outer = std::mem::replace(&mut self.walk_declared, declared);
         let ty = self.flow_type(&mut walk, flow);
@@ -3572,7 +3705,7 @@ impl<'p> Checker<'p> {
         let Some(mut reference) = self.reference_of(file, init) else {
             return declared;
         };
-        reference.path.extend(names.iter().rev());
+        reference.path.extend(names.iter().rev().copied());
         // Nowhere is it written.
         reference.at = ExprId::NONE;
         let mut walk = Walk::new(reference, declared, declared, Auto::No, false);
@@ -3608,7 +3741,7 @@ impl<'p> Checker<'p> {
         let reference = Reference {
             file,
             root: Root::This,
-            path: vec![name],
+            path: smallvec![name],
             at: ExprId::NONE,
             has_key: true,
         };
@@ -3653,7 +3786,7 @@ impl<'p> Checker<'p> {
         let reference = Reference {
             file,
             root: Root::This,
-            path: vec![name],
+            path: smallvec![name],
             at: ExprId::NONE,
             has_key: true,
         };
@@ -3761,7 +3894,7 @@ impl<'p> Checker<'p> {
             let sym = self.files().sym(file, symbol);
             if self
                 .files()
-                .decls(sym)
+                .decls_of(sym)
                 .into_iter()
                 .find(|(_, d)| is_variable(d))
                 != Some((file, Decl::Var(pat)))
@@ -3897,6 +4030,7 @@ impl<'p> Checker<'p> {
     /// The node around the node `parent` stands for, going out of functions and classes too. `None` also for what is not kept track
     /// of: the default of a binding element, a computed name, the initializer of an enum member, `extends`, a decorator, the body
     /// of a namespace, and what is in a signature or in a member of an interface or a type literal.
+    #[inline]
     pub fn parent_of(&self, file: FileId, parent: crate::bind::Parent) -> crate::bind::Parent {
         use crate::bind::{ClassOwner, FnOwner, MemberOwner, Parent};
         let bound = self.bound(file);
@@ -4061,7 +4195,8 @@ impl<'p> Checker<'p> {
         // they get each other's properties first. None is fresh in the array.
         let element = self.regular_object(element);
         let element = if self.is_union(element) {
-            self.union_reduced(&self.parts(element).to_vec())
+            let parts = self.parts(element);
+            self.union_reduced(parts)
         } else {
             element
         };
@@ -4240,7 +4375,7 @@ impl<'p> Checker<'p> {
             /// `for (const k in x)`: `x` is there.
             NonNull,
         }
-        let mut pending: Vec<Pending> = Vec::new();
+        let mut pending: SmallVec<[Pending; 8]> = SmallVec::new();
         let mut flow = start;
         let depth = walk.depth;
         let mut ty = loop {
@@ -4261,7 +4396,7 @@ impl<'p> Checker<'p> {
                     let is_this = arrow
                         && walk.reference.root == Root::This
                         && walk.reference.path.is_empty();
-                    if outer.is_some() && (walk.crosses_functions || is_this) {
+                    if outer.is_some() && (is_this || self.settle_crossing(walk)) {
                         flow = outer;
                         continue;
                     }
@@ -4283,7 +4418,7 @@ impl<'p> Checker<'p> {
                             | Root::Pattern(_)
                             | Root::Params(_) => false,
                         };
-                    if plain || walk.crosses_functions || goes_on {
+                    if plain || goes_on || self.settle_crossing(walk) {
                         flow = outer;
                         continue;
                     }
@@ -4296,7 +4431,7 @@ impl<'p> Checker<'p> {
                     }
                     if let FlowTarget::Expr(e) = target
                         && self.is_compound_assignment_target(file, e)
-                        && self.matches(&walk.reference.clone(), e)
+                        && self.matches(&walk.reference, e)
                     {
                         pending.push(Pending::Compound);
                         flow = before;
@@ -4364,7 +4499,7 @@ impl<'p> Checker<'p> {
                     if let Some(known) = walk.known_at(flow) {
                         break known;
                     }
-                    let mut types = Vec::with_capacity(len as usize);
+                    let mut types: SmallVec<[TypeId; 4]> = SmallVec::new();
                     // The way past a `switch` none of whose cases matched. There is no such way if the cases cover everything,
                     // which is only asked when it would make a difference: the question can lead back here.
                     let mut bypass = None;
@@ -4445,9 +4580,9 @@ impl<'p> Checker<'p> {
                     // The result is incomplete only if the first antecedent is.
                     let incomplete = walk.incomplete;
                     // One pass: each back edge sees the types of the antecedents before it.
-                    let mut types = vec![entry];
+                    let mut types: SmallVec<[TypeId; 4]> = smallvec![entry];
                     walk.loops.push((flow, entry));
-                    walk.round_labels.push(FxHashMap::default());
+                    walk.round_labels.push(Labels::default());
                     self.flow_loops.push((
                         flow,
                         walk.reference.clone(),
@@ -4487,19 +4622,19 @@ impl<'p> Checker<'p> {
         if walk.too_deep {
             return TypeId::ANY;
         }
-        let reference = walk.reference.clone();
-        for p in pending.into_iter().rev() {
+        let reference = &walk.reference;
+        while let Some(p) = pending.pop() {
             if ty == TypeId::NEVER {
                 break;
             }
             // A test sees the array as it would be read; if it says nothing, the array goes on being filled.
             let seen = self.finalize_evolving_array(ty);
             let narrowed = match p {
-                Pending::Cond(expr, sense) => self.narrow(&reference, seen, expr, sense),
+                Pending::Cond(expr, sense) => self.narrow(reference, seen, expr, sense),
                 Pending::Switch(stmt, from, to) => {
-                    self.narrow_by_switch(&reference, seen, stmt, from as usize, to as usize)
+                    self.narrow_by_switch(reference, seen, stmt, from as usize, to as usize)
                 }
-                Pending::Assert(call) => self.narrow_by_assertion(&reference, seen, call),
+                Pending::Assert(call) => self.narrow_by_assertion(reference, seen, call),
                 Pending::Compound => self.base_type_of_literal_type(seen),
                 Pending::Mutation(expr) => {
                     ty = self.after_array_mutation(file, ty, expr);
@@ -4615,6 +4750,39 @@ impl<'p> Checker<'p> {
         }
     }
 
+    /// `getAssignmentReducedType`, of a union and something other than `any`, `never` and the union itself.
+    fn assignment_reduced_type(&mut self, declared: TypeId, assigned: TypeId) -> TypeId {
+        let key = (declared, assigned);
+        if let Some(&known) = self.flow_memo.assignment_reduced_types.get(&key) {
+            return known;
+        }
+        let (reduced, is_memoizable) =
+            self.run_memoizable(|c| c.assignment_reduced_type_uncached(declared, assigned));
+        if is_memoizable {
+            self.flow_memo.assignment_reduced_types.insert(key, reduced);
+        }
+        reduced
+    }
+
+    /// `getAssignmentReducedTypeWorker`
+    fn assignment_reduced_type_uncached(&mut self, declared: TypeId, assigned: TypeId) -> TypeId {
+        // A fresh `true` or `false` narrows to fresh types: `var n = s` then widens it.
+        let is_fresh_boolean =
+            matches!(*self.data(assigned), TypeData::BoolLit { fresh: true, .. });
+        let assigned = self.regular(assigned);
+        let reduced = self.filter(declared, |c, m| {
+            c.parts(assigned).iter().any(|&a| c.is_assignable(a, m))
+        });
+        if !self.is_assignable(assigned, reduced) {
+            return declared;
+        }
+        if is_fresh_boolean {
+            self.map_type(reduced, |c, m| c.fresh(m))
+        } else {
+            reduced
+        }
+    }
+
     /// What the reference is right after `target` was assigned. `None`: the assignment is to something else.
     fn type_at_assignment(&mut self, walk: &mut Walk, target: FlowTarget) -> Option<TypeId> {
         let file = walk.reference.file;
@@ -4645,21 +4813,7 @@ impl<'p> Checker<'p> {
             if assigned == TypeId::NEVER {
                 return assigned;
             }
-            // A fresh `true` or `false` narrows to fresh types: `var n = s` then widens it.
-            let is_fresh_boolean =
-                matches!(*c.data(assigned), TypeData::BoolLit { fresh: true, .. });
-            let assigned = c.regular(assigned);
-            let reduced = c.filter(declared, |c, m| {
-                c.parts(assigned).iter().any(|&a| c.is_assignable(a, m))
-            });
-            if !c.is_assignable(assigned, reduced) {
-                return declared;
-            }
-            if is_fresh_boolean {
-                c.map_type(reduced, |c, m| c.fresh(m))
-            } else {
-                reduced
-            }
+            c.assignment_reduced_type(declared, assigned)
         };
         let auto = walk.auto;
         // `isTypeAssignableTo(assignedType, declaredType)`: anything is assignable to `autoType`. `any`, `never`, arrays and tuples are
@@ -4762,8 +4916,7 @@ impl<'p> Checker<'p> {
                 {
                     return None;
                 }
-                let reference = walk.reference.clone();
-                if self.matches(&reference, e) {
+                if self.matches(&walk.reference, e) {
                     // `x = v`, and `x ??= v` on the path where it assigns
                     if let crate::bind::Parent::Expr(parent) = bound.expr_parent[e.idx()]
                         && let ExprKind::Assign { op: None | Some(BinOp::And | BinOp::Or | BinOp::Nullish), target, value } = hir[parent].kind
@@ -4820,7 +4973,7 @@ impl<'p> Checker<'p> {
                     }
                     return Some(walk.declared);
                 }
-                if self.is_proper_prefix(&reference, e) {
+                if self.is_proper_prefix(&walk.reference, e) {
                     return Some(walk.declared);
                 }
                 None
@@ -5114,7 +5267,7 @@ impl<'p> Checker<'p> {
             ExprKind::Dot { obj, name, .. } => {
                 let obj = self.explicit_type(file, obj)?;
                 let apparent = self.apparent_type(obj);
-                let (prop, mapper) = self.prop_of(apparent, name)?;
+                let (prop, mapper) = self.prop_ref(apparent, name)?;
                 // `getExplicitTypeOfSymbol`: a method, or a property whose first declaration says its type. Not what a getter gives,
                 // whatever it says.
                 if prop.flags.contains(PropFlags::ACCESSOR) {
@@ -5150,7 +5303,7 @@ impl<'p> Checker<'p> {
                     }
                     _ => {}
                 }
-                Some(self.type_of_prop(&prop, mapper))
+                Some(self.type_of_prop(prop, mapper))
             }
             _ => None,
         }
@@ -5171,14 +5324,17 @@ impl<'p> Checker<'p> {
             return None;
         }
         // `ValueDeclaration`: the first has the say. A type of the same name may be declared before it.
-        let (f, pat) = self
-            .files()
-            .decls(sym)
-            .into_iter()
-            .find_map(|(f, decl)| match decl {
-                Decl::Var(pat) | Decl::Param(pat) => Some((f, pat)),
-                _ => None,
-            })?;
+        let files = self.files();
+        let (f, pat) = files.parts(sym).iter().find_map(|&part| {
+            files
+                .symbol(part)
+                .decls
+                .iter()
+                .find_map(|&decl| match decl {
+                    Decl::Var(pat) | Decl::Param(pat) => Some((part.file, pat)),
+                    _ => None,
+                })
+        })?;
         let (hir, bound) = (self.hir(f), self.bound(f));
         match bound.pat_parent[pat.idx()] {
             // `isDeclarationWithExplicitTypeAnnotation`. It is the type of the variable: a parameter that may be left out may be `undefined`.
@@ -5236,6 +5392,26 @@ impl<'p> Checker<'p> {
     /// `getEffectsSignature`, of a call that is a statement: the signature called, if it says that it asserts something or that it
     /// never returns.
     fn effects_signature(&mut self, file: FileId, call: ExprId) -> Option<SigId> {
+        if let Some(&known) = self.flow_memo.effects_signatures.get(&(file, call)) {
+            return known;
+        }
+        let mut took_resolving = false;
+        let (sig, is_memoizable) =
+            self.run_memoizable(|c| c.effects_signature_uncached(file, call, &mut took_resolving));
+        // `explicit_type_of_symbol` says nothing where the stack is low.
+        if is_memoizable && !took_resolving && !self.is_stack_low() {
+            self.flow_memo.effects_signatures.insert((file, call), sig);
+        }
+        sig
+    }
+
+    /// `took_resolving`: the answer is as good as the resolution of the call, which keeps track of that itself.
+    fn effects_signature_uncached(
+        &mut self,
+        file: FileId,
+        call: ExprId,
+        took_resolving: &mut bool,
+    ) -> Option<SigId> {
         let hir = self.hir(file);
         let ExprKind::Call(c) = hir[call].kind else {
             return None;
@@ -5250,6 +5426,7 @@ impl<'p> Checker<'p> {
                 if !sigs.iter().any(|&s| self.asserts_or_never_returns(s)) {
                     return None;
                 }
+                *took_resolving = true;
                 self.resolve_call(file, call).sig?
             }
         };
@@ -5291,7 +5468,6 @@ impl<'p> Checker<'p> {
         };
         match self.sig_predicate(sig) {
             Some(predicate) if predicate.asserts => {
-                let args: Vec<ExprId> = hir.ids(hir[c].args).collect();
                 let receiver = match hir[hir[c].callee].kind {
                     ExprKind::Dot { obj, .. } => Some(obj),
                     _ => None,
@@ -5309,7 +5485,7 @@ impl<'p> Checker<'p> {
                         None => return ty,
                     }
                 };
-                self.apply_predicate(reference, ty, predicate, &args, receiver, true)
+                self.apply_predicate(reference, ty, predicate, hir[c].args, receiver, true)
             }
             _ => TypeId::NEVER,
         }
@@ -5702,7 +5878,7 @@ impl<'p> Checker<'p> {
         self.parts(apparent).iter().all(|&part| {
             let part = self.apparent_type(part);
             match self.members(part) {
-                Some(members) => self.property_of_type(&members, name).is_some(),
+                Some(members) => self.property_in(&members, name).is_some(),
                 None => false,
             }
         })
@@ -5810,7 +5986,7 @@ impl<'p> Checker<'p> {
             let reference = Reference {
                 file,
                 root: Root::Symbol(symbol),
-                path: Vec::new(),
+                path: SmallVec::new(),
                 at: ExprId::NONE,
                 has_key: true,
             };

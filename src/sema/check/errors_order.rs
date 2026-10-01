@@ -66,30 +66,59 @@ impl Checker<'_> {
         if hir.kind == FileKind::Declaration {
             return;
         }
-        for i in 0..hir.exprs.len() {
-            let e = ExprId(i as u32);
-            if matches!(bound.expr_parent[i], Parent::None) {
-                continue;
+        let index = self.exprs_by_kind(file);
+        let runs_in_place = self.has_function_run_in_place(file);
+        for &e in index.of(ExprTag::Ident) {
+            if !matches!(bound.expr_parent[e.idx()], Parent::None) {
+                self.check_name_declared_before_use(file, e, runs_in_place, out);
             }
-            match hir.exprs[i].kind {
-                ExprKind::Ident(_) => self.check_name_declared_before_use(file, e, out),
-                ExprKind::Dot {
+        }
+        // Without a class only what is in the initializer of a member or in a static block is looked at.
+        let has_static_block = hir.fns.iter().any(|f| f.kind == FnKind::StaticBlock);
+        if hir.classes.is_empty()
+            && !has_static_block
+            && !hir.members.iter().any(|m| m.init.is_some())
+        {
+            return;
+        }
+        for &e in index.of(ExprTag::Dot) {
+            if let ExprKind::Dot {
+                obj,
+                name,
+                name_pos,
+                ..
+            } = hir[e].kind
+                && !matches!(bound.expr_parent[e.idx()], Parent::None)
+            {
+                self.check_property_not_used_before_declaration(
+                    file,
+                    e,
                     obj,
                     name,
                     name_pos,
-                    ..
-                } => self
-                    .check_property_not_used_before_declaration(file, e, obj, name, name_pos, out),
-                _ => {}
+                    has_static_block,
+                    out,
+                );
             }
         }
     }
 
-    /// `checkResolvedBlockScopedVariable`
+    /// Whether some function of `file` may run where it is written: a static block, or a function expression that is called there.
+    /// If none does, the way out of a statement leads to nothing that is worked out together with it.
+    pub(super) fn has_function_run_in_place(&self, file: FileId) -> bool {
+        let hir = self.hir(file);
+        (0..hir.fns.len()).any(|f| {
+            hir.fns[f].kind == FnKind::StaticBlock
+                || self.is_immediately_invoked(file, FnId(f as u32))
+        })
+    }
+
+    /// `checkResolvedBlockScopedVariable`. `runs_in_place`: `has_function_run_in_place`.
     fn check_name_declared_before_use(
         &mut self,
         file: FileId,
         e: ExprId,
+        runs_in_place: bool,
         out: &mut Vec<Diagnostic>,
     ) {
         let (hir, bound) = (self.hir(file), self.bound(file));
@@ -138,7 +167,14 @@ impl Checker<'_> {
                 }
                 Some((
                     hir[decl].flags.contains(Flags::AMBIENT)
-                        || self.is_const_declared_before_use(file, e, pat, decl),
+                        || self.is_variable_declared_before_use(
+                            file,
+                            e,
+                            usage,
+                            pat,
+                            decl,
+                            runs_in_place,
+                        ),
                     2448,
                 ))
             }
@@ -209,10 +245,10 @@ impl Checker<'_> {
         while let ExprKind::Dot { obj, .. } = hir[first].kind {
             first = obj;
         }
-        self.is_variable_declared_before_use(file, e, hir[first].pos, pat, decl)
+        self.is_variable_declared_before_use(file, e, hir[first].pos, pat, decl, true)
     }
 
-    /// The same, of a use in `e` that starts at `usage`.
+    /// The same, of a use in `e` that starts at `usage`. `runs_in_place`: `has_function_run_in_place`, or true if that was not asked.
     fn is_variable_declared_before_use(
         &self,
         file: FileId,
@@ -220,6 +256,7 @@ impl Checker<'_> {
         usage: u32,
         pat: PatId,
         decl: VarDeclId,
+        runs_in_place: bool,
     ) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         // A binding element starts at the name of the property it takes.
@@ -228,7 +265,7 @@ impl Checker<'_> {
             _ => hir[pat].pos,
         };
         if start <= usage {
-            self.is_not_used_within_its_declaration(file, e, pat, decl)
+            self.is_not_used_within_its_declaration(file, e, pat, decl, runs_in_place)
         } else {
             self.is_use_deferred_in(file, e, Parent::Stmt(bound.var_stmt[decl.idx()]))
         }
@@ -328,7 +365,18 @@ impl Checker<'_> {
     }
 
     /// What is around what `parent` stands for, patterns and `extends` included. `None`: it is not kept track of.
+    #[inline]
     pub(super) fn outward(&self, file: FileId, parent: Parent) -> Parent {
+        match parent {
+            Parent::PatPropDefault(_)
+            | Parent::PatElemDefault(_)
+            | Parent::ClassExtends(_)
+            | Parent::Decorator(..) => self.outward_from_pattern_or_class(file, parent),
+            _ => self.parent_of(file, parent),
+        }
+    }
+
+    fn outward_from_pattern_or_class(&self, file: FileId, parent: Parent) -> Parent {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let of_pattern = |mut pat: PatId| loop {
             match bound.pat_parent[pat.idx()] {
@@ -503,6 +551,7 @@ impl Checker<'_> {
         e: ExprId,
         pat: PatId,
         decl: VarDeclId,
+        runs_in_place: bool,
     ) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         // Of an element of a pattern: the nearest element around the use, whatever else is in between, has to be another.
@@ -531,6 +580,7 @@ impl Checker<'_> {
                     Parent::File | Parent::Module(_) => break,
                     Parent::None | Parent::EnumInit(_) => return true,
                     Parent::Stmt(s) if s.is_none() => return true,
+                    Parent::Stmt(s) => bound.stmt_parent[s.idx()],
                     _ => self.outward(file, parent),
                 };
             }
@@ -571,7 +621,11 @@ impl Checker<'_> {
                     {
                         return false;
                     }
-                    self.outward(file, parent)
+                    // Around a statement are statements, and then a function that ends the search, a namespace or the file.
+                    if !runs_in_place {
+                        return true;
+                    }
+                    bound.stmt_parent[s.idx()]
                 }
                 Parent::Key(_) | Parent::MemberKey => {
                     let Parent::Expr(key) = below else {
@@ -589,6 +643,7 @@ impl Checker<'_> {
                     }
                 }
                 Parent::Expr(x) if x.is_none() => return true,
+                Parent::Expr(x) => bound.expr_parent[x.idx()],
                 Parent::None | Parent::File | Parent::Module(_) | Parent::EnumInit(_) => {
                     return true;
                 }
@@ -811,7 +866,7 @@ impl Checker<'_> {
         }
     }
 
-    /// `checkPropertyNotUsedBeforeDeclaration`: 2729 2449
+    /// `checkPropertyNotUsedBeforeDeclaration`: 2729 2449. `has_static_block`: whether there is one in the file.
     fn check_property_not_used_before_declaration(
         &mut self,
         file: FileId,
@@ -819,6 +874,7 @@ impl Checker<'_> {
         obj: ExprId,
         name: Atom,
         name_pos: u32,
+        has_static_block: bool,
         out: &mut Vec<Diagnostic>,
     ) {
         let (hir, bound) = (self.hir(file), self.bound(file));
@@ -904,7 +960,9 @@ impl Checker<'_> {
                     }
                 }
                 Parent::None | Parent::File | Parent::Module(_) => break false,
-                Parent::Stmt(s) if s.is_none() => break false,
+                // Around a statement are statements, and then the body of a function, a namespace or the file.
+                Parent::Stmt(s) if s.is_none() || !has_static_block => break false,
+                Parent::Stmt(s) => bound.stmt_parent[s.idx()],
                 _ => self.outward(file, parent),
             };
         };
@@ -939,7 +997,7 @@ impl Checker<'_> {
             return;
         }
         let object = self.apparent_type(object);
-        let Some((prop, mapper)) = self.prop_of(object, name) else {
+        let Some((prop, mapper)) = self.prop_ref(object, name) else {
             return;
         };
         let emit = self.p.files.options.emit_standard_class_fields;
@@ -1043,7 +1101,7 @@ impl Checker<'_> {
                                 };
                                 // Without such a block the answer is no, whatever the type of the property.
                                 if hir[class].members.iter().any(|b| is_in_range(b)) {
-                                    let ty = self.type_of_prop(&prop, mapper);
+                                    let ty = self.type_of_prop(prop, mapper);
                                     if !self.is_known(ty) {
                                         return;
                                     }
@@ -1114,7 +1172,7 @@ impl Checker<'_> {
                 }
             }
             PropSource::Symbol(s) => {
-                let decls = self.files().decls(self.files().canonical(s));
+                let decls = self.files().decls_of(self.files().canonical(s));
                 // `SetValueDeclaration`: the first that declares a value, a namespace only if nothing else does. An alias declares none.
                 let Some(&(declared_in, decl)) = decls
                     .iter()
@@ -1144,7 +1202,7 @@ impl Checker<'_> {
                         let Some(d) = self.variable_declaration_of(file, pat) else {
                             return;
                         };
-                        self.is_variable_declared_before_use(file, e, name_pos, pat, d)
+                        self.is_variable_declared_before_use(file, e, name_pos, pat, d, true)
                     }
                     Decl::Fn(f) => {
                         let FnOwner::Stmt(s) = bound.fns[f.idx()].owner else {

@@ -4,6 +4,7 @@
 //! `checkThisExpression` and `checkSwitchStatement` of TypeScript 7.0.2's checker.go.
 
 use super::errors::Diagnostic;
+use super::errors_small::in_file_order;
 use super::*;
 use crate::bind::{FnOwner, MemberOwner, Parent, ScopeKind, UNREACHABLE};
 
@@ -28,11 +29,23 @@ pub(super) enum QueriedThisContainer {
 impl Checker<'_> {
     pub(super) fn check_miscellaneous(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        for i in 0..hir.exprs.len() {
+        let index = self.exprs_by_kind(file);
+        let this = if self.p.files.options.no_implicit_this {
+            index.of(ExprTag::This)
+        } else {
+            &[]
+        };
+        for e in in_file_order([
+            index.of(ExprTag::Unary),
+            index.of(ExprTag::Binary),
+            index.of(ExprTag::Cond),
+            index.of(ExprTag::Object),
+            this,
+        ]) {
+            let i = e.idx();
             if matches!(bound.expr_parent[i], Parent::None) {
                 continue;
             }
-            let e = ExprId(i as u32);
             match hir.exprs[i].kind {
                 ExprKind::Unary {
                     op: UnOp::Not,
@@ -104,7 +117,15 @@ impl Checker<'_> {
             }
         }
         for s in 0..hir.stmts.len() {
-            if matches!(bound.stmt_parent[s], Parent::None) {
+            if !matches!(
+                hir.stmts[s].kind,
+                StmtKind::If { .. }
+                    | StmtKind::While { .. }
+                    | StmtKind::DoWhile { .. }
+                    | StmtKind::For { .. }
+                    | StmtKind::Switch { .. }
+            ) || matches!(bound.stmt_parent[s], Parent::None)
+            {
                 continue;
             }
             match hir.stmts[s].kind {

@@ -4,6 +4,7 @@ use super::errors_call::Applicable;
 use super::infer::{Inference, PRIORITY_PARTIAL_HOMOMORPHIC, PRIORITY_RETURN};
 use super::*;
 use crate::bind::{FnOwner, MemberOwner, Parent, UNREACHABLE};
+use smallvec::{SmallVec, smallvec};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedCall {
@@ -35,6 +36,9 @@ pub(super) enum Arg {
     /// `...list`: any number of the first. The second is the list that is spread.
     Spread(TypeId, TypeId),
 }
+
+pub(super) type Args = SmallVec<[Arg; 8]>;
+pub(super) type Sigs = SmallVec<[SigId; 8]>;
 
 /// A call whose signature is being picked, and the one under consideration.
 pub(super) struct Resolving<'p> {
@@ -286,20 +290,34 @@ impl<'p> Checker<'p> {
         resolved
     }
 
-    fn effective_args(&mut self, file: FileId, args: IdList<ExprId>) -> Vec<Arg> {
-        let mut out = Vec::with_capacity(args.len());
+    fn effective_args(&mut self, file: FileId, args: IdList<ExprId>) -> Args {
+        let mut out = Args::with_capacity(args.len());
         for a in self.hir(file).ids(args) {
-            self.push_effective_arg(file, a, &mut out);
+            self.each_effective_arg(file, a, |arg| out.push(arg));
         }
         out
     }
 
     /// What the argument `a` comes to: itself, or what it spreads.
     pub(super) fn push_effective_arg(&mut self, file: FileId, a: ExprId, out: &mut Vec<Arg>) {
-        let ExprKind::Spread(inner) = self.hir(file)[a].kind else {
-            out.push(Arg::Expr(a));
-            return;
-        };
+        self.each_effective_arg(file, a, |arg| out.push(arg));
+    }
+
+    /// `push_effective_arg`, for any kind of list.
+    #[inline]
+    pub(super) fn each_effective_arg(
+        &mut self,
+        file: FileId,
+        a: ExprId,
+        mut push: impl FnMut(Arg),
+    ) {
+        match self.hir(file)[a].kind {
+            ExprKind::Spread(inner) => self.each_spread_arg(file, inner, push),
+            _ => push(Arg::Expr(a)),
+        }
+    }
+
+    fn each_spread_arg(&mut self, file: FileId, inner: ExprId, mut push: impl FnMut(Arg)) {
         let ty = self.type_of_expr(file, inner);
         match self.data(ty) {
             // `getEffectiveCallArguments`: a `...T` in it is a spread of `T`, a `...X[]` one of `X[]`.
@@ -307,12 +325,12 @@ impl<'p> Checker<'p> {
                 for (&e, f) in elems.iter().zip(flags.iter()) {
                     if f.contains(ElemFlags::VARIADIC) {
                         let element = self.indexed_access(e, TypeId::NUMBER);
-                        out.push(Arg::Spread(element, e));
+                        push(Arg::Spread(element, e));
                     } else if f.contains(ElemFlags::REST) {
                         let list = self.array_of(e);
-                        out.push(Arg::Spread(e, list));
+                        push(Arg::Spread(e, list));
                     } else {
-                        out.push(Arg::Type(e));
+                        push(Arg::Type(e));
                     }
                 }
             }
@@ -324,7 +342,7 @@ impl<'p> Checker<'p> {
                     None if self.is_known(ty) && !self.is_uncertain(file, inner) => TypeId::ANY,
                     None => TypeId::UNRESOLVED,
                 };
-                out.push(Arg::Spread(element, ty));
+                push(Arg::Spread(element, ty));
             }
         }
     }
@@ -423,6 +441,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `hasCorrectArity`, of a call that is complete.
+    #[inline]
     pub(super) fn has_correct_arity(&mut self, params: &[SigParam], args: &[Arg]) -> bool {
         self.has_correct_arity_of_call(params, args, false)
     }
@@ -502,7 +521,8 @@ impl<'p> Checker<'p> {
                 };
             }
             let type_args = self.types_from_nodes(file, type_args);
-            let mut args = vec![Arg::Type(self.global_ref(known::TemplateStringsArray, &[]))];
+            let mut args = Args::new();
+            args.push(Arg::Type(self.global_ref(known::TemplateStringsArray, &[])));
             args.extend(hir.ids(exprs).map(Arg::Expr));
             let this_arg = self.this_argument_of_call(file, tag).map(|(obj, _)| obj);
             let is_sure = !self.is_uncertain(file, tag);
@@ -743,7 +763,7 @@ impl<'p> Checker<'p> {
                 TypeId::ANY
             }
         };
-        let sigs = self.reorder_candidates(declared);
+        let sigs = self.candidates_in_order(declared);
         // No attempt of this resolution has checked an argument yet. Only overloaded calls record which attempt did.
         if sigs.len() > 1 {
             for &arg in args {
@@ -753,7 +773,7 @@ impl<'p> Checker<'p> {
             }
         }
         let is_incomplete = self.is_call_incomplete(file, call, id);
-        let mut candidates: Vec<SigId> = Vec::new();
+        let mut candidates: Sigs = Sigs::new();
         for &sig in &sigs {
             let type_params = self.sig_type_params(sig);
             if !self.has_correct_type_argument_arity(&type_params, type_args.len()) {
@@ -1295,14 +1315,21 @@ impl<'p> Checker<'p> {
 
     /// The arguments of `call` the way `is_signature_applicable` takes them: each with the argument it is written as (part of),
     /// after the pieces of text if it is a tagged template.
-    fn args_with_nodes(&mut self, file: FileId, call: ExprId, id: CallId) -> Vec<(Arg, ExprId)> {
+    fn args_with_nodes(
+        &mut self,
+        file: FileId,
+        call: ExprId,
+        id: CallId,
+    ) -> SmallVec<[(Arg, ExprId); 8]> {
         let hir = self.hir(file);
-        let mut args = Vec::new();
+        let mut args: SmallVec<[(Arg, ExprId); 8]> = SmallVec::new();
         if matches!(hir[call].kind, ExprKind::TaggedTemplate(_)) {
             let strings = self.global_ref(known::TemplateStringsArray, &[]);
             args.push((Arg::Type(strings), call));
         }
-        args.extend(self.effective_args_with_nodes(file, hir[id].args));
+        for a in hir.ids(hir[id].args) {
+            self.each_effective_arg(file, a, |arg| args.push((arg, a)));
+        }
         args
     }
 
@@ -1431,7 +1458,7 @@ impl<'p> Checker<'p> {
                 self.set_context_checked(file, e, ContextChecked::ByEndedAttempt);
             }
         }
-        let mut attempts: Vec<(bool, SigId)> = candidates[at + 1..]
+        let mut attempts: SmallVec<[(bool, SigId); 8]> = candidates[at + 1..]
             .iter()
             .map(|&c| (by_subtype, c))
             .collect();
@@ -1697,18 +1724,15 @@ impl<'p> Checker<'p> {
         })
     }
 
-    /// What a signature declares and the block or type its declaration is written in.
-    fn sig_home(&self, sig: SigId) -> Option<(SigSymbol, SigParent)> {
-        // A clone is declared where what it is a clone of is (`Signature.declaration`).
-        let sig = self.p.types.sig_origin(sig);
-        let (file, func) = match *self.p.types.sig(sig) {
-            SigData::Decl { file, func, .. } | SigData::Construct { file, func, .. } => {
-                (file, func)
-            }
-            _ => return None,
-        };
+    /// What the signature `func` declares and the block or type `func` is written in. `before`: the same for another signature.
+    fn sig_home(
+        &self,
+        file: FileId,
+        func: FnId,
+        before: Option<(SigSymbol, SigParent)>,
+    ) -> (SigSymbol, SigParent) {
         let bound = self.bound(file);
-        Some(match bound.fns[func.idx()].owner {
+        match bound.fns[func.idx()].owner {
             FnOwner::Stmt(stmt) => {
                 let symbol = self.files().canonical(Sym {
                     file,
@@ -1721,12 +1745,17 @@ impl<'p> Checker<'p> {
             }
             FnOwner::Member(member) => {
                 let owner = bound.member_owner[member.idx()];
-                let of = match owner {
-                    MemberOwner::Interface(i) => Some(self.files().canonical(Sym {
+                let of = match (owner, before) {
+                    (_, Some((SigSymbol::Member(of, ..), parent)))
+                        if parent == SigParent::Type(file, owner) =>
+                    {
+                        Some(of)
+                    }
+                    (MemberOwner::Interface(i), _) => Some(self.files().canonical(Sym {
                         file,
                         id: bound.interface_symbol[i.idx()],
                     })),
-                    MemberOwner::Class(c) => Some(self.files().canonical(Sym {
+                    (MemberOwner::Class(c), _) => Some(self.files().canonical(Sym {
                         file,
                         id: bound.class_symbol[c.idx()],
                     })),
@@ -1745,17 +1774,10 @@ impl<'p> Checker<'p> {
                 }
             }
             _ => (SigSymbol::Lone(file, func), SigParent::Lone(file, func)),
-        })
+        }
     }
 
-    fn sig_has_literal_types(&self, sig: SigId) -> bool {
-        let sig = self.p.types.sig_origin(sig);
-        let (file, func) = match *self.p.types.sig(sig) {
-            SigData::Decl { file, func, .. } | SigData::Construct { file, func, .. } => {
-                (file, func)
-            }
-            _ => return false,
-        };
+    fn has_literal_types(&self, file: FileId, func: FnId) -> bool {
         let hir = self.hir(file);
         hir[func].params.iter().any(|p| {
             let p = &hir[p];
@@ -1791,19 +1813,37 @@ impl<'p> Checker<'p> {
         sig
     }
 
+    pub(super) fn reorder_candidates(&mut self, sigs: &[SigId]) -> Vec<SigId> {
+        self.candidates_in_order(sigs).into_vec()
+    }
+
     /// `reorderCandidates`: the order overloads are tried in. Of one thing declared in several places, what a later place declares
     /// goes first; signatures that ask for a literal go before all others.
-    pub(super) fn reorder_candidates(&mut self, sigs: &[SigId]) -> Vec<SigId> {
+    pub(super) fn candidates_in_order(&mut self, sigs: &[SigId]) -> Sigs {
         if sigs.len() < 2 {
-            return sigs.to_vec();
+            return Sigs::from_slice(sigs);
         }
-        let mut result: Vec<SigId> = Vec::with_capacity(sigs.len());
+        let mut result = Sigs::with_capacity(sigs.len());
         let mut last: Option<(Option<SigSymbol>, Option<SigParent>)> = None;
         let (mut cutoff, mut index, mut specialized) = (0usize, 0usize, 0usize);
         for &sig in sigs {
+            // A clone is declared where what it is a clone of is (`Signature.declaration`).
             let declared = self.declared_sig(sig);
-            let (symbol, parent) = match self.sig_home(declared) {
-                Some((s, p)) => (Some(s), Some(p)),
+            let declaration = match *self.p.types.sig(declared) {
+                SigData::Decl { file, func, .. } | SigData::Construct { file, func, .. } => {
+                    Some((file, func))
+                }
+                _ => None,
+            };
+            let before = match last {
+                Some((Some(symbol), Some(parent))) => Some((symbol, parent)),
+                _ => None,
+            };
+            let (symbol, parent) = match declaration {
+                Some((file, func)) => {
+                    let (symbol, parent) = self.sig_home(file, func, before);
+                    (Some(symbol), Some(parent))
+                }
                 None => (None, None),
             };
             match &last {
@@ -1820,7 +1860,7 @@ impl<'p> Checker<'p> {
                 _ => index = cutoff,
             }
             last = Some((symbol, parent));
-            let at = if self.sig_has_literal_types(declared) {
+            let at = if declaration.is_some_and(|(file, func)| self.has_literal_types(file, func)) {
                 specialized += 1;
                 cutoff += 1;
                 specialized - 1
@@ -1832,6 +1872,7 @@ impl<'p> Checker<'p> {
         result
     }
 
+    #[inline]
     pub(super) fn arg_type(&mut self, file: FileId, arg: Arg) -> TypeId {
         match arg {
             Arg::Expr(e) => self.type_of_expr(file, e),
@@ -1881,7 +1922,8 @@ impl<'p> Checker<'p> {
             };
         }
         let length = args.len().saturating_sub(index);
-        let (mut elems, mut flags) = (Vec::with_capacity(length), Vec::with_capacity(length));
+        let mut elems: SmallVec<[TypeId; 8]> = SmallVec::with_capacity(length);
+        let mut flags: SmallVec<[ElemFlags; 8]> = SmallVec::with_capacity(length);
         for i in index..args.len() {
             let (ty, flag) = match args[i] {
                 Arg::Spread(element, list) => {
@@ -1999,8 +2041,6 @@ impl<'p> Checker<'p> {
                     .map(|p| (p, TypeId::UNRESOLVED)),
             );
         }
-        pairs.sort_unstable();
-        pairs.dedup();
         let holes = self.p.types.mapper(pairs);
         self.candidate_holes.push(holes);
         let chosen = self.choose_overload_among(file, call, candidates, type_args, args, this_arg);
@@ -2019,10 +2059,9 @@ impl<'p> Checker<'p> {
         settled_before: usize,
     ) -> (bool, MapperId, MapperId) {
         let type_params = self.sig_type_params(candidate);
-        let plain: Vec<(usize, TypeId)> = args
-            .iter()
-            .enumerate()
-            .filter(|&(i, &a)| match a {
+        let mut plain: SmallVec<[(usize, TypeId); 8]> = SmallVec::new();
+        for (i, &a) in args.iter().enumerate() {
+            let is_plain = match a {
                 Arg::Expr(e) => {
                     // A call among the first `settled_before` arguments has been told what it is expected to be, and stays what it
                     // comes to.
@@ -2036,13 +2075,13 @@ impl<'p> Checker<'p> {
                 }
                 Arg::Type(_) => true,
                 Arg::Spread(..) => false,
-            })
-            .map(|(i, &a)| (i, a))
-            .collect::<Vec<_>>()
-            .into_iter()
-            .map(|(i, a)| (i, self.arg_type(file, a)))
-            .collect();
-        let mut inference = Inference::new(type_params.to_vec(), Some(candidate));
+            };
+            if is_plain {
+                let ty = self.arg_type(file, a);
+                plain.push((i, ty));
+            }
+        }
+        let mut inference = Inference::for_params(&type_params, Some(candidate));
         inference.any_default = self.hir(file).is_js;
         for &(i, ty) in &plain {
             if let Some(param) = self.param_type_at(params, i)
@@ -2159,7 +2198,7 @@ impl<'p> Checker<'p> {
         upto: usize,
     ) -> Inference {
         let mut inference =
-            Inference::new(self.sig_type_params(candidate).into_vec(), Some(candidate));
+            Inference::for_params(&self.sig_type_params(candidate), Some(candidate));
         inference.any_default = self.hir(file).is_js;
         for (j, &arg) in args[..upto].iter().enumerate() {
             let Some(param) = self.param_type_at(params, j) else {
@@ -2280,17 +2319,22 @@ impl<'p> Checker<'p> {
         this_arg: Option<ExprId>,
     ) -> Option<SigId> {
         // An argument is looked at once, whichever candidate is tried: it is expected to be what any of them wants.
-        let lists: Vec<List<'p, SigParam>> =
+        let lists: SmallVec<[List<'p, SigParam>; 8]> =
             candidates.iter().map(|&c| self.sig_params(c)).collect();
         // What is expected of the result says what a candidate's type parameters are, for a start.
-        let mut from_result: Vec<Option<MapperId>> = vec![None; candidates.len()];
-        let mut plain: Vec<Option<(bool, MapperId, MapperId)>> = vec![None; candidates.len()];
+        let mut from_result: SmallVec<[Option<MapperId>; 8]> = smallvec![None; candidates.len()];
+        let mut plain: SmallVec<[Option<(bool, MapperId, MapperId)>; 8]> =
+            smallvec![None; candidates.len()];
+        let is_sensitive: SmallVec<[bool; 8]> = args
+            .iter()
+            .map(|a| matches!(a, Arg::Expr(e) if self.is_context_sensitive(file, *e)))
+            .collect();
         for (i, &arg) in args.iter().enumerate() {
             let Arg::Expr(e) = arg else { continue };
-            if self.is_context_sensitive(file, e) || !self.depends_on_context(file, e) {
+            if is_sensitive[i] || !self.depends_on_context(file, e) {
                 continue;
             }
-            let mut wanted = Vec::new();
+            let mut wanted: SmallVec<[TypeId; 8]> = SmallVec::new();
             // A literal is in the end held against the candidate that is chosen, which is none that the plain arguments rule out.
             let is_literal = self.is_literal_that_depends_on_context(file, e);
             let has_call_before = args[..i].iter().any(|a| {
@@ -2312,7 +2356,7 @@ impl<'p> Checker<'p> {
                 self.hir(file)[e].kind,
                 ExprKind::Call(_) | ExprKind::New(_) | ExprKind::Fn(_)
             );
-            let mut reaches = vec![true; lists.len()];
+            let mut reaches: SmallVec<[bool; 8]> = smallvec![true; lists.len()];
             if is_settled_once && type_args.is_empty() && i > 0 {
                 for (k, list) in lists.iter().enumerate() {
                     reaches[k] = self
@@ -2387,7 +2431,7 @@ impl<'p> Checker<'p> {
                 }
             }
             // A candidate that takes anything says nothing of the argument, and must not drown out those that do.
-            let telling: Vec<TypeId> = wanted
+            let telling: SmallVec<[TypeId; 8]> = wanted
                 .iter()
                 .copied()
                 .filter(|&t| {
@@ -2424,8 +2468,8 @@ impl<'p> Checker<'p> {
         };
         // The first whose parameters the arguments are subtypes of, if there is one; whether the call is an error is up to
         // whether they can be assigned.
-        let mut instantiated: Vec<Option<(List<'p, SigParam>, Option<TypeId>)>> =
-            vec![None; candidates.len()];
+        let mut instantiated: SmallVec<[Option<(List<'p, SigParam>, Option<TypeId>)>; 8]> =
+            smallvec![None; candidates.len()];
         let passes: &[bool] = if candidates.len() > 1 {
             &[true, false]
         } else {
@@ -2434,8 +2478,8 @@ impl<'p> Checker<'p> {
         // `contextuallyCheckFunctionExpressionOrObjectLiteralMethod` infers from the annotations of a function only the first time the
         // function is checked. `is_arg_checked[i]`: an attempt has checked argument `i`. `is_first_to_check[k]`: the inference for
         // candidate `k` was the first to check a function, so `instantiated[k]` may depend on the annotations of that function.
-        let mut is_arg_checked = vec![false; args.len()];
-        let mut is_first_to_check = vec![false; candidates.len()];
+        let mut is_arg_checked: SmallVec<[bool; 8]> = smallvec![false; args.len()];
+        let mut is_first_to_check: SmallVec<[bool; 8]> = smallvec![false; candidates.len()];
         let mut was_by_subtype = passes[0];
         for (&by_subtype, k) in passes
             .iter()
@@ -2533,7 +2577,7 @@ impl<'p> Checker<'p> {
                     self.set_context_checked(file, e, ContextChecked::By(candidate));
                 }
                 if let Arg::Expr(e) = arg
-                    && self.is_context_sensitive(file, e)
+                    && is_sensitive[i]
                 {
                     // Where a type guard is asked for, only a type guard will do.
                     if let Some(param) = self.context_of_arg_at(&params, i, Some(args.len()))
@@ -2591,12 +2635,9 @@ impl<'p> Checker<'p> {
             }
             if applicable && let Some(rest) = rest {
                 // What waits is not looked at, and fits anything.
-                let taken_for: Vec<Option<TypeId>> = args
+                let taken_for: SmallVec<[Option<TypeId>; 8]> = is_sensitive
                     .iter()
-                    .map(|a| {
-                        matches!(a, Arg::Expr(e) if self.is_context_sensitive(file, *e))
-                            .then_some(TypeId::UNRESOLVED)
-                    })
+                    .map(|&waits| waits.then_some(TypeId::UNRESOLVED))
                     .collect();
                 let given = self.spread_argument_type(
                     file,
@@ -2834,7 +2875,7 @@ impl<'p> Checker<'p> {
     fn has_room_for_literal(&mut self, file: FileId, arg: ExprId, param: TypeId) -> bool {
         let is_function = matches!(self.hir(file)[arg].kind, ExprKind::Fn(_));
         let param = self.force(param);
-        self.parts(param).to_vec().into_iter().any(|part| {
+        self.parts(param).iter().any(|&part| {
             if self.is_any(part)
                 || part == TypeId::UNKNOWN
                 || part == TypeId::OBJECT
@@ -2895,7 +2936,7 @@ impl<'p> Checker<'p> {
             return false;
         }
         let scope = self.scope_of_expr(file, call);
-        let in_scope = self.outer_type_params(file, scope);
+        let in_scope = self.type_params_in_scope(file, scope);
         own.iter().any(|p| in_scope.contains(p))
     }
 
@@ -2992,14 +3033,15 @@ impl<'p> Checker<'p> {
     /// or `unknown`.
     fn outer_return_mapper(&mut self, inference: &Inference, return_mapper: MapperId) -> MapperId {
         // `cloneInferenceContext(context).mapper`: it is the clone that is settled.
-        let mut settled = inference.clone();
-        let mut pairs = Vec::with_capacity(settled.params.len());
-        for k in 0..settled.params.len() {
-            let param = settled.params[k];
+        let mut settled: Option<Inference> = None;
+        let mut pairs = Vec::with_capacity(inference.params.len());
+        for k in 0..inference.params.len() {
+            let param = inference.params[k];
             let ty = match self.p.types.map(return_mapper, param) {
                 Some(ty) => ty,
                 None => {
-                    self.fix_params_in(&mut settled, param);
+                    let settled = settled.get_or_insert_with(|| inference.clone());
+                    self.fix_params_in(settled, param);
                     settled.candidates[k].fixed.unwrap_or(TypeId::UNKNOWN)
                 }
             };
@@ -3068,15 +3110,15 @@ impl<'p> Checker<'p> {
     ) -> MapperId {
         let expected = self.instantiate_with_outer_return_mappers(contextual);
         let expected = self.instantiate_with_candidate_holes(expected);
-        let mut from_result = Inference::new(type_params.to_vec(), Some(sig));
+        let mut from_result = Inference::for_params(type_params, Some(sig));
         from_result.calls_itself = calls_itself;
         from_result.from_pattern = is_from_pattern;
         self.infer(&mut from_result, expected, target, PRIORITY_RETURN);
         // The names in a pattern can be anything, and nothing is inferred from that: only from the shape of it.
         if is_from_pattern {
             for c in &mut from_result.candidates {
-                c.covariant.retain(|&t| t != TypeId::ANY);
-                c.contravariant.retain(|&t| t != TypeId::ANY);
+                c.covariant.retain(|t| *t != TypeId::ANY);
+                c.contravariant.retain(|t| *t != TypeId::ANY);
             }
         }
         self.mapper_of_result_inference(type_params, &from_result)
@@ -3161,6 +3203,9 @@ impl<'p> Checker<'p> {
     /// into what is expected, unless that is `any` or `unknown`, and without `boolean`. The mapper that does the same all
     /// the way down at once.
     fn return_mapper_for_contexts(&mut self, return_mapper: MapperId) -> MapperId {
+        if return_mapper == MapperId::IDENTITY {
+            return MapperId::IDENTITY;
+        }
         let mapping = self.p.types.mapping(return_mapper);
         let mut pairs = Vec::with_capacity(mapping.len());
         for &(param, ty) in mapping {
@@ -3187,6 +3232,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `sig` with its type parameters given or inferred. `skip_sensitive`: leave out the arguments that wait for the others.
+    #[inline]
     pub(super) fn instantiate_for_call(
         &mut self,
         file: FileId,
@@ -3241,7 +3287,7 @@ impl<'p> Checker<'p> {
             return sig;
         }
 
-        let mut inference = Inference::new(type_params.to_vec(), Some(sig));
+        let mut inference = Inference::for_params(&type_params, Some(sig));
         // `chooseOverload`, `inferSignatureInstantiationForOverloadFailure`: `InferenceFlagsAnyDefault` depends on the file that contains
         // the call, not on the file that declares `sig`.
         inference.any_default = self.hir(file).is_js;
@@ -3350,14 +3396,15 @@ impl<'p> Checker<'p> {
             is_trial: skip_sensitive,
             ..Resolving::new(file, call, Some(sig), params.clone(), from_result)
         });
-        let mut is_sensitive: Vec<bool> = args
+        let mut is_sensitive: SmallVec<[bool; 8]> = args
             .iter()
             .map(|a| !settled && matches!(a, Arg::Expr(e) if self.is_context_sensitive(file, *e)))
             .collect();
         // `instantiateTypeWithSingleGenericCallSignature`: a generic function given where a function that is not generic is
         // expected waits as well: its own type parameters are worked out from what it will be called with. The same for
         // something generic to construct (`true`) where something to construct is expected.
-        let mut generic_functions: Vec<Option<(SigId, bool)>> = vec![None; args.len()];
+        let mut generic_functions: SmallVec<[Option<(SigId, bool)>; 8]> =
+            smallvec![None; args.len()];
         for (i, &arg) in args.iter().enumerate() {
             if let Arg::Expr(e) = arg
                 && !is_sensitive[i]
@@ -3405,7 +3452,7 @@ impl<'p> Checker<'p> {
         // `resolveCallExpression` under `CheckModeSkipGenericFunctions`: a call, without type arguments, of a generic function
         // that returns a function waits too, so that what stands to its left has had its say. It is a plain argument for all
         // that: nothing is settled for its sake. While candidates are tried it is held against each of them, and does not wait.
-        let mut put_off = vec![false; args.len()];
+        let mut put_off: SmallVec<[bool; 8]> = smallvec![false; args.len()];
         if !skip_sensitive {
             for (i, &arg) in args.iter().enumerate() {
                 if let Arg::Expr(e) = arg
@@ -3431,11 +3478,11 @@ impl<'p> Checker<'p> {
                 let early = self.inference_mapper(&inference);
                 // The instantiation of a generic rest parameter can change the arity, which is checked again before the arguments.
                 let has_wrong_arity = rest_ty.is_some() && {
-                    let instantiated: Vec<SigParam> = params
+                    let instantiated: SmallVec<[SigParam; 8]> = params
                         .iter()
                         .map(|p| SigParam {
                             ty: self.instantiate(p.ty, early),
-                            ..p.clone()
+                            ..*p
                         })
                         .collect();
                     !self.has_correct_arity(&instantiated, args)
@@ -3443,11 +3490,11 @@ impl<'p> Checker<'p> {
                 if has_wrong_arity
                     || !self.fits_without_sensitive(file, args, &params, &is_sensitive, early)
                 {
-                    let rejected: Vec<SigParam> = params
+                    let rejected: SmallVec<[SigParam; 8]> = params
                         .iter()
                         .map(|p| SigParam {
                             ty: self.instantiate(p.ty, early),
-                            ..p.clone()
+                            ..*p
                         })
                         .collect();
                     for (i, &arg) in args.iter().enumerate() {
@@ -3522,10 +3569,12 @@ impl<'p> Checker<'p> {
                     );
                     continue;
                 }
+                let depends_on_context =
+                    matches!(arg, Arg::Expr(e) if self.depends_on_context(file, e));
                 // What the argument is expected to be is settled before it is looked at, and stays: what is inferred
                 // from the argument cannot be what is expected of it.
                 if let Arg::Expr(e) = arg
-                    && (pass == 1 || self.depends_on_context(file, e))
+                    && (pass == 1 || depends_on_context)
                 {
                     let context = if pass == 1 && !put_off[i] && self.is_context_sensitive(file, e)
                     {
@@ -3613,9 +3662,7 @@ impl<'p> Checker<'p> {
                 if !self.has_type_variables(param) {
                     continue;
                 }
-                if let Arg::Expr(e) = arg
-                    && self.depends_on_context(file, e)
-                {
+                if depends_on_context {
                     self.note_so_far(&inference);
                 }
                 // The functions in it that wait for nothing are looked at along with it.
@@ -3635,7 +3682,7 @@ impl<'p> Checker<'p> {
                     }
                     // `instantiateTypeWithSingleGenericCallSignature` goes for whatever the argument is written as: a call that gives a
                     // generic function waits like a generic function that is named (`CheckModeSkipGenericFunctions`).
-                    if self.depends_on_context(file, e)
+                    if depends_on_context
                         && let Some(wants_construct) =
                             self.wants_plain_signature(param, from_result)
                         && let Some((generic, construct)) =
@@ -3681,7 +3728,7 @@ impl<'p> Checker<'p> {
                 } else {
                     !waits || !type_params.contains(&rest)
                 };
-            let mut taken_for: Vec<Option<TypeId>> = vec![None; args.len()];
+            let mut taken_for: SmallVec<[Option<TypeId>; 8]> = smallvec![None; args.len()];
             for (i, &arg) in args.iter().enumerate().skip(arg_count) {
                 let Arg::Expr(e) = arg else { continue };
                 if !is_sensitive[i] {
@@ -3851,7 +3898,7 @@ impl<'p> Checker<'p> {
                 continue;
             };
             // With something spread into it, or a name that is only known when it runs, what it has cannot be told.
-            let mut written: Vec<(Atom, PropId)> = Vec::with_capacity(props.len());
+            let mut written: SmallVec<[(Atom, PropId); 8]> = SmallVec::with_capacity(props.len());
             let mut is_open = false;
             for p in props.iter() {
                 match self.member_name(file, hir[p].key) {
@@ -3867,7 +3914,7 @@ impl<'p> Checker<'p> {
                     // What every object has need not be written.
                     let object = self.global_ref(known::Object, &[]);
                     if !wanted.flags.contains(PropFlags::OPTIONAL)
-                        && self.prop_of(object, wanted.name).is_none()
+                        && self.prop_ref(object, wanted.name).is_none()
                     {
                         return false;
                     }
@@ -4072,7 +4119,7 @@ impl<'p> Checker<'p> {
         expected: SigId,
         with_result: bool,
     ) -> SigId {
-        let mut inference = Inference::new(self.sig_type_params(sig).into_vec(), Some(sig));
+        let mut inference = Inference::for_params(&self.sig_type_params(sig), Some(sig));
         // What `expected` takes may really be a type parameter of `sig`, adopted by the call around or in scope there:
         // `inferFromTypes` takes it for a candidate like any other.
         inference.calls_itself = true;
@@ -4605,7 +4652,7 @@ impl<'p> Checker<'p> {
             inference,
             contextual_type,
             None,
-            Some((vec![true; count], takes_rest)),
+            Some((smallvec![true; count], takes_rest)),
         );
         let context = self.non_nullable(context);
         let expected = self.single_signature(context, construct, false)?;
@@ -4819,7 +4866,7 @@ impl<'p> Checker<'p> {
         }
         let scope = self.scope_of_expr(file, e);
         if !self
-            .outer_type_params(file, scope)
+            .type_params_in_scope(file, scope)
             .iter()
             .any(|&p| matches!(self.data(p), TypeData::TypeParam(..)))
         {
@@ -5261,18 +5308,18 @@ impl<'p> Checker<'p> {
                 // Property by property, like what is written out: a part of the object is no candidate for the whole.
                 if !sensitive {
                     let ty = self.type_of_expr(file, prop.value);
-                    for part in self.parts(ty).to_vec() {
+                    for &part in self.parts(ty) {
                         if self.is_primitive(part) || self.is_any(part) {
                             continue;
                         }
                         let Some(members) = self.members(part) else {
                             continue;
                         };
-                        for spread in members.shape().props.clone() {
+                        for spread in &members.shape().props {
                             if let Some(member_param) = self.contextual_property(param, spread.name)
                                 && self.has_type_variables(member_param)
                             {
-                                let ty = self.type_of_prop(&spread, members.mapper);
+                                let ty = self.type_of_prop(spread, members.mapper);
                                 self.infer(inference, ty, member_param, 0);
                             }
                         }
@@ -5334,9 +5381,9 @@ impl<'p> Checker<'p> {
                 continue;
             }
             // What may be left out may be `undefined`, which then says nothing about the type parameters.
-            let is_optional = self.parts(param).to_vec().into_iter().any(|part| {
+            let is_optional = self.parts(param).iter().any(|&part| {
                 let part = self.apparent_type(part);
-                self.prop_of(part, name)
+                self.prop_ref(part, name)
                     .is_some_and(|(p, _)| p.flags.contains(PropFlags::OPTIONAL))
             });
             self.optional_member = is_optional;
@@ -6140,7 +6187,7 @@ impl<'p> Checker<'p> {
         inference: &mut Inference,
         param: TypeId,
         arg: Option<(FileId, ExprId)>,
-        taken: Option<(Vec<bool>, bool)>,
+        taken: Option<(SmallVec<[bool; 8]>, bool)>,
     ) -> TypeId {
         if !self.has_type_variables(param) {
             return param;
@@ -6153,10 +6200,10 @@ impl<'p> Checker<'p> {
         // `assignContextualParameterTypes`: a function takes from what is expected the types of the parameters it has and
         // does not type itself, and nothing else is looked at. A rest parameter it does not type takes all there is from its
         // place on.
-        let needed: Option<(Vec<bool>, bool)> = taken.or_else(|| {
+        let needed: Option<(SmallVec<[bool; 8]>, bool)> = taken.or_else(|| {
             let (file, func) = function?;
             let hir = self.hir(file);
-            let (mut plain, mut takes_rest) = (Vec::new(), false);
+            let (mut plain, mut takes_rest) = (SmallVec::<[bool; 8]>::new(), false);
             for p in hir[func]
                 .params
                 .iter()
@@ -6211,18 +6258,18 @@ impl<'p> Checker<'p> {
         let non_null = self.non_nullable(param);
         // What is yet to be worked out has signatures only by way of what it extends, which is not what is looked for.
         let mut sigs = if self.some_type(non_null, |c, m| c.is_deferred(m)) {
-            Vec::new()
+            Sigs::new()
         } else if function.is_some() {
             // `getContextualSignature`: of a union, the members that can be called.
             let callable = self.filter(non_null, |c, m| !c.signatures(m, false).is_empty());
-            self.signatures(callable, false).into_vec()
+            Sigs::from_slice(&self.signatures(callable, false))
         } else {
             let sigs = self.signatures(non_null, false);
             // Something to construct, given where something to construct is expected.
             if sigs.is_empty() && arg.is_none() {
-                self.signatures(non_null, true).into_vec()
+                Sigs::from_slice(&self.signatures(non_null, true))
             } else {
-                sigs.into_vec()
+                Sigs::from_slice(&sigs)
             }
         };
         // `isAritySmaller`: a signature that takes less than the function asks for is not what it goes by.
@@ -6233,8 +6280,8 @@ impl<'p> Checker<'p> {
                     && !hir[*p].flags.intersects(Flags::OPTIONAL | Flags::REST)
             };
             let asked = hir[func].params.iter().take_while(is_asked_for).count();
-            sigs.retain(|&sig| {
-                let params = self.sig_params(sig);
+            sigs.retain(|sig| {
+                let params = self.sig_params(*sig);
                 self.has_effective_rest_parameter(&params) || self.parameter_count(&params) >= asked
             });
         }

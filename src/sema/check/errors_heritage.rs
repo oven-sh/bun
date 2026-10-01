@@ -7,6 +7,7 @@
 use super::errors::Diagnostic;
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent};
+use smallvec::SmallVec;
 
 /// The node an error of `checkIndexConstraints` is reported on.
 #[derive(Copy, Clone)]
@@ -619,7 +620,7 @@ impl Checker<'_> {
         let sym = self
             .files()
             .sym(file, self.bound(file).interface_symbol[i.idx()]);
-        let decls = self.files().decls(sym);
+        let decls = self.files().decls_of(sym);
         // Once for the interface: where it is first declared.
         let first = decls.iter().find_map(|&(f, d)| match d {
             Decl::Interface(id) => Some((f, id)),
@@ -674,8 +675,8 @@ impl Checker<'_> {
         } else if !self.inherited_properties_are_identical(sym, ty, &bases, &mut None) {
             return;
         }
-        let mut locals = Vec::new();
-        for &(f, d) in &decls {
+        let mut locals: SmallVec<[(FileId, Span<MemberId>); 2]> = SmallVec::new();
+        for &(f, d) in decls.iter() {
             match d {
                 Decl::Interface(id) => locals.push((f, self.hir(f)[id].members)),
                 Decl::Class(c) => locals.push((f, self.hir(f)[c].members)),

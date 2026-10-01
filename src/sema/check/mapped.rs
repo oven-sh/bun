@@ -2,14 +2,24 @@
 
 use super::relate::Relation;
 use super::*;
+use smallvec::SmallVec;
 
 impl<'p> Checker<'p> {
+    /// The pairs of `mapper`, and after them `ty` for `param`.
+    fn mapper_with_pair(&self, mapper: MapperId, param: TypeId, ty: TypeId) -> MapperId {
+        let mapping = self.p.types.mapping(mapper);
+        let mut pairs = Vec::with_capacity(mapping.len() + 1);
+        pairs.extend_from_slice(mapping);
+        pairs.push((param, ty));
+        self.p.types.mapper(pairs)
+    }
+
     /// Whether what `ty` is depends on type parameters in a way that puts off `keyof`, `T[K]` and `extends`.
     pub fn is_generic(&mut self, ty: TypeId) -> bool {
-        self.guard("is_generic");
         if !self.has_type_variables(ty) {
             return false;
         }
+        self.guard("is_generic");
         match self.data(ty) {
             TypeData::Union(parts) | TypeData::Intersection(parts) => {
                 parts.iter().any(|&p| self.is_generic(p))
@@ -33,9 +43,7 @@ impl<'p> Checker<'p> {
                 }
                 let declared = self.type_from_node(file, mapped.name_ty);
                 let param = self.type_param(file, mapped.param);
-                let mut pairs = self.p.types.mapping(mapper).to_vec();
-                pairs.push((param, constraint));
-                let with_keys = self.p.types.mapper(pairs);
+                let with_keys = self.mapper_with_pair(mapper, param, constraint);
                 let name = self.instantiate(declared, with_keys);
                 self.is_generic(name)
             }
@@ -80,7 +88,7 @@ impl<'p> Checker<'p> {
                 if !no_reducible_check && self.is_generic_reducible(ty) {
                     return self.intern(TypeData::Keyof(ty));
                 }
-                let keys: Vec<TypeId> = parts
+                let keys: SmallVec<[TypeId; 8]> = parts
                     .iter()
                     .map(|&p| self.keyof_ex(p, no_reducible_check))
                     .collect();
@@ -97,7 +105,7 @@ impl<'p> Checker<'p> {
                 {
                     return self.intern(TypeData::Keyof(ty));
                 }
-                let keys: Vec<TypeId> = parts
+                let keys: SmallVec<[TypeId; 8]> = parts
                     .iter()
                     .map(|&p| self.keyof_ex(p, no_reducible_check))
                     .collect();
@@ -139,9 +147,7 @@ impl<'p> Checker<'p> {
                 let (keys, _) = self.mapped_key_types(file, node, mapper, constraint);
                 let mut names = Vec::with_capacity(keys.len());
                 for key in keys {
-                    let mut pairs = self.p.types.mapping(mapper).to_vec();
-                    pairs.push((param, key));
-                    let with_key = self.p.types.mapper(pairs);
+                    let with_key = self.mapper_with_pair(mapper, param, key);
                     let name = self.instantiate(name_declared, with_key);
                     names.push(name);
                     // What is under any string is under any number.
@@ -162,7 +168,7 @@ impl<'p> Checker<'p> {
         let Some(members) = self.members(apparent) else {
             return TypeId::NEVER;
         };
-        let mut keys = Vec::with_capacity(members.shape().props.len());
+        let mut keys: SmallVec<[TypeId; 16]> = SmallVec::with_capacity(members.shape().props.len());
         for prop in &members.shape().props {
             if prop
                 .flags
@@ -436,7 +442,7 @@ impl<'p> Checker<'p> {
             return Some(obj);
         }
         if let TypeData::Union(keys) = self.data(index) {
-            let mut types = Vec::with_capacity(keys.len());
+            let mut types: SmallVec<[TypeId; 8]> = SmallVec::with_capacity(keys.len());
             for &key in keys.iter() {
                 types.push(self.property_type_for_index(
                     obj,
@@ -712,7 +718,7 @@ impl<'p> Checker<'p> {
             && name.is_some_and(|name| self.is_numeric_name(name))
             && parts.iter().all(|&part| self.is_tuple(part));
         if is_property || is_past_tuples {
-            let mut types = Vec::with_capacity(parts.len());
+            let mut types: SmallVec<[TypeId; 8]> = SmallVec::with_capacity(parts.len());
             for &part in parts {
                 // What stands in for a property is there.
                 match self.property_type_for_index(
@@ -960,7 +966,7 @@ impl<'p> Checker<'p> {
                 return TypeId::NEVER;
             }
             if is_distributed && let TypeData::Union(parts) = self.data(value) {
-                let mut results = Vec::with_capacity(parts.len());
+                let mut results: SmallVec<[TypeId; 8]> = SmallVec::with_capacity(parts.len());
                 for &part in parts.iter() {
                     let mut pairs = self.p.types.mapping(mapper).to_vec();
                     for p in &mut pairs {
@@ -995,7 +1001,7 @@ impl<'p> Checker<'p> {
         let TypeData::Tuple { elems, .. } = self.data(ty) else {
             return false;
         };
-        elems.to_vec().into_iter().any(|e| self.is_generic(e))
+        elems.iter().any(|&e| self.is_generic(e))
     }
 
     /// `getConditionalType`
@@ -1054,7 +1060,7 @@ impl<'p> Checker<'p> {
             self.collect_infer_params(file, extends, &mut infer_params);
             let mut combined = mapper;
             if !infer_params.is_empty() {
-                let params: Vec<TypeId> = infer_params
+                let params: SmallVec<[TypeId; 4]> = infer_params
                     .iter()
                     .map(|&p| self.type_param(file, p))
                     .collect();
@@ -1062,7 +1068,9 @@ impl<'p> Checker<'p> {
                     // The `infer` positions are found in the `extends` type with everything else filled in.
                     let target = self.instantiate(extends_declared, mapper);
                     let inferred = self.infer_from_types(&params, check_ty, target, mapper);
-                    let mut pairs = self.p.types.mapping(mapper).to_vec();
+                    let mapping = self.p.types.mapping(mapper);
+                    let mut pairs = Vec::with_capacity(mapping.len() + params.len());
+                    pairs.extend_from_slice(mapping);
                     pairs.extend(params.iter().copied().zip(inferred));
                     combined = self.p.types.mapper(pairs);
                 }
@@ -1447,9 +1455,7 @@ impl<'p> Checker<'p> {
             } else {
                 TypeId::ANY
             };
-            let mut pairs = c.p.types.mapping(of).to_vec();
-            pairs.push((param, key));
-            let with_key = c.p.types.mapper(pairs);
+            let with_key = c.mapper_with_pair(of, param, key);
             let ty = c.instantiate(declared, with_key);
             if !c.p.files.options.strict_null_checks {
                 return ty;
@@ -1697,9 +1703,7 @@ impl<'p> Checker<'p> {
             return None;
         }
         let param = self.type_param(file, mapped.param);
-        let mut pairs = self.p.types.mapping(mapper).to_vec();
-        pairs.push((param, index));
-        let with_key = self.p.types.mapper(pairs);
+        let with_key = self.mapper_with_pair(mapper, param, index);
         let template = self.type_from_node(file, mapped.ty);
         let template = self.instantiate(template, with_key);
         // `couldAccessOptionalProperty`: it may be one of the properties that can be left out.
@@ -1767,10 +1771,9 @@ impl<'p> Checker<'p> {
         let TypeData::Intersection(parts) = self.data(obj) else {
             return None;
         };
-        let parts = parts.to_vec();
         let mut any = false;
         let mut types = Vec::with_capacity(parts.len());
-        for part in parts {
+        for &part in parts.iter() {
             if let TypeData::Anon {
                 origin: Origin::Mapped(file, node),
                 mapper,
@@ -1783,9 +1786,7 @@ impl<'p> Checker<'p> {
                 }
                 any = true;
                 let param = self.type_param(file, mapped.param);
-                let mut pairs = self.p.types.mapping(mapper).to_vec();
-                pairs.push((param, index));
-                let with_key = self.p.types.mapper(pairs);
+                let with_key = self.mapper_with_pair(mapper, param, index);
                 let template = self.type_from_node(file, mapped.ty);
                 let template = self.instantiate(template, with_key);
                 let template = if mapped.optional == MappedModifier::Add {
@@ -1888,7 +1889,7 @@ impl<'p> Checker<'p> {
         node: TypeNodeId,
         mapper: MapperId,
         constraint: TypeId,
-    ) -> (Vec<TypeId>, Option<Members<'p>>) {
+    ) -> (List<'p, TypeId>, Option<Members<'p>>) {
         let source = self.mapped_modifiers_source(file, node);
         let over_keyof = matches!(source, Some((_, true)));
         // `getReducedApparentType`: of a type parameter what it extends, and an intersection nothing can be is not there.
@@ -1932,17 +1933,17 @@ impl<'p> Checker<'p> {
                     }
                 }
                 keys.extend(m.shape().index.iter().map(|i| i.key));
-                keys
+                List::Own(keys)
             }
             // What can be anything is gone over as if it had any string for a name.
-            _ if over_keyof && modifiers_ty == Some(TypeId::ANY) => vec![TypeId::STRING],
+            _ if over_keyof && modifiers_ty == Some(TypeId::ANY) => List::One(TypeId::STRING),
             // Only `T` is looked at: `never`, `unknown` and the like have nothing to go over, whatever `keyof` makes of them.
-            _ if over_keyof => Vec::new(),
+            _ if over_keyof => List::Kept(&[]),
             _ if self.is_generic(constraint) => {
                 let bound = self.lower_bound_of_key_type(constraint);
-                self.parts(bound).to_vec()
+                List::Kept(self.parts(bound))
             }
-            _ => self.parts(constraint).to_vec(),
+            _ => List::Kept(self.parts(constraint)),
         };
         (keys, modifiers)
     }
@@ -2076,22 +2077,43 @@ impl<'p> Checker<'p> {
             origin: Origin::Mapped(file, node),
             mapper,
         });
+        if keys.len() > 4 {
+            shape.props.reserve_exact(keys.len());
+        }
+        // Where in `shape.props` each name is, once there are many.
+        let mut places: FxHashMap<Atom, usize> = FxHashMap::default();
         for key in keys {
-            let mut pairs = self.p.types.mapping(mapper).to_vec();
-            pairs.push((param, key));
-            let with_key = self.p.types.mapper(pairs);
+            let with_key = self.mapper_with_pair(mapper, param, key);
             let names = match name_declared {
                 Some(declared) => self.instantiate(declared, with_key),
                 None => key,
             };
-            let source_prop = match (&modifiers, self.property_name_of_type(key)) {
+            let key_name = self.property_name_of_type(key);
+            let source_prop = match (&modifiers, key_name) {
                 (Some(m), Some(name)) => m.resolved.prop(name).map(|p| p.flags),
                 _ => None,
             };
             // `addMemberForKeyTypeWorker`
             for &name_ty in self.parts(names) {
-                match self.property_name_of_type(name_ty) {
-                    Some(name) => match shape.props.iter().position(|p| p.name == name) {
+                let name = if name_ty == key {
+                    key_name
+                } else {
+                    self.property_name_of_type(name_ty)
+                };
+                let place = match name {
+                    Some(name) if shape.props.len() < 16 => {
+                        shape.props.iter().position(|p| p.name == name)
+                    }
+                    Some(name) => {
+                        if places.is_empty() {
+                            places.extend(shape.props.iter().enumerate().map(|(i, p)| (p.name, i)));
+                        }
+                        places.get(&name).copied()
+                    }
+                    None => None,
+                };
+                match name {
+                    Some(name) => match place {
                         // One property for all the keys that come to its name. Its `keyType` is their union. The first key has
                         // settled the modifiers.
                         Some(i) => {
@@ -2102,9 +2124,7 @@ impl<'p> Checker<'p> {
                                 .unwrap_or(key);
                             let all = self.union(&[so_far, key]);
                             if all != so_far {
-                                let mut pairs = self.p.types.mapping(mapper).to_vec();
-                                pairs.push((param, all));
-                                shape.props[i].mapper = self.p.types.mapper(pairs);
+                                shape.props[i].mapper = self.mapper_with_pair(mapper, param, all);
                             }
                         }
                         None => {
@@ -2135,6 +2155,9 @@ impl<'p> Checker<'p> {
                             // `nameType`: made from a string, it is named by one.
                             if self.is_string_like(name_ty) && self.is_numeric_name(name) {
                                 flags |= PropFlags::STRING_NAME;
+                            }
+                            if !places.is_empty() {
+                                places.insert(name, shape.props.len());
                             }
                             // The type is resolved on demand (`type_of_mapped_prop`): the template under `with_key`.
                             shape.props.push(Prop {

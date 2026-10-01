@@ -1,7 +1,9 @@
 //! The types of values that have names: variables, parameters, functions, classes, imports; and what functions return.
 
+use super::decl::declarations_of;
 use super::*;
 use crate::bind::{Decl, FnOwner, Parent, PatParent, ScopeKind, UNREACHABLE};
+use smallvec::SmallVec;
 
 #[derive(Copy, Clone, Debug)]
 pub struct IterationTypes {
@@ -42,10 +44,16 @@ enum IteratorMethod {
 
 impl<'p> Checker<'p> {
     /// What `sym` is where a value is expected.
+    #[inline]
     pub fn type_of_symbol(&mut self, sym: Sym) -> TypeId {
         if let Some(known) = self.p.symbol_types.get(&sym) {
             return known;
         }
+        self.resolve_type_of_symbol(sym)
+    }
+
+    #[inline(never)]
+    fn resolve_type_of_symbol(&mut self, sym: Sym) -> TypeId {
         if !self.enter(Query::Symbol(sym)) {
             return if self.came_full_circle {
                 TypeId::ANY
@@ -104,7 +112,7 @@ impl<'p> Checker<'p> {
             });
         }
         if flags.intersects(SymFlags::VARIABLE) {
-            for (file, decl) in self.files().decls(sym) {
+            for (file, decl) in declarations_of(self.files(), sym) {
                 if let Decl::Var(pat) | Decl::Param(pat) = decl {
                     return self.type_of_pat(file, pat);
                 }
@@ -118,7 +126,7 @@ impl<'p> Checker<'p> {
         }
         if flags.contains(SymFlags::FUNCTION) {
             let mut mapper = MapperId::IDENTITY;
-            for (file, decl) in self.files().decls(sym) {
+            for (file, decl) in declarations_of(self.files(), sym) {
                 if let Decl::Fn(f) = decl {
                     let scope = self.bound(file).fns[f.idx()].scope;
                     let parent = self.bound(file).scopes[scope.idx()].parent;
@@ -143,11 +151,8 @@ impl<'p> Checker<'p> {
         }
         if flags.contains(SymFlags::VALUE_MODULE) {
             // `isShorthandAmbientModuleSymbol`: of `declare module "m";` nothing is known.
-            if self
-                .files()
-                .decls(sym)
-                .iter()
-                .any(|&(f, d)| matches!(d, Decl::Module(id) if !self.hir(f)[id].has_body))
+            if declarations_of(self.files(), sym)
+                .any(|(f, d)| matches!(d, Decl::Module(id) if !self.hir(f)[id].has_body))
             {
                 return TypeId::ANY;
             }
@@ -157,7 +162,7 @@ impl<'p> Checker<'p> {
             });
         }
         if flags.contains(SymFlags::EXPORT_VALUE) {
-            for (file, decl) in self.files().decls(sym) {
+            for (file, decl) in declarations_of(self.files(), sym) {
                 if let Decl::ExportExpr(stmt) = decl
                     && let StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e) =
                         self.hir(file)[stmt].kind
@@ -213,14 +218,17 @@ impl<'p> Checker<'p> {
     /// `getWidenedTypeForAssignmentDeclaration` up to its all-nullable check: the widened union of the types assigned to the
     /// CommonJS export `sym`. `None` if no assignment declares `sym`.
     fn widened_assigned_type(&mut self, sym: Sym) -> Option<TypeId> {
+        if !declarations_of(self.files(), sym)
+            .any(|(_, decl)| matches!(decl, Decl::ModuleExports(_) | Decl::ExportsProperty(_)))
+        {
+            return None;
+        }
         let decls = self.files().decls(sym);
         let mut types: Vec<TypeId> = Vec::new();
-        let mut any = false;
         for (index, &(file, decl)) in decls.iter().enumerate() {
             let (Decl::ModuleExports(assignment) | Decl::ExportsProperty(assignment)) = decl else {
                 continue;
             };
-            any = true;
             // `getAssignmentDeclarationInitializerType`: `Object.defineProperty(exports, "a", descriptor)` declares what the descriptor says.
             if matches!(self.hir(file)[assignment].kind, ExprKind::Call(_)) {
                 let name = self.files().symbol(sym).name;
@@ -253,9 +261,6 @@ impl<'p> Checker<'p> {
             if !types.contains(&ty) {
                 types.push(ty);
             }
-        }
-        if !any {
-            return None;
         }
         let ty = if types.is_empty() {
             TypeId::ANY
@@ -427,7 +432,7 @@ impl<'p> Checker<'p> {
             }
             // `isESMFormatImportImportingCommonjsFormatFile`
             let is_commonjs_to_node = is_file_to_node && !files.module(module.file).is_esm;
-            if !is_commonjs_to_node && self.prop_of(ty, known::default).is_none() {
+            if !is_commonjs_to_node && self.prop_ref(ty, known::default).is_none() {
                 return None;
             }
         }
@@ -465,7 +470,7 @@ impl<'p> Checker<'p> {
             return false;
         }
         let (mut kept, mut kept_value, mut exported_value) = (false, false, false);
-        for (f, d) in files.decls(target) {
+        for (f, d) in declarations_of(files, target) {
             let (hir, bound) = (files.hir(f), files.bound(f));
             let (is_value, flags) = match d {
                 Decl::Var(mut p) => loop {
@@ -501,14 +506,10 @@ impl<'p> Checker<'p> {
     /// (`getObjectTypeInstantiation`). The constructor of a class that extends a value whose type is a type variable is one of
     /// those as well.
     pub(super) fn type_of_class_value(&mut self, sym: Sym) -> TypeId {
-        let class = self
-            .files()
-            .decls(sym)
-            .into_iter()
-            .find_map(|(file, decl)| match decl {
-                Decl::Class(c) => Some((file, c)),
-                _ => None,
-            });
+        let class = declarations_of(self.files(), sym).find_map(|(file, decl)| match decl {
+            Decl::Class(c) => Some((file, c)),
+            _ => None,
+        });
         let mut mapper = MapperId::IDENTITY;
         if let Some((file, c)) = class {
             let scope = self.bound(file).class_scope[c.idx()];
@@ -607,8 +608,8 @@ impl<'p> Checker<'p> {
             let found = if self.is_union(apparent) {
                 self.type_of_property(apparent, name)
             } else {
-                self.prop_of(apparent, name)
-                    .map(|(prop, mapper)| self.type_of_prop(&prop, mapper))
+                self.prop_ref(apparent, name)
+                    .map(|(prop, mapper)| self.type_of_prop(prop, mapper))
             };
             return Some((ty, found));
         }
@@ -723,6 +724,7 @@ impl<'p> Checker<'p> {
 
     /// Whether `ty` is the type of an object literal expression, as opposed to that of something initialized with one. What a
     /// binding pattern implies is marked too, but no expression has that type: it is never fresh (`getTypeFromObjectBindingPattern`).
+    #[inline]
     pub fn is_object_literal_type(&self, ty: TypeId) -> bool {
         match self.data(ty) {
             TypeData::Anon {
@@ -760,19 +762,26 @@ impl<'p> Checker<'p> {
             TypeData::Tuple { elems, .. } => elems
                 .iter()
                 .any(|&e| self.contains_object_literal(e, depth + 1)),
-            TypeData::Ref { args, .. } if self.is_array(ty) => args
-                .iter()
-                .any(|&a| self.contains_object_literal(a, depth + 1)),
-            // What a pattern implies is widened like a literal, into a type that `patternForType` does not know.
-            TypeData::Synth(shape)
-                if matches!(
-                    shape.literal,
-                    Literalness::Pattern | Literalness::PatternWithComputedNames
-                ) =>
-            {
-                true
+            TypeData::Ref { args, .. } => {
+                !args.is_empty()
+                    && self.is_array(ty)
+                    && args
+                        .iter()
+                        .any(|&a| self.contains_object_literal(a, depth + 1))
             }
-            _ => self.is_object_literal_type(ty),
+            TypeData::Anon {
+                origin: Origin::ObjectLiteral(..),
+                ..
+            } => true,
+            // What a pattern implies is widened like a literal, into a type that `patternForType` does not know.
+            TypeData::Synth(shape) => {
+                shape.literal.is_of_expression()
+                    || matches!(
+                        shape.literal,
+                        Literalness::Pattern | Literalness::PatternWithComputedNames
+                    )
+            }
+            _ => false,
         }
     }
 
@@ -844,10 +853,10 @@ impl<'p> Checker<'p> {
         if !self.contains_object_literal(ty, 0) {
             return ty;
         }
-        match self.data(ty).clone() {
+        match self.data(ty) {
             TypeData::Union(parts) => {
-                let siblings = siblings.unwrap_or(&parts);
-                let widened: Vec<TypeId> = parts
+                let siblings = siblings.unwrap_or(&parts[..]);
+                let widened: SmallVec<[TypeId; 8]> = parts
                     .iter()
                     .map(|&p| {
                         if self.is_nullish(p) {
@@ -865,7 +874,7 @@ impl<'p> Checker<'p> {
                 }
             }
             TypeData::Intersection(parts) => {
-                let widened: Vec<TypeId> =
+                let widened: SmallVec<[TypeId; 8]> =
                     parts.iter().map(|&p| self.widen_objects(p, None)).collect();
                 self.intersection(&widened)
             }
@@ -874,14 +883,14 @@ impl<'p> Checker<'p> {
                 flags,
                 readonly,
             } => {
-                let widened: Vec<TypeId> =
+                let widened: SmallVec<[TypeId; 8]> =
                     elems.iter().map(|&e| self.widen_objects(e, None)).collect();
-                self.tuple(&widened, &flags, readonly)
+                self.tuple(&widened, flags, *readonly)
             }
             TypeData::Ref { target, args } => {
                 let args: Vec<TypeId> = args.iter().map(|&a| self.widen_objects(a, None)).collect();
                 self.intern(TypeData::Ref {
-                    target,
+                    target: *target,
                     args: args.into(),
                 })
             }
@@ -890,6 +899,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `undefinedType`: the `undefined` that is not widened. Without strictNullChecks that is not the one expressions give.
+    #[inline]
     pub(super) fn undefined_as_declared(&self) -> TypeId {
         if self.p.files.options.strict_null_checks {
             TypeId::UNDEFINED
@@ -900,7 +910,7 @@ impl<'p> Checker<'p> {
 
     /// `getWidenedTypeOfObjectLiteral`: every property is widened, and so is what is found under any key.
     fn widen_object_literal(&mut self, ty: TypeId, siblings: Option<&[TypeId]>) -> TypeId {
-        let others: Vec<TypeId> = siblings
+        let others: SmallVec<[TypeId; 8]> = siblings
             .unwrap_or(&[])
             .iter()
             .copied()
@@ -909,18 +919,18 @@ impl<'p> Checker<'p> {
         // `getWidenedProperty`: what is no plain property stays as it is.
         let as_they_are = PropFlags::METHOD | PropFlags::ACCESSOR;
         if others.is_empty() {
-            match self.data(ty).clone() {
+            match self.data(ty) {
                 TypeData::Anon {
                     origin: Origin::ObjectLiteral(file, e),
                     mapper,
                 } => {
                     return self.intern(TypeData::Anon {
-                        origin: Origin::WidenedLiteral(file, e),
-                        mapper,
+                        origin: Origin::WidenedLiteral(*file, *e),
+                        mapper: *mapper,
                     });
                 }
                 TypeData::Synth(shape) => {
-                    let mut shape = *shape;
+                    let mut shape = Shape::clone(shape);
                     shape.literal = Literalness::No;
                     for prop in &mut shape.props {
                         if !prop.flags.intersects(as_they_are) {
@@ -946,8 +956,8 @@ impl<'p> Checker<'p> {
                     // What the alternatives have under the same name are the alternatives to this.
                     let mut alternatives: Vec<TypeId> = self.parts(prop_ty).to_vec();
                     for &other in &others {
-                        if let Some((p, mapper)) = self.prop_of(other, prop.name) {
-                            let t = self.type_of_prop(&p, mapper);
+                        if let Some((p, mapper)) = self.prop_ref(other, prop.name) {
+                            let t = self.type_of_prop(p, mapper);
                             alternatives.extend_from_slice(self.parts(t));
                         }
                     }
@@ -1000,6 +1010,7 @@ impl<'p> Checker<'p> {
     // ───────────────────────────── bindings ─────────────────────────────
 
     /// The type of what `pat` binds or destructures.
+    #[inline]
     pub fn type_of_pat(&mut self, file: FileId, pat: PatId) -> TypeId {
         if pat.is_none() {
             return TypeId::UNRESOLVED;
@@ -1007,6 +1018,11 @@ impl<'p> Checker<'p> {
         if let Some(known) = self.p.pat_types.get(file, pat.idx()) {
             return known;
         }
+        self.resolve_type_of_pat(file, pat)
+    }
+
+    #[inline(never)]
+    fn resolve_type_of_pat(&mut self, file: FileId, pat: PatId) -> TypeId {
         if self.prepare_question_about_pat(file, pat)
             && let Some(known) = self.p.pat_types.get(file, pat.idx())
         {
@@ -2003,6 +2019,7 @@ impl<'p> Checker<'p> {
         }
     }
 
+    #[inline]
     pub fn type_of_param(&mut self, file: FileId, p: ParamId) -> TypeId {
         self.type_of_pat(file, self.hir(file)[p].pat)
     }
@@ -2154,7 +2171,7 @@ impl<'p> Checker<'p> {
                     elems: types,
                     flags,
                     readonly,
-                } = self.data(ty).clone()
+                } = self.data(ty)
                 else {
                     return ty;
                 };
@@ -2178,7 +2195,7 @@ impl<'p> Checker<'p> {
                     });
                     flags.push(ElemFlags::OPTIONAL);
                 }
-                self.tuple(&types, &flags, readonly)
+                self.tuple(&types, &flags, *readonly)
             }
             _ => ty,
         }
@@ -2319,10 +2336,16 @@ impl<'p> Checker<'p> {
     // ───────────────────────────── what functions return ─────────────────────────────
 
     /// The return type of `func` as declared or as its body implies, in terms of the type parameters in scope.
+    #[inline]
     pub fn return_type_of_fn(&mut self, file: FileId, func: FnId) -> TypeId {
         if let Some(known) = self.p.fn_return_types.get(file, func.idx()) {
             return known;
         }
+        self.resolve_return_type_of_fn(file, func)
+    }
+
+    #[inline(never)]
+    fn resolve_return_type_of_fn(&mut self, file: FileId, func: FnId) -> TypeId {
         if self.prepare_question_about_fn(file, func)
             && let Some(known) = self.p.fn_return_types.get(file, func.idx())
         {
@@ -2396,7 +2419,7 @@ impl<'p> Checker<'p> {
             }
             // `checkAndAggregateReturnExpressionTypes`
             FnBody::Block(_) => {
-                let mut types: Vec<TypeId> = Vec::new();
+                let mut types: SmallVec<[TypeId; 4]> = SmallVec::new();
                 let mut without_expression =
                     info.end != UNREACHABLE && self.is_reachable(file, info.end);
                 let mut returns_never = false;
@@ -2560,7 +2583,7 @@ impl<'p> Checker<'p> {
                     .files()
                     .flags(sym)
                     .intersects(SymFlags::CLASS | SymFlags::INTERFACE)
-                && self.type_params_of_symbol(sym).len() == 3
+                && self.local_type_params_of_symbol(sym).len() == 3
             {
                 return self.global_ref(name, &[yielded, ret, next]);
             }
@@ -2641,7 +2664,6 @@ impl<'p> Checker<'p> {
         } = self.p.types.sig(sig)
             && !of.is_empty()
         {
-            let of = of.to_vec();
             let returns: Vec<TypeId> = of.iter().map(|&s| self.sig_return(s)).collect();
             // `createUnionSignature` clones the first member, so the circle of the composite signature is reported where that one is
             // declared.
@@ -2850,7 +2872,7 @@ impl<'p> Checker<'p> {
             }
             self.awaiting.push(ty);
             let parts = self.parts(ty);
-            let mut mapped = Vec::with_capacity(parts.len());
+            let mut mapped: SmallVec<[TypeId; 8]> = SmallVec::new();
             for &part in parts {
                 mapped.extend(self.awaited_no_alias(part));
             }
@@ -2929,7 +2951,7 @@ impl<'p> Checker<'p> {
             let (mut is_declared, mut is_optional) = (false, false);
             for &part in self.parts(apparent) {
                 let part = self.apparent_type(part);
-                if let Some((prop, _)) = self.prop_of(part, name) {
+                if let Some((prop, _)) = self.prop_ref(part, name) {
                     is_declared = true;
                     is_optional |= prop.flags.contains(PropFlags::OPTIONAL);
                 }
@@ -2941,8 +2963,8 @@ impl<'p> Checker<'p> {
                 .type_of_property(apparent, name)
                 .map(|found| (found, is_optional));
         }
-        let (prop, mapper) = self.prop_of(apparent, name)?;
-        let found = self.type_of_prop(&prop, mapper);
+        let (prop, mapper) = self.prop_ref(apparent, name)?;
+        let found = self.type_of_prop(prop, mapper);
         let is_optional = prop.flags.contains(PropFlags::OPTIONAL);
         Some((
             if is_optional {
@@ -3003,7 +3025,7 @@ impl<'p> Checker<'p> {
             return None;
         }
         // The ways to call `then` on a `ty`.
-        let mut callbacks = Vec::new();
+        let mut callbacks: SmallVec<[TypeId; 4]> = SmallVec::new();
         for sig in self.signatures(then, false) {
             if let Some(this) = self.sig_this_type(sig)
                 && this != TypeId::VOID
@@ -3025,7 +3047,7 @@ impl<'p> Checker<'p> {
         if self.is_any(on_fulfilled) {
             return None;
         }
-        let mut values = Vec::new();
+        let mut values: SmallVec<[TypeId; 4]> = SmallVec::new();
         for callback in self.signatures(on_fulfilled, false) {
             values.push(self.type_of_first_parameter(callback));
         }
@@ -3304,6 +3326,9 @@ impl<'p> Checker<'p> {
         names: [Atom; 4],
         is_async: bool,
     ) -> Iter3 {
+        if !matches!(self.data(ty), TypeData::Ref { .. }) {
+            return Iter3::default();
+        }
         for name in names {
             if let Some(&[y, r, n]) = self.is_global_ref(ty, name) {
                 return self.resolved_iteration_types(y, r, n, is_async);

@@ -46,7 +46,9 @@ struct Cx<'a> {
     file: FileId,
     text: &'a [u8],
     /// Where module specifiers are written, in the order of the text.
-    uses: Vec<SpecifierUse>,
+    uses: &'a [SpecifierUse],
+    /// What `attributes_keyword` was last asked, and what it said.
+    last_keyword: std::cell::Cell<(u32, bool, Option<(usize, usize)>)>,
     /// `IsExternalModule`, as the program has it.
     is_module: bool,
     /// The program has it for a script, and it may be a module all the same: `xm_may_be_module`. What depends on which it is is
@@ -109,6 +111,17 @@ impl Cx<'_> {
     fn specifier(&self, pos: u32, spec: Atom) -> Option<SpecifierUse> {
         let at = self.uses.partition_point(|u| u.pos < pos);
         self.uses.get(at).copied().filter(|u| u.spec == spec)
+    }
+
+    /// `attributes_keyword`. A statement is asked about more than once.
+    fn attributes_keyword(&self, spec_pos: u32, is_export: bool) -> Option<(usize, usize)> {
+        let (last_pos, last_is_export, found) = self.last_keyword.get();
+        if last_pos == spec_pos && last_is_export == is_export {
+            return found;
+        }
+        let found = attributes_keyword(self.text, spec_pos, is_export);
+        self.last_keyword.set((spec_pos, is_export, found));
+        found
     }
 
     /// `checkGrammarModifiers`, of `export` on what is more than a type at the top of a file.
@@ -178,8 +191,15 @@ impl Checker<'_> {
         self.check_flow_too_deep(file, out);
         let module = self.files().module(file);
         let path = module.path.as_str();
-        let mut uses = hir.specifier_uses.clone();
-        uses.sort_unstable_by_key(|u| u.pos);
+        let sorted;
+        let uses: &[SpecifierUse] = if hir.specifier_uses.is_sorted_by_key(|u| u.pos) {
+            &hir.specifier_uses
+        } else {
+            let mut uses = hir.specifier_uses.clone();
+            uses.sort_unstable_by_key(|u| u.pos);
+            sorted = uses;
+            &sorted
+        };
         // NEEDS: `Options::verbatim_module_syntax: bool`, what `compilerOptions.verbatimModuleSyntax` says
         let is_verbatim = self.p.files.options.verbatim_module_syntax;
         let cx = Cx {
@@ -187,7 +207,7 @@ impl Checker<'_> {
             text: &hir.text,
             is_module: module.is_module(),
             may_be_module: self.xm_may_be_module(file),
-            grammar: !has_parse_diagnostics(hir) && !has_import_assertions(&hir.text, &uses),
+            grammar: !has_parse_diagnostics(hir) && !has_import_assertions(&hir.text, uses),
             is_js: [".js", ".jsx", ".mjs", ".cjs"]
                 .iter()
                 .any(|e| path.ends_with(e)),
@@ -202,6 +222,7 @@ impl Checker<'_> {
             members_of_export_equals: Default::default(),
             named_symbols: Default::default(),
             uses,
+            last_keyword: std::cell::Cell::new((u32::MAX, false, None)),
         };
         let top = Around {
             module: ModuleId::NONE,
@@ -242,8 +263,8 @@ impl Checker<'_> {
         let mut reported = Parent::None;
         for i in 0..hir.exprs.len() {
             let e = ExprId(i as u32);
-            if matches!(bound.expr_parent[i], Parent::None)
-                || !matches!(hir[e].kind, ExprKind::Ident(_) | ExprKind::Dot { .. } | ExprKind::Index { .. } | ExprKind::This)
+            if !matches!(hir[e].kind, ExprKind::Ident(_) | ExprKind::Dot { .. } | ExprKind::Index { .. } | ExprKind::This)
+                || matches!(bound.expr_parent[i], Parent::None)
                 // `checkWithStatement` does not check the body.
                 || hir.is_in_with(hir[e].pos)
             {
@@ -1828,20 +1849,20 @@ impl Checker<'_> {
     }
 
     /// `checkGrammarImportCallExpression`, `checkImportType`, `getTypeFromImportTypeNode`
-    fn xm_import_calls_and_types(&self, cx: &Cx<'_>, out: &mut Vec<Diagnostic>) {
+    fn xm_import_calls_and_types(&mut self, cx: &Cx<'_>, out: &mut Vec<Diagnostic>) {
         let (hir, bound, files) = (self.hir(cx.file), self.bound(cx.file), self.files());
         if cx.grammar && cx.is_verbatim && self.p.files.options.module == ModuleKind::CommonJs {
-            for (i, e) in hir.exprs.iter().enumerate() {
-                if matches!(e.kind, ExprKind::ImportCall(_))
-                    && !matches!(bound.expr_parent[i], Parent::None)
-                {
+            let index = self.exprs_by_kind(cx.file);
+            for &e in index.of(ExprTag::ImportCall) {
+                if !matches!(bound.expr_parent[e.idx()], Parent::None) {
+                    let start = hir[e].pos;
                     out.push(Diagnostic {
-                        start: e.pos,
+                        start,
                         code: cx.esm_syntax_code,
                     });
                     self.note(
-                        e.pos,
-                        self.end_inside_parentheses(cx.file, ExprId(i as u32)),
+                        start,
+                        self.end_inside_parentheses(cx.file, e),
                         cx.esm_syntax_code,
                         Vec::new(),
                     );
@@ -1907,7 +1928,24 @@ impl Checker<'_> {
         }
         let (hir, bound) = (self.hir(cx.file), self.bound(cx.file));
         for (i, s) in hir.stmts.iter().enumerate() {
-            if matches!(bound.stmt_parent[i], Parent::None) {
+            // Only declarations, imports and exports are looked at.
+            if !matches!(
+                s.kind,
+                StmtKind::Var(_)
+                    | StmtKind::Fn(_)
+                    | StmtKind::Class(_)
+                    | StmtKind::Interface(_)
+                    | StmtKind::TypeAlias(_)
+                    | StmtKind::Enum(_)
+                    | StmtKind::Module(_)
+                    | StmtKind::Import(_)
+                    | StmtKind::ImportEquals(_)
+                    | StmtKind::ExportNamed(_)
+                    | StmtKind::ExportStar { .. }
+                    | StmtKind::ExportAssign(_)
+                    | StmtKind::ExportDefault(_)
+            ) || matches!(bound.stmt_parent[i], Parent::None)
+            {
                 continue;
             }
             // `checkClassDeclaration`: only `export default class` can do without a name.
@@ -2210,7 +2248,7 @@ impl<'p> Checker<'p> {
     where
         'p: 'a,
     {
-        let (keyword, keyword_end) = attributes_keyword(cx.text, spec_pos, is_export)?;
+        let (keyword, keyword_end) = cx.attributes_keyword(spec_pos, is_export)?;
         let start = keyword as u32;
         let (hir, atoms) = (self.hir(cx.file), &self.files().atoms);
         let Some(&(_, object)) = hir.import_attributes.iter().find(|kept| kept.0 == start) else {

@@ -20,6 +20,7 @@ use super::explain::Line;
 use super::*;
 use crate::bind::{FnOwner, MemberOwner, Parent, PatParent};
 use crate::resolve::ScriptTarget;
+use smallvec::SmallVec;
 
 impl Checker<'_> {
     pub(super) fn check_x_operators(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
@@ -183,8 +184,11 @@ impl Checker<'_> {
         // What is found wrong with the way something is gone through is said the first time it is gone through that way.
         sites.sort_by_key(|site| site.at);
         let mut cached = Vec::new();
+        // `getGlobalIterableType() != emptyGenericType`
+        let iterable_exists =
+            !sites.is_empty() && self.global_type_of_arity(known::Iterable, 3).is_some();
         for site in &sites {
-            check_iterated_type(self, file, site, &mut cached, out);
+            check_iterated_type(self, file, site, iterable_exists, &mut cached, out);
         }
         // `checkGrammarBindingElement`
         if !has_parse_diagnostics(hir) {
@@ -584,8 +588,15 @@ fn maybe_type_of_kind_considering_base_constraint<'p>(
     if maybe_type_of_kind(c, ty, kind) {
         return true;
     }
-    let base = c.base_constraint_of(ty).unwrap_or(ty);
-    maybe_type_of_kind(c, base, kind)
+    match c.base_constraint_of(ty) {
+        Some(base) if base != ty => maybe_type_of_kind(c, base, kind),
+        _ => false,
+    }
+}
+
+/// `number` or the type of a numeric literal: assignable to `number | bigint`, and no `bigint`.
+fn is_plain_number(c: &Checker<'_>, ty: TypeId) -> bool {
+    ty == TypeId::NUMBER || matches!(c.data(ty), TypeData::NumberLit { .. })
 }
 
 /// `TypeFlagsUndefined`
@@ -685,12 +696,12 @@ pub(super) fn type_of_property_of_type(
 
 /// `isLiteralExpressionOfObject`
 fn is_literal_expression_of_object(hir: &File, e: ExprId) -> bool {
-    !is_parenthesized(hir, e)
-        && match hir[e].kind {
-            ExprKind::Object(_) | ExprKind::Array(_) | ExprKind::Regex | ExprKind::Class(_) => true,
-            ExprKind::Fn(f) => hir[f].kind == FnKind::Expr,
-            _ => false,
-        }
+    let is_literal = match hir[e].kind {
+        ExprKind::Object(_) | ExprKind::Array(_) | ExprKind::Regex | ExprKind::Class(_) => true,
+        ExprKind::Fn(f) => hir[f].kind == FnKind::Expr,
+        _ => false,
+    };
+    is_literal && !is_parenthesized(hir, e)
 }
 
 /// `checkBinaryLikeExpression`, of `a op b` and `a op= b`: 2791 6807 2839, and on to what has a function of its own.
@@ -720,34 +731,37 @@ fn check_binary_like(c: &mut Checker<'_>, file: FileId, e: ExprId, out: &mut Vec
             let Some((l, r)) = operand_types(c, file, left, right) else {
                 return;
             };
-            let (l, r) = (non_null_type(c, l), non_null_type(c, r));
-            // Of two booleans another operator is suggested, and that is all.
-            let is_boolean =
-                |c: &Checker<'_>, t: TypeId| t == TypeId::BOOLEAN || c.is_boolean_like(t);
-            if matches!(op, BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor)
-                && is_boolean(c, l)
-                && is_boolean(c, r)
-            {
-                return;
-            }
-            let numeric = c.union(&[TypeId::NUMBER, TypeId::BIGINT]);
-            let both_fit = c.is_assignable(l, numeric) && c.is_assignable(r, numeric);
-            let is_anything = |c: &Checker<'_>, t: TypeId| c.is_any(t) || t == TypeId::UNKNOWN;
-            let gives_number = is_anything(c, l) && is_anything(c, r)
-                || !maybe_type_of_kind(c, l, Checker::is_bigint_like)
-                    && !maybe_type_of_kind(c, r, Checker::is_bigint_like);
-            if op == BinOp::Pow
-                && !gives_number
-                && c.is_assignable(l, TypeId::BIGINT)
-                && c.is_assignable(r, TypeId::BIGINT)
-                && language_version(c) < ScriptTarget::ES2016
-            {
-                let start = c.start_inside_parentheses(file, e);
-                out.push(Diagnostic { start, code: 2791 });
-                c.note(start, c.end_inside_parentheses(file, e), 2791, Vec::new());
-            }
-            if !both_fit {
-                return;
+            // Two numbers fit, and give a number.
+            if !(is_plain_number(c, l) && is_plain_number(c, r)) {
+                let (l, r) = (non_null_type(c, l), non_null_type(c, r));
+                // Of two booleans another operator is suggested, and that is all.
+                let is_boolean =
+                    |c: &Checker<'_>, t: TypeId| t == TypeId::BOOLEAN || c.is_boolean_like(t);
+                if matches!(op, BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor)
+                    && is_boolean(c, l)
+                    && is_boolean(c, r)
+                {
+                    return;
+                }
+                let numeric = c.union(&[TypeId::NUMBER, TypeId::BIGINT]);
+                let both_fit = c.is_assignable(l, numeric) && c.is_assignable(r, numeric);
+                let is_anything = |c: &Checker<'_>, t: TypeId| c.is_any(t) || t == TypeId::UNKNOWN;
+                let gives_number = is_anything(c, l) && is_anything(c, r)
+                    || !maybe_type_of_kind(c, l, Checker::is_bigint_like)
+                        && !maybe_type_of_kind(c, r, Checker::is_bigint_like);
+                if op == BinOp::Pow
+                    && !gives_number
+                    && c.is_assignable(l, TypeId::BIGINT)
+                    && c.is_assignable(r, TypeId::BIGINT)
+                    && language_version(c) < ScriptTarget::ES2016
+                {
+                    let start = c.start_inside_parentheses(file, e);
+                    out.push(Diagnostic { start, code: 2791 });
+                    c.note(start, c.end_inside_parentheses(file, e), 2791, Vec::new());
+                }
+                if !both_fit {
+                    return;
+                }
             }
             if is_assignment {
                 check_assignment_operator(c, file, left, ExprId::NONE, out);
@@ -782,6 +796,10 @@ fn check_binary_like(c: &mut Checker<'_>, file: FileId, e: ExprId, out: &mut Vec
             let Some((mut l, mut r)) = operand_types(c, file, left, right) else {
                 return;
             };
+            // Two numbers give a number.
+            if is_plain_number(c, l) && is_plain_number(c, r) {
+                return check_assignment_operator(c, file, left, ExprId::NONE, out);
+            }
             if !c.is_assignable(l, TypeId::STRING) && !c.is_assignable(r, TypeId::STRING) {
                 l = non_null_type(c, l);
                 r = non_null_type(c, r);
@@ -1140,13 +1158,12 @@ fn check_assignment_operator(
         && type_of_property_of_type(c, object, name)
             .is_some_and(|declared| c.contains_missing_type(declared));
     let at = c.start_of(file, target);
-    let end = error_end(c, file, ErrorNode::Written(target));
-    if !c.check_assignable_with_end(
+    if !c.check_assignable_with_end_from(
         file,
         source,
         wanted,
         at,
-        end,
+        |c| error_end(c, file, ErrorNode::Written(target)),
         value,
         if is_mismatch { 2412 } else { 2322 },
         out,
@@ -1210,19 +1227,21 @@ fn check_unary(
         return;
     }
     if !matches!(op, UnOp::Plus | UnOp::Minus | UnOp::BitNot) {
-        let there = non_null_type(c, ty);
-        let numeric = c.union(&[TypeId::NUMBER, TypeId::BIGINT]);
-        if c.is_assignable(there, numeric) {
+        let fits = is_plain_number(c, ty) || {
+            let there = non_null_type(c, ty);
+            let numeric = c.union(&[TypeId::NUMBER, TypeId::BIGINT]);
+            c.is_assignable(there, numeric)
+        };
+        if fits {
             check_reference_expression(c, file, operand, 2357, 2777, out);
         }
         return;
     }
     // A signed literal is a literal.
-    if !is_parenthesized(hir, operand)
-        && matches!(
-            (hir[operand].kind, op),
-            (ExprKind::Number(_), UnOp::Plus | UnOp::Minus) | (ExprKind::BigInt(_), UnOp::Minus)
-        )
+    if matches!(
+        (hir[operand].kind, op),
+        (ExprKind::Number(_), UnOp::Plus | UnOp::Minus) | (ExprKind::BigInt(_), UnOp::Minus)
+    ) && !is_parenthesized(hir, operand)
     {
         return;
     }
@@ -1583,13 +1602,12 @@ fn check_instanceof(
         }
     };
     let at = error_start(c, file, right);
-    let end = error_end(c, file, ErrorNode::Written(right));
-    c.check_assignable_with_end(
+    c.check_assignable_with_end_from(
         file,
         returned,
         TypeId::BOOLEAN,
         at,
-        end,
+        |c| error_end(c, file, ErrorNode::Written(right)),
         ExprId::NONE,
         2861,
         out,
@@ -2151,6 +2169,7 @@ fn check_iterated_type(
     c: &mut Checker<'_>,
     file: FileId,
     site: &IterationSite,
+    iterable_exists: bool,
     cached: &mut Vec<(TypeId, bool, bool)>,
     out: &mut Vec<Diagnostic>,
 ) {
@@ -2172,8 +2191,6 @@ fn check_iterated_type(
     {
         return;
     }
-    // `getGlobalIterableType() != emptyGenericType`
-    let iterable_exists = c.global_type_of_arity(known::Iterable, 3).is_some();
     if iterable_exists || usage.allows_async() {
         let mut report = IterationReport::new(file, at, node);
         let types = iteration_types_of_iterable(c, input, usage, iterable_exists, &mut report);
@@ -2195,13 +2212,12 @@ fn check_iterated_type(
             out.append(&mut report.said);
         }
         if let Some(next) = types.next {
-            let end = error_end(c, file, node);
-            c.check_assignable_with_end(
+            c.check_assignable_with_end_from(
                 file,
                 sent,
                 next,
                 at,
-                end,
+                |c| error_end(c, file, node),
                 ExprId::NONE,
                 usage.code_for_what_is_sent(),
                 out,
@@ -2332,10 +2348,18 @@ fn iteration_types_of_global_reference(
     names: [Atom; 4],
     is_async: bool,
 ) -> Iteration {
-    for name in names {
-        if let Some(&[yielded, returned, next]) = c.is_global_ref(t, name) {
-            return resolved_iteration_types(c, yielded, returned, next, is_async);
-        }
+    let TypeData::Ref { target, .. } = c.data(t) else {
+        return Iteration::default();
+    };
+    // The one name it can be a reference to a global type by. A class expression may have none.
+    let name = c.files().symbol(*target).name;
+    if name.is_none() {
+        return Iteration::default();
+    }
+    if names.contains(&name)
+        && let Some(&[yielded, returned, next]) = c.is_global_ref(t, name)
+    {
+        return resolved_iteration_types(c, yielded, returned, next, is_async);
     }
     const BUILTIN: [&[u8]; 4] = [
         b"ArrayIterator",
@@ -2345,18 +2369,17 @@ fn iteration_types_of_global_reference(
     ];
     const BUILTIN_ASYNC: [&[u8]; 1] = [b"ReadableStreamAsyncIterator"];
     let builtin: &[&[u8]] = if is_async { &BUILTIN_ASYNC } else { &BUILTIN };
-    for &name in builtin {
-        if let Some(name) = c.files().atoms.lookup(name)
-            && let Some(&[yielded]) = c.is_global_ref(t, name)
-        {
-            // `getBuiltinIteratorReturnType`
-            let returned = if c.p.files.options.strict_builtin_iterator_return {
-                TypeId::UNDEFINED
-            } else {
-                TypeId::ANY
-            };
-            return resolved_iteration_types(c, yielded, returned, TypeId::UNKNOWN, is_async);
-        }
+    let text = c.files().atoms.bytes(name);
+    if builtin.iter().any(|&one| one == text)
+        && let Some(&[yielded]) = c.is_global_ref(t, name)
+    {
+        // `getBuiltinIteratorReturnType`
+        let returned = if c.p.files.options.strict_builtin_iterator_return {
+            TypeId::UNDEFINED
+        } else {
+            TypeId::ANY
+        };
+        return resolved_iteration_types(c, yielded, returned, TypeId::UNKNOWN, is_async);
     }
     Iteration::default()
 }
@@ -2427,13 +2450,13 @@ fn iteration_types_of_iterable_slow(
     } else {
         known::sym_iterator
     };
-    let Some((prop, mapper)) = c.prop_of(apparent, name) else {
+    let Some((prop, mapper)) = c.prop_ref(apparent, name) else {
         return Iteration::default();
     };
     if prop.flags.contains(PropFlags::OPTIONAL) {
         return Iteration::default();
     }
-    let method = c.type_of_prop(&prop, mapper);
+    let method = c.type_of_prop(prop, mapper);
     if !c.is_known(method) {
         return report.give_up();
     }
@@ -2441,7 +2464,7 @@ fn iteration_types_of_iterable_slow(
         return Iteration::ANY;
     }
     // What the ways to call it without an argument give.
-    let mut iterators = Vec::new();
+    let mut iterators: SmallVec<[TypeId; 2]> = SmallVec::new();
     for sig in c.signatures(method, false) {
         let params = c.sig_params(sig);
         if c.min_argument_count(&params) == 0 {

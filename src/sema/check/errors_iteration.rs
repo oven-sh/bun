@@ -8,6 +8,7 @@
 use super::errors::Diagnostic;
 use super::*;
 use crate::bind::{FnOwner, MemberOwner, Parent, PatParent, ScopeKind};
+use smallvec::SmallVec;
 
 impl Checker<'_> {
     pub(super) fn check_iteration(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
@@ -16,10 +17,13 @@ impl Checker<'_> {
         // Without `Iterable` other things are said of what is gone through, in other words.
         let has_iterable = self.global_type_of_arity(known::Iterable, 3).is_some();
         for s in 0..hir.stmts.len() {
-            if matches!(bound.stmt_parent[s], Parent::None) {
+            let kind = hir.stmts[s].kind;
+            if !matches!(kind, StmtKind::ForOf { .. } | StmtKind::ForIn { .. })
+                || matches!(bound.stmt_parent[s], Parent::None)
+            {
                 continue;
             }
-            match hir.stmts[s].kind {
+            match kind {
                 StmtKind::ForOf {
                     left,
                     expr,
@@ -107,31 +111,47 @@ impl Checker<'_> {
                 _ => {}
             }
         }
-        for i in 0..hir.exprs.len() {
-            if matches!(bound.expr_parent[i], Parent::None) {
-                continue;
+        let index = self.exprs_by_kind(file);
+        let mut looked_at: SmallVec<[ExprId; 8]> = SmallVec::new();
+        // `[...x]`, `f(...x)`
+        for &e in index.of(ExprTag::Spread) {
+            if matches!(bound.expr_parent[e.idx()], Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Array(_) | ExprKind::Call(_) | ExprKind::New(_)))
+                && !self.is_assignment_target(file, e)
+            {
+                looked_at.push(e);
             }
-            let e = ExprId(i as u32);
-            match hir.exprs[i].kind {
-                // `[...x]`, `f(...x)`
-                ExprKind::Spread(inner)
-                    if !self.is_assignment_target(file, e)
-                        && matches!(bound.expr_parent[i], Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Array(_) | ExprKind::Call(_) | ExprKind::New(_))) =>
-                {
+        }
+        // One that is a default in a pattern is looked at with the pattern.
+        for &e in index.of(ExprTag::Assign) {
+            if let ExprKind::Assign {
+                op: None, target, ..
+            } = hir[e].kind
+                && !matches!(bound.expr_parent[e.idx()], Parent::None)
+                && self.is_assignment_pattern(file, target)
+                && !self.is_assignment_target(file, e)
+            {
+                looked_at.push(e);
+            }
+        }
+        if has_iterable {
+            for &e in index.of(ExprTag::Yield) {
+                if !matches!(bound.expr_parent[e.idx()], Parent::None) {
+                    looked_at.push(e);
+                }
+            }
+        }
+        // In the order they have in the file, whatever their kind.
+        looked_at.sort_unstable();
+        for e in looked_at {
+            match hir[e].kind {
+                ExprKind::Spread(inner) => {
                     let given = self.type_of_expr(file, inner);
                     if !self.is_uncertain(file, inner) && !self.is_nothing_but_nullish(given) {
                         let at = self.start_of_error_about(file, inner);
                         self.check_iterated(given, false, at, |c| c.error_end_of(file, inner), out);
                     }
                 }
-                // One that is a default in a pattern is looked at with the pattern.
-                ExprKind::Assign {
-                    op: None,
-                    target,
-                    value,
-                } if self.is_assignment_pattern(file, target)
-                    && !self.is_assignment_target(file, e) =>
-                {
+                ExprKind::Assign { target, value, .. } => {
                     let given = self.type_of_expr(file, value);
                     let given = if self.is_uncertain(file, value) {
                         TypeId::UNRESOLVED
@@ -140,9 +160,7 @@ impl Checker<'_> {
                     };
                     self.check_destructuring_assignment(file, target, given, out);
                 }
-                ExprKind::Yield { value, star } if has_iterable => {
-                    self.check_yield(file, e, value, star, out)
-                }
+                ExprKind::Yield { value, star } => self.check_yield(file, e, value, star, out),
                 _ => {}
             }
         }
@@ -178,7 +196,9 @@ impl Checker<'_> {
         let mut type_parents = None;
         for p in 0..hir.pats.len() {
             let pat = PatId(p as u32);
-            if matches!(bound.pat_parent[p], PatParent::None) {
+            if matches!(hir.pats[p].kind, PatKind::Ident(_) | PatKind::Missing)
+                || matches!(bound.pat_parent[p], PatParent::None)
+            {
                 continue;
             }
             if self.binds_no_name(file, pat) {
@@ -435,17 +455,17 @@ impl Checker<'_> {
     /// `getIterationTypesOfIterableSlow`: the method `name` of `ty` is there for sure, can be called with nothing, and what it gives
     /// is an iterator: it has a `next`, a `return` or a `throw` that can be called (`getIterationTypesOfIteratorSlow`).
     fn gives_an_iterator(&mut self, ty: TypeId, name: Atom) -> bool {
-        let Some((method, mapper)) = self.prop_of(ty, name) else {
+        let Some((method, mapper)) = self.prop_ref(ty, name) else {
             return false;
         };
         if method.flags.contains(PropFlags::OPTIONAL) {
             return false;
         }
-        let method = self.type_of_prop(&method, mapper);
+        let method = self.type_of_prop(method, mapper);
         if !self.is_known(method) || self.is_any(method) {
             return true;
         }
-        let mut iterators = Vec::new();
+        let mut iterators: SmallVec<[TypeId; 2]> = SmallVec::new();
         for sig in self.signatures(method, false) {
             let params = self.sig_params(sig);
             if self.min_argument_count(&params) == 0 {
@@ -463,26 +483,28 @@ impl Checker<'_> {
             return true;
         }
         // `getIterationTypesOfMethod`. Only `next` has to be there for sure.
-        let atoms = &self.files().atoms;
-        [known::next, atoms.intern(b"return"), atoms.intern(b"throw")]
-            .into_iter()
-            .any(|name| {
-                let Some((method, mapper)) = self.prop_of(iterator, name) else {
-                    return false;
-                };
-                if name == known::next && method.flags.contains(PropFlags::OPTIONAL) {
-                    return false;
-                }
-                let method = self.type_of_prop(&method, mapper);
-                let method = if name == known::next {
-                    method
-                } else {
-                    self.non_nullable(method)
-                };
-                !self.is_known(method)
-                    || self.is_any(method)
-                    || !self.signatures(method, false).is_empty()
-            })
+        (0..3).any(|method| {
+            let name = match method {
+                0 => known::next,
+                1 => self.files().atoms.intern(b"return"),
+                _ => self.files().atoms.intern(b"throw"),
+            };
+            let Some((method, mapper)) = self.prop_ref(iterator, name) else {
+                return false;
+            };
+            if name == known::next && method.flags.contains(PropFlags::OPTIONAL) {
+                return false;
+            }
+            let method = self.type_of_prop(method, mapper);
+            let method = if name == known::next {
+                method
+            } else {
+                self.non_nullable(method)
+            };
+            !self.is_known(method)
+                || self.is_any(method)
+                || !self.signatures(method, false).is_empty()
+        })
     }
 
     /// `checkGeneratorInstantiationAssignabilityToReturnType`: the generator that yields, returns and takes what `declared`, which a
@@ -956,7 +978,8 @@ impl Checker<'_> {
         if self.is_generic(object) || self.is_generic(key) {
             return TypeId::UNRESOLVED;
         }
-        let (mut types, mut is_missing) = (Vec::new(), false);
+        let mut types: SmallVec<[TypeId; 4]> = SmallVec::new();
+        let mut is_missing = false;
         for &part in self.parts(key) {
             // `getPropertyTypeForIndexType`. Any index signature takes `any`; without one it is no index type.
             let found = if part == TypeId::ANY

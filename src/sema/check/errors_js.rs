@@ -7,6 +7,7 @@
 use super::errors::Diagnostic;
 use super::*;
 use crate::bind::{FnOwner, MemberOwner};
+use smallvec::SmallVec;
 
 /// `plainJSErrors` (compiler/program.go): what is said of JavaScript nobody asked to have checked. In order.
 pub(super) const PLAIN_JS_ERRORS: [u32; 91] = [
@@ -195,7 +196,7 @@ fn typescript_modifier(word: &[u8]) -> Option<Flags> {
 
 /// The words before `at` that go with what is declared there, the first one first: where each is, and whether only TypeScript has
 /// it. `at` is the name of a member, or the keyword of a declaration, or anywhere among its modifiers.
-fn modifiers_around(text: &[u8], at: u32, flags: Flags) -> Vec<(u32, bool)> {
+fn modifiers_around(text: &[u8], at: u32, flags: Flags) -> SmallVec<[(u32, bool); 4]> {
     let is_modifier = |word: &[u8]| match typescript_modifier(word) {
         Some(flag) => flags.contains(flag).then_some(true),
         None => matches!(
@@ -204,7 +205,7 @@ fn modifiers_around(text: &[u8], at: u32, flags: Flags) -> Vec<(u32, bool)> {
         )
         .then_some(false),
     };
-    let mut found = Vec::new();
+    let mut found: SmallVec<[(u32, bool); 4]> = SmallVec::new();
     let mut i = at as usize;
     loop {
         let mut end = skip_trivia_back(text, i);

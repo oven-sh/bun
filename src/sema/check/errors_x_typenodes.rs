@@ -189,6 +189,44 @@ fn trailing_comma_of_type_arguments(hir: &hir::File, args: IdList<TypeNodeId>) -
     hir.text[..end].ends_with(b",").then(|| end as u32 - 1)
 }
 
+/// What a text has of lists between `<` and `>` that `checkGrammarTypeArguments` objects to. A `<` or `>` that is an operator, or is
+/// in a comment or a string, counts too: this only tells where there is nothing to look for.
+#[derive(Copy, Clone, Default)]
+struct OddLists {
+    /// Some `<` is followed by `>`.
+    has_empty: bool,
+    /// Some `>` follows `,` or `<`.
+    has_early_end: bool,
+}
+
+impl OddLists {
+    fn written_in(text: &[u8]) -> OddLists {
+        const CHUNK: usize = 64;
+        let mut lists = OddLists::default();
+        for (n, chunk) in text.chunks(CHUNK).enumerate() {
+            if lists.has_empty && lists.has_early_end {
+                break;
+            }
+            // `<` and `>` differ in one bit.
+            if !chunk.iter().fold(false, |any, &c| any | (c | 2 == b'>')) {
+                continue;
+            }
+            for (i, &c) in chunk.iter().enumerate() {
+                let at = n * CHUNK + i;
+                if c == b'<' && !lists.has_empty {
+                    lists.has_empty = text.get(skip_trivia(text, at + 1)) == Some(&b'>');
+                } else if c == b'>' && !lists.has_early_end {
+                    lists.has_early_end = matches!(
+                        text[..end_of_previous_token(text, at)].last(),
+                        Some(b',' | b'<')
+                    );
+                }
+            }
+        }
+        lists
+    }
+}
+
 /// Where the type `node`, which is all of an element or an argument, starts as it is written: parentheses around a type are not
 /// kept, nor is the `new` of a constructor type.
 fn start_of_type(hir: &hir::File, node: TypeNodeId) -> u32 {
@@ -323,6 +361,35 @@ fn implements_in_interface_head(text: &[u8], name_pos: usize) -> Option<usize> {
 }
 
 // ───────────────────────────── what is written ─────────────────────────────
+
+const TUPLE: u32 = 1 << 0;
+const TEMPLATE: u32 = 1 << 1;
+const INTERSECTION: u32 = 1 << 2;
+const INFER: u32 = 1 << 3;
+const READONLY: u32 = 1 << 4;
+const UNIQUE_SYMBOL: u32 = 1 << 5;
+const THIS: u32 = 1 << 6;
+const INDEXED_ACCESS: u32 = 1 << 7;
+const TYPEOF: u32 = 1 << 8;
+
+/// Which of these kinds of types the file has any of.
+fn kinds_of_types_written(hir: &hir::File) -> u32 {
+    hir.types.iter().fold(0, |kinds, node| {
+        kinds
+            | match node.kind {
+                TypeNodeKind::Tuple(_) => TUPLE,
+                TypeNodeKind::Template { .. } => TEMPLATE,
+                TypeNodeKind::Intersection(_) => INTERSECTION,
+                TypeNodeKind::Infer(_) => INFER,
+                TypeNodeKind::Readonly(_) => READONLY,
+                TypeNodeKind::UniqueSymbol => UNIQUE_SYMBOL,
+                TypeNodeKind::Keyword(Keyword::This) => THIS,
+                TypeNodeKind::IndexedAccess { .. } => INDEXED_ACCESS,
+                TypeNodeKind::Typeof { .. } => TYPEOF,
+                _ => 0,
+            }
+    })
+}
 
 /// Whether the element starts with `...`. `name: ...T` does not, whatever else is wrong with it.
 fn is_rest_element(hir: &hir::File, elem: &TupleElem) -> bool {
@@ -569,34 +636,60 @@ impl Checker<'_> {
             self.check_keys_of_index_signatures(file, out);
             return;
         }
+        let exprs = self.exprs_by_kind(file);
+        let lists = if has_parse_diagnostics(hir) {
+            OddLists::default()
+        } else {
+            OddLists::written_in(&hir.text)
+        };
         self.check_private_names_of_both_kinds(file, out);
         self.check_private_names_in_signatures(file, out);
         self.check_members_next_to_a_mapping(file, out);
-        self.check_type_argument_lists_of_calls(file, out);
-        self.check_commas_of_import_calls(file, out);
-        self.check_instantiation_expressions(file, out);
-        self.check_instantiations_after_instanceof(file, out);
+        self.check_type_argument_lists_of_calls(file, &exprs, lists, out);
+        self.check_commas_of_import_calls(file, &exprs, out);
+        self.check_instantiation_expressions(file, &exprs, out);
+        self.check_instantiations_after_instanceof(file, &exprs, out);
         self.check_clauses_of_interfaces(file, out);
-        self.check_keys_of_element_accesses(file, out);
-        self.check_size_of_array_literals(file, out);
-        self.check_subtype_reduction_of_array_literals(file, out);
-        self.check_contextual_property_cross_products(file, out);
+        self.check_keys_of_element_accesses(file, &exprs, out);
+        self.check_size_of_array_literals(file, &exprs, out);
+        self.check_subtype_reduction_of_array_literals(file, &exprs, out);
+        self.check_contextual_property_cross_products(file, &exprs, out);
         self.check_excessive_depth(file, out);
         if hir.types.is_empty() {
             return;
         }
-        let parents = Self::type_node_parents(hir, bound);
-        self.check_tuple_type_nodes(file, &parents, out);
+        let kinds = kinds_of_types_written(hir);
+        let has = |any_of: u32| kinds & any_of != 0;
+        let parents = if has(TUPLE | INFER | THIS | INDEXED_ACCESS) || !hir.aliases.is_empty() {
+            Self::type_node_parents(hir, bound)
+        } else {
+            Vec::new()
+        };
+        if has(TUPLE) {
+            self.check_tuple_type_nodes(file, &parents, out);
+        }
         self.check_instantiated_tuple_sizes(file, out);
-        self.check_size_of_cross_products(file, out);
-        self.check_infer_type_nodes(file, &parents, out);
-        self.check_type_operator_nodes(file, out);
-        self.check_type_argument_lists_of_types(file, out);
-        self.check_this_type_nodes(file, &parents, out);
+        if has(TEMPLATE | TUPLE | INTERSECTION) {
+            self.check_size_of_cross_products(file, out);
+        }
+        if has(INFER) {
+            self.check_infer_type_nodes(file, &parents, out);
+        }
+        if has(READONLY | UNIQUE_SYMBOL) {
+            self.check_type_operator_nodes(file, out);
+        }
+        self.check_type_argument_lists_of_types(file, lists, out);
+        if has(THIS) {
+            self.check_this_type_nodes(file, &parents, out);
+        }
         self.check_intrinsic_aliases(file, out);
         self.check_keys_of_index_signatures(file, out);
-        self.check_indexed_access_type_nodes(file, &parents, out);
-        self.check_instantiated_type_queries(file, out);
+        if has(INDEXED_ACCESS) {
+            self.check_indexed_access_type_nodes(file, &parents, out);
+        }
+        if has(TYPEOF) {
+            self.check_instantiated_type_queries(file, out);
+        }
         self.check_circular_aliases_and_arguments(file, &parents, out);
     }
 
@@ -776,9 +869,14 @@ impl Checker<'_> {
     }
 
     /// The same of an array literal that comes to a tuple: 2800.
-    fn check_size_of_array_literals(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_size_of_array_literals(
+        &mut self,
+        file: FileId,
+        exprs: &ExprsByKind,
+        out: &mut Vec<Diagnostic>,
+    ) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        for i in 0..hir.exprs.len() {
+        for i in exprs.of(ExprTag::Array).iter().map(|e| e.idx()) {
             let ExprKind::Array(items) = hir.exprs[i].kind else {
                 continue;
             };
@@ -823,13 +921,12 @@ impl Checker<'_> {
     fn check_subtype_reduction_of_array_literals(
         &mut self,
         file: FileId,
+        exprs: &ExprsByKind,
         out: &mut Vec<Diagnostic>,
     ) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        for i in 0..hir.exprs.len() {
-            if !matches!(hir.exprs[i].kind, ExprKind::Array(_))
-                || matches!(bound.expr_parent[i], Parent::None)
-            {
+        for i in exprs.of(ExprTag::Array).iter().map(|e| e.idx()) {
+            if matches!(bound.expr_parent[i], Parent::None) {
                 continue;
             }
             let e = ExprId(i as u32);
@@ -954,12 +1051,13 @@ impl Checker<'_> {
     fn check_contextual_property_cross_products(
         &mut self,
         file: FileId,
+        exprs: &ExprsByKind,
         out: &mut Vec<Diagnostic>,
     ) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         // (start of the object literal, contextual intersection, property name, start and end of the error)
         let mut refused: Vec<(u32, TypeId, Atom, u32, u32)> = Vec::new();
-        for i in 0..hir.exprs.len() {
+        for i in exprs.of(ExprTag::Object).iter().map(|e| e.idx()) {
             let ExprKind::Object(props) = hir.exprs[i].kind else {
                 continue;
             };
@@ -1642,13 +1740,25 @@ impl Checker<'_> {
     // ───────────────────────────── lists between brackets ─────────────────────────────
 
     /// `checkGrammarTypeArguments`, of calls, `new`, instantiation expressions and JSX tags: 1009 for `f<T,>()`, 1099 for `f<>()`.
-    fn check_type_argument_lists_of_calls(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_type_argument_lists_of_calls(
+        &mut self,
+        file: FileId,
+        exprs: &ExprsByKind,
+        lists: OddLists,
+        out: &mut Vec<Diagnostic>,
+    ) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        if has_parse_diagnostics(hir) {
+        if has_parse_diagnostics(hir) || !lists.has_empty && !lists.has_early_end {
             return;
         }
         let text: &[u8] = &hir.text;
-        for i in 0..hir.exprs.len() {
+        let none: &[ExprId] = &[];
+        let calls = if lists.has_early_end {
+            [exprs.of(ExprTag::Call), exprs.of(ExprTag::New)]
+        } else {
+            [none, none]
+        };
+        for i in calls.into_iter().flatten().map(|e| e.idx()) {
             let (ExprKind::Call(c) | ExprKind::New(c)) = hir.exprs[i].kind else {
                 continue;
             };
@@ -1689,17 +1799,25 @@ impl Checker<'_> {
             text.get(open) == Some(&b'<') && text.get(skip_trivia(text, open + 1)) == Some(&b'>')
         };
         // `checkGrammarExpressionWithTypeArguments`: `f<>` that is not called. An empty list is not kept, so it is read after the name.
-        for (i, e) in hir.exprs.iter().enumerate() {
+        let names = if lists.has_empty {
+            [exprs.of(ExprTag::Ident), exprs.of(ExprTag::Dot)]
+        } else {
+            [none, none]
+        };
+        for i in names.into_iter().flatten().map(|e| e.idx()) {
+            let e = &hir.exprs[i];
             let (name, name_pos) = match e.kind {
                 ExprKind::Ident(name) => (name, e.pos as usize),
                 ExprKind::Dot { name, name_pos, .. } => (name, name_pos as usize),
                 _ => continue,
             };
+            if matches!(bound.expr_parent[i], Parent::None) {
+                continue;
+            }
             let name = self.files().atoms.bytes(name);
-            if matches!(bound.expr_parent[i], Parent::None)
-                || !text
-                    .get(name_pos..)
-                    .is_some_and(|rest| rest.starts_with(name))
+            if !text
+                .get(name_pos..)
+                .is_some_and(|rest| rest.starts_with(name))
             {
                 continue;
             }
@@ -1714,7 +1832,8 @@ impl Checker<'_> {
             }
         }
         // `checkGrammarJsxElement`: the list after the name of an opening tag.
-        for (i, e) in hir.exprs.iter().enumerate() {
+        for i in exprs.of(ExprTag::Jsx).iter().map(|e| e.idx()) {
+            let e = &hir.exprs[i];
             let ExprKind::Jsx(j) = e.kind else { continue };
             if hir[j].tag.is_none() || matches!(bound.expr_parent[i], Parent::None) {
                 continue;
@@ -1748,9 +1867,14 @@ impl Checker<'_> {
     }
 
     /// The same of references to types and of type queries: 1009 for `A<T,>`, 1099 for `A.B<>`.
-    fn check_type_argument_lists_of_types(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_type_argument_lists_of_types(
+        &mut self,
+        file: FileId,
+        lists: OddLists,
+        out: &mut Vec<Diagnostic>,
+    ) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        if has_parse_diagnostics(hir) {
+        if has_parse_diagnostics(hir) || !lists.has_empty && !lists.has_early_end {
             return;
         }
         let text: &[u8] = &hir.text;
@@ -1766,12 +1890,17 @@ impl Checker<'_> {
                 continue;
             }
             if !args.is_empty() {
-                if let Some(comma) = trailing_comma_of_type_arguments(hir, args) {
+                if lists.has_early_end
+                    && let Some(comma) = trailing_comma_of_type_arguments(hir, args)
+                {
                     out.push(Diagnostic {
                         start: comma,
                         code: 1009,
                     });
                 }
+                continue;
+            }
+            if !lists.has_empty {
                 continue;
             }
             // Past the name. The list is on the same line, or it is not a list.
@@ -1803,7 +1932,12 @@ impl Checker<'_> {
     }
 
     /// `checkGrammarImportCallExpression`, as far as `import(a,)` goes: 1009.
-    fn check_commas_of_import_calls(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_commas_of_import_calls(
+        &mut self,
+        file: FileId,
+        exprs: &ExprsByKind,
+        out: &mut Vec<Diagnostic>,
+    ) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let kind = self.p.files.options.module;
         let is_verbatim = self.p.files.options.verbatim_module_syntax;
@@ -1820,13 +1954,11 @@ impl Checker<'_> {
             return;
         }
         let text: &[u8] = &hir.text;
-        for (i, e) in hir.exprs.iter().enumerate() {
-            if !matches!(e.kind, ExprKind::ImportCall(_))
-                || matches!(bound.expr_parent[i], Parent::None)
-            {
+        for &e in exprs.of(ExprTag::ImportCall) {
+            if matches!(bound.expr_parent[e.idx()], Parent::None) {
                 continue;
             }
-            let open = skip_trivia(text, e.pos as usize + b"import".len());
+            let open = skip_trivia(text, hir[e].pos as usize + b"import".len());
             if text.get(open) != Some(&b'(') {
                 continue;
             }
@@ -1846,10 +1978,15 @@ impl Checker<'_> {
     // ───────────────────────────── instantiation expressions ─────────────────────────────
 
     /// `checkExpressionWithTypeArguments`, of `f<T>` that is not called: 1009, 2848 for `a instanceof B<T>`, 2635.
-    fn check_instantiation_expressions(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_instantiation_expressions(
+        &mut self,
+        file: FileId,
+        exprs: &ExprsByKind,
+        out: &mut Vec<Diagnostic>,
+    ) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let is_silent = has_parse_diagnostics(hir);
-        for i in 0..hir.exprs.len() {
+        for i in exprs.of(ExprTag::Instantiation).iter().map(|e| e.idx()) {
             let ExprKind::Instantiation { expr, type_args } = hir.exprs[i].kind else {
                 continue;
             };
@@ -1880,10 +2017,15 @@ impl Checker<'_> {
     }
 
     /// The same where the type arguments were not kept, being none or given up on: 2848. They are looked for after the name.
-    fn check_instantiations_after_instanceof(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_instantiations_after_instanceof(
+        &mut self,
+        file: FileId,
+        exprs: &ExprsByKind,
+        out: &mut Vec<Diagnostic>,
+    ) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let text: &[u8] = &hir.text;
-        for i in 0..hir.exprs.len() {
+        for i in exprs.of(ExprTag::Binary).iter().map(|e| e.idx()) {
             let ExprKind::Binary {
                 op: BinOp::Instanceof,
                 right,
@@ -2319,9 +2461,14 @@ impl Checker<'_> {
 
     /// `checkElementAccessExpression`, for what it says of the key: 2514; 2536 4105 2542 where the type of the access is a deferred
     /// `T[K]`; 2862 where the object type is generic and the access is written to.
-    fn check_keys_of_element_accesses(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_keys_of_element_accesses(
+        &mut self,
+        file: FileId,
+        exprs: &ExprsByKind,
+        out: &mut Vec<Diagnostic>,
+    ) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        for i in 0..hir.exprs.len() {
+        for i in exprs.of(ExprTag::Index).iter().map(|e| e.idx()) {
             let ExprKind::Index { obj, index, chain } = hir.exprs[i].kind else {
                 continue;
             };
@@ -2871,18 +3018,23 @@ impl Checker<'_> {
 
     /// What the type alias `sym` is declared as.
     fn declaration_of_alias(&self, sym: Sym) -> Option<Written> {
-        self.files()
-            .decls(sym)
-            .into_iter()
-            .find_map(|(file, decl)| match decl {
-                Decl::Alias(a) if self.hir(file)[a].ty.is_some() => Some(Written {
-                    file,
-                    node: self.hir(file)[a].ty,
-                    is_aliased: true,
-                    by_alias: true,
-                }),
-                _ => None,
-            })
+        let files = self.files();
+        files.parts(sym).iter().find_map(|&part| {
+            let (file, hir) = (part.file, self.hir(part.file));
+            files
+                .symbol(part)
+                .decls
+                .iter()
+                .find_map(|&decl| match decl {
+                    Decl::Alias(a) if hir[a].ty.is_some() => Some(Written {
+                        file,
+                        node: hir[a].ty,
+                        is_aliased: true,
+                        by_alias: true,
+                    }),
+                    _ => None,
+                })
+        })
     }
 
     /// What the reference to a type at `node` names.
@@ -2906,11 +3058,14 @@ impl Checker<'_> {
         // `resolveNameHelper`: an import is among the locals and an exported declaration of the same name is not, so the import is
         // found first if what it stands for is a type.
         let is_import_beside_exported_type = files.flags(sym).contains(SymFlags::ALIAS)
-            && files.decls(sym).iter().all(|&(f, decl)| match decl {
-                Decl::Alias(a) => self.hir(f)[a].flags.contains(Flags::EXPORT),
-                Decl::Interface(i) => self.hir(f)[i].flags.contains(Flags::EXPORT),
-                Decl::ImportDefault(_) | Decl::ImportNamespace(_) | Decl::ImportSpec(_) => true,
-                _ => false,
+            && files.parts(sym).iter().all(|&part| {
+                let hir = self.hir(part.file);
+                files.symbol(part).decls.iter().all(|&decl| match decl {
+                    Decl::Alias(a) => hir[a].flags.contains(Flags::EXPORT),
+                    Decl::Interface(i) => hir[i].flags.contains(Flags::EXPORT),
+                    Decl::ImportDefault(_) | Decl::ImportNamespace(_) | Decl::ImportSpec(_) => true,
+                    _ => false,
+                })
             });
         if is_import_beside_exported_type
             && let Some(target) = files.resolve_alias_if_needed(sym)

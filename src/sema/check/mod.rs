@@ -342,6 +342,7 @@ impl Program {
             reverse_mapped_target_stack: Vec::new(),
             reverse_expanding: 0,
             discriminants: FxHashMap::default(),
+            flow_memo: Default::default(),
             skip_binding_patterns: 0,
             optional_member: false,
             candidate_holes: Vec::new(),
@@ -563,6 +564,8 @@ pub struct Checker<'p> {
     reverse_mapped_target_stack: Vec<TypeId>,
     reverse_expanding: u8,
     discriminants: FxHashMap<(TypeId, Atom), bool>,
+    /// What narrowing has worked out once and for all.
+    flow_memo: flow::FlowMemo,
     trace_cycles: bool,
     /// Say which property or signature a relation between two object types fails on.
     pub(super) trace_relations: bool,

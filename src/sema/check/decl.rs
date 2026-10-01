@@ -3,6 +3,7 @@
 use super::errors_x_enums_names::{Location, is_declared_before_use};
 use super::*;
 use crate::bind::{Decl, PatParent, ScopeId, ScopeKind};
+use smallvec::SmallVec;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct Predicate {
@@ -62,6 +63,20 @@ fn is_variadic_tuple_element(hir: &hir::File, elem: &TupleElem) -> bool {
     elem.rest && elem.ty.is_some() && array_element_type_node(hir, elem.ty).is_none()
 }
 
+/// Every declaration of `sym`, which is canonical: what `Files::decls` lists, one at a time.
+pub(super) fn declarations_of(
+    files: &Files,
+    sym: Sym,
+) -> impl Iterator<Item = (FileId, Decl)> + '_ {
+    files.parts(sym).into_iter().flat_map(move |part| {
+        files
+            .symbol(part)
+            .decls
+            .iter()
+            .map(move |&decl| (part.file, decl))
+    })
+}
+
 impl<'p> Checker<'p> {
     // ───────────────────────────── type parameters in scope ─────────────────────────────
 
@@ -70,7 +85,19 @@ impl<'p> Checker<'p> {
         if scope.is_none() {
             return Arc::from([]);
         }
-        if let Some(known) = self.p.outer_type_params.get(&(file, scope)) {
+        self.kept_outer_type_params(file, scope).clone()
+    }
+
+    /// The same, for whoever only looks at them.
+    pub(super) fn type_params_in_scope(&mut self, file: FileId, scope: ScopeId) -> &'p [TypeId] {
+        if scope.is_none() {
+            return &[];
+        }
+        self.kept_outer_type_params(file, scope)
+    }
+
+    fn kept_outer_type_params(&mut self, file: FileId, scope: ScopeId) -> &'p Arc<[TypeId]> {
+        if let Some(known) = self.p.outer_type_params.get_ref(&(file, scope)) {
             return known;
         }
         let bound = self.bound(file);
@@ -114,12 +141,12 @@ impl<'p> Checker<'p> {
             }
             all.into()
         };
-        self.p.outer_type_params.insert((file, scope), result)
+        self.p.outer_type_params.insert_ref((file, scope), result)
     }
 
     /// Every type parameter in scope, standing for itself.
     pub fn identity_mapper(&mut self, file: FileId, scope: ScopeId) -> MapperId {
-        let params = self.outer_type_params(file, scope);
+        let params = self.type_params_in_scope(file, scope);
         if params.is_empty() {
             return MapperId::IDENTITY;
         }
@@ -141,11 +168,11 @@ impl<'p> Checker<'p> {
         if mentioned.everything {
             return self.identity_mapper(file, scope);
         }
-        let params = self.outer_type_params(file, scope);
+        let params = self.type_params_in_scope(file, scope);
         // The outermost come first, so those that count for where they are declared are the first so many.
         let mut taken = self.params_beyond_a_block(file, scope, pos);
         for &(of, declared_in) in &mentioned.values_in {
-            let seen = self.outer_type_params(of, declared_in).len();
+            let seen = self.type_params_in_scope(of, declared_in).len();
             // A declaration of the method in another file: what is seen from there is not what is seen from `scope`.
             if of != file && seen > 0 {
                 return self.identity_mapper(file, scope);
@@ -182,7 +209,7 @@ impl<'p> Checker<'p> {
         while scope.is_some() {
             let s = &bound.scopes[scope.idx()];
             match s.kind {
-                ScopeKind::Block => return self.outer_type_params(file, scope).len(),
+                ScopeKind::Block => return self.type_params_in_scope(file, scope).len(),
                 ScopeKind::Fn(f) => {
                     // The body of a function shares its scope with the signature: told apart by where it starts.
                     if let FnBody::Block(stmts) = hir[f].body
@@ -191,7 +218,7 @@ impl<'p> Checker<'p> {
                             .next()
                             .is_some_and(|first| pos >= hir[first].pos)
                     {
-                        return self.outer_type_params(file, scope).len();
+                        return self.type_params_in_scope(file, scope).len();
                     }
                     // The scope that the name of a function expression has to itself is no block.
                     if hir[f].kind == FnKind::Expr && hir[f].name.is_some() {
@@ -237,7 +264,7 @@ impl<'p> Checker<'p> {
         scope: ScopeId,
         node: TypeNodeId,
     ) -> MapperId {
-        if self.outer_type_params(file, scope).is_empty() {
+        if self.type_params_in_scope(file, scope).is_empty() {
             return MapperId::IDENTITY;
         }
         // `getObjectTypeInstantiation`, `getTypeFromConditionalTypeNode`: what a generic alias stands for depends on all of them,
@@ -257,7 +284,7 @@ impl<'p> Checker<'p> {
         scope: ScopeId,
         decls: &[(FileId, FnId)],
     ) -> MapperId {
-        if self.outer_type_params(file, scope).is_empty() {
+        if self.type_params_in_scope(file, scope).is_empty() {
             return MapperId::IDENTITY;
         }
         let mut mentioned = Mentioned::default();
@@ -436,11 +463,9 @@ impl<'p> Checker<'p> {
     }
 
     /// The type parameter lists of the declarations of a class, an interface or an alias, those that have the name.
-    fn type_param_lists(&self, sym: Sym) -> Vec<(FileId, Span<TypeParamId>)> {
+    fn type_param_lists(&self, sym: Sym) -> SmallVec<[(FileId, Span<TypeParamId>); 16]> {
         let flags = self.type_flags_of_symbol(sym);
-        self.files()
-            .decls(sym)
-            .into_iter()
+        declarations_of(self.files(), sym)
             .filter_map(|(file, decl)| {
                 let hir = self.hir(file);
                 match decl {
@@ -462,6 +487,11 @@ impl<'p> Checker<'p> {
     /// `getLocalTypeParametersOfClassOrInterfaceOrTypeAlias`: the type parameters of all the declarations of a class, an interface
     /// or an alias, in the order they are first met. Those of one name are one.
     pub fn type_params_of_symbol(&mut self, sym: Sym) -> Arc<[TypeId]> {
+        Arc::from(&self.local_type_params_of_symbol(sym)[..])
+    }
+
+    /// The same, for whoever only looks at them.
+    pub(super) fn local_type_params_of_symbol(&mut self, sym: Sym) -> SmallVec<[TypeId; 4]> {
         if let Some((file, params)) = self.only_type_param_list(sym) {
             return params.iter().map(|tp| self.type_param(file, tp)).collect();
         }
@@ -484,9 +514,9 @@ impl<'p> Checker<'p> {
             }
         }
         let Some((best_file, best, _)) = best else {
-            return Arc::from([]);
+            return SmallVec::new();
         };
-        let mut all: Vec<(Atom, TypeId)> = Vec::with_capacity(best.len());
+        let mut all: SmallVec<[(Atom, TypeId); 4]> = SmallVec::new();
         for &(file, params) in &lists {
             for tp in params.iter() {
                 let name = self.hir(file)[tp].name;
@@ -578,6 +608,11 @@ impl<'p> Checker<'p> {
 
     /// The type parameters that the `args` of a `TypeData::Ref` to `sym` go with: those around the declaration, then its own.
     pub fn all_type_params_of_symbol(&mut self, sym: Sym) -> Arc<[TypeId]> {
+        Arc::from(&self.listed_type_params_of_symbol(sym)[..])
+    }
+
+    /// The same, for whoever only looks at them.
+    pub(super) fn listed_type_params_of_symbol(&mut self, sym: Sym) -> List<'p, TypeId> {
         if self
             .files()
             .flags(sym)
@@ -586,10 +621,10 @@ impl<'p> Checker<'p> {
             // The declared type has them for arguments.
             let declared = self.declared_type(sym);
             if let TypeData::Ref { args, .. } = self.data(declared) {
-                return Arc::from(&args[..]);
+                return List::Kept(&args[..]);
             }
         }
-        self.type_params_of_symbol(sym)
+        List::Own(self.local_type_params_of_symbol(sym).into_vec())
     }
 
     /// How many type arguments a reference to `sym` has to have at least, and can have at most.
@@ -606,7 +641,7 @@ impl<'p> Checker<'p> {
         }
         let lists = self.type_param_lists(sym);
         // `getMinTypeArgumentCount`, `hasTypeParameterDefault`: a parameter has a default if any of its declarations gives it one.
-        let mut all: Vec<(Atom, bool)> = Vec::new();
+        let mut all: SmallVec<[(Atom, bool); 4]> = SmallVec::new();
         for (file, params) in lists {
             let hir = self.hir(file);
             for tp in params.iter() {
@@ -635,7 +670,7 @@ impl<'p> Checker<'p> {
         if params.is_empty() {
             return MapperId::IDENTITY;
         }
-        let canonical = self.type_params_of_symbol(sym);
+        let canonical = self.local_type_params_of_symbol(sym);
         let mut pairs: Vec<(TypeId, TypeId)> = Vec::new();
         for tp in params.iter() {
             let own = self.type_param(file, tp);
@@ -740,15 +775,20 @@ impl<'p> Checker<'p> {
         {
             return false;
         }
-        let (mut seen, mut todo) = (Vec::new(), vec![constraint]);
+        let mut seen: SmallVec<[TypeId; 4]> = SmallVec::new();
+        let mut todo: SmallVec<[TypeId; 8]> = SmallVec::new();
+        todo.push(constraint);
         while let Some(t) = todo.pop() {
             if t == param {
                 return true;
             }
             match self.data(t) {
-                TypeData::Union(parts) | TypeData::Intersection(parts) => {
-                    todo.extend(parts.iter().copied())
-                }
+                TypeData::Union(parts) | TypeData::Intersection(parts) => todo.extend(
+                    parts
+                        .iter()
+                        .copied()
+                        .filter(|&part| self.has_type_variables(part)),
+                ),
                 TypeData::TypeParam(..) if !seen.contains(&t) => {
                     seen.push(t);
                     // What the others extend is only looked at to see where it leads.
@@ -805,7 +845,7 @@ impl<'p> Checker<'p> {
             return (file, tp, None);
         }
         let name = hir[tp].name;
-        for (of, decl) in self.files().decls(self.files().sym(file, owner)) {
+        for (of, decl) in declarations_of(self.files(), self.files().sym(file, owner)) {
             let other = self.hir(of);
             let theirs = match decl {
                 Decl::Class(c) => other[c].type_params,
@@ -857,12 +897,22 @@ impl<'p> Checker<'p> {
             Some(ScopeKind::Fn(f)) => hir[f].type_params,
             _ => Span::new(tp.0, 1),
         };
-        let mut pairs = self.p.types.mapping(around).to_vec();
-        for t in list.iter() {
-            let declared = self.type_param(file, t);
-            pairs.retain(|p| p.0 != declared);
-            pairs.push((declared, self.cloned_type_param(file, t, around)));
-        }
+        let fresh: SmallVec<[(TypeId, TypeId); 4]> = list
+            .iter()
+            .map(|t| {
+                let declared = self.type_param(file, t);
+                (declared, self.cloned_type_param(file, t, around))
+            })
+            .collect();
+        let mapping = self.p.types.mapping(around);
+        let mut pairs = Vec::with_capacity(mapping.len() + fresh.len());
+        pairs.extend(
+            mapping
+                .iter()
+                .copied()
+                .filter(|p| !fresh.iter().any(|f| f.0 == p.0)),
+        );
+        pairs.extend_from_slice(&fresh);
         self.p.types.mapper(pairs)
     }
 
@@ -886,7 +936,7 @@ impl<'p> Checker<'p> {
                 no,
             } => self.any_may_be_error_type(file, &[check, extends, yes, no], depth + 1),
             TypeNodeKind::Ref { name, args } => {
-                let names: Vec<Atom> = hir.ids(name).collect();
+                let names: SmallVec<[Atom; 4]> = hir.ids(name).collect();
                 let scope = self.bound(file).type_scope[node.idx()];
                 let Some(found) = self
                     .files()
@@ -913,13 +963,10 @@ impl<'p> Checker<'p> {
                     return true;
                 }
                 let Some((of, alias)) =
-                    self.files()
-                        .decls(sym)
-                        .into_iter()
-                        .find_map(|(f, d)| match d {
-                            Decl::Alias(a) => Some((f, self.hir(f)[a])),
-                            _ => None,
-                        })
+                    declarations_of(self.files(), sym).find_map(|(f, d)| match d {
+                        Decl::Alias(a) => Some((f, self.hir(f)[a])),
+                        _ => None,
+                    })
                 else {
                     return true;
                 };
@@ -950,6 +997,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `getInferredTypeParameterConstraint`: what follows for `infer T` from where it is written.
+    #[inline(never)]
     fn inferred_type_param_constraint(
         &mut self,
         param: TypeId,
@@ -991,7 +1039,7 @@ impl<'p> Checker<'p> {
                     let TypeNodeKind::Ref { name, args } = hir[node].kind else {
                         continue;
                     };
-                    let names: Vec<Atom> = hir.ids(name).collect();
+                    let names: SmallVec<[Atom; 4]> = hir.ids(name).collect();
                     let Some(sym) = self.files().resolve_entity(
                         file,
                         bound.type_scope[node.idx()],
@@ -1008,7 +1056,7 @@ impl<'p> Checker<'p> {
                     if args.len() < least || args.len() > most {
                         continue;
                     }
-                    let params = self.type_params_of_symbol(sym);
+                    let params = self.local_type_params_of_symbol(sym);
                     let Some(&target) = params.get(index as usize) else {
                         continue;
                     };
@@ -1133,7 +1181,8 @@ impl<'p> Checker<'p> {
         is_js: bool,
     ) -> Vec<TypeId> {
         let given = args.len().min(params.len());
-        let mut filled: Vec<TypeId> = args[..given].to_vec();
+        let mut filled: Vec<TypeId> = Vec::with_capacity(params.len());
+        filled.extend_from_slice(&args[..given]);
         // A default that mentions itself or what comes later is in error there, and what is in error can be anything.
         filled.resize(params.len(), TypeId::ANY);
         for i in given..params.len() {
@@ -1159,10 +1208,16 @@ impl<'p> Checker<'p> {
     // ───────────────────────────── declared types of symbols ─────────────────────────────
 
     /// What `sym` means where a type is expected.
+    #[inline]
     pub fn declared_type(&mut self, sym: Sym) -> TypeId {
         if let Some(known) = self.p.declared_types.get(&sym) {
             return known;
         }
+        self.resolve_declared_type(sym)
+    }
+
+    #[inline(never)]
+    fn resolve_declared_type(&mut self, sym: Sym) -> TypeId {
         if !self.enter(Query::Declared(sym)) {
             return if self.came_full_circle {
                 TypeId::ANY
@@ -1304,15 +1359,15 @@ impl<'p> Checker<'p> {
                 .type_flags_of_symbol(sym)
                 .intersects(SymFlags::CLASS | SymFlags::INTERFACE);
             let local = if has_the_name {
-                self.type_params_of_symbol(sym)
+                self.local_type_params_of_symbol(sym)
             } else {
-                Arc::from([])
+                SmallVec::new()
             };
             let args: Box<[TypeId]> = outer.iter().chain(local.iter()).copied().collect();
             return self.intern(TypeData::Ref { target: sym, args });
         }
         if flags.contains(SymFlags::TYPE_ALIAS) {
-            for (file, decl) in self.files().decls(sym) {
+            for (file, decl) in declarations_of(self.files(), sym) {
                 if let Decl::Alias(a) = decl {
                     let ty = self.type_from_node(file, self.hir(file)[a].ty);
                     if self.is_union(ty) {
@@ -1329,7 +1384,7 @@ impl<'p> Checker<'p> {
             return self.enum_member_type(sym);
         }
         if flags.contains(SymFlags::TYPE_PARAMETER) {
-            for (file, decl) in self.files().decls(sym) {
+            for (file, decl) in declarations_of(self.files(), sym) {
                 if let Decl::TypeParam(tp) = decl {
                     return self.type_param(file, tp);
                 }
@@ -1342,7 +1397,7 @@ impl<'p> Checker<'p> {
     pub fn enum_type(&mut self, sym: Sym) -> TypeId {
         let mut members = Vec::new();
         let mut values = crate::util::FxHashSet::default();
-        for (file, decl) in self.files().decls(sym) {
+        for (file, decl) in declarations_of(self.files(), sym) {
             let Decl::Enum(e) = decl else { continue };
             for m in self.hir(file)[e].members.iter() {
                 let member = self
@@ -1396,7 +1451,7 @@ impl<'p> Checker<'p> {
 
     /// `getDeclaredTypeOfEnumMember`, in its regular form.
     pub fn enum_member_type(&mut self, member: Sym) -> TypeId {
-        for (file, decl) in self.files().decls(member) {
+        for (file, decl) in declarations_of(self.files(), member) {
             if let Decl::EnumMember(m) = decl {
                 // `createComputedEnumType`: what has no value is a type of its own.
                 let Some(value) = self.enum_member_value(file, m) else {
@@ -1468,12 +1523,12 @@ impl<'p> Checker<'p> {
         self.constant_value_at(file, e, Location::Expr(file, e))
     }
 
-    fn constant_text(&self, value: EnumValue) -> Vec<u8> {
+    fn constant_text(&self, value: EnumValue) -> &'p [u8] {
         let atom = match value {
             EnumValue::String(s) => s,
             EnumValue::Number(bits) => self.number_name(f64::from_bits(bits)),
         };
-        self.files().atoms.bytes(atom).to_vec()
+        self.files().atoms.bytes(atom)
     }
 
     /// `evaluate`. `at`: its `location`, what `e` is evaluated for: the member of an enum or the constant that it is (part of) the
@@ -1494,10 +1549,16 @@ impl<'p> Checker<'p> {
             ExprKind::Number(n) => number(hir.numbers[n as usize]),
             ExprKind::String(s) => Some(EnumValue::String(s)),
             ExprKind::Template { exprs, texts } => {
-                let mut text = self.files().atoms.bytes(hir.id_at(texts, 0)).to_vec();
+                if exprs.is_empty() {
+                    return Some(EnumValue::String(hir.id_at(texts, 0)));
+                }
+                let mut text: Vec<u8> = Vec::new();
                 for (i, span) in hir.ids(exprs).enumerate() {
                     let value = self.constant_value_at(file, span, at)?;
-                    text.extend_from_slice(&self.constant_text(value));
+                    if i == 0 {
+                        text.extend_from_slice(self.files().atoms.bytes(hir.id_at(texts, 0)));
+                    }
+                    text.extend_from_slice(self.constant_text(value));
                     text.extend_from_slice(self.files().atoms.bytes(hir.id_at(texts, i + 1)));
                 }
                 Some(EnumValue::String(self.files().atoms.intern(&text)))
@@ -1548,8 +1609,7 @@ impl<'p> Checker<'p> {
                         }
                     }
                     (l, r) if op == BinOp::Add => {
-                        let mut text = self.constant_text(l);
-                        text.extend_from_slice(&self.constant_text(r));
+                        let text = [self.constant_text(l), self.constant_text(r)].concat();
                         Some(EnumValue::String(self.files().atoms.intern(&text)))
                     }
                     _ => None,
@@ -1576,8 +1636,8 @@ impl<'p> Checker<'p> {
                 if !flags.contains(SymFlags::CONST) {
                     return None;
                 }
-                let decls = self.files().decls(sym);
-                let &[(decl_file, Decl::Var(pat))] = &decls[..] else {
+                let mut decls = declarations_of(self.files(), sym);
+                let (Some((decl_file, Decl::Var(pat))), None) = (decls.next(), decls.next()) else {
                     return None;
                 };
                 let PatParent::Var(d) = self.bound(decl_file).pat_parent[pat.idx()] else {
@@ -1638,13 +1698,10 @@ impl<'p> Checker<'p> {
     /// `evaluateEnumMember`
     fn evaluate_enum_member(&mut self, member: Sym, at: Location) -> Option<EnumValue> {
         let (of, m) =
-            self.files()
-                .decls(member)
-                .into_iter()
-                .find_map(|(file, decl)| match decl {
-                    Decl::EnumMember(m) => Some((file, m)),
-                    _ => None,
-                })?;
+            declarations_of(self.files(), member).find_map(|(file, decl)| match decl {
+                Decl::EnumMember(m) => Some((file, m)),
+                _ => None,
+            })?;
         let declared = Location::Member(of, m);
         // It is used before it has a value.
         if declared == at {
@@ -1677,6 +1734,7 @@ impl<'p> Checker<'p> {
     }
 
     /// The type `node` denotes, with the type parameters in scope standing for themselves.
+    #[inline]
     pub fn type_from_node(&mut self, file: FileId, node: TypeNodeId) -> TypeId {
         if node.is_none() {
             return TypeId::UNRESOLVED;
@@ -1684,6 +1742,11 @@ impl<'p> Checker<'p> {
         if let Some(known) = self.p.type_node_types.get(file, node.idx()) {
             return known;
         }
+        self.resolve_type_from_node(file, node)
+    }
+
+    #[inline(never)]
+    fn resolve_type_from_node(&mut self, file: FileId, node: TypeNodeId) -> TypeId {
         if !self.enter(Query::TypeNode(file, node)) {
             // `getTypeFromTypeNode` does not detect re-entry: tsgo recurses until it hits an instantiation limit.
             return self.excessively_deep();
@@ -1886,7 +1949,7 @@ impl<'p> Checker<'p> {
                     && index != TypeId::NEVER
                     && !self.is_generic(obj)
                     && !self.is_generic(index)
-                    && self.parts(index).to_vec().into_iter().any(|key| {
+                    && self.parts(index).iter().any(|&key| {
                         self.indexed_access_if_any(obj, key, false).is_none()
                             && !self.property_name_of_type(key).is_some_and(|name| {
                                 let apparent = self.apparent_type(obj);
@@ -1948,7 +2011,7 @@ impl<'p> Checker<'p> {
                     return TypeId::ANY;
                 }
                 let ty = if narrowed == TypeId::UNRESOLVED {
-                    let names: Vec<Atom> = hir.ids(name).collect();
+                    let names: SmallVec<[Atom; 4]> = hir.ids(name).collect();
                     self.type_of_entity(file, scope, &names)
                 } else {
                     self.regular(narrowed)
@@ -1971,7 +2034,7 @@ impl<'p> Checker<'p> {
                 let Some(module) = self.files().module_of_specifier_as(file, spec, mode) else {
                     return TypeId::ANY;
                 };
-                let names: Vec<Atom> = hir.ids(name).collect();
+                let names: SmallVec<[Atom; 4]> = hir.ids(name).collect();
                 // `resolveExternalModuleSymbol`: the module, or what it says it is with `export =`. Of one that could not be
                 // followed nothing is known.
                 let value = self.files().module_value(module);
@@ -2075,7 +2138,7 @@ impl<'p> Checker<'p> {
                 self.written_type_reference(sym, &args)
             }
             TypeNodeKind::Ref { name, args } => {
-                let names: Vec<Atom> = hir.ids(name).collect();
+                let names: SmallVec<[Atom; 4]> = hir.ids(name).collect();
                 // A name nothing goes by is an error, and what is in error can be anything.
                 let Some(found) = self
                     .files()
@@ -2148,7 +2211,7 @@ impl<'p> Checker<'p> {
                     self.types_from_nodes(file, args)
                 };
                 if is_js_reference {
-                    let params = self.type_params_of_symbol(sym);
+                    let params = self.local_type_params_of_symbol(sym);
                     args = self.fill_type_args_as(&params, &args, true);
                 }
                 // `getTypeFromTypeAliasReference`: a reference to a generic alias that is the body of another alias is instantiated
@@ -2213,13 +2276,10 @@ impl<'p> Checker<'p> {
 
     /// The first type alias declaration of `sym`.
     fn alias_declaration(&self, sym: Sym) -> Option<(FileId, AliasId)> {
-        self.files()
-            .decls(sym)
-            .into_iter()
-            .find_map(|(file, decl)| match decl {
-                Decl::Alias(alias) => Some((file, alias)),
-                _ => None,
-            })
+        declarations_of(self.files(), sym).find_map(|(file, decl)| match decl {
+            Decl::Alias(alias) => Some((file, alias)),
+            _ => None,
+        })
     }
 
     /// `isLocalTypeAlias`: whether the type alias `sym` is declared inside a function.
@@ -2245,7 +2305,7 @@ impl<'p> Checker<'p> {
     /// reads it).
     fn interface_members_mention_this(&self, sym: Sym) -> bool {
         let mut mentioned = Mentioned::default();
-        for (file, decl) in self.files().decls(sym) {
+        for (file, decl) in declarations_of(self.files(), sym) {
             let Decl::Interface(interface) = decl else {
                 continue;
             };
@@ -2437,7 +2497,7 @@ impl<'p> Checker<'p> {
                 .iter()
                 .any(|e| is_variadic_tuple_element(hir, &hir[e])),
             TypeNodeKind::Ref { name, .. } => {
-                let names: Vec<Atom> = hir.ids(name).collect();
+                let names: SmallVec<[Atom; 4]> = hir.ids(name).collect();
                 let scope = self.bound(file).type_scope[node.idx()];
                 let found = self
                     .files()
@@ -2502,7 +2562,7 @@ impl<'p> Checker<'p> {
         let hir = self.hir(file);
         match hir[node].kind {
             TypeNodeKind::Ref { name, .. } => {
-                let names: Vec<Atom> = hir.ids(name).collect();
+                let names: SmallVec<[Atom; 4]> = hir.ids(name).collect();
                 let scope = self.bound(file).type_scope[node.idx()];
                 let found = self
                     .files()
@@ -2565,7 +2625,7 @@ impl<'p> Checker<'p> {
         let TypeNodeKind::Ref { name, args } = hir[node].kind else {
             return None;
         };
-        let names: Vec<Atom> = hir.ids(name).collect();
+        let names: SmallVec<[Atom; 4]> = hir.ids(name).collect();
         let found = self.files().resolve_entity(
             file,
             self.bound(file).type_scope[node.idx()],
@@ -2589,7 +2649,7 @@ impl<'p> Checker<'p> {
         let own = bound.alias_scope[alias.idx()];
         if own.is_none()
             || !self
-                .outer_type_params(declared_in, bound.scopes[own.idx()].parent)
+                .type_params_in_scope(declared_in, bound.scopes[own.idx()].parent)
                 .is_empty()
         {
             return None;
@@ -2625,7 +2685,7 @@ impl<'p> Checker<'p> {
             }
         }
         let args = self.types_from_nodes(file, args);
-        let params = self.type_params_of_symbol(sym);
+        let params = self.local_type_params_of_symbol(sym);
         let args = self.fill_type_args(&params, &args);
         self.intern(TypeData::LazyAlias {
             sym,
@@ -2638,7 +2698,7 @@ impl<'p> Checker<'p> {
         let flags = self.type_flags_of_symbol(sym);
         if flags.intersects(SymFlags::CLASS | SymFlags::INTERFACE) {
             let declared = self.declared_type(sym);
-            let params = self.type_params_of_symbol(sym);
+            let params = self.local_type_params_of_symbol(sym);
             if params.is_empty() {
                 return declared;
             }
@@ -2648,7 +2708,11 @@ impl<'p> Checker<'p> {
                 TypeData::Ref { args: all, .. } => &all[..all.len().saturating_sub(params.len())],
                 _ => &[],
             };
-            let args: Box<[TypeId]> = outer.iter().copied().chain(filled).collect();
+            let args: Box<[TypeId]> = if outer.is_empty() {
+                filled.into()
+            } else {
+                outer.iter().copied().chain(filled).collect()
+            };
             return self.intern(TypeData::Ref { target: sym, args });
         }
         if flags.contains(SymFlags::TYPE_ALIAS) {
@@ -2673,7 +2737,7 @@ impl<'p> Checker<'p> {
                 self.cycles += 1;
                 return TypeId::ANY;
             }
-            let params = self.type_params_of_symbol(sym);
+            let params = self.local_type_params_of_symbol(sym);
             if params.is_empty() {
                 // `getDeclaredTypeOfTypeAlias`: `type BuiltinIteratorReturn = intrinsic`
                 if self.is_declared_intrinsic(sym)
@@ -2698,7 +2762,7 @@ impl<'p> Checker<'p> {
             let declared = self.declared_type_by_name(sym, flags);
             let mapper = self.mapper_from(&params, &args);
             let ty = self.instantiate(declared, mapper);
-            if self.is_union(ty) {
+            if self.is_union(ty) && self.p.named_unions.get(&ty).is_none() {
                 self.p.named_unions.insert(ty, ());
             }
             // `instantiateTypeWithAlias`: a union or an intersection made from a generic alias keeps the alias and its type
@@ -2706,7 +2770,8 @@ impl<'p> Checker<'p> {
             if matches!(
                 self.data(ty),
                 TypeData::Union(_) | TypeData::Intersection(_)
-            ) && self.is_pinned_to_type_arguments(ty, &params, &args, 0)
+            ) && self.p.alias_of.get_ref(&ty).is_none()
+                && self.is_pinned_to_type_arguments(ty, &params, &args, 0)
             {
                 self.p.alias_of.insert(ty, (sym, Arc::from(&args[..])));
             }
@@ -2831,6 +2896,7 @@ impl<'p> Checker<'p> {
         List::Own(params)
     }
 
+    #[inline(never)]
     fn sig_type_params_of_declaration(&mut self, sig: SigId) -> Vec<TypeId> {
         match self.p.types.sig(sig) {
             SigData::Decl { file, func, mapper } => {
@@ -2859,7 +2925,7 @@ impl<'p> Checker<'p> {
             SigData::Construct { class, mapper, .. }
             | SigData::DefaultConstruct { class, mapper, .. } => {
                 let mapper = *mapper;
-                let params = self.type_params_of_symbol(*class);
+                let params = self.local_type_params_of_symbol(*class);
                 params
                     .iter()
                     .copied()
@@ -2890,7 +2956,7 @@ impl<'p> Checker<'p> {
     /// Only the base constructor type counts: the base types may be empty (the base signature returns `any`, `object`, a type
     /// parameter). `None` if the base constructor type has no such signature.
     pub(super) fn default_construct_base_sig(&mut self, mut sig: SigId) -> Option<SigId> {
-        let mut visited: Vec<Sym> = Vec::new();
+        let mut visited: SmallVec<[Sym; 4]> = SmallVec::new();
         loop {
             sig = match *self.p.types.sig(sig) {
                 SigData::WithReturn { sig: inner, .. } => inner,
@@ -2919,33 +2985,39 @@ impl<'p> Checker<'p> {
     }
 
     pub fn sig_params(&mut self, sig: SigId) -> List<'p, SigParam> {
-        if let SigData::WithReturn { sig: inner, .. } = *self.p.types.sig(sig) {
-            return self.sig_params(inner);
-        }
-        if let SigData::Synth { params, .. } = self.p.types.sig(sig) {
-            return List::Kept(params);
-        }
+        let (file, func, mapper) = match self.p.types.sig(sig) {
+            SigData::WithReturn { sig: inner, .. } => return self.sig_params(*inner),
+            SigData::Synth { params, .. } => return List::Kept(params),
+            // Nothing is kept for one of these.
+            SigData::DefaultConstruct { .. } => {
+                return match self.default_construct_base_sig(sig) {
+                    Some(base) => self.sig_params(base),
+                    None => List::default(),
+                };
+            }
+            SigData::Decl { file, func, mapper }
+            | SigData::Construct {
+                file, func, mapper, ..
+            } => (*file, *func, *mapper),
+        };
         if let Some(kept) = self.p.sig_params.get_ref(&sig) {
             return List::Kept(kept);
         }
-        if matches!(self.p.types.sig(sig), SigData::DefaultConstruct { .. }) {
-            return match self.default_construct_base_sig(sig) {
-                Some(base) => self.sig_params(base),
-                None => List::default(),
-            };
-        }
         let before = self.what_only_holds_for_now();
-        let params = self.sig_params_of_declaration(sig);
+        let params = self.sig_params_of_declaration(file, func, mapper);
         if self.what_only_holds_for_now() == before && params.iter().all(|p| self.is_known(p.ty)) {
             return List::Kept(self.p.sig_params.insert_ref(sig, params.into()).1);
         }
         List::Own(params)
     }
 
-    fn sig_params_of_declaration(&mut self, sig: SigId) -> Vec<SigParam> {
-        let Some((file, func, mapper)) = self.sig_decl(sig) else {
-            return Vec::new();
-        };
+    #[inline(never)]
+    fn sig_params_of_declaration(
+        &mut self,
+        file: FileId,
+        func: FnId,
+        mapper: MapperId,
+    ) -> Vec<SigParam> {
         let hir = self.hir(file);
         let mut out = Vec::with_capacity(hir[func].params.len());
         // `getImmediatelyInvokedFunctionExpression`: how many arguments a function that is called where it is written is called with.
@@ -3051,14 +3123,11 @@ impl<'p> Checker<'p> {
 
     /// `getThisTypeOfSignature`: what it is to be called on, whatever made the signature.
     pub fn sig_this_type(&mut self, sig: SigId) -> Option<TypeId> {
-        if let SigData::WithReturn { sig: inner, .. } = *self.p.types.sig(sig) {
-            return self.sig_this_type(inner);
-        }
-        if let SigData::Synth { this, .. } = self.p.types.sig(sig) {
-            return *this;
-        }
-        let SigData::Decl { file, func, mapper } = *self.p.types.sig(sig) else {
-            return None;
+        let (file, func, mapper) = match *self.p.types.sig(sig) {
+            SigData::WithReturn { sig: inner, .. } => return self.sig_this_type(inner),
+            SigData::Synth { this, .. } => return this,
+            SigData::Decl { file, func, mapper } => (file, func, mapper),
+            _ => return None,
         };
         let this_ty = self.hir(file)[func].this_ty;
         if this_ty.is_none() {
@@ -3069,11 +3138,10 @@ impl<'p> Checker<'p> {
     }
 
     pub fn sig_predicate(&mut self, sig: SigId) -> Option<Predicate> {
-        if let SigData::WithReturn { sig: inner, .. } = *self.p.types.sig(sig) {
-            return self.sig_predicate(inner);
-        }
-        let SigData::Decl { file, func, mapper } = *self.p.types.sig(sig) else {
-            return None;
+        let (file, func, mapper) = match *self.p.types.sig(sig) {
+            SigData::WithReturn { sig: inner, .. } => return self.sig_predicate(inner),
+            SigData::Decl { file, func, mapper } => (file, func, mapper),
+            _ => return None,
         };
         let hir = self.hir(file);
         let f = &hir[func];

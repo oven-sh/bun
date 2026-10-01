@@ -138,14 +138,15 @@ impl Checker<'_> {
         u.has_unchecked_returns = hir.stmts.iter().any(
             |s| matches!(s.kind, StmtKind::Return(e) if e.is_some() && u.is_in_unchecked_return(e)),
         );
-        u.note_references();
+        let index = self.exprs_by_kind(file);
+        u.note_references(&index);
         self.note_jsdoc_links(file, &mut u);
         if parameters {
             u.merge_type_parameters();
             u.collect_ambient_type_scopes();
         }
         if !hir.jsx.is_empty() {
-            self.note_jsx_factories(file, &mut u);
+            self.note_jsx_factories(file, &index, &mut u);
         }
         if locals {
             self.note_private_reads(file, &mut u);
@@ -181,7 +182,7 @@ impl Checker<'_> {
 
     /// `markJsxAliasReferenced`: a tag is a call of the factory, which has to be in scope where the tag is, unless a module that is there
     /// is imported for it unasked (`getJsxNamespaceContainerForImplicitImport`).
-    fn note_jsx_factories(&self, file: FileId, u: &mut Unused) {
+    fn note_jsx_factories(&self, file: FileId, index: &ExprsByKind, u: &mut Unused) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let (options, atoms) = (&self.p.files.options, &self.p.files.atoms);
         let runtime = crate::program::jsx_runtime_of(options, hir, atoms);
@@ -193,15 +194,15 @@ impl Checker<'_> {
             return;
         }
         let (factory, fragment_factory) = super::errors_jsx::jsx_factory_names(self.files(), hir);
-        for i in 0..hir.exprs.len() {
-            let ExprKind::Jsx(j) = hir.exprs[i].kind else {
+        for &e in index.of(ExprTag::Jsx) {
+            let ExprKind::Jsx(j) = hir[e].kind else {
                 continue;
             };
-            if matches!(bound.expr_parent[i], Parent::None) || u.is_unchecked(ExprId(i as u32)) {
+            if matches!(bound.expr_parent[e.idx()], Parent::None) || u.is_unchecked(e) {
                 continue;
             }
             let is_fragment = hir[j].tag.is_none();
-            let scope = u.scope_of(ExprId(i as u32));
+            let scope = u.scope_of(e);
             // `symbolReferenced`: what it is made with is used even by a tag inside of it.
             if let Some(found) = u.note_name(
                 scope,
@@ -279,7 +280,15 @@ impl Checker<'_> {
         }
         for i in 0..hir.exprs.len() {
             let e = ExprId(i as u32);
-            if matches!(bound.expr_parent[i], Parent::None) || u.is_unchecked(e) {
+            if !matches!(
+                hir.exprs[i].kind,
+                ExprKind::Dot { .. }
+                    | ExprKind::Index { .. }
+                    | ExprKind::Assign { op: None, .. }
+                    | ExprKind::Binary { op: BinOp::In, .. }
+            ) || matches!(bound.expr_parent[i], Parent::None)
+                || u.is_unchecked(e)
+            {
                 continue;
             }
             match hir.exprs[i].kind {
@@ -473,13 +482,13 @@ impl Checker<'_> {
         let receiver = self.apparent_type(receiver);
         // `createUnionOrIntersectionProperty`: what is private has to be there in every member of a union. It is the property of the first
         // if that of each is the same. If not there is none, or one made up for the occasion, and that is what is marked.
-        let mut found: Option<(Prop, MapperId)> = None;
+        let mut found: Option<(&Prop, MapperId)> = None;
         for &part in self.parts(receiver) {
             let part = self.apparent_type(part);
             if part == TypeId::UNRESOLVED {
                 return u.note_members_named(name);
             }
-            let Some((mut prop, mut mapper)) = self.prop_of(part, name) else {
+            let Some((mut prop, mut mapper)) = self.prop_ref(part, name) else {
                 return;
             };
             if let PropSource::Intersected(_, list) = &prop.source {
@@ -489,7 +498,7 @@ impl Checker<'_> {
                 }) {
                     return;
                 }
-                (prop, mapper) = (first.clone(), MapperId::IDENTITY);
+                (prop, mapper) = (first, MapperId::IDENTITY);
             }
             let Some(first) = &found else {
                 let is_private = match &prop.source {
@@ -507,7 +516,7 @@ impl Checker<'_> {
                 found = Some((prop, mapper));
                 continue;
             };
-            if !self.is_same_property(&first.0, first.1, &prop, mapper) {
+            if !self.is_same_property(first.0, first.1, prop, mapper) {
                 return;
             }
         }
@@ -912,17 +921,14 @@ fn collect_signature_scopes(hir: &hir::File, bound: &Bound, f: FnId, scopes: &mu
 impl Unused<'_> {
     // ───────────────────────────── what is referred to ─────────────────────────────
 
-    fn note_references(&mut self) {
+    fn note_references(&mut self, index: &ExprsByKind) {
         let (hir, bound) = (self.hir, self.bound);
-        for i in 0..hir.exprs.len() {
-            let e = ExprId(i as u32);
-            if !matches!(hir.exprs[i].kind, ExprKind::Ident(_))
-                || matches!(bound.expr_parent[i], Parent::None)
-            {
-                continue;
-            }
+        for &e in index.of(ExprTag::Ident) {
+            let i = e.idx();
             let symbol = bound.expr_symbol[i];
             if symbol.is_none()
+                || self.referenced[symbol.idx()] & VALUE != 0
+                || matches!(bound.expr_parent[i], Parent::None)
                 || self.is_unchecked(e)
                 || self.is_write_only(e)
                 || self.is_inside_declaration_of(e, symbol)

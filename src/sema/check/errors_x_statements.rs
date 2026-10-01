@@ -23,6 +23,7 @@ use super::errors_x_properties_jsx::end_of_brackets;
 use super::*;
 use crate::bind::{Decl, MemberOwner, Parent, PatParent};
 use crate::resolve::{ModuleKind, ScriptTarget};
+use smallvec::SmallVec;
 
 // ───────────────────────────── the text ─────────────────────────────
 
@@ -365,15 +366,16 @@ enum Objection {
 }
 
 /// What there is to say of `await` at the top level of a file.
-struct TopLevelAwait {
+struct TopLevelAwait<'a> {
     /// `IsEffectiveExternalModule`
     is_module: bool,
     objection: Objection,
-    /// The statements of the file that end up in an await context all the same. Sorted.
-    parsed_again: Vec<StmtId>,
+    /// The statements of the file that end up in an await context all the same. Sorted. Found out when first asked for.
+    parsed_again: std::cell::OnceCell<Vec<StmtId>>,
+    index: &'a ExprsByKind,
 }
 
-impl TopLevelAwait {
+impl TopLevelAwait<'_> {
     fn object(
         &self,
         start: u32,
@@ -441,6 +443,10 @@ fn compared_modifiers(flags: Flags) -> Flags {
 
 /// 2687, of the members of one class, interface or type literal. What is said about `file` is kept.
 fn say_where_modifiers_differ(file: FileId, declared: &mut [Declared], out: &mut Vec<Diagnostic>) {
+    // Only of what is variable-like is anything said.
+    if declared.len() < 2 || !declared.iter().any(|d| d.is_variable_like) {
+        return;
+    }
     declared.sort_unstable_by_key(|d| (d.name, d.is_static, d.order));
     let mut rest: &[Declared] = declared;
     while let Some(first) = rest.first() {
@@ -450,12 +456,12 @@ fn say_where_modifiers_differ(file: FileId, declared: &mut [Declared], out: &mut
             .count();
         let (run, after) = rest.split_at(len);
         rest = after;
-        if len < 2 {
+        if len < 2 || !run.iter().any(|d| d.is_variable_like) {
             continue;
         }
         // `declareSymbolEx`: what does not go with what is in the table gets a symbol of its own.
         let mut flags = 0;
-        let mut merged: Vec<&Declared> = Vec::with_capacity(len);
+        let mut merged: SmallVec<[&Declared; 8]> = SmallVec::new();
         for d in run {
             if flags & d.excludes == 0 {
                 flags |= d.includes;
@@ -513,11 +519,19 @@ impl Checker<'_> {
         } else {
             Vec::new()
         };
-        let rules = self.rules_for_top_level_await(file);
-        self.check_statements_one_by_one(file, parses, &refused, &rules, out);
-        self.check_await_expressions_are_in_place(file, parses, &rules, out);
-        self.check_yield_in_parameter_initializers(file, out);
-        self.check_initializers_of_using_declarations(file, out);
+        let index = self.exprs_by_kind(file);
+        let has_using = hir
+            .var_decls
+            .iter()
+            .any(|d| matches!(d.kind, VarKind::Using | VarKind::AwaitUsing));
+        let rules = self.rules_for_top_level_await(file, &index);
+        let misplaced_returns =
+            self.check_statements_one_by_one(file, parses, has_using, &refused, &rules, out);
+        self.check_await_expressions_are_in_place(file, parses, &index, &rules, out);
+        self.check_yield_in_parameter_initializers(file, &index, out);
+        if has_using {
+            self.check_initializers_of_using_declarations(file, out);
+        }
         let said_before = out.len();
         self.check_modifiers_of_merged_declarations(file, out);
         // `DeclarationNameToString`: the name as it is written, which may be a string or in brackets.
@@ -528,7 +542,7 @@ impl Checker<'_> {
         if parses {
             self.check_catch_clause_variables(file, out);
         }
-        self.take_back_what_is_never_checked(file, &refused, out);
+        self.take_back_what_is_never_checked(file, &index, &refused, &misplaced_returns, out);
     }
 
     // ───────────────────────────── statements ─────────────────────────────
@@ -569,22 +583,34 @@ impl Checker<'_> {
         refused
     }
 
+    /// Gives the `return` statements that are in no function, or in a static block.
     fn check_statements_one_by_one(
         &mut self,
         file: FileId,
         parses: bool,
+        has_using: bool,
         refused: &[StmtId],
-        rules: &TopLevelAwait,
+        rules: &TopLevelAwait<'_>,
         out: &mut Vec<Diagnostic>,
-    ) {
+    ) -> Vec<StmtId> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let text: &[u8] = &hir.text;
+        let mut misplaced_returns = Vec::new();
         for i in 0..hir.stmts.len() {
-            if matches!(bound.stmt_parent[i], Parent::None) {
+            let Stmt { kind, pos } = hir.stmts[i];
+            let is_looked_at = match kind {
+                StmtKind::Block(_)
+                | StmtKind::Return(_)
+                | StmtKind::If { .. }
+                | StmtKind::ForIn { .. }
+                | StmtKind::ForOf { .. } => true,
+                StmtKind::Var(_) => has_using,
+                _ => false,
+            };
+            if !is_looked_at || matches!(bound.stmt_parent[i], Parent::None) {
                 continue;
             }
             let s = StmtId(i as u32);
-            let Stmt { kind, pos } = hir.stmts[i];
             match kind {
                 StmtKind::Block(_) if is_with_statement(hir, s) => {
                     // `checkStrictModeWithStatement`
@@ -617,20 +643,27 @@ impl Checker<'_> {
                     }
                 }
                 // `checkReturnStatement`
-                StmtKind::Return(_) if parses && !refused.contains(&s) => {
-                    match self.enclosing_fn(file, Parent::Stmt(s)) {
-                        Some(f) if hir[f].kind == FnKind::StaticBlock => out.push(Diagnostic {
+                StmtKind::Return(_) => {
+                    let is_in_static_block = match self.enclosing_fn(file, Parent::Stmt(s)) {
+                        Some(f) if hir[f].kind == FnKind::StaticBlock => true,
+                        Some(_) => continue,
+                        None => false,
+                    };
+                    misplaced_returns.push(s);
+                    if !parses || refused.contains(&s) {
+                        continue;
+                    }
+                    if is_in_static_block {
+                        out.push(Diagnostic {
                             start: pos,
                             code: 18041,
-                        }),
-                        Some(_) => {}
-                        None => {
-                            out.retain(|d| d.start != pos || d.code != 18041);
-                            out.push(Diagnostic {
-                                start: pos,
-                                code: 1108,
-                            });
-                        }
+                        });
+                    } else {
+                        out.retain(|d| d.start != pos || d.code != 18041);
+                        out.push(Diagnostic {
+                            start: pos,
+                            code: 1108,
+                        });
                     }
                 }
                 // `checkIfStatement`. Other statements of which nothing is kept are empty as well: it has to be written that way.
@@ -721,6 +754,7 @@ impl Checker<'_> {
                 _ => {}
             }
         }
+        misplaced_returns
     }
 
     /// `GetErrorRangeForNode`, of an expression: where an error about the whole of `e` starts. `assigned_to`: where the variable
@@ -827,7 +861,7 @@ impl Checker<'_> {
         decls: Span<VarDeclId>,
         parses: bool,
         refused: &[StmtId],
-        rules: &TopLevelAwait,
+        rules: &TopLevelAwait<'_>,
         out: &mut Vec<Diagnostic>,
     ) {
         let (hir, bound) = (self.hir(file), self.bound(file));
@@ -999,7 +1033,11 @@ impl Checker<'_> {
     }
 
     /// The `switch` on `moduleKind` in `checkGrammarAwaitOrAwaitUsing` and `checkGrammarForInOrForOfStatement`.
-    fn rules_for_top_level_await(&self, file: FileId) -> TopLevelAwait {
+    fn rules_for_top_level_await<'a>(
+        &self,
+        file: FileId,
+        index: &'a ExprsByKind,
+    ) -> TopLevelAwait<'a> {
         let kind = self.p.files.options.module;
         let module = self.files().module(file);
         // `GetEmitModuleDetectionKind`: from `node16` on every file is a module. That `moduleDetection` says otherwise is not kept.
@@ -1018,46 +1056,47 @@ impl Checker<'_> {
         } else {
             Objection::Options
         };
-        // `parseSourceFileWorker`: a declaration file is not parsed again.
-        let parsed_again = if is_module && self.hir(file).kind != FileKind::Declaration {
-            self.statements_parsed_again_for_await(file)
-        } else {
-            Vec::new()
-        };
         TopLevelAwait {
             is_module,
             objection,
-            parsed_again,
+            parsed_again: std::cell::OnceCell::new(),
+            index,
         }
     }
 
     /// `reparseTopLevelAwait`: the statements of a module in which `await` was taken for a name are parsed again with `await` for a
     /// keyword, and are in an await context from then on. Where that makes a statement longer than it was, the parser goes on that
     /// way until it has been through the next such statements, or to the end of the file if there are none.
-    fn statements_parsed_again_for_await(&self, file: FileId) -> Vec<StmtId> {
+    fn statements_parsed_again_for_await(&self, file: FileId, index: &ExprsByKind) -> Vec<StmtId> {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let name = self.files().atoms.lookup(b"await");
         // The statements in which `await` was taken for a name, and whether the statement was over right after the name.
         let mut noted: Vec<(StmtId, bool)> = Vec::new();
-        for (i, e) in hir.exprs.iter().enumerate() {
-            let ends = match e.kind {
+        if let Some(name) = self.files().atoms.lookup(b"await") {
+            for &e in index.of(ExprTag::Ident) {
                 // `parsePropertyName` puts it back, and `{ await }` is no more than the name of a property to the parser.
-                ExprKind::Ident(n)
-                    if Some(n) == name
-                        && matches!(bound.expr_parent[i], Parent::Prop(p) if hir[p].kind == PropKind::Shorthand) =>
+                if matches!(hir[e].kind, ExprKind::Ident(n) if n == name)
+                    && !matches!(bound.expr_parent[e.idx()], Parent::Prop(p) if hir[p].kind == PropKind::Shorthand)
+                    && let Some(s) = self.statement_noting_await(file, e)
                 {
-                    continue;
+                    noted.push((s, false));
                 }
-                // `newIdentifier`: after a dot as well.
-                ExprKind::Ident(n) | ExprKind::Dot { name: n, .. } if Some(n) == name => false,
-                ExprKind::Await(_) => match after_await(&hir.text, e.pos) {
-                    AfterAwait::Operand => continue,
-                    AfterAwait::GoesOn => false,
-                    AfterAwait::Ends => true,
-                },
-                _ => continue,
+            }
+            // `newIdentifier`: after a dot as well.
+            for &e in index.of(ExprTag::Dot) {
+                if matches!(hir[e].kind, ExprKind::Dot { name: n, .. } if n == name)
+                    && let Some(s) = self.statement_noting_await(file, e)
+                {
+                    noted.push((s, false));
+                }
+            }
+        }
+        for &e in index.of(ExprTag::Await) {
+            let ends = match after_await(&hir.text, hir[e].pos) {
+                AfterAwait::Operand => continue,
+                AfterAwait::GoesOn => false,
+                AfterAwait::Ends => true,
             };
-            if let Some(s) = self.statement_noting_await(file, ExprId(i as u32)) {
+            if let Some(s) = self.statement_noting_await(file, e) {
                 noted.push((s, ends));
             }
         }
@@ -1129,12 +1168,28 @@ impl Checker<'_> {
         }
     }
 
-    fn place_of_await_in(&self, file: FileId, from: Parent, rules: &TopLevelAwait) -> AwaitPlace {
-        match self.place_of_await(file, from) {
-            AwaitPlace::TopLevel(s) if rules.parsed_again.binary_search(&s).is_ok() => {
-                AwaitPlace::Allowed
+    fn place_of_await_in(
+        &self,
+        file: FileId,
+        from: Parent,
+        rules: &TopLevelAwait<'_>,
+    ) -> AwaitPlace {
+        let place = self.place_of_await(file, from);
+        let AwaitPlace::TopLevel(s) = place else {
+            return place;
+        };
+        let parsed_again = rules.parsed_again.get_or_init(|| {
+            // `parseSourceFileWorker`: a declaration file is not parsed again.
+            if rules.is_module && self.hir(file).kind != FileKind::Declaration {
+                self.statements_parsed_again_for_await(file, rules.index)
+            } else {
+                Vec::new()
             }
-            place => place,
+        });
+        if parsed_again.binary_search(&s).is_ok() {
+            AwaitPlace::Allowed
+        } else {
+            place
         }
     }
 
@@ -1224,19 +1279,19 @@ impl Checker<'_> {
         &self,
         file: FileId,
         parses: bool,
-        rules: &TopLevelAwait,
+        index: &ExprsByKind,
+        rules: &TopLevelAwait<'_>,
         out: &mut Vec<Diagnostic>,
     ) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        for (i, e) in hir.exprs.iter().enumerate() {
-            if !matches!(e.kind, ExprKind::Await(_))
-                || matches!(bound.expr_parent[i], Parent::None)
-                || !is_word_at(&hir.text, e.pos as usize, b"await")
+        for &e in index.of(ExprTag::Await) {
+            let start = hir[e].pos;
+            if matches!(bound.expr_parent[e.idx()], Parent::None)
+                || !is_word_at(&hir.text, start as usize, b"await")
             {
                 continue;
             }
-            let start = e.pos;
-            let place = self.place_of_await_in(file, Parent::Expr(ExprId(i as u32)), rules);
+            let place = self.place_of_await_in(file, Parent::Expr(e), rules);
             // Where nothing makes a keyword of it, `await (x)` is a call of something by that name.
             if !matches!(place, AwaitPlace::Allowed | AwaitPlace::StaticBlock)
                 && after_await(&hir.text, start) != AfterAwait::Operand
@@ -1247,16 +1302,16 @@ impl Checker<'_> {
             match place {
                 AwaitPlace::StaticBlock => {
                     out.push(Diagnostic { start, code: 18037 });
-                    let end = self.end_inside_parentheses(file, ExprId(i as u32));
+                    let end = self.end_inside_parentheses(file, e);
                     self.note(start, end, 18037, Vec::new());
                 }
                 AwaitPlace::TopLevel(_) if parses => rules.object(start, 1375, 1378, out),
                 AwaitPlace::Elsewhere if parses => out.push(Diagnostic { start, code: 1308 }),
                 _ => {}
             }
-            if self.xs_is_in_parameter_initializer(file, ExprId(i as u32)) {
+            if self.xs_is_in_parameter_initializer(file, e) {
                 out.push(Diagnostic { start, code: 2524 });
-                let end = self.end_inside_parentheses(file, ExprId(i as u32));
+                let end = self.end_inside_parentheses(file, e);
                 self.note(start, end, 2524, Vec::new());
             }
         }
@@ -1264,15 +1319,19 @@ impl Checker<'_> {
 
     /// `checkGrammarYieldExpression`: 2523, a plain error that parse errors do not silence. 1163 comes from the parser and from
     /// `check_grammar`.
-    fn check_yield_in_parameter_initializers(&self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_yield_in_parameter_initializers(
+        &self,
+        file: FileId,
+        index: &ExprsByKind,
+        out: &mut Vec<Diagnostic>,
+    ) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        for (i, e) in hir.exprs.iter().enumerate() {
-            if matches!(e.kind, ExprKind::Yield { .. })
-                && !matches!(bound.expr_parent[i], Parent::None)
-                && self.xs_is_in_parameter_initializer(file, ExprId(i as u32))
+        for &e in index.of(ExprTag::Yield) {
+            if !matches!(bound.expr_parent[e.idx()], Parent::None)
+                && self.xs_is_in_parameter_initializer(file, e)
             {
                 out.push(Diagnostic {
-                    start: e.pos,
+                    start: hir[e].pos,
                     code: 2523,
                 });
             }
@@ -1317,19 +1376,13 @@ impl Checker<'_> {
     // ───────────────────────────── declarations ─────────────────────────────
 
     /// From `checkVariableLikeDeclaration`: 2850 2851, or what says more. What is to be disposed of has to have what it takes.
+    /// For a file that has a `using` or an `await using`.
     fn check_initializers_of_using_declarations(
         &mut self,
         file: FileId,
         out: &mut Vec<Diagnostic>,
     ) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        if !hir
-            .var_decls
-            .iter()
-            .any(|d| matches!(d.kind, VarKind::Using | VarKind::AwaitUsing))
-        {
-            return;
-        }
         // `getGlobalDisposableType`, `getGlobalAsyncDisposableType`: without them nothing is asked.
         if self.global_type_symbol(known::Disposable).is_none() {
             return;
@@ -1461,21 +1514,28 @@ impl Checker<'_> {
         symbols.sort_unstable();
         symbols.dedup();
         let mut declared: Vec<Declared> = Vec::new();
+        let files = self.files();
         for sym in symbols {
             declared.clear();
-            let decls = self.files().decls(sym);
+            let parts = files.parts(sym);
+            let decls = || {
+                parts.iter().flat_map(|&part| {
+                    files
+                        .symbol(part)
+                        .decls
+                        .iter()
+                        .map(move |&d| (part.file, d))
+                })
+            };
             // `declareSymbolEx`, `mergeSymbol`: what does not go together is not put together, and its members are its own. Nothing
             // that is a type goes with an enum, a type alias or a type parameter, nor a class with a variable. Which of them was
             // there first is not gone into: where there is one of those, nothing counts as merged.
-            let is_type_refused = decls
-                .iter()
+            let is_type_refused = decls()
                 .any(|(_, d)| matches!(d, Decl::Enum(_) | Decl::Alias(_) | Decl::TypeParam(_)));
-            let is_class_refused = is_type_refused
-                || decls
-                    .iter()
-                    .any(|(_, d)| matches!(d, Decl::Var(_) | Decl::Param(_)));
+            let is_class_refused =
+                is_type_refused || decls().any(|(_, d)| matches!(d, Decl::Var(_) | Decl::Param(_)));
             let mut has_class = false;
-            for (of, decl) in decls {
+            for (of, decl) in decls() {
                 let (members, is_alone) = match decl {
                     // A second class by the name is refused by the first.
                     Decl::Class(c) => (
@@ -1507,6 +1567,9 @@ impl Checker<'_> {
         }
         // A parameter and a `var` of the same name may differ. What a pattern in a `var` binds is not let off.
         for symbol in &bound.symbols {
+            if symbol.decls.len() < 2 {
+                continue;
+            }
             let [Decl::Param(first), rest @ ..] = symbol.decls.as_slice() else {
                 continue;
             };
@@ -1698,17 +1761,26 @@ impl Checker<'_> {
     fn take_back_what_is_never_checked(
         &self,
         file: FileId,
+        index: &ExprsByKind,
         refused: &[StmtId],
+        misplaced_returns: &[StmtId],
         out: &mut Vec<Diagnostic>,
     ) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut skipped: Vec<(u32, u32)> = Vec::new();
+        let no_return_is_skipped = refused.is_empty() && misplaced_returns.is_empty();
         for i in 0..hir.stmts.len() {
-            if matches!(bound.stmt_parent[i], Parent::None) {
+            let kind = hir.stmts[i].kind;
+            let is_looked_at = match kind {
+                StmtKind::Block(_) | StmtKind::ForOf { .. } => true,
+                StmtKind::Return(_) => !no_return_is_skipped,
+                _ => false,
+            };
+            if !is_looked_at || matches!(bound.stmt_parent[i], Parent::None) {
                 continue;
             }
             let s = StmtId(i as u32);
-            match hir.stmts[i].kind {
+            match kind {
                 StmtKind::Block(list) if is_with_statement(hir, s) => {
                     let body = hir.id_at(list, 1);
                     // An empty body contains no nodes, and its `pos` can be 0, which is not where it is written.
@@ -1717,10 +1789,7 @@ impl Checker<'_> {
                     }
                 }
                 StmtKind::Return(e) if e.is_some() => {
-                    let is_in_place = self
-                        .enclosing_fn(file, Parent::Stmt(s))
-                        .is_some_and(|f| hir[f].kind != FnKind::StaticBlock);
-                    if !is_in_place || refused.contains(&s) {
+                    if misplaced_returns.contains(&s) || refused.contains(&s) {
                         skipped.push((self.start_of(file, e), self.start_of_what_follows(file, s)));
                     }
                 }
@@ -1736,14 +1805,14 @@ impl Checker<'_> {
             }
         }
         // `checkYieldExpression` returns `any` for a `yield` outside a generator before it checks the operand.
-        for (i, e) in hir.exprs.iter().enumerate() {
+        for &yield_expr in index.of(ExprTag::Yield) {
+            let e = &hir[yield_expr];
             let ExprKind::Yield { value, .. } = e.kind else {
                 continue;
             };
-            if value.is_none() || matches!(bound.expr_parent[i], Parent::None) {
+            if value.is_none() || matches!(bound.expr_parent[yield_expr.idx()], Parent::None) {
                 continue;
             }
-            let yield_expr = ExprId(i as u32);
             let is_operand_checked = match self.xs_containing_function(file, yield_expr) {
                 Some(Some(f)) => hir[f].flags.contains(Flags::GENERATOR),
                 Some(None) => false,

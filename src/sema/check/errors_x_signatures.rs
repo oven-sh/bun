@@ -24,6 +24,7 @@ use super::*;
 use crate::bind::{Decl, FnOwner, MemberOwner, Parent, ScopeKind, SymbolId};
 use crate::resolve::ScriptTarget;
 use crate::util::FxHashSet;
+use smallvec::SmallVec;
 
 // ───────────────────────────── the text ─────────────────────────────
 
@@ -1229,7 +1230,13 @@ fn declared_by_statement(
                     _ => (BLOCK_SCOPED_VARIABLE, VALUE, SPACE_VALUE),
                 };
                 names.clear();
-                names_bound_by(hir, decl.pat, &mut names);
+                match hir[decl.pat].kind {
+                    PatKind::Ident(name) => all.push(Declared {
+                        is_variable: true,
+                        ..declaration(block, name, hir[decl.pat].pos, decl.flags, inside, table)
+                    }),
+                    _ => names_bound_by(hir, decl.pat, &mut names),
+                }
                 for &(name, at) in &names {
                     all.push(Declared {
                         is_variable: true,
@@ -1407,7 +1414,7 @@ fn declared_by_statement(
 
 /// What the statements of `block` declare, in the order the binder gets to them: `bindEachStatementFunctionsFirst`.
 fn declared_in_block(hir: &hir::File, bound: &Bound, block: &Block) -> Vec<Declared> {
-    let mut all = Vec::new();
+    let mut all = Vec::with_capacity(block.list.len());
     for functions in [true, false] {
         for s in hir.ids(block.list) {
             if matches!(hir[s].kind, StmtKind::Fn(_)) == functions {
@@ -1418,11 +1425,21 @@ fn declared_in_block(hir: &hir::File, bound: &Bound, block: &Block) -> Vec<Decla
     all
 }
 
+/// Whether one of the statements in `list` declares a function by name and gives it no body.
+fn declares_function_without_body(hir: &hir::File, list: IdList<StmtId>) -> bool {
+    hir.ids(list).any(|s| {
+        matches!(hir[s].kind, StmtKind::Fn(f) if hir[f].name.is_some() && !has_written_body(hir, f))
+    })
+}
+
 /// `declareSymbolEx`: calls `f` with the declarations of each name that has several, those that end up as one symbol in the table, and
 /// whether any was refused. `as_locals`: it is the table of locals, where what is exported only leaves a mark.
 fn for_each_symbol(all: &[Declared], as_locals: bool, mut f: impl FnMut(&[usize], bool)) {
+    if all.len() < 2 {
+        return;
+    }
     let mut order: Vec<usize> = (0..all.len()).collect();
-    order.sort_by_key(|&i| all[i].name);
+    order.sort_unstable_by_key(|&i| (all[i].name, i));
     let mut group = Vec::new();
     let mut start = 0;
     while start < order.len() {
@@ -1833,28 +1850,25 @@ impl Checker<'_> {
             .type_params
             .iter()
             .any(|p| p.flags.intersects(Flags::IN | Flags::OUT));
-        let mut owners: Vec<(SymbolId, Span<TypeParamId>, bool)> = Vec::new();
-        if has_annotations {
-            owners.extend(
-                hir.aliases
-                    .iter()
-                    .enumerate()
-                    .map(|(a, alias)| (bound.alias_symbol[a], alias.type_params, true)),
-            );
+        if hir.type_params.is_empty() {
+            return;
         }
-        owners.extend(
-            hir.classes
-                .iter()
-                .enumerate()
-                .map(|(c, class)| (bound.class_symbol[c], class.type_params, false)),
-        );
-        owners.extend(
-            hir.interfaces
-                .iter()
-                .enumerate()
-                .map(|(i, interface)| (bound.interface_symbol[i], interface.type_params, false)),
-        );
-        for (symbol, params, is_alias) in owners {
+        let aliases: &[hir::Alias] = if has_annotations { &hir.aliases } else { &[] };
+        let aliases = aliases
+            .iter()
+            .enumerate()
+            .map(|(a, alias)| (bound.alias_symbol[a], alias.type_params, true));
+        let classes = hir
+            .classes
+            .iter()
+            .enumerate()
+            .map(|(c, class)| (bound.class_symbol[c], class.type_params, false));
+        let interfaces = hir
+            .interfaces
+            .iter()
+            .enumerate()
+            .map(|(i, interface)| (bound.interface_symbol[i], interface.type_params, false));
+        for (symbol, params, is_alias) in aliases.chain(classes).chain(interfaces) {
             if symbol.is_none() || params.is_empty() {
                 continue;
             }
@@ -2314,7 +2328,13 @@ impl Checker<'_> {
     /// `checkTypePredicate`: 1228, 1229, 2677, 1230, 1225.
     fn check_type_predicates(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
+        if hir.types.is_empty() {
+            return;
+        }
         let text = &hir.text[..];
+        let asserts_word = self.files().atoms.lookup(b"asserts");
+        // What each function says it returns, and the function. Sorted.
+        let mut returning: Option<Vec<(TypeNodeId, usize)>> = None;
         for t in 0..hir.types.len() {
             if bound.type_scope[t].is_none() {
                 continue;
@@ -2337,7 +2357,7 @@ impl Checker<'_> {
                 TypeNodeKind::Ref { name, args }
                     if name.len() == 1
                         && args.is_empty()
-                        && self.files().atoms.bytes(hir.id_at(name, 0)) == b"asserts" =>
+                        && Some(hir.id_at(name, 0)) == asserts_word =>
                 {
                     let end = hir.types[t].pos as usize + 7;
                     let next = skip_trivia(text, end);
@@ -2358,7 +2378,19 @@ impl Checker<'_> {
             };
             // `getTypePredicateParent`
             let node = TypeNodeId(t as u32);
-            let parent = hir.fns.iter().position(|f| f.ret == node).filter(|&f| {
+            let sorted = returning.get_or_insert_with(|| {
+                let mut all: Vec<(TypeNodeId, usize)> = hir
+                    .fns
+                    .iter()
+                    .enumerate()
+                    .map(|(f, func)| (func.ret, f))
+                    .collect();
+                all.sort_unstable();
+                all
+            });
+            let first = sorted.partition_point(|r| r.0 < node);
+            let parent = sorted.get(first).filter(|r| r.0 == node).map(|r| r.1);
+            let parent = parent.filter(|&f| {
                 matches!(
                     hir.fns[f].kind,
                     FnKind::Arrow
@@ -2576,8 +2608,8 @@ impl Checker<'_> {
     /// `getTypeOfPropertyOfType(t, "then")`
     fn type_of_then(&mut self, t: TypeId) -> Option<TypeId> {
         let apparent = self.apparent_type(t);
-        let (prop, mapper) = self.prop_of(apparent, known::then)?;
-        Some(self.type_of_prop_as_read(&prop, mapper))
+        let (prop, mapper) = self.prop_ref(apparent, known::then)?;
+        Some(self.type_of_prop_as_read(prop, mapper))
     }
 
     /// `getAwaitedTypeNoAliasEx`, for what it reports. `false`: there is no awaited type.
@@ -2653,12 +2685,13 @@ impl Checker<'_> {
         // what has a `then` but is no promise.
         let mut sites: Vec<(u32, Result<ExprId, TypeId>, Option<(u32, Reported)>, u32)> =
             Vec::new();
-        for (i, e) in hir.exprs.iter().enumerate() {
-            if let ExprKind::Await(operand) = e.kind
-                && !matches!(bound.expr_parent[i], Parent::None)
+        let by_kind = self.exprs_by_kind(file);
+        for &e in by_kind.of(ExprTag::Await) {
+            if let ExprKind::Await(operand) = hir[e].kind
+                && !matches!(bound.expr_parent[e.idx()], Parent::None)
             {
-                let node = Reported::Expr(ExprId(i as u32));
-                sites.push((e.pos, Ok(operand), Some((e.pos, node)), 0));
+                let pos = hir[e].pos;
+                sites.push((pos, Ok(operand), Some((pos, Reported::Expr(e))), 0));
             }
         }
         let mut branches = Vec::new();
@@ -2792,16 +2825,17 @@ impl Checker<'_> {
             return;
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
-        for (i, e) in hir.exprs.iter().enumerate() {
-            if matches!(e.kind, ExprKind::ImportCall(_))
-                && !matches!(bound.expr_parent[i], Parent::None)
+        let by_kind = self.exprs_by_kind(file);
+        for &id in by_kind.of(ExprTag::ImportCall) {
+            let e = &hir[id];
+            if !matches!(bound.expr_parent[id.idx()], Parent::None)
                 && word_at(&hir.text, e.pos as usize) == b"import"
             {
                 out.push(Diagnostic {
                     start: e.pos,
                     code: 2712,
                 });
-                let end = self.end_inside_parentheses(file, ExprId(i as u32));
+                let end = self.end_inside_parentheses(file, id);
                 self.explain_to(e.pos, end, 2712, |_| vec![]);
             }
         }
@@ -2867,12 +2901,15 @@ impl Checker<'_> {
             if sym.file == file && sym.id.idx() != i {
                 continue;
             }
-            let mut lists: Vec<(FileId, Span<MemberId>, u32, u32)> = Vec::new();
-            for (of, decl) in self.files().decls(sym) {
-                match decl {
-                    Decl::Class(c) => lists.push((of, self.hir(of)[c].members, 0, c.0)),
-                    Decl::Interface(x) => lists.push((of, self.hir(of)[x].members, 1, x.0)),
-                    _ => {}
+            let mut lists: SmallVec<[(FileId, Span<MemberId>, u32, u32); 4]> = SmallVec::new();
+            for &part in self.files().parts(sym).iter() {
+                let of = part.file;
+                for &decl in &self.files().symbol(part).decls {
+                    match decl {
+                        Decl::Class(c) => lists.push((of, self.hir(of)[c].members, 0, c.0)),
+                        Decl::Interface(x) => lists.push((of, self.hir(of)[x].members, 1, x.0)),
+                        _ => {}
+                    }
                 }
             }
             self.check_member_lists_agree(file, &lists, out);
@@ -3074,7 +3111,8 @@ impl Checker<'_> {
         // The symbols among the exports, which the blocks of a namespace share, in whichever file they are.
         let mut seen: Vec<Sym> = Vec::new();
         for block in blocks.iter().filter(|b| b.has_exports) {
-            let mut sharing = vec![*block];
+            let mut sharing: SmallVec<[Block; 2]> = SmallVec::new();
+            sharing.push(*block);
             if block.module.is_some() {
                 let sym = self
                     .files()
@@ -3091,6 +3129,12 @@ impl Checker<'_> {
                         sharing.push(Block::of_module(self.hir(of), of, m));
                     }
                 }
+            }
+            if !sharing
+                .iter()
+                .any(|b| declares_function_without_body(self.hir(b.file), b.list))
+            {
+                continue;
             }
             let mut all: Vec<Declared> = Vec::new();
             let mut homes: Vec<usize> = Vec::new();
@@ -3347,8 +3391,11 @@ impl Checker<'_> {
             }
         }
         // `<T>e`, from the `<`.
-        for (i, e) in hir.exprs.iter().enumerate() {
-            if matches!(bound.expr_parent[i], Parent::None) {
+        let by_kind = self.exprs_by_kind(file);
+        let assertions = by_kind.of(ExprTag::As).iter();
+        for &id in assertions.chain(by_kind.of(ExprTag::AsConst)) {
+            let e = &hir[id];
+            if matches!(bound.expr_parent[id.idx()], Parent::None) {
                 continue;
             }
             // Where the `<` ends, and the `>`.

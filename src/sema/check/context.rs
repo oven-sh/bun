@@ -1,10 +1,16 @@
 //! What an expression is expected to be, going by where it is written.
 
+use super::infer::Parts;
 use super::*;
 use crate::bind::{FnOwner, Parent, PatParent};
+use smallvec::SmallVec;
+
+/// The names of properties that tell the members of a union apart, and what each is given as.
+type Discriminants = SmallVec<[(Atom, TypeId); 8]>;
 
 impl<'p> Checker<'p> {
     /// The function-like `e` is evaluated in.
+    #[inline]
     pub fn enclosing_fn_of_expr(&self, file: FileId, e: ExprId) -> Option<FnId> {
         self.enclosing_fn(file, self.bound(file).expr_parent[e.idx()])
     }
@@ -14,19 +20,14 @@ impl<'p> Checker<'p> {
         loop {
             parent = match parent {
                 Parent::Expr(e) => bound.expr_parent[e.idx()],
-                Parent::Stmt(s) => bound.stmt_parent[s.idx()],
+                Parent::Stmt(s) if s.is_some() => bound.stmt_parent[s.idx()],
                 Parent::VarInit(d) => Parent::Stmt(bound.var_stmt[d.idx()]),
-                Parent::Prop(p) => Parent::Expr(bound.prop_owner[p.idx()]),
+                Parent::Prop(p) => bound.expr_parent[bound.prop_owner[p.idx()].idx()],
                 Parent::Case(c) => Parent::Stmt(bound.case_stmt[c.idx()]),
                 Parent::FnBody(f) => return Some(f),
                 Parent::ParamDefault(p) => return Some(bound.param_fn[p.idx()]),
                 _ => return None,
             };
-            if let Parent::Stmt(s) = parent
-                && s.is_none()
-            {
-                return None;
-            }
         }
     }
 
@@ -174,15 +175,24 @@ impl<'p> Checker<'p> {
     }
 
     /// Whether `e` names something bound by a pattern whose implied type is being worked out, from within that pattern.
+    #[inline]
     pub(super) fn is_reference_within_contextual_pattern(
         &mut self,
         file: FileId,
         e: ExprId,
         sym: Sym,
     ) -> bool {
-        if self.contextual_binding_patterns.is_empty() || sym.file != file {
-            return false;
-        }
+        !self.contextual_binding_patterns.is_empty()
+            && sym.file == file
+            && self.is_reference_within_one_of_the_patterns(file, e, sym)
+    }
+
+    fn is_reference_within_one_of_the_patterns(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        sym: Sym,
+    ) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let Some(&(crate::bind::Decl::Var(declared) | crate::bind::Decl::Param(declared))) =
             bound.symbols[sym.id.idx()].decls.first()
@@ -730,14 +740,14 @@ impl<'p> Checker<'p> {
         if !self.is_union(ty) {
             let apparent = self.apparent_type(ty);
             let members = self.members(apparent)?;
-            let (prop, mapper) = self.property_of_type(&members, name)?;
-            return Some(self.type_of_prop(&prop, mapper));
+            let (prop, mapper) = self.property_in(&members, name)?;
+            return Some(self.type_of_prop(prop, mapper));
         }
         let mut is_declared = false;
         for &part in self.parts(ty) {
             let apparent = self.apparent_type(part);
             if let Some(members) = self.members(apparent)
-                && self.property_of_type(&members, name).is_some()
+                && self.property_in(&members, name).is_some()
             {
                 is_declared = true;
                 break;
@@ -765,7 +775,7 @@ impl<'p> Checker<'p> {
         if self.is_any(context) {
             return None;
         }
-        let mut types = Vec::new();
+        let mut types = Parts::new();
         for &written in self.parts(context) {
             // `getApparentTypeOfContextualType`: a mapped type stays as it is.
             let written = self.force(written);
@@ -817,7 +827,7 @@ impl<'p> Checker<'p> {
             return None;
         };
         // `getApparentTypeOfIntersectionType`: every member as a property access sees it.
-        let mut apparent = Vec::with_capacity(members.len());
+        let mut apparent = Parts::with_capacity(members.len());
         for &m in members.iter() {
             apparent.push(self.apparent_type(m));
         }
@@ -835,7 +845,7 @@ impl<'p> Checker<'p> {
         }
         // `appendContextualPropertyTypeConstituent`: `any` says nothing, and is not to drown what the others say.
         let said = |t: TypeId| if t == TypeId::ANY { TypeId::UNKNOWN } else { t };
-        let (mut found, mut candidates): (Vec<TypeId>, Vec<TypeId>) = (Vec::new(), Vec::new());
+        let (mut found, mut candidates) = (Parts::new(), Parts::new());
         let mut ignore_index_infos = false;
         for &m in &apparent {
             if !self.is_object_type(m) {
@@ -940,21 +950,24 @@ impl<'p> Checker<'p> {
         this: Option<TypeId>,
     ) -> Option<TypeId> {
         let members = self.members(part)?;
-        let (prop, mut mapper) = self.property_of_type(&members, name)?;
+        let (prop, mut mapper) = self.property_in(&members, name)?;
         // `getTypeWithThisArgument`
         if let Some(this) = this
             && let TypeData::Ref { target, .. } = self.data(part)
         {
             let param = self.intern(TypeData::ThisParam(*target));
-            let mut pairs = self.p.types.mapping(mapper).to_vec();
-            for pair in &mut pairs {
-                if pair.0 == param {
-                    pair.1 = this;
+            let mapping = self.p.types.mapping(mapper);
+            if mapping.iter().any(|pair| pair.0 == param && pair.1 != this) {
+                let mut pairs = mapping.to_vec();
+                for pair in &mut pairs {
+                    if pair.0 == param {
+                        pair.1 = this;
+                    }
                 }
+                mapper = self.p.types.mapper(pairs);
             }
-            mapper = self.p.types.mapper(pairs);
         }
-        let ty = self.type_of_prop(&prop, mapper);
+        let ty = self.type_of_prop(prop, mapper);
         Some(self.remove_missing_type(ty, prop.flags.contains(PropFlags::OPTIONAL)))
     }
 
@@ -1069,7 +1082,7 @@ impl<'p> Checker<'p> {
             return context;
         }
         // Only names the binder knows count. A computed name is skipped.
-        let (mut items, mut written): (Vec<(Atom, TypeId)>, Vec<Atom>) = (Vec::new(), Vec::new());
+        let (mut items, mut written) = (Discriminants::new(), SmallVec::<[Atom; 16]>::new());
         for p in props.iter() {
             let prop = &hir[p];
             if prop.kind == PropKind::Spread {
@@ -1103,11 +1116,22 @@ impl<'p> Checker<'p> {
     ) -> TypeId {
         match self.data(ty) {
             TypeData::Union(members) => {
-                let mapped: Vec<TypeId> = members.iter().map(|&m| f(self, m)).collect();
-                if mapped[..] == members[..] {
-                    return ty;
+                let mut mapped: Option<Parts> = None;
+                for (i, &m) in members.iter().enumerate() {
+                    let to = f(self, m);
+                    if let Some(list) = &mut mapped {
+                        list.push(to);
+                    } else if to != m {
+                        let mut list = Parts::with_capacity(members.len());
+                        list.extend_from_slice(&members[..i]);
+                        list.push(to);
+                        mapped = Some(list);
+                    }
                 }
-                self.union_unreduced(&mapped)
+                match mapped {
+                    Some(mapped) => self.union_unreduced(&mapped),
+                    None => ty,
+                }
             }
             TypeData::Intrinsic(Intrinsic::Never) => ty,
             _ => f(self, ty),
@@ -1147,7 +1171,7 @@ impl<'p> Checker<'p> {
         if !self.is_union(context) {
             return context;
         }
-        let (mut items, mut written): (Vec<(Atom, TypeId)>, Vec<Atom>) = (Vec::new(), Vec::new());
+        let (mut items, mut written) = (Discriminants::new(), SmallVec::<[Atom; 16]>::new());
         for p in hir[j].attrs.iter() {
             let attr = &hir[p];
             if attr.kind == PropKind::Spread {
@@ -1215,21 +1239,28 @@ impl<'p> Checker<'p> {
         &mut self,
         context: TypeId,
         written: &[Atom],
-        items: &mut Vec<(Atom, TypeId)>,
+        items: &mut Discriminants,
     ) {
         // `getPropertiesOfType`
         let reduced = self.reduced(context);
-        let mut seen: Vec<Atom> = Vec::new();
+        let mut gone_through: SmallVec<[Members<'p>; 2]> = SmallVec::new();
         for &part in self.parts(reduced) {
             let Some(members) = self.members(part) else {
                 break;
             };
             for prop in &members.shape().props {
                 let name = prop.name;
-                if seen.contains(&name) {
+                // Each name once.
+                if gone_through
+                    .iter()
+                    .any(|earlier| earlier.resolved.prop(name).is_some())
+                    || members
+                        .resolved
+                        .prop(name)
+                        .is_some_and(|first| !std::ptr::eq(first, prop))
+                {
                     continue;
                 }
-                seen.push(name);
                 if written.contains(&name) || !self.is_discriminant_property(context, name) {
                     continue;
                 }
@@ -1237,7 +1268,7 @@ impl<'p> Checker<'p> {
                 let mut is_optional = false;
                 for &m in self.parts(reduced) {
                     is_optional |= self
-                        .prop_of(m, name)
+                        .prop_ref(m, name)
                         .is_some_and(|(p, _)| p.flags.contains(PropFlags::OPTIONAL));
                 }
                 // What some member has nothing for is no property of the union.
@@ -1249,6 +1280,7 @@ impl<'p> Checker<'p> {
             if members.shape().index.is_empty() {
                 break;
             }
+            gone_through.push(members);
         }
     }
 
@@ -1269,7 +1301,7 @@ impl<'p> Checker<'p> {
         const IN: u8 = 1;
         const MAYBE: u8 = 2;
         let types = self.parts(context);
-        let mut include: Vec<u8> = Vec::with_capacity(types.len());
+        let mut include: SmallVec<[u8; 16]> = SmallVec::with_capacity(types.len());
         for &t in types {
             include.push(
                 if !self.is_primitive(t) && self.reduced(t) != TypeId::NEVER {
@@ -1309,7 +1341,7 @@ impl<'p> Checker<'p> {
         if !include.contains(&OUT) {
             return context;
         }
-        let kept: Vec<TypeId> = types
+        let kept: Parts = types
             .iter()
             .zip(&include)
             .filter(|(_, slot)| **slot == IN)
@@ -1384,10 +1416,8 @@ impl<'p> Checker<'p> {
                 let index = hir.ids(items).position(|i| i == e)?;
                 // `getSpreadIndices`
                 let is_spread = |i: ExprId| matches!(hir[i].kind, ExprKind::Spread(_));
-                let (first, last) = (
-                    hir.ids(items).position(is_spread),
-                    hir.ids(items).rposition(is_spread),
-                );
+                let first = hir.ids(items).position(is_spread);
+                let last = first.and_then(|_| hir.ids(items).rposition(is_spread));
                 self.contextual_element_at(context, index, Some(items.len()), first, last)
             }
             // Nothing is expected of what is spread into an array or an argument list.
@@ -1468,7 +1498,7 @@ impl<'p> Checker<'p> {
                 }
                 // Of several, each is expected to be what a list has in its place.
                 let key = self.number_literal(index as f64, false);
-                let mut types = Vec::with_capacity(self.parts(field).len());
+                let mut types = Parts::with_capacity(self.parts(field).len());
                 for &t in self.parts(field) {
                     types.push(if self.is_array_like(t) {
                         self.indexed_access(t, key)
@@ -1566,7 +1596,7 @@ impl<'p> Checker<'p> {
                         _ => None,
                     };
                     if let Some(name) = name
-                        && let Some((prop, _)) = self.prop_of(this, name)
+                        && let Some((prop, _)) = self.prop_ref(this, name)
                         && let PropSource::Members(members) = &prop.source
                         && let Some(&(of, m)) = members.first()
                     {
@@ -1656,7 +1686,7 @@ impl<'p> Checker<'p> {
     ) -> Option<TypeId> {
         let variable = ElemFlags::REST | ElemFlags::VARIADIC;
         let before_spreads = first_spread.is_none_or(|s| index < s);
-        let mut types = Vec::new();
+        let mut types = Parts::new();
         for &part in self.parts(context) {
             // `getApparentTypeOfContextualType`: a mapped type stays as it is.
             let part = self.force(part);
@@ -1737,10 +1767,10 @@ impl<'p> Checker<'p> {
             }
             // `getIteratedTypeOrElementType(IterationUseElement, t, .., nil)`: what cannot be gone through says nothing.
             let part = self.apparent_type(part);
-            if let Some((method, mapper)) = self.prop_of(part, known::sym_iterator)
+            if let Some((method, mapper)) = self.prop_ref(part, known::sym_iterator)
                 && !method.flags.contains(PropFlags::OPTIONAL)
             {
-                let method = self.type_of_prop(&method, mapper);
+                let method = self.type_of_prop(method, mapper);
                 if method == TypeId::ANY {
                     types.push(method);
                 } else if !self.signatures(method, false).is_empty() {
@@ -1771,7 +1801,7 @@ impl<'p> Checker<'p> {
         if from >= end {
             return None;
         }
-        let mut slice = Vec::with_capacity(end - from);
+        let mut slice = Parts::with_capacity(end - from);
         for i in from..end {
             let element = if flags[i].contains(ElemFlags::VARIADIC) {
                 self.indexed_access(elems[i], TypeId::NUMBER)
@@ -1820,14 +1850,18 @@ impl<'p> Checker<'p> {
             }
         });
         let required = self.required_own_params(file, func);
-        let mut found: Vec<SigId> = Vec::new();
-        for part in self.parts_in_order(context) {
+        let mut found: SmallVec<[SigId; 4]> = SmallVec::new();
+        for part in self.sorted_parts(context) {
             if self.is_primitive(part) {
                 continue;
             }
             // `getContextualCallSignature`
-            let mut fitting = self.signatures(part, false).into_vec();
-            fitting.retain(|&s| !self.is_arity_smaller(file, func, s, required));
+            let mut fitting: SmallVec<[SigId; 4]> = SmallVec::new();
+            for s in self.signatures(part, false) {
+                if !self.is_arity_smaller(file, func, s, required) {
+                    fitting.push(s);
+                }
+            }
             let sig = match fitting[..] {
                 [] => continue,
                 [only] => only,
@@ -1870,10 +1904,10 @@ impl<'p> Checker<'p> {
                         params: params.into(),
                         ret: TypeId::UNRESOLVED,
                         this,
-                        of: found.into(),
+                        of: found.into_boxed_slice(),
                     }));
                 }
-                let returns: Vec<TypeId> = found.iter().map(|&s| self.sig_return(s)).collect();
+                let returns: Parts = found.iter().map(|&s| self.sig_return(s)).collect();
                 let ret = self.union_reduced(&returns);
                 Some(self.p.types.intern_sig(SigData::Synth {
                     type_params: type_params.into(),

@@ -3,6 +3,7 @@
 use super::*;
 use crate::bind::{Decl, FnOwner, MemberOwner, Parent};
 use crate::table::Handle;
+use smallvec::{SmallVec, smallvec};
 
 pub struct Resolved {
     pub shape: Shape,
@@ -13,6 +14,7 @@ impl Resolved {
     fn new(shape: Shape) -> Resolved {
         let mut by_name = FxHashMap::default();
         if shape.props.len() > 8 {
+            by_name.reserve(shape.props.len());
             for (i, p) in shape.props.iter().enumerate() {
                 by_name.entry(p.name).or_insert(i as u32);
             }
@@ -20,6 +22,7 @@ impl Resolved {
         Resolved { shape, by_name }
     }
 
+    #[inline]
     pub fn prop(&self, name: Atom) -> Option<&Prop> {
         if self.shape.props.len() > 8 {
             return self
@@ -27,7 +30,7 @@ impl Resolved {
                 .get(&name)
                 .map(|&i| &self.shape.props[i as usize]);
         }
-        self.shape.prop(name)
+        self.shape.props.iter().find(|p| p.name == name)
     }
 }
 
@@ -94,6 +97,20 @@ enum Access {
     Written,
 }
 
+/// Whether it is an object type that a property access looks into as it stands: any but a mapped type.
+#[inline]
+fn is_plain_object(data: &TypeData) -> bool {
+    match data {
+        TypeData::Ref { .. }
+        | TypeData::Tuple { .. }
+        | TypeData::Fns { .. }
+        | TypeData::Synth(_)
+        | TypeData::ReverseMapped { .. } => true,
+        TypeData::Anon { origin, .. } => !matches!(origin, Origin::Mapped(..)),
+        _ => false,
+    }
+}
+
 /// `decl.Body() != nil`: a body written where none belongs is not kept, but it counts.
 fn has_body(func: &Func) -> bool {
     !matches!(func.body, FnBody::None) || func.flags.contains(Flags::BODY_DROPPED)
@@ -120,31 +137,71 @@ fn follows_a_semicolon(text: &[u8], pos: u32) -> bool {
 #[derive(Default)]
 struct Builder {
     shape: Shape,
+    /// Where each property is, while there are more than `FEW`. Empty otherwise.
     index: FxHashMap<Atom, usize>,
     /// The keys of the index signatures that computed names implied.
     implied: Vec<TypeId>,
 }
 
 impl Builder {
-    fn has(&self, name: Atom) -> bool {
-        self.index.contains_key(&name)
+    const FEW: usize = 8;
+
+    /// Where the property `name` is.
+    #[inline]
+    fn position(&self, name: Atom) -> Option<usize> {
+        if self.shape.props.len() <= Self::FEW {
+            return self.shape.props.iter().position(|p| p.name == name);
+        }
+        self.index.get(&name).copied()
     }
-    fn add(&mut self, prop: Prop) {
-        match self.index.get(&prop.name) {
-            Some(&i) => self.shape.props[i] = prop,
-            None => {
-                self.index.insert(prop.name, self.shape.props.len());
-                self.shape.props.push(prop);
-            }
+    #[inline]
+    fn has(&self, name: Atom) -> bool {
+        self.position(name).is_some()
+    }
+    /// Makes room for `more` properties.
+    fn reserve(&mut self, more: usize) {
+        self.shape.props.reserve(more);
+        let all = self.shape.props.len() + more;
+        if all > Self::FEW {
+            self.index.reserve(all - self.index.len());
         }
     }
+    fn add(&mut self, prop: Prop) {
+        match self.position(prop.name) {
+            Some(i) => self.shape.props[i] = prop,
+            None => self.add_new(prop),
+        }
+    }
+    /// Adds a property whose name is not there yet.
+    fn add_new(&mut self, prop: Prop) {
+        let at = self.shape.props.len();
+        if at == Self::FEW {
+            self.index.extend(
+                self.shape
+                    .props
+                    .iter()
+                    .enumerate()
+                    .map(|(i, p)| (p.name, i)),
+            );
+        }
+        if at >= Self::FEW {
+            self.index.insert(prop.name, at);
+        }
+        self.shape.props.push(prop);
+    }
     fn remove(&mut self, name: Atom) {
-        if let Some(i) = self.index.remove(&name) {
-            self.shape.props.remove(i);
-            for v in self.index.values_mut() {
-                if *v > i {
-                    *v -= 1;
-                }
+        let Some(i) = self.position(name) else {
+            return;
+        };
+        self.shape.props.remove(i);
+        if self.shape.props.len() <= Self::FEW {
+            self.index.clear();
+            return;
+        }
+        self.index.remove(&name);
+        for v in self.index.values_mut() {
+            if *v > i {
+                *v -= 1;
             }
         }
     }
@@ -152,7 +209,16 @@ impl Builder {
 
 impl<'p> Checker<'p> {
     /// `ty` if it is not a reference to an alias that was still being worked out when it was made.
+    #[inline]
     pub fn force(&mut self, ty: TypeId) -> TypeId {
+        match self.data(ty) {
+            TypeData::LazyAlias { .. } | TypeData::NoInfer(_) => self.force_reference(ty),
+            _ => ty,
+        }
+    }
+
+    /// `force`, of a reference to an alias or a `NoInfer<T>`.
+    fn force_reference(&mut self, ty: TypeId) -> TypeId {
         self.guard("force");
         match self.data(ty) {
             TypeData::LazyAlias { sym, args } => {
@@ -180,6 +246,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `isNoInferType`
+    #[inline]
     pub(super) fn is_no_infer(&self, ty: TypeId) -> bool {
         match self.data(ty) {
             TypeData::NoInfer(_) => true,
@@ -257,6 +324,7 @@ impl<'p> Checker<'p> {
     }
 
     /// The contents of an object type or an intersection of them. `None` for anything else.
+    #[inline]
     pub fn members(&mut self, ty: TypeId) -> Option<Members<'p>> {
         if let Some(known) = self.p.members.get(&ty) {
             return Some(Members {
@@ -264,6 +332,11 @@ impl<'p> Checker<'p> {
                 mapper: known.mapper,
             });
         }
+        self.members_to_keep(ty)
+    }
+
+    /// `members`, of a type nothing is kept for yet.
+    fn members_to_keep(&mut self, ty: TypeId) -> Option<Members<'p>> {
         let (built, mapper) = self.members_uncached(ty)?;
         if let Some(shape) = built.kept {
             self.p.members.insert(ty, KeptMembers { shape, mapper });
@@ -302,11 +375,13 @@ impl<'p> Checker<'p> {
                 // `resolveTypeReferenceMembers`: the arguments go with the type parameters around the declaration, then its own,
                 // then `this`. Where nothing is given for `this` it is the type the member is looked up in.
                 let this = args.get(params.len()).copied().unwrap_or(ty);
-                let mut pairs: Vec<(TypeId, TypeId)> = if declared == ty {
-                    Vec::new()
+                let given = if declared == ty {
+                    0
                 } else {
-                    params.iter().copied().zip(args.iter().copied()).collect()
+                    params.len().min(args.len())
                 };
+                let mut pairs: Vec<(TypeId, TypeId)> = Vec::with_capacity(given + 1);
+                pairs.extend(params.iter().copied().zip(args.iter().copied()).take(given));
                 pairs.push((self.intern(TypeData::ThisParam(target)), this));
                 Some((resolved, self.p.types.mapper(pairs)))
             }
@@ -396,14 +471,13 @@ impl<'p> Checker<'p> {
                 flags,
                 readonly,
             } => {
-                let (elems, flags, readonly) = (elems.clone(), flags.clone(), *readonly);
+                let readonly = *readonly;
                 let resolved =
-                    self.shape_memo(ty, |c| c.build_tuple_shape(ty, &elems, &flags, readonly));
+                    self.shape_memo(ty, |c| c.build_tuple_shape(ty, elems, flags, readonly));
                 Some((resolved, MapperId::IDENTITY))
             }
             TypeData::Intersection(parts) => {
-                let parts = parts.clone();
-                let resolved = self.shape_memo(ty, |c| c.build_intersection_shape(ty, &parts));
+                let resolved = self.shape_memo(ty, |c| c.build_intersection_shape(ty, parts));
                 Some((resolved, MapperId::IDENTITY))
             }
             _ => None,
@@ -571,7 +645,7 @@ impl<'p> Checker<'p> {
             .next()
             .is_some_and(|m| self.is_declared_outside_classes(file, m));
         // Declarations of one name are one property.
-        let mut groups: Vec<(Atom, Vec<MemberId>)> = Vec::new();
+        let mut groups: Vec<(Atom, SmallVec<[MemberId; 4]>)> = Vec::new();
         // Those whose name is worked out and could be any string, number or symbol.
         let mut computed: Vec<MemberId> = Vec::new();
         for m in members.iter() {
@@ -601,7 +675,7 @@ impl<'p> Checker<'p> {
                     };
                     match groups.iter_mut().find(|g| g.0 == name) {
                         Some(group) => group.1.push(m),
-                        None => groups.push((name, vec![m])),
+                        None => groups.push((name, smallvec![m])),
                     }
                 }
                 MemberKind::CallSignature => {
@@ -707,11 +781,12 @@ impl<'p> Checker<'p> {
                 b, file, &computed, &groups, holds_more, mapper,
             );
         }
+        b.reserve(groups.len());
         for (name, group) in groups {
-            let mut list: Vec<(FileId, MemberId)> = group.into_iter().map(|m| (file, m)).collect();
-            let Some(&i) = b.index.get(&name) else {
+            let mut list: Vec<(FileId, MemberId)> = group.iter().map(|&m| (file, m)).collect();
+            let Some(i) = b.position(name) else {
                 let flags = self.flags_of_declarations(&list);
-                b.add(Prop {
+                b.add_new(Prop {
                     name,
                     flags,
                     source: PropSource::Members(list.into()),
@@ -877,7 +952,7 @@ impl<'p> Checker<'p> {
         b: &mut Builder,
         file: FileId,
         computed: &[MemberId],
-        named: &[(Atom, Vec<MemberId>)],
+        named: &[(Atom, SmallVec<[MemberId; 4]>)],
         holds_more: bool,
         mapper: MapperId,
     ) {
@@ -1107,6 +1182,9 @@ impl<'p> Checker<'p> {
         };
         let Some(members) = members else { return };
         let mapper = members.mapper;
+        b.reserve(members.shape().props.len());
+        // The mapper of the last property that had one of its own, and that followed by `mapper`.
+        let mut composed = (MapperId::IDENTITY, mapper);
         for prop in &members.shape().props {
             if b.has(prop.name) {
                 continue;
@@ -1114,9 +1192,14 @@ impl<'p> Checker<'p> {
             let mut prop = prop.clone();
             match prop.source {
                 PropSource::Type(t) => prop.source = PropSource::Type(self.instantiate(t, mapper)),
-                _ => prop.mapper = self.compose(prop.mapper, mapper),
+                _ => {
+                    if prop.mapper != composed.0 {
+                        composed = (prop.mapper, self.compose(prop.mapper, mapper));
+                    }
+                    prop.mapper = composed.1;
+                }
             }
-            b.add(prop);
+            b.add_new(prop);
         }
         for &sig in &members.shape().call {
             let sig = self.instantiate_sig(sig, mapper);
@@ -2044,7 +2127,7 @@ impl<'p> Checker<'p> {
                 .iter()
                 .filter(|f| f.contains(ElemFlags::REQUIRED))
                 .count();
-            let lengths: Vec<TypeId> = (min..=fixed)
+            let lengths: SmallVec<[TypeId; 4]> = (min..=fixed)
                 .map(|n| self.number_literal(n as f64, false))
                 .collect();
             self.union(&lengths)
@@ -2103,7 +2186,7 @@ impl<'p> Checker<'p> {
 
     /// What any element of the tuple may be.
     pub fn tuple_element_union(&mut self, elems: &[TypeId], flags: &[ElemFlags]) -> TypeId {
-        let mut all = Vec::with_capacity(elems.len());
+        let mut all: SmallVec<[TypeId; 8]> = SmallVec::new();
         for (&e, f) in elems.iter().zip(flags) {
             if f.contains(ElemFlags::VARIADIC) {
                 all.push(self.indexed_access(e, TypeId::NUMBER));
@@ -2139,13 +2222,16 @@ impl<'p> Checker<'p> {
 
     /// `findMixins`: the construct signatures of each member of an intersection, and which members are mixin constructors that
     /// give theirs up.
-    fn find_mixins(&mut self, parts: &[TypeId]) -> (Vec<Vec<SigId>>, Vec<bool>) {
-        let mut constructors: Vec<Vec<SigId>> = Vec::with_capacity(parts.len());
-        let mut is_mixin: Vec<bool> = Vec::with_capacity(parts.len());
+    fn find_mixins(
+        &mut self,
+        parts: &[TypeId],
+    ) -> (SmallVec<[List<'p, SigId>; 4]>, SmallVec<[bool; 8]>) {
+        let mut constructors: SmallVec<[List<'p, SigId>; 4]> = SmallVec::new();
+        let mut is_mixin: SmallVec<[bool; 8]> = SmallVec::new();
         for &part in parts {
             let sigs = self.signatures(part, true);
             is_mixin.push(self.is_mixin_constructor_type(&sigs));
-            constructors.push(sigs.into_vec());
+            constructors.push(sigs);
         }
         let constructor_types = constructors.iter().filter(|sigs| !sigs.is_empty()).count();
         let mixins = is_mixin.iter().filter(|&&mixin| mixin).count();
@@ -2163,7 +2249,7 @@ impl<'p> Checker<'p> {
     fn build_intersection_shape(&mut self, whole: TypeId, parts: &[TypeId]) -> Shape {
         let mut b = Builder::default();
         // What a property is is only looked into when it is asked for: with `this` for the whole, that can take knowing
-        // other properties of the whole.
+        // other properties of the whole. For each name that several members have: the properties, the one in `b` first.
         let mut lists: Vec<Vec<Prop>> = Vec::new();
         let (constructors, is_mixin) = self.find_mixins(parts);
         let has_mixins = is_mixin.contains(&true);
@@ -2191,6 +2277,7 @@ impl<'p> Checker<'p> {
                 }
                 members.mapper = self.p.types.mapper(pairs);
             }
+            b.reserve(members.shape().props.len());
             for prop in &members.shape().props {
                 let mut own = prop.clone();
                 match own.source {
@@ -2199,16 +2286,20 @@ impl<'p> Checker<'p> {
                     }
                     _ => own.mapper = self.compose(own.mapper, members.mapper),
                 }
-                match b.index.get(&prop.name) {
+                match b.position(prop.name) {
                     // The very same property, come by in two ways, is there once.
-                    Some(&i) => {
-                        if !lists[i].contains(&own) {
+                    Some(i) => {
+                        if lists[i].is_empty() {
+                            if b.shape.props[i] != own {
+                                lists[i] = vec![b.shape.props[i].clone(), own];
+                            }
+                        } else if !lists[i].contains(&own) {
                             lists[i].push(own);
                         }
                     }
                     None => {
-                        b.add(own.clone());
-                        lists.push(vec![own]);
+                        b.add_new(own);
+                        lists.push(Vec::new());
                     }
                 }
             }
@@ -2218,9 +2309,8 @@ impl<'p> Checker<'p> {
                 if !b
                     .shape
                     .call
-                    .clone()
-                    .into_iter()
-                    .any(|s| self.signatures_identical(s, sig))
+                    .iter()
+                    .any(|&s| self.signatures_identical(s, sig))
                 {
                     b.shape.call.push(sig);
                 }
@@ -2245,9 +2335,8 @@ impl<'p> Checker<'p> {
                     if !b
                         .shape
                         .construct
-                        .clone()
-                        .into_iter()
-                        .any(|s| self.signatures_identical(s, sig))
+                        .iter()
+                        .any(|&s| self.signatures_identical(s, sig))
                     {
                         b.shape.construct.push(sig);
                     }
@@ -2529,6 +2618,7 @@ impl<'p> Checker<'p> {
             return TypeId::UNRESOLVED;
         };
         let mut b = Builder::default();
+        b.reserve(l.shape().props.len() + r.shape().props.len());
         // What comes of spreading into the attributes of an element is still that (`objectFlags`).
         let is_jsx = |c: &Self, t: TypeId| matches!(c.data(t), TypeData::Synth(shape) if shape.literal == Literalness::JsxAttributes);
         let (left_is_jsx, right_is_jsx) = (is_jsx(self, left), is_jsx(self, right));
@@ -2593,7 +2683,7 @@ impl<'p> Checker<'p> {
             let is_write_only = prop.flags.contains(PropFlags::WRITE_ONLY);
             if right_is_written && !is_write_only && is_written(prop) {
                 b.remove(prop.name);
-                b.add(prop.clone());
+                b.add_new(prop.clone());
                 continue;
             }
             let mut ty = if is_write_only {
@@ -2603,10 +2693,10 @@ impl<'p> Checker<'p> {
             };
             let flags;
             if prop.flags.contains(PropFlags::OPTIONAL)
-                && let Some(&i) = b.index.get(&prop.name)
+                && let Some(i) = b.position(prop.name)
             {
-                let existing = b.shape.props[i].clone();
-                let left_ty = self.type_of_prop(&existing, MapperId::IDENTITY);
+                let existing = &b.shape.props[i];
+                let left_ty = self.type_of_prop(existing, MapperId::IDENTITY);
                 // It is made anew, and named as the one on the left is.
                 let named = match l.resolved.prop(prop.name) {
                     Some(original) => self.name_flag_of_copy(left, original, true),
@@ -2628,7 +2718,7 @@ impl<'p> Checker<'p> {
             }
             // What comes later goes last.
             b.remove(prop.name);
-            b.add(Prop {
+            b.add_new(Prop {
                 name: prop.name,
                 flags,
                 source: PropSource::Type(ty),
@@ -2666,11 +2756,13 @@ impl<'p> Checker<'p> {
     // ───────────────────────────── reading ─────────────────────────────
 
     /// The type of `prop`, which was found in something whose mapper is `outer`.
+    #[inline]
     pub fn type_of_prop(&mut self, prop: &Prop, outer: MapperId) -> TypeId {
         self.type_of_prop_with(prop, outer, false)
     }
 
     /// The same for whoever infers to it: a `NoInfer<T>` written there is still that (`inferFromTypes`).
+    #[inline]
     pub(super) fn type_of_prop_for_inference(&mut self, prop: &Prop, outer: MapperId) -> TypeId {
         self.type_of_prop_with(prop, outer, true)
     }
@@ -2704,7 +2796,7 @@ impl<'p> Checker<'p> {
                     Some(known) => known,
                     None => {
                         let cycles_before = self.cycles;
-                        let mut types = Vec::with_capacity(parts.len());
+                        let mut types: SmallVec<[TypeId; 4]> = SmallVec::new();
                         for part in parts.iter() {
                             types.push(self.type_of_prop(part, MapperId::IDENTITY));
                         }
@@ -2720,8 +2812,16 @@ impl<'p> Checker<'p> {
                 self.type_of_assigned_prop(*file, prop.name, assignments)
             }
         };
-        let ty = self.instantiate(base, own_mapper);
-        let ty = self.instantiate(ty, outer);
+        let ty = if self.has_type_variables(base) {
+            let ty = if own_mapper == MapperId::IDENTITY {
+                base
+            } else {
+                self.instantiate(base, own_mapper)
+            };
+            self.instantiate(ty, outer)
+        } else {
+            base
+        };
         let ty = if keeps_no_infer && self.is_no_infer(ty) {
             ty
         } else {
@@ -3397,7 +3497,17 @@ impl<'p> Checker<'p> {
     }
 
     /// What `ty` looks like to a property access: the wrapper of a primitive, the constraint of a type parameter.
+    #[inline]
     pub fn apparent_type(&mut self, ty: TypeId) -> TypeId {
+        match self.data(ty) {
+            TypeData::Union(_) if ty != TypeId::BOOLEAN => ty,
+            data if is_plain_object(data) => ty,
+            _ => self.apparent_type_of_other(ty),
+        }
+    }
+
+    /// `apparent_type`, of what may look like something else.
+    fn apparent_type_of_other(&mut self, ty: TypeId) -> TypeId {
         self.guard("apparent_type");
         let ty = self.force(ty);
         // What extends nothing extends `unknown`.
@@ -3406,68 +3516,72 @@ impl<'p> Checker<'p> {
         } else {
             ty
         };
-        if matches!(
-            self.data(ty),
+        let wrapper = match self.data(ty) {
             TypeData::Anon {
                 origin: Origin::Mapped(..),
                 ..
-            }
-        ) {
-            return self.apparent_type_of_mapped(ty);
-        }
-        // `getApparentTypeOfIntersectionType`: the intersection of what its members look like, so `T & {}` of a
-        // `T extends A | undefined` is `A`. Where every member looks like an object the intersection stays as it is: its shape is
-        // put together from what they look like, which is where `this` is seen to.
-        if let TypeData::Intersection(parts) = self.data(ty)
-            && parts.iter().any(|&p| self.is_deferred(p))
-        {
-            let mut distributes = false;
-            let mut looks = Vec::with_capacity(parts.len());
-            for &p in parts.iter() {
-                let look = if self.is_deferred(p) {
-                    self.apparent_type(p)
-                } else {
-                    p
-                };
-                distributes |= look != p
-                    && !self.is_object_type(look)
-                    && !matches!(self.data(look), TypeData::Intersection(_));
-                looks.push(look);
-            }
-            if distributes {
-                let whole = self.intersection(&looks);
-                if whole != ty {
-                    return self.apparent_type(whole);
+            } => return self.apparent_type_of_mapped(ty),
+            // `getApparentTypeOfIntersectionType`: the intersection of what its members look like, so `T & {}` of a
+            // `T extends A | undefined` is `A`. Where every member looks like an object the intersection stays as it is: its shape
+            // is put together from what they look like, which is where `this` is seen to.
+            TypeData::Intersection(parts) => {
+                if parts.iter().any(|&p| self.is_deferred(p)) {
+                    let mut distributes = false;
+                    let mut looks: SmallVec<[TypeId; 8]> = SmallVec::new();
+                    for &p in parts.iter() {
+                        let look = if self.is_deferred(p) {
+                            self.apparent_type(p)
+                        } else {
+                            p
+                        };
+                        distributes |= look != p
+                            && !self.is_object_type(look)
+                            && !matches!(self.data(look), TypeData::Intersection(_));
+                        looks.push(look);
+                    }
+                    if distributes {
+                        let whole = self.intersection(&looks);
+                        if whole != ty {
+                            return self.apparent_type(whole);
+                        }
+                    }
                 }
+                return ty;
             }
-        }
-        if self.is_string_like(ty) {
-            return self.global_ref(known::String, &[]);
-        }
-        if self.is_number_like(ty) {
-            return self.global_ref(known::Number, &[]);
-        }
-        if self.is_boolean_like(ty) || ty == TypeId::BOOLEAN {
-            return self.global_ref(known::Boolean, &[]);
-        }
-        if self.is_bigint_like(ty) {
-            return self.global_ref(known::BigInt, &[]);
-        }
-        if self.is_symbol_like(ty) {
-            return self.global_ref(known::Symbol, &[]);
-        }
-        if ty == TypeId::OBJECT {
-            return TypeId::EMPTY_OBJECT;
-        }
-        // `unknown` has nothing, not even what every object has, unless `null` and `undefined` are not told apart.
-        if ty == TypeId::UNKNOWN && !self.p.files.options.strict_null_checks {
-            return TypeId::EMPTY_OBJECT;
-        }
-        ty
+            TypeData::Intrinsic(Intrinsic::String)
+            | TypeData::StringLit { .. }
+            | TypeData::Template { .. }
+            | TypeData::StringMapping { .. }
+            | TypeData::EnumLit {
+                value: EnumValue::String(_),
+                ..
+            } => known::String,
+            TypeData::Intrinsic(Intrinsic::Number)
+            | TypeData::NumberLit { .. }
+            | TypeData::EnumLit {
+                value: EnumValue::Number(_),
+                ..
+            }
+            | TypeData::Enum { .. } => known::Number,
+            TypeData::BoolLit { .. } => known::Boolean,
+            TypeData::Union(_) if ty == TypeId::BOOLEAN => known::Boolean,
+            TypeData::Intrinsic(Intrinsic::BigInt) | TypeData::BigIntLit { .. } => known::BigInt,
+            TypeData::Intrinsic(Intrinsic::Symbol) | TypeData::UniqueSymbol { .. } => known::Symbol,
+            _ if ty == TypeId::OBJECT => return TypeId::EMPTY_OBJECT,
+            // `unknown` has nothing, not even what every object has, unless `null` and `undefined` are not told apart.
+            _ if ty == TypeId::UNKNOWN && !self.p.files.options.strict_null_checks => {
+                return TypeId::EMPTY_OBJECT;
+            }
+            _ => return ty,
+        };
+        self.global_ref(wrapper, &[])
     }
 
     /// `getResolvedBaseConstraint`: the widest type `ty` can be, with no type parameter left at the top. `unknown`: there is none.
     pub fn base_constraint(&mut self, ty: TypeId) -> TypeId {
+        if !self.has_type_variables(ty) {
+            return ty;
+        }
         // Asked from outside, it starts a stack of its own.
         let around = std::mem::take(&mut self.constraint_stack);
         let result = self.next_base_constraint(ty);
@@ -3477,21 +3591,27 @@ impl<'p> Checker<'p> {
 
     /// `getNextBaseConstraint`: the same, for the sake of the constraint that is being worked out.
     pub(super) fn next_base_constraint(&mut self, ty: TypeId) -> TypeId {
+        if !self.has_type_variables(ty) {
+            return ty;
+        }
         // `getBaseConstraintOfType`: the kinds that have one.
-        let may_have_one = self.is_deferred(ty)
-            || match self.data(ty) {
-                TypeData::Union(_)
-                | TypeData::Intersection(_)
-                | TypeData::Template { .. }
-                | TypeData::StringMapping { .. }
-                | TypeData::NoInfer(_) => true,
-                // `isGenericTupleType`
-                TypeData::Tuple { flags, .. } => {
-                    flags.iter().any(|f| f.contains(ElemFlags::VARIADIC))
-                }
-                _ => false,
-            };
-        if !may_have_one || !self.has_type_variables(ty) {
+        let may_have_one = match self.data(ty) {
+            TypeData::TypeParam(..)
+            | TypeData::ThisParam(_)
+            | TypeData::Marker(_)
+            | TypeData::IndexedAccess { .. }
+            | TypeData::Cond { .. }
+            | TypeData::Keyof(_)
+            | TypeData::Union(_)
+            | TypeData::Intersection(_)
+            | TypeData::Template { .. }
+            | TypeData::StringMapping { .. }
+            | TypeData::NoInfer(_) => true,
+            // `isGenericTupleType`
+            TypeData::Tuple { flags, .. } => flags.iter().any(|f| f.contains(ElemFlags::VARIADIC)),
+            _ => false,
+        };
+        if !may_have_one {
             return ty;
         }
         if let Some(known) = self.p.constraints.get(&ty) {
@@ -3689,16 +3809,23 @@ impl<'p> Checker<'p> {
 
     /// The property `name` of an object type, an intersection, or what stands for a primitive.
     pub fn prop_of(&mut self, ty: TypeId, name: Atom) -> Option<(Prop, MapperId)> {
+        self.prop_ref(ty, name)
+            .map(|(prop, mapper)| (prop.clone(), mapper))
+    }
+
+    /// The same, where it is kept.
+    pub fn prop_ref(&mut self, ty: TypeId, name: Atom) -> Option<(&'p Prop, MapperId)> {
         let members = self.members(ty)?;
         let prop = members.resolved.prop(name)?;
         if self.is_type_only_member(ty, name) {
             return None;
         }
-        Some((prop.clone(), members.mapper))
+        Some((prop, members.mapper))
     }
 
     /// `getPropertyOfTypeEx`: whether `ty` is the object of a module that has `name` only through `export type *`. It is listed
     /// among the properties, but it is not there for the asking, and nothing stands in for it.
+    #[inline]
     fn is_type_only_member(&self, ty: TypeId, name: Atom) -> bool {
         matches!(*self.data(ty), TypeData::Anon { origin: Origin::Module(module), .. } if self.files().is_type_only_star_export(module, name))
     }
@@ -3719,8 +3846,14 @@ impl<'p> Checker<'p> {
     }
 
     /// Whether `ty` is an intersection nothing can be.
+    #[inline]
     pub fn is_never_intersection(&mut self, ty: TypeId) -> bool {
-        if !matches!(self.data(ty), TypeData::Intersection(_)) || self.is_generic(ty) {
+        matches!(self.data(ty), TypeData::Intersection(_)) && self.is_empty_intersection(ty)
+    }
+
+    /// `is_never_intersection`, of an intersection.
+    fn is_empty_intersection(&mut self, ty: TypeId) -> bool {
+        if self.has_type_variables(ty) && self.is_generic(ty) {
             return false;
         }
         if let Some(known) = self.p.never_intersections.get(&ty) {
@@ -3776,9 +3909,18 @@ impl<'p> Checker<'p> {
     }
 
     /// `ty` without the intersections nothing can be.
+    #[inline]
     pub fn reduced(&mut self, ty: TypeId) -> TypeId {
         match self.data(ty) {
-            TypeData::Intersection(_) if self.is_never_intersection(ty) => TypeId::NEVER,
+            TypeData::Intersection(_) | TypeData::Union(_) => self.reduced_members(ty),
+            _ => ty,
+        }
+    }
+
+    /// `reduced`, of a union or an intersection.
+    fn reduced_members(&mut self, ty: TypeId) -> TypeId {
+        match self.data(ty) {
+            TypeData::Intersection(_) if self.is_empty_intersection(ty) => TypeId::NEVER,
             TypeData::Union(parts)
                 if parts
                     .iter()
@@ -3822,6 +3964,9 @@ impl<'p> Checker<'p> {
     /// `checkPropertyAccessExpressionOrQualifiedName`: the type of the property `name` of `ty`, or failing that of the index
     /// signature that stands in for it, and which of the two it is.
     fn find_property(&mut self, ty: TypeId, name: Atom, access: Access) -> Option<(TypeId, Found)> {
+        if is_plain_object(self.data(ty)) {
+            return self.find_property_in(ty, ty, name, access);
+        }
         self.guard("type_of_property");
         let ty = self.force(ty);
         if self.is_any(ty) {
@@ -3831,9 +3976,9 @@ impl<'p> Checker<'p> {
         if let TypeData::Union(parts) = self.data(ty) {
             // `createUnionOrIntersectionProperty`: some member has it, and the others have something to stand in for it.
             let is_symbol = self.files().atoms.is_symbol_name(name);
-            let mut types = Vec::with_capacity(parts.len());
+            let mut types: SmallVec<[TypeId; 8]> = SmallVec::new();
             // `indexTypes`
-            let mut stand_ins = Vec::new();
+            let mut stand_ins: SmallVec<[TypeId; 4]> = SmallVec::new();
             let (mut is_property, mut is_restricted, mut is_partial) = (false, false, false);
             // `writeTypes`: whether some member takes something else than it gives.
             let mut takes_another = false;
@@ -3869,7 +4014,7 @@ impl<'p> Checker<'p> {
                 }
                 // What is written is then what the members that have the property take, and that is all.
                 if !takes_another {
-                    types.append(&mut stand_ins);
+                    types.extend_from_slice(&stand_ins);
                 }
                 return Some((
                     self.union(&types),
@@ -3900,6 +4045,17 @@ impl<'p> Checker<'p> {
         } else {
             self.reduced(apparent)
         };
+        self.find_property_in(ty, apparent, name, access)
+    }
+
+    /// `find_property`, of a `ty` that is no union and looks like `apparent`.
+    fn find_property_in(
+        &mut self,
+        ty: TypeId,
+        apparent: TypeId,
+        name: Atom,
+        access: Access,
+    ) -> Option<(TypeId, Found)> {
         // Nothing is written through an index signature of what a type parameter extends.
         let is_closed = access != Access::Read
             && !matches!(self.data(ty), TypeData::ThisParam(_))
@@ -3909,12 +4065,15 @@ impl<'p> Checker<'p> {
                 .find_property(apparent, name, access)
                 .filter(|found| !(is_closed && found.1 == Found::ByIndex));
         }
-        if let Some((mut prop, mut mapper)) = self.prop_of(apparent, name) {
+        let members = self.members(apparent)?;
+        if self.is_type_only_member(apparent, name) {
+            return None;
+        }
+        if let Some(mut prop) = members.resolved.prop(name) {
+            let mut mapper = members.mapper;
+            let is_through_constraint = apparent != ty && self.is_deferred(ty);
             // In a member found through what a type parameter extends, `this` is the type parameter.
-            if apparent != ty
-                && self.is_deferred(ty)
-                && let TypeData::Ref { target, .. } = self.data(apparent)
-            {
+            if is_through_constraint && let TypeData::Ref { target, .. } = self.data(apparent) {
                 let this = self.intern(TypeData::ThisParam(*target));
                 let mut pairs = self.p.types.mapping(mapper).to_vec();
                 for pair in &mut pairs {
@@ -3925,8 +4084,7 @@ impl<'p> Checker<'p> {
                 mapper = self.p.types.mapper(pairs);
             }
             // A tuple is a reference too: what it has from `Array` is found there, with the type parameter for `this`.
-            if apparent != ty
-                && self.is_deferred(ty)
+            if is_through_constraint
                 && name != known::length
                 && !self.is_numeric_name(name)
                 && let TypeData::Tuple {
@@ -3937,7 +4095,7 @@ impl<'p> Checker<'p> {
             {
                 let array = self.tuple_base_type(elems, flags, *readonly);
                 let array = self.type_with_this_argument(array, ty);
-                if let Some(of_array) = self.prop_of(array, name) {
+                if let Some(of_array) = self.prop_ref(array, name) {
                     (prop, mapper) = of_array;
                 }
             }
@@ -3950,22 +4108,18 @@ impl<'p> Checker<'p> {
                 Found::Property
             };
             let found = if access == Access::Written {
-                self.write_type_of_prop(&prop, mapper)
+                self.write_type_of_prop(prop, mapper)
             } else {
-                self.type_of_prop(&prop, mapper)
+                self.type_of_prop(prop, mapper)
             };
             return Some((found, how));
-        }
-        let members = self.members(apparent)?;
-        if self.is_type_only_member(apparent, name) {
-            return None;
         }
         // `getPropertyOfTypeEx`: what every function and every object has comes before any index signature. It is not looked
         // for in a `const enum`.
         if !self.is_const_enum_object(apparent)
-            && let Some((prop, mapper)) = self.property_of_type(&members, name)
+            && let Some((prop, mapper)) = self.property_in(&members, name)
         {
-            return Some((self.type_of_prop(&prop, mapper), Found::Property));
+            return Some((self.type_of_prop(prop, mapper), Found::Property));
         }
         if is_closed {
             return None;
@@ -4015,7 +4169,7 @@ impl<'p> Checker<'p> {
             }
         }
         let (mut is_restricted, mut is_partial) = (false, false);
-        let mut found: Vec<(Prop, MapperId)> = Vec::new();
+        let mut found: SmallVec<[(&'p Prop, MapperId); 8]> = SmallVec::new();
         for &part in parts {
             let part = self.apparent_type(part);
             if part == TypeId::NEVER || !self.is_known(part) {
@@ -4025,7 +4179,7 @@ impl<'p> Checker<'p> {
             if self.is_union(part) {
                 return false;
             }
-            match self.prop_of(part, name) {
+            match self.prop_ref(part, name) {
                 Some(prop) => {
                     is_restricted |= prop
                         .0
@@ -4177,11 +4331,23 @@ impl<'p> Checker<'p> {
     /// `isNumericLiteralName`: as a number and then as a string again, the name is what it was.
     pub fn is_numeric_name(&self, name: Atom) -> bool {
         let text = self.files().atoms.bytes(name);
-        !text.is_empty()
-            && std::str::from_utf8(text)
-                .ok()
-                .and_then(|s| s.parse::<f64>().ok())
-                .is_some_and(|n| crate::atom::number_to_string(n).as_bytes() == text)
+        // What a number is written as begins with a digit or a `-`, or it is one of two words.
+        match text.first().copied() {
+            Some(b'0'..=b'9') => {
+                // An integer that a number holds exactly is written as its digits.
+                if text.len() <= 15 && text.iter().all(u8::is_ascii_digit) {
+                    return text[0] != b'0' || text.len() == 1;
+                }
+            }
+            Some(b'-') => {}
+            Some(b'I') => return text == b"Infinity",
+            Some(b'N') => return text == b"NaN",
+            _ => return false,
+        }
+        std::str::from_utf8(text)
+            .ok()
+            .and_then(|s| s.parse::<f64>().ok())
+            .is_some_and(|n| crate::atom::number_to_string(n).as_bytes() == text)
     }
 
     /// The call or construct signatures of `ty`.
@@ -4211,10 +4377,9 @@ impl<'p> Checker<'p> {
         let ty = self.reduced(ty);
         // `resolveUnionTypeMembers`: once for a union. Putting the signatures of many members together is quadratic in them.
         if let TypeData::Union(parts) = self.data(ty) {
-            let parts = parts.clone();
             let resolved = self.shape_memo(ty, |c| Shape {
-                call: c.signatures_of_union(&parts, false),
-                construct: c.signatures_of_union(&parts, true),
+                call: c.signatures_of_union(parts, false),
+                construct: c.signatures_of_union(parts, true),
                 ..Shape::default()
             });
             return if construct {

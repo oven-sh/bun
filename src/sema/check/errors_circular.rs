@@ -8,6 +8,39 @@
 use super::errors::Diagnostic;
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, Symbol, SymbolId};
+use smallvec::SmallVec;
+
+type TypeParams = SmallVec<[TypeParamId; 8]>;
+
+/// Whether `mapped_keys_made_at_once` has anything to find in `node`, however many type arguments the names in it take.
+fn is_mapped_type_written_in(hir: &hir::File, node: TypeNodeId) -> bool {
+    if node.is_none() {
+        return false;
+    }
+    match hir[node].kind {
+        TypeNodeKind::Mapped(_) => true,
+        TypeNodeKind::Array(t) | TypeNodeKind::Keyof(t) | TypeNodeKind::Readonly(t) => {
+            is_mapped_type_written_in(hir, t)
+        }
+        TypeNodeKind::Tuple(elems) => elems
+            .iter()
+            .any(|e| is_mapped_type_written_in(hir, hir[e].ty)),
+        TypeNodeKind::Ref { args: list, .. }
+        | TypeNodeKind::Union(list)
+        | TypeNodeKind::Intersection(list)
+        | TypeNodeKind::Template { types: list, .. }
+        | TypeNodeKind::Typeof { args: list, .. } => {
+            hir.ids(list).any(|t| is_mapped_type_written_in(hir, t))
+        }
+        TypeNodeKind::IndexedAccess { obj, index } => {
+            is_mapped_type_written_in(hir, obj) || is_mapped_type_written_in(hir, index)
+        }
+        TypeNodeKind::Cond { check, extends, .. } => {
+            is_mapped_type_written_in(hir, check) || is_mapped_type_written_in(hir, extends)
+        }
+        _ => false,
+    }
+}
 
 /// `getConstraintDeclaration`: where the constraint `node` starts as it is written. Neither the parentheses around a type are kept
 /// nor a `|` or a `&` before its only member; what comes before a constraint is `extends` or `in`, which none of these can be
@@ -90,7 +123,12 @@ impl Checker<'_> {
             }
         }
         // `getResolvedBaseConstraint`, of the key of a mapped type that had to be known to tell whether the type can be extended.
-        for (n, node) in hir.types.iter().enumerate() {
+        let looked_through = if hir.mapped.is_empty() {
+            0
+        } else {
+            hir.types.len()
+        };
+        for (n, node) in hir.types[..looked_through].iter().enumerate() {
             if let TypeNodeKind::Mapped(m) = node.kind
                 && hir[hir[m].param].constraint.is_some()
                 && self
@@ -243,12 +281,11 @@ impl Checker<'_> {
             if first != member {
                 continue;
             }
-            let both: Vec<(FileId, MemberId)> = [getter, setter]
+            let mut both: SmallVec<[(FileId, MemberId); 2]> = [getter, setter]
                 .into_iter()
                 .flatten()
                 .map(|m| (file, m))
                 .collect();
-            let mut both = both;
             both.sort_unstable();
             self.type_of_member_declarations(&both);
             if self.p.circular_members.get(&(file, first)).is_none() {
@@ -605,7 +642,7 @@ impl Checker<'_> {
         if self.p.circular_bases.get(&own).is_some() {
             return true;
         }
-        let mut seen = Vec::new();
+        let mut seen: SmallVec<[Sym; 8]> = SmallVec::new();
         let mut todo = self.base_types_written(own);
         while let Some(next) = todo.pop() {
             if next == own {
@@ -622,12 +659,12 @@ impl Checker<'_> {
     /// The class `class` says it extends, if it says so by name.
     fn base_class_written(&self, class: Sym) -> Option<Sym> {
         let files = self.files();
-        let (of, c) = files.decls(class).into_iter().find_map(|(of, d)| match d {
+        let (of, c) = files.decls_of(class).iter().find_map(|&(of, d)| match d {
             Decl::Class(c) => Some((of, c)),
             _ => None,
         })?;
         let hir = self.hir(of);
-        let mut names = Vec::new();
+        let mut names: SmallVec<[Atom; 4]> = SmallVec::new();
         let mut e = hir[c].extends;
         if e.is_none() {
             return None;
@@ -660,10 +697,10 @@ impl Checker<'_> {
     }
 
     /// The classes and interfaces that the declarations of `sym` say they extend.
-    fn base_types_written(&self, sym: Sym) -> Vec<Sym> {
+    fn base_types_written(&self, sym: Sym) -> SmallVec<[Sym; 4]> {
         let files = self.files();
-        let mut bases = Vec::new();
-        for (of, decl) in files.decls(sym) {
+        let mut bases: SmallVec<[Sym; 4]> = SmallVec::new();
+        for (of, decl) in files.decls_of(sym) {
             match decl {
                 Decl::Interface(i) => {
                     let (hir, bound) = (self.hir(of), self.bound(of));
@@ -671,7 +708,7 @@ impl Checker<'_> {
                         let TypeNodeKind::Ref { name, .. } = hir[node].kind else {
                             continue;
                         };
-                        let names: Vec<Atom> = hir.ids(name).collect();
+                        let names: SmallVec<[Atom; 4]> = hir.ids(name).collect();
                         if let Some(found) = files
                             .resolve_entity(
                                 of,
@@ -705,7 +742,7 @@ impl Checker<'_> {
         if hir[own].constraint.is_none() {
             return false;
         }
-        let (mut seen, mut todo) = (Vec::new(), Vec::new());
+        let (mut seen, mut todo) = (TypeParams::new(), TypeParams::new());
         self.type_parameters_written(file, hir[own].constraint, &mut todo);
         while let Some(next) = todo.pop() {
             if next == own {
@@ -723,7 +760,7 @@ impl Checker<'_> {
 
     /// The type parameters a constraint comes down to: itself, the members of a union or an intersection, and the keys of the mapped
     /// types that are made with it.
-    fn type_parameters_written(&self, file: FileId, node: TypeNodeId, into: &mut Vec<TypeParamId>) {
+    fn type_parameters_written(&self, file: FileId, node: TypeNodeId, into: &mut TypeParams) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         match hir[node].kind {
             TypeNodeKind::Ref { name, args } if args.is_empty() && name.len() == 1 => {
@@ -755,12 +792,7 @@ impl Checker<'_> {
     /// `getTypeFromMappedTypeNode` resolves the constraint of its key as soon as the type is made: the keys of the mapped types that
     /// are made together with `node`, which is in a constraint, where nothing is put off (`isDeferredTypeReferenceNode`). Members,
     /// signatures, the templates of mapped types and what they rename to wait.
-    fn mapped_keys_made_at_once(
-        &self,
-        file: FileId,
-        node: TypeNodeId,
-        into: &mut Vec<TypeParamId>,
-    ) {
+    fn mapped_keys_made_at_once(&self, file: FileId, node: TypeNodeId, into: &mut TypeParams) {
         if node.is_none() {
             return;
         }
@@ -776,13 +808,13 @@ impl Checker<'_> {
                 }
             }
             TypeNodeKind::Ref { name, args } => {
-                if args.is_empty() {
+                if !hir.ids(args).any(|t| is_mapped_type_written_in(hir, t)) {
                     return;
                 }
                 // `getTypeFromClassOrInterfaceReference`, `getTypeFromTypeAliasReference`: the wrong number of type arguments is an
                 // error, and they are not looked at. Those of a name that means nothing are.
                 let files = self.files();
-                let names: Vec<Atom> = hir.ids(name).collect();
+                let names: SmallVec<[Atom; 4]> = hir.ids(name).collect();
                 let named = files
                     .resolve_entity(file, bound.type_scope[node.idx()], &names, SymFlags::TYPE)
                     .and_then(|s| files.resolve_alias_if_needed(s));

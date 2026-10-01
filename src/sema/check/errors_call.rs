@@ -11,6 +11,7 @@ use super::errors::Diagnostic;
 use super::explain::Line;
 use super::*;
 use crate::bind::{Decl, FnOwner, MemberOwner, Parent, PatParent};
+use smallvec::SmallVec;
 
 #[derive(PartialEq, Eq)]
 pub(super) enum Applicable {
@@ -23,7 +24,7 @@ pub(super) enum Applicable {
 
 /// What `chooseOverload` leaves behind when no candidate will do, and what it held the candidates against.
 struct Failed {
-    args: Vec<(Arg, ExprId)>,
+    args: SmallVec<[(Arg, ExprId); 4]>,
     type_args: Vec<TypeId>,
     this_arg: Option<ExprId>,
     /// `candidatesForArgumentError`
@@ -60,13 +61,17 @@ impl ArgumentCounts {
 
 impl Checker<'_> {
     pub(super) fn check_calls(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
-        let hir = self.hir(file);
+        let (hir, bound) = (self.hir(file), self.bound(file));
         for i in 0..hir.exprs.len() {
-            if matches!(self.bound(file).expr_parent[i], Parent::None) {
+            if !matches!(
+                hir.exprs[i].kind,
+                ExprKind::Call(_) | ExprKind::New(_) | ExprKind::TaggedTemplate(_)
+            ) || matches!(bound.expr_parent[i], Parent::None)
+            {
                 continue;
             }
             // `checkVariableLikeDeclaration` returns after `checkAliasSymbol` for `const x = require("m")`, so it never checks the call.
-            if let Parent::VarInit(d) = self.bound(file).expr_parent[i]
+            if let Parent::VarInit(d) = bound.expr_parent[i]
                 && matches!(hir[hir[d].pat].kind, PatKind::Ident(_))
                 && self.external_module_require_argument(file, d).is_some()
             {
@@ -99,7 +104,6 @@ impl Checker<'_> {
         }
         // Everything about the call is worked out for good before candidates are tried again.
         let resolved = self.resolve_call(file, e);
-        let node_start = self.start_of(file, e);
         let called = if is_new {
             self.type_of_expr(file, data.callee)
         } else {
@@ -154,6 +158,7 @@ impl Checker<'_> {
                 construct_sigs.len(),
             ) {
                 if has_type_args && !self.is_callee_in_error(file, data.callee) {
+                    let node_start = self.start_of(file, e);
                     out.push(Diagnostic {
                         start: node_start,
                         code: 2347,
@@ -168,6 +173,7 @@ impl Checker<'_> {
                     return;
                 }
                 if !construct_sigs.is_empty() {
+                    let node_start = self.start_of(file, e);
                     out.push(Diagnostic {
                         start: node_start,
                         code: 2348,
@@ -207,6 +213,7 @@ impl Checker<'_> {
         }
         if self.is_any(apparent) {
             if has_type_args && !self.is_callee_in_error(file, data.callee) {
+                let node_start = self.start_of(file, e);
                 out.push(Diagnostic {
                     start: node_start,
                     code: 2347,
@@ -217,6 +224,7 @@ impl Checker<'_> {
         }
         if !construct_sigs.is_empty() {
             if let Some((code, class)) = self.inaccessible_constructor(file, e, construct_sigs[0]) {
+                let node_start = self.start_of(file, e);
                 out.push(Diagnostic {
                     start: node_start,
                     code,
@@ -229,6 +237,7 @@ impl Checker<'_> {
                 return;
             }
             if self.some_construct_signature_is_abstract(reduced) {
+                let node_start = self.start_of(file, e);
                 out.push(Diagnostic {
                     start: node_start,
                     code: 2511,
@@ -241,6 +250,7 @@ impl Checker<'_> {
         }
         if !call_sigs.is_empty() {
             self.report_call_resolution(file, e, c, &call_sigs, true, resolved, out);
+            let node_start = self.start_of(file, e);
             let only = match call_sigs[..] {
                 [only] => Some(only),
                 _ => None,
@@ -353,8 +363,8 @@ impl Checker<'_> {
         let data = hir[c];
         let Some(sig) = sig else { return };
         if data.chain == Chain::Start
-            || is_parenthesized(hir, e)
             || !matches!(self.bound(file).expr_parent[e.idx()], Parent::Stmt(s) if s.is_some() && matches!(hir[s].kind, StmtKind::Expr(_)))
+            || is_parenthesized(hir, e)
             || !self.sig_predicate(sig).is_some_and(|p| p.asserts)
         {
             return;
@@ -604,7 +614,7 @@ impl Checker<'_> {
                     // The type annotation of the value declaration can resolve to the error type. An initializer is not followed: it
                     // can refer back to this expression.
                     let Some(&(decl_file, Decl::Var(pat) | Decl::Param(pat))) =
-                        self.files().decls(sym).first()
+                        self.files().decls_of(sym).first()
                     else {
                         return false;
                     };
@@ -773,7 +783,7 @@ impl Checker<'_> {
         };
         let receiver = self.type_of_expr(file, obj);
         let receiver = self.apparent_type(receiver);
-        let Some((prop, _)) = self.prop_of(receiver, name) else {
+        let Some((prop, _)) = self.prop_ref(receiver, name) else {
             return false;
         };
         match &prop.source {
@@ -873,21 +883,6 @@ impl Checker<'_> {
             }
             _ => false,
         }
-    }
-
-    /// The arguments as `getEffectiveCallArguments` has them, each with the argument it is written as (part of).
-    pub(super) fn effective_args_with_nodes(
-        &mut self,
-        file: FileId,
-        args: IdList<ExprId>,
-    ) -> Vec<(Arg, ExprId)> {
-        let mut out = Vec::with_capacity(args.len());
-        let mut one = Vec::new();
-        for a in self.hir(file).ids(args) {
-            self.push_effective_arg(file, a, &mut one);
-            out.extend(one.drain(..).map(|arg| (arg, a)));
-        }
-        out
     }
 
     /// `hasCorrectTypeArgumentArity`
@@ -999,15 +994,17 @@ impl Checker<'_> {
     ) -> Option<Failed> {
         let hir = self.hir(file);
         let data = hir[c];
-        let candidates = self.reorder_candidates(sigs);
+        let candidates = self.candidates_in_order(sigs);
         // `getEffectiveCallArguments`: of a tagged template the pieces of text come first. There is no node for the template:
         // the whole stands in for it.
-        let mut args = Vec::new();
+        let mut args: SmallVec<[(Arg, ExprId); 4]> = SmallVec::new();
         if matches!(hir[e].kind, ExprKind::TaggedTemplate(_)) {
             let strings = self.global_ref(known::TemplateStringsArray, &[]);
             args.push((Arg::Type(strings), e));
         }
-        args.extend(self.effective_args_with_nodes(file, data.args));
+        for a in hir.ids(data.args) {
+            self.each_effective_arg(file, a, |arg| args.push((arg, a)));
+        }
         // A call that is being resolved cannot say what it expects of an argument. The candidate at hand does, in
         // `is_signature_applicable`.
         let is_under_way = self.stack.contains(&Query::Call(file, e));
@@ -1030,7 +1027,7 @@ impl Checker<'_> {
             self.this_argument_of_call(file, data.callee)
                 .map(|(obj, _)| obj)
         };
-        let plain: Vec<Arg> = args.iter().map(|a| a.0).collect();
+        let plain: SmallVec<[Arg; 4]> = args.iter().map(|a| a.0).collect();
         // `callIsIncomplete`. For a call `close_pos` is where the parser expected the `)`. The default library has no text.
         let is_incomplete = if matches!(hir[e].kind, ExprKind::TaggedTemplate(_)) {
             data.close_pos == INCOMPLETE_TEMPLATE
@@ -1316,7 +1313,8 @@ impl Checker<'_> {
     }
 
     /// `isSignatureApplicable`, of the call, `new` or tagged template `e`, which may still be in the middle of being resolved.
-    /// `args`: what `effective_args_with_nodes` gives, after the pieces of text if it is a tagged template.
+    /// `args`: the arguments as `getEffectiveCallArguments` has them, each with the argument it is written as (part of), after the
+    /// pieces of text if it is a tagged template.
     pub(super) fn is_signature_applicable(
         &mut self,
         file: FileId,
@@ -1371,8 +1369,8 @@ impl Checker<'_> {
         let callee = hir[c].callee;
         // Only a call of `super.m` written just so goes without.
         let is_super_property = matches!(hir[e].kind, ExprKind::Call(_))
-            && !is_parenthesized(hir, callee)
-            && matches!(hir[callee].kind, ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if matches!(hir[obj].kind, ExprKind::Super));
+            && matches!(hir[callee].kind, ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if matches!(hir[obj].kind, ExprKind::Super))
+            && !is_parenthesized(hir, callee);
         if let Some(wanted) = self.sig_this_type(sig)
             && wanted != TypeId::VOID
             && !is_new

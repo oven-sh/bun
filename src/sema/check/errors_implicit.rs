@@ -265,6 +265,9 @@ impl Checker<'_> {
                 self.check_widening_of_element(file, decl.pat, ExprId::NONE, decl.init, out);
             }
         }
+        if hir.mapped.iter().all(|m| m.ty.is_some()) {
+            return;
+        }
         for (t, node) in hir.types.iter().enumerate() {
             if let TypeNodeKind::Mapped(m) = node.kind
                 && hir[m].ty.is_none()

@@ -14,6 +14,7 @@ use super::errors::{Diagnostic, is_close};
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent};
 use crate::resolve::ModuleKind;
+use smallvec::SmallVec;
 
 /// What `getBaseConstructorTypeOfClass` and `getBaseTypes` come to for a class.
 #[derive(Copy, Clone)]
@@ -160,8 +161,13 @@ impl Checker<'_> {
             }
         }
         self.check_super_call_placement(file, out);
-        self.check_abstract_properties_in_constructors(file, out);
-        self.check_this_in_static_initializers_of_decorated_classes(file, out);
+        // The rest is about `this`.
+        let index = self.exprs_by_kind(file);
+        if index.of(ExprTag::This).is_empty() {
+            return;
+        }
+        self.check_abstract_properties_in_constructors(file, &index, out);
+        self.check_this_in_static_initializers_of_decorated_classes(file, &index, out);
     }
 
     // ───────────────────────────── what a class extends and implements ─────────────────────────────
@@ -788,8 +794,21 @@ impl Checker<'_> {
     ) {
         let hir = self.hir(file);
         let class = &hir[c];
+        // Otherwise only what says `override` is looked at.
+        let looks_at_all = self.p.files.options.no_implicit_override && !hir.is_js;
         for m in class.members.iter() {
             let member = &hir[m];
+            if !looks_at_all
+                && !member.flags.contains(Flags::OVERRIDE)
+                && (member.kind != MemberKind::Constructor
+                    || member.func.is_some()
+                        && !hir[member.func]
+                            .params
+                            .iter()
+                            .any(|p| hir[p].flags.contains(Flags::OVERRIDE)))
+            {
+                continue;
+            }
             // `HasAmbientModifier`: `declare` is written on the member itself. Every member of an ambient class has
             // `Flags::AMBIENT`, so there the source text decides.
             if member.flags.contains(Flags::AMBIENT)
@@ -1558,30 +1577,51 @@ impl Checker<'_> {
     fn check_abstract_properties_in_constructors(
         &mut self,
         file: FileId,
+        index: &ExprsByKind,
         out: &mut Vec<Diagnostic>,
     ) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let is_this =
             |e: ExprId| matches!(hir[e].kind, ExprKind::This) && !is_parenthesized(hir, e);
-        for i in 0..hir.exprs.len() {
-            let e = ExprId(i as u32);
-            let parent = bound.expr_parent[i];
-            if matches!(parent, Parent::None) {
-                continue;
+        let mut looked_at: SmallVec<[ExprId; 16]> = SmallVec::new();
+        // `isThisProperty`
+        for &e in index.of(ExprTag::Dot) {
+            if let ExprKind::Dot { obj, .. } = hir[e].kind
+                && is_this(obj)
+                && !matches!(bound.expr_parent[e.idx()], Parent::None)
+                && !bound.is_in_type_query(e)
+                && self.is_used_during_class_initialization(file, bound.expr_parent[e.idx()])
+            {
+                looked_at.push(e);
             }
-            match hir.exprs[i].kind {
-                // `isThisProperty`
+        }
+        // `isThisInitializedObjectBindingExpression`
+        for &e in index.of(ExprTag::Assign) {
+            if let ExprKind::Assign {
+                op: None,
+                target,
+                value,
+            } = hir[e].kind
+                && is_this(value)
+                && !matches!(bound.expr_parent[e.idx()], Parent::None)
+                && matches!(hir[target].kind, ExprKind::Object(_))
+                && !is_parenthesized(hir, target)
+                && self.is_used_during_class_initialization(file, bound.expr_parent[e.idx()])
+            {
+                looked_at.push(e);
+            }
+        }
+        // In the order they have in the file, whichever of the two they are.
+        looked_at.sort_unstable();
+        for e in looked_at {
+            let parent = bound.expr_parent[e.idx()];
+            match hir[e].kind {
                 ExprKind::Dot {
                     obj,
                     name,
                     name_pos,
                     ..
-                } if is_this(obj) => {
-                    if bound.is_in_type_query(e)
-                        || !self.is_used_during_class_initialization(file, parent)
-                    {
-                        continue;
-                    }
+                } => {
                     // `IsWriteAccess`
                     let is_written = self.is_assignment_target(file, e)
                         || matches!(parent, Parent::Expr(p) if match hir[p].kind {
@@ -1597,20 +1637,10 @@ impl Checker<'_> {
                         self.explain_abstract_property_access(file, name_pos, obj, name);
                     }
                 }
-                // `isThisInitializedObjectBindingExpression`
-                ExprKind::Assign {
-                    op: None,
-                    target,
-                    value,
-                } if is_this(value) => {
+                ExprKind::Assign { target, value, .. } => {
                     let ExprKind::Object(props) = hir[target].kind else {
                         continue;
                     };
-                    if is_parenthesized(hir, target)
-                        || !self.is_used_during_class_initialization(file, parent)
-                    {
-                        continue;
-                    }
                     for p in props.iter() {
                         let prop = &hir[p];
                         if matches!(prop.kind, PropKind::Init | PropKind::Shorthand)
@@ -1741,7 +1771,7 @@ impl Checker<'_> {
             return false;
         }
         let apparent = self.apparent_type(object);
-        let Some((prop, _)) = self.prop_of(apparent, name) else {
+        let Some((prop, _)) = self.prop_ref(apparent, name) else {
             return false;
         };
         let PropSource::Members(members) = &prop.source else {
@@ -1778,6 +1808,7 @@ impl Checker<'_> {
     fn check_this_in_static_initializers_of_decorated_classes(
         &self,
         file: FileId,
+        index: &ExprsByKind,
         out: &mut Vec<Diagnostic>,
     ) {
         let (hir, bound) = (self.hir(file), self.bound(file));
@@ -1789,16 +1820,14 @@ impl Checker<'_> {
         {
             return;
         }
-        for i in 0..hir.exprs.len() {
-            if !matches!(hir.exprs[i].kind, ExprKind::This)
-                || bound.is_in_type_query(ExprId(i as u32))
-            {
+        for &this in index.of(ExprTag::This) {
+            if bound.is_in_type_query(this) {
                 continue;
             }
             // `GetThisContainer`, through arrow functions.
-            let mut parent = bound.expr_parent[i];
+            let mut parent = bound.expr_parent[this.idx()];
             // The outermost expression so far: a computed name is told by it.
-            let mut top = ExprId(i as u32);
+            let mut top = this;
             let container = loop {
                 match parent {
                     Parent::MemberInit(m) => break Some(m),
@@ -1843,7 +1872,7 @@ impl Checker<'_> {
                     .any(|d| d.0 == DecoratorOwner::Class(c))
             {
                 out.push(Diagnostic {
-                    start: hir.exprs[i].pos,
+                    start: hir[this].pos,
                     code: 2816,
                 });
             }

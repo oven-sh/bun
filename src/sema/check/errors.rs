@@ -16,6 +16,7 @@ use crate::bind::{
     ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind, SymbolId,
     TableId,
 };
+use smallvec::SmallVec;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct Diagnostic {
@@ -98,7 +99,9 @@ impl Checker<'_> {
         }
         self.checking = Some(file);
         // `BUN_SEMA_TRACE_PASSES=1`: which pass added or removed each error.
-        let trace_passes = std::env::var_os("BUN_SEMA_TRACE_PASSES").is_some();
+        static TRACE_PASSES: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let trace_passes =
+            *TRACE_PASSES.get_or_init(|| std::env::var_os("BUN_SEMA_TRACE_PASSES").is_some());
         macro_rules! pass {
             ($name:ident) => {{
                 let before = if trace_passes {
@@ -397,9 +400,10 @@ impl Checker<'_> {
             };
             self.check_specifier(file, spec, pos, Some(kind), mode, out);
         }
-        for i in 0..hir.exprs.len() {
-            if let ExprKind::ImportCall(argument) = hir.exprs[i].kind
-                && !matches!(self.bound(file).expr_parent[i], Parent::None)
+        let index = self.exprs_by_kind(file);
+        for &e in index.of(ExprTag::ImportCall) {
+            if let ExprKind::ImportCall(argument) = hir[e].kind
+                && !matches!(self.bound(file).expr_parent[e.idx()], Parent::None)
                 && let ExprKind::String(spec) = hir[argument].kind
             {
                 let mode = self.files().mode_of_import_call(file);
@@ -411,8 +415,7 @@ impl Checker<'_> {
         if hir.is_js {
             let bound = self.bound(file);
             let is_identifier = |pat: PatId| matches!(hir[pat].kind, PatKind::Ident(_));
-            for i in 0..hir.exprs.len() {
-                let call = ExprId(i as u32);
+            for &call in index.of(ExprTag::Call) {
                 let Some((argument, spec)) = require_call_argument(hir, call) else {
                     continue;
                 };
@@ -422,7 +425,7 @@ impl Checker<'_> {
                 }
                 // `bindVariableDeclarationOrBindingElement`: the name, or each identifier directly in the binding pattern, is an alias,
                 // whatever `require` resolves to.
-                let alias_declaration = match bound.expr_parent[i] {
+                let alias_declaration = match bound.expr_parent[call.idx()] {
                     Parent::None => continue,
                     Parent::VarInit(decl)
                         if self.external_module_require_argument(file, decl).is_some() =>
@@ -460,11 +463,12 @@ impl Checker<'_> {
             }
         }
         // `checkImportCallExpression`: the second argument is an `ImportCallOptions`, taken as a whole.
-        if let Some(sym) = self
-            .files()
-            .atoms
-            .lookup(b"ImportCallOptions")
-            .and_then(|name| self.global_type_symbol(name))
+        if !hir.import_options.is_empty()
+            && let Some(sym) = self
+                .files()
+                .atoms
+                .lookup(b"ImportCallOptions")
+                .and_then(|name| self.global_type_symbol(name))
         {
             for &(_, options) in &hir.import_options {
                 if matches!(self.bound(file).expr_parent[options.idx()], Parent::None) {
@@ -764,39 +768,7 @@ impl Checker<'_> {
     ) -> Option<Sym> {
         let files = self.files();
         let module = files.module_of_specifier_as(file, spec, mode)?;
-        // What `export =` gives has properties, which can be imported as well.
-        if files.export(module, known::export_equals).is_some() {
-            return None;
-        }
-        // `declare module "m";` has whatever is asked of it. What a JSON file has is up to what is in it.
-        let is_open = |m: Sym| {
-            files.symbol(m).exports.is_none()
-                || files.decls(m).iter().any(|&(f, d)| matches!(d, crate::bind::Decl::Module(id) if !files.hir(f)[id].has_body))
-                || files.module(m.file).path.ends_with(".json")
-        };
-        if is_open(module) {
-            return None;
-        }
-        let mut pending = vec![module];
-        let mut visited = vec![module];
-        while let Some(m) = pending.pop() {
-            for part in files.parts(m) {
-                for &(container, star) in &files.bound(part.file).export_stars {
-                    if container != part.id {
-                        continue;
-                    }
-                    let target = files.module_of_specifier(part.file, star)?;
-                    if files.export(target, known::export_equals).is_some() || is_open(target) {
-                        return None;
-                    }
-                    if !visited.contains(&target) {
-                        visited.push(target);
-                        pending.push(target);
-                    }
-                }
-            }
-        }
-        Some(module)
+        files.has_known_exports(module).then_some(module)
     }
 
     /// `getTargetOfModuleDefault`: whether `module` has a default export, its own or a synthetic one. `usage` and `target` as in
@@ -845,7 +817,7 @@ impl Checker<'_> {
         let ty = self.apparent_type(ty);
         let ty = self.reduced(ty);
         let TypeData::Union(parts) = self.data(ty) else {
-            return self.prop_of(ty, name).is_some();
+            return self.prop_ref(ty, name).is_some();
         };
         // `createUnionOrIntersectionProperty`: some member has it, and those that do not have an index signature for it, or are object
         // literals that leave it out.
@@ -973,7 +945,7 @@ impl Checker<'_> {
             return (2614, None);
         }
         // What the file, or the first `declare module "m"`, declares for itself.
-        let local = files.decls(module).first().and_then(|&(of, decl)| {
+        let local = files.decls_of(module).first().and_then(|&(of, decl)| {
             let bound = files.bound(of);
             let scope = match decl {
                 Decl::File => 0,
@@ -1268,7 +1240,7 @@ impl Checker<'_> {
             let flags = self.files().flags(sym);
             if self
                 .files()
-                .decls(sym)
+                .decls_of(sym)
                 .iter()
                 .find(|d| is_of_a_value(d.1, flags))
                 .is_some_and(|d| d.0 != file)
@@ -1301,15 +1273,18 @@ impl Checker<'_> {
     /// Whether `e` is written in the initializer of the declaration `d`, which binds `pat`.
     fn is_in_initializer_of(&self, file: FileId, e: ExprId, pat: PatId, d: VarDeclId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
+        let declared_at = hir[pat].pos;
         let mut parent = bound.expr_parent[e.idx()];
         loop {
-            match parent {
+            parent = match parent {
                 Parent::VarInit(v) if v == d => return true,
                 Parent::None | Parent::File | Parent::Module(_) => return false,
                 // A function that starts further up is around the declaration.
-                Parent::FnBody(f) if hir[f].pos < hir[pat].pos => return false,
-                _ => parent = self.parent_of(file, parent),
-            }
+                Parent::FnBody(f) if hir[f].pos < declared_at => return false,
+                Parent::Expr(x) => bound.expr_parent[x.idx()],
+                Parent::Stmt(s) if s.is_some() => bound.stmt_parent[s.idx()],
+                _ => self.parent_of(file, parent),
+            };
         }
     }
 
@@ -1404,13 +1379,20 @@ impl Checker<'_> {
             }
         }
         // `isOuterVariable`, which goes by where the flow starts before that is moved out of function expressions.
-        if self.flow_container(file, parent) == self.flow_container(file, Parent::Stmt(stmt)) {
+        let declared_in = bound.stmt_parent[stmt.idx()];
+        let (container, is_around_both) = self.flow_container_past(file, parent, declared_in);
+        let container_of_declaration = if is_around_both {
+            container
+        } else {
+            self.flow_container(file, declared_in)
+        };
+        if container == container_of_declaration {
             return false;
         }
         // `isNeverInitialized`: what has been done to it by the time this runs cannot be told, unless nothing ever gives it a value.
         let is_local_let = decl.kind == VarKind::Let
             && !decl.flags.contains(Flags::EXPORT)
-            && (hir.has_module_syntax || !matches!(bound.stmt_parent[stmt.idx()], Parent::File));
+            && (hir.has_module_syntax || !matches!(declared_in, Parent::File));
         !(is_local_let
             && decl.pat == pat
             && decl.init.is_none()
@@ -1424,8 +1406,10 @@ impl Checker<'_> {
         if !self.p.files.options.strict_null_checks || hir.kind == FileKind::Declaration {
             return;
         }
-        for i in 0..hir.exprs.len() {
-            let e = ExprId(i as u32);
+        // Nothing but an identifier has a symbol.
+        let index = self.exprs_by_kind(file);
+        for &e in index.of(ExprTag::Ident) {
+            let i = e.idx();
             let Some((pat, d)) = self.value_declaration_of_variable(file, e) else {
                 continue;
             };
@@ -1528,10 +1512,10 @@ impl Checker<'_> {
                     Some(name) => {
                         let sym = self.files().sym(file, self.bound(file).class_symbol[c]);
                         let instance = self.declared_type(sym);
-                        let Some((prop, _)) = self.prop_of(instance, name) else {
+                        let Some((prop, _)) = self.prop_ref(instance, name) else {
                             continue;
                         };
-                        (Some(name), self.type_of_prop(&prop, MapperId::IDENTITY))
+                        (Some(name), self.type_of_prop(prop, MapperId::IDENTITY))
                     }
                     None => {
                         // `[k]: T` is held to it whatever `k` is.
@@ -1579,9 +1563,21 @@ impl Checker<'_> {
 
     /// What the flow of control is followed within: from inside, what is declared outside has whatever value it was left with.
     /// `getControlFlowContainer`
-    fn flow_container(&self, file: FileId, mut parent: Parent) -> Container {
+    fn flow_container(&self, file: FileId, parent: Parent) -> Container {
+        self.flow_container_past(file, parent, Parent::None).0
+    }
+
+    /// The same, and whether `through` is on the way out to it: from there on the way is the same for whoever gets there.
+    fn flow_container_past(
+        &self,
+        file: FileId,
+        mut parent: Parent,
+        through: Parent,
+    ) -> (Container, bool) {
         let bound = self.bound(file);
-        loop {
+        let mut is_passed = false;
+        let container = loop {
+            is_passed |= parent == through;
             parent = match parent {
                 Parent::Expr(x) => bound.expr_parent[x.idx()],
                 Parent::Stmt(s) if s.is_some() => bound.stmt_parent[s.idx()],
@@ -1591,9 +1587,9 @@ impl Checker<'_> {
                 // The default of a binding element is worked out where the pattern is.
                 Parent::PatPropDefault(_) | Parent::PatElemDefault(_) => self.outward(file, parent),
                 // What decorates a member or a parameter is inside of the member.
-                Parent::Decorator(_, DecoratorOwner::Member(m)) => return Container::Member(m),
+                Parent::Decorator(_, DecoratorOwner::Member(m)) => break Container::Member(m),
                 Parent::Decorator(_, DecoratorOwner::Param(p)) => {
-                    return Container::Fn(bound.param_fn[p.idx()]);
+                    break Container::Fn(bound.param_fn[p.idx()]);
                 }
                 Parent::ClassExtends(c) | Parent::Decorator(c, DecoratorOwner::Class(_)) => {
                     match bound.class_owner[c.idx()] {
@@ -1610,15 +1606,16 @@ impl Checker<'_> {
                     };
                     match self.what_runs_in_place(file, f) {
                         Some(it) => it,
-                        None => return Container::Fn(f),
+                        None => break Container::Fn(f),
                     }
                 }
-                Parent::MemberInit(m) => return Container::Member(m),
-                Parent::Module(m) => return Container::Module(m),
-                Parent::File => return Container::File,
-                _ => return Container::Other,
+                Parent::MemberInit(m) => break Container::Member(m),
+                Parent::Module(m) => break Container::Module(m),
+                Parent::File => break Container::File,
+                _ => break Container::Other,
             };
-        }
+        };
+        (container, is_passed)
     }
 
     /// `getControlFlowContainer`: a static block is not like a function, and a function expression that is called where it is written
@@ -1754,7 +1751,7 @@ impl Checker<'_> {
             };
             let start = hir.types[i].pos;
             if name.len() > 1 {
-                let names: Vec<Atom> = hir.ids(name).collect();
+                let names: SmallVec<[Atom; 8]> = hir.ids(name).collect();
                 self.check_entity_name(file, scope, &names, start, SymFlags::TYPE, out);
                 continue;
             }
@@ -2726,7 +2723,7 @@ impl Checker<'_> {
         if let TypeData::Union(parts) = self.data(ty) {
             return parts.iter().all(|&part| self.has_property(part, name));
         }
-        if self.prop_of(ty, name).is_some() {
+        if self.prop_ref(ty, name).is_some() {
             return true;
         }
         let Some(members) = self.members(ty) else {
@@ -2749,13 +2746,13 @@ impl Checker<'_> {
             };
             for global in [function, known::Function] {
                 let function = self.global_ref(global, &[]);
-                if self.prop_of(function, name).is_some() {
+                if self.prop_ref(function, name).is_some() {
                     return true;
                 }
             }
         }
         let object = self.global_ref(known::Object, &[]);
-        self.prop_of(object, name).is_some()
+        self.prop_ref(object, name).is_some()
     }
 
     /// `x` where `this.x` or `C.x` was meant: 2663, 2662. `checkAndReportErrorForMissingPrefix`
@@ -3225,7 +3222,7 @@ fn spelling_distance(a: &[u8], b: &[u8]) -> f64 {
 
 /// Where the first declaration of `sym` is: the libraries first, then by file, then by position. `compareSymbols`, `compareNodes`
 fn place_of_first_declaration(c: &Checker<'_>, sym: Sym) -> Option<(bool, FileId, u32)> {
-    let (file, decl) = c.files().decls(sym).first().copied()?;
+    let (file, decl) = c.files().decls_of(sym).first().copied()?;
     let hir = c.hir(file);
     let pos = match decl {
         Decl::Var(p) | Decl::Param(p) | Decl::Require(p) => hir[p].pos,
@@ -3382,7 +3379,7 @@ fn library_of_feature(name: &[u8]) -> &'static str {
 /// `getFullyQualifiedName` of `module`, seen from an import of it. `getSpecifierForModuleSymbol`: a file goes by a specifier that
 /// leads to it from there, for which `spec`, the one that is written, is taken.
 fn module_name_as_imported(c: &mut Checker<'_>, module: Sym, spec: Atom) -> String {
-    let decls = c.files().decls(module);
+    let decls = c.files().decls_of(module);
     if decls.iter().any(|d| matches!(d.1, Decl::File)) {
         format!("\"{}\"", c.atom_text(spec))
     } else {
@@ -3969,9 +3966,14 @@ fn explain_early_error(c: &Checker<'_>, file: FileId, start: u32, code: u32) {
 
 impl Checker<'_> {
     fn check_operators(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
-        let hir = self.hir(file);
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let mut numeric = None;
         for i in 0..hir.exprs.len() {
-            if matches!(self.bound(file).expr_parent[i], Parent::None) {
+            if !matches!(
+                hir.exprs[i].kind,
+                ExprKind::Binary { .. } | ExprKind::Assign { .. } | ExprKind::Unary { .. }
+            ) || matches!(bound.expr_parent[i], Parent::None)
+            {
                 continue;
             }
             let e = ExprId(i as u32);
@@ -4015,13 +4017,12 @@ impl Checker<'_> {
                             let wanted =
                                 self.union(&[TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL]);
                             let at = self.error_start_of(file, left);
-                            let end = error_end_if_read(self, file, left);
-                            self.check_assignable_with_end(
+                            self.check_assignable_with_end_from(
                                 file,
                                 key,
                                 wanted,
                                 at,
-                                end,
+                                |c| error_end_if_read(c, file, left),
                                 ExprId::NONE,
                                 2322,
                                 out,
@@ -4032,13 +4033,12 @@ impl Checker<'_> {
                     if self.is_known(object) {
                         let object = self.check_not_nullish(file, right, object, out);
                         let at = self.error_start_of(file, right);
-                        let end = error_end_if_read(self, file, right);
-                        self.check_assignable_with_end(
+                        self.check_assignable_with_end_from(
                             file,
                             object,
                             TypeId::OBJECT,
                             at,
-                            end,
+                            |c| error_end_if_read(c, file, right),
                             ExprId::NONE,
                             2322,
                             out,
@@ -4046,7 +4046,7 @@ impl Checker<'_> {
                     }
                 }
                 ExprKind::Binary { op, left, right } => {
-                    self.check_binary(file, e, op, left, right, out);
+                    self.check_binary(file, e, op, left, right, &mut numeric, out);
                 }
                 // Whatever is on the left, what is on the right is looked at.
                 ExprKind::Assign {
@@ -4054,7 +4054,7 @@ impl Checker<'_> {
                     target,
                     value,
                 } => {
-                    if self.check_binary(file, e, op, target, value, out) {
+                    if self.check_binary(file, e, op, target, value, &mut numeric, out) {
                         self.check_compound_assignment(file, e, op, target, value, out);
                     }
                 }
@@ -4065,7 +4065,7 @@ impl Checker<'_> {
                     let ty = self.type_of_expr(file, operand);
                     if self.is_known(ty) && !self.is_refused_target(file, operand) {
                         let ty = self.check_not_nullish(file, operand, ty, out);
-                        self.check_arithmetic_operand(file, operand, ty, 2356, out);
+                        self.check_arithmetic_operand(file, operand, ty, 2356, &mut numeric, out);
                     }
                 }
                 _ => {}
@@ -4121,7 +4121,8 @@ impl Checker<'_> {
     }
 
     /// `checkBinaryLikeExpression`, of an operator that makes something of two values. Whether it gets as far as
-    /// `checkAssignmentOperator`, which is where `op=` goes on from.
+    /// `checkAssignmentOperator`, which is where `op=` goes on from. `numeric`: see `number_or_bigint`.
+    #[allow(clippy::too_many_arguments)]
     fn check_binary(
         &mut self,
         file: FileId,
@@ -4129,6 +4130,7 @@ impl Checker<'_> {
         op: BinOp,
         left: ExprId,
         right: ExprId,
+        numeric: &mut Option<TypeId>,
         out: &mut Vec<Diagnostic>,
     ) -> bool {
         match op {
@@ -4136,13 +4138,13 @@ impl Checker<'_> {
             BinOp::Comma | BinOp::In | BinOp::Instanceof => return false,
             _ => {}
         }
-        let start = self.start_inside_parentheses(file, e);
         // `checkNaNEquality`, which is not a matter of types.
         if matches!(
             op,
             BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq
         ) && (self.is_global_nan(file, left) || self.is_global_nan(file, right))
         {
+            let start = self.start_inside_parentheses(file, e);
             out.push(Diagnostic { start, code: 2845 });
             let end = self.end_inside_parentheses(file, e);
             let always = if matches!(op, BinOp::EqEq | BinOp::EqEqEq) {
@@ -4177,7 +4179,7 @@ impl Checker<'_> {
                 for (operand, ty, code) in [(left, l, 2362), (right, r, 2363)] {
                     if self.is_known(ty) && !self.is_uncertain(file, operand) {
                         let ty = self.check_not_nullish(file, operand, ty, out);
-                        self.check_arithmetic_operand(file, operand, ty, code, out);
+                        self.check_arithmetic_operand(file, operand, ty, code, numeric, out);
                     }
                 }
             }
@@ -4216,7 +4218,7 @@ impl Checker<'_> {
                     };
                     let found =
                         start_of_token_before(&hir.text, self.start_of(file, right), operator);
-                    let start = found.unwrap_or(start);
+                    let start = found.unwrap_or_else(|| self.start_inside_parentheses(file, e));
                     out.push(Diagnostic { start, code: 2447 });
                     let end = found.map_or(0, |at| at + operator.len() as u32);
                     // `getSuggestedBooleanOperator`
@@ -4233,8 +4235,8 @@ impl Checker<'_> {
                     });
                     return false;
                 }
-                let left_fits = self.check_arithmetic_operand(file, left, l, 2362, out);
-                let right_fits = self.check_arithmetic_operand(file, right, r, 2363, out);
+                let left_fits = self.check_arithmetic_operand(file, left, l, 2362, numeric, out);
+                let right_fits = self.check_arithmetic_operand(file, right, r, 2363, numeric, out);
                 let anything = |c: &Self, t: TypeId| c.is_any(t) || t == TypeId::UNKNOWN;
                 let gives_number = anything(self, l) && anything(self, r)
                     || !self.maybe_type_of_kind(l, Self::is_bigint_like)
@@ -4243,6 +4245,7 @@ impl Checker<'_> {
                     let both = self.is_assignable(l, TypeId::BIGINT)
                         && self.is_assignable(r, TypeId::BIGINT);
                     if !both || op == BinOp::UShr {
+                        let start = self.start_inside_parentheses(file, e);
                         out.push(Diagnostic { start, code: 2365 });
                         let is_related = (!both).then_some(both_are_bigint_like as Related);
                         explain_operator_error(self, file, e, op, start, 2365, l, r, is_related);
@@ -4273,6 +4276,7 @@ impl Checker<'_> {
                     || self.is_any(l)
                     || self.is_any(r);
                 if !has_result {
+                    let start = self.start_inside_parentheses(file, e);
                     out.push(Diagnostic { start, code: 2365 });
                     let is_related = Some(may_be_added as Related);
                     explain_operator_error(self, file, e, op, start, 2365, l, r, is_related);
@@ -4291,7 +4295,7 @@ impl Checker<'_> {
                     return false;
                 }
                 let (l, r) = (self.base_for_comparison(l), self.base_for_comparison(r));
-                let numeric = self.union(&[TypeId::NUMBER, TypeId::BIGINT]);
+                let numeric = self.number_or_bigint(numeric);
                 let (ln, rn) = (
                     self.is_assignable(l, numeric),
                     self.is_assignable(r, numeric),
@@ -4299,6 +4303,7 @@ impl Checker<'_> {
                 if !((ln && rn)
                     || (!ln && !rn && (self.is_comparable(l, r) || self.is_comparable(r, l))))
                 {
+                    let start = self.start_inside_parentheses(file, e);
                     out.push(Diagnostic { start, code: 2365 });
                     let is_related = Some(can_be_ordered as Related);
                     explain_operator_error(self, file, e, op, start, 2365, l, r, is_related);
@@ -4312,6 +4317,7 @@ impl Checker<'_> {
                     || self.is_comparable(l, r)
                     || self.is_comparable(r, l))
                 {
+                    let start = self.start_inside_parentheses(file, e);
                     self.trace_pair(2367, start, l, r);
                     out.push(Diagnostic { start, code: 2367 });
                     let is_related = Some(can_be_equal as Related);
@@ -4335,7 +4341,6 @@ impl Checker<'_> {
     ) {
         let hir = self.hir(file);
         let at = self.error_start_of(file, target);
-        let end = error_end_if_read(self, file, target);
         // `checkReferenceExpression`: what is asserted of a reference is a reference too. A pattern is only one to `=`.
         let mut reference = target;
         while let ExprKind::NonNull(x)
@@ -4371,7 +4376,7 @@ impl Checker<'_> {
                     start: at,
                     code: 2364,
                 });
-                self.note(at, end, 2364, Vec::new());
+                self.note(at, error_end_if_read(self, file, target), 2364, Vec::new());
                 return;
             }
         };
@@ -4408,7 +4413,16 @@ impl Checker<'_> {
             } else {
                 left
             };
-            self.check_assignable_with_end(file, right, wanted, at, end, value, 2322, out);
+            self.check_assignable_with_end_from(
+                file,
+                right,
+                wanted,
+                at,
+                |c| error_end_if_read(c, file, target),
+                value,
+                2322,
+                out,
+            );
             return;
         }
         // The others put what they make of the two where the target is, which is what it is known to hold there.
@@ -4436,7 +4450,16 @@ impl Checker<'_> {
         if self.has_type_variables(wanted) && !self.is_in_generic_context(file, e) {
             return;
         }
-        self.check_assignable_with_end(file, source, wanted, at, end, ExprId::NONE, 2322, out);
+        self.check_assignable_with_end_from(
+            file,
+            source,
+            wanted,
+            at,
+            |c| error_end_if_read(c, file, target),
+            ExprId::NONE,
+            2322,
+            out,
+        );
     }
 
     /// `isGlobalNaN`
@@ -4490,10 +4513,11 @@ impl Checker<'_> {
     ) -> bool {
         // `maybeTypeOfKindConsideringBaseConstraint`
         let mut may_be_symbol = |t: TypeId| {
-            self.maybe_type_of_kind(t, Self::is_symbol_like) || {
-                let base = self.base_constraint_of(t).unwrap_or(t);
-                self.maybe_type_of_kind(base, Self::is_symbol_like)
-            }
+            self.maybe_type_of_kind(t, Self::is_symbol_like)
+                || match self.base_constraint_of(t) {
+                    Some(base) => self.maybe_type_of_kind(base, Self::is_symbol_like),
+                    None => false,
+                }
         };
         let offending = if may_be_symbol(l) {
             left
@@ -4533,16 +4557,22 @@ impl Checker<'_> {
         })
     }
 
-    /// `checkArithmeticOperandType`: whether the operand will do.
+    /// `number | bigint`. `made`: it, from the first time it is asked for.
+    fn number_or_bigint(&mut self, made: &mut Option<TypeId>) -> TypeId {
+        *made.get_or_insert_with(|| self.union(&[TypeId::NUMBER, TypeId::BIGINT]))
+    }
+
+    /// `checkArithmeticOperandType`: whether the operand will do. `numeric`: see `number_or_bigint`.
     fn check_arithmetic_operand(
         &mut self,
         file: FileId,
         operand: ExprId,
         ty: TypeId,
         code: u32,
+        numeric: &mut Option<TypeId>,
         out: &mut Vec<Diagnostic>,
     ) -> bool {
-        let numeric = self.union(&[TypeId::NUMBER, TypeId::BIGINT]);
+        let numeric = self.number_or_bigint(numeric);
         let fits = self.is_assignable(ty, numeric);
         if !fits {
             let start = self.error_start_of(file, operand);
@@ -4565,11 +4595,14 @@ impl Checker<'_> {
             return ty;
         }
         let hir = self.hir(file);
-        let start = self.error_start_of(file, node);
-        let is_name = self.is_entity_name(file, node);
         // This much alone is a matter of strictNullChecks: without them a type that is `null` or `undefined` is nothing else.
         if ty == TypeId::UNKNOWN && self.p.files.options.strict_null_checks {
-            let code = if is_name { 18046 } else { 2571 };
+            let start = self.error_start_of(file, node);
+            let code = if self.is_entity_name(file, node) {
+                18046
+            } else {
+                2571
+            };
             out.push(Diagnostic { start, code });
             let end = self.error_end_of(file, node);
             self.explain_to(start, end, code, |c| match code {
@@ -4579,18 +4612,27 @@ impl Checker<'_> {
             return TypeId::ANY;
         }
         // `getTypeFacts`: what waits for type parameters goes by what it extends, and so does an intersection.
-        let seen = self.map_type(ty, |c, m| {
-            if c.is_deferred(m) || matches!(c.data(m), TypeData::Intersection(_)) {
-                c.base_constraint(m)
-            } else {
-                m
-            }
-        });
+        let goes_by_constraint = |c: &Self, m: TypeId| {
+            c.is_deferred(m) || matches!(c.data(m), TypeData::Intersection(_))
+        };
+        let seen = if self.some_type(ty, goes_by_constraint) {
+            self.map_type(ty, |c, m| {
+                if goes_by_constraint(c, m) {
+                    c.base_constraint(m)
+                } else {
+                    m
+                }
+            })
+        } else {
+            ty
+        };
         let undefined = self.some_type(seen, |_, m| m.is_undefined());
         let null = self.some_type(seen, |_, m| m.is_null());
         if !undefined && !null {
             return ty;
         }
+        let start = self.error_start_of(file, node);
+        let is_name = self.is_entity_name(file, node);
         let code = match hir[node].kind {
             // `(null)` and `(undefined)` are expressions in parentheses.
             ExprKind::Null if !self.is_written_in_parentheses(file, node) => 18050,
@@ -4691,6 +4733,23 @@ impl Checker<'_> {
     /// How `e` is written to, if it is: by `=`, by an operator that reads it first, or by `++` and `--`. `GetAssignmentTarget`
     fn write_kind(&self, file: FileId, e: ExprId) -> Option<Write> {
         let (hir, bound) = (self.hir(file), self.bound(file));
+        // Nothing else leads to any of them.
+        match bound.expr_parent[e.idx()] {
+            Parent::Expr(parent) => {
+                if !matches!(
+                    hir[parent].kind,
+                    ExprKind::Assign { .. }
+                        | ExprKind::Unary { .. }
+                        | ExprKind::NonNull(_)
+                        | ExprKind::Array(_)
+                        | ExprKind::Spread(_)
+                ) {
+                    return None;
+                }
+            }
+            Parent::Prop(_) | Parent::Stmt(_) => {}
+            _ => return None,
+        }
         // `x!` and the literals a pattern is made of are seen through on the way to any of them: `[x]++` writes to `x`.
         let mut at = e;
         loop {
@@ -4722,9 +4781,10 @@ impl Checker<'_> {
     /// 2628 to 2632, 2539, 2588: a name that cannot be assigned to. 2540: a property that can only be read.
     /// 2364, 2357: something that is neither.
     fn check_writes(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
-        let hir = self.hir(file);
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let mut numeric = None;
         for i in 0..hir.exprs.len() {
-            if matches!(self.bound(file).expr_parent[i], Parent::None) {
+            if matches!(bound.expr_parent[i], Parent::None) {
                 continue;
             }
             let e = ExprId(i as u32);
@@ -4769,7 +4829,7 @@ impl Checker<'_> {
                     }
                     // `checkNonNullType`, whose errors `check_operators` has reported.
                     let ty = self.check_not_nullish(file, operand, ty, &mut Vec::new());
-                    let numeric = self.union(&[TypeId::NUMBER, TypeId::BIGINT]);
+                    let numeric = self.number_or_bigint(&mut numeric);
                     if self.is_assignable(ty, numeric)
                         && !self.can_be_written_to(file, operand, false)
                     {
@@ -4819,7 +4879,7 @@ impl Checker<'_> {
         let Some(members) = self.members(apparent) else {
             return;
         };
-        let Some((prop, _)) = self.property_of_type(&members, name) else {
+        let Some((prop, _)) = self.property_in(&members, name) else {
             return;
         };
         // `isAssignmentToReadonlyEntity`: what a CommonJS module exports by assigning can be assigned again, whatever it stands for.
@@ -4834,7 +4894,7 @@ impl Checker<'_> {
             return;
         }
         let is_refused = if prop.flags.contains(PropFlags::READONLY) {
-            !self.is_written_in_own_constructor(file, e, obj, &prop)
+            !self.is_written_in_own_constructor(file, e, obj, prop)
         } else {
             // Whatever is got at through `import * as` can only be read.
             matches!(self.hir(file)[obj].kind, ExprKind::Ident(n)
@@ -4847,7 +4907,7 @@ impl Checker<'_> {
                 start: at,
                 code: 2540,
             });
-            explain_readonly_element(self, file, e, at, Some(&prop), name);
+            explain_readonly_element(self, file, e, at, Some(prop), name);
         }
     }
 
@@ -4908,7 +4968,7 @@ impl Checker<'_> {
                 continue;
             }
             let members = self.members(part)?;
-            if let Some((prop, _)) = self.property_of_type(&members, name) {
+            if let Some((prop, _)) = self.property_in(&members, name) {
                 is_declared = true;
                 is_readonly |= prop.flags.contains(PropFlags::READONLY);
                 continue;

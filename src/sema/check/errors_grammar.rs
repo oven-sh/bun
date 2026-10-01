@@ -87,7 +87,11 @@ impl Checker<'_> {
         let kind = self.p.files.options.module;
         let is_declaration_file = hir.kind == FileKind::Declaration;
         for (i, s) in hir.stmts.iter().enumerate() {
-            if matches!(bound.stmt_parent[i], Parent::None) {
+            if !matches!(
+                s.kind,
+                StmtKind::ImportEquals(_) | StmtKind::ExportAssign(_)
+            ) || matches!(bound.stmt_parent[i], Parent::None)
+            {
                 continue;
             }
             match s.kind {
@@ -160,7 +164,9 @@ impl Checker<'_> {
         }
         let has_import_attributes =
             kind.is_node() || matches!(kind, ModuleKind::EsNext | ModuleKind::Preserve);
-        for (i, e) in hir.exprs.iter().enumerate() {
+        let index = self.exprs_by_kind(file);
+        for &id in index.of(ExprTag::ImportCall) {
+            let (i, e) = (id.idx(), &hir[id]);
             let ExprKind::ImportCall(specifier) = e.kind else {
                 continue;
             };
@@ -229,13 +235,16 @@ impl Checker<'_> {
             return;
         }
         for (d, decl) in hir.var_decls.iter().enumerate() {
+            let is_using = matches!(decl.kind, VarKind::Using | VarKind::AwaitUsing);
+            if !is_using && (decl.init.is_some() || decl.flags.contains(Flags::AMBIENT)) {
+                continue;
+            }
             // The variable of a `catch` clause is put down to the `try` statement: `checkVariableDeclaration` does not see it.
             let stmt = bound.var_stmt[d];
             if stmt.is_none() || !matches!(hir[stmt].kind, StmtKind::Var(_)) {
                 continue;
             }
             let is_pattern = matches!(hir[decl.pat].kind, PatKind::Object(_) | PatKind::Array(_));
-            let is_using = matches!(decl.kind, VarKind::Using | VarKind::AwaitUsing);
             let start = hir[decl.pat].pos;
             let keyword = match decl.kind {
                 VarKind::AwaitUsing => "await using",
@@ -270,16 +279,17 @@ impl Checker<'_> {
 
     /// `checkGrammarYieldExpression`: 1163. `parsePropertyDeclaration` parses an initializer outside of the yield context around the
     /// class, where `yield` is the keyword only if a name, a keyword or a literal follows on the same line (`isYieldExpression`).
-    fn check_yield_in_property_initializers(&self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_yield_in_property_initializers(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        for (i, e) in hir.exprs.iter().enumerate() {
-            if !matches!(e.kind, ExprKind::Yield { .. })
-                || !is_word_at(&hir.text, e.pos as usize, b"yield")
+        let index = self.exprs_by_kind(file);
+        for &id in index.of(ExprTag::Yield) {
+            let e = &hir[id];
+            if !is_word_at(&hir.text, e.pos as usize, b"yield")
                 || !operand_follows_on_the_line(&hir.text, e.pos as usize + 5)
             {
                 continue;
             }
-            let (mut at, mut below) = (bound.expr_parent[i], ExprId(i as u32));
+            let (mut at, mut below) = (bound.expr_parent[id.idx()], id);
             let is_in_initializer = loop {
                 match at {
                     Parent::MemberInit(_) => break true,
@@ -331,21 +341,22 @@ impl Checker<'_> {
             return;
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
-        for (i, e) in hir.exprs.iter().enumerate() {
+        let index = self.exprs_by_kind(file);
+        for &id in index.of(ExprTag::Binary) {
             let ExprKind::Binary {
                 op: BinOp::Comma,
                 left,
                 right,
-            } = e.kind
+            } = hir[id].kind
             else {
                 continue;
             };
+            let i = id.idx();
             if matches!(bound.expr_parent[i], Parent::None) || !self.is_side_effect_free(file, left)
             {
                 continue;
             }
             // `isIndirectCall`: `(0, x.f)()` is a way of calling `x.f` without `x` for `this`.
-            let id = ExprId(i as u32);
             let is_zero =
                 matches!(hir[left].kind, ExprKind::Number(n) if hir.numbers[n as usize] == 0.0);
             let is_callee = matches!(bound.expr_parent[i], Parent::Expr(p)
@@ -462,41 +473,55 @@ impl Checker<'_> {
         const EVAL_OR_ARGUMENTS: [u32; 3] = [1210, 1215, 1100];
         const RESERVED: [u32; 3] = [1213, 1214, 1212];
         let is_eval_or_arguments = |name: Atom| name == known::eval || name == known::arguments;
-        let is_reserved = |c: &Self, name: Atom| {
-            parses
-                && name.is_some()
-                && matches!(
-                    c.files().atoms.bytes(name),
-                    b"implements"
-                        | b"interface"
-                        | b"let"
-                        | b"package"
-                        | b"private"
-                        | b"protected"
-                        | b"public"
-                        | b"static"
-                        | b"yield"
-                )
+        // Every name of the file is interned by now: a word that is not is the name of nothing here.
+        const RESERVED_WORDS: [&[u8]; 9] = [
+            b"implements",
+            b"interface",
+            b"let",
+            b"package",
+            b"private",
+            b"protected",
+            b"public",
+            b"static",
+            b"yield",
+        ];
+        let atoms = &self.files().atoms;
+        let reserved_words: [Atom; 9] = if parses {
+            RESERVED_WORDS.map(|word| atoms.lookup(word).unwrap_or(Atom::NONE))
+        } else {
+            [Atom::NONE; 9]
         };
+        let is_reserved = |name: Atom| parses && name.is_some() && reserved_words.contains(&name);
         // What is in parentheses is no identifier, whatever is in them.
         let is_parenthesized = |e: ExprId| hir.parens.binary_search_by_key(&e.0, |p| p.0.0).is_ok();
-        for (i, e) in hir.exprs.iter().enumerate() {
-            if matches!(bound.expr_parent[i], Parent::None) {
-                continue;
-            }
-            let id = ExprId(i as u32);
-            match e.kind {
+        let index = self.exprs_by_kind(file);
+        if parses {
+            for &id in index.of(ExprTag::Ident) {
+                let e = &hir[id];
                 // The operand of a `typeof` in a type is seen to with the types.
-                ExprKind::Ident(name)
-                    if is_reserved(self, name)
-                        && !bound.is_in_type_query(id)
-                        && !self.is_ambient_expr(file, id) =>
+                if let ExprKind::Ident(name) = e.kind
+                    && is_reserved(name)
+                    && !matches!(bound.expr_parent[id.idx()], Parent::None)
+                    && !bound.is_in_type_query(id)
+                    && !self.is_ambient_expr(file, id)
                 {
                     out.push(Diagnostic {
                         start: e.pos,
                         code: pick(self, Parent::Expr(id), RESERVED),
                     });
                 }
+            }
+        }
+        for &id in index
+            .of(ExprTag::Assign)
+            .iter()
+            .chain(index.of(ExprTag::Unary))
+        {
+            if matches!(bound.expr_parent[id.idx()], Parent::None) {
+                continue;
+            }
+            let e = &hir[id];
+            match e.kind {
                 ExprKind::Assign {
                     target: operand, ..
                 }
@@ -544,7 +569,7 @@ impl Checker<'_> {
                 continue;
             };
             let is_eval = is_eval_or_arguments(name);
-            if !(is_eval || is_reserved(self, name)) {
+            if !(is_eval || is_reserved(name)) {
                 continue;
             }
             let mut root = PatId(i as u32);
@@ -587,7 +612,7 @@ impl Checker<'_> {
             if !matches!(f.kind, FnKind::Decl | FnKind::Expr) || f.flags.contains(Flags::AMBIENT) {
                 continue;
             }
-            if !(is_eval_or_arguments(f.name) || is_reserved(self, f.name)) {
+            if !(is_eval_or_arguments(f.name) || is_reserved(f.name)) {
                 continue;
             }
             let parent = match bound.fns[i].owner {
@@ -613,7 +638,7 @@ impl Checker<'_> {
                 ClassOwner::Stmt(s) => s.is_some(),
             };
             // Its name is inside it.
-            if is_bound && !c.flags.contains(Flags::AMBIENT) && is_reserved(self, c.name) {
+            if is_bound && !c.flags.contains(Flags::AMBIENT) && is_reserved(c.name) {
                 out.push(Diagnostic {
                     start: c.name_pos,
                     code: RESERVED[0],
@@ -629,7 +654,7 @@ impl Checker<'_> {
         let in_scope =
             |c: &Self, name: Atom, start: u32, scope: ScopeId, out: &mut Vec<Diagnostic>| {
                 if scope.is_some()
-                    && is_reserved(c, name)
+                    && is_reserved(name)
                     && is_word_at(text, start as usize, c.files().atoms.bytes(name))
                 {
                     let (in_class, is_ambient) = c.in_class_and_ambient(file, scope);
@@ -661,7 +686,7 @@ impl Checker<'_> {
                     }
                 }
                 TypeNodeKind::Import { name, .. }
-                    if !name.is_empty() && is_reserved(self, hir.id_at(name, 0)) =>
+                    if !name.is_empty() && is_reserved(hir.id_at(name, 0)) =>
                 {
                     // Where the name is is not kept: past `import( .. )` and the dot.
                     let (mut at, mut depth) = (t.pos as usize, 0u32);
@@ -696,7 +721,7 @@ impl Checker<'_> {
                 TypeNodeKind::Tuple(elems) => {
                     for e in elems.iter() {
                         let elem = &hir[e];
-                        if !is_reserved(self, elem.name) {
+                        if !is_reserved(elem.name) {
                             continue;
                         }
                         // Where the name is is not kept: back from the type over `...`, `:` and `?`.
@@ -729,7 +754,7 @@ impl Checker<'_> {
         // The names statements give and use.
         let named =
             |c: &Self, name: Atom, start: u32, parent: Parent, out: &mut Vec<Diagnostic>| {
-                if is_reserved(c, name)
+                if is_reserved(name)
                     && is_word_at(text, start as usize, c.files().atoms.bytes(name))
                 {
                     out.push(Diagnostic {
@@ -767,7 +792,7 @@ impl Checker<'_> {
                     // Of `a.b.c` only `a`, which comes after the `=`.
                     if let ImportEqualsTarget::Entity(path) = import.target
                         && !path.is_empty()
-                        && is_reserved(self, hir.id_at(path, 0))
+                        && is_reserved(hir.id_at(path, 0))
                     {
                         let equals = skip_trivia(
                             text,
@@ -793,7 +818,7 @@ impl Checker<'_> {
                         named(self, hir[spec].local, hir[spec].pos, parent, out);
                     }
                 }
-                StmtKind::ExportStar { alias, .. } if is_reserved(self, alias) => {
+                StmtKind::ExportStar { alias, .. } if is_reserved(alias) => {
                     // Where the name is is not kept: past `export`, `type`, `*` and `as`.
                     let words: [&[u8]; 4] = [b"export", b"type", b"*", b"as"];
                     let mut at = s.pos as usize;

@@ -7,6 +7,7 @@
 use super::errors::Diagnostic;
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeKind, SymbolId};
+use smallvec::SmallVec;
 
 /// `hasParseDiagnostics`: of the grammar of a file that does not parse nothing is said. What the parser objected to and went on from is
 /// kept with what tsgo's binder and checker say of syntax; these are the codes that parser.go and scanner.go give. 18016 is not listed:
@@ -24,6 +25,40 @@ pub(super) fn has_parse_diagnostics(hir: &hir::File) -> bool {
                     | 2819 | 2880 | 6188 | 6189 | 17002 | 17006..=17008 | 17014 | 17015 | 17021 | 18009 | 18026 | 18029 | 18030
             )
         })
+}
+
+/// The expressions of `lists`, each of which is in the order of the file, all together in that order.
+pub(super) fn in_file_order<const N: usize>(
+    mut lists: [&[ExprId]; N],
+) -> impl Iterator<Item = ExprId> + '_ {
+    // Takes the first of a list off it. `u32::MAX`: there is none left.
+    fn take_first(list: &mut &[ExprId]) -> u32 {
+        match list.split_first() {
+            Some((first, rest)) => {
+                *list = rest;
+                first.0
+            }
+            None => u32::MAX,
+        }
+    }
+    let mut firsts = [u32::MAX; N];
+    for (first, list) in firsts.iter_mut().zip(lists.iter_mut()) {
+        *first = take_first(list);
+    }
+    std::iter::from_fn(move || {
+        let mut least = 0;
+        for i in 1..N {
+            if firsts[i] < firsts[least] {
+                least = i;
+            }
+        }
+        let e = firsts[least];
+        if e == u32::MAX {
+            return None;
+        }
+        firsts[least] = take_first(&mut lists[least]);
+        Some(ExprId(e))
+    })
 }
 
 /// Whether `checkGrammarParameterList` objects to the parameters of `func`: 1014 1047 1048, 1015, 1016.
@@ -83,7 +118,9 @@ impl Checker<'_> {
             {
                 continue;
             }
-            for i in 0..hir.exprs.len() {
+            let index = self.exprs_by_kind(file);
+            for &id in index.of(ExprTag::Ident) {
+                let i = id.idx();
                 let ExprKind::Ident(name) = hir.exprs[i].kind else {
                     continue;
                 };
@@ -281,9 +318,12 @@ impl Checker<'_> {
     /// by the name of `await` at the top of a module: 1262.
     fn check_names_that_are_keywords(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
+        if hir.kind == FileKind::Declaration {
+            return;
+        }
         let atoms = &self.files().atoms;
         let (r#let, r#await) = (atoms.lookup(b"let"), atoms.lookup(b"await"));
-        if hir.kind == FileKind::Declaration || r#let.is_none() && r#await.is_none() {
+        if r#let.is_none() && r#await.is_none() {
             return;
         }
         let is_module = self.files().module(file).is_module();
@@ -585,7 +625,7 @@ impl Checker<'_> {
                 FnOwner::Member(m) => hir[m].pos,
                 _ => func.name_pos,
             };
-            let params: Vec<ParamId> = func
+            let params: SmallVec<[ParamId; 4]> = func
                 .params
                 .iter()
                 .filter(|&p| !matches!(hir[hir[p].pat].kind, PatKind::Ident(known::this)))
@@ -659,7 +699,9 @@ impl Checker<'_> {
                 self.check_known_truthy_types(file, test, test, Parent::Stmt(yes), out);
             }
         }
-        for i in 0..hir.exprs.len() {
+        let index = self.exprs_by_kind(file);
+        for e in in_file_order([index.of(ExprTag::Cond), index.of(ExprTag::Binary)]) {
+            let i = e.idx();
             if matches!(bound.expr_parent[i], Parent::None) {
                 continue;
             }
@@ -798,11 +840,7 @@ impl Checker<'_> {
         {
             return;
         }
-        let is_promise = self
-            .parts(ty)
-            .to_vec()
-            .into_iter()
-            .all(|m| self.awaited(m) != m);
+        let is_promise = self.parts(ty).iter().all(|&m| self.awaited(m) != m);
         if self.signatures(ty, false).is_empty() && !is_promise {
             return;
         }
@@ -889,8 +927,14 @@ impl Checker<'_> {
             return false;
         }
         let same_variable = |a: ExprId, b: ExprId| matches!((hir[a].kind, hir[b].kind), (ExprKind::Ident(x), ExprKind::Ident(y)) if x == y && bound.expr_symbol[a.idx()] == bound.expr_symbol[b.idx()]);
-        for i in 0..hir.exprs.len() {
-            let child = ExprId(i as u32);
+        let index = self.exprs_by_kind(file);
+        let of_its_kind = match hir[tested].kind {
+            ExprKind::Ident(_) => index.of(ExprTag::Ident),
+            ExprKind::Dot { .. } => index.of(ExprTag::Dot),
+            _ => return false,
+        };
+        for &child in of_its_kind {
+            let i = child.idx();
             let may_be_the_same = same_variable(tested, child)
                 || matches!((hir[tested].kind, hir[child].kind), (ExprKind::Dot { name: x, .. }, ExprKind::Dot { name: y, .. }) if x == y);
             if child == tested || !may_be_the_same {
@@ -1157,16 +1201,17 @@ impl Checker<'_> {
     /// `checkInstanceOfExpression`, `resolveInstanceofExpression`: 2358 2359
     fn check_instanceof(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        for i in 0..hir.exprs.len() {
+        let index = self.exprs_by_kind(file);
+        for &e in index.of(ExprTag::Binary) {
             let ExprKind::Binary {
                 op: BinOp::Instanceof,
                 left,
                 right,
-            } = hir.exprs[i].kind
+            } = hir[e].kind
             else {
                 continue;
             };
-            if matches!(bound.expr_parent[i], Parent::None) {
+            if matches!(bound.expr_parent[e.idx()], Parent::None) {
                 continue;
             }
             let (l, r) = (
@@ -1263,6 +1308,10 @@ impl Checker<'_> {
 
     /// `checkEnumDeclaration`, as far as several declarations of one enum go.
     fn check_enum_declarations(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+        // Only what an enum of this file starts with is objected to.
+        if self.hir(file).enums.is_empty() {
+            return;
+        }
         let bound = self.bound(file);
         for i in 0..bound.symbols.len() {
             let symbol = &bound.symbols[i];

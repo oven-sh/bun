@@ -9,8 +9,9 @@ use crate::resolve::{
     Host, JsxEmit, ModuleDetection, ModuleKind, Options, Resolver, ScriptTarget, is_javascript,
     is_relative, join, known_extension, lib_name, parent_dir,
 };
-use crate::table::{Bases, ByNode, ByNodeKept};
-use crate::util::{FxHashMap, FxHashSet, List};
+use crate::table::{Bases, ByNode, ByNodeKept, RawWord};
+use crate::util::{FxHashMap, FxHashSet, List, ListIter};
+use smallvec::SmallVec;
 use std::sync::Mutex;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
@@ -128,6 +129,8 @@ pub struct Files {
     /// From a symbol to its parts, itself included.
     merged_parts: FxHashMap<Sym, Vec<Sym>>,
     merged_exports: FxHashMap<Sym, FxHashMap<Atom, Sym>>,
+    /// The tables of `merged_exports` sorted by name, once symbols are put together.
+    sorted_exports: FxHashMap<Sym, Box<[(Atom, Sym)]>>,
     /// The pairs `mergeSymbol` refused to make one symbol of, where what a module passes on with `export *`, what a pattern declares or
     /// a name that only stands for something was added to: what was there, and what was to be added.
     pub refused_merges: Vec<(Sym, Sym)>,
@@ -143,11 +146,73 @@ pub struct Files {
     aliases: ByNode<Sym, Option<Sym>>,
     /// What each alias is declared to stand for: one step.
     alias_steps: ByNode<Sym, Option<Sym>>,
+    /// Symbols are put together: nothing about them changes any more.
+    is_merged: bool,
+    memo: Memo,
     /// The order in which declarations of one thing in several files count: it decides the order of overloads.
     order: Vec<FileId>,
     /// What is wrong with what the options name, no file being to blame: the codes.
     program_errors: Vec<u32>,
 }
+
+/// What follows from how symbols are put together, each worked out the first time it is asked for. Until they are put together the
+/// tables have room for nothing, and so keep nothing.
+struct Memo {
+    /// From each symbol that is `MERGED` to the symbol it is a part of, which may be itself.
+    whole: ByNode<Sym, Option<Sym>>,
+    /// `symbol_flags` of an alias, with `FLAGS_KNOWN` set.
+    symbol_flags: ByNode<Sym, RawWord>,
+    /// The declarations of a symbol that has several.
+    decls: ByNodeKept<Sym, Box<[(FileId, Decl)]>>,
+    /// `export_stars_of`
+    export_stars: ByNodeKept<Sym, Box<[(Option<Sym>, bool)]>>,
+    /// `all_module_exports`
+    all_exports: ByNodeKept<Sym, Box<[(Atom, Sym)]>>,
+    has_known_exports: ByNode<Sym, bool>,
+}
+
+/// No flag of a symbol.
+const FLAGS_KNOWN: u32 = 1 << 31;
+
+impl Memo {
+    fn new(symbols: &Bases) -> Memo {
+        Memo {
+            whole: ByNode::new(symbols),
+            symbol_flags: ByNode::new(symbols),
+            decls: ByNodeKept::new(symbols),
+            export_stars: ByNodeKept::new(symbols),
+            all_exports: ByNodeKept::new(symbols),
+            has_known_exports: ByNode::new(symbols),
+        }
+    }
+}
+
+/// `Files::each_export`. One of the two lists is empty.
+struct Exports<'a> {
+    files: &'a Files,
+    file: FileId,
+    /// As the binder has them.
+    own: std::slice::Iter<'a, (Atom, SymbolId)>,
+    merged: ListIter<'a, (Atom, Sym)>,
+}
+
+impl Iterator for Exports<'_> {
+    type Item = (Atom, Sym);
+    #[inline]
+    fn next(&mut self) -> Option<(Atom, Sym)> {
+        match self.own.next() {
+            Some(&(name, id)) => Some((name, self.files.sym(self.file, id))),
+            None => self.merged.next(),
+        }
+    }
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let left = self.own.len() + self.merged.len();
+        (left, Some(left))
+    }
+}
+
+impl ExactSizeIterator for Exports<'_> {}
 
 struct Loaded {
     module: Module,
@@ -755,6 +820,7 @@ impl Files {
             .iter()
             .any(|m| m.bound.export_star_type_only.contains(&true));
         let symbols = Bases::new(modules.iter().map(|m| m.bound.symbols.len()));
+        let memo = Memo::new(&Bases::new(modules.iter().map(|_| 0)));
         let mut files = Files {
             atoms,
             options,
@@ -767,12 +833,15 @@ impl Files {
             merged_into: FxHashMap::default(),
             merged_parts: FxHashMap::default(),
             merged_exports: FxHashMap::default(),
+            sorted_exports: FxHashMap::default(),
             refused_merges: Vec::new(),
             circular_at_merge: Vec::new(),
             has_type_only_stars,
             type_only_star_names: ByNodeKept::new(&symbols),
             aliases: ByNode::new(&symbols),
             alias_steps: ByNode::new(&symbols),
+            is_merged: false,
+            memo,
             order: Vec::new(),
             program_errors,
         };
@@ -1300,6 +1369,23 @@ impl Files {
         let symbols = Bases::new(self.modules.iter().map(|m| m.bound.symbols.len()));
         self.aliases = ByNode::new(&symbols);
         self.alias_steps = ByNode::new(&symbols);
+        self.memo = Memo::new(&symbols);
+        for (&part, &whole) in &self.merged_into {
+            self.memo.whole.insert(part, Some(whole));
+        }
+        for &whole in self.merged_parts.keys() {
+            self.memo.whole.insert(whole, Some(whole));
+        }
+        self.sorted_exports = self
+            .merged_exports
+            .iter()
+            .map(|(&sym, table)| {
+                let mut all: Vec<(Atom, Sym)> = table.iter().map(|(&n, &s)| (n, s)).collect();
+                all.sort_unstable();
+                (sym, all.into_boxed_slice())
+            })
+            .collect();
+        self.is_merged = true;
     }
 
     fn symbol_mut(&mut self, sym: Sym) -> &mut Symbol {
@@ -1535,9 +1621,17 @@ impl Files {
     #[inline]
     pub fn canonical(&self, sym: Sym) -> Sym {
         if self.symbol(sym).flags.contains(SymFlags::MERGED) {
-            return self.merged_into.get(&sym).copied().unwrap_or(sym);
+            return self.whole_of(sym);
         }
         sym
+    }
+
+    /// `canonical` of a symbol that is `MERGED`.
+    fn whole_of(&self, sym: Sym) -> Sym {
+        match self.memo.whole.get(&sym) {
+            Some(Some(whole)) => whole,
+            _ => self.merged_into.get(&sym).copied().unwrap_or(sym),
+        }
     }
 
     #[inline]
@@ -1547,6 +1641,26 @@ impl Files {
 
     /// Every declaration of `sym`, which is canonical.
     pub fn decls(&self, sym: Sym) -> Vec<(FileId, Decl)> {
+        self.decls_of(sym).into_vec()
+    }
+
+    /// `decls`, kept for good where there are several.
+    pub fn decls_of(&self, sym: Sym) -> List<'_, (FileId, Decl)> {
+        let symbol = self.symbol(sym);
+        if !symbol.flags.contains(SymFlags::MERGED) {
+            match symbol.decls.as_slice() {
+                [] => return List::Kept(&[]),
+                [decl] => return List::One((sym.file, *decl)),
+                _ => {}
+            }
+        }
+        match self.memo.decls.get_ref(&sym) {
+            Some(kept) => List::Kept(kept),
+            None => List::Kept(self.memo.decls.insert_ref(sym, self.collect_decls(sym))),
+        }
+    }
+
+    fn collect_decls(&self, sym: Sym) -> Box<[(FileId, Decl)]> {
         if self.symbol(sym).flags.contains(SymFlags::MERGED)
             && let Some(parts) = self.merged_parts.get(&sym)
         {
@@ -1563,32 +1677,51 @@ impl Files {
     }
 
     pub fn export(&self, sym: Sym, name: Atom) -> Option<Sym> {
-        if self.symbol(sym).flags.contains(SymFlags::MERGED)
+        let symbol = self.symbol(sym);
+        if symbol.flags.contains(SymFlags::MERGED)
             && let Some(table) = self.merged_exports.get(&sym)
         {
             return table.get(&name).copied();
         }
-        let bound = self.bound(sym.file);
-        bound
-            .lookup(self.symbol(sym).exports, name)
+        self.bound(sym.file)
+            .lookup(symbol.exports, name)
             .map(|id| self.sym(sym.file, id))
     }
 
     /// The names `sym` exports itself, sorted by name.
     pub fn exports(&self, sym: Sym) -> Vec<(Atom, Sym)> {
-        if self.symbol(sym).flags.contains(SymFlags::MERGED)
-            && let Some(table) = self.merged_exports.get(&sym)
-        {
-            let mut all: Vec<(Atom, Sym)> = table.iter().map(|(&n, &s)| (n, s)).collect();
-            all.sort_unstable();
-            return all;
+        self.each_export(sym).collect()
+    }
+
+    /// `exports`, one after the other.
+    pub fn each_export(&self, sym: Sym) -> impl ExactSizeIterator<Item = (Atom, Sym)> + '_ {
+        let symbol = self.symbol(sym);
+        let merged = if symbol.flags.contains(SymFlags::MERGED) {
+            self.merged_exports_of(sym)
+        } else {
+            None
+        };
+        let own: &[(Atom, SymbolId)] = match merged {
+            Some(_) => &[],
+            None => self.bound(sym.file).table(symbol.exports),
+        };
+        Exports {
+            files: self,
+            file: sym.file,
+            own: own.iter(),
+            merged: merged.unwrap_or_default().into_iter(),
         }
-        let bound = self.bound(sym.file);
-        bound
-            .table(self.symbol(sym).exports)
-            .iter()
-            .map(|&(n, id)| (n, self.sym(sym.file, id)))
-            .collect()
+    }
+
+    /// What `sym`, which is `MERGED`, exports, sorted by name. `None`: what the binder says it does.
+    fn merged_exports_of(&self, sym: Sym) -> Option<List<'_, (Atom, Sym)>> {
+        if let Some(sorted) = self.sorted_exports.get(&sym) {
+            return Some(List::Kept(sorted));
+        }
+        let table = self.merged_exports.get(&sym)?;
+        let mut all: Vec<(Atom, Sym)> = table.iter().map(|(&n, &s)| (n, s)).collect();
+        all.sort_unstable();
+        Some(List::Own(all))
     }
 
     pub fn parts(&self, sym: Sym) -> List<'_, Sym> {
@@ -1624,7 +1757,33 @@ impl Files {
 
     /// `getSymbolFlags`: what `sym` and all that is on the way to what it stands for mean, taken together. Everything if it leads
     /// nowhere.
+    #[inline]
     pub fn symbol_flags(&self, sym: Sym) -> SymFlags {
+        let flags = self.flags(sym);
+        if !flags.contains(SymFlags::ALIAS) {
+            return flags;
+        }
+        let known = self.memo.symbol_flags.raw(sym);
+        if known != 0 {
+            return SymFlags::from_bits_retain(known & !FLAGS_KNOWN);
+        }
+        self.symbol_flags_of_alias(sym)
+    }
+
+    /// `symbol_flags`, worked out and kept.
+    fn symbol_flags_of_alias(&self, sym: Sym) -> SymFlags {
+        let circles = RESOLVING.with(|r| r.borrow().circles);
+        let flags = self.symbol_flags_uncached(sym);
+        // As in `alias_step`. Where no circle was cut short, every step of the way is settled.
+        if RESOLVING.with(|r| r.borrow().circles) == circles {
+            self.memo
+                .symbol_flags
+                .set_raw(sym, flags.bits() | FLAGS_KNOWN);
+        }
+        flags
+    }
+
+    fn symbol_flags_uncached(&self, sym: Sym) -> SymFlags {
         let mut flags = self.flags(sym);
         // The way gone so far, to know a circle by.
         let mut way = [sym; 32];
@@ -1695,7 +1854,7 @@ impl Files {
             return None;
         }
         let name = PropKey::Name(symbol.name);
-        let has_static_member = self.decls(class).iter().any(|&(file, decl)| {
+        let has_static_member = self.decls_of(class).iter().any(|&(file, decl)| {
             let Decl::Class(c) = decl else { return false };
             let hir = self.hir(file);
             hir[c].members.iter().any(|m| {
@@ -1778,7 +1937,7 @@ impl Files {
         while scope.is_some() {
             let s = &bound.scopes[scope.idx()];
             // The `infer`s of a conditional type are seen from its true branch, not from the `extends` clause that declares them.
-            if from != ScopeKind::Extends
+            if !matches!(from, ScopeKind::Extends)
                 && let Some(id) = bound.lookup(s.locals, name)
             {
                 let sym = self.sym(file, id);
@@ -1919,7 +2078,7 @@ impl Files {
         let usage = usage.mode(self);
         // `declare module "m";` has whatever is asked of it, a default too.
         if self
-            .decls(module)
+            .decls_of(module)
             .iter()
             .any(|&(f, d)| matches!(d, Decl::Module(id) if !self.hir(f)[id].has_body))
         {
@@ -2056,25 +2215,115 @@ impl Files {
     /// What importing `name` from `module` gives.
     pub fn module_export(&self, module: Sym, name: Atom) -> Option<Sym> {
         let value = self.module_value(module);
-        let mut visited = FxHashSet::default();
         if value == module {
-            return self.module_export_inner(module, name, &mut visited);
+            return self.export_or_passed_on(module, name);
         }
         // `getExportsOfModuleWorker`: what it says it is with `export =` exports for it, with the `export *` of that and none of its own.
         // That is not its `default`: whether it has one is up to `canHaveSyntheticDefault`.
         // Of what the module exports besides, only what is a type or a namespace and no value counts.
-        self.module_export_inner(value, name, &mut visited)
-            .or_else(|| {
-                let own = self.export(module, name)?;
-                let flags = self.symbol_flags(own);
-                (flags.intersects(SymFlags::TYPE | SymFlags::NAMESPACE)
-                    && !flags.intersects(SymFlags::VALUE))
-                .then_some(own)
-            })
+        self.export_or_passed_on(value, name).or_else(|| {
+            let own = self.export(module, name)?;
+            let flags = self.symbol_flags(own);
+            (flags.intersects(SymFlags::TYPE | SymFlags::NAMESPACE)
+                && !flags.intersects(SymFlags::VALUE))
+            .then_some(own)
+        })
     }
 
-    /// `visit` of `getExportsOfModuleWorker`: what `module` exports itself, or passes on with `export *`. An `export =` of what is
-    /// passed on counts for nothing.
+    /// `getExportsOfModuleWorker`: what `module` exports itself, or passes on with `export *`.
+    fn export_or_passed_on(&self, module: Sym, name: Atom) -> Option<Sym> {
+        if let Some(found) = self.export(module, name) {
+            return Some(found);
+        }
+        if name == known::default {
+            return None;
+        }
+        if !self.is_merged {
+            return self.module_export_inner(module, name, &mut FxHashSet::default());
+        }
+        if self.export_stars_of(module).is_empty() {
+            return None;
+        }
+        let all = self.all_exports_of(module);
+        all.binary_search_by_key(&name, |export| export.0)
+            .ok()
+            .map(|i| all[i].1)
+    }
+
+    /// What `module` passes on with `export *`, in the order it says so: the module, if the specifier leads to one, and whether it
+    /// says `export type *`.
+    pub fn export_stars_of(&self, module: Sym) -> &[(Option<Sym>, bool)] {
+        if self
+            .parts(module)
+            .iter()
+            .all(|part| self.bound(part.file).export_stars.is_empty())
+        {
+            return &[];
+        }
+        if let Some(kept) = self.memo.export_stars.get_ref(&module) {
+            return kept;
+        }
+        let mut stars = Vec::new();
+        for part in self.parts(module) {
+            let bound = self.bound(part.file);
+            for (i, &(container, spec)) in bound.export_stars.iter().enumerate() {
+                if container == part.id {
+                    stars.push((
+                        self.module_of_specifier(part.file, spec),
+                        bound.export_star_type_only[i],
+                    ));
+                }
+            }
+        }
+        self.memo.export_stars.insert_ref(module, stars.into())
+    }
+
+    /// Whether all there is to import from `module` can be told. What `export =` gives has properties, which can be imported as well.
+    /// `declare module "m";` has whatever is asked of it. What a JSON file has is up to what is in it. The same goes for what is
+    /// passed on with `export *`, and nothing is known of what that leads to if it leads nowhere.
+    pub fn has_known_exports(&self, module: Sym) -> bool {
+        if let Some(known) = self.memo.has_known_exports.get(&module) {
+            return known;
+        }
+        self.memo
+            .has_known_exports
+            .insert(module, self.has_known_exports_uncached(module))
+    }
+
+    fn has_known_exports_uncached(&self, module: Sym) -> bool {
+        let is_open = |m: Sym| {
+            self.export(m, known::export_equals).is_some()
+                || self.symbol(m).exports.is_none()
+                || self
+                    .decls_of(m)
+                    .iter()
+                    .any(|&(f, d)| matches!(d, Decl::Module(id) if !self.hir(f)[id].has_body))
+                || self.module(m.file).path.ends_with(".json")
+        };
+        if is_open(module) {
+            return false;
+        }
+        let mut pending = vec![module];
+        let mut visited = FxHashSet::default();
+        visited.insert(module);
+        while let Some(m) = pending.pop() {
+            for &(target, _) in self.export_stars_of(m) {
+                let Some(target) = target else {
+                    return false;
+                };
+                if is_open(target) {
+                    return false;
+                }
+                if visited.insert(target) {
+                    pending.push(target);
+                }
+            }
+        }
+        true
+    }
+
+    /// `visit` of `getExportsOfModuleWorker`, while symbols are being put together: what `module` exports itself, or passes on with
+    /// `export *`. An `export =` of what is passed on counts for nothing.
     fn module_export_inner(
         &self,
         module: Sym,
@@ -2115,6 +2364,16 @@ impl Files {
         all
     }
 
+    /// `all_module_exports`, kept for good.
+    pub fn all_exports_of(&self, module: Sym) -> &[(Atom, Sym)] {
+        if let Some(kept) = self.memo.all_exports.get_ref(&module) {
+            return kept;
+        }
+        self.memo
+            .all_exports
+            .insert_ref(module, self.all_module_exports(module).into())
+    }
+
     fn collect_exports(
         &self,
         module: Sym,
@@ -2125,19 +2384,15 @@ impl Files {
         if !visited.insert(module) {
             return;
         }
-        for (name, sym) in self.exports(module) {
+        for (name, sym) in self.each_export(module) {
             if name == known::default && !with_default {
                 continue;
             }
             out.entry(name).or_insert(sym);
         }
-        for part in self.parts(module) {
-            for &(container, spec) in &self.bound(part.file).export_stars {
-                if container == part.id
-                    && let Some(target) = self.module_of_specifier(part.file, spec)
-                {
-                    self.collect_exports(target, out, visited, false);
-                }
+        for &(target, _) in self.export_stars_of(module) {
+            if let Some(target) = target {
+                self.collect_exports(target, out, visited, false);
             }
         }
     }
@@ -2181,37 +2436,29 @@ impl Files {
         plain: &mut FxHashSet<Atom>,
         type_only: &mut FxHashSet<Atom>,
     ) -> Option<FxHashSet<Atom>> {
-        let own = self.exports(module);
         // Before it is asked whether it has been here: a plain `export *` takes back what an `export type *` of the same module said.
         if !is_type_only {
-            plain.extend(own.iter().map(|e| e.0));
+            plain.extend(self.each_export(module).map(|e| e.0));
         }
         if visited.contains(&module) {
             return None;
         }
         visited.push(module);
-        let mut names: FxHashSet<Atom> = own.into_iter().map(|e| e.0).collect();
-        for part in self.parts(module) {
-            let bound = self.bound(part.file);
-            for (i, &(container, spec)) in bound.export_stars.iter().enumerate() {
-                if container != part.id {
-                    continue;
-                }
-                let Some(target) = self.module_of_specifier(part.file, spec) else {
-                    continue;
-                };
-                let says_type = bound.export_star_type_only[i];
-                if let Some(nested) = self.visit_export_stars(
-                    target,
-                    says_type,
-                    is_type_only || says_type,
-                    visited,
-                    plain,
-                    type_only,
-                ) {
-                    // `extendExportSymbols`: a default is not passed on.
-                    names.extend(nested.into_iter().filter(|&n| n != known::default));
-                }
+        let mut names: FxHashSet<Atom> = self.each_export(module).map(|e| e.0).collect();
+        for &(target, says_type) in self.export_stars_of(module) {
+            let Some(target) = target else {
+                continue;
+            };
+            if let Some(nested) = self.visit_export_stars(
+                target,
+                says_type,
+                is_type_only || says_type,
+                visited,
+                plain,
+                type_only,
+            ) {
+                // `extendExportSymbols`: a default is not passed on.
+                names.extend(nested.into_iter().filter(|&n| n != known::default));
             }
         }
         if through_type_only {
@@ -2412,7 +2659,7 @@ impl Files {
     /// declarations `declareSymbolEx` refused, which are not declarations of the symbol: an import excludes every other alias
     /// (`AliasExcludes`), so an import that follows an alias declaration was refused.
     pub fn declaration_of_alias_symbol(&self, sym: Sym) -> Option<(FileId, Decl)> {
-        let decls = self.decls(sym);
+        let decls = self.decls_of(sym);
         (0..decls.len()).rev().find_map(|i| {
             let (file, decl) = decls[i];
             if !self.is_alias_symbol_declaration(file, decl) {
@@ -2489,7 +2736,7 @@ impl Files {
                     self.module_of_specifier_as(file, spec, ResolutionMode::Require)?,
                 )),
                 ImportEqualsTarget::Entity(names) => {
-                    let names: Vec<Atom> = hir.ids(names).collect();
+                    let names: SmallVec<[Atom; 4]> = hir.ids(names).collect();
                     // `getSymbolOfPartOfRightHandSideOfImportEquals`: `import a = b` is about a namespace, `import a = b.c` about anything.
                     let meaning = if names.len() == 1 {
                         SymFlags::NAMESPACE
@@ -2563,7 +2810,7 @@ impl Files {
                 if let ExprKind::Class(c) = hir[e].kind {
                     return Some(self.sym(file, bound.class_symbol[c.idx()]));
                 }
-                let mut names = Vec::new();
+                let mut names: SmallVec<[Atom; 4]> = SmallVec::new();
                 let mut at = e;
                 loop {
                     match hir[at].kind {

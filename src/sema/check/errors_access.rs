@@ -11,6 +11,7 @@ use super::errors_small::has_parse_diagnostics;
 use super::explain::Line;
 use super::*;
 use crate::bind::{ClassOwner, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind};
+use smallvec::{SmallVec, smallvec};
 
 /// What a type of the standard library got with each version of it: `(lib, properties)`.
 type Features = &'static [(&'static str, &'static [&'static str])];
@@ -168,10 +169,10 @@ impl Checker<'_> {
         self.check_private_names(file, out);
         self.check_lookups_by_name(file, out);
         self.check_element_accesses(file, out);
-        let hir = self.hir(file);
+        let (hir, bound) = (self.hir(file), self.bound(file));
         let strict_null_checks = self.p.files.options.strict_null_checks;
-        for i in 0..hir.exprs.len() {
-            let e = ExprId(i as u32);
+        let index = self.exprs_by_kind(file);
+        for &e in index.of(ExprTag::Dot) {
             let ExprKind::Dot {
                 obj,
                 name,
@@ -181,7 +182,8 @@ impl Checker<'_> {
             else {
                 continue;
             };
-            if matches!(self.bound(file).expr_parent[i], Parent::None) {
+            let parent = bound.expr_parent[e.idx()];
+            if matches!(parent, Parent::None) {
                 continue;
             }
             let text = self.files().atoms.bytes(name);
@@ -205,8 +207,13 @@ impl Checker<'_> {
             if self.is_any(left) || self.every_type(left, |_, m| m.is_null() || m.is_undefined()) {
                 continue;
             }
+            // `isMethodAccessForCall`
+            let is_called = matches!(parent, Parent::Expr(p)
+                if matches!(hir[p].kind, ExprKind::Call(c) | ExprKind::New(c) if hir[c].callee == e));
+            // `IsAssignmentTarget`, which what is called is not.
+            let is_assigned = !is_called && self.is_written(file, e);
             // `getWidenedType`: what is assigned to, or called, is looked up in the type a variable would get.
-            let looked_into = if self.is_written_or_called(file, e) {
+            let looked_into = if is_called || is_assigned {
                 self.regular_object(left)
             } else {
                 left
@@ -234,8 +241,6 @@ impl Checker<'_> {
                 self.explain_no_property(file, e, left, name, name_pos, 2339);
                 continue;
             }
-            // `IsAssignmentTarget`
-            let is_assigned = self.is_written(file, e);
             // Through what a type parameter extends an index signature can be read, not written: `getApplicableIndexInfoForName`
             // is not asked.
             let no_index_signatures = is_assigned
@@ -245,7 +250,7 @@ impl Checker<'_> {
                 || no_index_signatures && !self.has_property_of_type(apparent, name)
             {
                 // `getPropertyOfTypeEx` with `includeTypeOnlyMembers`: what a qualified name in `typeof a.b` is looked up with.
-                if self.bound(file).is_in_type_query(e)
+                if bound.is_in_type_query(e)
                     && self.type_only_member_of_module(apparent, name).is_some()
                 {
                     continue;
@@ -301,7 +306,7 @@ impl Checker<'_> {
                 continue;
             }
             // `isDeleteTarget`
-            let is_deleted = matches!(self.bound(file).expr_parent[i], Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Unary { op: UnOp::Delete, .. }));
+            let is_deleted = matches!(parent, Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Unary { op: UnOp::Delete, .. }));
             // A name that only an index signature answers for, which is not written through if it says `readonly`.
             if (is_assigned || is_deleted) && !self.has_property_of_type(apparent, name) {
                 let infos = self.index_signatures_of(apparent);
@@ -318,7 +323,7 @@ impl Checker<'_> {
                 continue;
             }
             let is_super = matches!(hir[obj].kind, ExprKind::Super);
-            let writing = self.is_write_access(file, e);
+            let writing = !is_called && self.is_write_access(file, e);
             if let Some(code) =
                 self.why_not_accessible(file, Parent::Expr(e), is_super, writing, apparent, name)
             {
@@ -428,87 +433,87 @@ impl Checker<'_> {
                 });
             }
         }
-        for i in 0..hir.exprs.len() {
-            let parent = bound.expr_parent[i];
-            if matches!(parent, Parent::None) {
+        let index = self.exprs_by_kind(file);
+        for &e in index.of(ExprTag::Dot) {
+            let ExprKind::Dot {
+                obj,
+                name_pos,
+                chain,
+                ..
+            } = hir[e].kind
+            else {
+                continue;
+            };
+            if !is_private(name_pos) || matches!(bound.expr_parent[e.idx()], Parent::None) {
                 continue;
             }
-            let (e, pos) = (ExprId(i as u32), hir.exprs[i].pos);
-            match hir.exprs[i].kind {
-                ExprKind::Dot {
-                    obj,
-                    name_pos,
-                    chain,
-                    ..
-                } if is_private(name_pos) => {
-                    if is_private_constructor_name(text, name_pos) {
-                        out.push(Diagnostic {
-                            start: name_pos,
-                            code: 18012,
-                        });
+            if is_private_constructor_name(text, name_pos) {
+                out.push(Diagnostic {
+                    start: name_pos,
+                    code: 18012,
+                });
+            }
+            if bound.is_in_type_query(e) || !self.classes_around_private_name(file, e).is_empty() {
+                continue;
+            }
+            let (receiver, _) = self.chain_receiver(file, obj, chain);
+            if !self.is_known(receiver) || self.is_uncertain(file, obj) {
+                continue;
+            }
+            let apparent = self.apparent_type(receiver);
+            if self.is_any(apparent) {
+                out.push(Diagnostic {
+                    start: name_pos,
+                    code: 18016,
+                });
+            }
+        }
+        for &e in index.of(ExprTag::String) {
+            let (parent, pos) = (bound.expr_parent[e.idx()], hir[e].pos);
+            if !is_private(pos) || matches!(parent, Parent::None) {
+                continue;
+            }
+            // JSX text may start with `#`.
+            if matches!(parent, Parent::Expr(owner) if owner.is_some() && matches!(hir[owner].kind, ExprKind::Jsx(_)))
+            {
+                continue;
+            }
+            if is_private_constructor_name(text, pos) {
+                out.push(Diagnostic {
+                    start: pos,
+                    code: 18012,
+                });
+            }
+            if self.enclosing_classes(file, e).is_empty() {
+                out.push(Diagnostic {
+                    start: pos,
+                    code: 18016,
+                });
+                continue;
+            }
+            // Parentheses are a parent of their own.
+            let is_allowed = !self.is_written_in_parentheses(file, e)
+                && match parent {
+                    // `IsExpressionNode`: only as the left operand of `in`.
+                    Parent::Expr(owner) if owner.is_some() => {
+                        matches!(hir[owner].kind, ExprKind::Binary { op: BinOp::In, left, .. } if left == e)
                     }
-                    if bound.is_in_type_query(e)
-                        || !self.classes_around_private_name(file, e).is_empty()
-                    {
-                        continue;
-                    }
-                    let (receiver, _) = self.chain_receiver(file, obj, chain);
-                    if !self.is_known(receiver) || self.is_uncertain(file, obj) {
-                        continue;
-                    }
-                    let apparent = self.apparent_type(receiver);
-                    if self.is_any(apparent) {
-                        out.push(Diagnostic {
-                            start: name_pos,
-                            code: 18016,
-                        });
-                    }
-                }
-                ExprKind::String(_) if is_private(pos) => {
-                    // JSX text may start with `#`.
-                    if matches!(parent, Parent::Expr(owner) if owner.is_some() && matches!(hir[owner].kind, ExprKind::Jsx(_)))
-                    {
-                        continue;
-                    }
-                    if is_private_constructor_name(text, pos) {
-                        out.push(Diagnostic {
-                            start: pos,
-                            code: 18012,
-                        });
-                    }
-                    if self.enclosing_classes(file, e).is_empty() {
-                        out.push(Diagnostic {
-                            start: pos,
-                            code: 18016,
-                        });
-                        continue;
-                    }
-                    // Parentheses are a parent of their own.
-                    let is_allowed = !self.is_written_in_parentheses(file, e)
-                        && match parent {
-                            // `IsExpressionNode`: only as the left operand of `in`.
-                            Parent::Expr(owner) if owner.is_some() => {
-                                matches!(hir[owner].kind, ExprKind::Binary { op: BinOp::In, left, .. } if left == e)
-                            }
-                            // `IsForInStatement(privId.Parent)`: the statement reports 2406 itself.
-                            Parent::Stmt(s) if s.is_some() => match hir[s].kind {
-                                StmtKind::ForIn { .. } => true,
-                                StmtKind::Expr(_) => {
-                                    matches!(bound.stmt_parent[s.idx()], Parent::Stmt(outer)
+                    // `IsForInStatement(privId.Parent)`: the statement reports 2406 itself.
+                    Parent::Stmt(s) if s.is_some() => match hir[s].kind {
+                        StmtKind::ForIn { .. } => true,
+                        StmtKind::Expr(_) => {
+                            matches!(bound.stmt_parent[s.idx()], Parent::Stmt(outer)
                                     if outer.is_some() && matches!(hir[outer].kind, StmtKind::ForIn { left, .. } if left == s))
-                                }
-                                _ => false,
-                            },
-                            _ => false,
-                        };
-                    if !is_allowed {
-                        out.push(Diagnostic {
-                            start: pos,
-                            code: 1451,
-                        });
-                    }
-                }
-                _ => {}
+                        }
+                        _ => false,
+                    },
+                    _ => false,
+                };
+            if !is_allowed {
+                out.push(Diagnostic {
+                    start: pos,
+                    code: 1451,
+                });
             }
         }
     }
@@ -519,11 +524,12 @@ impl Checker<'_> {
     fn check_element_accesses(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let no_implicit_any = self.p.files.options.no_implicit_any;
-        for i in 0..hir.exprs.len() {
-            let ExprKind::Index { obj, index, chain } = hir.exprs[i].kind else {
+        let by_kind = self.exprs_by_kind(file);
+        for &e in by_kind.of(ExprTag::Index) {
+            let ExprKind::Index { obj, index, chain } = hir[e].kind else {
                 continue;
             };
-            let e = ExprId(i as u32);
+            let i = e.idx();
             if matches!(bound.expr_parent[i], Parent::None) {
                 continue;
             }
@@ -563,7 +569,7 @@ impl Checker<'_> {
             }
             // A `const enum` is looked into with a string literal. Anything else is 2476, and in error.
             let is_const_enum = matches!(*self.data(apparent), TypeData::Anon { origin: Origin::EnumObject(sym), .. }
-                if self.files().decls(sym).iter().any(|&(f, d)| matches!(d, crate::bind::Decl::Enum(id) if self.hir(f)[id].flags.contains(Flags::CONST))));
+                if self.files().decls_of(sym).iter().any(|&(f, d)| matches!(d, crate::bind::Decl::Enum(id) if self.hir(f)[id].flags.contains(Flags::CONST))));
             let is_string_literal_like = hir
                 .parens
                 .binary_search_by_key(&index.0, |p| p.0.0)
@@ -596,10 +602,10 @@ impl Checker<'_> {
             let infos = self.index_signatures_of(apparent);
             // What is missing for one member of a union of keys is `any`, which is not said again of the members after it.
             let mut was_missing = false;
-            let mut parts = if keys == TypeId::BOOLEAN {
-                vec![keys]
+            let mut parts: SmallVec<[TypeId; 8]> = if keys == TypeId::BOOLEAN {
+                smallvec![keys]
             } else {
-                self.parts(keys).to_vec()
+                SmallVec::from_slice(self.parts(keys))
             };
             parts.sort_by(|&a, &b| self.compare_keys(a, b));
             for key in parts {
@@ -1136,7 +1142,7 @@ impl Checker<'_> {
             let Some(members) = self.members(part) else {
                 return false;
             };
-            if self.property_of_type(&members, name).is_some() {
+            if self.property_in(&members, name).is_some() {
                 is_declared = true;
                 continue;
             }
@@ -1159,8 +1165,8 @@ impl Checker<'_> {
 
     /// `getIndexInfosOfType`: the key of each index signature of `ty`, which is an apparent type, and whether it is readonly.
     /// Of a union (`getUnionIndexInfos`), those of its first member that all the others have, readonly if one of them is.
-    fn index_signatures_of(&mut self, ty: TypeId) -> Vec<(TypeId, bool)> {
-        let mut infos: Vec<(TypeId, bool)> = Vec::new();
+    fn index_signatures_of(&mut self, ty: TypeId) -> SmallVec<[(TypeId, bool); 4]> {
+        let mut infos: SmallVec<[(TypeId, bool); 4]> = SmallVec::new();
         for (at, &part) in self.parts(ty).iter().enumerate() {
             let part = self.apparent_type(part);
             let members = self.members(part);
@@ -1172,7 +1178,7 @@ impl Checker<'_> {
                 infos.extend(own.iter().map(|info| (info.key, info.readonly)));
                 continue;
             }
-            infos.retain_mut(|info| match own.iter().find(|other| other.key == info.0) {
+            infos.retain(|info| match own.iter().find(|other| other.key == info.0) {
                 Some(other) => {
                     info.1 |= other.readonly;
                     true
@@ -1317,7 +1323,7 @@ impl Checker<'_> {
         }
         let statics = self.type_of_symbol(target);
         // `prototype`, and what a namespace merged with the class exports, are not declared `static`.
-        self.prop_of(statics, name)
+        self.prop_ref(statics, name)
             .is_some_and(|(prop, _)| matches!(prop.source, PropSource::Members(_)))
     }
 
@@ -1441,10 +1447,10 @@ impl Checker<'_> {
         else {
             return false;
         };
-        let Some((prop, mapper)) = self.prop_of(object, name) else {
+        let Some((prop, mapper)) = self.prop_ref(object, name) else {
             return false;
         };
-        let ty = self.type_of_prop(&prop, mapper);
+        let ty = self.type_of_prop(prop, mapper);
         let Some(sig) = self.single_call_signature(ty, false) else {
             return false;
         };
@@ -1460,7 +1466,9 @@ impl Checker<'_> {
     fn check_lookups_by_name(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         for p in 0..hir.pats.len() {
-            self.check_lookups_of_pattern(file, PatId(p as u32), out);
+            if matches!(hir.pats[p].kind, PatKind::Object(_) | PatKind::Array(_)) {
+                self.check_lookups_of_pattern(file, PatId(p as u32), out);
+            }
         }
         // `getTypeFromIndexedAccessTypeNode`
         let mut parents: Option<Vec<TypeNodeId>> = None;
@@ -1845,7 +1853,7 @@ impl Checker<'_> {
                 mapper: MapperId::IDENTITY,
             });
             if self
-                .prop_of(statics, name)
+                .prop_ref(statics, name)
                 .is_some_and(|(prop, _)| matches!(prop.source, PropSource::Members(_)))
             {
                 return 2576;
@@ -2328,17 +2336,13 @@ impl Checker<'_> {
         name: Atom,
     ) -> Option<Inaccessible> {
         // `forEachProperty`: a property of a union or of an intersection is made of those of the members.
-        let mut parts: Vec<Prop> = Vec::new();
+        let mut parts: SmallVec<[&Prop; 4]> = SmallVec::new();
         for &member in self.parts(containing) {
             let member = self.apparent_type(member);
-            let (prop, _) = self.prop_of(member, name)?;
-            if matches!(prop.source, PropSource::Intersected(..)) {
-                properties_intersected(&prop, &mut parts);
-            } else {
-                parts.push(prop);
-            }
+            let (prop, _) = self.prop_ref(member, name)?;
+            properties_intersected(prop, &mut parts);
         }
-        let first = parts.first()?;
+        let first = *parts.first()?;
         let found = |code: u32, class: Option<Sym>, containing: TypeId| Inaccessible {
             code,
             prop: first.clone(),
@@ -2348,7 +2352,7 @@ impl Checker<'_> {
         let hidden = Flags::PRIVATE | Flags::PROTECTED;
         // With one declaration for all of them it goes by that (`createUnionOrIntersectionProperty`). Otherwise it is private if one of
         // them is, else public if one is, else protected, and static if one is.
-        let is_declared_once = parts.iter().all(|p| p.source == first.source);
+        let is_declared_once = parts.len() == 1 || parts.iter().all(|p| p.source == first.source);
         let flags = if is_declared_once {
             self.modifiers_of_property(first, writing)
         } else {
@@ -2478,12 +2482,12 @@ impl Checker<'_> {
 }
 
 /// `forEachProperty`: the properties a property of an intersection is made of; any other, itself.
-fn properties_intersected(prop: &Prop, out: &mut Vec<Prop>) {
+fn properties_intersected<'a>(prop: &'a Prop, out: &mut SmallVec<[&'a Prop; 4]>) {
     match &prop.source {
         PropSource::Intersected(_, parts) => parts
             .iter()
             .for_each(|part| properties_intersected(part, out)),
-        _ => out.push(prop.clone()),
+        _ => out.push(prop),
     }
 }
 

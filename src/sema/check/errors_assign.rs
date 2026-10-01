@@ -65,6 +65,15 @@ struct RelationError {
     named_otherwise: (bool, bool),
 }
 
+/// Where the type that something is held against is written out.
+#[derive(Copy, Clone)]
+enum Written {
+    Nowhere,
+    At(FileId, TypeNodeId),
+    /// Where the variable or parameter that the expression names is annotated, if it is.
+    AnnotationOf(ExprId),
+}
+
 /// What `levenshteinWithMax` measures: changing a letter costs two, and changing its case next to nothing.
 fn edit_distance(a: &[u8], b: &[u8]) -> f64 {
     let mut previous: Vec<f64> = (0..=b.len()).map(|j| j as f64).collect();
@@ -118,14 +127,15 @@ impl Checker<'_> {
             }
             let target = self.type_from_node(file, decl.ty);
             let source = self.type_of_expr(file, decl.init);
-            let end = self.end_if_explained(|c| c.end_of_pat(file, decl.pat));
             self.check_assignable_to(
                 file,
                 source,
                 target,
-                Some((file, decl.ty)),
-                hir[decl.pat].pos,
-                end,
+                Written::At(file, decl.ty),
+                |c| {
+                    let end = c.end_if_explained(|c| c.end_of_pat(file, decl.pat));
+                    (hir[decl.pat].pos, end)
+                },
                 decl.init,
                 false,
                 false,
@@ -147,16 +157,20 @@ impl Checker<'_> {
             }
             let (target, is_uninstantiated) = self.param_default_target(file, ParamId(p as u32));
             let source = self.type_of_expr(file, param.default);
-            let written = param.ty.is_some().then_some((file, param.ty));
-            let at = param.pos.min(hir[param.pat].pos);
-            let end = self.end_if_explained(|c| c.end_of_param(file, ParamId(p as u32)));
+            let written = if param.ty.is_some() {
+                Written::At(file, param.ty)
+            } else {
+                Written::Nowhere
+            };
             self.check_assignable_to(
                 file,
                 source,
                 target,
                 written,
-                at,
-                end,
+                |c| {
+                    let end = c.end_if_explained(|c| c.end_of_param(file, ParamId(p as u32)));
+                    (param.pos.min(hir[param.pat].pos), end)
+                },
                 param.default,
                 false,
                 is_uninstantiated,
@@ -166,6 +180,17 @@ impl Checker<'_> {
         }
         // The defaults in a pattern, against what the pattern takes apart says they stand in for.
         for i in 0..hir.pats.len() {
+            let has_defaults = match hir.pats[i].kind {
+                PatKind::Object(props) => props.iter().any(|p| hir[p].default.is_some()),
+                PatKind::Array(elems) => elems.iter().any(|e| hir[e].default.is_some()),
+                _ => false,
+            };
+            if !has_defaults
+                || matches!(bound.pat_parent[i], crate::bind::PatParent::None)
+                || self.is_in_parameter_without_body(file, PatId(i as u32))
+            {
+                continue;
+            }
             let defaults: Vec<(PatId, ExprId)> = match hir.pats[i].kind {
                 PatKind::Object(props) => props
                     .iter()
@@ -176,11 +201,6 @@ impl Checker<'_> {
                 }
                 _ => continue,
             };
-            if matches!(bound.pat_parent[i], crate::bind::PatParent::None)
-                || self.is_in_parameter_without_body(file, PatId(i as u32))
-            {
-                continue;
-            }
             let is_ambient = self
                 .var_decl_of_pat(file, PatId(i as u32))
                 .is_some_and(|d| hir[d].flags.contains(Flags::AMBIENT));
@@ -195,12 +215,20 @@ impl Checker<'_> {
                 {
                     let target = self.type_of_pat(file, pat);
                     let source = self.type_of_expr(file, default);
-                    let (at, end) = (
-                        hir[pat].pos,
-                        self.end_if_explained(|c| c.end_of_pat(file, pat)),
-                    );
-                    self.check_assignable_with_end(
-                        file, source, target, at, end, default, 2322, out,
+                    self.check_assignable_to(
+                        file,
+                        source,
+                        target,
+                        Written::Nowhere,
+                        |c| {
+                            let end = c.end_if_explained(|c| c.end_of_pat(file, pat));
+                            (hir[pat].pos, end)
+                        },
+                        default,
+                        false,
+                        false,
+                        2322,
+                        out,
                     );
                 }
             }
@@ -227,15 +255,21 @@ impl Checker<'_> {
             } else {
                 declared
             };
-            let written = (!is_optional).then_some((file, member.ty));
-            let end = self.end_if_explained(|c| c.end_of_member_name(file, MemberId(m as u32)));
+            let written = if is_optional {
+                Written::Nowhere
+            } else {
+                Written::At(file, member.ty)
+            };
             self.check_assignable_to(
                 file,
                 source,
                 target,
                 written,
-                member.pos,
-                end,
+                |c| {
+                    let end =
+                        c.end_if_explained(|c| c.end_of_member_name(file, MemberId(m as u32)));
+                    (member.pos, end)
+                },
                 member.init,
                 false,
                 false,
@@ -243,7 +277,9 @@ impl Checker<'_> {
                 out,
             );
         }
-        for i in 0..hir.exprs.len() {
+        let by_kind = self.exprs_by_kind(file);
+        for &assignment in by_kind.of(ExprTag::Assign) {
+            let i = assignment.idx();
             let ExprKind::Assign {
                 op: None,
                 target,
@@ -347,11 +383,20 @@ impl Checker<'_> {
                     continue;
                 }
             }
-            let at = self.start_of(file, target);
-            let written = self.annotation_of_reference(file, target);
-            let end = self.end_if_explained(|c| c.end_of_expr(file, target));
             self.check_assignable_to(
-                file, source, wanted, written, at, end, value, false, false, 2322, out,
+                file,
+                source,
+                wanted,
+                Written::AnnotationOf(target),
+                |c| {
+                    let end = c.end_if_explained(|c| c.end_of_expr(file, target));
+                    (c.start_of(file, target), end)
+                },
+                value,
+                false,
+                false,
+                2322,
+                out,
             );
         }
         for f in 0..hir.fns.len() {
@@ -652,7 +697,9 @@ impl Checker<'_> {
     /// `checkAssertionDeferred`: 2352, `x as T` where neither is anything like the other, or what is said in its place.
     fn check_assertions(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        for i in 0..hir.exprs.len() {
+        let by_kind = self.exprs_by_kind(file);
+        for &assertion in by_kind.of(ExprTag::As) {
+            let i = assertion.idx();
             let ExprKind::As { expr, ty } = hir.exprs[i].kind else {
                 continue;
             };
@@ -802,7 +849,9 @@ impl Checker<'_> {
             }
         }
         // `getContextualTypeForAssignmentExpression`: what is assigned to a pattern is expected to be what the pattern is.
-        for i in 0..hir.exprs.len() {
+        let by_kind = self.exprs_by_kind(file);
+        for &assignment in by_kind.of(ExprTag::Assign) {
+            let i = assignment.idx();
             let ExprKind::Assign {
                 op: None,
                 target,
@@ -1940,15 +1989,25 @@ impl Checker<'_> {
         while let ExprKind::Satisfies { expr, .. } = self.hir(file)[e].kind {
             e = expr;
         }
-        // Of a `return` statement it is the keyword that is pointed at.
-        let (at, end) = match statement {
-            Some(at) => (at, 0),
-            None => (
-                self.start_inside_parentheses(file, e),
-                self.end_if_explained(|c| c.error_end_inside_parentheses(file, e)),
-            ),
-        };
-        self.check_effective_node_assignable(file, ty, wanted, at, end, e, 2322, out);
+        self.check_assignable_to(
+            file,
+            ty,
+            wanted,
+            Written::Nowhere,
+            // Of a `return` statement it is the keyword that is pointed at.
+            |c| match statement {
+                Some(at) => (at, 0),
+                None => (
+                    c.start_inside_parentheses(file, e),
+                    c.end_if_explained(|c| c.error_end_inside_parentheses(file, e)),
+                ),
+            },
+            e,
+            true,
+            false,
+            2322,
+            out,
+        );
     }
 
     /// Complains unless `source`, the type of `e` if there is an `e`, fits `target`. `at`: where, if not further in.
@@ -1964,7 +2023,16 @@ impl Checker<'_> {
         out: &mut Vec<Diagnostic>,
     ) -> bool {
         self.check_assignable_to(
-            file, source, target, None, at, 0, e, false, false, head, out,
+            file,
+            source,
+            target,
+            Written::Nowhere,
+            |_| (at, 0),
+            e,
+            false,
+            false,
+            head,
+            out,
         )
     }
 
@@ -1982,53 +2050,104 @@ impl Checker<'_> {
         out: &mut Vec<Diagnostic>,
     ) -> bool {
         self.check_assignable_to(
-            file, source, target, None, at, end, e, false, false, head, out,
+            file,
+            source,
+            target,
+            Written::Nowhere,
+            |_| (at, end),
+            e,
+            false,
+            false,
+            head,
+            out,
         )
     }
 
-    /// The same for an `e` that is what `getEffectiveCheckNode` leaves: the parentheses around it are no part of it.
+    /// The same. `end` is only asked where the node ends once there is something to complain of.
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn check_effective_node_assignable(
+    pub(super) fn check_assignable_with_end_from(
         &mut self,
         file: FileId,
         source: TypeId,
         target: TypeId,
         at: u32,
-        end: u32,
+        end: impl FnOnce(&Self) -> u32,
         e: ExprId,
         head: u32,
         out: &mut Vec<Diagnostic>,
     ) -> bool {
         self.check_assignable_to(
-            file, source, target, None, at, end, e, true, false, head, out,
+            file,
+            source,
+            target,
+            Written::Nowhere,
+            |c| (at, end(c)),
+            e,
+            false,
+            false,
+            head,
+            out,
         )
     }
 
-    /// `end()`, if where errors end is going to be read. For an end that is worked out before it is known that there is an error.
+    /// `end()`, if where errors end is going to be read.
     fn end_if_explained(&self, end: impl FnOnce(&Self) -> u32) -> u32 {
         if self.explains { end(self) } else { 0 }
     }
 
     /// `written`: where `target` is written out, if it is. `is_effective`: the parentheses around `e` are no part of it.
     /// `is_uninstantiated`: `target` comes from the uninstantiated signature of a generic callee, so its type parameters are expected.
-    /// `end`: where the node that starts at `at` ends. `0`: with the token there.
+    /// `place`: where to complain if not further in, and where the node that starts there ends (`0`: with the token there). It is
+    /// only asked once there is something to complain of.
     #[allow(clippy::too_many_arguments)]
+    #[inline]
     fn check_assignable_to(
         &mut self,
         file: FileId,
         source: TypeId,
         target: TypeId,
-        written: Option<(FileId, TypeNodeId)>,
-        at: u32,
-        end: u32,
+        written: Written,
+        place: impl FnOnce(&Self) -> (u32, u32),
         e: ExprId,
         is_effective: bool,
         is_uninstantiated: bool,
         head: u32,
         out: &mut Vec<Diagnostic>,
     ) -> bool {
-        if !self.is_known(source) || !self.is_known(target) {
+        let Some(is_too_complex) =
+            self.finds_unassignable(file, source, target, written, e, is_uninstantiated)
+        else {
             return true;
+        };
+        let (at, end) = place(&*self);
+        self.report_unassignable(
+            file,
+            source,
+            target,
+            written,
+            (at, end),
+            e,
+            is_effective,
+            is_too_complex,
+            head,
+            out,
+        );
+        false
+    }
+
+    /// `None`: `source` fits `target`, or there is no telling. Otherwise there is something to complain of, and it is said whether
+    /// that is that the comparison got too complex.
+    fn finds_unassignable(
+        &mut self,
+        file: FileId,
+        source: TypeId,
+        target: TypeId,
+        written: Written,
+        e: ExprId,
+        is_uninstantiated: bool,
+    ) -> Option<bool> {
+        if !self.is_known(source) || !self.is_known(target) {
+            return None;
         }
         self.relation_too_complex = false;
         let fits = self.compare_if_certain(|c| c.is_assignable(source, target));
@@ -2036,15 +2155,15 @@ impl Checker<'_> {
         match fits {
             Some(true) => {
                 if !self.is_refused_by_hosting_alias(file, written, e, source, target) {
-                    return true;
+                    return None;
                 }
             }
             // Cut short for another reason than complexity: the result is unknown. tsgo's own depth limit (2321) is among those.
-            None if !is_too_complex => return true,
+            None if !is_too_complex => return None,
             _ => {}
         }
         if e.is_some() && self.is_uncertain(file, e) {
-            return true;
+            return None;
         }
         // A type parameter where none is in scope is something the resolver did not get to the bottom of.
         if e.is_some()
@@ -2054,8 +2173,26 @@ impl Checker<'_> {
                     && !self.is_reference_with_unbound_this(target))
             && !self.is_in_generic_context(file, e)
         {
-            return true;
+            return None;
         }
+        Some(is_too_complex)
+    }
+
+    /// What `check_assignable_to` says once `finds_unassignable` has found something to complain of.
+    #[allow(clippy::too_many_arguments)]
+    fn report_unassignable(
+        &mut self,
+        file: FileId,
+        source: TypeId,
+        target: TypeId,
+        written: Written,
+        (at, end): (u32, u32),
+        e: ExprId,
+        is_effective: bool,
+        is_too_complex: bool,
+        head: u32,
+        out: &mut Vec<Diagnostic>,
+    ) {
         // `checkTypeRelatedToEx`: an overflow is reported instead of the relation error. The pair is not compared again to elaborate.
         if is_too_complex {
             out.push(Diagnostic {
@@ -2065,7 +2202,7 @@ impl Checker<'_> {
             self.explain_to(at, end, 2859, |c| {
                 vec![c.type_to_string(source), c.type_to_string(target)]
             });
-            return false;
+            return;
         }
         if e.is_none() || !self.elaborate_from(file, e, is_effective, source, target, head, out) {
             let given = if e.is_some() {
@@ -2073,13 +2210,21 @@ impl Checker<'_> {
             } else {
                 None
             };
+            let written = self.written_at(file, written);
             let named_otherwise = (
                 self.is_named_otherwise(given, source),
                 self.is_named_otherwise(written, target),
             );
             self.report_not_assignable_as(source, target, at, end, head, named_otherwise, out);
         }
-        false
+    }
+
+    fn written_at(&self, file: FileId, written: Written) -> Option<(FileId, TypeNodeId)> {
+        match written {
+            Written::Nowhere => None,
+            Written::At(of, node) => Some((of, node)),
+            Written::AnnotationOf(e) => self.annotation_of_reference(file, e),
+        }
     }
 
     /// `combineValueAndTypeSymbols`: the declared type of the combined symbol, whose members keep the `this` type of the interface.
@@ -2099,14 +2244,15 @@ impl Checker<'_> {
     fn is_refused_by_hosting_alias(
         &mut self,
         file: FileId,
-        written: Option<(FileId, TypeNodeId)>,
+        written: Written,
         e: ExprId,
         source: TypeId,
         target: TypeId,
     ) -> bool {
-        if written.is_none() || e.is_none() {
+        if e.is_none() || !self.may_have_hosting_alias(target) {
             return false;
         }
+        let written = self.written_at(file, written);
         let Some((alias, targets)) = self.hosting_alias(written, target) else {
             return false;
         };
@@ -2120,6 +2266,14 @@ impl Checker<'_> {
             }) == Some(true)
     }
 
+    /// The kinds of type `hosting_alias` has something for.
+    fn may_have_hosting_alias(&self, ty: TypeId) -> bool {
+        matches!(
+            self.data(ty),
+            TypeData::Anon { .. } | TypeData::Fns { .. } | TypeData::Cond { .. }
+        )
+    }
+
     /// `getTypeFromTypeAliasReference`: `Type.alias` of the object or conditional type `ty`, written at `written` as `A<..>`, where
     /// the body of the generic alias `A` is a reference to another generic alias. That reference is instantiated under `A`
     /// (`getAliasSymbolForTypeNode`), and `alias_of` only knows the innermost alias.
@@ -2130,10 +2284,7 @@ impl Checker<'_> {
     ) -> Option<(Sym, Vec<TypeId>)> {
         use crate::bind::ScopeKind;
         let (file, node) = written?;
-        if !matches!(
-            self.data(ty),
-            TypeData::Anon { .. } | TypeData::Fns { .. } | TypeData::Cond { .. }
-        ) {
+        if !self.may_have_hosting_alias(ty) {
             return None;
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
@@ -2233,14 +2384,17 @@ impl Checker<'_> {
             return None;
         };
         let sym = self.symbol_of_identifier(file, e, name)?;
-        let (of, pat) = self
-            .files()
-            .decls(sym)
-            .into_iter()
-            .find_map(|(of, decl)| match decl {
-                Decl::Var(pat) | Decl::Param(pat) => Some((of, pat)),
-                _ => None,
-            })?;
+        let files = self.files();
+        let (of, pat) = files.parts(sym).iter().find_map(|&part| {
+            files
+                .symbol(part)
+                .decls
+                .iter()
+                .find_map(|&decl| match decl {
+                    Decl::Var(pat) | Decl::Param(pat) => Some((part.file, pat)),
+                    _ => None,
+                })
+        })?;
         let ty = match self.bound(of).pat_parent[pat.idx()] {
             PatParent::Var(d) => self.hir(of)[d].ty,
             PatParent::Param(p) => self.hir(of)[p].ty,

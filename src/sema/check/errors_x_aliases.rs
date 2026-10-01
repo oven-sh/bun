@@ -74,7 +74,7 @@ struct ExportStar {
 /// What `getExportsOfModuleWorker` keeps while it goes from module to module.
 #[derive(Default)]
 struct ExportWalk {
-    visited: Vec<Sym>,
+    visited: FxHashSet<Sym>,
     non_type_only_names: FxHashSet<Atom>,
     type_only_stars: FxHashMap<Atom, FileId>,
     /// The file whose `export *` are reported. Of those that say again what another has said: where they start, the one that said it
@@ -335,14 +335,8 @@ impl Checker<'_> {
         is_type_only.then_some(kind)
     }
 
-    /// `markSymbolOfAliasDeclarationIfTypeOnly`. `star`: the file of the `export type *` the name came through.
-    fn xa_mark_type_only(
-        &self,
-        sym: Sym,
-        decl: Decl,
-        star: Option<FileId>,
-        links: &mut AliasLinks,
-    ) {
+    /// `markSymbolOfAliasDeclarationIfTypeOnly`, of a name that came through no `export *`.
+    fn xa_mark_type_only(&self, sym: Sym, decl: Decl, links: &mut AliasLinks) {
         if links.type_only.contains_key(&sym) {
             return;
         }
@@ -352,14 +346,6 @@ impl Checker<'_> {
                 TypeOnly {
                     file: sym.file,
                     kind,
-                },
-            );
-        } else if let Some(file) = star {
-            links.type_only.insert(
-                sym,
-                TypeOnly {
-                    file,
-                    kind: TypeOnlyKind::ExportStar,
                 },
             );
         }
@@ -376,7 +362,7 @@ impl Checker<'_> {
             // `getTargetOfImportEqualsDeclaration`
             Decl::ImportEquals(x) => match hir[x].target {
                 ImportEqualsTarget::Require(spec) => {
-                    self.xa_mark_type_only(sym, decl, None, links);
+                    self.xa_mark_type_only(sym, decl, links);
                     let module = files.module_of_specifier(file, spec)?;
                     let resolved = files.export(module, known::export_equals).unwrap_or(module);
                     // From `node20` on, `require` of an ECMAScript module returns its `"module.exports"` export.
@@ -418,7 +404,7 @@ impl Checker<'_> {
                         };
                         Some(module_exports.unwrap_or(symbol))
                     });
-                self.xa_mark_type_only(sym, decl, None, links);
+                self.xa_mark_type_only(sym, decl, links);
                 target
             }
             // `getTargetOfImportSpecifier`
@@ -428,7 +414,7 @@ impl Checker<'_> {
                     .iter()
                     .find(|x| x.named.range().contains(&s.idx()))?;
                 let Some(module) = files.module_of_specifier(file, import.spec) else {
-                    self.xa_mark_type_only(sym, decl, None, links);
+                    self.xa_mark_type_only(sym, decl, links);
                     return None;
                 };
                 if hir[s].imported == known::default {
@@ -445,7 +431,7 @@ impl Checker<'_> {
                     .find(|(_, x)| x.items.range().contains(&s.idx()))?;
                 if export.spec.is_some() {
                     let Some(module) = files.module_of_specifier(file, export.spec) else {
-                        self.xa_mark_type_only(sym, decl, None, links);
+                        self.xa_mark_type_only(sym, decl, links);
                         return None;
                     };
                     if hir[s].local == known::default {
@@ -461,7 +447,7 @@ impl Checker<'_> {
                     true,
                     links,
                 );
-                self.xa_mark_type_only(sym, decl, None, links);
+                self.xa_mark_type_only(sym, decl, links);
                 found
             }
             // `getTargetOfNamespaceExport`
@@ -472,7 +458,7 @@ impl Checker<'_> {
                 let target = files
                     .module_of_specifier(file, spec)
                     .and_then(|module| self.xa_es_module_symbol(sym, module, links));
-                self.xa_mark_type_only(sym, decl, None, links);
+                self.xa_mark_type_only(sym, decl, links);
                 target
             }
             // `getTargetOfExportAssignment`
@@ -535,7 +521,7 @@ impl Checker<'_> {
             // The `"module.exports"` export of a required ECMAScript module, else a synthetic default, else the declared default.
             None => files.default_of_module(sym.file, module),
         };
-        self.xa_mark_type_only(sym, decl, None, links);
+        self.xa_mark_type_only(sym, decl, links);
         target
     }
 
@@ -565,8 +551,24 @@ impl Checker<'_> {
     ) -> Option<Sym> {
         self.xa_es_module_symbol(sym, module, links);
         let found = self.files().module_export(module, name);
-        let star = self.xa_type_only_export_star(module, name, links);
-        self.xa_mark_type_only(sym, decl, star, links);
+        // `markSymbolOfAliasDeclarationIfTypeOnly`: an `export type *` the name came through counts if nothing else says `type`.
+        if !links.type_only.contains_key(&sym) {
+            let type_only = match self.xa_type_only_kind(sym.file, decl) {
+                Some(kind) => Some(TypeOnly {
+                    file: sym.file,
+                    kind,
+                }),
+                None => self
+                    .xa_type_only_export_star(module, name, links)
+                    .map(|file| TypeOnly {
+                        file,
+                        kind: TypeOnlyKind::ExportStar,
+                    }),
+            };
+            if let Some(type_only) = type_only {
+                links.type_only.insert(sym, type_only);
+            }
+        }
         found
     }
 
@@ -829,17 +831,40 @@ impl Checker<'_> {
     ) -> Option<FxHashMap<Atom, Sym>> {
         let files = self.files();
         let symbol = symbol?;
+        let is_visited = walk.visited.contains(&symbol);
+        if is_visited && is_type_only {
+            return None;
+        }
         let own = files.exports(symbol);
         if !is_type_only {
             walk.non_type_only_names.extend(own.iter().map(|e| e.0));
         }
-        if walk.visited.contains(&symbol) {
+        if is_visited {
             return None;
         }
-        walk.visited.push(symbol);
+        walk.visited.insert(symbol);
         let mut symbols: FxHashMap<Atom, Sym> = own.into_iter().collect();
         let stars = self.xa_export_stars_of(symbol);
-        if !stars.is_empty() {
+        if !stars.iter().any(|star| Some(star.file) == walk.report_in) {
+            // Nothing is said of these: all that counts is which comes first.
+            for star in &stars {
+                let resolved = files.module_of_specifier(star.file, star.spec);
+                let Some(exported) = self.xa_visit_exports(
+                    resolved,
+                    Some((star.file, star.type_only)),
+                    is_type_only || star.type_only,
+                    walk,
+                ) else {
+                    continue;
+                };
+                // `extendExportSymbols`
+                for (id, source) in exported {
+                    if id != known::default {
+                        symbols.entry(id).or_insert(source);
+                    }
+                }
+            }
+        } else {
             let mut nested: FxHashMap<Atom, Sym> = FxHashMap::default();
             // `ExportCollision`, by name: whose `specifierText` it is, and `exportsWithDuplicate`.
             let mut lookup: FxHashMap<Atom, (ExportStar, Vec<(FileId, u32)>)> =
@@ -902,8 +927,12 @@ impl Checker<'_> {
         if visited.contains(&module) {
             return false;
         }
+        let stars = self.xa_export_stars_of(module);
+        if stars.is_empty() {
+            return false;
+        }
         visited.push(module);
-        self.xa_export_stars_of(module).iter().any(|star| {
+        stars.iter().any(|star| {
             star.type_only
                 || self
                     .files()
@@ -919,22 +948,24 @@ impl Checker<'_> {
         name: Atom,
         links: &mut AliasLinks,
     ) -> Option<FileId> {
-        if !links.type_only_stars.contains_key(&module) {
-            let mut map = FxHashMap::default();
-            if self.xa_has_type_only_export_star(module, &mut Vec::new()) {
-                let mut walk = ExportWalk::default();
-                self.xa_visit_exports(
-                    Some(self.files().module_value(module)),
-                    None,
-                    false,
-                    &mut walk,
-                );
-                map = walk.type_only_stars;
-                map.retain(|name, _| !walk.non_type_only_names.contains(name));
-            }
-            links.type_only_stars.insert(module, map);
+        if let Some(map) = links.type_only_stars.get(&module) {
+            return map.get(&name).copied();
         }
-        links.type_only_stars.get(&module)?.get(&name).copied()
+        let mut map = FxHashMap::default();
+        if self.xa_has_type_only_export_star(module, &mut Vec::new()) {
+            let mut walk = ExportWalk::default();
+            self.xa_visit_exports(
+                Some(self.files().module_value(module)),
+                None,
+                false,
+                &mut walk,
+            );
+            map = walk.type_only_stars;
+            map.retain(|name, _| !walk.non_type_only_names.contains(name));
+        }
+        let found = map.get(&name).copied();
+        links.type_only_stars.insert(module, map);
+        found
     }
 
     /// `getExportsOfModuleWorker`: 2308
@@ -980,34 +1011,50 @@ impl Checker<'_> {
         let files = self.files();
         let (hir, bound) = (self.hir(file), self.bound(file));
         // A circle goes through a file by an alias others can get at, or by one that stands for another name of the file.
-        let can_be_circular = bound.symbols.iter().any(|symbol| {
-            symbol.flags.contains(SymFlags::ALIAS)
-                && symbol.decls.iter().any(|d| {
-                    matches!(
-                        d,
-                        Decl::ImportEquals(_)
-                            | Decl::ExportSpec(_)
-                            | Decl::ExportStarAs(_)
-                            | Decl::ExportExpr(_)
-                    )
-                })
-        });
-        if !files.options.isolated_modules && !can_be_circular && !hir.is_js {
+        let (mut has_alias, mut can_be_circular) = (false, false);
+        for symbol in &bound.symbols {
+            if !symbol.flags.contains(SymFlags::ALIAS) {
+                continue;
+            }
+            has_alias = true;
+            can_be_circular = symbol.decls.iter().any(|d| {
+                matches!(
+                    d,
+                    Decl::ImportEquals(_)
+                        | Decl::ExportSpec(_)
+                        | Decl::ExportStarAs(_)
+                        | Decl::ExportExpr(_)
+                )
+            });
+            if can_be_circular {
+                break;
+            }
+        }
+        if !has_alias || !files.options.isolated_modules && !can_be_circular && !hir.is_js {
             return;
         }
         let mut import_stmts = vec![StmtId::NONE; hir.imports.len()];
         let mut import_equals_stmts = vec![StmtId::NONE; hir.import_equals.len()];
         let mut export_stmts = vec![StmtId::NONE; hir.exports.len()];
         for (i, stmt) in hir.stmts.iter().enumerate() {
-            if matches!(bound.stmt_parent[i], Parent::None) {
-                continue;
+            let of = match stmt.kind {
+                StmtKind::Import(x) => &mut import_stmts[x.idx()],
+                StmtKind::ImportEquals(x) => &mut import_equals_stmts[x.idx()],
+                StmtKind::ExportNamed(x) => &mut export_stmts[x.idx()],
+                _ => continue,
+            };
+            if !matches!(bound.stmt_parent[i], Parent::None) {
+                *of = StmtId(i as u32);
             }
-            match stmt.kind {
-                StmtKind::Import(x) => import_stmts[x.idx()] = StmtId(i as u32),
-                StmtKind::ImportEquals(x) => import_equals_stmts[x.idx()] = StmtId(i as u32),
-                StmtKind::ExportNamed(x) => export_stmts[x.idx()] = StmtId(i as u32),
-                _ => {}
-            }
+        }
+        // The statement each name in braces is in. The first import or export that has it counts.
+        let mut import_spec_stmts = vec![StmtId::NONE; hir.import_specs.len()];
+        for (x, import) in hir.imports.iter().enumerate().rev() {
+            import_spec_stmts[import.named.range()].fill(import_stmts[x]);
+        }
+        let mut export_spec_stmts = vec![StmtId::NONE; hir.export_specs.len()];
+        for (x, export) in hir.exports.iter().enumerate().rev() {
+            export_spec_stmts[export.items.range()].fill(export_stmts[x]);
         }
         let text = &hir.text[..];
         let mut nodes: Vec<AliasNode> = Vec::new();
@@ -1019,17 +1066,9 @@ impl Checker<'_> {
             for &decl in &symbol.decls {
                 let stmt = match decl {
                     Decl::ImportDefault(x) | Decl::ImportNamespace(x) => import_stmts[x.idx()],
-                    Decl::ImportSpec(s) => hir
-                        .imports
-                        .iter()
-                        .position(|x| x.named.range().contains(&s.idx()))
-                        .map_or(StmtId::NONE, |x| import_stmts[x]),
+                    Decl::ImportSpec(s) => import_spec_stmts[s.idx()],
                     Decl::ImportEquals(x) => import_equals_stmts[x.idx()],
-                    Decl::ExportSpec(s) => hir
-                        .exports
-                        .iter()
-                        .position(|x| x.items.range().contains(&s.idx()))
-                        .map_or(StmtId::NONE, |x| export_stmts[x]),
+                    Decl::ExportSpec(s) => export_spec_stmts[s.idx()],
                     Decl::ExportStarAs(s) | Decl::ExportExpr(s) | Decl::UmdGlobal(s) => s,
                     _ => continue,
                 };
@@ -1791,55 +1830,52 @@ impl Checker<'_> {
     /// `getExternalModuleMember`: 1544 for each name imported or re-exported from a JSON module. `check_imported_names` reports the
     /// names that a module does not export.
     fn xa_imported_members(&self, file: FileId, out: &mut Vec<Diagnostic>) {
-        let hir = self.hir(file);
+        let (files, hir) = (self.files(), self.hir(file));
+        // `isOnlyImportableAsDefault` holds of nothing otherwise.
+        if !files.options.module.is_node() || !files.module(file).is_esm {
+            return;
+        }
         for import in &hir.imports {
+            if import.named.is_empty() || !self.xa_is_json_file(file, import.spec) {
+                continue;
+            }
             for s in import.named.iter() {
-                self.xa_imported_member(
-                    file,
-                    import.spec,
-                    hir[s].imported,
-                    hir[s].imported_pos,
-                    out,
-                );
+                self.xa_imported_from_json(hir[s].imported, hir[s].imported_pos, out);
             }
         }
         for export in &hir.exports {
-            if export.spec.is_none() {
+            if export.spec.is_none()
+                || export.items.is_empty()
+                || !self.xa_is_json_file(file, export.spec)
+            {
                 continue;
             }
             for s in export.items.iter() {
-                self.xa_imported_member(file, export.spec, hir[s].local, hir[s].local_pos, out);
+                self.xa_imported_from_json(hir[s].local, hir[s].local_pos, out);
             }
         }
     }
 
-    fn xa_imported_member(
-        &self,
-        file: FileId,
-        spec: Atom,
-        name: Atom,
-        start: u32,
-        out: &mut Vec<Diagnostic>,
-    ) {
+    /// The rest of `isOnlyImportableAsDefault`: to Node, a JSON file has a default and nothing else.
+    fn xa_is_json_file(&self, file: FileId, spec: Atom) -> bool {
         let files = self.files();
+        let Some(module) = files.module_of_specifier(file, spec) else {
+            return false;
+        };
+        if !files.symbol(module).decls.contains(&Decl::File) {
+            return false;
+        }
+        let path = files.module(module.file).path.as_str();
+        path.ends_with(".json") || path.ends_with(".d.json.ts")
+    }
+
+    fn xa_imported_from_json(&self, name: Atom, start: u32, out: &mut Vec<Diagnostic>) {
         if name == known::default {
             return;
         }
-        let Some(module) = files.module_of_specifier(file, spec) else {
-            return;
-        };
-        // `isOnlyImportableAsDefault`: to Node, a JSON file has a default and nothing else.
-        if files.options.module.is_node()
-            && files.module(file).is_esm
-            && files.symbol(module).decls.contains(&Decl::File)
-        {
-            let path = files.module(module.file).path.as_str();
-            if path.ends_with(".json") || path.ends_with(".d.json.ts") {
-                out.push(Diagnostic { start, code: 1544 });
-                let kind = super::errors_x_modules::module_kind_name(files.options.module);
-                self.note(start, 0, 1544, vec![kind.to_owned()]);
-            }
-        }
+        out.push(Diagnostic { start, code: 1544 });
+        let kind = super::errors_x_modules::module_kind_name(self.files().options.module);
+        self.note(start, 0, 1544, vec![kind.to_owned()]);
     }
 
     // ───────────────────────────── module specifiers ─────────────────────────────
@@ -1990,10 +2026,11 @@ impl Checker<'_> {
                 );
             }
         }
-        for (i, e) in hir.exprs.iter().enumerate() {
-            if let ExprKind::ImportCall(argument) = e.kind
+        let index = self.exprs_by_kind(file);
+        for &e in index.of(ExprTag::ImportCall) {
+            if let ExprKind::ImportCall(argument) = hir[e].kind
                 && argument.is_some()
-                && !matches!(bound.expr_parent[i], Parent::None)
+                && !matches!(bound.expr_parent[e.idx()], Parent::None)
                 && let ExprKind::String(spec) = hir[argument].kind
             {
                 let (kind, mode) = (SiteKind::ImportCall, files.mode_of_import_call(file));
@@ -2015,8 +2052,7 @@ impl Checker<'_> {
         // declaration initialized to `require("m")` declares. `resolveExternalModuleTypeByLiteral` resolves it for every other call
         // that `isCommonJSRequire` accepts.
         let is_identifier = |pat: PatId| matches!(hir[pat].kind, PatKind::Ident(_));
-        for i in 0..hir.exprs.len() {
-            let call = ExprId(i as u32);
+        for &call in index.of(ExprTag::Call) {
             let Some((argument, spec)) = require_call_argument(hir, call) else {
                 continue;
             };
@@ -2024,7 +2060,7 @@ impl Checker<'_> {
             if !bound.specifiers.contains(&spec) {
                 continue;
             }
-            let declares_alias = match bound.expr_parent[i] {
+            let declares_alias = match bound.expr_parent[call.idx()] {
                 Parent::None => continue,
                 Parent::VarInit(decl)
                     if self.external_module_require_argument(file, decl).is_some() =>
@@ -2096,10 +2132,12 @@ impl Checker<'_> {
         }
         // `ResolvedUsingTsExtension`
         let using_ts_extension = importing.ts_extension_imports.contains(&(spec, site.mode));
-        let is_declaration_name = is_declaration_file_name(&text);
+        let is_declaration_name = (using_ts_extension
+            || options.rewrite_relative_import_extensions)
+            && is_declaration_file_name(&text);
         // `AllowImportingTsExtensionsFrom`
         let allows_ts_extensions =
-            options.allow_importing_ts_extensions || is_declaration_file_name(&importing.path);
+            || options.allow_importing_ts_extensions || is_declaration_file_name(&importing.path);
         if using_ts_extension && is_declaration_name {
             if site.is_emittable {
                 out.push(Diagnostic { start, code: 2846 });
@@ -2109,7 +2147,7 @@ impl Checker<'_> {
                     suggested_import_source(&text, is_esm, options.allow_importing_ts_extensions);
                 self.note(start, 0, 2846, vec![suggested]);
             }
-        } else if using_ts_extension && !allows_ts_extensions {
+        } else if using_ts_extension && !allows_ts_extensions() {
             if site.is_emittable {
                 out.push(Diagnostic { start, code: 5097 });
                 // An extension that a pattern of `imports` or `paths` matched may be anywhere in the specifier.
@@ -2185,83 +2223,116 @@ impl Checker<'_> {
     // ───────────────────────────── expressions ─────────────────────────────
 
     fn xa_expressions(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
-        let files = self.files();
         let (hir, bound) = (self.hir(file), self.bound(file));
-        for i in 0..hir.exprs.len() {
-            if matches!(bound.expr_parent[i], Parent::None) {
-                continue;
+        if !self.files().options.isolated_modules {
+            let index = self.exprs_by_kind(file);
+            for tag in [
+                ExprTag::ImportCall,
+                ExprTag::ImportMeta,
+                ExprTag::Missing,
+                ExprTag::NewTarget,
+            ] {
+                for &e in index.of(tag) {
+                    self.xa_import_call_or_meta_property(file, e, out);
+                }
             }
+            return;
+        }
+        // Names and what is in namespaces are looked at as well, all in the order they have in the file.
+        for i in 0..hir.exprs.len() {
             let e = ExprId(i as u32);
             match hir.exprs[i].kind {
-                // `checkImportCallExpression`
-                ExprKind::ImportCall(argument) => {
-                    if argument.is_none()
-                        || matches!(hir[argument].kind, ExprKind::Missing | ExprKind::Spread(_))
-                    {
-                        continue;
-                    }
-                    let ty = self.type_of_expr(file, argument);
-                    if !self.is_known(ty) || self.is_uncertain(file, argument) {
-                        continue;
-                    }
-                    // A type parameter where none is in scope is something that was not got to the bottom of.
-                    if self.has_type_variables(ty) && !self.is_in_generic_context(file, argument) {
-                        continue;
-                    }
-                    if ty.is_undefined() || ty.is_null() || !self.is_assignable(ty, TypeId::STRING)
-                    {
-                        let start = self.start_of(file, argument);
-                        out.push(Diagnostic { start, code: 7036 });
-                        let end = self.end_of_expr(file, argument);
-                        self.explain_to(start, end, 7036, |c| vec![c.type_to_string(ty)]);
-                    }
-                }
-                // `checkImportMetaProperty`
-                kind @ (ExprKind::ImportMeta | ExprKind::Missing) => {
-                    let module = files.options.module;
-                    let code = if module.is_node() {
-                        if files.module(file).is_esm {
-                            continue;
-                        }
-                        1470
-                    } else if module < ModuleKind::Es2020 && module != ModuleKind::System {
-                        1343
-                    } else {
-                        continue;
-                    };
-                    let start = hir.exprs[i].pos;
-                    if matches!(kind, ExprKind::ImportMeta)
-                        || is_other_import_meta_property(&hir.text, start)
-                    {
-                        out.push(Diagnostic { start, code });
-                        let end = meta_property_end(&hir.text, start, b"import");
-                        self.note(start, end, code, Vec::new());
-                    }
-                }
-                // `checkNewTargetMetaProperty`
-                ExprKind::NewTarget => {
-                    if self.xa_has_new_target_container(file, e) == Some(false) {
-                        let start = hir.exprs[i].pos;
-                        out.push(Diagnostic { start, code: 17013 });
-                        let end = meta_property_end(&hir.text, start, b"new");
-                        self.note(start, end, 17013, vec!["new.target".to_owned()]);
-                    }
-                }
-                ExprKind::Ident(_) if files.options.isolated_modules => {
+                ExprKind::Ident(_) => {
                     let local = bound.expr_symbol[i];
-                    if local.is_none()
+                    if (local.is_none()
                         || bound.symbols[local.idx()]
                             .flags
-                            .intersects(SymFlags::ENUM | SymFlags::ALIAS)
+                            .intersects(SymFlags::ENUM | SymFlags::ALIAS))
+                        && !matches!(bound.expr_parent[i], Parent::None)
                     {
                         self.xa_const_enum_access(file, e, out);
                     }
                 }
-                ExprKind::Dot { .. } if files.options.isolated_modules => {
-                    self.xa_const_enum_access(file, e, out)
+                ExprKind::Dot { .. } => {
+                    if !matches!(bound.expr_parent[i], Parent::None) {
+                        self.xa_const_enum_access(file, e, out);
+                    }
                 }
+                ExprKind::ImportCall(_)
+                | ExprKind::ImportMeta
+                | ExprKind::Missing
+                | ExprKind::NewTarget => self.xa_import_call_or_meta_property(file, e, out),
                 _ => {}
             }
+        }
+    }
+
+    fn xa_import_call_or_meta_property(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        out: &mut Vec<Diagnostic>,
+    ) {
+        let files = self.files();
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        if matches!(bound.expr_parent[e.idx()], Parent::None) {
+            return;
+        }
+        match hir[e].kind {
+            // `checkImportCallExpression`
+            ExprKind::ImportCall(argument) => {
+                if argument.is_none()
+                    || matches!(hir[argument].kind, ExprKind::Missing | ExprKind::Spread(_))
+                {
+                    return;
+                }
+                let ty = self.type_of_expr(file, argument);
+                if !self.is_known(ty) || self.is_uncertain(file, argument) {
+                    return;
+                }
+                // A type parameter where none is in scope is something that was not got to the bottom of.
+                if self.has_type_variables(ty) && !self.is_in_generic_context(file, argument) {
+                    return;
+                }
+                if ty.is_undefined() || ty.is_null() || !self.is_assignable(ty, TypeId::STRING) {
+                    let start = self.start_of(file, argument);
+                    out.push(Diagnostic { start, code: 7036 });
+                    let end = self.end_of_expr(file, argument);
+                    self.explain_to(start, end, 7036, |c| vec![c.type_to_string(ty)]);
+                }
+            }
+            // `checkImportMetaProperty`
+            kind @ (ExprKind::ImportMeta | ExprKind::Missing) => {
+                let module = files.options.module;
+                let code = if module.is_node() {
+                    if files.module(file).is_esm {
+                        return;
+                    }
+                    1470
+                } else if module < ModuleKind::Es2020 && module != ModuleKind::System {
+                    1343
+                } else {
+                    return;
+                };
+                let start = hir[e].pos;
+                if matches!(kind, ExprKind::ImportMeta)
+                    || is_other_import_meta_property(&hir.text, start)
+                {
+                    out.push(Diagnostic { start, code });
+                    let end = meta_property_end(&hir.text, start, b"import");
+                    self.note(start, end, code, Vec::new());
+                }
+            }
+            // `checkNewTargetMetaProperty`
+            ExprKind::NewTarget => {
+                if self.xa_has_new_target_container(file, e) == Some(false) {
+                    let start = hir[e].pos;
+                    out.push(Diagnostic { start, code: 17013 });
+                    let end = meta_property_end(&hir.text, start, b"new");
+                    self.note(start, end, 17013, vec!["new.target".to_owned()]);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -2979,11 +3050,27 @@ fn can_start_regular_expression(before: &[u8]) -> bool {
     !matches!(last, b')' | b']' | b'}' | b'<' | b'"' | b'\'' | b'`')
 }
 
+/// Whether `@ts-` is written anywhere in `text`.
+fn says_ts_directive(text: &[u8]) -> bool {
+    const BLOCK: usize = 128;
+    let mut start = 0;
+    while start < text.len() {
+        let end = (start + BLOCK).min(text.len());
+        if text[start..end].contains(&b'@')
+            && (start..end).any(|at| text[at] == b'@' && text[at + 1..].starts_with(b"ts-"))
+        {
+            return true;
+        }
+        start = end;
+    }
+    false
+}
+
 /// The comments of `text` that are `@ts-ignore` or `@ts-expect-error`: where each starts and ends, as `CommentDirective.Loc` has it,
 /// and whether it expects an error. What is in strings, templates and regular expressions is no comment.
 fn comment_directives(text: &[u8]) -> Vec<(u32, u32, bool)> {
     let mut out = Vec::new();
-    if !text.windows(4).any(|w| w == b"@ts-") {
+    if !says_ts_directive(text) {
         return out;
     }
     // For each `${` that is open, how many `{` are open inside of it.

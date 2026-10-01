@@ -34,7 +34,18 @@ impl Checker<'_> {
         if hir.text.is_empty() || hir.kind == FileKind::Json {
             return;
         }
-        let elements = jsx_elements(hir, self.bound(file));
+        let index = self.exprs_by_kind(file);
+        let bound = self.bound(file);
+        let elements: Vec<(ExprId, JsxId)> = index
+            .of(ExprTag::Jsx)
+            .iter()
+            .filter_map(|&e| match hir[e].kind {
+                ExprKind::Jsx(j) if !matches!(bound.expr_parent[e.idx()], Parent::None) => {
+                    Some((e, j))
+                }
+                _ => None,
+            })
+            .collect();
         // A declaration file has no JSX.
         if hir.kind != FileKind::Declaration {
             self.check_jsx_spread_children(file, &elements, out);
@@ -49,7 +60,7 @@ impl Checker<'_> {
         self.check_grammar_of_property_declarations(file, out);
         self.check_grammar_of_method_names(file, out);
         self.check_grammar_of_ambient_or_definite_variables(file, out);
-        self.check_grammar_of_object_literals(file, out);
+        self.check_grammar_of_object_literals(file, &index, out);
         self.check_declare_on_imports(file, out);
         self.check_type_modifier_in_type_only_clauses(file, out);
         self.check_commas_in_jsx_expressions(file, &elements, out);
@@ -414,38 +425,48 @@ impl Checker<'_> {
     /// `checkGrammarObjectLiteralExpression` is part of `checkObjectLiteral`: it is said of the object literals that are looked at as
     /// expressions. One that is assigned to is taken apart instead (`checkDestructuringAssignment`), and only looked at as an
     /// expression if somebody asks for its type.
-    fn check_grammar_of_object_literals(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_grammar_of_object_literals(
+        &mut self,
+        file: FileId,
+        index: &ExprsByKind,
+        out: &mut Vec<Diagnostic>,
+    ) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        for i in 0..hir.exprs.len() {
-            if matches!(bound.expr_parent[i], Parent::None) {
+        let is_part_of_the_file = |e: ExprId| !matches!(bound.expr_parent[e.idx()], Parent::None);
+        for &e in index.of(ExprTag::Object) {
+            if is_part_of_the_file(e) && !is_assignment_target(hir, bound, e) {
+                self.check_grammar_of_object_literal(file, e, false, out);
+            }
+        }
+        // `checkBinaryLikeExpression`
+        for &e in index.of(ExprTag::Assign) {
+            let ExprKind::Assign { op, target, value } = hir[e].kind else {
+                continue;
+            };
+            if !is_part_of_the_file(e) {
                 continue;
             }
-            match hir.exprs[i].kind {
-                ExprKind::Object(_) if !is_assignment_target(hir, bound, ExprId(i as u32)) => {
-                    self.check_grammar_of_object_literal(file, ExprId(i as u32), false, out);
-                }
-                // `checkBinaryLikeExpression`
-                ExprKind::Assign { op, target, value } => {
-                    let is_pattern = op.is_none()
-                        && !is_parenthesized(hir, target)
-                        && matches!(hir[target].kind, ExprKind::Object(_) | ExprKind::Array(_));
-                    if !is_pattern {
-                        self.check_assignment_target_as_expression(file, target, out);
-                        continue;
-                    }
-                    self.check_assignment_pattern(file, target, out);
-                    // `getContextualTypeForAssignmentExpression`: what is assigned is expected to be what the target is.
-                    if self.asks_for_its_contextual_type(file, value) {
-                        self.check_assignment_target_as_expression(file, target, out);
-                    }
-                }
-                ExprKind::Unary {
-                    op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
-                    operand,
-                } => {
-                    self.check_assignment_target_as_expression(file, operand, out);
-                }
-                _ => {}
+            let is_pattern = op.is_none()
+                && !is_parenthesized(hir, target)
+                && matches!(hir[target].kind, ExprKind::Object(_) | ExprKind::Array(_));
+            if !is_pattern {
+                self.check_assignment_target_as_expression(file, target, out);
+                continue;
+            }
+            self.check_assignment_pattern(file, target, out);
+            // `getContextualTypeForAssignmentExpression`: what is assigned is expected to be what the target is.
+            if self.asks_for_its_contextual_type(file, value) {
+                self.check_assignment_target_as_expression(file, target, out);
+            }
+        }
+        for &e in index.of(ExprTag::Unary) {
+            if let ExprKind::Unary {
+                op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
+                operand,
+            } = hir[e].kind
+                && is_part_of_the_file(e)
+            {
+                self.check_assignment_target_as_expression(file, operand, out);
             }
         }
         // `checkForInStatement`, `checkForOfStatement`
@@ -683,6 +704,9 @@ impl Checker<'_> {
     /// The end of `checkGrammarModifiers`, of an import: 1079.
     fn check_declare_on_imports(&self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
+        if hir.imports.is_empty() && hir.import_equals.is_empty() {
+            return;
+        }
         let text = &hir.text[..];
         for (i, s) in hir.stmts.iter().enumerate() {
             if !matches!(s.kind, StmtKind::Import(_) | StmtKind::ImportEquals(_)) {
@@ -696,8 +720,12 @@ impl Checker<'_> {
             };
             // The statement may be said to start after its modifiers. A modifier is on the line of what follows it.
             let mut first = (s.pos as usize).min(text.len());
+            let line = text[..first]
+                .iter()
+                .rposition(|&c| c == b'\n')
+                .map_or(0, |i| i + 1);
             loop {
-                let before = trim_trivia_end(&text[..first]);
+                let before = trim_trivia_end(&text[line..first]);
                 let length = if ends_with_word(before, b"declare") {
                     7
                 } else if ends_with_word(before, b"export") {
@@ -705,10 +733,7 @@ impl Checker<'_> {
                 } else {
                     break;
                 };
-                if text[before.len()..first].contains(&b'\n') {
-                    break;
-                }
-                first = before.len() - length;
+                first = line + before.len() - length;
             }
             let (mut at, mut has_export, mut last_declare) = (first, false, None);
             let is_refused = loop {
@@ -740,6 +765,11 @@ impl Checker<'_> {
     /// `checkGrammarTypeOnlyNamedImportsOrExports`: `type` on the statement and again on a name in it. Said of the first.
     fn check_type_modifier_in_type_only_clauses(&self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
+        if !hir.import_specs.iter().any(|s| s.type_only)
+            && !hir.export_specs.iter().any(|s| s.type_only)
+        {
+            return;
+        }
         for (i, s) in hir.stmts.iter().enumerate() {
             let (first_name, code) = match s.kind {
                 // `checkGrammarModuleElementContext`
@@ -1611,6 +1641,9 @@ fn trim_trivia_end(mut text: &[u8]) -> &[u8] {
 
 /// Where the `//` comment starts that `line` ends with, if it ends with one. What is in quotes or in `/* */` is no comment.
 fn start_of_line_comment(line: &[u8]) -> Option<usize> {
+    if !line.contains(&b'/') {
+        return None;
+    }
     let mut i = 0;
     loop {
         match *line.get(i)? {
@@ -1740,6 +1773,22 @@ fn is_all_in_parentheses(text: &[u8], bracket: u32) -> bool {
             .is_some_and(|end| text.get(skip_trivia(text, end)) == Some(&b']'))
 }
 
+/// Whether an identifier is written at `pos` and what follows it closes no parenthesis: no parenthesis opens right before it then.
+/// A comment after it hides what follows.
+fn is_word_outside_parentheses(text: &[u8], pos: u32) -> bool {
+    let rest = &text[(pos as usize).min(text.len())..];
+    let length = rest
+        .iter()
+        .position(|&c| !is_identifier_part(c))
+        .unwrap_or(rest.len());
+    length > 0
+        && !rest[0].is_ascii_digit()
+        && !matches!(
+            rest[length..].trim_ascii_start().first(),
+            None | Some(b')' | b'/')
+        )
+}
+
 /// Where the name of the member `m` starts. That of a computed name is its bracket, where the member may be said to be where the
 /// expression in the brackets is: between the two there are only parentheses, type assertions and comments.
 fn start_of_member_name(hir: &File, m: MemberId) -> u32 {
@@ -1750,9 +1799,15 @@ fn start_of_member_name(hir: &File, m: MemberId) -> u32 {
     }
     if !matches!(hir[m].key, PropKey::Computed(_)) {
         // `[("a")]`
+        if is_word_outside_parentheses(text, pos) {
+            return pos;
+        }
         let start = before_parentheses(text, pos);
+        if start == pos {
+            return pos;
+        }
         let before = trim_trivia_end(upto(text, start));
-        return if start != pos && before.ends_with(b"[") {
+        return if before.ends_with(b"[") {
             before.len() as u32 - 1
         } else {
             pos

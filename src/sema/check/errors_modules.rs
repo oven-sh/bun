@@ -9,6 +9,7 @@
 use super::errors::{Diagnostic, is_close};
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, SymbolId};
+use smallvec::{SmallVec, smallvec};
 
 impl Checker<'_> {
     pub(super) fn check_names_and_exports(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
@@ -296,18 +297,42 @@ impl Checker<'_> {
         if hir.has_errors {
             return;
         }
-        for i in 0..hir.exprs.len() {
-            let ExprKind::Object(props) = hir.exprs[i].kind else {
+        let index = self.exprs_by_kind(file);
+        for &literal in index.of(ExprTag::Object) {
+            let ExprKind::Object(props) = hir[literal].kind else {
                 continue;
             };
             if props.len() < 2
-                || matches!(bound.expr_parent[i], Parent::None)
-                || self.is_assignment_target(file, ExprId(i as u32))
+                || matches!(bound.expr_parent[literal.idx()], Parent::None)
+                || self.is_assignment_target(file, literal)
             {
                 continue;
             }
+            // Of names that are all written out and all different there is nothing to say.
+            let mut written: SmallVec<[Atom; 16]> = SmallVec::new();
+            let mut is_all_written = true;
+            for p in props.iter() {
+                let prop = &hir[p];
+                if prop.kind == PropKind::Spread {
+                    continue;
+                }
+                match prop.key {
+                    PropKey::Name(name) | PropKey::Private(name) => written.push(name),
+                    PropKey::Computed(_) => {
+                        is_all_written = false;
+                        break;
+                    }
+                    PropKey::None => {}
+                }
+            }
+            if is_all_written {
+                written.sort_unstable();
+                if written.windows(2).all(|pair| pair[0] != pair[1]) {
+                    continue;
+                }
+            }
             // `declareSymbolEx`: what the table of its members refuses. A method goes with nothing, not even another.
-            let mut table: Vec<(Atom, u8, Vec<u32>)> = Vec::new();
+            let mut table: SmallVec<[(Atom, u8, SmallVec<[u32; 2]>); 8]> = SmallVec::new();
             for p in props.iter() {
                 let prop = &hir[p];
                 let (includes, excludes) = match prop.kind {
@@ -321,7 +346,7 @@ impl Checker<'_> {
                     continue;
                 };
                 let Some(entry) = table.iter_mut().find(|t| t.0 == name) else {
-                    table.push((name, includes, vec![prop.pos]));
+                    table.push((name, includes, smallvec![prop.pos]));
                     continue;
                 };
                 // What is there may refuse the newcomer just as well.
@@ -342,7 +367,7 @@ impl Checker<'_> {
                     entry.1 |= GET | SET;
                 }
             }
-            let mut seen: Vec<(Atom, u8)> = Vec::new();
+            let mut seen: SmallVec<[(Atom, u8); 8]> = SmallVec::new();
             for p in props.iter() {
                 let prop = &hir[p];
                 let current = match prop.kind {
@@ -448,7 +473,7 @@ impl Checker<'_> {
             self.default_exports(file, hir.body).iter(),
             out,
         );
-        let mut blocks: Vec<(SymbolId, u32, Vec<DefaultExport>)> = Vec::new();
+        let mut blocks: Vec<(SymbolId, u32, SmallVec<[DefaultExport; 2]>)> = Vec::new();
         for (m, module) in hir.modules.iter().enumerate() {
             let defaults = self.default_exports(file, module.body);
             if !defaults.is_empty() {
@@ -510,14 +535,14 @@ impl Checker<'_> {
     }
 
     /// The declarations of the name `default` among the statements of `body`, in the order the binder declares them.
-    fn default_exports(&self, file: FileId, body: IdList<StmtId>) -> Vec<DefaultExport> {
+    fn default_exports(&self, file: FileId, body: IdList<StmtId>) -> SmallVec<[DefaultExport; 2]> {
         const ALIAS: u8 = 1;
         const PROPERTY: u8 = 2;
         const FUNCTION: u8 = 4;
         const CLASS: u8 = 8;
         const INTERFACE: u8 = 16;
         let hir = self.hir(file);
-        let mut defaults: Vec<DefaultExport> = Vec::new();
+        let mut defaults: SmallVec<[DefaultExport; 2]> = SmallVec::new();
         let mut declare = |start: u32, statement: StmtId, includes: u8, excludes: u8, code: u32| {
             defaults.push(DefaultExport {
                 start,
@@ -822,12 +847,12 @@ impl Checker<'_> {
         }
         let is_in_parens = |e: ExprId| hir.parens.binary_search_by_key(&e.0, |p| p.0.0).is_ok();
         // What is said of each name where it is used as a value. It is looked into once, however often it is used.
-        let mut codes: FxHashMap<SymbolId, Option<u32>> = FxHashMap::default();
-        for i in 0..hir.exprs.len() {
-            let ExprKind::Ident(_) = hir.exprs[i].kind else {
-                continue;
-            };
-            let e = ExprId(i as u32);
+        // By symbol, once there is a name to ask about. 0: nothing is said.
+        const NOT_LOOKED_INTO: u32 = u32::MAX;
+        let mut codes: Vec<u32> = Vec::new();
+        let index = self.exprs_by_kind(file);
+        for &e in index.of(ExprTag::Ident) {
+            let i = e.idx();
             let local = bound.expr_symbol[i];
             if local.is_none() || matches!(bound.expr_parent[i], Parent::None) {
                 continue;
@@ -839,20 +864,26 @@ impl Checker<'_> {
             {
                 continue;
             }
-            let code = *codes.entry(local).or_insert_with(|| {
+            if codes.is_empty() {
+                codes.resize(bound.symbols.len(), NOT_LOOKED_INTO);
+            }
+            if codes[local.idx()] == NOT_LOOKED_INTO {
                 let sym = self.files().sym(file, local);
                 // `getSymbol`: an alias that leads nowhere goes for a value as for anything else.
                 let is_value = match self.files().resolve_alias(sym) {
                     Some(target) => self.files().flags(target).intersects(SymFlags::VALUE),
                     None => self.is_alias_in_error(sym),
                 };
-                if !is_value {
-                    return None;
-                }
-                self.type_only_alias_declaration(sym)
-                    .map(|is_export| if is_export { 1362 } else { 1361 })
-            });
-            let Some(code) = code else { continue };
+                codes[local.idx()] = match is_value.then(|| self.type_only_alias_declaration(sym)) {
+                    Some(Some(true)) => 1362,
+                    Some(Some(false)) => 1361,
+                    _ => 0,
+                };
+            }
+            let code = codes[local.idx()];
+            if code == 0 {
+                continue;
+            }
             // `IsValidTypeOnlyAliasUseSite`. `top`: all of `a.b.c`, as far as there are no parentheses in it.
             let mut top = e;
             let root = loop {
@@ -1042,7 +1073,7 @@ fn report_default_export_conflicts<'a>(
     out: &mut Vec<Diagnostic>,
 ) {
     let mut flags = 0;
-    let mut accepted: Vec<&DefaultExport> = Vec::new();
+    let mut accepted: SmallVec<[&DefaultExport; 2]> = SmallVec::new();
     for d in defaults {
         if flags & d.excludes == 0 {
             flags |= d.includes;

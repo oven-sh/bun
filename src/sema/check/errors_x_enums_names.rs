@@ -49,6 +49,32 @@ impl Checker<'_> {
     /// `checkTemplateExpression`, and `checkBinaryLikeExpression` for what something is shifted by.
     fn check_x_enum_member_values(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
+        // What is evaluated besides the members, in the order it is written.
+        let by_kind = self.exprs_by_kind(file);
+        let mut evaluated: Vec<ExprId> = Vec::new();
+        for tag in [ExprTag::Template, ExprTag::Binary, ExprTag::Assign] {
+            evaluated.extend(by_kind.of(tag).iter().copied().filter(|&e| {
+                let is_evaluated = match hir[e].kind {
+                    ExprKind::Template { exprs, .. } => !exprs.is_empty(),
+                    ExprKind::Binary {
+                        op: BinOp::Shl | BinOp::Shr | BinOp::UShr,
+                        right,
+                        ..
+                    }
+                    | ExprKind::Assign {
+                        op: Some(BinOp::Shl | BinOp::Shr | BinOp::UShr),
+                        value: right,
+                        ..
+                    } => !matches!(hir[right].kind, ExprKind::Number(_)),
+                    _ => false,
+                };
+                is_evaluated && !matches!(bound.expr_parent[e.idx()], Parent::None)
+            }));
+        }
+        if evaluated.is_empty() && hir.enums.is_empty() {
+            return;
+        }
+        evaluated.sort_unstable();
         let mut values = EnumValues {
             c: self,
             file,
@@ -67,25 +93,17 @@ impl Checker<'_> {
                 values.compute_enum_member_values(file, EnumId(i as u32));
             }
         }
-        for i in 0..hir.exprs.len() {
-            if matches!(bound.expr_parent[i], Parent::None) {
-                continue;
-            }
-            match hir.exprs[i].kind {
-                ExprKind::Template { exprs, .. } if !exprs.is_empty() => {
-                    let e = ExprId(i as u32);
+        for e in evaluated {
+            match hir[e].kind {
+                ExprKind::Template { .. } => {
                     values.evaluate(file, e, Location::Expr(file, e));
                 }
-                ExprKind::Binary {
-                    op: BinOp::Shl | BinOp::Shr | BinOp::UShr,
-                    left,
-                    right,
-                }
+                ExprKind::Binary { left, right, .. }
                 | ExprKind::Assign {
-                    op: Some(BinOp::Shl | BinOp::Shr | BinOp::UShr),
                     target: left,
                     value: right,
-                } if !matches!(hir[right].kind, ExprKind::Number(_)) => {
+                    ..
+                } => {
                     // Only once both operands have passed for numbers, `null` and `undefined` aside (`checkNonNullType`).
                     let (l, r) = (
                         values.c.type_of_expr(file, left),
@@ -245,6 +263,9 @@ impl Checker<'_> {
     /// `Resolve`, at an enum declaration: 1281.
     fn check_x_names_from_other_files(&self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
+        if hir.enums.is_empty() && hir.modules.is_empty() {
+            return;
+        }
         for &(e, scope) in &bound.free_idents {
             let ExprKind::Ident(name) = hir[e].kind else {
                 continue;
@@ -1679,14 +1700,19 @@ fn is_use_deferred(c: &Checker<'_>, usage: Location, declaration: Location) -> b
 // ───────────────────────────── kinds of types and symbols ─────────────────────────────
 
 /// `isConstEnumObjectType`
+#[inline]
 fn is_const_enum_object_type(c: &Checker<'_>, ty: TypeId) -> bool {
-    let TypeData::Anon {
-        origin: Origin::EnumObject(symbol),
-        ..
-    } = *c.data(ty)
-    else {
-        return false;
-    };
+    match *c.data(ty) {
+        TypeData::Anon {
+            origin: Origin::EnumObject(symbol),
+            ..
+        } => is_const_enum(c, symbol),
+        _ => false,
+    }
+}
+
+/// Whether every enum among the declarations of `symbol` is `const`, and there is one.
+fn is_const_enum(c: &Checker<'_>, symbol: Sym) -> bool {
     let mut is_enum = false;
     for (file, decl) in c.files().decls(symbol) {
         if let Decl::Enum(en) = decl {

@@ -316,7 +316,7 @@ impl<'p> Checker<'p> {
         if self.is_tuple(ty) {
             return true;
         }
-        let (zero, apparent) = (self.number_name(0.0), self.apparent_type(ty));
+        let (zero, apparent) = (self.files().atoms.intern(b"0"), self.apparent_type(ty));
         if self.prop_of(apparent, zero).is_some() {
             return true;
         }

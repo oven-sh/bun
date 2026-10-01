@@ -9,6 +9,7 @@
 use super::errors::Diagnostic;
 use super::*;
 use crate::bind::{ClassOwner, Decl, PatParent, ScopeId, ScopeKind, SymbolId};
+use smallvec::SmallVec;
 
 const FUNCTION_SCOPED_VARIABLE: u32 = 1 << 0;
 const BLOCK_SCOPED_VARIABLE: u32 = 1 << 1;
@@ -46,6 +47,9 @@ const TYPE: u32 = CLASS | INTERFACE | ENUM | ENUM_MEMBER | TYPE_PARAMETER | TYPE
 /// The local symbol of a name in a module or a namespace also lists what is exported under the name, which goes by another symbol.
 type Declaration = (FileId, Decl, bool);
 
+/// A list of statements, by its file and where it is among the lists of that, and `hasExportDeclarations` of it.
+type BodyExports = ((FileId, u32, u32), bool);
+
 /// What `declareSymbolEx` says of a declaration that would make `includes` of a name that is `flags` already.
 fn code_of_refusal(flags: u32, includes: u32) -> u32 {
     if (flags | includes) & ENUM != 0 {
@@ -60,6 +64,7 @@ fn code_of_refusal(flags: u32, includes: u32) -> u32 {
 impl Checker<'_> {
     pub(super) fn check_duplicates(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let bound = self.bound(file);
+        let mut last_body = None;
         for i in 0..bound.symbols.len() {
             let symbol = &bound.symbols[i];
             if symbol.decls.len() < 2 && !symbol.flags.contains(SymFlags::MERGED) {
@@ -70,7 +75,7 @@ impl Checker<'_> {
             if sym.file == file && sym.id.idx() != i {
                 continue;
             }
-            self.check_declarations_of(file, sym, out);
+            self.check_declarations_of(file, sym, &mut last_body, out);
         }
         self.check_locals_of_bodies(file, out);
         self.check_refused_merges(file, out);
@@ -225,13 +230,15 @@ impl Checker<'_> {
     }
 
     /// `declareModuleMember`: whether the declaration of `part` whose name is at `pos` is put among the exports of the module, namespace
-    /// or enum it is written in. `None`: it is written where nothing is exported.
+    /// or enum it is written in. `None`: it is written where nothing is exported. `last_body`: what was found out about the body that
+    /// was looked at last.
     fn is_declared_among_exports(
         &self,
         part: Sym,
         includes: u32,
         pos: u32,
         modifiers: Flags,
+        last_body: &mut Option<BodyExports>,
     ) -> Option<bool> {
         let (hir, bound) = (self.hir(part.file), self.bound(part.file));
         let container = bound.symbols[part.id.idx()].parent;
@@ -270,7 +277,19 @@ impl Checker<'_> {
             None => return None,
         };
         // `setExportContextFlag`
-        Some(is_ambient && !has_export_declarations(hir, list))
+        if !is_ambient {
+            return Some(false);
+        }
+        let body = (part.file, list.start, list.len);
+        let has_exports = match *last_body {
+            Some((last, has_exports)) if last == body => has_exports,
+            _ => {
+                let has_exports = has_export_declarations(hir, list);
+                *last_body = Some((body, has_exports));
+                has_exports
+            }
+        };
+        Some(!has_exports)
     }
 
     /// `getAdjustedNodeForError`: the start of the name of `decl`, or of `decl` itself if it has no name.
@@ -334,7 +353,13 @@ impl Checker<'_> {
 
     /// The declarations of `sym`: those of each file as `declareSymbolEx` puts them in a table, then the files one after the other as
     /// `mergeSymbol` puts them together. What is said about `file` is kept.
-    fn check_declarations_of(&mut self, file: FileId, sym: Sym, out: &mut Vec<Diagnostic>) {
+    fn check_declarations_of(
+        &mut self,
+        file: FileId,
+        sym: Sym,
+        last_body: &mut Option<BodyExports>,
+        out: &mut Vec<Diagnostic>,
+    ) {
         let files = self.files();
         let parts = files.parts(sym);
         if parts.len() == 1 && files.symbol(sym).decls.len() < 2 {
@@ -378,9 +403,9 @@ impl Checker<'_> {
                             // Of a module or a namespace this is the table of exports. Its locals: `check_locals_of_bodies`. What is
                             // exported as the default goes by that name: `check_redeclared_exports`.
                             let modifiers = self.modifiers_of_declaration(part.file, decl);
-                            if let Some(is_exported) =
-                                self.is_declared_among_exports(part, includes, pos, modifiers)
-                                && (!is_exported || modifiers.contains(Flags::DEFAULT))
+                            if let Some(is_exported) = self.is_declared_among_exports(
+                                part, includes, pos, modifiers, last_body,
+                            ) && (!is_exported || modifiers.contains(Flags::DEFAULT))
                             {
                                 continue;
                             }
@@ -474,6 +499,7 @@ impl Checker<'_> {
         let mut accepted: Vec<Declaration> = Vec::new();
         for (list, is_ambient) in whole.into_iter().chain(bodies) {
             declared.clear();
+            declared.reserve(list.len());
             // `bindEachStatementFunctionsFirst`
             for functions in [true, false] {
                 for s in hir.ids(list) {
@@ -547,8 +573,12 @@ impl Checker<'_> {
                 .map(|(of, decl)| (of, decl, true))
                 .collect()
         };
+        let is_declared_here = |sym: Sym| files.parts(sym).iter().any(|part| part.file == file);
         for &(target, source) in &files.refused_merges {
             let (target, source) = (files.canonical(target), files.canonical(source));
+            if !is_declared_here(target) && !is_declared_here(source) {
+                continue;
+            }
             let added = declarations(source);
             if files.flags(target).contains(SymFlags::NAMESPACE_MODULE) {
                 // What does not go with a namespace without values has words of its own, said once.
@@ -755,17 +785,14 @@ impl Checker<'_> {
         }
         if lists.len() > 1 {
             struct Entry {
-                name: Atom,
                 flags: u32,
                 /// Which declaration, in which file, and where.
                 accepted: Vec<(usize, FileId, u32)>,
             }
-            let mut entries: Vec<Entry> = Vec::new();
-            // Name, what it makes of the name, what that excludes, where.
-            let mut declared: Vec<(Atom, u32, u32, u32)> = Vec::new();
+            // Which declaration, in which file, the name, what it makes of the name, what that excludes, where.
+            let mut declared: Vec<(usize, FileId, Atom, u32, u32, u32)> = Vec::new();
             for (at, &(of, members, _)) in lists.iter().enumerate() {
                 let hir = self.hir(of);
-                declared.clear();
                 for m in members.iter() {
                     let member = &hir[m];
                     // `bindParameter`
@@ -775,6 +802,8 @@ impl Checker<'_> {
                                 && let PatKind::Ident(name) = hir[hir[p].pat].kind
                             {
                                 declared.push((
+                                    at,
+                                    of,
                                     name,
                                     PROPERTY,
                                     VALUE & !(PROPERTY | ACCESSOR),
@@ -793,38 +822,50 @@ impl Checker<'_> {
                     let Some(name) = self.name_of_declared_member(of, member.key) else {
                         continue;
                     };
-                    declared.push((name, includes, excludes, member.pos));
+                    declared.push((at, of, name, includes, excludes, member.pos));
                 }
-                for &(name, includes, excludes, pos) in &declared {
-                    let Some(entry) = entries.iter_mut().find(|e| e.name == name) else {
-                        entries.push(Entry {
-                            name,
-                            flags: includes,
-                            accepted: vec![(at, of, pos)],
-                        });
-                        continue;
-                    };
-                    if entry.flags & excludes == 0 {
-                        entry.flags |= includes;
-                        entry.accepted.push((at, of, pos));
-                        continue;
-                    }
-                    // Within one declaration it has been said.
-                    if !entry.accepted.iter().all(|a| a.0 == at) {
-                        for &(_, other, start) in
-                            entry.accepted.iter().chain(std::iter::once(&(at, of, pos)))
-                        {
-                            if other == file {
-                                out.push(Diagnostic { start, code: 2300 });
-                                self.note_duplicate_name(file, start, start);
-                            }
+            }
+            let mut names: Vec<Atom> = declared.iter().map(|d| d.2).collect();
+            names.sort_unstable();
+            // What is declared once has nothing to clash with. Sorted.
+            let mut repeated: Vec<Atom> = Vec::new();
+            for same in names.chunk_by(|a, b| a == b) {
+                if same.len() > 1 {
+                    repeated.push(same[0]);
+                }
+            }
+            // One for each of `repeated`.
+            let mut entries: Vec<Entry> = repeated
+                .iter()
+                .map(|_| Entry {
+                    flags: 0,
+                    accepted: Vec::new(),
+                })
+                .collect();
+            for &(at, of, name, includes, excludes, pos) in &declared {
+                let Ok(index) = repeated.binary_search(&name) else {
+                    continue;
+                };
+                let entry = &mut entries[index];
+                if entry.flags & excludes == 0 {
+                    entry.flags |= includes;
+                    entry.accepted.push((at, of, pos));
+                    continue;
+                }
+                // Within one declaration it has been said.
+                if !entry.accepted.iter().all(|a| a.0 == at) {
+                    for &(_, other, start) in
+                        entry.accepted.iter().chain(std::iter::once(&(at, of, pos)))
+                    {
+                        if other == file {
+                            out.push(Diagnostic { start, code: 2300 });
+                            self.note_duplicate_name(file, start, start);
                         }
                     }
-                    // After an accessor met something else, nothing goes with it any more.
-                    if entry.flags & ACCESSOR != 0 && entry.flags & ACCESSOR != includes & ACCESSOR
-                    {
-                        entry.flags |= ACCESSOR;
-                    }
+                }
+                // After an accessor met something else, nothing goes with it any more.
+                if entry.flags & ACCESSOR != 0 && entry.flags & ACCESSOR != includes & ACCESSOR {
+                    entry.flags |= ACCESSOR;
                 }
             }
         }
@@ -969,12 +1010,14 @@ impl Checker<'_> {
                     self.note(start, end, 2300, vec!["export=".to_owned()]);
                 }
             }
-            for (i, &(name, start)) in names.iter().enumerate() {
-                if names
-                    .iter()
-                    .enumerate()
-                    .any(|(j, other)| j != i && other.0 == name)
-                {
+            let mut sorted: Vec<Atom> = names.iter().map(|n| n.0).collect();
+            sorted.sort_unstable();
+            if !sorted.windows(2).any(|pair| pair[0] == pair[1]) {
+                continue;
+            }
+            for &(name, start) in &names {
+                let first = sorted.partition_point(|&other| other < name);
+                if sorted.get(first + 1) == Some(&name) {
                     out.push(Diagnostic { start, code: 2300 });
                 }
             }
@@ -1025,8 +1068,9 @@ impl Checker<'_> {
         }
         let hir = self.hir(file);
         let mut declared: Vec<Declared> = Vec::new();
-        // What is declared without being exported.
+        // What is declared without being exported. Only an `export { a }` without `from` looks there.
         let mut locals: Vec<(Atom, u32)> = Vec::new();
+        let needs_locals = hir.exports.iter().any(|x| x.spec.is_none());
         let mut names = Vec::new();
         for s in hir.ids(hir.body) {
             let mut add = |c: &Self,
@@ -1035,6 +1079,9 @@ impl Checker<'_> {
                            decl: Decl,
                            is_overload: bool,
                            unnamed: bool| {
+                if !needs_locals && !flags.contains(Flags::EXPORT) {
+                    return;
+                }
                 let Some((includes, excludes, start)) = c.declaration_flags(file, decl) else {
                     return;
                 };
@@ -1061,6 +1108,9 @@ impl Checker<'_> {
             match hir[s].kind {
                 StmtKind::Var(decls) => {
                     for d in decls.iter() {
+                        if !needs_locals && !hir[d].flags.contains(Flags::EXPORT) {
+                            continue;
+                        }
                         names.clear();
                         names_in(hir, hir[d].pat, &mut names);
                         for &(name, pat) in &names {
@@ -1158,19 +1208,28 @@ impl Checker<'_> {
                 _ => {}
             }
         }
-        // `bindEachStatementFunctionsFirst`
-        declared.sort_by_key(|d| d.includes != FUNCTION);
-        let mut done: Vec<Atom> = Vec::new();
-        for i in 0..declared.len() {
-            let name = declared[i].name;
-            if done.contains(&name) {
-                continue;
-            }
-            done.push(name);
+        if declared.len() < 2 {
+            return;
+        }
+        // `bindEachStatementFunctionsFirst`: the functions come before everything else.
+        let mut by_name: Vec<(Atom, bool, usize)> = declared
+            .iter()
+            .enumerate()
+            .map(|(i, d)| (d.name, d.includes != FUNCTION, i))
+            .collect();
+        by_name.sort_unstable();
+        // The names that are declared more than once, in the order they first come.
+        let mut groups: Vec<&[(Atom, bool, usize)]> = by_name
+            .chunk_by(|a, b| a.0 == b.0)
+            .filter(|group| group.len() > 1)
+            .collect();
+        groups.sort_unstable_by_key(|group| (group[0].1, group[0].2));
+        for group in groups {
+            let name = group[0].0;
             // What is refused is not in the table.
             let mut flags = 0;
             let mut accepted: Vec<&Declared> = Vec::new();
-            for d in declared[i..].iter().filter(|d| d.name == name) {
+            for d in group.iter().map(|&(_, _, i)| &declared[i]) {
                 if flags & d.excludes == 0 {
                     flags |= d.includes;
                     accepted.push(d);
@@ -1435,8 +1494,6 @@ impl Checker<'_> {
         out: &mut Vec<Diagnostic>,
     ) {
         struct Entry {
-            name: Atom,
-            is_static: bool,
             flags: u32,
             /// Where the declarations that went together are.
             accepted: Vec<u32>,
@@ -1454,9 +1511,8 @@ impl Checker<'_> {
         {
             return;
         }
-        let mut entries: Vec<Entry> = Vec::new();
         // Name, whether it is static, what it makes of the name, what that excludes, where, and 1 for a property, 2 for an accessor.
-        let mut declared: Vec<(Atom, bool, u32, u32, u32, u8)> = Vec::new();
+        let mut declared: SmallVec<[(Atom, bool, u32, u32, u32, u8); 16]> = SmallVec::new();
         // Where those are whose names the checker works out (`lateBindMember`).
         let mut late_bound: Vec<u32> = Vec::new();
         for m in members.iter() {
@@ -1504,32 +1560,38 @@ impl Checker<'_> {
             }
             declared.push((name, is_static, includes, excludes, member.pos, kind));
         }
+        let mut keys: SmallVec<[(Atom, bool); 16]> = declared.iter().map(|d| (d.0, d.1)).collect();
         // `bindClassLikeDeclaration`: every class has a static `prototype`, a property nobody declared.
-        if declared.iter().any(|d| d.1 && d.0 == known::prototype) {
-            entries.push(Entry {
-                name: known::prototype,
-                is_static: true,
-                flags: PROPERTY,
+        const PROTOTYPE: (Atom, bool) = (known::prototype, true);
+        if keys.contains(&PROTOTYPE) {
+            keys.push(PROTOTYPE);
+        }
+        keys.sort_unstable();
+        // What is declared once has nothing to clash with. Sorted.
+        let mut repeated: Vec<(Atom, bool)> = Vec::new();
+        for same in keys.chunk_by(|a, b| a == b) {
+            if same.len() > 1 {
+                repeated.push(same[0]);
+            }
+        }
+        if repeated.is_empty() {
+            return;
+        }
+        // One for each of `repeated`.
+        let mut entries: Vec<Entry> = repeated
+            .iter()
+            .map(|&key| Entry {
+                flags: if key == PROTOTYPE { PROPERTY } else { 0 },
                 accepted: Vec::new(),
                 all: Vec::new(),
                 state: 0,
-            });
-        }
+            })
+            .collect();
         for &(name, is_static, includes, excludes, pos, _) in &declared {
-            let Some(entry) = entries
-                .iter_mut()
-                .find(|e| e.name == name && e.is_static == is_static)
-            else {
-                entries.push(Entry {
-                    name,
-                    is_static,
-                    flags: includes,
-                    accepted: vec![pos],
-                    all: vec![pos],
-                    state: 0,
-                });
+            let Ok(at) = repeated.binary_search(&(name, is_static)) else {
                 continue;
             };
+            let entry = &mut entries[at];
             entry.all.push(pos);
             if entry.flags & excludes == 0 {
                 entry.flags |= includes;
@@ -1567,12 +1629,10 @@ impl Checker<'_> {
             if kind == 0 {
                 continue;
             }
-            let Some(entry) = entries
-                .iter_mut()
-                .find(|e| e.name == name && e.is_static == is_static)
-            else {
+            let Ok(at) = repeated.binary_search(&(name, is_static)) else {
                 continue;
             };
+            let entry = &mut entries[at];
             if entry.accepted.len() < 2 || !entry.accepted.contains(&pos) {
                 continue;
             }

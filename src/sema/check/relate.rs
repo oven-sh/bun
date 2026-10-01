@@ -7,6 +7,7 @@
 
 use super::*;
 use crate::util::{FxHashSet, FxHasher};
+use smallvec::SmallVec;
 use std::hash::Hasher;
 use std::ops::{BitAnd, BitAndAssign};
 
@@ -192,8 +193,152 @@ impl Relater {
     }
 }
 
+/// Where `getPropertyOfType` looks for what a type does not have itself: the global types that every function and every object is
+/// one of.
+pub(super) struct Inherited<'p> {
+    globals: [Atom; 3],
+    count: usize,
+    /// What the first `asked` of `globals` have.
+    members: [Option<Members<'p>>; 3],
+    asked: usize,
+}
+
 /// What instantiations of one declaration have in common.
 pub(super) type RecursionId = (u8, u32, u32);
+
+// The kinds of types, for whoever has the `TypeData` at hand.
+
+/// `Checker::is_object_type`
+#[inline]
+fn is_object_kind(data: &TypeData) -> bool {
+    matches!(
+        data,
+        TypeData::Ref { .. }
+            | TypeData::Tuple { .. }
+            | TypeData::Anon { .. }
+            | TypeData::Fns { .. }
+            | TypeData::Synth(_)
+            | TypeData::ReverseMapped { .. }
+    )
+}
+
+#[inline]
+fn is_type_param_kind(data: &TypeData) -> bool {
+    matches!(
+        data,
+        TypeData::TypeParam(..) | TypeData::ThisParam(_) | TypeData::Marker(_)
+    )
+}
+
+#[inline]
+fn is_union_or_intersection_kind(data: &TypeData) -> bool {
+    matches!(data, TypeData::Union(_) | TypeData::Intersection(_))
+}
+
+/// `TypeFlagsInstantiable`
+#[inline]
+fn is_instantiable_kind(data: &TypeData) -> bool {
+    matches!(
+        data,
+        TypeData::TypeParam(..)
+            | TypeData::ThisParam(_)
+            | TypeData::Marker(_)
+            | TypeData::IndexedAccess { .. }
+            | TypeData::Cond { .. }
+            | TypeData::Keyof(_)
+            | TypeData::Template { .. }
+            | TypeData::StringMapping { .. }
+    )
+}
+
+/// `TypeFlagsStructuredOrInstantiable`
+#[inline]
+fn is_structured_or_instantiable_kind(data: &TypeData) -> bool {
+    is_object_kind(data) || is_union_or_intersection_kind(data) || is_instantiable_kind(data)
+}
+
+/// `Checker::is_primitive`
+#[inline]
+fn is_primitive_kind(data: &TypeData) -> bool {
+    match data {
+        TypeData::Intrinsic(intrinsic) => !matches!(
+            intrinsic,
+            Intrinsic::Unresolved
+                | Intrinsic::Any
+                | Intrinsic::Unknown
+                | Intrinsic::Never
+                | Intrinsic::Object
+        ),
+        TypeData::StringLit { .. }
+        | TypeData::NumberLit { .. }
+        | TypeData::BigIntLit { .. }
+        | TypeData::BoolLit { .. }
+        | TypeData::EnumLit { .. }
+        | TypeData::Enum { .. }
+        | TypeData::UniqueSymbol { .. }
+        | TypeData::Template { .. }
+        | TypeData::StringMapping { .. } => true,
+        _ => false,
+    }
+}
+
+/// `Checker::is_fresh_literal`
+#[inline]
+fn is_fresh_literal_kind(data: &TypeData) -> bool {
+    matches!(
+        *data,
+        TypeData::StringLit { fresh: true, .. }
+            | TypeData::NumberLit { fresh: true, .. }
+            | TypeData::BigIntLit { fresh: true, .. }
+            | TypeData::BoolLit { fresh: true, .. }
+            | TypeData::EnumLit { fresh: true, .. }
+            | TypeData::Enum { fresh: true, .. }
+    )
+}
+
+#[inline]
+fn is_generic_tuple_kind(data: &TypeData) -> bool {
+    matches!(data, TypeData::Tuple { flags, .. } if flags.iter().any(|f| f.contains(ElemFlags::VARIADIC)))
+}
+
+#[inline]
+fn is_mapped_kind(data: &TypeData) -> bool {
+    matches!(
+        data,
+        TypeData::Anon {
+            origin: Origin::Mapped(..),
+            ..
+        }
+    )
+}
+
+/// `Checker::is_object_literal_type`
+#[inline]
+fn is_object_literal_kind(data: &TypeData) -> bool {
+    match data {
+        TypeData::Anon {
+            origin: Origin::ObjectLiteral(..),
+            ..
+        } => true,
+        TypeData::Synth(shape) => shape.literal.is_of_expression(),
+        _ => false,
+    }
+}
+
+/// `normalized` gives a type of this kind back as it is.
+#[inline]
+fn is_normalized_kind(data: &TypeData) -> bool {
+    match data {
+        TypeData::Union(_)
+        | TypeData::Intersection(_)
+        | TypeData::IndexedAccess { .. }
+        | TypeData::Cond { .. }
+        | TypeData::LazyAlias { .. }
+        | TypeData::NoInfer(_) => false,
+        TypeData::Tuple { .. } => !is_generic_tuple_kind(data),
+        _ => !is_fresh_literal_kind(data),
+    }
+}
 
 impl<'p> Checker<'p> {
     pub fn is_assignable(&mut self, source: TypeId, target: TypeId) -> bool {
@@ -250,22 +395,75 @@ impl<'p> Checker<'p> {
     /// `TypeFlagsInstantiable`
     #[inline]
     pub(super) fn is_instantiable(&self, ty: TypeId) -> bool {
-        self.is_deferred(ty)
-            || matches!(
-                self.data(ty),
-                TypeData::Template { .. } | TypeData::StringMapping { .. }
-            )
+        is_instantiable_kind(self.data(ty))
     }
 
     /// `TypeFlagsStructuredOrInstantiable`
     #[inline]
     pub(super) fn is_structured_or_instantiable(&self, ty: TypeId) -> bool {
-        self.is_object_type(ty) || self.is_union_or_intersection(ty) || self.is_instantiable(ty)
+        is_structured_or_instantiable_kind(self.data(ty))
     }
 
     /// `TypeFlagsPrimitive`, which `boolean` and an enum have though they are unions.
+    #[inline]
     pub(super) fn has_primitive_flag(&self, ty: TypeId) -> bool {
-        self.is_primitive(ty) || ty == TypeId::BOOLEAN || self.union_enum_symbol(ty).is_some()
+        self.has_primitive_flag_as(ty, self.data(ty))
+    }
+
+    /// `data`: what `ty` is.
+    #[inline]
+    fn has_primitive_flag_as(&self, ty: TypeId, data: &TypeData) -> bool {
+        match data {
+            TypeData::Union(_) => ty == TypeId::BOOLEAN || self.union_enum_symbol(ty).is_some(),
+            _ => is_primitive_kind(data),
+        }
+    }
+
+    /// `force`, and what the result is.
+    #[inline]
+    fn forced_as(&mut self, ty: TypeId) -> (TypeId, &'p TypeData) {
+        let data = self.data(ty);
+        if matches!(data, TypeData::LazyAlias { .. } | TypeData::NoInfer(_)) {
+            let ty = self.force(ty);
+            return (ty, self.data(ty));
+        }
+        (ty, data)
+    }
+
+    /// `TypeId::plain`, and what the result is. `data`: what `ty` is.
+    #[inline]
+    fn plain_as(&self, ty: TypeId, data: &'p TypeData) -> (TypeId, &'p TypeData) {
+        let plain = ty.plain();
+        if plain == ty {
+            (ty, data)
+        } else {
+            (plain, self.data(plain))
+        }
+    }
+
+    /// A literal type as an annotation would name it, and what the result is. `data`: what `ty` is.
+    #[inline]
+    fn regular_as(&self, ty: TypeId, data: &'p TypeData) -> (TypeId, &'p TypeData) {
+        if is_fresh_literal_kind(data) {
+            let ty = self.with_freshness(ty, false);
+            return (ty, self.data(ty));
+        }
+        (ty, data)
+    }
+
+    /// `normalized`, and what the result is. `data`: what `ty` is.
+    #[inline]
+    fn normalized_as(
+        &mut self,
+        ty: TypeId,
+        data: &'p TypeData,
+        writing: bool,
+    ) -> (TypeId, &'p TypeData) {
+        if is_normalized_kind(data) {
+            return (ty, data);
+        }
+        let ty = self.normalized(ty, writing);
+        (ty, self.data(ty))
     }
 
     /// The enum a member belongs to; an enum is its own.
@@ -289,7 +487,7 @@ impl<'p> Checker<'p> {
             _ => None,
         };
         let owner = owner_of(parts[0])?;
-        parts
+        parts[1..]
             .iter()
             .all(|&p| owner_of(p) == Some(owner))
             .then_some(owner)
@@ -297,8 +495,14 @@ impl<'p> Checker<'p> {
 
     /// `TypeFlagsDefinitelyNonNullable`
     pub(super) fn is_definitely_non_nullable(&self, ty: TypeId) -> bool {
-        (self.has_primitive_flag(ty) && !self.is_nullish(ty))
-            || self.is_object_type(ty)
+        self.is_definitely_non_nullable_as(ty, self.data(ty))
+    }
+
+    /// `data`: what `ty` is.
+    #[inline]
+    fn is_definitely_non_nullable_as(&self, ty: TypeId, data: &TypeData) -> bool {
+        (self.has_primitive_flag_as(ty, data) && !self.is_nullish(ty))
+            || is_object_kind(data)
             || ty == TypeId::OBJECT
     }
 
@@ -356,7 +560,7 @@ impl<'p> Checker<'p> {
             | TypeData::Marker(_)
             | TypeData::IndexedAccess { .. }
             | TypeData::Cond { .. } => true,
-            _ => self.is_generic_mapped_type(ty) || self.is_generic_tuple_type(ty),
+            data => is_mapped_kind(data) && self.is_generic(ty) || is_generic_tuple_kind(data),
         }
     }
 
@@ -404,30 +608,37 @@ impl<'p> Checker<'p> {
             TypeData::Union(parts) => parts.iter().any(|&p| self.is_empty_object_type(p)),
             TypeData::Intersection(parts) => parts.iter().all(|&p| self.is_empty_object_type(p)),
             _ if ty == TypeId::OBJECT => true,
-            _ => {
-                self.is_object_type(ty) && !self.is_generic_mapped_type(ty) && self.has_nothing(ty)
+            data => {
+                is_object_kind(data)
+                    && !(is_mapped_kind(data) && self.is_generic(ty))
+                    && self.has_nothing(ty)
             }
         }
     }
 
     /// `IsEmptyAnonymousObjectType`
     pub(super) fn is_empty_anonymous_object_type(&mut self, ty: TypeId) -> bool {
-        ty == TypeId::EMPTY_OBJECT
+        if ty == TypeId::EMPTY_OBJECT {
+            return true;
+        }
+        match self.data(ty) {
             // `getTypeWithSyntheticDefaultImportType` gives its result the symbol of a type literal without members.
-            || matches!(self.data(ty), TypeData::Synth(shape) if shape.literal == Literalness::SyntheticDefault)
-            || matches!(self.data(ty), TypeData::Anon { origin: Origin::TypeLiteral(..) | Origin::ObjectLiteral(..) | Origin::WidenedLiteral(..), .. } | TypeData::Synth(_))
-                && self.has_nothing(ty)
+            TypeData::Synth(shape) => {
+                shape.literal == Literalness::SyntheticDefault || self.has_nothing(ty)
+            }
+            TypeData::Anon {
+                origin:
+                    Origin::TypeLiteral(..) | Origin::ObjectLiteral(..) | Origin::WidenedLiteral(..),
+                ..
+            } => self.has_nothing(ty),
+            _ => false,
+        }
     }
 
-    /// `isUnknownLikeUnionType`: `undefined | null | {}`
-    fn is_unknown_like_union(&mut self, ty: TypeId) -> bool {
-        if !self.p.files.options.strict_null_checks {
-            return false;
-        }
-        let TypeData::Union(parts) = self.data(ty) else {
-            return false;
-        };
-        parts.len() >= 3
+    /// `isUnknownLikeUnionType`: `undefined | null | {}`. `parts`: the members of the union.
+    fn is_unknown_like_union(&mut self, parts: &[TypeId]) -> bool {
+        self.p.files.options.strict_null_checks
+            && parts.len() >= 3
             && parts.iter().any(|p| p.is_undefined())
             && parts.iter().any(|p| p.is_null())
             && parts
@@ -472,63 +683,114 @@ impl<'p> Checker<'p> {
         if let Some(prop) = members.resolved.prop(name) {
             return Some((prop.clone(), members.mapper));
         }
-        let shape = members.shape();
+        let mut inherited = self.inherited_of(members.shape());
+        self.inherited_property(&mut inherited, name)
+            .map(|(prop, mapper)| (prop.clone(), mapper))
+    }
+
+    /// `property_of_type`, by reference.
+    pub(super) fn property_in(
+        &mut self,
+        members: &Members<'p>,
+        name: Atom,
+    ) -> Option<(&'p Prop, MapperId)> {
+        if let Some(prop) = members.resolved.prop(name) {
+            return Some((prop, members.mapper));
+        }
+        let mut inherited = self.inherited_of(members.shape());
+        self.inherited_property(&mut inherited, name)
+    }
+
+    /// `property_in`, for one name after the other. `inherited`: `inherited_of` the shape of `members`.
+    #[inline]
+    pub(super) fn property_among(
+        &mut self,
+        members: &Members<'p>,
+        inherited: &mut Inherited<'p>,
+        name: Atom,
+    ) -> Option<(&'p Prop, MapperId)> {
+        match members.resolved.prop(name) {
+            Some(prop) => Some((prop, members.mapper)),
+            None => self.inherited_property(inherited, name),
+        }
+    }
+
+    pub(super) fn inherited_of(&self, shape: &Shape) -> Inherited<'p> {
+        let mut globals = [known::Object; 3];
+        let mut count = 0;
         if Self::is_any_function_shape(shape) {
             // `anyFunctionType` has the properties of `Function`.
-            let function = self.global_ref(known::Function, &[]);
-            if let Some(found) = self.prop_of(function, name) {
-                return Some(found);
-            }
+            globals[0] = known::Function;
+            count = 1;
         } else if !(shape.call.is_empty() && shape.construct.is_empty()) {
-            let specific = if shape.call.is_empty() {
-                known::NewableFunction
-            } else {
-                known::CallableFunction
-            };
-            let specific = if self.p.files.options.strict_bind_call_apply {
-                specific
-            } else {
-                known::Function
-            };
-            for global in [specific, known::Function] {
-                let function = self.global_ref(global, &[]);
-                if let Some(found) = self.prop_of(function, name) {
-                    return Some(found);
-                }
+            if self.p.files.options.strict_bind_call_apply {
+                globals[0] = if shape.call.is_empty() {
+                    known::NewableFunction
+                } else {
+                    known::CallableFunction
+                };
+                count = 1;
+            }
+            globals[count] = known::Function;
+            count += 1;
+        }
+        Inherited {
+            globals,
+            count: count + 1,
+            members: [None; 3],
+            asked: 0,
+        }
+    }
+
+    fn inherited_property(
+        &mut self,
+        from: &mut Inherited<'p>,
+        name: Atom,
+    ) -> Option<(&'p Prop, MapperId)> {
+        for i in 0..from.count {
+            if i == from.asked {
+                let global = self.global_ref(from.globals[i], &[]);
+                from.members[i] = self.members(global);
+                from.asked += 1;
+            }
+            if let Some(members) = from.members[i]
+                && let Some(prop) = members.resolved.prop(name)
+            {
+                return Some((prop, members.mapper));
             }
         }
-        let object = self.global_ref(known::Object, &[]);
-        self.prop_of(object, name)
+        None
     }
 
     // ───────────────────────────── the question ─────────────────────────────
 
     /// `isTypeRelatedTo`
     pub(super) fn related(&mut self, source: TypeId, target: TypeId, relation: Relation) -> bool {
-        self.guard("related");
         if source == target {
             return true;
         }
+        let is_stack_low = self.is_stack_low();
+        if is_stack_low {
+            self.guard("related");
+        }
         // A question asked while a type is being simplified passes no `enter`: what does not end has to be cut off here too.
-        if self.is_out_of_time() || self.is_stack_low() {
+        if self.is_out_of_time() || is_stack_low {
             self.gave_up();
             return false;
         }
-        let (source, target) = (self.force(source), self.force(target));
+        let ((source, sd), (target, td)) = (self.forced_as(source), self.forced_as(target));
         // Every rule goes by the flags, which the kinds of `undefined` and of `null` share.
-        let (source, target) = (source.plain(), target.plain());
-        let (source, target) = (
-            self.with_freshness(source, false),
-            self.with_freshness(target, false),
-        );
+        let ((source, sd), (target, td)) = (self.plain_as(source, sd), self.plain_as(target, td));
+        let ((source, sd), (target, td)) =
+            (self.regular_as(source, sd), self.regular_as(target, td));
         if source == target {
             return true;
         }
         if relation != Relation::Identity {
             if relation == Relation::Comparable
                 && target != TypeId::NEVER
-                && self.is_simple_type_related_to(target, source, relation)
-                || self.is_simple_type_related_to(source, target, relation)
+                && self.is_simple_type_related_to(target, td, source, sd, relation)
+                || self.is_simple_type_related_to(source, sd, target, td, relation)
             {
                 return true;
             }
@@ -540,7 +802,7 @@ impl<'p> Checker<'p> {
                 return true;
             }
         }
-        if !self.retracing && self.is_object_type(source) && self.is_object_type(target) {
+        if !self.retracing && is_object_kind(sd) && is_object_kind(td) {
             let (key, _) = self.relation_key(source, target, relation, STATE_NONE, false);
             if let Some(entry) = self.p.relations.get(&key) {
                 // The comparison of these two types was cut short when it was made.
@@ -551,8 +813,7 @@ impl<'p> Checker<'p> {
                 return entry & SUCCEEDED != 0;
             }
         }
-        if self.is_structured_or_instantiable(source) || self.is_structured_or_instantiable(target)
-        {
+        if is_structured_or_instantiable_kind(sd) || is_structured_or_instantiable_kind(td) {
             return self.check_type_related_to(source, target, relation);
         }
         false
@@ -631,10 +892,17 @@ impl<'p> Checker<'p> {
         result.holds()
     }
 
-    /// `isSimpleTypeRelatedTo`
-    fn is_simple_type_related_to(&mut self, s: TypeId, t: TypeId, relation: Relation) -> bool {
+    /// `isSimpleTypeRelatedTo`. `sd`, `td`: what `s` and `t` are.
+    fn is_simple_type_related_to(
+        &mut self,
+        s: TypeId,
+        sd: &'p TypeData,
+        t: TypeId,
+        td: &'p TypeData,
+        relation: Relation,
+    ) -> bool {
         // It goes by the flags, which the kinds of `undefined` and of `null` share.
-        let (s, t) = (s.plain(), t.plain());
+        let ((s, sd), (t, td)) = (self.plain_as(s, sd), self.plain_as(t, td));
         if self.is_any(t) || s == TypeId::NEVER || s == TypeId::UNRESOLVED {
             return true;
         }
@@ -650,15 +918,44 @@ impl<'p> Checker<'p> {
         if t == TypeId::NEVER {
             return false;
         }
-        if t == TypeId::STRING && self.is_string_like(s)
-            || t == TypeId::NUMBER && self.is_number_like(s)
-            || t == TypeId::BIGINT && self.is_bigint_like(s)
-            || t == TypeId::BOOLEAN && self.is_boolean_like(s)
-            || t == TypeId::SYMBOL && self.is_symbol_like(s)
-        {
+        // `TypeFlagsStringLike` and so on.
+        let is_like = match t {
+            TypeId::STRING => matches!(
+                sd,
+                TypeData::Intrinsic(Intrinsic::String)
+                    | TypeData::StringLit { .. }
+                    | TypeData::Template { .. }
+                    | TypeData::StringMapping { .. }
+                    | TypeData::EnumLit {
+                        value: EnumValue::String(_),
+                        ..
+                    }
+            ),
+            TypeId::NUMBER => matches!(
+                sd,
+                TypeData::Intrinsic(Intrinsic::Number)
+                    | TypeData::NumberLit { .. }
+                    | TypeData::EnumLit {
+                        value: EnumValue::Number(_),
+                        ..
+                    }
+                    | TypeData::Enum { .. }
+            ),
+            TypeId::BIGINT => matches!(
+                sd,
+                TypeData::Intrinsic(Intrinsic::BigInt) | TypeData::BigIntLit { .. }
+            ),
+            TypeId::BOOLEAN => matches!(sd, TypeData::BoolLit { .. }),
+            TypeId::SYMBOL => matches!(
+                sd,
+                TypeData::Intrinsic(Intrinsic::Symbol) | TypeData::UniqueSymbol { .. }
+            ),
+            _ => false,
+        };
+        if is_like {
             return true;
         }
-        match (self.data(s), self.data(t)) {
+        match (sd, td) {
             (
                 TypeData::EnumLit {
                     value: EnumValue::String(a),
@@ -712,18 +1009,18 @@ impl<'p> Checker<'p> {
         }
         let strict = self.p.files.options.strict_null_checks;
         if s == TypeId::UNDEFINED
-            && (!strict && !self.is_union_or_intersection(t)
+            && (!strict && !is_union_or_intersection_kind(td)
                 || t == TypeId::UNDEFINED
                 || t == TypeId::VOID)
         {
             return true;
         }
-        if s == TypeId::NULL && (!strict && !self.is_union_or_intersection(t) || t == TypeId::NULL)
+        if s == TypeId::NULL && (!strict && !is_union_or_intersection_kind(td) || t == TypeId::NULL)
         {
             return true;
         }
         if t == TypeId::OBJECT
-            && self.is_object_type(s)
+            && is_object_kind(sd)
             && !(relation == Relation::StrictSubtype
                 && !self.is_object_literal_type(s)
                 && self.is_empty_anonymous_object_type(s))
@@ -735,7 +1032,7 @@ impl<'p> Checker<'p> {
                 return true;
             }
             // So that enums can be used as bit flags.
-            match (self.data(s), self.data(t)) {
+            match (sd, td) {
                 (
                     TypeData::Intrinsic(Intrinsic::Number),
                     TypeData::Enum { .. }
@@ -754,7 +1051,9 @@ impl<'p> Checker<'p> {
                 ) if bits == v => return true,
                 _ => {}
             }
-            if self.is_unknown_like_union(t) {
+            if let TypeData::Union(parts) = td
+                && self.is_unknown_like_union(parts)
+            {
                 return true;
             }
         }
@@ -873,8 +1172,8 @@ impl<'p> Checker<'p> {
                     elems,
                     flags,
                     readonly,
-                } if self.is_generic_tuple_type(t) => {
-                    let simpler: Vec<TypeId> =
+                } if flags.iter().any(|f| f.contains(ElemFlags::VARIADIC)) => {
+                    let simpler: SmallVec<[TypeId; 8]> =
                         elems.iter().map(|&e| self.simplified(e, writing)).collect();
                     if simpler[..] == elems[..] {
                         t
@@ -883,7 +1182,8 @@ impl<'p> Checker<'p> {
                     }
                 }
                 TypeData::LazyAlias { .. } | TypeData::NoInfer(_) => self.force(t),
-                _ => self.with_freshness(t, false),
+                data if is_fresh_literal_kind(data) => self.with_freshness(t, false),
+                _ => return t,
             };
             if n == t {
                 return t;
@@ -1220,9 +1520,9 @@ impl<'p> Checker<'p> {
             }
             // `noConstraintType`, `circularConstraintType`: none. A union has none if some member has none, an intersection if no
             // member has one.
-            _ if self.is_union_or_intersection(t)
-                || self.is_deferred(t)
-                || self.is_generic_tuple_type(t) =>
+            data if is_union_or_intersection_kind(data)
+                || is_instantiable_kind(data)
+                || is_generic_tuple_kind(data) =>
             {
                 Some(if nested {
                     self.next_base_constraint(t)
@@ -2006,6 +2306,14 @@ impl<'p> Checker<'p> {
         }
     }
 
+    /// `variances_of`, as a list.
+    fn variances_list(&mut self, sym: Sym) -> List<'p, u8> {
+        match self.p.variances.get_ref(&sym) {
+            Some(known) => List::Kept(known),
+            None => List::Own(self.variances_of(sym).to_vec()),
+        }
+    }
+
     /// `hasCovariantVoidArgument`
     pub(super) fn has_covariant_void_argument(&self, args: &[TypeId], variances: &[u8]) -> bool {
         variances
@@ -2039,8 +2347,10 @@ impl<'p> Checker<'p> {
         if original_source == original_target {
             return Ternary::TRUE;
         }
-        let (original_source, original_target) =
-            (self.force(original_source), self.force(original_target));
+        let ((original_source, original_sd), (original_target, original_td)) = (
+            self.forced_as(original_source),
+            self.forced_as(original_target),
+        );
         let relation = r.relation;
         // `getPermissiveInstantiation` is called with `top_source` and `top_target`. Any other type is a part of one of them, where a
         // template literal type is instantiated too.
@@ -2051,16 +2361,28 @@ impl<'p> Checker<'p> {
         {
             return Ternary::TRUE;
         }
-        if self.is_object_type(original_source) && self.has_primitive_flag(original_target) {
+        if is_object_kind(original_sd) && self.has_primitive_flag_as(original_target, original_td) {
             return Ternary::of(
                 relation == Relation::Comparable
                     && original_target != TypeId::NEVER
-                    && self.is_simple_type_related_to(original_target, original_source, relation)
-                    || self.is_simple_type_related_to(original_source, original_target, relation),
+                    && self.is_simple_type_related_to(
+                        original_target,
+                        original_td,
+                        original_source,
+                        original_sd,
+                        relation,
+                    )
+                    || self.is_simple_type_related_to(
+                        original_source,
+                        original_sd,
+                        original_target,
+                        original_td,
+                        relation,
+                    ),
             );
         }
-        let source = self.normalized(original_source, false);
-        let mut target = self.normalized(original_target, true);
+        let (source, sd) = self.normalized_as(original_source, original_sd, false);
+        let (mut target, mut td) = self.normalized_as(original_target, original_td, true);
         if source == target {
             return Ternary::TRUE;
         }
@@ -2075,54 +2397,52 @@ impl<'p> Checker<'p> {
         }
         // A type parameter against exactly what it extends: very common.
         if relation != Relation::Restrictive
-            && self.is_type_param(source)
+            && is_type_param_kind(sd)
             && self.constraint_of_type_param(source) == Some(target)
         {
             return Ternary::TRUE;
         }
         // Something that is never null or undefined against `X | null | undefined`: against `X`.
-        if self.is_definitely_non_nullable(source)
-            && let TypeData::Union(types) = self.data(target)
+        if let TypeData::Union(types) = td
+            && matches!(types.len(), 2 | 3)
+            && self.is_definitely_non_nullable_as(source, sd)
         {
             // There `undefined` and `null` come first in a union. Here `void` comes before them.
             let mut others = types
                 .iter()
                 .copied()
                 .filter(|t| !t.is_null() && !t.is_undefined());
-            let candidate = match (types.len(), others.next(), others.next()) {
-                (2 | 3, Some(only), None) => Some(only),
-                _ => None,
-            };
-            if let Some(candidate) = candidate {
+            if let (Some(candidate), None) = (others.next(), others.next()) {
                 target = self.normalized(candidate, true);
                 if source == target {
                     return Ternary::TRUE;
                 }
+                td = self.data(target);
             }
         }
         if relation == Relation::Comparable
             && target != TypeId::NEVER
-            && self.is_simple_type_related_to(target, source, relation)
-            || self.is_simple_type_related_to(source, target, relation)
+            && self.is_simple_type_related_to(target, td, source, sd, relation)
+            || self.is_simple_type_related_to(source, sd, target, td, relation)
         {
             return Ternary::TRUE;
         }
-        if self.is_structured_or_instantiable(source) || self.is_structured_or_instantiable(target)
-        {
+        let source_is_structured_or_instantiable = is_structured_or_instantiable_kind(sd);
+        if source_is_structured_or_instantiable || is_structured_or_instantiable_kind(td) {
             if state & (STATE_TARGET | STATE_REGULAR) == 0
-                && self.is_object_literal_type(source)
+                && is_object_literal_kind(sd)
                 && self.has_excess_properties(r, source, target).is_some()
             {
                 return Ternary::FALSE;
             }
-            let is_performing_common_property_checks = (relation != Relation::Comparable
-                || self.is_unit(source))
-                && state & STATE_TARGET == 0
-                && (self.has_primitive_flag(source)
-                    || self.is_object_type(source)
-                    || self.is_intersection(source))
-                && self.is_global_ref(source, known::Object).is_none()
-                && (self.is_object_type(target) || self.is_intersection(target))
+            let is_performing_common_property_checks = state & STATE_TARGET == 0
+                && (is_object_kind(td) || matches!(td, TypeData::Intersection(_)))
+                && (is_object_kind(sd)
+                    || matches!(sd, TypeData::Intersection(_))
+                    || self.has_primitive_flag_as(source, sd))
+                && (relation != Relation::Comparable || self.is_unit(source))
+                && !(matches!(sd, TypeData::Ref { .. })
+                    && self.is_global_ref(source, known::Object).is_some())
                 && self.is_weak_type(target)
                 && {
                     let apparent = self.apparent_type(source);
@@ -2134,11 +2454,9 @@ impl<'p> Checker<'p> {
             if is_performing_common_property_checks && !self.has_common_properties(source, target) {
                 return Ternary::FALSE;
             }
-            let skip_caching = match (self.data(source), self.data(target)) {
+            let skip_caching = match (sd, td) {
                 (TypeData::Union(s), t) if s.len() < 4 && !matches!(t, TypeData::Union(_)) => true,
-                (_, TypeData::Union(t))
-                    if t.len() < 4 && !self.is_structured_or_instantiable(source) =>
-                {
+                (_, TypeData::Union(t)) if t.len() < 4 && !source_is_structured_or_instantiable => {
                     true
                 }
                 _ => false,
@@ -2230,9 +2548,10 @@ impl<'p> Checker<'p> {
         if !self.is_excess_property_check_target(target) {
             return None;
         }
+        let (sd, td) = (self.data(source), self.data(target));
         // `ObjectFlagsJSLiteral` on the target itself: without noImplicitAny a JS literal accepts any property.
         if matches!(
-            self.data(target),
+            td,
             TypeData::Anon {
                 origin: Origin::ObjectLiteral(..) | Origin::WidenedLiteral(..),
                 ..
@@ -2242,7 +2561,8 @@ impl<'p> Checker<'p> {
             return None;
         }
         // What takes anything takes any object literal, but not any attribute.
-        let is_jsx = matches!(self.data(source), TypeData::Synth(shape) if shape.literal == Literalness::JsxAttributes);
+        let is_jsx =
+            matches!(sd, TypeData::Synth(shape) if shape.literal == Literalness::JsxAttributes);
         if r.relation.is_lenient()
             && (self.contains_global_object_type(target)
                 || !is_jsx && self.is_empty_object_type(target))
@@ -2252,16 +2572,16 @@ impl<'p> Checker<'p> {
         // The type of an object literal checked under `CheckModeSkipContextSensitive` is fresh. It reaches the strict subtype relation
         // through `removeSubtypes`. `chooseOverload` compares its `getRegularTypeOfObjectLiteral`, under the other relations.
         let is_fresh_partial = r.relation == Relation::StrictSubtype
-            && matches!(self.data(source), TypeData::Synth(shape) if shape.literal == Literalness::Partial);
+            && matches!(sd, TypeData::Synth(shape) if shape.literal == Literalness::Partial);
         let mut reduced_target = target;
-        let is_union = self.is_union(target);
+        let is_union = matches!(td, TypeData::Union(_));
         if is_union {
             reduced_target = match self.find_matching_discriminant_type(r, source, target) {
                 Some(found) => found,
                 None => self.filter_primitives_if_contains_non_primitive(target),
             };
         }
-        let literal = match *self.data(source) {
+        let literal = match *sd {
             TypeData::Anon {
                 origin: Origin::ObjectLiteral(file, e),
                 ..
@@ -2304,7 +2624,7 @@ impl<'p> Checker<'p> {
             }
             if is_union {
                 let given = self.type_of_prop(prop, sm.mapper);
-                let wanted: Vec<TypeId> = self
+                let wanted: SmallVec<[TypeId; 8]> = self
                     .parts(reduced_target)
                     .iter()
                     .map(|&t| self.type_of_property_in_type(t, prop.name))
@@ -2332,8 +2652,7 @@ impl<'p> Checker<'p> {
             return TypeId::UNDEFINED;
         };
         if let Some(prop) = members.resolved.prop(name) {
-            let prop = prop.clone();
-            return self.type_of_prop_with_missing(&prop, members.mapper);
+            return self.type_of_prop_with_missing(prop, members.mapper);
         }
         self.applicable_index_info_for_name(&members, name)
             .unwrap_or(TypeId::UNDEFINED)
@@ -2368,7 +2687,7 @@ impl<'p> Checker<'p> {
                 .all(|&p| self.is_excess_property_check_target(p)),
             // `ObjectFlagsObjectLiteralPatternWithComputedProperties`: there is no telling what else it takes.
             TypeData::Synth(shape) => shape.literal != Literalness::PatternWithComputedNames,
-            _ => t == TypeId::OBJECT || self.is_object_type(t),
+            data => t == TypeId::OBJECT || is_object_kind(data),
         }
     }
 
@@ -2379,8 +2698,8 @@ impl<'p> Checker<'p> {
                 self.is_excess_property_check_target(t)
                     && parts.iter().any(|&p| self.is_known_property(p, name))
             }
-            _ => {
-                if !self.is_object_type(t) {
+            data => {
+                if !is_object_kind(data) {
                     return false;
                 }
                 let Some(members) = self.members(t) else {
@@ -2406,10 +2725,11 @@ impl<'p> Checker<'p> {
 
     /// `isWeakType`: properties, all of them optional, and nothing else.
     pub(super) fn is_weak_type(&mut self, t: TypeId) -> bool {
-        if let TypeData::Intersection(parts) = self.data(t) {
+        let data = self.data(t);
+        if let TypeData::Intersection(parts) = data {
             return parts.iter().all(|&p| self.is_weak_type(p));
         }
-        if !self.is_object_type(t) || self.is_generic_mapped_type(t) {
+        if !is_object_kind(data) || is_mapped_kind(data) && self.is_generic(t) {
             return false;
         }
         self.members(t).is_some_and(|m| {
@@ -2461,7 +2781,7 @@ impl<'p> Checker<'p> {
             return None;
         }
         let sm = self.members(source)?;
-        let telling: Vec<&Prop> = sm
+        let telling: SmallVec<[&Prop; 4]> = sm
             .shape()
             .props
             .iter()
@@ -2472,7 +2792,7 @@ impl<'p> Checker<'p> {
         }
         // `discriminateTypeByDiscriminableItems`
         let types = self.parts(target);
-        let mut include: Vec<Ternary> = types
+        let mut include: SmallVec<[Ternary; 16]> = types
             .iter()
             .map(|&t| Ternary::of(!self.has_primitive_flag(t) && self.reduced(t) != TypeId::NEVER))
             .collect();
@@ -2506,7 +2826,7 @@ impl<'p> Checker<'p> {
         if !include.contains(&Ternary::FALSE) {
             return None;
         }
-        let kept: Vec<TypeId> = types
+        let kept: SmallVec<[TypeId; 8]> = types
             .iter()
             .zip(&include)
             .filter(|(_, i)| **i == Ternary::TRUE)
@@ -2520,8 +2840,8 @@ impl<'p> Checker<'p> {
     fn property_or_index_signature_type(&mut self, t: TypeId, name: Atom) -> Option<TypeId> {
         let apparent = self.apparent_type(t);
         let members = self.members(apparent)?;
-        if let Some((prop, mapper)) = self.property_of_type(&members, name) {
-            return Some(self.type_of_prop_with_missing(&prop, mapper));
+        if let Some((prop, mapper)) = self.property_in(&members, name) {
+            return Some(self.type_of_prop_with_missing(prop, mapper));
         }
         // There may be nothing under the name.
         let value = self.applicable_index_info_for_name(&members, name)?;
@@ -2538,11 +2858,13 @@ impl<'p> Checker<'p> {
         target: TypeId,
         state: u8,
     ) -> Ternary {
-        if self.is_union(source) {
+        let (sd, td) = (self.data(source), self.data(target));
+        let target_is_union = matches!(td, TypeData::Union(_));
+        if matches!(sd, TypeData::Union(_)) {
             // `A & B` is related to `A`: the source was distributed from an intersection that contains the target. `named_unions` is
             // `target.alias != nil`.
-            if self.is_union(target)
-                && let Some(origin) = self.p.union_origins.get(&source)
+            if target_is_union
+                && let Some(origin) = self.p.union_origins.get_ref(&source)
                 && origin.contains(&target)
                 && self.p.named_unions.get(&target).is_some()
             {
@@ -2554,28 +2876,30 @@ impl<'p> Checker<'p> {
                 self.each_type_related_to_type(r, source, target, state)
             };
         }
-        if self.is_union(target) {
+        if target_is_union {
             // No longer fresh, it is an object literal still, which is what a subtype may leave optional properties out for, and the
             // attributes of a JSX element still, where a name with a hyphen is always known.
-            let is_jsx = matches!(self.data(source), TypeData::Synth(shape) if shape.literal == Literalness::JsxAttributes);
-            if (r.relation.is_subtype() || is_jsx) && self.is_object_literal_type(source) {
+            let is_jsx =
+                matches!(sd, TypeData::Synth(shape) if shape.literal == Literalness::JsxAttributes);
+            let is_object_literal = is_object_literal_kind(sd);
+            if (r.relation.is_subtype() || is_jsx) && is_object_literal {
                 return self.type_related_to_some_type(r, source, target, state | STATE_REGULAR);
             }
-            let regular = if self.is_object_literal_type(source) {
+            let regular = if is_object_literal {
                 self.regular_object(source)
             } else {
                 source
             };
             return self.type_related_to_some_type(r, regular, target, state);
         }
-        if self.is_intersection(target) {
+        if matches!(td, TypeData::Intersection(_)) {
             return self.type_related_to_each_type(r, source, target, STATE_TARGET);
         }
         // The source is an intersection. `T & 1` with `T extends 1 | 2` is not to seem comparable to `2`.
         let mut source = source;
-        if r.relation == Relation::Comparable && self.has_primitive_flag(target) {
+        if r.relation == Relation::Comparable && self.has_primitive_flag_as(target, td) {
             let types = self.parts_of_intersection(source);
-            let constraints: Vec<TypeId> = types
+            let constraints: SmallVec<[TypeId; 8]> = types
                 .iter()
                 .map(|&t| {
                     if self.is_instantiable(t) {
@@ -2616,6 +2940,16 @@ impl<'p> Checker<'p> {
         }
     }
 
+    /// `constituents`, and whether `t` is a union.
+    #[inline]
+    fn constituents_and_is_union(&self, t: TypeId) -> (&'p [TypeId], bool) {
+        match self.data(t) {
+            TypeData::Union(parts) => (parts, true),
+            TypeData::Intersection(parts) => (parts, false),
+            _ => (&[], false),
+        }
+    }
+
     /// `someTypeRelatedToType`
     fn some_type_related_to_type(
         &mut self,
@@ -2624,8 +2958,8 @@ impl<'p> Checker<'p> {
         target: TypeId,
         state: u8,
     ) -> Ternary {
-        let types = self.constituents(source);
-        if self.is_union(source) && types.binary_search(&target).is_ok() {
+        let (types, is_union) = self.constituents_and_is_union(source);
+        if is_union && types.binary_search(&target).is_ok() {
             return Ternary::TRUE;
         }
         for &t in types {
@@ -2647,10 +2981,9 @@ impl<'p> Checker<'p> {
     ) -> Ternary {
         let mut result = Ternary::TRUE;
         let sources = self.constituents(source);
-        let targets: &[TypeId] = if self.is_union(target) {
-            self.constituents(target)
-        } else {
-            &[]
+        let targets: &[TypeId] = match self.data(target) {
+            TypeData::Union(parts) => parts,
+            _ => &[],
         };
         // `getUndefinedStrippedTargetIfNeeded`: `undefined`, which optionality adds, would spoil the correspondence. Where it
         // stands in a union: members are in the order of their ids, and its kinds come one after the other.
@@ -2701,13 +3034,14 @@ impl<'p> Checker<'p> {
         target: TypeId,
         state: u8,
     ) -> Ternary {
-        let types = self.constituents(target);
-        if self.is_union(target) {
+        let (types, is_union) = self.constituents_and_is_union(target);
+        if is_union {
             if types.binary_search(&source).is_ok() {
                 return Ternary::TRUE;
             }
             // A literal is in a union of primitives, in one form or the other, or its primitive is; or it does not fit.
-            let is_such_a_literal = match self.data(source) {
+            let sd = self.data(source);
+            let is_such_a_literal = match sd {
                 TypeData::StringLit { .. }
                 | TypeData::BoolLit { .. }
                 | TypeData::BigIntLit { .. } => true,
@@ -2716,10 +3050,10 @@ impl<'p> Checker<'p> {
             };
             if r.relation != Relation::Comparable
                 && is_such_a_literal
-                && types.iter().all(|&t| self.is_primitive(t))
+                && types.iter().all(|&t| is_primitive_kind(self.data(t)))
             {
-                let alternate = self.with_freshness(source, !self.is_fresh_literal(source));
-                let primitive = match self.data(source) {
+                let alternate = self.with_freshness(source, !is_fresh_literal_kind(sd));
+                let primitive = match sd {
                     TypeData::StringLit { .. } => Some(TypeId::STRING),
                     TypeData::NumberLit { .. } => Some(TypeId::NUMBER),
                     TypeData::BigIntLit { .. } => Some(TypeId::BIGINT),
@@ -2790,10 +3124,12 @@ impl<'p> Checker<'p> {
     /// `isTypeReferenceWithGenericArguments`. A tuple is a reference to its tuple target. A marker does not count as a type
     /// parameter: the reliability flags cached with a comparison depend on its markers, so it must not share a key with a
     /// comparison that has type parameters in their place.
+    #[inline]
     fn is_type_reference_with_generic_arguments(&self, t: TypeId) -> bool {
-        if !self.has_type_variables(t) {
-            return false;
-        }
+        self.has_type_variables(t) && self.has_generic_arguments(t)
+    }
+
+    fn has_generic_arguments(&self, t: TypeId) -> bool {
         let args: &[TypeId] = match self.data(t) {
             TypeData::Ref { args, .. } => args,
             TypeData::Tuple { elems, .. } => elems,
@@ -2868,6 +3204,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `getRelationKey`. The second value is `constrained`: a constrained type parameter was written by id.
+    #[inline]
     pub(super) fn relation_key(
         &mut self,
         source: TypeId,
@@ -2890,6 +3227,17 @@ impl<'p> Checker<'p> {
         {
             return ((source, target, flags), false);
         }
+        self.generic_relation_key(source, target, flags, ignore_constraints)
+    }
+
+    /// `writeGenericTypeReferences`. `flags`: those of the key.
+    fn generic_relation_key(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        flags: u8,
+        ignore_constraints: bool,
+    ) -> (Key, bool) {
         let cycles_before = self.cycles;
         let mut key = GenericKeyBuilder {
             hasher: FxHasher::default(),
@@ -2945,7 +3293,8 @@ impl<'p> Checker<'p> {
             r.overflow = true;
             return Ternary::FALSE;
         }
-        if r.maybe_keys_set.contains(&key) {
+        // The key goes into the set here, and out again wherever the comparison is not begun after all.
+        if !r.maybe_keys_set.insert(key) {
             if self.retracing {
                 eprintln!(
                     "{:w$}assumed: {} to {}",
@@ -2960,7 +3309,8 @@ impl<'p> Checker<'p> {
         // `broadestEquivalentId`: the key the comparison would have if no type parameter had a constraint.
         if constrained {
             let (broadest, _) = self.relation_key(source, target, r.relation, state, true);
-            if r.maybe_keys_set.contains(&broadest) {
+            if broadest != key && r.maybe_keys_set.contains(&broadest) {
+                r.maybe_keys_set.remove(&key);
                 return Ternary::MAYBE;
             }
         }
@@ -2984,6 +3334,7 @@ impl<'p> Checker<'p> {
             || self.is_stack_low()
             || self.is_out_of_time()
         {
+            r.maybe_keys_set.remove(&key);
             r.overflow = true;
             return Ternary::FALSE;
         }
@@ -2991,11 +3342,11 @@ impl<'p> Checker<'p> {
         // What is found out from here on holds for others as long as the resolver does not run into itself meanwhile.
         let cycles_before = self.cycles;
         r.maybe_keys.push(key);
-        r.maybe_keys_set.insert(key);
         let save_expanding = r.expanding;
         if recursion & REC_SOURCE != 0 {
             r.source_stack.push(source);
             if r.expanding & REC_SOURCE == 0
+                && r.source_stack.len() >= 3
                 && self.is_deeply_nested_type(source, &r.source_stack, 3)
             {
                 r.expanding |= REC_SOURCE;
@@ -3004,6 +3355,7 @@ impl<'p> Checker<'p> {
         if recursion & REC_TARGET != 0 {
             r.target_stack.push(target);
             if r.expanding & REC_TARGET == 0
+                && r.target_stack.len() >= 3
                 && self.is_deeply_nested_type(target, &r.target_stack, 3)
             {
                 r.expanding |= REC_TARGET;
@@ -3096,14 +3448,15 @@ impl<'p> Checker<'p> {
             return false;
         }
         let t = self.mapped_target_with_symbol(t);
-        if let TypeData::Intersection(parts) = self.data(t)
+        let data = self.data(t);
+        if let TypeData::Intersection(parts) = data
             && parts
                 .iter()
                 .any(|&p| self.is_deeply_nested_type(p, stack, max_depth))
         {
             return true;
         }
-        let identity = self.recursion_identity(t);
+        let identity = self.recursion_identity_as(t, data);
         let mut count = 0;
         let mut last = TypeId(0);
         for &on_stack in stack {
@@ -3122,7 +3475,16 @@ impl<'p> Checker<'p> {
 
     /// `getMappedTargetWithSymbol`: what a homomorphic mapped type is applied to, through as many of them as there are, as long as
     /// that is something declared. `Id<{ x: .. }>` is then told apart by the type literal it is applied to.
-    fn mapped_target_with_symbol(&mut self, mut t: TypeId) -> TypeId {
+    #[inline]
+    fn mapped_target_with_symbol(&mut self, t: TypeId) -> TypeId {
+        if is_mapped_kind(self.data(t)) {
+            self.target_with_symbol_of_mapped(t)
+        } else {
+            t
+        }
+    }
+
+    fn target_with_symbol_of_mapped(&mut self, mut t: TypeId) -> TypeId {
         let has_symbol = |c: &Self, ty: TypeId| {
             matches!(
                 c.data(ty),
@@ -3165,40 +3527,43 @@ impl<'p> Checker<'p> {
             TypeData::Intersection(parts) => parts
                 .iter()
                 .any(|&p| self.has_matching_recursion_identity(p, identity)),
-            _ => self.recursion_identity(t) == identity,
+            data => self.recursion_identity_as(t, data) == identity,
         }
     }
 
     /// The type of an array literal with object literals in it, as it stands or widened. What is in an object literal is worked
     /// out when it is asked for here, and beforehand there, where `isDeeplyNestedType` therefore never takes the list inside for
-    /// newer than the one around it.
-    fn holds_object_literals(&self, t: TypeId) -> bool {
-        let inside: &[TypeId] = match self.data(t) {
+    /// newer than the one around it. `data`: what `t` is.
+    fn holds_object_literals(&self, t: TypeId, data: &TypeData) -> bool {
+        let inside: &[TypeId] = match data {
             TypeData::Tuple { elems, .. } => elems,
-            TypeData::Ref { args, .. } => args,
+            TypeData::Ref { args, .. } if !args.is_empty() && self.is_array(t) => args,
             _ => return false,
         };
         inside.iter().any(|&e| {
-            self.some_type(e, |c, m| {
-                c.is_object_literal_type(m)
-                    || matches!(
-                        c.data(m),
-                        TypeData::Anon {
-                            origin: Origin::WidenedLiteral(..),
-                            ..
-                        }
-                    )
+            self.some_type(e, |c, m| match c.data(m) {
+                TypeData::Anon {
+                    origin: Origin::ObjectLiteral(..) | Origin::WidenedLiteral(..),
+                    ..
+                } => true,
+                TypeData::Synth(shape) => shape.literal.is_of_expression(),
+                _ => false,
             })
-        }) && self.is_array_or_tuple(t)
+        })
     }
 
     /// `getRecursionIdentity`
     pub(super) fn recursion_identity(&self, t: TypeId) -> RecursionId {
-        match self.data(t) {
+        self.recursion_identity_as(t, self.data(t))
+    }
+
+    /// `data`: what `t` is.
+    fn recursion_identity_as(&self, t: TypeId, data: &TypeData) -> RecursionId {
+        match data {
             // Written out as a type, or the type of an array literal: not made by instantiation (`ObjectFlagsFromTypeNode`,
             // `isObjectOrArrayLiteralType`).
             TypeData::Ref { .. } | TypeData::Tuple { .. }
-                if self.p.types.is_manifest(t) || self.holds_object_literals(t) =>
+                if self.p.types.is_manifest(t) || self.holds_object_literals(t, data) =>
             {
                 (0, t.0, 0)
             }
@@ -3251,21 +3616,23 @@ impl<'p> Checker<'p> {
         if r.relation == Relation::Identity {
             return result;
         }
+        let (sd, td) = (self.data(source), self.data(target));
+        let source_is_intersection = matches!(sd, TypeData::Intersection(_));
+        let target_is_union = matches!(td, TypeData::Union(_));
         // The constraint of an intersection is the intersection of the constraints of its parts, and may come to something
         // that none of them does: `T & U`, each extending `string | number`; `V & number`. The type parameters of a restrictive
         // instantiation extend nothing.
         if !result.holds()
             && r.relation != Relation::Restrictive
-            && (self.is_intersection(source) || self.is_type_param(source) && self.is_union(target))
+            && (source_is_intersection || is_type_param_kind(sd) && target_is_union)
         {
             let one = [source];
-            let types: &[TypeId] = if self.is_intersection(source) {
-                self.constituents(source)
-            } else {
-                &one
+            let types: &[TypeId] = match sd {
+                TypeData::Intersection(parts) => parts,
+                _ => &one,
             };
             if let Some(constraint) =
-                self.effective_constraint_of_intersection(types, self.is_union(target))
+                self.effective_constraint_of_intersection(types, target_is_union)
                 && self.every_type(constraint, |_, c| c != source)
             {
                 result = self.is_related_to_ex(r, constraint, target, REC_SOURCE, state);
@@ -3273,9 +3640,9 @@ impl<'p> Checker<'p> {
         }
         if result.holds()
             && state & STATE_TARGET == 0
-            && self.is_intersection(target)
+            && matches!(td, TypeData::Intersection(_))
             && !self.is_generic_object_type(target)
-            && (self.is_object_type(source) || self.is_intersection(source))
+            && (is_object_kind(sd) || source_is_intersection)
         {
             // Part by part, nothing sees what is too much, or too little, further in. What is in a literal that is no longer fresh
             // is not fresh either (`getRegularTypeOfObjectLiteral`).
@@ -3285,8 +3652,9 @@ impl<'p> Checker<'p> {
                 result &= self.index_signatures_related_to(r, source, target, false, STATE_NONE);
             }
         } else if result.holds()
-            && self.is_object_type(target)
-            && !self.is_generic_mapped_type(target)
+            && is_object_kind(td)
+            && !(is_mapped_kind(td) && self.is_generic(target))
+            && source_is_intersection
             && !self.is_array_or_tuple(target)
             && self.is_source_intersection_needing_extra_check(source, target)
         {
@@ -3402,8 +3770,9 @@ impl<'p> Checker<'p> {
     ) -> Ternary {
         let relation = r.relation;
         let mut variance_check_failed = false;
+        let (sd, td) = (self.data(source), self.data(target));
         if relation == Relation::Identity {
-            match (self.data(source), self.data(target)) {
+            match (sd, td) {
                 (TypeData::Union(_), _) | (TypeData::Intersection(_), _) => {
                     let mut result = self.each_type_related_to_some_type(r, source, target);
                     if result.holds() {
@@ -3481,10 +3850,10 @@ impl<'p> Checker<'p> {
                 }
                 _ => {}
             }
-            if !self.is_object_type(source) {
+            if !is_object_kind(sd) {
                 return Ternary::FALSE;
             }
-        } else if self.is_union_or_intersection(source) || self.is_union_or_intersection(target) {
+        } else if is_union_or_intersection_kind(sd) || is_union_or_intersection_kind(td) {
             let result = self.union_or_intersection_related_to(r, source, target, state);
             if result.holds() {
                 return result;
@@ -3492,18 +3861,17 @@ impl<'p> Checker<'p> {
             // Taking them apart in order does not cover: a source that waits for type parameters; an object against a union
             // (`{ a, b: boolean }` and `{ a, b: true } | { a, b: false }`); an intersection against an object, a union, or
             // something that waits.
-            if !(self.is_instantiable(source)
-                || self.is_object_type(source) && self.is_union(target)
-                || self.is_intersection(source)
-                    && (self.is_object_type(target)
-                        || self.is_union(target)
-                        || self.is_instantiable(target)))
+            let target_is_union = matches!(td, TypeData::Union(_));
+            if !(is_instantiable_kind(sd)
+                || is_object_kind(sd) && target_is_union
+                || matches!(sd, TypeData::Intersection(_))
+                    && (is_object_kind(td) || target_is_union || is_instantiable_kind(td)))
             {
                 return Ternary::FALSE;
             }
         }
         // Two instantiations of one generic alias: go by how it varies with its type parameters.
-        let same_body = match (self.data(source), self.data(target)) {
+        let same_body = match (sd, td) {
             (TypeData::Anon { origin: s, .. }, TypeData::Anon { origin: t, .. }) => s == t,
             (TypeData::Fns { decls: s, .. }, TypeData::Fns { decls: t, .. }) => s == t,
             (
@@ -3524,7 +3892,7 @@ impl<'p> Checker<'p> {
                 !self.are_marker_arguments(alias, &params, &source_args) && !self.are_marker_arguments(alias, &params, &target_args)
             })
         {
-            let variances = self.variances_of(alias);
+            let variances = self.variances_list(alias);
             // Being measured.
             if variances.is_empty() {
                 return Ternary::UNKNOWN;
@@ -3545,7 +3913,7 @@ impl<'p> Checker<'p> {
             elems,
             flags,
             readonly,
-        } = self.data(source)
+        } = sd
             && elems.len() == 1
             && flags[0].contains(ElemFlags::VARIADIC)
             && !*readonly
@@ -3559,7 +3927,7 @@ impl<'p> Checker<'p> {
             elems,
             flags,
             readonly,
-        } = self.data(target)
+        } = td
             && elems.len() == 1
             && flags[0].contains(ElemFlags::VARIADIC)
             && (*readonly || {
@@ -3574,10 +3942,10 @@ impl<'p> Checker<'p> {
         }
 
         // ── by what the target is ──
-        match *self.data(target) {
+        match *td {
             TypeData::TypeParam(..) | TypeData::ThisParam(_) | TypeData::Marker(_) => {
                 // `{ [P in Q]: X }` fits `T` if `keyof T` fits `Q` and `X` fits `T[Q]`.
-                if self.mapped_origin(source).is_some() && self.mapped_name_type(source).is_none() {
+                if is_mapped_kind(sd) && self.mapped_name_type(source).is_none() {
                     let (keys, covered) = (self.keyof(target), self.mapped_keys(source));
                     if self.is_related_to(r, keys, covered, REC_BOTH).holds()
                         && self.mapped_optional_modifier(source) != MappedModifier::Add
@@ -3753,7 +4121,10 @@ impl<'p> Checker<'p> {
                     return Ternary::TRUE;
                 }
             }
-            _ if relation != Relation::Identity && self.is_generic_mapped_type(target) => {
+            _ if relation != Relation::Identity
+                && is_mapped_kind(td)
+                && self.is_generic(target) =>
+            {
                 // `S` against `{ [P in Q]: T }` or `{ [P in Q as R]: T }`.
                 let name_type = self.mapped_name_type(target);
                 let keys_remapped = name_type.is_some();
@@ -3826,7 +4197,7 @@ impl<'p> Checker<'p> {
         }
 
         // ── by what the source is ──
-        match *self.data(source) {
+        match *sd {
             TypeData::TypeParam(..)
             | TypeData::ThisParam(_)
             | TypeData::Marker(_)
@@ -4013,15 +4384,17 @@ impl<'p> Checker<'p> {
         variance_check_failed: &mut bool,
     ) -> Ternary {
         let relation = r.relation;
+        let td = self.data(target);
+        let target_is_mapped = is_mapped_kind(td);
         // Nothing fits what asks for nothing in particular.
         if !relation.is_subtype()
-            && self.mapped_origin(target).is_some()
+            && target_is_mapped
             && self.mapped_optional_modifier(target) == MappedModifier::Add
             && self.is_empty_object_type(source)
         {
             return Ternary::TRUE;
         }
-        if self.is_generic_mapped_type(target) {
+        if target_is_mapped && self.is_generic(target) {
             if self.is_generic_mapped_type(source) {
                 let result = self.mapped_type_related_to(r, source, target);
                 if result.holds() {
@@ -4039,13 +4412,14 @@ impl<'p> Checker<'p> {
         } else if self.is_generic_mapped_type(source) {
             return Ternary::FALSE;
         }
-        match (self.data(source), self.data(target)) {
+        let sd = self.data(source);
+        match (sd, td) {
             (TypeData::Ref { target: st, args: sa }, TypeData::Ref { target: tt, args: ta })
                 // With a wildcard for every type parameter there are no marker types left.
                 if st == tt && (relation == Relation::Permissive || !self.is_marker_type(source) && !self.is_marker_type(target)) =>
             {
                 // Two instantiations of one generic type: go by how it varies with its type parameters.
-                let variances = self.variances_of(*st);
+                let variances = self.variances_list(*st);
                 // Being measured. So only occurrences that are not inside instantiations of the type itself count.
                 if variances.is_empty() {
                     return Ternary::UNKNOWN;
@@ -4054,7 +4428,7 @@ impl<'p> Checker<'p> {
                     return result;
                 }
             }
-            _ if self.is_array(target)
+            (_, TypeData::Ref { .. }) if self.is_array(target)
                 && (self.is_global_ref(target, known::ReadonlyArray).is_some() && self.every_type(source, |c, m| c.is_array_or_tuple(m))
                     || self.every_type(source, |c, m| matches!(c.data(m), TypeData::Tuple { readonly: false, .. }))) =>
             {
@@ -4064,7 +4438,7 @@ impl<'p> Checker<'p> {
                 }
                 return Ternary::FALSE;
             }
-            (TypeData::Tuple { .. }, TypeData::Tuple { .. }) if self.is_generic_tuple_type(source) && !self.is_generic_tuple_type(target) => {
+            (TypeData::Tuple { .. }, TypeData::Tuple { .. }) if is_generic_tuple_kind(sd) && !is_generic_tuple_kind(td) => {
                 let constraint = self.base_constraint_or_type(source);
                 if constraint != source {
                     return self.is_related_to(r, constraint, target, REC_SOURCE);
@@ -4076,9 +4450,9 @@ impl<'p> Checker<'p> {
             _ => {}
         }
         // Whatever unions, intersections and type arguments said, what is in them may do. An intersection counts as one object.
-        if (self.is_object_type(source) || self.is_intersection(source))
-            && self.is_object_type(target)
-        {
+        let source_is_object_or_intersection =
+            is_object_kind(sd) || matches!(sd, TypeData::Intersection(_));
+        if source_is_object_or_intersection && is_object_kind(td) {
             let mut result = self.properties_related_to(r, source, target, &[], false, state);
             if result.holds() {
                 result &= self.signatures_related_to(r, source, target, false, state);
@@ -4107,7 +4481,7 @@ impl<'p> Checker<'p> {
             }
         }
         // An object fits a union told apart by some properties if every way it can be is some member's.
-        if (self.is_object_type(source) || self.is_intersection(source)) && self.is_union(target) {
+        if source_is_object_or_intersection && matches!(td, TypeData::Union(_)) {
             let object_only =
                 self.filter(target, |c, m| c.is_object_type(m) || c.is_intersection(m));
             if self.is_union(object_only) {
@@ -4245,10 +4619,10 @@ impl<'p> Checker<'p> {
                 let Some(members) = self.members(apparent) else {
                     break;
                 };
-                if let Some((prop, mapper)) = self.property_of_type(&members, name) {
+                if let Some((prop, mapper)) = self.property_in(&members, name) {
                     is_property = true;
                     // `getWriteTypeOfSymbol`
-                    let ty = self.write_type_of_prop(&prop, mapper);
+                    let ty = self.write_type_of_prop(prop, mapper);
                     let takes_undefined = prop.flags.contains(PropFlags::OPTIONAL)
                         && !self.p.files.options.exact_optional_property_types;
                     of_each.push(if takes_undefined {
@@ -4498,7 +4872,7 @@ impl<'p> Checker<'p> {
                     let alternatives = self.parts(*ty);
                     let chosen = alternatives[n % alternatives.len()];
                     n /= alternatives.len();
-                    let Some((target_prop, target_mapper)) = self.property_of_type(&tm, prop.name)
+                    let Some((target_prop, target_mapper)) = self.property_in(&tm, prop.name)
                     else {
                         continue 'members;
                     };
@@ -4507,7 +4881,7 @@ impl<'p> Checker<'p> {
                             r,
                             prop,
                             chosen,
-                            &target_prop,
+                            target_prop,
                             target_mapper,
                             STATE_NONE,
                             skip_optional,
@@ -4563,11 +4937,12 @@ impl<'p> Checker<'p> {
             return self.properties_identical_to(r, source, target, excluded);
         }
         let mut result = Ternary::TRUE;
+        let td = self.data(target);
         if let TypeData::Tuple {
             elems: target_elems,
             flags: target_flags,
             readonly: target_readonly,
-        } = self.data(target)
+        } = td
         {
             let variable = ElemFlags::REST | ElemFlags::VARIADIC;
             let target_has_rest_element = target_flags.iter().any(|f| f.intersects(variable));
@@ -4698,19 +5073,20 @@ impl<'p> Checker<'p> {
         let require_optional_properties = r.relation.is_subtype()
             && !self.is_object_literal_type(source)
             && !self.is_tuple(source);
+        let mut inherited = self.inherited_of(sm.shape());
         // `getUnmatchedProperty`
         for tp in &tm.shape().props {
-            // `isStaticPrivateIdentifierProperty`
-            if self.is_static_private_name(tp) {
+            if !(require_optional_properties || !tp.flags.contains(PropFlags::OPTIONAL))
+                // `isStaticPrivateIdentifierProperty`
+                || self.is_static_private_name(tp)
+            {
                 continue;
             }
-            if (require_optional_properties || !tp.flags.contains(PropFlags::OPTIONAL))
-                && self.property_of_type(&sm, tp.name).is_none()
-            {
+            if self.property_among(&sm, &mut inherited, tp.name).is_none() {
                 return Ternary::FALSE;
             }
         }
-        if self.is_object_literal_type(target) {
+        if is_object_literal_kind(td) {
             for sp in &sm.shape().props {
                 if !excluded.contains(&sp.name) && tm.resolved.prop(sp.name).is_none() {
                     return Ternary::FALSE;
@@ -4719,7 +5095,7 @@ impl<'p> Checker<'p> {
         }
         // `SymbolFlagsPrototype`: what a class makes is seen to by its construct signatures.
         let target_is_class = matches!(
-            self.data(target),
+            td,
             TypeData::Anon {
                 origin: Origin::ClassStatic(_),
                 ..
@@ -4732,16 +5108,17 @@ impl<'p> Checker<'p> {
             {
                 continue;
             }
-            let Some((sp, source_mapper)) = self.property_of_type(&sm, tp.name) else {
+            let Some((sp, source_mapper)) = self.property_among(&sm, &mut inherited, tp.name)
+            else {
                 continue;
             };
-            if sp.source == tp.source && sp.mapper == tp.mapper && source_mapper == tm.mapper {
+            if source_mapper == tm.mapper && sp.mapper == tp.mapper && sp.source == tp.source {
                 continue;
             }
-            let given = self.type_of_prop_as_read(&sp, source_mapper);
+            let given = self.type_of_prop_as_read(sp, source_mapper);
             let related = self.property_related_to(
                 r,
-                &sp,
+                sp,
                 given,
                 tp,
                 tm.mapper,
@@ -4992,12 +5369,13 @@ impl<'p> Checker<'p> {
         construct: bool,
         state: u8,
     ) -> Ternary {
+        let (sd, td) = (self.data(source), self.data(target));
         // With respect to signatures, `anyFunctionType` is a subtype of every other function type.
         if r.relation != Relation::Identity {
-            if self.is_any_function_type(source) {
+            if matches!(sd, TypeData::Synth(shape) if Self::is_any_function_shape(shape)) {
                 return Ternary::TRUE;
             }
-            if self.is_any_function_type(target) {
+            if matches!(td, TypeData::Synth(shape) if Self::is_any_function_shape(shape)) {
                 return Ternary::FALSE;
             }
         }
@@ -5018,17 +5396,28 @@ impl<'p> Checker<'p> {
             return Ternary::TRUE;
         }
         // Whatever can be called is a `Function`.
-        let list = |c: &mut Self, m: &Members| -> Vec<SigId> {
-            let sigs = if construct {
-                &m.shape().construct
-            } else {
-                &m.shape().call
+        let list =
+            |c: &mut Self, ty: TypeId, data: &TypeData, m: &Members<'p>| -> List<'p, SigId> {
+                let sigs: &'p [SigId] = if construct {
+                    &m.shape().construct
+                } else {
+                    &m.shape().call
+                };
+                match sigs {
+                    _ if sigs.is_empty() || m.mapper == MapperId::IDENTITY => List::Kept(sigs),
+                    // An object type other than a mapped one is its own reduced apparent type.
+                    _ if is_object_kind(data) && !is_mapped_kind(data) => {
+                        c.signatures(ty, construct)
+                    }
+                    [only] => List::One(c.instantiate_sig(*only, m.mapper)),
+                    _ => List::Own(
+                        sigs.iter()
+                            .map(|&s| c.instantiate_sig(s, m.mapper))
+                            .collect(),
+                    ),
+                }
             };
-            sigs.iter()
-                .map(|&s| c.instantiate_sig(s, m.mapper))
-                .collect()
-        };
-        let (source_sigs, target_sigs) = (list(self, &sm), list(self, &tm));
+        let (source_sigs, target_sigs) = (list(self, source, sd, &sm), list(self, target, td, &tm));
         if r.relation == Relation::Identity {
             let mut result = Ternary::TRUE;
             for (&s, &t) in source_sigs.iter().zip(&target_sigs) {
@@ -5064,7 +5453,7 @@ impl<'p> Checker<'p> {
         // `ObjectFlagsInstantiated`: not the type as it is declared.
         let is_instantiated =
             |c: &Self, mapper: MapperId| c.p.types.mapping(mapper).iter().any(|p| p.0 != p.1);
-        let same_origin = match (self.data(source), self.data(target)) {
+        let same_origin = match (sd, td) {
             (
                 TypeData::Anon {
                     origin: a,
@@ -5150,7 +5539,7 @@ impl<'p> Checker<'p> {
         if params.is_empty() {
             return sig;
         }
-        let anys = vec![TypeId::ANY; params.len()];
+        let anys: SmallVec<[TypeId; 8]> = SmallVec::from_elem(TypeId::ANY, params.len());
         self.with_own_type_params(sig, &params, &anys)
     }
 
@@ -5238,18 +5627,39 @@ impl<'p> Checker<'p> {
 
     /// `isInstantiatedGenericParameter`
     pub(super) fn is_instantiated_generic_parameter(&mut self, sig: SigId, index: usize) -> bool {
-        // `cloneSignature` keeps the target.
-        let sig = self.p.types.sig_origin(sig);
-        let Some((file, func, _)) = self.sig_decl(sig) else {
+        self.is_instantiated_generic_parameter_of(&mut None, sig, index)
+    }
+
+    /// `target`: `Signature.target` of `sig`, once it has been asked for.
+    fn is_instantiated_generic_parameter_of(
+        &mut self,
+        target: &mut Option<Option<SigId>>,
+        sig: SigId,
+        index: usize,
+    ) -> bool {
+        let declared = match *target {
+            Some(known) => known,
+            None => {
+                let found = self.sig_instantiated_from(sig);
+                *target = Some(found);
+                found
+            }
+        };
+        let Some(declared) = declared else {
             return false;
         };
-        let declared = self.sig_of_fn(file, func);
-        if declared == sig {
-            return false;
-        }
         let params = self.sig_params(declared);
         self.param_type_at(&params, index)
             .is_some_and(|ty| self.is_generic(ty))
+    }
+
+    /// The signature as declared that `sig` is an instantiation of.
+    fn sig_instantiated_from(&mut self, sig: SigId) -> Option<SigId> {
+        // `cloneSignature` keeps the target.
+        let sig = self.p.types.sig_origin(sig);
+        let (file, func, _) = self.sig_decl(sig)?;
+        let declared = self.sig_of_fn(file, func);
+        (declared != sig).then_some(declared)
     }
 
     /// The tuple a rest parameter is declared as, if it is one.
@@ -5304,7 +5714,10 @@ impl<'p> Checker<'p> {
         let mut count = count.unwrap_or_else(|| Self::min_args(params));
         // What takes `void` last can go without.
         while count > 0 {
-            let ty = self.param_type_at(params, count - 1).unwrap_or(TypeId::ANY);
+            let ty = match params.get(count - 1) {
+                Some(param) if !param.rest => param.ty,
+                _ => self.param_type_at(params, count - 1).unwrap_or(TypeId::ANY),
+            };
             if !self.some_type(ty, |_, m| m == TypeId::VOID) {
                 break;
             }
@@ -5441,6 +5854,7 @@ impl<'p> Checker<'p> {
         } else {
             None
         };
+        let mut given_from = (None, None);
         for i in 0..param_count {
             let (source_type, target_type) = if Some(i) == rest_index {
                 (
@@ -5461,8 +5875,8 @@ impl<'p> Checker<'p> {
             // keeps `Promise<T>` covariant and not bivariant.
             let mut callbacks = None;
             if check_mode & CALLBACK == 0
-                && !self.is_instantiated_generic_parameter(as_given.0, i)
-                && !self.is_instantiated_generic_parameter(as_given.1, i)
+                && !self.is_instantiated_generic_parameter_of(&mut given_from.0, as_given.0, i)
+                && !self.is_instantiated_generic_parameter_of(&mut given_from.1, as_given.1, i)
             {
                 let nullish = |c: &Self, ty: TypeId| {
                     (
@@ -5821,9 +6235,8 @@ impl<'p> Checker<'p> {
             return ty;
         }
         let looks: Vec<TypeId> = parts
-            .to_vec()
-            .into_iter()
-            .map(|p| {
+            .iter()
+            .map(|&p| {
                 if self.is_deferred(p) {
                     self.apparent_type(p)
                 } else {

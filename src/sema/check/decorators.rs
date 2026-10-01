@@ -747,7 +747,7 @@ impl<'p> Checker<'p> {
             DecoratorOwner::Member(m) if hir[m].kind == MemberKind::Property => 1240,
             DecoratorOwner::Member(_) => 1241,
         };
-        let sigs = self.reorder_candidates(&sigs);
+        let sigs = self.candidates_in_order(&sigs);
         let lists: Vec<List<'p, SigParam>> = sigs.iter().map(|&s| self.sig_params(s)).collect();
         // `isPotentiallyUncalledDecorator`, which goes by the parameters as declared: one that takes `void` is required.
         if !sigs.is_empty()

@@ -50,12 +50,12 @@ impl Checker<'_> {
             c.files().resolve_name(file, scope, name, meaning).is_none()
         };
         let intrinsic_elements = self.jsx_type(file, known::IntrinsicElements);
-        let mut elements: Vec<ExprId> = (0..hir.exprs.len() as u32)
-            .map(ExprId)
-            .filter(|e| {
-                matches!(hir[*e].kind, ExprKind::Jsx(_))
-                    && !matches!(bound.expr_parent[e.idx()], Parent::None)
-            })
+        let mut elements: Vec<ExprId> = self
+            .exprs_by_kind(file)
+            .of(ExprTag::Jsx)
+            .iter()
+            .copied()
+            .filter(|e| !matches!(bound.expr_parent[e.idx()], Parent::None))
             .collect();
         elements.sort_unstable_by_key(|&e| hir[e].pos);
         // What is said once for the file is said of what is looked at first.

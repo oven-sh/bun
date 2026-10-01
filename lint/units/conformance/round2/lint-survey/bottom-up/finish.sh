@@ -86,7 +86,8 @@ bun "$here/crashes-md.ts" "$out/observed" "$work/raw.jsonl" "$here/class-c-cause
   sed -n '1p;4,/^$/p' "$out/observed/class-c-diagnostics.txt" | sed 's/^/  /'
   if [ -s "$out/observed/compare-release.txt" ]; then
     echo "The debug build against the release build of the same src/ (raw runs of round2/default-check-classification, $release):"
-    head -3 "$out/observed/compare-release.txt" | sed 's/^/  /'
+    head -2 "$out/observed/compare-release.txt" | sed 's/^/  /'
+    grep -A12 '^same class of run' "$out/observed/compare-release.txt" | grep '^  ' | head -12 | sed 's/^/  /'
     grep '^both printed diagnostics' "$out/observed/compare-release.txt" | sed 's/^/  /'
     echo
   fi

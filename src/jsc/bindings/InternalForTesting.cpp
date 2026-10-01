@@ -12,6 +12,7 @@
 #include <wtf/text/StringToIntegerConversion.h>
 #include <wtf/text/WTFString.h>
 #include <bun-uws/src/HttpRouter.h>
+#include <algorithm>
 #include <atomic>
 #include <memory>
 #include <string>
@@ -253,8 +254,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_spawnThreadsForTesting, (JSC::JSGlobalObject
 namespace {
 
 struct HttpRouterScriptData {
-    // uWS::HttpRouter adds its loop iterations to a member of this name.
-    uint64_t routerSteps = 0;
     uint64_t request = 0;
     std::string* trace = nullptr;
 };
@@ -273,12 +272,9 @@ std::vector<std::string_view> splitFields(std::string_view text, char separator)
     }
 }
 
-// A router that sorts its routes when a registration pass ends has sortRoutes().
-template<typename Router>
-void endRegistrationPass(Router& router)
+bool hasEmpty(const std::vector<std::string_view>& list)
 {
-    if constexpr (requires { router.sortRoutes(); })
-        router.sortRoutes();
+    return std::ranges::find(list, std::string_view()) != list.end();
 }
 
 bool parsePriority(std::string_view name, uint32_t& priority)
@@ -316,14 +312,17 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_httpRouterScript, (JSC::JSGlobalObject * glo
         if (line.empty())
             continue;
         auto fields = splitFields(line, ' ');
-        std::string_view command = fields[0];
+        // An empty field or method name is a typing error in the script: no command runs.
+        std::string_view command = hasEmpty(fields) ? std::string_view() : fields[0];
         uint32_t priority = 0;
+        std::vector<std::string_view> methods;
         std::optional<uint64_t> yieldPercent;
-        if (command == "add" && fields.size() == 5)
+        if (command == "add" && fields.size() == 5) {
+            methods = splitFields(fields[2], ',');
             yieldPercent = parseInteger<uint64_t>(StringView(std::span<const char>(fields[4].data(), fields[4].size())));
+        }
 
-        if (yieldPercent && parsePriority(fields[1], priority) && !fields[2].empty()) {
-            auto methods = splitFields(fields[2], ',');
+        if (yieldPercent && parsePriority(fields[1], priority) && !hasEmpty(methods)) {
             uint32_t id = nextHandler++;
             router->add(methods, fields[3], [id, yieldPercent = *yieldPercent](ScriptedHttpRouter* r) {
                 auto& data = r->getUserData();
@@ -347,11 +346,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_httpRouterScript, (JSC::JSGlobalObject * glo
             router->getUserData().request = requests++;
             bool matched = router->route(fields[1], fields[2]);
             output.append(matched ? "1" : "0").append(trace).append("\n");
-        } else if (command == "steps" && fields.size() == 1) {
-            output.append("s").append(std::to_string(router->getUserData().routerSteps)).append("\n");
-            router->getUserData().routerSteps = 0;
-        } else if (command == "sort" && fields.size() == 1) {
-            endRegistrationPass(*router);
         } else if (command == "reset" && fields.size() == 1) {
             router = std::make_unique<ScriptedHttpRouter>();
         } else {

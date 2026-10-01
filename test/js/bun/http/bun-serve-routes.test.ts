@@ -1114,8 +1114,6 @@ describe.concurrent("false route with no fetch handler", () => {
 //   add <H|M|L> <method,method,...> <pattern> <percent>   H, M, L is the priority: high, medium, low
 //   remove <H|M|L> <method> <pattern>                     prints r1 or r0
 //   route <method> <url>                                  prints 1 or 0, then " id(param,...)" for each handler that ran
-//   steps                                                 prints s and the loop iterations since the last steps line
-//   sort                                                  ends a registration pass
 //   reset                                                 a new router
 //
 // Handlers are numbered in the order they are added. The percent of an `add`
@@ -1123,6 +1121,22 @@ describe.concurrent("false route with no fetch handler", () => {
 // answers every request, 100 yields every request.
 describe("uWS::HttpRouter", () => {
   const run = (...lines: string[]) => httpRouterScript(lines.join("\n")).split("\n").slice(0, -1);
+
+  test.each([
+    "nonsense",
+    "route GET",
+    "remove GET /x",
+    "add X GET /x 0",
+    "add M GET /x",
+    "add M GET /x many",
+    "add M GET, /x 0",
+    "add M ,GET /x 0",
+    "remove M  /x",
+    "route  /x",
+    "route GET ",
+  ])("a line that is not a router call is an error: %s", line => {
+    expect(() => run(line)).toThrow(`httpRouterScript: cannot run the line "${line}"`);
+  });
 
   // The cases of uWebSockets' tests/HttpRouter.cpp (Apache-2.0), with its
   // handler names as comments.
@@ -1263,13 +1277,41 @@ describe("uWS::HttpRouter", () => {
     });
   });
 
-  // A fixed pseudo-random sequence of router calls. The digests are the output
+  // Two answers that follow from how the router keeps its methods, not from
+  // a route. Each has a test of its own here, so that a change to one of them
+  // is a change to a test with a name. Of the sequences below, only the ones
+  // that say so depend on them.
+  describe("a request that the routes of its method do not answer", () => {
+    test("runs the routes of ANY a second time when its method is *", () => {
+      expect(run("add L * /a 100", "route * /a")).toEqual(["0 0() 0()"]);
+    });
+
+    test("goes to the last method by name once a removal dropped the empty ANY node", () => {
+      expect(
+        run(
+          "add M GET /get 0", // 0
+          "add M POST /post 0", // 1
+          "add M PUT /put 0", // 2
+          "route PATCH /post", // a new router has an ANY node with no routes
+          "remove M PUT /put", // drops every node that it leaves empty
+          "route PATCH /post",
+          "route GET /post",
+          "add L * /any 0", // 3
+          "route PATCH /post",
+        ),
+      ).toEqual(["0", "r1", "1 1()", "1 1()", "0"]);
+    });
+  });
+
+  // Fixed pseudo-random sequences of router calls. The digests are the output
   // of the router on main at bf42a525d5, so a router change that sends any of
   // these requests to other handlers, in another order or with other
   // parameters changes a digest. To find the call, run the same script on a
   // build without the change and compare the two outputs line by line.
   describe("random call sequences", () => {
-    function randomScript(seed: number, calls: number, names: number) {
+    // With `anyStays`, one route under ANY is never removed and no request has
+    // the method *. Then neither of the two answers above is part of a digest.
+    function randomScript(seed: number, calls: number, names: number, anyStays: boolean) {
       let state = (seed * 2654435761 + 1013904223) >>> 0;
       const below = (n: number) => {
         state ^= state << 13;
@@ -1283,14 +1325,13 @@ describe("uWS::HttpRouter", () => {
       const patternSegments = ["a", "b", "c", "d", "", ":x", ":yy", ":", "*", "*z", "e", "a-longer-static-name", "a"];
       const urlSegments = ["a", "b", "c", "d", "", "e", "zz", ":x", ":", "*", "*z", "a-longer-static-name", "q"];
       const methods = ["GET", "POST", "HEAD", "PUT", "*"];
+      const requestMethods = anyStays ? ["GET", "POST", "HEAD", "PUT"] : methods;
       const priorities = ["H", "M", "L"];
       const depth = 1 + below(4);
       const yields = below(3) === 0 ? 0 : 10 + below(70);
       const routeShare = 20 + below(60);
       const repeatShare = below(50);
-      // An empty ANY node is dropped by the first removal. Half of the
-      // sequences keep a route under ANY so that the node stays.
-      const keeper = seed % 2 === 0 ? ["add L * /never-requested/keeper 100"] : [];
+      const keeper = anyStays ? ["add L * /never-requested/keeper 100"] : [];
       const path = (segments: readonly string[], maxDepth: number) => {
         let out = "";
         for (let i = 1 + below(maxDepth); i > 0; i--) {
@@ -1301,10 +1342,10 @@ describe("uWS::HttpRouter", () => {
       const lines = [...keeper];
       let added: string[] = [];
       for (let i = 0; i < calls; i++) {
-        if (below(16) === 0) lines.push("sort");
         const dice = below(100);
         if (dice < routeShare) {
-          lines.push(`route ${below(8) === 0 ? "PATCH" : pick(methods)} ${path(urlSegments, depth + 1)}`);
+          // No route names PATCH.
+          lines.push(`route ${below(8) === 0 ? "PATCH" : pick(requestMethods)} ${path(urlSegments, depth + 1)}`);
         } else if (dice < routeShare + 8) {
           // Half of the removals name a route that was added.
           if (added.length && below(2) === 0) {
@@ -1329,61 +1370,73 @@ describe("uWS::HttpRouter", () => {
           added.push(line);
         }
       }
-      lines.push("steps");
       return lines.join("\n");
     }
-    const digest = (script: string) => {
-      const output = httpRouterScript(script);
-      // The last line is the step count, which is not part of the routing result.
-      return new Bun.CryptoHasher("sha1").update(output.slice(0, output.lastIndexOf("\ns") + 1)).digest("hex");
-    };
+    const digest = (script: string) => new Bun.CryptoHasher("sha1").update(httpRouterScript(script)).digest("hex");
+    const digests = (first: number, calls: number, names: number, anyStays: boolean, count: number) =>
+      Array.from({ length: count }, (_, i) => digest(randomScript(first + i, calls, names, anyStays)));
 
-    test.each([
+    // [first seed, calls in a sequence, names that the segments come from, one digest for each sequence]
+    const anyStays: [number, number, number, string[]][] = [
       [
         0,
+        300,
+        0,
         [
-          "e32cf48c7ccbc3f1ea5229f847a46b7be1cdba68",
-          "4fcb682b14ff6e5387dd9f9700ebbd13283131ee",
-          "1e22b601cf88fe7765c1ea9fc38b07d48ec1adb1",
-          "d00fb3e84a191d0a44a67d09e8ebbf616e6125fb",
+          "26435e859239dfdf4dffbf0f055c2b82bf0c9aaf",
+          "ab9c35cfeb906307b93107c8bf4cbf56939c690c",
+          "e0e22b8009e5fbfa9aa0edc5bf0dfa257a9a14f4",
+          "208e40aaf022f783e2fca15aa8d5ffbd23e98746",
         ],
       ],
       [
         4,
+        300,
+        0,
         [
-          "4492dcb6307657b9f0634d1db3fb7d07863c16a7",
-          "207433ed61f3a5a2d9f30f249838e24311cc9117",
-          "ae5a7eb90e3dc0b88efe620769474505c9657983",
-          "49032f562000d253cffbff9c201421edf9ab297b",
+          "9d0282bb17c46d200d3fec7a2356daf0029a9264",
+          "ada8ead40b263465bfb568d8f89dc9c1355ad393",
+          "a8e5287d2e28f181e9da024ee4ed34e895a4ef88",
+          "3fc6a684c249b500fbbc5906c3787c447111cfa3",
         ],
       ],
+      [100, 1500, 400, ["1f60f49c0dc9e6a3f8b726f8492c3af233eada51"]],
+    ];
+    const anyCanGo: [number, number, number, string[]][] = [
       [
         8,
+        300,
+        0,
         [
-          "9ae60068227e476daf570cb1fe3777e56c682ccf",
-          "f0ac51b2df94012c33e8be09619296559b09c1f2",
-          "7d4785c1b68f0625c4d642027ec036f37bc26388",
-          "da35183dafc0f36afd68f30da698fa21900800bc",
+          "b876b3202217f84ed282e99acf126cda242c4bfd",
+          "2ad3026873476b04a034f823862e4c527750fc21",
+          "c7b32fd0f2c92098dff67fbfa4e00898fc53fba4",
+          "5e2592566bcbe845eec31a1ffc9fe303bf70dd66",
         ],
       ],
       [
         12,
+        300,
+        0,
         [
-          "7a6b5156325fbc3b0fcf6e1188f34678c6a0b9c5",
-          "a22d996ab3c3efccfb44b5bd2515d8febceb52fb",
-          "21b3c4488493edbb6c8f377751bfc2c845a21f1d",
-          "8cf4e9f84833c52a225e8a201074bbe12fd5000d",
+          "2a062a409e30f259463cfbb037e1f8b07a6635cc",
+          "7fba73040e79e3d42c910769d513f0612c4e09c9",
+          "8ead2fa9e9fb1c5314bc47721389f42574b849e0",
+          "a08d017f20adc574708862f34196740040b408c2",
         ],
       ],
-    ])("short sibling lists, 4 sequences from seed %d", (first, digests) => {
-      expect(Array.from({ length: 4 }, (_, i) => digest(randomScript(first + i, 300, 0)))).toEqual(digests);
+      [101, 1500, 400, ["83715563baee4189cf24b43185a248122012df68"]],
+    ];
+
+    test.each(anyStays)("an ANY route stays, from seed %d: %d calls, %d names", (first, calls, names, expected) => {
+      expect(digests(first, calls, names, true, expected.length)).toEqual(expected);
     });
 
-    test.each([
-      [100, "4e57733ca6d82949f12ba81e2ff1fbad4bd78c19"],
-      [101, "ac045a2e3a18d1e62615b435f1110d768fd1de5b"],
-    ])("sibling lists of hundreds of names, seed %d", (seed, expected) => {
-      expect(digest(randomScript(seed, 1500, 400))).toBe(expected);
-    });
+    test.each(anyCanGo)(
+      "the ANY node can go and a request can have the method *, from seed %d: %d calls, %d names",
+      (first, calls, names, expected) => {
+        expect(digests(first, calls, names, false, expected.length)).toEqual(expected);
+      },
+    );
   });
 });

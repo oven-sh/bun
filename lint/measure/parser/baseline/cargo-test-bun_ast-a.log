@@ -1,0 +1,64 @@
+   Compiling memchr v2.8.0
+   Compiling bstr v1.12.1
+   Compiling bun_highway v0.0.0 (/workspace/wt/parser/src/highway)
+   Compiling bun_wyhash v0.0.0 (/workspace/wt/parser/src/wyhash)
+   Compiling bun_hash v0.0.0 (/workspace/wt/parser/src/hash)
+   Compiling bun_alloc v0.0.0 (/workspace/wt/parser/src/bun_alloc)
+   Compiling bun_core v0.0.0 (/workspace/wt/parser/src/bun_core)
+   Compiling bun_errno v0.0.0 (/workspace/wt/parser/src/errno)
+   Compiling bun_ptr v0.0.0 (/workspace/wt/parser/src/ptr)
+   Compiling bun_paths v0.0.0 (/workspace/wt/parser/src/paths)
+   Compiling bun_collections v0.0.0 (/workspace/wt/parser/src/collections)
+   Compiling bun_sys v0.0.0 (/workspace/wt/parser/src/sys)
+   Compiling bun_perf v0.0.0 (/workspace/wt/parser/src/perf)
+   Compiling bun_ast v0.0.0 (/workspace/wt/parser/src/ast)
+error: linking with `/usr/lib/llvm-23/bin/clang++` failed: exit status: 1
+  |
+  = note:  "/usr/lib/llvm-23/bin/clang++" "-m64" "/workspace/wt/parser/target/debug/build/bun_ast/bf086e08434e68a3/out/rustcy13jUH/symbols.o" "<148 object files omitted>" "-Wl,--as-needed" "-Wl,-Bstatic" "/workspace/wt/parser/target/debug/build/bun_perf/28f68c5308b503dc/out/libbun_perf-28f68c5308b503dc.rlib" "/workspace/wt/parser/target/debug/build/bun_sys/654a2b423608a031/out/libbun_sys-654a2b423608a031.rlib" "/workspace/wt/parser/target/debug/build/scopeguard/e5deabc0ef80f014/out/libscopeguard-e5deabc0ef80f014.rlib" "/workspace/wt/parser/target/debug/build/rustix/54a6d728baccbde1/out/librustix-54a6d728baccbde1.rlib" "/workspace/wt/parser/target/debug/build/linux-raw-sys/83f3118e82d77f34/out/liblinux_raw_sys-83f3118e82d77f34.rlib" "<sysroot>/lib/rustlib/x86_64-unknown-linux-gnu/lib/{libtest-*,libgetopts-*,librustc_std_workspace_std-*}.rlib" "/workspace/wt/parser/target/debug/build/bitflags/ad690312527ce656/out/libbitflags-ad690312527ce656.rlib" "/workspace/wt/parser/target/debug/build/enumset/8867f7780f014e3f/out/libenumset-8867f7780f014e3f.rlib" "/workspace/wt/parser/target/debug/build/bun_paths/1a05ca49c40b8dd7/out/libbun_paths-1a05ca49c40b8dd7.rlib" "/workspace/wt/parser/target/debug/build/bun_errno/7c0194c903682cc5/out/libbun_errno-7c0194c903682cc5.rlib" "/workspace/wt/parser/target/debug/build/bun_libuv_sys/e158de10e1811648/out/libbun_libuv_sys-e158de10e1811648.rlib" "/workspace/wt/parser/target/debug/build/enum-map/a2ef25edf6ade988/out/libenum_map-a2ef25edf6ade988.rlib" "/workspace/wt/parser/target/debug/build/bun_collections/1826de130fc3686f/out/libbun_collections-1826de130fc3686f.rlib" "/workspace/wt/parser/target/debug/build/rustc-hash/3235c5a890450cc4/out/librustc_hash-3235c5a890450cc4.rlib" "/workspace/wt/parser/target/debug/build/smallvec/10643ec2d630207b/out/libsmallvec-10643ec2d630207b.rlib" "/workspace/wt/parser/target/debug/build/bun_ptr/3bcf7beca77be633/out/libbun_ptr-3bcf7beca77be633.rlib" "/workspace/wt/parser/target/debug/build/hashbrown/0131b3b088571df5/out/libhashbrown-0131b3b088571df5.rlib" "/workspace/wt/parser/target/debug/build/bun_core/cc73572b3dba021a/out/libbun_core-cc73572b3dba021a.rlib" "/workspace/wt/parser/target/debug/build/thiserror/dc5bf0719b7079ba/out/libthiserror-dc5bf0719b7079ba.rlib" "/workspace/wt/parser/target/debug/build/bun_output_tags/6a4641e03fecf338/out/libbun_output_tags-6a4641e03fecf338.rlib" "/workspace/wt/parser/target/debug/build/itoa/8d0ab51d268956b3/out/libitoa-8d0ab51d268956b3.rlib" "/workspace/wt/parser/target/debug/build/strum/8b09883ff8f1e3c8/out/libstrum-8b09883ff8f1e3c8.rlib" "/workspace/wt/parser/target/debug/build/bun_simdutf_sys/aa45ee3e8b196920/out/libbun_simdutf_sys-aa45ee3e8b196920.rlib" "/workspace/wt/parser/target/debug/build/bun_hash/2798d99a11728cad/out/libbun_hash-2798d99a11728cad.rlib" "/workspace/wt/parser/target/debug/build/bun_highway/d7e2c505bfab78c8/out/libbun_highway-d7e2c505bfab78c8.rlib" "/workspace/wt/parser/target/debug/build/bstr/1fbb7b33ff81cb14/out/libbstr-1fbb7b33ff81cb14.rlib" "/workspace/wt/parser/target/debug/build/memchr/6965932ad51f07b1/out/libmemchr-6965932ad51f07b1.rlib" "/workspace/wt/parser/target/debug/build/bytemuck/a9d06654efd58ed2/out/libbytemuck-a9d06654efd58ed2.rlib" "/workspace/wt/parser/target/debug/build/bun_alloc/35126272a8c15d1e/out/libbun_alloc-35126272a8c15d1e.rlib" "/workspace/wt/parser/target/debug/build/bun_wyhash/4a892cfc779e6c87/out/libbun_wyhash-4a892cfc779e6c87.rlib" "/workspace/wt/parser/target/debug/build/libc/b2cc9e86bc174c3d/out/liblibc-b2cc9e86bc174c3d.rlib" "/workspace/wt/parser/target/debug/build/allocator-api2/b5807a6031cc6d5c/out/liballocator_api2-b5807a6031cc6d5c.rlib" "/workspace/wt/parser/target/debug/build/bun_mimalloc_sys/2da1ab9a86c1e907/out/libbun_mimalloc_sys-2da1ab9a86c1e907.rlib" "/workspace/wt/parser/target/debug/build/bun_opaque/cd8395d2a04c1b90/out/libbun_opaque-cd8395d2a04c1b90.rlib" "/workspace/wt/parser/target/debug/build/const_format/be8da8d8c0cbd6b4/out/libconst_format-be8da8d8c0cbd6b4.rlib" "/workspace/wt/parser/target/debug/build/konst/3ab7ce7754eff186/out/libkonst-3ab7ce7754eff186.rlib" "/workspace/wt/parser/target/debug/build/konst_macro_rules/a225824503f87ab5/out/libkonst_macro_rules-a225824503f87ab5.rlib" "<sysroot>/lib/rustlib/x86_64-unknown-linux-gnu/lib/{libstd-*,libpanic_unwind-*,libobject-*,libmemchr-*,libaddr2line-*,libgimli-*,libcfg_if-*,librustc_demangle-*,libstd_detect-*,libhashbrown-*,librustc_std_workspace_alloc-*,libminiz_oxide-*,libadler2-*,libunwind-*,liblibc-*,librustc_std_workspace_core-*,liballoc-*,libcore-*,libcompiler_builtins-*}.rlib" "-Wl,-Bdynamic" "-lgcc_s" "-lutil" "-lrt" "-lpthread" "-lm" "-ldl" "-lc" "-L" "/workspace/wt/parser/target/debug/build/bun_ast/bf086e08434e68a3/out/rustcy13jUH/raw-dylibs" "-Wl,--eh-frame-hdr" "-Wl,-z,noexecstack" "-L" "<sysroot>/lib/rustlib/x86_64-unknown-linux-gnu/lib" "-o" "/workspace/wt/parser/target/debug/build/bun_ast/bf086e08434e68a3/out/bun_ast-bf086e08434e68a3" "-Wl,--gc-sections" "-pie" "-Wl,-z,relro,-z,now" "-nodefaultlibs" "-fuse-ld=lld" "-Qunused-arguments"
+  = note: some arguments are omitted. use `--verbose` to show all linker arguments
+  = note: ld.lld: error: undefined symbol: mi_heap_malloc
+          >>> referenced by MimallocArena.rs:560 (src/bun_alloc/MimallocArena.rs:560)
+          >>>               /workspace/wt/parser/target/debug/build/bun_ast/bf086e08434e68a3/out/bun_ast-bf086e08434e68a3.5xpdn8topys68yyiba91oqfk3.1cruz0j.rcgu.o:(bun_alloc::mimalloc_arena::heap_alloc_maybe_aligned)
+          
+          ld.lld: error: undefined symbol: mi_heap_malloc_aligned
+          >>> referenced by MimallocArena.rs:558 (src/bun_alloc/MimallocArena.rs:558)
+          >>>               /workspace/wt/parser/target/debug/build/bun_ast/bf086e08434e68a3/out/bun_ast-bf086e08434e68a3.5xpdn8topys68yyiba91oqfk3.1cruz0j.rcgu.o:(bun_alloc::mimalloc_arena::heap_alloc_maybe_aligned)
+          
+          ld.lld: error: undefined symbol: mi_malloc_usable_size
+          >>> referenced by MimallocArena.rs:566 (src/bun_alloc/MimallocArena.rs:566)
+          >>>               /workspace/wt/parser/target/debug/build/bun_ast/bf086e08434e68a3/out/bun_ast-bf086e08434e68a3.5xpdn8topys68yyiba91oqfk3.1cruz0j.rcgu.o:(bun_alloc::mimalloc_arena::heap_alloc_maybe_aligned)
+          
+          ld.lld: error: undefined symbol: mi_is_in_heap_region
+          >>> referenced by basic.rs:15 (src/bun_alloc/basic.rs:15)
+          >>>               /workspace/wt/parser/target/debug/build/bun_ast/bf086e08434e68a3/out/bun_ast-bf086e08434e68a3.5xpdn8topys68yyiba91oqfk3.1cruz0j.rcgu.o:(<&bun_alloc::mimalloc_arena::MimallocArena as core::alloc::Allocator>::deallocate)
+          
+          ld.lld: error: undefined symbol: mi_free_size
+          >>> referenced by basic.rs:19 (src/bun_alloc/basic.rs:19)
+          >>>               /workspace/wt/parser/target/debug/build/bun_ast/bf086e08434e68a3/out/bun_ast-bf086e08434e68a3.5xpdn8topys68yyiba91oqfk3.1cruz0j.rcgu.o:(<&bun_alloc::mimalloc_arena::MimallocArena as core::alloc::Allocator>::deallocate)
+          
+          ld.lld: error: undefined symbol: mi_free_size_aligned
+          >>> referenced by basic.rs:17 (src/bun_alloc/basic.rs:17)
+          >>>               /workspace/wt/parser/target/debug/build/bun_ast/bf086e08434e68a3/out/bun_ast-bf086e08434e68a3.5xpdn8topys68yyiba91oqfk3.1cruz0j.rcgu.o:(<&bun_alloc::mimalloc_arena::MimallocArena as core::alloc::Allocator>::deallocate)
+          
+          ld.lld: error: undefined symbol: highway_index_of_any_char
+          >>> referenced by lib.rs:544 (src/highway/lib.rs:544)
+          >>>               /workspace/wt/parser/target/debug/build/bun_ast/bf086e08434e68a3/out/bun_ast-bf086e08434e68a3.7wo15qq43gmxb4m2vrv2jxpiq.1cruz0j.rcgu.o:(bun_core::string::immutable::index_of_any)
+          >>> referenced by lib.rs:544 (src/highway/lib.rs:544)
+          >>>               bun_core-cc73572b3dba021a.5sj5vhy5mbel25bah09zow48e.17702s7.rcgu.o:(bun_core::string::immutable::index_of_any) in archive /workspace/wt/parser/target/debug/build/bun_core/cc73572b3dba021a/out/libbun_core-cc73572b3dba021a.rlib
+          
+          ld.lld: error: undefined symbol: highway_index_of_char
+          >>> referenced by lib.rs:232 (src/highway/lib.rs:232)
+          >>>               bun_core-cc73572b3dba021a.5sj5vhy5mbel25bah09zow48e.17702s7.rcgu.o:(bun_core::string::immutable::index_of_char_usize) in archive /workspace/wt/parser/target/debug/build/bun_core/cc73572b3dba021a/out/libbun_core-cc73572b3dba021a.rlib
+          
+          ld.lld: error: undefined symbol: highway_memmem
+          >>> referenced by lib.rs:289 (src/highway/lib.rs:289)
+          >>>               bun_core-cc73572b3dba021a.5sj5vhy5mbel25bah09zow48e.17702s7.rcgu.o:(bun_core::string::immutable::memmem) in archive /workspace/wt/parser/target/debug/build/bun_core/cc73572b3dba021a/out/libbun_core-cc73572b3dba021a.rlib
+          
+          ld.lld: error: undefined symbol: simdutf__validate_ascii
+          >>> referenced by lib.rs:1466 (src/bun_core/lib.rs:1466)
+          >>>               bun_core-cc73572b3dba021a.b9lqkyucs08fkmrga9ezrcf35.17702s7.rcgu.o:(bun_core::strings_impl::is_all_ascii) in archive /workspace/wt/parser/target/debug/build/bun_core/cc73572b3dba021a/out/libbun_core-cc73572b3dba021a.rlib
+          clang++: error: linker command failed with exit code 1 (use -v to see invocation)
+          
+
+error: could not compile `bun_ast` (lib test) due to 1 previous error
+### cargo test -p bun_ast --lib rc=101 secs=34 HEAD=be1ebe5295

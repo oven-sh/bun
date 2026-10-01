@@ -76,3 +76,5 @@
     Checking bun_crash_handler v0.0.0 (/tmp/sizeprobe-a-incrate-base/tree/src/crash_handler)
     Checking bun_options_types v0.0.0 (/tmp/sizeprobe-a-incrate-base/tree/src/options_types)
     Checking bun_js_parser v0.0.0 (/tmp/sizeprobe-a-incrate-base/tree/src/js_parser)
+error: could not compile `bun_js_parser` (lib) due to 3 previous errors
+cargo check release exit=101

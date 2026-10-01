@@ -9,10 +9,11 @@ branch `robobun/abbc0c92/lint-typecheck`). The reference is microsoft/typescript
 Commit `1e45ca9abb`. 32 Rust modules, one per upstream file with upstream's name, and one `mod.rs` per package that
 declares them and re-exports their public names, so `core.Filter` of upstream is `crate::core::filter`.
 
-NOT wired yet: `lib.rs` has no `pub mod` line, so cargo does not compile these files. They need
-`pub mod collections; pub mod core; pub mod jsnum; pub mod stringutil; pub mod tspath;` and nothing else: the five
-packages use `std` only and each other (`core` uses `collections`, `stringutil`, `tspath`; `jsnum` and `tspath` use
-`stringutil`). What was verified instead is in "Verified" below.
+Wired since `80dcacd6db`: `lib.rs` declares the five packages
+(`pub mod collections; pub mod core; pub mod jsnum; pub mod stringutil; pub mod tspath;`), and they need nothing
+else: they use `std` only and each other (`core` uses `collections`, `stringutil`, `tspath`; `jsnum` and `tspath`
+use `stringutil`). At `1e45ca9abb` `lib.rs` had no `pub mod` line and cargo did not compile these files: what was
+verified then is in "Verified" below, and PORT_STATUS.md names the commit that declares each package.
 
 `src/typecheck/.gitignore` holds `!/core/`: line 203 of the root `.gitignore` is `core` (core dumps), which ignores
 the directory `src/typecheck/core/` too. Without that file `git status` shows nothing under `core/` and `git add`
@@ -138,8 +139,8 @@ Files that are not ported: `collections/syncmap.go`, `collections/syncset.go`, `
 
 ### Verified
 
-Nothing was built with cargo or `bun bd`: `lib.rs` does not declare the modules. The five packages were compiled in
-place with `rustc` alone from a scratch root (`#[path]` to the five `mod.rs`), with the `deny` set of the workspace
+At `1e45ca9abb` nothing was built with cargo or `bun bd`: `lib.rs` did not declare the modules. The five packages
+were compiled in place with `rustc` alone from a scratch root (`#[path]` to the five `mod.rs`), with the `deny` set of the workspace
 (`warnings`, `dead_code`, `unreachable_pub`, `unused_*`), then with `clippy-driver` and the repository's
 `clippy.toml` and lint table (library and tests), and `rustfmt --check`. All clean.
 

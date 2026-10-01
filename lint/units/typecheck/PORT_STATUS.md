@@ -14,6 +14,12 @@ declares it in `lib.rs`:
   No `cargo check` and no `cargo test` was run with that commit: the survey of round 2
   (`/workspace/notes/lint/tools/typecheck-survey.sh`) is the first cargo compile of the six files, and their tests
   have run from the scratch root only.
+- `core`: declared by `80dcacd6db` (`pub mod core;`; its 18 files are unchanged since `404d95dbe9`, which added
+  `nodemodules.rs` and its two lines of `mod.rs` to the 17 files of `1e45ca9abb`). It names `crate::stringutil`,
+  `crate::tspath` and `crate::collections`, so it compiles only in a tree whose `lib.rs` declares those three as
+  well: `80dcacd6db` is the first commit whose `lib.rs` declares all five leaf packages, as the scratch root does.
+  No `cargo check` and no `cargo test` was run with that commit: the survey of round 2 is the first cargo compile of
+  the 18 files, and their tests have run from the scratch root only.
 - `jsnum`: declared by `80dcacd6db` (`pub mod jsnum;`, its four files are unchanged since `1e45ca9abb`). It names
   `crate::stringutil`, which the same commit declares. The line was written without a cargo run: the survey of
   round 2 is the first cargo compile of the four files, and the seven tests of `jsnum` have run from the scratch

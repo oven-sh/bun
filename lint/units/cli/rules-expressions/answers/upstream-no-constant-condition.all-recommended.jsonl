@@ -1,0 +1,282 @@
+{"kind":"valid","code":"if(a);","type":"script","reports":["no-undef 1:4 'a' is not defined."]}
+{"kind":"valid","code":"if(a == 0);","type":"script","reports":["no-undef 1:4 'a' is not defined."]}
+{"kind":"valid","code":"if(a = f());","type":"script","reports":["no-cond-assign 1:4 Expected a conditional expression and instead saw an assignment.","no-undef 1:4 'a' is not defined.","no-undef 1:8 'f' is not defined."]}
+{"kind":"valid","code":"if(a += 1);","type":"script","reports":["no-cond-assign 1:4 Expected a conditional expression and instead saw an assignment.","no-undef 1:4 'a' is not defined."]}
+{"kind":"valid","code":"if(a |= 1);","type":"script","reports":["no-cond-assign 1:4 Expected a conditional expression and instead saw an assignment.","no-undef 1:4 'a' is not defined."]}
+{"kind":"valid","code":"if(a |= true);","type":"script","reports":["no-cond-assign 1:4 Expected a conditional expression and instead saw an assignment.","no-undef 1:4 'a' is not defined."]}
+{"kind":"valid","code":"if(a |= false);","type":"script","reports":["no-cond-assign 1:4 Expected a conditional expression and instead saw an assignment.","no-undef 1:4 'a' is not defined."]}
+{"kind":"valid","code":"if(a &= 1);","type":"script","reports":["no-cond-assign 1:4 Expected a conditional expression and instead saw an assignment.","no-undef 1:4 'a' is not defined."]}
+{"kind":"valid","code":"if(a &= true);","type":"script","reports":["no-cond-assign 1:4 Expected a conditional expression and instead saw an assignment.","no-undef 1:4 'a' is not defined."]}
+{"kind":"valid","code":"if(a &= false);","type":"script","reports":["no-cond-assign 1:4 Expected a conditional expression and instead saw an assignment.","no-undef 1:4 'a' is not defined."]}
+{"kind":"valid","code":"if(a >>= 1);","type":"script","reports":["no-cond-assign 1:4 Expected a conditional expression and instead saw an assignment.","no-undef 1:4 'a' is not defined."]}
+{"kind":"valid","code":"if(a >>= true);","type":"script","reports":["no-cond-assign 1:4 Expected a conditional expression and instead saw an assignment.","no-undef 1:4 'a' is not defined."]}
+{"kind":"valid","code":"if(a >>= false);","type":"script","reports":["no-cond-assign 1:4 Expected a conditional expression and instead saw an assignment.","no-undef 1:4 'a' is not defined."]}
+{"kind":"valid","code":"if(a >>>= 1);","type":"script","reports":["no-cond-assign 1:4 Expected a conditional expression and instead saw an assignment.","no-undef 1:4 'a' is not defined."]}
+{"kind":"valid","code":"if(a ??= 1);","type":"script","reports":["no-cond-assign 1:4 Expected a conditional expression and instead saw an assignment.","no-undef 1:4 'a' is not defined."]}
+{"kind":"valid","code":"if(a ??= true);","type":"script","reports":["no-cond-assign 1:4 Expected a conditional expression and instead saw an assignment.","no-undef 1:4 'a' is not defined."]}
+{"kind":"valid","code":"if(a ??= false);","type":"script","reports":["no-cond-assign 1:4 Expected a conditional expression and instead saw an assignment.","no-undef 1:4 'a' is not defined."]}
+{"kind":"valid","code":"if(a ||= b);","type":"script","reports":["no-cond-assign 1:4 Expected a conditional expression and instead saw an assignment.","no-undef 1:4 'a' is not defined.","no-undef 1:10 'b' is not defined."]}
+{"kind":"valid","code":"if(a ||= false);","type":"script","reports":["no-cond-assign 1:4 Expected a conditional expression and instead saw an assignment.","no-undef 1:4 'a' is not defined."]}
+{"kind":"valid","code":"if(a ||= 0);","type":"script","reports":["no-cond-assign 1:4 Expected a conditional expression and instead saw an assignment.","no-undef 1:4 'a' is not defined."]}
+{"kind":"valid","code":"if(a ||= void 0);","type":"script","reports":["no-cond-assign 1:4 Expected a conditional expression and instead saw an assignment.","no-undef 1:4 'a' is not defined."]}
+{"kind":"valid","code":"if(+(a ||= 1));","type":"script","reports":["no-undef 1:6 'a' is not defined."]}
+{"kind":"valid","code":"if(f(a ||= true));","type":"script","reports":["no-undef 1:4 'f' is not defined.","no-undef 1:6 'a' is not defined."]}
+{"kind":"valid","code":"if((a ||= 1) + 2);","type":"script","reports":["no-undef 1:5 'a' is not defined."]}
+{"kind":"valid","code":"if(1 + (a ||= true));","type":"script","reports":["no-undef 1:9 'a' is not defined."]}
+{"kind":"valid","code":"if(a ||= '' || false);","type":"script","reports":["no-cond-assign 1:4 Expected a conditional expression and instead saw an assignment.","no-undef 1:4 'a' is not defined.","no-constant-binary-expression 1:10 Unexpected constant truthiness on the left-hand side of a `||` expression."]}
+{"kind":"valid","code":"if(a ||= void 0 || null);","type":"script","reports":["no-cond-assign 1:4 Expected a conditional expression and instead saw an assignment.","no-undef 1:4 'a' is not defined.","no-constant-binary-expression 1:10 Unexpected constant truthiness on the left-hand side of a `||` expression."]}
+{"kind":"valid","code":"if((a ||= false) || b);","type":"script","reports":["no-undef 1:5 'a' is not defined.","no-undef 1:21 'b' is not defined."]}
+{"kind":"valid","code":"if(a || (b ||= false));","type":"script","reports":["no-undef 1:4 'a' is not defined.","no-undef 1:10 'b' is not defined."]}
+{"kind":"valid","code":"if((a ||= true) && b);","type":"script","reports":["no-constant-binary-expression 1:5 Unexpected constant truthiness on the left-hand side of a `&&` expression.","no-undef 1:5 'a' is not defined.","no-undef 1:20 'b' is not defined."]}
+{"kind":"valid","code":"if(a && (b ||= true));","type":"script","reports":["no-undef 1:4 'a' is not defined.","no-undef 1:10 'b' is not defined."]}
+{"kind":"valid","code":"if(a &&= b);","type":"script","reports":["no-cond-assign 1:4 Expected a conditional expression and instead saw an assignment.","no-undef 1:4 'a' is not defined.","no-undef 1:10 'b' is not defined."]}
+{"kind":"valid","code":"if(a &&= true);","type":"script","reports":["no-cond-assign 1:4 Expected a conditional expression and instead saw an assignment.","no-undef 1:4 'a' is not defined."]}
+{"kind":"valid","code":"if(a &&= 1);","type":"script","reports":["no-cond-assign 1:4 Expected a conditional expression and instead saw an assignment.","no-undef 1:4 'a' is not defined."]}
+{"kind":"valid","code":"if(a &&= 'foo');","type":"script","reports":["no-cond-assign 1:4 Expected a conditional expression and instead saw an assignment.","no-undef 1:4 'a' is not defined."]}
+{"kind":"valid","code":"if((a &&= '') + false);","type":"script","reports":["no-undef 1:5 'a' is not defined."]}
+{"kind":"valid","code":"if('' + (a &&= null));","type":"script","reports":["no-undef 1:10 'a' is not defined."]}
+{"kind":"valid","code":"if(a &&= 1 && 2);","type":"script","reports":["no-cond-assign 1:4 Expected a conditional expression and instead saw an assignment.","no-undef 1:4 'a' is not defined.","no-constant-binary-expression 1:10 Unexpected constant truthiness on the left-hand side of a `&&` expression."]}
+{"kind":"valid","code":"if((a &&= true) && b);","type":"script","reports":["no-undef 1:5 'a' is not defined.","no-undef 1:20 'b' is not defined."]}
+{"kind":"valid","code":"if(a && (b &&= true));","type":"script","reports":["no-undef 1:4 'a' is not defined.","no-undef 1:10 'b' is not defined."]}
+{"kind":"valid","code":"if((a &&= false) || b);","type":"script","reports":["no-constant-binary-expression 1:5 Unexpected constant truthiness on the left-hand side of a `||` expression.","no-undef 1:5 'a' is not defined.","no-undef 1:21 'b' is not defined."]}
+{"kind":"valid","code":"if(a || (b &&= false));","type":"script","reports":["no-undef 1:4 'a' is not defined.","no-undef 1:10 'b' is not defined."]}
+{"kind":"valid","code":"if(a ||= b ||= false);","type":"script","reports":["no-cond-assign 1:4 Expected a conditional expression and instead saw an assignment.","no-undef 1:4 'a' is not defined.","no-undef 1:10 'b' is not defined."]}
+{"kind":"valid","code":"if(a &&= b &&= true);","type":"script","reports":["no-cond-assign 1:4 Expected a conditional expression and instead saw an assignment.","no-undef 1:4 'a' is not defined.","no-undef 1:10 'b' is not defined."]}
+{"kind":"valid","code":"if(a ||= b &&= false);","type":"script","reports":["no-cond-assign 1:4 Expected a conditional expression and instead saw an assignment.","no-undef 1:4 'a' is not defined.","no-undef 1:10 'b' is not defined."]}
+{"kind":"valid","code":"if(a ||= b &&= true);","type":"script","reports":["no-cond-assign 1:4 Expected a conditional expression and instead saw an assignment.","no-undef 1:4 'a' is not defined.","no-undef 1:10 'b' is not defined."]}
+{"kind":"valid","code":"if(a &&= b ||= false);","type":"script","reports":["no-cond-assign 1:4 Expected a conditional expression and instead saw an assignment.","no-undef 1:4 'a' is not defined.","no-undef 1:10 'b' is not defined."]}
+{"kind":"valid","code":"if(a &&= b ||= true);","type":"script","reports":["no-cond-assign 1:4 Expected a conditional expression and instead saw an assignment.","no-undef 1:4 'a' is not defined.","no-undef 1:10 'b' is not defined."]}
+{"kind":"valid","code":"if(1, a);","type":"script","reports":["no-undef 1:7 'a' is not defined."]}
+{"kind":"valid","code":"if ('every' in []);","type":"script","reports":[]}
+{"kind":"valid","code":"if (`\\\n${a}`) {}","type":"script","reports":["no-undef 2:3 'a' is not defined.","no-empty 2:8 Empty block statement."]}
+{"kind":"valid","code":"if (`${a}`);","type":"script","reports":["no-undef 1:8 'a' is not defined."]}
+{"kind":"valid","code":"if (`${foo()}`);","type":"script","reports":["no-undef 1:8 'foo' is not defined."]}
+{"kind":"valid","code":"if (`${a === 'b' && b==='a'}`);","type":"script","reports":["no-undef 1:8 'a' is not defined.","no-undef 1:21 'b' is not defined."]}
+{"kind":"valid","code":"if (`foo${a}` === 'fooa');","type":"script","reports":["no-undef 1:11 'a' is not defined."]}
+{"kind":"valid","code":"if (tag`a`);","type":"script","reports":["no-undef 1:5 'tag' is not defined."]}
+{"kind":"valid","code":"if (tag`${a}`);","type":"script","reports":["no-undef 1:5 'tag' is not defined.","no-undef 1:11 'a' is not defined."]}
+{"kind":"valid","code":"if (+(a || true));","type":"script","reports":["no-undef 1:7 'a' is not defined."]}
+{"kind":"valid","code":"if (-(a || true));","type":"script","reports":["no-undef 1:7 'a' is not defined."]}
+{"kind":"valid","code":"if (~(a || 1));","type":"script","reports":["no-undef 1:7 'a' is not defined."]}
+{"kind":"valid","code":"if (+(a && 0) === +(b && 0));","type":"script","reports":["no-undef 1:7 'a' is not defined.","no-undef 1:21 'b' is not defined."]}
+{"kind":"valid","code":"while(~!a);","type":"script","reports":["no-undef 1:9 'a' is not defined."]}
+{"kind":"valid","code":"while(a = b);","type":"script","reports":["no-cond-assign 1:7 Expected a conditional expression and instead saw an assignment.","no-undef 1:7 'a' is not defined.","no-undef 1:11 'b' is not defined."]}
+{"kind":"valid","code":"while(`${a}`);","type":"script","reports":["no-undef 1:10 'a' is not defined."]}
+{"kind":"valid","code":"for(;x < 10;);","type":"script","reports":["no-undef 1:6 'x' is not defined."]}
+{"kind":"valid","code":"for(;;);","type":"script","reports":[]}
+{"kind":"valid","code":"for(;`${a}`;);","type":"script","reports":["no-undef 1:9 'a' is not defined."]}
+{"kind":"valid","code":"do{ }while(x)","type":"script","reports":["no-empty 1:3 Empty block statement.","no-undef 1:12 'x' is not defined."]}
+{"kind":"valid","code":"q > 0 ? 1 : 2;","type":"script","reports":["no-undef 1:1 'q' is not defined."]}
+{"kind":"valid","code":"`${a}` === a ? 1 : 2","type":"script","reports":["no-undef 1:4 'a' is not defined.","no-undef 1:12 'a' is not defined."]}
+{"kind":"valid","code":"`foo${a}` === a ? 1 : 2","type":"script","reports":["no-undef 1:7 'a' is not defined.","no-undef 1:15 'a' is not defined."]}
+{"kind":"valid","code":"tag`a` === a ? 1 : 2","type":"script","reports":["no-undef 1:1 'tag' is not defined.","no-undef 1:12 'a' is not defined."]}
+{"kind":"valid","code":"tag`${a}` === a ? 1 : 2","type":"script","reports":["no-undef 1:1 'tag' is not defined.","no-undef 1:7 'a' is not defined.","no-undef 1:15 'a' is not defined."]}
+{"kind":"valid","code":"while(x += 3) {}","type":"script","reports":["no-cond-assign 1:7 Expected a conditional expression and instead saw an assignment.","no-undef 1:7 'x' is not defined.","no-empty 1:15 Empty block statement."]}
+{"kind":"valid","code":"while(tag`a`) {}","type":"script","reports":["no-undef 1:7 'tag' is not defined.","no-empty 1:15 Empty block statement."]}
+{"kind":"valid","code":"while(tag`${a}`) {}","type":"script","reports":["no-undef 1:7 'tag' is not defined.","no-undef 1:13 'a' is not defined.","no-empty 1:18 Empty block statement."]}
+{"kind":"valid","code":"while(`\\\n${a}`) {}","type":"script","reports":["no-undef 2:3 'a' is not defined.","no-empty 2:8 Empty block statement."]}
+{"kind":"valid","code":"if(typeof x === 'undefined'){}","type":"script","reports":["no-empty 1:29 Empty block statement."]}
+{"kind":"valid","code":"if(`${typeof x}` === 'undefined'){}","type":"script","reports":["no-empty 1:34 Empty block statement."]}
+{"kind":"valid","code":"if(a === 'str' && typeof b){}","type":"script","reports":["no-undef 1:4 'a' is not defined.","no-empty 1:28 Empty block statement."]}
+{"kind":"valid","code":"typeof a == typeof b","type":"script","reports":[]}
+{"kind":"valid","code":"typeof 'a' === 'string'|| typeof b === 'string'","type":"script","reports":["no-constant-binary-expression 1:1 Unexpected constant truthiness on the left-hand side of a `||` expression."]}
+{"kind":"valid","code":"`${typeof 'a'}` === 'string'|| `${typeof b}` === 'string'","type":"script","reports":["no-constant-binary-expression 1:1 Unexpected constant truthiness on the left-hand side of a `||` expression."]}
+{"kind":"valid","code":"if (void a || a);","type":"script","reports":["no-constant-binary-expression 1:5 Unexpected constant truthiness on the left-hand side of a `||` expression.","no-undef 1:10 'a' is not defined.","no-undef 1:15 'a' is not defined."]}
+{"kind":"valid","code":"if (a || void a);","type":"script","reports":["no-undef 1:5 'a' is not defined.","no-undef 1:15 'a' is not defined."]}
+{"kind":"valid","code":"if(xyz === 'str1' && abc==='str2'){}","type":"script","reports":["no-undef 1:4 'xyz' is not defined.","no-undef 1:22 'abc' is not defined.","no-empty 1:35 Empty block statement."]}
+{"kind":"valid","code":"if(xyz === 'str1' || abc==='str2'){}","type":"script","reports":["no-undef 1:4 'xyz' is not defined.","no-undef 1:22 'abc' is not defined.","no-empty 1:35 Empty block statement."]}
+{"kind":"valid","code":"if(xyz === 'str1' || abc==='str2' && pqr === 5){}","type":"script","reports":["no-undef 1:4 'xyz' is not defined.","no-undef 1:22 'abc' is not defined.","no-undef 1:38 'pqr' is not defined.","no-empty 1:48 Empty block statement."]}
+{"kind":"valid","code":"if(typeof abc === 'string' && abc==='str2'){}","type":"script","reports":["no-undef 1:31 'abc' is not defined.","no-empty 1:44 Empty block statement."]}
+{"kind":"valid","code":"if(false || abc==='str'){}","type":"script","reports":["no-constant-binary-expression 1:4 Unexpected constant truthiness on the left-hand side of a `||` expression.","no-undef 1:13 'abc' is not defined.","no-empty 1:25 Empty block statement."]}
+{"kind":"valid","code":"if(true && abc==='str'){}","type":"script","reports":["no-constant-binary-expression 1:4 Unexpected constant truthiness on the left-hand side of a `&&` expression.","no-undef 1:12 'abc' is not defined.","no-empty 1:24 Empty block statement."]}
+{"kind":"valid","code":"if(typeof 'str' && abc==='str'){}","type":"script","reports":["no-constant-binary-expression 1:4 Unexpected constant truthiness on the left-hand side of a `&&` expression.","no-undef 1:20 'abc' is not defined.","no-empty 1:32 Empty block statement."]}
+{"kind":"valid","code":"if(abc==='str' || false || def ==='str'){}","type":"script","reports":["no-undef 1:4 'abc' is not defined.","no-undef 1:28 'def' is not defined.","no-empty 1:41 Empty block statement."]}
+{"kind":"valid","code":"if(true && abc==='str' || def ==='str'){}","type":"script","reports":["no-constant-binary-expression 1:4 Unexpected constant truthiness on the left-hand side of a `&&` expression.","no-undef 1:12 'abc' is not defined.","no-undef 1:27 'def' is not defined.","no-empty 1:40 Empty block statement."]}
+{"kind":"valid","code":"if(true && typeof abc==='string'){}","type":"script","reports":["no-constant-binary-expression 1:4 Unexpected constant truthiness on the left-hand side of a `&&` expression.","no-empty 1:34 Empty block statement."]}
+{"kind":"valid","code":"if('str1' && a){}","type":"script","reports":["no-constant-binary-expression 1:4 Unexpected constant truthiness on the left-hand side of a `&&` expression.","no-undef 1:14 'a' is not defined.","no-empty 1:16 Empty block statement."]}
+{"kind":"valid","code":"if(a && 'str'){}","type":"script","reports":["no-undef 1:4 'a' is not defined.","no-empty 1:15 Empty block statement."]}
+{"kind":"valid","code":"if ((foo || true) === 'baz') {}","type":"script","reports":["no-undef 1:6 'foo' is not defined.","no-empty 1:30 Empty block statement."]}
+{"kind":"valid","code":"if ((foo || 'bar') === 'baz') {}","type":"script","reports":["no-undef 1:6 'foo' is not defined.","no-empty 1:31 Empty block statement."]}
+{"kind":"valid","code":"if ((foo || 'bar') !== 'baz') {}","type":"script","reports":["no-undef 1:6 'foo' is not defined.","no-empty 1:31 Empty block statement."]}
+{"kind":"valid","code":"if ((foo || 'bar') == 'baz') {}","type":"script","reports":["no-undef 1:6 'foo' is not defined.","no-empty 1:30 Empty block statement."]}
+{"kind":"valid","code":"if ((foo || 'bar') != 'baz') {}","type":"script","reports":["no-undef 1:6 'foo' is not defined.","no-empty 1:30 Empty block statement."]}
+{"kind":"valid","code":"if ((foo || 233) > 666) {}","type":"script","reports":["no-undef 1:6 'foo' is not defined.","no-empty 1:25 Empty block statement."]}
+{"kind":"valid","code":"if ((foo || 233) < 666) {}","type":"script","reports":["no-undef 1:6 'foo' is not defined.","no-empty 1:25 Empty block statement."]}
+{"kind":"valid","code":"if ((foo || 233) >= 666) {}","type":"script","reports":["no-undef 1:6 'foo' is not defined.","no-empty 1:26 Empty block statement."]}
+{"kind":"valid","code":"if ((foo || 233) <= 666) {}","type":"script","reports":["no-undef 1:6 'foo' is not defined.","no-empty 1:26 Empty block statement."]}
+{"kind":"valid","code":"if ((key || 'k') in obj) {}","type":"script","reports":["no-undef 1:6 'key' is not defined.","no-undef 1:21 'obj' is not defined.","no-empty 1:26 Empty block statement."]}
+{"kind":"valid","code":"if ((foo || {}) instanceof obj) {}","type":"script","reports":["no-undef 1:6 'foo' is not defined.","no-undef 1:28 'obj' is not defined.","no-empty 1:33 Empty block statement."]}
+{"kind":"valid","code":"if ((foo || 'bar' || 'bar') === 'bar');","type":"script","reports":["no-constant-binary-expression 1:6 Unexpected constant truthiness on the left-hand side of a `||` expression.","no-undef 1:6 'foo' is not defined."]}
+{"kind":"valid","code":"if ((foo || 1n) === 'baz') {}","type":"script","reports":["no-undef 1:6 'foo' is not defined.","no-empty 1:28 Empty block statement."]}
+{"kind":"valid","code":"if (a && 0n || b);","type":"script","reports":["no-constant-binary-expression 1:5 Unexpected constant truthiness on the left-hand side of a `||` expression.","no-undef 1:5 'a' is not defined.","no-undef 1:16 'b' is not defined."]}
+{"kind":"valid","code":"if(1n && a){};","type":"script","reports":["no-constant-binary-expression 1:4 Unexpected constant truthiness on the left-hand side of a `&&` expression.","no-undef 1:10 'a' is not defined.","no-empty 1:12 Empty block statement."]}
+{"kind":"valid","code":"if ('' + [y] === '' + [ty]) {}","type":"script","reports":["no-undef 1:11 'y' is not defined.","no-undef 1:24 'ty' is not defined.","no-empty 1:29 Empty block statement."]}
+{"kind":"valid","code":"if ('a' === '' + [ty]) {}","type":"script","reports":["no-undef 1:19 'ty' is not defined.","no-empty 1:24 Empty block statement."]}
+{"kind":"valid","code":"if ('' + [y, m, d] === 'a') {}","type":"script","reports":["no-undef 1:11 'y' is not defined.","no-undef 1:14 'm' is not defined.","no-undef 1:17 'd' is not defined.","no-empty 1:29 Empty block statement."]}
+{"kind":"valid","code":"if ('' + [y, 'm'] === '' + [ty, 'tm']) {}","type":"script","reports":["no-undef 1:11 'y' is not defined.","no-undef 1:29 'ty' is not defined.","no-empty 1:40 Empty block statement."]}
+{"kind":"valid","code":"if ('' + [y, 'm'] === '' + ['ty']) {}","type":"script","reports":["no-undef 1:11 'y' is not defined.","no-empty 1:36 Empty block statement."]}
+{"kind":"valid","code":"if ([,] in\n\n($2))\n ;\nelse\n ;","type":"script","reports":["no-sparse-arrays 1:6 Unexpected comma in middle of array.","no-undef 3:2 '$2' is not defined."]}
+{"kind":"valid","code":"if ([...x]+'' === 'y'){}","type":"script","reports":["no-undef 1:9 'x' is not defined.","no-empty 1:23 Empty block statement."]}
+{"kind":"valid","code":"while(true);","type":"script","reports":[]}
+{"kind":"valid","code":"while(true);","type":"script","reports":[]}
+{"kind":"valid","code":"function* foo(){while(true){yield 'foo';}}","type":"script","reports":["no-unused-vars 1:11 'foo' is defined but never used."]}
+{"kind":"valid","code":"function* foo(){for(;true;){yield 'foo';}}","type":"script","reports":["no-unused-vars 1:11 'foo' is defined but never used."]}
+{"kind":"valid","code":"function* foo(){do{yield 'foo';}while(true)}","type":"script","reports":["no-unused-vars 1:11 'foo' is defined but never used."]}
+{"kind":"valid","code":"function* foo(){while (true) { while(true) {yield;}}}","type":"script","reports":["no-unused-vars 1:11 'foo' is defined but never used."]}
+{"kind":"valid","code":"function* foo() {for (; yield; ) {}}","type":"script","reports":["no-unused-vars 1:11 'foo' is defined but never used.","no-empty 1:34 Empty block statement."]}
+{"kind":"valid","code":"function* foo() {for (; ; yield) {}}","type":"script","reports":["no-unused-vars 1:11 'foo' is defined but never used.","no-empty 1:34 Empty block statement."]}
+{"kind":"valid","code":"function* foo() {while (true) {function* foo() {yield;}yield;}}","type":"script","reports":["no-unused-vars 1:11 'foo' is defined but never used.","no-unused-vars 1:42 'foo' is defined but never used."]}
+{"kind":"valid","code":"function* foo() { for (let x = yield; x < 10; x++) {yield;}yield;}","type":"script","reports":["no-unused-vars 1:11 'foo' is defined but never used."]}
+{"kind":"valid","code":"function* foo() { for (let x = yield; ; x++) { yield; }}","type":"script","reports":["no-unused-vars 1:11 'foo' is defined but never used."]}
+{"kind":"valid","code":"if (new Number(x) + 1 === 2) {}","type":"script","reports":["no-undef 1:16 'x' is not defined.","no-empty 1:30 Empty block statement."]}
+{"kind":"valid","code":"if([a]==[b]) {}","type":"script","reports":["no-constant-binary-expression 1:4 Unexpected comparison of two newly constructed objects. These two values can never be equal.","no-undef 1:5 'a' is not defined.","no-undef 1:10 'b' is not defined.","no-empty 1:14 Empty block statement."]}
+{"kind":"valid","code":"if (+[...a]) {}","type":"script","reports":["no-undef 1:10 'a' is not defined.","no-empty 1:14 Empty block statement."]}
+{"kind":"valid","code":"if (+[...[...a]]) {}","type":"script","reports":["no-undef 1:14 'a' is not defined.","no-empty 1:19 Empty block statement."]}
+{"kind":"valid","code":"if (`${[...a]}`) {}","type":"script","reports":["no-undef 1:12 'a' is not defined.","no-empty 1:18 Empty block statement."]}
+{"kind":"valid","code":"if (`${[a]}`) {}","type":"script","reports":["no-undef 1:9 'a' is not defined.","no-empty 1:15 Empty block statement."]}
+{"kind":"valid","code":"if (+[a]) {}","type":"script","reports":["no-undef 1:7 'a' is not defined.","no-empty 1:11 Empty block statement."]}
+{"kind":"valid","code":"if (0 - [a]) {}","type":"script","reports":["no-undef 1:10 'a' is not defined.","no-empty 1:14 Empty block statement."]}
+{"kind":"valid","code":"if (1 * [a]) {}","type":"script","reports":["no-undef 1:10 'a' is not defined.","no-empty 1:14 Empty block statement."]}
+{"kind":"valid","code":"if (Boolean(a)) {}","type":"script","reports":["no-extra-boolean-cast 1:5 Redundant Boolean call.","no-undef 1:13 'a' is not defined.","no-empty 1:17 Empty block statement."]}
+{"kind":"valid","code":"if (Boolean(...args)) {}","type":"script","reports":["no-extra-boolean-cast 1:5 Redundant Boolean call.","no-undef 1:16 'args' is not defined.","no-empty 1:23 Empty block statement."]}
+{"kind":"valid","code":"if (foo.Boolean(1)) {}","type":"script","reports":["no-undef 1:5 'foo' is not defined.","no-empty 1:21 Empty block statement."]}
+{"kind":"valid","code":"function foo(Boolean) { if (Boolean(1)) {} }","type":"script","reports":["no-unused-vars 1:10 'foo' is defined but never used.","no-empty 1:41 Empty block statement."]}
+{"kind":"valid","code":"const Boolean = () => {}; if (Boolean(1)) {}","type":"script","reports":["no-redeclare 1:7 'Boolean' is already defined as a built-in global variable.","no-empty 1:43 Empty block statement."]}
+{"kind":"valid","code":"if (Boolean()) {}","type":"script","skip":"globals","reports":["no-constant-condition 1:5 Unexpected constant condition.","no-extra-boolean-cast 1:5 Redundant Boolean call.","no-empty 1:16 Empty block statement."]}
+{"kind":"valid","code":"const undefined = 'lol'; if (undefined) {}","type":"script","reports":["no-redeclare 1:7 'undefined' is already defined as a built-in global variable.","no-shadow-restricted-names 1:7 Shadowing of global property 'undefined'.","no-empty 1:41 Empty block statement."]}
+{"kind":"valid","code":"if (undefined) {}","type":"script","skip":"globals","reports":["no-constant-condition 1:5 Unexpected constant condition.","no-empty 1:16 Empty block statement."]}
+{"kind":"invalid","code":"for(;true;);","type":"script","reports":["no-constant-condition 1:6 Unexpected constant condition."]}
+{"kind":"invalid","code":"for(;``;);","type":"script","reports":["no-constant-condition 1:6 Unexpected constant condition."]}
+{"kind":"invalid","code":"for(;`foo`;);","type":"script","reports":["no-constant-condition 1:6 Unexpected constant condition."]}
+{"kind":"invalid","code":"for(;`foo${bar}`;);","type":"script","reports":["no-constant-condition 1:6 Unexpected constant condition.","no-undef 1:12 'bar' is not defined."]}
+{"kind":"invalid","code":"do{}while(true)","type":"script","reports":["no-empty 1:3 Empty block statement.","no-constant-condition 1:11 Unexpected constant condition."]}
+{"kind":"invalid","code":"do{}while('1')","type":"script","reports":["no-empty 1:3 Empty block statement.","no-constant-condition 1:11 Unexpected constant condition."]}
+{"kind":"invalid","code":"do{}while(0)","type":"script","reports":["no-empty 1:3 Empty block statement.","no-constant-condition 1:11 Unexpected constant condition."]}
+{"kind":"invalid","code":"do{}while(t = -2)","type":"script","reports":["no-empty 1:3 Empty block statement.","no-cond-assign 1:11 Expected a conditional expression and instead saw an assignment.","no-constant-condition 1:11 Unexpected constant condition.","no-undef 1:11 't' is not defined."]}
+{"kind":"invalid","code":"do{}while(``)","type":"script","reports":["no-empty 1:3 Empty block statement.","no-constant-condition 1:11 Unexpected constant condition."]}
+{"kind":"invalid","code":"do{}while(`foo`)","type":"script","reports":["no-empty 1:3 Empty block statement.","no-constant-condition 1:11 Unexpected constant condition."]}
+{"kind":"invalid","code":"do{}while(`foo${bar}`)","type":"script","reports":["no-empty 1:3 Empty block statement.","no-constant-condition 1:11 Unexpected constant condition.","no-undef 1:17 'bar' is not defined."]}
+{"kind":"invalid","code":"true ? 1 : 2;","type":"script","reports":["no-constant-condition 1:1 Unexpected constant condition."]}
+{"kind":"invalid","code":"1 ? 1 : 2;","type":"script","reports":["no-constant-condition 1:1 Unexpected constant condition."]}
+{"kind":"invalid","code":"q = 0 ? 1 : 2;","type":"script","reports":["no-undef 1:1 'q' is not defined.","no-constant-condition 1:5 Unexpected constant condition."]}
+{"kind":"invalid","code":"(q = 0) ? 1 : 2;","type":"script","reports":["no-cond-assign 1:2 Expected a conditional expression and instead saw an assignment.","no-constant-condition 1:2 Unexpected constant condition.","no-undef 1:2 'q' is not defined."]}
+{"kind":"invalid","code":"`` ? 1 : 2;","type":"script","reports":["no-constant-condition 1:1 Unexpected constant condition."]}
+{"kind":"invalid","code":"`foo` ? 1 : 2;","type":"script","reports":["no-constant-condition 1:1 Unexpected constant condition."]}
+{"kind":"invalid","code":"`foo${bar}` ? 1 : 2;","type":"script","reports":["no-constant-condition 1:1 Unexpected constant condition.","no-undef 1:7 'bar' is not defined."]}
+{"kind":"invalid","code":"if(-2);","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition."]}
+{"kind":"invalid","code":"if(true);","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition."]}
+{"kind":"invalid","code":"if(1);","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition."]}
+{"kind":"invalid","code":"if({});","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition."]}
+{"kind":"invalid","code":"if(0 < 1);","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition."]}
+{"kind":"invalid","code":"if(0 || 1);","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-constant-binary-expression 1:4 Unexpected constant truthiness on the left-hand side of a `||` expression."]}
+{"kind":"invalid","code":"if(a, 1);","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-undef 1:4 'a' is not defined."]}
+{"kind":"invalid","code":"if(`foo`);","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition."]}
+{"kind":"invalid","code":"if(``);","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition."]}
+{"kind":"invalid","code":"if(`\\\n`);","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition."]}
+{"kind":"invalid","code":"if(`${'bar'}`);","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition."]}
+{"kind":"invalid","code":"if(`${'bar' + `foo`}`);","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition."]}
+{"kind":"invalid","code":"if(`foo${false || true}`);","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-constant-binary-expression 1:10 Unexpected constant truthiness on the left-hand side of a `||` expression."]}
+{"kind":"invalid","code":"if(`foo${0 || 1}`);","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-constant-binary-expression 1:10 Unexpected constant truthiness on the left-hand side of a `||` expression."]}
+{"kind":"invalid","code":"if(`foo${bar}`);","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-undef 1:10 'bar' is not defined."]}
+{"kind":"invalid","code":"if(`${bar}foo`);","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-undef 1:7 'bar' is not defined."]}
+{"kind":"invalid","code":"if(!(true || a));","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-constant-binary-expression 1:6 Unexpected constant truthiness on the left-hand side of a `||` expression.","no-undef 1:14 'a' is not defined."]}
+{"kind":"invalid","code":"if(!(a && void b && c));","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-constant-binary-expression 1:6 Unexpected constant truthiness on the left-hand side of a `&&` expression.","no-undef 1:6 'a' is not defined.","no-undef 1:16 'b' is not defined.","no-undef 1:21 'c' is not defined."]}
+{"kind":"invalid","code":"if(0 || !(a && null));","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-constant-binary-expression 1:4 Unexpected constant truthiness on the left-hand side of a `||` expression.","no-undef 1:11 'a' is not defined."]}
+{"kind":"invalid","code":"if(1 + !(a || true));","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-undef 1:10 'a' is not defined."]}
+{"kind":"invalid","code":"if(!(null && a) > 1);","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-constant-binary-expression 1:6 Unexpected constant truthiness on the left-hand side of a `&&` expression.","no-undef 1:14 'a' is not defined."]}
+{"kind":"invalid","code":"if(+(!(a && 0)));","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-undef 1:8 'a' is not defined."]}
+{"kind":"invalid","code":"if(!typeof a === 'string');","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-constant-binary-expression 1:18 Unexpected constant binary expression. Compares constantly with the left-hand side of the `===`."]}
+{"kind":"invalid","code":"if(-('foo' || a));","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-constant-binary-expression 1:6 Unexpected constant truthiness on the left-hand side of a `||` expression.","no-undef 1:15 'a' is not defined."]}
+{"kind":"invalid","code":"if(+(void a && b) === ~(1 || c));","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-constant-binary-expression 1:6 Unexpected constant truthiness on the left-hand side of a `&&` expression.","no-undef 1:11 'a' is not defined.","no-undef 1:16 'b' is not defined.","no-constant-binary-expression 1:25 Unexpected constant truthiness on the left-hand side of a `||` expression.","no-undef 1:30 'c' is not defined."]}
+{"kind":"invalid","code":"if(a ||= true);","type":"script","reports":["no-cond-assign 1:4 Expected a conditional expression and instead saw an assignment.","no-constant-condition 1:4 Unexpected constant condition.","no-undef 1:4 'a' is not defined."]}
+{"kind":"invalid","code":"if(a ||= 5);","type":"script","reports":["no-cond-assign 1:4 Expected a conditional expression and instead saw an assignment.","no-constant-condition 1:4 Unexpected constant condition.","no-undef 1:4 'a' is not defined."]}
+{"kind":"invalid","code":"if(a ||= 'foo' || b);","type":"script","reports":["no-cond-assign 1:4 Expected a conditional expression and instead saw an assignment.","no-constant-condition 1:4 Unexpected constant condition.","no-undef 1:4 'a' is not defined.","no-constant-binary-expression 1:10 Unexpected constant truthiness on the left-hand side of a `||` expression.","no-undef 1:19 'b' is not defined."]}
+{"kind":"invalid","code":"if(a ||= b || /regex/);","type":"script","reports":["no-cond-assign 1:4 Expected a conditional expression and instead saw an assignment.","no-constant-condition 1:4 Unexpected constant condition.","no-undef 1:4 'a' is not defined.","no-undef 1:10 'b' is not defined."]}
+{"kind":"invalid","code":"if(a ||= b ||= true);","type":"script","reports":["no-cond-assign 1:4 Expected a conditional expression and instead saw an assignment.","no-constant-condition 1:4 Unexpected constant condition.","no-undef 1:4 'a' is not defined.","no-undef 1:10 'b' is not defined."]}
+{"kind":"invalid","code":"if(a ||= b ||= c || 1);","type":"script","reports":["no-cond-assign 1:4 Expected a conditional expression and instead saw an assignment.","no-constant-condition 1:4 Unexpected constant condition.","no-undef 1:4 'a' is not defined.","no-undef 1:10 'b' is not defined.","no-undef 1:16 'c' is not defined."]}
+{"kind":"invalid","code":"if(!(a ||= true));","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-undef 1:6 'a' is not defined."]}
+{"kind":"invalid","code":"if(!(a ||= 'foo') === true);","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-undef 1:6 'a' is not defined.","no-constant-binary-expression 1:23 Unexpected constant binary expression. Compares constantly with the left-hand side of the `===`."]}
+{"kind":"invalid","code":"if(!(a ||= 'foo') === false);","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-undef 1:6 'a' is not defined.","no-constant-binary-expression 1:23 Unexpected constant binary expression. Compares constantly with the left-hand side of the `===`."]}
+{"kind":"invalid","code":"if(a || (b ||= true));","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-undef 1:4 'a' is not defined.","no-undef 1:10 'b' is not defined."]}
+{"kind":"invalid","code":"if((a ||= 1) || b);","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-constant-binary-expression 1:5 Unexpected constant truthiness on the left-hand side of a `||` expression.","no-undef 1:5 'a' is not defined.","no-undef 1:17 'b' is not defined."]}
+{"kind":"invalid","code":"if((a ||= true) && true);","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-constant-binary-expression 1:5 Unexpected constant truthiness on the left-hand side of a `&&` expression.","no-undef 1:5 'a' is not defined."]}
+{"kind":"invalid","code":"if(true && (a ||= true));","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-constant-binary-expression 1:4 Unexpected constant truthiness on the left-hand side of a `&&` expression.","no-undef 1:13 'a' is not defined."]}
+{"kind":"invalid","code":"if(a &&= false);","type":"script","reports":["no-cond-assign 1:4 Expected a conditional expression and instead saw an assignment.","no-constant-condition 1:4 Unexpected constant condition.","no-undef 1:4 'a' is not defined."]}
+{"kind":"invalid","code":"if(a &&= null);","type":"script","reports":["no-cond-assign 1:4 Expected a conditional expression and instead saw an assignment.","no-constant-condition 1:4 Unexpected constant condition.","no-undef 1:4 'a' is not defined."]}
+{"kind":"invalid","code":"if(a &&= void b);","type":"script","reports":["no-cond-assign 1:4 Expected a conditional expression and instead saw an assignment.","no-constant-condition 1:4 Unexpected constant condition.","no-undef 1:4 'a' is not defined.","no-undef 1:15 'b' is not defined."]}
+{"kind":"invalid","code":"if(a &&= 0 && b);","type":"script","reports":["no-cond-assign 1:4 Expected a conditional expression and instead saw an assignment.","no-constant-condition 1:4 Unexpected constant condition.","no-undef 1:4 'a' is not defined.","no-constant-binary-expression 1:10 Unexpected constant truthiness on the left-hand side of a `&&` expression.","no-undef 1:15 'b' is not defined."]}
+{"kind":"invalid","code":"if(a &&= b && '');","type":"script","reports":["no-cond-assign 1:4 Expected a conditional expression and instead saw an assignment.","no-constant-condition 1:4 Unexpected constant condition.","no-undef 1:4 'a' is not defined.","no-undef 1:10 'b' is not defined."]}
+{"kind":"invalid","code":"if(a &&= b &&= false);","type":"script","reports":["no-cond-assign 1:4 Expected a conditional expression and instead saw an assignment.","no-constant-condition 1:4 Unexpected constant condition.","no-undef 1:4 'a' is not defined.","no-undef 1:10 'b' is not defined."]}
+{"kind":"invalid","code":"if(a &&= b &&= c && false);","type":"script","reports":["no-cond-assign 1:4 Expected a conditional expression and instead saw an assignment.","no-constant-condition 1:4 Unexpected constant condition.","no-undef 1:4 'a' is not defined.","no-undef 1:10 'b' is not defined.","no-undef 1:16 'c' is not defined."]}
+{"kind":"invalid","code":"if(!(a &&= false));","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-undef 1:6 'a' is not defined."]}
+{"kind":"invalid","code":"if(!(a &&= 0) + 1);","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-undef 1:6 'a' is not defined."]}
+{"kind":"invalid","code":"if(a && (b &&= false));","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-undef 1:4 'a' is not defined.","no-undef 1:10 'b' is not defined."]}
+{"kind":"invalid","code":"if((a &&= null) && b);","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-constant-binary-expression 1:5 Unexpected constant truthiness on the left-hand side of a `&&` expression.","no-undef 1:5 'a' is not defined.","no-undef 1:20 'b' is not defined."]}
+{"kind":"invalid","code":"if(false || (a &&= false));","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-constant-binary-expression 1:4 Unexpected constant truthiness on the left-hand side of a `||` expression.","no-undef 1:14 'a' is not defined."]}
+{"kind":"invalid","code":"if((a &&= false) || false);","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-constant-binary-expression 1:5 Unexpected constant truthiness on the left-hand side of a `||` expression.","no-undef 1:5 'a' is not defined."]}
+{"kind":"invalid","code":"while([]);","type":"script","reports":["no-constant-condition 1:7 Unexpected constant condition."]}
+{"kind":"invalid","code":"while(~!0);","type":"script","reports":["no-constant-condition 1:7 Unexpected constant condition."]}
+{"kind":"invalid","code":"while(x = 1);","type":"script","reports":["no-cond-assign 1:7 Expected a conditional expression and instead saw an assignment.","no-constant-condition 1:7 Unexpected constant condition.","no-undef 1:7 'x' is not defined."]}
+{"kind":"invalid","code":"while(function(){});","type":"script","reports":["no-constant-condition 1:7 Unexpected constant condition."]}
+{"kind":"invalid","code":"while(1);","type":"script","reports":["no-constant-condition 1:7 Unexpected constant condition."]}
+{"kind":"invalid","code":"while(() => {});","type":"script","reports":["no-constant-condition 1:7 Unexpected constant condition."]}
+{"kind":"invalid","code":"while(`foo`);","type":"script","reports":["no-constant-condition 1:7 Unexpected constant condition."]}
+{"kind":"invalid","code":"while(``);","type":"script","reports":["no-constant-condition 1:7 Unexpected constant condition."]}
+{"kind":"invalid","code":"while(`${'foo'}`);","type":"script","reports":["no-constant-condition 1:7 Unexpected constant condition."]}
+{"kind":"invalid","code":"while(`${'foo' + 'bar'}`);","type":"script","reports":["no-constant-condition 1:7 Unexpected constant condition."]}
+{"kind":"invalid","code":"if(typeof x){}","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-empty 1:13 Empty block statement."]}
+{"kind":"invalid","code":"if(typeof 'abc' === 'string'){}","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-empty 1:30 Empty block statement."]}
+{"kind":"invalid","code":"if(a = typeof b){}","type":"script","reports":["no-cond-assign 1:4 Expected a conditional expression and instead saw an assignment.","no-constant-condition 1:4 Unexpected constant condition.","no-undef 1:4 'a' is not defined.","no-empty 1:17 Empty block statement."]}
+{"kind":"invalid","code":"if(a, typeof b){}","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-undef 1:4 'a' is not defined.","no-empty 1:16 Empty block statement."]}
+{"kind":"invalid","code":"if(typeof 'a' == 'string' || typeof 'b' == 'string'){}","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-constant-binary-expression 1:4 Unexpected constant truthiness on the left-hand side of a `||` expression.","no-empty 1:53 Empty block statement."]}
+{"kind":"invalid","code":"while(typeof x){}","type":"script","reports":["no-constant-condition 1:7 Unexpected constant condition.","no-empty 1:16 Empty block statement."]}
+{"kind":"invalid","code":"if(1 || void x);","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-constant-binary-expression 1:4 Unexpected constant truthiness on the left-hand side of a `||` expression.","no-undef 1:14 'x' is not defined."]}
+{"kind":"invalid","code":"if(void x);","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-undef 1:9 'x' is not defined."]}
+{"kind":"invalid","code":"if(y = void x);","type":"script","reports":["no-cond-assign 1:4 Expected a conditional expression and instead saw an assignment.","no-constant-condition 1:4 Unexpected constant condition.","no-undef 1:4 'y' is not defined.","no-undef 1:13 'x' is not defined."]}
+{"kind":"invalid","code":"if(x, void x);","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-undef 1:4 'x' is not defined.","no-undef 1:12 'x' is not defined."]}
+{"kind":"invalid","code":"if(void x === void y);","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-undef 1:9 'x' is not defined.","no-constant-binary-expression 1:15 Unexpected constant binary expression. Compares constantly with the left-hand side of the `===`.","no-undef 1:20 'y' is not defined."]}
+{"kind":"invalid","code":"if(void x && a);","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-constant-binary-expression 1:4 Unexpected constant truthiness on the left-hand side of a `&&` expression.","no-undef 1:9 'x' is not defined.","no-undef 1:14 'a' is not defined."]}
+{"kind":"invalid","code":"if(a && void x);","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-undef 1:4 'a' is not defined.","no-undef 1:14 'x' is not defined."]}
+{"kind":"invalid","code":"if(false && abc==='str'){}","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-constant-binary-expression 1:4 Unexpected constant truthiness on the left-hand side of a `&&` expression.","no-undef 1:13 'abc' is not defined.","no-empty 1:25 Empty block statement."]}
+{"kind":"invalid","code":"if(true || abc==='str'){}","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-constant-binary-expression 1:4 Unexpected constant truthiness on the left-hand side of a `||` expression.","no-undef 1:12 'abc' is not defined.","no-empty 1:24 Empty block statement."]}
+{"kind":"invalid","code":"if(1 || abc==='str'){}","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-constant-binary-expression 1:4 Unexpected constant truthiness on the left-hand side of a `||` expression.","no-undef 1:9 'abc' is not defined.","no-empty 1:21 Empty block statement."]}
+{"kind":"invalid","code":"if(abc==='str' || true){}","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-undef 1:4 'abc' is not defined.","no-empty 1:24 Empty block statement."]}
+{"kind":"invalid","code":"if(abc==='str' || true || def ==='str'){}","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-constant-binary-expression 1:4 Unexpected constant truthiness on the left-hand side of a `||` expression.","no-undef 1:4 'abc' is not defined.","no-undef 1:27 'def' is not defined.","no-empty 1:40 Empty block statement."]}
+{"kind":"invalid","code":"if(false || true){}","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-constant-binary-expression 1:4 Unexpected constant truthiness on the left-hand side of a `||` expression.","no-empty 1:18 Empty block statement."]}
+{"kind":"invalid","code":"if(typeof abc==='str' || true){}","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","valid-typeof 1:17 Invalid typeof comparison value.","no-empty 1:31 Empty block statement."]}
+{"kind":"invalid","code":"if('str' || a){}","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-constant-binary-expression 1:4 Unexpected constant truthiness on the left-hand side of a `||` expression.","no-undef 1:13 'a' is not defined.","no-empty 1:15 Empty block statement."]}
+{"kind":"invalid","code":"if('str' || abc==='str'){}","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-constant-binary-expression 1:4 Unexpected constant truthiness on the left-hand side of a `||` expression.","no-undef 1:13 'abc' is not defined.","no-empty 1:25 Empty block statement."]}
+{"kind":"invalid","code":"if('str1' || 'str2'){}","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-constant-binary-expression 1:4 Unexpected constant truthiness on the left-hand side of a `||` expression.","no-empty 1:21 Empty block statement."]}
+{"kind":"invalid","code":"if('str1' && 'str2'){}","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-constant-binary-expression 1:4 Unexpected constant truthiness on the left-hand side of a `&&` expression.","no-empty 1:21 Empty block statement."]}
+{"kind":"invalid","code":"if(abc==='str' || 'str'){}","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-undef 1:4 'abc' is not defined.","no-empty 1:25 Empty block statement."]}
+{"kind":"invalid","code":"if(a || 'str'){}","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-undef 1:4 'a' is not defined.","no-empty 1:15 Empty block statement."]}
+{"kind":"invalid","code":"function* foo(){if (true) {yield 'foo';}}","type":"script","reports":["no-unused-vars 1:11 'foo' is defined but never used.","no-constant-condition 1:21 Unexpected constant condition."]}
+{"kind":"invalid","code":"function* foo() {for (let foo = yield; true;) {}}","type":"script","reports":["no-unused-vars 1:11 'foo' is defined but never used.","no-unused-vars 1:27 'foo' is assigned a value but never used.","no-constant-condition 1:40 Unexpected constant condition.","no-empty 1:47 Empty block statement."]}
+{"kind":"invalid","code":"function* foo() {for (foo = yield; true;) {}}","type":"script","reports":["no-unused-vars 1:11 'foo' is assigned a value but never used.","no-func-assign 1:23 'foo' is a function.","no-constant-condition 1:36 Unexpected constant condition.","no-empty 1:43 Empty block statement."]}
+{"kind":"invalid","code":"function* foo() { for (let foo = 1 + 2 + 3 + (yield); true; baz) {}}","type":"script","reports":["no-unused-vars 1:11 'foo' is defined but never used.","no-unused-vars 1:28 'foo' is assigned a value but never used.","no-constant-condition 1:55 Unexpected constant condition.","no-undef 1:61 'baz' is not defined.","no-empty 1:66 Empty block statement."]}
+{"kind":"invalid","code":"if([a]) {}","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-undef 1:5 'a' is not defined.","no-empty 1:9 Empty block statement."]}
+{"kind":"invalid","code":"if([]) {}","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-empty 1:8 Empty block statement."]}
+{"kind":"invalid","code":"if(''+['a']) {}","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-empty 1:14 Empty block statement."]}
+{"kind":"invalid","code":"if(''+[]) {}","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-empty 1:11 Empty block statement."]}
+{"kind":"invalid","code":"if(+1) {}","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-empty 1:8 Empty block statement."]}
+{"kind":"invalid","code":"if ([,] + ''){}","type":"script","reports":["no-constant-condition 1:5 Unexpected constant condition.","no-sparse-arrays 1:6 Unexpected comma in middle of array.","no-empty 1:14 Empty block statement."]}
+{"kind":"invalid","code":"if(/foo/ui);","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition."]}
+{"kind":"invalid","code":"if(0n);","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition."]}
+{"kind":"invalid","code":"if(0b0n);","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition."]}
+{"kind":"invalid","code":"if(0o0n);","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition."]}
+{"kind":"invalid","code":"if(0x0n);","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition."]}
+{"kind":"invalid","code":"if(0b1n);","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition."]}
+{"kind":"invalid","code":"if(0o1n);","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition."]}
+{"kind":"invalid","code":"if(0x1n);","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition."]}
+{"kind":"invalid","code":"if(0x1n || foo);","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-constant-binary-expression 1:4 Unexpected constant truthiness on the left-hand side of a `||` expression.","no-undef 1:12 'foo' is not defined."]}
+{"kind":"invalid","code":"if(class {}) {}","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-empty 1:14 Empty block statement."]}
+{"kind":"invalid","code":"if(new Foo()) {}","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-undef 1:8 'Foo' is not defined.","no-empty 1:15 Empty block statement."]}
+{"kind":"invalid","code":"if(new Boolean(foo)) {}","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-undef 1:16 'foo' is not defined.","no-empty 1:22 Empty block statement."]}
+{"kind":"invalid","code":"if(new String(foo)) {}","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-undef 1:15 'foo' is not defined.","no-empty 1:21 Empty block statement."]}
+{"kind":"invalid","code":"if(new Number(foo)) {}","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-undef 1:15 'foo' is not defined.","no-empty 1:21 Empty block statement."]}
+{"kind":"invalid","code":"if(`${[...['a']]}`) {}","type":"script","reports":["no-constant-condition 1:4 Unexpected constant condition.","no-empty 1:21 Empty block statement."]}
+{"kind":"invalid","code":"if (undefined) {}","type":"script","reports":["no-constant-condition 1:5 Unexpected constant condition.","no-empty 1:16 Empty block statement."]}
+{"kind":"invalid","code":"if (Boolean(1)) {}","type":"script","reports":["no-constant-condition 1:5 Unexpected constant condition.","no-extra-boolean-cast 1:5 Redundant Boolean call.","no-empty 1:17 Empty block statement."]}
+{"kind":"invalid","code":"if (Boolean()) {}","type":"script","reports":["no-constant-condition 1:5 Unexpected constant condition.","no-extra-boolean-cast 1:5 Redundant Boolean call.","no-empty 1:16 Empty block statement."]}
+{"kind":"invalid","code":"if (Boolean([a])) {}","type":"script","reports":["no-constant-condition 1:5 Unexpected constant condition.","no-extra-boolean-cast 1:5 Redundant Boolean call.","no-undef 1:14 'a' is not defined.","no-empty 1:19 Empty block statement."]}
+{"kind":"invalid","code":"if (Boolean(1)) { function Boolean() {}}","type":"script","reports":["no-constant-condition 1:5 Unexpected constant condition.","no-extra-boolean-cast 1:5 Redundant Boolean call.","no-unused-vars 1:28 'Boolean' is defined but never used."]}

@@ -340,8 +340,6 @@ describe("FormData", () => {
   });
 
   // RFC 2045 §5.1: an unquoted parameter value is a token and ends at `;`.
-  // Previously the unquoted-value scan only stopped at `"` or end of line, so
-  // `name=k; filename=x.txt` swallowed the whole tail into the name.
   describe("Content-Disposition unquoted parameter values", () => {
     const boundary = "BXa";
     const parse = async (C: typeof Response | typeof Request, disposition: string) => {

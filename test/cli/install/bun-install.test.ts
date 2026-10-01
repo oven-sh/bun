@@ -10142,6 +10142,52 @@ describe.concurrent("bun-install", () => {
         ]);
       });
 
+      // bun.lock writes a registry.npmjs.org tarball URL as "" and rebuilds it
+      // under the configured registry, so such a URL names that registry's
+      // folder. A URL on any other host does not. Both installs are offline: a
+      // cache miss is an error, and nothing reaches the network.
+      it("treats a lockfile URL on registry.npmjs.org as the configured registry's", async () => {
+        const registries = await startRegistries({ "/": "stub" });
+        await using _server = registries.server;
+        const { stub } = registries;
+
+        using dir = tempDir("registry-npmjs-lockfile-url", project("a", stub.url));
+        const cwd = join(String(dir), "a");
+        const cacheDir = join(String(dir), ".bun-cache");
+        const lockfilePath = join(cwd, "bun.lock");
+
+        await install(cwd, cacheDir);
+        const lockfile = await file(lockfilePath).text();
+        const stubTarball = `${stub.url}no-deps/-/no-deps-1.0.0.tgz`;
+        expect(lockfile).toContain(stubTarball);
+
+        async function installOfflineFrom(tarball: string) {
+          await writeFile(lockfilePath, lockfile.replace(stubTarball, tarball));
+          await rm(join(cwd, "node_modules"), { recursive: true, force: true });
+          await using proc = spawn({
+            cmd: [bunExe(), "install", "--offline"],
+            cwd,
+            env: { ...env, BUN_INSTALL_CACHE_DIR: cacheDir },
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          return { stderr, exitCode };
+        }
+
+        expect(await installOfflineFrom("https://registry.npmjs.org/no-deps/-/no-deps-1.0.0.tgz")).toEqual({
+          stderr: expect.not.stringContaining("error:"),
+          exitCode: 0,
+        });
+        expect(await installedVariant(cwd)).toBe("stub");
+
+        expect(await installOfflineFrom("https://registry.example/no-deps/-/no-deps-1.0.0.tgz")).toEqual({
+          stderr: expect.stringContaining('--offline: "no-deps" is not in the cache'),
+          exitCode: 1,
+        });
+        expect(stub.requests.filter(request => request.endsWith(".tgz"))).toHaveLength(1);
+      });
+
       // The host in a folder name is read from a URL. Only a plain name is
       // shown: `[::1]` has bytes that a file name cannot hold on every platform.
       it.skipIf(!isIPv6())("leaves a host that is not a plain name out of the folder name", async () => {

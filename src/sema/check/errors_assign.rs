@@ -2968,6 +2968,9 @@ impl Checker<'_> {
         if !self.may_have_hosting_alias(ty) {
             return false;
         }
+        if let Some(host) = self.hosting_alias_declaration(ty) {
+            return host == (file, alias);
+        }
         // The alias at the end of the references: the one `alias_of` knows.
         let (mut of, mut body) = (file, self.hir(file)[alias].ty);
         let mut innermost = None;

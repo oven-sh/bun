@@ -2456,6 +2456,102 @@ impl<'p> Checker<'p> {
         self.variances_in_progress.contains(&sym) || self.p.variances.get(&sym).is_some()
     }
 
+    /// The alias whose type parameters `with_hosting_alias` has added to the mapper of the mapped type `t`. They are the ones that
+    /// are not in scope where the mapped type is written. For an alias without type parameters it has added a reference to it.
+    pub(super) fn hosting_alias_declaration(&self, t: TypeId) -> Option<(FileId, AliasId)> {
+        let (origin_file, node, mapper) = self.mapped_origin(t)?;
+        self.p.types.mapping(mapper).iter().find_map(|&(param, _)| {
+            if let TypeData::LazyAlias { sym, .. } = *self.data(param) {
+                return self
+                    .files()
+                    .decls(sym)
+                    .into_iter()
+                    .find_map(|(file, decl)| match decl {
+                        crate::bind::Decl::Alias(alias) => Some((file, alias)),
+                        _ => None,
+                    });
+            }
+            let TypeData::TypeParam(file, tp, _) = *self.data(param) else {
+                return None;
+            };
+            let bound = self.bound(file);
+            let declared_in = bound.type_param_scope[tp.idx()];
+            if declared_in.is_none() {
+                return None;
+            }
+            if file == origin_file {
+                let mut scope = bound.type_scope[node.idx()];
+                while scope.is_some() {
+                    if scope == declared_in {
+                        return None;
+                    }
+                    scope = bound.scopes[scope.idx()].parent;
+                }
+            }
+            let alias = bound.alias_scope.iter().position(|&s| s == declared_in)?;
+            Some((file, AliasId(alias as u32)))
+        })
+    }
+
+    /// `t.alias`, of a mapped type that was instantiated under an alias whose body is a reference to a generic alias
+    /// (`getTypeFromTypeAliasReference`): that alias, and what stands for its type parameters in `t`.
+    pub(super) fn hosting_alias_of(&mut self, t: TypeId) -> Option<(Sym, Vec<TypeId>)> {
+        let (file, alias) = self.hosting_alias_declaration(t)?;
+        let (_, _, mapper) = self.mapped_origin(t)?;
+        let symbol = self.bound(file).alias_symbol[alias.idx()];
+        if symbol.is_none() {
+            return None;
+        }
+        let sym = self.files().sym(file, symbol);
+        // As in `alias_of`.
+        if self.stack.contains(&Query::Declared(sym))
+            || self
+                .files()
+                .flags(sym)
+                .intersects(SymFlags::CLASS | SymFlags::INTERFACE)
+        {
+            return None;
+        }
+        let params = self.type_params_of_symbol(sym);
+        Some((
+            sym,
+            params
+                .iter()
+                .map(|&p| self.p.types.map(mapper, p).unwrap_or(p))
+                .collect(),
+        ))
+    }
+
+    /// The mapped type `t` without the alias that hosts it: without the pairs `with_hosting_alias` has added to its mapper.
+    pub(super) fn without_hosting_alias(&self, t: TypeId) -> TypeId {
+        let Some((host_file, host)) = self.hosting_alias_declaration(t) else {
+            return t;
+        };
+        let Some((file, node, mapper)) = self.mapped_origin(t) else {
+            return t;
+        };
+        let own = self.hir(host_file)[host].type_params.range();
+        let mut pairs = self.p.types.mapping(mapper).to_vec();
+        pairs.retain(|pair| match *self.data(pair.0) {
+            TypeData::TypeParam(f, tp, _) => f != host_file || !own.contains(&tp.idx()),
+            TypeData::LazyAlias { .. } => false,
+            _ => true,
+        });
+        let mapper = self.p.types.mapper(pairs);
+        self.intern(TypeData::Anon {
+            origin: Origin::Mapped(file, node),
+            mapper,
+        })
+    }
+
+    /// `t.alias`: `hosting_alias_of`, or else `alias_of`.
+    pub(super) fn type_alias_of(&mut self, t: TypeId) -> Option<(Sym, Vec<TypeId>)> {
+        match self.hosting_alias_of(t) {
+            Some(alias) => Some(alias),
+            None => self.alias_of(t),
+        }
+    }
+
     /// `t.alias`, of an object or a conditional type: the generic alias whose whole right side `t` is made from, and what stands
     /// for its type parameters in `t`.
     pub(super) fn alias_of(&mut self, t: TypeId) -> Option<(Sym, Vec<TypeId>)> {
@@ -4489,7 +4585,9 @@ impl<'p> Checker<'p> {
             _ => false,
         };
         if same_body
-            && let (Some((alias, source_args)), Some((_, target_args))) = (self.alias_of(source), self.alias_of(target))
+            && let (Some((alias, source_args)), Some((target_alias, target_args))) = (self.type_alias_of(source), self.type_alias_of(target))
+            && alias == target_alias
+            && !source_args.is_empty()
             // With a wildcard for every type parameter there are no marker types left.
             && (relation == Relation::Permissive || {
                 let params = self.type_params_of_symbol(alias);

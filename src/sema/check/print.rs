@@ -1316,6 +1316,9 @@ impl<'p> Printer<'_, 'p> {
     /// `t.alias`. Types do not keep it. An object, function or conditional type has it if its syntax is the whole body of a type
     /// alias. A union or an intersection is looked up among what the aliases of the program stand for.
     fn alias_of_type(&mut self, ty: TypeId) -> Option<(Sym, Vec<TypeId>)> {
+        if let Some(hosting) = self.c.hosting_alias_of(ty) {
+            return Some(hosting);
+        }
         let (file, node, mapper) = match self.c.data(ty) {
             TypeData::LazyAlias { sym, args } => return Some((*sym, args.to_vec())),
             TypeData::Anon {

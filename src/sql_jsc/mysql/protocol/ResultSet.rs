@@ -7,7 +7,6 @@ use bun_sql::mysql::protocol::any_mysql_error::AnyMySQLError;
 use bun_sql::mysql::protocol::column_definition41::ColumnFlags;
 use bun_sql::mysql::protocol::encode_int::decode_length_int;
 use bun_sql::mysql::protocol::new_reader::{NewReader, ReaderContext};
-use bun_sql::shared::ColumnIdentifier as NameOrIndex;
 use bun_sql::shared::Data;
 use bun_sql::shared::SQLQueryResultMode;
 
@@ -52,7 +51,7 @@ impl<'a> Row<'a> {
         )
     }
 
-    pub(crate) fn decode_internal<Context: ReaderContext>(
+    fn decode_internal<Context: ReaderContext>(
         &mut self,
         reader: NewReader<Context>,
     ) -> Result<(), AnyMySQLError> {
@@ -169,7 +168,7 @@ impl<'a> Row<'a> {
                 // BIT(1) is a special case, it's a boolean
                 if column.column_length == 1 {
                     let slice = value.slice();
-                    *cell = SQLDataCell::bool_(!slice.is_empty() && slice[0] == 1);
+                    *cell = SQLDataCell::bool(!slice.is_empty() && slice[0] == 1);
                 } else {
                     *cell = SQLDataCell::raw(value);
                 }
@@ -224,16 +223,10 @@ impl<'a> Row<'a> {
                         self.parse_value_and_set_cell(value, column, &string_data);
                     }
                 }
-                value.index = match column.name_or_index {
-                    // The indexed columns can be out of order.
-                    NameOrIndex::Index(i) => i,
-                    _ => u32::try_from(index).expect("int cast"),
-                };
-                value.is_indexed_column = match column.name_or_index {
-                    NameOrIndex::Duplicate => 2,
-                    NameOrIndex::Index(_) => 1,
-                    NameOrIndex::Name(_) => 0,
-                };
+                value.set_column(
+                    u32::try_from(index).expect("int cast"),
+                    &column.name_or_index,
+                );
             } else {
                 return Err(AnyMySQLError::InvalidResultRow);
             }
@@ -291,16 +284,7 @@ impl<'a> Row<'a> {
                         .unwrap_or(AnyMySQLError::InvalidBinaryValue),
                 })?;
             }
-            value.index = match column.name_or_index {
-                // The indexed columns can be out of order.
-                NameOrIndex::Index(idx) => idx,
-                _ => u32::try_from(i).expect("int cast"),
-            };
-            value.is_indexed_column = match column.name_or_index {
-                NameOrIndex::Duplicate => 2,
-                NameOrIndex::Index(_) => 1,
-                NameOrIndex::Name(_) => 0,
-            };
+            value.set_column(u32::try_from(i).expect("int cast"), &column.name_or_index);
         }
 
         self.values = scopeguard::ScopeGuard::into_inner(cells);

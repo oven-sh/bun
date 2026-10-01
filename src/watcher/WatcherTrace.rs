@@ -13,7 +13,7 @@ static TRACE_FILE: Guarded<Option<File>> = Guarded::new(None);
 
 /// Initialize trace file if BUN_WATCHER_TRACE env var is set.
 /// Only checks once on first call.
-pub fn init() {
+pub(crate) fn init() {
     let mut slot = TRACE_FILE.lock();
     if slot.is_some() {
         return;
@@ -32,7 +32,7 @@ pub fn init() {
 /// Write trace events to the trace file if enabled.
 /// This is called from the watcher thread, so no locking is needed.
 /// Events are assumed to be already deduped by path.
-pub fn write_events(
+pub(crate) fn write_events(
     watchlist: &WatchList,
     events: &[WatchEvent],
     changed_files: &[ChangedFilePath],

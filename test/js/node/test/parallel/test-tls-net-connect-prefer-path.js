@@ -1,6 +1,5 @@
 'use strict';
 const common = require('../common');
-if (common.isWindows) return; // TODO: BUN
 const fixtures = require('../common/fixtures');
 
 // This tests that both tls and net will ignore host and port if path is
@@ -39,14 +38,14 @@ function mkServer(lib, tcp, cb) {
 }
 
 function testLib(lib, cb) {
-  mkServer(lib, true, (tcpServer) => {
-    mkServer(lib, false, (unixServer) => {
+  mkServer(lib, true, common.mustCall((tcpServer) => {
+    mkServer(lib, false, common.mustCall((unixServer) => {
       const client = lib.connect({
         path: unixServer.address(),
         port: tcpServer.address().port,
         host: 'localhost',
         rejectUnauthorized: false
-      }, () => {
+      }, common.mustCall(() => {
         const bufs = [];
         client.on('data', common.mustCall((d) => {
           bufs.push(d);
@@ -58,9 +57,9 @@ function testLib(lib, cb) {
           unixServer.close();
           cb();
         }));
-      });
-    });
-  });
+      }));
+    }));
+  }));
 }
 
 testLib(net, common.mustCall(() => testLib(tls, common.mustCall())));

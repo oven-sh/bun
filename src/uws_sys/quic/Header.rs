@@ -7,11 +7,11 @@ use core::ffi::{c_int, c_uint};
 
 #[repr(C)]
 pub struct Header {
-    pub name: *const u8,
-    pub name_len: c_uint,
-    pub value: *const u8,
-    pub value_len: c_uint,
-    pub qpack_index: c_int, // default -1
+    pub(crate) name: *const u8,
+    pub(crate) name_len: c_uint,
+    pub(crate) value: *const u8,
+    pub(crate) value_len: c_uint,
+    pub(crate) qpack_index: c_int, // default -1
 }
 
 impl Header {

@@ -20,7 +20,6 @@ SEL Ref::s_alloc;
 SEL Ref::s_init;
 SEL Ref::s_release;
 SEL Ref::s_retain;
-SEL Ref::s_description;
 SEL Ref::s_isKindOfClass;
 
 Class NSString::cls;
@@ -117,9 +116,24 @@ SEL WKWebView::s_callAsyncJavaScript;
 Class WKWebViewConfiguration::cls;
 Class WKWebViewConfiguration::cls_WKWebsiteDataStore;
 Class WKWebViewConfiguration::cls_WKWebsiteDataStoreConfiguration;
+Class WKWebViewConfiguration::cls_WKProcessPool;
 SEL WKWebViewConfiguration::s_nonPersistentDataStore;
 SEL WKWebViewConfiguration::s_initWithDirectory;
 SEL WKWebViewConfiguration::s_initWithConfiguration;
+SEL WKWebViewConfiguration::s_setProcessPool;
+
+// One pool shared by every view, retained for process lifetime. A private
+// pool per view spends one CVDisplayLink each (CoreVideo allows 64 per
+// process), so the 65th lifetime view wedged (oven-sh/bun#40951).
+id WKWebViewConfiguration::sharedProcessPool()
+{
+    static id pool;
+    if (!pool) {
+        Ref p(msgCls<id>(cls_WKProcessPool, s_alloc));
+        pool = p.msg<id>(s_init);
+    }
+    return pool;
+}
 
 // Keyed by directory path. Stores live for the process: each WKWebsiteDataStore
 // runs its own NetworkProcess session, so two instances at the same path don't
@@ -165,7 +179,6 @@ SEL WKWebView::s_canGoBack;
 SEL WKWebView::s_canGoForward;
 SEL WKWebView::s_goBack;
 SEL WKWebView::s_goForward;
-SEL WKWebView::s_isLoading;
 SEL WKWebView::s_URL;
 SEL WKWebView::s_title;
 SEL WKWebView::s_setAfterScreenUpdates;
@@ -347,7 +360,6 @@ bool ObjCRuntime::load()
     Ref::s_init = sel("init");
     Ref::s_release = sel("release");
     Ref::s_retain = sel("retain");
-    Ref::s_description = sel("description");
     Ref::s_isKindOfClass = sel("isKindOfClass:");
 
     // --- populate wrapper classes -----------------------------------------
@@ -448,6 +460,8 @@ bool ObjCRuntime::load()
     // _WKWebsiteDataStoreConfiguration is SPI but stable since macOS 10.13.
     // initWithDirectory: is 15.2+.
     CLS(WKWebViewConfiguration::cls_WKWebsiteDataStoreConfiguration, "_WKWebsiteDataStoreConfiguration");
+    CLS(WKWebViewConfiguration::cls_WKProcessPool, "WKProcessPool");
+    WKWebViewConfiguration::s_setProcessPool = sel("setProcessPool:");
     WKWebViewConfiguration::s_nonPersistentDataStore = sel("nonPersistentDataStore");
     WKWebViewConfiguration::s_initWithDirectory = sel("initWithDirectory:");
     WKWebViewConfiguration::s_initWithConfiguration = sel("_initWithConfiguration:");
@@ -476,7 +490,6 @@ bool ObjCRuntime::load()
     WKWebView::s_canGoForward = sel("canGoForward");
     WKWebView::s_goBack = sel("goBack");
     WKWebView::s_goForward = sel("goForward");
-    WKWebView::s_isLoading = sel("isLoading");
     WKWebView::s_URL = sel("URL");
     WKWebView::s_title = sel("title");
     WKWebView::s_setAfterScreenUpdates = sel("setAfterScreenUpdates:");

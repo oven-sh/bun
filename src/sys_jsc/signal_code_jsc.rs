@@ -32,9 +32,7 @@ pub fn from_js(arg: JSValue, global_this: &JSGlobalObject) -> JsResult<SignalCod
         // ctor instead of a transmute.
         return Ok(SignalCode(sig64 as u8));
     } else if arg.is_string_literal() {
-        // SAFETY: `is_string_literal()` ⇒ `as_string()` returns a non-null JSString cell;
-        // borrowed for `.length()` only.
-        if unsafe { &*arg.as_string() }.length() == 0 {
+        if arg.as_string().length() == 0 {
             return Ok(SignalCode::DEFAULT);
         }
         let signal_code = arg.to_enum::<SignalCode>(global_this, "signal")?;

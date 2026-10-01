@@ -7,7 +7,6 @@ use bun_boringssl_sys as boring;
 use bun_core::strings;
 use bun_sha_hmac::hmac;
 
-use bun_core::NodeEncoding;
 use bun_sha_hmac::evp::Algorithm;
 
 /// Default expiration time for tokens (24 hours)
@@ -19,10 +18,7 @@ pub const DEFAULT_ALGORITHM: Algorithm = Algorithm::Sha256;
 /// Error types for CSRF operations
 #[derive(strum::IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
-    InvalidToken,
-    ExpiredToken,
     TokenCreationFailed,
-    DecodingFailed,
 }
 bun_core::impl_tag_error!(Error);
 
@@ -36,8 +32,6 @@ pub struct GenerateOptions<'a> {
     pub session_id: &'a [u8],
     /// How long the token should be valid (in milliseconds)
     pub expires_in_ms: u64, // = DEFAULT_EXPIRATION_MS
-    /// Format to encode the token in
-    pub encoding: TokenFormat, // = .base64url
     /// Algorithm to use for signing
     pub algorithm: Algorithm, // = DEFAULT_ALGORITHM
 }
@@ -66,16 +60,6 @@ pub enum TokenFormat {
     Base64,
     Base64Url,
     Hex,
-}
-
-impl TokenFormat {
-    pub fn to_node_encoding(self) -> NodeEncoding {
-        match self {
-            TokenFormat::Base64 => NodeEncoding::Base64,
-            TokenFormat::Base64Url => NodeEncoding::Base64url,
-            TokenFormat::Hex => NodeEncoding::Hex,
-        }
-    }
 }
 
 /// Generate a new CSRF token

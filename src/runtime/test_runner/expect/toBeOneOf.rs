@@ -40,8 +40,7 @@ pub(crate) fn to_be_one_of(
     let (this, expected, not) =
         this.matcher_prelude(global_this, call_frame.this(), "toBeOneOf", "<green>expected<r>")?;
 
-    let arguments_ = call_frame.arguments_old::<1>();
-    let arguments = arguments_.slice();
+    let arguments = call_frame.arguments();
 
     if arguments.len() < 1 {
         return Err(global_this.throw_invalid_arguments(format_args!("toBeOneOf() takes 1 argument")));

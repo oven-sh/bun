@@ -63,8 +63,8 @@ static const JSC::HashTableValue JSDiffieHellmanGroupPrototypeTableValues[] = {
 void JSDiffieHellmanGroupPrototype::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSDiffieHellmanGroup::info(), JSDiffieHellmanGroupPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSDiffieHellmanGroup::info(), JSDiffieHellmanGroupPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 } // namespace Bun

@@ -1,5 +1,4 @@
 #![feature(adt_const_params, generic_const_exprs, allocator_api)]
-#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
 #![allow(incomplete_features)]
 
@@ -8,9 +7,6 @@ pub use error::{Error, Result};
 
 #[path = "braces.rs"]
 pub mod braces;
-
-// Re-exports expected at crate root (callers do `use crate::{...}`).
-pub use braces::{CharIter, InputChar, ShellCharIter, ShellCharIterState, StringEncoding};
 
 // ─── lexer / parser / AST ───────────────────────────────────────────────────
 // Shell lex/parse — moved down from `bun_runtime::shell::shell_body`
@@ -22,13 +18,6 @@ pub mod parse;
 pub mod json_fmt;
 
 pub use parse::{
-    BACKSLASHABLE_CHARS, EscapeUtf16Result, IfClauseTok, JSValueRaw, LEX_JS_OBJREF_PREFIX,
-    LEX_JS_STRING_PREFIX, LexError, LexResult, Lexer, LexerAscii, LexerError, LexerUnicode,
-    MemoryCost, ParseError, Parser, ParserError, SPECIAL_CHARS, SPECIAL_CHARS_TABLE, SmolList,
-    SubShellKind, SubshellKind, TextRange, Token, TokenTag, ast, ast as AST, escape_8bit,
-    escape_bun_str, escape_utf16, is_valid_var_name, needs_escape_bunstr,
-    needs_escape_utf8_ascii_latin1, needs_escape_utf16,
+    JSValueRaw, LexResult, LexerError, ParseError, Parser, ast, escape_8bit, escape_bun_str,
+    needs_escape_bunstr, needs_escape_utf8_ascii_latin1,
 };
-// NOTE: `StringEncoding`/`ShellCharIter`/`InputChar` already re-exported from
-// `braces` above; `parse` defines its own (lexer-shaped) copies which stay
-// module-scoped to avoid crate-root ambiguity.

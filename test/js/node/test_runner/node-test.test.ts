@@ -4,21 +4,32 @@ import { bunEnv, bunExe } from "harness";
 import { join } from "node:path";
 
 describe("node:test", () => {
-  test("should run basic tests", async () => {
-    const { exitCode, stderr } = await runTests(["01-harness.js"]);
-    expect({ exitCode, stderr }).toMatchObject({
-      exitCode: 0,
-      stderr: expect.stringContaining("0 fail"),
-    });
-  });
+  // These three drive the largest fixtures (01-harness has 32 node:test cases);
+  // a debug+ASAN `bun test` child takes several seconds to start, so give them
+  // headroom and let them spawn in parallel instead of serially.
+  test.concurrent(
+    "should run basic tests",
+    async () => {
+      const { exitCode, stderr } = await runTests(["01-harness.js"]);
+      expect({ exitCode, stderr }).toMatchObject({
+        exitCode: 0,
+        stderr: expect.stringContaining("0 fail"),
+      });
+    },
+    30_000,
+  );
 
-  test("should run hooks in the right order", async () => {
-    const { exitCode, stderr } = await runTests(["02-hooks.js"]);
-    expect({ exitCode, stderr }).toMatchObject({
-      exitCode: 0,
-      stderr: expect.stringContaining("0 fail"),
-    });
-  });
+  test.concurrent(
+    "should run hooks in the right order",
+    async () => {
+      const { exitCode, stderr } = await runTests(["02-hooks.js"]);
+      expect({ exitCode, stderr }).toMatchObject({
+        exitCode: 0,
+        stderr: expect.stringContaining("0 fail"),
+      });
+    },
+    30_000,
+  );
 
   test("should run tests with different variations", async () => {
     const { exitCode, stderr } = await runTests(["03-test-variations.js"]);
@@ -36,14 +47,18 @@ describe("node:test", () => {
     });
   });
 
-  test("should run all tests from multiple files", async () => {
-    const { exitCode, stderr } = await runTests(["01-harness.js", "02-hooks.js"]);
-    expect({ exitCode, stderr }).toMatchObject({
-      exitCode: 0,
-      // 32 from 01-harness + 3 from 02-hooks
-      stderr: expect.stringContaining("35 pass"),
-    });
-  });
+  test.concurrent(
+    "should run all tests from multiple files",
+    async () => {
+      const { exitCode, stderr } = await runTests(["01-harness.js", "02-hooks.js"]);
+      expect({ exitCode, stderr }).toMatchObject({
+        exitCode: 0,
+        // 32 from 01-harness + 3 from 02-hooks
+        stderr: expect.stringContaining("35 pass"),
+      });
+    },
+    30_000,
+  );
 
   test("should run test() and describe() called inside another test() as subtests", async () => {
     const { exitCode, stderr } = await runTests(["05-test-in-test.js"]);
@@ -191,6 +206,56 @@ describe("node:test", () => {
     expect({ exitCode, stderr }).toMatchObject({
       exitCode: 1,
       stderr: expect.stringContaining("1 fail"),
+    });
+  });
+
+  test("should treat a failing expectFailure test as a pass", async () => {
+    const { exitCode, stderr } = await runTests(["25-expect-failure.js"]);
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 0,
+      stderr: expect.stringContaining("0 fail"),
+    });
+  });
+
+  test("should fail an expectFailure test that passes", async () => {
+    const { exitCode, stderr } = await runTests(["27-expect-failure-but-passes.js"]);
+    expect(stderr).toContain("test was expected to fail but passed");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 1,
+      stderr: expect.stringContaining("1 fail"),
+    });
+  });
+
+  test("should fail an expectFailure test whose error does not match the validator", async () => {
+    const { exitCode, stderr } = await runTests(["29-expect-failure-mismatch.js"]);
+    expect(stderr).toContain("the error did not match the expected validation");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 1,
+      stderr: expect.stringContaining("1 fail"),
+    });
+  });
+
+  test("should inherit expectFailure into subtests", async () => {
+    // Matches node v26.3.0: the subtest inherits the expectation and passes, so
+    // the parent is the one that fails for not failing.
+    const { exitCode, stderr } = await runTests(["28-expect-failure-inherited.js"]);
+    expect(stderr).toContain("test was expected to fail but passed");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 1,
+      stderr: expect.stringContaining("1 fail"),
+    });
+  });
+
+  test("should not run a skipped suite's callback", async () => {
+    const { exitCode, stdout, stderr } = await runTests(["26-skipped-suite-body.js"]);
+    expect(stdout).not.toContain("[suite body ran: skip-only]");
+    // { skip: true, todo: true } is a skip in Node, so this body is skipped too.
+    expect(stdout).not.toContain("[suite body ran: both-flags]");
+    // A todo suite's callback does run.
+    expect(stdout).toContain("[suite body ran: pending-only]");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 0,
+      stderr: expect.stringContaining("0 fail"),
     });
   });
 

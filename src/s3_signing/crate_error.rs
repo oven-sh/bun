@@ -16,7 +16,7 @@ pub enum Error {
 
 impl Error {
     #[allow(clippy::trivially_copy_pass_by_ref)]
-    pub fn name(&self) -> &'static str {
+    pub(crate) fn name(&self) -> &'static str {
         match self {
             Self::MissingCredentials => "MissingCredentials",
             Self::InvalidMethod => "InvalidMethod",
@@ -49,5 +49,3 @@ impl From<crate::credentials::SignError> for Error {
         }
     }
 }
-
-pub type Result<T, E = Error> = core::result::Result<T, E>;

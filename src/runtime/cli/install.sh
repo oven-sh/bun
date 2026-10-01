@@ -105,7 +105,8 @@ GITHUB=${GITHUB-"https://github.com"}
 
 github_repo="$GITHUB/oven-sh/bun"
 
-# If AVX2 isn't supported, use the -baseline build
+# A pinned older version ($1) may still split haswell/nehalem; probe AVX2 and
+# request `-baseline` on miss. Current releases alias that name.
 case "$target" in
 'darwin-x64'*)
     if [[ $(sysctl -a | grep machdep.cpu | grep AVX2) == '' ]]; then
@@ -113,7 +114,6 @@ case "$target" in
     fi
     ;;
 'linux-x64'*)
-    # If AVX2 isn't supported, use the -baseline build
     if [[ $(cat /proc/cpuinfo | grep avx2) = '' ]]; then
         target="$target-baseline"
     fi

@@ -47,7 +47,7 @@ static const uint64_t AllBitsSet = ~(uint64_t)0;
 
 static inline bool usagesAreInvalidForCryptoAlgorithmAES_CTR(CryptoKeyUsageBitmap usages)
 {
-    return usages & (CryptoKeyUsageSign | CryptoKeyUsageVerify | CryptoKeyUsageDeriveKey | CryptoKeyUsageDeriveBits);
+    return usages & (CryptoKeyUsageSign | CryptoKeyUsageVerify | CryptoKeyUsageDeriveKey | CryptoKeyUsageDeriveBits | CryptoKeyUsageKemMask);
 }
 
 static bool parametersAreValid(const CryptoAlgorithmAesCtrParams& parameters)
@@ -103,7 +103,7 @@ void CryptoAlgorithmAES_CTR::generateKey(const CryptoAlgorithmParameters& parame
     const auto& aesParameters = downcast<CryptoAlgorithmAesKeyParams>(parameters);
 
     if (usagesAreInvalidForCryptoAlgorithmAES_CTR(usages)) {
-        exceptionCallback(SyntaxError, ""_s);
+        exceptionCallback(SyntaxError, "Unsupported key usage for an AES key"_s);
         return;
     }
 
@@ -121,12 +121,13 @@ void CryptoAlgorithmAES_CTR::importKey(CryptoKeyFormat format, KeyData&& data, c
     using namespace CryptoAlgorithmAES_CTRInternal;
 
     if (usagesAreInvalidForCryptoAlgorithmAES_CTR(usages)) {
-        exceptionCallback(SyntaxError, ""_s);
+        exceptionCallback(SyntaxError, "Unsupported key usage for an AES key"_s);
         return;
     }
 
     RefPtr<CryptoKeyAES> result;
     switch (format) {
+    case CryptoKeyFormat::RawSecret:
     case CryptoKeyFormat::Raw:
         result = CryptoKeyAES::importRaw(parameters.identifier, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages);
         break;
@@ -169,6 +170,7 @@ void CryptoAlgorithmAES_CTR::exportKey(CryptoKeyFormat format, Ref<CryptoKey>&& 
 
     KeyData result;
     switch (format) {
+    case CryptoKeyFormat::RawSecret:
     case CryptoKeyFormat::Raw:
         result = Vector<uint8_t>(aesKey.key());
         break;

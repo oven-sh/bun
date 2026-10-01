@@ -28,14 +28,7 @@
 
 #if ENABLE(WEB_CRYPTO)
 
-#include "CryptoAlgorithmRegistry.h"
-#include "WebCoreOpaqueRoot.h"
-#include <wtf/CryptographicallyRandomNumber.h>
 #include <openssl/rand.h>
-#include <openssl/evp.h>
-#include "CryptoKeyRSA.h"
-#include "CryptoKeyEC.h"
-#include "CryptoKeyHMAC.h"
 namespace WebCore {
 
 CryptoKey::CryptoKey(CryptoAlgorithmIdentifier algorithmIdentifier, Type type, bool extractable, CryptoKeyUsageBitmap usages)
@@ -68,12 +61,15 @@ auto CryptoKey::usages() const -> Vector<CryptoKeyUsage>
         result.append(CryptoKeyUsage::WrapKey);
     if (m_usages & CryptoKeyUsageUnwrapKey)
         result.append(CryptoKeyUsage::UnwrapKey);
+    if (m_usages & CryptoKeyUsageEncapsulateKey)
+        result.append(CryptoKeyUsage::EncapsulateKey);
+    if (m_usages & CryptoKeyUsageEncapsulateBits)
+        result.append(CryptoKeyUsage::EncapsulateBits);
+    if (m_usages & CryptoKeyUsageDecapsulateKey)
+        result.append(CryptoKeyUsage::DecapsulateKey);
+    if (m_usages & CryptoKeyUsageDecapsulateBits)
+        result.append(CryptoKeyUsage::DecapsulateBits);
     return result;
-}
-
-WebCoreOpaqueRoot root(CryptoKey* key)
-{
-    return WebCoreOpaqueRoot { key };
 }
 
 Vector<uint8_t> CryptoKey::randomData(size_t size)

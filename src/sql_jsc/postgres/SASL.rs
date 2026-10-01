@@ -12,16 +12,16 @@ const SERVER_SIGNATURE_BASE64_LEN: usize =
 const SALTED_PASSWORD_BYTE_LEN: usize = 32;
 
 pub struct SASL {
-    pub nonce_base64_bytes: [u8; NONCE_BASE64_LEN],
-    pub nonce_len: u8,
+    pub(crate) nonce_base64_bytes: [u8; NONCE_BASE64_LEN],
+    pub(crate) nonce_len: u8,
 
-    pub server_signature_base64_bytes: [u8; SERVER_SIGNATURE_BASE64_LEN],
-    pub server_signature_len: u8,
+    pub(crate) server_signature_base64_bytes: [u8; SERVER_SIGNATURE_BASE64_LEN],
+    pub(crate) server_signature_len: u8,
 
-    pub salted_password_bytes: [u8; SALTED_PASSWORD_BYTE_LEN],
-    pub salted_password_created: bool,
+    pub(crate) salted_password_bytes: [u8; SALTED_PASSWORD_BYTE_LEN],
+    pub(crate) salted_password_created: bool,
 
-    pub status: SASLStatus,
+    pub(crate) status: SASLStatus,
 }
 
 impl Default for SASL {
@@ -60,7 +60,7 @@ impl SASL {
     // would alias the `&mut self.authentication_state` borrow live at the call
     // site in `PostgresSQLConnection::on`. Caller dereferences the
     // self-referential `*const [u8]` and passes the slice directly.
-    pub fn compute_salted_password(
+    pub(crate) fn compute_salted_password(
         &mut self,
         salt_bytes: &[u8],
         iteration_count: u32,
@@ -101,17 +101,17 @@ impl SASL {
         Ok(())
     }
 
-    pub fn salted_password(&self) -> &[u8] {
+    pub(crate) fn salted_password(&self) -> &[u8] {
         debug_assert!(self.salted_password_created);
         &self.salted_password_bytes[0..SALTED_PASSWORD_BYTE_LEN]
     }
 
-    pub fn server_signature(&self) -> &[u8] {
+    pub(crate) fn server_signature(&self) -> &[u8] {
         debug_assert!(self.server_signature_len > 0);
         &self.server_signature_base64_bytes[0..self.server_signature_len as usize]
     }
 
-    pub fn compute_server_signature(&mut self, auth_string: &[u8]) -> crate::Result<()> {
+    pub(crate) fn compute_server_signature(&mut self, auth_string: &[u8]) -> crate::Result<()> {
         debug_assert!(self.server_signature_len == 0);
 
         let server_key =
@@ -126,11 +126,11 @@ impl SASL {
         Ok(())
     }
 
-    pub fn client_key(&self) -> [u8; 32] {
+    pub(crate) fn client_key(&self) -> [u8; 32] {
         hmac(self.salted_password(), b"Client Key").unwrap()
     }
 
-    pub fn client_key_signature(&self, client_key: &[u8], auth_string: &[u8]) -> [u8; 32] {
+    pub(crate) fn client_key_signature(&self, client_key: &[u8], auth_string: &[u8]) -> [u8; 32] {
         use bun_sha_hmac::SHA256;
         let mut sha_digest = [0u8; SHA256::DIGEST];
         // BoringSSL's `EVP_DigestInit_ex` never reads its `ENGINE*`
@@ -143,7 +143,7 @@ impl SASL {
         hmac(&sha_digest, auth_string).unwrap()
     }
 
-    pub fn nonce(&mut self) -> &[u8] {
+    pub(crate) fn nonce(&mut self) -> &[u8] {
         if self.nonce_len == 0 {
             let mut bytes: [u8; NONCE_BYTE_LEN] = [0; NONCE_BYTE_LEN];
             bun_boringssl_sys::rand_bytes(&mut bytes);

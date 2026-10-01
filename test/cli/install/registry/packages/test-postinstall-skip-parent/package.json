@@ -1,0 +1,36 @@
+{
+  "_id": "test-postinstall-skip-parent",
+  "name": "test-postinstall-skip-parent",
+  "dist-tags": {
+    "latest": "2.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "test-postinstall-skip-parent",
+      "version": "1.0.0",
+      "dependencies": {
+        "test-postinstall-skip": "1.0.0"
+      },
+      "_id": "test-postinstall-skip-parent@1.0.0",
+      "dist": {
+        "integrity": "sha512-imDL/l5Ek1weCWfu1/EiLkfLNYrmah1PAUc8LUYLu7kB17mGKMnXq65WHJ6gM6LzW4otfOq0zLa/PEafqINdOQ==",
+        "shasum": "52002bd7ed68fa3c1702fbd7abaccb4f7f3ae3cb",
+        "tarball": "http://localhost:4873/test-postinstall-skip-parent/-/test-postinstall-skip-parent-1.0.0.tgz"
+      }
+    },
+    "2.0.0": {
+      "name": "test-postinstall-skip-parent",
+      "version": "2.0.0",
+      "dependencies": {
+        "test-postinstall-skip": "1.0.0",
+        "test-postinstall-skip-native": "1.0.0"
+      },
+      "_id": "test-postinstall-skip-parent@2.0.0",
+      "dist": {
+        "integrity": "sha512-iHQhYeHNwO3Gfcy5onj5NMZZKPzt2uzkOtmcbSqT6sVIQhtfEUAJ2+yQBjQSmR4/0H2sYasQIyE21KOPd4YC+g==",
+        "shasum": "0a211cb71f4149a83cfb83552a548e25eeba1aea",
+        "tarball": "http://localhost:4873/test-postinstall-skip-parent/-/test-postinstall-skip-parent-2.0.0.tgz"
+      }
+    }
+  }
+}

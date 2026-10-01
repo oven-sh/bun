@@ -1,8 +1,7 @@
 // Hardcoded module "node:fs/promises"
 const types = require("node:util/types");
 const EventEmitter = require("node:events");
-const fs = require("internal/fs/binding") as $ZigGeneratedClasses.NodeJSFS;
-const { Glob } = require("internal/fs/glob");
+const fs = require("internal/fs/binding");
 const {
   validateInteger,
   validateBoolean,
@@ -48,6 +47,7 @@ function watch(
     persistent?: boolean;
     recursive?: boolean;
     signal?: AbortSignal;
+    ignore?: import("node:fs").WatchOptions["ignore"];
   } = {},
 ) {
   type Event = {
@@ -143,6 +143,7 @@ function watch(
               }
               if (event.eventType === "error") {
                 closed = true;
+                watcher.close();
                 removeAbortListener();
                 throw event.filename;
               }
@@ -198,10 +199,10 @@ function settleFromNodeCallback(resolve, reject, err, value) {
   else resolve(value);
 }
 
-async function opendir(dir: string, options) {
+async function opendir(dir: string, options?) {
   // Delegate to the callback form so the eager path check (ENOTDIR/ENOENT at
   // open time, like node) runs on an async stat instead of blocking.
-  const { promise, resolve, reject } = Promise.withResolvers();
+  const { promise, resolve, reject } = Promise.withResolvers<import("node:fs").Dir>();
   require("node:fs").opendir(dir, options, settleFromNodeCallback.bind(null, resolve, reject));
   return promise;
 }
@@ -240,15 +241,17 @@ const _readFile = fs.readFile.bind(fs);
 const _writeFile = fs.writeFile.bind(fs);
 const _appendFile = fs.appendFile.bind(fs);
 
+type TailParameters<F> = F extends (first: any, ...rest: infer Rest) => any ? Rest : never;
+
 // Argument validation must run at the first .next(), not at call time: Node's
 // fs/promises glob is an async generator whose body constructs Glob lazily.
 async function* glob(pattern, options) {
-  yield* new Glob(pattern, options).glob();
+  yield* new (require("internal/fs/glob").Glob)(pattern, options).glob();
 }
 
 const exports = {
   access: asyncWrap(fs.access, "access"),
-  appendFile: async function (fileHandleOrFdOrPath, ...args) {
+  appendFile: async function (fileHandleOrFdOrPath, ...args: TailParameters<typeof _appendFile>) {
     fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
     return _appendFile(fileHandleOrFdOrPath, ...args);
   },
@@ -272,7 +275,12 @@ const exports = {
   ftruncate: asyncWrap(fs.ftruncate, "ftruncate"),
   futimes: asyncWrap(fs.futimes, "futimes"),
   glob,
-  lchmod: asyncWrap(fs.lchmod, "lchmod"),
+  lchmod:
+    constants.O_SYMLINK !== undefined
+      ? asyncWrap(fs.lchmod, "lchmod")
+      : async function lchmod(_path, _mode) {
+          throw $ERR_METHOD_NOT_IMPLEMENTED("lchmod()");
+        },
   lchown: asyncWrap(fs.lchown, "lchown"),
   link: asyncWrap(fs.link, "link"),
   lstat: asyncWrap(fs.lstat, "lstat"),
@@ -303,7 +311,7 @@ const exports = {
     fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
     return _readFile(fileHandleOrFdOrPath, ...args);
   },
-  writeFile: async function (fileHandleOrFdOrPath, ...args: any[]) {
+  writeFile: async function (fileHandleOrFdOrPath, ...args: TailParameters<typeof _writeFile>) {
     fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
     if (
       !$isTypedArrayView(args[0]) &&
@@ -327,6 +335,12 @@ const exports = {
   utimes: asyncWrap(fs.utimes, "utimes"),
   lutimes: asyncWrap(fs.lutimes, "lutimes"),
   rm: async function rm(path, options) {
+    if (typeof options === "object" && options !== null) {
+      // Node merges the caller's options over the defaults with a spread, which
+      // copies own enumerable keys only -- including ones holding `undefined`.
+      // Normalize here so the native parser sees exactly that set.
+      options = { ...options };
+    }
     if (!options?.recursive) {
       // node validates in JS and reports ERR_FS_EISDIR for directories
       // (same check as rmSync)
@@ -349,10 +363,8 @@ const exports = {
     return fs.rm(path, options);
   },
   rmdir: async function rmdir(path, options) {
-    // node throws for any defined `recursive`, not just truthy ones
-    if (options?.recursive !== undefined) {
-      throw $ERR_INVALID_ARG_VALUE("options.recursive", options.recursive, "is no longer supported");
-    }
+    // Node 26 removed `recursive` (DEP0147), but packages still pass it. Keep it working through `rm`.
+    if (options?.recursive) return exports.rm(path, options);
     return fs.rmdir(path, options);
   },
   writev: async (fd, buffers, position) => {
@@ -440,10 +452,10 @@ function asyncWrap(fn: any, name: string) {
     // needs to exist for https://github.com/nodejs/node/blob/8641d941893/test/parallel/test-worker-message-port-transfer-fake-js-transferable.js to pass
     [Symbol("messaging_transfer_symbol")]() {}
 
-    async appendFile(data, options) {
+    async appendFile(data, options?: BufferEncoding | { encoding?: BufferEncoding | null; flush?: boolean } | null) {
       const fd = this[kFd];
       throwEBADFIfNecessary("writeFile", fd);
-      let encoding = "utf8";
+      let encoding: BufferEncoding = "utf8";
       let flush = false;
       if (options == null || typeof options === "function") {
       } else if (typeof options === "string") {
@@ -509,7 +521,7 @@ function asyncWrap(fn: any, name: string) {
       }
     }
 
-    async read(bufferOrParams, offset, length, position) {
+    async read(bufferOrParams?, offset?, length?, position?) {
       const fd = this[kFd];
       throwEBADFIfNecessary("read", fd);
 
@@ -668,10 +680,13 @@ function asyncWrap(fn: any, name: string) {
       }
     }
 
-    async writeFile(data: string, options: any = "utf8") {
+    async writeFile(
+      data: string,
+      options: BufferEncoding | { encoding?: BufferEncoding | null; signal?: AbortSignal } | null = "utf8",
+    ) {
       const fd = this[kFd];
       throwEBADFIfNecessary("writeFile", fd);
-      let encoding: string = "utf8";
+      let encoding: BufferEncoding = "utf8";
       let signal: AbortSignal | undefined = undefined;
 
       if (options == null || typeof options === "function") {
@@ -733,11 +748,102 @@ function asyncWrap(fn: any, name: string) {
       return this.close();
     }
 
-    readableWebStream(_options = kEmptyObject) {
+    // Port of Node.js FileHandle.prototype.readableWebStream
+    // (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/promises.js#L324).
+    // The handle is locked for the lifetime of the stream, is kept referenced
+    // until the stream ends or is cancelled, and closing the handle closes the
+    // stream even while a reader holds it.
+    readableWebStream(options = kEmptyObject) {
       const fd = this[kFd];
-      throwEBADFIfNecessary("readableWebStream", fd);
+      // Node reports a closed or closing handle as ERR_INVALID_STATE here
+      // rather than the EBADF the other FileHandle methods use.
+      if (fd === -1) throw $ERR_INVALID_STATE("The FileHandle is closed");
+      if (this[kClosePromise]) throw $ERR_INVALID_STATE("The FileHandle is closing");
+      if (this[kLocked]) throw $ERR_INVALID_STATE("The FileHandle is locked");
+      this[kLocked] = true;
 
-      return Bun.file(fd).stream();
+      validateObject(options, "options");
+      const { type = "bytes", autoClose = false } = options;
+      validateBoolean(autoClose, "options.autoClose");
+
+      if (type !== "bytes") {
+        process.emitWarning(
+          'A non-"bytes" options.type has no effect. A byte-oriented steam is always created.',
+          "ExperimentalWarning",
+        );
+      }
+
+      const handle = this;
+      let controllerRef;
+      let done = false;
+
+      async function ondone() {
+        if (done) return;
+        done = true;
+        // Release the listener with the stream it was cancelling, so a drained
+        // stream is not retained for the rest of the handle's life.
+        handle.removeListener("close", onFileHandleClose);
+        handle[kUnref]();
+        if (autoClose) await handle.close();
+      }
+
+      // Node cancels the stream from here with the internal readableStreamCancel,
+      // which is not reachable from JS. Closing the controller and then settling
+      // any outstanding BYOB request ends the stream the same way, including when
+      // a reader is attached and waiting on a read.
+      function onFileHandleClose() {
+        if (done) return;
+        try {
+          controllerRef?.close();
+        } catch {}
+        try {
+          controllerRef?.byobRequest?.respond(0);
+        } catch {}
+        ondone();
+      }
+
+      const readable = new ReadableStream({
+        type: "bytes",
+        autoAllocateChunkSize: 16384,
+
+        start(controller) {
+          controllerRef = controller;
+        },
+
+        async pull(controller) {
+          const request = controller.byobRequest;
+          // The handle can be closed while a pull is in flight, which settles the
+          // request and drops the fd out from under the read below.
+          if (request === null) return;
+          const view = request.view!;
+
+          let bytesRead;
+          try {
+            ({ bytesRead } = await handle.read(view, view.byteOffset, view.byteLength));
+          } catch (err) {
+            if (done) return;
+            await ondone();
+            throw err;
+          }
+          if (done) return;
+
+          if (bytesRead === 0) {
+            controller.close();
+            await ondone();
+          }
+
+          controller.byobRequest!.respond(bytesRead);
+        },
+
+        async cancel() {
+          await ondone();
+        },
+      });
+
+      this[kRef]();
+      this.once("close", onFileHandleClose);
+
+      return readable;
     }
 
     createReadStream(options = kEmptyObject) {
@@ -986,8 +1092,8 @@ function asyncWrap(fn: any, name: string) {
       let totalBytesWritten = 0;
       let closed = false;
       let closing = false;
-      let pendingEndPromise = null;
-      let error = null;
+      let pendingEndPromise: Promise<number> | null = null;
+      let error: unknown = null;
       // Count of in-flight async writes (write() doesn't serialize callers,
       // so several can be on the threadpool at once).
       let asyncPending = 0;
@@ -1046,7 +1152,7 @@ function asyncWrap(fn: any, name: string) {
 
             if (bytesWritten === 0) {
               if (++retries > 5) {
-                throw $ERR_OPERATION_FAILED("Operation failed: write failed after retries");
+                throw $ERR_OPERATION_FAILED("write failed after retries");
               }
             } else {
               retries = 0;
@@ -1090,7 +1196,7 @@ function asyncWrap(fn: any, name: string) {
               // Retry the writev as-is on a zero-byte write (up to 5 times)
               // instead of degrading to the concat fallback below.
               if (++retries > 5) {
-                throw $ERR_OPERATION_FAILED("Operation failed: writev failed after retries");
+                throw $ERR_OPERATION_FAILED("writev failed after retries");
               }
               continue;
             }
@@ -1127,7 +1233,7 @@ function asyncWrap(fn: any, name: string) {
           const bytesWritten = fsSync.writeSync(fd, buf, offset, length, position >= 0 ? position : null) || 0;
           if (bytesWritten === 0) {
             if (++retries > 5) {
-              throw $ERR_OPERATION_FAILED("Operation failed: write failed after retries");
+              throw $ERR_OPERATION_FAILED("write failed after retries");
             }
           } else {
             retries = 0;
@@ -1448,6 +1554,13 @@ function asyncWrap(fn: any, name: string) {
 }
 
 function throwEBADFIfNecessary(fn: string, fd) {
+  if (fd === undefined) {
+    // A FileHandle method invoked with a foreign receiver (fn.call({})); node's
+    // fsCall asserts on the missing internal slot before touching the fd.
+    throw $ERR_INTERNAL_ASSERTION(
+      "handle must be an instance of FileHandle" + require("internal/shared").kInternalAssertionSuffix,
+    );
+  }
   if (fd === -1) {
     const err: any = new Error("Bad file descriptor");
     err.code = "EBADF";

@@ -19,7 +19,7 @@ pub(crate) fn to_equal_ignoring_whitespace(
     let (this, value, not) =
         this.matcher_prelude(global, frame.this(), "toEqualIgnoringWhitespace", "<green>expected<r>")?;
 
-    let arguments_ = frame.arguments_old::<1>(); let arguments: &[JSValue] = arguments_.slice();
+    let arguments: &[JSValue] = frame.arguments();
 
     if arguments.len() < 1 {
         return Err(global.throw_invalid_arguments(format_args!(
@@ -38,9 +38,8 @@ pub(crate) fn to_equal_ignoring_whitespace(
     let mut pass = value.is_string() && expected.is_string();
 
     if pass {
-        let value_slice = value.to_slice(global)?;
-        let expected_slice = expected.to_slice(global)?;
-        // `defer ….deinit()` deleted — Drop handles it.
+        let value_slice = value.to_utf8(global)?;
+        let expected_slice = expected.to_utf8(global)?;
 
         let value_utf8: &[u8] = value_slice.slice();
         let expected_utf8: &[u8] = expected_slice.slice();

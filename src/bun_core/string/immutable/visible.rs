@@ -50,7 +50,7 @@ pub mod visible {
 
             /// Visible terminal width of a UTF-16 string, treating ANSI escape
             /// sequences as zero-width.
-            pub fn utf16(input: &[u16], ambiguous_as_wide: bool) -> usize {
+            pub(crate) fn utf16(input: &[u16], ambiguous_as_wide: bool) -> usize {
                 // SAFETY: `input` is a live slice for the duration of the call.
                 unsafe {
                     Bun__visibleWidthExcludeANSI_utf16(

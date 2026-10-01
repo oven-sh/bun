@@ -1,46 +1,13 @@
 [
-	{
-		"code": "class A { static {} }",
-		"ts": true
-	},
-	{
-		"code": "class A { static { type T = 1 } }",
-		"ts": true
-	},
-	{
-		"code": "class A { static { interface I {} } }",
-		"ts": true
-	},
-	{
-		"code": "class A { static { declare const a: number } }",
-		"ts": true
-	},
-	{
-		"code": "class A<T> { static {} }",
-		"ts": true
-	},
-	{
-		"code": "abstract class A { static {} }",
-		"ts": true
-	},
-	{
-		"code": "declare class A { static {} }",
-		"ts": true
-	},
-	{
-		"code": "class A { static { /* c */ } private a = 1 }",
-		"ts": true
-	},
-	{
-		"code": "class A { static { } static a: number }",
-		"ts": true
-	},
-	{
-		"code": "export default class<T> { static {} }",
-		"ts": true
-	},
-	{
-		"code": "class A { @dec static {} }",
-		"ts": true
-	}
+	{"code":"class A { static {} }","ext":"ts","ts":true},
+	{"code":"class A { static { type T = 1 } }","ext":"ts","ts":true},
+	{"code":"class A { static { interface I {} } }","ext":"ts","ts":true},
+	{"code":"class A { static { declare const a: number } }","ext":"ts","ts":true},
+	{"code":"class A<T> { static {} }","ext":"ts","ts":true},
+	{"code":"abstract class A { static {} }","ext":"ts","ts":true},
+	{"code":"declare class A { static {} }","ext":"ts","ts":true},
+	{"code":"class A { static { /* c */ } private a = 1 }","ext":"ts","ts":true},
+	{"code":"class A { static { } static a: number }","ext":"ts","ts":true},
+	{"code":"export default class<T> { static {} }","ext":"ts","ts":true},
+	{"code":"class A { @dec static {} }","ext":"ts","ts":true}
 ]

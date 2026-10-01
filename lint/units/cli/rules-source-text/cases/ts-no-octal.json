@@ -1,34 +1,10 @@
 [
-	{
-		"code": "const x = 017",
-		"ts": true
-	},
-	{
-		"code": "const x = 08",
-		"ts": true
-	},
-	{
-		"code": "type T = 017",
-		"ts": true
-	},
-	{
-		"code": "enum E { A = 017 }",
-		"ts": true
-	},
-	{
-		"code": "const x = 0o17",
-		"ts": true
-	},
-	{
-		"code": "const x = 0",
-		"ts": true
-	},
-	{
-		"code": "const x = 0.5",
-		"ts": true
-	},
-	{
-		"code": "const x = 00",
-		"ts": true
-	}
+	{"code":"const x = 017","ext":"ts","ts":true},
+	{"code":"const x = 08","ext":"ts","ts":true},
+	{"code":"type T = 017","ext":"ts","ts":true},
+	{"code":"enum E { A = 017 }","ext":"ts","ts":true},
+	{"code":"const x = 0o17","ext":"ts","ts":true},
+	{"code":"const x = 0","ext":"ts","ts":true},
+	{"code":"const x = 0.5","ext":"ts","ts":true},
+	{"code":"const x = 00","ext":"ts","ts":true}
 ]

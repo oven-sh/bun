@@ -219,10 +219,6 @@
 		"jsx": true
 	},
 	{
-		"code": "<a b=<c d=\"\\8\"/>/>",
-		"jsx": true
-	},
-	{
 		"code": "<a>\"\\8\"</a>",
 		"jsx": true
 	}

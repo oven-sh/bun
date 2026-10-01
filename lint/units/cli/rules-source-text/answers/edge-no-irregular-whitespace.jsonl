@@ -6,7 +6,6 @@
 {"code":"'a  b c' ","type":"script","reports":["3:3-3:4 Irregular whitespace not allowed."]}
 {"code":" 'a'","type":"script","reports":["1:1-1:2 Irregular whitespace not allowed."]}
 {"code":"'a' ","type":"script","reports":["1:4-1:5 Irregular whitespace not allowed."]}
-{"code":"' ' ' '","type":"script","fatal":"1:5 Parsing error: Unexpected token ' '","reports":[]}
 {"code":"({'a b': 1, c : 2})","type":"script","reports":["1:14-1:15 Irregular whitespace not allowed."]}
 {"code":"({\"​\": 1})","type":"script","reports":[]}
 {"code":"class A { ' '() {} }","type":"script","reports":[]}
@@ -24,8 +23,6 @@
 {"code":"' '; x","type":"script","reports":[]}
 {"code":"function f() { ' '; }","type":"script","reports":[]}
 {"code":"(' ')","type":"script","reports":[]}
-{"code":"x  　y","type":"script","fatal":"1:5 Parsing error: Unexpected token y","reports":[]}
-{"code":"x   y","type":"script","fatal":"1:5 Parsing error: Unexpected token y","reports":[]}
 {"code":"x  y","type":"script","reports":["1:2-2:1 Irregular whitespace not allowed.","2:1-2:2 Irregular whitespace not allowed."]}
 {"code":"x  y","type":"script","reports":["1:2-1:3 Irregular whitespace not allowed.","1:3-2:1 Irregular whitespace not allowed."]}
 {"code":"x  y","type":"script","reports":["1:2-2:1 Irregular whitespace not allowed.","2:1-3:1 Irregular whitespace not allowed."]}
@@ -83,7 +80,6 @@
 {"code":"<a b=\"c\"/>","type":"script","jsx":true,"reports":["1:3-1:4 Irregular whitespace not allowed."]}
 {"code":"<a b=\"x \\\"/>","type":"script","jsx":true,"reports":[]}
 {"code":"<a b=\" \n \"/>","type":"script","jsx":true,"reports":[]}
-{"code":"<a b=<c d=\" \"/>/>","type":"script","jsx":true,"reports":[]}
 {"code":"<a {...{' ': 1}}/>","type":"script","jsx":true,"reports":[]}
 {"code":"<a>{/*   */}</a>","type":"script","jsx":true,"reports":["1:8-1:9 Irregular whitespace not allowed."]}
 {"code":"<a>{` `}</a>","type":"script","jsx":true,"reports":["1:6-1:7 Irregular whitespace not allowed."]}

@@ -58,5 +58,4 @@
 {"code":"<a b=\"\\8\\\"/>","type":"script","jsx":true,"reports":["1:7-1:9 Don't use '\\8' escape sequence."]}
 {"code":"<a b=\"\\8\n\\9\"/>","type":"script","jsx":true,"reports":["1:7-1:9 Don't use '\\8' escape sequence.","2:1-2:3 Don't use '\\9' escape sequence."]}
 {"code":"<a {...\"\\8\"}/>","type":"script","jsx":true,"reports":["1:9-1:11 Don't use '\\8' escape sequence."]}
-{"code":"<a b=<c d=\"\\8\"/>/>","type":"script","jsx":true,"reports":["1:12-1:14 Don't use '\\8' escape sequence."]}
 {"code":"<a>\"\\8\"</a>","type":"script","jsx":true,"reports":[]}

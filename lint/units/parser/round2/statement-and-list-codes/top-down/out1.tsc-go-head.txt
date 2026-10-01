@@ -1,0 +1,3923 @@
+## TS2880 assert
+"import x from \"y\" assert { type: \"json\" };" [ts]
+   tsc parses; checker @18+6 TS2880 Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
+   go  @18+6 TS2880 Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
+   bun accepts
+"import \"y\" assert { type: \"json\" };" [ts]
+   tsc parses; checker @11+6 TS2880 Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
+   go  @11+6 TS2880 Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
+   bun accepts
+"import * as x from \"y\" assert { type: \"json\" };" [ts]
+   tsc parses; checker @23+6 TS2880 Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
+   go  @23+6 TS2880 Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
+   bun accepts
+"import { a } from \"y\" assert { type: \"json\" };" [ts]
+   tsc parses; checker @22+6 TS2880 Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
+   go  @22+6 TS2880 Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
+   bun accepts
+"import type x from \"y\" assert { type: \"json\" };" [ts]
+   tsc parses; checker @23+6 TS2880 Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
+   go  @23+6 TS2880 Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
+   bun accepts
+"export * from \"y\" assert { type: \"json\" };" [ts]
+   tsc parses; checker @18+6 TS2880 Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
+   go  @18+6 TS2880 Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
+   bun accepts
+"export * as ns from \"y\" assert { type: \"json\" };" [ts]
+   tsc parses; checker @24+6 TS2880 Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
+   go  @24+6 TS2880 Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
+   bun accepts
+"export { a } from \"y\" assert { type: \"json\" };" [ts]
+   tsc parses; checker @22+6 TS2880 Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
+   go  @22+6 TS2880 Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
+   bun accepts
+"export type { a } from \"y\" assert { type: \"json\" };" [ts]
+   tsc parses; checker @27+6 TS2880 Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
+   go  @27+6 TS2880 Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
+   bun accepts
+"import x from \"y\"\nassert { type: \"json\" };" [ts]
+   tsc @18+6 TS1435 Unknown keyword or identifier. Did you mean 'asserts'?
+   go  @18+6 TS1435 Unknown keyword or identifier. Did you mean 'asserts'?
+   bun @25+1 Expected ";" but found "{"
+   bun @40+1 Unexpected }
+"import x from \"y\"\nwith { type: \"json\" };" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"export * from \"y\"\nwith { type: \"json\" };" [ts]
+   tsc @23+1 TS1005 '(' expected.
+   tsc @39+1 TS1005 ')' expected.
+   go  @23+1 TS1005 '(' expected.
+   go  @39+1 TS1005 ')' expected.
+   bun accepts
+"export * from \"y\"\nassert { type: \"json\" };" [ts]
+   tsc @18+6 TS1435 Unknown keyword or identifier. Did you mean 'asserts'?
+   go  @18+6 TS1435 Unknown keyword or identifier. Did you mean 'asserts'?
+   bun @25+1 Expected ";" but found "{"
+   bun @40+1 Unexpected }
+"import x from \"y\" with { type: \"json\" };" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"import x from \"y\" assert;" [ts]
+   tsc @24+1 TS1005 '{' expected.
+   go  @18+6 TS2880 Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
+   go  @24+1 TS1005 '{' expected.
+   bun @24+1 Expected "{" but found ";"
+   bun @25+0 Expected identifier but found end of file
+"import x from \"y\" assert {};" [ts]
+   tsc parses; checker @18+6 TS2880 Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
+   go  @18+6 TS2880 Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
+   bun accepts
+"type T = import(\"y\", { assert: { \"resolution-mode\": \"import\" } });" [ts]
+   tsc parses; checker @31+1 TS2880 Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
+   go  @23+6 TS2880 Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
+   bun accepts
+"type T = typeof import(\"y\", { assert: { \"resolution-mode\": \"import\" } });" [ts]
+   tsc parses; checker @38+1 TS2880 Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
+   go  @30+6 TS2880 Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
+   bun accepts
+"type T = import(\"y\", { with: { \"resolution-mode\": \"import\" } });" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"type T = import(\"y\", { foo: {} });" [ts]
+   tsc @23+3 TS1005 'with' expected.
+   tsc @31+1 TS1128 Declaration or statement expected.
+   tsc @32+1 TS1128 Declaration or statement expected.
+   go  @23+3 TS1005 'with' expected.
+   go  @31+1 TS1128 Declaration or statement expected.
+   go  @32+1 TS1128 Declaration or statement expected.
+   bun accepts
+"let v: import(\"y\", { assert: { \"resolution-mode\": \"import\" } }).T;" [ts]
+   tsc parses; checker @29+1 TS2880 Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
+   go  @21+6 TS2880 Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
+   bun accepts
+"x as import(\"y\", { assert: { \"resolution-mode\": \"import\" } }).T;" [ts]
+   tsc parses; checker @27+1 TS2880 Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
+   go  @19+6 TS2880 Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
+   bun accepts
+"import(\"y\", { assert: { type: \"json\" } });" [ts]
+   tsc parses; checker @14+6 TS2880 Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
+   go  parses
+   bun accepts
+"import x from \"y\" assert { type: \"json\" };" [js]
+   tsc parses
+   go  @18+6 TS2880 Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
+   bun accepts
+"import x from \"y\" assert { type: \"json\" };" [dts]
+   tsc parses; checker @18+6 TS2880 Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
+   go  @18+6 TS2880 Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
+   bun accepts
+"import x from \"y\" assert { type: \"json\" }, z;" [ts]
+   tsc @41+1 TS1005 ';' expected.
+   go  @18+6 TS2880 Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
+   go  @41+1 TS1005 ';' expected.
+   bun @41+1 Expected ";" but found ","
+"import x from \"y\" /* c */ assert /* d */ { type: \"json\" };" [ts]
+   tsc parses; checker @26+6 TS2880 Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
+   go  @26+6 TS2880 Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
+   bun accepts
+## TS1357 TS1132 enum
+"enum E { A B }" [ts]
+   tsc @11+1 TS1357 An enum member name must be followed by a ',', '=', or '}'.
+   go  @11+1 TS1357 An enum member name must be followed by a ',', '=', or '}'.
+   bun @11+1 Expected "}" but found "B"
+   bun @13+1 Unexpected }
+"enum E { A = 1 B }" [ts]
+   tsc @15+1 TS1357 An enum member name must be followed by a ',', '=', or '}'.
+   go  @15+1 TS1357 An enum member name must be followed by a ',', '=', or '}'.
+   bun @15+1 Expected "}" but found "B"
+   bun @17+1 Unexpected }
+"enum E { A; B }" [ts]
+   tsc @10+1 TS1357 An enum member name must be followed by a ',', '=', or '}'.
+   go  @10+1 TS1357 An enum member name must be followed by a ',', '=', or '}'.
+   bun accepts
+"enum E { A = 1; }" [ts]
+   tsc @14+1 TS1357 An enum member name must be followed by a ',', '=', or '}'.
+   go  @14+1 TS1357 An enum member name must be followed by a ',', '=', or '}'.
+   bun accepts
+"enum E { A\nB }" [ts]
+   tsc @11+1 TS1357 An enum member name must be followed by a ',', '=', or '}'.
+   go  @11+1 TS1357 An enum member name must be followed by a ',', '=', or '}'.
+   bun @11+1 Expected "}" but found "B"
+   bun @13+1 Unexpected }
+"enum E { \"a\" \"b\" }" [ts]
+   tsc @13+3 TS1357 An enum member name must be followed by a ',', '=', or '}'.
+   go  @13+3 TS1357 An enum member name must be followed by a ',', '=', or '}'.
+   bun @13+3 Expected "}" but found ""b""
+   bun @17+1 Unexpected }
+"enum E { A: 1 }" [ts]
+   tsc @10+1 TS1357 An enum member name must be followed by a ',', '=', or '}'.
+   go  @10+1 TS1357 An enum member name must be followed by a ',', '=', or '}'.
+   bun @10+1 Expected "}" but found ":"
+   bun @14+1 Unexpected }
+"enum E { A, , B }" [ts]
+   tsc @12+1 TS1132 Enum member expected.
+   go  @12+1 TS1132 Enum member expected.
+   bun @12+1 Expected identifier but found ","
+"enum E { , }" [ts]
+   tsc @9+1 TS1132 Enum member expected.
+   go  @9+1 TS1132 Enum member expected.
+   bun @9+1 Expected identifier but found ","
+"enum E { + }" [ts]
+   tsc @9+1 TS1132 Enum member expected.
+   tsc @11+1 TS1109 Expression expected.
+   go  @9+1 TS1132 Enum member expected.
+   go  @11+1 TS1109 Expression expected.
+   bun @9+1 Expected identifier but found "+"
+"enum E { 1 }" [ts]
+   tsc parses
+   go  parses
+   bun @9+1 Expected identifier but found "1"
+"enum E { 1n }" [ts]
+   tsc parses
+   go  parses
+   bun @9+2 Expected identifier but found "1n"
+"enum E { [x] }" [ts]
+   tsc parses; checker @9+3 TS1164 Computed property names are not allowed in enums.
+   go  parses
+   bun @9+1 Expected identifier but found "["
+"enum E { ['a'] }" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"enum E { [`a`] }" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"enum E { #a }" [ts]
+   tsc parses; checker @9+2 TS18024 An enum member cannot be named with a private identifier.
+   go  parses
+   bun @9+2 Expected identifier but found "#a"
+"enum E { A = }" [ts]
+   tsc @13+1 TS1109 Expression expected.
+   go  @13+1 TS1109 Expression expected.
+   bun @13+1 Unexpected }
+"enum E { A, B" [ts]
+   tsc @13+0 TS1005 '}' expected.
+   go  @13+0 TS1005 '}' expected.
+   bun @13+0 Expected "}" but found end of file
+"enum E { A" [ts]
+   tsc @10+0 TS1005 '}' expected.
+   go  @10+0 TS1005 '}' expected.
+   bun @10+0 Expected "}" but found end of file
+"enum E { A = 1" [ts]
+   tsc @14+0 TS1005 '}' expected.
+   go  @14+0 TS1005 '}' expected.
+   bun @14+0 Expected "}" but found end of file
+"enum E { A, B, }" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"const enum E { A B }" [ts]
+   tsc @17+1 TS1357 An enum member name must be followed by a ',', '=', or '}'.
+   go  @17+1 TS1357 An enum member name must be followed by a ',', '=', or '}'.
+   bun @17+1 Expected "}" but found "B"
+   bun @19+1 Unexpected }
+"declare enum E { A B }" [ts]
+   tsc @19+1 TS1357 An enum member name must be followed by a ',', '=', or '}'.
+   go  @19+1 TS1357 An enum member name must be followed by a ',', '=', or '}'.
+   bun @19+1 Expected "}" but found "B"
+   bun @21+1 Unexpected }
+"export enum E { A B }" [ts]
+   tsc @18+1 TS1357 An enum member name must be followed by a ',', '=', or '}'.
+   go  @18+1 TS1357 An enum member name must be followed by a ',', '=', or '}'.
+   bun @18+1 Expected "}" but found "B"
+   bun @20+1 Unexpected }
+"enum E { A ( }" [ts]
+   tsc @11+1 TS1357 An enum member name must be followed by a ',', '=', or '}'.
+   tsc @13+1 TS1109 Expression expected.
+   go  @11+1 TS1357 An enum member name must be followed by a ',', '=', or '}'.
+   go  @13+1 TS1109 Expression expected.
+   bun @11+1 Expected "}" but found "("
+   bun @13+1 Unexpected }
+"enum E { A.B }" [ts]
+   tsc @10+1 TS1357 An enum member name must be followed by a ',', '=', or '}'.
+   go  @10+1 TS1357 An enum member name must be followed by a ',', '=', or '}'.
+   bun @10+1 Expected "}" but found "."
+   bun @13+1 Unexpected }
+"enum E { A ! }" [ts]
+   tsc @11+1 TS1357 An enum member name must be followed by a ',', '=', or '}'.
+   tsc @13+1 TS1109 Expression expected.
+   go  @11+1 TS1357 An enum member name must be followed by a ',', '=', or '}'.
+   go  @13+1 TS1109 Expression expected.
+   bun @11+1 Expected "}" but found "!"
+   bun @13+1 Unexpected }
+"enum E { class }" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"enum E { class = 1, var, }" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"enum E A }" [ts]
+   tsc @7+1 TS1005 '{' expected.
+   tsc @9+1 TS1128 Declaration or statement expected.
+   go  @7+1 TS1005 '{' expected.
+   go  @9+1 TS1128 Declaration or statement expected.
+   bun @7+1 Expected "{" but found "A"
+"enum { A }" [ts]
+   tsc @5+1 TS1003 Identifier expected.
+   go  @5+1 TS1003 Identifier expected.
+   bun @5+1 Expected identifier but found "{"
+   bun @7+1 Expected "{" but found "A"
+"enum E { A } B" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"enum E { A = 1 + , B }" [ts]
+   tsc @17+1 TS1109 Expression expected.
+   go  @17+1 TS1109 Expression expected.
+   bun @17+1 Unexpected ,
+"enum E { A /* c */ B }" [ts]
+   tsc @19+1 TS1357 An enum member name must be followed by a ',', '=', or '}'.
+   go  @19+1 TS1357 An enum member name must be followed by a ',', '=', or '}'.
+   bun @19+1 Expected "}" but found "B"
+   bun @21+1 Unexpected }
+## TS1260 escaped keyword
+"\\u0076ar x = 1;" [ts]
+   tsc @0+8 TS1260 Keywords cannot contain escape characters.
+   go  @0+8 TS1260 Keywords cannot contain escape characters.
+   bun @0+8 Unexpected \u0076ar
+"v\\u0061r x = 1;" [ts]
+   tsc @0+8 TS1260 Keywords cannot contain escape characters.
+   go  @0+8 TS1260 Keywords cannot contain escape characters.
+   bun @0+8 Unexpected v\u0061r
+"\\u{76}ar x = 1;" [ts]
+   tsc @0+8 TS1260 Keywords cannot contain escape characters.
+   go  @0+8 TS1260 Keywords cannot contain escape characters.
+   bun @0+8 Unexpected \u{76}ar
+"var \\u0076ar = 1;" [ts]
+   tsc @4+8 TS1389 'var' is not allowed as a variable declaration name.
+   tsc @13+1 TS1134 Variable declaration expected.
+   tsc @15+1 TS1134 Variable declaration expected.
+   go  @4+8 TS1389 'var' is not allowed as a variable declaration name.
+   go  @13+1 TS1134 Variable declaration expected.
+   go  @15+1 TS1134 Variable declaration expected.
+   bun @4+8 Expected identifier but found "\u0076ar"
+"x = tru\\u0065;" [ts]
+   tsc @4+9 TS1260 Keywords cannot contain escape characters.
+   go  @4+9 TS1260 Keywords cannot contain escape characters.
+   bun @4+9 Unexpected tru\u0065
+"x = \\u0074rue;" [ts]
+   tsc @4+9 TS1260 Keywords cannot contain escape characters.
+   go  @4+9 TS1260 Keywords cannot contain escape characters.
+   bun @4+9 Unexpected \u0074rue
+"x = n\\u0075ll;" [ts]
+   tsc @4+9 TS1260 Keywords cannot contain escape characters.
+   go  @4+9 TS1260 Keywords cannot contain escape characters.
+   bun @4+9 Unexpected n\u0075ll
+"x = \\u0074his;" [ts]
+   tsc @4+9 TS1260 Keywords cannot contain escape characters.
+   go  @4+9 TS1260 Keywords cannot contain escape characters.
+   bun @4+9 Unexpected \u0074his
+"x = typ\\u0065of y;" [ts]
+   tsc @4+11 TS1260 Keywords cannot contain escape characters.
+   go  @4+11 TS1260 Keywords cannot contain escape characters.
+   bun @4+11 Unexpected typ\u0065of
+"x = n\\u0065w Y();" [ts]
+   tsc @4+8 TS1260 Keywords cannot contain escape characters.
+   go  @4+8 TS1260 Keywords cannot contain escape characters.
+   bun @4+8 Unexpected n\u0065w
+"x = v\\u006fid 0;" [ts]
+   tsc @4+9 TS1260 Keywords cannot contain escape characters.
+   go  @4+9 TS1260 Keywords cannot contain escape characters.
+   bun @4+9 Unexpected v\u006fid
+"x = d\\u0065lete y.z;" [ts]
+   tsc @4+11 TS1260 Keywords cannot contain escape characters.
+   go  @4+11 TS1260 Keywords cannot contain escape characters.
+   bun @4+11 Unexpected d\u0065lete
+"\\u0069f (x) {}" [ts]
+   tsc @0+7 TS1260 Keywords cannot contain escape characters.
+   go  @0+7 TS1260 Keywords cannot contain escape characters.
+   bun @0+7 Unexpected \u0069f
+"\\u0066unction f() {}" [ts]
+   tsc @0+13 TS1260 Keywords cannot contain escape characters.
+   go  @0+13 TS1260 Keywords cannot contain escape characters.
+   bun @0+13 Unexpected \u0066unction
+"\\u0063lass C {}" [ts]
+   tsc @0+10 TS1260 Keywords cannot contain escape characters.
+   go  @0+10 TS1260 Keywords cannot contain escape characters.
+   bun @0+10 Unexpected \u0063lass
+"\\u0065lse" [ts]
+   tsc @0+9 TS1128 Declaration or statement expected.
+   go  @0+9 TS1128 Declaration or statement expected.
+   bun @0+9 Unexpected \u0065lse
+"x = \\u0076ar;" [ts]
+   tsc @4+8 TS1109 Expression expected.
+   go  @4+8 TS1109 Expression expected.
+   bun @4+8 Unexpected \u0076ar
+"foo.\\u0076ar;" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"({ \\u0076ar: 1 });" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"var \\u0061sync = 1;" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"\\u0061sync function f() {}" [ts]
+   tsc @0+10 TS1260 Keywords cannot contain escape characters.
+   go  @0+10 TS1260 Keywords cannot contain escape characters.
+   bun @11+8 Expected ";" but found "function"
+   bun @24+1 Expected ";" but found "{"
+   bun @25+1 Unexpected }
+"x = \\u0061sync () => 1;" [ts]
+   tsc @4+10 TS1260 Keywords cannot contain escape characters.
+   go  @4+10 TS1260 Keywords cannot contain escape characters.
+   bun @18+2 Expected ";" but found "=>"
+"x \\u0061s T;" [ts]
+   tsc @2+7 TS1260 Keywords cannot contain escape characters.
+   go  @2+7 TS1260 Keywords cannot contain escape characters.
+   bun @2+7 Expected ";" but found "\u0061s"
+"x \\u0073atisfies T;" [ts]
+   tsc @2+14 TS1260 Keywords cannot contain escape characters.
+   go  @2+14 TS1260 Keywords cannot contain escape characters.
+   bun @2+14 Expected ";" but found "\u0073atisfies"
+"\\u0074ype T = number;" [ts]
+   tsc @0+9 TS1260 Keywords cannot contain escape characters.
+   go  @0+9 TS1260 Keywords cannot contain escape characters.
+   bun accepts
+"\\u0069nterface I {}" [ts]
+   tsc @0+14 TS1260 Keywords cannot contain escape characters.
+   go  @0+14 TS1260 Keywords cannot contain escape characters.
+   bun accepts
+"n\\u0061mespace N {}" [ts]
+   tsc @0+14 TS1260 Keywords cannot contain escape characters.
+   go  @0+14 TS1260 Keywords cannot contain escape characters.
+   bun accepts
+"m\\u006fdule N {}" [ts]
+   tsc @0+11 TS1260 Keywords cannot contain escape characters.
+   go  @0+11 TS1260 Keywords cannot contain escape characters.
+   bun accepts
+"d\\u0065clare const x: number;" [ts]
+   tsc @0+12 TS1260 Keywords cannot contain escape characters.
+   go  @0+12 TS1260 Keywords cannot contain escape characters.
+   bun accepts
+"\\u0061bstract class C {}" [ts]
+   tsc @0+13 TS1260 Keywords cannot contain escape characters.
+   go  @0+13 TS1260 Keywords cannot contain escape characters.
+   bun accepts
+"l\\u0065t x = 1;" [ts]
+   tsc @0+8 TS1260 Keywords cannot contain escape characters.
+   go  @0+8 TS1260 Keywords cannot contain escape characters.
+   bun @9+1 Expected ";" but found "x"
+   bun @11+1 Unexpected =
+"c\\u006fnst x = 1;" [ts]
+   tsc @0+10 TS1260 Keywords cannot contain escape characters.
+   go  @0+10 TS1260 Keywords cannot contain escape characters.
+   bun @0+10 Unexpected c\u006fnst
+"class C { st\\u0061tic x = 1 }" [ts]
+   tsc @10+11 TS1260 Keywords cannot contain escape characters.
+   go  @10+11 TS1260 Keywords cannot contain escape characters.
+   bun @22+1 Expected ";" but found "x"
+   bun @24+1 Expected identifier but found "="
+"class C { \\u0067et x() { return 1 } }" [ts]
+   tsc @10+8 TS1260 Keywords cannot contain escape characters.
+   go  @10+8 TS1260 Keywords cannot contain escape characters.
+   bun @19+1 Expected ";" but found "x"
+   bun @20+1 Expected identifier but found "("
+   bun @23+1 Expected ";" but found "{"
+"class C { publi\\u0063 x = 1 }" [ts]
+   tsc @10+11 TS1260 Keywords cannot contain escape characters.
+   go  @10+11 TS1260 Keywords cannot contain escape characters.
+   bun @22+1 Expected ";" but found "x"
+   bun @24+1 Expected identifier but found "="
+"class C { r\\u0065adonly x = 1 }" [ts]
+   tsc @10+13 TS1260 Keywords cannot contain escape characters.
+   go  @10+13 TS1260 Keywords cannot contain escape characters.
+   bun @24+1 Expected ";" but found "x"
+   bun @26+1 Expected identifier but found "="
+"class C { \\u0063onstructor() {} }" [ts]
+   tsc @10+16 TS1260 Keywords cannot contain escape characters.
+   go  @10+16 TS1260 Keywords cannot contain escape characters.
+   bun accepts
+"class C { \\u0061sync m() {} }" [ts]
+   tsc @10+10 TS1260 Keywords cannot contain escape characters.
+   go  @10+10 TS1260 Keywords cannot contain escape characters.
+   bun @21+1 Expected ";" but found "m"
+   bun @22+1 Expected identifier but found "("
+   bun @25+1 Expected ";" but found "{"
+"class C \\u0065xtends D {}" [ts]
+   tsc @8+12 TS1260 Keywords cannot contain escape characters.
+   go  @8+12 TS1260 Keywords cannot contain escape characters.
+   bun @8+12 Expected "{" but found "\u0065xtends"
+   bun @23+1 Expected ";" but found "{"
+"class C \\u0069mplements D {}" [ts]
+   tsc @8+15 TS1260 Keywords cannot contain escape characters.
+   go  @8+15 TS1260 Keywords cannot contain escape characters.
+   bun @8+15 Expected "{" but found "\u0069mplements"
+   bun @26+1 Expected ";" but found "{"
+"let x: \\u0073tring;" [ts]
+   tsc @7+11 TS1260 Keywords cannot contain escape characters.
+   go  @7+11 TS1260 Keywords cannot contain escape characters.
+   bun accepts
+"let x: \\u0061ny;" [ts]
+   tsc @7+8 TS1260 Keywords cannot contain escape characters.
+   go  @7+8 TS1260 Keywords cannot contain escape characters.
+   bun accepts
+"let x: k\\u0065yof T;" [ts]
+   tsc @7+10 TS1260 Keywords cannot contain escape characters.
+   go  @7+10 TS1260 Keywords cannot contain escape characters.
+   bun accepts
+"let x: \\u0074ypeof y;" [ts]
+   tsc @7+11 TS1260 Keywords cannot contain escape characters.
+   go  @7+11 TS1260 Keywords cannot contain escape characters.
+   bun @7+11 Unexpected \u0074ypeof
+"let x: r\\u0065adonly T[];" [ts]
+   tsc @7+13 TS1260 Keywords cannot contain escape characters.
+   go  @7+13 TS1260 Keywords cannot contain escape characters.
+   bun accepts
+"type T<U> = U \\u0065xtends V ? 1 : 2;" [ts]
+   tsc @14+12 TS1260 Keywords cannot contain escape characters.
+   go  @14+12 TS1260 Keywords cannot contain escape characters.
+   bun @14+12 Expected ";" but found "\u0065xtends"
+"type T<U> = U extends \\u0069nfer V ? 1 : 2;" [ts]
+   tsc @22+10 TS1260 Keywords cannot contain escape characters.
+   go  @22+10 TS1260 Keywords cannot contain escape characters.
+   bun accepts
+"function f(x: T): x \\u0069s U {}" [ts]
+   tsc @20+7 TS1260 Keywords cannot contain escape characters.
+   go  @20+7 TS1260 Keywords cannot contain escape characters.
+   bun @20+7 Expected ";" but found "\u0069s"
+   bun @30+1 Expected ";" but found "{"
+   bun @31+1 Unexpected }
+"for (const x \\u006ff y) {}" [ts]
+   tsc @13+7 TS1260 Keywords cannot contain escape characters.
+   go  @13+7 TS1260 Keywords cannot contain escape characters.
+   bun @11+1 The constant "x" must be initialized
+   bun @13+7 Expected ";" but found "\u006ff"
+   bun @22+1 Expected ";" but found ")"
+"for (const x \\u0069n y) {}" [ts]
+   tsc @13+7 TS1260 Keywords cannot contain escape characters.
+   go  @13+7 TS1260 Keywords cannot contain escape characters.
+   bun @11+1 The constant "x" must be initialized
+   bun @13+7 Expected ";" but found "\u0069n"
+   bun @22+1 Expected ";" but found ")"
+"import x fr\\u006fm \"y\";" [ts]
+   tsc @9+9 TS1260 Keywords cannot contain escape characters.
+   go  @9+9 TS1260 Keywords cannot contain escape characters.
+   bun @9+0 Expected "from" but found "fr\u006fm" (token: TIdentifier)
+"import \\u0074ype X from \"y\";" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"import { \\u0074ype X } from \"y\";" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"import { X \\u0061s Y } from \"y\";" [ts]
+   tsc @11+7 TS1260 Keywords cannot contain escape characters.
+   go  @11+7 TS1260 Keywords cannot contain escape characters.
+   bun @11+7 Expected "}" but found "\u0061s"
+   bun @19+0 Expected "from" but found "Y" (token: TIdentifier)
+"export d\\u0065fault 1;" [ts]
+   tsc @7+12 TS1260 Keywords cannot contain escape characters.
+   go  @7+12 TS1260 Keywords cannot contain escape characters.
+   bun @7+12 Unexpected d\u0065fault
+"\\u0065xport const x = 1;" [ts]
+   tsc @0+11 TS1260 Keywords cannot contain escape characters.
+   go  @0+11 TS1260 Keywords cannot contain escape characters.
+   bun @0+11 Unexpected \u0065xport
+"\\u0069mport x from \"y\";" [ts]
+   tsc @0+11 TS1260 Keywords cannot contain escape characters.
+   go  @0+11 TS1260 Keywords cannot contain escape characters.
+   bun @0+11 Unexpected \u0069mport
+"function f() { r\\u0065turn 1 }" [ts]
+   tsc @15+11 TS1260 Keywords cannot contain escape characters.
+   go  @15+11 TS1260 Keywords cannot contain escape characters.
+   bun @15+11 Unexpected r\u0065turn
+"x = y inst\\u0061nceof z;" [ts]
+   tsc @6+15 TS1260 Keywords cannot contain escape characters.
+   go  @6+15 TS1260 Keywords cannot contain escape characters.
+   bun @6+15 Expected ";" but found "inst\u0061nceof"
+"x = y \\u0069n z;" [ts]
+   tsc @6+7 TS1260 Keywords cannot contain escape characters.
+   go  @6+7 TS1260 Keywords cannot contain escape characters.
+   bun @6+7 Expected ";" but found "\u0069n"
+"async function f() { \\u0061wait x; }" [ts]
+   tsc @21+10 TS1260 Keywords cannot contain escape characters.
+   go  @21+10 TS1260 Keywords cannot contain escape characters.
+   bun @21+10 The keyword "await" cannot be escaped
+   bun @32+1 Expected ";" but found "x"
+"function* g() { \\u0079ield 1; }" [ts]
+   tsc @16+10 TS1260 Keywords cannot contain escape characters.
+   go  @16+10 TS1260 Keywords cannot contain escape characters.
+   bun @16+10 The keyword "yield" cannot be escaped
+   bun @27+1 Expected ";" but found "1"
+"x = { g\\u0065t a() { return 1 } };" [ts]
+   tsc @6+8 TS1260 Keywords cannot contain escape characters.
+   go  @6+8 TS1260 Keywords cannot contain escape characters.
+   bun @15+1 Expected "}" but found "a"
+   bun @19+1 Expected ";" but found "{"
+   bun @30+1 Unexpected }
+"label: br\\u0065ak label;" [ts]
+   tsc @7+10 TS1260 Keywords cannot contain escape characters.
+   go  @7+10 TS1260 Keywords cannot contain escape characters.
+   bun @7+10 Unexpected br\u0065ak
+"d\\u006f {} while (x)" [ts]
+   tsc @0+7 TS1260 Keywords cannot contain escape characters.
+   go  @0+7 TS1260 Keywords cannot contain escape characters.
+   bun @0+7 Unexpected d\u006f
+"try {} c\\u0061tch {}" [ts]
+   tsc @7+10 TS1260 Keywords cannot contain escape characters.
+   go  @7+10 TS1260 Keywords cannot contain escape characters.
+   bun @7+10 Expected "finally" but found "c\u0061tch"
+"try {} f\\u0069nally {}" [ts]
+   tsc @7+12 TS1260 Keywords cannot contain escape characters.
+   go  @7+12 TS1260 Keywords cannot contain escape characters.
+   bun @7+12 Expected "finally" but found "f\u0069nally"
+"switch (x) { c\\u0061se 1: }" [ts]
+   tsc @13+9 TS1260 Keywords cannot contain escape characters.
+   go  @13+9 TS1260 Keywords cannot contain escape characters.
+   bun @13+9 Expected "case" but found "c\u0061se"
+"switch (x) { d\\u0065fault: }" [ts]
+   tsc @13+12 TS1260 Keywords cannot contain escape characters.
+   go  @13+12 TS1260 Keywords cannot contain escape characters.
+   bun @13+12 Expected "case" but found "d\u0065fault"
+   bun @25+1 Unexpected :
+"let \\u0074ype = 1;" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"let \\u0079ield = 1;" [ts]
+   tsc parses; checker @4+10 TS1212 Identifier expected. '\u0079ield' is a reserved word in strict mode.
+   go  parses
+   bun accepts
+"var \\u0061wait = 1;" [ts]
+   tsc parses
+   go  parses
+   bun @4+10 Cannot use "yield" or "await" here.
+"\\u0074hrow x;" [ts]
+   tsc @0+10 TS1260 Keywords cannot contain escape characters.
+   go  @0+10 TS1260 Keywords cannot contain escape characters.
+   bun @0+10 Unexpected \u0074hrow
+"\\u0064ebugger;" [ts]
+   tsc @0+13 TS1260 Keywords cannot contain escape characters.
+   go  @0+13 TS1260 Keywords cannot contain escape characters.
+   bun @0+13 Unexpected \u0064ebugger
+"x = \\u0073uper.y;" [ts]
+   tsc @4+10 TS1260 Keywords cannot contain escape characters.
+   go  @4+10 TS1260 Keywords cannot contain escape characters.
+   bun @4+10 Unexpected \u0073uper
+"x = \\u0066alse;" [ts]
+   tsc @4+10 TS1260 Keywords cannot contain escape characters.
+   go  @4+10 TS1260 Keywords cannot contain escape characters.
+   bun @4+10 Unexpected \u0066alse
+"x = \\u0066unction () {};" [ts]
+   tsc @4+13 TS1260 Keywords cannot contain escape characters.
+   go  @4+13 TS1260 Keywords cannot contain escape characters.
+   bun @4+13 Unexpected \u0066unction
+"x = \\u0063lass {};" [ts]
+   tsc @4+10 TS1260 Keywords cannot contain escape characters.
+   go  @4+10 TS1260 Keywords cannot contain escape characters.
+   bun @4+10 Unexpected \u0063lass
+"x = \\u0069mport('y');" [ts]
+   tsc @4+11 TS1260 Keywords cannot contain escape characters.
+   go  @4+11 TS1260 Keywords cannot contain escape characters.
+   bun @4+11 Unexpected \u0069mport
+"function f(\\u0074his: T) {}" [ts]
+   tsc parses
+   go  parses
+   bun @11+9 Expected identifier but found "\u0074his"
+"class C { m(): \\u0074his {} }" [ts]
+   tsc @15+9 TS1260 Keywords cannot contain escape characters.
+   go  @15+9 TS1260 Keywords cannot contain escape characters.
+   bun @15+9 Unexpected \u0074his
+   bun @25+1 Expected identifier but found "{"
+"enum E { \\u0076ar }" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"type T = { \\u0076ar: 1 };" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"type T = \\u0076oid;" [ts]
+   tsc @9+9 TS1260 Keywords cannot contain escape characters.
+   go  @9+9 TS1260 Keywords cannot contain escape characters.
+   bun @9+9 Unexpected \u0076oid
+"type T = \\u006eull;" [ts]
+   tsc @9+9 TS1260 Keywords cannot contain escape characters.
+   go  @9+9 TS1260 Keywords cannot contain escape characters.
+   bun @9+9 Unexpected \u006eull
+"x = <\\u0063onst>y;" [ts]
+   tsc parses; checker @16+1 TS1355 A 'const' assertion can only be applied to references to enum members, or string, number, boolean, array, or object literals.
+   go  parses
+   bun @5+10 Unexpected \u0063onst
+"let x: unique \\u0073ymbol;" [ts]
+   tsc @14+11 TS1260 Keywords cannot contain escape characters.
+   go  @14+11 TS1260 Keywords cannot contain escape characters.
+   bun @14+11 Expected ";" but found "\u0073ymbol"
+"a\\u0073 = 1;" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"\\u0076ar x = 1;" [js]
+   tsc @0+8 TS1260 Keywords cannot contain escape characters.
+   go  @0+8 TS1260 Keywords cannot contain escape characters.
+   bun @0+8 Unexpected \u0076ar
+"var \\u0061sync = 1;" [js]
+   tsc parses
+   go  parses
+   bun accepts
+## lists: TS1135 arguments
+"f(:)" [ts]
+   tsc @2+1 TS1135 Argument expression expected.
+   go  @2+1 TS1135 Argument expression expected.
+   bun @2+1 Unexpected :
+"f(a, :)" [ts]
+   tsc @5+1 TS1135 Argument expression expected.
+   go  @5+1 TS1135 Argument expression expected.
+   bun @5+1 Unexpected :
+"f(})" [ts]
+   tsc @2+1 TS1135 Argument expression expected.
+   go  @2+1 TS1135 Argument expression expected.
+   bun @2+1 Unexpected }
+"f(]" [ts]
+   tsc @2+1 TS1135 Argument expression expected.
+   tsc @3+0 TS1005 ')' expected.
+   go  @2+1 TS1135 Argument expression expected.
+   go  @3+0 TS1005 ')' expected.
+   bun @2+1 Unexpected ]
+"f(;" [ts]
+   tsc @2+1 TS1005 ')' expected.
+   go  @2+1 TS1005 ')' expected.
+   bun @2+1 Unexpected ;
+"f(a, ;" [ts]
+   tsc @5+1 TS1005 ')' expected.
+   go  @5+1 TS1005 ')' expected.
+   bun @5+1 Unexpected ;
+"f(" [ts]
+   tsc @2+0 TS1005 ')' expected.
+   go  @2+0 TS1005 ')' expected.
+   bun @2+0 Unexpected end of file
+"f(a," [ts]
+   tsc @4+0 TS1005 ')' expected.
+   go  @4+0 TS1005 ')' expected.
+   bun @4+0 Unexpected end of file
+"f(a b)" [ts]
+   tsc @4+1 TS1005 ',' expected.
+   go  @4+1 TS1005 ',' expected.
+   bun @4+1 Expected ")" but found "b"
+   bun @5+1 Expected ";" but found ")"
+"f(+)" [ts]
+   tsc @3+1 TS1109 Expression expected.
+   go  @3+1 TS1109 Expression expected.
+   bun @3+1 Unexpected )
+"f(...;)" [ts]
+   tsc @5+1 TS1109 Expression expected.
+   tsc @6+1 TS1128 Declaration or statement expected.
+   go  @5+1 TS1109 Expression expected.
+   go  @6+1 TS1128 Declaration or statement expected.
+   bun @5+1 Unexpected ;
+"f(a, (b, ))" [ts]
+   tsc @9+1 TS1109 Expression expected.
+   go  @9+1 TS1109 Expression expected.
+   bun accepts
+"f((;))" [ts]
+   tsc @3+1 TS1109 Expression expected.
+   tsc @4+1 TS1128 Declaration or statement expected.
+   tsc @5+1 TS1128 Declaration or statement expected.
+   go  @3+1 TS1109 Expression expected.
+   go  @4+1 TS1128 Declaration or statement expected.
+   go  @5+1 TS1128 Declaration or statement expected.
+   bun @3+1 Unexpected ;
+"new A(:)" [ts]
+   tsc @6+1 TS1135 Argument expression expected.
+   go  @6+1 TS1135 Argument expression expected.
+   bun @6+1 Unexpected :
+"new A(a, :)" [ts]
+   tsc @9+1 TS1135 Argument expression expected.
+   go  @9+1 TS1135 Argument expression expected.
+   bun @9+1 Unexpected :
+"f(a, ])" [ts]
+   tsc @5+1 TS1135 Argument expression expected.
+   go  @5+1 TS1135 Argument expression expected.
+   bun @5+1 Unexpected ]
+"f(=)" [ts]
+   tsc @2+1 TS1135 Argument expression expected.
+   go  @2+1 TS1135 Argument expression expected.
+   bun @2+1 Unexpected =
+"f(=>)" [ts]
+   tsc @2+2 TS1135 Argument expression expected.
+   go  @2+2 TS1135 Argument expression expected.
+   bun @2+2 Unexpected =>
+"f(a, ?)" [ts]
+   tsc @5+1 TS1135 Argument expression expected.
+   go  @5+1 TS1135 Argument expression expected.
+   bun @5+1 Unexpected ?
+"f(.)" [ts]
+   tsc @2+1 TS1135 Argument expression expected.
+   go  @2+1 TS1135 Argument expression expected.
+   bun @2+1 Unexpected .
+"f(*)" [ts]
+   tsc @2+1 TS1109 Expression expected.
+   tsc @3+1 TS1109 Expression expected.
+   go  @2+1 TS1109 Expression expected.
+   go  @3+1 TS1109 Expression expected.
+   bun @2+1 Unexpected *
+"f(a, *)" [ts]
+   tsc @5+1 TS1109 Expression expected.
+   tsc @6+1 TS1109 Expression expected.
+   go  @5+1 TS1109 Expression expected.
+   go  @6+1 TS1109 Expression expected.
+   bun @5+1 Unexpected *
+"f(in)" [ts]
+   tsc @2+2 TS1109 Expression expected.
+   tsc @4+1 TS1109 Expression expected.
+   go  @2+2 TS1109 Expression expected.
+   go  @4+1 TS1109 Expression expected.
+   bun @2+2 Unexpected in
+"f(a, case)" [ts]
+   tsc @5+4 TS1135 Argument expression expected.
+   go  @5+4 TS1135 Argument expression expected.
+   bun @5+4 Unexpected case
+"f(a, else)" [ts]
+   tsc @5+4 TS1135 Argument expression expected.
+   go  @5+4 TS1135 Argument expression expected.
+   bun @5+4 Unexpected else
+"@f(:) class C {}" [ts]
+   tsc @3+1 TS1135 Argument expression expected.
+   go  @3+1 TS1135 Argument expression expected.
+   bun @3+1 Unexpected :
+"super(:)" [ts]
+   tsc @6+1 TS1135 Argument expression expected.
+   go  @6+1 TS1135 Argument expression expected.
+   bun @0+5 Unexpected "super"
+   bun @6+1 Unexpected :
+"f?.(:)" [ts]
+   tsc @4+1 TS1135 Argument expression expected.
+   go  @4+1 TS1135 Argument expression expected.
+   bun @4+1 Unexpected :
+"f<T>(:)" [ts]
+   tsc @5+1 TS1135 Argument expression expected.
+   go  @5+1 TS1135 Argument expression expected.
+   bun @5+1 Unexpected :
+"import(:)" [ts]
+   tsc @7+1 TS1135 Argument expression expected.
+   go  @7+1 TS1135 Argument expression expected.
+   bun @7+1 Unexpected :
+"f`${:}`" [ts]
+   tsc @4+1 TS1109 Expression expected.
+   tsc @1+3 TS1443 Module declaration names may only use ' or " quoted strings.
+   tsc @4+1 TS1128 Declaration or statement expected.
+   tsc @5+1 TS1128 Declaration or statement expected.
+   go  @4+1 TS1109 Expression expected.
+   go  @1+3 TS1443 Module declaration names may only use ' or " quoted strings.
+   go  @4+1 TS1128 Declaration or statement expected.
+   go  @5+1 TS1128 Declaration or statement expected.
+   bun @4+1 Unexpected :
+"f(a, /* c */ :)" [ts]
+   tsc @13+1 TS1135 Argument expression expected.
+   go  @13+1 TS1135 Argument expression expected.
+   bun @13+1 Unexpected :
+"f(\n:)" [ts]
+   tsc @3+1 TS1135 Argument expression expected.
+   go  @3+1 TS1135 Argument expression expected.
+   bun @3+1 Unexpected :
+"f(var)" [ts]
+   tsc @2+3 TS1135 Argument expression expected.
+   tsc @5+1 TS1134 Variable declaration expected.
+   go  @2+3 TS1135 Argument expression expected.
+   go  @5+1 TS1134 Variable declaration expected.
+   bun @2+3 Unexpected var
+"f(a, var)" [ts]
+   tsc @5+3 TS1135 Argument expression expected.
+   tsc @8+1 TS1134 Variable declaration expected.
+   go  @5+3 TS1135 Argument expression expected.
+   go  @8+1 TS1134 Variable declaration expected.
+   bun @5+3 Unexpected var
+"f(if)" [ts]
+   tsc @2+2 TS1135 Argument expression expected.
+   tsc @4+1 TS1005 '(' expected.
+   tsc @5+0 TS1109 Expression expected.
+   go  @2+2 TS1135 Argument expression expected.
+   go  @4+1 TS1005 '(' expected.
+   go  @5+0 TS1109 Expression expected.
+   bun @2+2 Unexpected if
+"f(a, })" [ts]
+   tsc @5+1 TS1135 Argument expression expected.
+   go  @5+1 TS1135 Argument expression expected.
+   bun @5+1 Unexpected }
+## lists: TS1137 array literal
+"x = [:]" [ts]
+   tsc @5+1 TS1137 Expression or comma expected.
+   go  @5+1 TS1137 Expression or comma expected.
+   bun @5+1 Unexpected :
+"x = [a, :]" [ts]
+   tsc @8+1 TS1137 Expression or comma expected.
+   go  @8+1 TS1137 Expression or comma expected.
+   bun @8+1 Unexpected :
+"x = [)]" [ts]
+   tsc @5+1 TS1137 Expression or comma expected.
+   go  @5+1 TS1137 Expression or comma expected.
+   bun @5+1 Unexpected )
+"x = [a, )]" [ts]
+   tsc @8+1 TS1137 Expression or comma expected.
+   go  @8+1 TS1137 Expression or comma expected.
+   bun @8+1 Unexpected )
+"x = [;" [ts]
+   tsc @5+1 TS1137 Expression or comma expected.
+   tsc @6+0 TS1005 ']' expected.
+   go  @5+1 TS1137 Expression or comma expected.
+   go  @6+0 TS1005 ']' expected.
+   bun @5+1 Unexpected ;
+"x = [a, ;" [ts]
+   tsc @8+1 TS1137 Expression or comma expected.
+   tsc @9+0 TS1005 ']' expected.
+   go  @8+1 TS1137 Expression or comma expected.
+   go  @9+0 TS1005 ']' expected.
+   bun @8+1 Unexpected ;
+"x = [" [ts]
+   tsc @5+0 TS1005 ']' expected.
+   go  @5+0 TS1005 ']' expected.
+   bun @5+0 Unexpected end of file
+"x = [a," [ts]
+   tsc @7+0 TS1005 ']' expected.
+   go  @7+0 TS1005 ']' expected.
+   bun @7+0 Unexpected end of file
+"x = [a b]" [ts]
+   tsc @7+1 TS1005 ',' expected.
+   go  @7+1 TS1005 ',' expected.
+   bun @7+1 Expected "]" but found "b"
+   bun @8+1 Expected ";" but found "]"
+"x = [+]" [ts]
+   tsc @6+1 TS1109 Expression expected.
+   go  @6+1 TS1109 Expression expected.
+   bun @6+1 Unexpected ]
+"x = [...;]" [ts]
+   tsc @8+1 TS1109 Expression expected.
+   go  @8+1 TS1109 Expression expected.
+   bun @8+1 Unexpected ;
+"x = [}]" [ts]
+   tsc @5+1 TS1137 Expression or comma expected.
+   go  @5+1 TS1137 Expression or comma expected.
+   bun @5+1 Unexpected }
+"x = [a, }]" [ts]
+   tsc @8+1 TS1137 Expression or comma expected.
+   go  @8+1 TS1137 Expression or comma expected.
+   bun @8+1 Unexpected }
+"x = [=]" [ts]
+   tsc @5+1 TS1137 Expression or comma expected.
+   go  @5+1 TS1137 Expression or comma expected.
+   bun @5+1 Unexpected =
+"x = [.]" [ts]
+   tsc @5+1 TS1109 Expression expected.
+   tsc @6+1 TS1003 Identifier expected.
+   go  @5+1 TS1109 Expression expected.
+   go  @6+1 TS1003 Identifier expected.
+   bun @5+1 Unexpected .
+"x = [a, .]" [ts]
+   tsc @8+1 TS1109 Expression expected.
+   tsc @9+1 TS1003 Identifier expected.
+   go  @8+1 TS1109 Expression expected.
+   go  @9+1 TS1003 Identifier expected.
+   bun @8+1 Unexpected .
+"x = [,,:]" [ts]
+   tsc @7+1 TS1137 Expression or comma expected.
+   go  @7+1 TS1137 Expression or comma expected.
+   bun @7+1 Unexpected :
+"[:] = x" [ts]
+   tsc @1+1 TS1137 Expression or comma expected.
+   go  @1+1 TS1137 Expression or comma expected.
+   bun @1+1 Unexpected :
+"x = [a, in]" [ts]
+   tsc @8+2 TS1109 Expression expected.
+   tsc @10+1 TS1109 Expression expected.
+   go  @8+2 TS1109 Expression expected.
+   go  @10+1 TS1109 Expression expected.
+   bun @8+2 Unexpected in
+"x = [a, /* c */ )]" [ts]
+   tsc @16+1 TS1137 Expression or comma expected.
+   go  @16+1 TS1137 Expression or comma expected.
+   bun @16+1 Unexpected )
+"x = [a, var]" [ts]
+   tsc @8+3 TS1137 Expression or comma expected.
+   tsc @11+1 TS1134 Variable declaration expected.
+   go  @8+3 TS1137 Expression or comma expected.
+   go  @11+1 TS1134 Variable declaration expected.
+   bun @8+3 Unexpected var
+## lists: TS1136 object literal
+"x = {:}" [ts]
+   tsc @5+1 TS1136 Property assignment expected.
+   go  @5+1 TS1136 Property assignment expected.
+   bun @5+1 Expected identifier but found ":"
+   bun @7+0 Expected "}" but found end of file
+"x = {a, :}" [ts]
+   tsc @8+1 TS1136 Property assignment expected.
+   go  @8+1 TS1136 Property assignment expected.
+   bun @8+1 Expected identifier but found ":"
+   bun @10+0 Expected "}" but found end of file
+"x = {)}" [ts]
+   tsc @5+1 TS1136 Property assignment expected.
+   go  @5+1 TS1136 Property assignment expected.
+   bun @5+1 Expected identifier but found ")"
+   bun @7+0 Expected "}" but found end of file
+"x = {a: 1, )}" [ts]
+   tsc @11+1 TS1136 Property assignment expected.
+   go  @11+1 TS1136 Property assignment expected.
+   bun @11+1 Expected identifier but found ")"
+   bun @13+0 Expected "}" but found end of file
+"x = {;" [ts]
+   tsc @5+1 TS1136 Property assignment expected.
+   tsc @6+0 TS1005 '}' expected.
+   go  @5+1 TS1136 Property assignment expected.
+   go  @6+0 TS1005 '}' expected.
+   bun @5+1 Expected identifier but found ";"
+   bun @6+0 Expected "}" but found end of file
+"x = {a: 1, ;" [ts]
+   tsc @11+1 TS1136 Property assignment expected.
+   tsc @12+0 TS1005 '}' expected.
+   go  @11+1 TS1136 Property assignment expected.
+   go  @12+0 TS1005 '}' expected.
+   bun @11+1 Expected identifier but found ";"
+   bun @12+0 Expected "}" but found end of file
+"x = {" [ts]
+   tsc @5+0 TS1005 '}' expected.
+   go  @5+0 TS1005 '}' expected.
+   bun @5+0 Expected identifier but found end of file
+"x = {a: 1," [ts]
+   tsc @10+0 TS1005 '}' expected.
+   go  @10+0 TS1005 '}' expected.
+   bun @10+0 Expected identifier but found end of file
+"x = {a: 1 b: 2}" [ts]
+   tsc @10+1 TS1005 ',' expected.
+   go  @10+1 TS1005 ',' expected.
+   bun @10+1 Expected "}" but found "b"
+   bun @11+1 Expected ";" but found ":"
+   bun @14+1 Unexpected }
+"x = {+}" [ts]
+   tsc @5+1 TS1136 Property assignment expected.
+   tsc @6+1 TS1109 Expression expected.
+   go  @5+1 TS1136 Property assignment expected.
+   go  @6+1 TS1109 Expression expected.
+   bun @5+1 Expected identifier but found "+"
+   bun @7+0 Expected "}" but found end of file
+"x = {a: 1; b: 2}" [ts]
+   tsc @9+1 TS1005 ',' expected.
+   go  @9+1 TS1005 ',' expected.
+   bun @9+1 Expected "}" but found ";"
+   bun @11+1 Expected ";" but found "b"
+   bun @12+1 Unexpected :
+"x = {,}" [ts]
+   tsc @5+1 TS1136 Property assignment expected.
+   go  @5+1 TS1136 Property assignment expected.
+   bun @5+1 Expected identifier but found ","
+   bun @7+0 Expected "}" but found end of file
+"x = {a: 1,, b: 2}" [ts]
+   tsc @10+1 TS1136 Property assignment expected.
+   go  @10+1 TS1136 Property assignment expected.
+   bun @10+1 Expected identifier but found ","
+"x = {=}" [ts]
+   tsc @5+1 TS1136 Property assignment expected.
+   go  @5+1 TS1136 Property assignment expected.
+   bun @5+1 Expected identifier but found "="
+   bun @7+0 Expected "}" but found end of file
+"x = {a: 1, =}" [ts]
+   tsc @11+1 TS1136 Property assignment expected.
+   go  @11+1 TS1136 Property assignment expected.
+   bun @11+1 Expected identifier but found "="
+   bun @13+0 Expected "}" but found end of file
+"x = {.}" [ts]
+   tsc @5+1 TS1003 Identifier expected.
+   tsc @6+1 TS1003 Identifier expected.
+   go  @5+1 TS1003 Identifier expected.
+   go  @6+1 TS1003 Identifier expected.
+   bun @5+1 Expected identifier but found "."
+   bun @7+0 Expected "}" but found end of file
+"x = {*}" [ts]
+   tsc @6+1 TS1003 Identifier expected.
+   go  @6+1 TS1003 Identifier expected.
+   bun @6+1 Expected identifier but found "}"
+   bun @7+0 Expected "(" but found end of file
+"x = {a: 1, ]}" [ts]
+   tsc @11+1 TS1136 Property assignment expected.
+   go  @11+1 TS1136 Property assignment expected.
+   bun @11+1 Expected identifier but found "]"
+   bun @13+0 Expected "}" but found end of file
+"x = {a b}" [ts]
+   tsc @7+1 TS1005 ',' expected.
+   go  @7+1 TS1005 ',' expected.
+   bun @7+1 Expected "}" but found "b"
+   bun @8+1 Unexpected }
+"x = {a: }" [ts]
+   tsc @8+1 TS1109 Expression expected.
+   go  @8+1 TS1109 Expression expected.
+   bun @8+1 Unexpected }
+"x = {1: 1, +}" [ts]
+   tsc @11+1 TS1136 Property assignment expected.
+   tsc @12+1 TS1109 Expression expected.
+   go  @11+1 TS1136 Property assignment expected.
+   go  @12+1 TS1109 Expression expected.
+   bun @11+1 Expected identifier but found "+"
+   bun @13+0 Expected "}" but found end of file
+"x = {...}" [ts]
+   tsc @8+1 TS1109 Expression expected.
+   go  @8+1 TS1109 Expression expected.
+   bun @8+1 Unexpected }
+"x = {a: 1, /* c */ )}" [ts]
+   tsc @19+1 TS1136 Property assignment expected.
+   go  @19+1 TS1136 Property assignment expected.
+   bun @19+1 Expected identifier but found ")"
+   bun @21+0 Expected "}" but found end of file
+"({)})" [ts]
+   tsc @2+1 TS1136 Property assignment expected.
+   go  @2+1 TS1136 Property assignment expected.
+   bun @2+1 Expected identifier but found ")"
+   bun @4+1 Expected "}" but found ")"
+   bun @5+0 Expected ")" but found end of file
+"x = {a: 1, ?}" [ts]
+   tsc @11+1 TS1136 Property assignment expected.
+   go  @11+1 TS1136 Property assignment expected.
+   bun @11+1 Expected identifier but found "?"
+   bun @13+0 Expected "}" but found end of file
+"x = {a: 1, !}" [ts]
+   tsc @11+1 TS1136 Property assignment expected.
+   tsc @12+1 TS1128 Declaration or statement expected.
+   go  @11+1 TS1136 Property assignment expected.
+   go  @12+1 TS1128 Declaration or statement expected.
+   bun @11+1 Expected identifier but found "!"
+   bun @13+0 Expected "}" but found end of file
+"x = {a: 1, <}" [ts]
+   tsc @11+1 TS1136 Property assignment expected.
+   tsc @12+1 TS1109 Expression expected.
+   go  @11+1 TS1136 Property assignment expected.
+   go  @12+1 TS1109 Expression expected.
+   bun @11+1 Expected identifier but found "<"
+   bun @13+0 Expected "}" but found end of file
+## lists: TS1138 TS1390 parameters
+"function f(:) {}" [ts]
+   tsc @11+1 TS1138 Parameter declaration expected.
+   go  @11+1 TS1138 Parameter declaration expected.
+   bun @11+1 Expected identifier but found ":"
+"function f(a, :) {}" [ts]
+   tsc @14+1 TS1138 Parameter declaration expected.
+   go  @14+1 TS1138 Parameter declaration expected.
+   bun @14+1 Expected identifier but found ":"
+"function f(+) {}" [ts]
+   tsc @11+1 TS1138 Parameter declaration expected.
+   tsc @12+1 TS1109 Expression expected.
+   go  @11+1 TS1138 Parameter declaration expected.
+   go  @12+1 TS1109 Expression expected.
+   bun @11+1 Expected identifier but found "+"
+"function f(a, +) {}" [ts]
+   tsc @14+1 TS1138 Parameter declaration expected.
+   tsc @15+1 TS1109 Expression expected.
+   go  @14+1 TS1138 Parameter declaration expected.
+   go  @15+1 TS1109 Expression expected.
+   bun @14+1 Expected identifier but found "+"
+"function f(;" [ts]
+   tsc @11+1 TS1138 Parameter declaration expected.
+   tsc @12+0 TS1005 ')' expected.
+   go  @11+1 TS1138 Parameter declaration expected.
+   go  @12+0 TS1005 ')' expected.
+   bun @11+1 Expected identifier but found ";"
+   bun @12+0 Expected ")" but found end of file
+"function f(" [ts]
+   tsc @11+0 TS1005 ')' expected.
+   go  @11+0 TS1005 ')' expected.
+   bun @11+0 Expected identifier but found end of file
+"function f(a," [ts]
+   tsc @13+0 TS1005 ')' expected.
+   go  @13+0 TS1005 ')' expected.
+   bun @13+0 Expected identifier but found end of file
+"function f(a b) {}" [ts]
+   tsc @13+1 TS1005 ',' expected.
+   go  @13+1 TS1005 ',' expected.
+   bun @13+1 Expected ")" but found "b"
+   bun @14+1 Expected ";" but found ")"
+"function f(}) {}" [ts]
+   tsc @11+1 TS1138 Parameter declaration expected.
+   go  @11+1 TS1138 Parameter declaration expected.
+   bun @11+1 Expected identifier but found "}"
+"function f(a, }) {}" [ts]
+   tsc @14+1 TS1138 Parameter declaration expected.
+   go  @14+1 TS1138 Parameter declaration expected.
+   bun @14+1 Expected identifier but found "}"
+"function f(class) {}" [ts]
+   tsc @11+5 TS1390 'class' is not allowed as a parameter name.
+   tsc @16+1 TS1005 '{' expected.
+   go  @11+5 TS1390 'class' is not allowed as a parameter name.
+   go  @16+1 TS1005 '{' expected.
+   bun @11+5 Expected identifier but found "class"
+"function f(a, class) {}" [ts]
+   tsc @14+5 TS1390 'class' is not allowed as a parameter name.
+   tsc @19+1 TS1005 '{' expected.
+   go  @14+5 TS1390 'class' is not allowed as a parameter name.
+   go  @19+1 TS1005 '{' expected.
+   bun @14+5 Expected identifier but found "class"
+"function f(var) {}" [ts]
+   tsc @11+3 TS1390 'var' is not allowed as a parameter name.
+   tsc @14+1 TS1134 Variable declaration expected.
+   go  @11+3 TS1390 'var' is not allowed as a parameter name.
+   go  @14+1 TS1134 Variable declaration expected.
+   bun @11+3 Expected identifier but found "var"
+"function f(if) {}" [ts]
+   tsc @11+2 TS1390 'if' is not allowed as a parameter name.
+   tsc @13+1 TS1005 '(' expected.
+   go  @11+2 TS1390 'if' is not allowed as a parameter name.
+   go  @13+1 TS1005 '(' expected.
+   bun @11+2 Expected identifier but found "if"
+"function f(1) {}" [ts]
+   tsc @11+1 TS1003 Identifier expected.
+   go  @11+1 TS1003 Identifier expected.
+   bun @11+1 Expected identifier but found "1"
+"function f(a, 1) {}" [ts]
+   tsc @14+1 TS1003 Identifier expected.
+   go  @14+1 TS1003 Identifier expected.
+   bun @14+1 Expected identifier but found "1"
+"function f('a') {}" [ts]
+   tsc @11+3 TS1003 Identifier expected.
+   go  @11+3 TS1003 Identifier expected.
+   bun @11+3 Expected identifier but found "'a'"
+"function f(a, .) {}" [ts]
+   tsc @14+1 TS1138 Parameter declaration expected.
+   go  @14+1 TS1138 Parameter declaration expected.
+   bun @14+1 Expected identifier but found "."
+"function f(...) {}" [ts]
+   tsc @14+1 TS1003 Identifier expected.
+   go  @14+1 TS1003 Identifier expected.
+   bun @14+1 Expected identifier but found ")"
+   bun @16+1 Expected ")" but found "{"
+   bun @17+1 Unexpected }
+"function f(...1) {}" [ts]
+   tsc @14+1 TS1003 Identifier expected.
+   go  @14+1 TS1003 Identifier expected.
+   bun @14+1 Expected identifier but found "1"
+"function f(=) {}" [ts]
+   tsc @11+1 TS1138 Parameter declaration expected.
+   go  @11+1 TS1138 Parameter declaration expected.
+   bun @11+1 Expected identifier but found "="
+"function f(a, =) {}" [ts]
+   tsc @14+1 TS1138 Parameter declaration expected.
+   go  @14+1 TS1138 Parameter declaration expected.
+   bun @14+1 Expected identifier but found "="
+"x = function (:) {}" [ts]
+   tsc @14+1 TS1138 Parameter declaration expected.
+   go  @14+1 TS1138 Parameter declaration expected.
+   bun @14+1 Expected identifier but found ":"
+"x = (a, :) => 1" [ts]
+   tsc @8+1 TS1138 Parameter declaration expected.
+   go  @8+1 TS1138 Parameter declaration expected.
+   bun @8+1 Unexpected :
+"x = async (a, :) => 1" [ts]
+   tsc @14+1 TS1138 Parameter declaration expected.
+   go  @14+1 TS1138 Parameter declaration expected.
+   bun @14+1 Unexpected :
+"class C { m(:) {} }" [ts]
+   tsc @12+1 TS1138 Parameter declaration expected.
+   go  @12+1 TS1138 Parameter declaration expected.
+   bun @12+1 Expected identifier but found ":"
+"class C { constructor(:) {} }" [ts]
+   tsc @22+1 TS1138 Parameter declaration expected.
+   go  @22+1 TS1138 Parameter declaration expected.
+   bun @22+1 Expected identifier but found ":"
+"class C { m(a, :) {} }" [ts]
+   tsc @15+1 TS1138 Parameter declaration expected.
+   go  @15+1 TS1138 Parameter declaration expected.
+   bun @15+1 Expected identifier but found ":"
+"x = { m(:) {} }" [ts]
+   tsc @8+1 TS1138 Parameter declaration expected.
+   go  @8+1 TS1138 Parameter declaration expected.
+   bun @8+1 Expected identifier but found ":"
+"x = { set a(:) {} }" [ts]
+   tsc @12+1 TS1138 Parameter declaration expected.
+   go  @12+1 TS1138 Parameter declaration expected.
+   bun @12+1 Expected identifier but found ":"
+"type T = (:) => void" [ts]
+   tsc @10+1 TS1110 Type expected.
+   tsc @11+1 TS1128 Declaration or statement expected.
+   tsc @13+2 TS1128 Declaration or statement expected.
+   tsc @20+0 TS1109 Expression expected.
+   go  @10+1 TS1110 Type expected.
+   go  @11+1 TS1128 Declaration or statement expected.
+   go  @13+2 TS1128 Declaration or statement expected.
+   go  @20+0 TS1109 Expression expected.
+   bun @10+1 Unexpected :
+   bun @11+1 Expected ";" but found ")"
+   bun @13+2 Unexpected =>
+"type T = (a, :) => void" [ts]
+   tsc @13+1 TS1138 Parameter declaration expected.
+   go  @13+1 TS1138 Parameter declaration expected.
+   bun @11+1 Expected ")" but found ","
+   bun @13+1 Expected ";" but found ":"
+   bun @14+1 Unexpected )
+"type T = { m(:): void }" [ts]
+   tsc @13+1 TS1138 Parameter declaration expected.
+   go  @13+1 TS1138 Parameter declaration expected.
+   bun @13+1 Unexpected :
+"type T = new (:) => void" [ts]
+   tsc @14+1 TS1138 Parameter declaration expected.
+   go  @14+1 TS1138 Parameter declaration expected.
+   bun @14+1 Unexpected :
+   bun @15+1 Expected ";" but found ")"
+   bun @17+2 Unexpected =>
+"function f(a, /* c */ :) {}" [ts]
+   tsc @22+1 TS1138 Parameter declaration expected.
+   go  @22+1 TS1138 Parameter declaration expected.
+   bun @22+1 Expected identifier but found ":"
+"function f(this) {}" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"function f(a, ]) {}" [ts]
+   tsc @14+1 TS1005 ')' expected.
+   tsc @15+1 TS1128 Declaration or statement expected.
+   go  @14+1 TS1005 ')' expected.
+   go  @15+1 TS1128 Declaration or statement expected.
+   bun @14+1 Expected identifier but found "]"
+"function f(])" [ts]
+   tsc @11+1 TS1005 ')' expected.
+   tsc @12+1 TS1128 Declaration or statement expected.
+   go  @11+1 TS1005 ')' expected.
+   go  @12+1 TS1128 Declaration or statement expected.
+   bun @11+1 Expected identifier but found "]"
+"function f(a, null) {}" [ts]
+   tsc @14+4 TS1359 Identifier expected. 'null' is a reserved word that cannot be used here.
+   go  @14+4 TS1359 Identifier expected. 'null' is a reserved word that cannot be used here.
+   bun @14+4 Expected identifier but found "null"
+"function f(a, true) {}" [ts]
+   tsc @14+4 TS1359 Identifier expected. 'true' is a reserved word that cannot be used here.
+   go  @14+4 TS1359 Identifier expected. 'true' is a reserved word that cannot be used here.
+   bun @14+4 Expected identifier but found "true"
+"function f(a, this) {}" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"function f(a, new) {}" [ts]
+   tsc @14+3 TS1359 Identifier expected. 'new' is a reserved word that cannot be used here.
+   go  @14+3 TS1359 Identifier expected. 'new' is a reserved word that cannot be used here.
+   bun @14+3 Expected identifier but found "new"
+"function f(a, void) {}" [ts]
+   tsc @14+4 TS1359 Identifier expected. 'void' is a reserved word that cannot be used here.
+   go  @14+4 TS1359 Identifier expected. 'void' is a reserved word that cannot be used here.
+   bun @14+4 Expected identifier but found "void"
+## lists: TS1139 type parameters
+"function f<:>() {}" [ts]
+   tsc @11+1 TS1139 Type parameter declaration expected.
+   go  @11+1 TS1139 Type parameter declaration expected.
+   bun @11+1 Expected identifier but found ":"
+"function f<T, :>() {}" [ts]
+   tsc @14+1 TS1139 Type parameter declaration expected.
+   go  @14+1 TS1139 Type parameter declaration expected.
+   bun @14+1 Expected identifier but found ":"
+"function f<>() {}" [ts]
+   tsc parses; checker @10+2 TS1098 Type parameter list cannot be empty.
+   go  parses
+   bun @11+1 Expected identifier but found ">"
+   bun @12+1 Expected ">" but found "("
+"function f<1>() {}" [ts]
+   tsc @11+1 TS1139 Type parameter declaration expected.
+   tsc @14+1 TS1109 Expression expected.
+   tsc @16+1 TS1005 ';' expected.
+   go  @11+1 TS1139 Type parameter declaration expected.
+   go  @14+1 TS1109 Expression expected.
+   go  @16+1 TS1005 ';' expected.
+   bun @11+1 Expected identifier but found "1"
+"function f<T, 1>() {}" [ts]
+   tsc @14+1 TS1139 Type parameter declaration expected.
+   tsc @17+1 TS1109 Expression expected.
+   tsc @19+1 TS1005 ';' expected.
+   go  @14+1 TS1139 Type parameter declaration expected.
+   go  @17+1 TS1109 Expression expected.
+   go  @19+1 TS1005 ';' expected.
+   bun @14+1 Expected identifier but found "1"
+"function f<T U>() {}" [ts]
+   tsc @13+1 TS1005 ',' expected.
+   go  @13+1 TS1005 ',' expected.
+   bun @13+1 Expected ">" but found "U"
+   bun @14+1 Expected identifier but found ">"
+   bun @15+1 Expected ")" but found "("
+"function f<+>() {}" [ts]
+   tsc @11+1 TS1139 Type parameter declaration expected.
+   tsc @12+1 TS1109 Expression expected.
+   tsc @14+1 TS1109 Expression expected.
+   tsc @16+1 TS1005 ';' expected.
+   go  @11+1 TS1139 Type parameter declaration expected.
+   go  @12+1 TS1109 Expression expected.
+   go  @14+1 TS1109 Expression expected.
+   go  @16+1 TS1005 ';' expected.
+   bun @11+1 Expected identifier but found "+"
+"function f<T, +>() {}" [ts]
+   tsc @14+1 TS1139 Type parameter declaration expected.
+   tsc @15+1 TS1109 Expression expected.
+   tsc @17+1 TS1109 Expression expected.
+   tsc @19+1 TS1005 ';' expected.
+   go  @14+1 TS1139 Type parameter declaration expected.
+   go  @15+1 TS1109 Expression expected.
+   go  @17+1 TS1109 Expression expected.
+   go  @19+1 TS1005 ';' expected.
+   bun @14+1 Expected identifier but found "+"
+"class C<:> {}" [ts]
+   tsc @8+1 TS1139 Type parameter declaration expected.
+   go  @8+1 TS1139 Type parameter declaration expected.
+   bun @8+1 Expected identifier but found ":"
+"class C<T, :> {}" [ts]
+   tsc @11+1 TS1139 Type parameter declaration expected.
+   go  @11+1 TS1139 Type parameter declaration expected.
+   bun @11+1 Expected identifier but found ":"
+"interface I<:> {}" [ts]
+   tsc @12+1 TS1139 Type parameter declaration expected.
+   go  @12+1 TS1139 Type parameter declaration expected.
+   bun @12+1 Expected identifier but found ":"
+"type T<:> = 1" [ts]
+   tsc @7+1 TS1139 Type parameter declaration expected.
+   go  @7+1 TS1139 Type parameter declaration expected.
+   bun @7+1 Expected identifier but found ":"
+"type T<U, :> = 1" [ts]
+   tsc @10+1 TS1139 Type parameter declaration expected.
+   go  @10+1 TS1139 Type parameter declaration expected.
+   bun @10+1 Expected identifier but found ":"
+"type T<U, 1> = 1" [ts]
+   tsc @10+1 TS1139 Type parameter declaration expected.
+   tsc @11+1 TS1005 ';' expected.
+   tsc @13+1 TS1109 Expression expected.
+   go  @10+1 TS1139 Type parameter declaration expected.
+   go  @11+1 TS1005 ';' expected.
+   go  @13+1 TS1109 Expression expected.
+   bun @10+1 Expected identifier but found "1"
+"type T<;" [ts]
+   tsc @7+1 TS1139 Type parameter declaration expected.
+   tsc @8+0 TS1005 '>' expected.
+   go  @7+1 TS1139 Type parameter declaration expected.
+   go  @8+0 TS1005 '>' expected.
+   bun @7+1 Expected identifier but found ";"
+   bun @8+0 Expected ">" but found end of file
+"type T<U," [ts]
+   tsc @9+0 TS1005 '>' expected.
+   go  @9+0 TS1005 '>' expected.
+   bun @9+0 Expected identifier but found end of file
+"type T<U, ;" [ts]
+   tsc @10+1 TS1139 Type parameter declaration expected.
+   tsc @11+0 TS1005 '>' expected.
+   go  @10+1 TS1139 Type parameter declaration expected.
+   go  @11+0 TS1005 '>' expected.
+   bun @10+1 Expected identifier but found ";"
+   bun @11+0 Expected ">" but found end of file
+"type T<U, class> = 1" [ts]
+   tsc @10+5 TS1139 Type parameter declaration expected.
+   tsc @15+1 TS1005 ';' expected.
+   tsc @17+1 TS1109 Expression expected.
+   go  @10+5 TS1139 Type parameter declaration expected.
+   go  @15+1 TS1005 ';' expected.
+   go  @17+1 TS1109 Expression expected.
+   bun @10+5 Expected identifier but found "class"
+"type T<class> = 1" [ts]
+   tsc @7+5 TS1139 Type parameter declaration expected.
+   tsc @12+1 TS1005 ';' expected.
+   tsc @14+1 TS1109 Expression expected.
+   go  @7+5 TS1139 Type parameter declaration expected.
+   go  @12+1 TS1005 ';' expected.
+   go  @14+1 TS1109 Expression expected.
+   bun @7+5 Expected identifier but found "class"
+"x = <T, :>() => 1" [ts]
+   tsc @8+1 TS1139 Type parameter declaration expected.
+   go  @8+1 TS1139 Type parameter declaration expected.
+   bun @6+1 Expected ">" but found ","
+"type T = <U, :>() => void" [ts]
+   tsc @13+1 TS1139 Type parameter declaration expected.
+   go  @13+1 TS1139 Type parameter declaration expected.
+   bun @13+1 Expected identifier but found ":"
+"class C { m<T, :>() {} }" [ts]
+   tsc @15+1 TS1139 Type parameter declaration expected.
+   go  @15+1 TS1139 Type parameter declaration expected.
+   bun @15+1 Expected identifier but found ":"
+"type T<U, /* c */ :> = 1" [ts]
+   tsc @18+1 TS1139 Type parameter declaration expected.
+   go  @18+1 TS1139 Type parameter declaration expected.
+   bun @18+1 Expected identifier but found ":"
+"type T<U, )> = 1" [ts]
+   tsc @10+1 TS1139 Type parameter declaration expected.
+   go  @10+1 TS1139 Type parameter declaration expected.
+   bun @10+1 Expected identifier but found ")"
+"type T<U, ]> = 1" [ts]
+   tsc @10+1 TS1139 Type parameter declaration expected.
+   go  @10+1 TS1139 Type parameter declaration expected.
+   bun @10+1 Expected identifier but found "]"
+"type T<U, }> = 1" [ts]
+   tsc @10+1 TS1139 Type parameter declaration expected.
+   go  @10+1 TS1139 Type parameter declaration expected.
+   bun @10+1 Expected identifier but found "}"
+"type T<U, => = 1" [ts]
+   tsc @10+2 TS1139 Type parameter declaration expected.
+   tsc @13+1 TS1139 Type parameter declaration expected.
+   tsc @15+1 TS1139 Type parameter declaration expected.
+   go  @10+2 TS1139 Type parameter declaration expected.
+   go  @13+1 TS1139 Type parameter declaration expected.
+   go  @15+1 TS1139 Type parameter declaration expected.
+   bun @10+2 Expected identifier but found "=>"
+   bun @16+0 Expected ">" but found end of file
+"type T<'a'> = 1" [ts]
+   tsc @7+3 TS1139 Type parameter declaration expected.
+   tsc @10+1 TS1005 ';' expected.
+   tsc @12+1 TS1109 Expression expected.
+   go  @7+3 TS1139 Type parameter declaration expected.
+   go  @10+1 TS1005 ';' expected.
+   go  @12+1 TS1109 Expression expected.
+   bun @7+3 Expected identifier but found "'a'"
+"type T<U, 'a'> = 1" [ts]
+   tsc @10+3 TS1139 Type parameter declaration expected.
+   tsc @13+1 TS1005 ';' expected.
+   tsc @15+1 TS1109 Expression expected.
+   go  @10+3 TS1139 Type parameter declaration expected.
+   go  @13+1 TS1005 ';' expected.
+   go  @15+1 TS1109 Expression expected.
+   bun @10+3 Expected identifier but found "'a'"
+"type T<U, [> = 1" [ts]
+   tsc @10+1 TS1139 Type parameter declaration expected.
+   tsc @11+1 TS1110 Type expected.
+   tsc @13+1 TS1109 Expression expected.
+   go  @10+1 TS1139 Type parameter declaration expected.
+   go  @11+1 TS1110 Type expected.
+   go  @13+1 TS1109 Expression expected.
+   bun @10+1 Expected identifier but found "["
+"type T<U, *> = 1" [ts]
+   tsc @10+1 TS1139 Type parameter declaration expected.
+   tsc @11+1 TS1005 ';' expected.
+   tsc @13+1 TS1109 Expression expected.
+   go  @10+1 TS1139 Type parameter declaration expected.
+   go  @11+1 TS1005 ';' expected.
+   go  @13+1 TS1109 Expression expected.
+   bun @10+1 Expected identifier but found "*"
+## lists: TS1134 TS1389 variable declarations
+"var ;" [ts]
+   tsc parses; checker @3+0 TS1123 Variable declaration list cannot be empty.
+   go  parses
+   bun @4+1 Expected identifier but found ";"
+"var" [ts]
+   tsc parses; checker @3+0 TS1123 Variable declaration list cannot be empty.
+   go  parses
+   bun @3+0 Expected identifier but found end of file
+"let ;" [ts]
+   tsc parses; checker @0+3 TS1212 Identifier expected. 'let' is a reserved word in strict mode.
+   go  parses
+   bun accepts
+"const ;" [ts]
+   tsc parses; checker @5+0 TS1123 Variable declaration list cannot be empty.
+   go  parses
+   bun @6+1 Expected identifier but found ";"
+   bun @6+0 This constant must be initialized
+"var a, ;" [ts]
+   tsc parses; checker @5+1 TS1009 Trailing comma not allowed.
+   go  parses
+   bun @7+1 Expected identifier but found ";"
+"var a, " [ts]
+   tsc parses; checker @5+1 TS1009 Trailing comma not allowed.
+   go  parses
+   bun @7+0 Expected identifier but found end of file
+"var :" [ts]
+   tsc @4+1 TS1134 Variable declaration expected.
+   go  @4+1 TS1134 Variable declaration expected.
+   bun @4+1 Expected identifier but found ":"
+"var a, :" [ts]
+   tsc @7+1 TS1134 Variable declaration expected.
+   go  @7+1 TS1134 Variable declaration expected.
+   bun @7+1 Expected identifier but found ":"
+"var +" [ts]
+   tsc @4+1 TS1134 Variable declaration expected.
+   tsc @5+0 TS1109 Expression expected.
+   go  @4+1 TS1134 Variable declaration expected.
+   go  @5+0 TS1109 Expression expected.
+   bun @4+1 Expected identifier but found "+"
+"var a, +" [ts]
+   tsc @7+1 TS1134 Variable declaration expected.
+   tsc @8+0 TS1109 Expression expected.
+   go  @7+1 TS1134 Variable declaration expected.
+   go  @8+0 TS1109 Expression expected.
+   bun @7+1 Expected identifier but found "+"
+"var 1" [ts]
+   tsc @4+1 TS1134 Variable declaration expected.
+   go  @4+1 TS1134 Variable declaration expected.
+   bun @4+1 Expected identifier but found "1"
+"var a, 1" [ts]
+   tsc @7+1 TS1134 Variable declaration expected.
+   go  @7+1 TS1134 Variable declaration expected.
+   bun @7+1 Expected identifier but found "1"
+"var class" [ts]
+   tsc @4+5 TS1389 'class' is not allowed as a variable declaration name.
+   tsc @9+0 TS1005 '{' expected.
+   go  @4+5 TS1389 'class' is not allowed as a variable declaration name.
+   go  @9+0 TS1005 '{' expected.
+   bun @4+5 Expected identifier but found "class"
+"var a, class" [ts]
+   tsc @7+5 TS1389 'class' is not allowed as a variable declaration name.
+   tsc @12+0 TS1005 '{' expected.
+   go  @7+5 TS1389 'class' is not allowed as a variable declaration name.
+   go  @12+0 TS1005 '{' expected.
+   bun @7+5 Expected identifier but found "class"
+"var if;" [ts]
+   tsc @4+2 TS1389 'if' is not allowed as a variable declaration name.
+   tsc @6+1 TS1005 '(' expected.
+   go  @4+2 TS1389 'if' is not allowed as a variable declaration name.
+   go  @6+1 TS1005 '(' expected.
+   bun @4+2 Expected identifier but found "if"
+"var a, var b;" [ts]
+   tsc @7+3 TS1389 'var' is not allowed as a variable declaration name.
+   go  @7+3 TS1389 'var' is not allowed as a variable declaration name.
+   bun @7+3 Expected identifier but found "var"
+   bun @11+1 Expected ";" but found "b"
+"var a b" [ts]
+   tsc @6+1 TS1005 ',' expected.
+   go  @6+1 TS1005 ',' expected.
+   bun @6+1 Expected ";" but found "b"
+"var a, )" [ts]
+   tsc @7+1 TS1134 Variable declaration expected.
+   go  @7+1 TS1134 Variable declaration expected.
+   bun @7+1 Expected identifier but found ")"
+"var )" [ts]
+   tsc @4+1 TS1134 Variable declaration expected.
+   go  @4+1 TS1134 Variable declaration expected.
+   bun @4+1 Expected identifier but found ")"
+"var a, }" [ts]
+   tsc @7+1 TS1128 Declaration or statement expected.
+   go  @7+1 TS1128 Declaration or statement expected.
+   bun @7+1 Expected identifier but found "}"
+"var =" [ts]
+   tsc @4+1 TS1134 Variable declaration expected.
+   go  @4+1 TS1134 Variable declaration expected.
+   bun @4+1 Expected identifier but found "="
+"var a, = 1" [ts]
+   tsc @7+1 TS1134 Variable declaration expected.
+   tsc @9+1 TS1134 Variable declaration expected.
+   go  @7+1 TS1134 Variable declaration expected.
+   go  @9+1 TS1134 Variable declaration expected.
+   bun @7+1 Expected identifier but found "="
+   bun @9+1 Expected ";" but found "1"
+"var a = 1, = 2" [ts]
+   tsc @11+1 TS1134 Variable declaration expected.
+   tsc @13+1 TS1134 Variable declaration expected.
+   go  @11+1 TS1134 Variable declaration expected.
+   go  @13+1 TS1134 Variable declaration expected.
+   bun @11+1 Expected identifier but found "="
+   bun @13+1 Expected ";" but found "2"
+"for (var ; ;) {}" [ts]
+   tsc parses; checker @8+0 TS1123 Variable declaration list cannot be empty.
+   go  parses
+   bun @9+1 Expected identifier but found ";"
+   bun @12+1 Unexpected )
+"for (var a, ; ;) {}" [ts]
+   tsc parses; checker @10+1 TS1009 Trailing comma not allowed.
+   go  parses
+   bun @12+1 Expected identifier but found ";"
+   bun @15+1 Unexpected )
+"for (var of x) {}" [ts]
+   tsc parses; checker @8+0 TS1123 Variable declaration list cannot be empty.
+   go  parses
+   bun @12+1 Expected ";" but found "x"
+   bun @13+1 Unexpected )
+"for (var in x) {}" [ts]
+   tsc parses; checker @8+0 TS1123 Variable declaration list cannot be empty.
+   go  parses
+   bun @9+2 Expected identifier but found "in"
+   bun @12+1 Expected ";" but found "x"
+   bun @13+1 Unexpected )
+"for (var a, of x) {}" [ts]
+   tsc @15+1 TS1005 ',' expected.
+   tsc @16+1 TS1005 ',' expected.
+   tsc @20+0 TS1005 ';' expected.
+   go  @15+1 TS1005 ',' expected.
+   go  @16+1 TS1005 ',' expected.
+   go  @20+0 TS1005 ';' expected.
+   bun @15+1 Expected ";" but found "x"
+   bun @16+1 Unexpected )
+"export var ;" [ts]
+   tsc parses; checker @10+0 TS1123 Variable declaration list cannot be empty.
+   go  parses
+   bun @11+1 Expected identifier but found ";"
+"declare var ;" [ts]
+   tsc parses; checker @11+0 TS1123 Variable declaration list cannot be empty.
+   go  parses
+   bun @12+1 Expected identifier but found ";"
+"var a, /* c */ :" [ts]
+   tsc @15+1 TS1134 Variable declaration expected.
+   go  @15+1 TS1134 Variable declaration expected.
+   bun @15+1 Expected identifier but found ":"
+"var 'a'" [ts]
+   tsc @4+3 TS1134 Variable declaration expected.
+   go  @4+3 TS1134 Variable declaration expected.
+   bun @4+3 Expected identifier but found "'a'"
+"var a, 'a'" [ts]
+   tsc @7+3 TS1134 Variable declaration expected.
+   go  @7+3 TS1134 Variable declaration expected.
+   bun @7+3 Expected identifier but found "'a'"
+"var #a" [ts]
+   tsc @4+2 TS18029 Private identifiers are not allowed in variable declarations.
+   go  @4+2 TS18029 Private identifiers are not allowed in variable declarations.
+   bun @4+2 Expected identifier but found "#a"
+"using ;" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"var a, null" [ts]
+   tsc @7+4 TS1389 'null' is not allowed as a variable declaration name.
+   go  @7+4 TS1389 'null' is not allowed as a variable declaration name.
+   bun @7+4 Expected identifier but found "null"
+"var a, this" [ts]
+   tsc @7+4 TS1389 'this' is not allowed as a variable declaration name.
+   go  @7+4 TS1389 'this' is not allowed as a variable declaration name.
+   bun @7+4 Expected identifier but found "this"
+"var a, true" [ts]
+   tsc @7+4 TS1389 'true' is not allowed as a variable declaration name.
+   go  @7+4 TS1389 'true' is not allowed as a variable declaration name.
+   bun @7+4 Expected identifier but found "true"
+"var a, typeof" [ts]
+   tsc @7+6 TS1389 'typeof' is not allowed as a variable declaration name.
+   tsc @13+0 TS1109 Expression expected.
+   go  @7+6 TS1389 'typeof' is not allowed as a variable declaration name.
+   go  @13+0 TS1109 Expression expected.
+   bun @7+6 Expected identifier but found "typeof"
+"var a, new" [ts]
+   tsc @7+3 TS1389 'new' is not allowed as a variable declaration name.
+   tsc @10+0 TS1109 Expression expected.
+   go  @7+3 TS1389 'new' is not allowed as a variable declaration name.
+   go  @10+0 TS1109 Expression expected.
+   bun @7+3 Expected identifier but found "new"
+"let a, class" [ts]
+   tsc @7+5 TS1389 'class' is not allowed as a variable declaration name.
+   tsc @12+0 TS1005 '{' expected.
+   go  @7+5 TS1389 'class' is not allowed as a variable declaration name.
+   go  @12+0 TS1005 '{' expected.
+   bun @7+5 Expected identifier but found "class"
+"const a = 1, +" [ts]
+   tsc @13+1 TS1134 Variable declaration expected.
+   tsc @14+0 TS1109 Expression expected.
+   go  @13+1 TS1134 Variable declaration expected.
+   go  @14+0 TS1109 Expression expected.
+   bun @13+1 Expected identifier but found "+"
+   bun @13+0 This constant must be initialized
+"var a, ." [ts]
+   tsc @7+1 TS1134 Variable declaration expected.
+   go  @7+1 TS1134 Variable declaration expected.
+   bun @7+1 Expected identifier but found "."
+"var a, ?" [ts]
+   tsc @7+1 TS1134 Variable declaration expected.
+   go  @7+1 TS1134 Variable declaration expected.
+   bun @7+1 Expected identifier but found "?"
+"var a, !" [ts]
+   tsc @7+1 TS1134 Variable declaration expected.
+   tsc @8+0 TS1109 Expression expected.
+   go  @7+1 TS1134 Variable declaration expected.
+   go  @8+0 TS1109 Expression expected.
+   bun @7+1 Expected identifier but found "!"
+"var a, *" [ts]
+   tsc @7+1 TS1134 Variable declaration expected.
+   tsc @8+0 TS1109 Expression expected.
+   go  @7+1 TS1134 Variable declaration expected.
+   go  @8+0 TS1109 Expression expected.
+   bun @7+1 Expected identifier but found "*"
+"var a, <" [ts]
+   tsc @7+1 TS1134 Variable declaration expected.
+   tsc @8+0 TS1110 Type expected.
+   go  @7+1 TS1134 Variable declaration expected.
+   go  @8+0 TS1110 Type expected.
+   bun @7+1 Expected identifier but found "<"
+"var a, =>" [ts]
+   tsc @7+2 TS1005 ';' expected.
+   go  @7+2 TS1005 ';' expected.
+   bun @7+2 Expected identifier but found "=>"
+"var a, enum" [ts]
+   tsc @7+4 TS1389 'enum' is not allowed as a variable declaration name.
+   tsc @11+0 TS1003 Identifier expected.
+   go  @7+4 TS1389 'enum' is not allowed as a variable declaration name.
+   go  @11+0 TS1003 Identifier expected.
+   bun @7+4 Expected identifier but found "enum"
+"var enum" [ts]
+   tsc @4+4 TS1389 'enum' is not allowed as a variable declaration name.
+   tsc @8+0 TS1003 Identifier expected.
+   go  @4+4 TS1389 'enum' is not allowed as a variable declaration name.
+   go  @8+0 TS1003 Identifier expected.
+   bun @4+4 Expected identifier but found "enum"
+## lists: TS1180 object binding
+"var {:} = x" [ts]
+   tsc @5+1 TS1180 Property destructuring pattern expected.
+   go  @5+1 TS1180 Property destructuring pattern expected.
+   bun @5+1 Expected identifier but found ":"
+   bun @11+0 Expected "}" but found end of file
+"var {a, :} = x" [ts]
+   tsc @8+1 TS1180 Property destructuring pattern expected.
+   go  @8+1 TS1180 Property destructuring pattern expected.
+   bun @8+1 Expected identifier but found ":"
+   bun @14+0 Expected "}" but found end of file
+"var {+} = x" [ts]
+   tsc @5+1 TS1180 Property destructuring pattern expected.
+   tsc @6+1 TS1109 Expression expected.
+   tsc @8+1 TS1128 Declaration or statement expected.
+   go  @5+1 TS1180 Property destructuring pattern expected.
+   go  @6+1 TS1109 Expression expected.
+   go  @8+1 TS1128 Declaration or statement expected.
+   bun @5+1 Expected identifier but found "+"
+   bun @11+0 Expected "}" but found end of file
+"var {a, +} = x" [ts]
+   tsc @8+1 TS1180 Property destructuring pattern expected.
+   tsc @9+1 TS1109 Expression expected.
+   tsc @11+1 TS1128 Declaration or statement expected.
+   go  @8+1 TS1180 Property destructuring pattern expected.
+   go  @9+1 TS1109 Expression expected.
+   go  @11+1 TS1128 Declaration or statement expected.
+   bun @8+1 Expected identifier but found "+"
+   bun @14+0 Expected "}" but found end of file
+"var {)} = x" [ts]
+   tsc @5+1 TS1180 Property destructuring pattern expected.
+   go  @5+1 TS1180 Property destructuring pattern expected.
+   bun @5+1 Expected identifier but found ")"
+   bun @11+0 Expected "}" but found end of file
+"var {a, )} = x" [ts]
+   tsc @8+1 TS1180 Property destructuring pattern expected.
+   go  @8+1 TS1180 Property destructuring pattern expected.
+   bun @8+1 Expected identifier but found ")"
+   bun @14+0 Expected "}" but found end of file
+"var {;" [ts]
+   tsc @5+1 TS1180 Property destructuring pattern expected.
+   go  @5+1 TS1180 Property destructuring pattern expected.
+   bun @5+1 Expected identifier but found ";"
+   bun @6+0 Expected "}" but found end of file
+"var {a, ;" [ts]
+   tsc @8+1 TS1180 Property destructuring pattern expected.
+   go  @8+1 TS1180 Property destructuring pattern expected.
+   bun @8+1 Expected identifier but found ";"
+   bun @9+0 Expected "}" but found end of file
+"var {" [ts]
+   tsc @5+0 TS1005 '}' expected.
+   go  @5+0 TS1005 '}' expected.
+   bun @5+0 Expected identifier but found end of file
+"var {a," [ts]
+   tsc @7+0 TS1005 '}' expected.
+   go  @7+0 TS1005 '}' expected.
+   bun @7+0 Expected identifier but found end of file
+"var {a b} = x" [ts]
+   tsc @7+1 TS1005 ',' expected.
+   go  @7+1 TS1005 ',' expected.
+   bun @7+1 Expected "}" but found "b"
+   bun @8+1 Unexpected }
+"var {a: } = x" [ts]
+   tsc @8+1 TS1003 Identifier expected.
+   go  @8+1 TS1003 Identifier expected.
+   bun @8+1 Expected identifier but found "}"
+   bun @13+0 Expected "}" but found end of file
+"var {a: 1} = x" [ts]
+   tsc @8+1 TS1003 Identifier expected.
+   tsc @9+1 TS1005 ':' expected.
+   go  @8+1 TS1003 Identifier expected.
+   go  @9+1 TS1005 ':' expected.
+   bun @8+1 Expected identifier but found "1"
+"var {,} = x" [ts]
+   tsc @5+1 TS1180 Property destructuring pattern expected.
+   go  @5+1 TS1180 Property destructuring pattern expected.
+   bun @5+1 Expected identifier but found ","
+   bun @11+0 Expected "}" but found end of file
+"var {a,, b} = x" [ts]
+   tsc @7+1 TS1180 Property destructuring pattern expected.
+   go  @7+1 TS1180 Property destructuring pattern expected.
+   bun @7+1 Expected identifier but found ","
+"var {=} = x" [ts]
+   tsc @5+1 TS1180 Property destructuring pattern expected.
+   go  @5+1 TS1180 Property destructuring pattern expected.
+   bun @5+1 Expected identifier but found "="
+   bun @11+0 Expected "}" but found end of file
+"var {a, =} = x" [ts]
+   tsc @8+1 TS1180 Property destructuring pattern expected.
+   go  @8+1 TS1180 Property destructuring pattern expected.
+   bun @8+1 Expected identifier but found "="
+   bun @14+0 Expected "}" but found end of file
+"var {...} = x" [ts]
+   tsc @8+1 TS1003 Identifier expected.
+   go  @8+1 TS1003 Identifier expected.
+   bun @8+1 Expected identifier but found "}"
+   bun @10+1 Expected "}" but found "="
+   bun @12+1 Expected ";" but found "x"
+"var {...1} = x" [ts]
+   tsc @9+1 TS1005 ':' expected.
+   go  @9+1 TS1005 ':' expected.
+   bun @8+1 Expected identifier but found "1"
+"function f({:}) {}" [ts]
+   tsc @12+1 TS1180 Property destructuring pattern expected.
+   go  @12+1 TS1180 Property destructuring pattern expected.
+   bun @12+1 Expected identifier but found ":"
+   bun @14+1 Expected "}" but found ")"
+   bun @16+1 Expected ")" but found "{"
+"function f({a, :}) {}" [ts]
+   tsc @15+1 TS1180 Property destructuring pattern expected.
+   go  @15+1 TS1180 Property destructuring pattern expected.
+   bun @15+1 Expected identifier but found ":"
+   bun @17+1 Expected "}" but found ")"
+   bun @19+1 Expected ")" but found "{"
+"x = ({a, :}) => 1" [ts]
+   tsc @9+1 TS1180 Property destructuring pattern expected.
+   go  @9+1 TS1180 Property destructuring pattern expected.
+   bun @9+1 Expected identifier but found ":"
+   bun @11+1 Expected "}" but found ")"
+   bun @13+2 Expected ")" but found "=>"
+"for (var {a, :} of x) {}" [ts]
+   tsc @13+1 TS1180 Property destructuring pattern expected.
+   go  @13+1 TS1180 Property destructuring pattern expected.
+   bun @13+1 Expected identifier but found ":"
+   bun @16+2 Expected "}" but found "of"
+   bun @19+1 Expected ";" but found "x"
+"try {} catch ({a, :}) {}" [ts]
+   tsc @18+1 TS1180 Property destructuring pattern expected.
+   go  @18+1 TS1180 Property destructuring pattern expected.
+   bun @18+1 Expected identifier but found ":"
+   bun @20+1 Expected "}" but found ")"
+   bun @22+1 Expected ")" but found "{"
+"var {a, /* c */ :} = x" [ts]
+   tsc @16+1 TS1180 Property destructuring pattern expected.
+   go  @16+1 TS1180 Property destructuring pattern expected.
+   bun @16+1 Expected identifier but found ":"
+   bun @22+0 Expected "}" but found end of file
+"var {a, ]} = x" [ts]
+   tsc @8+1 TS1180 Property destructuring pattern expected.
+   go  @8+1 TS1180 Property destructuring pattern expected.
+   bun @8+1 Expected identifier but found "]"
+   bun @14+0 Expected "}" but found end of file
+"var {1} = x" [ts]
+   tsc @6+1 TS1005 ':' expected.
+   go  @6+1 TS1005 ':' expected.
+   bun @6+1 Expected ":" but found "}"
+   bun @8+1 Expected identifier but found "="
+   bun @10+1 Expected "}" but found "x"
+"var {a, class} = x" [ts]
+   tsc @13+1 TS1005 ':' expected.
+   go  @13+1 TS1005 ':' expected.
+   bun accepts
+"var {class} = x" [ts]
+   tsc @10+1 TS1005 ':' expected.
+   go  @10+1 TS1005 ':' expected.
+   bun accepts
+"var {a, .} = x" [ts]
+   tsc @8+1 TS1180 Property destructuring pattern expected.
+   go  @8+1 TS1180 Property destructuring pattern expected.
+   bun @8+1 Expected identifier but found "."
+   bun @14+0 Expected "}" but found end of file
+"var {a: {:}} = x" [ts]
+   tsc @9+1 TS1180 Property destructuring pattern expected.
+   go  @9+1 TS1180 Property destructuring pattern expected.
+   bun @9+1 Expected identifier but found ":"
+   bun @16+0 Expected "}" but found end of file
+"var {a, *} = x" [ts]
+   tsc @8+1 TS1180 Property destructuring pattern expected.
+   tsc @9+1 TS1109 Expression expected.
+   tsc @11+1 TS1128 Declaration or statement expected.
+   go  @8+1 TS1180 Property destructuring pattern expected.
+   go  @9+1 TS1109 Expression expected.
+   go  @11+1 TS1128 Declaration or statement expected.
+   bun @8+1 Expected identifier but found "*"
+   bun @14+0 Expected "}" but found end of file
+"var {a, ?} = x" [ts]
+   tsc @8+1 TS1180 Property destructuring pattern expected.
+   go  @8+1 TS1180 Property destructuring pattern expected.
+   bun @8+1 Expected identifier but found "?"
+   bun @14+0 Expected "}" but found end of file
+## lists: TS1181 array binding
+"var [:] = x" [ts]
+   tsc @5+1 TS1181 Array element destructuring pattern expected.
+   go  @5+1 TS1181 Array element destructuring pattern expected.
+   bun @5+1 Expected identifier but found ":"
+"var [a, :] = x" [ts]
+   tsc @8+1 TS1181 Array element destructuring pattern expected.
+   go  @8+1 TS1181 Array element destructuring pattern expected.
+   bun @8+1 Expected identifier but found ":"
+"var [+] = x" [ts]
+   tsc @5+1 TS1181 Array element destructuring pattern expected.
+   tsc @6+1 TS1109 Expression expected.
+   tsc @8+1 TS1128 Declaration or statement expected.
+   go  @5+1 TS1181 Array element destructuring pattern expected.
+   go  @6+1 TS1109 Expression expected.
+   go  @8+1 TS1128 Declaration or statement expected.
+   bun @5+1 Expected identifier but found "+"
+"var [a, +] = x" [ts]
+   tsc @8+1 TS1181 Array element destructuring pattern expected.
+   tsc @9+1 TS1109 Expression expected.
+   tsc @11+1 TS1128 Declaration or statement expected.
+   go  @8+1 TS1181 Array element destructuring pattern expected.
+   go  @9+1 TS1109 Expression expected.
+   go  @11+1 TS1128 Declaration or statement expected.
+   bun @8+1 Expected identifier but found "+"
+"var [)] = x" [ts]
+   tsc @5+1 TS1181 Array element destructuring pattern expected.
+   go  @5+1 TS1181 Array element destructuring pattern expected.
+   bun @5+1 Expected identifier but found ")"
+"var [a, )] = x" [ts]
+   tsc @8+1 TS1181 Array element destructuring pattern expected.
+   go  @8+1 TS1181 Array element destructuring pattern expected.
+   bun @8+1 Expected identifier but found ")"
+"var [;" [ts]
+   tsc @5+1 TS1181 Array element destructuring pattern expected.
+   go  @5+1 TS1181 Array element destructuring pattern expected.
+   bun @5+1 Expected identifier but found ";"
+   bun @6+0 Expected "]" but found end of file
+"var [a, ;" [ts]
+   tsc @8+1 TS1181 Array element destructuring pattern expected.
+   go  @8+1 TS1181 Array element destructuring pattern expected.
+   bun @8+1 Expected identifier but found ";"
+   bun @9+0 Expected "]" but found end of file
+"var [" [ts]
+   tsc @5+0 TS1005 ']' expected.
+   go  @5+0 TS1005 ']' expected.
+   bun @5+0 Expected identifier but found end of file
+"var [a," [ts]
+   tsc @7+0 TS1005 ']' expected.
+   go  @7+0 TS1005 ']' expected.
+   bun @7+0 Expected identifier but found end of file
+"var [a b] = x" [ts]
+   tsc @7+1 TS1005 ',' expected.
+   go  @7+1 TS1005 ',' expected.
+   bun @7+1 Expected "]" but found "b"
+   bun @8+1 Expected ";" but found "]"
+   bun @10+1 Unexpected =
+"var [1] = x" [ts]
+   tsc @5+1 TS1181 Array element destructuring pattern expected.
+   tsc @6+1 TS1005 ';' expected.
+   tsc @8+1 TS1128 Declaration or statement expected.
+   go  @5+1 TS1181 Array element destructuring pattern expected.
+   go  @6+1 TS1005 ';' expected.
+   go  @8+1 TS1128 Declaration or statement expected.
+   bun @5+1 Expected identifier but found "1"
+"var [a, 1] = x" [ts]
+   tsc @8+1 TS1181 Array element destructuring pattern expected.
+   tsc @9+1 TS1005 ';' expected.
+   tsc @11+1 TS1128 Declaration or statement expected.
+   go  @8+1 TS1181 Array element destructuring pattern expected.
+   go  @9+1 TS1005 ';' expected.
+   go  @11+1 TS1128 Declaration or statement expected.
+   bun @8+1 Expected identifier but found "1"
+"var [=] = x" [ts]
+   tsc @5+1 TS1181 Array element destructuring pattern expected.
+   go  @5+1 TS1181 Array element destructuring pattern expected.
+   bun @5+1 Expected identifier but found "="
+"var [a, =] = x" [ts]
+   tsc @8+1 TS1181 Array element destructuring pattern expected.
+   go  @8+1 TS1181 Array element destructuring pattern expected.
+   bun @8+1 Expected identifier but found "="
+"var [...] = x" [ts]
+   tsc @8+1 TS1003 Identifier expected.
+   go  @8+1 TS1003 Identifier expected.
+   bun @8+1 Expected identifier but found "]"
+   bun @10+1 Expected "]" but found "="
+   bun @12+1 Expected ";" but found "x"
+"var [...1] = x" [ts]
+   tsc @8+1 TS1003 Identifier expected.
+   tsc @9+1 TS1005 ';' expected.
+   tsc @11+1 TS1128 Declaration or statement expected.
+   go  @8+1 TS1003 Identifier expected.
+   go  @9+1 TS1005 ';' expected.
+   go  @11+1 TS1128 Declaration or statement expected.
+   bun @8+1 Expected identifier but found "1"
+"function f([:]) {}" [ts]
+   tsc @12+1 TS1181 Array element destructuring pattern expected.
+   go  @12+1 TS1181 Array element destructuring pattern expected.
+   bun @12+1 Expected identifier but found ":"
+"function f([a, :]) {}" [ts]
+   tsc @15+1 TS1181 Array element destructuring pattern expected.
+   go  @15+1 TS1181 Array element destructuring pattern expected.
+   bun @15+1 Expected identifier but found ":"
+"x = ([a, :]) => 1" [ts]
+   tsc @9+1 TS1181 Array element destructuring pattern expected.
+   go  @9+1 TS1181 Array element destructuring pattern expected.
+   bun @9+1 Unexpected :
+"for (var [a, :] of x) {}" [ts]
+   tsc @13+1 TS1181 Array element destructuring pattern expected.
+   go  @13+1 TS1181 Array element destructuring pattern expected.
+   bun @13+1 Expected identifier but found ":"
+"try {} catch ([a, :]) {}" [ts]
+   tsc @18+1 TS1181 Array element destructuring pattern expected.
+   go  @18+1 TS1181 Array element destructuring pattern expected.
+   bun @18+1 Expected identifier but found ":"
+"var [a, /* c */ :] = x" [ts]
+   tsc @16+1 TS1181 Array element destructuring pattern expected.
+   go  @16+1 TS1181 Array element destructuring pattern expected.
+   bun @16+1 Expected identifier but found ":"
+"var [a, }] = x" [ts]
+   tsc @8+1 TS1181 Array element destructuring pattern expected.
+   tsc @9+1 TS1128 Declaration or statement expected.
+   tsc @11+1 TS1128 Declaration or statement expected.
+   go  @8+1 TS1181 Array element destructuring pattern expected.
+   go  @9+1 TS1128 Declaration or statement expected.
+   go  @11+1 TS1128 Declaration or statement expected.
+   bun @8+1 Expected identifier but found "}"
+"var [class] = x" [ts]
+   tsc @5+5 TS1181 Array element destructuring pattern expected.
+   tsc @10+1 TS1005 '{' expected.
+   tsc @12+1 TS1128 Declaration or statement expected.
+   go  @5+5 TS1181 Array element destructuring pattern expected.
+   go  @10+1 TS1005 '{' expected.
+   go  @12+1 TS1128 Declaration or statement expected.
+   bun @5+5 Expected identifier but found "class"
+"var [a, class] = x" [ts]
+   tsc @8+5 TS1181 Array element destructuring pattern expected.
+   tsc @13+1 TS1005 '{' expected.
+   tsc @15+1 TS1128 Declaration or statement expected.
+   go  @8+5 TS1181 Array element destructuring pattern expected.
+   go  @13+1 TS1005 '{' expected.
+   go  @15+1 TS1128 Declaration or statement expected.
+   bun @8+5 Expected identifier but found "class"
+"var [a, .] = x" [ts]
+   tsc @8+1 TS1181 Array element destructuring pattern expected.
+   go  @8+1 TS1181 Array element destructuring pattern expected.
+   bun @8+1 Expected identifier but found "."
+"var [[:]] = x" [ts]
+   tsc @6+1 TS1181 Array element destructuring pattern expected.
+   go  @6+1 TS1181 Array element destructuring pattern expected.
+   bun @6+1 Expected identifier but found ":"
+"var [a, *] = x" [ts]
+   tsc @8+1 TS1181 Array element destructuring pattern expected.
+   tsc @9+1 TS1109 Expression expected.
+   tsc @11+1 TS1128 Declaration or statement expected.
+   go  @8+1 TS1181 Array element destructuring pattern expected.
+   go  @9+1 TS1109 Expression expected.
+   go  @11+1 TS1128 Declaration or statement expected.
+   bun @8+1 Expected identifier but found "*"
+"var [a, 'b'] = x" [ts]
+   tsc @8+3 TS1181 Array element destructuring pattern expected.
+   tsc @11+1 TS1005 ';' expected.
+   tsc @13+1 TS1128 Declaration or statement expected.
+   go  @8+3 TS1181 Array element destructuring pattern expected.
+   go  @11+1 TS1005 ';' expected.
+   go  @13+1 TS1128 Declaration or statement expected.
+   bun @8+3 Expected identifier but found "'b'"
+"var [a, this] = x" [ts]
+   tsc @8+4 TS1181 Array element destructuring pattern expected.
+   tsc @12+1 TS1005 ';' expected.
+   tsc @14+1 TS1128 Declaration or statement expected.
+   go  @8+4 TS1181 Array element destructuring pattern expected.
+   go  @12+1 TS1005 ';' expected.
+   go  @14+1 TS1128 Declaration or statement expected.
+   bun @8+4 Expected identifier but found "this"
+"var [a, null] = x" [ts]
+   tsc @8+4 TS1181 Array element destructuring pattern expected.
+   tsc @12+1 TS1005 ';' expected.
+   tsc @14+1 TS1128 Declaration or statement expected.
+   go  @8+4 TS1181 Array element destructuring pattern expected.
+   go  @12+1 TS1005 ';' expected.
+   go  @14+1 TS1128 Declaration or statement expected.
+   bun @8+4 Expected identifier but found "null"
+## TS1129 TS1130 switch
+"switch (x) { case 1: ) }" [ts]
+   tsc @21+1 TS1129 Statement expected.
+   go  @21+1 TS1129 Statement expected.
+   bun @21+1 Unexpected )
+"switch (x) { case 1: foo; ) }" [ts]
+   tsc @26+1 TS1129 Statement expected.
+   go  @26+1 TS1129 Statement expected.
+   bun @26+1 Unexpected )
+"switch (x) { default: ) }" [ts]
+   tsc @22+1 TS1129 Statement expected.
+   go  @22+1 TS1129 Statement expected.
+   bun @22+1 Unexpected )
+"switch (x) { case 1: { ) } }" [ts]
+   tsc @23+1 TS1128 Declaration or statement expected.
+   go  @23+1 TS1128 Declaration or statement expected.
+   bun @23+1 Unexpected )
+"switch (x) { case 1: if (a) ) }" [ts]
+   tsc @28+1 TS1109 Expression expected.
+   go  @28+1 TS1109 Expression expected.
+   bun @28+1 Unexpected )
+"switch (x) { case 1: a: ) }" [ts]
+   tsc @24+1 TS1109 Expression expected.
+   go  @24+1 TS1109 Expression expected.
+   bun @24+1 Unexpected )
+"switch (x) { case 1: function f() { ) } }" [ts]
+   tsc @36+1 TS1128 Declaration or statement expected.
+   go  @36+1 TS1128 Declaration or statement expected.
+   bun @36+1 Unexpected )
+"switch (x) { case 1: switch (y) { case 2: ) } }" [ts]
+   tsc @42+1 TS1129 Statement expected.
+   go  @42+1 TS1129 Statement expected.
+   bun @42+1 Unexpected )
+"switch (x) { case 1: : }" [ts]
+   tsc @21+1 TS1129 Statement expected.
+   go  @21+1 TS1129 Statement expected.
+   bun @21+1 Unexpected :
+"switch (x) { case 1: else }" [ts]
+   tsc @21+4 TS1129 Statement expected.
+   go  @21+4 TS1129 Statement expected.
+   bun @21+4 Unexpected else
+"switch (x) { case 1: = }" [ts]
+   tsc @21+1 TS1129 Statement expected.
+   go  @21+1 TS1129 Statement expected.
+   bun @21+1 Unexpected =
+"switch (x) { case 1: + }" [ts]
+   tsc @23+1 TS1109 Expression expected.
+   go  @23+1 TS1109 Expression expected.
+   bun @23+1 Unexpected }
+"switch (x) { case 1: in }" [ts]
+   tsc @21+2 TS1109 Expression expected.
+   tsc @24+1 TS1109 Expression expected.
+   go  @21+2 TS1109 Expression expected.
+   go  @24+1 TS1109 Expression expected.
+   bun @21+2 Unexpected in
+"switch (x) { case 1: catch }" [ts]
+   tsc @21+5 TS1005 'try' expected.
+   tsc @27+1 TS1005 '{' expected.
+   go  @21+5 TS1005 'try' expected.
+   go  @27+1 TS1005 '{' expected.
+   bun @21+5 Unexpected catch
+"switch (x) { case 1: ] }" [ts]
+   tsc @21+1 TS1129 Statement expected.
+   go  @21+1 TS1129 Statement expected.
+   bun @21+1 Unexpected ]
+"switch (x) { case 1: , }" [ts]
+   tsc @21+1 TS1129 Statement expected.
+   go  @21+1 TS1129 Statement expected.
+   bun @21+1 Unexpected ,
+"switch (x) { case 1: . }" [ts]
+   tsc @21+1 TS1129 Statement expected.
+   go  @21+1 TS1129 Statement expected.
+   bun @21+1 Unexpected .
+"switch (x) { case 1: => }" [ts]
+   tsc @21+2 TS1129 Statement expected.
+   go  @21+2 TS1129 Statement expected.
+   bun @21+2 Unexpected =>
+"switch (x) { foo; }" [ts]
+   tsc @13+3 TS1130 'case' or 'default' expected.
+   tsc @18+1 TS1128 Declaration or statement expected.
+   go  @13+3 TS1130 'case' or 'default' expected.
+   go  @18+1 TS1128 Declaration or statement expected.
+   bun @13+3 Expected "case" but found "foo"
+   bun @16+1 Unexpected ;
+"switch (x) { ) }" [ts]
+   tsc @13+1 TS1130 'case' or 'default' expected.
+   go  @13+1 TS1130 'case' or 'default' expected.
+   bun @13+1 Expected "case" but found ")"
+   bun @15+1 Unexpected }
+"switch (x) { 1: }" [ts]
+   tsc @13+1 TS1130 'case' or 'default' expected.
+   tsc @14+1 TS1005 ';' expected.
+   tsc @16+1 TS1128 Declaration or statement expected.
+   go  @13+1 TS1130 'case' or 'default' expected.
+   go  @14+1 TS1005 ';' expected.
+   go  @16+1 TS1128 Declaration or statement expected.
+   bun @13+1 Expected "case" but found "1"
+   bun @14+1 Unexpected :
+"switch (x) { ; }" [ts]
+   tsc @13+1 TS1130 'case' or 'default' expected.
+   go  @13+1 TS1130 'case' or 'default' expected.
+   bun @13+1 Expected "case" but found ";"
+   bun @15+1 Unexpected }
+"switch (x) { { } }" [ts]
+   tsc @13+1 TS1130 'case' or 'default' expected.
+   tsc @17+1 TS1128 Declaration or statement expected.
+   go  @13+1 TS1130 'case' or 'default' expected.
+   go  @17+1 TS1128 Declaration or statement expected.
+   bun @13+1 Expected "case" but found "{"
+   bun @15+1 Unexpected }
+"switch (x) { var a; }" [ts]
+   tsc @13+3 TS1130 'case' or 'default' expected.
+   tsc @20+1 TS1128 Declaration or statement expected.
+   go  @13+3 TS1130 'case' or 'default' expected.
+   go  @20+1 TS1128 Declaration or statement expected.
+   bun @13+3 Expected "case" but found "var"
+   bun @18+1 Expected ":" but found ";"
+"switch (x) { case 1: break; foo }" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"switch (x) { else }" [ts]
+   tsc @13+4 TS1130 'case' or 'default' expected.
+   go  @13+4 TS1130 'case' or 'default' expected.
+   bun @13+4 Expected "case" but found "else"
+   bun @18+1 Unexpected }
+"switch (x) { + }" [ts]
+   tsc @13+1 TS1130 'case' or 'default' expected.
+   tsc @15+1 TS1109 Expression expected.
+   go  @13+1 TS1130 'case' or 'default' expected.
+   go  @15+1 TS1109 Expression expected.
+   bun @13+1 Expected "case" but found "+"
+   bun @15+1 Unexpected }
+"switch (x) { , }" [ts]
+   tsc @13+1 TS1130 'case' or 'default' expected.
+   go  @13+1 TS1130 'case' or 'default' expected.
+   bun @13+1 Expected "case" but found ","
+   bun @15+1 Unexpected }
+"switch (x) {" [ts]
+   tsc @12+0 TS1005 '}' expected.
+   go  @12+0 TS1005 '}' expected.
+   bun @12+0 Expected "case" but found end of file
+"switch (x) { case 1:" [ts]
+   tsc @20+0 TS1005 '}' expected.
+   go  @20+0 TS1005 '}' expected.
+   bun @20+0 Unexpected end of file
+"switch (x) { case 1: foo;" [ts]
+   tsc @25+0 TS1005 '}' expected.
+   go  @25+0 TS1005 '}' expected.
+   bun @25+0 Unexpected end of file
+"switch (x) { case }" [ts]
+   tsc @18+1 TS1109 Expression expected.
+   go  @18+1 TS1109 Expression expected.
+   bun @18+1 Unexpected }
+"switch (x) { case 1 }" [ts]
+   tsc @20+1 TS1005 ':' expected.
+   go  @20+1 TS1005 ':' expected.
+   bun @20+1 Expected ":" but found "}"
+   bun @21+0 Unexpected end of file
+"switch (x) { default }" [ts]
+   tsc @21+1 TS1005 ':' expected.
+   go  @21+1 TS1005 ':' expected.
+   bun @21+1 Expected ":" but found "}"
+   bun @22+0 Unexpected end of file
+"switch (x) { default: default: }" [ts]
+   tsc parses; checker @22+8 TS1113 A 'default' clause cannot appear more than once in a 'switch' statement.
+   go  parses
+   bun @22+7 Multiple default clauses are not allowed
+"switch (x) { /* c */ foo; }" [ts]
+   tsc @21+3 TS1130 'case' or 'default' expected.
+   tsc @26+1 TS1128 Declaration or statement expected.
+   go  @21+3 TS1130 'case' or 'default' expected.
+   go  @26+1 TS1128 Declaration or statement expected.
+   bun @21+3 Expected "case" but found "foo"
+   bun @24+1 Unexpected ;
+"switch (x) { case 1: /* c */ ) }" [ts]
+   tsc @29+1 TS1129 Statement expected.
+   go  @29+1 TS1129 Statement expected.
+   bun @29+1 Unexpected )
+"switch (x) { function f() {} }" [ts]
+   tsc @13+8 TS1130 'case' or 'default' expected.
+   tsc @29+1 TS1128 Declaration or statement expected.
+   go  @13+8 TS1130 'case' or 'default' expected.
+   go  @29+1 TS1128 Declaration or statement expected.
+   bun @13+8 Expected "case" but found "function"
+   bun @26+1 Expected ":" but found "{"
+   bun @29+1 Unexpected }
+"switch (x) { class C {} }" [ts]
+   tsc @13+5 TS1130 'case' or 'default' expected.
+   tsc @24+1 TS1128 Declaration or statement expected.
+   go  @13+5 TS1130 'case' or 'default' expected.
+   go  @24+1 TS1128 Declaration or statement expected.
+   bun @13+5 Expected "case" but found "class"
+   bun @21+1 Expected ":" but found "{"
+   bun @24+1 Unexpected }
+"switch (x) { if (a) b; }" [ts]
+   tsc @13+2 TS1130 'case' or 'default' expected.
+   tsc @23+1 TS1128 Declaration or statement expected.
+   go  @13+2 TS1130 'case' or 'default' expected.
+   go  @23+1 TS1128 Declaration or statement expected.
+   bun @13+2 Expected "case" but found "if"
+   bun @20+1 Expected ":" but found "b"
+"switch (x) { x }" [ts]
+   tsc @13+1 TS1130 'case' or 'default' expected.
+   tsc @15+1 TS1128 Declaration or statement expected.
+   go  @13+1 TS1130 'case' or 'default' expected.
+   go  @15+1 TS1128 Declaration or statement expected.
+   bun @13+1 Expected "case" but found "x"
+   bun @15+1 Unexpected }
+"switch (x) { 'a' }" [ts]
+   tsc @13+3 TS1130 'case' or 'default' expected.
+   tsc @17+1 TS1128 Declaration or statement expected.
+   go  @13+3 TS1130 'case' or 'default' expected.
+   go  @17+1 TS1128 Declaration or statement expected.
+   bun @13+3 Expected "case" but found "'a'"
+   bun @17+1 Unexpected }
+"switch (x) { case 1: case 2: ) }" [ts]
+   tsc @29+1 TS1129 Statement expected.
+   go  @29+1 TS1129 Statement expected.
+   bun @29+1 Unexpected )
+"switch (x) { case 1: default }" [ts]
+   tsc @29+1 TS1005 ':' expected.
+   go  @29+1 TS1005 ':' expected.
+   bun @29+1 Expected ":" but found "}"
+   bun @30+0 Unexpected end of file
+"switch (x) { case 1: ) }" [js]
+   tsc @21+1 TS1129 Statement expected.
+   go  @21+1 TS1129 Statement expected.
+   bun @21+1 Unexpected )
+"switch (x) { foo; }" [js]
+   tsc @13+3 TS1130 'case' or 'default' expected.
+   tsc @18+1 TS1128 Declaration or statement expected.
+   go  @13+3 TS1130 'case' or 'default' expected.
+   go  @18+1 TS1128 Declaration or statement expected.
+   bun @13+3 Expected "case" but found "foo"
+   bun @16+1 Unexpected ;
+## TS1472 try
+"try {} foo" [ts]
+   tsc @7+3 TS1472 'catch' or 'finally' expected.
+   go  @7+3 TS1472 'catch' or 'finally' expected.
+   bun @7+3 Expected "finally" but found "foo"
+   bun @10+0 Expected "{" but found end of file
+"try {}" [ts]
+   tsc @6+0 TS1472 'catch' or 'finally' expected.
+   go  @6+0 TS1472 'catch' or 'finally' expected.
+   bun @6+0 Expected "finally" but found end of file
+"try {} ;" [ts]
+   tsc @7+1 TS1472 'catch' or 'finally' expected.
+   go  @7+1 TS1472 'catch' or 'finally' expected.
+   bun @7+1 Expected "finally" but found ";"
+   bun @8+0 Expected "{" but found end of file
+"try {} else" [ts]
+   tsc @7+4 TS1472 'catch' or 'finally' expected.
+   go  @7+4 TS1472 'catch' or 'finally' expected.
+   bun @7+4 Expected "finally" but found "else"
+   bun @11+0 Expected "{" but found end of file
+"try {}\nfoo()" [ts]
+   tsc @7+3 TS1472 'catch' or 'finally' expected.
+   go  @7+3 TS1472 'catch' or 'finally' expected.
+   bun @7+3 Expected "finally" but found "foo"
+   bun @10+1 Expected "{" but found "("
+   bun @11+1 Unexpected )
+"try {} catch {} foo" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"try {} catch (e) {} finally" [ts]
+   tsc @27+0 TS1005 '{' expected.
+   go  @27+0 TS1005 '{' expected.
+   bun @27+0 Expected "{" but found end of file
+"try {} finally foo" [ts]
+   tsc @15+3 TS1005 '{' expected.
+   go  @15+3 TS1005 '{' expected.
+   bun @15+3 Expected "{" but found "foo"
+   bun @18+0 Unexpected end of file
+"try {} )" [ts]
+   tsc @7+1 TS1472 'catch' or 'finally' expected.
+   go  @7+1 TS1472 'catch' or 'finally' expected.
+   bun @7+1 Expected "finally" but found ")"
+   bun @8+0 Expected "{" but found end of file
+"try {} catch" [ts]
+   tsc @12+0 TS1005 '{' expected.
+   go  @12+0 TS1005 '{' expected.
+   bun @12+0 Expected "(" but found end of file
+"try {} catch (" [ts]
+   tsc @14+0 TS1003 Identifier expected.
+   go  @14+0 TS1003 Identifier expected.
+   bun @14+0 Expected identifier but found end of file
+"try {} catch (e" [ts]
+   tsc @15+0 TS1005 ')' expected.
+   go  @15+0 TS1005 ')' expected.
+   bun @15+0 Expected ")" but found end of file
+"try {} catch (e) foo" [ts]
+   tsc @17+3 TS1005 '{' expected.
+   go  @17+3 TS1005 '{' expected.
+   bun @17+3 Expected "{" but found "foo"
+   bun @20+0 Unexpected end of file
+"try foo" [ts]
+   tsc @4+3 TS1005 '{' expected.
+   go  @4+3 TS1005 '{' expected.
+   bun @4+3 Expected "{" but found "foo"
+   bun @7+0 Unexpected end of file
+"try" [ts]
+   tsc @3+0 TS1005 '{' expected.
+   go  @3+0 TS1005 '{' expected.
+   bun @3+0 Expected "{" but found end of file
+"try {} /* c */ foo" [ts]
+   tsc @15+3 TS1472 'catch' or 'finally' expected.
+   go  @15+3 TS1472 'catch' or 'finally' expected.
+   bun @15+3 Expected "finally" but found "foo"
+   bun @18+0 Expected "{" but found end of file
+"function f() { try {} }" [ts]
+   tsc @22+1 TS1472 'catch' or 'finally' expected.
+   go  @22+1 TS1472 'catch' or 'finally' expected.
+   bun @22+1 Expected "finally" but found "}"
+   bun @23+0 Expected "{" but found end of file
+"{ try {} }" [ts]
+   tsc @9+1 TS1472 'catch' or 'finally' expected.
+   go  @9+1 TS1472 'catch' or 'finally' expected.
+   bun @9+1 Expected "finally" but found "}"
+   bun @10+0 Expected "{" but found end of file
+"try {} try {} catch {}" [ts]
+   tsc @7+3 TS1472 'catch' or 'finally' expected.
+   go  @7+3 TS1472 'catch' or 'finally' expected.
+   bun @7+3 Expected "finally" but found "try"
+   bun @14+5 Unexpected catch
+"try {} var a;" [ts]
+   tsc @7+3 TS1472 'catch' or 'finally' expected.
+   go  @7+3 TS1472 'catch' or 'finally' expected.
+   bun @7+3 Expected "finally" but found "var"
+   bun @11+1 Expected "{" but found "a"
+   bun @13+0 Unexpected end of file
+"try { } 1" [ts]
+   tsc @8+1 TS1472 'catch' or 'finally' expected.
+   go  @8+1 TS1472 'catch' or 'finally' expected.
+   bun @8+1 Expected "finally" but found "1"
+   bun @9+0 Expected "{" but found end of file
+"try {} foo" [js]
+   tsc @7+3 TS1472 'catch' or 'finally' expected.
+   go  @7+3 TS1472 'catch' or 'finally' expected.
+   bun @7+3 Expected "finally" but found "foo"
+   bun @10+0 Expected "{" but found end of file
+## missing semicolon: TS1434 TS1435 TS1440 TS1228 TS1437-1439
+"foo bar" [ts]
+   tsc @0+3 TS1434 Unexpected keyword or identifier.
+   go  @0+3 TS1434 Unexpected keyword or identifier.
+   bun @4+3 Expected ";" but found "bar"
+"foo bar baz" [ts]
+   tsc @0+3 TS1434 Unexpected keyword or identifier.
+   tsc @4+3 TS1434 Unexpected keyword or identifier.
+   go  @0+3 TS1434 Unexpected keyword or identifier.
+   go  @4+3 TS1434 Unexpected keyword or identifier.
+   bun @4+3 Expected ";" but found "bar"
+"foo 1" [ts]
+   tsc @0+3 TS1434 Unexpected keyword or identifier.
+   go  @0+3 TS1434 Unexpected keyword or identifier.
+   bun @4+1 Expected ";" but found "1"
+"foo 'a'" [ts]
+   tsc @0+3 TS1434 Unexpected keyword or identifier.
+   go  @0+3 TS1434 Unexpected keyword or identifier.
+   bun @4+3 Expected ";" but found "'a'"
+"foo {}" [ts]
+   tsc @0+3 TS1434 Unexpected keyword or identifier.
+   go  @0+3 TS1434 Unexpected keyword or identifier.
+   bun @4+1 Expected ";" but found "{"
+   bun @5+1 Unexpected }
+"foo [" [ts]
+   tsc @5+0 TS1109 Expression expected.
+   go  @5+0 TS1109 Expression expected.
+   bun @5+0 Unexpected end of file
+"foo +" [ts]
+   tsc @5+0 TS1109 Expression expected.
+   go  @5+0 TS1109 Expression expected.
+   bun @5+0 Unexpected end of file
+"foo\nbar" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"a.b c" [ts]
+   tsc @4+1 TS1005 ';' expected.
+   go  @4+1 TS1005 ';' expected.
+   bun @4+1 Expected ";" but found "c"
+"foo() bar" [ts]
+   tsc @6+3 TS1005 ';' expected.
+   go  @6+3 TS1005 ';' expected.
+   bun @6+3 Expected ";" but found "bar"
+"(foo) bar" [ts]
+   tsc @6+3 TS1005 ';' expected.
+   go  @6+3 TS1005 ';' expected.
+   bun @6+3 Expected ";" but found "bar"
+"foo! bar" [ts]
+   tsc @5+3 TS1005 ';' expected.
+   go  @5+3 TS1005 ';' expected.
+   bun @5+3 Expected ";" but found "bar"
+"1 bar" [ts]
+   tsc @2+3 TS1005 ';' expected.
+   go  @2+3 TS1005 ';' expected.
+   bun @2+3 Expected ";" but found "bar"
+"'a' bar" [ts]
+   tsc @4+3 TS1005 ';' expected.
+   go  @4+3 TS1005 ';' expected.
+   bun @4+3 Expected ";" but found "bar"
+"foo bar;" [ts]
+   tsc @0+3 TS1434 Unexpected keyword or identifier.
+   go  @0+3 TS1434 Unexpected keyword or identifier.
+   bun @4+3 Expected ";" but found "bar"
+"{ foo bar }" [ts]
+   tsc @2+3 TS1434 Unexpected keyword or identifier.
+   go  @2+3 TS1434 Unexpected keyword or identifier.
+   bun @6+3 Expected ";" but found "bar"
+"function f() { foo bar }" [ts]
+   tsc @15+3 TS1434 Unexpected keyword or identifier.
+   go  @15+3 TS1434 Unexpected keyword or identifier.
+   bun @19+3 Expected ";" but found "bar"
+"if (a) foo bar" [ts]
+   tsc @7+3 TS1434 Unexpected keyword or identifier.
+   go  @7+3 TS1434 Unexpected keyword or identifier.
+   bun @11+3 Expected ";" but found "bar"
+"label: foo bar" [ts]
+   tsc @7+3 TS1434 Unexpected keyword or identifier.
+   go  @7+3 TS1434 Unexpected keyword or identifier.
+   bun @11+3 Expected ";" but found "bar"
+"clas C {}" [ts]
+   tsc @0+4 TS1435 Unknown keyword or identifier. Did you mean 'class'?
+   tsc @5+1 TS1434 Unexpected keyword or identifier.
+   go  @0+4 TS1435 Unknown keyword or identifier. Did you mean 'class'?
+   go  @5+1 TS1434 Unexpected keyword or identifier.
+   bun @5+1 Expected ";" but found "C"
+"functio f() {}" [ts]
+   tsc @0+7 TS1435 Unknown keyword or identifier. Did you mean 'function'?
+   tsc @12+1 TS1005 ';' expected.
+   go  @0+7 TS1435 Unknown keyword or identifier. Did you mean 'function'?
+   go  @12+1 TS1005 ';' expected.
+   bun @8+1 Expected ";" but found "f"
+   bun @12+1 Expected "=>" but found "{"
+"cosnt x = 1" [ts]
+   tsc @0+5 TS1435 Unknown keyword or identifier. Did you mean 'const'?
+   go  @0+5 TS1435 Unknown keyword or identifier. Did you mean 'const'?
+   bun @6+1 Expected ";" but found "x"
+   bun @8+1 Unexpected =
+"asyn function f() {}" [ts]
+   tsc @0+4 TS1435 Unknown keyword or identifier. Did you mean 'async'?
+   go  @0+4 TS1435 Unknown keyword or identifier. Did you mean 'async'?
+   bun @5+8 Expected ";" but found "function"
+   bun @18+1 Expected ";" but found "{"
+   bun @19+1 Unexpected }
+"interfac I {}" [ts]
+   tsc @0+8 TS1435 Unknown keyword or identifier. Did you mean 'interface'?
+   tsc @9+1 TS1434 Unexpected keyword or identifier.
+   go  @0+8 TS1435 Unknown keyword or identifier. Did you mean 'interface'?
+   go  @9+1 TS1434 Unexpected keyword or identifier.
+   bun @9+1 Expected ";" but found "I"
+"typ T = 1" [ts]
+   tsc @0+3 TS1435 Unknown keyword or identifier. Did you mean 'type'?
+   go  @0+3 TS1435 Unknown keyword or identifier. Did you mean 'type'?
+   bun @4+1 Expected ";" but found "T"
+   bun @6+1 Unexpected =
+"namespac N {}" [ts]
+   tsc @0+8 TS1435 Unknown keyword or identifier. Did you mean 'namespace'?
+   tsc @9+1 TS1434 Unexpected keyword or identifier.
+   go  @0+8 TS1435 Unknown keyword or identifier. Did you mean 'namespace'?
+   go  @9+1 TS1434 Unexpected keyword or identifier.
+   bun @9+1 Expected ";" but found "N"
+"modul N {}" [ts]
+   tsc @0+5 TS1435 Unknown keyword or identifier. Did you mean 'module'?
+   tsc @6+1 TS1434 Unexpected keyword or identifier.
+   go  @0+5 TS1435 Unknown keyword or identifier. Did you mean 'module'?
+   go  @6+1 TS1434 Unexpected keyword or identifier.
+   bun @6+1 Expected ";" but found "N"
+"declar const x: number" [ts]
+   tsc @0+6 TS1435 Unknown keyword or identifier. Did you mean 'declare'?
+   go  @0+6 TS1435 Unknown keyword or identifier. Did you mean 'declare'?
+   bun @7+5 Expected ";" but found "const"
+"abstrac class C {}" [ts]
+   tsc @0+7 TS1435 Unknown keyword or identifier. Did you mean 'abstract'?
+   go  @0+7 TS1435 Unknown keyword or identifier. Did you mean 'abstract'?
+   bun @8+5 Expected ";" but found "class"
+   bun @16+1 Expected ";" but found "{"
+   bun @17+1 Unexpected }
+"improt x from 'y'" [ts]
+   tsc @0+6 TS1435 Unknown keyword or identifier. Did you mean 'import'?
+   tsc @7+1 TS1434 Unexpected keyword or identifier.
+   tsc @9+4 TS1434 Unexpected keyword or identifier.
+   go  @0+6 TS1435 Unknown keyword or identifier. Did you mean 'import'?
+   go  @7+1 TS1434 Unexpected keyword or identifier.
+   go  @9+4 TS1434 Unexpected keyword or identifier.
+   bun @7+1 Expected ";" but found "x"
+   bun @14+3 Expected ";" but found "'y'"
+"exprot const x = 1" [ts]
+   tsc @0+6 TS1435 Unknown keyword or identifier. Did you mean 'export'?
+   go  @0+6 TS1435 Unknown keyword or identifier. Did you mean 'export'?
+   bun @7+5 Expected ";" but found "const"
+"retrun 1" [ts]
+   tsc @0+6 TS1435 Unknown keyword or identifier. Did you mean 'return'?
+   go  @0+6 TS1435 Unknown keyword or identifier. Did you mean 'return'?
+   bun @7+1 Expected ";" but found "1"
+"thorw x" [ts]
+   tsc @0+5 TS1435 Unknown keyword or identifier. Did you mean 'throw'?
+   go  @0+5 TS1435 Unknown keyword or identifier. Did you mean 'throw'?
+   bun @6+1 Expected ";" but found "x"
+"awiat x" [ts]
+   tsc @0+5 TS1435 Unknown keyword or identifier. Did you mean 'await'?
+   go  @0+5 TS1435 Unknown keyword or identifier. Did you mean 'await'?
+   bun @6+1 Expected ";" but found "x"
+"yeild x" [ts]
+   tsc @0+5 TS1435 Unknown keyword or identifier. Did you mean 'yield'?
+   go  @0+5 TS1435 Unknown keyword or identifier. Did you mean 'yield'?
+   bun @6+1 Expected ";" but found "x"
+"lte x = 1" [ts]
+   tsc @0+3 TS1434 Unexpected keyword or identifier.
+   go  @0+3 TS1434 Unexpected keyword or identifier.
+   bun @4+1 Expected ";" but found "x"
+   bun @6+1 Unexpected =
+"vra x = 1" [ts]
+   tsc @0+3 TS1434 Unexpected keyword or identifier.
+   go  @0+3 TS1434 Unexpected keyword or identifier.
+   bun @4+1 Expected ";" but found "x"
+   bun @6+1 Unexpected =
+"fucntion f() {}" [ts]
+   tsc @0+8 TS1435 Unknown keyword or identifier. Did you mean 'function'?
+   tsc @13+1 TS1005 ';' expected.
+   go  @0+8 TS1435 Unknown keyword or identifier. Did you mean 'function'?
+   go  @13+1 TS1005 ';' expected.
+   bun @9+1 Expected ";" but found "f"
+   bun @13+1 Expected "=>" but found "{"
+"classs C {}" [ts]
+   tsc @0+6 TS1435 Unknown keyword or identifier. Did you mean 'class'?
+   tsc @7+1 TS1434 Unexpected keyword or identifier.
+   go  @0+6 TS1435 Unknown keyword or identifier. Did you mean 'class'?
+   go  @7+1 TS1434 Unexpected keyword or identifier.
+   bun @7+1 Expected ";" but found "C"
+"constx = 1" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"const1 = 1" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"varfoo bar" [ts]
+   tsc @0+6 TS1435 Unknown keyword or identifier. Did you mean 'var foo'?
+   go  @0+6 TS1435 Unknown keyword or identifier. Did you mean 'var foo'?
+   bun @7+3 Expected ";" but found "bar"
+"letfoo bar" [ts]
+   tsc @0+6 TS1435 Unknown keyword or identifier. Did you mean 'let foo'?
+   go  @0+6 TS1435 Unknown keyword or identifier. Did you mean 'let foo'?
+   bun @7+3 Expected ";" but found "bar"
+"functionfoo bar" [ts]
+   tsc @0+11 TS1435 Unknown keyword or identifier. Did you mean 'function'?
+   go  @0+11 TS1435 Unknown keyword or identifier. Did you mean 'function'?
+   bun @12+3 Expected ";" but found "bar"
+"classFoo {}" [ts]
+   tsc @0+8 TS1435 Unknown keyword or identifier. Did you mean 'class Foo'?
+   go  @0+8 TS1435 Unknown keyword or identifier. Did you mean 'class Foo'?
+   bun @9+1 Expected ";" but found "{"
+   bun @10+1 Unexpected }
+"asyncfunction f() {}" [ts]
+   tsc @0+13 TS1435 Unknown keyword or identifier. Did you mean 'async function'?
+   tsc @18+1 TS1005 ';' expected.
+   go  @0+13 TS1435 Unknown keyword or identifier. Did you mean 'async function'?
+   go  @18+1 TS1005 ';' expected.
+   bun @14+1 Expected ";" but found "f"
+   bun @18+1 Expected "=>" but found "{"
+"interfaceFoo {}" [ts]
+   tsc @0+12 TS1435 Unknown keyword or identifier. Did you mean 'interface'?
+   go  @0+12 TS1435 Unknown keyword or identifier. Did you mean 'interface'?
+   bun @13+1 Expected ";" but found "{"
+   bun @14+1 Unexpected }
+"typeFoo = 1" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"const x" [ts]
+   tsc parses; checker @6+1 TS1155 'const' declarations must be initialized.
+   go  parses
+   bun @6+0 The constant "x" must be initialized
+"let x y" [ts]
+   tsc @6+1 TS1005 ',' expected.
+   go  @6+1 TS1005 ',' expected.
+   bun @6+1 Expected ";" but found "y"
+"var x y" [ts]
+   tsc @6+1 TS1005 ',' expected.
+   go  @6+1 TS1005 ',' expected.
+   bun @6+1 Expected ";" but found "y"
+"x const y" [ts]
+   tsc @0+1 TS1434 Unexpected keyword or identifier.
+   go  @0+1 TS1434 Unexpected keyword or identifier.
+   bun @2+5 Expected ";" but found "const"
+"const const" [ts]
+   tsc @6+5 TS1389 'const' is not allowed as a variable declaration name.
+   go  @6+5 TS1389 'const' is not allowed as a variable declaration name.
+   bun @6+5 Expected identifier but found "const"
+   bun @6+0 This constant must be initialized
+"foo const" [ts]
+   tsc @0+3 TS1434 Unexpected keyword or identifier.
+   go  @0+3 TS1434 Unexpected keyword or identifier.
+   bun @4+5 Expected ";" but found "const"
+"const" [ts]
+   tsc parses; checker @5+0 TS1123 Variable declaration list cannot be empty.
+   go  parses
+   bun @5+0 Expected identifier but found end of file
+   bun @5+0 This constant must be initialized
+"let" [ts]
+   tsc parses; checker @0+3 TS1212 Identifier expected. 'let' is a reserved word in strict mode.
+   go  parses
+   bun accepts
+"var" [ts]
+   tsc parses; checker @3+0 TS1123 Variable declaration list cannot be empty.
+   go  parses
+   bun @3+0 Expected identifier but found end of file
+"foo let" [ts]
+   tsc @0+3 TS1434 Unexpected keyword or identifier.
+   go  @0+3 TS1434 Unexpected keyword or identifier.
+   bun @4+3 Expected ";" but found "let"
+"foo var" [ts]
+   tsc @0+3 TS1434 Unexpected keyword or identifier.
+   go  @0+3 TS1434 Unexpected keyword or identifier.
+   bun @4+3 Expected ";" but found "var"
+"declare foo" [ts]
+   tsc parses
+   go  parses
+   bun @8+3 Unexpected "foo"
+"declare" [ts]
+   tsc parses
+   go  parses
+   bun @7+0 Unexpected end of file
+"foo declare" [ts]
+   tsc @0+3 TS1434 Unexpected keyword or identifier.
+   go  @0+3 TS1434 Unexpected keyword or identifier.
+   bun @4+7 Expected ";" but found "declare"
+"interface {}" [ts]
+   tsc @10+1 TS1438 Interface must be given a name.
+   go  @10+1 TS1438 Interface must be given a name.
+   bun @10+1 Expected identifier but found "{"
+   bun @11+1 Expected "{" but found "}"
+   bun @12+0 Unexpected end of file
+"interface I" [ts]
+   tsc @11+0 TS1005 '{' expected.
+   go  @11+0 TS1005 '{' expected.
+   bun @11+0 Expected "{" but found end of file
+"interface" [ts]
+   tsc parses; checker @0+9 TS1212 Identifier expected. 'interface' is a reserved word in strict mode.
+   go  parses
+   bun @9+0 Expected identifier but found end of file
+"interface 1" [ts]
+   tsc @10+1 TS2427 Interface name cannot be '1'.
+   go  @10+1 TS2427 Interface name cannot be '1'.
+   bun @10+1 Expected identifier but found "1"
+   bun @11+0 Expected "{" but found end of file
+"foo interface" [ts]
+   tsc @0+3 TS1434 Unexpected keyword or identifier.
+   go  @0+3 TS1434 Unexpected keyword or identifier.
+   bun @4+9 Expected ";" but found "interface"
+"interface foo bar" [ts]
+   tsc @14+3 TS1005 '{' expected.
+   go  @14+3 TS1005 '{' expected.
+   bun @14+3 Expected "{" but found "bar"
+   bun @17+0 Unexpected end of file
+"is x" [ts]
+   tsc @0+3 TS1228 A type predicate is only allowed in return type position for functions and methods.
+   go  @0+3 TS1228 A type predicate is only allowed in return type position for functions and methods.
+   bun @3+1 Expected ";" but found "x"
+"x is y" [ts]
+   tsc @0+1 TS1434 Unexpected keyword or identifier.
+   tsc @2+3 TS1228 A type predicate is only allowed in return type position for functions and methods.
+   go  @0+1 TS1434 Unexpected keyword or identifier.
+   go  @2+3 TS1228 A type predicate is only allowed in return type position for functions and methods.
+   bun @2+2 Expected ";" but found "is"
+"x is" [ts]
+   tsc @0+1 TS1434 Unexpected keyword or identifier.
+   go  @0+1 TS1434 Unexpected keyword or identifier.
+   bun @2+2 Expected ";" but found "is"
+"foo is string" [ts]
+   tsc @0+3 TS1434 Unexpected keyword or identifier.
+   tsc @4+3 TS1228 A type predicate is only allowed in return type position for functions and methods.
+   go  @0+3 TS1434 Unexpected keyword or identifier.
+   go  @4+3 TS1228 A type predicate is only allowed in return type position for functions and methods.
+   bun @4+2 Expected ";" but found "is"
+"module {}" [ts]
+   tsc @7+1 TS1437 Namespace must be given a name.
+   go  @7+1 TS1437 Namespace must be given a name.
+   bun @7+1 Expected ";" but found "{"
+   bun @8+1 Unexpected }
+"namespace {}" [ts]
+   tsc @10+1 TS1437 Namespace must be given a name.
+   go  @10+1 TS1437 Namespace must be given a name.
+   bun @10+1 Expected ";" but found "{"
+   bun @11+1 Unexpected }
+"module" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"namespace" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"module 1" [ts]
+   tsc @7+1 TS2819 Namespace name cannot be '1'.
+   go  @7+1 TS2819 Namespace name cannot be '1'.
+   bun @7+1 Expected ";" but found "1"
+"namespace 1" [ts]
+   tsc @10+1 TS2819 Namespace name cannot be '1'.
+   go  @10+1 TS2819 Namespace name cannot be '1'.
+   bun @10+1 Expected ";" but found "1"
+"module foo bar" [ts]
+   tsc @11+3 TS1005 '{' expected.
+   go  @11+3 TS1005 '{' expected.
+   bun @11+3 Expected "{" but found "bar"
+   bun @14+0 Unexpected end of file
+"namespace a.b c" [ts]
+   tsc @14+1 TS1005 '{' expected.
+   go  @14+1 TS1005 '{' expected.
+   bun @14+1 Expected "{" but found "c"
+   bun @15+0 Unexpected end of file
+"type" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"type = 1" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"type T" [ts]
+   tsc @6+0 TS1005 '=' expected.
+   go  @6+0 TS1005 '=' expected.
+   bun @6+0 Expected "=" but found end of file
+"type 1" [ts]
+   tsc @5+1 TS2457 Type alias name cannot be '1'.
+   go  @5+1 TS2457 Type alias name cannot be '1'.
+   bun @5+1 Expected ";" but found "1"
+"type foo bar" [ts]
+   tsc @9+3 TS1005 '=' expected.
+   go  @9+3 TS1005 '=' expected.
+   bun @9+3 Expected "=" but found "bar"
+   bun @12+0 Unexpected end of file
+"foo type" [ts]
+   tsc @0+3 TS1434 Unexpected keyword or identifier.
+   go  @0+3 TS1434 Unexpected keyword or identifier.
+   bun @4+4 Expected ";" but found "type"
+"type T 1" [ts]
+   tsc @7+1 TS1005 '=' expected.
+   go  @7+1 TS1005 '=' expected.
+   bun @7+1 Expected "=" but found "1"
+   bun @8+0 Unexpected end of file
+"type `a`" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"module `M1` {}" [ts]
+   tsc @7+4 TS1443 Module declaration names may only use ' or " quoted strings.
+   go  @7+4 TS1443 Module declaration names may only use ' or " quoted strings.
+   bun @12+1 Expected ";" but found "{"
+   bun @13+1 Unexpected }
+"namespace `a` {}" [ts]
+   tsc @10+3 TS1443 Module declaration names may only use ' or " quoted strings.
+   go  @10+3 TS1443 Module declaration names may only use ' or " quoted strings.
+   bun @14+1 Expected ";" but found "{"
+   bun @15+1 Unexpected }
+"throw foo bar" [ts]
+   tsc @6+3 TS1434 Unexpected keyword or identifier.
+   go  @6+3 TS1434 Unexpected keyword or identifier.
+   bun @10+3 Expected ";" but found "bar"
+"throw a b" [ts]
+   tsc @6+1 TS1434 Unexpected keyword or identifier.
+   go  @6+1 TS1434 Unexpected keyword or identifier.
+   bun @8+1 Expected ";" but found "b"
+"throw" [ts]
+   tsc @5+0 TS1109 Expression expected.
+   go  @5+0 TS1109 Expression expected.
+   bun @5+0 Unexpected end of file
+"throw\nfoo" [ts]
+   tsc parses; checker @5+0 TS1142 Line break not permitted here.
+   go  parses
+   bun @5+0 Unexpected newline after "throw"
+"foo /* c */ bar" [ts]
+   tsc @0+3 TS1434 Unexpected keyword or identifier.
+   go  @0+3 TS1434 Unexpected keyword or identifier.
+   bun @12+3 Expected ";" but found "bar"
+"/* c */ foo bar" [ts]
+   tsc @8+3 TS1434 Unexpected keyword or identifier.
+   go  @8+3 TS1434 Unexpected keyword or identifier.
+   bun @12+3 Expected ";" but found "bar"
+"  foo bar" [ts]
+   tsc @2+3 TS1434 Unexpected keyword or identifier.
+   go  @2+3 TS1434 Unexpected keyword or identifier.
+   bun @6+3 Expected ";" but found "bar"
+"foo bar\nbaz" [ts]
+   tsc @0+3 TS1434 Unexpected keyword or identifier.
+   go  @0+3 TS1434 Unexpected keyword or identifier.
+   bun @4+3 Expected ";" but found "bar"
+"async foo" [ts]
+   tsc @0+5 TS1434 Unexpected keyword or identifier.
+   go  @0+5 TS1434 Unexpected keyword or identifier.
+   bun @6+3 Expected ";" but found "foo"
+"await foo" [ts]
+   tsc parses; checker @0+5 TS1375 'await' expressions are only allowed at the top level of a file when that file is a module, but this file has no imports or exports. Consider adding an empty 'export {}' to make this file a module.
+   go  parses
+   bun accepts
+"yield foo" [ts]
+   tsc parses; checker @0+5 TS1163 A 'yield' expression is only allowed in a generator body.
+   go  parses
+   bun @0+5 Cannot use "yield" outside a generator function
+   bun @6+3 Expected ";" but found "foo"
+"of x" [ts]
+   tsc @0+2 TS1434 Unexpected keyword or identifier.
+   go  @0+2 TS1434 Unexpected keyword or identifier.
+   bun @3+1 Expected ";" but found "x"
+"abstract foo" [ts]
+   tsc @0+8 TS1434 Unexpected keyword or identifier.
+   go  @0+8 TS1434 Unexpected keyword or identifier.
+   bun @9+3 Expected ";" but found "foo"
+"static foo" [ts]
+   tsc @0+6 TS1128 Declaration or statement expected.
+   go  @0+6 TS1128 Declaration or statement expected.
+   bun @7+3 Expected ";" but found "foo"
+"public foo" [ts]
+   tsc @0+6 TS1128 Declaration or statement expected.
+   go  @0+6 TS1128 Declaration or statement expected.
+   bun @7+3 Expected ";" but found "foo"
+"private x" [ts]
+   tsc @0+7 TS1128 Declaration or statement expected.
+   go  @0+7 TS1128 Declaration or statement expected.
+   bun @8+1 Expected ";" but found "x"
+"readonly x" [ts]
+   tsc @0+8 TS1128 Declaration or statement expected.
+   go  @0+8 TS1128 Declaration or statement expected.
+   bun @9+1 Expected ";" but found "x"
+"enum" [ts]
+   tsc @4+0 TS1003 Identifier expected.
+   go  @4+0 TS1003 Identifier expected.
+   bun @4+0 Expected identifier but found end of file
+"accessor x" [ts]
+   tsc @0+8 TS1128 Declaration or statement expected.
+   go  @0+8 TS1128 Declaration or statement expected.
+   bun @9+1 Expected ";" but found "x"
+"get x" [ts]
+   tsc @0+3 TS1434 Unexpected keyword or identifier.
+   go  @0+3 TS1434 Unexpected keyword or identifier.
+   bun @4+1 Expected ";" but found "x"
+"set x" [ts]
+   tsc @0+3 TS1434 Unexpected keyword or identifier.
+   go  @0+3 TS1434 Unexpected keyword or identifier.
+   bun @4+1 Expected ";" but found "x"
+"global x" [ts]
+   tsc @7+1 TS1005 ';' expected.
+   go  @7+1 TS1005 ';' expected.
+   bun @7+1 Expected ";" but found "x"
+"require x" [ts]
+   tsc @0+7 TS1434 Unexpected keyword or identifier.
+   go  @0+7 TS1434 Unexpected keyword or identifier.
+   bun @8+1 Expected ";" but found "x"
+"from x" [ts]
+   tsc @0+4 TS1434 Unexpected keyword or identifier.
+   go  @0+4 TS1434 Unexpected keyword or identifier.
+   bun @5+1 Expected ";" but found "x"
+"as x" [ts]
+   tsc @0+2 TS1434 Unexpected keyword or identifier.
+   go  @0+2 TS1434 Unexpected keyword or identifier.
+   bun @3+1 Expected ";" but found "x"
+"satisfies x" [ts]
+   tsc @0+9 TS1434 Unexpected keyword or identifier.
+   go  @0+9 TS1434 Unexpected keyword or identifier.
+   bun @10+1 Expected ";" but found "x"
+"asserts x" [ts]
+   tsc @0+7 TS1435 Unknown keyword or identifier. Did you mean 'assert'?
+   go  @0+7 TS1435 Unknown keyword or identifier. Did you mean 'assert'?
+   bun @8+1 Expected ";" but found "x"
+"infer x" [ts]
+   tsc @0+5 TS1434 Unexpected keyword or identifier.
+   go  @0+5 TS1434 Unexpected keyword or identifier.
+   bun @6+1 Expected ";" but found "x"
+"keyof x" [ts]
+   tsc @0+5 TS1434 Unexpected keyword or identifier.
+   go  @0+5 TS1434 Unexpected keyword or identifier.
+   bun @6+1 Expected ";" but found "x"
+"unique x" [ts]
+   tsc @0+6 TS1434 Unexpected keyword or identifier.
+   go  @0+6 TS1434 Unexpected keyword or identifier.
+   bun @7+1 Expected ";" but found "x"
+"out x" [ts]
+   tsc @0+3 TS1434 Unexpected keyword or identifier.
+   go  @0+3 TS1434 Unexpected keyword or identifier.
+   bun @4+1 Expected ";" but found "x"
+"override x" [ts]
+   tsc @0+8 TS1434 Unexpected keyword or identifier.
+   go  @0+8 TS1434 Unexpected keyword or identifier.
+   bun @9+1 Expected ";" but found "x"
+"any x" [ts]
+   tsc @0+3 TS1434 Unexpected keyword or identifier.
+   go  @0+3 TS1434 Unexpected keyword or identifier.
+   bun @4+1 Expected ";" but found "x"
+"number x" [ts]
+   tsc @0+6 TS1434 Unexpected keyword or identifier.
+   go  @0+6 TS1434 Unexpected keyword or identifier.
+   bun @7+1 Expected ";" but found "x"
+"string x" [ts]
+   tsc @0+6 TS1434 Unexpected keyword or identifier.
+   go  @0+6 TS1434 Unexpected keyword or identifier.
+   bun @7+1 Expected ";" but found "x"
+"boolean x" [ts]
+   tsc @0+7 TS1434 Unexpected keyword or identifier.
+   go  @0+7 TS1434 Unexpected keyword or identifier.
+   bun @8+1 Expected ";" but found "x"
+"symbol x" [ts]
+   tsc @0+6 TS1434 Unexpected keyword or identifier.
+   go  @0+6 TS1434 Unexpected keyword or identifier.
+   bun @7+1 Expected ";" but found "x"
+"object x" [ts]
+   tsc @0+6 TS1434 Unexpected keyword or identifier.
+   go  @0+6 TS1434 Unexpected keyword or identifier.
+   bun @7+1 Expected ";" but found "x"
+"never x" [ts]
+   tsc @0+5 TS1434 Unexpected keyword or identifier.
+   go  @0+5 TS1434 Unexpected keyword or identifier.
+   bun @6+1 Expected ";" but found "x"
+"unknown x" [ts]
+   tsc @0+7 TS1434 Unexpected keyword or identifier.
+   go  @0+7 TS1434 Unexpected keyword or identifier.
+   bun @8+1 Expected ";" but found "x"
+"bigint x" [ts]
+   tsc @0+6 TS1434 Unexpected keyword or identifier.
+   go  @0+6 TS1434 Unexpected keyword or identifier.
+   bun @7+1 Expected ";" but found "x"
+"undefined x" [ts]
+   tsc @0+9 TS1434 Unexpected keyword or identifier.
+   go  @0+9 TS1434 Unexpected keyword or identifier.
+   bun @10+1 Expected ";" but found "x"
+"using x" [ts]
+   tsc parses; checker @6+1 TS1155 'using' declarations must be initialized.
+   go  parses
+   bun @6+0 The declaration "x" must be initialized
+"defer x" [ts]
+   tsc @0+5 TS1434 Unexpected keyword or identifier.
+   go  @0+5 TS1434 Unexpected keyword or identifier.
+   bun @6+1 Expected ";" but found "x"
+"x y = 1" [ts]
+   tsc @0+1 TS1434 Unexpected keyword or identifier.
+   go  @0+1 TS1434 Unexpected keyword or identifier.
+   bun @2+1 Expected ";" but found "y"
+   bun @4+1 Unexpected =
+"foo: bar baz" [ts]
+   tsc @5+3 TS1434 Unexpected keyword or identifier.
+   go  @5+3 TS1434 Unexpected keyword or identifier.
+   bun @9+3 Expected ";" but found "baz"
+"a b c d" [ts]
+   tsc @0+1 TS1434 Unexpected keyword or identifier.
+   tsc @2+1 TS1434 Unexpected keyword or identifier.
+   tsc @4+1 TS1434 Unexpected keyword or identifier.
+   go  @0+1 TS1434 Unexpected keyword or identifier.
+   go  @2+1 TS1434 Unexpected keyword or identifier.
+   go  @4+1 TS1434 Unexpected keyword or identifier.
+   bun @2+1 Expected ";" but found "b"
+   bun @6+1 Expected ";" but found "d"
+"x = 1 y" [ts]
+   tsc @6+1 TS1005 ';' expected.
+   go  @6+1 TS1005 ';' expected.
+   bun @6+1 Expected ";" but found "y"
+"x++ y" [ts]
+   tsc @4+1 TS1005 ';' expected.
+   go  @4+1 TS1005 ';' expected.
+   bun @4+1 Expected ";" but found "y"
+"delete x y" [ts]
+   tsc @9+1 TS1005 ';' expected.
+   go  @9+1 TS1005 ';' expected.
+   bun @9+1 Expected ";" but found "y"
+"typeof x y" [ts]
+   tsc @9+1 TS1005 ';' expected.
+   go  @9+1 TS1005 ';' expected.
+   bun @9+1 Expected ";" but found "y"
+"void 0 y" [ts]
+   tsc @7+1 TS1005 ';' expected.
+   go  @7+1 TS1005 ';' expected.
+   bun @7+1 Expected ";" but found "y"
+"new X y" [ts]
+   tsc @6+1 TS1005 ';' expected.
+   go  @6+1 TS1005 ';' expected.
+   bun @6+1 Expected ";" but found "y"
+"x ? y : z w" [ts]
+   tsc @10+1 TS1005 ';' expected.
+   go  @10+1 TS1005 ';' expected.
+   bun @10+1 Expected ";" but found "w"
+"x as T y" [ts]
+   tsc @7+1 TS1005 ';' expected.
+   go  @7+1 TS1005 ';' expected.
+   bun @7+1 Expected ";" but found "y"
+"x! y" [ts]
+   tsc @3+1 TS1005 ';' expected.
+   go  @3+1 TS1005 ';' expected.
+   bun @3+1 Expected ";" but found "y"
+"<T>x y" [ts]
+   tsc @5+1 TS1005 ';' expected.
+   go  @5+1 TS1005 ';' expected.
+   bun @5+1 Expected ";" but found "y"
+"x satisfies T y" [ts]
+   tsc @14+1 TS1005 ';' expected.
+   go  @14+1 TS1005 ';' expected.
+   bun @14+1 Expected ";" but found "y"
+"x\n++y z" [ts]
+   tsc @6+1 TS1005 ';' expected.
+   go  @6+1 TS1005 ';' expected.
+   bun @6+1 Expected ";" but found "z"
+"return x y" [ts]
+   tsc @9+1 TS1005 ';' expected.
+   go  @9+1 TS1005 ';' expected.
+   bun @9+1 Expected ";" but found "y"
+"break x y" [ts]
+   tsc @8+1 TS1005 ';' expected.
+   go  @8+1 TS1005 ';' expected.
+   bun @8+1 Expected ";" but found "y"
+"continue x y" [ts]
+   tsc @11+1 TS1005 ';' expected.
+   go  @11+1 TS1005 ';' expected.
+   bun @11+1 Expected ";" but found "y"
+"debugger x" [ts]
+   tsc @9+1 TS1005 ';' expected.
+   go  @9+1 TS1005 ';' expected.
+   bun @9+1 Expected ";" but found "x"
+"do x while (y) z" [ts]
+   tsc @3+1 TS1434 Unexpected keyword or identifier.
+   go  @3+1 TS1434 Unexpected keyword or identifier.
+   bun @5+5 Expected ";" but found "while"
+   bun @11+1 Expected "while" but found "("
+   bun @12+1 Expected "(" but found "y"
+"export default x y" [ts]
+   tsc @17+1 TS1005 ';' expected.
+   go  @17+1 TS1005 ';' expected.
+   bun @17+1 Expected ";" but found "y"
+"export = x y" [ts]
+   tsc @11+1 TS1005 ';' expected.
+   go  @11+1 TS1005 ';' expected.
+   bun @11+1 Expected ";" but found "y"
+"import x = y z" [ts]
+   tsc @13+1 TS1005 ';' expected.
+   go  @13+1 TS1005 ';' expected.
+   bun @13+1 Expected ";" but found "z"
+"var x = 1 y" [ts]
+   tsc @10+1 TS1005 ',' expected.
+   go  @10+1 TS1005 ',' expected.
+   bun @10+1 Expected ";" but found "y"
+"let x: T y" [ts]
+   tsc @9+1 TS1005 ',' expected.
+   go  @9+1 TS1005 ',' expected.
+   bun @9+1 Expected ";" but found "y"
+"type T = U V" [ts]
+   tsc @11+1 TS1005 ';' expected.
+   go  @11+1 TS1005 ';' expected.
+   bun @11+1 Expected ";" but found "V"
+"declare var x y" [ts]
+   tsc @14+1 TS1005 ',' expected.
+   go  @14+1 TS1005 ',' expected.
+   bun @14+1 Expected ";" but found "y"
+"foo bar" [js]
+   tsc @0+3 TS1434 Unexpected keyword or identifier.
+   go  @0+3 TS1434 Unexpected keyword or identifier.
+   bun @4+3 Expected ";" but found "bar"
+"cosnt x = 1" [js]
+   tsc @0+5 TS1435 Unknown keyword or identifier. Did you mean 'const'?
+   go  @0+5 TS1435 Unknown keyword or identifier. Did you mean 'const'?
+   bun @6+1 Expected ";" but found "x"
+   bun @8+1 Unexpected =
+"foo bar" [tsx]
+   tsc @0+3 TS1434 Unexpected keyword or identifier.
+   go  @0+3 TS1434 Unexpected keyword or identifier.
+   bun @4+3 Expected ";" but found "bar"
+"é bar" [ts]
+   tsc @0+1 TS1434 Unexpected keyword or identifier.
+   go  @0+2 TS1434 Unexpected keyword or identifier.
+   bun @3+3 Expected ";" but found "bar"
+"foo é" [ts]
+   tsc @0+3 TS1434 Unexpected keyword or identifier.
+   go  @0+3 TS1434 Unexpected keyword or identifier.
+   bun @4+2 Expected ";" but found "é"
+"föö bar" [ts]
+   tsc @0+3 TS1434 Unexpected keyword or identifier.
+   go  @0+5 TS1434 Unexpected keyword or identifier.
+   bun @6+3 Expected ";" but found "bar"
+"f\\u006fo bar" [ts]
+   tsc @0+8 TS1434 Unexpected keyword or identifier.
+   go  @0+8 TS1434 Unexpected keyword or identifier.
+   bun @9+3 Expected ";" but found "bar"
+"$ bar" [ts]
+   tsc @0+1 TS1434 Unexpected keyword or identifier.
+   go  @0+1 TS1434 Unexpected keyword or identifier.
+   bun @2+3 Expected ";" but found "bar"
+"_ bar" [ts]
+   tsc @0+1 TS1434 Unexpected keyword or identifier.
+   go  @0+1 TS1434 Unexpected keyword or identifier.
+   bun @2+3 Expected ";" but found "bar"
+"a1 bar" [ts]
+   tsc @0+2 TS1434 Unexpected keyword or identifier.
+   go  @0+2 TS1434 Unexpected keyword or identifier.
+   bun @3+3 Expected ";" but found "bar"
+"x => y z" [ts]
+   tsc @7+1 TS1005 ';' expected.
+   go  @7+1 TS1005 ';' expected.
+   bun @7+1 Expected ";" but found "z"
+"async x => y z" [ts]
+   tsc @13+1 TS1005 ';' expected.
+   go  @13+1 TS1005 ';' expected.
+   bun @13+1 Expected ";" but found "z"
+"() => {} z" [ts]
+   tsc @9+1 TS1005 ';' expected.
+   go  @9+1 TS1005 ';' expected.
+   bun @9+1 Expected ";" but found "z"
+"function () {} z" [ts]
+   tsc @9+1 TS1003 Identifier expected.
+   go  @9+1 TS1003 Identifier expected.
+   bun @9+1 Expected identifier but found "("
+   bun @10+1 Expected "(" but found ")"
+   bun @15+1 Expected ")" but found "z"
+"class {} z" [ts]
+   tsc parses; checker @0+5 TS1211 A class declaration without the 'default' modifier must have a name.
+   go  parses
+   bun @6+1 Expected identifier but found "{"
+"`a` b" [ts]
+   tsc @4+1 TS1005 ';' expected.
+   go  @4+1 TS1005 ';' expected.
+   bun @4+1 Expected ";" but found "b"
+"a`b` c" [ts]
+   tsc @1+3 TS1443 Module declaration names may only use ' or " quoted strings.
+   go  @1+3 TS1443 Module declaration names may only use ' or " quoted strings.
+   bun @5+1 Expected ";" but found "c"
+"/a/ b" [ts]
+   tsc @4+1 TS1005 ';' expected.
+   go  @4+1 TS1005 ';' expected.
+   bun @4+1 Expected ";" but found "b"
+"this b" [ts]
+   tsc @5+1 TS1005 ';' expected.
+   go  @5+1 TS1005 ';' expected.
+   bun @5+1 Expected ";" but found "b"
+"super.a b" [ts]
+   tsc @8+1 TS1005 ';' expected.
+   go  @8+1 TS1005 ';' expected.
+   bun @0+5 Unexpected "super"
+   bun @8+1 Expected ";" but found "b"
+"null b" [ts]
+   tsc @5+1 TS1005 ';' expected.
+   go  @5+1 TS1005 ';' expected.
+   bun @5+1 Expected ";" but found "b"
+"true b" [ts]
+   tsc @5+1 TS1005 ';' expected.
+   go  @5+1 TS1005 ';' expected.
+   bun @5+1 Expected ";" but found "b"
+"new.target b" [ts]
+   tsc @11+1 TS1005 ';' expected.
+   go  @11+1 TS1005 ';' expected.
+   bun @11+1 Expected ";" but found "b"
+"import.meta b" [ts]
+   tsc @12+1 TS1005 ';' expected.
+   go  @12+1 TS1005 ';' expected.
+   bun @12+1 Expected ";" but found "b"
+## class members: TS1442 TS1441 TS1436 TS1144 TS1068
+"class C { x: number y }" [ts]
+   tsc @20+1 TS1442 Expected '=' for property initializer.
+   go  @20+1 TS1442 Expected '=' for property initializer.
+   bun @20+1 Expected ";" but found "y"
+"class C { x: number y: string }" [ts]
+   tsc @20+1 TS1442 Expected '=' for property initializer.
+   go  @20+1 TS1442 Expected '=' for property initializer.
+   bun @20+1 Expected ";" but found "y"
+   bun @21+1 Expected identifier but found ":"
+"class C { x: number = 1 y }" [ts]
+   tsc @24+1 TS1005 ';' expected.
+   go  @24+1 TS1005 ';' expected.
+   bun @24+1 Expected ";" but found "y"
+"class C { x = 1 y }" [ts]
+   tsc @16+1 TS1005 ';' expected.
+   go  @16+1 TS1005 ';' expected.
+   bun @16+1 Expected ";" but found "y"
+"class C { x y }" [ts]
+   tsc @10+1 TS1434 Unexpected keyword or identifier.
+   go  @10+1 TS1434 Unexpected keyword or identifier.
+   bun @12+1 Expected ";" but found "y"
+"class C { x y z }" [ts]
+   tsc @10+1 TS1434 Unexpected keyword or identifier.
+   tsc @12+1 TS1434 Unexpected keyword or identifier.
+   go  @10+1 TS1434 Unexpected keyword or identifier.
+   go  @12+1 TS1434 Unexpected keyword or identifier.
+   bun @12+1 Expected ";" but found "y"
+"class C { x: number() }" [ts]
+   tsc @19+1 TS1441 Cannot start a function call in a type annotation.
+   tsc @20+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @19+1 TS1441 Cannot start a function call in a type annotation.
+   go  @20+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   bun @19+1 Expected ";" but found "("
+   bun @20+1 Expected identifier but found ")"
+   bun @23+0 Expected "}" but found end of file
+"class C { x() }" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"class C { x: () }" [ts]
+   tsc @16+1 TS1005 '=>' expected.
+   go  @16+1 TS1005 '=>' expected.
+   bun @14+1 Unexpected )
+"class C { x @dec y }" [ts]
+   tsc @12+1 TS1436 Decorators must precede the name and all keywords of property declarations.
+   go  @12+1 TS1436 Decorators must precede the name and all keywords of property declarations.
+   bun @12+1 Expected ";" but found "@"
+   bun @17+1 Expected ";" but found "y"
+"class C { x: number @dec y }" [ts]
+   tsc @20+1 TS1436 Decorators must precede the name and all keywords of property declarations.
+   go  @20+1 TS1436 Decorators must precede the name and all keywords of property declarations.
+   bun @20+1 Expected ";" but found "@"
+   bun @25+1 Expected ";" but found "y"
+"class C { x = 1 @dec y }" [ts]
+   tsc @16+1 TS1436 Decorators must precede the name and all keywords of property declarations.
+   go  @16+1 TS1436 Decorators must precede the name and all keywords of property declarations.
+   bun @16+1 Expected ";" but found "@"
+   bun @21+1 Expected ";" but found "y"
+"class C { x\n@dec y }" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"class C { x @dec }" [ts]
+   tsc @12+1 TS1436 Decorators must precede the name and all keywords of property declarations.
+   tsc @16+0 TS1146 Declaration expected.
+   go  @12+1 TS1436 Decorators must precede the name and all keywords of property declarations.
+   go  @16+0 TS1146 Declaration expected.
+   bun @12+1 Expected ";" but found "@"
+"class C { foo() bar }" [ts]
+   tsc @16+3 TS1144 '{' or ';' expected.
+   go  @16+3 TS1144 '{' or ';' expected.
+   bun @16+3 Expected ";" but found "bar"
+"class C { foo() }" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"class C { foo(): void }" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"class C { foo(): void bar }" [ts]
+   tsc @22+3 TS1144 '{' or ';' expected.
+   go  @22+3 TS1144 '{' or ';' expected.
+   bun @22+3 Expected ";" but found "bar"
+"class C { constructor() bar }" [ts]
+   tsc @24+3 TS1144 '{' or ';' expected.
+   go  @24+3 TS1144 '{' or ';' expected.
+   bun @24+3 Expected ";" but found "bar"
+"class C { constructor() }" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"class C { get x() }" [ts]
+   tsc parses; checker @16+1 TS1005 '{' expected.
+   go  parses
+   bun accepts
+"class C { get x() bar }" [ts]
+   tsc @18+3 TS1005 '{' expected.
+   go  @18+3 TS1005 '{' expected.
+   bun @18+3 Expected ";" but found "bar"
+"class C { set x(v) bar }" [ts]
+   tsc @19+3 TS1005 '{' expected.
+   go  @19+3 TS1005 '{' expected.
+   bun @19+3 Expected ";" but found "bar"
+"class C { static foo() bar }" [ts]
+   tsc @23+3 TS1144 '{' or ';' expected.
+   go  @23+3 TS1144 '{' or ';' expected.
+   bun @23+3 Expected ";" but found "bar"
+"class C { async foo() bar }" [ts]
+   tsc @22+3 TS1144 '{' or ';' expected.
+   go  @22+3 TS1144 '{' or ';' expected.
+   bun @22+3 Expected ";" but found "bar"
+"class C { *foo() bar }" [ts]
+   tsc @17+3 TS1144 '{' or ';' expected.
+   go  @17+3 TS1144 '{' or ';' expected.
+   bun @17+3 Expected ";" but found "bar"
+"class C { foo?() bar }" [ts]
+   tsc @17+3 TS1144 '{' or ';' expected.
+   go  @17+3 TS1144 '{' or ';' expected.
+   bun @17+3 Expected ";" but found "bar"
+"class C { foo<T>() bar }" [ts]
+   tsc @19+3 TS1144 '{' or ';' expected.
+   go  @19+3 TS1144 '{' or ';' expected.
+   bun @19+3 Expected ";" but found "bar"
+"function f() bar" [ts]
+   tsc @13+3 TS1144 '{' or ';' expected.
+   go  @13+3 TS1144 '{' or ';' expected.
+   bun @13+3 Expected ";" but found "bar"
+"function f()" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"function f(): void" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"function f(): void bar" [ts]
+   tsc @19+3 TS1144 '{' or ';' expected.
+   go  @19+3 TS1144 '{' or ';' expected.
+   bun @19+3 Expected ";" but found "bar"
+"function f() => 1" [ts]
+   tsc @13+2 TS1144 '{' or ';' expected.
+   go  @13+2 TS1144 '{' or ';' expected.
+   bun @13+2 Expected ";" but found "=>"
+"function f();" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"function f()\nbar" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"async function f() bar" [ts]
+   tsc @19+3 TS1144 '{' or ';' expected.
+   go  @19+3 TS1144 '{' or ';' expected.
+   bun @19+3 Expected ";" but found "bar"
+"function* f() bar" [ts]
+   tsc @14+3 TS1144 '{' or ';' expected.
+   go  @14+3 TS1144 '{' or ';' expected.
+   bun @14+3 Expected ";" but found "bar"
+"export function f() bar" [ts]
+   tsc @20+3 TS1144 '{' or ';' expected.
+   go  @20+3 TS1144 '{' or ';' expected.
+   bun @20+3 Expected ";" but found "bar"
+"export default function () bar" [ts]
+   tsc @27+3 TS1144 '{' or ';' expected.
+   go  @27+3 TS1144 '{' or ';' expected.
+   bun @27+3 Expected ";" but found "bar"
+"x = function () bar" [ts]
+   tsc @16+3 TS1005 '{' expected.
+   go  @16+3 TS1005 '{' expected.
+   bun @16+3 Expected "{" but found "bar"
+   bun @19+0 Unexpected end of file
+"x = function f() bar" [ts]
+   tsc @17+3 TS1005 '{' expected.
+   go  @17+3 TS1005 '{' expected.
+   bun @17+3 Expected "{" but found "bar"
+   bun @20+0 Unexpected end of file
+"x = { m() bar }" [ts]
+   tsc @10+3 TS1005 '{' expected.
+   go  @10+3 TS1005 '{' expected.
+   bun @10+3 Expected "{" but found "bar"
+   bun @15+0 Expected "}" but found end of file
+"x = { get a() bar }" [ts]
+   tsc @14+3 TS1005 '{' expected.
+   go  @14+3 TS1005 '{' expected.
+   bun @14+3 Expected "{" but found "bar"
+   bun @19+0 Expected "}" but found end of file
+"x = { async m() bar }" [ts]
+   tsc @16+3 TS1005 '{' expected.
+   go  @16+3 TS1005 '{' expected.
+   bun @16+3 Expected "{" but found "bar"
+   bun @21+0 Expected "}" but found end of file
+"x = { *m() bar }" [ts]
+   tsc @11+3 TS1005 '{' expected.
+   go  @11+3 TS1005 '{' expected.
+   bun @11+3 Expected "{" but found "bar"
+   bun @16+0 Expected "}" but found end of file
+"declare function f() bar" [ts]
+   tsc @21+3 TS1144 '{' or ';' expected.
+   go  @21+3 TS1144 '{' or ';' expected.
+   bun @21+3 Expected ";" but found "bar"
+"declare class C { foo() bar }" [ts]
+   tsc @24+3 TS1144 '{' or ';' expected.
+   go  @24+3 TS1144 '{' or ';' expected.
+   bun @24+3 Expected ";" but found "bar"
+"abstract class C { abstract foo() bar }" [ts]
+   tsc @34+3 TS1144 '{' or ';' expected.
+   go  @34+3 TS1144 '{' or ';' expected.
+   bun @34+3 Expected ";" but found "bar"
+"class C { foo() { } bar }" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"class C { : }" [ts]
+   tsc @10+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @10+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   bun @10+1 Expected identifier but found ":"
+   bun @13+0 Expected "}" but found end of file
+"class C { ) }" [ts]
+   tsc @10+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @10+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   bun @10+1 Expected identifier but found ")"
+   bun @13+0 Expected "}" but found end of file
+"class C { + }" [ts]
+   tsc @10+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   tsc @12+1 TS1109 Expression expected.
+   go  @10+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @12+1 TS1109 Expression expected.
+   bun @10+1 Expected identifier but found "+"
+   bun @13+0 Expected "}" but found end of file
+"class C { , }" [ts]
+   tsc @10+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @10+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   bun @10+1 Expected identifier but found ","
+   bun @13+0 Expected "}" but found end of file
+"class C { = }" [ts]
+   tsc @10+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @10+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   bun @10+1 Expected identifier but found "="
+   bun @13+0 Expected "}" but found end of file
+"class C { . }" [ts]
+   tsc @10+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @10+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   bun @10+1 Expected identifier but found "."
+   bun @13+0 Expected "}" but found end of file
+"class C { x; ) }" [ts]
+   tsc @13+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @13+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   bun @13+1 Expected identifier but found ")"
+   bun @16+0 Expected "}" but found end of file
+"class C { x, y }" [ts]
+   tsc @10+1 TS1434 Unexpected keyword or identifier.
+   tsc @11+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @10+1 TS1434 Unexpected keyword or identifier.
+   go  @11+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   bun @11+1 Expected ";" but found ","
+"class C { 1 2 }" [ts]
+   tsc @12+1 TS1005 ';' expected.
+   go  @12+1 TS1005 ';' expected.
+   bun @12+1 Expected ";" but found "2"
+"class C { ; ; }" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"class C { x: number; ) }" [ts]
+   tsc @21+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @21+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   bun @21+1 Expected identifier but found ")"
+   bun @24+0 Expected "}" but found end of file
+"class C { foo() {} ) }" [ts]
+   tsc @19+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @19+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   bun @19+1 Expected identifier but found ")"
+   bun @22+0 Expected "}" but found end of file
+"class C { static }" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"class C { static ) }" [ts]
+   tsc @10+6 TS1434 Unexpected keyword or identifier.
+   tsc @17+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @10+6 TS1434 Unexpected keyword or identifier.
+   go  @17+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   bun @17+1 Expected ";" but found ")"
+"class C { public ) }" [ts]
+   tsc @10+6 TS1434 Unexpected keyword or identifier.
+   tsc @17+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @10+6 TS1434 Unexpected keyword or identifier.
+   go  @17+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   bun @17+1 Expected ";" but found ")"
+"class C { public static ) }" [ts]
+   tsc @17+6 TS1434 Unexpected keyword or identifier.
+   tsc @24+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @17+6 TS1434 Unexpected keyword or identifier.
+   go  @24+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   bun @24+1 Expected ";" but found ")"
+"class C { @dec ) }" [ts]
+   tsc @14+0 TS1146 Declaration expected.
+   tsc @15+1 TS1005 ';' expected.
+   go  @14+0 TS1146 Declaration expected.
+   go  @15+1 TS1005 ';' expected.
+   bun @15+1 Expected identifier but found ")"
+   bun @18+0 Expected "}" but found end of file
+"class C { @dec }" [ts]
+   tsc @14+0 TS1146 Declaration expected.
+   go  @14+0 TS1146 Declaration expected.
+   bun @15+1 Expected identifier but found "}"
+   bun @16+0 Expected "}" but found end of file
+"class C { x: number = }" [ts]
+   tsc @22+1 TS1109 Expression expected.
+   go  @22+1 TS1109 Expression expected.
+   bun @22+1 Unexpected }
+"class C { x = }" [ts]
+   tsc @14+1 TS1109 Expression expected.
+   go  @14+1 TS1109 Expression expected.
+   bun @14+1 Unexpected }
+"class C { x: }" [ts]
+   tsc @13+1 TS1110 Type expected.
+   go  @13+1 TS1110 Type expected.
+   bun @13+1 Unexpected }
+"class C { x! y }" [ts]
+   tsc @10+1 TS1434 Unexpected keyword or identifier.
+   go  @10+1 TS1434 Unexpected keyword or identifier.
+   bun @13+1 Expected ";" but found "y"
+"class C { x? y }" [ts]
+   tsc @10+1 TS1434 Unexpected keyword or identifier.
+   go  @10+1 TS1434 Unexpected keyword or identifier.
+   bun @13+1 Expected ";" but found "y"
+"class C { x!: number y }" [ts]
+   tsc @21+1 TS1442 Expected '=' for property initializer.
+   go  @21+1 TS1442 Expected '=' for property initializer.
+   bun @21+1 Expected ";" but found "y"
+"class C { x?: number y }" [ts]
+   tsc @21+1 TS1442 Expected '=' for property initializer.
+   go  @21+1 TS1442 Expected '=' for property initializer.
+   bun @21+1 Expected ";" but found "y"
+"class C { [k: string]: number y }" [ts]
+   tsc @30+1 TS1005 ';' expected.
+   go  @30+1 TS1005 ';' expected.
+   bun @30+1 Expected ";" but found "y"
+"class C { 'a' 'b' }" [ts]
+   tsc @14+3 TS1005 ';' expected.
+   go  @14+3 TS1005 ';' expected.
+   bun @14+3 Expected ";" but found "'b'"
+"class C { a\nb }" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"class C { a: T\nb }" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"class C { a = 1\nb }" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"class C { a: number b = 1 }" [ts]
+   tsc @20+1 TS1442 Expected '=' for property initializer.
+   go  @20+1 TS1442 Expected '=' for property initializer.
+   bun @20+1 Expected ";" but found "b"
+   bun @22+1 Expected identifier but found "="
+"class C { a: number, b }" [ts]
+   tsc @19+1 TS1442 Expected '=' for property initializer.
+   go  @19+1 TS1442 Expected '=' for property initializer.
+   bun @19+1 Expected ";" but found ","
+"class C { a: number = 1, b }" [ts]
+   tsc @23+1 TS1005 ';' expected.
+   go  @23+1 TS1005 ';' expected.
+   bun @23+1 Expected ";" but found ","
+"class C { a = 1, b }" [ts]
+   tsc @15+1 TS1005 ';' expected.
+   go  @15+1 TS1005 ';' expected.
+   bun @15+1 Expected ";" but found ","
+"class C { a, b }" [ts]
+   tsc @10+1 TS1434 Unexpected keyword or identifier.
+   tsc @11+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @10+1 TS1434 Unexpected keyword or identifier.
+   go  @11+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   bun @11+1 Expected ";" but found ","
+"class C { a: number: string }" [ts]
+   tsc @19+1 TS1442 Expected '=' for property initializer.
+   go  @19+1 TS1442 Expected '=' for property initializer.
+   bun @19+1 Expected ";" but found ":"
+"class C { a: number = 1 = 2 }" [ts]
+   tsc parses
+   go  parses
+   bun visit @22+0 Invalid assignment target
+"class C { a: number ( }" [ts]
+   tsc @20+1 TS1441 Cannot start a function call in a type annotation.
+   go  @20+1 TS1441 Cannot start a function call in a type annotation.
+   bun @20+1 Expected ";" but found "("
+"class C { a = 1 ( }" [ts]
+   tsc @18+1 TS1135 Argument expression expected.
+   go  @18+1 TS1135 Argument expression expected.
+   bun @18+1 Unexpected }
+"class C { a ( }" [ts]
+   tsc @14+1 TS1138 Parameter declaration expected.
+   go  @14+1 TS1138 Parameter declaration expected.
+   bun @14+1 Expected identifier but found "}"
+   bun @15+0 Expected ")" but found end of file
+"class C { foo() =>" [ts]
+   tsc @16+2 TS1144 '{' or ';' expected.
+   tsc @18+0 TS1005 '}' expected.
+   go  @16+2 TS1144 '{' or ';' expected.
+   go  @18+0 TS1005 '}' expected.
+   bun @16+2 Expected ";" but found "=>"
+   bun @18+0 Expected "}" but found end of file
+"class C { accessor x y }" [ts]
+   tsc @19+1 TS1434 Unexpected keyword or identifier.
+   go  @19+1 TS1434 Unexpected keyword or identifier.
+   bun @21+1 Expected ";" but found "y"
+"class C { static x y }" [ts]
+   tsc @17+1 TS1434 Unexpected keyword or identifier.
+   go  @17+1 TS1434 Unexpected keyword or identifier.
+   bun @19+1 Expected ";" but found "y"
+"class C { declare x: number y }" [ts]
+   tsc @28+1 TS1442 Expected '=' for property initializer.
+   go  @28+1 TS1442 Expected '=' for property initializer.
+   bun @28+1 Expected ";" but found "y"
+"class C { readonly x: number y }" [ts]
+   tsc @29+1 TS1442 Expected '=' for property initializer.
+   go  @29+1 TS1442 Expected '=' for property initializer.
+   bun @29+1 Expected ";" but found "y"
+"class C { x: number /* c */ y }" [ts]
+   tsc @28+1 TS1442 Expected '=' for property initializer.
+   go  @28+1 TS1442 Expected '=' for property initializer.
+   bun @28+1 Expected ";" but found "y"
+"class C { foo() /* c */ bar }" [ts]
+   tsc @24+3 TS1144 '{' or ';' expected.
+   go  @24+3 TS1144 '{' or ';' expected.
+   bun @24+3 Expected ";" but found "bar"
+"class C {" [ts]
+   tsc @9+0 TS1005 '}' expected.
+   go  @9+0 TS1005 '}' expected.
+   bun @9+0 Expected "}" but found end of file
+"class C { x" [ts]
+   tsc @11+0 TS1005 '}' expected.
+   go  @11+0 TS1005 '}' expected.
+   bun @11+0 Expected "}" but found end of file
+"class C { x:" [ts]
+   tsc @12+0 TS1110 Type expected.
+   go  @12+0 TS1110 Type expected.
+   bun @12+0 Unexpected end of file
+"class C { foo(" [ts]
+   tsc @14+0 TS1005 ')' expected.
+   go  @14+0 TS1005 ')' expected.
+   bun @14+0 Expected identifier but found end of file
+"class C { foo()" [ts]
+   tsc @15+0 TS1005 '}' expected.
+   go  @15+0 TS1005 '}' expected.
+   bun @15+0 Expected "}" but found end of file
+"class C { x: number" [ts]
+   tsc @19+0 TS1005 '}' expected.
+   go  @19+0 TS1005 '}' expected.
+   bun @19+0 Expected "}" but found end of file
+"class C { x = 1" [ts]
+   tsc @15+0 TS1005 '}' expected.
+   go  @15+0 TS1005 '}' expected.
+   bun @15+0 Expected "}" but found end of file
+"class C extends {}" [ts]
+   tsc parses; checker @15+0 TS1097 'extends' list cannot be empty.
+   go  parses
+   bun @18+0 Expected "{" but found end of file
+"class C extends A B {}" [ts]
+   tsc @18+1 TS1005 ',' expected.
+   go  @18+1 TS1005 ',' expected.
+   bun @18+1 Expected "{" but found "B"
+   bun @20+1 Expected identifier but found "{"
+   bun @22+0 Expected "}" but found end of file
+"class C extends A, B {}" [ts]
+   tsc parses; checker @19+1 TS1174 Classes can only extend a single class.
+   go  parses
+   bun @17+1 Expected "{" but found ","
+   bun @21+1 Expected ";" but found "{"
+"class C implements {}" [ts]
+   tsc parses; checker @18+0 TS1097 'implements' list cannot be empty.
+   go  parses
+   bun @21+0 Expected "{" but found end of file
+"class C implements A B {}" [ts]
+   tsc @21+1 TS1005 ',' expected.
+   go  @21+1 TS1005 ',' expected.
+   bun @21+1 Expected "{" but found "B"
+   bun @23+1 Expected identifier but found "{"
+   bun @25+0 Expected "}" but found end of file
+"class C extends A implements B C {}" [ts]
+   tsc @31+1 TS1005 ',' expected.
+   go  @31+1 TS1005 ',' expected.
+   bun @31+1 Expected "{" but found "C"
+   bun @33+1 Expected identifier but found "{"
+   bun @35+0 Expected "}" but found end of file
+"class C foo {}" [ts]
+   tsc @8+3 TS1005 '{' expected.
+   go  @8+3 TS1005 '{' expected.
+   bun @8+3 Expected "{" but found "foo"
+   bun @12+1 Expected identifier but found "{"
+   bun @14+0 Expected "}" but found end of file
+"class C extends A foo {}" [ts]
+   tsc @18+3 TS1005 ',' expected.
+   go  @18+3 TS1005 ',' expected.
+   bun @18+3 Expected "{" but found "foo"
+   bun @22+1 Expected identifier but found "{"
+   bun @24+0 Expected "}" but found end of file
+"class C extends : {}" [ts]
+   tsc @16+1 TS1109 Expression expected.
+   go  @16+1 TS1109 Expression expected.
+   bun @16+1 Unexpected :
+"class C implements : {}" [ts]
+   tsc @19+1 TS1109 Expression expected.
+   go  @19+1 TS1109 Expression expected.
+   bun @19+1 Unexpected :
+   bun @21+1 Expected identifier but found "{"
+   bun @23+0 Expected "}" but found end of file
+"class C implements A, : {}" [ts]
+   tsc @22+1 TS1109 Expression expected.
+   go  @22+1 TS1109 Expression expected.
+   bun @22+1 Unexpected :
+   bun @24+1 Expected identifier but found "{"
+   bun @26+0 Expected "}" but found end of file
+"interface I extends : {}" [ts]
+   tsc @20+1 TS1109 Expression expected.
+   go  @20+1 TS1109 Expression expected.
+   bun @20+1 Unexpected :
+   bun @22+1 Unexpected {
+"interface I extends A, : {}" [ts]
+   tsc @23+1 TS1109 Expression expected.
+   go  @23+1 TS1109 Expression expected.
+   bun @23+1 Unexpected :
+   bun @25+1 Unexpected {
+"interface I extends {}" [ts]
+   tsc parses; checker @19+0 TS1097 'extends' list cannot be empty.
+   go  parses
+   bun accepts
+"interface I extends A B {}" [ts]
+   tsc @22+1 TS1005 ',' expected.
+   go  @22+1 TS1005 ',' expected.
+   bun @22+1 Expected "{" but found "B"
+   bun @24+1 Unexpected {
+"interface I foo {}" [ts]
+   tsc @12+3 TS1005 '{' expected.
+   go  @12+3 TS1005 '{' expected.
+   bun @12+3 Expected "{" but found "foo"
+   bun @16+1 Unexpected {
+"class C extends A extends B {}" [ts]
+   tsc parses; checker @18+7 TS1172 'extends' clause already seen.
+   go  parses
+   bun @18+7 Expected "{" but found "extends"
+   bun @28+1 Expected ";" but found "{"
+"class C implements A implements B {}" [ts]
+   tsc parses; checker @21+10 TS1175 'implements' clause already seen.
+   go  parses
+   bun @21+10 Expected "{" but found "implements"
+   bun @34+1 Expected ";" but found "{"
+"class C implements A extends B {}" [ts]
+   tsc parses; checker @21+7 TS1173 'extends' clause must precede 'implements' clause.
+   go  parses
+   bun @31+1 Expected "?" but found "{"
+   bun @32+1 Unexpected }
+   bun @33+0 Unexpected end of file
+"class C { x y }" [js]
+   tsc @10+1 TS1434 Unexpected keyword or identifier.
+   go  @10+1 TS1434 Unexpected keyword or identifier.
+   bun @12+1 Expected ";" but found "y"
+"class C { foo() bar }" [js]
+   tsc @16+3 TS1144 '{' or ';' expected.
+   go  @16+3 TS1144 '{' or ';' expected.
+   bun @16+3 Expected "{" but found "bar"
+   bun @21+0 Expected "}" but found end of file
+"function f() bar" [js]
+   tsc @13+3 TS1144 '{' or ';' expected.
+   go  @13+3 TS1144 '{' or ';' expected.
+   bun @13+3 Expected "{" but found "bar"
+   bun @16+0 Unexpected end of file
+"class C { ) }" [js]
+   tsc @10+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @10+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   bun @10+1 Expected identifier but found ")"
+   bun @13+0 Expected "}" but found end of file
+"x = class { x: number y }" [ts]
+   tsc @22+1 TS1442 Expected '=' for property initializer.
+   go  @22+1 TS1442 Expected '=' for property initializer.
+   bun @22+1 Expected ";" but found "y"
+"x = class { foo() bar }" [ts]
+   tsc @18+3 TS1144 '{' or ';' expected.
+   go  @18+3 TS1144 '{' or ';' expected.
+   bun @18+3 Expected ";" but found "bar"
+"x = class { ) }" [ts]
+   tsc @12+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @12+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   bun @12+1 Expected identifier but found ")"
+   bun @15+0 Expected "}" but found end of file
+"class C { static { ) } }" [ts]
+   tsc @19+1 TS1128 Declaration or statement expected.
+   go  @19+1 TS1128 Declaration or statement expected.
+   bun @19+1 Unexpected )
+"class C { static {} ) }" [ts]
+   tsc @20+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @20+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   bun @20+1 Expected identifier but found ")"
+   bun @23+0 Expected "}" but found end of file
+"class C { x: number\n(y) }" [ts]
+   tsc @20+1 TS1441 Cannot start a function call in a type annotation.
+   tsc @21+1 TS1434 Unexpected keyword or identifier.
+   tsc @22+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @20+1 TS1441 Cannot start a function call in a type annotation.
+   go  @21+1 TS1434 Unexpected keyword or identifier.
+   go  @22+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   bun @20+1 Expected identifier but found "("
+   bun @22+1 Expected ";" but found ")"
+"class C { x\n(y) }" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"class C { x = 1\n(y) }" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"class C { x: number\n[y] }" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"class C { x = 1\n[y] }" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"class C { x: number y() {} }" [ts]
+   tsc @20+1 TS1442 Expected '=' for property initializer.
+   go  @20+1 TS1442 Expected '=' for property initializer.
+   bun @20+1 Expected ";" but found "y"
+   bun @21+1 Expected identifier but found "("
+   bun @24+1 Expected ";" but found "{"
+"class C { x = y z }" [ts]
+   tsc @16+1 TS1005 ';' expected.
+   go  @16+1 TS1005 ';' expected.
+   bun @16+1 Expected ";" but found "z"
+"class C { x: T<U> y }" [ts]
+   tsc @18+1 TS1442 Expected '=' for property initializer.
+   go  @18+1 TS1442 Expected '=' for property initializer.
+   bun @18+1 Expected ";" but found "y"
+"class C { x: number } y" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"class C { get }" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"class C { get; }" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"class C { get x }" [ts]
+   tsc @16+1 TS1005 '(' expected.
+   go  @16+1 TS1005 '(' expected.
+   bun @16+1 Expected "(" but found "}"
+   bun @17+0 Expected identifier but found end of file
+"class C { set }" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"class C { async }" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"class C { async x }" [ts]
+   tsc parses; checker @10+5 TS1042 'async' modifier cannot be used here.
+   go  parses
+   bun @18+1 Expected "(" but found "}"
+   bun @19+0 Expected identifier but found end of file
+"class C { async\nx() {} }" [ts]
+   tsc parses
+   go  parses
+   bun accepts

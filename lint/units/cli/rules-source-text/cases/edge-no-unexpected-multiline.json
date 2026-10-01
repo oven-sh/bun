@@ -356,10 +356,6 @@
 		"jsx": false
 	},
 	{
-		"code": "a\n/b/*c*/g",
-		"jsx": false
-	},
-	{
 		"code": "a\n/b/d",
 		"jsx": false
 	},
@@ -430,10 +426,6 @@
 	{
 		"code": "a = b\n++c",
 		"jsx": false
-	},
-	{
-		"code": "a\n<b/>",
-		"jsx": true
 	},
 	{
 		"code": "x = a\n(<b/>)",

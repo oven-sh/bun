@@ -1,154 +1,40 @@
 [
-	{
-		"code": "const x = 9007199254740993",
-		"ts": true
-	},
-	{
-		"code": "const x: number = 9007199254740993",
-		"ts": true
-	},
-	{
-		"code": "type T = 9007199254740993",
-		"ts": true
-	},
-	{
-		"code": "type T = -9007199254740993",
-		"ts": true
-	},
-	{
-		"code": "let x: 9007199254740993 | 1",
-		"ts": true
-	},
-	{
-		"code": "enum E { A = 9007199254740993 }",
-		"ts": true
-	},
-	{
-		"code": "enum E { A = 1, B = 9007199254740993, C }",
-		"ts": true
-	},
-	{
-		"code": "declare const x = 9007199254740993",
-		"ts": true
-	},
-	{
-		"code": "const x = 9007199254740993 as number",
-		"ts": true
-	},
-	{
-		"code": "const x = <number>9007199254740993",
-		"ts": true
-	},
-	{
-		"code": "const x = 9007199254740993!",
-		"ts": true
-	},
-	{
-		"code": "const x = (9007199254740993 satisfies number)",
-		"ts": true
-	},
-	{
-		"code": "class A { 9007199254740993 = 1; x = 9007199254740993 }",
-		"ts": true
-	},
-	{
-		"code": "class A { declare x: 9007199254740993 }",
-		"ts": true
-	},
-	{
-		"code": "abstract class A { abstract 9007199254740993(): void }",
-		"ts": true
-	},
-	{
-		"code": "interface I { 9007199254740993: string }",
-		"ts": true
-	},
-	{
-		"code": "type T = { 9007199254740993: string }",
-		"ts": true
-	},
-	{
-		"code": "type T = [9007199254740993]",
-		"ts": true
-	},
-	{
-		"code": "function f(a = 9007199254740993, b?: 9007199254740993) {}",
-		"ts": true
-	},
-	{
-		"code": "function f(a: number = 9007199254740993) {}",
-		"ts": true
-	},
-	{
-		"code": "declare function f(a: 9007199254740993): void",
-		"ts": true
-	},
-	{
-		"code": "let x: Array<9007199254740993>",
-		"ts": true
-	},
-	{
-		"code": "f<9007199254740993>()",
-		"ts": true
-	},
-	{
-		"code": "namespace N { export const a = 9007199254740993 }",
-		"ts": true
-	},
-	{
-		"code": "declare namespace N { const a = 9007199254740993 }",
-		"ts": true
-	},
-	{
-		"code": "const x = 0x20000000000001",
-		"ts": true
-	},
-	{
-		"code": "type T = 0x20000000000001",
-		"ts": true
-	},
-	{
-		"code": "const x = 1e999",
-		"ts": true
-	},
-	{
-		"code": "const x = 5123000000000000000000000000001n",
-		"ts": true
-	},
-	{
-		"code": "type T = 5123000000000000000000000000001n",
-		"ts": true
-	},
-	{
-		"code": "const x = { 9007199254740993: 1 }",
-		"ts": true
-	},
-	{
-		"code": "const x = a[9007199254740993]",
-		"ts": true
-	},
-	{
-		"code": "type T = A[9007199254740993]",
-		"ts": true
-	},
-	{
-		"code": "export = 9007199254740993",
-		"ts": true
-	},
-	{
-		"code": "@dec(9007199254740993) class A {}",
-		"ts": true
-	},
-	{
-		"code": "type T = `${9007199254740993}`",
-		"ts": true
-	},
-	{
-		"code": "const enum E { A = 9007199254740993 }",
-		"ts": true
-	},
-	{
-		"code": "declare enum E { A = 9007199254740993 }",
-		"ts": true
-	}
+	{"code":"const x = 9007199254740993","ext":"ts","ts":true},
+	{"code":"const x: number = 9007199254740993","ext":"ts","ts":true},
+	{"code":"type T = 9007199254740993","ext":"ts","ts":true},
+	{"code":"type T = -9007199254740993","ext":"ts","ts":true},
+	{"code":"let x: 9007199254740993 | 1","ext":"ts","ts":true},
+	{"code":"enum E { A = 9007199254740993 }","ext":"ts","ts":true},
+	{"code":"enum E { A = 1, B = 9007199254740993, C }","ext":"ts","ts":true},
+	{"code":"declare const x = 9007199254740993","ext":"ts","ts":true},
+	{"code":"const x = 9007199254740993 as number","ext":"ts","ts":true},
+	{"code":"const x = <number>9007199254740993","ext":"ts","ts":true},
+	{"code":"const x = 9007199254740993!","ext":"ts","ts":true},
+	{"code":"const x = (9007199254740993 satisfies number)","ext":"ts","ts":true},
+	{"code":"class A { 9007199254740993 = 1; x = 9007199254740993 }","ext":"ts","ts":true},
+	{"code":"class A { declare x: 9007199254740993 }","ext":"ts","ts":true},
+	{"code":"abstract class A { abstract 9007199254740993(): void }","ext":"ts","ts":true},
+	{"code":"interface I { 9007199254740993: string }","ext":"ts","ts":true},
+	{"code":"type T = { 9007199254740993: string }","ext":"ts","ts":true},
+	{"code":"type T = [9007199254740993]","ext":"ts","ts":true},
+	{"code":"function f(a = 9007199254740993, b?: 9007199254740993) {}","ext":"ts","ts":true},
+	{"code":"function f(a: number = 9007199254740993) {}","ext":"ts","ts":true},
+	{"code":"declare function f(a: 9007199254740993): void","ext":"ts","ts":true},
+	{"code":"let x: Array<9007199254740993>","ext":"ts","ts":true},
+	{"code":"f<9007199254740993>()","ext":"ts","ts":true},
+	{"code":"namespace N { export const a = 9007199254740993 }","ext":"ts","ts":true},
+	{"code":"declare namespace N { const a = 9007199254740993 }","ext":"ts","ts":true},
+	{"code":"const x = 0x20000000000001","ext":"ts","ts":true},
+	{"code":"type T = 0x20000000000001","ext":"ts","ts":true},
+	{"code":"const x = 1e999","ext":"ts","ts":true},
+	{"code":"const x = 5123000000000000000000000000001n","ext":"ts","ts":true},
+	{"code":"type T = 5123000000000000000000000000001n","ext":"ts","ts":true},
+	{"code":"const x = { 9007199254740993: 1 }","ext":"ts","ts":true},
+	{"code":"const x = a[9007199254740993]","ext":"ts","ts":true},
+	{"code":"type T = A[9007199254740993]","ext":"ts","ts":true},
+	{"code":"export = 9007199254740993","ext":"ts","ts":true},
+	{"code":"@dec(9007199254740993) class A {}","ext":"ts","ts":true},
+	{"code":"type T = `${9007199254740993}`","ext":"ts","ts":true},
+	{"code":"const enum E { A = 9007199254740993 }","ext":"ts","ts":true},
+	{"code":"declare enum E { A = 9007199254740993 }","ext":"ts","ts":true}
 ]

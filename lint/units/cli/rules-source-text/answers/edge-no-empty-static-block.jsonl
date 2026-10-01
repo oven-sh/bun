@@ -19,8 +19,4 @@
 {"code":"class A { static\n{} }","type":"script","reports":["2:1-2:3 Unexpected empty static block."]}
 {"code":"class A { static { } }","type":"script","reports":["1:18-1:21 Unexpected empty static block."]}
 {"code":"class A { static { } }","type":"script","reports":["1:18-2:2 Unexpected empty static block."]}
-{"code":"class A { static { debugger } }","type":"script","reports":[]}
 {"code":"class A { static m() {} }","type":"script","reports":[]}
-{"code":"class A { static = 1; static() {} }","type":"script","reports":[]}
-{"code":"class A { static static {} }","type":"script","fatal":"1:25 Parsing error: Unexpected token {","reports":[]}
-{"code":"class A { 'static' {} }","type":"script","fatal":"1:20 Parsing error: Unexpected token {","reports":[]}

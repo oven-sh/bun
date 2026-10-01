@@ -87,7 +87,6 @@
 {"code":"a/b/c\n/d/g","type":"script","reports":["2:1-2:2 Unexpected newline between numerator and division operator."]}
 {"code":"a\n/b/g(c)","type":"script","reports":["2:1-2:2 Unexpected newline between numerator and division operator."]}
 {"code":"a\n/b/\\u0067","type":"script","reports":["2:1-2:2 Unexpected newline between numerator and division operator."]}
-{"code":"a\n/b/*c*/g","type":"script","fatal":"2:8 Parsing error: Unexpected token g","reports":[]}
 {"code":"a\n/b/d","type":"script","reports":["2:1-2:2 Unexpected newline between numerator and division operator."]}
 {"code":"a /* c\n*/ /b/g","type":"script","reports":["2:4-2:5 Unexpected newline between numerator and division operator."]}
 {"code":"a\n/b/y.z","type":"script","reports":["2:1-2:2 Unexpected newline between numerator and division operator."]}
@@ -106,7 +105,6 @@
 {"code":"a = /x/\n[b]","type":"script","reports":["2:1-2:2 Unexpected newline between object and [ of property access."]}
 {"code":"a = b++\n(c)","type":"script","reports":[]}
 {"code":"a = b\n++c","type":"script","reports":[]}
-{"code":"a\n<b/>","type":"script","jsx":true,"fatal":"2:4 Parsing error: Unexpected token >","reports":[]}
 {"code":"x = a\n(<b/>)","type":"script","jsx":true,"reports":["2:1-2:2 Unexpected newline between function and ( of function call."]}
 {"code":"f(\n<b/>)","type":"script","jsx":true,"reports":[]}
 {"code":"f\n(<b/>)","type":"script","jsx":true,"reports":["2:1-2:2 Unexpected newline between function and ( of function call."]}

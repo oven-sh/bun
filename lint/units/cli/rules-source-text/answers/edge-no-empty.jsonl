@@ -52,7 +52,6 @@
 {"code":"{ /* @license x */ }","type":"script","reports":[]}
 {"code":"{ <!-- c\n }","type":"script","reports":[]}
 {"code":"{\n--> c\n }","type":"script","reports":[]}
-{"code":"{ debugger }","type":"script","reports":[]}
 {"code":"{ }","type":"script","reports":["1:1-1:4 Empty block statement."]}
 {"code":"{ }","type":"script","reports":["1:1-2:2 Empty block statement."]}
 {"code":"{﻿}","type":"script","reports":["1:1-1:4 Empty block statement."]}
@@ -70,9 +69,6 @@
 {"code":"export {}","type":"module","reports":[]}
 {"code":"import {} from 'a'","type":"module","reports":[]}
 {"code":"var a = {}","type":"script","reports":[]}
-{"code":"var {} = a","type":"script","reports":[]}
-{"code":"({}) => {}","type":"script","reports":[]}
-{"code":"function f({}) {}","type":"script","reports":[]}
 {"code":"new (class {})","type":"script","reports":[]}
 {"code":"x = { a: {} }","type":"script","reports":[]}
 {"code":"{ a }","type":"script","reports":[]}

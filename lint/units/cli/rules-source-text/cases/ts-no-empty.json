@@ -1,166 +1,43 @@
 [
-	{
-		"code": "{ type A = number }",
-		"ts": true
-	},
-	{
-		"code": "{ interface A {} }",
-		"ts": true
-	},
-	{
-		"code": "{ declare const a: number }",
-		"ts": true
-	},
-	{
-		"code": "{ declare function f(): void }",
-		"ts": true
-	},
-	{
-		"code": "if (a) { type A = 1 }",
-		"ts": true
-	},
-	{
-		"code": "{ enum E {} }",
-		"ts": true
-	},
-	{
-		"code": "{ namespace N {} }",
-		"ts": true
-	},
-	{
-		"code": "namespace N {}",
-		"ts": true
-	},
-	{
-		"code": "module M {}",
-		"ts": true
-	},
-	{
-		"code": "declare module 'm' {}",
-		"ts": true
-	},
-	{
-		"code": "declare global {}",
-		"ts": true
-	},
-	{
-		"code": "namespace N { {} }",
-		"ts": true
-	},
-	{
-		"code": "namespace N { export function f() {} }",
-		"ts": true
-	},
-	{
-		"code": "interface I {}",
-		"ts": true
-	},
-	{
-		"code": "enum E {}",
-		"ts": true
-	},
-	{
-		"code": "class A {}",
-		"ts": true
-	},
-	{
-		"code": "abstract class A { abstract m(): void }",
-		"ts": true
-	},
-	{
-		"code": "function f(): void {}",
-		"ts": true
-	},
-	{
-		"code": "function f<T>(a: T): asserts a is T {}",
-		"ts": true
-	},
-	{
-		"code": "const f = (): void => {}",
-		"ts": true
-	},
-	{
-		"code": "class A { m(): void {} constructor(private a: number) {} }",
-		"ts": true
-	},
-	{
-		"code": "try {} catch (e: unknown) {}",
-		"ts": true
-	},
-	{
-		"code": "try { a } catch (e: any) {} finally {}",
-		"ts": true
-	},
-	{
-		"code": "if (a as boolean) {}",
-		"ts": true
-	},
-	{
-		"code": "if (a!) {} else {}",
-		"ts": true
-	},
-	{
-		"code": "for (const a of b as number[]) {}",
-		"ts": true
-	},
-	{
-		"code": "switch (a as number) {}",
-		"ts": true
-	},
-	{
-		"code": "switch (<number>a) {}",
-		"ts": true
-	},
-	{
-		"code": "switch (a satisfies number) { }",
-		"ts": true
-	},
-	{
-		"code": "switch (a!) { /* c */ }",
-		"ts": true
-	},
-	{
-		"code": "label: {}",
-		"ts": true
-	},
-	{
-		"code": "{ import A = B.C }",
-		"ts": true
-	},
-	{
-		"code": "{ export {} }",
-		"ts": true
-	},
-	{
-		"code": "function f() { { type A = 1 } }",
-		"ts": true
-	},
-	{
-		"code": "{ abstract class A {} }",
-		"ts": true
-	},
-	{
-		"code": "{ declare class A {} }",
-		"ts": true
-	},
-	{
-		"code": "{ const enum E { A } }",
-		"ts": true
-	},
-	{
-		"code": "{ declare enum E { A } }",
-		"ts": true
-	},
-	{
-		"code": "{ declare namespace N {} }",
-		"ts": true
-	},
-	{
-		"code": "{ function f(): void; function f() {} }",
-		"ts": true
-	},
-	{
-		"code": "while (a) { type T = 1; }",
-		"ts": true
-	}
+	{"code":"{ type A = number }","ext":"ts","ts":true},
+	{"code":"{ interface A {} }","ext":"ts","ts":true},
+	{"code":"{ declare const a: number }","ext":"ts","ts":true},
+	{"code":"{ declare function f(): void }","ext":"ts","ts":true},
+	{"code":"if (a) { type A = 1 }","ext":"ts","ts":true},
+	{"code":"{ enum E {} }","ext":"ts","ts":true},
+	{"code":"{ namespace N {} }","ext":"ts","ts":true},
+	{"code":"namespace N {}","ext":"ts","ts":true},
+	{"code":"module M {}","ext":"ts","ts":true},
+	{"code":"declare module 'm' {}","ext":"ts","ts":true},
+	{"code":"declare global {}","ext":"ts","ts":true},
+	{"code":"namespace N { {} }","ext":"ts","ts":true},
+	{"code":"namespace N { export function f() {} }","ext":"ts","ts":true},
+	{"code":"interface I {}","ext":"ts","ts":true},
+	{"code":"enum E {}","ext":"ts","ts":true},
+	{"code":"class A {}","ext":"ts","ts":true},
+	{"code":"abstract class A { abstract m(): void }","ext":"ts","ts":true},
+	{"code":"function f(): void {}","ext":"ts","ts":true},
+	{"code":"function f<T>(a: T): asserts a is T {}","ext":"ts","ts":true},
+	{"code":"const f = (): void => {}","ext":"ts","ts":true},
+	{"code":"class A { m(): void {} constructor(private a: number) {} }","ext":"ts","ts":true},
+	{"code":"try {} catch (e: unknown) {}","ext":"ts","ts":true},
+	{"code":"try { a } catch (e: any) {} finally {}","ext":"ts","ts":true},
+	{"code":"if (a as boolean) {}","ext":"ts","ts":true},
+	{"code":"if (a!) {} else {}","ext":"ts","ts":true},
+	{"code":"for (const a of b as number[]) {}","ext":"ts","ts":true},
+	{"code":"switch (a as number) {}","ext":"ts","ts":true},
+	{"code":"switch (<number>a) {}","ext":"ts","ts":true},
+	{"code":"switch (a satisfies number) { }","ext":"ts","ts":true},
+	{"code":"switch (a!) { /* c */ }","ext":"ts","ts":true},
+	{"code":"label: {}","ext":"ts","ts":true},
+	{"code":"{ import A = B.C }","ext":"ts","ts":true},
+	{"code":"{ export {} }","ext":"ts","ts":true},
+	{"code":"function f() { { type A = 1 } }","ext":"ts","ts":true},
+	{"code":"{ abstract class A {} }","ext":"ts","ts":true},
+	{"code":"{ declare class A {} }","ext":"ts","ts":true},
+	{"code":"{ const enum E { A } }","ext":"ts","ts":true},
+	{"code":"{ declare enum E { A } }","ext":"ts","ts":true},
+	{"code":"{ declare namespace N {} }","ext":"ts","ts":true},
+	{"code":"{ function f(): void; function f() {} }","ext":"ts","ts":true},
+	{"code":"while (a) { type T = 1; }","ext":"ts","ts":true}
 ]

@@ -448,6 +448,43 @@ describe("Bun.Terminal platform behaviour", () => {
     );
   });
 
+  // Windows gives the number of a closed handle to the next one opened.
+  test.skipIf(!isWindows)("setRawMode() refuses a screen buffer opened after a console input was closed", async () => {
+    const { output } = await runInTerminal(
+      `const { dlopen, ptr } = require("bun:ffi");
+       const { ReadStream } = require("node:tty");
+       const { openSync, closeSync } = require("node:fs");
+       const k32 = dlopen("kernel32.dll", {
+         GetStdHandle: { args: ["i32"], returns: "ptr" },
+         GetConsoleMode: { args: ["ptr", "ptr"], returns: "i32" },
+       }).symbols;
+       const screenMode = () => {
+         const word = new Uint32Array(1);
+         if (!k32.GetConsoleMode(k32.GetStdHandle(-11), ptr(word))) throw new Error("GetConsoleMode");
+         return word[0];
+       };
+       const before = screenMode();
+       const seen = [];
+       for (let round = 0; round < 4; round++) {
+         const inputFd = openSync("CONIN$", "r+");
+         const input = new ReadStream(inputFd);
+         input.on("error", () => seen.push("input refused"));
+         input.setRawMode(true);
+         input.setRawMode(false);
+         closeSync(inputFd);
+         const screenFd = openSync("CONOUT$", "r+");
+         const screen = new ReadStream(screenFd);
+         screen.on("error", () => seen.push("refused"));
+         screen.setRawMode(true);
+         closeSync(screenFd);
+       }
+       process.stdout.write("SEEN=" + JSON.stringify([seen.join(), screenMode() === before]) + " DONE");
+       process.exit(0);`,
+      { readyMarker: " DONE", done: o => o.includes(" DONE") },
+    );
+    expect(Bun.stripANSI(output)).toContain('SEEN=["refused,refused,refused,refused",true] DONE');
+  });
+
   // A Windows console hands over key records. Raw mode asks it to make VT sequences of the keys
   // itself; for one that cannot (legacy console mode), Bun does, with libuv's (so Node's) mappings.
   // The child puts the records into its own console's queue, each case followed by a key that

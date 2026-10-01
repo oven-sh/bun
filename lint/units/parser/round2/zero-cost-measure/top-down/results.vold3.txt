@@ -1,0 +1,75 @@
+vold3 = the type grammar of the base reads first for the Discard sink; fallback when it returned Err or the count of errors moved (one jump). Parser symbols (bun_js_parser|bun_ast), 20 passes.
+-- raw (one Bc per executed conditional jump)
+bun-types       rawbase      matched Ir    324,579,267 Bc    48,504,593 Bi   4,923,576
+bun-types       rawhead      matched Ir    357,791,537 Bc    54,750,693 Bi   4,643,696   vs rawbase: Ir   +33,212,270 Bc   +6,246,100 Bi   -279,880
+bun-types       rawvold      matched Ir    337,698,357 Bc    49,742,153 Bi   4,972,276   vs rawbase: Ir   +13,119,090 Bc   +1,237,560 Bi    +48,700
+bun-types       rawvold3     matched Ir    338,232,357 Bc    49,742,793 Bi   4,972,276   vs rawbase: Ir   +13,653,090 Bc   +1,238,200 Bi    +48,700
+typescript-lib  rawbase      matched Ir  1,111,791,187 Bc   173,606,173 Bi  15,647,136
+typescript-lib  rawhead      matched Ir  1,272,467,977 Bc   203,122,273 Bi  15,264,216   vs rawbase: Ir  +160,676,790 Bc  +29,516,100 Bi   -382,920
+typescript-lib  rawvold      matched Ir  1,164,789,917 Bc   179,837,433 Bi  15,887,076   vs rawbase: Ir   +52,998,730 Bc   +6,231,260 Bi   +239,940
+typescript-lib  rawvold3     matched Ir  1,165,379,537 Bc   179,837,433 Bi  15,887,076   vs rawbase: Ir   +53,588,350 Bc   +6,231,260 Bi   +239,940
+src-js          rawbase      matched Ir  5,011,054,474 Bc   580,255,840 Bi  57,402,455
+src-js          rawhead      matched Ir  5,029,510,124 Bc   584,754,260 Bi  57,317,855   vs rawbase: Ir   +18,455,650 Bc   +4,498,420 Bi    -84,600
+src-js          rawvold      matched Ir  5,033,636,504 Bc   582,585,020 Bi  57,727,375   vs rawbase: Ir   +22,582,030 Bc   +2,329,180 Bi   +324,920
+src-js          rawvold3     matched Ir  5,040,199,304 Bc   582,621,400 Bi  57,727,375   vs rawbase: Ir   +29,144,830 Bc   +2,365,560 Bi   +324,920
+tsx             rawbase      matched Ir  1,353,449,852 Bc   161,932,075 Bi  15,337,035
+tsx             rawhead      matched Ir  1,398,563,842 Bc   171,582,075 Bi  14,837,035   vs rawbase: Ir   +45,113,990 Bc   +9,650,000 Bi   -500,000
+tsx             rawvold      matched Ir  1,377,301,842 Bc   163,736,075 Bi  15,447,035   vs rawbase: Ir   +23,851,990 Bc   +1,804,000 Bi   +110,000
+tsx             rawvold3     matched Ir  1,379,729,842 Bc   163,722,075 Bi  15,447,035   vs rawbase: Ir   +26,279,990 Bc   +1,790,000 Bi   +110,000
+js-control      rawbase      matched Ir  3,301,848,109 Bc   351,009,231 Bi  42,778,315
+js-control      rawhead      matched Ir  3,299,485,179 Bc   351,045,631 Bi  42,778,315   vs rawbase: Ir    -2,362,930 Bc      +36,400 Bi         +0
+js-control      rawvold      matched Ir  3,299,485,179 Bc   351,045,631 Bi  42,778,315   vs rawbase: Ir    -2,362,930 Bc      +36,400 Bi         +0
+js-control      rawvold3     matched Ir  3,299,485,179 Bc   351,045,631 Bi  42,778,315   vs rawbase: Ir    -2,362,930 Bc      +36,400 Bi         +0
+-- default
+bun-types       base20b      matched Ir    331,255,477 Bc    46,592,991 Bi   4,923,576
+bun-types       head20b      matched Ir    364,856,107 Bc    52,009,911 Bi   4,643,696   vs base20b: Ir   +33,600,630 Bc   +5,416,920 Bi   -279,880
+bun-types       vold         matched Ir    344,735,947 Bc    47,788,051 Bi   4,972,276   vs base20b: Ir   +13,480,470 Bc   +1,195,060 Bi    +48,700
+bun-types       vold3        matched Ir    345,269,947 Bc    47,785,911 Bi   4,972,276   vs base20b: Ir   +14,014,470 Bc   +1,192,920 Bi    +48,700
+typescript-lib  base20b      matched Ir  1,144,739,177 Bc   166,938,251 Bi  15,647,136
+typescript-lib  head20b      matched Ir  1,307,711,227 Bc   192,992,511 Bi  15,264,216   vs base20b: Ir  +162,972,050 Bc  +26,054,260 Bi   -382,920
+typescript-lib  vold         matched Ir  1,200,000,287 Bc   173,114,291 Bi  15,887,076   vs base20b: Ir   +55,261,110 Bc   +6,176,040 Bi   +239,940
+typescript-lib  vold3        matched Ir  1,200,589,907 Bc   173,090,971 Bi  15,887,076   vs base20b: Ir   +55,850,730 Bc   +6,152,720 Bi   +239,940
+src-js          base20b      matched Ir  5,065,657,144 Bc   565,355,079 Bi  57,402,455
+src-js          head20b      matched Ir  5,084,135,834 Bc   569,331,519 Bi  57,317,855   vs base20b: Ir   +18,478,690 Bc   +3,976,440 Bi    -84,600
+src-js          vold         matched Ir  5,088,452,414 Bc   567,731,239 Bi  57,727,375   vs base20b: Ir   +22,795,270 Bc   +2,376,160 Bi   +324,920
+src-js          vold3        matched Ir  5,095,015,214 Bc   567,766,619 Bi  57,727,375   vs base20b: Ir   +29,358,070 Bc   +2,411,540 Bi   +324,920
+tsx             base20b      matched Ir  1,366,356,422 Bc   156,418,054 Bi  15,337,035
+tsx             head20b      matched Ir  1,411,692,412 Bc   164,666,054 Bi  14,837,035   vs base20b: Ir   +45,335,990 Bc   +8,248,000 Bi   -500,000
+tsx             vold         matched Ir  1,390,352,412 Bc   158,188,054 Bi  15,447,035   vs base20b: Ir   +23,995,990 Bc   +1,770,000 Bi   +110,000
+tsx             vold3        matched Ir  1,392,780,412 Bc   158,186,054 Bi  15,447,035   vs base20b: Ir   +26,423,990 Bc   +1,768,000 Bi   +110,000
+js-control      base20b      matched Ir  3,315,540,179 Bc   343,413,670 Bi  42,778,315
+js-control      head20b      matched Ir  3,312,992,649 Bc   343,577,190 Bi  42,778,315   vs base20b: Ir    -2,547,530 Bc     +163,520 Bi         +0
+js-control      vold         matched Ir  3,312,992,649 Bc   343,577,190 Bi  42,778,315   vs base20b: Ir    -2,547,530 Bc     +163,520 Bi         +0
+js-control      vold3        matched Ir  3,312,992,649 Bc   343,577,190 Bi  42,778,315   vs base20b: Ir    -2,547,530 Bc     +163,520 Bi         +0
+-- A1 harness, head vs vold3 (required: 0 records differ), then base vs vold3
+== testrows
+4515 records compared, 165 differ, in 11 sources
+!!      165 records      11 sources  A>R          unexplained
+4515 records compared, 3391 differ, in 290 sources
+!!      352 records      73 sources  A>A          unexplained
+!!     3039 records     217 sources  R>A          unexplained
+== targeted
+59280 records compared, 0 differ, in 0 sources
+59280 records compared, 2423 differ, in 180 sources
+!!       55 records      13 sources  A>A          unexplained
+!!     1715 records     121 sources  R>A          unexplained
+!!      653 records      47 sources  R>R          unexplained
+== small
+3144420 records compared, 1285 differ, in 93 sources
+!!     1165 records      85 sources  A>R          unexplained
+!!      120 records       8 sources  R>R          unexplained
+3144420 records compared, 109955 differ, in 7698 sources
+!!     1180 records     295 sources  A>A          unexplained
+!!    22595 records    1548 sources  R>A          unexplained
+!!    86180 records    5856 sources  R>R          unexplained
+-- raw Bc by cause, base -> vold3
+cause (Bc)              bun-types typescript-lib         src-js            tsx     js-control
+startup-js                     +0             +0             +0             +0             +0
+backtracker                -35460        -120900        +111940         +70000             +0
+type grammar             -4545020      -22706700       -3084680       -6166000             +0
+type statements           +233920       +1287200        +129060        +328000             +0
+lexer                     +781140       +4615240       +1530100        +840000             +0
+statements                 +84160        +411980        +259160        +120000        -110660
+expressions+class          +77960         +12680        +217240        +296000        +203340
+visit+layout             +4641500      +22731760       +3202740       +6302000         -56280
+parser symbols           +1238200       +6231260       +2365560       +1790000         +36400

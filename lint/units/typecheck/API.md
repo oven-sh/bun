@@ -799,8 +799,8 @@ Measured on the 1,276 JavaScript units of the conformance corpus (goldens: upstr
 ### Verified
 
 Nothing was built with cargo or `bun bd` at that commit: its `lib.rs` did not declare the modules (`ebb836b39f`
-declares `importer`; PORT_STATUS.md, "Parser pieces for JavaScript trees", says what has compiled the files in the
-real crate since, and that the tests have not run there). The files were compiled in place
+declares `importer`; PORT_STATUS.md, "Parser pieces for JavaScript trees", has the state of the files in the real
+crate since that line, and says that their tests have not run there). The files were compiled in place
 with `rustc` alone from a scratch root (`jsdoc-reparser-js-trees/port/scratch`: the node table files of the
 worktree by path, stand-ins for `core`, `internal`, `tspath`, `diagnostics`, five scanner functions, `ast.rs` and
 `utilities.rs`; `stringutil` of the worktree), with the `deny` set of the workspace, then with `clippy-driver`, the

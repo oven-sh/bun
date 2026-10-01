@@ -1,0 +1,17 @@
+base 1.4.3 be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb (301 sources)
+next 1.4.3 be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb (301 sources)
+4515 records compared, 165 differ, in 11 sources
+!!      165 records      11 sources  A>R          unexplained
+              t.ts.plain       "let x: typeof import(\"x\")<C>;"
+                base ["o","let x;\n"]
+                next ["e",[["Expected \";\" but found \"<\"",1,26],["Unexpected ;",1,29]]]
+              t.ts.exp         "let x: typeof import(\"x\")<C>;"
+                base ["o","let x;\n"]
+                next ["e",[["Expected \";\" but found \"<\"",1,26],["Unexpected ;",1,29]]]
+              t.ts.deco        "let x: typeof import(\"x\")<C>;"
+                base ["o","let x;\n"]
+                next ["e",[["Expected \";\" but found \"<\"",1,26],["Unexpected ;",1,29]]]
+              t.tsx.plain      "let x: typeof import(\"x\")<C>;"
+                base ["o","let x;\n"]
+                next ["e",[["Expected \";\" but found \"<\"",1,26],["Unexpected ;",1,29]]]
+165 records with the mark !!, 0 with the mark ??

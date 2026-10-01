@@ -1,0 +1,30 @@
+base 1.4.3 be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb (209628 sources)
+next 1.4.3 be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb (209628 sources)
+3144420 records compared, 1285 differ, in 93 sources
+!!     1165 records      85 sources  A>R          unexplained
+              t.ts.plain       "type X = import('x')<A>;"
+                base ["o",""]
+                next ["e",[["Expected \";\" but found \"<\"",1,21],["Unexpected ;",1,24]]]
+              t.ts.exp         "type X = import('x')<A>;"
+                base ["o",""]
+                next ["e",[["Expected \";\" but found \"<\"",1,21],["Unexpected ;",1,24]]]
+              t.ts.deco        "type X = import('x')<A>;"
+                base ["o",""]
+                next ["e",[["Expected \";\" but found \"<\"",1,21],["Unexpected ;",1,24]]]
+              t.tsx.plain      "type X = import('x')<A>;"
+                base ["o",""]
+                next ["e",[["Expected \";\" but found \"<\"",1,21],["Unexpected ;",1,24]]]
+!!      120 records       8 sources  R>R          unexplained
+              t.ts.plain       "let f = (a): (function) => void => a;"
+                base ["e",[["Unexpected =>",1,33]]]
+                next ["e",[["Expected \";\" but found \":\"",1,12],["Expected \"(\" but found \")\"",1,23],["Expected identifier but found \"=>\"",1,25],["Expected \")\" but found \"void\"",1,28],["Expected \"{\" but foun
+              t.ts.exp         "let f = (a): (function) => void => a;"
+                base ["e",[["Unexpected =>",1,33]]]
+                next ["e",[["Expected \";\" but found \":\"",1,12],["Expected \"(\" but found \")\"",1,23],["Expected identifier but found \"=>\"",1,25],["Expected \")\" but found \"void\"",1,28],["Expected \"{\" but foun
+              t.ts.deco        "let f = (a): (function) => void => a;"
+                base ["e",[["Unexpected =>",1,33]]]
+                next ["e",[["Expected \";\" but found \":\"",1,12],["Expected \"(\" but found \")\"",1,23],["Expected identifier but found \"=>\"",1,25],["Expected \")\" but found \"void\"",1,28],["Expected \"{\" but foun
+              t.tsx.plain      "let f = (a): (function) => void => a;"
+                base ["e",[["Unexpected =>",1,33]]]
+                next ["e",[["Expected \";\" but found \":\"",1,12],["Expected \"(\" but found \")\"",1,23],["Expected identifier but found \"=>\"",1,25],["Expected \")\" but found \"void\"",1,28],["Expected \"{\" but foun
+1285 records with the mark !!, 0 with the mark ??

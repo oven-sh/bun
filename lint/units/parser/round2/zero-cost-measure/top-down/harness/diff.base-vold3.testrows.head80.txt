@@ -1,0 +1,30 @@
+base 1.4.3 e3566be889995ffff8b08823b9233617f979c889 (301 sources)
+next 1.4.3 be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb (301 sources)
+4515 records compared, 3391 differ, in 290 sources
+!!      352 records      73 sources  A>A          unexplained
+              t.ts.plain       "namespace as {}"
+                base ["o","namespace;\n"]
+                next ["o",""]
+              t.ts.exp         "namespace as {}"
+                base ["o","namespace;\n"]
+                next ["o",""]
+              t.ts.deco        "namespace as {}"
+                base ["o","namespace;\n"]
+                next ["o",""]
+              t.tsx.plain      "namespace as {}"
+                base ["o","namespace;\n"]
+                next ["o",""]
+!!     3039 records     217 sources  R>A          unexplained
+              t.ts.plain       "let x: if;"
+                base ["e",[["Unexpected if",1,8]]]
+                next ["o","let x;\n"]
+              t.ts.exp         "let x: if;"
+                base ["e",[["Unexpected if",1,8]]]
+                next ["o","let x;\n"]
+              t.ts.deco        "let x: if;"
+                base ["e",[["Unexpected if",1,8]]]
+                next ["o","let x;\n"]
+              t.tsx.plain      "let x: if;"
+                base ["e",[["Unexpected if",1,8]]]
+                next ["o","let x;\n"]
+3391 records with the mark !!, 0 with the mark ??

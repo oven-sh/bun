@@ -2096,9 +2096,7 @@ pub(crate) fn install_isolated_packages(
             .iter()
             .any(|r| r.tag == ResolutionTag::Symlink)
         {
-            // Rows loaded from bun.lock skip the resolver's check. Checked before
-            // the first task starts, since a dependent links to the target without
-            // waiting for this entry.
+            // Rows loaded from bun.lock skip the resolver's check.
             for &node_id in entry_node_ids {
                 let pkg_id = node_pkg_ids[node_id.get() as usize];
                 let pkg_res = &pkg_resolutions[pkg_id as usize];

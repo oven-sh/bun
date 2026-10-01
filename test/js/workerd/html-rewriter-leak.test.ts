@@ -1,6 +1,6 @@
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, expectRssDeltaBelow, isASAN, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, expectRssDeltaBelow, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 
 // `wire_input`'s materialized-body path transfers the body's `+1` (a
@@ -175,8 +175,12 @@ test("onEndTag callbacks are released after the rewrite", () => {
 //
 // Skipped in debug: at this N a debug pass is ~40s and the extra debug-build
 // allocation tracking adds enough RSS noise to drown the signal. CI has no
-// debug test lane; release + ASAN cover the regression.
-test.skipIf(isDebug)(
+// debug test lane.
+//
+// Skipped on sanitizer builds: the 1.8 million registrations below cost about
+// 7 µs each on the ASAN lane, most of the 15 s limit. The LeakSanitizer test
+// after this one counts the same allocations exactly with a few thousand.
+test.skipIf(isDebug || isASAN)(
   "HTMLRewriter does not leak element/document handler allocations",
   async () => {
     const code = /* js */ `
@@ -213,11 +217,6 @@ test.skipIf(isDebug)(
         ...bunEnv,
         // Don't inherit the runner's GC_LEVEL=1 — it changes the per-pass live set.
         BUN_GARBAGE_COLLECTOR_LEVEL: "0",
-        // ASAN's freed-block quarantine is exactly the thing that pins RSS at
-        // peak; disable it so freed lol-html builders get reused across passes.
-        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
-          .filter(Boolean)
-          .join(":"),
       },
       stdout: "pipe",
       stderr: "pipe",
@@ -225,12 +224,7 @@ test.skipIf(isDebug)(
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    const filteredStderr = stderr
-      .split("\n")
-      .filter(line => !line.startsWith("WARNING: ASAN interferes"))
-      .join("\n")
-      .trim();
-    expect(filteredStderr).toBe("");
+    expect(stderr.trim()).toBe("");
 
     const { deltaMB } = JSON.parse(stdout.trim());
 
@@ -241,6 +235,75 @@ test.skipIf(isDebug)(
     expect(exitCode).toBe(0);
   },
   15_000,
+);
+
+// The same regression on sanitizer builds. LeakSanitizer fails the run for
+// every handler struct that is still allocated at exit with nothing pointing
+// to it, so one leaked struct is enough: no RSS threshold, no warmup.
+test.skipIf(!isASAN || isWindows)(
+  "HTMLRewriter does not leak element/document handler allocations (LeakSanitizer)",
+  async () => {
+    const ROUNDS = 4;
+    const REWRITERS_PER_ROUND = 16;
+    const code = /* js */ `
+      const { heapStats } = require("bun:jsc");
+      const noop = { element() {}, comments() {}, text() {} };
+      const docNoop = { doctype() {}, comments() {}, text() {}, end() {} };
+      let handlers = 0;
+
+      function once() {
+        const rw = new HTMLRewriter();
+        for (let i = 0; i < 32; i++) rw.on("div", noop);
+        for (let i = 0; i < 32; i++) rw.onDocument(docNoop);
+        handlers += 64;
+      }
+
+      // From a macrotask on purpose: leaksan.supp has entries for module
+      // evaluation, and they hide every allocation made while the module
+      // body is on the stack.
+      setImmediate(() => {
+        for (let round = 0; round < ${ROUNDS}; round++) {
+          for (let i = 0; i < ${REWRITERS_PER_ROUND}; i++) once();
+          Bun.gc(true);
+        }
+        const rewriters = heapStats().objectTypeCounts.HTMLRewriter ?? 0;
+        process.stdout.write(JSON.stringify({ handlers, rewriters }));
+      });
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: {
+        ...bunEnv,
+        // Every cell that is still alive at exit gets finalized, so what
+        // LeakSanitizer then finds is a struct that a finalizer did not free.
+        BUN_DESTRUCT_VM_ON_EXIT: "1",
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+        LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../leaksan.supp")}`,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // Unfixed: "SUMMARY: AddressSanitizer: 180224 byte(s) leaked in 4096
+    // allocation(s)" on stderr and a non-zero exit code.
+    expect({ stdout, stderr: withoutAsanWarning(stderr), exitCode }).toEqual({
+      stdout: expect.stringMatching(/^\{"handlers":/),
+      stderr: "",
+      exitCode: 0,
+    });
+
+    const { handlers, rewriters } = JSON.parse(stdout);
+    expect(handlers).toBe(ROUNDS * REWRITERS_PER_ROUND * 64);
+    // The collector freed them: they did not wait for the VM to be torn down.
+    expect(rewriters).toBeLessThan((ROUNDS * REWRITERS_PER_ROUND) / 4);
+  },
+  // A pass takes about 0.3 s on a release ASAN build and 2 s on a debug build.
+  // A failure takes over 6 s, more than the default limit: LeakSanitizer
+  // symbolizes its report before the child exits.
+  90_000,
 );
 
 // `fail()` / `cancel_from_output()` on a native ByteStream/FileReader input

@@ -10623,9 +10623,10 @@ describe.concurrent("file: tarballs declared by a package installed from the cac
   }
 
   async function run(root: string, ...args: string[]) {
+    const cwd = args.includes("--cwd") ? args.splice(args.indexOf("--cwd"), 2)[1] : join(root, "project");
     await using proc = spawn({
       cmd: [bunExe(), ...args],
-      cwd: join(root, "project"),
+      cwd,
       env: { ...env, BUN_INSTALL_CACHE_DIR: join(root, "cache") },
       stdout: "pipe",
       stdin: "ignore",
@@ -10803,7 +10804,7 @@ describe.concurrent("file: tarballs declared by a package installed from the cac
     expect(exitCode).toBe(0);
 
     // An update re-resolves `a` before `b`, so `b` is located while `a` has no resolution.
-    const update = await run(root, "update", "a", "b");
+    const update = await run(root, "update", "a", "b", "--cwd", join(root, "project", "packages", "app"));
     expect(diagnostics(update.err)).toEqual([]);
     expect(await file(join(root, "project", "bun.lock")).text()).toBe(lockfile);
     expect(update.exitCode).toBe(0);

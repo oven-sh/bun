@@ -1,0 +1,91 @@
+{"code":"if (a = b) {}","type":"script","reports":["1:5-1:10 Expected a conditional expression and instead saw an assignment."]}
+{"code":"if ((a = b)) {}","type":"script","reports":[]}
+{"code":"if (((a = b))) {}","type":"script","reports":[]}
+{"code":"if ( ( a = b ) ) {}","type":"script","reports":[]}
+{"code":"if (/* c */ (a = b) /* d */) {}","type":"script","reports":[]}
+{"code":"if (\n(a = b)\n) {}","type":"script","reports":[]}
+{"code":"if ((a) = b) {}","type":"script","reports":["1:5-1:12 Expected a conditional expression and instead saw an assignment."]}
+{"code":"if ((a).b = c) {}","type":"script","reports":["1:5-1:14 Expected a conditional expression and instead saw an assignment."]}
+{"code":"if (((a)).b = c) {}","type":"script","reports":["1:5-1:16 Expected a conditional expression and instead saw an assignment."]}
+{"code":"if ([a] = b) {}","type":"script","reports":["1:5-1:12 Expected a conditional expression and instead saw an assignment."]}
+{"code":"if (({a} = b)) {}","type":"script","reports":[]}
+{"code":"if ({a} = b) {}","type":"script","reports":["1:5-1:12 Expected a conditional expression and instead saw an assignment."]}
+{"code":"if (a = b, c) {}","type":"script","reports":[]}
+{"code":"if ((a = b, c)) {}","type":"script","reports":[]}
+{"code":"if (c, a = b) {}","type":"script","reports":[]}
+{"code":"if (a += b) {}","type":"script","reports":["1:5-1:11 Expected a conditional expression and instead saw an assignment."]}
+{"code":"if (a -= b) {}","type":"script","reports":["1:5-1:11 Expected a conditional expression and instead saw an assignment."]}
+{"code":"if (a *= b) {}","type":"script","reports":["1:5-1:11 Expected a conditional expression and instead saw an assignment."]}
+{"code":"if (a /= b) {}","type":"script","reports":["1:5-1:11 Expected a conditional expression and instead saw an assignment."]}
+{"code":"if (a %= b) {}","type":"script","reports":["1:5-1:11 Expected a conditional expression and instead saw an assignment."]}
+{"code":"if (a **= b) {}","type":"script","reports":["1:5-1:12 Expected a conditional expression and instead saw an assignment."]}
+{"code":"if (a <<= b) {}","type":"script","reports":["1:5-1:12 Expected a conditional expression and instead saw an assignment."]}
+{"code":"if (a >>= b) {}","type":"script","reports":["1:5-1:12 Expected a conditional expression and instead saw an assignment."]}
+{"code":"if (a >>>= b) {}","type":"script","reports":["1:5-1:13 Expected a conditional expression and instead saw an assignment."]}
+{"code":"if (a |= b) {}","type":"script","reports":["1:5-1:11 Expected a conditional expression and instead saw an assignment."]}
+{"code":"if (a ^= b) {}","type":"script","reports":["1:5-1:11 Expected a conditional expression and instead saw an assignment."]}
+{"code":"if (a &= b) {}","type":"script","reports":["1:5-1:11 Expected a conditional expression and instead saw an assignment."]}
+{"code":"if (a ||= b) {}","type":"script","reports":["1:5-1:12 Expected a conditional expression and instead saw an assignment."]}
+{"code":"if (a &&= b) {}","type":"script","reports":["1:5-1:12 Expected a conditional expression and instead saw an assignment."]}
+{"code":"if (a ??= b) {}","type":"script","reports":["1:5-1:12 Expected a conditional expression and instead saw an assignment."]}
+{"code":"if (a = b = c) {}","type":"script","reports":["1:5-1:14 Expected a conditional expression and instead saw an assignment."]}
+{"code":"if (a = (b = c)) {}","type":"script","reports":["1:5-1:16 Expected a conditional expression and instead saw an assignment."]}
+{"code":"if (!(a = b)) {}","type":"script","reports":[]}
+{"code":"if ((a = b) && c) {}","type":"script","reports":[]}
+{"code":"if (a && (b = c)) {}","type":"script","reports":[]}
+{"code":"if (a == b) {} else if (c = d) {}","type":"script","reports":["1:25-1:30 Expected a conditional expression and instead saw an assignment."]}
+{"code":"if (a) {} else if ((c = d)) {}","type":"script","reports":[]}
+{"code":"while (a = b) {}","type":"script","reports":["1:8-1:13 Expected a conditional expression and instead saw an assignment."]}
+{"code":"while ((a = b)) {}","type":"script","reports":[]}
+{"code":"while (((a = b))) {}","type":"script","reports":[]}
+{"code":"do {} while (a = b)","type":"script","reports":["1:14-1:19 Expected a conditional expression and instead saw an assignment."]}
+{"code":"do {} while ((a = b))","type":"script","reports":[]}
+{"code":"do ; while (a = b);","type":"script","reports":["1:13-1:18 Expected a conditional expression and instead saw an assignment."]}
+{"code":"do a = b; while (a = b)","type":"script","reports":["1:18-1:23 Expected a conditional expression and instead saw an assignment."]}
+{"code":"for (a = b; a = b; a = b) {}","type":"script","reports":["1:13-1:18 Expected a conditional expression and instead saw an assignment."]}
+{"code":"for (a = b; (a = b); a = b) {}","type":"script","reports":[]}
+{"code":"for (;a = b;) {}","type":"script","reports":["1:7-1:12 Expected a conditional expression and instead saw an assignment."]}
+{"code":"for (; (a = b) ;) {}","type":"script","reports":[]}
+{"code":"for (;((a = b));) {}","type":"script","reports":[]}
+{"code":"for (var i = 0; i = 1;) {}","type":"script","reports":["1:17-1:22 Expected a conditional expression and instead saw an assignment."]}
+{"code":"for (;;a = b) {}","type":"script","reports":[]}
+{"code":"for (a = b;;) {}","type":"script","reports":[]}
+{"code":"for (a in b = c) {}","type":"script","reports":[]}
+{"code":"for (a of (b = c)) {}","type":"script","reports":[]}
+{"code":"(a = b) ? c : d;","type":"script","reports":["1:2-1:7 Expected a conditional expression and instead saw an assignment."]}
+{"code":"((a = b)) ? c : d;","type":"script","reports":[]}
+{"code":"(((a = b))) ? c : d;","type":"script","reports":[]}
+{"code":"x = (a = b) ? c : d;","type":"script","reports":["1:6-1:11 Expected a conditional expression and instead saw an assignment."]}
+{"code":"f((a = b) ? c : d);","type":"script","reports":["1:4-1:9 Expected a conditional expression and instead saw an assignment."]}
+{"code":"f(((a = b)) ? c : d);","type":"script","reports":[]}
+{"code":"((a = b) ? c : d);","type":"script","reports":["1:3-1:8 Expected a conditional expression and instead saw an assignment."]}
+{"code":"(((a = b)) ? c : d);","type":"script","reports":[]}
+{"code":"a ? (b = c) : d;","type":"script","reports":[]}
+{"code":"a ? b : (c = d);","type":"script","reports":[]}
+{"code":"a ? b : c = d;","type":"script","reports":[]}
+{"code":"(a = b) ? (c = d) ? e : f : g;","type":"script","reports":["1:2-1:7 Expected a conditional expression and instead saw an assignment.","1:12-1:17 Expected a conditional expression and instead saw an assignment."]}
+{"code":"x = (a = b) ? c : (d = e) ? f : g;","type":"script","reports":["1:6-1:11 Expected a conditional expression and instead saw an assignment.","1:20-1:25 Expected a conditional expression and instead saw an assignment."]}
+{"code":"if ((a = b) ? c : d) {}","type":"script","reports":["1:6-1:11 Expected a conditional expression and instead saw an assignment."]}
+{"code":"if (((a = b)) ? c : d) {}","type":"script","reports":[]}
+{"code":"while ((a = b) ? c : d) {}","type":"script","reports":["1:9-1:14 Expected a conditional expression and instead saw an assignment."]}
+{"code":"`${(a = b) ? c : d}`;","type":"script","reports":["1:5-1:10 Expected a conditional expression and instead saw an assignment."]}
+{"code":"[(a = b) ? c : d];","type":"script","reports":["1:3-1:8 Expected a conditional expression and instead saw an assignment."]}
+{"code":"({ x: (a = b) ? c : d });","type":"script","reports":["1:8-1:13 Expected a conditional expression and instead saw an assignment."]}
+{"code":"function f() { return (a = b) ? c : d; }","type":"script","reports":["1:24-1:29 Expected a conditional expression and instead saw an assignment."]}
+{"code":"() => (a = b) ? c : d;","type":"script","reports":["1:8-1:13 Expected a conditional expression and instead saw an assignment."]}
+{"code":"var f = () => { if (a = b) {} };","type":"script","reports":["1:21-1:26 Expected a conditional expression and instead saw an assignment."]}
+{"code":"class A { m() { while (a = b) {} } static { if (a = b) {} } x = (a = b) ? 1 : 2; }","type":"script","reports":["1:24-1:29 Expected a conditional expression and instead saw an assignment.","1:49-1:54 Expected a conditional expression and instead saw an assignment.","1:66-1:71 Expected a conditional expression and instead saw an assignment."]}
+{"code":"label: if (a = b) {}","type":"script","reports":["1:12-1:17 Expected a conditional expression and instead saw an assignment."]}
+{"code":"switch (a = b) { case c = d: }","type":"script","reports":[]}
+{"code":"if (a = b) if (c = d) {}","type":"script","reports":["1:5-1:10 Expected a conditional expression and instead saw an assignment.","1:16-1:21 Expected a conditional expression and instead saw an assignment."]}
+{"code":"if (a) {} else { if (c = d) {} }","type":"script","reports":["1:22-1:27 Expected a conditional expression and instead saw an assignment."]}
+{"code":"async function f() { if (a = await b) {} }","type":"script","reports":["1:26-1:37 Expected a conditional expression and instead saw an assignment."]}
+{"code":"function* g() { if (a = yield b) {} }","type":"script","reports":["1:21-1:32 Expected a conditional expression and instead saw an assignment."]}
+{"code":"if (a = function () { if (b = c) {} }) {}","type":"script","reports":["1:5-1:38 Expected a conditional expression and instead saw an assignment.","1:27-1:32 Expected a conditional expression and instead saw an assignment."]}
+{"code":"if (a = () => b = c) {}","type":"script","reports":["1:5-1:20 Expected a conditional expression and instead saw an assignment."]}
+{"code":"if (a = b ? c : d) {}","type":"script","reports":["1:5-1:18 Expected a conditional expression and instead saw an assignment."]}
+{"code":"if ((a = b) === c) {}","type":"script","reports":[]}
+{"code":"if (x.y = z) {}","type":"script","reports":["1:5-1:12 Expected a conditional expression and instead saw an assignment."]}
+{"code":"if (x[y] = z) {}","type":"script","reports":["1:5-1:13 Expected a conditional expression and instead saw an assignment."]}
+{"code":"if (x?.y) {} else if ((x).y = z) {}","type":"script","reports":["1:23-1:32 Expected a conditional expression and instead saw an assignment."]}
+{"code":"if ((x, y) = z) {}","type":"script","fatal":"Parsing error: Assigning to rvalue","reports":[]}

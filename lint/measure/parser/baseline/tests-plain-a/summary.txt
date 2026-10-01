@@ -1,0 +1,11 @@
+# HEAD be1ebe5295 dirty=[] 2026-10-01T08:58:59Z load=738.09 667.06 702.81
+plain test/bundler/transpiler/typescript-grammar.test.ts rc=0 secs=11 ::  180 pass; 0 fail; 180 expect() calls;Ran 180 tests across 1 file. [4.88s];
+plain test/bundler/transpiler/typescript-grammar-expressions.test.ts rc=0 secs=14 ::  63 pass; 0 fail; 63 expect() calls;Ran 63 tests across 1 file. [2.42s];
+plain test/bundler/transpiler/typescript-grammar-statements.test.ts rc=0 secs=11 ::  66 pass; 0 fail; 66 expect() calls;Ran 66 tests across 1 file. [2.98s];
+plain test/bundler/transpiler/typescript-grammar-decorator-metadata.test.ts rc=0 secs=12 ::  57 pass; 0 fail; 57 expect() calls;Ran 57 tests across 1 file. [3.41s];
+plain test/bundler/transpiler/decorator-metadata.test.ts rc=0 secs=10 ::  5 pass; 0 fail; 227 expect() calls;Ran 5 tests across 1 file. [3.33s];
+plain test/bundler/transpiler/decorators.test.ts rc=0 secs=25 ::  24 pass; 0 fail; 273 expect() calls;Ran 24 tests across 1 file. [18.76s];
+plain test/bundler/transpiler/transpiler-stack-overflow.test.ts rc=0 secs=32 ::  1 pass; 0 fail; 1 expect() calls;
+plain test/bundler/transpiler/transpiler.test.js rc=0 secs=46 ::  237 pass; 1 skip; 21 todo; 0 fail; 12 snapshots, 2043 expect() calls;Ran 259 tests across 1 file. [40.78s];
+plain test/bundler/bundler_decorator_metadata.test.ts rc=0 secs=12 ::  2 pass; 0 fail; 2 expect() calls;Ran 2 tests across 1 file. [7.67s];
+plain test/bundler/esbuild/ts.test.ts rc=0 secs=46 ::  59 pass; 16 todo; 0 fail; 43 expect() calls;Ran 75 tests across 1 file. [41.35s];

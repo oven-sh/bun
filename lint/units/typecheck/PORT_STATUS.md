@@ -24,6 +24,11 @@ declares it in `lib.rs`:
   `crate::stringutil`, which the same commit declares. The line was written without a cargo run: the survey of
   round 2 is the first cargo compile of the four files, and the seven tests of `jsnum` have run from the scratch
   root only.
+- `stringutil`: declared by `80dcacd6db` (`pub mod stringutil;`, its seven files are unchanged since `1e45ca9abb`).
+  It names no other package. No `cargo check` and no `cargo test` was run with that commit: the survey of round 2 is
+  the first cargo compile of the seven files, and the seven tests of `stringutil` have run from the scratch root
+  only. Compared with upstream at that commit, entry for entry and equal: the four range tables and the 2,927 rows
+  of the casing table against `identifier_parts_generated.go` and `js_case_generated.go`.
 - `tspath`: declared by `c1d548ae4e` (`pub mod tspath;`, its three files are unchanged since `1e45ca9abb`). It names
   `crate::stringutil`, so it compiles only in a tree whose `lib.rs` declares `stringutil` as well. No `cargo check`
   and no `cargo test` was run with that commit: the survey of round 2 is the first cargo compile of the three files,

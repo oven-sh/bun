@@ -1,0 +1,21 @@
+$ BUN_DEBUG_QUIET_LOGS=1 bun scripts/build.ts --profile=debug --quiet test test/js/bun/typescript/type-export.test.ts
+bun test v1.4.3 (be1ebe529)
+
+test/js/bun/typescript/type-export.test.ts:
+(skip) re-export with export from > import with require > run > works
+(pass) re-export with export from > import with require > build > works [1294.86ms]
+(fail) re-export with export from > import with require > compile > works [5003.70ms]
+  ^ this test timed out after 5000ms.
+(skip) re-export with export from > import with import star > run > works
+(pass) re-export with export from > import with import star > build > works [674.22ms]
+(pass) re-export with export from > import with import star > compile > works [4049.25ms]
+(skip) re-export with export from > import with await import > run > works
+(pass) re-export with export from > import with await import > build > works [578.53ms]
+(pass) re-export with export from > import with await import > compile > works [4481.68ms]
+(skip) re-export with export from > import with import individual > run > works
+(pass) re-export with export from > import with import individual > build > works [1049.05ms]
+(pass) re-export with export from > import with import individual > compile > works [4712.70ms]
+(skip) re-export with import then export > import with require > run > works
+(pass) re-export with import then export > import with require > build > works [643.96ms]
+(pass) re-export with import then export > import with require > compile > works [4286.38ms]
+(skip) re-export with import then export > import with import star > run > works

@@ -140,9 +140,9 @@ Files that are not ported: `collections/syncmap.go`, `collections/syncset.go`, `
 ### Verified
 
 At `1e45ca9abb` nothing was built with cargo or `bun bd`: `lib.rs` did not declare the modules. The five packages
-were compiled in place with `rustc` alone from a scratch root (`#[path]` to the five `mod.rs`), with the `deny` set of the workspace
-(`warnings`, `dead_code`, `unreachable_pub`, `unused_*`), then with `clippy-driver` and the repository's
-`clippy.toml` and lint table (library and tests), and `rustfmt --check`. All clean.
+were compiled in place with `rustc` alone from a scratch root (`#[path]` to the five `mod.rs`), with the `deny` set
+of the workspace (`warnings`, `dead_code`, `unreachable_pub`, `unused_*`), then with `clippy-driver` and the
+repository's `clippy.toml` and lint table (library and tests), and `rustfmt --check`. All clean.
 
 The 38 `#[test]`s of the packages ran from that scratch root and pass, also with overflow checks and debug
 assertions on. They replay what upstream's Go code answers (`testdata/*.tsv` beside the modules):

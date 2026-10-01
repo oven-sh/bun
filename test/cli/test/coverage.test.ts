@@ -1,6 +1,6 @@
-import { beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
-import { readFileSync } from "node:fs";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isPosix, normalizeBunSnapshot, tempDir } from "harness";
+import { readFileSync, truncateSync, writeFileSync } from "node:fs";
 import path from "path";
 
 test("coverage crash", () => {
@@ -588,6 +588,289 @@ All files  |    0.00 |    0.00 |
 Ran 1 test across 1 file."
 `);
   expect(result.exitCode).toBe(0);
+});
+
+// `bun build --target=bun` writes a file that starts with `// @bun`, and a JSON source map for
+// it. The report of such a file is in the lines of its sources. The map does not say how many
+// lines they have, and the report made room for 2^31 of them: 768 MiB for each file, and under
+// `--parallel` a 9 GB message that the worker could not build. The room is now one past the
+// largest line that a mapping names, and never more than the source text at hand can have.
+// https://github.com/oven-sh/bun/issues/44325
+describe("a file with a JSON source map", () => {
+  const source = "export function first() {\n  return 1;\n}\nexport function second() {\n  return 2;\n}\n";
+  // A hand-made file is `// @bun`, then `source`, then the comment that names its map.
+  // `lineByLine` maps each line of `source` in it to itself.
+  const handMade = (name: string) => `// @bun\n${source}//# sourceMappingURL=${name}.js.map\n`;
+  const lineByLine = ";AAAA;AACA;AACA;AACA;AACA;AACA";
+  // One more mapping, for the comment: the line of the source goes up by 2^31 - 6, to 2^31 - 1.
+  const hugeLine = lineByLine + ";AA0/////DA";
+  type SourceMapFields = { sources: string[]; sourcesContent: (string | null)[]; mappings: string };
+  const map = (fields: Partial<SourceMapFields> = {}) =>
+    JSON.stringify({
+      version: 3,
+      sources: ["../src/lib.ts"],
+      sourcesContent: [source],
+      mappings: lineByLine,
+      names: [],
+      ...fields,
+    });
+  // `undefined`: the file names a map that does not exist, so its report is in its own lines.
+  const handMadeMaps: Record<string, string | undefined> = {
+    "plain": map(),
+    "no-map": undefined,
+    "no-mappings": map({ mappings: "" }),
+    "huge-line": map({ mappings: hugeLine }),
+    // The last line of `plain` in the report is 6. A text of 5 bytes can have 6 lines.
+    "text-of-5-bytes": map({ sourcesContent: ["12345"] }),
+    "text-of-4-bytes": map({ sourcesContent: ["1234"] }),
+    "null-text": map({ sourcesContent: [null] }),
+    "empty-text": map({ sourcesContent: [""] }),
+    "null-text-huge-line": map({ sourcesContent: [null], mappings: hugeLine }),
+    "null-text-missing-file": map({ sources: ["../src/missing.ts"], sourcesContent: [null] }),
+    "no-sources": map({ sources: [], sourcesContent: [] }),
+  };
+  // [the map, the end of its warning]
+  const unreadable: [string, RegExp][] = [
+    ["null-text-missing-file", /missing\.ts" and the file could not be read \(ENOENT\)$/],
+    ["no-sources", /: the sourcemap names no source$/],
+  ];
+  if (isPosix) {
+    handMadeMaps["null-text-fifo"] = map({ sources: ["../src/fifo"], sourcesContent: [null] });
+    handMadeMaps["null-text-2-gib-file"] = map({ sources: ["../src/2-gib"], sourcesContent: [null] });
+    unreadable.push(
+      ["null-text-fifo", /fifo" and the file could not be read \(not a regular file\)$/],
+      ["null-text-2-gib-file", /2-gib" and the file could not be read \(larger than 2 GiB\)$/],
+    );
+  }
+  const handMadeNames = Object.keys(handMadeMaps);
+
+  const bunfig = "[test]\ncoverageSkipTestFiles = true\ncoverageThreshold = { functions = 0.9 }\n";
+  const files: Record<string, string> = {
+    "bunfig.toml": bunfig,
+    "ignore-maps.toml": bunfig + "coverageIgnoreSourcemaps = true\n",
+    "src/lib.ts": source,
+    // The map of the bundle of these two has both texts. `long.ts` has the larger lines.
+    "src/short.ts":
+      'import * as long from "./long.ts";\nexport const pick = (n: number) => [long.one, long.two, long.three, long.last][n];\n',
+    "src/long.ts":
+      "export function one() {\n  return 1;\n}\nexport function two() {\n  return 2;\n}\n" +
+      'export function three() {\n  return 3;\n}\nexport function last() {\n  return "never called";\n}\n',
+    "built.test.ts": `
+import { expect, test } from "bun:test";
+import { first } from "./dist/linked/lib.js";
+
+test("calls first", () => {
+  expect(first()).toBe(1);
+});
+`,
+    "others.test.ts": `
+import { expect, test } from "bun:test";
+import { codeCoverageForFile } from "bun:jsc";
+import { first as inline } from "./dist/inline/lib.js";
+import { first as external } from "./dist/external/lib.js";
+import { pick } from "./dist/bundle/short.js";
+${handMadeNames.map((name, i) => `import { first as handMade${i} } from "./dist/${name}.js";`).join("\n")}
+
+test("calls first of each file", () => {
+  for (const first of [inline, external, ${handMadeNames.map((_, i) => `handMade${i}`).join(", ")}]) expect(first()).toBe(1);
+  expect(pick(0)()).toBe(1);
+  // codeCoverageForFile() takes the path as the module loader spells it.
+  const row = (name: string) => codeCoverageForFile(Bun.resolveSync("./dist/" + name + ".js", import.meta.dir), false);
+  console.log(JSON.stringify({ plain: row("plain"), unreadable: [row("no-sources"), row("no-sources")] }));
+});
+`,
+    // On Linux the peak RSS of a child starts at the RSS of its parent, and the process that runs
+    // this file is large. So a small process starts the two runs to compare.
+    "peak-rss-fixture.ts": `
+async function run(config: string) {
+  const proc = Bun.spawn({
+    cmd: [process.execPath, "--config=" + config, "test", "--coverage", "./built.test.ts"],
+    cwd: import.meta.dir,
+    stdio: ["ignore", "ignore", "ignore"],
+  });
+  const exitCode = await proc.exited;
+  return { maxRSS: proc.resourceUsage()!.maxRSS, exitCode };
+}
+const [withTheMap, withoutTheMap] = await Promise.all([run("bunfig.toml"), run("ignore-maps.toml")]);
+console.log(JSON.stringify({ withTheMap, withoutTheMap }));
+`,
+  };
+  for (const [name, text] of Object.entries(handMadeMaps)) {
+    files[`dist/${name}.js`] = handMade(name);
+    if (text !== undefined) files[`dist/${name}.js.map`] = text;
+  }
+
+  type Row = { functions: string; lines: string; uncovered: string };
+  type Report = {
+    rows: Record<string, Row>;
+    // For each file, the lines that its lcov record has a `DA:` entry for.
+    lines: Record<string, number[]>;
+    lcov: string;
+    stdout: string;
+    stderr: string;
+    exitCode: number;
+  };
+  async function report(cwd: string, coverageDir: string, ...args: string[]): Promise<Report> {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "test",
+        "--coverage",
+        "--coverage-reporter=text",
+        "--coverage-reporter=lcov",
+        `--coverage-dir=${coverageDir}`,
+        ...args,
+      ],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const rows: Report["rows"] = {};
+    for (const [, file, functions, lines, uncovered] of stderr.matchAll(
+      /^ (\S+) +\| +(\d+\.\d+) \| +(\d+\.\d+) \| ?([\d,-]*)$/gm,
+    )) {
+      rows[file.replaceAll("\\", "/")] = { functions, lines, uncovered };
+    }
+    const lcov = readFileSync(path.join(cwd, coverageDir, "lcov.info"), "utf-8");
+    const lines: Report["lines"] = {};
+    for (const record of lcov.split("end_of_record")) {
+      const file = record.match(/^SF:(.+)$/m)?.[1].replaceAll("\\", "/");
+      if (file) lines[file] = Array.from(record.matchAll(/^DA:(\d+),/gm), ([, line]) => Number(line));
+    }
+    return { rows, lines, lcov, stdout, stderr, exitCode };
+  }
+
+  let dir: ReturnType<typeof tempDir>;
+  let bundleMappings: string;
+  let serial: Report;
+  let parallel: Report;
+
+  beforeAll(async () => {
+    dir = tempDir("cov-json-source-map", files);
+    const cwd = String(dir);
+    if (isPosix) {
+      expect(Bun.spawnSync(["mkfifo", path.join(cwd, "src", "fifo")]).exitCode).toBe(0);
+      // One byte more than the longest text that a parser of bun takes. It has no data on disk.
+      writeFileSync(path.join(cwd, "src", "2-gib"), "");
+      truncateSync(path.join(cwd, "src", "2-gib"), 2 ** 31);
+    }
+    const build = (entry: string, outdir: string, sourcemap: "linked" | "inline" | "external") =>
+      Bun.build({
+        entrypoints: [path.join(cwd, "src", entry)],
+        outdir: path.join(cwd, "dist", outdir),
+        target: "bun",
+        sourcemap,
+        throw: true,
+      });
+    await Promise.all([
+      build("lib.ts", "linked", "linked"),
+      build("lib.ts", "inline", "inline"),
+      build("lib.ts", "external", "external"),
+      build("short.ts", "bundle", "linked"),
+    ]);
+    bundleMappings = JSON.parse(readFileSync(path.join(cwd, "dist", "bundle", "short.js.map"), "utf-8")).mappings;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "peak-rss-fixture.ts"],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(exitCode).toBe(0);
+    const { withTheMap, withoutTheMap } = JSON.parse(stdout);
+    // Each run reports that `second` was never called, which is below the threshold.
+    expect([withTheMap.exitCode, withoutTheMap.exitCode]).toEqual([1, 1]);
+    // The run with the map took 768 MiB more. While it does, the runs of the next hook need
+    // gigabytes, and they do not start after a hook that failed.
+    expect(withTheMap.maxRSS - withoutTheMap.maxRSS).toBeLessThan(256 * 1024 * 1024);
+  });
+
+  beforeAll(async () => {
+    [serial, parallel] = await Promise.all([
+      report(String(dir), "serial"),
+      report(String(dir), "parallel", "--parallel=2"),
+    ]);
+  });
+
+  afterAll(() => dir?.[Symbol.dispose]());
+
+  test.each(["linked", "inline", "external"])("bun build --sourcemap=%s reports the lines of the source", kind => {
+    // `second` is never called. It starts on line 4, and `return 2;` is line 5.
+    expect(serial.rows[`dist/${kind}/lib.js`]).toEqual({
+      functions: "50.00",
+      lines: expect.any(String),
+      uncovered: expect.stringMatching(/^4(-5)?$/),
+    });
+    expect(serial.lines[`dist/${kind}/lib.js`]).toEqual([1, 2, 4, 5]);
+  });
+
+  test("a bundle of two sources has room for the lines of the longer one", () => {
+    // The parser of mappings takes another path for 128 bytes and more.
+    expect(bundleMappings.length).toBeGreaterThanOrEqual(128);
+    // short.ts has 2 lines. `return "never called";` is line 11 of long.ts, which has 12.
+    expect(serial.lines["dist/bundle/short.js"]).toContain(11);
+    expect(Math.max(...serial.lines["dist/bundle/short.js"])).toBeLessThanOrEqual(12);
+  });
+
+  test("a hand-made map reports the lines that it names", () => {
+    expect(serial.rows["dist/plain.js"]).toEqual({ functions: "50.00", lines: expect.any(String), uncovered: "4" });
+    expect(serial.lines["dist/plain.js"]).toEqual(expect.arrayContaining([1, 6]));
+    expect(Math.max(...serial.lines["dist/plain.js"])).toBe(6);
+    // Without the map the same text reports its own lines, which are one further down.
+    expect(serial.rows["dist/no-map.js"].uncovered).toBe("5");
+  });
+
+  test("a map with no mappings reports no line", () => {
+    expect(serial.rows["dist/no-mappings.js"]).toEqual({ functions: "100.00", lines: "100.00", uncovered: "" });
+    expect(serial.lines["dist/no-mappings.js"]).toEqual([]);
+  });
+
+  test("a mapping to line 2^31 of a text of 6 lines is dropped", () => {
+    expect(serial.rows["dist/huge-line.js"]).toEqual(serial.rows["dist/plain.js"]);
+    expect(serial.lines["dist/huge-line.js"]).toEqual(serial.lines["dist/plain.js"]);
+  });
+
+  test("a text of n bytes has room for n + 1 lines", () => {
+    expect(serial.lines["dist/text-of-5-bytes.js"]).toEqual(serial.lines["dist/plain.js"]);
+    expect(serial.lines["dist/text-of-4-bytes.js"]).toEqual(serial.lines["dist/plain.js"].filter(line => line < 6));
+  });
+
+  describe("with no text for a source in the map", () => {
+    test.each(["null-text", "empty-text", "null-text-huge-line"])("%s: the file of the source has the lines", name => {
+      expect(serial.rows[`dist/${name}.js`]).toEqual(serial.rows["dist/plain.js"]);
+      expect(serial.lines[`dist/${name}.js`]).toEqual(serial.lines["dist/plain.js"]);
+    });
+
+    test.each(unreadable)("%s: the report is in the lines of the built file, with a warning", (name, why) => {
+      expect(serial.rows[`dist/${name}.js`]).toEqual(serial.rows["dist/no-map.js"]);
+      expect(serial.lines[`dist/${name}.js`]).toEqual(serial.lines["dist/no-map.js"]);
+      const warnings = serial.stderr.split("\n").filter(line => line.includes(" is not mapped to its sources"));
+      expect(warnings.filter(line => line.includes(`${name}.js"`))).toEqual([
+        expect.stringMatching(/^warn: Coverage of ".+" is not mapped to its sources: the sourcemap /),
+      ]);
+      expect(warnings.find(line => line.includes(`${name}.js"`))).toMatch(why);
+      // No other file has the warning. codeCoverageForFile() reported `no-sources` twice before.
+      expect(warnings).toHaveLength(unreadable.length);
+    });
+  });
+
+  test("bun:jsc codeCoverageForFile()", () => {
+    const rows = JSON.parse(serial.stdout.split("\n").find(line => line.startsWith("{"))!);
+    expect(rows.plain).toMatch(/plain\.js \| +50\.00 \| +\d+\.\d+ \| 4$/);
+    expect(rows.unreadable[0]).toMatch(/no-sources\.js \| +50\.00 \| +\d+\.\d+ \| 5$/);
+    expect(rows.unreadable[1]).toBe(rows.unreadable[0]);
+  });
+
+  test("--parallel reports what the serial run reports", () => {
+    expect(parallel.rows).toEqual(serial.rows);
+    expect(parallel.lcov).toBe(serial.lcov);
+    // The threshold fails each run.
+    expect([serial.exitCode, parallel.exitCode]).toEqual([1, 1]);
+  });
 });
 
 // https://github.com/oven-sh/bun/issues/39930

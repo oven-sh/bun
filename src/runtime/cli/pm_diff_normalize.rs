@@ -276,12 +276,10 @@ fn print_js<'a>(
 
     let mut map = Vec::new();
     if let Some(chunk) = collector.0 {
-        let printed_lines = bun_core::strings::count_char(&text, b'\n') + 1;
         if let Ok(parsed) = bun_sourcemap::mapping::parse(
             chunk.buffer.list.as_slice(),
             None,
             1,
-            printed_lines,
             bun_sourcemap::mapping::ParseOptions {
                 allow_names: false,
                 sort: true,

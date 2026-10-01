@@ -677,7 +677,6 @@ impl SourceMapStore {
             &vlq_bytes,
             None,
             i32::try_from(entry.paths.len()).expect("int cast"),
-            0, // unused
             Default::default(),
         ) {
             Err(fail) => {

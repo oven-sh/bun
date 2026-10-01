@@ -2150,7 +2150,7 @@ function rawTarballMembers(tgz: Uint8Array) {
 
 // Only Linux lets a filename carry bytes that are not valid UTF-8 (APFS rejects
 // them and Windows filenames are UTF-16).
-test.skipIf(!isLinux)("filenames that are not valid UTF-8 are stored byte for byte", async () => {
+test.concurrent.skipIf(!isLinux)("filenames that are not valid UTF-8 are stored byte for byte", async () => {
   using dir = tempDir("pack-invalid-utf8", {
     "package.json": JSON.stringify({ name: "pack-invalid-utf8", version: "1.0.0" }),
   });

@@ -1,0 +1,46 @@
+{
+ "premise": "defect: process is documented as an instance of EventEmitter; node:events semantics (duplicate listeners, listenerCount(ev, fn), errorMonitor, emit('error') with no listener throws, borrowed EventEmitter.prototype methods operate on the same registry) are the contract. Bun's process used a separate native emitter (WebCore::JSEventEmitter) that reimplements these and diverges.",
+ "pick": "process-on-events-ts",
+ "pick_reason": "process becomes a real node:events EventEmitter: its prototype inherits from EventEmitter.prototype and its listeners live in its own _events. One implementation of the emitter contract is left, so every divergence of the native copy (dedupe, listenerCount(ev, fn), errorMonitor, no-listener error, throwing listeners, removeListener meta event, borrowed methods, process.on !== EventEmitter.prototype.on) ends at once, and about 1,600 lines of native emitter are deleted. Runtime-started emits (signals, IPC, exit, warnings) call the same emit.",
+ "why_not_minimal": "The minimal patch (oven-sh/bun#41830) repairs three symptoms inside the native emitter and leaves a second implementation of the EventEmitter contract that still differs (borrowed methods use another registry, emit does not propagate a throw, no 'removeListener' event, no rawListeners wrappers). Each new difference needs another native patch. It also keeps the cost of the native emitter: binary bytes and a separate listener map.",
+ "plan": [
+  "One PR (the seam, the builtins and the flip cannot be reviewed apart: the shape of the prototype depends on what process needs).",
+  "EventEmitter.prototype is a native object with a lazy static property table: a method is a builtin that is created at its first read, so the first access of process costs less than before.",
+  "Process inherits from it, listeners live in process._events, signal/IPC/memoryPressure hooks are 'newListener'/'removeListener' listeners as in node, the native emitter is deleted. Carries the tests of #41830.",
+  "Not in this PR: runtime emits call a user-replaced process.emit (#12918, #32228)."
+ ],
+ "measurements": [
+  "modules evaluated at first process.on (must stay 0: node:events is not evaluated)",
+  "GC cells / heap size at first process access, base vs PR",
+  "instructions per iteration for bench/emitter cases and process.on/off/emit/listenerCount, per JIT tier, base vs PR",
+  "instructions for runtime-started emits (signal, exit, beforeExit)",
+  "binary size (.text/.data) of release builds, base vs PR",
+  "count of host functions added/removed",
+  "rt_sigaction syscall counts for on/off of a signal listener",
+  "BUN_JSC_validateExceptionChecks=1 on the process and events tests"
+ ],
+ "siblings_in_scope": [
+  "process.on dedupe (#29451 / ledger #12251)",
+  "process.listenerCount(ev, fn)",
+  "signal handler disarmed one removal early",
+  "events.errorMonitor on process (#29452a)",
+  "process.emit('error') with no listener (#29452b)",
+  "EventEmitter.prototype.on.call(process) separate registry (#29453)",
+  "process.on !== EventEmitter.prototype.on",
+  "'removeListener' meta event on process",
+  "rawListeners once wrappers on process",
+  "postMessageToThread LISTENER_ERROR (internal/worker/messaging.ts manual listener loop)"
+ ],
+ "siblings_noted": [
+  "#29454 http Server captureRejections: fixed separately by merged #43557",
+  "#12918 runtime emits ignore a replaced process.emit (PR 4)"
+ ],
+ "revive": "e2ae14facd of #32228 for PR 4 (credit with Co-authored-by)",
+ "build_findings": [
+  "An eager prototype (19 builtin functions, 18 property transitions) made the first access of process cost 146k instructions (base 50.5k). The lazy table makes it 37.8k.",
+  "A static-table entry with a getter or setter would flag the structure (or, with Bun's stale lut generator, fail on assignment): all entries are PropertyCallback.",
+  "Bun's lut generator never sets HashTable::seenPropertyAttributes: process.exitCode = x only worked because the old native prototype had a custom accessor. Process::createStructure now sets the flag. Handed off the generator fix.",
+  "emit without a rest parameter (arguments object) is 3x to 15x slower in FTL for more than three arguments and for 'error': kept the closure that a builtin returns.",
+  "Cost that stays: the first process.on() of a program that used no EventEmitter before compiles addListener and emit: 634k instructions (base 10.5k)."
+ ]
+}

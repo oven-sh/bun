@@ -1,0 +1,10 @@
+### step=clippy cwd=/workspace/wt/parser
+### cmd: /workspace/tools/lk /tmp/parser-bb/clippy.sh
+### queued: 2026-10-01T09:58:05Z
+### lock acquired: 2026-10-01T10:08:27Z
+check rc=0
+check-all-targets rc=0
+clippy rc=101
+clippy-all-targets rc=101
+fmt rc=0
+### finished: 2026-10-01T10:10:03Z rc=1 run_secs=96

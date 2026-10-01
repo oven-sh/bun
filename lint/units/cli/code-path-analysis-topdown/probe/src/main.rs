@@ -29,7 +29,6 @@ struct Walk<'p, 'a> {
     field_value: bool,
     /// The next binding, when it is an identifier, is one that `isIdentifierReference` answers true for.
     bind_ref: bool,
-    dont_forward: bool,
     /// Operands that `as`, `satisfies`, `!` or `<T>` is around.
     ts_wrapped: HashSet<ExprId>,
     /// Trace statements for the rule prototype.
@@ -112,10 +111,10 @@ impl<'a> Walk<'_, 'a> {
         !self.ts_wrapped.is_empty() && self.ts_wrapped.contains(&ExprId::of(expr))
     }
 
-    /// getBooleanValueIfSimpleConstant: `t`, `f`, or `u` where the node is no Literal.
+    /// getBooleanValueIfSimpleConstant: `null` where the node is no Literal.
     fn constant(&self, expr: &Expr) -> &'static str {
         if self.is_ts_wrapped(expr) {
-            return "u";
+            return "null";
         }
         let truthy = match &expr.data {
             ExprData::EBoolean(node) => node.value,
@@ -134,9 +133,9 @@ impl<'a> Walk<'_, 'a> {
                 };
                 digits.iter().any(|&digit| digit != b'0' && digit != b'_' && digit != b'n')
             }
-            _ => return "u",
+            _ => return "null",
         };
-        if truthy { "t" } else { "f" }
+        if truthy { "true" } else { "false" }
     }
 
     /// `left` of an AssignmentPattern is walked; now its `right`.
@@ -148,6 +147,10 @@ impl<'a> Walk<'_, 'a> {
         self.op("forkBypassPath");
         self.op("forkPath");
         self.visit_expr(value);
+    }
+
+    /// The exit of an AssignmentPattern.
+    fn default_end(&mut self) {
         self.op("popForkContext");
         self.f();
     }
@@ -165,6 +168,7 @@ impl<'ast> Walk<'_, 'ast> {
                 self.bind_ref = true;
                 self.visit_binding(&arg.binding);
                 self.default_value(default);
+                self.default_end();
             } else if has_rest && index + 1 == count {
                 self.f();
                 self.bind_ref = false;
@@ -200,7 +204,6 @@ impl<'ast> Walk<'_, 'ast> {
         self.f();
         for property in class.properties.slice() {
             if let Some(block) = &property.class_static_block {
-                self.f();
                 self.op("start class-static-block");
                 self.f();
                 for stmt in block.stmts.iter() {
@@ -265,6 +268,7 @@ impl<'ast> Walk<'_, 'ast> {
         }
         if let Some(initializer) = &property.initializer {
             self.default_value(initializer);
+            self.default_end();
         }
         self.f();
     }
@@ -282,44 +286,41 @@ impl<'ast> Visitor<'ast> for Walk<'_, 'ast> {
         }
         // processCodePathToEnter
         match &stmt.data {
-            StmtData::SFunction(_) => {
-                self.f();
-                self.op("start function");
-            }
+            StmtData::SFunction(_) => self.op("start function"),
             StmtData::SSwitch(node) => {
                 let has_case = node.cases.slice().iter().any(|case| case.value.is_some());
-                let text = format!("pushSwitchContext {} {}", u8::from(has_case), self.label_of(label));
+                let text = format!("pushSwitchContext [{has_case},{}]", self.label_of(label));
                 self.op(&text);
             }
             StmtData::STry(node) => {
-                let text = format!("pushTryContext {}", u8::from(node.finally.is_some()));
+                let text = format!("pushTryContext [{}]", node.finally.is_some());
                 self.op(&text);
             }
-            StmtData::SIf(_) => self.op("pushChoiceContext test 0"),
+            StmtData::SIf(_) => self.op("pushChoiceContext [\"test\",false]"),
             StmtData::SWhile(_) => {
-                let text = format!("pushLoopContext WhileStatement {}", self.label_of(label));
+                let text = format!("pushLoopContext [\"WhileStatement\",{}]", self.label_of(label));
                 self.op(&text);
             }
             StmtData::SDoWhile(_) => {
-                let text = format!("pushLoopContext DoWhileStatement {}", self.label_of(label));
+                let text = format!("pushLoopContext [\"DoWhileStatement\",{}]", self.label_of(label));
                 self.op(&text);
             }
             StmtData::SFor(_) => {
-                let text = format!("pushLoopContext ForStatement {}", self.label_of(label));
+                let text = format!("pushLoopContext [\"ForStatement\",{}]", self.label_of(label));
                 self.op(&text);
             }
             StmtData::SForIn(_) => {
-                let text = format!("pushLoopContext ForInStatement {}", self.label_of(label));
+                let text = format!("pushLoopContext [\"ForInStatement\",{}]", self.label_of(label));
                 self.op(&text);
             }
             StmtData::SForOf(_) => {
-                let text = format!("pushLoopContext ForOfStatement {}", self.label_of(label));
+                let text = format!("pushLoopContext [\"ForOfStatement\",{}]", self.label_of(label));
                 self.op(&text);
             }
             StmtData::SLabel(node) => {
                 if !breakable(&node.stmt) {
                     let name = self.parsed.name_of(node.name.ref_);
-                    let text = format!("pushBreakContext 0 {}", json(name));
+                    let text = format!("pushBreakContext [false,{}]", json(name));
                     self.op(&text);
                 }
             }
@@ -336,14 +337,14 @@ impl<'ast> Visitor<'ast> for Walk<'_, 'ast> {
             StmtData::SBreak(node) => {
                 self.f();
                 let name = node.label.as_ref().map(|label| self.parsed.name_of(label.ref_));
-                let text = format!("makeBreak {}", self.label_of(name));
+                let text = format!("makeBreak [{}]", self.label_of(name));
                 self.op(&text);
                 dont_forward = true;
             }
             StmtData::SContinue(node) => {
                 self.f();
                 let name = node.label.as_ref().map(|label| self.parsed.name_of(label.ref_));
-                let text = format!("makeContinue {}", self.label_of(name));
+                let text = format!("makeContinue [{}]", self.label_of(name));
                 self.op(&text);
                 dont_forward = true;
             }
@@ -398,7 +399,6 @@ impl<'ast> Visitor<'ast> for Walk<'_, 'ast> {
         let mut is_default = false;
         // processCodePathToEnter
         if field_value {
-            self.f();
             self.op("start class-field-initializer");
         }
         if chain_root {
@@ -406,10 +406,7 @@ impl<'ast> Visitor<'ast> for Walk<'_, 'ast> {
             self.f();
         }
         match &expr.data {
-            ExprData::EFunction(_) | ExprData::EArrow(_) => {
-                self.f();
-                self.op("start function");
-            }
+            ExprData::EFunction(_) | ExprData::EArrow(_) => self.op("start function"),
             ExprData::EDot(_) | ExprData::EIndex(_) | ExprData::ECall(_) => {
                 if optional_chain == Some(OptionalChain::Start) {
                     self.op("makeOptionalNode");
@@ -420,11 +417,11 @@ impl<'ast> Visitor<'ast> for Walk<'_, 'ast> {
                     is_default = true;
                 } else if let Some(kind) = logical(node.op) {
                     let forks = forking && !self.is_ts_wrapped(expr);
-                    let text = format!("pushChoiceContext {kind} {}", u8::from(forks));
+                    let text = format!("pushChoiceContext [\"{kind}\",{forks}]");
                     self.op(&text);
                 }
             }
-            ExprData::EIf(_) => self.op("pushChoiceContext test 0"),
+            ExprData::EIf(_) => self.op("pushChoiceContext [\"test\",false]"),
             ExprData::ESpread(_) => self.not_ref = not_ref,
             _ => {}
         }
@@ -435,7 +432,7 @@ impl<'ast> Visitor<'ast> for Walk<'_, 'ast> {
             _ => walk::walk_expr(self, expr),
         }
         // processCodePathToExit
-        let mut dont_forward = core::mem::take(&mut self.dont_forward);
+        let mut dont_forward = false;
         match &expr.data {
             ExprData::EIf(_) => self.op("popChoiceContext"),
             ExprData::EBinary(node) => {
@@ -505,6 +502,7 @@ impl<'ast> Visitor<'ast> for Walk<'_, 'ast> {
                         self.bind_ref = true;
                         self.visit_binding(&item.binding);
                         self.default_value(default);
+                        self.default_end();
                     } else if node.has_spread && index + 1 == count {
                         self.f();
                         self.visit_binding(&item.binding);
@@ -538,6 +536,7 @@ impl<'ast> Visitor<'ast> for Walk<'_, 'ast> {
                         self.bind_ref = true;
                         self.visit_binding(&property.value);
                         self.default_value(default);
+                        self.default_end();
                     } else {
                         self.bind_ref = true;
                         self.visit_binding(&property.value);
@@ -561,7 +560,7 @@ impl<'ast> Visitor<'ast> for Walk<'_, 'ast> {
     }
 
     fn visit_s_while(&mut self, node: &'ast S::While, _: Loc) {
-        let text = format!("makeWhileTest {}", self.constant(&node.test));
+        let text = format!("makeWhileTest [{}]", self.constant(&node.test));
         self.op(&text);
         self.forking = true;
         self.visit_expr(&node.test);
@@ -572,7 +571,7 @@ impl<'ast> Visitor<'ast> for Walk<'_, 'ast> {
     fn visit_s_do_while(&mut self, node: &'ast S::DoWhile, _: Loc) {
         self.op("makeDoWhileBody");
         self.visit_stmt(&node.body);
-        let text = format!("makeDoWhileTest {}", self.constant(&node.test));
+        let text = format!("makeDoWhileTest [{}]", self.constant(&node.test));
         self.op(&text);
         self.forking = true;
         self.visit_expr(&node.test);
@@ -586,7 +585,7 @@ impl<'ast> Visitor<'ast> for Walk<'_, 'ast> {
             }
         }
         if let Some(test) = &node.test {
-            let text = format!("makeForTest {}", self.constant(test));
+            let text = format!("makeForTest [{}]", self.constant(test));
             self.op(&text);
             self.forking = true;
             self.visit_expr(test);
@@ -645,18 +644,18 @@ impl<'ast> Visitor<'ast> for Walk<'_, 'ast> {
             if let Some(value) = &case.value {
                 self.visit_expr(value);
             }
-            let is_default = u8::from(case.value.is_none());
+            let is_default = case.value.is_none();
             let body = case.body.slice();
             for (at, stmt) in body.iter().enumerate() {
                 if at == 0 {
-                    let text = format!("makeSwitchCaseBody 0 {is_default}");
+                    let text = format!("makeSwitchCaseBody [false,{is_default}]");
                     self.op(&text);
                 }
                 self.visit_stmt(stmt);
             }
             // A SwitchCase: processCodePathToExit.
             if body.is_empty() {
-                let text = format!("makeSwitchCaseBody 1 {is_default}");
+                let text = format!("makeSwitchCaseBody [true,{is_default}]");
                 self.op(&text);
             }
             self.op("F-unless-reachable");
@@ -810,12 +809,10 @@ impl<'ast> Visitor<'ast> for Walk<'_, 'ast> {
 impl<'ast> Walk<'_, 'ast> {
     /// The operands of a binary expression in the order they are evaluated, a chain of left operands without recursion.
     fn binary(&mut self, outer: &'ast E::Binary, outer_is_default: bool) {
-        // Each link of the chain below `outer`, with what its enter decided.
-        let mut inner: Vec<(&'ast E::Binary, bool)> = Vec::new();
+        // `outer`, then each binary expression that is the left operand of the one before it, with what its enter decided.
+        let mut links: Vec<(&'ast E::Binary, bool)> = vec![(outer, outer_is_default)];
         let mut link = outer;
-        let mut link_is_default = outer_is_default;
         loop {
-            // `left` of `link` is next: mark it when it is an assignment target.
             if link.op == OpCode::BinAssign && matches!(link.left.data, ExprData::EArray(_) | ExprData::EObject(_)) {
                 self.mark(&link.left);
             }
@@ -827,20 +824,18 @@ impl<'ast> Walk<'_, 'ast> {
             if left.op == OpCode::BinAssign && self.take(core::ptr::from_ref::<E::Binary>(left).addr()) {
                 is_default = true;
             } else if let Some(kind) = logical(left.op) {
-                let forks = logical(link.op).is_some() && !link_is_default && !self.is_ts_wrapped(&link.left);
-                let text = format!("pushChoiceContext {kind} {}", u8::from(forks));
+                let forks = logical(link.op).is_some() && !self.is_ts_wrapped(&link.left);
+                let text = format!("pushChoiceContext [\"{kind}\",{forks}]");
                 self.op(&text);
             }
             self.f();
-            inner.push((left, is_default));
+            links.push((left, is_default));
             link = left;
-            link_is_default = is_default;
         }
-        self.forking = logical(link.op).is_some() && !link_is_default;
+        self.forking = logical(link.op).is_some();
         self.visit_expr(&link.left);
-        loop {
-            // `right` of `link`.
-            if link_is_default {
+        while let Some((link, is_default)) = links.pop() {
+            if is_default {
                 self.default_value(&link.right);
             } else {
                 if logical(link.op).is_some() {
@@ -849,21 +844,18 @@ impl<'ast> Walk<'_, 'ast> {
                 }
                 self.visit_expr(&link.right);
             }
-            let Some((done, is_default)) = inner.pop() else {
+            if links.is_empty() {
+                // processCodePathToExit of `outer` is its caller's.
                 break;
-            };
-            // processCodePathToExit of `done`; the one of `outer` is its caller's.
+            }
             if is_default {
-                // popForkContext and the forward were made by `default_value`.
+                self.default_end();
             } else {
-                if logical(done.op).is_some() {
+                if logical(link.op).is_some() {
                     self.op("popChoiceContext");
                 }
                 self.f();
             }
-            let _ = is_default;
-            link = inner.last().map_or(outer, |(node, _)| *node);
-            link_is_default = inner.last().map_or(outer_is_default, |(_, is_default)| *is_default);
         }
     }
 }
@@ -910,7 +902,6 @@ fn trace(path: &str, with_nodes: bool) -> Option<String> {
             not_ref: false,
             field_value: false,
             bind_ref: false,
-            dont_forward: false,
             ts_wrapped,
             with_nodes,
         };

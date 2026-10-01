@@ -1,0 +1,19 @@
+RESEARCH OF D4, "rules-bindings", the pass that starts from the goal (1b). Nothing here is in the tree. Read at be1ebe5295 of /workspace/wt/cli.
+The other pass of the same research has ../oracle, ../cases and ../vectors; this pass only reads them.
+
+v.cjs            node v.cjs <ext> <rule,rule> [--core] <cases.json>    ESLint at the pin as the harness of D2 configures it
+                 (../../ts-entry-codes-harness/topdown/tools/eslint-side.cjs: .cjs and .cts are commonjs, every other extension a module,
+                 a TypeScript extension through @typescript-eslint/parser, and @typescript-eslint/no-redeclare in place of no-redeclare
+                 unless --core). It has NO globals of Bun: for no-global-assign and for `global.Math()` use
+                 ../oracle/rb-oracle.cjs --bun-globals or ../../name-resolution/oracle/scope-oracle.cjs --bun-globals.
+                 node v.cjs plugins x x     the rules of typescript-eslint that stand in for a core rule.
+cols.cjs         node cols.cjs <cases.json> <index>     the statements of a one-line case with their columns, to read a report.
+carry.cjs        [SHOW=1] node carry.cjs <rule>...      ESLint's own cases of a rule (default options) by the extension that carries them.
+cases/           the lists behind the findings: each is an array of codes. js-* and cjs-* with scope-oracle.cjs or v.cjs js|cjs,
+                 ts-* with v.cjs ts. ts-no-dupe-args-paren.json: the `(` that ESLint reports when a type parameter list holds one.
+parse-probe/     one declaration clash or restricted name per file: what the lint parse takes and what it rejects.
+                 for f in parse-probe/*; do ASAN_OPTIONS=detect_leaks=0 /tmp/nr/nrprobe --no-tree $f; done
+                 (the probe of ../../name-resolution/probe). Rejected ("... has already been declared"): a03 a04 a09 a10 a11 a12 a20
+                 a22 a24 a25 a27 b16 b17 b22. Taken: every other file, among them a05 (`let a; { var a; }`), a13 (`catch (e) { let e; }`),
+                 a19 and a28 (eval and arguments bound or written in strict code), a31 (a parameter name twice in strict code, in an
+                 arrow function, in a method), b19 (`import { I }` and `const I` in TypeScript).

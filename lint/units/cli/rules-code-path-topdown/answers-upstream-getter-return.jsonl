@@ -1,0 +1,56 @@
+{"code":"var foo = { get bar(){return true;} };","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"class foo { get bar(){return true;} }","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"class foo { get bar(){if(baz){return true;} else {return false;} } }","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"class foo { get(){return true;} }","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"Object.defineProperty(foo, \"bar\", { get: function () {return true;}});","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"Object.defineProperty(foo, \"bar\", { get: function () { ~function (){ return true; }();return true;}});","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"Object.defineProperties(foo, { bar: { get: function () {return true;}} });","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"Object.defineProperties(foo, { bar: { get: function () { ~function (){ return true; }(); return true;}} });","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"Reflect.defineProperty(foo, \"bar\", { get: function () {return true;}});","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"Reflect.defineProperty(foo, \"bar\", { get: function () { ~function (){ return true; }();return true;}});","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"Object.create(foo, { bar: { get() {return true;} } });","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"Object.create(foo, { bar: { get: function () {return true;} } });","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"Object.create(foo, { bar: { get: () => {return true;} } });","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"var get = function(){};","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"var get = function(){ return true; };","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"var foo = { bar(){} };","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"var foo = { bar(){ return true; } };","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"var foo = { bar: function(){} };","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"var foo = { bar: function(){return;} };","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"var foo = { bar: function(){return true;} };","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"var foo = { get: function () {} }","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"var foo = { get: () => {}};","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"class C { get; foo() {} }","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"foo.defineProperty(null, { get() {} });","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"foo.defineProperties(null, { bar: { get() {} } });","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"foo.create(null, { bar: { get() {} } });","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"Object.defineProperty({ get() {} }, 'foo', { value: 1 });","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"Reflect.defineProperty({ get() {} }, 'foo', { value: 1 });","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"Object.defineProperties({ foo: { get() {} } }, { bar: { value: 1 } });","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"Object.create({ foo: { get() {} } }, { bar: { value: 1 } });","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"let Object; Object.defineProperty(foo, 'bar', { get() {} })","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"function f() { Reflect.defineProperty(foo, 'bar', { get() {} }); var Reflect;}","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"function f(Object) { Object.defineProperties(foo, { bar: { get() {} } }) }","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"if (x) { const Object = getObject(); Object.create(foo, { bar: { get() {} } }) }","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"/* globals Object:off */ Object.defineProperty(foo, 'bar', { get() {} })","ext":"js","sourceType":"script","kind":"valid","reports":["getter-return 1:62 Expected to return a value in method 'get'."]}
+{"code":"var foo = { get bar() {} };","ext":"js","sourceType":"script","kind":"invalid","reports":["getter-return 1:13 Expected to return a value in getter 'bar'."]}
+{"code":"var foo = { get\n bar () {} };","ext":"js","sourceType":"script","kind":"invalid","reports":["getter-return 1:13 Expected to return a value in getter 'bar'."]}
+{"code":"var foo = { get bar(){if(baz) {return true;}} };","ext":"js","sourceType":"script","kind":"invalid","reports":["getter-return 1:13 Expected getter 'bar' to always return a value."]}
+{"code":"var foo = { get bar() { ~function () {return true;}} };","ext":"js","sourceType":"script","kind":"invalid","reports":["getter-return 1:13 Expected to return a value in getter 'bar'."]}
+{"code":"var foo = { get bar() { return; } };","ext":"js","sourceType":"script","kind":"invalid","reports":["getter-return 1:25 Expected to return a value in getter 'bar'."]}
+{"code":"class foo { get bar(){} }","ext":"js","sourceType":"script","kind":"invalid","reports":["getter-return 1:13 Expected to return a value in getter 'bar'."]}
+{"code":"var foo = class {\n  static get\nbar(){} }","ext":"js","sourceType":"script","kind":"invalid","reports":["getter-return 2:3 Expected to return a value in static getter 'bar'."]}
+{"code":"class foo { get bar(){ if (baz) { return true; }}}","ext":"js","sourceType":"script","kind":"invalid","reports":["getter-return 1:13 Expected getter 'bar' to always return a value."]}
+{"code":"class foo { get bar(){ ~function () { return true; }()}}","ext":"js","sourceType":"script","kind":"invalid","reports":["getter-return 1:13 Expected to return a value in getter 'bar'."]}
+{"code":"Object.defineProperty(foo, 'bar', { get: function (){}});","ext":"js","sourceType":"script","kind":"invalid","reports":["getter-return 1:37 Expected to return a value in method 'get'."]}
+{"code":"Object.defineProperty(foo, 'bar', { get: function getfoo (){}});","ext":"js","sourceType":"script","kind":"invalid","reports":["getter-return 1:37 Expected to return a value in method 'get'."]}
+{"code":"Object.defineProperty(foo, 'bar', { get(){} });","ext":"js","sourceType":"script","kind":"invalid","reports":["getter-return 1:37 Expected to return a value in method 'get'."]}
+{"code":"Object.defineProperty(foo, 'bar', { get: () => {}});","ext":"js","sourceType":"script","kind":"invalid","reports":["getter-return 1:37 Expected to return a value in method 'get'."]}
+{"code":"Object.defineProperty(foo, \"bar\", { get: function (){if(bar) {return true;}}});","ext":"js","sourceType":"script","kind":"invalid","reports":["getter-return 1:37 Expected method 'get' to always return a value."]}
+{"code":"Object.defineProperty(foo, \"bar\", { get: function (){ ~function () { return true; }()}});","ext":"js","sourceType":"script","kind":"invalid","reports":["getter-return 1:37 Expected to return a value in method 'get'."]}
+{"code":"Reflect.defineProperty(foo, 'bar', { get: function (){}});","ext":"js","sourceType":"script","kind":"invalid","reports":["getter-return 1:38 Expected to return a value in method 'get'."]}
+{"code":"Object.create(foo, { bar: { get: function() {} } })","ext":"js","sourceType":"script","kind":"invalid","reports":["getter-return 1:29 Expected to return a value in method 'get'."]}
+{"code":"Object.create(foo, { bar: { get() {} } })","ext":"js","sourceType":"script","kind":"invalid","reports":["getter-return 1:29 Expected to return a value in method 'get'."]}
+{"code":"Object.create(foo, { bar: { get: () => {} } })","ext":"js","sourceType":"script","kind":"invalid","reports":["getter-return 1:29 Expected to return a value in method 'get'."]}
+{"code":"Object?.defineProperty(foo, 'bar', { get: function (){} });","ext":"js","sourceType":"script","kind":"invalid","reports":["getter-return 1:38 Expected to return a value in method 'get'."]}
+{"code":"(Object?.defineProperty)(foo, 'bar', { get: function (){} });","ext":"js","sourceType":"script","kind":"invalid","reports":["getter-return 1:40 Expected to return a value in method 'get'."]}

@@ -1,0 +1,52 @@
+RESEARCH OF D3, "rules-regex", pass 1a (from the code): no-control-regex, no-regex-spaces, no-useless-backreference,
+no-misleading-character-class, no-useless-escape. Nothing here is in the tree. Read at be1ebe5295 (worktree /workspace/wt/cli).
+The other pass of the same research has its own directory: ../../rules-regex-topdown/.
+
+The oracle is ESLint at the pin of src/lint/UPSTREAM_PORTED (/workspace/ref/eslint, regexpp 4.12.2, eslint-utils 4.10.1 =
+f16575f3ab9dbfa60854c2706bf71621aa02d56f) and, for a case with ext ts or tsx, the parser of typescript-eslint
+(/workspace/ref/tseslint): sh ../../tools/eslint-oracle-setup.sh restores both. Node v26.3.0, Unicode 17.0 (the same as the
+installed bun). "Bun" is /workspace/wt/cli/build/debug/bun-debug of be1ebe5295, which has none of the five rules: it was used
+to see which cases its parser rejects. /tmp/rx/probe and /tmp/nr/nrprobe (../../rules-expressions/probe, ../../name-resolution/probe)
+showed the tree of the parse pass.
+
+oracle/extract.cjs <rule>            ESLint's own cases of the rule as { valid, invalid, typescript } (reads cases/upstream-<rule>.json,
+                                     which ../../rules-source-text/oracle/upstream.cjs <rule> writes). A code once: the first list it is in.
+oracle/eslint.cjs <rule> <list> [--all-recommended] [--ts]   one rule at its DEFAULT options; one JSON line per case with
+                                     "line:column-endLine:endColumn message" (copy of ../../rules-source-text/oracle/eslint.cjs)
+oracle/run.cjs <rule[,rule]> <list> [--json] [--ts]   several rules over a list of codes or { code, ext?, jsx?, sourceType? }
+oracle/bun.cjs, bun-parse.cjs <bun-debug> <list>...   what a build of `bun --lint` prints for the cases (which ones its parser rejects)
+oracle/cross.cjs [--json]            the cases of test/cli/lint/rules/*.json of the tree on which one of the five reports (1 case)
+oracle/cross-lists.cjs <rules> <list>...   for every case of the lists, the rules that report on it: lines { rule, from, code, jsx?, ext?, expect }
+                                     in the form that ../../rules-statements/oracle/make-fixture.cjs takes as a .jsonl list
+oracle/gen-mark-ranges.cjs rust|check   General_Category Mark (what isCombiningCharacter tests) as a Rust table: 327 ranges, 654
+                                     numbers, 2543 code points, sum of the numbers 28960952 (Unicode 17.0, node and bun agree)
+
+cases/upstream-<rule>.json, extract-<rule>.json   ESLint's own cases. valid+invalid in the file: no-control-regex 28+21, no-regex-spaces
+                                     44+29, no-useless-backreference 101+89, no-misleading-character-class 55+135 (23 with allowEscape),
+                                     no-useless-escape 202+86 (53 with allowRegexCharacters). After one entry per code: 28+21, 44+29,
+                                     101+89, 55+128, 196+42. Bun's parser takes every one of them.
+cases/edge-literals.json             95 cases on regular expression literals: bytes before the literal that are no ASCII, raw control
+                                     characters, the flags u and v, literals that ESLint's parser rejects (12) and Bun's does not
+cases/edge-calls.json                113 cases `RegExp(...)` and `new RegExp(...)`: every form of callee, of pattern and of flags, names
+                                     declared in another scope, writes to RegExp, aliases
+cases/ts-calls.json                  55 TypeScript cases: as, !, <T>, satisfies and type arguments around the callee, the pattern and
+                                     the flags; declarations that leave no node; literals inside TypeScript syntax
+cases/edge-no-useless-escape-strings.json   82 cases (JavaScript, JSX, TypeScript by `ext`) of every place a string or a template can stand
+answers/upstream-<rule>.jsonl        eslint.cjs over the extract lists (what the rule says with its default options)
+answers/cross-upstream-<rule>.jsonl  the same with every rule of eslint:recommended: what else reports on the cases
+answers/edge-*.jsonl, ts-calls.jsonl run.cjs --json over the lists, the five rules together
+answers/cross-lists.jsonl, .txt      cross-lists.cjs over all the lists (926 lines); answers/cross-existing-fixtures.jsonl: cross.cjs --json
+answers/bun-upstream-<rule>.jsonl    bun.cjs: empty, no upstream case gets a line of the eleven rules or of the parser
+
+proto/mcc-model.cjs [count] [seed]   no-misleading-character-class as it is to be written: the pattern in UTF-16 units, every reported
+                                     position a BYTE offset (char-source.js on the bytes of a string or of a template, the bytes of a
+                                     regular expression literal), against ESLint: node mcc-model.cjs 12000 12345 -> 5920 compared,
+                                     5508 the same, 412 differ only because a position inside a character of two units has no byte, 0 wrong
+proto/escape-model.cjs [count] [seed]   the string and template part of no-useless-escape on bytes: 10109 compared, 0 wrong
+proto/spaces-model.cjs [count] [seed]   the scan that stands for /( {2,})(?: [+*{?]|[^+*{?]|$)/gu: 300000 texts, 0 wrong
+proto/char-source-vectors.cjs        ESLint's own char-source.js over 26 literals, its offsets as bytes: vectors for a Rust test
+
+A fixture, once a rule is in a build (the tool is the one of rules-statements; TypeScript cases need the tool of D2 that reads `ext`):
+node ../../rules-statements/oracle/make-fixture.cjs <rule> --bun /workspace/wt/cli/build/debug/bun-debug \
+  --out /workspace/wt/cli/test/cli/lint/rules/<rule>.json cases/extract-<rule>.json cases/edge-literals.json cases/edge-calls.json \
+  answers/cross-lists.jsonl answers/cross-existing-fixtures.jsonl

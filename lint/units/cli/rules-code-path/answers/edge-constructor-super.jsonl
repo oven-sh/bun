@@ -1,0 +1,173 @@
+{"code":"class A extends B { constructor() {  } }","ext":"js","eslint":[{"line":1,"column":21,"message":"Expected to call 'super()'."}]}
+{"code":"class A extends B { constructor() { super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { super(); super(); } }","ext":"js","eslint":[{"line":1,"column":46,"message":"Unexpected duplicate 'super()'."}]}
+{"code":"class A extends B { constructor() { return; } }","ext":"js","eslint":[{"line":1,"column":21,"message":"Expected to call 'super()'."}]}
+{"code":"class A extends B { constructor() { return a; } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { if (a) super(); } }","ext":"js","eslint":[{"line":1,"column":21,"message":"Lacked a call of 'super()' in some code paths."}]}
+{"code":"class A extends B { constructor() { if (a) super(); else super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { a && super(); } }","ext":"js","eslint":[{"line":1,"column":21,"message":"Lacked a call of 'super()' in some code paths."}]}
+{"code":"class A extends B { constructor() { a || super(); } }","ext":"js","eslint":[{"line":1,"column":21,"message":"Lacked a call of 'super()' in some code paths."}]}
+{"code":"class A extends B { constructor() { a ?? super(); } }","ext":"js","eslint":[{"line":1,"column":21,"message":"Lacked a call of 'super()' in some code paths."}]}
+{"code":"class A extends B { constructor() { a ? super() : super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { a ? super() : 0; } }","ext":"js","eslint":[{"line":1,"column":21,"message":"Lacked a call of 'super()' in some code paths."}]}
+{"code":"class A extends B { constructor() { while (a) super(); } }","ext":"js","eslint":[{"line":1,"column":21,"message":"Lacked a call of 'super()' in some code paths."},{"line":1,"column":47,"message":"Unexpected duplicate 'super()'."}]}
+{"code":"class A extends B { constructor() { do { super(); } while (a); } }","ext":"js","eslint":[{"line":1,"column":42,"message":"Unexpected duplicate 'super()'."}]}
+{"code":"class A extends B { constructor() { for (;;) super(); } }","ext":"js","eslint":[{"line":1,"column":46,"message":"Unexpected duplicate 'super()'."}]}
+{"code":"class A extends B { constructor() { for (;; super()) {} } }","ext":"js","eslint":[{"line":1,"column":45,"message":"Unexpected duplicate 'super()'."}]}
+{"code":"class A extends B { constructor() { for (super();;) {} } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { for (; super();) {} } }","ext":"js","eslint":[{"line":1,"column":44,"message":"Unexpected duplicate 'super()'."}]}
+{"code":"class A extends B { constructor() { for (var k in super()) {} } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { for (var k of a) super(); } }","ext":"js","eslint":[{"line":1,"column":21,"message":"Lacked a call of 'super()' in some code paths."},{"line":1,"column":54,"message":"Unexpected duplicate 'super()'."}]}
+{"code":"class A extends B { constructor() { for (k in a) { super(); break; } } }","ext":"js","eslint":[{"line":1,"column":21,"message":"Lacked a call of 'super()' in some code paths."}]}
+{"code":"class A extends B { constructor() { try { super(); } catch (e) { } } }","ext":"js","eslint":[{"line":1,"column":21,"message":"Lacked a call of 'super()' in some code paths."}]}
+{"code":"class A extends B { constructor() { try { super(); } catch (e) { super(); } } }","ext":"js","eslint":[{"line":1,"column":66,"message":"Unexpected duplicate 'super()'."}]}
+{"code":"class A extends B { constructor() { try { a(); } finally { super(); } } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { try { super(); } finally { a(); } } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { try { return; } finally { super(); } } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { try { throw a; } catch { super(); } } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { switch (a) { case 1: super(); break; default: super(); } } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { switch (a) { case 1: super(); default: super(); } } }","ext":"js","eslint":[{"line":1,"column":76,"message":"Unexpected duplicate 'super()'."}]}
+{"code":"class A extends B { constructor() { switch (a) { default: super(); case 1: break; } } }","ext":"js","eslint":[{"line":1,"column":21,"message":"Lacked a call of 'super()' in some code paths."}]}
+{"code":"class A extends B { constructor() { switch (a) { case 1: super(); } } }","ext":"js","eslint":[{"line":1,"column":21,"message":"Lacked a call of 'super()' in some code paths."}]}
+{"code":"class A extends B { constructor() { switch (a) { default: break; case 1: super(); } } }","ext":"js","eslint":[{"line":1,"column":21,"message":"Lacked a call of 'super()' in some code paths."}]}
+{"code":"class A extends B { constructor() { L: { super(); break L; } } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { L: { if (a) break L; super(); } } }","ext":"js","eslint":[{"line":1,"column":21,"message":"Lacked a call of 'super()' in some code paths."}]}
+{"code":"class A extends B { constructor() { throw a; } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { if (a) throw b; super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { if (a) return b; super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { if (a) return; super(); } }","ext":"js","eslint":[{"line":1,"column":21,"message":"Lacked a call of 'super()' in some code paths."}]}
+{"code":"class A extends B { constructor() { (() => super())(); } }","ext":"js","eslint":[{"line":1,"column":21,"message":"Expected to call 'super()'."}]}
+{"code":"class A extends B { constructor() { var f = () => { super(); }; } }","ext":"js","eslint":[{"line":1,"column":21,"message":"Expected to call 'super()'."}]}
+{"code":"class A extends B { constructor() { function g() { } super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { class K extends B { constructor() { super(); } } } }","ext":"js","eslint":[{"line":1,"column":21,"message":"Expected to call 'super()'."}]}
+{"code":"class A extends B { constructor() { class K extends B { constructor() { } } super(); } }","ext":"js","eslint":[{"line":1,"column":57,"message":"Expected to call 'super()'."}]}
+{"code":"class A extends B { constructor() { var o = { m() { super.x; } }; super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { super(); return; } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { super(); return a; } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { return a; super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { super(); throw a; } }","ext":"js","eslint":[]}
+{"code":"class A extends null { constructor() { super() } }","ext":"js","eslint":[{"line":1,"column":40,"message":"Unexpected 'super()' because 'super' is not a constructor."}]}
+{"code":"class A extends null { constructor() {  } }","ext":"js","eslint":[{"line":1,"column":24,"message":"Expected to call 'super()'."}]}
+{"code":"class A extends null { constructor() { return a; } }","ext":"js","eslint":[]}
+{"code":"class A extends undefined { constructor() { super(); } }","ext":"js","eslint":[{"line":1,"column":45,"message":"Unexpected 'super()' because 'super' is not a constructor."}]}
+{"code":"class A extends void 0 { constructor() { super(); } }","ext":"js","fatal":"Parsing error: Unexpected token void"}
+{"code":"class A extends (B) { constructor() { super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends B.C { constructor() { super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends B() { constructor() { super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends new B { constructor() { super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends class {} { constructor() { super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends function () {} { constructor() { super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends (() => {}) { constructor() { super(); } }","ext":"js","eslint":[{"line":1,"column":46,"message":"Unexpected 'super()' because 'super' is not a constructor."}]}
+{"code":"class A extends 's' { constructor() { super(); } }","ext":"js","eslint":[{"line":1,"column":39,"message":"Unexpected 'super()' because 'super' is not a constructor."}]}
+{"code":"class A extends 1 { constructor() { super(); } }","ext":"js","eslint":[{"line":1,"column":37,"message":"Unexpected 'super()' because 'super' is not a constructor."}]}
+{"code":"class A extends 1n { constructor() { super(); } }","ext":"js","eslint":[{"line":1,"column":38,"message":"Unexpected 'super()' because 'super' is not a constructor."}]}
+{"code":"class A extends true { constructor() { super(); } }","ext":"js","eslint":[{"line":1,"column":40,"message":"Unexpected 'super()' because 'super' is not a constructor."}]}
+{"code":"class A extends /r/ { constructor() { super(); } }","ext":"js","eslint":[{"line":1,"column":39,"message":"Unexpected 'super()' because 'super' is not a constructor."}]}
+{"code":"class A extends `t` { constructor() { super(); } }","ext":"js","eslint":[{"line":1,"column":39,"message":"Unexpected 'super()' because 'super' is not a constructor."}]}
+{"code":"class A extends tag`t` { constructor() { super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends (a && b) { constructor() { super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends (a && 1) { constructor() { super(); } }","ext":"js","eslint":[{"line":1,"column":44,"message":"Unexpected 'super()' because 'super' is not a constructor."}]}
+{"code":"class A extends (1 && b) { constructor() { super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends (a || 1) { constructor() { super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends (1 || 2) { constructor() { super(); } }","ext":"js","eslint":[{"line":1,"column":44,"message":"Unexpected 'super()' because 'super' is not a constructor."}]}
+{"code":"class A extends (a ?? 1) { constructor() { super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends (1 ?? 2) { constructor() { super(); } }","ext":"js","eslint":[{"line":1,"column":44,"message":"Unexpected 'super()' because 'super' is not a constructor."}]}
+{"code":"class A extends (a ? b : 1) { constructor() { super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends (a ? 1 : b) { constructor() { super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends (a ? 1 : 2) { constructor() { super(); } }","ext":"js","eslint":[{"line":1,"column":47,"message":"Unexpected 'super()' because 'super' is not a constructor."}]}
+{"code":"class A extends (a, 1) { constructor() { super(); } }","ext":"js","eslint":[{"line":1,"column":42,"message":"Unexpected 'super()' because 'super' is not a constructor."}]}
+{"code":"class A extends (1, a) { constructor() { super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends (1, 2, a) { constructor() { super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends (a, (b, 1)) { constructor() { super(); } }","ext":"js","eslint":[{"line":1,"column":47,"message":"Unexpected 'super()' because 'super' is not a constructor."}]}
+{"code":"class A extends (a = b) { constructor() { super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends (a = 1) { constructor() { super(); } }","ext":"js","eslint":[{"line":1,"column":43,"message":"Unexpected 'super()' because 'super' is not a constructor."}]}
+{"code":"class A extends (a &&= b) { constructor() { super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends (a &&= 1) { constructor() { super(); } }","ext":"js","eslint":[{"line":1,"column":45,"message":"Unexpected 'super()' because 'super' is not a constructor."}]}
+{"code":"class A extends (a ||= 1) { constructor() { super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends (a ??= 1) { constructor() { super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends (a ??= 2) { constructor() { super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends (a += b) { constructor() { super(); } }","ext":"js","eslint":[{"line":1,"column":44,"message":"Unexpected 'super()' because 'super' is not a constructor."}]}
+{"code":"class A extends (a -= b) { constructor() { super(); } }","ext":"js","eslint":[{"line":1,"column":44,"message":"Unexpected 'super()' because 'super' is not a constructor."}]}
+{"code":"class A extends (a **= b) { constructor() { super(); } }","ext":"js","eslint":[{"line":1,"column":45,"message":"Unexpected 'super()' because 'super' is not a constructor."}]}
+{"code":"class A extends (a >>>= b) { constructor() { super(); } }","ext":"js","eslint":[{"line":1,"column":46,"message":"Unexpected 'super()' because 'super' is not a constructor."}]}
+{"code":"class A extends this { constructor() { super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends a?.b { constructor() { super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends (a?.b) { constructor() { super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends a?.() { constructor() { super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends a[b] { constructor() { super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends a.b { constructor() { super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends (-a) { constructor() { super(); } }","ext":"js","eslint":[{"line":1,"column":40,"message":"Unexpected 'super()' because 'super' is not a constructor."}]}
+{"code":"class A extends (!a) { constructor() { super(); } }","ext":"js","eslint":[{"line":1,"column":40,"message":"Unexpected 'super()' because 'super' is not a constructor."}]}
+{"code":"class A extends (typeof a) { constructor() { super(); } }","ext":"js","eslint":[{"line":1,"column":46,"message":"Unexpected 'super()' because 'super' is not a constructor."}]}
+{"code":"class A extends (a + b) { constructor() { super(); } }","ext":"js","eslint":[{"line":1,"column":43,"message":"Unexpected 'super()' because 'super' is not a constructor."}]}
+{"code":"class A extends (a++) { constructor() { super(); } }","ext":"js","eslint":[{"line":1,"column":41,"message":"Unexpected 'super()' because 'super' is not a constructor."}]}
+{"code":"class A extends [] { constructor() { super(); } }","ext":"js","eslint":[{"line":1,"column":38,"message":"Unexpected 'super()' because 'super' is not a constructor."}]}
+{"code":"class A extends ({}) { constructor() { super(); } }","ext":"js","eslint":[{"line":1,"column":40,"message":"Unexpected 'super()' because 'super' is not a constructor."}]}
+{"code":"class A extends (async function () {}) { constructor() { super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends (function* () {}) { constructor() { super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends (async () => {}) { constructor() { super(); } }","ext":"js","eslint":[{"line":1,"column":52,"message":"Unexpected 'super()' because 'super' is not a constructor."}]}
+{"code":"function* g() { class A extends (yield) { constructor() { super(); } } }","ext":"js","eslint":[]}
+{"code":"async function g() { class A extends (await a) { constructor() { super(); } } }","ext":"js","eslint":[{"line":1,"column":66,"message":"Unexpected 'super()' because 'super' is not a constructor."}]}
+{"code":"function g() { class A extends new.target { constructor() { super(); } } }","ext":"js","eslint":[]}
+{"code":"class A extends import.meta { constructor() { super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends import('m') { constructor() { super(); } }","ext":"js","eslint":[{"line":1,"column":47,"message":"Unexpected 'super()' because 'super' is not a constructor."}]}
+{"code":"class A extends B { 'constructor'() { } }","ext":"js","eslint":[{"line":1,"column":21,"message":"Expected to call 'super()'."}]}
+{"code":"class A extends B { \"constructor\"() { super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends B { ['constructor']() { } }","ext":"js","eslint":[]}
+{"code":"class A extends B { static constructor() { } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor\n() { } }","ext":"js","eslint":[{"line":1,"column":21,"message":"Expected to call 'super()'."}]}
+{"code":"class A extends B { /* c */ constructor /* d */ () { } }","ext":"js","eslint":[{"line":1,"column":29,"message":"Expected to call 'super()'."}]}
+{"code":"class A extends B { m() {} ; constructor() { } ; n() {} }","ext":"js","eslint":[{"line":1,"column":30,"message":"Expected to call 'super()'."}]}
+{"code":"(class extends B { constructor() { } })","ext":"js","eslint":[{"line":1,"column":20,"message":"Expected to call 'super()'."}]}
+{"code":"(class A extends B { constructor() { } })","ext":"js","eslint":[{"line":1,"column":22,"message":"Expected to call 'super()'."}]}
+{"code":"export default class extends B { constructor() { } }","ext":"js","eslint":[{"line":1,"column":34,"message":"Expected to call 'super()'."}]}
+{"code":"export class A extends B { constructor() { } }","ext":"js","eslint":[{"line":1,"column":28,"message":"Expected to call 'super()'."}]}
+{"code":"class A { constructor() { } }","ext":"js","eslint":[]}
+{"code":"class A { constructor() { class K extends B { constructor() { } } } }","ext":"js","eslint":[{"line":1,"column":47,"message":"Expected to call 'super()'."}]}
+{"code":"class A extends B { constructor(a = super()) { } }","ext":"js","eslint":[{"line":1,"column":21,"message":"Lacked a call of 'super()' in some code paths."}]}
+{"code":"class A extends B { constructor(a = super()) { super(); } }","ext":"js","eslint":[{"line":1,"column":48,"message":"Unexpected duplicate 'super()'."}]}
+{"code":"class A extends B { constructor(a = b ? super() : 0) { } }","ext":"js","eslint":[{"line":1,"column":21,"message":"Lacked a call of 'super()' in some code paths."}]}
+{"code":"class A extends B { constructor({ a = super() }) { } }","ext":"js","eslint":[{"line":1,"column":21,"message":"Lacked a call of 'super()' in some code paths."}]}
+{"code":"class A extends B { constructor([a = super()] = []) { } }","ext":"js","eslint":[{"line":1,"column":21,"message":"Lacked a call of 'super()' in some code paths."}]}
+{"code":"class A extends B { constructor() { var a = [super()]; } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { var a = { [super()]: 1 }; } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { var a = { b: super() }; } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { `${super()}`; } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { foo(super()); } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { new (super())(); } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { super().a; } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { super()?.a; } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { a?.[super()]; } }","ext":"js","eslint":[{"line":1,"column":21,"message":"Lacked a call of 'super()' in some code paths."}]}
+{"code":"class A extends B { constructor() { a?.b(super()); } }","ext":"js","eslint":[{"line":1,"column":21,"message":"Lacked a call of 'super()' in some code paths."}]}
+{"code":"class A extends B { constructor() { a = super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { a ||= super(); } }","ext":"js","eslint":[{"line":1,"column":21,"message":"Lacked a call of 'super()' in some code paths."}]}
+{"code":"class A extends B { constructor() { a &&= super(); } }","ext":"js","eslint":[{"line":1,"column":21,"message":"Lacked a call of 'super()' in some code paths."}]}
+{"code":"class A extends B { constructor() { a ??= super(); } }","ext":"js","eslint":[{"line":1,"column":21,"message":"Lacked a call of 'super()' in some code paths."}]}
+{"code":"class A extends B { constructor() { [a = super()] = b; } }","ext":"js","eslint":[{"line":1,"column":21,"message":"Lacked a call of 'super()' in some code paths."}]}
+{"code":"class A extends B { constructor() { ({ a = super() } = b); } }","ext":"js","eslint":[{"line":1,"column":21,"message":"Lacked a call of 'super()' in some code paths."}]}
+{"code":"class A extends B { constructor() { class K { [super()]() {} } } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { class K extends super() { } } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { (super(), super()); } }","ext":"js","eslint":[{"line":1,"column":47,"message":"Unexpected duplicate 'super()'."}]}
+{"code":"class A extends B { constructor() { super(super()); } }","ext":"js","eslint":[{"line":1,"column":37,"message":"Unexpected duplicate 'super()'."}]}
+{"code":"class A extends B { constructor() { !super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { if (super()) { } } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { while (super()) { } } }","ext":"js","eslint":[{"line":1,"column":44,"message":"Unexpected duplicate 'super()'."}]}
+{"code":"class A extends B { constructor() { do { } while (super()); } }","ext":"js","eslint":[{"line":1,"column":51,"message":"Unexpected duplicate 'super()'."}]}
+{"code":"class A extends B { constructor() { for (;;) { super(); break; } } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { for (;;) { if (a) { super(); break; } } } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { for (var i = 0; i < n; i++) { } super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { for (var i = 0; i < n; i++) { if (a) continue; } super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { super(); for (var i = 0; i < n; i++) { a(); } } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { while (a) { if (b) { super(); return; } } } }","ext":"js","eslint":[{"line":1,"column":21,"message":"Lacked a call of 'super()' in some code paths."}]}
+{"code":"class A extends B { constructor() { while (a) { super(); } super(); } }","ext":"js","eslint":[{"line":1,"column":49,"message":"Unexpected duplicate 'super()'."},{"line":1,"column":60,"message":"Unexpected duplicate 'super()'."}]}
+{"code":"class A extends B { constructor() { L: while (a) { while (b) { super(); continue L; } } } }","ext":"js","eslint":[{"line":1,"column":21,"message":"Lacked a call of 'super()' in some code paths."},{"line":1,"column":64,"message":"Unexpected duplicate 'super()'."}]}
+{"code":"class A extends B { constructor() { switch (a) { case 1: super(); break; case 2: super(); break; } } }","ext":"js","eslint":[{"line":1,"column":21,"message":"Lacked a call of 'super()' in some code paths."}]}
+{"code":"class A extends B { constructor() { switch (a) { case 1: super(); case 2: break; default: super(); } } }","ext":"js","eslint":[{"line":1,"column":21,"message":"Lacked a call of 'super()' in some code paths."}]}
+{"code":"class A extends B { constructor() { switch (a) { default: case 1: super(); } } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { switch (a) { case 1: default: break; case 2: super(); } } }","ext":"js","eslint":[{"line":1,"column":21,"message":"Lacked a call of 'super()' in some code paths."}]}
+{"code":"class A extends B { constructor() { try { a(); } catch (e) { return; } super(); } }","ext":"js","eslint":[{"line":1,"column":21,"message":"Lacked a call of 'super()' in some code paths."}]}
+{"code":"class A extends B { constructor() { try { a(); super(); } catch (e) { super(); } } }","ext":"js","eslint":[{"line":1,"column":71,"message":"Unexpected duplicate 'super()'."}]}
+{"code":"class A extends B { constructor() { try { super(); a(); } catch (e) { super(); } } }","ext":"js","eslint":[{"line":1,"column":71,"message":"Unexpected duplicate 'super()'."}]}
+{"code":"class A extends B { constructor() { try { if (a) return; } finally { super(); } } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { try { super(); } finally { if (a) return; } } }","ext":"js","eslint":[{"line":1,"column":21,"message":"Lacked a call of 'super()' in some code paths."}]}
+{"code":"class A extends B { constructor() { with (a) { super(); } } }","ext":"js","fatal":"Parsing error: 'with' in strict mode"}

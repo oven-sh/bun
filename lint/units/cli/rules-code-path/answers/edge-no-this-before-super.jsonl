@@ -1,0 +1,135 @@
+{"code":"class A extends B { constructor() { this.a = 0; super(); } }","ext":"js","eslint":[{"line":1,"column":37,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { this.a(); super(); } }","ext":"js","eslint":[{"line":1,"column":37,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { super.a(); super(); } }","ext":"js","eslint":[{"line":1,"column":37,"message":"'super' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { super(this.a); } }","ext":"js","eslint":[{"line":1,"column":43,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { super(this); } }","ext":"js","eslint":[{"line":1,"column":43,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { super(super.a); } }","ext":"js","eslint":[{"line":1,"column":43,"message":"'super' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { super(() => this); } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { super(); this.a = 0; } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { super(); super.a(); } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { this; } }","ext":"js","eslint":[{"line":1,"column":37,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { this.a; } }","ext":"js","eslint":[{"line":1,"column":37,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { super.a; } }","ext":"js","eslint":[{"line":1,"column":37,"message":"'super' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { super[a]; } }","ext":"js","eslint":[{"line":1,"column":37,"message":"'super' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { super.a.b.c; } }","ext":"js","eslint":[{"line":1,"column":37,"message":"'super' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { super.a(); } }","ext":"js","eslint":[{"line":1,"column":37,"message":"'super' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { super[a](); } }","ext":"js","eslint":[{"line":1,"column":37,"message":"'super' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { super.a`t`; } }","ext":"js","eslint":[{"line":1,"column":37,"message":"'super' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { if (a) super(); this.a; } }","ext":"js","eslint":[{"line":1,"column":53,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { if (a) super(); else super(); this.a; } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { if (a) { super(); this.a; } this.b; } }","ext":"js","eslint":[{"line":1,"column":65,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { a && super(); this.a; } }","ext":"js","eslint":[{"line":1,"column":51,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { a ? super() : super(); this.a; } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { a ? super() : 0; this.a; } }","ext":"js","eslint":[{"line":1,"column":54,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { super() || this.a; } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { super() && this.a; } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { this.a || super(); } }","ext":"js","eslint":[{"line":1,"column":37,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { (super(), this.a); } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { (this.a, super()); } }","ext":"js","eslint":[{"line":1,"column":38,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { foo(this, super()); } }","ext":"js","eslint":[{"line":1,"column":41,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { foo(super(), this); } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { [this, super()]; } }","ext":"js","eslint":[{"line":1,"column":38,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { [super(), this]; } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { ({ a: this, b: super() }); } }","ext":"js","eslint":[{"line":1,"column":43,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { ({ a: super(), b: this }); } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { ({ [this]: super() }); } }","ext":"js","eslint":[{"line":1,"column":41,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { `${this}${super()}`; } }","ext":"js","eslint":[{"line":1,"column":40,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { `${super()}${this}`; } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { this.a = super(); } }","ext":"js","eslint":[{"line":1,"column":37,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { this[super()]; } }","ext":"js","eslint":[{"line":1,"column":37,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { this[super()] = this; } }","ext":"js","eslint":[{"line":1,"column":37,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { super()[this]; } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { new this(super()); } }","ext":"js","eslint":[{"line":1,"column":41,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { new (super())(this); } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { a = this, super(); } }","ext":"js","eslint":[{"line":1,"column":41,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { while (a) { this.a; super(); } } }","ext":"js","eslint":[{"line":1,"column":49,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { while (a) { super(); this.a; } } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { while (a) { super(); } this.a; } }","ext":"js","eslint":[{"line":1,"column":60,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { super(); while (a) { this.a; } } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { do { this.a; } while (super()); } }","ext":"js","eslint":[{"line":1,"column":42,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { do { super(); } while (this.a); } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { for (this.a;;) { super(); } } }","ext":"js","eslint":[{"line":1,"column":42,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { for (;this.a;) { super(); } } }","ext":"js","eslint":[{"line":1,"column":43,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { for (;;this.a) { super(); break; } } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { for (super();;this.a) { } } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { for (;;super()) { this.a; if (b) break; } } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { for (var i = 0; i < n; i++) { if (a) { super(); } this.a; } } }","ext":"js","eslint":[{"line":1,"column":87,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { for (var k in this) { super(); } } }","ext":"js","eslint":[{"line":1,"column":51,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { for (var k of this.a) { super(); } } }","ext":"js","eslint":[{"line":1,"column":51,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { for (this.k in a) { super(); } } }","ext":"js","eslint":[{"line":1,"column":42,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { for (this.k of super()) { } } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { for (var k in super()) { this.a; } } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { try { this.a; super(); } catch (e) { } } }","ext":"js","eslint":[{"line":1,"column":43,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { try { super(); } catch (e) { this.a; } } }","ext":"js","eslint":[{"line":1,"column":66,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { try { super(); } finally { this.a; } } }","ext":"js","eslint":[{"line":1,"column":64,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { try { a(); } finally { this.a; } super(); } }","ext":"js","eslint":[{"line":1,"column":60,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { try { super(); this.a; } catch (e) { this.b; } finally { this.c; } } }","ext":"js","eslint":[{"line":1,"column":74,"message":"'this' is not allowed before 'super()'."},{"line":1,"column":94,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { try { if (a) return; super(); } finally { this.a; } } }","ext":"js","eslint":[{"line":1,"column":79,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { try { super(); } catch { super(); } this.a; } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { try { throw a; } catch { super(); } this.a; } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { switch (a) { case 1: super(); break; case 2: this.a; } } }","ext":"js","eslint":[{"line":1,"column":82,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { switch (a) { case 1: super(); case 2: this.a; } } }","ext":"js","eslint":[{"line":1,"column":75,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { switch (a) { case this.a: super(); } } }","ext":"js","eslint":[{"line":1,"column":55,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { switch (this.a) { case 1: super(); } } }","ext":"js","eslint":[{"line":1,"column":45,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { switch (a) { default: this.a; case 1: super(); } } }","ext":"js","eslint":[{"line":1,"column":59,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { switch (a) { case 1: super(); default: this.a; case 2: this.b; } } }","ext":"js","eslint":[{"line":1,"column":92,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { switch (super()) { case this.a: } } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { L: { if (a) break L; super(); } this.a; } }","ext":"js","eslint":[{"line":1,"column":69,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { L: { super(); break L; } this.a; } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { if (a) return; this.a; super(); } }","ext":"js","eslint":[{"line":1,"column":52,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { if (a) throw this.a; super(); } }","ext":"js","eslint":[{"line":1,"column":50,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { return this; } }","ext":"js","eslint":[{"line":1,"column":44,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { return this.a; } }","ext":"js","eslint":[{"line":1,"column":44,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { throw this; } }","ext":"js","eslint":[{"line":1,"column":43,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { var f = () => this; super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { var f = () => super.a; super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { var f = function () { this.a; }; super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { function g() { this.a; } super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { class K { m() { this.a; } } super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { class K { x = this.a; } super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { class K { static { this.a; } } super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { class K { [this.a]() {} } super(); } }","ext":"js","eslint":[{"line":1,"column":48,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { class K extends this.a {} super(); } }","ext":"js","eslint":[{"line":1,"column":53,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { class K extends B { constructor() { this.a; super(); } } super(); } }","ext":"js","eslint":[{"line":1,"column":73,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { var o = { m() { this.a; super.b; } }; super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor() { var o = { [this.a]: 1, get g() { return this; } }; super(); } }","ext":"js","eslint":[{"line":1,"column":48,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends null { constructor() { this.a; } }","ext":"js","eslint":[]}
+{"code":"class A extends undefined { constructor() { this.a; } }","ext":"js","eslint":[]}
+{"code":"class A extends void 0 { constructor() { this.a; } }","ext":"js","fatal":"Parsing error: Unexpected token void"}
+{"code":"class A extends (null) { constructor() { this.a; } }","ext":"js","eslint":[]}
+{"code":"class A extends (a, null) { constructor() { this.a; } }","ext":"js","eslint":[{"line":1,"column":45,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends (void a) { constructor() { this.a; } }","ext":"js","eslint":[]}
+{"code":"class A extends 0 { constructor() { this.a; super(); } }","ext":"js","eslint":[{"line":1,"column":37,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B.C { constructor() { this.a; super(); } }","ext":"js","eslint":[{"line":1,"column":39,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends null { constructor() { super.a; } }","ext":"js","eslint":[]}
+{"code":"class A { constructor() { this.a; } }","ext":"js","eslint":[]}
+{"code":"class A { constructor() { this.a; super.b; } }","ext":"js","eslint":[]}
+{"code":"class A extends B { m() { this.a; super.b; } }","ext":"js","eslint":[]}
+{"code":"class A extends B { x = this.a; y = super.b; constructor() { super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends B { static { this.a; super.b; } constructor() { super(); } }","ext":"js","eslint":[]}
+{"code":"class A extends B { constructor(a = this.a) { super(); } }","ext":"js","eslint":[{"line":1,"column":37,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor(a = super.b) { super(); } }","ext":"js","eslint":[{"line":1,"column":37,"message":"'super' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor(a = super(), b = this.a) { } }","ext":"js","eslint":[{"line":1,"column":50,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor(a = this.a, b = super()) { } }","ext":"js","eslint":[{"line":1,"column":37,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor({ a = this }, [b = super.c]) { super(); } }","ext":"js","eslint":[{"line":1,"column":39,"message":"'this' is not allowed before 'super()'."},{"line":1,"column":52,"message":"'super' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor(...[a = this]) { super(); } }","ext":"js","eslint":[{"line":1,"column":41,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { 'constructor'() { this.a; super(); } }","ext":"js","eslint":[{"line":1,"column":39,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { ['constructor']() { this.a; super(); } }","ext":"js","fatal":"Parsing error: super() call outside constructor of a subclass"}
+{"code":"class A extends B { static constructor() { this.a; } }","ext":"js","eslint":[]}
+{"code":"(class extends B { constructor() { this.a; super(); } })","ext":"js","eslint":[{"line":1,"column":36,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"export default class extends B { constructor() { this.a; super(); } }","ext":"js","eslint":[{"line":1,"column":50,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { this\n.a; super(); } }","ext":"js","eslint":[{"line":1,"column":37,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { (this).a; ((super.b)); super(); } }","ext":"js","eslint":[{"line":1,"column":38,"message":"'this' is not allowed before 'super()'."},{"line":1,"column":49,"message":"'super' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { this?.a; this?.(); super(); } }","ext":"js","eslint":[{"line":1,"column":37,"message":"'this' is not allowed before 'super()'."},{"line":1,"column":46,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { typeof this; void this; delete this.a; !this; -this; super(); } }","ext":"js","eslint":[{"line":1,"column":44,"message":"'this' is not allowed before 'super()'."},{"line":1,"column":55,"message":"'this' is not allowed before 'super()'."},{"line":1,"column":68,"message":"'this' is not allowed before 'super()'."},{"line":1,"column":77,"message":"'this' is not allowed before 'super()'."},{"line":1,"column":84,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { this.a++; --this.b; this.c += 1; this.d ??= 2; super(); } }","ext":"js","eslint":[{"line":1,"column":37,"message":"'this' is not allowed before 'super()'."},{"line":1,"column":49,"message":"'this' is not allowed before 'super()'."},{"line":1,"column":57,"message":"'this' is not allowed before 'super()'."},{"line":1,"column":70,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { a = { ...this }; b = [...this]; foo(...this); super(); } }","ext":"js","eslint":[{"line":1,"column":46,"message":"'this' is not allowed before 'super()'."},{"line":1,"column":62,"message":"'this' is not allowed before 'super()'."},{"line":1,"column":76,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { this.a`t`; super(); } }","ext":"js","eslint":[{"line":1,"column":37,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { a in this; this instanceof B; #p in this; super(); } #p; }","ext":"js","eslint":[{"line":1,"column":42,"message":"'this' is not allowed before 'super()'."},{"line":1,"column":48,"message":"'this' is not allowed before 'super()'."},{"line":1,"column":73,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { ({ a: this.a } = b); [this.c] = d; super(); } }","ext":"js","eslint":[{"line":1,"column":43,"message":"'this' is not allowed before 'super()'."},{"line":1,"column":59,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { for ({ a: this.a } of b) { } super(); } }","ext":"js","eslint":[{"line":1,"column":47,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"function* g() { class A extends B { constructor() { this.a; super(); } } }","ext":"js","eslint":[{"line":1,"column":53,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { super(); } } class C extends D { constructor() { this.a; super(); } }","ext":"js","eslint":[{"line":1,"column":86,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { <this.Foo>{this.x}</this.Foo>; super(); } }","ext":"jsx","eslint":[{"line":1,"column":48,"message":"'this' is not allowed before 'super()'."}]}
+{"code":"class A extends B { constructor() { <this />; super(); } }","ext":"jsx","eslint":[]}
+{"code":"class A extends B { constructor() { <div a={this.a} {...this.b}>{super.c}</div>; super(); } }","ext":"jsx","eslint":[{"line":1,"column":45,"message":"'this' is not allowed before 'super()'."},{"line":1,"column":57,"message":"'this' is not allowed before 'super()'."},{"line":1,"column":66,"message":"'super' is not allowed before 'super()'."}]}

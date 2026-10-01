@@ -49,6 +49,7 @@ function collectFacts(ast) {
 	const fnFacts = new Map();
 	const forMarks = []; // {decl: VariableDeclaration} | {id: Identifier}
 	const globals = []; // TSModuleDeclaration of kind global
+	const paramLists = []; // the parameters of a setter and of a signature without a body: every identifier in them marks a name
 	const get = id => { let s = site.get(id); if (!s) site.set(id, (s = {})); return s; };
 	function walk(node, cx, parent, key) {
 		if (!node || typeof node.type !== "string") return;
@@ -61,6 +62,8 @@ function collectFacts(ast) {
 		if (node.type === "TSTypeQuery") { let e = node.exprName; while (e.type === "TSQualifiedName") e = e.left; if (e.type === "Identifier") get(e).typeQuery = true; }
 		if (node.type === "TSTypePredicate" && node.parameterName.type === "Identifier") get(node.parameterName).typePredicate = true;
 		if (node.type === "TSModuleDeclaration" && node.kind === "global") globals.push(node);
+		if (SIGNATURES.has(node.type)) paramLists.push(node.params);
+		if ((node.type === "MethodDefinition" || node.type === "Property") && node.kind === "set" && node.value && node.value.params) paramLists.push(node.value.params);
 		if (node.type === "ForInStatement" || node.type === "ForOfStatement") {
 			let body = node.body, ok = true;
 			if (body.type === "BlockStatement") { if (body.body.length !== 1) ok = false; else body = body.body[0]; }
@@ -89,14 +92,14 @@ function collectFacts(ast) {
 		}
 	}
 	walk(ast, { unused: false, loop: 0, fn: { verdict: false } }, null, null);
-	return { site, fnFacts, forMarks, globals };
+	return { site, fnFacts, forMarks, globals, paramLists };
 }
 
 const overriding = body => body.some(s => (s.type === "ExportNamedDeclaration" && s.declaration == null) || s.type === "ExportAllDeclaration" || s.type === "TSExportAssignment" || (s.type === "ExportDefaultDeclaration" && s.declaration.type === "Identifier"));
 const isDts = f => /\.d\.(ts|cts|mts|.*\.ts)$/.test(f.toLowerCase());
 
 function unusedVars(scopeManager, ast, facts, filename) {
-	const { site, fnFacts, forMarks, globals } = facts;
+	const { site, fnFacts, forMarks, globals, paramLists } = facts;
 	const S = ref => site.get(ref.identifier) || {};
 	const marked = new Set();
 	const lookup = (scope, name) => { for (let s = scope; s; s = s.upper) { const v = s.variables.find(x => x.name === name); if (v) return v; } return null; };
@@ -120,8 +123,6 @@ function unusedVars(scopeManager, ast, facts, filename) {
 			for (const def of v.defs) {
 				if (def.type === "Parameter") {
 					const f = def.node;
-					if (f.parent && (f.parent.type === "MethodDefinition" || f.parent.type === "Property") && f.parent.kind === "set" && f.parent.value === f) marked.add(v); // M3
-					if (SIGNATURES.has(f.type)) marked.add(v); // M4
 					if (v.name === "this" && scope.type === "function" && f.params.includes(def.name)) marked.add(v); // M5
 					let p = def.name.parent;
 					if (p.type === "AssignmentPattern" && p.left === def.name) p = p.parent;
@@ -133,6 +134,9 @@ function unusedVars(scopeManager, ast, facts, filename) {
 			}
 		}
 	}
+	// M3 and M4: every Identifier node under a parameter of a setter or of a signature, looked up by its name from where it stands.
+	const idsUnder = (node, out) => { if (!node || typeof node.type !== "string") return out; if (node.type === "Identifier") out.push(node); for (const k of visitorKeys[node.type] || []) { const c = node[k]; if (Array.isArray(c)) c.forEach(x => idsUnder(x, out)); else idsUnder(c, out); } return out; };
+	for (const params of paramLists) for (const param of params) for (const id of idsUnder(param, [])) { const v = lookup(scopeOf(id), id.name); if (v) marked.add(v); }
 	for (const g of globals) { const v = lookup(scopeOf(g.parent), "global"); if (v) marked.add(v); } // M8
 	for (const m of forMarks) { // M10
 		if (m.decl) { const v = scopeManager.getDeclaredVariables(m.decl)[0]; if (v) marked.add(v); }

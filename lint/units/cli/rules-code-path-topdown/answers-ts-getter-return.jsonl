@@ -1,0 +1,71 @@
+{"code":"class A { get a(): number { } }","ext":"ts","sourceType":"module","reports":["getter-return 1:11 Expected to return a value in getter 'a'."]}
+{"code":"class A { public get a(): number { } }","ext":"ts","sourceType":"module","reports":["getter-return 1:11 Expected to return a value in getter 'a'."]}
+{"code":"class A { private static get a(): number { } }","ext":"ts","sourceType":"module","reports":["getter-return 1:11 Expected to return a value in static getter 'a'."]}
+{"code":"class A { static   get a(): number { } }","ext":"ts","sourceType":"module","reports":["getter-return 1:11 Expected to return a value in static getter 'a'."]}
+{"code":"class A { public static override get a(): number { } }","ext":"ts","sourceType":"module","reports":["getter-return 1:11 Expected to return a value in static getter 'a'."]}
+{"code":"class A { @dec get a(): number { } }","ext":"ts","sourceType":"module","reports":["getter-return 1:11 Expected to return a value in getter 'a'."]}
+{"code":"class A { @dec() public get a(): number { } }","ext":"ts","sourceType":"module","reports":["getter-return 1:11 Expected to return a value in getter 'a'."]}
+{"code":"class A { @dec\n  get a(): number { } }","ext":"ts","sourceType":"module","reports":["getter-return 1:11 Expected to return a value in getter 'a'."]}
+{"code":"abstract class A { abstract get a(): number; }","ext":"ts","sourceType":"module","reports":[]}
+{"code":"abstract class A { abstract get a(): number { } }","ext":"ts","sourceType":"module","fatal":"Parsing error: An abstract accessor cannot have an implementation."}
+{"code":"abstract class A { abstract get a(): number { return; } }","ext":"ts","sourceType":"module","fatal":"Parsing error: An abstract accessor cannot have an implementation."}
+{"code":"declare class A { get a(): number; }","ext":"ts","sourceType":"module","reports":[]}
+{"code":"interface I { get a(): number }","ext":"ts","sourceType":"module","reports":[]}
+{"code":"type T = { get a(): number }","ext":"ts","sourceType":"module","reports":[]}
+{"code":"class A { get a(): number { return; } }","ext":"ts","sourceType":"module","reports":["getter-return 1:29 Expected to return a value in getter 'a'."]}
+{"code":"class A { get a(): number { return 1 as any; } }","ext":"ts","sourceType":"module","reports":[]}
+{"code":"class A { get a(): number { if (x) return 1; } }","ext":"ts","sourceType":"module","reports":["getter-return 1:11 Expected getter 'a' to always return a value."]}
+{"code":"class A { get #a(): number { } }","ext":"ts","sourceType":"module","reports":["getter-return 1:11 Expected to return a value in private getter #a."]}
+{"code":"class A { static get #a(): number { } }","ext":"ts","sourceType":"module","reports":["getter-return 1:11 Expected to return a value in static private getter #a."]}
+{"code":"class A { get ['a' as string](): number { } }","ext":"ts","sourceType":"module","reports":["getter-return 1:11 Expected to return a value in getter."]}
+{"code":"class A { get ['a'](): number { } }","ext":"ts","sourceType":"module","reports":["getter-return 1:11 Expected to return a value in getter 'a'."]}
+{"code":"class A { get [a!](): number { } }","ext":"ts","sourceType":"module","reports":["getter-return 1:11 Expected to return a value in getter."]}
+{"code":"class A { get a<T>(): number { } }","ext":"ts","sourceType":"module","reports":["getter-return 1:11 Expected to return a value in getter 'a'."]}
+{"code":"class A { get a() { function f(): void; function f() {} } }","ext":"ts","sourceType":"module","reports":["getter-return 1:11 Expected to return a value in getter 'a'."]}
+{"code":"class A { get a(); get a() { } }","ext":"ts","sourceType":"module","reports":["getter-return 1:20 Expected to return a value in getter 'a'."]}
+{"code":"var o = { get a(): number { } };","ext":"ts","sourceType":"module","reports":["getter-return 1:11 Expected to return a value in getter 'a'."]}
+{"code":"var o = { get a(): number { return; } };","ext":"ts","sourceType":"module","reports":["getter-return 1:29 Expected to return a value in getter 'a'."]}
+{"code":"var o = <T>{ get a(): number { } };","ext":"ts","sourceType":"module","reports":["getter-return 1:14 Expected to return a value in getter 'a'."]}
+{"code":"var o = { get a(): number { } } as T;","ext":"ts","sourceType":"module","reports":["getter-return 1:11 Expected to return a value in getter 'a'."]}
+{"code":"Object.defineProperty(o, 'a', { get(): number { } });","ext":"ts","sourceType":"module","reports":["getter-return 1:33 Expected to return a value in method 'get'."]}
+{"code":"Object.defineProperty(o, 'a', { get: function(): number { } });","ext":"ts","sourceType":"module","reports":["getter-return 1:33 Expected to return a value in method 'get'."]}
+{"code":"Object.defineProperty(o, 'a', { get: (): number => { } });","ext":"ts","sourceType":"module","reports":["getter-return 1:33 Expected to return a value in method 'get'."]}
+{"code":"Object.defineProperty(o, 'a', { get: function(): number { } } as PropertyDescriptor);","ext":"ts","sourceType":"module","reports":[]}
+{"code":"Object.defineProperty(o, 'a', <PropertyDescriptor>{ get() { } });","ext":"ts","sourceType":"module","reports":[]}
+{"code":"Object.defineProperty(o, 'a', { get() { } } satisfies PropertyDescriptor);","ext":"ts","sourceType":"module","reports":[]}
+{"code":"Object.defineProperty(o, 'a', ({ get() { } })!);","ext":"ts","sourceType":"module","reports":[]}
+{"code":"Object.defineProperty(o, 'a', ({ get() { } }));","ext":"ts","sourceType":"module","reports":["getter-return 1:34 Expected to return a value in method 'get'."]}
+{"code":"(Object as any).defineProperty(o, 'a', { get() { } });","ext":"ts","sourceType":"module","reports":[]}
+{"code":"Object!.defineProperty(o, 'a', { get() { } });","ext":"ts","sourceType":"module","reports":[]}
+{"code":"Object.defineProperty!(o, 'a', { get() { } });","ext":"ts","sourceType":"module","reports":[]}
+{"code":"(Object.defineProperty as any)(o, 'a', { get() { } });","ext":"ts","sourceType":"module","reports":[]}
+{"code":"(Object.defineProperty)(o, 'a', { get() { } });","ext":"ts","sourceType":"module","reports":["getter-return 1:35 Expected to return a value in method 'get'."]}
+{"code":"(Object).defineProperty(o, 'a', { get() { } });","ext":"ts","sourceType":"module","reports":["getter-return 1:35 Expected to return a value in method 'get'."]}
+{"code":"Object.defineProperty<T>(o, 'a', { get() { } });","ext":"ts","sourceType":"module","reports":["getter-return 1:36 Expected to return a value in method 'get'."]}
+{"code":"Object['defineProperty' as string](o, 'a', { get() { } });","ext":"ts","sourceType":"module","reports":[]}
+{"code":"Object['defineProperty'](o, 'a', { get() { } });","ext":"ts","sourceType":"module","reports":["getter-return 1:36 Expected to return a value in method 'get'."]}
+{"code":"Object.defineProperty(o, 'a', { get: (function() { }) as any });","ext":"ts","sourceType":"module","reports":[]}
+{"code":"Object.defineProperty(o, 'a', { get: <any>function() { } });","ext":"ts","sourceType":"module","reports":[]}
+{"code":"Object.defineProperty(o, 'a', { get: (function() { })! });","ext":"ts","sourceType":"module","reports":[]}
+{"code":"Object.defineProperty(o, 'a', { get: (function() { }) });","ext":"ts","sourceType":"module","reports":["getter-return 1:33 Expected to return a value in method 'get'."]}
+{"code":"Object.defineProperty(o, 'a', { ['get' as string]: function() { } });","ext":"ts","sourceType":"module","reports":[]}
+{"code":"Object.defineProperty(o, 'a', { ['get']: function() { } });","ext":"ts","sourceType":"module","reports":["getter-return 1:33 Expected to return a value in method 'get'."]}
+{"code":"Object.defineProperties(o, { a: { get() { } } as any });","ext":"ts","sourceType":"module","reports":[]}
+{"code":"Object.defineProperties(o, { a: { get() { } } });","ext":"ts","sourceType":"module","reports":["getter-return 1:35 Expected to return a value in method 'get'."]}
+{"code":"Object.defineProperties(o, { a: ({ get() { } }) });","ext":"ts","sourceType":"module","reports":["getter-return 1:36 Expected to return a value in method 'get'."]}
+{"code":"Object.defineProperties(o, { a: { get() { } } } as any);","ext":"ts","sourceType":"module","reports":[]}
+{"code":"Object.create(null, { a: { get: (): void => { } } });","ext":"ts","sourceType":"module","reports":["getter-return 1:28 Expected to return a value in method 'get'."]}
+{"code":"Reflect.defineProperty(o, 'a', { get(): void { } });","ext":"ts","sourceType":"module","reports":["getter-return 1:34 Expected to return a value in method 'get'."]}
+{"code":"Reflect!.defineProperty(o, 'a', { get(): void { } });","ext":"ts","sourceType":"module","reports":[]}
+{"code":"namespace Object { } Object.defineProperty(o, 'a', { get() { } });","ext":"ts","sourceType":"module","reports":[]}
+{"code":"declare const Object: any; Object.defineProperty(o, 'a', { get() { } });","ext":"ts","sourceType":"module","reports":[]}
+{"code":"import type Object from 'x'; Object.defineProperty(o, 'a', { get() { } });","ext":"ts","sourceType":"module","reports":[]}
+{"code":"type Object = number; Object.defineProperty(o, 'a', { get() { } });","ext":"ts","sourceType":"module","reports":["getter-return 1:55 Expected to return a value in method 'get'."]}
+{"code":"interface Object { } Object.defineProperty(o, 'a', { get() { } });","ext":"ts","sourceType":"module","reports":["getter-return 1:54 Expected to return a value in method 'get'."]}
+{"code":"enum Object { } Object.defineProperty(o, 'a', { get() { } });","ext":"ts","sourceType":"module","reports":[]}
+{"code":"function f<Object>() { Object.defineProperty(o, 'a', { get() { } }); }","ext":"ts","sourceType":"module","reports":["getter-return 1:56 Expected to return a value in method 'get'."]}
+{"code":"class A { accessor x = 1; get y() { } }","ext":"ts","sourceType":"module","reports":["getter-return 1:27 Expected to return a value in getter 'y'."]}
+{"code":"class A { get a() { <div />; } }","ext":"tsx","sourceType":"module","reports":["getter-return 1:11 Expected to return a value in getter 'a'."]}
+{"code":"class A { get a(this: A) { } }","ext":"ts","sourceType":"module","reports":["getter-return 1:11 Expected to return a value in getter 'a'."]}
+{"code":"class A { get a(): never { throw new Error(); } }","ext":"ts","sourceType":"module","reports":[]}
+{"code":"class A { get a() { switch (x) { case E.A: return 1; case E.B: return 2; } } }","ext":"ts","sourceType":"module","reports":["getter-return 1:11 Expected getter 'a' to always return a value."]}

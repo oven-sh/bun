@@ -1,0 +1,1 @@
+["import { undefined, NaN as eval } from './macros.js' with { type: 'macro' }; eval = 1; undefined++;", "import { feature } from 'bun:bundle'; feature = 1; var Infinity = feature('X');", "function NaN(a, a) { var undefined; undefined = 2 } var f = function Infinity(Infinity) {}; try {} catch ({ eval }) { eval = 1 } class arguments { static { arguments = 1 } }"]

@@ -1,0 +1,74 @@
+{"code":"class A extends (B as any) { constructor() { super(); } }","ext":"ts","sourceType":"module","reports":["constructor-super 1:46 Unexpected 'super()' because 'super' is not a constructor."]}
+{"code":"class A extends B! { constructor() { super(); } }","ext":"ts","sourceType":"module","reports":["constructor-super 1:38 Unexpected 'super()' because 'super' is not a constructor."]}
+{"code":"class A extends (<any>B) { constructor() { super(); } }","ext":"ts","sourceType":"module","reports":["constructor-super 1:44 Unexpected 'super()' because 'super' is not a constructor."]}
+{"code":"class A extends (B satisfies C) { constructor() { super(); } }","ext":"ts","sourceType":"module","reports":["constructor-super 1:51 Unexpected 'super()' because 'super' is not a constructor."]}
+{"code":"class A extends B<T> { constructor() { super(); } }","ext":"ts","sourceType":"module","reports":[]}
+{"code":"class A extends (B<T>) { constructor() { super(); } }","ext":"ts","sourceType":"module","reports":["constructor-super 1:42 Unexpected 'super()' because 'super' is not a constructor."]}
+{"code":"class A extends (B) { constructor() { super(); } }","ext":"ts","sourceType":"module","reports":[]}
+{"code":"class A extends (null as any) { constructor() { super(); } }","ext":"ts","sourceType":"module","reports":["constructor-super 1:49 Unexpected 'super()' because 'super' is not a constructor."]}
+{"code":"class A extends (null as any) { constructor() { } }","ext":"ts","sourceType":"module","reports":["constructor-super 1:33 Expected to call 'super()'."]}
+{"code":"class A extends (B as any) { constructor() { } }","ext":"ts","sourceType":"module","reports":["constructor-super 1:30 Expected to call 'super()'."]}
+{"code":"class A extends (a = B as any) { constructor() { super(); } }","ext":"ts","sourceType":"module","reports":["constructor-super 1:50 Unexpected 'super()' because 'super' is not a constructor."]}
+{"code":"class A extends (a || (B as any)) { constructor() { super(); } }","ext":"ts","sourceType":"module","reports":[]}
+{"code":"class A extends (a ? b! : 1) { constructor() { super(); } }","ext":"ts","sourceType":"module","reports":["constructor-super 1:48 Unexpected 'super()' because 'super' is not a constructor."]}
+{"code":"class A extends (a, b!) { constructor() { super(); } }","ext":"ts","sourceType":"module","reports":["constructor-super 1:43 Unexpected 'super()' because 'super' is not a constructor."]}
+{"code":"class A extends (a && b)! { constructor() { super(); } }","ext":"ts","sourceType":"module","reports":["constructor-super 1:45 Unexpected 'super()' because 'super' is not a constructor."]}
+{"code":"class A implements I { constructor() { } }","ext":"ts","sourceType":"module","reports":[]}
+{"code":"class A extends B implements I { constructor() { } }","ext":"ts","sourceType":"module","reports":["constructor-super 1:34 Expected to call 'super()'."]}
+{"code":"abstract class A extends B { constructor() { super(); } }","ext":"ts","sourceType":"module","reports":[]}
+{"code":"abstract class A extends B { constructor() { } }","ext":"ts","sourceType":"module","reports":["constructor-super 1:30 Expected to call 'super()'."]}
+{"code":"class A extends B { constructor(); constructor(a?: any) { super(); } }","ext":"ts","sourceType":"module","reports":[]}
+{"code":"class A extends B { constructor(); constructor(a?: any) { } }","ext":"ts","sourceType":"module","reports":["constructor-super 1:36 Expected to call 'super()'."]}
+{"code":"class A extends B { constructor(a: number); constructor(a: string); constructor(a: any) { if (a) super(); } }","ext":"ts","sourceType":"module","reports":["constructor-super 1:69 Lacked a call of 'super()' in some code paths."]}
+{"code":"declare class A extends B { constructor(); }","ext":"ts","sourceType":"module","reports":[]}
+{"code":"class A extends B { constructor(private x: number) { super(); } }","ext":"ts","sourceType":"module","reports":[]}
+{"code":"class A extends B { constructor(private x: number) { } }","ext":"ts","sourceType":"module","reports":["constructor-super 1:21 Expected to call 'super()'."]}
+{"code":"class A extends B { public constructor() { } }","ext":"ts","sourceType":"module","reports":["constructor-super 1:21 Expected to call 'super()'."]}
+{"code":"class A extends B { private constructor() { } }","ext":"ts","sourceType":"module","reports":["constructor-super 1:21 Expected to call 'super()'."]}
+{"code":"class A extends B { protected   constructor() { } }","ext":"ts","sourceType":"module","reports":["constructor-super 1:21 Expected to call 'super()'."]}
+{"code":"class A extends B { 'constructor'() { } }","ext":"ts","sourceType":"module","reports":["constructor-super 1:21 Expected to call 'super()'."]}
+{"code":"class A extends B { constructor() { (super() as any); } }","ext":"ts","sourceType":"module","reports":[]}
+{"code":"class A extends B { constructor() { super()!; } }","ext":"ts","sourceType":"module","reports":[]}
+{"code":"class A extends B { constructor() { <any>super(); } }","ext":"ts","sourceType":"module","reports":[]}
+{"code":"class A extends B { constructor() { super<T>(); } }","ext":"ts","sourceType":"module","fatal":"Parsing error: 'super' may not use type arguments."}
+{"code":"class A extends B { constructor() { return <any>x; } }","ext":"ts","sourceType":"module","reports":[]}
+{"code":"class A extends B { constructor() { return x as any; } }","ext":"ts","sourceType":"module","reports":[]}
+{"code":"class A extends B { constructor() { return; } }","ext":"ts","sourceType":"module","reports":["constructor-super 1:21 Expected to call 'super()'."]}
+{"code":"class A extends B { constructor() { for (;; (a && b) as any) { } super(); } }","ext":"ts","sourceType":"module","reports":[]}
+{"code":"class A extends B { constructor() { for (;; (a && super()) as any) { } } }","ext":"ts","sourceType":"module","reports":["constructor-super 1:51 Unexpected duplicate 'super()'."]}
+{"code":"class A extends B { constructor() { for (;; a && super()) { } } }","ext":"ts","sourceType":"module","reports":["constructor-super 1:50 Unexpected duplicate 'super()'."]}
+{"code":"class A extends B { constructor() { for (;; (a && super())) { } } }","ext":"ts","sourceType":"module","reports":["constructor-super 1:51 Unexpected duplicate 'super()'."]}
+{"code":"class A extends B { constructor() { for (;; (a && super())!) { } } }","ext":"ts","sourceType":"module","reports":["constructor-super 1:51 Unexpected duplicate 'super()'."]}
+{"code":"namespace N { class A extends B { constructor() { } } }","ext":"ts","sourceType":"module","reports":["constructor-super 1:35 Expected to call 'super()'."]}
+{"code":"namespace N { export class A extends B { constructor() { } } }","ext":"ts","sourceType":"module","reports":["constructor-super 1:42 Expected to call 'super()'."]}
+{"code":"declare namespace N { class A extends B { constructor(); } }","ext":"ts","sourceType":"module","reports":[]}
+{"code":"module M { class A extends B { constructor() { } } }","ext":"ts","sourceType":"module","reports":["constructor-super 1:32 Expected to call 'super()'."]}
+{"code":"export default class extends B { constructor() { } }","ext":"ts","sourceType":"module","reports":["constructor-super 1:34 Expected to call 'super()'."]}
+{"code":"export class A extends B { constructor() { } }","ext":"ts","sourceType":"module","reports":["constructor-super 1:28 Expected to call 'super()'."]}
+{"code":"export default abstract class A extends B { constructor() { } }","ext":"ts","sourceType":"module","reports":["constructor-super 1:45 Expected to call 'super()'."]}
+{"code":"class A extends B { constructor() { const f = (): void => { super(); }; } }","ext":"ts","sourceType":"module","reports":["constructor-super 1:21 Expected to call 'super()'."]}
+{"code":"class A<T> extends B<T> { constructor() { } }","ext":"ts","sourceType":"module","reports":["constructor-super 1:27 Expected to call 'super()'."]}
+{"code":"class A extends B.C<T> { constructor() { super(); } }","ext":"ts","sourceType":"module","reports":[]}
+{"code":"class A extends B { @dec constructor() { } }","ext":"ts","sourceType":"module","fatal":"Parsing error: Decorators are not valid here."}
+{"code":"@dec class A extends B { constructor() { } }","ext":"ts","sourceType":"module","reports":["constructor-super 1:26 Expected to call 'super()'."]}
+{"code":"class A extends B { constructor(@dec a) { } }","ext":"ts","sourceType":"module","reports":["constructor-super 1:21 Expected to call 'super()'."]}
+{"code":"class A extends B { declare x: number; constructor() { } }","ext":"ts","sourceType":"module","reports":["constructor-super 1:40 Expected to call 'super()'."]}
+{"code":"class A extends B { x: number = 1; constructor() { } }","ext":"ts","sourceType":"module","reports":["constructor-super 1:36 Expected to call 'super()'."]}
+{"code":"class A extends B { constructor() { type T = number; } }","ext":"ts","sourceType":"module","reports":["constructor-super 1:21 Expected to call 'super()'."]}
+{"code":"class A extends B { constructor() { enum E { a = super() } } }","ext":"ts","sourceType":"module","reports":[]}
+{"code":"class A extends B { constructor() { switch (a) { case 1: type T = number; default: super(); } } }","ext":"ts","sourceType":"module","reports":[]}
+{"code":"class A extends B { constructor() { <div a={super()} />; } }","ext":"tsx","sourceType":"module","reports":[]}
+{"code":"class A extends B { constructor() { <this.x />; super(); } }","ext":"tsx","sourceType":"module","reports":[]}
+{"code":"class A extends B { constructor() { this.x!; super(); } }","ext":"ts","sourceType":"module","reports":["no-this-before-super 1:37 'this' is not allowed before 'super()'."]}
+{"code":"class A extends B { constructor() { (this as any).x; super(); } }","ext":"ts","sourceType":"module","reports":["no-this-before-super 1:38 'this' is not allowed before 'super()'."]}
+{"code":"class A extends B { constructor() { <any>this; super(); } }","ext":"ts","sourceType":"module","reports":["no-this-before-super 1:42 'this' is not allowed before 'super()'."]}
+{"code":"class A extends B { constructor() { super.x!; super(); } }","ext":"ts","sourceType":"module","reports":["no-this-before-super 1:37 'super' is not allowed before 'super()'."]}
+{"code":"class A extends B { constructor() { let x: this; super(); } }","ext":"ts","sourceType":"module","reports":[]}
+{"code":"class A extends B { constructor() { let x: typeof this.y; super(); } }","ext":"ts","sourceType":"module","reports":["no-this-before-super 1:51 'this' is not allowed before 'super()'."]}
+{"code":"class A extends B { constructor() { function f(this: A) {} super(); } }","ext":"ts","sourceType":"module","reports":[]}
+{"code":"class A extends B { constructor(public a = this.b) { super(); } }","ext":"ts","sourceType":"module","reports":["no-this-before-super 1:44 'this' is not allowed before 'super()'."]}
+{"code":"class A extends (undefined as any) { constructor() { this.a; } }","ext":"ts","sourceType":"module","reports":["constructor-super 1:38 Expected to call 'super()'.","no-this-before-super 1:54 'this' is not allowed before 'super()'."]}
+{"code":"class A extends null! { constructor() { this.a; } }","ext":"ts","sourceType":"module","reports":["constructor-super 1:25 Expected to call 'super()'.","no-this-before-super 1:41 'this' is not allowed before 'super()'."]}
+{"code":"class A extends (void 0)! { constructor() { this.a; } }","ext":"ts","sourceType":"module","reports":["constructor-super 1:29 Expected to call 'super()'.","no-this-before-super 1:45 'this' is not allowed before 'super()'."]}
+{"code":"class A extends (null) { constructor() { this.a; } }","ext":"ts","sourceType":"module","reports":["constructor-super 1:26 Expected to call 'super()'."]}
+{"code":"class A extends B { constructor() { try { super(); } catch (e: unknown) { this.a; } } }","ext":"ts","sourceType":"module","reports":["constructor-super 1:21 Lacked a call of 'super()' in some code paths.","no-this-before-super 1:75 'this' is not allowed before 'super()'."]}

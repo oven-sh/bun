@@ -31,7 +31,7 @@ const linter = new Linter({ configType: "flat" });
 const ruleId = ts && rule === "no-redeclare" ? "@typescript-eslint/no-redeclare" : rule;
 function eslint(code, sourceType) {
 	const config = {
-		files: ["**/*"],
+		files: ["**/*.js", "**/*.cjs", "**/*.mjs", "**/*.jsx", "**/*.ts", "**/*.tsx", "**/*.cts", "**/*.mts"],
 		plugins: plugin ? { "@typescript-eslint": plugin } : {},
 		languageOptions: { ecmaVersion: "latest", sourceType, globals, ...(parser ? { parser } : {}), parserOptions: { ecmaFeatures: { jsx: !ts } } },
 		linterOptions: { noInlineConfig: true, reportUnusedDisableDirectives: "off" },

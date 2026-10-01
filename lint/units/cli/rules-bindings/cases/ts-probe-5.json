@@ -1,0 +1,12 @@
+[
+"Math(); (Math as any)(); Math!(); (<any>Math)(); (Math satisfies any)(); new (JSON as any)(); globalThis.Math(); (globalThis as any).Math(); globalThis!.JSON(); var m = Math as any; m();",
+"const { Math: m } = globalThis as any; m(); const g = globalThis!; g.JSON(); let h: typeof globalThis = globalThis; h.Reflect();",
+"function f(a: any = Math) { a(); } const k = <any>JSON; new k(); (Math<string>)(); Math<string>(); new Math<number>();",
+"declare const Math: any; Math(); namespace N { export const x = JSON; x(); } enum E { A = (Intl as any)() }",
+"import type { Math } from 'x'; Math();",
+"class C { m = Math; static s = (JSON as any)(); constructor(public p = Reflect) { p(); } }",
+"let a: any; a = Math!; a(); a = (globalThis as any).JSON; a(); [a] = [Math]; ({ Math: a } = globalThis as typeof globalThis); a();",
+"var x = Math satisfies object; x?.(); (x as any)?.(); x!(); new (x!)();",
+"type T = typeof Math; interface I { m: typeof JSON } var y: T = Math; y();",
+"abstract class A { abstract m(): void; x = globalThis.Math(); } declare function d(a?: typeof Math): void;"
+]

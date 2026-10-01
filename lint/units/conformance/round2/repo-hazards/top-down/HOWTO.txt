@@ -31,3 +31,21 @@ S is a scratch clone of the conformance branch with the corpus written by sync.s
 
 6. The refusal of sync.sh (its line 263) against the names that a discoverer takes: the awk line of the findings, fed with
   the paths of step 3 (0 refused) and with probe names (12 of 12 refused, 11 of 11 look-alikes let through).
+
+7. oxlint 1.70.0 with the configuration of the repository on the conformance directory of S (no --fix, nothing is written):
+  O=/workspace/wt/conformance/node_modules/.bin/oxlint; C=/workspace/wt/conformance/oxlint.json
+  (cd /tmp/rh/scratch && $O --threads 4 --config $C test/cli/lint/conformance | grep -a '^Found\|^Finished')
+  As committed: 12,481 files, 63,762 errors. With a file corpus/.eslintignore that holds "*": 33 files, 4 errors (the four
+  of runner/gostrings.ts:58-64). With the entry "test/cli/lint/conformance/corpus" in ignorePatterns of a copy of the
+  configuration: 33 files. With a file corpus/.oxlintrc.json { "ignorePatterns": ["**"] }: 12,481 files (--config
+  switches nested configurations off).
+
+8. Line endings under the git settings of format.yml (core.autocrlf true), simulated in a small repository with the same
+  attributes (git 2.47.3): a file with CR LF and no text attribute (the four licence files) is left alone by status and
+  by add -A, and is rewritten by add --renormalize; with "-text" it is left alone by all three. Files below corpus/ have
+  -text from the unit's .gitattributes and are left alone by all three.
+
+9. The list of changed files that CI reads, with the corpus in the pull request:
+  git diff --name-status --no-renames $(git merge-base origin/main HEAD) <commit with the corpus> | cut -f2 | LC_ALL=C sort
+  22,325 paths; test/cli/lint/conformance.test.ts is entry 77, the directory is entries 78 to 22,309, the list of CI ends
+  at entry 500, and 16 paths come after the directory.

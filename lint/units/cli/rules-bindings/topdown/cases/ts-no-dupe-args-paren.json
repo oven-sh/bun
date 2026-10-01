@@ -1,0 +1,1 @@
+["function f<T extends (x: any) => void>(a, a) {}", "class C { m<T extends (x: any) => void>(b, b) {} }", "const o = { async *[k(1)]<T>(c, c) {} }", "(function <U = (() => void)>(d, d) {})", "class D { constructor(private e, e) {} set s(f) {} }", "function g(@dec(1) h, h) {}"]

@@ -1,0 +1,48 @@
+{"code":"class A extends (B as any) { constructor() { super(); } }","ext":"ts","eslint":[{"line":1,"column":46,"message":"Unexpected 'super()' because 'super' is not a constructor."}]}
+{"code":"class A extends B! { constructor() { super(); } }","ext":"ts","eslint":[{"line":1,"column":38,"message":"Unexpected 'super()' because 'super' is not a constructor."}]}
+{"code":"class A extends (<any>B) { constructor() { super(); } }","ext":"ts","eslint":[{"line":1,"column":44,"message":"Unexpected 'super()' because 'super' is not a constructor."}]}
+{"code":"class A extends (B satisfies C) { constructor() { super(); } }","ext":"ts","eslint":[{"line":1,"column":51,"message":"Unexpected 'super()' because 'super' is not a constructor."}]}
+{"code":"class A extends B<T> { constructor() { super(); } }","ext":"ts","eslint":[]}
+{"code":"class A extends (B<T>) { constructor() { super(); } }","ext":"ts","eslint":[{"line":1,"column":42,"message":"Unexpected 'super()' because 'super' is not a constructor."}]}
+{"code":"class A extends B.C<T> { constructor() { super(); } }","ext":"ts","eslint":[]}
+{"code":"class A extends mixin(B)<T> { constructor() { super(); } }","ext":"ts","eslint":[]}
+{"code":"class A extends (B as any) { constructor() { } }","ext":"ts","eslint":[{"line":1,"column":30,"message":"Expected to call 'super()'."}]}
+{"code":"class A extends (null as any) { constructor() { super(); } }","ext":"ts","eslint":[{"line":1,"column":49,"message":"Unexpected 'super()' because 'super' is not a constructor."}]}
+{"code":"class A extends (null as any) { constructor() { } }","ext":"ts","eslint":[{"line":1,"column":33,"message":"Expected to call 'super()'."}]}
+{"code":"class A extends (a || B as any) { constructor() { super(); } }","ext":"ts","eslint":[]}
+{"code":"class A extends ((a as any) || B) { constructor() { super(); } }","ext":"ts","eslint":[]}
+{"code":"class A extends ((a as any) && (B as any)) { constructor() { super(); } }","ext":"ts","eslint":[{"line":1,"column":62,"message":"Unexpected 'super()' because 'super' is not a constructor."}]}
+{"code":"class A extends (a ? (B as any) : 1) { constructor() { super(); } }","ext":"ts","eslint":[{"line":1,"column":56,"message":"Unexpected 'super()' because 'super' is not a constructor."}]}
+{"code":"class A extends (a, B as any) { constructor() { super(); } }","ext":"ts","eslint":[{"line":1,"column":49,"message":"Unexpected 'super()' because 'super' is not a constructor."}]}
+{"code":"class A extends (x = B as any) { constructor() { super(); } }","ext":"ts","eslint":[{"line":1,"column":50,"message":"Unexpected 'super()' because 'super' is not a constructor."}]}
+{"code":"class A extends B { public constructor() { } }","ext":"ts","eslint":[{"line":1,"column":21,"message":"Expected to call 'super()'."}]}
+{"code":"class A extends B { private   constructor() { } }","ext":"ts","eslint":[{"line":1,"column":21,"message":"Expected to call 'super()'."}]}
+{"code":"class A extends B { protected constructor() { super(); } }","ext":"ts","eslint":[]}
+{"code":"class A extends B { constructor(); constructor(a?: any) { } }","ext":"ts","eslint":[{"line":1,"column":36,"message":"Expected to call 'super()'."}]}
+{"code":"class A extends B { constructor(a: string); constructor(a: number); constructor(a: any) { super(); } }","ext":"ts","eslint":[]}
+{"code":"class A extends B { constructor(private a: string) { } }","ext":"ts","eslint":[{"line":1,"column":21,"message":"Expected to call 'super()'."}]}
+{"code":"class A extends B { constructor(private a: string) { super(); } }","ext":"ts","eslint":[]}
+{"code":"class A extends B { constructor() { super() as any; } }","ext":"ts","eslint":[]}
+{"code":"class A extends B { constructor() { super()!; } }","ext":"ts","eslint":[]}
+{"code":"class A extends B { constructor() { (<any>super()); } }","ext":"ts","eslint":[]}
+{"code":"class A extends B { constructor() { return x as any; } }","ext":"ts","eslint":[]}
+{"code":"class A extends B { constructor() { return x!; } }","ext":"ts","eslint":[]}
+{"code":"class A extends B { constructor() { if (a) super(); else return <any>x; } }","ext":"ts","eslint":[]}
+{"code":"class A extends B { constructor() { for (;; (a && super()) as any) { if (b) break; } } }","ext":"ts","eslint":[{"line":1,"column":21,"message":"Lacked a call of 'super()' in some code paths."},{"line":1,"column":51,"message":"Unexpected duplicate 'super()'."}]}
+{"code":"class A extends B { constructor() { for (;; (a ? super() : 0)!) { if (b) break; } } }","ext":"ts","eslint":[{"line":1,"column":21,"message":"Lacked a call of 'super()' in some code paths."},{"line":1,"column":50,"message":"Unexpected duplicate 'super()'."}]}
+{"code":"class A extends B implements I { constructor() { } }","ext":"ts","eslint":[{"line":1,"column":34,"message":"Expected to call 'super()'."}]}
+{"code":"class A implements I { constructor() { } }","ext":"ts","eslint":[]}
+{"code":"abstract class A extends B { constructor() { super(); } abstract m(): void; }","ext":"ts","eslint":[]}
+{"code":"abstract class A extends B { constructor() { } }","ext":"ts","eslint":[{"line":1,"column":30,"message":"Expected to call 'super()'."}]}
+{"code":"declare class A extends B { constructor(); }","ext":"ts","eslint":[]}
+{"code":"declare namespace N { class A extends B { constructor(); } }","ext":"ts","eslint":[]}
+{"code":"namespace N { export class A extends B { constructor() { } } }","ext":"ts","eslint":[{"line":1,"column":42,"message":"Expected to call 'super()'."}]}
+{"code":"class A extends B { constructor() { enum E { X = 1 } super(); } }","ext":"ts","eslint":[]}
+{"code":"class A extends B { constructor() { type T = number; } }","ext":"ts","eslint":[{"line":1,"column":21,"message":"Expected to call 'super()'."}]}
+{"code":"class A extends B { constructor() { let f = function (this: A) { }; super(); } }","ext":"ts","eslint":[]}
+{"code":"class A<T> extends B<T> { constructor() { super(); } }","ext":"ts","eslint":[]}
+{"code":"class A extends B { @dec m() {} constructor() { } }","ext":"ts","eslint":[{"line":1,"column":33,"message":"Expected to call 'super()'."}]}
+{"code":"class A extends B { declare x: number; constructor() { } }","ext":"ts","eslint":[{"line":1,"column":40,"message":"Expected to call 'super()'."}]}
+{"code":"class A extends B { x!: number; constructor() { super(); this.x = 1; } }","ext":"ts","eslint":[]}
+{"code":"class A extends B { constructor(a = super() as any) { } }","ext":"ts","eslint":[{"line":1,"column":21,"message":"Lacked a call of 'super()' in some code paths."}]}
+{"code":"class A extends B { constructor() { try { super(); } catch (e: unknown) { } } }","ext":"ts","eslint":[{"line":1,"column":21,"message":"Lacked a call of 'super()' in some code paths."}]}

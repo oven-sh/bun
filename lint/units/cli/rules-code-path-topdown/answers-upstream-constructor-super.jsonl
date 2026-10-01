@@ -1,0 +1,82 @@
+{"code":"class A { }","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"class A { constructor() { } }","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"class A extends null { }","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"class A extends B { }","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"class A extends B { constructor() { super(); } }","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"class A extends B { constructor() { if (true) { super(); } else { super(); } } }","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"class A extends (class B {}) { constructor() { super(); } }","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"class A extends (B = C) { constructor() { super(); } }","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"class A extends (B &&= C) { constructor() { super(); } }","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"class A extends (B ||= C) { constructor() { super(); } }","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"class A extends (B ??= C) { constructor() { super(); } }","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"class A extends (B ||= 5) { constructor() { super(); } }","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"class A extends (B ??= 5) { constructor() { super(); } }","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"class A extends (B || C) { constructor() { super(); } }","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"class A extends (5 && B) { constructor() { super(); } }","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"class A extends (false && B) { constructor() { super(); } }","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"class A extends (B || 5) { constructor() { super(); } }","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"class A extends (B ?? 5) { constructor() { super(); } }","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"class A extends (a ? B : C) { constructor() { super(); } }","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"class A extends (B, C) { constructor() { super(); } }","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"class A { constructor() { class B extends C { constructor() { super(); } } } }","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"class A extends B { constructor() { super(); class C extends D { constructor() { super(); } } } }","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"class A extends B { constructor() { super(); class C { constructor() { } } } }","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"class A extends B { constructor() { a ? super() : super(); } }","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"class A extends B { constructor() { if (a) super(); else super(); } }","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"class A extends B { constructor() { switch (a) { case 0: super(); break; default: super(); } } }","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"class A extends B { constructor() { try {} finally { super(); } } }","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"class A extends B { constructor() { if (a) throw Error(); super(); } }","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"class A extends B { constructor() { if (true) return a; super(); } }","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"class A extends null { constructor() { return a; } }","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"class A { constructor() { return a; } }","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"class A extends B { constructor(a) { super(); for (const b of a) { this.a(); } } }","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"class A extends B { constructor(a) { super(); for (b in a) ( foo(b) ); } }","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"class Foo extends Object { constructor(method) { super(); this.method = method || function() {}; } }","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"class A extends Object {\n    constructor() {\n        super();\n        for (let i = 0; i < 0; i++);\n    }\n}","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"class A extends Object {\n    constructor() {\n        super();\n        for (; i < 0; i++);\n    }\n}","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"class A extends Object {\n    constructor() {\n        super();\n        for (let i = 0;; i++) {\n            if (foo) break;\n        }\n    }\n}","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"class A extends Object {\n    constructor() {\n        super();\n        for (let i = 0; i < 0;);\n    }\n}","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"class A extends Object {\n    constructor() {\n        super();\n        for (let i = 0;;) {\n            if (foo) break;\n        }\n    }\n}","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"\n            class A extends B {\n                constructor(props) {\n                    super(props);\n\n                    try {\n                        let arr = [];\n                        for (let a of arr) {\n                        }\n                    } catch (err) {\n                    }\n                }\n            }\n        ","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"class A extends obj?.prop { constructor() { super(); } }","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"\n            class A extends Base {\n                constructor(list) {\n                    for (const a of list) {\n                        if (a.foo) {\n                            super(a);\n                            return;\n                        }\n                    }\n                    super();\n                }\n            }\n        ","ext":"js","sourceType":"script","kind":"valid","reports":[]}
+{"code":"class A extends null { constructor() { super(); } }","ext":"js","sourceType":"script","kind":"invalid","reports":["constructor-super 1:40 Unexpected 'super()' because 'super' is not a constructor."]}
+{"code":"class A extends null { constructor() { } }","ext":"js","sourceType":"script","kind":"invalid","reports":["constructor-super 1:24 Expected to call 'super()'."]}
+{"code":"class A extends 100 { constructor() { super(); } }","ext":"js","sourceType":"script","kind":"invalid","reports":["constructor-super 1:39 Unexpected 'super()' because 'super' is not a constructor."]}
+{"code":"class A extends 'test' { constructor() { super(); } }","ext":"js","sourceType":"script","kind":"invalid","reports":["constructor-super 1:42 Unexpected 'super()' because 'super' is not a constructor."]}
+{"code":"class A extends (B = 5) { constructor() { super(); } }","ext":"js","sourceType":"script","kind":"invalid","reports":["constructor-super 1:43 Unexpected 'super()' because 'super' is not a constructor."]}
+{"code":"class A extends (B && 5) { constructor() { super(); } }","ext":"js","sourceType":"script","kind":"invalid","reports":["constructor-super 1:44 Unexpected 'super()' because 'super' is not a constructor."]}
+{"code":"class A extends (B &&= 5) { constructor() { super(); } }","ext":"js","sourceType":"script","kind":"invalid","reports":["constructor-super 1:45 Unexpected 'super()' because 'super' is not a constructor."]}
+{"code":"class A extends (B += C) { constructor() { super(); } }","ext":"js","sourceType":"script","kind":"invalid","reports":["constructor-super 1:44 Unexpected 'super()' because 'super' is not a constructor."]}
+{"code":"class A extends (B -= C) { constructor() { super(); } }","ext":"js","sourceType":"script","kind":"invalid","reports":["constructor-super 1:44 Unexpected 'super()' because 'super' is not a constructor."]}
+{"code":"class A extends (B **= C) { constructor() { super(); } }","ext":"js","sourceType":"script","kind":"invalid","reports":["constructor-super 1:45 Unexpected 'super()' because 'super' is not a constructor."]}
+{"code":"class A extends (B |= C) { constructor() { super(); } }","ext":"js","sourceType":"script","kind":"invalid","reports":["constructor-super 1:44 Unexpected 'super()' because 'super' is not a constructor."]}
+{"code":"class A extends (B &= C) { constructor() { super(); } }","ext":"js","sourceType":"script","kind":"invalid","reports":["constructor-super 1:44 Unexpected 'super()' because 'super' is not a constructor."]}
+{"code":"class A extends B { constructor() { } }","ext":"js","sourceType":"script","kind":"invalid","reports":["constructor-super 1:21 Expected to call 'super()'."]}
+{"code":"class A extends B { constructor() { for (var a of b) super.foo(); } }","ext":"js","sourceType":"script","kind":"invalid","reports":["constructor-super 1:21 Expected to call 'super()'."]}
+{"code":"class A extends B { constructor() { for (var i = 1; i < 10; i++) super.foo(); } }","ext":"js","sourceType":"script","kind":"invalid","reports":["constructor-super 1:21 Expected to call 'super()'."]}
+{"code":"class A extends B { constructor() { var c = class extends D { constructor() { super(); } } } }","ext":"js","sourceType":"script","kind":"invalid","reports":["constructor-super 1:21 Expected to call 'super()'."]}
+{"code":"class A extends B { constructor() { var c = () => super(); } }","ext":"js","sourceType":"script","kind":"invalid","reports":["constructor-super 1:21 Expected to call 'super()'."]}
+{"code":"class A extends B { constructor() { class C extends D { constructor() { super(); } } } }","ext":"js","sourceType":"script","kind":"invalid","reports":["constructor-super 1:21 Expected to call 'super()'."]}
+{"code":"class A extends B { constructor() { var C = class extends D { constructor() { super(); } } } }","ext":"js","sourceType":"script","kind":"invalid","reports":["constructor-super 1:21 Expected to call 'super()'."]}
+{"code":"class A extends B { constructor() { super(); class C extends D { constructor() { } } } }","ext":"js","sourceType":"script","kind":"invalid","reports":["constructor-super 1:66 Expected to call 'super()'."]}
+{"code":"class A extends B { constructor() { super(); var C = class extends D { constructor() { } } } }","ext":"js","sourceType":"script","kind":"invalid","reports":["constructor-super 1:72 Expected to call 'super()'."]}
+{"code":"class A extends B { constructor() { if (a) super(); } }","ext":"js","sourceType":"script","kind":"invalid","reports":["constructor-super 1:21 Lacked a call of 'super()' in some code paths."]}
+{"code":"class A extends B { constructor() { if (a); else super(); } }","ext":"js","sourceType":"script","kind":"invalid","reports":["constructor-super 1:21 Lacked a call of 'super()' in some code paths."]}
+{"code":"class A extends B { constructor() { a && super(); } }","ext":"js","sourceType":"script","kind":"invalid","reports":["constructor-super 1:21 Lacked a call of 'super()' in some code paths."]}
+{"code":"class A extends B { constructor() { switch (a) { case 0: super(); } } }","ext":"js","sourceType":"script","kind":"invalid","reports":["constructor-super 1:21 Lacked a call of 'super()' in some code paths."]}
+{"code":"class A extends B { constructor() { switch (a) { case 0: break; default: super(); } } }","ext":"js","sourceType":"script","kind":"invalid","reports":["constructor-super 1:21 Lacked a call of 'super()' in some code paths."]}
+{"code":"class A extends B { constructor() { try { super(); } catch (err) {} } }","ext":"js","sourceType":"script","kind":"invalid","reports":["constructor-super 1:21 Lacked a call of 'super()' in some code paths."]}
+{"code":"class A extends B { constructor() { try { a; } catch (err) { super(); } } }","ext":"js","sourceType":"script","kind":"invalid","reports":["constructor-super 1:21 Lacked a call of 'super()' in some code paths."]}
+{"code":"class A extends B { constructor() { if (a) return; super(); } }","ext":"js","sourceType":"script","kind":"invalid","reports":["constructor-super 1:21 Lacked a call of 'super()' in some code paths."]}
+{"code":"class A extends B { constructor() { super(); super(); } }","ext":"js","sourceType":"script","kind":"invalid","reports":["constructor-super 1:46 Unexpected duplicate 'super()'."]}
+{"code":"class A extends B { constructor() { super() || super(); } }","ext":"js","sourceType":"script","kind":"invalid","reports":["constructor-super 1:48 Unexpected duplicate 'super()'."]}
+{"code":"class A extends B { constructor() { if (a) super(); super(); } }","ext":"js","sourceType":"script","kind":"invalid","reports":["constructor-super 1:53 Unexpected duplicate 'super()'."]}
+{"code":"class A extends B { constructor() { switch (a) { case 0: super(); default: super(); } } }","ext":"js","sourceType":"script","kind":"invalid","reports":["constructor-super 1:76 Unexpected duplicate 'super()'."]}
+{"code":"class A extends B { constructor(a) { while (a) super(); } }","ext":"js","sourceType":"script","kind":"invalid","reports":["constructor-super 1:21 Lacked a call of 'super()' in some code paths.","constructor-super 1:48 Unexpected duplicate 'super()'."]}
+{"code":"class A extends B { constructor() { return; super(); } }","ext":"js","sourceType":"script","kind":"invalid","reports":["constructor-super 1:21 Expected to call 'super()'."]}
+{"code":"class Foo extends Bar {\n                constructor() {\n                    for (a in b) for (c in d);\n                }\n            }","ext":"js","sourceType":"script","kind":"invalid","reports":["constructor-super 2:17 Expected to call 'super()'."]}
+{"code":"class C extends D {\n\n                constructor() {\n                    do {\n                        something();\n                    } while (foo);\n                }\n\n            }","ext":"js","sourceType":"script","kind":"invalid","reports":["constructor-super 3:17 Expected to call 'super()'."]}
+{"code":"class C extends D {\n\n                constructor() {\n                    for (let i = 1;;i++) {\n                        if (bar) {\n                            break;\n                        }\n                    }\n                }\n\n            }","ext":"js","sourceType":"script","kind":"invalid","reports":["constructor-super 3:17 Expected to call 'super()'."]}
+{"code":"class C extends D {\n\n                constructor() {\n                    do {\n                        super();\n                    } while (foo);\n                }\n\n            }","ext":"js","sourceType":"script","kind":"invalid","reports":["constructor-super 5:25 Unexpected duplicate 'super()'."]}
+{"code":"class C extends D {\n\n                constructor() {\n                    while (foo) {\n                        if (bar) {\n                            super();\n                            break;\n                        }\n                    }\n                }\n\n            }","ext":"js","sourceType":"script","kind":"invalid","reports":["constructor-super 3:17 Lacked a call of 'super()' in some code paths."]}

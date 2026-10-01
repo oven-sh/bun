@@ -1,0 +1,1 @@
+try {} catch ([a, a]) {}

@@ -1,0 +1,134 @@
+{"code":"switch (x) { case 1: a(); /* falls through */ case 2: b(); }","ext":"js","eslint":[]}
+{"code":"switch (x) { case 1: a(); // falls through\n case 2: b(); }","ext":"js","eslint":[]}
+{"code":"switch (x) { case 1: a(); // fall through\n case 2: b(); }","ext":"js","eslint":[]}
+{"code":"switch (x) { case 1: a(); // fallthrough\n case 2: b(); }","ext":"js","eslint":[]}
+{"code":"switch (x) { case 1: a(); // FALLS-THROUGH\n case 2: b(); }","ext":"js","eslint":[{"line":2,"column":2,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: a(); // Falls Through\n case 2: b(); }","ext":"js","eslint":[]}
+{"code":"switch (x) { case 1: a(); // falls\tthrough\n case 2: b(); }","ext":"js","eslint":[]}
+{"code":"switch (x) { case 1: a(); /* falls\nthrough */ case 2: b(); }","ext":"js","eslint":[]}
+{"code":"switch (x) { case 1: a(); /* falls  through */ case 2: b(); }","ext":"js","eslint":[{"line":1,"column":48,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: a(); /* this falls through to the next */ case 2: b(); }","ext":"js","eslint":[]}
+{"code":"switch (x) { case 1: a(); /* fallſ through */ case 2: b(); }","ext":"js","eslint":[]}
+{"code":"switch (x) { case 1: a(); /* falls through */ case 2: b(); }","ext":"js","eslint":[]}
+{"code":"switch (x) { case 1: a(); /* falls through */ case 2: b(); }","ext":"js","eslint":[]}
+{"code":"switch (x) { case 1: a(); /* falls through */ /* other */ case 2: b(); }","ext":"js","eslint":[{"line":1,"column":59,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: a(); /* other */ /* falls through */ case 2: b(); }","ext":"js","eslint":[]}
+{"code":"switch (x) { case 1: a(); // falls through\n // other\n case 2: b(); }","ext":"js","eslint":[{"line":3,"column":2,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: a() /* falls through */; case 2: b(); }","ext":"js","eslint":[{"line":1,"column":47,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: /* falls through */ a(); case 2: b(); }","ext":"js","eslint":[{"line":1,"column":47,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: a(); case /* falls through */ 2: b(); }","ext":"js","eslint":[{"line":1,"column":27,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: a(); // eslint-disable-line falls through\n case 2: b(); }","ext":"js","eslint":[{"line":2,"column":2,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: a(); // eslint-disable-next-line falls through\n case 2: b(); }","ext":"js","eslint":[{"line":2,"column":2,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: a(); /* eslint-enable falls through */ case 2: b(); }","ext":"js","eslint":[{"line":1,"column":61,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: a(); /* eslint-env falls through */ case 2: b(); }","ext":"js","eslint":[{"line":1,"column":58,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: a(); /* eslint falls through */ case 2: b(); }","ext":"js","eslint":[{"line":1,"column":54,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: a(); /* global falls through */ case 2: b(); }","ext":"js","eslint":[{"line":1,"column":54,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: a(); /* globals falls through */ case 2: b(); }","ext":"js","eslint":[{"line":1,"column":55,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: a(); /* exported falls through */ case 2: b(); }","ext":"js","eslint":[{"line":1,"column":56,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: a(); /*   exported\nfalls through */ case 2: b(); }","ext":"js","eslint":[{"line":2,"column":18,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: a(); /* eslintfalls through */ case 2: b(); }","ext":"js","eslint":[]}
+{"code":"switch (x) { case 1: a(); /* globalize: falls through */ case 2: b(); }","ext":"js","eslint":[]}
+{"code":"switch (x) { case 1: a(); /* eslint-disabled falls through */ case 2: b(); }","ext":"js","eslint":[]}
+{"code":"switch (x) { case 1: { a(); /* falls through */ } case 2: b(); }","ext":"js","eslint":[]}
+{"code":"switch (x) { case 1: { a(); // falls through\n } case 2: b(); }","ext":"js","eslint":[]}
+{"code":"switch (x) { case 1: { /* falls through */ } case 2: b(); }","ext":"js","eslint":[]}
+{"code":"switch (x) { case 1: { /* falls through */ a(); } case 2: b(); }","ext":"js","eslint":[{"line":1,"column":51,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: { a(); } /* falls through */ case 2: b(); }","ext":"js","eslint":[]}
+{"code":"switch (x) { case 1: { a(); /* other */ } /* falls through */ case 2: b(); }","ext":"js","eslint":[]}
+{"code":"switch (x) { case 1: { a(); /* falls through */ } /* other */ case 2: b(); }","ext":"js","eslint":[]}
+{"code":"switch (x) { case 1: { a(); /* falls through */ /* other */ } case 2: b(); }","ext":"js","eslint":[{"line":1,"column":63,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: { a(); } { /* falls through */ } case 2: b(); }","ext":"js","eslint":[{"line":1,"column":55,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: a(); { /* falls through */ } case 2: b(); }","ext":"js","eslint":[{"line":1,"column":51,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: { { /* falls through */ } } case 2: b(); }","ext":"js","eslint":[{"line":1,"column":50,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: if (a) { /* falls through */ } case 2: b(); }","ext":"js","eslint":[{"line":1,"column":53,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: L: { /* falls through */ } case 2: b(); }","ext":"js","eslint":[{"line":1,"column":49,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: {} case 2: b(); }","ext":"js","eslint":[{"line":1,"column":25,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: ; case 2: b(); }","ext":"js","eslint":[{"line":1,"column":24,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: a = '// falls through'; case 2: b(); }","ext":"js","eslint":[{"line":1,"column":46,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: a = `// falls through`; case 2: b(); }","ext":"js","eslint":[{"line":1,"column":46,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: a = `${b}// falls through\n`; case 2: b(); }","ext":"js","eslint":[{"line":2,"column":4,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: a = /\\/\\/ falls through/; case 2: b(); }","ext":"js","eslint":[{"line":1,"column":48,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: a = b / 2 // falls through\n ; case 2: b(); }","ext":"js","eslint":[{"line":2,"column":4,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: a = b / 2 / c; // falls through\n case 2: b(); }","ext":"js","eslint":[]}
+{"code":"switch (x) { case 1: a = /re/ // falls through\n case 2: b(); }","ext":"js","eslint":[]}
+{"code":"switch (x) { case 1: a();\n\n   case 2: b(); }","ext":"js","eslint":[{"line":3,"column":4,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: a(); default: b(); }","ext":"js","eslint":[{"line":1,"column":27,"message":"Expected a 'break' statement before 'default'."}]}
+{"code":"switch (x) { case 1: a(); /* c */ default: b(); }","ext":"js","eslint":[{"line":1,"column":35,"message":"Expected a 'break' statement before 'default'."}]}
+{"code":"switch (x) { default: a(); case 1: b(); }","ext":"js","eslint":[{"line":1,"column":28,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: a(); case (2): b(); }","ext":"js","eslint":[{"line":1,"column":27,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: a(); case ((2)): b(); }","ext":"js","eslint":[{"line":1,"column":27,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: a(); case\n 2: b(); }","ext":"js","eslint":[{"line":1,"column":27,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: a(); case /* c */ 2: b(); }","ext":"js","eslint":[{"line":1,"column":27,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case a.default: a(); default: b(); }","ext":"js","eslint":[{"line":1,"column":35,"message":"Expected a 'break' statement before 'default'."}]}
+{"code":"switch (x) { case 1: a.default(); default: b(); }","ext":"js","eslint":[{"line":1,"column":35,"message":"Expected a 'break' statement before 'default'."}]}
+{"code":"switch (x) { case 1: a = b ? c.default : d; default: b(); }","ext":"js","eslint":[{"line":1,"column":45,"message":"Expected a 'break' statement before 'default'."}]}
+{"code":"switch (x) { case 1: a = { default: 1 }; default: b(); }","ext":"js","eslint":[{"line":1,"column":42,"message":"Expected a 'break' statement before 'default'."}]}
+{"code":"switch (x) { case 1: switch (y) { default: a(); } default: b(); }","ext":"js","eslint":[{"line":1,"column":51,"message":"Expected a 'break' statement before 'default'."}]}
+{"code":"switch (x) { case 1: (function () { switch (y) { default: a(); } })(); default: b(); }","ext":"js","eslint":[{"line":1,"column":72,"message":"Expected a 'break' statement before 'default'."}]}
+{"code":"switch (x) { case 1: (a).default; default: b(); }","ext":"js","eslint":[{"line":1,"column":35,"message":"Expected a 'break' statement before 'default'."}]}
+{"code":"switch (x) { case 1: a?.default; default: b(); }","ext":"js","eslint":[{"line":1,"column":34,"message":"Expected a 'break' statement before 'default'."}]}
+{"code":"switch (x) { case 1: class K { default() {} } default: b(); }","ext":"js","eslint":[{"line":1,"column":47,"message":"Expected a 'break' statement before 'default'."}]}
+{"code":"switch (x) { case 1: a(); case 2: b(); case 3: c(); default: d(); }","ext":"js","eslint":[{"line":1,"column":27,"message":"Expected a 'break' statement before 'case'."},{"line":1,"column":40,"message":"Expected a 'break' statement before 'case'."},{"line":1,"column":53,"message":"Expected a 'break' statement before 'default'."}]}
+{"code":"switch (x) { case 1: case 2: b(); }","ext":"js","eslint":[]}
+{"code":"switch (x) { case 1:\n case 2: b(); }","ext":"js","eslint":[]}
+{"code":"switch (x) { case 1:\n\n case 2: b(); }","ext":"js","eslint":[{"line":3,"column":2,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1:\r\n\r\n case 2: b(); }","ext":"js","eslint":[{"line":3,"column":2,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1:\r\r case 2: b(); }","ext":"js","eslint":[{"line":3,"column":2,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1:   case 2: b(); }","ext":"js","eslint":[{"line":3,"column":2,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: // c\n\n case 2: b(); }","ext":"js","eslint":[{"line":3,"column":2,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1:\n // c\n case 2: b(); }","ext":"js","eslint":[{"line":3,"column":2,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1:\n // falls through\n case 2: b(); }","ext":"js","eslint":[]}
+{"code":"switch (x) { case 1: /* a\n b\n c */ case 2: b(); }","ext":"js","eslint":[{"line":3,"column":7,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1\n\n:\n case 2: b(); }","ext":"js","eslint":[]}
+{"code":"switch (x) { case (1\n\n):\n case 2: b(); }","ext":"js","eslint":[]}
+{"code":"switch (x) { case (1):\n\n case 2: b(); }","ext":"js","eslint":[{"line":3,"column":2,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case a ? b : c:\n\n case 2: b(); }","ext":"js","eslint":[{"line":3,"column":2,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case { a: 1 }.a:\n\n case 2: b(); }","ext":"js","eslint":[{"line":3,"column":2,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { default:\n\n case 2: b(); }","ext":"js","eslint":[{"line":3,"column":2,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { default\n\n:\n case 2: b(); }","ext":"js","eslint":[]}
+{"code":"switch (x) { case 1:\n\n default: b(); }","ext":"js","eslint":[{"line":3,"column":2,"message":"Expected a 'break' statement before 'default'."}]}
+{"code":"switch (x) { case 1:\n\n }","ext":"js","eslint":[]}
+{"code":"switch (x) { case 1: case 2:\n\n case 3: a(); }","ext":"js","eslint":[{"line":3,"column":2,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: a(); break; case 2: b(); }","ext":"js","eslint":[]}
+{"code":"function f() { switch (x) { case 1: return; case 2: b(); } }","ext":"js","eslint":[]}
+{"code":"switch (x) { case 1: throw a; case 2: b(); }","ext":"js","eslint":[]}
+{"code":"switch (x) { case 1: if (a) break; case 2: b(); }","ext":"js","eslint":[{"line":1,"column":36,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: if (a) break; else break; case 2: b(); }","ext":"js","eslint":[]}
+{"code":"switch (x) { case 1: if (a) { break; } else { throw b; } case 2: b(); }","ext":"js","eslint":[]}
+{"code":"switch (x) { case 1: while (true) {} case 2: b(); }","ext":"js","eslint":[]}
+{"code":"switch (x) { case 1: while (a) { break; } case 2: b(); }","ext":"js","eslint":[{"line":1,"column":43,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: for (;;) {} case 2: b(); }","ext":"js","eslint":[]}
+{"code":"switch (x) { case 1: for (;;) { break; } case 2: b(); }","ext":"js","eslint":[{"line":1,"column":42,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: do { break; } while (a); case 2: b(); }","ext":"js","eslint":[{"line":1,"column":47,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: try { break; } finally { } case 2: b(); }","ext":"js","eslint":[]}
+{"code":"switch (x) { case 1: try { a(); } finally { break; } case 2: b(); }","ext":"js","eslint":[]}
+{"code":"switch (x) { case 1: try { throw a; } catch (e) { break; } case 2: b(); }","ext":"js","eslint":[]}
+{"code":"switch (x) { case 1: try { a(); } catch (e) { break; } case 2: b(); }","ext":"js","eslint":[{"line":1,"column":56,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: { break; } case 2: b(); }","ext":"js","eslint":[]}
+{"code":"switch (x) { case 1: { a(); break; b(); } case 2: b(); }","ext":"js","eslint":[]}
+{"code":"switch (x) { case 1: break; a(); case 2: b(); }","ext":"js","eslint":[]}
+{"code":"switch (x) { case 1: switch (y) { case 1: break; } case 2: b(); }","ext":"js","eslint":[{"line":1,"column":52,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"function f() { switch (x) { case 1: switch (y) { default: return; } case 2: b(); } }","ext":"js","eslint":[]}
+{"code":"L: switch (x) { case 1: break L; case 2: b(); }","ext":"js","eslint":[]}
+{"code":"L: while (a) switch (x) { case 1: continue L; case 2: b(); }","ext":"js","eslint":[]}
+{"code":"while (a) switch (x) { case 1: continue; case 2: b(); }","ext":"js","eslint":[]}
+{"code":"switch (x) { case 1: L: break L; case 2: b(); }","ext":"js","eslint":[{"line":1,"column":34,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: function g() { return; } case 2: b(); }","ext":"js","eslint":[{"line":1,"column":47,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: class K {} case 2: b(); }","ext":"js","eslint":[{"line":1,"column":33,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: var v; case 2: b(); }","ext":"js","eslint":[{"line":1,"column":29,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: a && b(); case 2: b(); }","ext":"js","eslint":[{"line":1,"column":32,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: process.exit(); case 2: b(); }","ext":"js","eslint":[{"line":1,"column":38,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: debugger; case 2: b(); }","ext":"js","eslint":[{"line":1,"column":32,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: 'use strict'; case 2: b(); }","ext":"js","eslint":[{"line":1,"column":36,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: a(); case 2: b(); break; case 3: c(); default: d(); break; case 4: e(); }","ext":"js","eslint":[{"line":1,"column":27,"message":"Expected a 'break' statement before 'case'."},{"line":1,"column":60,"message":"Expected a 'break' statement before 'default'."}]}
+{"code":"switch (x) { case 1: a(); default: d(); case 2: e(); }","ext":"js","eslint":[{"line":1,"column":27,"message":"Expected a 'break' statement before 'default'."},{"line":1,"column":41,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { default: case 1: a(); }","ext":"js","eslint":[]}
+{"code":"switch (x) {  }","ext":"js","eslint":[]}
+{"code":"switch (x) { case 1: a(); }","ext":"js","eslint":[]}
+{"code":"switch (x) { default: a(); }","ext":"js","eslint":[]}
+{"code":"function f() { switch (x) { case 1: return 1; case 2: return 2; default: a(); case 3: b(); } } ","ext":"js","eslint":[{"line":1,"column":79,"message":"Expected a 'break' statement before 'case'."}]}
+{"code":"switch (x) { case 1: a(); /* falls through */ case 2: switch (y) { case 3: b(); case 4: c(); } default: d(); }","ext":"js","eslint":[{"line":1,"column":81,"message":"Expected a 'break' statement before 'case'."},{"line":1,"column":96,"message":"Expected a 'break' statement before 'default'."}]}
+{"code":"foo: switch (x) { case 1: { break foo; } case 2: a(); }","ext":"js","eslint":[]}
+{"code":"switch (x) { case 1: a()\n// falls through\ncase 2: b() }","ext":"js","eslint":[]}
+{"code":"switch (x) { case 1: a() <!-- falls through\n case 2: b() }","ext":"js","eslint":[]}
+{"code":"switch (x) { case 1: a()\n--> falls through\n case 2: b() }","ext":"js","eslint":[]}

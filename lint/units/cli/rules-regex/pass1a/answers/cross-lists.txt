@@ -12,10 +12,11 @@ no-misleading-character-class <- ts-calls 38
 no-regex-spaces <- edge-calls 40
 no-regex-spaces <- edge-literals 24
 no-regex-spaces <- extract-no-regex-spaces 29
-no-regex-spaces <- ts-calls 21
+no-regex-spaces <- ts-calls 22
 no-useless-backreference <- edge-calls 81
 no-useless-backreference <- edge-literals 12
 no-useless-backreference <- extract-no-useless-backreference 89
+no-useless-backreference <- ts-calls 43
 no-useless-escape <- edge-literals 12
 no-useless-escape <- edge-no-useless-escape-strings 73
 no-useless-escape <- extract-no-misleading-character-class 8

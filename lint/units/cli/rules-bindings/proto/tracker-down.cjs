@@ -122,7 +122,7 @@ let equal = 0, differ = 0, fatal = 0, reports = 0;
 for (const c of cases) {
 	const lo = c.languageOptions ? { ...c.languageOptions } : { ecmaVersion: "latest", sourceType: "module", globals };
 	if (lo.parser) continue;
-	const run = rule => linter.verify(c.code, [{ files: ["**/*"], plugins: { p: { rules: { proto } } }, languageOptions: { ...lo, ...(parser ? { parser } : {}) }, linterOptions: { noInlineConfig: true, reportUnusedDisableDirectives: "off" }, rules: { [rule]: "error" } }], { filename: ts ? "a.ts" : lo.sourceType === "commonjs" ? "a.cjs" : "a.js" });
+	const run = rule => linter.verify(c.code, [{ files: ["**/*.js", "**/*.cjs", "**/*.mjs", "**/*.jsx", "**/*.ts", "**/*.tsx", "**/*.cts", "**/*.mts"], plugins: { p: { rules: { proto } } }, languageOptions: { ...lo, ...(parser ? { parser } : {}) }, linterOptions: { noInlineConfig: true, reportUnusedDisableDirectives: "off" }, rules: { [rule]: "error" } }], { filename: ts ? "a.ts" : lo.sourceType === "commonjs" ? "a.cjs" : "a.js" });
 	const norm = ms => [...new Set(ms.filter(m => m.ruleId || m.fatal).map(m => (m.fatal ? "FATAL" : `${m.line}:${m.column} ${m.message}`)))].sort();
 	const want = norm(run("no-obj-calls")), got = norm(run("p/proto"));
 	if (want[0] === "FATAL") { fatal++; continue; }

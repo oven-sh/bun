@@ -196,8 +196,7 @@ static inline bool setJSMessagePort_onmessageSetter(JSGlobalObject& lexicalGloba
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     UNUSED_PARAM(vm);
     auto& port = thisObject.wrapped();
-    // A non-callable object replaces the handler in place (no listener removal fires), so the
-    // callable it displaces has to be unref'd here; node unrefs there because it counts only functions.
+    // node: a non-callable object displacing a function is a listener removal (replaceJSFunctionForAttributeListener fires none).
     bool replacesCallable = value.isObject() && !value.isCallable()
         && eventHandlerAttribute(port, eventNames().messageEvent, worldForDOMObject(thisObject)).isCallable();
     setEventHandlerAttribute<JSEventListener>(port, eventNames().messageEvent, value, thisObject);

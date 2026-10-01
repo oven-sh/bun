@@ -1,9 +1,10 @@
 import type { Subprocess } from "bun";
 import { spawn } from "bun";
-import { afterEach, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isBroken, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import {
   copyFileSync,
+  linkSync,
   readdirSync,
   readFileSync,
   readlinkSync,
@@ -11,6 +12,7 @@ import {
   renameSync,
   rmSync,
   symlinkSync,
+  writeFileSync,
 } from "node:fs";
 import { basename, join } from "node:path";
 
@@ -269,71 +271,280 @@ int pthread_create(pthread_t *t, const pthread_attr_t *a, void *(*f)(void *), vo
   expect(exitCode).not.toBe(0);
 });
 
-// A --watch reload re-execs the executable the session was started from. The
-// two tests below start the session from a private copy of the executable,
-// kept outside the watched directory, so that they can remove or replace it
-// between the first run and the reload.
-const ENTRY_FIRST = `console.log("iter first"); setInterval(() => {}, 1000);`;
-const ENTRY_SECOND = `console.log("iter second"); setInterval(() => {}, 1000);`;
-function spawnWatchFromCopiedExe(dir: string) {
-  const exe = join(dir, basename(bunExe()));
-  copyFileSync(bunExe(), exe);
-  const proc = spawn({
-    // --debug-crash-handler-use-trace-string skips the debug build's slow
-    // backtrace symbolication, so a reload that crashes fails these tests
-    // quickly instead of timing out.
-    cmd: [exe, "--debug-crash-handler-use-trace-string", "--watch", "entry.js"],
+// A --watch reload re-execs the executable the session was started from. Each
+// test below starts its session from its own hard link to the executable, so
+// that it can remove or replace that path between the first run and the
+// reload. A link and not a copy: a debug executable is close to 1 GB.
+function linkExe(exe: string): string {
+  try {
+    linkSync(bunExe(), exe);
+  } catch (e: any) {
+    if (e?.code !== "EXDEV") throw e;
+    // The temp directory is on another filesystem than the executable.
+    copyFileSync(bunExe(), exe);
+  }
+  return exe;
+}
+
+// A failed reload must not upload to the crash collector that CI sets.
+const noCrashReportEnv = { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" };
+
+// Runs `exe` in `<dir>/app`, where the tests keep the watched files. The
+// executable itself is outside that directory.
+function spawnInApp(
+  exe: string,
+  dir: string,
+  args: string[],
+  env: Record<string, string | undefined> = noCrashReportEnv,
+) {
+  return spawn({
+    cmd: [exe, ...args],
     cwd: join(dir, "app"),
-    env: bunEnv,
+    env,
     stdout: "pipe",
     stderr: "pipe",
     stdin: "ignore",
   });
-  watchee = proc;
-  return { exe, proc };
 }
 
-// The executable can be gone by the time a file change triggers the re-exec
-// (bun uninstalled, a version manager switched versions). execve then fails
-// with ENOENT. That is the user's environment, so it is reported as an error,
-// not as a panic with a crash report.
-it.skipIf(isWindows)("--watch reports an error when the executable it was started from is gone", async () => {
-  using dir = tempDir("watch-exe-removed", { "app/entry.js": ENTRY_FIRST });
-  const { exe, proc } = spawnWatchFromCopiedExe(String(dir));
-  const stderr = proc.stderr.text();
+// Skips the debug build's slow backtrace symbolication, so a reload that
+// crashes fails its test quickly instead of timing out.
+const fastCrash = "--debug-crash-handler-use-trace-string";
+const keepAlive = `setInterval(() => {}, 1000);`;
+const reloadFailed = (exe: string, errno: string) =>
+  `error: Failed to reload ${JSON.stringify(exe)}: ${errno} (execve)\nnote: Run the command again to restart.\n`;
 
-  const { waitFor, release } = stdoutWaiter(proc);
-  await waitFor("iter first");
-  release();
+// Windows restarts through a watcher-manager parent process, not through exec.
+describe.skipIf(isWindows)("a reload after the executable changed on disk", () => {
+  // The path must never be written through or chmod-ed while it is the hard
+  // link: that would change the executable under test itself.
+  const remove = (exe: string) => rmSync(exe);
+  const replaceWithNonExecutable = (exe: string) => {
+    rmSync(exe);
+    writeFileSync(exe, "", { mode: 0o644 });
+  };
+  const listener = (body: string) => `process.on("SIGTERM", () => { console.log("listener ran"); ${body} });`;
 
-  rmSync(exe);
-  await Bun.write(join(String(dir), "app", "entry.js"), ENTRY_SECOND);
+  // execve fails for a reason in the user's environment. Every entry point
+  // reports it as an error and exits 1, where it used to panic.
+  for (const { name, args, file, first, started, breakExe, errno, afterChange } of [
+    {
+      name: "--watch, executable removed",
+      args: [fastCrash, "--watch", "entry.js"],
+      file: "entry.js",
+      first: `console.log("iter first"); ${keepAlive}`,
+      started: "iter first",
+      breakExe: remove,
+      errno: "ENOENT: No such file or directory",
+    },
+    {
+      name: "--watch, executable replaced by a file without execute permission",
+      args: [fastCrash, "--watch", "entry.js"],
+      file: "entry.js",
+      first: `console.log("iter first"); ${keepAlive}`,
+      started: "iter first",
+      breakExe: replaceWithNonExecutable,
+      errno: "EACCES: Permission denied",
+    },
+    {
+      name: "--watch with a SIGTERM listener, executable removed",
+      args: [fastCrash, "--watch", "entry.js"],
+      file: "entry.js",
+      first: `${listener("")} console.log("iter first"); ${keepAlive}`,
+      started: "iter first",
+      breakExe: remove,
+      errno: "ENOENT: No such file or directory",
+      afterChange: "listener ran",
+    },
+    {
+      name: "--watch with process.exit() in a SIGTERM listener, executable removed",
+      args: [fastCrash, "--watch", "entry.js"],
+      file: "entry.js",
+      first: `${listener("process.exit(0);")} console.log("iter first"); ${keepAlive}`,
+      started: "iter first",
+      breakExe: remove,
+      errno: "ENOENT: No such file or directory",
+      afterChange: "listener ran",
+    },
+    {
+      // The JS thread never runs the posted reload, so the watcher's grace
+      // thread does it. The loop ends by itself in case the test dies first.
+      name: "--watch with a SIGTERM listener and a busy JS thread, executable removed",
+      args: [fastCrash, "--watch", "entry.js"],
+      file: "entry.js",
+      first: `process.on("SIGTERM", () => {}); console.log("iter first"); const end = Date.now() + 30_000; while (Date.now() < end) {} process.exit(2);`,
+      started: "iter first",
+      breakExe: remove,
+      errno: "ENOENT: No such file or directory",
+    },
+    {
+      name: "test --watch, executable removed",
+      args: ["test", fastCrash, "--watch", "main.test.ts"],
+      file: "main.test.ts",
+      first: `import { test } from "bun:test"; test("ready", () => console.log("iter first"));`,
+      started: "iter first",
+      breakExe: remove,
+      errno: "ENOENT: No such file or directory",
+    },
+    {
+      name: "build --watch, executable removed",
+      args: ["build", fastCrash, "--watch", "./entry.js", "--outdir", "out"],
+      file: "entry.js",
+      first: `console.log("iter first");`,
+      started: "(entry point)",
+      breakExe: remove,
+      errno: "ENOENT: No such file or directory",
+    },
+  ] as {
+    name: string;
+    args: string[];
+    file: string;
+    first: string;
+    started: string;
+    breakExe: (exe: string) => void;
+    errno: string;
+    afterChange?: string;
+  }[]) {
+    it.concurrent(`${name}: reports the error and exits 1`, async () => {
+      using dir = tempDir("watch-exe-gone", { [`app/${file}`]: first });
+      const exe = linkExe(join(String(dir), basename(bunExe())));
+      await using proc = spawnInApp(exe, String(dir), args);
+      const stderr = proc.stderr.text();
+      const { waitFor, release } = stdoutWaiter(proc);
+      await waitFor(started);
 
-  expect(await stderr).toContain(`error: Failed to reload "${exe}": ENOENT: No such file or directory (execve)`);
-  expect(await stderr).not.toContain("Bun has crashed");
-  expect(await proc.exited).toBe(1);
-});
+      breakExe(exe);
+      await Bun.write(join(String(dir), "app", file), `${first}\n// changed\n`);
+      if (afterChange) await waitFor(afterChange);
+      release();
 
-// `bun upgrade` and package reinstalls rename a new binary over the running
-// one. On Linux, /proc/self/exe then reads "<path> (deleted)", which no longer
-// execs; the reload has to land on the replacement at the original path.
-it.skipIf(isWindows)("--watch reloads into a binary that replaced the running one", async () => {
-  using dir = tempDir("watch-exe-replaced", { "app/entry.js": ENTRY_FIRST });
-  const { exe, proc } = spawnWatchFromCopiedExe(String(dir));
-  const stderr = proc.stderr.text();
+      expect(await stderr).toContain(reloadFailed(exe, errno));
+      expect(await proc.exited).toBe(1);
+    });
+  }
 
-  const { waitFor, release } = stdoutWaiter(proc);
-  await waitFor("iter first");
+  // The executable was replaced, as an upgrade or a reinstall does. The reload
+  // runs the file that is now at the path the session was started from. On
+  // Linux, /proc/self/exe follows the old file instead ("<path> (deleted)", or
+  // the place it was moved to), so that path is resolved when watch mode starts.
+  for (const { name, replace } of [
+    {
+      name: "removed and put back",
+      replace: (exe: string) => {
+        rmSync(exe);
+        linkExe(exe);
+      },
+    },
+    {
+      name: "moved aside with a new executable at its path",
+      replace: (exe: string) => {
+        renameSync(exe, `${exe}.old`);
+        linkExe(exe);
+      },
+    },
+  ]) {
+    it.concurrent(`--watch, executable ${name}: reloads from the startup path`, async () => {
+      // The first image must not read process.execPath: that resolves the path
+      // before the replacement and hides the difference.
+      using dir = tempDir("watch-exe-replaced", { "app/entry.js": `console.log("first"); ${keepAlive}` });
+      const exe = linkExe(join(String(dir), basename(bunExe())));
+      await using proc = spawnInApp(exe, String(dir), [fastCrash, "--watch", "entry.js"]);
+      const stderr = proc.stderr.text();
+      const { waitFor, release, output } = stdoutWaiter(proc);
+      await waitFor("first");
 
-  copyFileSync(bunExe(), `${exe}.new`);
-  renameSync(`${exe}.new`, exe);
-  await Bun.write(join(String(dir), "app", "entry.js"), ENTRY_SECOND);
-  await waitFor("iter second");
-  release();
+      replace(exe);
+      await Bun.write(
+        join(String(dir), "app", "entry.js"),
+        `console.log("second", process.pid, process.execPath, "<end>"); ${keepAlive}`,
+      );
+      await waitFor("<end>");
+      release();
 
-  proc.kill("SIGKILL");
-  await proc.exited;
-  expect(await stderr).toBe("");
+      expect(output()).toContain(`second ${proc.pid} ${exe} <end>`);
+      proc.kill("SIGKILL");
+      await proc.exited;
+      expect(await stderr).toBe("");
+    });
+  }
+
+  // A crash in watch mode restarts the process. When that restart cannot exec,
+  // the error is printed and the process still dies from the crash.
+  it.concurrent("--watch, executable removed, then a crash: reports the error and dies from the crash", async () => {
+    using dir = tempDir("watch-exe-gone-crash", {
+      // argv0 and not execPath: see the comment in the tests above.
+      "app/entry.js": `const { crash_handler } = require("bun:internal-for-testing");
+const { existsSync } = require("node:fs");
+console.log("iter first");
+setInterval(() => {
+  if (!existsSync(process.argv0)) crash_handler.panic();
+}, 1);
+`,
+    });
+    const exe = linkExe(join(String(dir), basename(bunExe())));
+    await using proc = spawnInApp(exe, String(dir), [fastCrash, "--watch", "entry.js"]);
+    const stderr = proc.stderr.text();
+    const { waitFor, release } = stdoutWaiter(proc);
+    await waitFor("iter first");
+    release();
+
+    rmSync(exe);
+
+    expect(await stderr).toContain(reloadFailed(exe, "ENOENT: No such file or directory"));
+    await proc.exited;
+    expect(proc.signalCode).toBe("SIGABRT");
+  });
+
+  // Without /proc there is no path to exec. An LD_PRELOAD shim fails the
+  // readlink of /proc/self/exe, as a sandbox with no /proc mounted does.
+  it.concurrent.skipIf(!isLinux || !cc)("--watch without /proc/self/exe: reports the error and exits 1", async () => {
+    using dir = tempDir("watch-no-proc-self-exe", {
+      "shim.c": /* c */ `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <errno.h>
+#include <string.h>
+#include <unistd.h>
+
+ssize_t readlink(const char *path, char *buf, size_t len) {
+  static ssize_t (*real_readlink)(const char *, char *, size_t);
+  if (!strcmp(path, "/proc/self/exe")) {
+    errno = ENOENT;
+    return -1;
+  }
+  if (!real_readlink) real_readlink = dlsym(RTLD_NEXT, "readlink");
+  return real_readlink(path, buf, len);
+}
+`,
+      "app/entry.js": `console.log("iter first"); ${keepAlive}`,
+    });
+    const shimPath = join(String(dir), "shim.so");
+    await using ccProc = Bun.spawn({
+      cmd: [cc!, "-shared", "-fPIC", "-o", shimPath, join(String(dir), "shim.c"), "-ldl"],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [ccOut, ccErr, ccExit] = await Promise.all([ccProc.stdout.text(), ccProc.stderr.text(), ccProc.exited]);
+    if (ccExit !== 0) throw new Error(`shim compile failed: ${ccErr || ccOut}`);
+
+    const existing = bunEnv.LD_PRELOAD;
+    await using proc = spawnInApp(bunExe(), String(dir), [fastCrash, "--watch", "entry.js"], {
+      ...noCrashReportEnv,
+      LD_PRELOAD: existing ? `${shimPath}:${existing}` : shimPath,
+    });
+    const stderr = proc.stderr.text();
+    const { waitFor, release } = stdoutWaiter(proc);
+    await waitFor("iter first");
+    release();
+
+    await Bun.write(join(String(dir), "app", "entry.js"), `console.log("iter second"); ${keepAlive}`);
+
+    expect(await stderr).toContain(
+      "error: Failed to reload: the path of this executable is unknown\nnote: Run the command again to restart.\n",
+    );
+    expect(await proc.exited).toBe(1);
+  });
 });
 
 // A script that registers a SIGTERM handler and then spins in synchronous

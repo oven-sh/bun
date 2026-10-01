@@ -1,0 +1,3 @@
+   text	   data	    bss	    dec	    hex	filename
+80677149	 110424	1822992	82610565	4ec8985	../bin/bun-base-bf42a525d
+80698299	 110872	1822992	82632163	4ecdde3	../bin/bun-pr-f1dd8f057

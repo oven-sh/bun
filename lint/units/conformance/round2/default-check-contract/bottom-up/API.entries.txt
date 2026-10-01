@@ -1,0 +1,83 @@
+Text for /workspace/notes/lint/units/conformance/API.md: what the default check makes of a run of `bun --lint`, the
+outcomes, and the level. It describes default-check-contract.patch of this directory. The contract on the side of the
+binary is "What `bun --lint` prints" of units/cli/API.md.
+
+## The default check (runner/check_bun_lint.ts)
+
+createSpawnCheck({ command: [bunExe()], env: bunEnv, probed? }) is a Check. For each instance it starts
+`<command> --lint <the root files of the instance>` in the current directory of the instance, with the caller's
+environment and BUN_FEATURE_FLAG_EXPERIMENTAL_LINT=1, BUN_DEBUG_QUIET_LOGS=1, NO_COLOR=1, BUN_ENABLE_CRASH_REPORTING=0,
+without FORCE_COLOR and BUN_OPTIONS, stdin closed, at most 16 MiB of output. The options of the instance do not reach
+the command. Before the first instance it probes the command once (two files, two processes); `probed` hands over the
+verdict of a probe that the caller ran.
+
+What one run becomes, in this order:
+
+| what the command did | outcome | cause | more in the result |
+| --- | --- | --- | --- |
+| no process started | unavailable | unavailable | |
+| the time limit of the instance was reached (the command is ended with SIGKILL) | timeout | timeout | program |
+| ended by a signal | crash | signal <name> | death, program |
+| exit code 1 and stderr is one line `error: <text>`, stdout empty | unsupported | refusal | |
+| exit code 1 and anything else (a sanitizer ends so) | crash | exit code 1 | death, program |
+| any exit code but 0, 1, 2 | crash | exit code <n> | death, program |
+| text on stdout | crash | stdout | death, program |
+| a line on stderr that is no diagnostic and no line of a chain | crash | stderr | death, program |
+| exit code 0 with an error on stderr, or 2 without one | crash | exit code and errors | death, program |
+| a line `internal-stand-in` | provisional | stand-ins | standIns |
+| a line `internal-error` | fail | internal-error | named |
+| a name that is no name of the command, in no file | fail | unknown code | named |
+| a line `cannot-read-file` | fail | cannot-read-file | named |
+| a line `unsupported-extension` | fail | unsupported-extension | named |
+| a line `syntax`, error or warning | fail | syntax | named |
+| a `TS` diagnostic in a file that is not of the instance and no default library | fail | file outside the instance | |
+| anything else | the comparison of the `TS` diagnostics with the oracle | | rules, silent, exitCode |
+
+- A crash with `death` is a command that died or whose output is no list of diagnostics: `death` has the exit code,
+  the signal and what it wrote (names of the instance for the real paths; of a long text the first 5,000 and the last
+  3,000 characters), `program` the root files and the current directory. A crash without `death` is a fault of a
+  check function, of the runner or of the oracle. "How many crash or time out" is: outcome crash with death, and
+  outcome timeout.
+- A line whose code is a name is never a crash. The kinds that fail the instance are counted in `named`, by category
+  and name: { "error syntax": 2, "warning syntax": 1 }. Where a run has several kinds, the cause is the first of the
+  table and the reason names its first line and how many more there are.
+- `internal-error` is first: a check that was not complete never reads as a clean run, and never as another kind.
+- A report of a lint rule is no diagnostic of TypeScript. It is left out of the comparison and counted in `rules`
+  (the name of the rule, the number of reports), whatever its category. The runner takes as a rule every code that is a
+  name, is none of `syntax`, `cannot-read-file`, `unsupported-extension`, `internal-error`, `internal-stand-in`, and
+  stands in a file. The option ignoreRules is gone.
+- The probe takes a command whose clean file gives only reports of rules, and does not take a report of a rule for
+  the error of its broken file.
+
+## The guard
+
+`silent` is true when the command ended with the exit code 0 and wrote nothing, false when it ended with a list that
+has a line, absent when the check starts no command or the command did not end with a list. `exitCode` is 0 or 2.
+Of the instances without errors (class C) only those with `silent: true` are the guard. What is near it is counted
+apart and is not the guard:
+- pass with `silent: false`: every line was a report of a rule (left out);
+- `exitCode: 0` with `silent: false`: lines and none of the category error (today: warnings of Bun's parser, which
+  fail the instance with the cause syntax).
+The lists take a pass as a pass: list C does not ask for `silent`.
+
+## The level
+
+A pass of an instance with errors (class E) is at a level: "baseline" (every byte of the error baseline) or
+"first-section" (the bytes of its first section: path, line, column, category, code, text and chain of every
+diagnostic, in order). The plain format of a command has no length of a span and no related information, so through
+the default check "first-section" is all that can be equal; the one exception is an instance whose diagnostics are all
+in a default library file.
+
+- RunOptions.level says what passes: absent or "baseline", only every byte; "first-section", the first section too.
+  RunResult.level is set for a pass of class E: "baseline" when every byte was equal, else "first-section".
+  RunResult.outcome is the answer at the level that the run was given: a tool that prints by outcome needs no more.
+- At the level "baseline" a first section that is the oracle's is `fail` with `headerOnly: true`, as before.
+- The 14 instances in the pretty form pass only with the lengths, at either level.
+- expectations.json records the level of its list E: "first-section" now. sweep.ts and conformance.test.ts run at
+  the level of the lists (`level: lists.level`) and hand the results over with factsOf(result, lists.level) of
+  runner/expectations.ts. A pass at "baseline" verifies a name of a list at "first-section"; a pass at
+  "first-section" does not enter a list at "baseline".
+- A check that has the lengths and the related information (a module for --check, or later a report of the binary)
+  can keep a list of its own at the level "baseline": --expectations <path>.
+- The level of expectations.json is raised to "baseline" when a channel for the lengths exists and every name of
+  list E passes there; compareWithRevision reports a level that was lowered.

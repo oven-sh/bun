@@ -40,36 +40,43 @@ impl Rx<'_, '_, '_> {
         }
     }
 
-    /// `expr` hands the value of the identifier `name` on as ReferenceTracker follows it: `||`, `&&`, `??`, the branches of `?:`, the last of a comma, the right of an assignment.
-    fn reaches(&self, expr: &Expr, name: &[u8], member: bool, depth: u32) -> bool {
+    /// `expr` hands the value of the global `RegExp` on as ReferenceTracker follows it: `||`, `&&`, `??`, the branches of `?:`, the last of a comma, the right of an assignment. 1: the identifier `RegExp`. 2: the member `RegExp` of `globalThis`.
+    fn reaches(&self, expr: &Expr, name: &[u8], member: bool, depth: u32) -> u8 {
         if depth > 64 {
-            return false;
+            return 0;
         }
         match &expr.data {
-            ExprData::EIdentifier(identifier) => self.ctx.parsed.name_of(identifier.ref_) == name,
-            ExprData::EDot(dot) if member => dot.name.slice() == name && self.reaches(&dot.target, b"globalThis", false, depth + 1),
+            ExprData::EIdentifier(identifier) => u8::from(self.ctx.parsed.name_of(identifier.ref_) == name),
+            ExprData::EDot(dot) if member => {
+                if dot.name.slice() == name && self.reaches(&dot.target, b"globalThis", false, depth + 1) != 0 { 2 } else { 0 }
+            }
             ExprData::EIndex(index) if member => {
                 let key = eslint_utils::get_string_if_constant(self.ctx, &index.index);
                 let want: Vec<u16> = name.iter().map(|&b| u16::from(b)).collect();
-                key.as_deref() == Some(&want[..]) && self.reaches(&index.target, b"globalThis", false, depth + 1)
+                if key.as_deref() == Some(&want[..]) && self.reaches(&index.target, b"globalThis", false, depth + 1) != 0 { 2 } else { 0 }
             }
             ExprData::EBinary(binary) => match binary.op {
                 OpCode::BinLogicalOr | OpCode::BinLogicalAnd | OpCode::BinNullishCoalescing => {
-                    self.reaches(&binary.left, name, member, depth + 1) || self.reaches(&binary.right, name, member, depth + 1)
+                    self.reaches(&binary.left, name, member, depth + 1) | self.reaches(&binary.right, name, member, depth + 1)
                 }
                 OpCode::BinComma => self.reaches(&binary.right, name, member, depth + 1),
                 op if is_assign(op) => self.reaches(&binary.right, name, member, depth + 1),
-                _ => false,
+                _ => 0,
             },
-            ExprData::EIf(conditional) => self.reaches(&conditional.yes, name, member, depth + 1) || self.reaches(&conditional.no, name, member, depth + 1),
-            _ => false,
+            ExprData::EIf(conditional) => self.reaches(&conditional.yes, name, member, depth + 1) | self.reaches(&conditional.no, name, member, depth + 1),
+            _ => 0,
         }
+    }
+
+    /// Whether a symbol of the parse pass has the name: the file declares it somewhere.
+    fn declares(&self, name: &[u8]) -> bool {
+        self.ctx.parsed.symbols.iter().any(|symbol| symbol.kind != bun_ast::SymbolKind::Unbound && symbol.original_name.slice() == name)
     }
 
     fn call(&mut self, expr: &Expr, target: &Expr, args: &[Expr], is_new: bool) {
         let ident = self.name(target) == Some(b"RegExp");
         let tracked = self.reaches(target, b"RegExp", true, 0);
-        if !ident && !tracked {
+        if !ident && tracked == 0 {
             return;
         }
         let plain = self.ctx.plain(target).is_some();
@@ -83,12 +90,13 @@ impl Rx<'_, '_, '_> {
                 _ => "x",
             };
             let value = eslint_utils::get_string_if_constant(self.ctx, arg);
+            let undeclared = self.name(arg).is_some_and(|name| !self.declares(name));
             let units = match &arg.data {
                 ExprData::EString(string) => format!("\"{}\"", hex16(&units_of(string))),
                 _ => "null".into(),
             };
             list.push(format!(
-                "{{\"t\":\"{kind}\",\"at\":{},\"loc\":{},\"ts\":{},\"v\":{},\"u\":{units}}}",
+                "{{\"t\":\"{kind}\",\"at\":{},\"loc\":{},\"ts\":{},\"un\":{undeclared},\"v\":{},\"u\":{units}}}",
                 self.ctx.start_of_place(arg),
                 arg.loc.start,
                 self.ctx.plain(arg).is_none(),

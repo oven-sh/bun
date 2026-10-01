@@ -1,0 +1,101 @@
+Entries for /workspace/notes/lint/units/conformance/NEEDS.md from the default check. cli2.md rules that no new flag, no
+configuration file and no variable of the binary is asked for in this round: nothing below asks for one. Where a pass
+would need one, the entry says what the runner does instead. They replace N1 to N7 of
+../../default-check-classification/bottom-up/NEEDS.entries.txt (N2 and N3 there ask for BUN_INTERNAL_LINT_REPORT and
+BUN_INTERNAL_LINT_OPTIONS: not in this round).
+
+State, measured 2026-10-01 with a release build of be1ebe5295 (the `src/` of 3110ce85cf), one process for each of the
+12,797 run instances, `bun --lint <the root files>` (the raw runs of ../../default-check-classification): exit code 0
+in 11,282, 2 in 1,329; 186 are not laid out by the runner. No signal, no other exit code, nothing on stdout, no line on
+stderr that is no diagnostic: no crash and no timeout.
+  class C (5,770): 5,649 wrote nothing with the exit code 0 (the guard); 1 has one report of a rule and nothing else
+    (`declarationEmitClassSetAccessorParamNameInJs2.ts`, no-empty-pattern: it passes and is not the guard); 27 have
+    `error syntax`; 0 have warnings alone; 93 are not laid out.
+  class E (7,027): 5,626 wrote nothing; 1,292 have `error syntax` (3,505 lines); 7 have `warning syntax` alone (22
+    lines, exit code 0); 7 have `error unsupported-extension` (11 lines); 2 have reports of rules alone; 93 are not
+    laid out. No line has a `TS` number, so no instance of class E passes at any level.
+
+## D-1. cli (its D2): what a pass at the level "first-section" needs of a syntax error
+
+For: cli (`lint_command.rs`, the call of `Parser::parse_for_lint_with_codes`), parser (its table).
+
+The level of expectations.json is "first-section": path, line, column, category, code, text and chain of every
+diagnostic of the run are the bytes of the first section of the oracle. With the numbers of D2 an instance passes when
+1. every line that the command prints for its files has a `TS` number, with the text that typescript-go has for it;
+2. line and column are the reference's (1-based, UTF-16);
+3. the command prints as many diagnostics as the oracle holds, in its order.
+One `syntax` line beside them fails the instance (cause syntax), error or warning. Bun's parser stops at its first
+error where the reference recovers, so an oracle with one diagnostic is what can be met first. Measured by
+../../default-check-classification (observed/near.txt): 497 oracles of class E hold a code of the parser's table, 161
+only such codes, 121 exactly one diagnostic of the table; for 105 of the 121 Bun reports an error today, for 54
+exactly one, at the line and the column of the oracle's. Those 54 are the first names that can enter list E.
+Nothing is asked beyond D2 itself. To decide on cli's side: what is printed for a message of the log that has no
+number when another message of the same file has one (API.md of cli, "Where the parser has no code for a message").
+
+## D-2. cli: a warning of Bun's parser in a lint run
+
+For: cli. Seven instances of class E, none of class C.
+
+`log.level = Warn` (`lint_command.rs:236` and `:249`) prints the warnings of the parser as `warning syntax`. The seven
+instances that print them alone (`privateNameAccessors.ts`, `privateNameMethodAssignment.ts`, `privateNameReadonly.ts`,
+`privateNameSetterNoGetter.ts`, `privateNameStaticAccessors.ts`, `privateNameStaticMethodAssignment.ts`,
+`privateWriteOnlyAccessorRead.ts`) have in their oracle an error of the checker for the same code (TS2540, TS2803,
+TS2806), at the same place in some (`privateNameAccessors.ts(9,14)`) and at another column in others
+(`privateWriteOnlyAccessorRead.ts`: the oracle has 9,17, the warning 9,22). The runner fails an instance with a `warning syntax` line (cause syntax; it is counted
+apart as "lines and the exit code 0"). It does not leave the line out as it leaves out a report of a rule: a warning
+of the parser speaks of what the reference checks.
+To decide on cli's side, no flag needed: whether a lint run prints a warning of the parser where the checker will
+report the error. Until then these instances cannot pass.
+
+## D-3. cli: the five names of the command, and a rule reports in a file
+
+For: cli.
+
+The runner leaves a report of a rule out of the comparison and counts it. It takes as a rule a code that is a name, is
+none of `syntax`, `cannot-read-file`, `unsupported-extension`, `internal-error`, `internal-stand-in`
+(`commandCodes` of `runner/check_bun_lint.ts`) and stands in a file. A name outside the five without a file fails the
+instance (cause unknown code).
+Ask: a sixth name of the command goes into the table "The codes" of cli's API.md and into `commandCodes` in the same
+merge. Until it is there the runner reads such a line in a file as a report of a rule and leaves it out.
+
+## D-4. cli: TS6054 for an operand with another extension
+
+For: cli. Seven instances of class E, low priority.
+
+`unsupported-extension` has the text of TS6054. The oracle of the seven instances with such an operand
+(`jsFileCompilationWithMapFileAsJs*.ts`: `b.js.map`; `bundlerImportTsExtensions(*).ts`: `/project/e`, `/project/e.txt`)
+holds `error TS6054: File 'b.js.map' has an unsupported extension. The only supported extensions are ...` with the
+chain `The file is in the program because:` / `Root file specified for compilation`. For a pass the command prints
+the number, the name of the file as the reference prints it, and the chain. Until then: fail, cause
+unsupported-extension.
+
+## D-5. parser: errors of a lint parse where the reference has none
+
+For: parser. 27 instances of class C, for information; the sweep's report names each with its first line.
+
+`"x" has already been declared` (8, e.g. `duplicateVarAndImport.ts`), `Unexpected )` (3, `asyncArrowFunction2_*`),
+`Cannot use "yield" or "await" here.` (3), `Expected "x" but found "y"` (3), `Cannot "continue" to label` (2), an
+unexpected U+0085 (2), `"static" is a reserved word ...` (2), `The constant "x" must be initialized` (2:
+`component.d.html.ts` is a declaration file for TypeScript, and `lint_command.rs` takes only `.d.ts`, `.d.mts` and
+`.d.cts` as one), and two single ones. Each fails its instance with the cause syntax.
+
+## D-6. Not asked in this round, and what the runner does without it
+
+- The length of a span and the related information (CH-2 of the round-1 draft, a report of the run): no code reads
+  `BUN_INTERNAL_LINT_REPORT` and none is asked for. The lists are at the level "first-section". A check function that
+  has both (K5 of typecheck) passes at the level "baseline" and can keep a list of its own with --expectations.
+- The options of the instance (CH-3): the command gets the operands and the current directory and nothing else. Every
+  result of the default check is one for a run without the options of the instance; the report of the sweep says so.
+- The operands as the roots of one program: each operand is read and parsed by itself. 1,506 of the 12,611 instances
+  that are laid out have more than one.
+- A way to run without the rules: the runner leaves their reports out by the name of the code (D-3).
+
+## D-7. integrator: the lint path under the leak check
+
+For: integrator, for information.
+
+`conformance.test.ts` starts `bun --lint` six times in every lane (the probe, two units, two instances of the corpus)
+and once more for every listed instance, with the environment of the lane. A leak on the lint path ends the child by
+a signal or with the exit code 1: the outcome is crash and the test fails. It is to be fixed on the lint path, with no
+line in `test/no-validate-leaksan.txt`. With the debug build of 3110ce85c and the settings of CI's leak check the six
+runs end clean.

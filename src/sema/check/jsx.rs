@@ -82,8 +82,55 @@ impl<'p> Checker<'p> {
         (self.signatures(apparent, false), false)
     }
 
+    /// All of `getUninstantiatedJsxSignaturesOfType`, and whether what it finds is for `new` (`getJsxReferenceKind`): where the
+    /// alternatives of a union have no signatures in common, what each of them has, to construct or else to call, is put
+    /// together. `None`: it is not worked out.
+    pub(super) fn jsx_signatures_of_tag(
+        &mut self,
+        file: FileId,
+        component: TypeId,
+    ) -> Option<(Vec<SigId>, bool)> {
+        // `anySignature`
+        if component == TypeId::STRING {
+            let takes_nothing = self.p.types.intern_sig(SigData::Synth {
+                type_params: Box::new([]),
+                params: Box::new([]),
+                ret: TypeId::ANY,
+                this: None,
+                of: Box::new([]),
+            });
+            return Some((vec![takes_nothing], false));
+        }
+        if let Some(name) = self.string_literal_value(component) {
+            let attributes = match self.jsx_attributes_of_literal_tag(file, name) {
+                Ok(Some(attributes)) => attributes,
+                Ok(None) => return Some((Vec::new(), false)),
+                Err(()) => TypeId::ANY,
+            };
+            return Some((vec![self.jsx_intrinsic_signature(file, attributes)], false));
+        }
+        let apparent = self.apparent_type(component);
+        if !self.is_known(apparent) {
+            return None;
+        }
+        let (sigs, construct) = self.jsx_signatures(component);
+        if !sigs.is_empty() || !self.is_union(apparent) {
+            return Some((sigs.into_vec(), construct));
+        }
+        let parts = self.parts_in_order(apparent);
+        let mut lists = Vec::with_capacity(parts.len());
+        for part in parts {
+            let (of_part, _) = self.jsx_signatures_of_tag(file, part)?;
+            if of_part.is_empty() {
+                return Some((Vec::new(), false));
+            }
+            lists.push(of_part);
+        }
+        Some((self.union_signatures(&lists), false))
+    }
+
     /// `createSignatureForJSXIntrinsic`: `(props: attributes) => JSX.Element`, which is what a tag that is not a component comes to.
-    fn jsx_intrinsic_function_type(&mut self, file: FileId, attributes: TypeId) -> TypeId {
+    fn jsx_intrinsic_signature(&mut self, file: FileId, attributes: TypeId) -> SigId {
         let ret = self.jsx_type(file, known::Element).unwrap_or(TypeId::ANY);
         let params = vec![SigParam {
             name: known::props,
@@ -91,13 +138,18 @@ impl<'p> Checker<'p> {
             optional: false,
             rest: false,
         }];
-        let sig = self.p.types.intern_sig(SigData::Synth {
+        self.p.types.intern_sig(SigData::Synth {
             type_params: Box::new([]),
             params: params.into(),
             ret,
             this: None,
             of: Box::new([]),
-        });
+        })
+    }
+
+    /// `getOrCreateTypeFromSignature` of that.
+    fn jsx_intrinsic_function_type(&mut self, file: FileId, attributes: TypeId) -> TypeId {
+        let sig = self.jsx_intrinsic_signature(file, attributes);
         self.synth(Shape {
             call: vec![sig],
             ..Shape::default()
@@ -156,6 +208,47 @@ impl<'p> Checker<'p> {
         Ok(self.applicable_index_info(&members, TypeId::STRING, None))
     }
 
+    /// `getJSXFragmentType`: what the fragment `e` is made with. `None`: anything, or it is not found.
+    pub(super) fn jsx_fragment_type(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
+        let (hir, files) = (self.hir(file), self.files());
+        let (options, atoms) = (&files.options, &files.atoms);
+        let name = super::errors_jsx::jsx_factory_names(files, hir).1;
+        if options.jsx != JsxEmit::React && options.jsx_fragment_factory.is_empty()
+            || atoms.bytes(name) == b"null"
+        {
+            return None;
+        }
+        let fragment = atoms.intern(b"Fragment");
+        // `getJsxNamespaceContainerForImplicitImport`, or else the name as it is in scope.
+        let runtime = files
+            .jsx_runtime(file)
+            .and_then(|spec| files.module_of_specifier(file, spec));
+        let member = match runtime {
+            Some(module) => files.module_export(module, fragment)?,
+            None => {
+                let meaning = if matches!(options.jsx, JsxEmit::Preserve | JsxEmit::ReactNative) {
+                    SymFlags::VALUE.difference(SymFlags::ENUM)
+                } else {
+                    SymFlags::VALUE
+                };
+                let scope = self.bound(file).expr_scope.get(&e).copied();
+                let scope = scope.unwrap_or(crate::bind::ScopeId(0));
+                let found = files.resolve_name(file, scope, name, meaning)?;
+                if name == fragment {
+                    let found = files.resolve_alias_if_needed(found)?;
+                    return Some(self.type_of_symbol(found));
+                }
+                let container = files.resolve_alias_if_needed(found)?;
+                files.namespace_member(container, fragment)?
+            }
+        };
+        if !files.means(member, SymFlags::BLOCK_SCOPED_VARIABLE) {
+            return None;
+        }
+        let member = files.resolve_alias_if_needed(member)?;
+        Some(self.type_of_symbol(member))
+    }
+
     /// `getJsxManagedAttributesFromLocatedAttributes`: `JSX.LibraryManagedAttributes<typeof Component, Props>`
     fn jsx_managed_attributes(&mut self, file: FileId, e: ExprId, attributes: TypeId) -> TypeId {
         let Some(managed) = self.jsx_symbol(file, known::LibraryManagedAttributes) else {
@@ -170,6 +263,12 @@ impl<'p> Checker<'p> {
         };
         let tag = hir[j].tag;
         // `getStaticTypeOfReferencedJsxConstructor`
+        if tag.is_none() {
+            return match self.jsx_fragment_type(file, e) {
+                Some(fragment) => self.type_reference(managed, &[fragment, attributes]),
+                None => attributes,
+            };
+        }
         let constructor = match hir[tag].kind {
             ExprKind::String(name) => match self.jsx_intrinsic_attributes(file, name) {
                 Some(intrinsic) => self.jsx_intrinsic_function_type(file, intrinsic),
@@ -285,6 +384,31 @@ impl<'p> Checker<'p> {
         }
         parts.push(attributes);
         self.intersection(&parts)
+    }
+
+    /// `createDeferredTypeReference`: `JSX.IntrinsicClassAttributes` as a type that goes by that name, if it is an alias and `ty` is
+    /// the reference that is all it stands for.
+    pub(super) fn jsx_class_attributes_by_name(
+        &mut self,
+        file: FileId,
+        ty: TypeId,
+    ) -> Option<TypeId> {
+        if !matches!(self.data(ty), TypeData::Ref { args, .. } if !args.is_empty()) {
+            return None;
+        }
+        let alias = self.jsx_symbol(file, known::IntrinsicClassAttributes)?;
+        let flags = self.files().flags(alias);
+        if !flags.contains(SymFlags::TYPE_ALIAS)
+            || flags.intersects(SymFlags::CLASS | SymFlags::INTERFACE)
+            || self.declared_type(alias) != ty
+        {
+            return None;
+        }
+        let args = self.local_type_params_of_symbol(alias);
+        Some(self.intern(TypeData::LazyAlias {
+            sym: alias,
+            args: args.to_vec().into(),
+        }))
     }
 
     /// `checkJsxChildren`: the children that count, and what each is.
@@ -447,7 +571,10 @@ impl<'p> Checker<'p> {
         flush(self, &mut spread, &mut pending);
         // `getSpreadType(.., objectFlags, ..)`: what comes of spreading is still the attributes of an element.
         let attributes = match spread {
-            Some(ty) if has_spread => self.map_type(ty, |c, m| c.as_jsx_attributes(m)),
+            Some(ty) if has_spread => {
+                let ty = self.map_type(ty, |c, m| c.as_jsx_attributes(m));
+                self.jsx_attributes_in_order_of_declaration(file, j, ty)
+            }
             Some(ty) => ty,
             None => empty,
         };
@@ -458,6 +585,79 @@ impl<'p> Checker<'p> {
             not_spread.push(attributes);
         }
         self.intersection(&not_spread)
+    }
+
+    /// `getNamedMembers`: `ty`, what the attributes of `j` come to with something spread among them, with its properties by where the
+    /// first declaration of each is, those without one last. As it is where that cannot be told.
+    fn jsx_attributes_in_order_of_declaration(
+        &mut self,
+        file: FileId,
+        j: JsxId,
+        ty: TypeId,
+    ) -> TypeId {
+        let TypeData::Synth(shape) = self.data(ty) else {
+            return ty;
+        };
+        let hir = self.hir(file);
+        // `getSpreadType`: what comes later takes the place of what was there, unless it may be left out.
+        let mut places: Vec<(Atom, (bool, u32, u32))> = Vec::new();
+        for p in hir[j].attrs.iter() {
+            let attr = &hir[p];
+            if attr.kind != PropKind::Spread {
+                if let Some(name) = self.member_name(file, attr.key) {
+                    places.retain(|place| place.0 != name);
+                    places.push((name, (true, file.0, attr.pos)));
+                }
+                continue;
+            }
+            let spread = self.type_of_expr(file, attr.value);
+            let spread = self.reduced(spread);
+            if !self.is_valid_spread_type(spread) {
+                continue;
+            }
+            if self.is_union(spread) {
+                return ty;
+            }
+            let Some(members) = self.members(spread) else {
+                return ty;
+            };
+            for prop in &members.shape().props {
+                let is_there = places.iter().any(|place| place.0 == prop.name);
+                if !self.is_spreadable_property(prop)
+                    || is_there && prop.flags.contains(PropFlags::OPTIONAL)
+                {
+                    continue;
+                }
+                let Some((of, start, _)) = self.place_of_first_prop_declaration(prop) else {
+                    return ty;
+                };
+                places.retain(|place| place.0 != prop.name);
+                places.push((prop.name, (!self.files().module(of).is_lib, of.0, start)));
+            }
+        }
+        // What is made up for the children has no declaration.
+        if hir
+            .ids(hir[j].children)
+            .any(|child| !matches!(hir[child].kind, ExprKind::Missing))
+            && let JsxName::Name(name) = self.jsx_children_property_name(file)
+        {
+            places.retain(|place| place.0 != name);
+        }
+        let atoms = &self.files().atoms;
+        let key = |prop: &Prop| match places.iter().find(|place| place.0 == prop.name) {
+            Some(place) => (false, place.1),
+            None => (true, (false, 0, 0)),
+        };
+        let mut ordered = Shape::clone(shape);
+        ordered.props.sort_by(|a, b| {
+            key(a)
+                .cmp(&key(b))
+                .then_with(|| atoms.bytes(a.name).cmp(atoms.bytes(b.name)))
+        });
+        if ordered.props == shape.props {
+            return ty;
+        }
+        self.synth(ordered)
     }
 
     /// `ty`, which came of spreading into the attributes of an element, marked as the attributes of one.

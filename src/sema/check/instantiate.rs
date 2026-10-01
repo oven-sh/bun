@@ -187,6 +187,28 @@ impl<'p> Checker<'p> {
         result
     }
 
+    /// `instantiateTypeAlias`: `Type.alias` of the intersection `ty` goes along to `result`, which is what `ty` comes to under
+    /// `mapper`, with its type arguments under `mapper`.
+    fn carry_alias_along(&mut self, ty: TypeId, mapper: MapperId, result: TypeId) {
+        let Some((alias, arguments)) = self.p.alias_of.get(&ty) else {
+            return;
+        };
+        if !matches!(
+            self.data(result),
+            TypeData::Union(_) | TypeData::Intersection(_)
+        ) || self.p.alias_of.get_ref(&result).is_some()
+        {
+            return;
+        }
+        let arguments = self.instantiate_all(&arguments, mapper);
+        let params = self.local_type_params_of_symbol(alias);
+        if self.is_pinned_to_type_arguments(result, &params, &arguments, 0) {
+            self.p
+                .alias_of
+                .insert(result, (alias, Arc::from(&arguments[..])));
+        }
+    }
+
     fn instantiate_uncached(&mut self, ty: TypeId, mapper: MapperId) -> TypeId {
         match self.data(ty) {
             // `instantiateTypeWorker`: what does not change stays as it is, unreduced if it was.
@@ -210,7 +232,9 @@ impl<'p> Checker<'p> {
                 if new[..] == members[..] {
                     return ty;
                 }
-                self.intersection(&new)
+                let result = self.intersection(&new);
+                self.carry_alias_along(ty, mapper, result);
+                result
             }
             TypeData::Ref { target, args } => {
                 let is_deferred = self.p.deferred_references.get(&ty).is_some();

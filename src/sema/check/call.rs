@@ -6979,7 +6979,20 @@ impl<'p> Checker<'p> {
                         mapper: MapperId::IDENTITY,
                     });
                 }
-                self.synth(shape)
+                let partial = self.synth(shape);
+                // They are the members of the literal.
+                if !props.iter().any(|p| hir[p].kind == PropKind::Spread) {
+                    let scope = self.scope_of_expr(file, e);
+                    let mapper = self.identity_mapper(file, scope);
+                    let whole = self.intern(TypeData::Anon {
+                        origin: Origin::ObjectLiteral(file, e),
+                        mapper,
+                    });
+                    self.p
+                        .copied_from
+                        .insert(partial, (false, vec![whole].into_boxed_slice()));
+                }
+                partial
             }
             ExprKind::Array(items) => {
                 let mut types = Vec::with_capacity(items.len());

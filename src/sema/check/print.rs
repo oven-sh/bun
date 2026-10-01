@@ -3886,8 +3886,13 @@ impl<'p> Printer<'_, 'p> {
             .map(|parameter| self.c.type_param(file, parameter))
             .collect();
         let saved = std::mem::replace(&mut self.infer_type_parameters, infer_type_parameters);
-        let extends = self.c.cond_piece(ty, 1);
-        let extends = self.type_to_node(extends);
+        let extends = match self.unresolved_reference_to_node(file, extends) {
+            Some(written) => written,
+            None => {
+                let extends = self.c.cond_piece(ty, 1);
+                self.type_to_node(extends)
+            }
+        };
         self.infer_type_parameters = saved;
         let when_true = self.c.cond_piece(ty, 2);
         let when_true = self.type_to_node_or_circularity_elision(when_true);

@@ -3012,10 +3012,12 @@ impl Pass<'_, '_> {
                 vec![c.declaration_name_at(here, name_pos), on]
             });
             if is_shadowed && let Some((_, _, shadowing)) = lexical {
-                let meant = hir[type_class]
-                    .members
-                    .iter()
-                    .find(|&m| hir[m].key == PropKey::Private(name));
+                // Each class has a name of its own for what is written alike.
+                let atoms = &self.c.files().atoms;
+                let written = written_private_name(atoms.bytes(name));
+                let meant = hir[type_class].members.iter().find(|&m| {
+                    matches!(hir[m].key, PropKey::Private(key) if written_private_name(atoms.bytes(key)) == written)
+                });
                 self.c.relate(name_pos, code, |c| {
                     let name = c.declaration_name_at(here, name_pos);
                     [(Some(shadowing), 18017), (meant, 18018)]

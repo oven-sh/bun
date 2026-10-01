@@ -854,6 +854,28 @@ pub struct Resolver<'h> {
     resolved: ShardedMap<String, Option<(String, bool, bool)>>,
     /// `resolutionState.diagnostics`, of all that was looked for: whether it is about `imports`, the entry, and the `package.json`.
     ambiguous_roots: std::sync::Mutex<Vec<(bool, String, String)>>,
+    /// `OriginalPath` and `ResolvedFileName`, of what was found by way of a link. Only where declaration files are emitted.
+    links: std::sync::Mutex<Vec<(String, String)>>,
+}
+
+/// `guessDirectorySymlink`: the directory that is linked and the link, going by a file at `real` that was found at `link`.
+fn guess_directory_link(real: &str, link: &str) -> Option<(String, String)> {
+    let mut a: Vec<&str> = real.split('/').collect();
+    let mut b: Vec<&str> = link.split('/').collect();
+    // `isNodeModulesOrScopedPackageDirectory`: it is what is in them that is linked.
+    let holds_packages = |name: &str| name == "node_modules" || name.starts_with('@');
+    let mut is_directory = false;
+    while a.len() >= 2
+        && b.len() >= 2
+        && !holds_packages(a[a.len() - 2])
+        && !holds_packages(b[b.len() - 2])
+        && a[a.len() - 1] == b[b.len() - 1]
+    {
+        a.pop();
+        b.pop();
+        is_directory = true;
+    }
+    is_directory.then(|| (a.join("/"), b.join("/")))
 }
 
 /// `extensionsToRemove`: the extensions that mean something, in the order they are looked for at the end of a name.
@@ -941,7 +963,84 @@ impl<'h> Resolver<'h> {
             alternates: RwLock::default(),
             resolved: ShardedMap::default(),
             ambiguous_roots: Default::default(),
+            links: Default::default(),
         }
+    }
+
+    /// `getOriginalAndResolvedFileName`: where the links in `found` lead.
+    fn followed(&self, found: String) -> String {
+        let real = self.host.realpath(&found);
+        if self.options.emits_declaration_files && real != found {
+            self.links.lock().unwrap().push((found, real.clone()));
+        }
+        real
+    }
+
+    /// `GetSymlinkCache`, `DirectoriesByRealpath`: each directory that is known to be linked, with a link to it, in order. They are known
+    /// from what was resolved, and from what the packages of the files at `emitted` depend on.
+    pub fn linked_directories<'a>(
+        &self,
+        emitted: impl Iterator<Item = &'a str>,
+    ) -> Vec<(String, String)> {
+        let mut found: Vec<(String, String)> = Vec::new();
+        // `processResolution`, `SetDirectory`
+        let mut note = |real: &str, link: &str| {
+            if let Some(pair) = guess_directory_link(real, link)
+                && !["/node_modules/.", "/.git", ".#"]
+                    .iter()
+                    .any(|ignored| pair.1.contains(ignored))
+                && !found.iter().any(|known| known.1 == pair.1)
+            {
+                found.push(pair);
+            }
+        };
+        let mut links = self.links.lock().unwrap().clone();
+        links.sort();
+        for (link, real) in &links {
+            note(real, link);
+        }
+        let mut seen: Vec<&str> = Vec::new();
+        for path in emitted {
+            let Some((directory, package)) = self.package_scope(parent_dir(path)) else {
+                continue;
+            };
+            if seen.contains(&directory) {
+                continue;
+            }
+            seen.push(directory);
+            // `GetRuntimeDependencyNames`
+            for field in ["dependencies", "peerDependencies", "optionalDependencies"] {
+                let Some(Json::Object(entries)) = package.json.get(field) else {
+                    continue;
+                };
+                for (name, _) in entries {
+                    // `ResolvePackageDirectory`
+                    let mut around = directory;
+                    loop {
+                        let link = [name.clone(), format!("@types/{}", mangle_scoped(name))]
+                            .into_iter()
+                            .map(|package| inside(around, &format!("node_modules/{package}")))
+                            .find(|candidate| self.is_dir(candidate));
+                        if let Some(link) = link {
+                            let real = self.host.realpath(&link);
+                            if real != link {
+                                note(
+                                    &inside(&real, "package.json"),
+                                    &inside(&link, "package.json"),
+                                );
+                            }
+                            break;
+                        }
+                        if around.is_empty() || around == "/" {
+                            break;
+                        }
+                        around = parent_dir(around);
+                    }
+                }
+            }
+        }
+        found.sort();
+        found
     }
 
     fn is_dir(&self, path: &str) -> bool {
@@ -1121,7 +1220,7 @@ impl<'h> Resolver<'h> {
             let is_in_package = found.contains("/node_modules/");
             look.is_external.set(is_in_package);
             if follows_links && is_in_package {
-                self.host.realpath(&found)
+                self.followed(found)
             } else {
                 found
             }
@@ -1320,7 +1419,7 @@ impl<'h> Resolver<'h> {
         Some(if self.options.preserve_symlinks {
             found
         } else {
-            self.host.realpath(&found)
+            self.followed(found)
         })
     }
 

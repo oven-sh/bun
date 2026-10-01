@@ -1356,6 +1356,18 @@ impl<'a> Spans<'a> {
                 } else if self.byte(pos) == b'*' {
                     // JSDoc's `*`
                     pos + 1
+                } else if self.byte(pos) == b'.' && self.eat_name(pos + 1) != pos + 1 {
+                    // `parseEntityName`: a name that is missing goes on behind its dots like any other.
+                    let mut at = pos;
+                    loop {
+                        let dot = self.eat(at, b".");
+                        let end = self.eat_name(dot);
+                        if dot == at || end == dot {
+                            break;
+                        }
+                        at = end;
+                    }
+                    at
                 } else {
                     // A type that is missing.
                     return previous_token_end(self.text, pos);

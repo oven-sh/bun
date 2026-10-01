@@ -135,12 +135,49 @@ impl Checker<'_> {
                 }
                 let (declared, _) = self.mapped_modifiers_source(file, node)?;
                 let modifiers = self.instantiate(declared, mapper);
+                // `getReducedApparentType`
+                let modifiers = self.reduced(modifiers);
                 let modifiers = self.apparent_type(modifiers);
+                let modifiers = self.reduced(modifiers);
                 let (origin, _) = self.prop_of(modifiers, prop.name)?;
                 self.place_of_first_prop_declaration_within(&origin, depth + 1)
             }
             PropSource::Type(_) => None,
         }
+    }
+
+    /// `Declarations[0]` of the property `name` of `ty`, an object type whose properties are copies of those of other types
+    /// (`getSpreadSymbol`, `createSymbolWithType`): where the original is declared.
+    pub(super) fn place_of_copied_prop(
+        &mut self,
+        ty: crate::types::TypeId,
+        name: crate::atom::Atom,
+        depth: u32,
+    ) -> Option<Place> {
+        if depth > 8 {
+            return None;
+        }
+        let (is_spread, from) = self.p.copied_from.get(&ty)?;
+        // `getSpreadType`: what is on the right hides what is on the left, unless it may be left out.
+        let is_left_hidden = match from[..] {
+            [_, right] if is_spread => self
+                .prop_ref(right, name)
+                .is_some_and(|(prop, _)| !prop.flags.contains(crate::types::PropFlags::OPTIONAL)),
+            _ => false,
+        };
+        for &of in &from[usize::from(is_left_hidden)..] {
+            let Some((prop, _)) = self.prop_of(of, name) else {
+                continue;
+            };
+            let place = match prop.source {
+                PropSource::Type(_) => self.place_of_copied_prop(of, name, depth + 1),
+                _ => self.place_of_first_prop_declaration_within(&prop, depth + 1),
+            };
+            if place.is_some() {
+                return place;
+            }
+        }
+        None
     }
 
     /// `'{0}' is declared here.`

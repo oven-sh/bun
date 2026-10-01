@@ -2072,6 +2072,22 @@ impl<'p> Checker<'p> {
                 if result.holds() {
                     return result;
                 }
+                // A substitution type among the members of a union is written as the type parameter it is made of.
+                let plain = self.default_constraint_of_conditional_ex(source, false);
+                if plain != default_constraint
+                    && self.is_union(plain)
+                    && self.is_union(default_constraint)
+                    && let Some(said) = x.chain.clone()
+                    && said.args.first() == Some(&self.type_to_string(default_constraint))
+                {
+                    let mut args = said.args.clone();
+                    args[0] = self.type_to_string(plain);
+                    x.chain = Some(Rc::new(Reported {
+                        next: said.next.clone(),
+                        code: said.code,
+                        args,
+                    }));
+                }
                 if !matches!(self.data(target), TypeData::Cond { .. })
                     && relation != Relation::Restrictive
                     && let Some(distributive) = self.constraint_of_distributive_conditional(source)
@@ -2683,7 +2699,11 @@ impl<'p> Checker<'p> {
             let (source_type, target_type) = self.type_names_for_error_display(source, target);
             let name = self.prop_to_string(only);
             x.report(2741, vec![name.clone(), source_type, target_type]);
-            if let Some(place) = self.place_of_first_prop_declaration(only) {
+            let place = match only.source {
+                PropSource::Type(_) => self.place_of_copied_prop(target, only.name, 0),
+                _ => self.place_of_first_prop_declaration(only),
+            };
+            if let Some(place) = place {
                 x.related.push(self.declared_here(place, name));
             }
         } else if self.try_elaborate_array_like_errors(x, source, target, false) {

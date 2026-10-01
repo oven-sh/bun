@@ -345,6 +345,9 @@ pub struct Files {
     /// The `package.json` of each package in a `node_modules` that a file of the program is in, by its directory. Only where declaration
     /// files are emitted, which have to call such files something.
     pub package_jsons: FxHashMap<String, Json>,
+    /// `DirectoriesByRealpath`: each directory that is known to be linked, with a link to it, in order. Only where declaration files are
+    /// emitted. The `package.json` of each is in `package_jsons` under the path of the link.
+    pub linked_directories: Vec<(String, String)>,
 }
 
 /// What follows from how symbols are put together, each worked out the first time it is asked for. Until they are put together the
@@ -1301,6 +1304,24 @@ impl Files {
                 }
             }
         }
+        let mut linked_directories = Vec::new();
+        if options.emits_declaration_files {
+            // `SourceFileMayBeEmitted`
+            let emitted = modules.iter().flatten().filter(|module| {
+                matches!(module.hir.kind, hir::FileKind::Ts | hir::FileKind::Tsx)
+                    && !module.is_lib
+                    && !module.path.contains("/node_modules/")
+            });
+            linked_directories =
+                resolver.linked_directories(emitted.map(|module| module.path.as_str()));
+            for (_, link) in &linked_directories {
+                if !package_jsons.contains_key(link)
+                    && let Some(json) = resolver.package_json(link)
+                {
+                    package_jsons.insert(link.clone(), json);
+                }
+            }
+        }
         drop(resolver);
         let mut modules: Vec<ModuleCell> = modules
             .into_iter()
@@ -1387,6 +1408,7 @@ impl Files {
             ranks: Vec::new(),
             program_errors,
             package_jsons,
+            linked_directories,
         };
         files.order = files.declaration_order(&starts);
         files.ranks = vec![u32::MAX; files.modules.len()];

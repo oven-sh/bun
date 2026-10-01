@@ -134,6 +134,7 @@ impl Checker<'_> {
                     let name = fragment_factory;
                     self.explain_missing_jsx_factory(file, scope, (start, end), code, name);
                 }
+                self.check_jsx_fragment(file, e, out);
                 continue;
             }
             if factory_is_missing {
@@ -192,6 +193,70 @@ impl Checker<'_> {
                 });
             }
         }
+    }
+
+    /// `resolveJsxOpeningLikeElement` of the fragment `e`, which is a call of what fragments are made with: 2322 and what says more,
+    /// of its children. Of several candidates, and of one that is generic, nothing is said.
+    fn check_jsx_fragment(&mut self, file: FileId, e: ExprId, out: &mut Vec<Diagnostic>) {
+        let (hir, files) = (self.hir(file), self.files());
+        let ExprKind::Jsx(j) = hir[e].kind else {
+            return;
+        };
+        // `getJsxNamespaceAt` goes by the name fragments are made with. Only where that leads to the `JSX` elements go by.
+        let jsx_of = |name: Atom| {
+            files
+                .resolve_name(file, ScopeId(0), name, SymFlags::NAMESPACE)
+                .and_then(|container| files.resolve_alias_if_needed(container))
+                .and_then(|container| files.namespace_member(container, known::JSX))
+        };
+        let (factory, fragment_factory) = jsx_factory_names(files, hir);
+        if factory != fragment_factory && jsx_of(factory) != jsx_of(fragment_factory) {
+            return;
+        }
+        let Some(fragment) = self.jsx_fragment_type(file, e) else {
+            return;
+        };
+        let apparent = self.apparent_type(fragment);
+        if !self.is_known(apparent) || self.is_any(apparent) {
+            return;
+        }
+        let Some((sigs, _)) = self.jsx_signatures_of_tag(file, fragment) else {
+            return;
+        };
+        if sigs.is_empty() {
+            // `isUntypedFunctionCall`: a `Function` can be called, with whatever.
+            let function = self.global_ref(known::Function, &[]);
+            if self.is_union(apparent)
+                || self.reduced(apparent) == TypeId::NEVER
+                || !self.is_assignable(fragment, function)
+            {
+                let (start, end) = (hir[e].pos, self.end_of_jsx_opening(file, e, j));
+                out.push(Diagnostic { start, code: 2604 });
+                self.explain_to(start, end, 2604, |c| vec![c.source_text(file, start, end)]);
+            }
+            return;
+        }
+        let [sig] = sigs[..] else {
+            return;
+        };
+        if !self.sig_type_params(sig).is_empty() {
+            return;
+        }
+        // `getEffectiveFirstArgumentForJsxSignature`: the first parameter, whatever kind of signature it is.
+        let props = self.jsx_effective_first_argument(file, e, sig, false);
+        let given = self.jsx_attributes_type(file, e);
+        if !self.is_known(props)
+            || !self.is_known(given)
+            || self
+                .jsx_child_types(file, e)
+                .iter()
+                .any(|child| !self.is_known(child.1))
+            || self.is_assignable(given, props)
+        {
+            return;
+        }
+        let (start, end) = (hir[e].pos, self.end_of_jsx_opening(file, e, j));
+        self.report_not_assignable_with_end(given, props, start, end, 2322, out);
     }
 
     /// `onFailedToResolveSymbol`: whatever `why_no_jsx_factory` has it say, it says of `name`, which is looked for from `scope` and is
@@ -309,12 +374,16 @@ impl Checker<'_> {
                 {
                     return;
                 }
-                // `getUninstantiatedJsxSignaturesOfType`: `string` takes anything (`anySignature`), but no type arguments.
+                // `getUninstantiatedJsxSignaturesOfType`: `anySignature`, which has no parameter and takes no type arguments.
                 if component == TypeId::STRING {
-                    self.report_jsx_type_argument_arity(file, jsx.type_args, &[], out);
-                    return;
-                }
-                if let Some(name) = self.string_literal_value(component) {
+                    if self.report_jsx_type_argument_arity(file, jsx.type_args, &[], out) {
+                        return;
+                    }
+                    match self.jsx_props_type(file, e) {
+                        Some(props) => vec![props],
+                        None => return,
+                    }
+                } else if let Some(name) = self.string_literal_value(component) {
                     // A string literal stands for the element of that name.
                     match self.jsx_attributes_of_literal_tag(file, name) {
                         Ok(Some(_)) => {}
@@ -351,23 +420,28 @@ impl Checker<'_> {
                     if !self.is_known(apparent) || self.is_any(apparent) {
                         return;
                     }
-                    let (sigs, construct) = self.jsx_signatures(component);
-                    if self.is_union(apparent) {
-                        // Of what can be several things it is only asked whether it can be a tag at all.
+                    let (mut sigs, construct) = self.jsx_signatures(component);
+                    if sigs.is_empty() && self.is_union(apparent) {
+                        // Every alternative is asked, whatever the others have.
                         let mut said = Vec::new();
                         let at = (hir[e].pos, self.end_of_jsx_opening(file, e, j));
-                        if sigs.is_empty()
-                            && self.jsx_tag_has_signatures(file, component, at, &mut said)
-                                == Some(false)
+                        if self.jsx_tag_has_signatures(file, component, at, &mut said)
+                            != Some(false)
                         {
+                            match self.jsx_signatures_of_tag(file, component) {
+                                Some((together, _)) => sigs = together.into(),
+                                None => return,
+                            }
+                        }
+                        if sigs.is_empty() {
                             out.append(&mut said);
                             out.push(Diagnostic {
                                 start: tag_name,
                                 code: 2604,
                             });
                             self.explain_by_tag_name(file, e, 2604);
+                            return;
                         }
-                        return;
                     }
                     if sigs.is_empty() {
                         // `isUntypedFunctionCall`: a `Function` can be called, with whatever.
@@ -502,6 +576,87 @@ impl Checker<'_> {
                 self.relate(d.start, 2769, |_| related.clone());
             }
         }
+        if self.explains
+            && let ExprKind::String(name) = hir[jsx.tag].kind
+            && let Some(named) = self.jsx_intrinsic_attributes_by_alias(file, name, props)
+        {
+            let (from, to) = (self.type_to_string(props), self.type_to_string(named));
+            for d in &said {
+                self.explain_renamed_throughout(d.start, d.code, &from, &to);
+            }
+        }
+        // The same where the tag is a value whose type stands for such names: of what it takes, and of what has that for a type
+        // argument.
+        if self.explains && !matches!(hir[jsx.tag].kind, ExprKind::String(_)) {
+            let tag = self.type_of_expr(file, jsx.tag);
+            let names: Vec<Atom> = match self.string_literal_value(tag) {
+                Some(name) => vec![name],
+                None => {
+                    let apparent = self.apparent_type(tag);
+                    self.parts(apparent)
+                        .iter()
+                        .filter_map(|&part| self.string_literal_value(part))
+                        .collect()
+                }
+            };
+            let mut compared = vec![props];
+            if let TypeData::Intersection(members) = self.data(props) {
+                compared.extend_from_slice(members);
+            }
+            let compared: Vec<(TypeId, Option<(Sym, Vec<TypeId>)>)> = compared
+                .into_iter()
+                .map(|ty| (ty, self.alias_with_arguments_for_declaration_emit(ty)))
+                .collect();
+            for name in names {
+                let Ok(Some(attributes)) = self.jsx_attributes_of_literal_tag(file, name) else {
+                    continue;
+                };
+                let is_argument_of = |alias: &Option<(Sym, Vec<TypeId>)>| {
+                    alias
+                        .as_ref()
+                        .is_some_and(|alias| alias.1.contains(&attributes))
+                };
+                if !compared
+                    .iter()
+                    .any(|(ty, alias)| *ty == attributes || is_argument_of(alias))
+                {
+                    continue;
+                }
+                let Some(named) = self.jsx_intrinsic_attributes_by_alias(file, name, attributes)
+                else {
+                    continue;
+                };
+                for (ty, alias) in &compared {
+                    let by_alias = match alias {
+                        _ if *ty == attributes => named,
+                        Some((alias, arguments)) if arguments.contains(&attributes) => {
+                            let args: Vec<TypeId> = arguments
+                                .iter()
+                                .map(|&a| if a == attributes { named } else { a })
+                                .collect();
+                            self.intern(TypeData::LazyAlias {
+                                sym: *alias,
+                                args: args.into(),
+                            })
+                        }
+                        _ => continue,
+                    };
+                    let (from, to) = (self.type_to_string(*ty), self.type_to_string(by_alias));
+                    for d in &said {
+                        self.explain_renamed_throughout(d.start, d.code, &from, &to);
+                    }
+                }
+            }
+        }
+        // `reportErrorResults` names a target that has an alias as it is given. What is compared is the reference (`getNormalizedType`).
+        if self.explains
+            && let Some(named) = self.jsx_class_attributes_by_name(file, props)
+        {
+            let (from, to) = (self.type_to_string(props), self.type_to_string(named));
+            for d in &said {
+                self.explain_first_line_renamed(d.start, d.code, &from, &to);
+            }
+        }
         out.append(&mut said);
     }
 
@@ -536,6 +691,64 @@ impl Checker<'_> {
             });
         }
         related
+    }
+
+    /// `getTypeAliasInstantiation`: `attributes`, which is what `JSX.IntrinsicElements` says the tag `name` takes, as a type that goes
+    /// by the generic alias it is written as there. `None`: it is not written so, it is no union or intersection, or the printer
+    /// has a name for it.
+    fn jsx_intrinsic_attributes_by_alias(
+        &mut self,
+        file: FileId,
+        name: Atom,
+        attributes: TypeId,
+    ) -> Option<TypeId> {
+        let forced = self.force(attributes);
+        if !matches!(
+            self.data(forced),
+            TypeData::Union(_) | TypeData::Intersection(_)
+        ) || self.alias_for_display(forced).is_some()
+        {
+            return None;
+        }
+        let elements = self.jsx_type(file, known::IntrinsicElements)?;
+        let (prop, _) = self.prop_of(elements, name)?;
+        let PropSource::Members(declarations) = &prop.source else {
+            return None;
+        };
+        let &(of, member) = declarations.first()?;
+        let node = self.hir(of)[member].ty;
+        let (alias, arguments) = self.deferrable_alias_reference(of, node)?;
+        let written = self.type_from_node(of, node);
+        if arguments.is_empty() || self.force(written) != forced {
+            return None;
+        }
+        // `getTypeFromUnionTypeNode`, `getTypeFromIntersectionTypeNode`: what else an alias stands for does not take its name.
+        let is_named = self
+            .files()
+            .decls(alias)
+            .into_iter()
+            .any(|(declared_in, decl)| {
+                let crate::bind::Decl::Alias(declaration) = decl else {
+                    return false;
+                };
+                let hir = self.hir(declared_in);
+                let body = hir[declaration].ty;
+                body.is_some()
+                    && matches!(
+                        hir[body].kind,
+                        TypeNodeKind::Union(_) | TypeNodeKind::Intersection(_)
+                    )
+            });
+        if !is_named {
+            return None;
+        }
+        let given = self.types_from_nodes(of, arguments);
+        let params = self.local_type_params_of_symbol(alias);
+        let args = self.fill_type_args(&params, &given);
+        Some(self.intern(TypeData::LazyAlias {
+            sym: alias,
+            args: args.into(),
+        }))
     }
 
     /// `getTypeArgumentArityError`: reports 2558 or 2743 at `type_args`, the type arguments of an element, unless one of `sigs`, the

@@ -3128,7 +3128,11 @@ impl<'p> Checker<'p> {
         } else {
             Literalness::WithSpread
         };
-        self.synth(b.shape)
+        let made = self.synth(b.shape);
+        self.p
+            .copied_from
+            .insert(made, (true, vec![left, right].into_boxed_slice()));
+        made
     }
 
     // ───────────────────────────── reading ─────────────────────────────
@@ -4910,11 +4914,15 @@ impl<'p> Checker<'p> {
         let ty = self.apparent_type(ty);
         let ty = self.reduced(ty);
         // `resolveUnionTypeMembers`: once for a union. Putting the signatures of many members together is quadratic in them.
-        if let TypeData::Union(parts) = self.data(ty) {
-            let resolved = self.shape_memo(ty, |c| Shape {
-                call: c.signatures_of_union(parts, false),
-                construct: c.signatures_of_union(parts, true),
-                ..Shape::default()
+        if self.is_union(ty) {
+            let resolved = self.shape_memo(ty, |c| {
+                // `t.Types()` are in the order of `CompareTypes`.
+                let parts = c.parts_in_order(ty);
+                Shape {
+                    call: c.signatures_of_union(&parts, false),
+                    construct: c.signatures_of_union(&parts, true),
+                    ..Shape::default()
+                }
             });
             return if construct {
                 resolved.resolved.shape.construct.clone()
@@ -5027,7 +5035,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `getUnionSignatures`: the ways to call something that is one of several things, each with its own ways.
-    fn union_signatures(&mut self, lists: &[Vec<SigId>]) -> Vec<SigId> {
+    pub(super) fn union_signatures(&mut self, lists: &[Vec<SigId>]) -> Vec<SigId> {
         // Where all have the same ways each stands for itself, but for one whose parameters are those of one before it.
         if lists.iter().all(|l| *l == lists[0]) {
             let mut result: Vec<SigId> = Vec::with_capacity(lists[0].len());

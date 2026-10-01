@@ -181,6 +181,31 @@ fn read_whole(directory: impl bun_sys::AsFd, name: &[u8]) -> Option<Vec<u8>> {
     })
 }
 
+/// `decodeBytes`: what a file says, going by the mark at its start.
+fn decoded(mut bytes: Vec<u8>) -> Cow<'static, [u8]> {
+    let utf16 = |rest: &[u8], is_big_endian: bool| {
+        let units = rest.chunks_exact(2).map(|pair| {
+            if is_big_endian {
+                u16::from_be_bytes([pair[0], pair[1]])
+            } else {
+                u16::from_le_bytes([pair[0], pair[1]])
+            }
+        });
+        char::decode_utf16(units)
+            .map(|c| c.unwrap_or(char::REPLACEMENT_CHARACTER))
+            .collect::<String>()
+            .into_bytes()
+    };
+    if bytes.starts_with(&[0xFF, 0xFE]) {
+        bytes = utf16(&bytes[2..], false);
+    } else if bytes.starts_with(&[0xFE, 0xFF]) {
+        bytes = utf16(&bytes[2..], true);
+    } else if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        bytes.drain(..3);
+    }
+    Cow::Owned(bytes)
+}
+
 fn split(path: &str) -> (&str, &str) {
     let path = if path.len() > 1 {
         path.trim_end_matches('/')
@@ -434,12 +459,12 @@ impl Host for Disk {
         }
         let (parent, name) = split(path);
         if name.is_empty() || Self::is_above_listings(parent) {
-            return std::fs::read(to_native(path)).ok().map(Cow::Owned);
+            return std::fs::read(to_native(path)).ok().map(decoded);
         }
         let _turn = self.reading.as_ref().map(Turn::wait_for);
         let by_whole_path = || -> Option<Cow<'static, [u8]>> {
             let path = to_native(path.trim_end_matches('/'));
-            read_whole(bun_sys::Fd::cwd(), path.as_bytes()).map(Cow::Owned)
+            read_whole(bun_sys::Fd::cwd(), path.as_bytes()).map(decoded)
         };
         LAST.with_borrow_mut(|(of, opened)| {
             if of.as_str() != parent {
@@ -456,7 +481,7 @@ impl Host for Disk {
             let Some(directory) = opened.as_ref() else {
                 return by_whole_path();
             };
-            read_whole(directory, name.as_bytes()).map(Cow::Owned)
+            read_whole(directory, name.as_bytes()).map(decoded)
         })
     }
     fn is_file(&self, path: &str) -> bool {

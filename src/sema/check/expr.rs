@@ -4098,12 +4098,55 @@ impl<'p> Checker<'p> {
                 self.infer(&mut inference, list, children_param, 0);
             }
         }
-        // And from all of it as one object: a type parameter that stands for the whole is inferred from the whole. Not where something
-        // in it waits: what that is expected to be is read off the signature as it comes out, where it would find itself.
+        // And from all of it as one object: a type parameter that stands for the whole is inferred from the whole.
         if !waits {
             let given = self.jsx_attributes_type(file, e);
             if self.is_known(given) {
                 self.infer(&mut inference, given, param, 0);
+            }
+        } else if !children
+            .iter()
+            .any(|&child| self.is_context_sensitive(file, child))
+        {
+            // What waits would find itself in the signature as it comes out. So it is said first what it is expected to be, as things
+            // stand (`nonFixingMapper`), and that stays: what is inferred from it cannot be what is expected of it.
+            let told = self.instantiate_instantiable_for_signature(&inference, param);
+            let mut waiting: Vec<(ExprId, TypeId)> = Vec::new();
+            let mut are_all_told = true;
+            for p in jsx.attrs.iter() {
+                let value = hir[p].value;
+                if value.is_none() || !self.is_context_sensitive(file, value) {
+                    continue;
+                }
+                let expected = match self.member_name(file, hir[p].key) {
+                    Some(name) if hir[p].kind != PropKind::Spread => {
+                        self.contextual_property(told, name)
+                    }
+                    _ => None,
+                };
+                match expected {
+                    Some(expected) => waiting.push((value, expected)),
+                    None => are_all_told = false,
+                }
+            }
+            if are_all_told {
+                for (value, expected) in waiting {
+                    // The others have been told attribute by attribute.
+                    if !self.has_type_variables(expected) {
+                        self.infer_from_member(
+                            file,
+                            value,
+                            expected,
+                            &mut inference,
+                            MapperId::IDENTITY,
+                            true,
+                        );
+                    }
+                }
+                let given = self.jsx_attributes_type(file, e);
+                if self.is_known(given) {
+                    self.infer(&mut inference, given, param, 0);
+                }
             }
         }
         self.jsx_resolving.pop();
@@ -4202,19 +4245,11 @@ impl<'p> Checker<'p> {
         if self.is_any(component) {
             return None;
         }
-        let mut props = Vec::new();
-        for &part in self.parts(component) {
-            let (sigs, construct) = self.jsx_signatures(part);
-            match sigs[..] {
-                [] => {}
-                [sig] => props.push(self.jsx_props_of_sig(file, e, sig, construct)?),
-                _ => props.push(self.jsx_props_of_overloads(file, e, &sigs, construct)?),
-            }
-        }
-        if props.is_empty() {
-            None
-        } else {
-            Some(self.union(&props))
+        let (sigs, construct) = self.jsx_signatures_of_tag(file, component)?;
+        match sigs[..] {
+            [] => None,
+            [sig] => self.jsx_props_of_sig(file, e, sig, construct),
+            _ => self.jsx_props_of_overloads(file, e, &sigs, construct),
         }
     }
 

@@ -134,7 +134,10 @@ impl Checker<'_> {
         }
         let members = self.members(ty)?;
         let (prop, _) = self.property_of_type(&members, name)?;
-        Some(self.first_declaration_of_prop(&prop, depth))
+        Some(match prop.source {
+            PropSource::Type(_) => self.place_of_copied_prop(ty, name, depth),
+            _ => self.first_declaration_of_prop(&prop, depth),
+        })
     }
 
     /// `GetErrorRangeForNode` of `prop.Declarations[0]`

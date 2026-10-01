@@ -247,6 +247,9 @@ pub struct Program {
     /// See `optional_property_kept`.
     optional_properties: ById<TypeId, TypeId>,
     intersected_props: ByKey<(TypeId, Atom), TypeId>,
+    /// What an object type whose properties are copies (`PropSource::Type`) was made from: a copy is declared where the original is.
+    /// Of a spread (the flag) what is on the left and on the right, otherwise where to look, in that order. `place_of_copied_prop`
+    copied_from: ByKey<TypeId, (bool, Box<[TypeId]>)>,
     /// `isDiscriminantProperty`, by union and property name.
     discriminants: ByKey<(TypeId, Atom), bool>,
     never_intersections: ById<TypeId, bool>,
@@ -448,6 +451,7 @@ impl Program {
             mapped_prop_types: Default::default(),
             optional_properties: Default::default(),
             intersected_props: Default::default(),
+            copied_from: Default::default(),
             discriminants: Default::default(),
             never_intersections: Default::default(),
             mapped_targets: Default::default(),
@@ -573,6 +577,7 @@ impl Program {
             recent_unions: Default::default(),
             deadline: None,
             constraint_stack: Vec::new(),
+            conditional_constraint_depth: 0,
             trap_on_timeout: std::env::var_os("BUN_SEMA_TIME_TRAP").is_some(),
             trap_on_low_stack: std::env::var_os("BUN_SEMA_DEBUG_STACK").is_some(),
             deepest_stack: std::cell::Cell::new(0),
@@ -819,6 +824,8 @@ pub struct Checker<'p> {
     deadline: Option<std::time::Instant>,
     /// The `stack` of `getResolvedBaseConstraint`: what the constraints being worked out, one for the sake of the other, are instances of.
     constraint_stack: Vec<relate::RecursionId>,
+    /// `conditionalConstraintDepth`
+    conditional_constraint_depth: u32,
     trap_on_timeout: bool,
     trap_on_low_stack: bool,
     deepest_stack: std::cell::Cell<usize>,

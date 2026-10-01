@@ -2077,7 +2077,11 @@ impl<'p> Checker<'p> {
     }
 
     /// `narrowed`: see `cond_inferred_true`.
-    fn default_constraint_of_conditional_ex(&mut self, t: TypeId, narrowed: bool) -> TypeId {
+    pub(super) fn default_constraint_of_conditional_ex(
+        &mut self,
+        t: TypeId,
+        narrowed: bool,
+    ) -> TypeId {
         let (yes, no) = (self.cond_inferred_true(t, narrowed), self.cond_false(t));
         // A branch that is `any` would make the whole assignable to anything.
         if self.is_any(yes) {

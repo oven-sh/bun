@@ -1313,6 +1313,12 @@ impl<'p> Checker<'p> {
         let TypeNodeKind::Cond { check, .. } = self.hir(file)[node].kind else {
             return TypeId::UNKNOWN;
         };
+        // `conditionalConstraintDepth`: what is checked is asked about on a stack of its own, so nothing else ends a row of these. One
+        // that `stack` has no room for would be refused, which keeps everything above from being kept, and it would all be asked again.
+        if self.conditional_constraint_depth >= 100 || self.stack.len() + 20 >= MAX_DEPTH {
+            return TypeId::UNKNOWN;
+        }
+        self.conditional_constraint_depth += 1;
         let this = self.intern(TypeData::Cond { file, node, mapper });
         // `getConstraintOfTypeParameter`: a type parameter whose constraint comes back to it has none to put in its place.
         let check_declared = self.type_from_node(file, check);
@@ -1331,6 +1337,7 @@ impl<'p> Checker<'p> {
         } else {
             self.constraint_of(this).unwrap_or(TypeId::UNKNOWN)
         };
+        self.conditional_constraint_depth -= 1;
         // What is left of a type variable is no constraint. A mapped type over one is an object type like another.
         let constraint = self.next_base_constraint(constraint);
         if self.some_type(constraint, |c, m| c.is_deferred(m)) {

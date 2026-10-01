@@ -3252,7 +3252,7 @@ impl<'p> Checker<'p> {
 
     /// Whether `ty`, a member of it, or a member of a member is an object, function or conditional type whose mapper maps each of
     /// `params` to the corresponding one of `args`.
-    fn is_pinned_to_type_arguments(
+    pub(super) fn is_pinned_to_type_arguments(
         &self,
         ty: TypeId,
         params: &[TypeId],

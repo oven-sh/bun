@@ -4458,8 +4458,26 @@ fn explain_early_error(c: &Checker<'_>, file: FileId, start: u32, code: u32) {
     match code {
         // `parseExpected`, `parseJsxElementOrSelfClosingElementOrFragment`, `parseNewExpressionOrNewDotTarget`
         1005 | 1209 | 17002 => {
-            if let Some((_, named)) = hir.error_arguments.iter().find(|e| e.0 == start) {
-                c.note(start, 0, code, vec![named.to_string()]);
+            let mut named: Vec<&str> = hir
+                .error_arguments
+                .iter()
+                .filter(|e| e.0 == start)
+                .map(|e| &*e.1)
+                .collect();
+            // `parseErrorAtPosition` keeps a second error at a place if another lies between the two. Which code an argument goes with
+            // is not kept.
+            let mut here = hir.early_errors.iter().filter(|e| e.0 == start);
+            if code == 1005 && here.all(|e| e.1 == 1005) {
+                named.sort_unstable();
+                named.dedup();
+            } else {
+                named.truncate(1);
+            }
+            for (i, named) in named.into_iter().enumerate() {
+                c.note(start, 0, code, vec![named.to_owned()]);
+                if i > 0 {
+                    c.explain_as_another(start);
+                }
             }
         }
         // `parseJsxElementOrSelfClosingElementOrFragment`: from the first of the elements, which commas join, to the end of the last.

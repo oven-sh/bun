@@ -1041,7 +1041,13 @@ impl<'p> Checker<'p> {
                     for info in &mut shape.index {
                         info.value = self.regular_object(info.value);
                     }
-                    return self.synth(shape);
+                    let widened = self.synth(shape);
+                    if widened != ty {
+                        self.p
+                            .copied_from
+                            .insert(widened, (false, vec![ty].into_boxed_slice()));
+                    }
+                    return widened;
                 }
                 _ => return ty,
             }
@@ -1122,7 +1128,20 @@ impl<'p> Checker<'p> {
             let value = self.regular_object(value);
             shape.index.push(IndexInfo { value, ..*info });
         }
-        self.synth(shape)
+        let widened = self.synth(shape);
+        // What is made up is made after the last there is of the name.
+        let mut from = vec![ty];
+        from.extend(
+            others
+                .iter()
+                .rev()
+                .copied()
+                .filter(|&other| self.is_closed_object_literal_type(other)),
+        );
+        self.p
+            .copied_from
+            .insert(widened, (false, from.into_boxed_slice()));
+        widened
     }
 
     // ───────────────────────────── bindings ─────────────────────────────
@@ -2999,9 +3018,12 @@ impl<'p> Checker<'p> {
     pub(super) fn awaited_or_none(&mut self, ty: TypeId) -> Option<TypeId> {
         let awaited = self.awaited_no_alias(ty)?;
         // `createAwaitedTypeIfNeeded`, of the whole: `T | U` is `Awaited<T | U>` if either may turn out to be a promise.
-        if self.is_awaited_type_needed(awaited)
-            && let Some(alias) = self.files().global(known::Awaited, SymFlags::TYPE_ALIAS)
-        {
+        if self.is_awaited_type_needed(awaited) {
+            // `getGlobalAwaitedSymbol`
+            let Some(alias) = self.files().global(known::Awaited, SymFlags::TYPE_ALIAS) else {
+                self.report_global_error(2318, vec!["Awaited".to_owned()]);
+                return Some(awaited);
+            };
             // `unwrapAwaitedType`: `Awaited<T | U>` does for `Awaited<Awaited<T> | U>`.
             let unwrapped = self.map_type(awaited, |c, m| c.awaited_argument(m).unwrap_or(m));
             return Some(self.type_reference(alias, &[unwrapped]));

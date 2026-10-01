@@ -2855,6 +2855,14 @@ impl<'a> Builder<'a> {
             self.lexer.restore(&snapshot);
         }
         let parsed = self.ambient_statement_at(pos);
+        // `parseExpressionOrLabeledStatement`: the parser has gone on from a semicolon that is missing.
+        if !self.tolerant
+            && let Some((end, parsed)) = parsed
+            && matches!(parsed.data, bun_ast::stmt::Data::SExpr(_))
+            && !self.can_parse_semicolon_before(pos, end)
+        {
+            return Err(Error::SyntaxError);
+        }
         // In a declaration file this is what notices a syntax error.
         if parsed.is_none() || !self.tolerant {
             self.skip_statement()?;
@@ -2865,6 +2873,22 @@ impl<'a> Builder<'a> {
             self.pending_statements.push((statement, parsed));
         }
         Ok(statement)
+    }
+
+    /// `canParseSemicolon` after the statement that the parser read from `pos` on, where the token after it starts at `end`. In doubt
+    /// it can.
+    fn can_parse_semicolon_before(&self, pos: u32, end: u32) -> bool {
+        let text = self.lexer.contents;
+        let Some(statement) = text.get(pos as usize..end as usize) else {
+            return true;
+        };
+        let written = statement.trim_ascii_end();
+        written.ends_with(b";")
+            || written.ends_with(b"*/")
+            || statement[written.len()..]
+                .iter()
+                .any(|&b| matches!(b, b'\n' | b'\r'))
+            || matches!(text.get(end as usize), None | Some(b'}'))
     }
 
     /// The statement the parser read at `pos` in an ambient context, and where the token after it starts. The last of several attempts.

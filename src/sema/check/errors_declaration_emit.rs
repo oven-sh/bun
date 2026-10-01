@@ -127,6 +127,8 @@ enum Context {
     Variable(PatId),
     /// A property, or the name of an accessor.
     Property(MemberId),
+    /// `f.name = value`, which declares a property of a function.
+    Assignment(ExprId),
     /// A parameter property of a private constructor.
     ParameterProperty(ParamId),
     Accessor(MemberId),
@@ -143,6 +145,8 @@ enum Context {
     TypeAlias(AliasId),
     /// `export default e`, `export = e`: where the statement is.
     DefaultExport(u32, u32),
+    /// `Object.defineProperty(exports, "name", descriptor)`
+    DefinedExport(ExprId),
 }
 
 /// `errorNameNode`
@@ -264,9 +268,14 @@ struct Builder {
     visited_types: Vec<TypeId>,
     symbol_depth: Vec<(Identity, u32)>,
     infer_type_parameters: Vec<TypeId>,
+    /// `enclosingDeclaration` is a block `enterNewScope` made up for the parameters or the type parameters of a signature.
+    is_in_made_up_scope: bool,
     reverse_mapped_stack: Vec<ReverseMappedProperty>,
     mapper: MapperId,
     depth: u32,
+    /// How many of the types that are being written out may go by a name in TypeScript, which keeps `t.alias`: here the alias is found
+    /// again from the syntax, and not always. What is named inside such a type may never be named there, so nothing is said of it.
+    may_be_named: u32,
     tracked: Vec<Tracked>,
     boundaries: Vec<Boundary>,
     serialized: FxHashMap<(TypeId, u32, Enclosing), Serialized>,
@@ -284,9 +293,11 @@ impl Builder {
             visited_types: Vec::new(),
             symbol_depth: Vec::new(),
             infer_type_parameters: Vec::new(),
+            is_in_made_up_scope: false,
             reverse_mapped_stack: Vec::new(),
             mapper: MapperId::IDENTITY,
             depth: 0,
+            may_be_named: 0,
             tracked: Vec::new(),
             boundaries: Vec::new(),
             serialized: FxHashMap::default(),
@@ -346,7 +357,6 @@ impl<'p> Checker<'p> {
         let module = files.module(file);
         // `sourceFileMayBeEmitted`. `stripInternal` goes by comments, which are not kept.
         if !matches!(module.hir.kind, FileKind::Ts | FileKind::Tsx)
-            || module.hir.is_js
             || files.options.strips_internal_declarations
             || module.path.contains("/node_modules/") && !files.options.files.contains(&module.path)
         {
@@ -362,7 +372,11 @@ impl<'p> Checker<'p> {
         self.eager.push(self.stack.len());
         let found = {
             let mut emit = DeclarationEmit::new(self, file);
-            emit.transform_source_file();
+            if module.hir.is_js {
+                emit.transform_javascript_file();
+            } else {
+                emit.transform_source_file();
+            }
             emit.found
         };
         self.eager.pop();
@@ -380,10 +394,6 @@ impl<'p> Checker<'p> {
                 args,
                 related,
             } = error;
-            // Not reported: a property of a mapped type whose name cannot be written.
-            if code == 4118 {
-                continue;
-            }
             out.push(Diagnostic { start, code });
             self.explain_another(start, end, code, |_| args);
             if !related.is_empty() {
@@ -1584,6 +1594,11 @@ impl<'p> DeclarationEmit<'_, 'p> {
         {
             result.accessibility = Accessibility::CannotBeNamed;
             result.module_name = self.symbol_text(module);
+            // `ErrorNode`: `enclosingDeclaration`, if it is in JavaScript. A variable declaration is where the error is anyway.
+            if self.c.hir(at.file).is_js && at.variable.is_none() && !self.b.is_in_made_up_scope {
+                let start = self.c.skip_trivia_from(at.file, 0);
+                result.error_node = Some((start, self.c.end_of_token_at(at.file, start)));
+            }
         }
         result
     }
@@ -1672,6 +1687,25 @@ impl<'p> DeclarationEmit<'_, 'p> {
                     of_property(is_static, is_in_class),
                     name,
                     self.c.error_range_of_member(self.file, m),
+                )
+            }
+            Context::Assignment(e) => {
+                let name = match hir[e].kind {
+                    ExprKind::Assign { target, .. } => match hir[target].kind {
+                        ExprKind::Dot { name_pos, .. } => {
+                            (name_pos, self.c.end_of_name_at(self.file, name_pos))
+                        }
+                        _ => (0, 0),
+                    },
+                    _ => (0, 0),
+                };
+                (
+                    of_property(false, false),
+                    name,
+                    (
+                        self.c.start_of(self.file, e),
+                        self.c.end_of_expr(self.file, e),
+                    ),
                 )
             }
             Context::ParameterProperty(p) => (
@@ -1792,6 +1826,14 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 ),
             ),
             Context::DefaultExport(start, end) => (4082, (0, 0), (start, end)),
+            Context::DefinedExport(e) => {
+                let (_, key) = crate::bind::define_property_call(hir, e)?;
+                let key = (
+                    self.c.start_of(self.file, key),
+                    self.c.end_of_expr(self.file, key),
+                );
+                (by_module(4023, 4024, 4025), key, key)
+            }
         })
     }
 
@@ -1849,8 +1891,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
         };
         let name = self.error_declaration_name();
         match report {
-            // Not reported.
-            Report::CyclicStructure => {}
+            Report::CyclicStructure => self.add_diagnostic(location, 5088, vec![name]),
             Report::InaccessibleThis => {
                 self.add_diagnostic(location, 2527, vec![name, "this".to_owned()]);
             }
@@ -1898,6 +1939,12 @@ impl<'p> DeclarationEmit<'_, 'p> {
         }
     }
 
+    fn is_declared_in_javascript(&self, symbol: Sym) -> bool {
+        self.decls_of(symbol)
+            .iter()
+            .any(|declaration| self.c.hir(declaration.0).is_js)
+    }
+
     /// `TrackSymbol`
     fn track_symbol(&mut self, symbol: Sym, at: Enclosing, meaning: Meaning) {
         self.track(Tracked {
@@ -1915,6 +1962,16 @@ impl<'p> DeclarationEmit<'_, 'p> {
         {
             return;
         }
+        // See `Builder::may_be_named`. And how JavaScript exports what it declares is not followed.
+        if !tracked.as_local
+            && (self.b.may_be_named > 0 || self.is_declared_in_javascript(tracked.symbol))
+            && !self
+                .is_symbol_accessible(tracked.symbol, tracked.at, tracked.meaning, false)
+                .is_accessible()
+        {
+            self.b.reported_diagnostic = true;
+            return;
+        }
         if let Some(boundary) = self.b.boundaries.last_mut() {
             boundary.tracked.push(tracked);
         } else {
@@ -1923,11 +1980,6 @@ impl<'p> DeclarationEmit<'_, 'p> {
             } else {
                 self.is_symbol_accessible(tracked.symbol, tracked.at, tracked.meaning, true)
             };
-            // Not reported: what a type that is worked out names and cannot be named where the type is wanted.
-            if !tracked.as_local && !access.is_accessible() {
-                self.b.reported_diagnostic = true;
-                return;
-            }
             if self.handle_symbol_accessibility_error(access) {
                 self.b.reported_diagnostic = true;
                 return;
@@ -1943,11 +1995,102 @@ impl<'p> DeclarationEmit<'_, 'p> {
     /// `visitSourceFile`
     fn transform_source_file(&mut self) {
         self.precalculate_visibility();
+        self.transform_expando_assignments();
         let hir = self.c.hir(self.file);
         for s in hir.ids(hir.body) {
             self.visit_statement(s);
         }
         self.transform_late_painted_statements();
+    }
+
+    /// `transformExpandoAssignment`, of each `f.name = value` that declares a property of a function. They come before all statements.
+    fn transform_expando_assignments(&mut self) {
+        let files = self.c.files();
+        let (hir, bound) = (self.c.hir(self.file), self.c.bound(self.file));
+        for &e in bound.expando_declarations.iter() {
+            let ExprKind::Assign {
+                op: None,
+                target,
+                value,
+            } = hir[e].kind
+            else {
+                continue;
+            };
+            let ExprKind::Dot { obj, name, .. } = hir[target].kind else {
+                continue;
+            };
+            let symbol = bound.expr_symbol[obj.idx()];
+            if !matches!(hir[obj].kind, ExprKind::Ident(_))
+                || symbol.is_none()
+                || self.c.is_private_name(name)
+            {
+                continue;
+            }
+            // `GetReferencedValueDeclaration`
+            let host = files.sym(self.file, symbol);
+            let decls = self.decls_of(host);
+            let Some(&(file, decl)) = decls
+                .iter()
+                .find(|d| matches!(d.1, Decl::Fn(_) | Decl::Var(_)))
+            else {
+                continue;
+            };
+            if file != self.file {
+                continue;
+            }
+            if let Decl::Var(pat) = decl {
+                let PatParent::Var(d) = bound.pat_parent[pat.idx()] else {
+                    continue;
+                };
+                let declaration = hir[d];
+                if declaration.ty.is_some()
+                    || declaration.init.is_none()
+                    || self.c.is_written_in_parentheses(file, declaration.init)
+                {
+                    continue;
+                }
+                let ExprKind::Fn(function) = hir[declaration.init].kind else {
+                    continue;
+                };
+                if !self.is_binding_name_visible(pat) {
+                    continue;
+                }
+                // `transformExpandoHost`: it is written as a function, in the place of the whole statement.
+                let statement = bound.var_stmt[d.idx()];
+                if statement.is_some() && self.written.insert(statement) {
+                    let saved = self.context;
+                    self.context = Context::Variable(pat);
+                    self.transform_signature(function);
+                    self.context = saved;
+                }
+            } else {
+                // `shouldEmitFunctionProperties`
+                let has_body = decls.iter().any(|d| {
+                    matches!(d.1, Decl::Fn(f)
+                        if d.0 == file && !matches!(hir[f].body, FnBody::None))
+                });
+                if !has_body || !self.is_declaration_visible(file, decl) {
+                    continue;
+                }
+            }
+            let saved = (self.error_name, self.context);
+            self.context = Context::Assignment(e);
+            if let ExprKind::Ident(right) = hir[value].kind
+                && !self.c.is_written_in_parentheses(file, value)
+            {
+                // It is written `export { right as name }`.
+                self.check_entity_name_visibility(right, hir[value].pos, Meaning::ValueOfName);
+            } else {
+                let function = self.c.type_of_symbol(host);
+                if let Some(ty) = self.c.type_of_property(function, name) {
+                    self.error_name = None;
+                    self.b = Builder::new(self.enclosing, WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL);
+                    self.serialize_declared_type(Declared::None, ty);
+                    self.exit_context();
+                }
+            }
+            (self.error_name, self.context) = saved;
+        }
     }
 
     /// `PrecalculateDeclarationEmitVisibility`
@@ -1975,8 +2118,71 @@ impl<'p> DeclarationEmit<'_, 'p> {
                         self.mark_linked_aliases(target);
                     }
                 }
+                // `isCommonJSModuleExports`
+                StmtKind::Expr(e)
+                    if bound.commonjs_indicator.is_some()
+                        && bound.stmt_parent[i] == Parent::File
+                        && matches!(
+                            crate::bind::assignment_declaration_kind(hir, e),
+                            crate::bind::JsDeclarationKind::ModuleExports
+                                | crate::bind::JsDeclarationKind::ExportsProperty(_)
+                        ) =>
+                {
+                    if let ExprKind::Assign { value, .. } = hir[e].kind
+                        && let ExprKind::Ident(name) = hir[value].kind
+                        && !self.c.is_written_in_parentheses(self.file, value)
+                    {
+                        let target = files.resolve_name(self.file, ScopeId(0), name, any);
+                        self.mark_linked_aliases(target);
+                    }
+                }
                 _ => {}
             }
+        }
+    }
+
+    /// `visitSourceFile`, of JavaScript, as far as it is followed: the variables at the top of the file, and what
+    /// `Object.defineProperty(exports, "name", descriptor)` exports. Of what may be wrong with them only a name that cannot be used
+    /// outside of its module is told.
+    fn transform_javascript_file(&mut self) {
+        self.precalculate_visibility();
+        self.transform_defined_exports();
+        let hir = self.c.hir(self.file);
+        for s in hir.ids(hir.body) {
+            if matches!(hir[s].kind, StmtKind::Var(_)) {
+                self.visit_statement(s);
+            }
+        }
+        while !self.late_marked.is_empty() {
+            let next = self.late_marked.remove(0);
+            if matches!(hir[next].kind, StmtKind::Var(_)) {
+                self.transform_top_level_declaration(next);
+            }
+        }
+        self.found.retain(|found| found.code == 4023);
+    }
+
+    /// `transformCommonJSExport`, of each `Object.defineProperty(exports, "name", descriptor)` that is the first to export its name.
+    fn transform_defined_exports(&mut self) {
+        let files = self.c.files();
+        if !files.module(self.file).is_commonjs() {
+            return;
+        }
+        let hir = self.c.hir(self.file);
+        for (_, symbol) in files.exports(files.file_symbol(self.file)) {
+            let Some(&(file, Decl::ExportsProperty(e))) = self.decls_of(symbol).first() else {
+                continue;
+            };
+            if file != self.file || crate::bind::define_property_call(hir, e).is_none() {
+                continue;
+            }
+            let saved = (self.error_name, self.context);
+            (self.error_name, self.context) = (None, Context::DefinedExport(e));
+            self.b = Builder::new(self.enclosing, WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL);
+            let ty = self.c.type_of_symbol(symbol);
+            self.serialize_declared_type(Declared::None, ty);
+            self.exit_context();
+            (self.error_name, self.context) = saved;
         }
     }
 
@@ -2179,9 +2385,19 @@ impl<'p> DeclarationEmit<'_, 'p> {
             Parent::Module(m) => self.module_scopes[m.idx()],
             _ => self.enclosing.scope,
         };
+        let is_commonjs = bound.commonjs_indicator.is_some();
         for d in decls.iter() {
             let pat = hir[d].pat;
             if !self.is_binding_name_visible(pat) {
+                continue;
+            }
+            // `transformCjsRequireVariableDeclaration`: it is written as an import. What JSDoc says of a type is not gone through.
+            if hir.is_js
+                && (hir[d].ty.is_some()
+                    || is_commonjs
+                        && hir[d].init.is_some()
+                        && crate::bind::required_specifier(hir, hir[d].init).is_some())
+            {
                 continue;
             }
             let saved = (
@@ -3226,14 +3442,32 @@ impl<'p> DeclarationEmit<'_, 'p> {
             }
             _ => {}
         }
-        if let Some((alias, arguments)) = self.c.alias_with_arguments_for_declaration_emit(ty)
+        let alias = self.c.alias_with_arguments_for_declaration_emit(ty);
+        if let Some((alias, arguments)) = &alias
             && self
-                .is_symbol_accessible(alias, self.b.enclosing, Meaning::Type, false)
+                .is_symbol_accessible(*alias, self.b.enclosing, Meaning::Type, false)
                 .is_accessible()
         {
-            self.map_to_type_nodes(&arguments, false);
-            return self.symbol_to_type_node(alias, Meaning::Type);
+            self.map_to_type_nodes(arguments, false);
+            return self.symbol_to_type_node(*alias, Meaning::Type);
         }
+        // `getTypeFromTypeAliasReference`: an alias that is written `= A<X>` takes the place of `A`, which is the one the syntax leads to.
+        // And nothing tells what a computed type is made from.
+        let saved = self.b.may_be_named;
+        if alias.is_some_and(|found| !found.1.is_empty())
+            || matches!(
+                self.c.data(ty),
+                TypeData::Synth(_) | TypeData::ReverseMapped { .. }
+            )
+        {
+            self.b.may_be_named += 1;
+        }
+        self.type_without_alias_to_node(ty);
+        self.b.may_be_named = saved;
+    }
+
+    /// The rest of `typeToTypeNode`, of a type that goes by no alias.
+    fn type_without_alias_to_node(&mut self, ty: TypeId) {
         match self.c.data(ty) {
             TypeData::Ref { target, args } => self.type_reference_to_node(ty, *target, args),
             TypeData::Tuple { elems, flags, .. } => {
@@ -3247,7 +3481,11 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 self.map_to_type_nodes(&types, false);
             }
             TypeData::TypeParam(..) => self.type_parameter_to_node(ty),
-            TypeData::Union(_) => {
+            TypeData::Union(members) => {
+                if let Some((alias, arguments)) = self.alias_found_from_members(ty, members) {
+                    self.map_to_type_nodes(&arguments, false);
+                    return self.symbol_to_type_node(alias, Meaning::Type);
+                }
                 // `UnionType.origin`
                 if let Some(origin) = self.c.p.union_origins.get(&ty) {
                     return self.list_to_node(&origin);
@@ -3255,7 +3493,13 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 let types = self.format_union_types(ty);
                 self.list_to_node(&types);
             }
-            TypeData::Intersection(members) => self.list_to_node(members),
+            TypeData::Intersection(members) => {
+                if let Some((alias, arguments)) = self.alias_found_from_members(ty, members) {
+                    self.map_to_type_nodes(&arguments, false);
+                    return self.symbol_to_type_node(alias, Meaning::Type);
+                }
+                self.list_to_node(members);
+            }
             TypeData::Anon { .. }
             | TypeData::Fns { .. }
             | TypeData::Synth(_)
@@ -3303,6 +3547,209 @@ impl<'p> DeclarationEmit<'_, 'p> {
             }
             _ => {}
         }
+    }
+
+    /// `t.alias`, of a union or an intersection the printer knows none for. `instantiateTypeWorker` passes the alias on with its type
+    /// arguments instantiated, and an alias that is written `= A<X>` takes the place of `A`. Here what `instantiate` makes does not
+    /// say what it is made from. So the alias is looked for among the generic aliases of the files the members are written in: one
+    /// that can be named where the type is wanted and comes to `ty` with the type arguments read off the members.
+    fn alias_found_from_members(
+        &mut self,
+        ty: TypeId,
+        members: &[TypeId],
+    ) -> Option<(Sym, Vec<TypeId>)> {
+        let files = self.c.files();
+        let is_union = self.c.is_union(ty);
+        let mut written_in: Vec<FileId> = Vec::new();
+        // What stands for the type parameters around each member that is written somewhere.
+        let mut mappers: Vec<MapperId> = Vec::new();
+        for &member in members {
+            let file = match self.c.data(member) {
+                TypeData::Ref { target, .. } => target.file,
+                TypeData::Anon {
+                    origin: Origin::TypeLiteral(file, _) | Origin::Mapped(file, _),
+                    mapper,
+                }
+                | TypeData::Cond { file, mapper, .. } => {
+                    mappers.push(*mapper);
+                    *file
+                }
+                TypeData::Fns { decls, mapper } => match decls.first() {
+                    Some(first) => {
+                        mappers.push(*mapper);
+                        first.0
+                    }
+                    None => continue,
+                },
+                _ => continue,
+            };
+            if !written_in.contains(&file) {
+                written_in.push(file);
+            }
+        }
+        for file in written_in {
+            let (hir, bound) = (self.c.hir(file), self.c.bound(file));
+            for (a, alias) in hir.aliases.iter().enumerate() {
+                if alias.type_params.is_empty()
+                    || alias.ty.is_none()
+                    || bound.alias_symbol[a].is_none()
+                {
+                    continue;
+                }
+                let symbol = files.sym(file, bound.alias_symbol[a]);
+                // A class or an interface of the same name is what the name means. What `ty` is made from has been resolved.
+                if files
+                    .flags(symbol)
+                    .intersects(SymFlags::CLASS | SymFlags::INTERFACE)
+                {
+                    continue;
+                }
+                let Some(declared) = self.c.p.declared_types.get(&symbol) else {
+                    continue;
+                };
+                let body = hir[alias.ty].kind;
+                let parameters = self.c.local_type_params_of_symbol(symbol);
+                let mut arguments: Vec<Option<TypeId>> = vec![None; parameters.len()];
+                let mut keys = None;
+                let fits = match self.c.data(declared) {
+                    TypeData::Union(patterns) | TypeData::Intersection(patterns)
+                        if self.c.is_union(declared) == is_union
+                            && patterns.len() == members.len()
+                            && matches!(
+                                body,
+                                TypeNodeKind::Union(_)
+                                    | TypeNodeKind::Intersection(_)
+                                    | TypeNodeKind::Ref { .. }
+                                    | TypeNodeKind::Mapped(_)
+                            ) =>
+                    {
+                        patterns.iter().all(|&pattern| {
+                            members.iter().any(|&member| {
+                                let mut attempt = arguments.clone();
+                                let fits =
+                                    self.fits_alias(pattern, member, &parameters, &mut attempt, 0);
+                                if fits {
+                                    arguments = attempt;
+                                }
+                                fits
+                            })
+                        })
+                    }
+                    // `getIndexedAccessTypeOrUndefined`: what a union of keys selects is a union that has the alias of the indexed
+                    // access type. `{ a: X[K] }["a"]` is `X[K]`, which has none.
+                    &TypeData::IndexedAccess { index, .. } if is_union => {
+                        let TypeNodeKind::IndexedAccess { index: written, .. } = body else {
+                            continue;
+                        };
+                        if self.c.type_from_node(file, written) != index {
+                            continue;
+                        }
+                        for (argument, &parameter) in arguments.iter_mut().zip(parameters.iter()) {
+                            *argument = mappers
+                                .iter()
+                                .find_map(|&mapper| self.c.p.types.map(mapper, parameter));
+                        }
+                        keys = Some(index);
+                        true
+                    }
+                    _ => false,
+                };
+                let Some(arguments) = arguments.into_iter().collect::<Option<Vec<TypeId>>>() else {
+                    continue;
+                };
+                if !fits {
+                    continue;
+                }
+                let mapper = self.c.mapper_from(&parameters, &arguments);
+                if let Some(keys) = keys {
+                    let keys = self.c.instantiate(keys, mapper);
+                    if keys == TypeId::BOOLEAN || !self.c.is_union(keys) {
+                        continue;
+                    }
+                }
+                if self.c.instantiate(declared, mapper) == ty
+                    && self
+                        .is_symbol_accessible(symbol, self.b.enclosing, Meaning::Type, false)
+                        .is_accessible()
+                {
+                    return Some((symbol, arguments));
+                }
+            }
+        }
+        None
+    }
+
+    /// Whether `actual` is `pattern` with something for each of `parameters`, which is noted in `arguments`.
+    fn fits_alias(
+        &self,
+        pattern: TypeId,
+        actual: TypeId,
+        parameters: &[TypeId],
+        arguments: &mut [Option<TypeId>],
+        depth: u32,
+    ) -> bool {
+        if let Some(i) = parameters.iter().position(|&p| p == pattern) {
+            return *arguments[i].get_or_insert(actual) == actual;
+        }
+        if depth > 8 || !self.c.has_type_variables(pattern) {
+            return pattern == actual;
+        }
+        let (left, right) = match (self.c.data(pattern), self.c.data(actual)) {
+            (
+                TypeData::Ref {
+                    target: a,
+                    args: left,
+                },
+                TypeData::Ref {
+                    target: b,
+                    args: right,
+                },
+            ) if a == b && left.len() == right.len() => {
+                return left
+                    .iter()
+                    .zip(right.iter())
+                    .all(|(&l, &r)| self.fits_alias(l, r, parameters, arguments, depth + 1));
+            }
+            (
+                TypeData::Anon {
+                    origin: a,
+                    mapper: left,
+                },
+                TypeData::Anon {
+                    origin: b,
+                    mapper: right,
+                },
+            ) if a == b => (*left, *right),
+            (
+                TypeData::Fns {
+                    decls: a,
+                    mapper: left,
+                },
+                TypeData::Fns {
+                    decls: b,
+                    mapper: right,
+                },
+            ) if a == b => (*left, *right),
+            (
+                TypeData::Cond {
+                    file: a,
+                    node: at,
+                    mapper: left,
+                },
+                TypeData::Cond {
+                    file: b,
+                    node: other,
+                    mapper: right,
+                },
+            ) if (a, at) == (b, other) => (*left, *right),
+            _ => return false,
+        };
+        // What is written at one place mentions the same type parameters.
+        let (left, right) = (self.c.p.types.mapping(left), self.c.p.types.mapping(right));
+        left.len() == right.len()
+            && left.iter().zip(right).all(|(l, r)| {
+                l.0 == r.0 && self.fits_alias(l.1, r.1, parameters, arguments, depth + 1)
+            })
     }
 
     /// The enum whose declared type is the union `ty` of `members`.
@@ -3401,7 +3848,9 @@ impl<'p> DeclarationEmit<'_, 'p> {
         if let [only] = members[..] {
             return self.type_to_node(only);
         }
+        self.b.may_be_named += 1;
         self.map_to_type_nodes(members, true);
+        self.b.may_be_named -= 1;
     }
 
     /// `formatUnionTypes`, as far as it matters which symbols are named.
@@ -3881,8 +4330,15 @@ impl<'p> DeclarationEmit<'_, 'p> {
     fn origin_of_mapped_property(&mut self, of: TypeId, name: Atom) -> Option<Prop> {
         let (file, node, mapper) = self.c.mapped_origin(of)?;
         let mapped = self.c.mapped_decl(file, node);
-        if mapped.name_ty.is_some() || self.c.hir(file)[mapped.param].constraint.is_none() {
+        if self.c.hir(file)[mapped.param].constraint.is_none() {
             return None;
+        }
+        // `MappedTypeNameTypeKindRemapping`
+        if let Some(renamed) = self.c.mapped_name_type(of) {
+            let key = self.c.mapped_type_param(of);
+            if !self.c.is_assignable(renamed, key) {
+                return None;
+            }
         }
         let (declared, _) = self.c.mapped_modifiers_source(file, node)?;
         let modifiers = self.c.instantiate(declared, mapper);
@@ -3967,6 +4423,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
         let name = files.symbol(first).name;
         match files.resolve_name(at.file, at.scope, name, SymFlags::VALUE) {
             Some(symbol) => self.track_symbol(symbol, at, Meaning::Value),
+            None if self.c.hir(at.file).is_js => {}
             None => self.track(Tracked {
                 symbol: first,
                 at,
@@ -3993,7 +4450,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
         }
         // The name means nothing where the type is written. What it means where the property is declared is a local of that place.
         let symbol = self.c.bound(file).expr_symbol[first.idx()];
-        if symbol.is_some() {
+        if symbol.is_some() && !self.c.hir(at.file).is_js {
             self.track(Tracked {
                 symbol: files.sym(file, symbol),
                 at,
@@ -4151,7 +4608,14 @@ impl<'p> DeclarationEmit<'_, 'p> {
     fn signature_to_declaration(&mut self, signature: SigId) {
         // `enterSignatureScope`
         let saved_mapper = self.b.mapper;
+        let saved_scope = self.b.is_in_made_up_scope;
         let declaration = self.c.sig_decl(signature);
+        if declaration.is_some()
+            && (!self.c.sig_params(signature).is_empty()
+                || !self.c.sig_type_params(signature).is_empty())
+        {
+            self.b.is_in_made_up_scope = true;
+        }
         if let Some((_, _, mapper)) = declaration
             && self
                 .c
@@ -4206,6 +4670,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
         }
         self.serialize_return_type_for_signature(signature);
         self.b.mapper = saved_mapper;
+        self.b.is_in_made_up_scope = saved_scope;
     }
 
     /// `createReturnFromSignature`: the type node that says what `func` returns.
@@ -4451,14 +4916,16 @@ impl<'p> DeclarationEmit<'_, 'p> {
         self.b.approximate_length += 10;
     }
 
-    /// `typeToTypeNodeOrCircularityElision`
-    fn type_to_node_or_circularity_elision(&mut self, ty: TypeId) {
+    /// `typeToTypeNodeOrCircularityElision`. `is_new`: `ty` stands for a type that is made for the occasion, which is not being written.
+    fn type_to_node_or_circularity_elision(&mut self, ty: TypeId, is_new: bool) {
         if !self.c.is_union(ty) {
             return self.type_to_node(ty);
         }
         if self.b.visited_types.contains(&ty) {
-            self.b.encountered_error = true;
-            self.report(Report::CyclicStructure);
+            if !is_new {
+                self.b.encountered_error = true;
+                self.report(Report::CyclicStructure);
+            }
             return self.elided();
         }
         self.visit_and_transform_type(ty, None, Self::type_to_node);
@@ -4469,7 +4936,12 @@ impl<'p> DeclarationEmit<'_, 'p> {
         let TypeData::Cond { file, node, .. } = *self.c.data(ty) else {
             return self.elided();
         };
-        let TypeNodeKind::Cond { extends, .. } = self.c.hir(file)[node].kind else {
+        let TypeNodeKind::Cond {
+            check: written,
+            extends,
+            ..
+        } = self.c.hir(file)[node].kind
+        else {
             return self.elided();
         };
         if self.check_truncation_length() {
@@ -4478,6 +4950,19 @@ impl<'p> DeclarationEmit<'_, 'p> {
         let check = self.c.cond_piece(ty, 0);
         self.type_to_node(check);
         self.b.approximate_length += 15;
+        // `FlagsGenerateNamesForShadowedTypeParams`: what goes member by member and is no type parameter any more is written
+        // `C extends infer T ? T extends C ? .. : never : never`, and the branches are instantiated with that `T`.
+        let as_declared = self.c.type_from_node(file, written);
+        let has_new_parameter = matches!(
+            self.c.data(as_declared),
+            TypeData::TypeParam(..) | TypeData::ThisParam(_)
+        ) && !matches!(
+            self.c.data(check),
+            TypeData::TypeParam(..) | TypeData::ThisParam(_)
+        );
+        if has_new_parameter {
+            self.b.approximate_length += 37;
+        }
         let mut declared = Vec::new();
         self.c.collect_infer_params(file, extends, &mut declared);
         let infer_type_parameters = declared
@@ -4489,9 +4974,9 @@ impl<'p> DeclarationEmit<'_, 'p> {
         self.type_to_node(extends);
         self.b.infer_type_parameters = saved;
         let when_true = self.c.cond_piece(ty, 2);
-        self.type_to_node_or_circularity_elision(when_true);
+        self.type_to_node_or_circularity_elision(when_true, has_new_parameter);
         let when_false = self.c.cond_piece(ty, 3);
-        self.type_to_node_or_circularity_elision(when_false);
+        self.type_to_node_or_circularity_elision(when_false, has_new_parameter);
     }
 }
 
@@ -5332,6 +5817,89 @@ impl<'p> DeclarationEmit<'_, 'p> {
         ))
     }
 
+    /// `GetEachFileNameOfModule`: the paths that lead to the file at `real` by a link to a directory it is in.
+    fn paths_through_links(&self, real: &str, importing: &str) -> Vec<String> {
+        let links = &self.c.files().linked_directories;
+        let mut paths = Vec::new();
+        let mut directory = parent_dir(real);
+        while !links.is_empty() && !directory.is_empty() && directory != "/" {
+            let mut to_here = links.iter().filter(|link| link.0 == directory).peekable();
+            if to_here.peek().is_some() {
+                // A package does not import from itself by its name.
+                if importing
+                    .strip_prefix(directory)
+                    .is_some_and(|rest| rest.starts_with('/'))
+                {
+                    break;
+                }
+                for link in to_here {
+                    paths.push([link.1.as_str(), &real[directory.len()..]].concat());
+                }
+            }
+            directory = parent_dir(directory);
+        }
+        paths
+    }
+
+    /// `getAllModulePathsWorker`, `computeModuleSpecifiers`, the first of them: what `importing` calls a file that all of `paths` lead to.
+    fn module_specifier_among(
+        &self,
+        mut paths: Vec<String>,
+        importing: FileId,
+        mode: ResolutionMode,
+        target_mode: ResolutionMode,
+    ) -> String {
+        let from = parent_dir(&self.c.files().module(importing).path);
+        // How far up from the importing file the directory is that `path` is in.
+        let distance = |path: &str| {
+            let (mut directory, mut up) = (from, 0);
+            while !directory.is_empty()
+                && directory != "/"
+                && !path
+                    .strip_prefix(directory)
+                    .is_some_and(|rest| rest.starts_with('/'))
+            {
+                directory = parent_dir(directory);
+                up += 1;
+            }
+            up
+        };
+        paths.sort_by(|a, b| {
+            distance(a)
+                .cmp(&distance(b))
+                .then(a.matches('/').count().cmp(&b.matches('/').count()))
+                .then(a.cmp(b))
+        });
+        paths.dedup();
+        let prefers_js = target_mode == ResolutionMode::Import;
+        let is_in_node_modules = paths.iter().any(|path| path.contains("/node_modules/"));
+        let mut relative_specifier = None;
+        for path in &paths {
+            let is_through_node_modules = path.contains("/node_modules/");
+            if is_through_node_modules
+                && let Some(name) =
+                    self.module_name_as_node_module(path, importing, mode, prefers_js)
+                && !name.is_empty()
+            {
+                return name;
+            }
+            // A relative path to another package is not portable: the one through `node_modules` is taken, which is reported.
+            if relative_specifier.is_none() && (is_through_node_modules || !is_in_node_modules) {
+                let relative = relative_path_from_directory(from, path);
+                let relative = if path_is_relative(&relative) {
+                    relative
+                } else {
+                    format!("./{relative}")
+                };
+                relative_specifier = Some(self.process_ending(
+                    &relative,
+                    &self.allowed_endings(importing, prefers_js, target_mode),
+                ));
+            }
+        }
+        relative_specifier.unwrap_or_default()
+    }
+
     /// `GetModuleSpecifiers`, the first of them: what `importing` calls the file `target`. Empty: it is not worked out, which `paths`,
     /// `rootDirs` and links in the file system would have a say in.
     fn module_specifier(&self, target: FileId, importing: FileId, mode: ResolutionMode) -> String {
@@ -5367,6 +5935,17 @@ impl<'p> DeclarationEmit<'_, 'p> {
         }
         let prefers_js = target_mode == ResolutionMode::Import;
         let path = files.module(target).path.as_str();
+        let mut paths = self.paths_through_links(path, &from.path);
+        if !paths.is_empty() {
+            // `containsIgnoredPath`
+            if !["/node_modules/.", "/.git", ".#"]
+                .iter()
+                .any(|ignored| path.contains(ignored))
+            {
+                paths.push(path.to_owned());
+            }
+            return self.module_specifier_among(paths, importing, mode, target_mode);
+        }
         if path.contains("/node_modules/") {
             match self.module_name_as_node_module(path, importing, mode, prefers_js) {
                 Some(name) if name.is_empty() => {}

@@ -1,0 +1,45 @@
+base 1.4.3 e3566be889995ffff8b08823b9233617f979c889 (3952 sources)
+next 1.4.3 be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb (3952 sources)
+59280 records compared, 2423 differ, in 180 sources
+!!       15 records       1 sources  R>A          RESTORE: grammar error of the checker TS1009
+!!      235 records      16 sources  R>A          RESTORE: grammar error of the checker TS1015
+!!       15 records       1 sources  R>A          RESTORE: grammar error of the checker TS1017
+!!       45 records       3 sources  R>A          RESTORE: grammar error of the checker TS1019
+!!       15 records       1 sources  R>A          RESTORE: grammar error of the checker TS1021
+!!       15 records       1 sources  R>A          RESTORE: grammar error of the checker TS1025
+!!       90 records       6 sources  R>A          RESTORE: grammar error of the checker TS1028
+!!       90 records       6 sources  R>A          RESTORE: grammar error of the checker TS1029
+!!       45 records       3 sources  R>A          RESTORE: grammar error of the checker TS1030
+!!       90 records       6 sources  R>A          RESTORE: grammar error of the checker TS1048
+!!      105 records       7 sources  R>A          RESTORE: grammar error of the checker TS1096
+!!       15 records       1 sources  R>A          RESTORE: grammar error of the checker TS1097
+!!       15 records       1 sources  R>A          RESTORE: grammar error of the checker TS1108
+!!       30 records       2 sources  R>A          RESTORE: grammar error of the checker TS1110
+!!       60 records       4 sources  R>A          RESTORE: grammar error of the checker TS1170
+!!       45 records       3 sources  R>A          RESTORE: grammar error of the checker TS1172
+!!       15 records       1 sources  R>A          RESTORE: grammar error of the checker TS1176
+!!       30 records       2 sources  R>A          RESTORE: grammar error of the checker TS1183
+!!       30 records       2 sources  R>A          RESTORE: grammar error of the checker TS1186
+!!       18 records       2 sources  R>A          RESTORE: grammar error of the checker TS1243
+!!       45 records       3 sources  R>A          RESTORE: grammar error of the checker TS1247
+!!        9 records       1 sources  R>A          RESTORE: grammar error of the checker TS1276
+!!       15 records       1 sources  R>A          RESTORE: grammar error of the checker TS1539
+!!       45 records       3 sources  R>A          RESTORE: grammar error of the checker TS18016
+!!       45 records       3 sources  R>A          RESTORE: grammar error of the checker TS2304
+!!      240 records      16 sources  R>A          RESTORE: grammar error of the checker TS8020
+         16 records       4 sources  A>A          metadata: a type predicate is Boolean, an assertion predicate is undefined
+          4 records       1 sources  A>A          metadata: | and & operands are the check type of a conditional type
+          8 records       2 sources  A>A          metadata: keyof, readonly and unique end before extends
+          8 records       2 sources  A>A          metadata: an import type and unique symbol are Object
+??        4 records       1 sources  A>A          ruling: metadata of a source that tsc does not parse
+!!        4 records       1 sources  A>A          FORBIDDEN metadata: differs from tsc
+??       11 records       2 sources  A>A          ruling: A>A a declaration named as or satisfies, where the base read a cast
+        653 records      47 sources  R>R          both reject: another error list
+         60 records       4 sources  R>A          as or satisfies names a type alias, an interface or a namespace
+         15 records       1 sources  R>A          abstract stands before declare
+         15 records       1 sources  R>A          a string in brackets names an enum member
+         83 records      10 sources  R>A          accessor is a modifier without standard decorators
+         20 records       2 sources  R>A          out or in names a type or a type parameter
+         30 records       2 sources  R>A          an interface extends, or a class implements, an expression
+         75 records       5 sources  R>A          a modifier stands before a parameter that is no parameter property
+1421 records with the mark !!, 15 with the mark ??

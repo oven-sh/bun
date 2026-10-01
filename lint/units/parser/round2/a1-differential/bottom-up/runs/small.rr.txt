@@ -1,0 +1,39 @@
+86300 R>R records in 5864 sources
+BY WHAT CHANGED
+  67150 rec  4578 src  head reports first at a later place
+          e.g. "class C { @d m(): A\n[] { return x; } }"
+               base [["Unexpected ]",2,2]]
+               head [["Expected \";\" but found \"{\"",2,4],["Expected \";\" but found \"x\"",2,13],["Unexpected }",2,18]]
+   5060 rec   339 src  first error equal, head has fewer errors
+          e.g. "class C { @d m(): keyof<A> { return x; } }"
+               base [["Expected \"(\" but found \"{\"",1,28],["Unexpected return",1,30],["Expected \";\" but found \"x\"",1,37],["Unexpected }",1,42]]
+               head [["Expected \"(\" but found \"{\"",1,28],["Expected \")\" but found \"x\"",1,37],["Unexpected }",1,42]]
+   5025 rec   336 src  first error equal, head has more errors
+          e.g. "class C { @d m(): A extends B { return x; } }"
+               base [["Expected \"?\" but found \"{\"",1,31],["Unexpected return",1,33],["Unexpected }",1,45]]
+               head [["Expected \"?\" but found \"{\"",1,31],["Expected \":\" but found \"x\"",1,40],["Unexpected ;",1,41],["Unexpected }",1,45]]
+   3615 rec   242 src  head reports first at an earlier place
+          e.g. "interface I extends A extends B ? C {}"
+               base [["Expected \":\" but found \"{\"",1,37],["Unexpected }",1,38],["Unexpected end of file",1,38]]
+               head [["Expected \"{\" but found \"?\"",1,33],["Unexpected {",1,37]]
+   3100 rec   210 src  first error equal, a later one differs
+          e.g. "class C { @d m(): A extends B ? C { return x; } }"
+               base [["Expected \":\" but found \"{\"",1,35],["Unexpected return",1,37],["Unexpected }",1,49]]
+               head [["Expected \":\" but found \"{\"",1,35],["Expected \";\" but found \"x\"",1,44],["Unexpected }",1,49]]
+   2350 rec   159 src  first error at the same place, another message
+          e.g. "interface I extends A extends B : C {}"
+               base [["Expected \"?\" but found \":\"",1,33],["Expected \":\" but found \"{\"",1,37],["Unexpected }",1,38],["Unexpected end of file",1,38]]
+               head [["Expected \"{\" but found \":\"",1,33],["Unexpected {",1,37]]
+BY MESSAGE FAMILY (first message of the base -> first message of the head)
+  52745 rec  3594 src  Unexpected …  ->  Expected … but found …      e.g. "class C { @d m(): A\n[] { return x; } }"
+  15015 rec  1011 src  Unexpected …  ->  Unexpected …      e.g. "type X = { [in in T]: V };"
+  10785 rec   723 src  Expected … but found …  ->  Expected … but found …      e.g. "class C { @d m(): keyof<A> { return x; } }"
+   4860 rec   331 src  Expected … but found …  ->  Unexpected …      e.g. "let f = (a): (function) => void => a;"
+   1100 rec    84 src  The modifier … is not valid here  ->  Expected … but found …      e.g. "let v = <out<A>x;"
+    795 rec    54 src  The modifier … is not valid here  ->  Unexpected …      e.g. "let v = <out<>>x;"
+    735 rec    49 src  Expected identifier but found …  ->  Expected identifier but found …      e.g. "interface I extends A extends infer in ? 1 : 2 {}"
+    105 rec     7 src  Expected identifier but found …  ->  Expected … but found …      e.g. "interface I extends A extends infer infer ? infer : never {}"
+     75 rec     5 src  Expected identifier but found …  ->  Unexpected …      e.g. "interface I extends A extends infer extends ? 1 : 2 {}"
+     60 rec     4 src  Expected string but found …  ->  Expected string but found …      e.g. "class C { @d x: import().A[]; }"
+     15 rec     1 src  Unexpected …  ->  Expected identifier but found …      e.g. "class C { @d m(): class {} { return x; } }"
+     10 rec     1 src  The modifier … is not valid here  ->  Expected identifier but found …      e.g. "let v = <out.>x;"

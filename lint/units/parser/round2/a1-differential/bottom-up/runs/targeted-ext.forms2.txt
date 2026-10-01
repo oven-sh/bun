@@ -1,0 +1,121 @@
+01-contextual-keywords	"interface as {}"	ok:-	Expected identifier but found end of file
+01-contextual-keywords	"interface satisfies {}"	ok:-	Expected identifier but found end of file
+01-contextual-keywords	"type as = 1;"	ok:-	Unexpected =
+01-contextual-keywords	"type satisfies = 1;"	ok:-	Unexpected =
+02-expressions	"const v = <in>x;"	S2304!:-	The modifier "in" is not valid here
+02-expressions	"const v = <out>x;"	ok:-	The modifier "out" is not valid here
+03-arrows-functions	"function f(override a: A) {}"	S2369:-	Expected ")" but found "a"
+03-arrows-functions	"function f(private a) {}"	S2369:-	Expected ")" but found "a"
+03-arrows-functions	"function f(public a: A) {}"	S2369:-	Expected ")" but found "a"
+03-arrows-functions	"function f(readonly a: A) {}"	S2369:-	Expected ")" but found "a"
+04-classes	"abstract class C { abstract accessor a: A }"	ok:-	Expected ";" but found "a"
+04-classes	"abstract declare class C {}"	ok:-	Expected ";" but found "declare"
+04-classes	"class C { [k: string, l: number]: A }"	S1096:-	Expected "]" but found ","
+04-classes	"class C { [k: string] }"	S1021:-	Expected ":" but found "}"
+04-classes	"class C { accessor #a: A }"	ok:-	Expected ";" but found "#a"
+04-classes	"class C { accessor 'a': A }"	ok:-	Expected ";" but found "'a'"
+04-classes	"class C { accessor [a]: A }"	ok:-	Expected ";" but found "["
+04-classes	"class C { accessor a = 1 }"	ok:-	Expected ";" but found "a"
+04-classes	"class C { accessor a }"	ok:-	Expected ";" but found "a"
+04-classes	"class C { accessor a!: A }"	ok:-	Expected ";" but found "a"
+04-classes	"class C { accessor a: A }"	ok:-	Expected ";" but found "a"
+04-classes	"class C { accessor a?: A }"	S1276:-	Expected ";" but found "a"
+04-classes	"class C { declare accessor a: A }"	S1243:-	Expected ";" but found "a"
+04-classes	"class C { m(public a: A) {} }"	S2369:-	Expected ")" but found "a"
+04-classes	"class C { readonly accessor a: A }"	S1243:-	Expected ";" but found "a"
+04-classes	"class C { static accessor a: A = 1 }"	ok:-	Expected ";" but found "a"
+05-declarations	"enum E { ['a'] = 1 }"	ok:-	Expected identifier but found "["
+05-declarations	"interface I extends A extends B {}"	S1172:-	Expected "?" but found "{"
+05-declarations	"interface I extends A, {}"	S1009:-	Expected "{" but found end of file
+05-declarations	"interface I extends a() {}"	S2499:-	Expected "{" but found "("
+05-declarations	"interface I extends a.b() {}"	S2499:-	Expected "{" but found "("
+05-declarations	"interface I extends {}"	S1097:-	Expected "{" but found end of file
+07-decorator-metadata	"class C { @d accessor a: string }"	ok:-	Expected ";" but found "a"
+09-checker-grammar	"class K { @d m(x: (a?: A = 1) => B) {} }"	S1015,2371:-	Expected ")" but found "?"
+09-checker-grammar	"class K { @d m(x: A.<B>) {} }"	S8020:-	Expected identifier but found "<"
+09-checker-grammar	"class K { @d m(x: Array.<A>) {} }"	S8020:-	Expected identifier but found "<"
+09-checker-grammar	"class K { @d m(x: any): (a?: A = 1) => B { return null as any } }"	S1015,2371:-	Expected ")" but found "?"
+09-checker-grammar	"class K { @d m(x: any): A.<B> { return null as any } }"	S8020:-	Expected identifier but found "<"
+09-checker-grammar	"class K { @d m(x: any): Array.<A> { return null as any } }"	S8020:-	Expected identifier but found "<"
+09-checker-grammar	"class K { @d p: (...[a] = []) => R; }"	S2371,1048:-	Unexpected ...
+09-checker-grammar	"class K { @d p: (...a = []) => R; }"	S2371,1048:-	Unexpected ...
+09-checker-grammar	"class K { @d p: (...a: A[] = []) => R; }"	S2371,1048:-	Unexpected ...
+09-checker-grammar	"class K { @d p: (a? = 1) => R; }"	S1015,2371:-	Expected ")" but found "?"
+09-checker-grammar	"class K { @d p: (a?: A = 1) => B; }"	S1015,2371:-	Expected ")" but found "?"
+09-checker-grammar	"class K { @d p: (a?: A = 1) => R; }"	S1015,2371:-	Expected ")" but found "?"
+09-checker-grammar	"class K { @d p: (override public a: A) => R; }"	S2369,1029:-	Expected ")" but found "public"
+09-checker-grammar	"class K { @d p: (public private a: A) => R; }"	S2369,1028:-	Expected ")" but found "private"
+09-checker-grammar	"class K { @d p: (public public a: A) => R; }"	S2369,1028:-	Expected ")" but found "public"
+09-checker-grammar	"class K { @d p: (readonly public a: A) => R; }"	S2369,1029:-	Expected ")" but found "a"
+09-checker-grammar	"class K { @d p: (readonly readonly a: A) => R; }"	S2369,1030:-	Expected ")" but found ":"
+09-checker-grammar	"class K { @d p: ({ ...a = 1 }) => R; }"	S2371,1186:-	Unexpected ...
+09-checker-grammar	"class K { @d p: A.<B>; }"	S8020:-	Expected identifier but found "<"
+09-checker-grammar	"class K { @d p: Array.<A>; }"	S8020:-	Expected identifier but found "<"
+09-checker-grammar	"class K { @d p: { #a: A }; }"	S18016:-	Unexpected #a
+09-checker-grammar	"class K { @d p: { 1n: A }; }"	S1539:-	Unexpected 1n
+09-checker-grammar	"class K { @d p: { [\"a\" + \"b\"]: A }; }"	S1170:-	Expected "]" but found "+"
+09-checker-grammar	"class K { @d p: { [...k: string[]]: A }; }"	S1017:-	Unexpected ...
+09-checker-grammar	"class K { @d p: { []: A }; }"	S1096:-	Unexpected ]
+09-checker-grammar	"class K { @d p: { [a as B]: A }; }"	S1170:-	Expected "]" but found "as"
+09-checker-grammar	"class K { @d p: { [a, b]: A }; }"	S1096:-	Expected "]" but found ","
+09-checker-grammar	"class K { @d p: { [k = 1]: A }; }"	S1170:-	Expected "]" but found "="
+09-checker-grammar	"class K { @d p: { [k, l]: A }; }"	S1096:-	Expected "]" but found ","
+09-checker-grammar	"class K { @d p: { [k: string, l: number]: A }; }"	S1096:-	Expected "]" but found ","
+09-checker-grammar	"class K { @d p: { [k: string,]: A }; }"	S1025:-	Expected "]" but found ","
+09-checker-grammar	"class K { @d p: { [k?: string]: A }; }"	S1019:-	Expected "]" but found "?"
+09-checker-grammar	"class K { @d p: { [k?]: A }; }"	S1019:-	Expected "]" but found "?"
+09-checker-grammar	"class K { @d p: { a: A = 1 }; }"	S1247:-	Unexpected =
+09-checker-grammar	"class K { @d p: { a?: A = 1 }; }"	S1247:-	Unexpected =
+09-checker-grammar	"class K { @d p: { get a(): A {} }; }"	S2378,1183:-	Unexpected {
+09-checker-grammar	"function f(override public a: A) {}"	S2369,1029:-	Expected ")" but found "public"
+09-checker-grammar	"function f(public private a: A) {}"	S2369,1028:-	Expected ")" but found "private"
+09-checker-grammar	"function f(public public a: A) {}"	S2369,1028:-	Expected ")" but found "public"
+09-checker-grammar	"function f(readonly public a: A) {}"	S2369,1029:-	Expected ")" but found "public"
+09-checker-grammar	"function f(readonly readonly a: A) {}"	S2369,1030:-	Expected ")" but found "readonly"
+09-checker-grammar	"function f(x: (a?: A = 1) => B) {}"	S1015,2371:-	Expected ")" but found "?"
+09-checker-grammar	"function f(x: A.<B>) {}"	S8020:-	Expected identifier but found "<"
+09-checker-grammar	"function f(x: Array.<A>) {}"	S8020:-	Expected identifier but found "<"
+09-checker-grammar	"function f(x: any): (a?: A = 1) => B { return null as any }"	S1015,2371:-	Expected ")" but found "?"
+09-checker-grammar	"function f(x: any): A.<B> { return null as any }"	S8020:-	Expected identifier but found "<"
+09-checker-grammar	"function f(x: any): Array.<A> { return null as any }"	S8020:-	Expected identifier but found "<"
+09-checker-grammar	"function f(x: any): class {} { return null as any }"	S2304!:-	Unexpected class
+09-checker-grammar	"function f<U extends #a, V = #a>() {}"	S1110,2304!:-	Unexpected #a
+09-checker-grammar	"function f<U extends (a?: A = 1) => B, V = (a?: A = 1) => B>() {}"	S1015,2371:-	Expected ")" but found "?"
+09-checker-grammar	"function f<U extends A.<B>, V = A.<B>>() {}"	S8020:-	Expected identifier but found "<"
+09-checker-grammar	"function f<U extends Array.<A>, V = Array.<A>>() {}"	S8020:-	Expected identifier but found "<"
+09-checker-grammar	"function f<U extends super.A, V = super.A>() {}"	S1110:-	Unexpected super
+09-checker-grammar	"interface I extends A, B extends C {}"	S1172:-	Expected "?" but found "{"
+09-checker-grammar	"interface I extends A<B> extends C<D> {}"	S1172:-	Expected "?" but found "{"
+09-checker-grammar	"interface I implements A extends B {}"	S1176:-	Expected "?" but found "{"
+09-checker-grammar	"interface I { #a(): void }"	S18016:-	Unexpected #a
+09-checker-grammar	"interface I { #a: A }"	S18016:-	Unexpected #a
+09-checker-grammar	"let f = (x: (a?: A = 1) => B) => x;"	S1015,2371:-	Expected ")" but found "?"
+09-checker-grammar	"let f = (x: A.<B>) => x;"	S8020:-	Expected identifier but found "<"
+09-checker-grammar	"let f = (x: Array.<A>) => x;"	S8020:-	Expected identifier but found "<"
+09-checker-grammar	"let f = (x: any): A.<B> => x;"	S8020:-	Unexpected ":"
+09-checker-grammar	"let f = (x: any): Array.<A> => x;"	S8020:-	Unexpected ":"
+09-checker-grammar	"let v = <(a?: A = 1) => B>x;"	S1015,2371:-	Expected ")" but found "?"
+09-checker-grammar	"let v = x as (a?: A = 1) => B;"	S1015,2371:-	Expected ")" but found "?"
+09-checker-grammar	"let v = x satisfies (a?: A = 1) => B;"	S1015,2371:-	Expected ")" but found "?"
+09-checker-grammar	"let x: #a | B;"	S2304!:-	Unexpected #a
+09-checker-grammar	"let x: #a[];"	S2304!:-	Unexpected #a
+09-checker-grammar	"let x: (a?: A = 1) => B;"	S1015,2371:-	Expected ")" but found "?"
+09-checker-grammar	"let x: keyof #a;"	S2304!:-	Unexpected #a
+09-checker-grammar	"type X = (...[a] = []) => R;"	S2371,1048:-	Unexpected ...
+09-checker-grammar	"type X = (...a = []) => R;"	S2371,1048:-	Unexpected ...
+09-checker-grammar	"type X = (...a: A[] = []) => R;"	S2371,1048:-	Unexpected ...
+09-checker-grammar	"type X = (a? = 1) => R;"	S1015,2371:-	Expected ")" but found "?"
+09-checker-grammar	"type X = (a?: A = 1) => B;"	S1015,2371:-	Expected ")" but found "?"
+09-checker-grammar	"type X = (a?: A = 1) => R;"	S1015,2371:-	Expected ")" but found "?"
+09-checker-grammar	"type X = (override public a: A) => R;"	S2369,1029:-	Expected ")" but found "public"
+09-checker-grammar	"type X = (public private a: A) => R;"	S2369,1028:-	Expected ")" but found "private"
+09-checker-grammar	"type X = (public public a: A) => R;"	S2369,1028:-	Expected ")" but found "public"
+09-checker-grammar	"type X = (readonly public a: A) => R;"	S2369,1029:-	Expected ")" but found "a"
+09-checker-grammar	"type X = (readonly readonly a: A) => R;"	S2369,1030:-	Expected ")" but found ":"
+09-checker-grammar	"type X = ({ ...a = 1 }) => R;"	S2371,1186:-	Unexpected ...
+09-checker-grammar	"type X = { [\"a\" + \"b\"]: A };"	S1170:-	Expected "]" but found "+"
+09-checker-grammar	"type X = { [a, b]: A };"	S1096:-	Expected "]" but found ","
+09-checker-grammar	"type X = { [k, l]: A };"	S1096:-	Expected "]" but found ","
+09-checker-grammar	"type X = { [k?]: A };"	S1019:-	Expected "]" but found "?"
+09-checker-grammar	"type X = { a?: A = 1 };"	S1247:-	Unexpected =
+09-checker-grammar	"type X = { get a(): A {} };"	S2378,1183:-	Unexpected {

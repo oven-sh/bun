@@ -1,0 +1,29 @@
+class C implements [...a: A[]] {}
+class C implements [...in: A[]] {}
+class C implements (a) => void {}
+class C implements (a = 1) => void {}
+interface I extends <T>() => T {}
+interface I extends <out>() => out {}
+class C implements import('x').A<C, D> {}
+class C implements import('x').A.<C, D> {}
+class C implements { (b): void } {}
+class C implements { (b = 1): void } {}
+class C implements () => asserts a is A {}
+class C implements () => asserts  is A {}
+class C implements [A] {}
+class C implements [function] {}
+class C implements A extends B ? 1 : 2 {}
+class C implements A extends  in ? 1 : 2 {}
+class C implements { [K in A]: V } {}
+class C implements { [K in in ]: V } {}
+let f = <U extends class>() => 0;
+let f = <U extends class>(a: U) => 0;
+let f = <U extends delete>(a: U) => 0;
+let f = <U extends if>(a: U) => 0;
+class C { m<U extends in>() {} }
+class C { m<U extends if>() {} }
+interface I { m<U extends in>(): void }
+type X = <U extends in>() => void;
+type X = <U extends if>() => void;
+function f<U extends A | in>() {}
+f<A | extends>(x);

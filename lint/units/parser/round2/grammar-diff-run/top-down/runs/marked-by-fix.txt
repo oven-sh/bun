@@ -1,0 +1,70 @@
+L1  heritage entry read as a type, as before: a type form that is newly accepted as a type
+     records 1365 (small 1365, targeted 0, testrows 0); sources 91 (91, 0, 0); tsc: TS1003 TS1005 TS1109 TS1136
+     e.g. "class C implements [...in: A[]] {}"  "interface I extends [...in: A[]] {}"  "class C implements [function] {}"
+L2  a function type without a return type before the body: the base reads { return x; } as its return type
+     records 480 (small 480, targeted 0, testrows 0); sources 32 (32, 0, 0); tsc: TS1131
+     e.g. "class C { @d m(): (a = 1) =>  { return x; } }"  "function f(): (a = 1) =>  { return x; }"  "class C { @d m(): (a: A = 1) =>  { return x; } }"
+L3  a type that is missing inside an attempt
+     records 30 (small 30, targeted 0, testrows 0); sources 2 (2, 0, 0); tsc: TS1005 TS1110
+     e.g. "let f = (a): <out>() =>  => a;"  "f<<out>() => >(x);"
+L4  accessor with experimentalDecorators + a modifier laxness the base has with standard decorators
+     records 27 (small 0, targeted 27, testrows 0); sources 3 (0, 3, 0); tsc: TS1243 TS1276
+     e.g. "class C { readonly accessor a: A }"  "class C { declare accessor a: A }"  "class C { accessor a?: A }"
+L5  top-level return after a function whose return type is a reserved word
+     records 30 (small 15, targeted 15, testrows 0); sources 2 (1, 1, 0); tsc: TS1108
+     e.g. "function f(): class {} { return x; }"  "function f(x: any): class {} { return null as any }"
+L6  A<>.C as a heritage entry: the base takes it as an expression (TS1477, TS1099)
+     records 30 (small 30, targeted 0, testrows 0); sources 2 (2, 0, 0); tsc: TS1477
+     e.g. "class C implements A<>.C {}"  "interface I extends A<>.C {}"
+L7  import type with attributes (TS2857), which the base takes on one line
+     records 15 (small 0, targeted 0, testrows 15); sources 1 (0, 0, 1); tsc: -
+     e.g. "import type A from \"x\"\nwith { type: \"json\" };"
+L8  with ( after a module path: the second statement alone is accepted by the base
+     records 15 (small 0, targeted 0, testrows 15); sources 1 (0, 0, 1); tsc: TS1005
+     e.g. "import A from \"x\"\nwith { type: \"json\" };\nimport B from \"y\"\nwith (A) {}"
+M-ruling  metadata of a source that tsc does not parse
+     records 388 (small 384, targeted 4, testrows 0); sources 97 (96, 1, 0); tsc: -
+     e.g. "class C { @d x: A extends infer U[] ? U : never; }"  "class C { @d m(a: A extends infer U[] ? U : never) {} }"  "@d class C { constructor(a: A extends infer U[] ? U : never) {} }"
+V-ruling  [delete A] as a heritage entry: TS1102 of the binder, no parse diagnostic, no grammar error
+     records 30 (small 30, targeted 0, testrows 0); sources 2 (2, 0, 0); tsc: TS1102
+     e.g. "class C implements [delete A] {}"  "interface I extends [delete A] {}"
+V-ruling  a declaration named as or satisfies, where the base read a cast (A>A is tsc's program, R>A has the base cast behind it)
+     records 141 (small 0, targeted 11, testrows 130); sources 14 (0, 2, 12); tsc: -
+     e.g. "namespace as {}"  "module as {}"  "interface as {}\nfoo()"
+V-ruling  export attributes on the next line (ECMAScript allows, tsc rejects)
+     records 30 (small 0, targeted 0, testrows 30); sources 2 (0, 0, 2); tsc: -
+     e.g. "export { a } from \"x\"\nwith { type: \"json\" };"  "export * from \"x\"\nwith { type: \"json\" };"
+X1  heritage entry: an expression that starts no LeftHandSideExpression
+     records 810 (small 810, targeted 0, testrows 0); sources 56 (56, 0, 0); tsc: TS1005 TS1109
+     e.g. "class C implements +1 {}"  "interface I extends +1 {}"  "class C implements -a {}"
+X10  class index signature
+     records 60 (small 30, targeted 30, testrows 0); sources 4 (2, 2, 0); tsc: TS1021 TS1096
+     e.g. "class C { @d x: A\n[]; }"  "class C { @d x: (A)\n[]; }"  "class C { [k: string] }"
+X12  a branch of a conditional type names a class of the file
+     records 4 (small 0, targeted 4, testrows 0); sources 1 (0, 1, 0); tsc: -
+     e.g. "class C { @d a: A extends B ? C : C }"
+X2  interface heritage clauses
+     records 330 (small 240, targeted 90, testrows 0); sources 22 (16, 6, 0); tsc: TS1005 TS1009 TS1097 TS1109 TS1172 TS1176
+     e.g. "interface I extends A extends B {}"  "interface I extends A extends {}"  "interface I extends A extends B extends C ? D : E {}"
+X3  parameters of a signature
+     records 755 (small 250, targeted 505, testrows 0); sources 51 (17, 34, 0); tsc: TS1015 TS1028 TS1029 TS1030 TS1048 TS1109 TS1131 TS1186
+     e.g. "type X = (a?: A = 1) => void;"  "let x: (a?: A = 1) => void;"  "class C { @d x: (a?: A = 1) => void; }"
+X4  modifiers of a parameter of a function
+     records 75 (small 0, targeted 75, testrows 0); sources 5 (0, 5, 0); tsc: TS1028 TS1029 TS1030
+     e.g. "function f(readonly public a: A) {}"  "function f(public private a: A) {}"  "function f(public public a: A) {}"
+X5  type member
+     records 3525 (small 3165, targeted 360, testrows 0); sources 240 (216, 24, 0); tsc: TS1005 TS1017 TS1019 TS1025 TS1096 TS1109 TS1110 TS1170 TS1183 TS1247 TS1539 TS18016
+     e.g. "type X = { [k?: string]: A };"  "let x: { [k?: string]: A };"  "class C { @d x: { [k?: string]: A }; }"
+X6  ? after the type of a named tuple element
+     records 590 (small 590, targeted 0, testrows 0); sources 40 (40, 0, 0); tsc: TS1005 TS1109 TS1110 TS5086
+     e.g. "type X = [a: A?];"  "let x: [a: A?];"  "class C { @d x: [a: A?]; }"
+X7  private name or .< in a type reference
+     records 1550 (small 1250, targeted 300, testrows 0); sources 105 (85, 20, 0); tsc: TS1003 TS1110 TS2304 TS8020
+     e.g. "type X = A.<B>;"  "let x: A.<B>;"  "class C { @d x: A.<B>; }"
+X8  constraint of a type parameter
+     records 90 (small 75, targeted 15, testrows 0); sources 6 (5, 1, 0); tsc: TS1005 TS1034 TS1109 TS1110
+     e.g. "function f<U extends super>() {}"  "function f<U extends super.a>() {}"  "function f<U extends  in>() {}"
+X9  extends at the start of a type argument
+     records 15 (small 15, targeted 0, testrows 0); sources 1 (1, 0, 0); tsc: TS1109
+     e.g. "f< extends>(x);"
+total 10385 records, 780 sources

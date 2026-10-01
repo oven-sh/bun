@@ -1,0 +1,35 @@
+a1-differential, lens "start from the code". Round 2, part A1. Nothing here is committed to the worktree.
+Binaries: base = /workspace/notes/lint/measure/parser/base/bun (e3566be889, sha256 31248200...), head = .../head/bun (be1ebe5295, sha256 7e1111b4...).
+typescript 6.0.2 from /workspace/wt/parser/node_modules/typescript. The scratch directory was /tmp/a1bu: the scripts name paths there.
+
+scripts/
+  run-harness.sh        the six runs of grammar-diff/harness.mjs (targeted, targeted-ext = targeted + file 09, small; --jobs=4)
+  classes.mjs           <base run> <head run> <prefix>: class counts, and <prefix>.diffsrc.jsonl (every source with a differing record)
+  whole.mjs             <x.diffsrc.jsonl> <out> [class]: tsc as a whole (parse diagnostics, else semantic diagnostics of a one-file program) per source, ts and tsx, with and without experimentalDecorators
+  codes.mjs             per tsc code, the R>A records that carry it
+  forms2.mjs            R>A sources by type form, with the contexts and the verdict of whole tsc
+  classify.mjs          <small|targeted|targeted-ext|testrows>: every R>A record gets a construct class (R1..R15 restore, V1..V12 valid, VB base-tolerated)
+  rr.mjs                R>R records by message family and by what changed
+  aa.mjs, aa2.mjs       A>A records; aa2: the ones whose source tsc does not parse, against what tsc emits in spite of its diagnostics
+  merge-oracle.mjs      the committed oracle plus chk/oth of the candidate oracle for the differing sources only (13 s instead of a full run)
+  tsc.mjs, tsc2.mjs     one-off: whole tsc for sources on the command line; tsc2 takes an ambient file first (declared names and modules)
+  p/ar.mjs, both.mjs    accept/reject of both binaries side by side (witnesses of what the base tolerates)
+  p/site.mjs            both binaries plus whole tsc for a list of sources; s1.json = probes at the sites of new acceptance
+  p/bunmeta.mjs, meta3.mjs   decorator metadata tags of base, head and tsc; m1/m2/m3.json = references in branches of conditional types, names declared in the file
+  p/extra.mjs, extra-cmp.mjs the three configurations harness.mjs lacks: ts with minify.identifiers, loader js, loader jsx
+  p/minid.mjs, minid-cmp.mjs, comments.json   180 sources with comments inside regions that are read twice, six configurations
+  p/tscases-*.mjs       12,848 single-file units of TypeScript's own tests (tests/cases/compiler and conformance) through both binaries
+
+runs/
+  head.*.jsonl.gz, base.targeted*.jsonl.gz, base.testrows.jsonl.gz   the harness runs (base.small is byte-identical to measure/base/grammar-diff/base.small.jsonl.gz)
+  run-harness.log       times and revisions
+  classes.*.txt         the table of classify.mjs per corpus
+  codes.*.txt           the table of codes.mjs
+  small.forms2.txt, targeted-ext.forms2.txt   one line per form or source: contexts, verdict, first message of the base
+  small.ra-whole.jsonl.gz, *.ra-whole.jsonl   whole tsc per R>A source
+  small.classified.jsonl.gz                   class per R>A record
+  small.rr.txt          R>R families
+  cand.diff.*.txt       the tables of the candidate diff.mjs + causes.mjs (../../grammar-diff-oracle-and-causes/for-grammar-diff) on these release runs
+  aa-unparseable.small.txt   the 96 A>A sources that tsc does not parse
+  same-file-names.txt   metadata where the names are declared in the file (class, enum, interface, alias, import)
+  tscases.ra.txt        the 92 R>A units of TypeScript's tests with the verdict of whole tsc

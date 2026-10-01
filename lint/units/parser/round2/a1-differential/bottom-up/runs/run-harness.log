@@ -1,0 +1,23 @@
+Thu Oct  1 18:29:40 UTC 2026
+31248200b0fcf27351d066f0b55e0eecaac97d4f7287d44b3c41f9c4b23d7d3c  /workspace/notes/lint/measure/parser/base/bun
+7e1111b462362a5748907049a1c7a424638fbdc976790a9e265d05ebfb04b8e6  /workspace/notes/lint/measure/parser/head/bun
+== base targeted
+/tmp/a1bu/runs/base.targeted.jsonl.gz: 2405 inputs x 15 apis, 0 crashes, 1.0 s, bun 1.4.3 e3566be889995ffff8b08823b9233617f979c889
+rc=0
+== head targeted
+/tmp/a1bu/runs/head.targeted.jsonl.gz: 2405 inputs x 15 apis, 0 crashes, 1.7 s, bun 1.4.3 be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb
+rc=0
+== base targeted-ext
+/tmp/a1bu/runs/base.targeted-ext.jsonl.gz: 3952 inputs x 15 apis, 0 crashes, 2.8 s, bun 1.4.3 e3566be889995ffff8b08823b9233617f979c889
+rc=0
+== head targeted-ext
+/tmp/a1bu/runs/head.targeted-ext.jsonl.gz: 3952 inputs x 15 apis, 0 crashes, 3.4 s, bun 1.4.3 be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb
+rc=0
+== base small
+/tmp/a1bu/runs/base.small.jsonl.gz: 209628 inputs x 15 apis, 0 crashes, 45.4 s, bun 1.4.3 e3566be889995ffff8b08823b9233617f979c889
+rc=0
+== head small
+/tmp/a1bu/runs/head.small.jsonl.gz: 209628 inputs x 15 apis, 0 crashes, 55.1 s, bun 1.4.3 be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb
+rc=0
+Thu Oct  1 18:31:37 UTC 2026
+ALL-DONE

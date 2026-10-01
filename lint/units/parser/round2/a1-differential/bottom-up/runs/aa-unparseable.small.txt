@@ -1,0 +1,119 @@
+  10  base=tsc	type=Ref(a) -> type=Boolean	tsc type=Ref(a)
+        "class C { @d x: (a is A); }"
+        "class C { @d x: a is A; }"
+        "class C { @d x: a is A | B; }"
+        "class C { @d x: a is A[]; }"
+   1  base=tsc	type=Ref(ab) -> type=Boolean	tsc type=Ref(ab)
+        "class C { @d x: ab is A; }"
+   1  base=tsc	type=Ref(is) -> type=Boolean	tsc type=Ref(is)
+        "class C { @d x:  is is A; }"
+   1  base=tsc	type=Ref(x) -> type=Boolean	tsc type=Ref(x)
+        "class C { @d x: x is A; }"
+   5  head=tsc	paramtypes=[undefined] -> paramtypes=[Object]	tsc paramtypes=[Object]
+        "@d class C { constructor(a: A extends infer U extends  ? U : never) {} }"
+        "@d class C { constructor(a: A extends (infer U extends ) ? U : never) {} }"
+        "@d class C { constructor(a: A extends [infer U extends ] ? U : never) {} }"
+        "@d class C { constructor(a: A extends { a: infer U extends  } ? U : never) {} }"
+   5  head=tsc	type=Function paramtypes=[] returntype=undefined -> type=Function paramtypes=[] returntype=Object	tsc type=Function paramtypes=[] returntype=Object
+        "class C { @d m(): A extends infer U extends  ? U : never { return x; } }"
+        "class C { @d m(): A extends (infer U extends ) ? U : never { return x; } }"
+        "class C { @d m(): A extends [infer U extends ] ? U : never { return x; } }"
+        "class C { @d m(): A extends { a: infer U extends  } ? U : never { return x; } }"
+   5  head=tsc	type=Function paramtypes=[undefined] returntype=undefined -> type=Function paramtypes=[Object] returntype=undefined	tsc type=Function paramtypes=[Object] returntype=undefined
+        "class C { @d m(a: A extends infer U extends  ? U : never) {} }"
+        "class C { @d m(a: A extends (infer U extends ) ? U : never) {} }"
+        "class C { @d m(a: A extends [infer U extends ] ? U : never) {} }"
+        "class C { @d m(a: A extends { a: infer U extends  } ? U : never) {} }"
+   8  head=tsc	type=undefined -> type=Object	tsc type=Object
+        "class C { @d x: A extends infer U[] ? U : never; }"
+        "class C { @d x: A extends infer U extends  ? U : never; }"
+        "class C { @d x: A extends (infer U extends ) ? U : never; }"
+        "class C { @d x: A extends [infer U extends ] ? U : never; }"
+   1  neither	paramtypes=[Object] -> paramtypes=[Boolean]	tsc paramtypes=[undefined, Object, Object, Object]
+        "@d class C { constructor(a: asserts  is A | B) {} }"
+   4  neither	paramtypes=[Object] -> paramtypes=[Boolean]	tsc paramtypes=[undefined, Object]
+        "@d class C { constructor(a: asserts is A) {} }"
+        "@d class C { constructor(a: asserts  is A) {} }"
+        "@d class C { constructor(a: asserts is  A) {} }"
+        "@d class C { constructor(a:  asserts is A) {} }"
+   1  neither	paramtypes=[Object] -> paramtypes=[Boolean]	tsc paramtypes=[undefined]
+        "@d class C { constructor(a: asserts is is ) {} }"
+   1  neither	paramtypes=[Ref(a)] -> paramtypes=[Boolean]	tsc (none)
+        "@d class C { constructor(a: (a is A)) {} }"
+   3  neither	paramtypes=[Ref(a)] -> paramtypes=[Boolean]	tsc paramtypes=[Ref(a), Object, Object, Object, Object]
+        "@d class C { constructor(a: a is A | B) {} }"
+        "@d class C { constructor(a: a is a is A) {} }"
+        "@d class C { constructor(a:  a is A | B) {} }"
+   1  neither	paramtypes=[Ref(a)] -> paramtypes=[Boolean]	tsc paramtypes=[Ref(a), Object, Object, Object, Ref(D)]
+        "@d class C { constructor(a: a is A extends B ? C : D) {} }"
+   2  neither	paramtypes=[Ref(a)] -> paramtypes=[Boolean]	tsc paramtypes=[Ref(a), Object, Object, Object]
+        "@d class C { constructor(a: a is A[]) {} }"
+        "@d class C { constructor(a: a is  | B) {} }"
+   3  neither	paramtypes=[Ref(a)] -> paramtypes=[Boolean]	tsc paramtypes=[Ref(a), Object, Object]
+        "@d class C { constructor(a: a is A) {} }"
+        "@d class C { constructor(a: a is []) {} }"
+        "@d class C { constructor(a:  a is A) {} }"
+   1  neither	paramtypes=[Ref(ab)] -> paramtypes=[Boolean]	tsc paramtypes=[Ref(ab), Object, Object]
+        "@d class C { constructor(a: ab is A) {} }"
+   1  neither	paramtypes=[Ref(is)] -> paramtypes=[Boolean]	tsc paramtypes=[Ref(is), Object, Object]
+        "@d class C { constructor(a:  is is A) {} }"
+   1  neither	paramtypes=[Ref(x)] -> paramtypes=[Boolean]	tsc paramtypes=[Ref(x), Object, Object]
+        "@d class C { constructor(a: x is A) {} }"
+   2  neither	paramtypes=[undefined] -> paramtypes=[Object]	tsc (none)
+        "@d class C { constructor(a: A extends { a infer U } ? U : never) {} }"
+        "@d class C { constructor(a: A extends { a infer U extends B } ? U : never) {} }"
+   1  neither	paramtypes=[undefined] -> paramtypes=[Object]	tsc paramtypes=[Object, Object]
+        "@d class C { constructor(a: A extends infer U[] ? U : never) {} }"
+   1  neither	type=Function paramtypes=[Object] returntype=undefined -> type=Function paramtypes=[Boolean] returntype=undefined	tsc type=Function paramtypes=[undefined, Object, Object, Object] returntype=undefined
+        "class C { @d m(a: asserts  is A | B) {} }"
+   4  neither	type=Function paramtypes=[Object] returntype=undefined -> type=Function paramtypes=[Boolean] returntype=undefined	tsc type=Function paramtypes=[undefined, Object] returntype=undefined
+        "class C { @d m(a: asserts is A) {} }"
+        "class C { @d m(a: asserts  is A) {} }"
+        "class C { @d m(a: asserts is  A) {} }"
+        "class C { @d m(a:  asserts is A) {} }"
+   1  neither	type=Function paramtypes=[Object] returntype=undefined -> type=Function paramtypes=[Boolean] returntype=undefined	tsc type=Function paramtypes=[undefined] returntype=undefined
+        "class C { @d m(a: asserts is is ) {} }"
+   1  neither	type=Function paramtypes=[Ref(a)] returntype=undefined -> type=Function paramtypes=[Boolean] returntype=undefined	tsc (none)
+        "class C { @d m(a: (a is A)) {} }"
+   3  neither	type=Function paramtypes=[Ref(a)] returntype=undefined -> type=Function paramtypes=[Boolean] returntype=undefined	tsc type=Function paramtypes=[Ref(a), Object, Object, Object, Object] returntype=undefined
+        "class C { @d m(a: a is A | B) {} }"
+        "class C { @d m(a: a is a is A) {} }"
+        "class C { @d m(a:  a is A | B) {} }"
+   1  neither	type=Function paramtypes=[Ref(a)] returntype=undefined -> type=Function paramtypes=[Boolean] returntype=undefined	tsc type=Function paramtypes=[Ref(a), Object, Object, Object, Ref(D)] returntype=undefined
+        "class C { @d m(a: a is A extends B ? C : D) {} }"
+   2  neither	type=Function paramtypes=[Ref(a)] returntype=undefined -> type=Function paramtypes=[Boolean] returntype=undefined	tsc type=Function paramtypes=[Ref(a), Object, Object, Object] returntype=undefined
+        "class C { @d m(a: a is A[]) {} }"
+        "class C { @d m(a: a is  | B) {} }"
+   3  neither	type=Function paramtypes=[Ref(a)] returntype=undefined -> type=Function paramtypes=[Boolean] returntype=undefined	tsc type=Function paramtypes=[Ref(a), Object, Object] returntype=undefined
+        "class C { @d m(a: a is A) {} }"
+        "class C { @d m(a: a is []) {} }"
+        "class C { @d m(a:  a is A) {} }"
+   1  neither	type=Function paramtypes=[Ref(ab)] returntype=undefined -> type=Function paramtypes=[Boolean] returntype=undefined	tsc type=Function paramtypes=[Ref(ab), Object, Object] returntype=undefined
+        "class C { @d m(a: ab is A) {} }"
+   1  neither	type=Function paramtypes=[Ref(is)] returntype=undefined -> type=Function paramtypes=[Boolean] returntype=undefined	tsc type=Function paramtypes=[Ref(is), Object, Object] returntype=undefined
+        "class C { @d m(a:  is is A) {} }"
+   1  neither	type=Function paramtypes=[Ref(x)] returntype=undefined -> type=Function paramtypes=[Boolean] returntype=undefined	tsc type=Function paramtypes=[Ref(x), Object, Object] returntype=undefined
+        "class C { @d m(a: x is A) {} }"
+   5  neither	type=Function paramtypes=[] returntype=Object -> type=Function paramtypes=[] returntype=undefined	tsc (none)
+        "class C { @d m(): asserts is { return x; } }"
+        "class C { @d m(): asserts is is A { return x; } }"
+        "class C { @d m(): asserts a.b { return x; } }"
+        "class C { @d m(): asserts  is { return x; } }"
+   2  neither	type=Function paramtypes=[] returntype=Ref(a) -> type=Function paramtypes=[] returntype=Boolean	tsc (none)
+        "class C { @d m(): (a is A) { return x; } }"
+        "class C { @d m(): a is a is A { return x; } }"
+   3  neither	type=Function paramtypes=[] returntype=undefined -> type=Function paramtypes=[] returntype=Object	tsc (none)
+        "class C { @d m(): A extends infer U[] ? U : never { return x; } }"
+        "class C { @d m(): A extends { a infer U } ? U : never { return x; } }"
+        "class C { @d m(): A extends { a infer U extends B } ? U : never { return x; } }"
+   2  neither	type=Function paramtypes=[undefined] returntype=undefined -> type=Function paramtypes=[Object] returntype=undefined	tsc (none)
+        "class C { @d m(a: A extends { a infer U } ? U : never) {} }"
+        "class C { @d m(a: A extends { a infer U extends B } ? U : never) {} }"
+   1  neither	type=Function paramtypes=[undefined] returntype=undefined -> type=Function paramtypes=[Object] returntype=undefined	tsc type=Function paramtypes=[Object, Object] returntype=undefined
+        "class C { @d m(a: A extends infer U[] ? U : never) {} }"
+   6  neither	type=Object -> type=Boolean	tsc type=undefined
+        "class C { @d x: asserts is A; }"
+        "class C { @d x: asserts  is A; }"
+        "class C { @d x: asserts is  A; }"
+        "class C { @d x: asserts is is ; }"
+96 sources

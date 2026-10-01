@@ -1,0 +1,448 @@
+   "class X {} class Y {} class C { @d p: X | X; }"
+     base type=Ref(X)
+     head type=Ref(X)
+     tsc  type=Ref(X)
+   "class X {} class Y {} class C { @d p: X | Y; }"
+     base type=Object
+     head type=Object
+     tsc  type=Object
+   "class X {} class Y {} class C { @d p: X & X; }"
+     base type=Ref(X)
+     head type=Ref(X)
+     tsc  type=Ref(X)
+ok "class X {} class Y {} class C { @d p: X.a | X.b; }"
+     base type=Ref(X.b)
+     head type=Object
+     tsc  type=Object
+!! "class X {} class Y {} class C { @d p: Q extends R ? X : X; }"
+     base type=Ref(X)
+     head type=Object
+     tsc  type=Ref(X)
+?? "class X {} class Y {} class C { @d p: Q extends R ? X : never; }"
+     base type=undefined
+     head type=Object
+     tsc  type=Ref(X)
+   "class X {} class Y {} class C { @d p: Q extends R ? X : Y; }"
+     base type=Object
+     head type=Object
+     tsc  type=Object
+!! "class X {} class Y {} class C { @d p: Q extends R ? X : null; }"
+     base type=Ref(X)
+     head type=Object
+     tsc  type=Ref(X)
+ok "class X {} class Y {} class C { @d p: Q extends R ? X.a : X.a; }"
+     base type=Ref(X.a)
+     head type=Object
+     tsc  type=Object
+!! "class X {} class Y {} class C { @d p: (Q extends R ? X : X) | X; }"
+     base type=Ref(X)
+     head type=Object
+     tsc  type=Ref(X)
+?? "class X {} class Y {} class C { @d p: keyof Q extends R ? X : X; }"
+     base type=Object
+     head type=Object
+     tsc  type=Ref(X)
+   "class X {} class Y {} class C { @d p: X | (X | X); }"
+     base type=Ref(X)
+     head type=Ref(X)
+     tsc  type=Ref(X)
+   "class X {} class Y {} class C { @d p: X | never; }"
+     base type=Ref(X)
+     head type=Ref(X)
+     tsc  type=Ref(X)
+   "class X {} class Y {} class C { @d p: X & unknown; }"
+     base type=Ref(X)
+     head type=Ref(X)
+     tsc  type=Ref(X)
+?? "enum X { a, b } enum Y { c } class C { @d p: X | X; }"
+     base type=Ref(X)
+     head type=Ref(X)
+     tsc  type=Number
+?? "enum X { a, b } enum Y { c } class C { @d p: X | Y; }"
+     base type=Object
+     head type=Object
+     tsc  type=Number
+?? "enum X { a, b } enum Y { c } class C { @d p: X & X; }"
+     base type=Ref(X)
+     head type=Ref(X)
+     tsc  type=Number
+?? "enum X { a, b } enum Y { c } class C { @d p: X.a | X.b; }"
+     base type=Ref(X.b)
+     head type=Object
+     tsc  type=Number
+?? "enum X { a, b } enum Y { c } class C { @d p: Q extends R ? X : X; }"
+     base type=Ref(X)
+     head type=Object
+     tsc  type=Number
+?? "enum X { a, b } enum Y { c } class C { @d p: Q extends R ? X : never; }"
+     base type=undefined
+     head type=Object
+     tsc  type=Number
+?? "enum X { a, b } enum Y { c } class C { @d p: Q extends R ? X : Y; }"
+     base type=Object
+     head type=Object
+     tsc  type=Number
+?? "enum X { a, b } enum Y { c } class C { @d p: Q extends R ? X : null; }"
+     base type=Ref(X)
+     head type=Object
+     tsc  type=Number
+?? "enum X { a, b } enum Y { c } class C { @d p: Q extends R ? X.a : X.a; }"
+     base type=Ref(X.a)
+     head type=Object
+     tsc  type=Number
+?? "enum X { a, b } enum Y { c } class C { @d p: (Q extends R ? X : X) | X; }"
+     base type=Ref(X)
+     head type=Object
+     tsc  type=Number
+?? "enum X { a, b } enum Y { c } class C { @d p: keyof Q extends R ? X : X; }"
+     base type=Object
+     head type=Object
+     tsc  type=Number
+?? "enum X { a, b } enum Y { c } class C { @d p: X | (X | X); }"
+     base type=Ref(X)
+     head type=Ref(X)
+     tsc  type=Number
+?? "enum X { a, b } enum Y { c } class C { @d p: X | never; }"
+     base type=Ref(X)
+     head type=Ref(X)
+     tsc  type=Number
+?? "enum X { a, b } enum Y { c } class C { @d p: X & unknown; }"
+     base type=Ref(X)
+     head type=Ref(X)
+     tsc  type=Number
+?? "enum X { a = \"a\", b = \"b\" } enum Y { c = \"c\" } class C { @d p: X | X; }"
+     base type=Ref(X)
+     head type=Ref(X)
+     tsc  type=String
+?? "enum X { a = \"a\", b = \"b\" } enum Y { c = \"c\" } class C { @d p: X | Y; }"
+     base type=Object
+     head type=Object
+     tsc  type=String
+?? "enum X { a = \"a\", b = \"b\" } enum Y { c = \"c\" } class C { @d p: X & X; }"
+     base type=Ref(X)
+     head type=Ref(X)
+     tsc  type=String
+?? "enum X { a = \"a\", b = \"b\" } enum Y { c = \"c\" } class C { @d p: X.a | X.b; }"
+     base type=Ref(X.b)
+     head type=Object
+     tsc  type=String
+?? "enum X { a = \"a\", b = \"b\" } enum Y { c = \"c\" } class C { @d p: Q extends R ? X : X; }"
+     base type=Ref(X)
+     head type=Object
+     tsc  type=String
+?? "enum X { a = \"a\", b = \"b\" } enum Y { c = \"c\" } class C { @d p: Q extends R ? X : never; }"
+     base type=undefined
+     head type=Object
+     tsc  type=String
+?? "enum X { a = \"a\", b = \"b\" } enum Y { c = \"c\" } class C { @d p: Q extends R ? X : Y; }"
+     base type=Object
+     head type=Object
+     tsc  type=String
+?? "enum X { a = \"a\", b = \"b\" } enum Y { c = \"c\" } class C { @d p: Q extends R ? X : null; }"
+     base type=Ref(X)
+     head type=Object
+     tsc  type=String
+?? "enum X { a = \"a\", b = \"b\" } enum Y { c = \"c\" } class C { @d p: Q extends R ? X.a : X.a; }"
+     base type=Ref(X.a)
+     head type=Object
+     tsc  type=String
+?? "enum X { a = \"a\", b = \"b\" } enum Y { c = \"c\" } class C { @d p: (Q extends R ? X : X) | X; }"
+     base type=Ref(X)
+     head type=Object
+     tsc  type=String
+?? "enum X { a = \"a\", b = \"b\" } enum Y { c = \"c\" } class C { @d p: keyof Q extends R ? X : X; }"
+     base type=Object
+     head type=Object
+     tsc  type=String
+?? "enum X { a = \"a\", b = \"b\" } enum Y { c = \"c\" } class C { @d p: X | (X | X); }"
+     base type=Ref(X)
+     head type=Ref(X)
+     tsc  type=String
+?? "enum X { a = \"a\", b = \"b\" } enum Y { c = \"c\" } class C { @d p: X | never; }"
+     base type=Ref(X)
+     head type=Ref(X)
+     tsc  type=String
+?? "enum X { a = \"a\", b = \"b\" } enum Y { c = \"c\" } class C { @d p: X & unknown; }"
+     base type=Ref(X)
+     head type=Ref(X)
+     tsc  type=String
+?? "interface X {} interface Y {} class C { @d p: X | X; }"
+     base type=Ref(X)
+     head type=Ref(X)
+     tsc  type=Object
+   "interface X {} interface Y {} class C { @d p: X | Y; }"
+     base type=Object
+     head type=Object
+     tsc  type=Object
+?? "interface X {} interface Y {} class C { @d p: X & X; }"
+     base type=Ref(X)
+     head type=Ref(X)
+     tsc  type=Object
+ok "interface X {} interface Y {} class C { @d p: X.a | X.b; }"
+     base type=Ref(X.b)
+     head type=Object
+     tsc  type=Object
+ok "interface X {} interface Y {} class C { @d p: Q extends R ? X : X; }"
+     base type=Ref(X)
+     head type=Object
+     tsc  type=Object
+ok "interface X {} interface Y {} class C { @d p: Q extends R ? X : never; }"
+     base type=undefined
+     head type=Object
+     tsc  type=Object
+   "interface X {} interface Y {} class C { @d p: Q extends R ? X : Y; }"
+     base type=Object
+     head type=Object
+     tsc  type=Object
+ok "interface X {} interface Y {} class C { @d p: Q extends R ? X : null; }"
+     base type=Ref(X)
+     head type=Object
+     tsc  type=Object
+ok "interface X {} interface Y {} class C { @d p: Q extends R ? X.a : X.a; }"
+     base type=Ref(X.a)
+     head type=Object
+     tsc  type=Object
+ok "interface X {} interface Y {} class C { @d p: (Q extends R ? X : X) | X; }"
+     base type=Ref(X)
+     head type=Object
+     tsc  type=Object
+   "interface X {} interface Y {} class C { @d p: keyof Q extends R ? X : X; }"
+     base type=Object
+     head type=Object
+     tsc  type=Object
+?? "interface X {} interface Y {} class C { @d p: X | (X | X); }"
+     base type=Ref(X)
+     head type=Ref(X)
+     tsc  type=Object
+?? "interface X {} interface Y {} class C { @d p: X | never; }"
+     base type=Ref(X)
+     head type=Ref(X)
+     tsc  type=Object
+?? "interface X {} interface Y {} class C { @d p: X & unknown; }"
+     base type=Ref(X)
+     head type=Ref(X)
+     tsc  type=Object
+?? "type X = string; type Y = string; class C { @d p: X | X; }"
+     base type=Ref(X)
+     head type=Ref(X)
+     tsc  type=String
+?? "type X = string; type Y = string; class C { @d p: X | Y; }"
+     base type=Object
+     head type=Object
+     tsc  type=String
+?? "type X = string; type Y = string; class C { @d p: X & X; }"
+     base type=Ref(X)
+     head type=Ref(X)
+     tsc  type=String
+ok "type X = string; type Y = string; class C { @d p: X.a | X.b; }"
+     base type=Ref(X.b)
+     head type=Object
+     tsc  type=Object
+?? "type X = string; type Y = string; class C { @d p: Q extends R ? X : X; }"
+     base type=Ref(X)
+     head type=Object
+     tsc  type=String
+?? "type X = string; type Y = string; class C { @d p: Q extends R ? X : never; }"
+     base type=undefined
+     head type=Object
+     tsc  type=String
+?? "type X = string; type Y = string; class C { @d p: Q extends R ? X : Y; }"
+     base type=Object
+     head type=Object
+     tsc  type=String
+?? "type X = string; type Y = string; class C { @d p: Q extends R ? X : null; }"
+     base type=Ref(X)
+     head type=Object
+     tsc  type=String
+ok "type X = string; type Y = string; class C { @d p: Q extends R ? X.a : X.a; }"
+     base type=Ref(X.a)
+     head type=Object
+     tsc  type=Object
+?? "type X = string; type Y = string; class C { @d p: (Q extends R ? X : X) | X; }"
+     base type=Ref(X)
+     head type=Object
+     tsc  type=String
+?? "type X = string; type Y = string; class C { @d p: keyof Q extends R ? X : X; }"
+     base type=Object
+     head type=Object
+     tsc  type=String
+?? "type X = string; type Y = string; class C { @d p: X | (X | X); }"
+     base type=Ref(X)
+     head type=Ref(X)
+     tsc  type=String
+?? "type X = string; type Y = string; class C { @d p: X | never; }"
+     base type=Ref(X)
+     head type=Ref(X)
+     tsc  type=String
+?? "type X = string; type Y = string; class C { @d p: X & unknown; }"
+     base type=Ref(X)
+     head type=Ref(X)
+     tsc  type=String
+?? "class K {} type X = K; type Y = K; class C { @d p: X | X; }"
+     base type=Ref(X)
+     head type=Ref(X)
+     tsc  type=Object
+   "class K {} type X = K; type Y = K; class C { @d p: X | Y; }"
+     base type=Object
+     head type=Object
+     tsc  type=Object
+?? "class K {} type X = K; type Y = K; class C { @d p: X & X; }"
+     base type=Ref(X)
+     head type=Ref(X)
+     tsc  type=Object
+ok "class K {} type X = K; type Y = K; class C { @d p: X.a | X.b; }"
+     base type=Ref(X.b)
+     head type=Object
+     tsc  type=Object
+ok "class K {} type X = K; type Y = K; class C { @d p: Q extends R ? X : X; }"
+     base type=Ref(X)
+     head type=Object
+     tsc  type=Object
+ok "class K {} type X = K; type Y = K; class C { @d p: Q extends R ? X : never; }"
+     base type=undefined
+     head type=Object
+     tsc  type=Object
+   "class K {} type X = K; type Y = K; class C { @d p: Q extends R ? X : Y; }"
+     base type=Object
+     head type=Object
+     tsc  type=Object
+ok "class K {} type X = K; type Y = K; class C { @d p: Q extends R ? X : null; }"
+     base type=Ref(X)
+     head type=Object
+     tsc  type=Object
+ok "class K {} type X = K; type Y = K; class C { @d p: Q extends R ? X.a : X.a; }"
+     base type=Ref(X.a)
+     head type=Object
+     tsc  type=Object
+ok "class K {} type X = K; type Y = K; class C { @d p: (Q extends R ? X : X) | X; }"
+     base type=Ref(X)
+     head type=Object
+     tsc  type=Object
+   "class K {} type X = K; type Y = K; class C { @d p: keyof Q extends R ? X : X; }"
+     base type=Object
+     head type=Object
+     tsc  type=Object
+?? "class K {} type X = K; type Y = K; class C { @d p: X | (X | X); }"
+     base type=Ref(X)
+     head type=Ref(X)
+     tsc  type=Object
+?? "class K {} type X = K; type Y = K; class C { @d p: X | never; }"
+     base type=Ref(X)
+     head type=Ref(X)
+     tsc  type=Object
+?? "class K {} type X = K; type Y = K; class C { @d p: X & unknown; }"
+     base type=Ref(X)
+     head type=Ref(X)
+     tsc  type=Object
+   "import { X, Y } from \"./m\"; class C { @d p: X | X; }"
+     base type=Ref(X)
+     head type=Ref(X)
+     tsc  type=Ref(X)
+   "import { X, Y } from \"./m\"; class C { @d p: X | Y; }"
+     base type=Object
+     head type=Object
+     tsc  type=Object
+   "import { X, Y } from \"./m\"; class C { @d p: X & X; }"
+     base type=Ref(X)
+     head type=Ref(X)
+     tsc  type=Ref(X)
+ok "import { X, Y } from \"./m\"; class C { @d p: X.a | X.b; }"
+     base type=Ref(X.b)
+     head type=Object
+     tsc  type=Object
+ok "import { X, Y } from \"./m\"; class C { @d p: Q extends R ? X : X; }"
+     base type=Ref(X)
+     head type=Object
+     tsc  type=Object
+ok "import { X, Y } from \"./m\"; class C { @d p: Q extends R ? X : never; }"
+     base type=undefined
+     head type=Object
+     tsc  type=Object
+   "import { X, Y } from \"./m\"; class C { @d p: Q extends R ? X : Y; }"
+     base type=Object
+     head type=Object
+     tsc  type=Object
+ok "import { X, Y } from \"./m\"; class C { @d p: Q extends R ? X : null; }"
+     base type=Ref(X)
+     head type=Object
+     tsc  type=Object
+ok "import { X, Y } from \"./m\"; class C { @d p: Q extends R ? X.a : X.a; }"
+     base type=Ref(X.a)
+     head type=Object
+     tsc  type=Object
+ok "import { X, Y } from \"./m\"; class C { @d p: (Q extends R ? X : X) | X; }"
+     base type=Ref(X)
+     head type=Object
+     tsc  type=Object
+   "import { X, Y } from \"./m\"; class C { @d p: keyof Q extends R ? X : X; }"
+     base type=Object
+     head type=Object
+     tsc  type=Object
+   "import { X, Y } from \"./m\"; class C { @d p: X | (X | X); }"
+     base type=Ref(X)
+     head type=Ref(X)
+     tsc  type=Ref(X)
+   "import { X, Y } from \"./m\"; class C { @d p: X | never; }"
+     base type=Ref(X)
+     head type=Ref(X)
+     tsc  type=Ref(X)
+   "import { X, Y } from \"./m\"; class C { @d p: X & unknown; }"
+     base type=Ref(X)
+     head type=Ref(X)
+     tsc  type=Ref(X)
+   " class C { @d p: X | X; }"
+     base type=Ref(X)
+     head type=Ref(X)
+     tsc  type=Ref(X)
+   " class C { @d p: X | Y; }"
+     base type=Object
+     head type=Object
+     tsc  type=Object
+   " class C { @d p: X & X; }"
+     base type=Ref(X)
+     head type=Ref(X)
+     tsc  type=Ref(X)
+ok " class C { @d p: X.a | X.b; }"
+     base type=Ref(X.b)
+     head type=Object
+     tsc  type=Object
+ok " class C { @d p: Q extends R ? X : X; }"
+     base type=Ref(X)
+     head type=Object
+     tsc  type=Object
+ok " class C { @d p: Q extends R ? X : never; }"
+     base type=undefined
+     head type=Object
+     tsc  type=Object
+   " class C { @d p: Q extends R ? X : Y; }"
+     base type=Object
+     head type=Object
+     tsc  type=Object
+ok " class C { @d p: Q extends R ? X : null; }"
+     base type=Ref(X)
+     head type=Object
+     tsc  type=Object
+ok " class C { @d p: Q extends R ? X.a : X.a; }"
+     base type=Ref(X.a)
+     head type=Object
+     tsc  type=Object
+ok " class C { @d p: (Q extends R ? X : X) | X; }"
+     base type=Ref(X)
+     head type=Object
+     tsc  type=Object
+   " class C { @d p: keyof Q extends R ? X : X; }"
+     base type=Object
+     head type=Object
+     tsc  type=Object
+   " class C { @d p: X | (X | X); }"
+     base type=Ref(X)
+     head type=Ref(X)
+     tsc  type=Ref(X)
+   " class C { @d p: X | never; }"
+     base type=Ref(X)
+     head type=Ref(X)
+     tsc  type=Ref(X)
+   " class C { @d p: X & unknown; }"
+     base type=Ref(X)
+     head type=Ref(X)
+     tsc  type=Ref(X)

@@ -1,0 +1,98 @@
+1715 R>A records in 121 sources
+tsc as a whole reports nothing: 99 records, 7 sources
+PARSE diagnostics (tsc's parser rejects):
+SEMANTIC diagnostics (a record counts under every code it has):
+  TS1009      15 records     1 sources  Trailing comma not allowed.
+        "interface I extends A, {}"
+  TS1015     235 records    16 sources  Parameter cannot have question mark and initializer.
+        "type X = (a?: A = 1) => R;"
+        "class K { @d p: (a?: A = 1) => R; }"
+  TS1017      15 records     1 sources  An index signature cannot have a rest parameter.
+        "class K { @d p: { [...k: string[]]: A }; }"
+  TS1019      45 records     3 sources  An index signature parameter cannot have a question mark.
+        "class K { @d p: { [k?: string]: A }; }"
+        "type X = { [k?]: A };"
+  TS1021      15 records     1 sources  An index signature must have a type annotation.
+        "class C { [k: string] }"
+  TS1025      15 records     1 sources  An index signature cannot have a trailing comma.
+        "class K { @d p: { [k: string,]: A }; }"
+  TS1028      90 records     6 sources  Accessibility modifier already seen.
+        "type X = (public private a: A) => R;"
+        "class K { @d p: (public private a: A) => R; }"
+  TS1029      90 records     6 sources  'public' modifier must precede 'readonly' modifier.
+        "type X = (readonly public a: A) => R;"
+        "class K { @d p: (readonly public a: A) => R; }"
+  TS1030      45 records     3 sources  'readonly' modifier already seen.
+        "type X = (readonly readonly a: A) => R;"
+        "class K { @d p: (readonly readonly a: A) => R; }"
+  TS1048      90 records     6 sources  A rest parameter cannot have an initializer.
+        "type X = (...a = []) => R;"
+        "class K { @d p: (...a = []) => R; }"
+  TS1096     105 records     7 sources  An index signature must have exactly one parameter.
+        "class C { [k: string, l: number]: A }"
+        "type X = { [a, b]: A };"
+  TS1097      15 records     1 sources  'extends' list cannot be empty.
+        "interface I extends {}"
+  TS1108      15 records     1 sources  A 'return' statement can only be used within a function body.
+        "function f(x: any): class {} { return null as any }"
+  TS1110      30 records     2 sources  Type expected.
+        "function f<U extends #a, V = #a>() {}"
+        "function f<U extends super.A, V = super.A>() {}"
+  TS1170      60 records     4 sources  A computed property name in a type literal must refer to an expression whose type is a literal type or a 'uniq
+        "type X = { [\"a\" + \"b\"]: A };"
+        "class K { @d p: { [\"a\" + \"b\"]: A }; }"
+  TS1172      45 records     3 sources  'extends' clause already seen.
+        "interface I extends A extends B {}"
+        "interface I extends A, B extends C {}"
+  TS1176      15 records     1 sources  Interface declaration cannot have 'implements' clause.
+        "interface I implements A extends B {}"
+  TS1183      30 records     2 sources  An implementation cannot be declared in ambient contexts.
+        "type X = { get a(): A {} };"
+        "class K { @d p: { get a(): A {} }; }"
+  TS1186      30 records     2 sources  A rest element cannot have an initializer.
+        "type X = ({ ...a = 1 }) => R;"
+        "class K { @d p: ({ ...a = 1 }) => R; }"
+  TS1243      18 records     2 sources  'accessor' modifier cannot be used with 'readonly' modifier.
+        "class C { readonly accessor a: A }"
+        "class C { declare accessor a: A }"
+  TS1247      45 records     3 sources  A type literal property cannot have an initializer.
+        "class K { @d p: { a: A = 1 }; }"
+        "type X = { a?: A = 1 };"
+  TS1276       9 records     1 sources  An 'accessor' property cannot be declared optional.
+        "class C { accessor a?: A }"
+  TS1539      15 records     1 sources  A 'bigint' literal cannot be used as a property name.
+        "class K { @d p: { 1n: A }; }"
+  TS2304    1502 records   106 sources  Cannot find name 'out'.
+        "const v = <out>x;"
+        "const v = <in>x;"
+  TS2369     300 records    20 sources  A parameter property is only allowed in a constructor implementation.
+        "function f(public a: A) {}"
+        "function f(private a) {}"
+  TS2371     355 records    24 sources  A parameter initializer is only allowed in a function or constructor implementation.
+        "type X = (...a = []) => R;"
+        "class K { @d p: (...a = []) => R; }"
+  TS2378      30 records     2 sources  A 'get' accessor must return a value.
+        "type X = { get a(): A {} };"
+        "class K { @d p: { get a(): A {} }; }"
+  TS2499      30 records     2 sources  An interface can only extend an identifier/qualified-name with optional type arguments.
+        "interface I extends a() {}"
+        "interface I extends a.b() {}"
+  TS2503      15 records     1 sources  Cannot find namespace 'super'.
+        "function f<U extends super.A, V = super.A>() {}"
+  TS2564     422 records    29 sources  Property 'a' has no initializer and is not definitely assigned in the constructor.
+        "class C { @d accessor a: string }"
+        "class K { @d p: { a: A = 1 }; }"
+  TS7006     105 records     7 sources  Parameter 'a' implicitly has an 'any' type.
+        "function f(private a) {}"
+        "type X = { [a, b]: A };"
+  TS7008       9 records     1 sources  Member 'a' implicitly has an 'any' type.
+        "class C { accessor a }"
+  TS7031      30 records     2 sources  Binding element 'a' implicitly has an 'any' type.
+        "type X = (...[a] = []) => R;"
+        "class K { @d p: (...[a] = []) => R; }"
+  TS8020     240 records    16 sources  JSDoc types can only be used inside documentation comments.
+        "function f(x: A.<B>) {}"
+        "function f(x: any): A.<B> { return null as any }"
+  TS18016      45 records     3 sources  Private identifiers are not allowed outside class bodies.
+        "interface I { #a: A }"
+        "interface I { #a(): void }"

@@ -1,0 +1,49 @@
+A>A  tsc parse[TS1005@24,TS1011@28] grammar[-]  class C implements [...a: A[]] {}
+R>A  tsc parse[TS1109@23,TS1109@25,TS1011@29] grammar[-] class C implements [...in: A[]] {}
+      base: Unexpected in
+A>A  tsc parse[TS1005@23,TS1109@26] grammar[-]  class C implements (a) => void {}
+R>A  tsc parse[TS1005@27,TS1109@30] grammar[-]  class C implements (a = 1) => void {}
+      base: Expected ")" but found "="
+A>A  tsc parse[TS1109@20,TS1005@31] grammar[-]  interface I extends <T>() => T {}
+R>A  tsc parse[TS1109@20,TS1005@35] grammar[-]  interface I extends <out>() => out {}
+      base: The modifier "out" is not valid here
+A>A  tsc parse[] grammar[]                      class C implements import('x').A<C, D> {}
+R>A  tsc parse[TS1003@33] grammar[-]            class C implements import('x').A.<C, D> {}
+      base: Expected identifier but found "<"
+A>A  tsc parse[TS1136@21,TS1005@24,TS1109@26,TS1109@31] grammar[-] class C implements { (b): void } {}
+R>A  tsc parse[TS1136@21,TS1005@28,TS1109@30,TS1109@35] grammar[-] class C implements { (b = 1): void } {}
+      base: Expected ")" but found "="
+A>A  tsc parse[TS1109@20,TS1005@22,TS1005@33,TS1005@35,TS1005@38] grammar[-] class C implements () => asserts a is A {}
+R>A  tsc parse[TS1109@20,TS1005@22,TS1005@34,TS1005@37] grammar[-] class C implements () => asserts  is A {}
+      base: Expected "{" but found "A"
+A>A  tsc parse[] grammar[]                      class C implements [A] {}
+R>A  tsc parse[TS1005@28] grammar[-]            class C implements [function] {}
+      base: Expected ":" but found "]"
+A>A  tsc parse[TS1005@31,TS1005@35] grammar[-]  class C implements A extends B ? 1 : 2 {}
+R>A  tsc parse[TS1109@30,TS1109@33,TS1005@41] grammar[-] class C implements A extends  in ? 1 : 2 {}
+      base: Unexpected in
+A>A  tsc parse[] grammar[]                      class C implements { [K in A]: V } {}
+R>A  tsc parse[TS1109@27,TS1109@30] grammar[-]  class C implements { [K in in ]: V } {}
+      base: Unexpected in
+R>A  tsc parse[TS1005@24] grammar[-]            let f = <U extends class>() => 0;
+      base: Unexpected class
+R>A  tsc parse[TS1005@24] grammar[-]            let f = <U extends class>(a: U) => 0;
+      base: Unexpected class
+R>R  tsc parse[TS1109@25] grammar[-]            let f = <U extends delete>(a: U) => 0;
+      base: Unexpected delete
+R>A  tsc parse[] grammar[]                      let f = <U extends if>(a: U) => 0;
+      base: Unexpected if
+R>A  tsc parse[TS1109@22] grammar[-]            class C { m<U extends in>() {} }
+      base: Unexpected in
+R>A  tsc parse[] grammar[]                      class C { m<U extends if>() {} }
+      base: Unexpected if
+R>A  tsc parse[TS1109@26] grammar[-]            interface I { m<U extends in>(): void }
+      base: Unexpected in
+R>A  tsc parse[TS1109@20] grammar[-]            type X = <U extends in>() => void;
+      base: Unexpected in
+R>A  tsc parse[] grammar[]                      type X = <U extends if>() => void;
+      base: Unexpected if
+R>A  tsc parse[] grammar[]                      function f<U extends A | in>() {}
+      base: Unexpected in
+R>A  tsc parse[] grammar[]                      f<A | extends>(x);
+      base: Unexpected extends

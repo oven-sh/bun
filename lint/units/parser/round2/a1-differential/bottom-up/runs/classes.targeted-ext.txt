@@ -1,0 +1,58 @@
+TOTAL  restore 1532 rec 104 src | valid 183 rec 17 src | unclassified 0 rec 0 src
+RESTORE                                  R1       30 rec     2 src  a heritage clause takes an expression (reread of the entry as an expression)
+        e.g. "interface I extends a() {}"   base: Expected "{" but found "("
+        tsc: S:2499 x30
+RESTORE                                  R10     240 rec    16 src  `.<` stands before the type arguments of a type reference
+        e.g. "function f(x: A.<B>) {}"   base: Expected identifier but found "<"
+        tsc: S:8020 x240
+RESTORE                                  R12     100 rec     7 src  a reserved word or a private name is the name of a type
+        e.g. "const v = <in>x;"   base: The modifier "in" is not valid here
+        tsc: S:undeclarable x70  S:1110,undeclarable x30
+RESTORE                                  R13      60 rec     4 src  an interface has a second extends clause, or extends after implements
+        e.g. "interface I extends A extends B {}"   base: Expected "?" but found "{"
+        tsc: S:1172 x45  S:1176 x15
+RESTORE                                  R13b     30 rec     2 src  the extends list of an interface is empty or ends with a comma
+        e.g. "interface I extends A, {}"   base: Expected "{" but found end of file
+        tsc: S:1009 x15  S:1097 x15
+RESTORE                                  R14      27 rec     3 src  accessor with ? or with declare or readonly, without standard decorators
+        e.g. "class C { readonly accessor a: A }"   base: Expected ";" but found "a"
+        tsc: S:1243 x18  S:1276 x9
+RESTORE                                  R2      355 rec    24 src  a parameter of a signature has an initializer
+        e.g. "type X = (...a = []) => R;"   base: Unexpected ...
+        tsc: S:1015,2371 x235  S:2371,1048 x90  S:2371,1186 x30
+RESTORE                                  R3      300 rec    20 src  a modifier stands before a parameter that is no parameter property
+        e.g. "function f(public a: A) {}"   base: Expected ")" but found "a"
+        tsc: S:2369,1029 x90  S:2369,1028 x90  S:2369 x75  S:2369,1030 x45
+RESTORE                                  R4      195 rec    13 src  an index signature with a rest, an optional, no or a second parameter, a comma, or no type
+        e.g. "class C { [k: string] }"   base: Expected ":" but found "}"
+        tsc: S:1096 x105  S:1019 x45  S:1021 x15  S:1017 x15  S:1025 x15
+RESTORE                                  R5       60 rec     4 src  a computed property name of a type literal is no entity name
+        e.g. "type X = { [\"a\" + \"b\"]: A };"   base: Expected "]" but found "+"
+        tsc: S:1170 x60
+RESTORE                                  R6       45 rec     3 src  a property of a type literal has an initializer
+        e.g. "class K { @d p: { a: A = 1 }; }"   base: Unexpected =
+        tsc: S:1247 x45
+RESTORE                                  R7       15 rec     1 src  a bigint names a property of a type literal
+        e.g. "class K { @d p: { 1n: A }; }"   base: Unexpected 1n
+        tsc: S:1539 x15
+RESTORE                                  R8       45 rec     3 src  a private name names a member of a type literal or an interface
+        e.g. "interface I { #a: A }"   base: Unexpected #a
+        tsc: S:18016 x45
+RESTORE                                  R9       30 rec     2 src  an accessor of a type literal has a body
+        e.g. "type X = { get a(): A {} };"   base: Unexpected {
+        tsc: S:1183 x30
+valid                                    V1       60 rec     4 src  as or satisfies names a type alias, an interface or a namespace
+        e.g. "type as = 1;"   base: Unexpected =
+        tsc: - x60
+valid                                    V2       15 rec     1 src  abstract stands before declare
+        e.g. "abstract declare class C {}"   base: Expected ";" but found "declare"
+        tsc: - x15
+valid                                    V3       15 rec     1 src  a string in brackets names an enum member
+        e.g. "enum E { ['a'] = 1 }"   base: Expected identifier but found "["
+        tsc: - x15
+valid                                    V4       83 rec    10 src  accessor is a modifier without standard decorators
+        e.g. "class C { accessor a: A }"   base: Expected ";" but found "a"
+        tsc: - x83
+valid                                    V5       10 rec     1 src  out names a type or a type parameter
+        e.g. "const v = <out>x;"   base: The modifier "out" is not valid here
+        tsc: - x10

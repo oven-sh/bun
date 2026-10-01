@@ -1,0 +1,20 @@
+type X = A extends () => infer R extends B ? R : never;
+interface I extends A extends () => infer R extends B ? R : never {}
+interface I extends A extends B ? C : D {}
+interface I extends A extends () => infer R ? R : never {}
+class C implements A extends () => infer R extends B ? R : never {}
+interface I extends A extends B extends C ? D : E {}
+interface I extends (A extends B ? C : D) {}
+class C implements A<>.C {}
+class C implements A<B>.C {}
+let v = A<>.C;
+let v = A<B>.C;
+class C extends A<>.C {}
+class C extends A<B>.C {}
+interface I extends typeof a<>.c {}
+interface I extends typeof a<B>.c {}
+let x: typeof a<>.c;
+let x: A<>.C;
+let x: A<>;
+f<>();
+let x: typeof a<>;

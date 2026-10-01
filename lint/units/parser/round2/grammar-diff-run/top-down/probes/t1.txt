@@ -1,0 +1,29 @@
+class C implements +1 {}
+interface I extends +1 {}
+class C implements (a = 1) => void {}
+interface I extends (a = 1) => void {}
+interface I extends A | B {}
+class C implements A | B {}
+class C implements () => void {}
+interface I extends typeof a {}
+class C implements typeof a {}
+interface I extends a() {}
+class C implements (A) {}
+interface I extends (A) {}
+interface I extends [A] {}
+interface I extends { a: A } {}
+class C implements { a: A } {}
+interface I extends new A {}
+interface I extends this {}
+interface I extends "a" {}
+interface I extends a`b` {}
+interface I extends a.b<C> {}
+interface I extends A<B>.c {}
+class C extends A implements B, C<D> {}
+class C implements B extends A {}
+class C implements A implements B {}
+class C extends A extends B {}
+class C extends A, B {}
+class C implements {}
+class C extends A implements {}
+interface I extends A implements B {}

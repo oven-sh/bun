@@ -1,0 +1,124 @@
+23760 R>A records in 1614 sources
+tsc as a whole reports nothing: 600 records, 40 sources
+PARSE diagnostics (tsc's parser rejects):
+  TS1003     210 records    14 sources  Identifier expected.
+        "class C implements [...enum: A[]] {}"
+        "interface I extends [...enum: A[]] {}"
+  TS1005    2310 records   156 sources  ';' expected.
+        "class C implements +1 {}"
+        "interface I extends +1 {}"
+  TS1011     150 records    10 sources  An element access expression should take an argument.
+        "class C implements [...in: A[]] {}"
+        "interface I extends [...in: A[]] {}"
+  TS1034      15 records     1 sources  'super' must be followed by an argument list or member access.
+        "function f<U extends super>() {}"
+  TS1109    2355 records   159 sources  Expression expected.
+        "class C implements +1 {}"
+        "interface I extends +1 {}"
+  TS1110     105 records     7 sources  Type expected.
+        "let f = (a): [a: ?] => a;"
+        "f<[a: ?]>(x);"
+  TS1128     510 records    34 sources  Declaration or statement expected.
+        "class C { @d m(): (a = 1) =>  { return x; } }"
+        "function f(): (a = 1) =>  { return x; }"
+  TS1131     510 records    34 sources  Property or signature expected.
+        "class C { @d m(): (a = 1) =>  { return x; } }"
+        "function f(): (a = 1) =>  { return x; }"
+  TS1134     135 records     9 sources  Variable declaration expected.
+        "class C implements [...var: A[]] {}"
+        "interface I extends [...var: A[]] {}"
+  TS1136     150 records    10 sources  Property assignment expected.
+        "class C implements { [...k: string[]]: A } {}"
+        "interface I extends { [...k: string[]]: A } {}"
+  TS1382      25 records     5 sources  Unexpected token. Did you mean `{'>'}` or `&gt;`?
+        "class C implements <out>() => out {}"
+        "interface I extends <out>() => out {}"
+  TS1477      60 records     4 sources  An instantiation expression cannot be followed by a property access.
+        "class C implements A<>.C {}"
+        "interface I extends A<>.C {}"
+  TS17008      25 records     5 sources  JSX element 'out' has no corresponding closing tag.
+        "class C implements <out>() => out {}"
+        "interface I extends <out>() => out {}"
+SEMANTIC diagnostics (a record counts under every code it has):
+  TS1015     190 records    13 sources  Parameter cannot have question mark and initializer.
+        "type X = (a?: A = 1) => void;"
+        "let x: (a?: A = 1) => void;"
+  TS1017     380 records    26 sources  An index signature cannot have a rest parameter.
+        "type X = { [...k: string[]]: A };"
+        "let x: { [...k: string[]]: A };"
+  TS1019     190 records    13 sources  An index signature parameter cannot have a question mark.
+        "type X = { [k?: string]: A };"
+        "let x: { [k?: string]: A };"
+  TS1025     190 records    13 sources  An index signature cannot have a trailing comma.
+        "type X = { [k: string,]: A };"
+        "let x: { [k: string,]: A };"
+  TS1096     630 records    43 sources  An index signature must have exactly one parameter.
+        "class C { @d x: A\n[]; }"
+        "class C { @d x: (A)\n[]; }"
+  TS1097      15 records     1 sources  'extends' list cannot be empty.
+        "interface I extends  {}"
+  TS1102      30 records     2 sources  'delete' cannot be called on an identifier in strict mode.
+        "class C implements [delete A] {}"
+        "interface I extends [delete A] {}"
+  TS1108      15 records     1 sources  A 'return' statement can only be used within a function body.
+        "function f(): class {} { return x; }"
+  TS1110      30 records     2 sources  Type expected.
+        "function f<U extends #a>() {}"
+        "function f<U extends super.a>() {}"
+  TS1170     950 records    65 sources  A computed property name in a type literal must refer to an expression whose type is a literal type or a 'uniq
+        "type X = { [k = 1]: A };"
+        "let x: { [k = 1]: A };"
+  TS1172      90 records     6 sources  'extends' clause already seen.
+        "interface I extends A extends B {}"
+        "interface I extends A extends {}"
+  TS1225     815 records    55 sources  Cannot find parameter 'asserts'.
+        "class C { @d m(): asserts is A { return x; } }"
+        "function f(): asserts is A { return x; }"
+  TS1247     190 records    13 sources  A type literal property cannot have an initializer.
+        "type X = { a: A = 1 };"
+        "let x: { a: A = 1 };"
+  TS1539     190 records    13 sources  A 'bigint' literal cannot be used as a property name.
+        "type X = { 1n: A };"
+        "let x: { 1n: A };"
+  TS2304   15990 records  1094 sources  Cannot find name 'A'.
+        "class C implements A\n<B> {}"
+        "interface I extends A\n<B> {}"
+  TS2307     695 records    47 sources  Cannot find module 'x' or its corresponding type declarations.
+        "type X = import('x')<A>;"
+        "let x: import('x')<A>;"
+  TS2369    1520 records   104 sources  A parameter property is only allowed in a constructor implementation.
+        "type X = (public a: A) => void;"
+        "let x: (public a: A) => void;"
+  TS2371    2660 records   182 sources  A parameter initializer is only allowed in a function or constructor implementation.
+        "type X = (a = 1) => void;"
+        "let x: (a = 1) => void;"
+  TS2499    1230 records    82 sources  An interface can only extend an identifier/qualified-name with optional type arguments.
+        "interface I extends [,] {}"
+        "interface I extends [A,,B] {}"
+  TS2500    1230 records    82 sources  A class can only implement an identifier/qualified-name with optional type arguments.
+        "class C implements [,] {}"
+        "class C implements [A,,B] {}"
+  TS2503     600 records    41 sources  Cannot find namespace 'infer'.
+        "class C implements infer.A {}"
+        "interface I extends infer.A {}"
+  TS2564     975 records    65 sources  Property 'x' has no initializer and is not definitely assigned in the constructor.
+        "class C { @d x: [a: A?]; }"
+        "class C { @d x: [a?: A?]; }"
+  TS2693     200 records    14 sources  'out' only refers to a type, but is being used as a value here.
+        "let v = <out>() => out>x;"
+        "type X = { [k `a${string}`]: A };"
+  TS2842     380 records    26 sources  'b' is an unused renaming of 'a'. Did you intend to use it as a type annotation?
+        "type X = ({ a: b = 1 }: A) => void;"
+        "let x: ({ a: b = 1 }: A) => void;"
+  TS5086     470 records    32 sources  A labeled tuple element is declared as optional with a question mark after the name and before the colon, rath
+        "type X = [a: A?];"
+        "let x: [a: A?];"
+  TS7006    2030 records   137 sources  Parameter 'a' implicitly has an 'any' type.
+        "let f = (a): [a: A?] => a;"
+        "let v = a ? (b): [a: A?] => c : d;"
+  TS8020     940 records    64 sources  JSDoc types can only be used inside documentation comments.
+        "type X = A.<B>;"
+        "let x: A.<B>;"
+  TS18016     235 records    16 sources  Private identifiers are not allowed outside class bodies.
+        "type X = { #a: A };"
+        "let x: { #a: A };"

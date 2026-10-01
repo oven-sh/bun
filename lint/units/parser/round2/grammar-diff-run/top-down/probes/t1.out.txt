@@ -1,0 +1,42 @@
+R>A  tsc parse[TS1109@19,TS1005@22] grammar[-]  class C implements +1 {}
+      base: Unexpected +
+R>A  tsc parse[TS1109@20,TS1005@23] grammar[-]  interface I extends +1 {}
+      base: Unexpected +
+R>A  tsc parse[TS1005@27,TS1109@30] grammar[-]  class C implements (a = 1) => void {}
+      base: Expected ")" but found "="
+R>A  tsc parse[TS1005@28,TS1109@31] grammar[-]  interface I extends (a = 1) => void {}
+      base: Expected ")" but found "="
+A>A  tsc parse[TS1005@22,TS1005@26] grammar[-]  interface I extends A | B {}
+A>A  tsc parse[TS1005@21,TS1005@25] grammar[-]  class C implements A | B {}
+A>A  tsc parse[TS1109@20,TS1005@22,TS1109@25] grammar[-] class C implements () => void {}
+A>A  tsc parse[TS1109@20,TS1005@29] grammar[-]  interface I extends typeof a {}
+A>A  tsc parse[TS1109@19,TS1005@28] grammar[-]  class C implements typeof a {}
+R>A  tsc parse[] grammar[]                      interface I extends a() {}
+      base: Expected "{" but found "("
+A>A  tsc parse[] grammar[]                      class C implements (A) {}
+A>A  tsc parse[] grammar[]                      interface I extends (A) {}
+A>A  tsc parse[] grammar[]                      interface I extends [A] {}
+A>A  tsc parse[] grammar[]                      interface I extends { a: A } {}
+A>A  tsc parse[] grammar[]                      class C implements { a: A } {}
+R>A  tsc parse[] grammar[]                      interface I extends new A {}
+      base: Expected "(" but found "A"
+A>A  tsc parse[] grammar[]                      interface I extends this {}
+A>A  tsc parse[] grammar[]                      interface I extends "a" {}
+R>A  tsc parse[] grammar[]                      interface I extends a`b` {}
+      base: Expected "{" but found "`b`"
+A>A  tsc parse[] grammar[]                      interface I extends a.b<C> {}
+A>A  tsc parse[TS1477@21] grammar[-]            interface I extends A<B>.c {}
+A>A  tsc parse[] grammar[]                      class C extends A implements B, C<D> {}
+R>R  tsc parse[] grammar[TS1173@21]             class C implements B extends A {}
+      base: Expected "?" but found "{"
+R>R  tsc parse[] grammar[TS1175@21]             class C implements A implements B {}
+      base: Expected "{" but found "implements"
+R>R  tsc parse[] grammar[TS1172@18]             class C extends A extends B {}
+      base: Expected "{" but found "extends"
+R>R  tsc parse[] grammar[TS1174@19]             class C extends A, B {}
+      base: Expected "{" but found ","
+R>R  tsc parse[] grammar[TS1097@18]             class C implements {}
+      base: Expected "{" but found end of file
+R>R  tsc parse[] grammar[TS1097@28]             class C extends A implements {}
+      base: Expected "{" but found end of file
+A>A  tsc parse[] grammar[TS1176@22]             interface I extends A implements B {}

@@ -1,0 +1,22 @@
+## ruling: A>A a declaration named as or satisfies, where the base read a cast  A>A  (6 forms)
+   "namespace as {}"  ctx[-] apis=10 recs=10  base: 
+   "interface as {}\nfoo()"  ctx[-] apis=10 recs=10  base: 
+   "interface as { a: 1 }\nconst x = 1;"  ctx[-] apis=10 recs=10  base: 
+   "interface as {}\n[x] = y"  ctx[-] apis=10 recs=10  base: 
+   "namespace as {}\nfoo()"  ctx[-] apis=10 recs=10  base: 
+   "namespace as {};"  ctx[-] apis=10 recs=10  base: 
+## ruling: attributes of a type-only import on the next line  R>A  (1 forms)
+   "import type A from \"x\"\nwith { type: \"json\" };"  ctx[-] apis=15 recs=15  base: Expected "(" but found "{"
+## ruling: attributes of an export on the next line  R>A  (2 forms)
+   "export { a } from \"x\"\nwith { type: \"json\" };"  ctx[-] apis=15 recs=15  base: Expected "(" but found "{"
+   "export * from \"x\"\nwith { type: \"json\" };"  ctx[-] apis=15 recs=15  base: Expected "(" but found "{"
+## ruling: cast after a declaration named as  R>A  (2 forms)
+   "type as = 1\ntype as any"  ctx[-] apis=15 recs=15  base: Unexpected =
+   "type as = 1\ntype as <T>(x: T) => void"  ctx[-] apis=15 recs=15  base: Unexpected =
+## ruling: cast after a declaration named as  A>A  (4 forms)
+   "interface as {}\ninterface as any\nfoo()"  ctx[-] apis=10 recs=10  base: 
+   "interface as {}\ninterface as {} | X\nfoo()"  ctx[-] apis=10 recs=10  base: 
+   "namespace as {}\nnamespace as any"  ctx[-] apis=10 recs=10  base: 
+   "namespace as {}\nnamespace as { foo(): void }"  ctx[-] apis=10 recs=10  base: 
+## RESTORE: tsc does not parse TS1005  R>A  (1 forms)
+   "import A from \"x\"\nwith { type: \"json\" };\nimport B from \"y\"\nwith (A) {}"  ctx[-] apis=15 recs=15  base: Expected "(" but found "{"

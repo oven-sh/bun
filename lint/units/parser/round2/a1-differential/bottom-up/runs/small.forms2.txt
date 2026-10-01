@@ -1,0 +1,251 @@
+array	"A\n[]"	S1096:fi	Unexpected ]
+conditional*	" extends"	S2304!:13 P1109:ta	Unexpected extends
+conditional	"A extends"	S1172:ie	Expected "?" but found end of file
+conditional*	"A extends "	S1172:ie	Expected "?" but found end of file
+conditional	"A extends B"	S1172:ie	Expected "?" but found "{"
+conditional*	"A extends B "	S1172:ie	Expected "?" but found "{"
+conditional	"A extends B extends C ? D : E"	P1005:ie	Expected "?" but found "extends"
+constructor-type*	" (a = 1) => A"	S2371:13 P1005:heie	Expected ")" but found "="
+constructor-type*	" A()"	S2500:he S2499:ie	Expected "{" but found "("
+constructor-type*	"new (a = 1) => "	P1131,1128:refr	Expected ")" but found "="
+constructor-type	"new (a = 1) => A"	S2371:13 P1005:heie	Expected ")" but found "="
+constructor-type	"new A"	S2500:he S2499:ie	Expected "(" but found "A"
+constructor-type	"new A()"	S2500:he S2499:ie	Expected "(" but found "A"
+contextual	"infer"	ok:heie	Expected identifier but found "{"
+contextual	"infer.A"	ok:heie	Expected identifier but found "."
+contextual	"infer<A>"	ok:heie	Expected identifier but found "<"
+contextual	"keyof"	ok:heie	Expected "{" but found end of file
+contextual	"keyof.A"	ok:heie	Unexpected .
+contextual	"keyof<A>"	ok:heie	Expected "(" but found "{"
+contextual	"out"	ok:an	The modifier "out" is not valid here
+contextual	"out.A"	ok:an	The modifier "out" is not valid here
+contextual	"out<A>"	ok:an	The modifier "out" is not valid here
+contextual	"readonly"	ok:heie	Expected "{" but found end of file
+contextual	"readonly.A"	ok:heie	Unexpected .
+contextual	"readonly<A>"	ok:heie	Expected "(" but found "{"
+function-type*	"() => asserts  is A"	ok:16 P1109,1005:heie	Expected ";" but found "A"
+function-type*	"([a = 1]: A) => "	P1131,1128:refr	Expected "]" but found "="
+function-type	"([a = 1]: A) => void"	S2371:13 P1005,1109:heie	Expected "]" but found "="
+function-type*	"([a, , ]: A) => void"	ok:13 P1005,1109:heie	Unexpected ,
+function-type*	"([a, , b]: A) => "	P1131,1128:refr	Unexpected ,
+function-type	"([a, , b]: A) => void"	ok:13 P1005,1109:heie	Unexpected ,
+function-type*	"(a = () => 1) => "	P1131,1128:refr	Expected ")" but found "="
+function-type	"(a = () => 1) => void"	S2371:13 P1005,1109:heie	Expected ")" but found "="
+function-type*	"(a = 1) => "	P1131,1128:refr	Expected ")" but found "="
+function-type	"(a = 1) => void"	S2371:13 P1005,1109:heie	Expected ")" but found "="
+function-type*	"(a = 1, b = 2) => "	P1131,1128:refr	Expected ")" but found "="
+function-type	"(a = 1, b = 2) => void"	S2371:13 P1005,1109:heie	Expected ")" but found "="
+function-type*	"(a = b as C) => "	P1131,1128:refr	Expected ")" but found "="
+function-type	"(a = b as C) => void"	S2371:13 P1005,1109:heie	Expected ")" but found "="
+function-type*	"(a: A = 1) => "	P1131,1128:refr	Expected ")" but found ":"
+function-type	"(a: A = 1) => void"	S2371:13 P1005,1109:heie	Expected ")" but found ":"
+function-type*	"(a: A) => asserts  is B"	ok:16 P1005,1109:heie	Expected ";" but found "B"
+function-type*	"(a?: A = 1) => "	P1131,1128:refr	Expected ")" but found "?"
+function-type	"(a?: A = 1) => void"	S1015,2371:13 P1109,1005:heie	Expected ")" but found "?"
+function-type*	"(override A) => void"	S2369:13 P1005,1109:heie	Expected ")" but found "A"
+function-type*	"(private A) => void"	S2369:13 P1005,1109:heie	Expected ")" but found "A"
+function-type*	"(private a: A) => "	P1131,1128:refr	Expected ")" but found "a"
+function-type	"(private a: A) => void"	S2369:13 P1005,1109:heie	Expected ")" but found "a"
+function-type*	"(protected A) => void"	S2369:13 P1005,1109:heie	Expected ")" but found "A"
+function-type*	"(public A) => void"	S2369:13 P1005,1109:heie	Expected ")" but found "A"
+function-type*	"(public a: A) => "	P1131,1128:refr	Expected ")" but found "a"
+function-type	"(public a: A) => void"	S2369:13 P1005,1109:heie	Expected ")" but found "a"
+function-type*	"(readonly A) => void"	S2369:13 P1005,1109:heie	Expected ";" but found "=>"
+function-type*	"(readonly a: A) => "	P1131,1128:refr	Expected ")" but found ":"
+function-type	"(readonly a: A) => void"	S2369:13 P1005,1109:heie	Expected ")" but found ":"
+function-type*	"({ [a]: b }: A) => "	P1131,1128:refr	Expected ")" but found ":"
+function-type	"({ [a]: b }: A) => void"	ok:13 P1005,1109:heie	Expected ")" but found ":"
+function-type*	"({ a = 1 }: A) => "	P1131,1128:refr	Unexpected =
+function-type	"({ a = 1 }: A) => void"	S2371:13 P1005,1109:heie	Unexpected =
+function-type*	"({ a,  } = c) => void"	S2371:13 P1005,1109:heie	Expected ")" but found "="
+function-type*	"({ a, b } = c) => "	P1131,1128:refr	Expected ")" but found "="
+function-type	"({ a, b } = c) => void"	S2371:13 P1005,1109:heie	Expected ")" but found "="
+function-type*	"({ a: b = 1 }: A) => "	P1131,1128:refr	Unexpected =
+function-type	"({ a: b = 1 }: A) => void"	ok:13 P1005,1109:heie	Unexpected =
+function-type*	"<out >() => T"	ok:15 P1109,1005:heie	The modifier "out" is not valid here
+function-type*	"<out>() => "	P1131,1128:refr P1005,1134:ar P1110:ta	The modifier "out" is not valid here
+function-type	"<out>() => out"	ok:15 P1109,1005:heie	The modifier "out" is not valid here
+function-type	"function"	S2304!:16	Unexpected function
+function-type*	"out>() => out"	ok:an	The modifier "out" is not valid here
+import-type*	"('x').#a"	S2500:he S2499:ie	Expected identifier but found "#a"
+import-type*	"('x')<A>"	S2500:he S2499:ie	Expected "{" but found "<"
+import-type*	"('x', A)"	S2500:he S2499:ie	Expected ")" but found ","
+import-type*	"('x', { a: { b: 'c' } })"	S2500:he S2499:ie	Expected ")" but found ","
+import-type*	"('x', { assert: { 'resolution-mode': 'import' } })"	S2500:he S2499:ie	Expected ")" but found ","
+import-type*	"('x', { with: { 'resolution-mode': 'import' } })"	S2500:he S2499:ie	Expected ")" but found ","
+import-type*	"('x', { with: { 'resolution-mode': 'import' } }).A<B>"	S2500:he S2499:ie	Expected ")" but found ","
+import-type*	"('x', { with: { 'resolution-mode': 'import' }, })"	S2500:he S2499:ie	Expected ")" but found ","
+import-type*	"('x', { with: { 'resolution-mode': 'import', } })"	S2500:he S2499:ie	Expected ")" but found ","
+import-type*	"('x', { with: { 'resolution-mode': 'require' } }).A"	S2500:he S2499:ie	Expected ")" but found ","
+import-type*	"('x', { with: { a: 'b', c: 'd' } })"	S2500:he S2499:ie	Expected ")" but found ","
+import-type*	"('x', { with: { a: 1 } })"	S2500:he S2499:ie	Expected ")" but found ","
+import-type*	"('x', { with: {} })"	S2500:he S2499:ie	Expected ")" but found ","
+import-type*	"('x', {})"	S2500:he S2499:ie	Expected ")" but found ","
+import-type	"import('x' | 'y')"	S2500:he S2499:ie	Expected ")" but found "|"
+import-type	"import('x').#a"	ok:13 S2500:he S2499:ie	Expected identifier but found "#a"
+import-type*	"import('x').A.<C, D>"	ok:16 P1003:heie	Expected identifier but found "<"
+import-type*	"import('x')<>"	ok:9	Expected ")" but found "<"
+import-type	"import('x')<A>"	ok:9 S2500:he S2499:ie	Expected ")" but found "<"
+import-type*	"import('x', )"	S2500:he S2499:ie	Expected "{" but found ")"
+import-type	"import('x', A)"	S2500:he S2499:ie	Expected "{" but found "A"
+import-type	"import('x',)"	S2500:he S2499:ie	Expected "{" but found ")"
+import-type	"import(A.B)"	S2500:he S2499:ie	Expected string but found "A"
+import-type*	"import(AB)"	S2500:he S2499:ie	Expected string but found "AB"
+import-type	"import(`x`)"	S2500:he S2499:ie	Expected string but found "`x`"
+import-type	"import(x)"	S2500:he S2499:ie	Expected string but found "x"
+import-type	"import.meta"	S2500:he S2499:ie	Expected "(" but found "."
+indexed*	"(keyof )[B]"	S2500:he S2499:ie	Unexpected )
+indexed*	"<B>[C]"	P1109,1005:heie	Expected "(" but found "["
+indexed	"A\n[B]"	S2500:he S2499:ie	Expected "{" but found "["
+indexed	"A[B, C]"	S2500:he S2499:ie	Expected "]" but found ","
+indexed*	"A[keyof ]"	S2500:he S2499:ie	Unexpected ]
+indexed*	"typeof [B]"	P1109,1005:heie	Expected identifier but found "["
+infer*	" U extends A"	S1172:ie	Expected "?" but found "{"
+infer*	"A extends  U extends B ? U : never"	P1005:ie	Expected "?" but found "extends"
+infer*	"A extends  in ? 1 : 2"	S2304!:13 P1109,1005:heie	Unexpected in
+infer*	"A extends () =>  R extends B ? R : never"	P1109,1005:ie	Expected "?" but found "{"
+infer	"A extends () => infer R extends B ? R : never"	P1109,1005:ie	Expected "?" but found "{"
+infer*	"A extends (...a:  P) => infer R extends B ? P : R"	P1109,1005:ie	Expected "?" but found "{"
+infer*	"A extends (...a: infer P) =>  R extends B ? P : R"	P1109,1005:ie	Expected "?" but found "{"
+infer	"A extends (...a: infer P) => infer R extends B ? P : R"	P1109,1005:ie	Expected "?" but found "{"
+infer*	"A extends (a: infer P) => infer R extends B ? P : R"	P1005,1109:ie	Expected "?" but found "{"
+infer*	"infer "	ok:heie	Expected identifier but found "{"
+infer*	"infer  extends A"	S1172:ie	Expected identifier but found "extends"
+jsdoc	"!A"	P1109,1005:heie	Unexpected !
+jsdoc	"A.<B>"	S8020:16 P1003:heie	Expected identifier but found "<"
+jsdoc	"Array.<A>"	S8020:16 P1003:heie	Expected identifier but found "<"
+junk	""	S1097:ie	Expected "{" but found end of file
+junk	"#a"	S2304!:12 S1110:tp	Unexpected #a
+junk	"/a/"	S2500:he S2499:ie	Unexpected /
+junk	"/a/g"	S2500:he S2499:ie	Unexpected /
+junk	"A?.B"	S2500:he S2499:ie	Expected "{" but found "?."
+junk	"await A"	P1005:heie	Expected "{" but found "A"
+junk	"class {}"	S2304!:fr S2500:he S2499:ie	Unexpected class
+junk	"delete A"	P1109,1005:heie	Unexpected delete
+junk	"function () {}"	S2500:he S2499:ie	Unexpected function
+junk	"super"	S2304!:12 P1034:tp	Unexpected super
+junk	"super.a"	ok:12 S1110:tp S2500:he S2499:ie	Unexpected super
+junk	"void A"	P1109,1005:heie	Expected "{" but found "A"
+junk	"~A"	P1109,1005:heie	Unexpected ~
+literal	"+1"	P1109,1005:heie	Unexpected +
+literal	"-a"	P1109,1005:heie	Expected number but found "a"
+literal	"-true"	P1109,1005:heie	Expected number but found "true"
+mapped*	"{ [K in in ]: V }"	S2304!:13 P1109:heie	Unexpected in
+mapped*	"{ [K in keyof  as K extends A ? B : never]: T[K] }"	S2500:he S2499:ie	Expected "]" but found "K"
+mapped*	"{ [K in keyof  as `a${K}`]: T[K] }"	S2500:he S2499:ie	Expected "]" but found "`a${"
+operator*	"keyof\n"	ok:heie	Expected "{" but found end of file
+operator*	"keyof "	ok:heie	Expected "{" but found end of file
+operator*	"keyof .B"	ok:heie	Unexpected .
+operator*	"keyof <B>"	ok:heie	Expected "(" but found "{"
+operator*	"readonly "	ok:heie	Expected "{" but found end of file
+operator*	"readonly <A>"	ok:heie	Expected "(" but found "{"
+parenthesized	"(A)\n[]"	S1096:fi	Unexpected ]
+parenthesized	"(A)<B>"	S2500:he S2499:ie	Expected "{" but found "<"
+parenthesized	"(A, B)"	S2500:he S2499:ie	Expected ")" but found ","
+parenthesized*	"(a<>)"	S2500:he S2499:ie	Unexpected >
+parenthesized*	"(a<B)"	S2500:he S2499:ie	Expected ">" but found ")"
+parenthesized	"(a?.b)"	S2500:he S2499:ie	Expected ")" but found "?."
+parenthesized*	"(infer )"	S2500:he S2499:ie	Expected identifier but found ")"
+predicate*	" asserts is A"	ok:refrarte	Expected ";" but found "A"
+predicate*	"asserts  is A"	ok:refrarte	Expected ";" but found "A"
+predicate*	"asserts  is A | B"	ok:refrarte	Expected ";" but found "A"
+predicate	"asserts a\nis A"	ok:refrarte	Expected ";" but found "A"
+predicate*	"asserts is  A"	ok:refrarte	Expected ";" but found "A"
+predicate	"asserts is A"	ok:refrarte	Expected ";" but found "A"
+query*	" a\n<B>"	ok:heie	Expected "{" but found "<"
+query*	" a()"	S2500:he S2499:ie	Expected "{" but found "("
+query*	" a.#b"	S2500:he S2499:ie	Expected identifier but found "#b"
+query*	" a.b()"	S2500:he S2499:ie	Expected "{" but found "("
+query*	" a?.b"	S2500:he S2499:ie	Expected "{" but found "?."
+query*	" class"	S2304!:14 P1005:tp	Unexpected class
+query*	" delete"	S2304!:12 P1109:tp	Unexpected delete
+query*	" enum"	S2304!:15	Unexpected enum
+query*	" function"	S2304!:16	Unexpected function
+query*	" in"	S2304!:12 P1109:tp	Unexpected in
+query*	" infer"	ok:heie	Expected identifier but found "{"
+query*	" keyof"	ok:heie	Expected "{" but found end of file
+query*	" out"	ok:an	The modifier "out" is not valid here
+query*	" readonly"	ok:heie	Expected "{" but found end of file
+query*	" var"	S2304!:15	Unexpected var
+query	"typeof 'a'"	P1109,1005:heie	Expected identifier but found "'a'"
+query*	"typeof ('x')"	P1109,1005:heie	Expected identifier but found "("
+query*	"typeof ('x').a"	P1109,1005:heie	Expected identifier but found "("
+query*	"typeof ('x').a<B>"	P1109:heie	Expected identifier but found "("
+query	"typeof (a)"	P1109,1005:heie	Expected identifier but found "("
+query	"typeof 1"	P1109,1005:heie	Expected identifier but found "1"
+query*	"typeof <B>[]"	P1109,1005:heie	Expected identifier but found "<"
+query*	"typeof ['b']"	P1109,1005:heie	Expected identifier but found "["
+query*	"typeof []"	P1109,1005:heie	Expected identifier but found "["
+query*	"typeof [number]"	P1109,1005:heie	Expected identifier but found "["
+query	"typeof a\n<B>"	P1109:heie	Expected "{" but found "<"
+query	"typeof a()"	P1109,1005:heie	Expected "{" but found "("
+query	"typeof a.b()"	P1109,1005:heie	Expected "{" but found "("
+query*	"typeof a<>.c"	P1109,1477,1005:heie	Unexpected >
+query	"typeof a?.b"	P1109,1005:heie	Expected "{" but found "?."
+query*	"typeof ab()"	P1109,1005:heie	Expected "{" but found "("
+query	"typeof typeof a"	P1109,1005:heie	Expected "{" but found "a"
+reference*	"<B>[]"	P1109,1005:heie	Expected "(" but found "["
+reference	"A\n<B>"	ok:heie	Expected "{" but found "<"
+reference*	"A.<C>"	S8020:16 P1003:heie	Expected identifier but found "<"
+reference*	"A.B.<D>[]"	S8020:16 P1003,1005:heie	Expected identifier but found "<"
+reference*	"A<>.C"	P1477:heie	Unexpected >
+this-type	"this<A>"	S2500:he S2499:ie	Expected "{" but found "<"
+tuple*	"[, B | C]"	S2500:he S2499:ie	Unexpected ,
+tuple*	"[, B]"	S2500:he S2499:ie	Unexpected ,
+tuple*	"[,,B]"	S2500:he S2499:ie	Unexpected ,
+tuple	"[,]"	S2500:he S2499:ie	Unexpected ,
+tuple	"[...class: A[]]"	ok:14 P1005,1011:heie	Unexpected class
+tuple*	"[...class: []]"	ok:14 P1005:heie	Unexpected class
+tuple	"[...const: A[]]"	ok:16 P1109,1134,1005:heie	Unexpected "const"
+tuple*	"[...const: []]"	ok:16 P1109,1134,1005:heie	Unexpected "const"
+tuple	"[...delete: A[]]"	ok:14 P1109,1011:heie	Unexpected delete
+tuple*	"[...delete: []]"	ok:14 P1109:heie	Unexpected delete
+tuple	"[...enum: A[]]"	ok:14 P1109,1003,1011,1005:heie	Unexpected enum
+tuple*	"[...enum: []]"	ok:14 P1109,1003,1005:heie	Unexpected enum
+tuple	"[...extends: A[]]"	ok:14 P1109,1011,1005:heie	Unexpected extends
+tuple*	"[...extends: []]"	ok:14 P1109,1005:heie	Unexpected extends
+tuple	"[...in: A[]]"	ok:14 P1109,1011:heie	Unexpected in
+tuple*	"[...in: []]"	ok:14 P1109:heie	Unexpected in
+tuple*	"[...infer ]"	S2500:he S2499:ie	Expected identifier but found "]"
+tuple	"[...var: A[]]"	ok:14 P1109,1134,1005:heie	Unexpected var
+tuple*	"[...var: []]"	ok:14 P1109,1134,1005:heie	Unexpected var
+tuple	"[A,,B]"	S2500:he S2499:ie	Unexpected ,
+tuple*	"[A,,]"	S2500:he S2499:ie	Unexpected ,
+tuple*	"[A<>]"	S2500:he S2499:ie	Unexpected >
+tuple*	"[A<B<>>]"	S2500:he S2499:ie	Unexpected >>
+tuple*	"[A<B<C>]"	S2500:he S2499:ie	Expected ">" but found "]"
+tuple*	"[A<B]"	S2500:he S2499:ie	Expected ">" but found "]"
+tuple*	"[a: ?]"	P1110:arta	Expected ";" but found ":"
+tuple	"[a: A?]"	S5086:16 P1005,1109:heie	Expected "]" but found "?"
+tuple*	"[a<B> A]"	S2500:he S2499:ie	Expected "]" but found "A"
+tuple*	"[a?: ?]"	P1110:arta	Expected ";" but found ":"
+tuple	"[a?: A?]"	S5086:16 P1109:heie	Expected "]" but found "?"
+tuple*	"[await A]"	S2500:he S2499:ie	Expected "]" but found "A"
+tuple*	"[delete A]"	S2500,1102:he S2499,1102:ie	Unexpected delete
+tuple	"[function]"	S2304!:16 P1005:heie	Expected ":" but found "]"
+tuple*	"[infer ]"	S2500:he S2499:ie	Expected identifier but found "]"
+tuple	"[infer]"	S2500:he S2499:ie	Expected identifier but found "]"
+tuple*	"[keyof ]"	S2500:he S2499:ie	Unexpected ]
+tuple	"[keyof]"	S2500:he S2499:ie	Unexpected ]
+tuple*	"[new A]"	S2500:he S2499:ie	Expected "(" but found "A"
+tuple	"[readonly]"	S2500:he S2499:ie	Unexpected ]
+tuple*	"[void A]"	S2500:he S2499:ie	Expected "]" but found "A"
+type-literal*	"{ #a:  }"	P1110:arta	Expected ";" but found ":"
+type-literal	"{ #a: A }"	S18016:16 S2500:he S2499:ie	Unexpected #a
+type-literal*	"{ (b = 1): void }"	S2371:13 P1136,1005,1109:heie	Expected ")" but found "="
+type-literal	"{ 1n: A }"	S1539:13 S2500:he S2499:ie	Unexpected 1n
+type-literal*	"{ [ + b]: A }"	S1170:13 S2500:he S2499:ie	Unexpected +
+type-literal*	"{ [...k: []]: A }"	S1017:13 P1109,1005,1136:heie	Unexpected ...
+type-literal	"{ [...k: string[]]: A }"	S1017:13 P1109,1005,1136:heie	Unexpected ...
+type-literal*	"{ []: A }"	S1096:14 P1109:heie	Unexpected ]
+type-literal	"{ [a + b]: A }"	S1170:13 S2500:he S2499:ie	Expected "]" but found "+"
+type-literal	"{ [a as B]: A }"	S1170:13 S2500:he S2499:ie	Expected "]" but found "as"
+type-literal	"{ [k = 1]: A }"	S1170:13 S2500:he S2499:ie	Expected "]" but found "="
+type-literal*	"{ [k `a${string}`]: A }"	S1170:13 S2500:he S2499:ie	Expected "]" but found "`a${"
+type-literal	"{ [k: string, l: number]: A }"	S1096:13 P1005,1136:heie	Expected "]" but found ","
+type-literal	"{ [k: string,]: A }"	S1025:13 P1005,1136:heie	Expected "]" but found ","
+type-literal	"{ [k?: string]: A }"	S1019:13 P1109:heie	Expected "]" but found "?"
+type-literal	"{ a(b = 1): void }"	S2371:13 S2500:he S2499:ie	Expected ")" but found "="
+type-literal	"{ a: A = 1 }"	S1247:13 S2500:he S2499:ie	Unexpected =
+type-literal*	"{ readonly []: A }"	S1096:14 P1109:heie	Unexpected ]
+union*	"A  (B & C)"	S2500:he S2499:ie	Expected "{" but found "("

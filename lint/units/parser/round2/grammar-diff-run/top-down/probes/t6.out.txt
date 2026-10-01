@@ -1,0 +1,34 @@
+A>A  tsc parse[] grammar[TS1108@21]             function f(): A {} { return x; }
+R>A  tsc parse[] grammar[TS1108@25]             function f(): class {} { return x; }
+      base: Unexpected class
+A>A  tsc parse[] grammar[TS1108@2]              { return x; }
+A>A  tsc parse[] grammar[TS1108@0]              return x;
+R>A  tsc parse[] grammar[]                      function f(): class { return x; }
+      base: Unexpected class
+R>A  tsc parse[] grammar[]                      function f(): class {}
+      base: Unexpected class
+A>A  tsc parse[] grammar[]                      let v = [delete A];
+R>A  tsc parse[] grammar[]                      class C implements [delete A] {}
+      base: Unexpected delete
+A>A  tsc parse[] grammar[]                      class C implements [A] {}
+A>A  tsc parse[] grammar[]                      delete A;
+A>A  tsc parse[] grammar[TS1253@10]             class C { abstract a: A }
+A>A  tsc parse[] grammar[TS1253@10]             class C { abstract accessor a: A }
+A>A  tsc parse[] grammar[]                      class C { readonly a?: A }
+A>A  tsc parse[TS1005@23,TS1005@27] grammar[-]  import B from "y"⏎with (A) {}
+R>A  tsc parse[TS1005@64,TS1005@68] grammar[-]  import A from "x"⏎with { type: "json" };⏎import B from "y"⏎with (A) {}
+      base: Expected "(" but found "{"
+R>A  tsc parse[] grammar[]                      import A from "x"⏎with { type: "json" };
+      base: Expected "(" but found "{"
+R>A  tsc parse[TS1005@27,TS1005@43] grammar[-]  export { a } from "x"⏎with { type: "json" };
+      base: Expected "(" but found "{"
+R>A  tsc parse[TS1005@23,TS1005@39] grammar[-]  export * from "x"⏎with { type: "json" };
+      base: Expected "(" but found "{"
+R>A  tsc parse[] grammar[TS2857@23]             import type A from "x"⏎with { type: "json" };
+      base: Expected "(" but found "{"
+A>A  tsc parse[] grammar[TS2857@23]             import type A from "x" with { type: "json" };
+R>A  tsc parse[TS1005@20] grammar[-]            type as = 1⏎type as any
+      base: Unexpected =
+A>A  tsc parse[TS1005@29] grammar[-]            interface as {}⏎interface as any⏎foo()
+A>A  tsc parse[] grammar[]                      namespace as {}
+A>A  tsc parse[TS1005@29] grammar[-]            namespace as {}⏎namespace as any

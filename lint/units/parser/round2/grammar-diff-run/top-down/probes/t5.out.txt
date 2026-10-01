@@ -1,0 +1,30 @@
+R>R  tsc parse[TS1005@54] grammar[-]            type X = A extends () => infer R extends B ? R : never;
+      base: Expected "?" but found ";"
+R>A  tsc parse[TS1109@31,TS1005@33,TS1005@42,TS1005@54,TS1005@58] grammar[-] interface I extends A extends () => infer R extends B ? R : never {}
+      base: Expected "?" but found "{"
+A>A  tsc parse[TS1005@32,TS1005@36] grammar[-]  interface I extends A extends B ? C : D {}
+A>A  tsc parse[TS1109@31,TS1005@33,TS1005@42,TS1005@44,TS1005@48] grammar[-] interface I extends A extends () => infer R ? R : never {}
+R>R  tsc parse[TS1109@30,TS1005@32,TS1005@41,TS1005@53,TS1005@57] grammar[-] class C implements A extends () => infer R extends B ? R : never {}
+      base: Expected "?" but found "{"
+R>A  tsc parse[TS1005@42,TS1005@46] grammar[-]  interface I extends A extends B extends C ? D : E {}
+      base: Expected "?" but found "extends"
+A>A  tsc parse[TS1005@23,TS1005@33,TS1005@37,TS1005@40] grammar[-] interface I extends (A extends B ? C : D) {}
+R>A  tsc parse[TS1477@20] grammar[-]            class C implements A<>.C {}
+      base: Unexpected >
+A>A  tsc parse[TS1477@20] grammar[-]            class C implements A<B>.C {}
+A>A  tsc parse[TS1477@9] grammar[-]             let v = A<>.C;
+A>A  tsc parse[TS1477@9] grammar[-]             let v = A<B>.C;
+A>A  tsc parse[TS1477@17] grammar[-]            class C extends A<>.C {}
+A>A  tsc parse[TS1477@17] grammar[-]            class C extends A<B>.C {}
+R>A  tsc parse[TS1109@20,TS1477@28,TS1005@33] grammar[-] interface I extends typeof a<>.c {}
+      base: Unexpected >
+A>A  tsc parse[TS1109@20,TS1477@28,TS1005@34] grammar[-] interface I extends typeof a<B>.c {}
+R>R  tsc parse[TS1005@17] grammar[-]            let x: typeof a<>.c;
+      base: Unexpected >
+R>R  tsc parse[TS1005@10] grammar[-]            let x: A<>.C;
+      base: Unexpected >
+R>R  tsc parse[] grammar[TS1099@8]              let x: A<>;
+      base: Unexpected >
+A>A  tsc parse[] grammar[TS1099@1]              f<>();
+R>R  tsc parse[] grammar[TS1099@15]             let x: typeof a<>;
+      base: Unexpected >

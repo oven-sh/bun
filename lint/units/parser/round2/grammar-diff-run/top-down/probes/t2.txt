@@ -1,0 +1,31 @@
+function f(): (a) =>  { return x; }
+function f(): (a = 1) =>  { return x; }
+class C { @d m(): (a) =>  { return x; } }
+function f(): <T>() =>  { return x; }
+function f(): <out>() =>  { return x; }
+let f = (a): <T>() =>  => a;
+let f = (a): <out>() =>  => a;
+f<<T>() => >(x);
+f<<out>() => >(x);
+let f = (a): [a: ?] => a;
+let f = (a): [a ?] => a;
+f<[a: ?]>(x);
+let f = (a): { #a:  } => a;
+let f = (a): { a:  } => a;
+f<{ a:  }>(x);
+f< extends>(x);
+f<extends B ? C : D>(x);
+f<extends ? C : D>(x);
+let x: A<extends>;
+let x: extends;
+function f<U extends  in>() {}
+function f<U extends  delete>() {}
+function f<U extends  class>() {}
+function f<U extends super>() {}
+function f<U extends super.a>() {}
+function f<U extends #a>() {}
+function f<U extends if>() {}
+function f<U extends  in, V>() {}
+type X<U extends in> = U;
+class C<U extends in> {}
+let f = <U extends in>() => 0;

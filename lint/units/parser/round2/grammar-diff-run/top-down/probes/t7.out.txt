@@ -1,0 +1,52 @@
+R>A  tsc parse[] grammar[TS5087@13]             type X = [a: ...B];
+      base: Unexpected ...
+R>A  tsc parse[] grammar[TS5087@13]             type X = [a: ...B[]];
+      base: Unexpected ...
+A>A  tsc parse[] grammar[TS5085@10]             type X = [...a?: B];
+A>A  tsc parse[] grammar[]                      type X = [...a: B[]];
+A>A  tsc parse[] grammar[]                      type X = [a?: B];
+A>A  tsc parse[] grammar[]                      type X = [A?];
+A>A  tsc parse[] grammar[TS17019@13]            type X = [...A?];
+R>A  tsc parse[] grammar[TS5086@13]             type X = [a: B?];
+      base: Expected "]" but found "?"
+R>A  tsc parse[] grammar[TS5086@16]             type X = [...a: B?];
+      base: Expected "]" but found "?"
+A>A  tsc parse[] grammar[]                      type X = [a: B, C];
+A>A  tsc parse[] grammar[]                      type X = [A, b: B];
+R>R  tsc parse[] grammar[TS17019@9]             type X = [a: B]?;
+      base: Expected ";" but found "?"
+R>A  tsc parse[] grammar[]                      type X = { [+1]: A };
+      base: Unexpected +
+R>A  tsc parse[] grammar[]                      type X = { [a?.b]: A };
+      base: Expected "]" but found "?."
+R>A  tsc parse[] grammar[]                      interface I { [+1]: A }
+      base: Unexpected +
+R>A  tsc parse[] grammar[]                      class C { [k: string]: T, }
+      base: Expected ";" but found ","
+A>A  tsc parse[] grammar[]                      class C { static [k: string]: T }
+A>A  tsc parse[] grammar[]                      class C { readonly [k: string]: T; }
+A>A  tsc parse[] grammar[]                      class C { [k: string]: T; [l: number]: U }
+A>A  tsc parse[] grammar[]                      class C { [k: string]: T⏎[l: number]: U }
+A>A  tsc parse[] grammar[]                      class C { [k]: T }
+A>A  tsc parse[] grammar[]                      class C { [k] }
+R>R  tsc parse[TS1005@21,TS1068@22] grammar[-]  class C { [k: string]?: T }
+      base: Expected ":" but found "?"
+R>R  tsc parse[TS1005@21,TS1109@22,TS1128@26] grammar[-] class C { [k: string]!: T }
+      base: Expected ":" but found "!"
+R>R  tsc parse[TS1005@25] grammar[-]            class C { [k: string]: T = 1 }
+      base: Expected ";" but found "="
+R>R  tsc parse[] grammar[TS1018@18]             class C { [public k: string]: T }
+      base: Expected "]" but found "k"
+R>A  tsc parse[] grammar[TS1020@11]             class C { [k: string = ""]: T }
+      base: Expected "]" but found "="
+R>A  tsc parse[] grammar[TS1019@12]             class C { [k?: string]: T }
+      base: Unexpected :
+R>A  tsc parse[] grammar[TS1017@11]             class C { [...k: string[]]: T }
+      base: Unexpected ...
+R>A  tsc parse[] grammar[TS1025@20]             class C { [k: string,]: T }
+      base: Expected "]" but found ","
+R>A  tsc parse[] grammar[TS1096@10]             class C { []: T }
+      base: Unexpected ]
+R>A  tsc parse[] grammar[]                      class C { [await: string]: T }
+      base: Unexpected :
+A>A  tsc parse[] grammar[]                      class C { [yield: string]: T }

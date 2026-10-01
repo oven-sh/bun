@@ -1,0 +1,129 @@
+## ruling: A>A a declaration named as or satisfies, where the base read a cast  A>A  (2 forms)
+   "namespace as {}"  ctx[-] apis=10 recs=10  base: 
+   "module as {}"  ctx[-] apis=1 recs=1  base: 
+## RESTORE: grammar error of the checker TS1243  R>A  (2 forms)
+   "class C { readonly accessor a: A }"  ctx[-] apis=9 recs=9  base: Expected ";" but found "a"
+   "class C { declare accessor a: A }"  ctx[-] apis=9 recs=9  base: Expected ";" but found "a"
+## RESTORE: grammar error of the checker TS1276  R>A  (1 forms)
+   "class C { accessor a?: A }"  ctx[-] apis=9 recs=9  base: Expected ";" but found "a"
+## RESTORE: grammar error of the checker TS1021  R>A  (1 forms)
+   "class C { [k: string] }"  ctx[-] apis=15 recs=15  base: Expected ":" but found "}"
+## RESTORE: grammar error of the checker TS1096  R>A  (7 forms)
+   "class C { [k: string, l: number]: A }"  ctx[-] apis=15 recs=15  base: Expected "]" but found ","
+   "type X = { [a, b]: A };"  ctx[-] apis=15 recs=15  base: Expected "]" but found ","
+   "class K { @d p: { [a, b]: A }; }"  ctx[-] apis=15 recs=15  base: Expected "]" but found ","
+   "class K { @d p: { []: A }; }"  ctx[-] apis=15 recs=15  base: Unexpected ]
+   "class K { @d p: { [k: string, l: number]: A }; }"  ctx[-] apis=15 recs=15  base: Expected "]" but found ","
+   "type X = { [k, l]: A };"  ctx[-] apis=15 recs=15  base: Expected "]" but found ","
+   "class K { @d p: { [k, l]: A }; }"  ctx[-] apis=15 recs=15  base: Expected "]" but found ","
+## RESTORE: grammar error of the checker TS1009  R>A  (1 forms)
+   "interface I extends A, {}"  ctx[-] apis=15 recs=15  base: Expected "{" but found end of file
+## RESTORE: grammar error of the checker TS1097  R>A  (1 forms)
+   "interface I extends {}"  ctx[-] apis=15 recs=15  base: Expected "{" but found end of file
+## RESTORE: grammar error of the checker TS1172  R>A  (3 forms)
+   "interface I extends A extends B {}"  ctx[-] apis=15 recs=15  base: Expected "?" but found "{"
+   "interface I extends A, B extends C {}"  ctx[-] apis=15 recs=15  base: Expected "?" but found "{"
+   "interface I extends A<B> extends C<D> {}"  ctx[-] apis=15 recs=15  base: Expected "?" but found "{"
+## FORBIDDEN metadata: differs from tsc  A>A  (1 forms)
+   "class C { @d a: A extends B ? C : C }"  ctx[-] apis=4 recs=4  base: 
+## ruling: metadata of a source that tsc does not parse  A>A  (1 forms)
+   "class C { @d a: b is A }"  ctx[-] apis=4 recs=4  base: 
+## RESTORE: grammar error of the checker TS2304  R>A  (3 forms)
+   "let x: keyof #a;"  ctx[-] apis=15 recs=15  base: Unexpected #a
+   "let x: #a[];"  ctx[-] apis=15 recs=15  base: Unexpected #a
+   "let x: #a | B;"  ctx[-] apis=15 recs=15  base: Unexpected #a
+## RESTORE: grammar error of the checker TS18016  R>A  (3 forms)
+   "interface I { #a: A }"  ctx[-] apis=15 recs=15  base: Unexpected #a
+   "interface I { #a(): void }"  ctx[-] apis=15 recs=15  base: Unexpected #a
+   "class K { @d p: { #a: A }; }"  ctx[-] apis=15 recs=15  base: Unexpected #a
+## RESTORE: grammar error of the checker TS8020  R>A  (16 forms)
+   "function f(x: A.<B>) {}"  ctx[-] apis=15 recs=15  base: Expected identifier but found "<"
+   "function f(x: any): A.<B> { return null as any }"  ctx[-] apis=15 recs=15  base: Expected identifier but found "<"
+   "let f = (x: A.<B>) => x;"  ctx[-] apis=15 recs=15  base: Expected identifier but found "<"
+   "let f = (x: any): A.<B> => x;"  ctx[-] apis=15 recs=15  base: Unexpected ":"
+   "function f<U extends A.<B>, V = A.<B>>() {}"  ctx[-] apis=15 recs=15  base: Expected identifier but found "<"
+   "class K { @d p: A.<B>; }"  ctx[-] apis=15 recs=15  base: Expected identifier but found "<"
+   "class K { @d m(x: A.<B>) {} }"  ctx[-] apis=15 recs=15  base: Expected identifier but found "<"
+   "class K { @d m(x: any): A.<B> { return null as any } }"  ctx[-] apis=15 recs=15  base: Expected identifier but found "<"
+   "function f(x: Array.<A>) {}"  ctx[-] apis=15 recs=15  base: Expected identifier but found "<"
+   "function f(x: any): Array.<A> { return null as any }"  ctx[-] apis=15 recs=15  base: Expected identifier but found "<"
+   "let f = (x: Array.<A>) => x;"  ctx[-] apis=15 recs=15  base: Expected identifier but found "<"
+   "let f = (x: any): Array.<A> => x;"  ctx[-] apis=15 recs=15  base: Unexpected ":"
+   "function f<U extends Array.<A>, V = Array.<A>>() {}"  ctx[-] apis=15 recs=15  base: Expected identifier but found "<"
+   "class K { @d p: Array.<A>; }"  ctx[-] apis=15 recs=15  base: Expected identifier but found "<"
+   "class K { @d m(x: Array.<A>) {} }"  ctx[-] apis=15 recs=15  base: Expected identifier but found "<"
+   "class K { @d m(x: any): Array.<A> { return null as any } }"  ctx[-] apis=15 recs=15  base: Expected identifier but found "<"
+## RESTORE: grammar error of the checker TS1110  R>A  (2 forms)
+   "function f<U extends #a, V = #a>() {}"  ctx[-] apis=15 recs=15  base: Unexpected #a
+   "function f<U extends super.A, V = super.A>() {}"  ctx[-] apis=15 recs=15  base: Unexpected super
+## RESTORE: grammar error of the checker TS1108  R>A  (1 forms)
+   "function f(x: any): class {} { return null as any }"  ctx[-] apis=15 recs=15  base: Unexpected class
+## RESTORE: grammar error of the checker TS1247  R>A  (3 forms)
+   "class K { @d p: { a: A = 1 }; }"  ctx[-] apis=15 recs=15  base: Unexpected =
+   "type X = { a?: A = 1 };"  ctx[-] apis=15 recs=15  base: Unexpected =
+   "class K { @d p: { a?: A = 1 }; }"  ctx[-] apis=15 recs=15  base: Unexpected =
+## RESTORE: grammar error of the checker TS1539  R>A  (1 forms)
+   "class K { @d p: { 1n: A }; }"  ctx[-] apis=15 recs=15  base: Unexpected 1n
+## RESTORE: grammar error of the checker TS1170  R>A  (4 forms)
+   "type X = { [\"a\" + \"b\"]: A };"  ctx[-] apis=15 recs=15  base: Expected "]" but found "+"
+   "class K { @d p: { [\"a\" + \"b\"]: A }; }"  ctx[-] apis=15 recs=15  base: Expected "]" but found "+"
+   "class K { @d p: { [a as B]: A }; }"  ctx[-] apis=15 recs=15  base: Expected "]" but found "as"
+   "class K { @d p: { [k = 1]: A }; }"  ctx[-] apis=15 recs=15  base: Expected "]" but found "="
+## RESTORE: grammar error of the checker TS1019  R>A  (3 forms)
+   "class K { @d p: { [k?: string]: A }; }"  ctx[-] apis=15 recs=15  base: Expected "]" but found "?"
+   "type X = { [k?]: A };"  ctx[-] apis=15 recs=15  base: Expected "]" but found "?"
+   "class K { @d p: { [k?]: A }; }"  ctx[-] apis=15 recs=15  base: Expected "]" but found "?"
+## RESTORE: grammar error of the checker TS1017  R>A  (1 forms)
+   "class K { @d p: { [...k: string[]]: A }; }"  ctx[-] apis=15 recs=15  base: Unexpected ...
+## RESTORE: grammar error of the checker TS1025  R>A  (1 forms)
+   "class K { @d p: { [k: string,]: A }; }"  ctx[-] apis=15 recs=15  base: Expected "]" but found ","
+## RESTORE: grammar error of the checker TS1183  R>A  (2 forms)
+   "type X = { get a(): A {} };"  ctx[-] apis=15 recs=15  base: Unexpected {
+   "class K { @d p: { get a(): A {} }; }"  ctx[-] apis=15 recs=15  base: Unexpected {
+## RESTORE: grammar error of the checker TS1176  R>A  (1 forms)
+   "interface I implements A extends B {}"  ctx[-] apis=15 recs=15  base: Expected "?" but found "{"
+## RESTORE: grammar error of the checker TS1048  R>A  (6 forms)
+   "type X = (...a = []) => R;"  ctx[-] apis=15 recs=15  base: Unexpected ...
+   "class K { @d p: (...a = []) => R; }"  ctx[-] apis=15 recs=15  base: Unexpected ...
+   "type X = (...a: A[] = []) => R;"  ctx[-] apis=15 recs=15  base: Unexpected ...
+   "class K { @d p: (...a: A[] = []) => R; }"  ctx[-] apis=15 recs=15  base: Unexpected ...
+   "type X = (...[a] = []) => R;"  ctx[-] apis=15 recs=15  base: Unexpected ...
+   "class K { @d p: (...[a] = []) => R; }"  ctx[-] apis=15 recs=15  base: Unexpected ...
+## RESTORE: grammar error of the checker TS1015  R>A  (16 forms)
+   "type X = (a?: A = 1) => R;"  ctx[-] apis=15 recs=15  base: Expected ")" but found "?"
+   "class K { @d p: (a?: A = 1) => R; }"  ctx[-] apis=15 recs=15  base: Expected ")" but found "?"
+   "type X = (a? = 1) => R;"  ctx[-] apis=15 recs=15  base: Expected ")" but found "?"
+   "class K { @d p: (a? = 1) => R; }"  ctx[-] apis=15 recs=15  base: Expected ")" but found "?"
+   "type X = (a?: A = 1) => B;"  ctx[-] apis=15 recs=15  base: Expected ")" but found "?"
+   "let x: (a?: A = 1) => B;"  ctx[-] apis=15 recs=15  base: Expected ")" but found "?"
+   "function f(x: (a?: A = 1) => B) {}"  ctx[-] apis=15 recs=15  base: Expected ")" but found "?"
+   "function f(x: any): (a?: A = 1) => B { return null as any }"  ctx[-] apis=15 recs=15  base: Expected ")" but found "?"
+   "let f = (x: (a?: A = 1) => B) => x;"  ctx[-] apis=15 recs=15  base: Expected ")" but found "?"
+   "let v = x as (a?: A = 1) => B;"  ctx[-] apis=15 recs=15  base: Expected ")" but found "?"
+   "let v = x satisfies (a?: A = 1) => B;"  ctx[-] apis=15 recs=15  base: Expected ")" but found "?"
+   "let v = <(a?: A = 1) => B>x;"  ctx[-] apis=10 recs=10  base: Expected ")" but found "?"
+   "function f<U extends (a?: A = 1) => B, V = (a?: A = 1) => B>() {}"  ctx[-] apis=15 recs=15  base: Expected ")" but found "?"
+   "class K { @d p: (a?: A = 1) => B; }"  ctx[-] apis=15 recs=15  base: Expected ")" but found "?"
+   "class K { @d m(x: (a?: A = 1) => B) {} }"  ctx[-] apis=15 recs=15  base: Expected ")" but found "?"
+   "class K { @d m(x: any): (a?: A = 1) => B { return null as any } }"  ctx[-] apis=15 recs=15  base: Expected ")" but found "?"
+## RESTORE: grammar error of the checker TS1186  R>A  (2 forms)
+   "type X = ({ ...a = 1 }) => R;"  ctx[-] apis=15 recs=15  base: Unexpected ...
+   "class K { @d p: ({ ...a = 1 }) => R; }"  ctx[-] apis=15 recs=15  base: Unexpected ...
+## RESTORE: grammar error of the checker TS1029  R>A  (6 forms)
+   "type X = (readonly public a: A) => R;"  ctx[-] apis=15 recs=15  base: Expected ")" but found "a"
+   "class K { @d p: (readonly public a: A) => R; }"  ctx[-] apis=15 recs=15  base: Expected ")" but found "a"
+   "type X = (override public a: A) => R;"  ctx[-] apis=15 recs=15  base: Expected ")" but found "public"
+   "class K { @d p: (override public a: A) => R; }"  ctx[-] apis=15 recs=15  base: Expected ")" but found "public"
+   "function f(readonly public a: A) {}"  ctx[-] apis=15 recs=15  base: Expected ")" but found "public"
+   "function f(override public a: A) {}"  ctx[-] apis=15 recs=15  base: Expected ")" but found "public"
+## RESTORE: grammar error of the checker TS1028  R>A  (6 forms)
+   "type X = (public private a: A) => R;"  ctx[-] apis=15 recs=15  base: Expected ")" but found "private"
+   "class K { @d p: (public private a: A) => R; }"  ctx[-] apis=15 recs=15  base: Expected ")" but found "private"
+   "type X = (public public a: A) => R;"  ctx[-] apis=15 recs=15  base: Expected ")" but found "public"
+   "class K { @d p: (public public a: A) => R; }"  ctx[-] apis=15 recs=15  base: Expected ")" but found "public"
+   "function f(public private a: A) {}"  ctx[-] apis=15 recs=15  base: Expected ")" but found "private"
+   "function f(public public a: A) {}"  ctx[-] apis=15 recs=15  base: Expected ")" but found "public"
+## RESTORE: grammar error of the checker TS1030  R>A  (3 forms)
+   "type X = (readonly readonly a: A) => R;"  ctx[-] apis=15 recs=15  base: Expected ")" but found ":"
+   "class K { @d p: (readonly readonly a: A) => R; }"  ctx[-] apis=15 recs=15  base: Expected ")" but found ":"
+   "function f(readonly readonly a: A) {}"  ctx[-] apis=15 recs=15  base: Expected ")" but found "readonly"

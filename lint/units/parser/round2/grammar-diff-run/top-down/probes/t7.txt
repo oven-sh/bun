@@ -1,0 +1,33 @@
+type X = [a: ...B];
+type X = [a: ...B[]];
+type X = [...a?: B];
+type X = [...a: B[]];
+type X = [a?: B];
+type X = [A?];
+type X = [...A?];
+type X = [a: B?];
+type X = [...a: B?];
+type X = [a: B, C];
+type X = [A, b: B];
+type X = [a: B]?;
+type X = { [+1]: A };
+type X = { [a?.b]: A };
+interface I { [+1]: A }
+class C { [k: string]: T, }
+class C { static [k: string]: T }
+class C { readonly [k: string]: T; }
+class C { [k: string]: T; [l: number]: U }
+class C { [k: string]: T⏎[l: number]: U }
+class C { [k]: T }
+class C { [k] }
+class C { [k: string]?: T }
+class C { [k: string]!: T }
+class C { [k: string]: T = 1 }
+class C { [public k: string]: T }
+class C { [k: string = ""]: T }
+class C { [k?: string]: T }
+class C { [...k: string[]]: T }
+class C { [k: string,]: T }
+class C { []: T }
+class C { [await: string]: T }
+class C { [yield: string]: T }

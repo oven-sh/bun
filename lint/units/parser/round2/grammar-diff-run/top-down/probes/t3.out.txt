@@ -1,0 +1,82 @@
+R>A  tsc parse[] grammar[TS2304@7]              let x: #a;
+      base: Unexpected #a
+R>A  tsc parse[] grammar[]                      let x: import("x").#a;
+      base: Expected identifier but found "#a"
+R>A  tsc parse[] grammar[]                      let x: import("x").#a.b;
+      base: Expected identifier but found "#a"
+A>A  tsc parse[TS1003@18] grammar[-]            let x: typeof a.#b;
+R>R  tsc parse[TS1003@11] grammar[-]            let x: A.#b;
+      base: Expected identifier but found "#b"
+R>A  tsc parse[] grammar[TS1539@11]             type X = { 1n: A };
+      base: Unexpected 1n
+A>A  tsc parse[TS1131@11,TS1005@13,TS1128@17] grammar[-] type X = { -1: A };
+R>A  tsc parse[] grammar[TS18016@11]            type X = { #a: A };
+      base: Unexpected #a
+R>A  tsc parse[] grammar[TS18016@11]            type X = { #a(): void };
+      base: Unexpected #a
+R>A  tsc parse[] grammar[TS18016@11,TS1247@17]  type X = { #a? = 1 };
+      base: Unexpected #a
+R>A  tsc parse[] grammar[]                      type X = { get #a(): A };
+      base: Unexpected #a
+A>A  tsc parse[] grammar[]                      type X = { get a(): A };
+R>A  tsc parse[] grammar[TS1183@22]             type X = { get a(): A {} };
+      base: Unexpected {
+R>A  tsc parse[] grammar[TS1183@23]             type X = { set a(v: A) {} };
+      base: Unexpected {
+R>A  tsc parse[] grammar[TS1183@19]             type X = { get a() { return 1 } };
+      base: Unexpected {
+R>A  tsc parse[] grammar[TS1247@18]             type X = { a: A = 1 };
+      base: Unexpected =
+R>A  tsc parse[] grammar[TS1247@19]             type X = { a?: A = 1 };
+      base: Unexpected =
+R>A  tsc parse[] grammar[TS1247@16]             type X = { a? = 1 };
+      base: Unexpected =
+R>A  tsc parse[] grammar[TS1247@17]             type X = { [a] = 1 };
+      base: Unexpected =
+R>A  tsc parse[] grammar[TS1247@22]             type X = { ["a"]: A = 1 };
+      base: Unexpected =
+R>A  tsc parse[] grammar[TS1247@20]             type X = { [a]: A = 1 };
+      base: Unexpected =
+R>R  tsc parse[TS1131@11,TS1128@17] grammar[-]  type X = { a = 1 };
+      base: Unexpected =
+R>R  tsc parse[TS1005@18,TS1128@21] grammar[-]  type X = { a(): A {} };
+      base: Unexpected {
+R>R  tsc parse[TS1005@15,TS1128@18] grammar[-]  type X = { a() {} };
+      base: Unexpected {
+R>A  tsc parse[] grammar[TS1246@21]             interface I { a: A = 1 }
+      base: Unexpected =
+R>A  tsc parse[] grammar[]                      type X = ({ 1n: a }) => void;
+      base: Unexpected 1n
+R>A  tsc parse[] grammar[]                      type X = ({ [a]: b }) => void;
+      base: Expected ";" but found "=>"
+R>A  tsc parse[] grammar[]                      type X = ({ [a + b]: c }) => void;
+      base: Expected "]" but found "+"
+R>A  tsc parse[] grammar[]                      type X = ({ a = 1 }) => void;
+      base: Unexpected =
+R>A  tsc parse[] grammar[]                      type X = ([a = 1]) => void;
+      base: Expected "]" but found "="
+R>A  tsc parse[] grammar[TS1186@16]             type X = ([...a = 1]) => void;
+      base: Expected "]" but found "="
+A>A  tsc parse[] grammar[TS2462@14]             type X = ([...a, b]) => void;
+A>A  tsc parse[] grammar[TS2462@15]             type X = ({ ...a, b }) => void;
+A>A  tsc parse[] grammar[TS1013@17]             type X = (a, ...b,) => void;
+A>A  tsc parse[] grammar[TS1047@14]             type X = (...a?) => void;
+A>A  tsc parse[] grammar[TS1047@14]             type X = (...a?: A[]) => void;
+A>A  tsc parse[] grammar[TS1016@14]             type X = (a?, b) => void;
+A>A  tsc parse[] grammar[]                      type X = (this) => void;
+R>A  tsc parse[] grammar[]                      type X = (a = 1,) => void;
+      base: Expected ")" but found "="
+R>A  tsc parse[] grammar[TS1015@13]             type X = { a(b? = 1): A };
+      base: Expected ")" but found "="
+R>A  tsc parse[] grammar[TS1015@16]             type X = { new (b? = 1): A };
+      base: Expected ")" but found "="
+R>A  tsc parse[] grammar[TS1015@12]             type X = { (b? = 1): A };
+      base: Expected ")" but found "="
+R>A  tsc parse[] grammar[TS1048@16]             type X = { a(...b = 1): A };
+      base: Expected ")" but found "="
+R>A  tsc parse[] grammar[TS1015@14]             type X = new (a? = 1) => A;
+      base: Expected ")" but found "?"
+R>A  tsc parse[] grammar[TS1015@23]             type X = abstract new (a? = 1) => A;
+      base: Expected ")" but found "?"
+R>A  tsc parse[] grammar[TS1015@13]             type X = <T>(a? = 1) => A;
+      base: Expected ")" but found "?"

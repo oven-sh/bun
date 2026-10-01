@@ -1,0 +1,85 @@
+TOTAL  restore 16810 rec 1142 src | valid 6950 rec 472 src | unclassified 0 rec 0 src
+RESTORE                                  R1     3195 rec   215 src  a heritage clause takes an expression (reread of the entry as an expression)
+        e.g. "class C implements +1 {}"   base: Unexpected +
+        tsc: S:2500 x1050  S:2499 x1050  P:1109,1005 x765  S:1172 x90  P:1005 x60  P:1109 x60  P:1477 x30  P:1109,1477,1005 x30  S:1097 x15  S:2500,1102 x15  S:2499,1102 x15  P:1005,1109 x15
+RESTORE                                  R10    1060 rec    72 src  `.<` stands before the type arguments of a type reference
+        e.g. "type X = A.<B>;"   base: Expected identifier but found "<"
+        tsc: S:8020 x940  P:1003 x90  P:1003,1005 x30
+RESTORE                                  R11     590 rec    40 src  `?` follows the type of a labeled tuple element
+        e.g. "type X = [a: A?];"   base: Expected "]" but found "?"
+        tsc: S:5086 x470  P:1110 x60  P:1005,1109 x30  P:1109 x30
+RESTORE                                  R12    3095 rec   211 src  a reserved word or a private name is the name of a type
+        e.g. "type X = [function];"   base: Expected ":" but found "]"
+        tsc: S:undeclarable x2810  P:1109 x75  P:1005 x45  P:1110 x45  S:2500 x30  S:2499 x30  S:1110 x30  P:1034 x15  P:1109,1005 x15
+RESTORE                                  R13      45 rec     3 src  an interface has a second extends clause, or extends after implements
+        e.g. "interface I extends [...extends: A[]] {}"   base: Unexpected extends
+        tsc: P:1109,1005 x30  P:1109,1011,1005 x15
+RESTORE                                  R2     3380 rec   230 src  a parameter of a signature has an initializer
+        e.g. "type X = (a = 1) => void;"   base: Expected ")" but found "="
+        tsc: S:2371 x2470  P:1131,1128 x300  P:1005,1109 x270  S:1015,2371 x190  P:1005 x60  P:1109,1005 x30  P:1136,1005,1109 x30  S:2500 x15  S:2499 x15
+RESTORE                                  R3     1850 rec   126 src  a modifier stands before a parameter that is no parameter property
+        e.g. "type X = (public a: A) => void;"   base: Expected ")" but found "a"
+        tsc: S:2369 x1520  P:1005,1109 x240  P:1131,1128 x90
+RESTORE                                  R4     1600 rec   109 src  an index signature with a rest, an optional, no or a second parameter, a comma, or no type
+        e.g. "class C { @d x: A\n[]; }"   base: Unexpected ]
+        tsc: S:1096 x630  S:1017 x380  S:1019 x190  S:1025 x190  P:1109 x90  P:1109,1005,1136 x60  P:1005,1136 x60
+RESTORE                                  R5     1100 rec    75 src  a computed property name of a type literal is no entity name
+        e.g. "type X = { [k = 1]: A };"   base: Expected "]" but found "="
+        tsc: S:1170 x950  S:2500 x75  S:2499 x75
+RESTORE                                  R6      220 rec    15 src  a property of a type literal has an initializer
+        e.g. "type X = { a: A = 1 };"   base: Unexpected =
+        tsc: S:1247 x190  S:2500 x15  S:2499 x15
+RESTORE                                  R7      220 rec    15 src  a bigint names a property of a type literal
+        e.g. "type X = { 1n: A };"   base: Unexpected 1n
+        tsc: S:1539 x190  S:2500 x15  S:2499 x15
+RESTORE                                  R8      265 rec    18 src  a private name names a member of a type literal or an interface
+        e.g. "type X = { #a: A };"   base: Unexpected #a
+        tsc: S:18016 x235  S:2500 x15  S:2499 x15
+RESTORE? tsc reports nothing             R12     190 rec    13 src  a reserved word or a private name is the name of a type
+        e.g. "type X = import('x').#a;"   base: Expected identifier but found "#a"
+        tsc: - x190
+valid                                    V10      60 rec     4 src  the type of an assertion predicate starts on the next line
+        e.g. "class C { @d m(): asserts a\nis A { return x; } }"   base: Expected ";" but found "A"
+        tsc: - x60
+valid                                    V11     770 rec    52 src  asserts is T is a predicate about a parameter named asserts
+        e.g. "class C { @d m(): asserts is A { return x; } }"   base: Expected ";" but found "A"
+        tsc: - x770
+valid                                    V12     760 rec    52 src  a binding pattern of a signature has a hole, a computed key or a default of a renamed element
+        e.g. "type X = ({ a: b = 1 }: A) => void;"   base: Unexpected =
+        tsc: - x760
+valid                                    V5      500 rec    35 src  out names a type or a type parameter
+        e.g. "let v = <out>x;"   base: The modifier "out" is not valid here
+        tsc: - x500
+valid                                    V6      570 rec    38 src  a contextual keyword names the type of a heritage clause
+        e.g. "class C implements infer {}"   base: Expected identifier but found "{"
+        tsc: - x570
+valid                                    V7       60 rec     4 src  the type arguments of a heritage element start on the next line
+        e.g. "class C implements A\n<B> {}"   base: Expected "{" but found "<"
+        tsc: - x60
+valid                                    V8     2930 rec   200 src  a reserved word is the label of a rest element of a tuple
+        e.g. "type X = [...in: A[]];"   base: Unexpected in
+        tsc: - x2930
+valid                                    V9      505 rec    34 src  an import type takes type arguments, and `.<` before them
+        e.g. "type X = import('x')<A>;"   base: Expected ";" but found "<"
+        tsc: - x505
+valid construct, base-tolerated source   VB       60 rec     4 src  a valid construct (V11) in a type of a heritage clause, where the base reads any type
+        e.g. "class C implements (a: A) => asserts  is B {}"   base: Expected "{" but found "B"
+        tsc: P:1005,1109 x30  P:1109,1005 x30
+valid construct, base-tolerated source   VB      120 rec     8 src  a valid construct (V12) in a type of a heritage clause, where the base reads any type
+        e.g. "class C implements ({ a: b = 1 }: A) => void {}"   base: Unexpected =
+        tsc: P:1005,1109 x120
+valid construct, base-tolerated source   VB       60 rec     4 src  a valid construct (V5) in a type of a heritage clause, where the base reads any type
+        e.g. "class C implements <out>() => out {}"   base: The modifier "out" is not valid here
+        tsc: P:1109,1005 x40  P:1109,1382,17008,1005 x20
+valid construct, base-tolerated source   VB      390 rec    26 src  a valid construct (V8) in a type of a heritage clause, where the base reads any type
+        e.g. "class C implements [...in: A[]] {}"   base: Unexpected in
+        tsc: P:1109,1134,1005 x120  P:1109,1011 x60  P:1109 x60  P:1005,1011 x30  P:1109,1003,1011,1005 x30  P:1005 x30  P:1109,1003,1005 x30  P:1109,1011,1005 x15  P:1109,1005 x15
+valid construct, base-tolerated source   VB       30 rec     2 src  a valid construct (V9) in a type of a heritage clause, where the base reads any type
+        e.g. "class C implements import('x').A.<C, D> {}"   base: Expected identifier but found "<"
+        tsc: P:1003 x30
+valid construct, tsc rejects the source  V12      90 rec     6 src  a binding pattern of a signature has a hole, a computed key or a default of a renamed element
+        e.g. "class C { @d m(): ({ a: b = 1 }: A) =>  { return x; } }"   base: Unexpected =
+        tsc: P:1131,1128 x90
+valid construct, tsc rejects the source  V5       45 rec     3 src  out names a type or a type parameter
+        e.g. "class C { @d m(): <out>() =>  { return x; } }"   base: The modifier "out" is not valid here
+        tsc: P:1131,1128 x30  P:1005,1134 x10  P:1005,1134,1382,17008 x5

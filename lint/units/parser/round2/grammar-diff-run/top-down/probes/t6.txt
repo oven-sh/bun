@@ -1,0 +1,24 @@
+function f(): A {} { return x; }
+function f(): class {} { return x; }
+{ return x; }
+return x;
+function f(): class { return x; }
+function f(): class {}
+let v = [delete A];
+class C implements [delete A] {}
+class C implements [A] {}
+delete A;
+class C { abstract a: A }
+class C { abstract accessor a: A }
+class C { readonly a?: A }
+import B from "y"⏎with (A) {}
+import A from "x"⏎with { type: "json" };⏎import B from "y"⏎with (A) {}
+import A from "x"⏎with { type: "json" };
+export { a } from "x"⏎with { type: "json" };
+export * from "x"⏎with { type: "json" };
+import type A from "x"⏎with { type: "json" };
+import type A from "x" with { type: "json" };
+type as = 1⏎type as any
+interface as {}⏎interface as any⏎foo()
+namespace as {}
+namespace as {}⏎namespace as any

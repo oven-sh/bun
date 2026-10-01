@@ -1,0 +1,26 @@
+class C { accessor a: A }
+class C { readonly accessor a: A }
+class C { declare accessor a: A }
+class C { accessor a?: A }
+class C { accessor a!: A }
+class C { accessor readonly a: A }
+class C { accessor declare a: A }
+class C { static accessor a: A }
+class C { accessor static a: A }
+class C { public accessor a: A }
+class C { accessor public a: A }
+class C { override accessor a: A }
+class C { accessor override a: A }
+class C { abstract accessor a: A }
+class C { accessor accessor a: A }
+class C { accessor a(): A {} }
+class C { accessor get a(): A { return 1 } }
+class C { async accessor a: A }
+class C { accessor constructor: A }
+class C { accessor "a": A }
+class C { accessor [a]: A }
+class C { accessor 1: A }
+class C { accessor⏎a: A }
+class C { accessor = 1 }
+class C { accessor; }
+class C { accessor: A }

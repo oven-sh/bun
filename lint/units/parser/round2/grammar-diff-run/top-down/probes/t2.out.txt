@@ -1,0 +1,52 @@
+A>A  tsc parse[TS1131@24,TS1128@34] grammar[-]  function f(): (a) =>  { return x; }
+R>A  tsc parse[TS1131@28,TS1128@38] grammar[-]  function f(): (a = 1) =>  { return x; }
+      base: Expected ")" but found "="
+A>A  tsc parse[TS1131@28,TS1128@38,TS1128@40] grammar[-] class C { @d m(): (a) =>  { return x; } }
+A>A  tsc parse[TS1131@26,TS1128@36] grammar[-]  function f(): <T>() =>  { return x; }
+R>A  tsc parse[TS1131@28,TS1128@38] grammar[-]  function f(): <out>() =>  { return x; }
+      base: The modifier "out" is not valid here
+A>A  tsc parse[TS1005@11,TS1134@13,TS1005@23] grammar[-] let f = (a): <T>() =>  => a;
+R>A  tsc parse[TS1005@11,TS1134@13,TS1005@25] grammar[-] let f = (a): <out>() =>  => a;
+      base: The modifier "out" is not valid here
+A>A  tsc parse[TS1110@11] grammar[-]            f<<T>() => >(x);
+R>A  tsc parse[TS1110@13] grammar[-]            f<<out>() => >(x);
+      base: The modifier "out" is not valid here
+R>A  tsc parse[TS1110@18] grammar[-]            let f = (a): [a: ?] => a;
+      base: Expected ";" but found ":"
+A>A  tsc parse[] grammar[]                      let f = (a): [a ?] => a;
+R>A  tsc parse[TS1110@7] grammar[-]             f<[a: ?]>(x);
+      base: Expected "]" but found ":"
+R>A  tsc parse[TS1110@20] grammar[-]            let f = (a): { #a:  } => a;
+      base: Expected ";" but found ":"
+A>A  tsc parse[TS1110@19] grammar[-]            let f = (a): { a:  } => a;
+A>A  tsc parse[TS1110@8] grammar[-]             f<{ a:  }>(x);
+R>A  tsc parse[TS1109@3,TS1109@10] grammar[-]   f< extends>(x);
+      base: Unexpected extends
+A>A  tsc parse[TS1109@2] grammar[-]             f<extends B ? C : D>(x);
+A>A  tsc parse[TS1109@2,TS1128@10] grammar[-]   f<extends ? C : D>(x);
+R>A  tsc parse[TS1005@9,TS1110@16,TS1109@17] grammar[-] let x: A<extends>;
+      base: Unexpected extends
+R>A  tsc parse[] grammar[]                      let x: extends;
+      base: Unexpected extends
+R>A  tsc parse[TS1109@22] grammar[-]            function f<U extends  in>() {}
+      base: Unexpected in
+R>A  tsc parse[TS1109@28] grammar[-]            function f<U extends  delete>() {}
+      base: Unexpected delete
+R>A  tsc parse[TS1005@27] grammar[-]            function f<U extends  class>() {}
+      base: Unexpected class
+R>A  tsc parse[TS1034@26] grammar[-]            function f<U extends super>() {}
+      base: Unexpected super
+R>A  tsc parse[] grammar[TS1110@21]             function f<U extends super.a>() {}
+      base: Unexpected super
+R>A  tsc parse[] grammar[TS1110@21]             function f<U extends #a>() {}
+      base: Unexpected #a
+R>A  tsc parse[] grammar[]                      function f<U extends if>() {}
+      base: Unexpected if
+R>A  tsc parse[TS1109@22,TS1139@24] grammar[-]  function f<U extends  in, V>() {}
+      base: Unexpected in
+R>A  tsc parse[TS1109@17] grammar[-]            type X<U extends in> = U;
+      base: Unexpected in
+R>A  tsc parse[TS1109@18] grammar[-]            class C<U extends in> {}
+      base: Unexpected in
+R>R  tsc parse[TS1109@19] grammar[-]            let f = <U extends in>() => 0;
+      base: Unexpected in

@@ -1,0 +1,218 @@
+## RESTORE: tsc does not parse TS1109  R>A  (59 forms)
+   "+1"  ctx[heritage,iextends] apis=15 recs=30  base: Unexpected +
+   "-a"  ctx[heritage,iextends] apis=15 recs=30  base: Expected number but found "a"
+   "-true"  ctx[heritage,iextends] apis=15 recs=30  base: Expected number but found "true"
+   "[a?: A?]"  ctx[heritage,iextends] apis=15 recs=30  base: Expected "]" but found "?"
+   "[...in: A[]]"  ctx[heritage,iextends] apis=15 recs=30  base: Unexpected in
+   "[...delete: A[]]"  ctx[heritage,iextends] apis=15 recs=30  base: Unexpected delete
+   "[...var: A[]]"  ctx[heritage,iextends] apis=15 recs=30  base: Unexpected var
+   "[...const: A[]]"  ctx[heritage,iextends] apis=15 recs=30  base: Unexpected "const"
+   "[...enum: A[]]"  ctx[heritage,iextends] apis=15 recs=30  base: Unexpected enum
+   "[...extends: A[]]"  ctx[heritage,iextends] apis=15 recs=30  base: Unexpected extends
+   "A extends (...a: infer P) => infer R extends B ? P : R"  ctx[iextends] apis=15 recs=15  base: Expected "?" but found "{"
+   "A extends () => infer R extends B ? R : never"  ctx[iextends] apis=15 recs=15  base: Expected "?" but found "{"
+   "typeof a\n<B>"  ctx[heritage,iextends] apis=15 recs=30  base: Expected "{" but found "<"
+   "typeof typeof a"  ctx[heritage,iextends] apis=15 recs=30  base: Expected "{" but found "a"
+   "typeof a.b()"  ctx[heritage,iextends] apis=15 recs=30  base: Expected "{" but found "("
+   "typeof a()"  ctx[heritage,iextends] apis=15 recs=30  base: Expected "{" but found "("
+   "typeof 'a'"  ctx[heritage,iextends] apis=15 recs=30  base: Expected identifier but found "'a'"
+   "typeof 1"  ctx[heritage,iextends] apis=15 recs=30  base: Expected identifier but found "1"
+   "typeof a?.b"  ctx[heritage,iextends] apis=15 recs=30  base: Expected "{" but found "?."
+   "typeof (a)"  ctx[heritage,iextends] apis=15 recs=30  base: Expected identifier but found "("
+   "(a?: A = 1) => void"  ctx[heritage,iextends] apis=15 recs=30  base: Expected ")" but found "?"
+   "<out>() => out"  ctx[heritage,iextends] apis=15 recs=30  base: The modifier "out" is not valid here
+   "{ [k?: string]: A }"  ctx[heritage,iextends] apis=15 recs=30  base: Expected "]" but found "?"
+   "{ [...k: string[]]: A }"  ctx[heritage,iextends] apis=15 recs=30  base: Unexpected ...
+   "!A"  ctx[heritage,iextends] apis=15 recs=30  base: Unexpected !
+   "delete A"  ctx[heritage,iextends] apis=15 recs=30  base: Unexpected delete
+   "void A"  ctx[heritage,iextends] apis=15 recs=30  base: Expected "{" but found "A"
+   "~A"  ctx[heritage,iextends] apis=15 recs=30  base: Unexpected ~
+   "<B>[]"  ctx[heritage,iextends] apis=10 recs=20  base: Expected "(" but found "["
+   "[...in: []]"  ctx[heritage,iextends] apis=15 recs=30  base: Unexpected in
+   "[...delete: []]"  ctx[heritage,iextends] apis=15 recs=30  base: Unexpected delete
+   "[...var: []]"  ctx[heritage,iextends] apis=15 recs=30  base: Unexpected var
+   "[...const: []]"  ctx[heritage,iextends] apis=15 recs=30  base: Unexpected "const"
+   "[...enum: []]"  ctx[heritage,iextends] apis=15 recs=30  base: Unexpected enum
+   "[...extends: []]"  ctx[heritage,iextends] apis=15 recs=30  base: Unexpected extends
+   " extends"  ctx[targ] apis=15 recs=15  base: Unexpected extends
+   "A extends (...a:  P) => infer R extends B ? P : R"  ctx[iextends] apis=15 recs=15  base: Expected "?" but found "{"
+   "A extends (...a: infer P) =>  R extends B ? P : R"  ctx[iextends] apis=15 recs=15  base: Expected "?" but found "{"
+   "A extends () =>  R extends B ? R : never"  ctx[iextends] apis=15 recs=15  base: Expected "?" but found "{"
+   "A extends  in ? 1 : 2"  ctx[heritage,iextends] apis=15 recs=30  base: Unexpected in
+   "{ [K in in ]: V }"  ctx[heritage,iextends] apis=15 recs=30  base: Unexpected in
+   "<B>[C]"  ctx[heritage,iextends] apis=10 recs=20  base: Expected "(" but found "["
+   "typeof [B]"  ctx[heritage,iextends] apis=15 recs=30  base: Expected identifier but found "["
+   "typeof <B>[]"  ctx[heritage,iextends] apis=10 recs=20  base: Expected identifier but found "<"
+   "typeof a<>.c"  ctx[heritage,iextends] apis=15 recs=30  base: Unexpected >
+   "typeof []"  ctx[heritage,iextends] apis=15 recs=30  base: Expected identifier but found "["
+   "typeof [number]"  ctx[heritage,iextends] apis=15 recs=30  base: Expected identifier but found "["
+   "typeof ['b']"  ctx[heritage,iextends] apis=15 recs=30  base: Expected identifier but found "["
+   "typeof ('x')"  ctx[heritage,iextends] apis=15 recs=30  base: Expected identifier but found "("
+   "typeof ('x').a"  ctx[heritage,iextends] apis=15 recs=30  base: Expected identifier but found "("
+   "typeof ('x').a<B>"  ctx[heritage,iextends] apis=15 recs=30  base: Expected identifier but found "("
+   "typeof ab()"  ctx[heritage,iextends] apis=15 recs=30  base: Expected "{" but found "("
+   " in"  ctx[tparam] apis=15 recs=15  base: Unexpected in
+   " delete"  ctx[tparam] apis=15 recs=15  base: Unexpected delete
+   "<out >() => T"  ctx[heritage,iextends] apis=15 recs=30  base: The modifier "out" is not valid here
+   "() => asserts  is A"  ctx[heritage,iextends] apis=15 recs=30  base: Expected "{" but found "A"
+   "{ [...k: []]: A }"  ctx[heritage,iextends] apis=15 recs=30  base: Unexpected ...
+   "{ []: A }"  ctx[heritage,iextends] apis=15 recs=30  base: Unexpected ]
+   "{ readonly []: A }"  ctx[heritage,iextends] apis=15 recs=30  base: Unexpected ]
+## RESTORE: grammar error of the checker TS1096  R>A  (5 forms)
+   "A\n[]"  ctx[field] apis=15 recs=15  base: Unexpected ]
+   "(A)\n[]"  ctx[field] apis=15 recs=15  base: Unexpected ]
+   "{ [k: string, l: number]: A }"  ctx[alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,as,satisfies,angle,tparam] apis=15 recs=190  base: Expected "]" but found ","
+   "{ []: A }"  ctx[alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,ternary,as,satisfies,angle,tparam] apis=15 recs=205  base: Unexpected ]
+   "{ readonly []: A }"  ctx[alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,ternary,as,satisfies,angle,tparam] apis=15 recs=205  base: Unexpected ]
+## RESTORE: grammar error of the checker TS5086  R>A  (2 forms)
+   "[a: A?]"  ctx[alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,arrowret,ternary,as,satisfies,angle,targ,tparam] apis=15 recs=235  base: Expected "]" but found "?"
+   "[a?: A?]"  ctx[alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,arrowret,ternary,as,satisfies,angle,targ,tparam] apis=15 recs=235  base: Expected "]" but found "?"
+## RESTORE: tsc does not parse TS1005  R>A  (36 forms)
+   "[a: A?]"  ctx[heritage,iextends] apis=15 recs=30  base: Expected "]" but found "?"
+   "[function]"  ctx[heritage,iextends] apis=15 recs=30  base: Expected ":" but found "]"
+   "[...class: A[]]"  ctx[heritage,iextends] apis=15 recs=30  base: Unexpected class
+   "A extends B extends C ? D : E"  ctx[iextends] apis=15 recs=15  base: Expected "?" but found "extends"
+   "(a = 1) => void"  ctx[heritage,iextends] apis=15 recs=30  base: Expected ")" but found "="
+   "(a: A = 1) => void"  ctx[heritage,iextends] apis=15 recs=30  base: Expected ")" but found ":"
+   "(a = 1, b = 2) => void"  ctx[heritage,iextends] apis=15 recs=30  base: Expected ")" but found "="
+   "(a = () => 1) => void"  ctx[heritage,iextends] apis=15 recs=30  base: Expected ")" but found "="
+   "(a = b as C) => void"  ctx[heritage,iextends] apis=15 recs=30  base: Expected ")" but found "="
+   "({ a = 1 }: A) => void"  ctx[heritage,iextends] apis=15 recs=30  base: Unexpected =
+   "({ a: b = 1 }: A) => void"  ctx[heritage,iextends] apis=15 recs=30  base: Unexpected =
+   "([a = 1]: A) => void"  ctx[heritage,iextends] apis=15 recs=30  base: Expected "]" but found "="
+   "([a, , b]: A) => void"  ctx[heritage,iextends] apis=15 recs=30  base: Unexpected ,
+   "({ [a]: b }: A) => void"  ctx[heritage,iextends] apis=15 recs=30  base: Expected ")" but found ":"
+   "({ a, b } = c) => void"  ctx[heritage,iextends] apis=15 recs=30  base: Expected ")" but found "="
+   "(public a: A) => void"  ctx[heritage,iextends] apis=15 recs=30  base: Expected ")" but found "a"
+   "(private a: A) => void"  ctx[heritage,iextends] apis=15 recs=30  base: Expected ")" but found "a"
+   "(readonly a: A) => void"  ctx[heritage,iextends] apis=15 recs=30  base: Expected ")" but found ":"
+   "new (a = 1) => A"  ctx[heritage,iextends] apis=15 recs=30  base: Expected ")" but found "="
+   "{ [k: string, l: number]: A }"  ctx[heritage,iextends] apis=15 recs=30  base: Expected "]" but found ","
+   "{ [k: string,]: A }"  ctx[heritage,iextends] apis=15 recs=30  base: Expected "]" but found ","
+   "await A"  ctx[heritage,iextends] apis=15 recs=30  base: Expected "{" but found "A"
+   "[...class: []]"  ctx[heritage,iextends] apis=15 recs=30  base: Unexpected class
+   "A extends  U extends B ? U : never"  ctx[iextends] apis=15 recs=15  base: Expected "?" but found "extends"
+   "A extends (a: infer P) => infer R extends B ? P : R"  ctx[iextends] apis=15 recs=15  base: Expected "?" but found "{"
+   " class"  ctx[tparam] apis=15 recs=15  base: Unexpected class
+   "([a, , ]: A) => void"  ctx[heritage,iextends] apis=15 recs=30  base: Unexpected ,
+   "({ a,  } = c) => void"  ctx[heritage,iextends] apis=15 recs=30  base: Expected ")" but found "="
+   "(a: A) => asserts  is B"  ctx[heritage,iextends] apis=15 recs=30  base: Expected "{" but found "B"
+   "(readonly A) => void"  ctx[heritage,iextends] apis=15 recs=30  base: Expected "{" but found "=>"
+   "(override A) => void"  ctx[heritage,iextends] apis=15 recs=30  base: Expected ")" but found "A"
+   "(public A) => void"  ctx[heritage,iextends] apis=15 recs=30  base: Expected ")" but found "A"
+   "(private A) => void"  ctx[heritage,iextends] apis=15 recs=30  base: Expected ")" but found "A"
+   "(protected A) => void"  ctx[heritage,iextends] apis=15 recs=30  base: Expected ")" but found "A"
+   "<out>() => "  ctx[arrowret] apis=15 recs=15  base: The modifier "out" is not valid here
+   " (a = 1) => A"  ctx[heritage,iextends] apis=15 recs=30  base: Expected ")" but found "="
+## RESTORE: grammar error of the checker TS1172  R>A  (6 forms)
+   "A extends B"  ctx[iextends] apis=15 recs=15  base: Expected "?" but found "{"
+   "A extends"  ctx[iextends] apis=15 recs=15  base: Expected "?" but found end of file
+   "A extends B "  ctx[iextends] apis=15 recs=15  base: Expected "?" but found "{"
+   "A extends "  ctx[iextends] apis=15 recs=15  base: Expected "?" but found end of file
+   " U extends A"  ctx[iextends] apis=15 recs=15  base: Expected "?" but found "{"
+   "infer  extends A"  ctx[iextends] apis=15 recs=15  base: Expected identifier but found "extends"
+## ruling: metadata of a source that tsc does not parse  A>A  (32 forms)
+   "A extends infer U[] ? U : never"  ctx[field,param,ctor,ret] apis=4 recs=16  base: 
+   "(a is A)"  ctx[field,param,ctor,ret] apis=4 recs=16  base: 
+   "a is A"  ctx[field,param,ctor] apis=4 recs=12  base: 
+   "x is A"  ctx[field,param,ctor] apis=4 recs=12  base: 
+   "a is A | B"  ctx[field,param,ctor] apis=4 recs=12  base: 
+   "a is A[]"  ctx[field,param,ctor] apis=4 recs=12  base: 
+   "a is A extends B ? C : D"  ctx[field,param,ctor] apis=4 recs=12  base: 
+   "a is a is A"  ctx[field,param,ctor,ret] apis=4 recs=16  base: 
+   "asserts is A"  ctx[field,param,ctor] apis=4 recs=12  base: 
+   "asserts is"  ctx[ret] apis=4 recs=4  base: 
+   "asserts is is A"  ctx[ret] apis=4 recs=4  base: 
+   "asserts a.b"  ctx[ret] apis=4 recs=4  base: 
+   "A extends infer U extends  ? U : never"  ctx[field,param,ctor,ret] apis=4 recs=16  base: 
+   "A extends (infer U extends ) ? U : never"  ctx[field,param,ctor,ret] apis=4 recs=16  base: 
+   "A extends [infer U extends ] ? U : never"  ctx[field,param,ctor,ret] apis=4 recs=16  base: 
+   "A extends { a infer U } ? U : never"  ctx[field,param,ctor,ret] apis=4 recs=16  base: 
+   "A extends { a infer U extends B } ? U : never"  ctx[field,param,ctor,ret] apis=4 recs=16  base: 
+   "A extends { a: infer U extends  } ? U : never"  ctx[field,param,ctor,ret] apis=4 recs=16  base: 
+   "A extends B<infer U extends > ? U : never"  ctx[field,param,ctor,ret] apis=4 recs=16  base: 
+   "a is  | B"  ctx[field,param,ctor] apis=4 recs=12  base: 
+   "a is []"  ctx[field,param,ctor] apis=4 recs=12  base: 
+   " a is A"  ctx[field,param,ctor] apis=4 recs=12  base: 
+   "asserts  is A"  ctx[field,param,ctor] apis=4 recs=12  base: 
+   "asserts  is"  ctx[ret] apis=4 recs=4  base: 
+   "asserts is "  ctx[ret] apis=4 recs=4  base: 
+   " is is A"  ctx[field,param,ctor] apis=4 recs=12  base: 
+   "asserts is  A"  ctx[field,param,ctor] apis=4 recs=12  base: 
+   "asserts is is "  ctx[field,param,ctor] apis=4 recs=12  base: 
+   " asserts is A"  ctx[field,param,ctor] apis=4 recs=12  base: 
+   " a is A | B"  ctx[field,param,ctor] apis=4 recs=12  base: 
+   "asserts  is A | B"  ctx[field,param,ctor] apis=4 recs=12  base: 
+   "ab is A"  ctx[field,param,ctor] apis=4 recs=12  base: 
+## RESTORE: grammar error of the checker TS1015  R>A  (1 forms)
+   "(a?: A = 1) => void"  ctx[alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,as,satisfies,angle,tparam] apis=15 recs=190  base: Expected ")" but found "?"
+## RESTORE: grammar error of the checker TS1019  R>A  (1 forms)
+   "{ [k?: string]: A }"  ctx[alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,as,satisfies,angle,tparam] apis=15 recs=190  base: Expected "]" but found "?"
+## RESTORE: grammar error of the checker TS1017  R>A  (2 forms)
+   "{ [...k: string[]]: A }"  ctx[alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,as,satisfies,angle,tparam] apis=15 recs=190  base: Unexpected ...
+   "{ [...k: []]: A }"  ctx[alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,as,satisfies,angle,tparam] apis=15 recs=190  base: Unexpected ...
+## RESTORE: grammar error of the checker TS1025  R>A  (1 forms)
+   "{ [k: string,]: A }"  ctx[alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,as,satisfies,angle,tparam] apis=15 recs=190  base: Expected "]" but found ","
+## RESTORE: grammar error of the checker TS1170  R>A  (5 forms)
+   "{ [k = 1]: A }"  ctx[alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,as,satisfies,angle,tparam] apis=15 recs=190  base: Expected "]" but found "="
+   "{ [a + b]: A }"  ctx[alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,as,satisfies,angle,tparam] apis=15 recs=190  base: Expected "]" but found "+"
+   "{ [a as B]: A }"  ctx[alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,as,satisfies,angle,tparam] apis=15 recs=190  base: Expected "]" but found "as"
+   "{ [k `a${string}`]: A }"  ctx[alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,as,satisfies,angle,tparam] apis=15 recs=190  base: Expected "]" but found "`a${"
+   "{ [ + b]: A }"  ctx[alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,as,satisfies,angle,tparam] apis=15 recs=190  base: Unexpected +
+## RESTORE: grammar error of the checker TS1539  R>A  (1 forms)
+   "{ 1n: A }"  ctx[alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,as,satisfies,angle,tparam] apis=15 recs=190  base: Unexpected 1n
+## RESTORE: grammar error of the checker TS18016  R>A  (1 forms)
+   "{ #a: A }"  ctx[alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,arrowret,ternary,as,satisfies,angle,targ,tparam] apis=15 recs=235  base: Unexpected #a
+## RESTORE: grammar error of the checker TS1247  R>A  (1 forms)
+   "{ a: A = 1 }"  ctx[alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,as,satisfies,angle,tparam] apis=15 recs=190  base: Unexpected =
+## RESTORE: grammar error of the checker TS8020  R>A  (4 forms)
+   "A.<B>"  ctx[alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,arrowret,ternary,as,satisfies,angle,targ,tparam] apis=15 recs=235  base: Expected identifier but found "<"
+   "Array.<A>"  ctx[alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,arrowret,ternary,as,satisfies,angle,targ,tparam] apis=15 recs=235  base: Expected identifier but found "<"
+   "A.<C>"  ctx[alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,arrowret,ternary,as,satisfies,angle,targ,tparam] apis=15 recs=235  base: Expected identifier but found "<"
+   "A.B.<D>[]"  ctx[alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,arrowret,ternary,as,satisfies,angle,targ,tparam] apis=15 recs=235  base: Expected identifier but found "<"
+## RESTORE: tsc does not parse TS1003  R>A  (5 forms)
+   "A.<B>"  ctx[heritage,iextends] apis=15 recs=30  base: Expected identifier but found "<"
+   "Array.<A>"  ctx[heritage,iextends] apis=15 recs=30  base: Expected identifier but found "<"
+   "A.<C>"  ctx[heritage,iextends] apis=15 recs=30  base: Expected identifier but found "<"
+   "A.B.<D>[]"  ctx[heritage,iextends] apis=15 recs=30  base: Expected identifier but found "<"
+   "import('x').A.<C, D>"  ctx[heritage,iextends] apis=15 recs=30  base: Expected identifier but found "<"
+## RESTORE: grammar error of the checker TS1097  R>A  (1 forms)
+   ""  ctx[iextends] apis=15 recs=15  base: Expected "{" but found end of file
+## RESTORE: grammar error of the checker TS2304  R>A  (1 forms)
+   "#a"  ctx[alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,as,satisfies,angle] apis=15 recs=175  base: Unexpected #a
+## RESTORE: grammar error of the checker TS1110  R>A  (2 forms)
+   "#a"  ctx[tparam] apis=15 recs=15  base: Unexpected #a
+   "super.a"  ctx[tparam] apis=15 recs=15  base: Unexpected super
+## RESTORE: grammar error of the checker TS1108  R>A  (1 forms)
+   "class {}"  ctx[fnret] apis=15 recs=15  base: Unexpected class
+## RESTORE: tsc does not parse TS1034  R>A  (1 forms)
+   "super"  ctx[tparam] apis=15 recs=15  base: Unexpected super
+## RESTORE: tsc does not parse TS1477  R>A  (1 forms)
+   "A<>.C"  ctx[heritage,iextends] apis=15 recs=30  base: Unexpected >
+## RESTORE: tsc does not parse TS1110  R>A  (4 forms)
+   "[a: ?]"  ctx[arrowret,targ] apis=15 recs=30  base: Expected ";" but found ":"
+   "[a?: ?]"  ctx[arrowret,targ] apis=15 recs=30  base: Expected ";" but found ":"
+   "<out>() => "  ctx[targ] apis=15 recs=15  base: The modifier "out" is not valid here
+   "{ #a:  }"  ctx[arrowret,targ] apis=15 recs=30  base: Expected ";" but found ":"
+## ruling: tsc reports a rule of syntax outside its grammar checks TS1102  R>A  (1 forms)
+   "[delete A]"  ctx[heritage,iextends] apis=15 recs=30  base: Unexpected delete
+## RESTORE: tsc does not parse TS1131  R>A  (17 forms)
+   "(a = 1) => "  ctx[ret,fnret] apis=15 recs=30  base: Expected ")" but found "="
+   "(a: A = 1) => "  ctx[ret,fnret] apis=15 recs=30  base: Expected ")" but found ":"
+   "(a?: A = 1) => "  ctx[ret,fnret] apis=15 recs=30  base: Expected ")" but found "?"
+   "(a = 1, b = 2) => "  ctx[ret,fnret] apis=15 recs=30  base: Expected ")" but found "="
+   "(a = () => 1) => "  ctx[ret,fnret] apis=15 recs=30  base: Expected ")" but found "="
+   "(a = b as C) => "  ctx[ret,fnret] apis=15 recs=30  base: Expected ")" but found "="
+   "({ a = 1 }: A) => "  ctx[ret,fnret] apis=15 recs=30  base: Unexpected =
+   "({ a: b = 1 }: A) => "  ctx[ret,fnret] apis=15 recs=30  base: Unexpected =
+   "([a = 1]: A) => "  ctx[ret,fnret] apis=15 recs=30  base: Expected "]" but found "="
+   "([a, , b]: A) => "  ctx[ret,fnret] apis=15 recs=30  base: Unexpected ,
+   "({ [a]: b }: A) => "  ctx[ret,fnret] apis=15 recs=30  base: Expected ")" but found ":"
+   "({ a, b } = c) => "  ctx[ret,fnret] apis=15 recs=30  base: Expected ")" but found "="
+   "(public a: A) => "  ctx[ret,fnret] apis=15 recs=30  base: Expected ")" but found "a"
+   "(private a: A) => "  ctx[ret,fnret] apis=15 recs=30  base: Expected ")" but found "a"
+   "(readonly a: A) => "  ctx[ret,fnret] apis=15 recs=30  base: Expected ")" but found ":"
+   "<out>() => "  ctx[ret,fnret] apis=15 recs=30  base: The modifier "out" is not valid here
+   "new (a = 1) => "  ctx[ret,fnret] apis=15 recs=30  base: Expected ")" but found "="
+## RESTORE: tsc does not parse TS1136  R>A  (1 forms)
+   "{ (b = 1): void }"  ctx[heritage,iextends] apis=15 recs=30  base: Expected ")" but found "="

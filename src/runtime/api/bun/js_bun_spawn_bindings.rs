@@ -34,6 +34,7 @@ use crate::api::bun_subprocess::{
 use crate::api::bun_terminal_body::{
     self as terminal_body, InitError as TerminalInitError, Options as TerminalOptions, Terminal,
 };
+use crate::node::validators;
 use crate::webcore as WebCore;
 
 // ── local extension shims (real-body wrappers, not stubs) ───────────────────
@@ -659,32 +660,16 @@ fn spawn_maybe_sync(
             // (negative values are cast to uid_t/gid_t, matching libuv).
             if let Some(uid_value) = args.get(cx.global(), "uid")? {
                 if uid_value != JSValue::NULL {
-                    let uid_int = cx.global().validate_integer_range::<i32>(
-                        uid_value,
-                        0,
-                        bun_sql_jsc::jsc::IntegerRange {
-                            min: i128::from(i32::MIN),
-                            max: i128::from(i32::MAX),
-                            field_name: b"uid",
-                            ..Default::default()
-                        },
-                    )?;
+                    let uid_int =
+                        validators::validate_int32(cx.global(), uid_value, "uid", None, None)?;
                     uid = Some(uid_int as u32);
                 }
             }
 
             if let Some(gid_value) = args.get(cx.global(), "gid")? {
                 if gid_value != JSValue::NULL {
-                    let gid_int = cx.global().validate_integer_range::<i32>(
-                        gid_value,
-                        0,
-                        bun_sql_jsc::jsc::IntegerRange {
-                            min: i128::from(i32::MIN),
-                            max: i128::from(i32::MAX),
-                            field_name: b"gid",
-                            ..Default::default()
-                        },
-                    )?;
+                    let gid_int =
+                        validators::validate_int32(cx.global(), gid_value, "gid", None, None)?;
                     gid = Some(gid_int as u32);
                 }
             }

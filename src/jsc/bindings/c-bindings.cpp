@@ -572,9 +572,6 @@ extern "C" ssize_t pwritev2(int fd, const struct iovec* iov, int iovcnt,
 #endif
 
 extern "C" void Bun__onExit();
-#if OS(DARWIN) || OS(WINDOWS)
-extern "C" int Bun__at_quick_exit(void (*)(void));
-#endif
 extern "C" int32_t bun_stdio_tty[3];
 #if !OS(WINDOWS)
 static termios termios_to_restore_later[3];
@@ -683,6 +680,35 @@ extern "C" void Bun__lockThreadSuspensionForExit()
 #endif
 
 extern "C" int32_t bun_is_stdio_null[3] = { 0, 0, 0 };
+
+#if OS(DARWIN) || OS(WINDOWS)
+// C11's at_quick_exit() and quick_exit(), where Bun does not use libc's. macOS has them only
+// since 15 and its header does not say so: linked, they keep Bun from starting on an older
+// one. Windows' also run the C runtime's terminators, and end in an ExitProcess() of their
+// own, which Bun takes a lock before.
+static void (*quickExitHandlers[32])(void);
+static size_t quickExitHandlerCount = 0;
+
+static int Bun__at_quick_exit(void (*handler)(void))
+{
+    if (quickExitHandlerCount == std::size(quickExitHandlers))
+        return -1;
+    quickExitHandlers[quickExitHandlerCount++] = handler;
+    return 0;
+}
+
+extern "C" [[noreturn]] void Bun__quick_exit(int code)
+{
+    while (quickExitHandlerCount)
+        quickExitHandlers[--quickExitHandlerCount]();
+#if OS(WINDOWS)
+    Bun__lockThreadSuspensionForExit();
+    ExitProcess(code);
+#else
+    _exit(code);
+#endif
+}
+#endif
 
 extern "C" void bun_initialize_process()
 {

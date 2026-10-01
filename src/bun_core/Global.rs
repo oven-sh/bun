@@ -658,44 +658,6 @@ fn run_exit_callbacks() {
     }
 }
 
-/// C11's `at_quick_exit()` and `quick_exit()`, where Bun does not use libc's. macOS has them
-/// only since 15 and its header does not say so: linked, they keep Bun from starting on an
-/// older one. Windows' also run the C runtime's terminators, and end in an `ExitProcess()`
-/// of their own, which Bun takes a lock before.
-#[cfg(any(target_os = "macos", windows))]
-static QUICK_EXIT_HANDLERS: crate::Mutex<Vec<ExitFn>> = crate::Mutex::new(Vec::new());
-
-#[cfg(any(target_os = "macos", windows))]
-#[unsafe(no_mangle)]
-extern "C" fn Bun__at_quick_exit(function: ExitFn) -> c_int {
-    QUICK_EXIT_HANDLERS.lock().push(function);
-    0
-}
-
-#[cfg(any(target_os = "macos", windows))]
-fn quick_exit(code: c_int) -> ! {
-    // Last registered, first called. Unlocked for the call, which may register another.
-    loop {
-        let Some(handler) = QUICK_EXIT_HANDLERS.lock().pop() else {
-            break;
-        };
-        handler();
-    }
-    #[cfg(target_os = "macos")]
-    libc_exit_now(code);
-    #[cfg(windows)]
-    {
-        // c-bindings.cpp: no WTF thread may hold this one suspended when ExitProcess
-        // kills it. No args, no preconditions: `safe fn`.
-        unsafe extern "C" {
-            safe fn Bun__lockThreadSuspensionForExit();
-        }
-        Bun__lockThreadSuspensionForExit();
-        // `ExitProcess` is `safe fn` (no preconditions; never returns).
-        crate::windows_sys::kernel32::ExitProcess(code as u32)
-    }
-}
-
 static IS_EXITING: AtomicBool = AtomicBool::new(false);
 
 #[unsafe(no_mangle)]
@@ -723,9 +685,10 @@ unsafe extern "C" {
     safe fn libc_exit(code: c_int) -> !;
     #[cfg(all(unix, not(target_os = "macos")))]
     safe fn quick_exit(code: c_int) -> !;
-    #[cfg(target_os = "macos")]
-    #[link_name = "_exit"]
-    safe fn libc_exit_now(code: c_int) -> !;
+    // c-bindings.cpp
+    #[cfg(any(target_os = "macos", windows))]
+    #[link_name = "Bun__quick_exit"]
+    safe fn quick_exit(code: c_int) -> !;
 }
 
 /// Flushes stdout and stderr (in exit/quick_exit callback) and exits with the given code.

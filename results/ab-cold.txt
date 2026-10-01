@@ -1,0 +1,11 @@
+A = /workspace/ee-perf-3/bin/bun-profile-base-bf42a525d (1.4.3-canary.1+bf42a525d) pre=none
+B = /workspace/ee-perf-3/bin/bun-profile-pr-f1dd8f057 (1.4.3-canary.1+f1dd8f057) pre=none
+instructions of the main thread per iteration (cold: of the body): median (lowest .. highest)
+default cold_control                19401.0 (19327.0 .. 19783.0)         20543.0 (20482.0 .. 20562.0)      +1142.0 (5.9%)
+default cold_require_events       5435778.0 (5435410.0 .. 5436428.0)   4666954.0 (4663203.0 .. 4667982.0)  -768824.0 (-14.1%)
+default cold_first_on_emit        6364471.0 (6363206.0 .. 6365498.0)   5561965.0 (5560286.0 .. 5563958.0)  -802506.0 (-12.6%)
+default cold_all_methods          7515426.0 (7514593.0 .. 7516374.0)   6883078.0 (6879439.0 .. 6884978.0)  -632348.0 (-8.4%)
+default cold_process_on_signal      77289.0 (77228.0 .. 77512.0)         76642.0 (76634.0 .. 76756.0)      -647.0 (-0.8%)
+default cold_process_on_emit        99741.0 (99578.0 .. 99806.0)         99054.0 (99027.0 .. 99160.0)      -687.0 (-0.7%)
+default cold_require_stream      25147337.0 (25145723.0 .. 25149087.0) 24379926.0 (24372319.0 .. 24388784.0) -767411.0 (-3.1%)
+default cold_require_http        52876327.0 (52869499.0 .. 52883397.0) 52059104.0 (52057601.0 .. 52068341.0) -817223.0 (-1.5%)

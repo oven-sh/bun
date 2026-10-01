@@ -1,0 +1,1 @@
+{"total":7397,"equal":6707,"differ":0,"both":690,"bothSame":690,"onlyNormal":0,"onlyLint":0,"missing":0}

@@ -1,0 +1,12 @@
+/tmp/a3-seam/suite/transpiler.test.js.lint.out:115:(fail) Bun.Transpiler > TypeScript > a signature parameter in a type literal that is not a binding > "let x: { foo(1): void }" is a located syntax error from every API [12.37ms]
+/tmp/a3-seam/suite/transpiler.test.js.lint.out:160:(fail) Bun.Transpiler > TypeScript > a signature parameter in a type literal that is not a binding > "function g() :{ a(\"/y\") }" is a located syntax error from every API [1.13ms
+/tmp/a3-seam/suite/transpiler.test.js.lint.out:204:(fail) Bun.Transpiler > TypeScript > a signature parameter in a type literal that is not a binding > "function f(a: { m(1): void }) {}" is a located syntax error from every API [0
+/tmp/a3-seam/suite/transpiler.test.js.lint.out:248:(fail) Bun.Transpiler > TypeScript > a signature parameter in a type literal that is not a binding > "x as { m(1): void }" is a located syntax error from every API [0.41ms]
+/tmp/a3-seam/suite/transpiler.test.js.lint.out:45:(fail) Bun.Transpiler > TypeScript > should parse empty type parameters [1.27ms]
+/tmp/a3-seam/suite/transpiler.test.js.lint.out:489:(fail) Bun.Transpiler > TypeScript > should parse empty type parameters [1.27ms]
+/tmp/a3-seam/suite/transpiler.test.js.lint.out:490:(fail) Bun.Transpiler > TypeScript > types [302.78ms]
+/tmp/a3-seam/suite/transpiler.test.js.lint.out:491:(fail) Bun.Transpiler > TypeScript > a signature parameter in a type literal that is not a binding > "let x: { foo(1): void }" is a located syntax error from every API [12.37ms]
+/tmp/a3-seam/suite/transpiler.test.js.lint.out:492:(fail) Bun.Transpiler > TypeScript > a signature parameter in a type literal that is not a binding > "function g() :{ a(\"/y\") }" is a located syntax error from every API [1.13ms
+/tmp/a3-seam/suite/transpiler.test.js.lint.out:493:(fail) Bun.Transpiler > TypeScript > a signature parameter in a type literal that is not a binding > "function f(a: { m(1): void }) {}" is a located syntax error from every API [0
+/tmp/a3-seam/suite/transpiler.test.js.lint.out:494:(fail) Bun.Transpiler > TypeScript > a signature parameter in a type literal that is not a binding > "x as { m(1): void }" is a located syntax error from every API [0.41ms]
+/tmp/a3-seam/suite/transpiler.test.js.lint.out:70:(fail) Bun.Transpiler > TypeScript > types [302.78ms]

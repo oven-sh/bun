@@ -2894,46 +2894,47 @@ it("new Database() does not leak the sqlite3 handle when open fails", async () =
   using dir = tempDir("sqlite-open-fail", {});
   const badPath = path.join(String(dir), "nonexistent", "x.sqlite");
 
-  // The failed open must still surface the real SQLite error code after the
-  // handle has been released.
+  // The error is built from the handle, so it must keep its SQLite code.
   expect(() => new Database(badPath)).toThrow(expect.objectContaining({ code: "SQLITE_CANTOPEN" }));
 
-  // sqlite3_open_v2 returns a handle that must be sqlite3_close()'d even on
-  // failure; previously it leaked (~3.5 KB/attempt). ASAN's quarantine hides
-  // this in RSS, so assert on LSAN bytes there and on RSS for release builds.
-  const iters = 2000;
-  const src = `
-    import { Database } from "bun:sqlite";
-    const step = () => { try { new Database(${JSON.stringify(badPath)}); } catch {} };
-    for (let i = 0; i < 200; i++) step();
-    Bun.gc(true);
-    const start = process.memoryUsage.rss();
-    for (let i = 0; i < ${iters}; i++) step();
-    Bun.gc(true);
-    console.log(((process.memoryUsage.rss() - start) / 1024 / 1024).toFixed(1));
-  `;
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", src],
-    env: {
-      ...bunEnv,
-      ASAN_OPTIONS: "detect_leaks=1:symbolize=0:quarantine_size_mb=0:allow_user_segv_handler=1:disable_coredump=0",
-    },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Runs `count` failed opens in a child. Returns the RSS growth over them, and
+  // the bytes that LeakSanitizer reports at exit (0 on a build without it).
+  async function failedOpens(count) {
+    const src = `
+      import { Database } from "bun:sqlite";
+      const step = () => { try { new Database(${JSON.stringify(badPath)}); } catch {} };
+      for (let i = 0; i < 200; i++) step();
+      Bun.gc(true);
+      const start = process.memoryUsage.rss();
+      for (let i = 0; i < ${count}; i++) step();
+      Bun.gc(true);
+      console.log((process.memoryUsage.rss() - start) / 1024 / 1024);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: {
+        ...bunEnv,
+        // symbolize=0 keeps the child fast. It also turns the LSAN suppressions off.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1", "symbolize=0"].filter(Boolean).join(":"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const summary = /SUMMARY: AddressSanitizer: (\d+) byte\(s\) leaked/.exec(stderr);
+    // A leak report makes the child exit with 1.
+    if (!summary) expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    return { rssGrowthMB: parseFloat(stdout), leakedBytes: Number(summary?.[1] ?? 0) };
+  }
 
-  const growthMB = parseFloat(stdout.trim());
-  expect(Number.isFinite(growthMB)).toBe(true);
-
-  const lsan = stderr.match(/SUMMARY: AddressSanitizer: (\d+) byte\(s\) leaked/);
-  if (lsan) {
-    // Unfixed: ~2.8 MB in ~16000 allocations. Fixed: a single ~124 byte
-    // startup allocation unrelated to sqlite.
-    expect(Number(lsan[1])).toBeLessThan(100_000);
-  } else if (!isASAN && !isDebug) {
-    // Unfixed: ~7 MB over 2000 iterations. Fixed: allocator noise.
-    expect(growthMB).toBeLessThan(4);
-    expect(exitCode).toBe(0);
+  if (isASAN) {
+    // Each handle that is not closed adds about 1400 bytes. The difference of
+    // two runs leaves out what every bun process leaks once.
+    const [none, many] = await Promise.all([failedOpens(0), failedOpens(500)]);
+    expect(many.leakedBytes - none.leakedBytes).toBeLessThan(100_000);
+  } else if (!isDebug) {
+    // 40000 handles that are not closed grow RSS by about 68 MB. With them
+    // closed it grows by less than 10 MB.
+    expect((await failedOpens(40_000)).rssGrowthMB).toBeLessThan(32);
   }
 });

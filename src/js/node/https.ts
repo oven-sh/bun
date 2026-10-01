@@ -197,8 +197,7 @@ function establishTunnel(agent, socket, options, tunnelConfig, afterSocket) {
         $debug("Propagate free event from tunneled socket to tunnel socket");
         socket.emit("free");
       }
-      // tls.connect() validates options synchronously, and https.request() has returned, so a throw would be uncaught:
-      // https://github.com/nodejs/node/blob/ada8c5c9f82f620885820a2268e19dbf8a2228d5/lib/https.js#L295-L308
+      // https.request() has returned, so a throw here would be uncaught: https://github.com/nodejs/node/blob/ada8c5c9f82f620885820a2268e19dbf8a2228d5/lib/https.js#L295-L308
       try {
         tunneledSocket = require("node:tls").connect(requestOptions, onTLSHandshakeSuccess);
       } catch (err) {

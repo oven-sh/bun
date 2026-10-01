@@ -1,6 +1,6 @@
 import { $, ShellOutput } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { lstatSync, readdirSync, readFileSync } from "fs";
+import { cpSync, lstatSync, readdirSync, readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, isASAN, tempDir, VerdaccioRegistry } from "harness";
 import { isAbsolute, join, sep } from "path";
 
@@ -1264,7 +1264,10 @@ describe.concurrent("bun patch --commit on an already patched package", () => {
     return stdout;
   }
 
-  async function gitApplyCheck(cwd: string, patchPath: string) {
+  // `pristine` is a copy of the package as installed before any patch, so a
+  // patch that only touches package files applies to it.
+  async function gitApplyCheck(packageDir: string, patchPath: string) {
+    const cwd = join(packageDir, "pristine");
     await using proc = Bun.spawn({
       cmd: ["git", "apply", "--check", patchPath],
       cwd,
@@ -1282,6 +1285,10 @@ describe.concurrent("bun patch --commit on an already patched package", () => {
       files: { "package.json": JSON.stringify({ name: "foo", dependencies: { "basic-1": "1.0.0" } }) },
     });
     await runBun(packageDir, "install");
+    cpSync(join(packageDir, "node_modules", "basic-1"), join(packageDir, "pristine"), {
+      recursive: true,
+      dereference: true,
+    });
     return packageDir;
   }
 
@@ -1314,6 +1321,33 @@ describe.concurrent("bun patch --commit on an already patched package", () => {
       );
     });
   }
+
+  // `git diff --no-index` names the same folder on both sides of the header for
+  // an added file (`a/node_modules/<pkg>/f b/node_modules/<pkg>/f`) and for a
+  // deleted one (`a/<cache folder>/f b/<cache folder>/f`). Both folders must be
+  // stripped from both sides.
+  test("added and deleted files get plain headers", async () => {
+    const packageDir = await createProject("hoisted");
+    const pkgDir = join(packageDir, "node_modules", "basic-1");
+
+    await runBun(packageDir, "patch", "basic-1");
+    await Bun.write(join(pkgDir, "added.js"), "module.exports = 1;\n");
+    await Bun.write(join(pkgDir, "empty.js"), "");
+    rmSync(join(pkgDir, "index.js"));
+    await runBun(packageDir, "patch", "--commit", "node_modules/basic-1");
+
+    const patch = await Bun.file(join(packageDir, "patches", "basic-1@1.0.0.patch")).text();
+    expect(patch).not.toContain("node_modules/");
+    expect(patch).not.toContain(".bun-cache");
+    expect(patch).toContain("diff --git a/added.js b/added.js\nnew file mode 100644\n");
+    expect(patch).toContain("diff --git a/empty.js b/empty.js\nnew file mode 100644\n");
+    expect(patch).toContain("diff --git a/index.js b/index.js\ndeleted file mode 100644\n");
+    expect(readdirSync(pkgDir).filter(name => !name.startsWith(".bun-tag-")).sort()).toEqual([
+      "added.js",
+      "empty.js",
+      "package.json",
+    ]);
+  });
 
   // https://github.com/oven-sh/bun/issues/19327
   test("committing again without new edits leaves the patch file as it is", async () => {

@@ -1891,20 +1891,31 @@ fn git_diff_postprocess(
     let old_folder_trimmed = strings::trim(old_folder, b"/");
     let new_folder_trimmed = strings::trim(new_folder, b"/");
 
+    // `git diff --no-index` writes a/ and b/ in front of whichever folder a
+    // side names: `a/$old/f b/$new/f` for a modified file, `a/$new/f b/$new/f`
+    // for an added file and `a/$old/f b/$old/f` for a deleted file. Both
+    // prefixes are tried for both folders, so the needle's first byte is
+    // flipped between `a` and `b` in place.
     let mut old_buf: Vec<u8> = Vec::with_capacity(old_folder_trimmed.len() + 3);
     old_buf.extend_from_slice(b"a/");
     old_buf.extend_from_slice(old_folder_trimmed);
     old_buf.push(b'/');
 
     let mut new_buf: Vec<u8> = Vec::with_capacity(new_folder_trimmed.len() + 3);
-    new_buf.extend_from_slice(b"b/");
+    new_buf.extend_from_slice(b"a/");
     new_buf.extend_from_slice(new_folder_trimmed);
     new_buf.push(b'/');
 
-    let (a_old_folder_slash, b_new_folder_slash) = (&old_buf[..], &new_buf[..]);
-
-    // const @"$old_folder/" = @"a/$old_folder/"[2..];
-    // const @"$new_folder/" = @"b/$new_folder/"[2..];
+    /// Finds `a/$folder/` or `b/$folder/` in `line`. Returns the index of the
+    /// `$folder/` part.
+    fn find_prefixed_folder(line: &[u8], needle: &mut [u8]) -> Option<usize> {
+        needle[0] = b'a';
+        if let Some(idx) = strings::index_of(line, needle) {
+            return Some(idx + 2);
+        }
+        needle[0] = b'b';
+        strings::index_of(line, needle).map(|idx| idx + 2)
+    }
 
     // these vars are here to disambguate `a/$OLD_FOLDER` when $OLD_FOLDER itself contains "a/"
     // basically if $OLD_FOLDER contains "a/" then the code will replace it
@@ -1938,10 +1949,10 @@ fn git_diff_postprocess(
         };
 
         if !skip {
-            // a/$old_folder/
-            if let Some(idx) = strings::index_of(&stdout[line_start..line_end], a_old_folder_slash)
+            // a/$old_folder/ or b/$old_folder/
+            if let Some(old_folder_slash_start) =
+                find_prefixed_folder(&stdout[line_start..line_end], &mut old_buf)
             {
-                let old_folder_slash_start = idx + 2;
                 stdout.drain(
                     line_start + old_folder_slash_start
                         ..line_start + old_folder_slash_start + old_folder_trimmed.len() + 1,
@@ -1951,17 +1962,16 @@ fn git_diff_postprocess(
                 saw_a_folder = Some(line_idx as usize);
                 continue;
             }
-            // b/$new_folder/
-            if let Some(idx) = strings::index_of(&stdout[line_start..line_end], b_new_folder_slash)
+            // a/$new_folder/ or b/$new_folder/
+            if let Some(new_folder_slash_start) =
+                find_prefixed_folder(&stdout[line_start..line_end], &mut new_buf)
             {
-                let new_folder_slash_start = idx + 2;
                 stdout.drain(
                     line_start + new_folder_slash_start
                         ..line_start + new_folder_slash_start + new_folder_trimmed.len() + 1,
                 );
-                // The next iteration
-                // resumes at the (now-shifted) byte after this line's '\n'.
-                cursor = next_cursor - (new_folder_trimmed.len() + 1);
+                // Re-examine this same line.
+                cursor = line_start;
                 saw_b_folder = Some(line_idx as usize);
                 continue;
             }

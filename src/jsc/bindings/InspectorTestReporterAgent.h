@@ -16,11 +16,14 @@ class BackendDispatcher;
 class TestReporterFrontendDispatcher;
 enum class DisconnectReason;
 
-class InspectorTestReporterAgent final : public InspectorAgentBase, public Inspector::TestReporterBackendDispatcherHandler {
+class InspectorTestReporterAgent final : public InspectorAgentBase, public Inspector::TestReporterBackendDispatcherHandler, public CanMakeThreadSafeCheckedPtr<InspectorTestReporterAgent> {
     WTF_MAKE_NONCOPYABLE(InspectorTestReporterAgent);
     WTF_MAKE_TZONE_ALLOCATED(InspectorTestReporterAgent);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(InspectorTestReporterAgent);
 
 public:
+    OVERRIDE_ABSTRACT_CAN_MAKE_CHECKEDPTR(CanMakeThreadSafeCheckedPtr);
+
     InspectorTestReporterAgent(JSC::JSGlobalObject&);
     virtual ~InspectorTestReporterAgent();
 

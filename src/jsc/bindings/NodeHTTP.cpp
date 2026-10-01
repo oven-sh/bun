@@ -535,9 +535,12 @@ static void writeAutoHeaders(uWS::HttpResponse<isSSL>* response, uint32_t autoHe
         // Same state the flat-array path sets when it sees the header: the writer adds no Content-Length.
         response->getHttpResponseData()->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER;
     }
-    // A stated raw body stops the writer's own framing line. JS that runs while the head is rendered can take away the line that ends the body: then the writer frames the body itself.
-    if ((autoHeaderBits & kAutoHeaderBodyRaw) && !(response->getHttpResponseData()->state & (uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER | uWS::HttpResponseData<isSSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER | uWS::HttpResponseData<isSSL>::HTTP_CLOSE_DELIMITED | uWS::HttpResponseData<isSSL>::HTTP_NO_BODY_STATUS))) {
-        response->getHttpResponseData()->state &= ~uWS::HttpResponseData<isSSL>::HTTP_NODE_BODY_RAW;
+    // A stated framing holds only under a head that has the line for it. JS that runs while the head is rendered can add or remove a framing header after its line: then the writer frames the body itself.
+    const uint32_t state = response->getHttpResponseData()->state;
+    if ((autoHeaderBits & kAutoHeaderBodyChunked)
+            ? !(state & uWS::HttpResponseData<isSSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER)
+            : ((autoHeaderBits & kAutoHeaderBodyRaw) && !(state & (uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER | uWS::HttpResponseData<isSSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER | uWS::HttpResponseData<isSSL>::HTTP_CLOSE_DELIMITED | uWS::HttpResponseData<isSSL>::HTTP_NO_BODY_STATUS)))) {
+        response->getHttpResponseData()->state &= ~(uWS::HttpResponseData<isSSL>::HTTP_NODE_BODY_CHUNKED | uWS::HttpResponseData<isSSL>::HTTP_NODE_BODY_RAW);
     }
 }
 

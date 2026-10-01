@@ -155,8 +155,8 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         /* node:http stated how the body of this response is framed (Node's
          * chunkedEncoding), in the head. The writer frames the body by it,
          * whatever the header bits and the request version say. At most one
-         * of the two is set, and each new response clears them. A raw body
-         * is stated only under a head that ends it (NodeHTTP.cpp). */
+         * of the two is set, and each new response clears them. A framing
+         * is stated only under a head that has the line for it (NodeHTTP.cpp). */
         HTTP_NODE_BODY_CHUNKED = 1 << 23,
         HTTP_NODE_BODY_RAW = 1 << 24,
         /* Close this connection the next time it is idle (no request being

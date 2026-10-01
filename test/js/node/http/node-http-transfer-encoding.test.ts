@@ -3533,6 +3533,27 @@ describe("the response body is framed by the value of Transfer-Encoding", () => 
       (res: any) => res.end("ok"),
       "HTTP/1.1 200 OK\r\nX-A: a\r\nDate: <D>\r\nConnection: close\r\nContent-Length: 2\r\n\r\nok",
     ],
+    [
+      "Transfer-Encoding: chunked behind a Content-Length line, write() + end()",
+      "Transfer-Encoding",
+      "chunked",
+      (res: any) => {
+        res.setHeader("Content-Length", "2");
+        res.write("ok");
+        res.end();
+      },
+      "HTTP/1.1 200 OK\r\nX-A: a\r\nContent-Length: 2\r\nDate: <D>\r\nConnection: close\r\n\r\nok",
+    ],
+    [
+      "Transfer-Encoding: chunked behind a Content-Length line, end(data)",
+      "Transfer-Encoding",
+      "chunked",
+      (res: any) => {
+        res.setHeader("Content-Length", "2");
+        res.end("ok");
+      },
+      "HTTP/1.1 200 OK\r\nX-A: a\r\nContent-Length: 2\r\nDate: <D>\r\nConnection: close\r\n\r\nok",
+    ],
   ] as [string, string, string, (res: any) => void, string][])(
     "a header that a toString() adds while the head is rendered does not frame the body: %s",
     async (_, name, value, send, expected) => {
@@ -4013,28 +4034,49 @@ describe("the allowHTTP1 fallback of http2 frames the body by the value of Trans
   // As on the native handle: a framing header that a toString() adds while the head is rendered is not a line of
   // this head, so it does not frame the body.
   test.concurrent.each([
-    ["Content-Length", "2"],
-    ["Transfer-Encoding", "identity"],
-  ])("a %s header that a toString() adds while the head is rendered does not frame the body", async (name, value) => {
-    const sent = await wire(res => {
-      let armed = false;
-      res.setHeader("X-A", {
-        toString() {
-          if (armed) {
-            armed = false;
-            res.setHeader(name, value);
-          }
-          return "a";
-        },
-      });
-      armed = true;
-      res.write("ok");
-      res.end();
-    });
-    expect(sent).toBe(
+    [
+      "Content-Length",
+      "Content-Length",
+      "2",
+      (res: any) => {},
       "HTTP/1.1 200 OK\r\nX-A: a\r\nDate: <D>\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\n\r\n",
-    );
-  });
+    ],
+    [
+      "Transfer-Encoding: identity",
+      "Transfer-Encoding",
+      "identity",
+      (res: any) => {},
+      "HTTP/1.1 200 OK\r\nX-A: a\r\nDate: <D>\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\n\r\n",
+    ],
+    [
+      "Transfer-Encoding: chunked behind a Content-Length line",
+      "Transfer-Encoding",
+      "chunked",
+      (res: any) => res.setHeader("Content-Length", "2"),
+      "HTTP/1.1 200 OK\r\nX-A: a\r\nContent-Length: 2\r\nDate: <D>\r\nConnection: close\r\n\r\nok",
+    ],
+  ] as [string, string, string, (res: any) => void, string][])(
+    "a header that a toString() adds while the head is rendered does not frame the body: %s",
+    async (_, name, value, before, expected) => {
+      const sent = await wire(res => {
+        let armed = false;
+        res.setHeader("X-A", {
+          toString() {
+            if (armed) {
+              armed = false;
+              res.setHeader(name, value);
+            }
+            return "a";
+          },
+        });
+        armed = true;
+        before(res);
+        res.write("ok");
+        res.end();
+      });
+      expect(sent).toBe(expected);
+    },
+  );
 
   const KEEP_ALIVE = "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
   const second = "HTTP/1.1 200 OK\r\nDate: <D>\r\nConnection: close\r\nContent-Length: 3\r\n\r\ntwo";

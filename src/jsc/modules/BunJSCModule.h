@@ -10,6 +10,7 @@
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "JavaScriptCore/JSNativeStdFunction.h"
 #include "MessagePort.h"
+#include "PathInlines.h"
 #include "SerializedScriptValue.h"
 #include <JavaScriptCore/APICast.h>
 #include <JavaScriptCore/AggregateError.h>
@@ -35,6 +36,7 @@
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include <algorithm>
 #include <cstddef>
+#include <wtf/FilePrintStream.h>
 #include <wtf/FileSystem.h>
 #include <wtf/MemoryFootprint.h>
 #include <wtf/text/WTFString.h>
@@ -458,7 +460,25 @@ JSC_DEFINE_HOST_FUNCTION(functionNeverInlineFunction,
 }
 
 extern "C" bool Bun__mkdirp(JSC::JSGlobalObject*, const char*);
-extern "C" void Bun__atexit(void (*func)(void));
+
+// Called by VirtualMachine::on_exit, on the thread of the VM.
+extern "C" void Bun__writeSamplingProfilerReport(JSC::JSGlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    String directory = std::exchange(WebCore::clientData(vm)->samplingProfilerReportDirectory, String());
+    auto* samplingProfiler = vm.samplingProfiler();
+    if (directory.isNull() || !samplingProfiler)
+        return;
+
+    auto path = makeString(directory, "/JSCSampilingProfile-"_s, reinterpret_cast<uintptr_t>(samplingProfiler), ".txt"_s);
+    auto out = FilePrintStream::open(toUTF8CString(path).legacyCStringPointer(), "w");
+    if (!out)
+        return;
+
+    JSC::JSLockHolder locker(vm);
+    samplingProfiler->reportTopFunctions(*out);
+    samplingProfiler->reportTopBytecodes(*out);
+}
 
 JSC_DECLARE_HOST_FUNCTION(functionStartSamplingProfiler);
 JSC_DEFINE_HOST_FUNCTION(functionStartSamplingProfiler,
@@ -485,21 +505,8 @@ JSC_DEFINE_HOST_FUNCTION(functionStartSamplingProfiler,
                 return {};
             }
 
-            // registerForReportAtExit() leaves the report to atexit(), which Bun's exit does not run.
-            // The option keeps a pointer into the path.
-            static Lock reportsLock;
-            static NeverDestroyed<Vector<std::pair<Ref<JSC::SamplingProfiler>, decltype(pathCString)>>> reports;
-            Locker locker { reportsLock };
-            if (reports->isEmpty()) {
-                Bun__atexit([] {
-                    Locker locker { reportsLock };
-                    for (auto& report : reports.get())
-                        report.first->reportDataToOptionFile();
-                });
-            }
-            reports->append({ Ref { samplingProfiler }, pathCString });
-            Options::samplingProfilerPath() = reports->last().second.data();
-            samplingProfiler.registerForReportAtExit();
+            // Absolute, so that process.chdir() does not move it.
+            WebCore::clientData(vm)->samplingProfilerReportDirectory = pathResolveWTFString(globalObject, path);
         }
     }
     if (sampleValue.isNumber()) {

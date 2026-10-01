@@ -25,7 +25,7 @@ import {
 } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { readdirSync, readFileSync } from "fs";
-import { bunEnv, bunExe, isBuildKite, isMacOS, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isBuildKite, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 describe("bun:jsc", () => {
@@ -662,27 +662,59 @@ it("deserialize applies the same nesting depth limit to arrays as to objects", a
   expect({ stdout, exitCode }).toEqual({ stdout: "rejected\n65\n", exitCode: 0 });
 });
 
-// Elsewhere the call crashes: it writes the directory to JSC's options, which are read-only by then.
-it.skipIf(!isMacOS && !isWindows).each(["process.exit(0)", "the event loop running dry"])(
-  "startSamplingProfiler(directory) writes its report at %s",
-  async ending => {
-    using dir = tempDir("sampling-profiler", {});
-    const script = `
-      require("bun:jsc").startSamplingProfiler(process.argv[1]);
-      ${ending === "process.exit(0)" ? ending : ""}
-    `;
+describe.concurrent("startSamplingProfiler(directory)", () => {
+  async function run(script: string, cwd: string) {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script, join(String(dir), "report")],
+      cmd: [bunExe(), "-e", script],
       env: bunEnv,
+      cwd,
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    const reports = readdirSync(join(String(dir), "report"));
-    expect({ reports: reports.length, stderr, exitCode }).toEqual({ reports: 1, stderr: "", exitCode: 0 });
-    expect(readFileSync(join(String(dir), "report", reports[0]), "utf8")).toContain("Sampling rate");
-  },
-);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+  const ok = { stdout: "", stderr: "", exitCode: 0 };
+  const reportsIn = (directory: string) =>
+    readdirSync(directory).map(name => readFileSync(join(directory, name), "utf8").trim().split(":")[0]);
+
+  it.each(["process.exit(0)", ""])("writes its report when the process ends: %s", async ending => {
+    using dir = tempDir("sampling-profiler", {});
+    expect(await run(`require("bun:jsc").startSamplingProfiler("report"); ${ending}`, String(dir))).toEqual(ok);
+    expect(reportsIn(join(String(dir), "report"))).toEqual(["Sampling rate"]);
+  });
+
+  it("keeps a relative directory where it was after process.chdir()", async () => {
+    using dir = tempDir("sampling-profiler", { "elsewhere/keep": "" });
+    const script = `require("bun:jsc").startSamplingProfiler("report"); process.chdir("elsewhere");`;
+    expect(await run(script, String(dir))).toEqual(ok);
+    expect(reportsIn(join(String(dir), "report"))).toEqual(["Sampling rate"]);
+  });
+
+  it("exits as usual when the directory is gone by then", async () => {
+    using dir = tempDir("sampling-profiler", {});
+    const script = `require("bun:jsc").startSamplingProfiler("report"); require("fs").rmdirSync("report");`;
+    expect(await run(script, String(dir))).toEqual(ok);
+  });
+
+  it("a worker writes its own report when it ends", async () => {
+    using dir = tempDir("sampling-profiler", {});
+    const script = `
+      const worker = new Worker("data:text/javascript," + encodeURIComponent('require("bun:jsc").startSamplingProfiler("report");'));
+      worker.addEventListener("close", () => console.log(require("fs").readdirSync("report").length));
+    `;
+    expect(await run(script, String(dir))).toEqual({ ...ok, stdout: "1\n" });
+  });
+
+  it("process.exit() does not wait for a busy worker that started it", async () => {
+    using dir = tempDir("sampling-profiler", {});
+    const script = `
+      const worker = new Worker("data:text/javascript," + encodeURIComponent('require("bun:jsc").startSamplingProfiler("report"); postMessage(0); for (;;);'));
+      worker.onmessage = () => process.exit(0);
+    `;
+    expect(await run(script, String(dir))).toEqual(ok);
+  });
+});
 
 describe("JsRef::Weak liveness", () => {
   // collectSyncWithoutSweep leaves dead cells allocated until the incremental sweeper reaches them.

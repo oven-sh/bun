@@ -262,6 +262,9 @@ public:
     // Their GCRequest::didFinishEndPhase, made once (JSC__VM__collectAsyncIdle).
     RefPtr<WTF::SharedTask<void()>> idleCollectionDidFinish;
 
+    // Set by startSamplingProfiler(directory) in bun:jsc. This VM writes its report there as it exits.
+    WTF::String samplingProfilerReportDirectory;
+
     void* bunVM;
     // Opaque box of the Rust VmHandle for this VM: what any *other* thread uses
     // to post work / ref the loop (never bunVM). Created in create(), released

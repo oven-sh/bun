@@ -1925,6 +1925,11 @@ pub(crate) mod js_bundler {
 
     impl Drop for OwnedPlugin {
         fn drop(&mut self) {
+            // `NewServer::finalize` frees a stopped server while the heap destructs its cells, so
+            // past `is_shutting_down()` this cell may be gone: like `Strong`, release nothing.
+            if jsc::virtual_machine::VirtualMachine::get().is_shutting_down() {
+                return;
+            }
             Plugin::destroy(self.0.as_ptr());
         }
     }

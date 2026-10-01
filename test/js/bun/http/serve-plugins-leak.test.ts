@@ -74,3 +74,16 @@ test.concurrent("exiting while an HTML route build is parked in the server's plu
   });
   expect(result).toSpawn("build parked in the plugin, exiting");
 });
+
+// VM teardown also frees a stopped server, from its finalizer, while the heap
+// destructs every cell. The server's plugin cell may be destructed first, so
+// the server must release nothing then. Same environment as the test above.
+test.concurrent("exiting after servers that loaded their plugins were stopped tears down cleanly", async () => {
+  const result = await bunRun(fixture("serve-plugins-exit-after-stop-fixture.ts"), {
+    BUN_DESTRUCT_VM_ON_EXIT: "1",
+    ...(isWindows
+      ? {}
+      : { Malloc: "1", ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":") }),
+  });
+  expect(result).toSpawn("servers stopped, exiting");
+});

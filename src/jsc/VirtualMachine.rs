@@ -5771,7 +5771,7 @@ impl VirtualMachine {
         // What the outgoing file's close handlers and last microtasks opened
         // since the caller's sweep.
         let _ = self.stop_context_handles(crate::StopReason::Disposed);
-        // Nothing enters its script now, so nothing dials again: this sweep leaves no socket.
+        // Nothing enters its script now, so no close handler dials again: this sweep leaves no socket.
         self.close_test_file_sockets();
         debug_assert!(!self.has_test_file_sockets());
         self.test_isolation_generation = self.test_isolation_generation.wrapping_add(1);

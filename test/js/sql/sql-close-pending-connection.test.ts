@@ -174,11 +174,15 @@ for (const [name, scheme, closedCode, timeoutCode] of drivers) {
         ],
         env: bunEnv,
         stdout: "pipe",
-        stderr: "inherit",
+        stderr: "pipe",
       });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      expect(stdout).toBe(timeoutCode + "\n");
-      expect(exitCode).toBe(0);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+        stdout: timeoutCode + "\n",
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
     },
   );
 
@@ -210,14 +214,15 @@ for (const [name, scheme, closedCode, timeoutCode] of drivers) {
         env: bunEnv,
         stdin: "pipe",
         stdout: "pipe",
-        stderr: "inherit",
+        stderr: "pipe",
       });
       const refuse = await server.silent;
       if (!act) refuse();
       proc.stdin.end();
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      expect({ stdout, exitCode, signalCode: proc.signalCode }).toEqual({
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
         stdout: code + "\n",
+        stderr: "",
         exitCode: 0,
         signalCode: null,
       });

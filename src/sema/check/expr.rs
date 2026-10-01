@@ -2761,6 +2761,8 @@ impl<'p> Checker<'p> {
             // Not to be written to, unless what is expected is.
             let list = self.array_of(TypeId::ANY);
             let is_readonly = is_const
+                // `someType` asks `never` itself, which is assignable to any list.
+                && context != Some(TypeId::NEVER)
                 && !context.is_some_and(|c| {
                     // `getApparentTypeOfContextualType`: a type variable maps to its constraint, and `someType` tests each member of that.
                     self.parts(c).iter().any(|&member| {

@@ -2262,6 +2262,9 @@ impl<'p> Checker<'p> {
             if let Some(param) = self.param_type_at(params, i)
                 && self.has_type_variables(param)
             {
+                if let Arg::Expr(e) = args[i] {
+                    self.note_array_literals(file, e, &mut inference.array_literals);
+                }
                 self.infer(&mut inference, ty, param, 0);
             }
         }
@@ -4370,9 +4373,14 @@ impl<'p> Checker<'p> {
                     self.note_array_literals(file, hir[p].value, out);
                 }
             }
-            ExprKind::Spread(x) | ExprKind::NonNull(x) | ExprKind::Satisfies { expr: x, .. } => {
-                self.note_array_literals(file, x, out)
-            }
+            ExprKind::Spread(x)
+            | ExprKind::NonNull(x)
+            | ExprKind::AsConst(x)
+            | ExprKind::Satisfies { expr: x, .. } => self.note_array_literals(file, x, out),
+            ExprKind::Await(x)
+            | ExprKind::Assign {
+                op: None, value: x, ..
+            } => self.note_array_literals(file, x, out),
             ExprKind::Cond { yes, no, .. } => {
                 self.note_array_literals(file, yes, out);
                 self.note_array_literals(file, no, out);

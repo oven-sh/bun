@@ -1,0 +1,158 @@
+"declare const x: any; true && x;"
+      => 1:23 Unexpected constant truthiness on the left-hand side of a `&&` expression.
+"declare const x: any; (true as boolean) && x;"
+      => (none)
+"declare const x: any; true! && x;"
+      => (none)
+"declare const x: any; <boolean>true && x;"
+      => (none)
+"declare const x: any; (true && x) as any;"
+      => 1:24 Unexpected constant truthiness on the left-hand side of a `&&` expression.
+"declare const x: any; (true satisfies boolean) || x;"
+      => (none)
+"declare const x: any; ({} as any) ?? x;"
+      => (none)
+"declare const x: any; {}! ?? x;"
+      => FATAL  1:26 Parsing error: Expression expected.
+"declare const x: any; ({}) ?? x;"
+      => 1:24 Unexpected constant nullishness on the left-hand side of a `??` expression.
+"declare const x: any; ({} ?? x) as any;"
+      => 1:24 Unexpected constant nullishness on the left-hand side of a `??` expression.
+"declare const x: any; null ?? x;"
+      => 1:23 Unexpected constant nullishness on the left-hand side of a `??` expression.
+"declare const x: any; (null as any) ?? x;"
+      => (none)
+"declare const x: any; null! ?? x;"
+      => (none)
+"declare const x: any; x == null;"
+      => (none)
+"declare const x: any; ({}) == null;"
+      => 1:24 Unexpected constant binary expression. Compares constantly with the right-hand side of the `==`.
+"declare const x: any; ({} as any) == null;"
+      => (none)
+"declare const x: any; ({}) == (null as any);"
+      => (none)
+"declare const x: any; ({}) == null!;"
+      => (none)
+"declare const x: any; x === true;"
+      => (none)
+"declare const x: any; ({}) === true;"
+      => 1:24 Unexpected constant binary expression. Compares constantly with the right-hand side of the `===`.
+"declare const x: any; ({} as object) === true;"
+      => (none)
+"declare const x: any; ({}) === (true as boolean);"
+      => 1:24 Unexpected comparison to newly constructed object. These two values can never be equal.
+"declare const x: any; x === {};"
+      => 1:29 Unexpected comparison to newly constructed object. These two values can never be equal.
+"declare const x: any; x === ({} as any);"
+      => (none)
+"declare const x: any; x === {}!;"
+      => (none)
+"declare const x: any; x === <any>{};"
+      => (none)
+"declare const x: any; x === [];"
+      => 1:29 Unexpected comparison to newly constructed object. These two values can never be equal.
+"declare const x: any; x === ([] as any[]);"
+      => (none)
+"declare const x: any; x === new Boolean(true);"
+      => 1:29 Unexpected comparison to newly constructed object. These two values can never be equal.
+"declare const x: any; x === new Boolean<any>(true);"
+      => 1:29 Unexpected comparison to newly constructed object. These two values can never be equal.
+"declare const x: any; x === new (Boolean as any)(true);"
+      => (none)
+"declare const x: any; x === new Boolean!(true);"
+      => (none)
+"declare const x: any; x === (new Boolean(true) as any);"
+      => (none)
+"declare const x: any; [] == [];"
+      => 1:23 Unexpected comparison of two newly constructed objects. These two values can never be equal.
+"declare const x: any; ([] as any) == [];"
+      => (none)
+"declare const x: any; [] == ([] as any);"
+      => (none)
+"declare const x: any; x == !(1 as any);"
+      => (none)
+"declare const x: any; ({}) == !1;"
+      => 1:24 Unexpected constant binary expression. Compares constantly with the right-hand side of the `==`.
+"declare const x: any; ({}) == !(1 as any);"
+      => (none)
+"declare const x: any; ({}) == Boolean(1);"
+      => 1:24 Unexpected constant binary expression. Compares constantly with the right-hand side of the `==`.
+"declare const x: any; ({}) == Boolean(1 as any);"
+      => (none)
+"declare const x: any; ({}) == Boolean<any>(1);"
+      => 1:24 Unexpected constant binary expression. Compares constantly with the right-hand side of the `==`.
+"declare const x: any; String(x) ?? 1;"
+      => 1:23 Unexpected constant nullishness on the left-hand side of a `??` expression.
+"declare const x: any; String(x as any) ?? 1;"
+      => 1:23 Unexpected constant nullishness on the left-hand side of a `??` expression.
+"declare const x: any; String<any>(x) ?? 1;"
+      => 1:23 Unexpected constant nullishness on the left-hand side of a `??` expression.
+"declare const x: any; String!(x) ?? 1;"
+      => (none)
+"declare const x: any; (x as any, {}) ?? 1;"
+      => 1:24 Unexpected constant nullishness on the left-hand side of a `??` expression.
+"declare const x: any; (x, {} as any) ?? 1;"
+      => (none)
+"declare let x: any; (x = {} as any) ?? 1;"
+      => (none)
+"declare let x: any; (x = {}) ?? 1;"
+      => 1:22 Unexpected constant nullishness on the left-hand side of a `??` expression.
+"declare let x: any; (x! = {}) ?? 1;"
+      => 1:22 Unexpected constant nullishness on the left-hand side of a `??` expression.
+"declare let x: any; ((x = {}) as any) ?? 1;"
+      => (none)
+"declare const x: any; (x as any)?.y ?? 1;"
+      => (none)
+"declare const x: any; (() => {}) ?? 1;"
+      => 1:24 Unexpected constant nullishness on the left-hand side of a `??` expression.
+"declare const x: any; ((): void => {}) ?? 1;"
+      => 1:24 Unexpected constant nullishness on the left-hand side of a `??` expression.
+"declare const x: any; (function (this: any) {}) ?? 1;"
+      => 1:24 Unexpected constant nullishness on the left-hand side of a `??` expression.
+"declare const x: any; (class<T> {}) ?? 1;"
+      => 1:24 Unexpected constant nullishness on the left-hand side of a `??` expression.
+"declare const x: any; undefined ?? 1;"
+      => 1:23 Unexpected constant nullishness on the left-hand side of a `??` expression.
+"declare const x: any; (undefined as any) ?? 1;"
+      => (none)
+"declare const x: any; void 0 ?? 1;"
+      => 1:23 Unexpected constant nullishness on the left-hand side of a `??` expression.
+"declare const x: any; void (0 as any) ?? 1;"
+      => 1:23 Unexpected constant nullishness on the left-hand side of a `??` expression.
+"declare const x: any; (void 0 as any) ?? 1;"
+      => (none)
+"declare const x: any; typeof (x as any) ?? 1;"
+      => 1:23 Unexpected constant nullishness on the left-hand side of a `??` expression.
+"declare const x: any; x?.y ?? 1;"
+      => (none)
+"declare const x: any; x! ?? 1;"
+      => (none)
+"declare const x: any; `a${x as any}` ?? 1;"
+      => 1:23 Unexpected constant nullishness on the left-hand side of a `??` expression.
+"declare const x: any; (`a${x}` as any) ?? 1;"
+      => (none)
+"declare const x: any; x++ ?? 1;"
+      => 1:23 Unexpected constant nullishness on the left-hand side of a `??` expression.
+"declare const x: any; (x as any)++ ?? 1;"
+      => 1:23 Unexpected constant nullishness on the left-hand side of a `??` expression.
+"declare const x: any; x!++ ?? 1;"
+      => 1:23 Unexpected constant nullishness on the left-hand side of a `??` expression.
+"declare const x: any; (x + 1) ?? 1;"
+      => 1:24 Unexpected constant nullishness on the left-hand side of a `??` expression.
+"declare const x: any; ((x as any) + 1) ?? 1;"
+      => 1:24 Unexpected constant nullishness on the left-hand side of a `??` expression.
+"declare const x: any; ((x + 1) as any) ?? 1;"
+      => (none)
+"enum E { A } E.A ?? 1;"
+      => (none)
+"declare const x: any; (x satisfies any) === null;"
+      => (none)
+"declare const x: any; null === (x satisfies any);"
+      => (none)
+"//tsx\ndeclare const x: any; <p /> && x;"
+      => (none)
+"//tsx\ndeclare const x: any; (<p /> as any) ?? x;"
+      => (none)
+"//tsx\ndeclare const x: any; ({} as any) ?? x;"
+      => (none)

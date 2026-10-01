@@ -616,7 +616,7 @@ blockExoticSubdeps = true
     expect(exitCode).toBe(1);
   });
 
-  describe("a git repository that the root's tarball dependency depends on", () => {
+  describe.skipIf(!Bun.which("git"))("a git repository that the root's tarball dependency depends on", () => {
     // The dependency key is `loot`. The repository names itself `private-thing`.
     let repo: ReturnType<typeof tempDir>;
     let url: string;

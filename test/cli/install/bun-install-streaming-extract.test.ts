@@ -6,7 +6,7 @@
 // the buffered extractor would produce.
 
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, readdirSorted, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, readdirSorted, tempDir } from "harness";
 import { createHash } from "node:crypto";
 import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
@@ -1038,27 +1038,14 @@ test.concurrent.each([
 });
 
 // -------------------------------------------------------------------
-// Buffered extract: a tarball whose ustar header declares a size far
-// larger than the body that follows must fail to extract without
-// leaving its temporary extraction directory behind, and without
-// allocating the declared size on disk. The declared size is
-// attacker-controlled and unbounded relative to the input.
+// Buffered extract: the archive is extracted into a temporary directory
+// that is renamed into the cache at the end. A failed extraction must
+// remove that directory, or each attempt leaves one more behind.
 // -------------------------------------------------------------------
-describe("buffered extract: malformed tarball cleanup", () => {
-  function treeSize(root: string): number {
-    let total = 0;
-    for (const entry of readdirSync(root, { withFileTypes: true })) {
-      const full = join(root, entry.name);
-      if (entry.isDirectory()) total += treeSize(full);
-      else if (entry.isFile()) total += statSync(full).size;
-    }
-    return total;
-  }
-
-  function leakedExtractionDirs(root: string): string[] {
-    // Temp extraction dirs are `.<hex>-<n>.<name>` directly under $TMPDIR.
-    return readdirSync(root, { withFileTypes: true })
-      .filter(d => d.isDirectory() && d.name.startsWith("."))
+describe.concurrent("buffered extract: failed extraction", () => {
+  function leftInTmp(tmp: string): string[] {
+    return readdirSync(tmp, { withFileTypes: true })
+      .filter(d => d.isDirectory())
       .map(d => d.name);
   }
 
@@ -1081,73 +1068,303 @@ describe("buffered extract: malformed tarball cleanup", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, stderr, exitCode, tmp, cache };
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return { stderr, exitCode, tmp };
   }
 
-  test("tar header size far exceeding body fails cleanly without leaking temp disk", async () => {
-    // A valid package.json entry followed by a file entry whose header
-    // claims 16 MiB but whose body is only 100 bytes; libarchive reports
-    // a truncated archive once it runs out of input. 16 MiB is well above
-    // the 1 MB preallocation threshold, so the unfixed build fallocated
-    // the full declared size on Linux before failing.
-    const DECLARED = 16 * 1024 * 1024;
+  test("a header that declares more than the archive holds leaves no temp directory", async () => {
+    // The header declares 16 MiB. The archive ends 100 bytes into the body.
     const pj = Buffer.from(JSON.stringify({ name: "pkg", version: "1.0.0" }));
     const body = Buffer.alloc(100, 0x78);
-    const tar = Buffer.concat([
-      tarHeader("package/package.json", pj.length, "0"),
-      pj,
-      pad512(pj.length),
-      tarHeader("package/big.bin", DECLARED, "0"),
-      body,
-      pad512(body.length),
-      Buffer.alloc(1024, 0),
-    ]);
-    const tgz = gzipSync(tar);
-    // The tarball itself is tiny; the damage is in the declared size.
-    expect(tgz.length).toBeLessThan(1024);
+    const tgz = gzipSync(
+      Buffer.concat([
+        tarHeader("package/package.json", pj.length, "0"),
+        pj,
+        pad512(pj.length),
+        tarHeader("package/big.bin", 16 * 1024 * 1024, "0"),
+        body,
+        pad512(body.length),
+        Buffer.alloc(1024, 0),
+      ]),
+    );
 
     using dir = tempDir("tar-size-lie", {
-      "package.json": JSON.stringify({
-        name: "app",
-        version: "1.0.0",
-        dependencies: { pkg: "file:./pkg.tgz" },
-      }),
+      "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { pkg: "file:./pkg.tgz" } }),
     });
     writeFileSync(join(String(dir), "pkg.tgz"), tgz);
 
-    // Run twice to confirm the leak does not accumulate per attempt.
-    let lastStderr = "";
-    for (let i = 0; i < 2; i++) {
-      const { stderr, exitCode, tmp, cache } = await runInstallIsolated(String(dir));
-      lastStderr = stderr;
-      expect(stderr).toContain("extracting tarball");
-      expect(exitCode).not.toBe(0);
-      // The failed extraction's temp directory must be gone.
-      expect({ leaked: leakedExtractionDirs(tmp) }).toEqual({ leaked: [] });
-      // Nothing close to the declared size was left anywhere under the
-      // test-isolated tmp or cache directories.
-      expect(treeSize(tmp) + treeSize(cache)).toBeLessThan(1024 * 1024);
+    // Twice: a leak would grow by one directory per attempt.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const { stderr, exitCode, tmp } = await runInstallIsolated(String(dir));
+      expect(stderr).toContain("Fail extracting tarball from pkg");
+      expect(leftInTmp(tmp)).toEqual([]);
+      expect(exitCode).toBe(1);
     }
     expect(existsSync(join(String(dir), "node_modules", "pkg"))).toBe(false);
-    expect(lastStderr).not.toBe("");
   });
 
-  test("a tarball that fails to decompress does not leak its temp directory", async () => {
-    // Not a gzip stream at all: the buffered extractor creates its temp
-    // directory, then libarchive fails to open the input as an archive.
+  test("a tarball that is not gzip leaves no temp directory", async () => {
     using dir = tempDir("tar-bad-gzip", {
-      "package.json": JSON.stringify({
-        name: "app",
-        version: "1.0.0",
-        dependencies: { pkg: "file:./pkg.tgz" },
-      }),
+      "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { pkg: "file:./pkg.tgz" } }),
     });
     writeFileSync(join(String(dir), "pkg.tgz"), Buffer.from("this is not a gzip stream"));
 
     const { stderr, exitCode, tmp } = await runInstallIsolated(String(dir));
-    expect(stderr).toContain("error:");
-    expect({ leaked: leakedExtractionDirs(tmp) }).toEqual({ leaked: [] });
-    expect(exitCode).not.toBe(0);
+    expect(stderr).toContain("Fail extracting tarball from pkg");
+    expect(leftInTmp(tmp)).toEqual([]);
+    expect(exitCode).toBe(1);
+  });
+});
+
+// -------------------------------------------------------------------
+// Sparse members, as `tar --sparse` writes them. Such a member stores
+// only its data chunks and a map of where they go; `realSize` is the
+// length of the extracted file, so a member whose last chunk ends
+// before `realSize` ends in a hole. The members are built here by hand
+// because CI has no GNU tar on every platform.
+//
+// Two things must hold for both extractors. The file has the bytes the
+// map describes, at its full length: the length comes from the end of
+// the entry's data, not from a block that was written. And the holes
+// take no disk: no call sizes the file from the header, which for a
+// sparse member names far more bytes than the archive holds.
+// -------------------------------------------------------------------
+type SparseChunk = { offset: number; data: Buffer };
+type SparseMember = { name: string; size: number; chunks: SparseChunk[] };
+
+function sparseMap(realSize: number, chunks: SparseChunk[]): [number, number][] {
+  const map = chunks.map(c => [c.offset, c.data.length] as [number, number]);
+  const end = chunks.length ? chunks.at(-1)!.offset + chunks.at(-1)!.data.length : 0;
+  // GNU tar closes the map with an empty entry at the real size.
+  if (end < realSize) map.push([realSize, 0]);
+  return map;
+}
+
+// Old GNU format, the `tar --sparse` default: typeflag 'S', magic "ustar  \0",
+// four map entries at offset 386, the real size at 483. The size field counts
+// the stored bytes only.
+function oldGnuSparseMember(name: string, realSize: number, chunks: SparseChunk[]): Buffer[] {
+  const map = sparseMap(realSize, chunks);
+  if (map.length > 4) throw new Error("the old GNU header holds four sparse entries");
+  const body = Buffer.concat(chunks.map(c => c.data));
+  const buf = Buffer.alloc(512, 0);
+  buf.write(name, 0, 100, "utf8");
+  buf.write(octal(0o644, 8), 100);
+  buf.write(octal(0, 8), 108);
+  buf.write(octal(0, 8), 116);
+  buf.write(octal(body.length, 12), 124);
+  buf.write(octal(0, 12), 136);
+  buf.fill(" ", 148, 156);
+  buf.write("S", 156);
+  buf.write("ustar  \0", 257, "latin1");
+  map.forEach(([offset, length], i) => {
+    buf.write(octal(offset, 12), 386 + i * 24);
+    buf.write(octal(length, 12), 398 + i * 24);
+  });
+  buf.write(octal(realSize, 12), 483);
+  let sum = 0;
+  for (let i = 0; i < 512; i++) sum += buf[i];
+  buf.write(octal(sum, 8), 148);
+  return [buf, body, pad512(body.length)];
+}
+
+// PAX format 1.0, what `tar --sparse --format=posix` writes: an 'x' header
+// carries the name and the real size, and the data area starts with the map as
+// decimal lines, NUL-padded to a block, followed by the chunks.
+function paxSparseMember(name: string, realSize: number, chunks: SparseChunk[]): Buffer[] {
+  const record = (key: string, value: string | number) => {
+    let len = 0;
+    let rec: string;
+    do {
+      rec = `${len} ${key}=${value}\n`;
+      len = Buffer.byteLength(rec);
+    } while (rec !== `${len} ${key}=${value}\n`);
+    return rec;
+  };
+  const pax = Buffer.from(
+    record("GNU.sparse.major", 1) +
+      record("GNU.sparse.minor", 0) +
+      record("GNU.sparse.name", name) +
+      record("GNU.sparse.realsize", realSize),
+  );
+  const map = sparseMap(realSize, chunks);
+  const mapText = Buffer.from(`${map.length}\n` + map.map(([offset, length]) => `${offset}\n${length}\n`).join(""));
+  const body = Buffer.concat([mapText, pad512(mapText.length), ...chunks.map(c => c.data)]);
+  const slash = name.lastIndexOf("/");
+  return [
+    tarHeader("PaxHeaders.0/sparse", pax.length, "x"),
+    pax,
+    pad512(pax.length),
+    tarHeader(`${name.slice(0, slash)}/GNUSparseFile.0/${name.slice(slash + 1)}`, body.length, "0"),
+    body,
+    pad512(body.length),
+  ];
+}
+
+// A package of sparse members: both formats, each given size, each layout.
+function sparsePackage(sizes: number[], onlyLayouts?: string[]) {
+  const layouts = (size: number): Record<string, SparseChunk[]> => {
+    const lastBlock = Math.floor((size - 1) / 512) * 512;
+    return {
+      "data-hole": [{ offset: 0, data: Buffer.alloc(512, 0x41) }],
+      "hole-data": [{ offset: lastBlock, data: Buffer.alloc(size - lastBlock, 0x42) }],
+      "data-hole-data-hole": [
+        { offset: 0, data: Buffer.alloc(512, 0x43) },
+        { offset: Math.floor(size / 2 / 512) * 512, data: Buffer.alloc(1024, 0x44) },
+      ],
+      "data-hole-data": [
+        { offset: 0, data: Buffer.alloc(512, 0x45) },
+        { offset: lastBlock, data: Buffer.alloc(size - lastBlock, 0x46) },
+      ],
+      "hole": [],
+    };
+  };
+  const pkgJson = Buffer.from(JSON.stringify({ name: "sparse-pkg", version: "1.0.0" }));
+  const blocks: Buffer[] = [tarHeader("package/package.json", pkgJson.length, "0"), pkgJson, pad512(pkgJson.length)];
+  const members: SparseMember[] = [];
+  let dataBytes = 0;
+  for (const [format, build] of [
+    ["gnu", oldGnuSparseMember],
+    ["pax", paxSparseMember],
+  ] as const) {
+    for (const size of sizes) {
+      for (const [layout, chunks] of Object.entries(layouts(size))) {
+        if (onlyLayouts && !onlyLayouts.includes(layout)) continue;
+        const name = `${format}-${layout}-${size}.bin`;
+        blocks.push(...build(`package/${name}`, size, chunks));
+        members.push({ name, size, chunks });
+        dataBytes += chunks.reduce((n, c) => n + c.data.length, 0);
+      }
+    }
+  }
+  blocks.push(Buffer.alloc(1024, 0));
+  const tgz = gzipSync(Buffer.concat(blocks));
+  return { tgz, members, dataBytes, integrity: "sha512-" + createHash("sha512").update(tgz).digest("base64") };
+}
+
+// Compares each extracted member with what its map describes. Returns the
+// members that differ and the disk space the members take.
+function checkSparseMembers(root: string, members: SparseMember[]) {
+  const wrong: { name: string; length: number }[] = [];
+  let allocated = 0;
+  for (const { name, size, chunks } of members) {
+    const expected = Buffer.alloc(size, 0);
+    for (const c of chunks) c.data.copy(expected, c.offset);
+    const got = readFileSync(join(root, name));
+    if (!got.equals(expected)) wrong.push({ name, length: got.length });
+    allocated += statSync(join(root, name)).blocks * 512;
+  }
+  return { wrong, allocated };
+}
+
+describe.concurrent("sparse tar members", () => {
+  // 300000 is below the size from which the extractors used to preallocate
+  // the output file (1 MB), 3000000 is above it.
+  const pkg = sparsePackage([300_000, 3_000_000]);
+
+  test("buffered extract writes each member whole and leaves its holes unallocated", async () => {
+    using dir = tempDir("sparse-buffered", {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { "sparse-pkg": "file:./pkg.tgz" },
+      }),
+    });
+    writeFileSync(join(String(dir), "pkg.tgz"), pkg.tgz);
+
+    const { stderr, exitCode } = await runInstall(String(dir));
+    expect(stderr).not.toContain("error:");
+    expect(stderr).not.toContain("Streamed ");
+
+    const { wrong, allocated } = checkSparseMembers(join(String(dir), "node_modules", "sparse-pkg"), pkg.members);
+    expect(wrong).toEqual([]);
+    // 33 MB of file for about 100 KB of data. Linux is the platform where
+    // every CI filesystem reports a hole as unallocated.
+    if (isLinux) expect(allocated).toBeLessThan(pkg.dataBytes + 1024 * 1024);
+    expect(exitCode).toBe(0);
+  });
+
+  test.each([
+    ["up to 3 MB", () => pkg],
+    // Longer than any cap a preallocation could have. One layout, because each
+    // member is 65 MiB of real disk on a filesystem without holes.
+    ["65 MiB", () => sparsePackage([65 * 1024 * 1024], ["data-hole"])],
+  ] as const)("streaming extract writes each member whole and leaves its holes unallocated (%s)", async (_, make) => {
+    const { tgz, members, dataBytes, integrity } = make();
+
+    using dir = tempDir("sparse-streamed", {
+      "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "sparse-pkg": "1.0.0" } }),
+    });
+    const tmp = join(String(dir), "bun-tmp");
+    const cache = join(String(dir), "bun-cache");
+    mkdirSync(tmp);
+    mkdirSync(cache);
+    let exited = false;
+
+    await using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname === "/sparse-pkg") {
+          return Response.json({
+            name: "sparse-pkg",
+            "dist-tags": { latest: "1.0.0" },
+            versions: {
+              "1.0.0": {
+                name: "sparse-pkg",
+                version: "1.0.0",
+                dist: { integrity, tarball: `${server.url}sparse-pkg/-/sparse-pkg-1.0.0.tgz` },
+              },
+            },
+          });
+        }
+        if (url.pathname.endsWith("/sparse-pkg-1.0.0.tgz")) {
+          return new Response(
+            new ReadableStream({
+              type: "direct",
+              async pull(c) {
+                const half = tgz.length >> 1;
+                c.write(tgz.subarray(0, half));
+                await c.flush();
+                // The streaming extractor takes the tarball only when the body
+                // arrives in more than one piece. Its first drain creates the
+                // extraction directory, so the rest waits until that exists.
+                while (!exited && !readdirSync(tmp).some(name => name.endsWith(".sparse-pkg"))) await Bun.sleep(5);
+                c.write(tgz.subarray(half));
+                await c.flush();
+                c.close();
+              },
+            }),
+            { headers: { "content-type": "application/octet-stream" } },
+          );
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
+    writeFileSync(join(String(dir), "bunfig.toml"), Bun.TOML.stringify({ install: { registry: String(server.url) } }));
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", "--verbose", "--linker=hoisted"],
+      cwd: String(dir),
+      env: {
+        ...bunEnv,
+        BUN_TMPDIR: tmp,
+        TMPDIR: tmp,
+        BUN_INSTALL_CACHE_DIR: cache,
+        // Drain on the first piece, so that the extraction directory appears.
+        BUN_INSTALL_STREAMING_DRAIN_THRESHOLD: "1",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    void proc.exited.then(() => (exited = true));
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(stderr).toContain("Streamed ");
+
+    const { wrong, allocated } = checkSparseMembers(join(String(dir), "node_modules", "sparse-pkg"), members);
+    expect(wrong).toEqual([]);
+    if (isLinux) expect(allocated).toBeLessThan(dataBytes + 1024 * 1024);
+    expect(exitCode).toBe(0);
   });
 });

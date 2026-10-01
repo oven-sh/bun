@@ -157,6 +157,127 @@ pub mod lib {
         pub result: Result,
     }
 
+    /// Which calls still work for placing a block in an output file. One per
+    /// extraction: a call that failed is not tried again for later entries.
+    pub struct WriteStrategy {
+        pub pwrite: bool,
+        pub lseek: bool,
+    }
+
+    impl Default for WriteStrategy {
+        fn default() -> Self {
+            Self {
+                pwrite: cfg!(unix),
+                lseek: true,
+            }
+        }
+    }
+
+    /// Writes the data of one archive entry to its output file.
+    ///
+    /// The entry header says how long the file is, but nothing proves the
+    /// archive holds that many bytes, and for a sparse entry it never does. So
+    /// no call here is sized from the header. A block goes to the offset
+    /// libarchive gives it, which leaves a hole where the entry has one, and
+    /// the file gets its length in [`EntryWriter::finish`], from the offset
+    /// libarchive returns once the entry's data has been read to the end.
+    pub struct EntryWriter {
+        fd: Fd,
+        /// One past the last byte written.
+        end: i64,
+        /// The file position, which only `write` and `lseek` move.
+        cursor: i64,
+    }
+
+    impl EntryWriter {
+        pub fn new(fd: Fd) -> Self {
+            Self {
+                fd,
+                end: 0,
+                cursor: 0,
+            }
+        }
+
+        #[inline]
+        pub fn fd(&self) -> Fd {
+            self.fd
+        }
+
+        pub fn write(
+            &mut self,
+            strategy: &mut WriteStrategy,
+            offset: i64,
+            data: &[u8],
+        ) -> bun_sys::Maybe<()> {
+            if data.is_empty() {
+                return Ok(());
+            }
+            let file = bun_sys::File::borrow(&self.fd);
+
+            #[cfg(unix)]
+            if strategy.pwrite {
+                match file.pwrite_all(data, offset) {
+                    Ok(()) => {
+                        self.end = self.end.max(offset + data.len() as i64);
+                        return Ok(());
+                    }
+                    Err(_) => {
+                        strategy.pwrite = false;
+                        bun_core::debug_warn!(
+                            "libarchive: falling back to write() after pwrite() failure",
+                        );
+                    }
+                }
+            }
+
+            if offset != self.cursor {
+                // Without lseek, zeros can fill a gap ahead. Nothing goes back.
+                let forward = offset > self.cursor;
+                if !forward || strategy.lseek {
+                    if let Err(err) = bun_sys::set_file_offset(self.fd, offset as u64) {
+                        strategy.lseek = false;
+                        if !forward {
+                            return Err(err);
+                        }
+                        Self::write_zeros(file, (offset - self.cursor) as usize)?;
+                    }
+                } else {
+                    Self::write_zeros(file, (offset - self.cursor) as usize)?;
+                }
+                self.cursor = offset;
+            }
+
+            file.write_all(data)?;
+            self.cursor += data.len() as i64;
+            self.end = self.end.max(self.cursor);
+            Ok(())
+        }
+
+        fn write_zeros(file: &bun_sys::File, count: usize) -> bun_sys::Maybe<()> {
+            // Use a runtime memset (vs `[0u8; _]`) to keep .rodata small.
+            let mut zero_buf = [0u8; 16 * 1024];
+            zero_buf.fill(0);
+            let mut remaining = count;
+            while remaining > 0 {
+                let to_write = &zero_buf[..remaining.min(zero_buf.len())];
+                file.write_all(to_write)?;
+                remaining -= to_write.len();
+            }
+            Ok(())
+        }
+
+        /// Call when libarchive reports the end of the entry's data. `end` is
+        /// the offset it returned with `ARCHIVE_EOF`: the length of the file.
+        /// When that is past the last byte written, the entry ends in a hole.
+        pub fn finish(&mut self, end: i64) -> bun_sys::Maybe<()> {
+            if end > self.end {
+                bun_sys::ftruncate(self.fd, end)?;
+                self.end = end;
+            }
+            Ok(())
+        }
+    }
+
     impl Archive {
         pub fn read_new() -> *mut Archive {
             // SAFETY: FFI call with no preconditions.
@@ -208,7 +329,36 @@ pub mod lib {
             unsafe { archive_read_data(self.as_mut_ptr(), buf.as_mut_ptr().cast(), buf.len()) }
         }
 
-        /// `archive_read_data_block` — returns `None` on EOF.
+        /// Appends the data of the current entry to `out`, at most `size`
+        /// bytes. Reads in steps so untrusted entry sizes don't drive
+        /// allocation. `Ok(false)` means libarchive reported a read error.
+        pub fn read_data_to_vec(
+            &self,
+            size: usize,
+            out: &mut Vec<u8>,
+        ) -> core::result::Result<bool, bun_core::OOM> {
+            let start = out.len();
+            while out.len() - start < size {
+                let to_read = (size - (out.len() - start)).min(64 * 1024);
+                out.try_reserve(to_read).map_err(|_| bun_core::AllocError)?;
+                // SAFETY: `archive_read_data` only writes into the slice; the written prefix is committed below.
+                let dest = unsafe { &mut bun_core::vec::spare_bytes_mut(out)[..to_read] };
+                let read = self.read_data(dest);
+                if read < 0 {
+                    return Ok(false);
+                }
+                if read == 0 {
+                    break;
+                }
+                // SAFETY: `archive_read_data` returns exactly the byte count it wrote (`<= to_read`).
+                unsafe { bun_core::vec::commit_spare(out, usize::try_from(read).expect("int cast")) };
+            }
+            Ok(true)
+        }
+
+        /// `archive_read_data_block`. Returns `None` at the end of the entry's
+        /// data; `*offset` is then the logical length of the entry, which is
+        /// past the last block when the entry ends in a hole.
         pub fn next(&self, offset: &mut i64) -> Option<Block<'_>> {
             let mut buff: *const c_void = core::ptr::null();
             let mut size: usize = 0;
@@ -236,117 +386,23 @@ pub mod lib {
             })
         }
 
-        pub fn write_zeros_to_file(file: &bun_sys::File, count: usize) -> Result {
-            // Use a runtime memset (vs `[0u8; _]`) to keep .rodata small.
-            let mut zero_buf = [0u8; 16 * 1024];
-            zero_buf.fill(0);
-            let mut remaining = count;
-            while remaining > 0 {
-                let to_write = &zero_buf[..remaining.min(zero_buf.len())];
-                if file.write_all(to_write).is_err() {
-                    return Result::Failed;
-                }
-                remaining -= to_write.len();
-            }
-            Result::Ok
-        }
-
-        /// Reads data from the archive and writes it to the given file
-        /// descriptor. This is a port of libarchive's
-        /// `archive_read_data_into_fd` with optimizations:
-        /// - Uses pwrite when possible to avoid needing lseek for sparse file handling
-        /// - Falls back to lseek + write if pwrite is not available
-        /// - Falls back to writing zeros if lseek is not available
-        /// - Truncates the file to the final size to handle trailing sparse holes
-        pub(crate) fn read_data_into_fd(
-            &self,
-            fd: Fd,
-            can_use_pwrite: &mut bool,
-            can_use_lseek: &mut bool,
-        ) -> Result {
-            #[cfg(windows)]
-            {
-                *can_use_pwrite = false;
-            }
-            let mut target_offset: i64 = 0; // Updated by archive.next() — where this block should be written
-            let mut actual_offset: i64 = 0; // Where we've actually written to (for write() path)
-            let mut final_offset: i64 = 0; // Furthest point the file must extend to
-            let file = bun_sys::File::borrow(&fd);
-
-            while let Some(block) = self.next(&mut target_offset) {
+        /// Reads the data of the current entry and writes it to `fd` through
+        /// an [`EntryWriter`].
+        pub fn read_data_into_fd(&self, fd: Fd, strategy: &mut WriteStrategy) -> Result {
+            let mut writer = EntryWriter::new(fd);
+            let mut offset: i64 = 0;
+            while let Some(block) = self.next(&mut offset) {
                 if block.result != Result::Ok {
                     return block.result;
                 }
-                let data = block.bytes;
-
-                // Track the furthest point we need to write to (for final truncation)
-                final_offset = final_offset.max(block.offset + data.len() as i64);
-
-                #[cfg(unix)]
-                {
-                    // Try pwrite first — it handles sparse files without needing lseek
-                    if *can_use_pwrite {
-                        match file.pwrite_all(data, block.offset) {
-                            Err(_) => {
-                                *can_use_pwrite = false;
-                                bun_core::debug_warn!(
-                                    "libarchive: falling back to write() after pwrite() failure",
-                                );
-                                // Fall through to lseek+write path
-                            }
-                            Ok(()) => {
-                                // pwrite doesn't update file position, but track logical position for fallback
-                                actual_offset = actual_offset.max(block.offset + data.len() as i64);
-                                continue;
-                            }
-                        }
-                    }
-                }
-
-                // Handle mismatch between actual position and target position
-                if block.offset != actual_offset {
-                    'seek: {
-                        if *can_use_lseek {
-                            match bun_sys::set_file_offset(fd, block.offset as u64) {
-                                Err(_) => *can_use_lseek = false,
-                                Ok(()) => {
-                                    actual_offset = block.offset;
-                                    break 'seek;
-                                }
-                            }
-                        }
-
-                        // lseek failed or not available
-                        if block.offset > actual_offset {
-                            // Write zeros to fill the gap
-                            let zero_count = (block.offset - actual_offset) as usize;
-                            let zero_result = Self::write_zeros_to_file(file, zero_count);
-                            if zero_result != Result::Ok {
-                                return zero_result;
-                            }
-                            actual_offset = block.offset;
-                        } else {
-                            // Can't seek backward without lseek
-                            return Result::Failed;
-                        }
-                    }
-                }
-
-                match file.write_all(data) {
-                    Err(_) => return Result::Failed,
-                    Ok(()) => {
-                        actual_offset += data.len() as i64;
-                    }
+                if writer.write(strategy, block.offset, block.bytes).is_err() {
+                    return Result::Failed;
                 }
             }
-
-            // Handle trailing sparse hole by truncating file to final size.
-            // This extends the file to include any trailing zeros without actually writing them.
-            if final_offset > actual_offset {
-                let _ = bun_sys::ftruncate(fd, final_offset);
+            match writer.finish(offset) {
+                Ok(()) => Result::Ok,
+                Err(_) => Result::Failed,
             }
-
-            Result::Ok
         }
 
         // `self` must be a live archive handle from `archive_{read,write}_new()`.
@@ -781,27 +837,12 @@ pub mod lib {
                     b"invalid archive entry size",
                 ));
             };
-            // Read data incrementally so untrusted entry sizes don't drive allocation.
             let mut buf: Vec<u8> = Vec::new();
-            while buf.len() < size {
-                let to_read = (size - buf.len()).min(64 * 1024);
-                buf.try_reserve(to_read).map_err(|_| bun_core::AllocError)?;
-                // SAFETY: `archive_read_data` only writes into the slice; the written prefix is committed below.
-                let dest = unsafe { &mut bun_core::vec::spare_bytes_mut(&mut buf)[..to_read] };
-                let read = archive.read_data(dest);
-                if read < 0 {
-                    return Ok(IteratorResult::init_err(
-                        archive.as_mut_ptr(),
-                        b"failed to read archive data",
-                    ));
-                }
-                if read == 0 {
-                    break;
-                }
-                // SAFETY: `archive_read_data` returns exactly the byte count it wrote (`<= to_read`).
-                unsafe {
-                    bun_core::vec::commit_spare(&mut buf, usize::try_from(read).expect("int cast"))
-                };
+            if !archive.read_data_to_vec(size, &mut buf)? {
+                return Ok(IteratorResult::init_err(
+                    archive.as_mut_ptr(),
+                    b"failed to read archive data",
+                ));
             }
             Ok(IteratorResult::init_res(buf.into_boxed_slice()))
         }
@@ -1426,8 +1467,7 @@ impl Archiver {
         let mut deferred_symlinks: Vec<DeferredSymlink> = Vec::new();
 
         let mut normalized_buf = bun_paths::os_path_buffer_pool::get();
-        let mut use_pwrite = cfg!(unix);
-        let mut use_lseek = true;
+        let mut write_strategy = lib::WriteStrategy::default();
 
         'loop_: loop {
             // SAFETY: archive valid for stream lifetime
@@ -1781,16 +1821,11 @@ impl Archiver {
 
                                     for plucker_ in ctx_.pluckers.iter_mut() {
                                         if plucker_.filename_hash == h {
-                                            plucker_.contents.inflate(size)?;
-                                            let cap = plucker_.contents.list.capacity();
-                                            plucker_.contents.list.resize(cap, 0);
+                                            plucker_.contents.list.clear();
                                             // SAFETY: archive valid
-                                            let read = unsafe {
-                                                (*archive).read_data(
-                                                    plucker_.contents.list.as_mut_slice(),
-                                                )
-                                            };
-                                            if read < 0 {
+                                            let read_ok = unsafe { &*archive }
+                                                .read_data_to_vec(size, &mut plucker_.contents.list)?;
+                                            if !read_ok {
                                                 if options.log {
                                                     // SAFETY: `archive` is the live
                                                     // `read_new()` handle this
@@ -1812,50 +1847,20 @@ impl Archiver {
                                                 }
                                                 return Err(crate::Error::Fail);
                                             }
-                                            plucker_.contents.inflate(
-                                                usize::try_from(read).expect("int cast"),
-                                            )?;
-                                            plucker_.found = read > 0;
+                                            plucker_.found = !plucker_.contents.list.is_empty();
                                             plucker_.fd = *file_handle;
                                             *plucked_file = true;
                                             continue 'loop_;
                                         }
                                     }
                                 }
-                                // archive_read_data_into_fd reads in chunks of 1 MB
-                                // #define    MAX_WRITE    (1024 * 1024)
-                                #[cfg(any(target_os = "linux", target_os = "android"))]
-                                {
-                                    // The header's size field is attacker-controlled; a
-                                    // malicious tarball can claim 8 GiB for a 100-byte body
-                                    // and fallocate that much real disk before the short body
-                                    // is detected. Bound by the input buffer length: when
-                                    // `file_buffer` is already the raw tar (pre-decompressed)
-                                    // this is exact; when it is the compressed gzip stream
-                                    // (libarchive's filter gunzips on the fly) it
-                                    // under-preallocates, which is acceptable since
-                                    // preallocation is best-effort. Either way the cap is at
-                                    // most what the caller actually supplied.
-                                    let prealloc = size.min(file_buffer.len());
-                                    if prealloc > 1_000_000 {
-                                        let _ = bun_sys::preallocate_file(
-                                            file_handle.native(),
-                                            0,
-                                            i64::try_from(prealloc).expect("int cast"),
-                                        );
-                                    }
-                                }
-
                                 let mut retries_remaining: u8 = 5;
 
                                 'possibly_retry: while retries_remaining != 0 {
                                     // SAFETY: archive valid
                                     match unsafe {
-                                        (*archive).read_data_into_fd(
-                                            *file_handle,
-                                            &mut use_pwrite,
-                                            &mut use_lseek,
-                                        )
+                                        (*archive)
+                                            .read_data_into_fd(*file_handle, &mut write_strategy)
                                     } {
                                         lib::Result::Eof => break 'loop_,
                                         lib::Result::Ok => break 'possibly_retry,

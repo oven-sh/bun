@@ -1,0 +1,1321 @@
+{"list":"cases-upstream-getter-return.json","code":"var foo = { get bar(){return true;} };","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"class foo { get bar(){return true;} }","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"class foo { get bar(){if(baz){return true;} else {return false;} } }","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"class foo { get(){return true;} }","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"Object.defineProperty(foo, \"bar\", { get: function () {return true;}});","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"Object.defineProperty(foo, \"bar\", { get: function () { ~function (){ return true; }();return true;}});","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"Object.defineProperties(foo, { bar: { get: function () {return true;}} });","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"Object.defineProperties(foo, { bar: { get: function () { ~function (){ return true; }(); return true;}} });","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"Reflect.defineProperty(foo, \"bar\", { get: function () {return true;}});","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"Reflect.defineProperty(foo, \"bar\", { get: function () { ~function (){ return true; }();return true;}});","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"Object.create(foo, { bar: { get() {return true;} } });","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"Object.create(foo, { bar: { get: function () {return true;} } });","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"Object.create(foo, { bar: { get: () => {return true;} } });","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"var get = function(){};","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"var get = function(){ return true; };","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"var foo = { bar(){} };","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"var foo = { bar(){ return true; } };","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"var foo = { bar: function(){} };","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"var foo = { bar: function(){return;} };","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"var foo = { bar: function(){return true;} };","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"var foo = { get: function () {} }","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"var foo = { get: () => {}};","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"class C { get; foo() {} }","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"foo.defineProperty(null, { get() {} });","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"foo.defineProperties(null, { bar: { get() {} } });","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"foo.create(null, { bar: { get() {} } });","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"Object.defineProperty({ get() {} }, 'foo', { value: 1 });","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"Reflect.defineProperty({ get() {} }, 'foo', { value: 1 });","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"Object.defineProperties({ foo: { get() {} } }, { bar: { value: 1 } });","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"Object.create({ foo: { get() {} } }, { bar: { value: 1 } });","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"let Object; Object.defineProperty(foo, 'bar', { get() {} })","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"function f() { Reflect.defineProperty(foo, 'bar', { get() {} }); var Reflect;}","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"function f(Object) { Object.defineProperties(foo, { bar: { get() {} } }) }","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"if (x) { const Object = getObject(); Object.create(foo, { bar: { get() {} } }) }","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"/* globals Object:off */ Object.defineProperty(foo, 'bar', { get() {} })","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"var foo = { get bar() {} };","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"var foo = { get\n bar () {} };","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"var foo = { get bar(){if(baz) {return true;}} };","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"var foo = { get bar() { ~function () {return true;}} };","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"var foo = { get bar() { return; } };","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"class foo { get bar(){} }","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"var foo = class {\n  static get\nbar(){} }","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"class foo { get bar(){ if (baz) { return true; }}}","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"class foo { get bar(){ ~function () { return true; }()}}","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"Object.defineProperty(foo, 'bar', { get: function (){}});","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"Object.defineProperty(foo, 'bar', { get: function getfoo (){}});","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"Object.defineProperty(foo, 'bar', { get(){} });","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"Object.defineProperty(foo, 'bar', { get: () => {}});","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"Object.defineProperty(foo, \"bar\", { get: function (){if(bar) {return true;}}});","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"Object.defineProperty(foo, \"bar\", { get: function (){ ~function () { return true; }()}});","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"Reflect.defineProperty(foo, 'bar', { get: function (){}});","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"Object.create(foo, { bar: { get: function() {} } })","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"Object.create(foo, { bar: { get() {} } })","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"Object.create(foo, { bar: { get: () => {} } })","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"Object?.defineProperty(foo, 'bar', { get: function (){} });","ext":"js","lines":[]}
+{"list":"cases-upstream-getter-return.json","code":"(Object?.defineProperty)(foo, 'bar', { get: function (){} });","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch(foo) { case 0: a(); /* falls through */ case 1: b(); }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch(foo) { case 0: a()\n /* falls through */ case 1: b(); }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch(foo) { case 0: a(); /* fall through */ case 1: b(); }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch(foo) { case 0: a(); /* fallthrough */ case 1: b(); }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch(foo) { case 0: a(); /* FALLS THROUGH */ case 1: b(); }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch(foo) { case 0: { a(); /* falls through */ } case 1: b(); }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch(foo) { case 0: { a()\n /* falls through */ } case 1: b(); }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch(foo) { case 0: { a(); /* fall through */ } case 1: b(); }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch(foo) { case 0: { a(); /* fallthrough */ } case 1: b(); }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch(foo) { case 0: { a(); /* FALLS THROUGH */ } case 1: b(); }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch(foo) { case 0: { a(); } /* falls through */ case 1: b(); }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch(foo) { case 0: { a(); /* falls through */ } /* comment */ case 1: b(); }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch(foo) { case 0: { /* falls through */ } case 1: b(); }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"function foo() { switch(foo) { case 0: a(); return; case 1: b(); }; }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch(foo) { case 0: a(); throw 'foo'; case 1: b(); }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"while (a) { switch(foo) { case 0: a(); continue; case 1: b(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch(foo) { case 0: a(); break; case 1: b(); }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch(foo) { case 0: case 1: a(); break; case 2: b(); }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch(foo) { case 0: case 1: break; case 2: b(); }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch(foo) { case 0: case 1: break; default: b(); }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch(foo) { case 0: case 1: a(); }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch(foo) { case 0: case 1: a(); break; }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch(foo) { case 0: case 1: break; }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch(foo) { case 0:\n case 1: break; }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch(foo) { case 0: // comment\n case 1: break; }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"function foo() { switch(foo) { case 0: case 1: return; } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"function foo() { switch(foo) { case 0: {return;}\n case 1: {return;} } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch(foo) { case 0: case 1: {break;} }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch(foo) { }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch(foo) { case 0: switch(bar) { case 2: break; } /* falls through */ case 1: break; }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"function foo() { switch(foo) { case 1: return a; a++; }}","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch (foo) { case 0: a(); /* falls through */ default:  b(); /* comment */ }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch (foo) { case 0: a(); /* falls through */ default: /* comment */ b(); }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch (foo) { case 0: if (a) { break; } else { throw 0; } default: b(); }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch (foo) { case 0: try { break; } finally {} default: b(); }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch (foo) { case 0: try {} finally { break; } default: b(); }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch (foo) { case 0: try { throw 0; } catch (err) { break; } default: b(); }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch (foo) { case 0: do { throw 0; } while(a); default: b(); }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch (foo) { case 0: a(); \n// eslint-disable-next-line rule-to-test/no-fallthrough\n case 1: }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"\n            switch (foo) {\n                case 0:\n                    a();\n                    break;\n                    /* falls through */\n                case 1:\n                    b();\n            }\n        ","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"\n            switch (foo) {\n                case 0:\n                    a();\n                    break;\n                    // eslint-disable-next-line rule-to-test/no-fallthrough\n                    /* falls through */\n                case 1:\n                    b();\n            }\n        ","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch (a) {\n case 1: ; break; \n case 3: }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"\nswitch (foo) {\n    case 0:\n        a();\n}\nswitch (bar) {\n    case 1:\n        b();\n}\n            ","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch(foo) { case 0: a();\ncase 1: b() }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch(foo) { case 0: a();\ndefault: b() }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch(foo) { case 0: a(); default: b() }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch(foo) { case 0: if (a) { break; } default: b() }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch(foo) { case 0: try { throw 0; } catch (err) {} default: b() }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch(foo) { case 0: while (a) { break; } default: b() }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch(foo) { case 0: do { break; } while (a); default: b() }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch(foo) { case 0:\n\n default: b() }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch(foo) { case 0: {} default: b() }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch(foo) { case 0: a(); { /* falls through */ } default: b() }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch(foo) { case 0: { /* falls through */ } a(); default: b() }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch(foo) { case 0: if (a) { /* falls through */ } default: b() }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch(foo) { case 0: { { /* falls through */ } } default: b() }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch(foo) { case 0: { /* comment */ } default: b() }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch(foo) { case 0:\n // comment\n default: b() }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch(foo) { case 0: a(); /* falling through */ default: b() }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch(foo) { case 0: \n /* with comments */  \ncase 1: b(); }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch(foo) { case 0:\n\ncase 1: b(); }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch(foo) { case 0:\n\ncase 1: b(); }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch (a) { case 1: \n ; case 2:  }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-fallthrough.json","code":"switch (foo) { case 0: a(); \n// eslint-enable no-fallthrough\n case 1: }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A { }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends null { }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends B { }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends B { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends B { constructor() { if (true) { super(); } else { super(); } } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends (class B {}) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends (B = C) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends (B &&= C) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends (B ||= C) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends (B ??= C) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends (B ||= 5) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends (B ??= 5) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends (B || C) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends (5 && B) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends (false && B) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends (B || 5) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends (B ?? 5) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends (a ? B : C) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends (B, C) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A { constructor() { class B extends C { constructor() { super(); } } } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends B { constructor() { super(); class C extends D { constructor() { super(); } } } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends B { constructor() { super(); class C { constructor() { } } } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends B { constructor() { a ? super() : super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends B { constructor() { if (a) super(); else super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends B { constructor() { switch (a) { case 0: super(); break; default: super(); } } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends B { constructor() { try {} finally { super(); } } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends B { constructor() { if (a) throw Error(); super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends B { constructor() { if (true) return a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends null { constructor() { return a; } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A { constructor() { return a; } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends B { constructor(a) { super(); for (const b of a) { this.a(); } } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends B { constructor(a) { super(); for (b in a) ( foo(b) ); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class Foo extends Object { constructor(method) { super(); this.method = method || function() {}; } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends Object {\n    constructor() {\n        super();\n        for (let i = 0; i < 0; i++);\n    }\n}","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends Object {\n    constructor() {\n        super();\n        for (; i < 0; i++);\n    }\n}","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends Object {\n    constructor() {\n        super();\n        for (let i = 0;; i++) {\n            if (foo) break;\n        }\n    }\n}","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends Object {\n    constructor() {\n        super();\n        for (let i = 0; i < 0;);\n    }\n}","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends Object {\n    constructor() {\n        super();\n        for (let i = 0;;) {\n            if (foo) break;\n        }\n    }\n}","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"\n            class A extends B {\n                constructor(props) {\n                    super(props);\n\n                    try {\n                        let arr = [];\n                        for (let a of arr) {\n                        }\n                    } catch (err) {\n                    }\n                }\n            }\n        ","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends obj?.prop { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"\n            class A extends Base {\n                constructor(list) {\n                    for (const a of list) {\n                        if (a.foo) {\n                            super(a);\n                            return;\n                        }\n                    }\n                    super();\n                }\n            }\n        ","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends null { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends null { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends 100 { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends 'test' { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends (B = 5) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends (B && 5) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends (B &&= 5) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends (B += C) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends (B -= C) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends (B **= C) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends (B |= C) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends (B &= C) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends B { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends B { constructor() { for (var a of b) super.foo(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends B { constructor() { for (var i = 1; i < 10; i++) super.foo(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends B { constructor() { var c = class extends D { constructor() { super(); } } } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends B { constructor() { var c = () => super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends B { constructor() { class C extends D { constructor() { super(); } } } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends B { constructor() { var C = class extends D { constructor() { super(); } } } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends B { constructor() { super(); class C extends D { constructor() { } } } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends B { constructor() { super(); var C = class extends D { constructor() { } } } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends B { constructor() { if (a) super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends B { constructor() { if (a); else super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends B { constructor() { a && super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends B { constructor() { switch (a) { case 0: super(); } } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends B { constructor() { switch (a) { case 0: break; default: super(); } } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends B { constructor() { try { super(); } catch (err) {} } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends B { constructor() { try { a; } catch (err) { super(); } } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends B { constructor() { if (a) return; super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends B { constructor() { super(); super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends B { constructor() { super() || super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends B { constructor() { if (a) super(); super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends B { constructor() { switch (a) { case 0: super(); default: super(); } } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends B { constructor(a) { while (a) super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class A extends B { constructor() { return; super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class Foo extends Bar {\n                constructor() {\n                    for (a in b) for (c in d);\n                }\n            }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class C extends D {\n\n                constructor() {\n                    do {\n                        something();\n                    } while (foo);\n                }\n\n            }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class C extends D {\n\n                constructor() {\n                    for (let i = 1;;i++) {\n                        if (bar) {\n                            break;\n                        }\n                    }\n                }\n\n            }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class C extends D {\n\n                constructor() {\n                    do {\n                        super();\n                    } while (foo);\n                }\n\n            }","ext":"js","lines":[]}
+{"list":"cases-upstream-constructor-super.json","code":"class C extends D {\n\n                constructor() {\n                    while (foo) {\n                        if (bar) {\n                            super();\n                            break;\n                        }\n                    }\n                }\n\n            }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A { }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A { constructor() { this.b = 0; } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A { constructor() { this.b(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A extends null { }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A extends null { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A extends B { }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A extends B { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A extends B { constructor() { super(); this.c = this.d; } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A extends B { constructor() { super(); this.c(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A extends B { constructor() { super(); super.c(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A extends B { constructor() { if (true) { super(); } else { super(); } this.c(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A extends B { constructor() { foo = super(); this.c(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A extends B { constructor() { foo += super().a; this.c(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A extends B { constructor() { foo |= super().a; this.c(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A extends B { constructor() { foo &= super().a; this.c(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A extends B { constructor() { class B extends C { constructor() { super(); this.d = 0; } } super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A extends B { constructor() { var B = class extends C { constructor() { super(); this.d = 0; } }; super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A extends B { constructor() { function c() { this.d(); } super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A extends B { constructor() { var c = function c() { this.d(); }; super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A extends B { constructor() { var c = () => this.d(); super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A { b() { this.c = 0; } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A extends B { c() { this.d = 0; } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"function a() { this.b = 0; }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A extends B { constructor() { if (a) { super(); this.a(); } else { super(); this.b(); } } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A extends B { constructor() { if (a) super(); else super(); this.a(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A extends B { constructor() { try { super(); } finally {} this.a(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A extends B {\n            constructor() {\n                while (foo) {\n                    super();\n                    this.a();\n                }\n            }\n        }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A extends B {\n            constructor() {\n                while (foo) {\n                    if (init) {\n                        super();\n                        this.a();\n                    }\n                }\n            }\n        }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A extends B { constructor(a) { super(); for (const b of a) { this.a(); } } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A extends B { constructor(a) { for (const b of a) { foo(b); } super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A extends B { constructor(a) { super(); this.a = a && function(){} && this.foo; } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A extends Object {\n    constructor() {\n        super();\n        for (let i = 0; i < 0; i++);\n        this;\n    }\n}","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A { constructor() { return; this; } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A extends B { constructor() { return; this; } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"\n            class A extends B {\n                constructor(props) {\n                    super(props);\n\n                    try {\n                        let arr = [];\n                        for (let a of arr) {\n                        }\n                    } catch (err) {\n                    }\n                }\n            }\n        ","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class C { field = this.toString(); }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class C extends B { field = this.foo(); }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class C extends B { field = this.foo(); constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class C extends B { field = this.foo(); constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A extends B { constructor() { this.c = 0; } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A extends B { constructor() { this.c(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A extends B { constructor() { super.c(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A extends B { constructor() { this.c = 0; super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A extends B { constructor() { this.c(); super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A extends B { constructor() { super.c(); super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A extends B { constructor() { super(this.c); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A extends B { constructor() { super(this.c()); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A extends B { constructor() { super(super.c()); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A extends B { constructor() { class C extends D { constructor() { super(); this.e(); } } this.f(); super(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A extends B { constructor() { class C extends D { constructor() { this.e(); super(); } } super(); this.f(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A extends B { constructor() { if (a) super(); this.a(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A extends B { constructor() { try { super(); } finally { this.a; } } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A extends B { constructor() { try { super(); } catch (err) { } this.a; } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A extends B { constructor() { foo &&= super().a; this.c(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A extends B { constructor() { foo ||= super().a; this.c(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"class A extends B { constructor() { foo ??= super().a; this.c(); } }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"\n            class A extends B {\n                constructor() {\n                    if (foo) {\n                        if (bar) { }\n                        super();\n                    }\n                    this.a();\n                }\n            }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"\n            class A extends B {\n                constructor() {\n                    if (foo) {\n                    } else {\n                      super();\n                    }\n                    this.a();\n                }\n            }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"\n            class A extends B {\n                constructor() {\n                    try {\n                        call();\n                    } finally {\n                        this.a();\n                    }\n                }\n            }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"\n            class A extends B {\n                constructor() {\n                    while (foo) {\n                        super();\n                    }\n                    this.a();\n                }\n            }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"\n            class A extends B {\n                constructor() {\n                    while (foo) {\n                        this.a();\n                        super();\n                    }\n                }\n            }","ext":"js","lines":[]}
+{"list":"cases-upstream-no-this-before-super.json","code":"\n            class A extends B {\n                constructor() {\n                    while (foo) {\n                        if (init) {\n                            this.a();\n                            super();\n                        }\n                    }\n                }\n            }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b();\n// falls through\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b();\n// falls through\n} case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b();\n/* falls through */\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b();\n/* falls through */\n} case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b();\n// fall through\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b();\n// fall through\n} case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b();\n// fallthrough\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b();\n// fallthrough\n} case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b();\n// fallsthrough\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b();\n// fallsthrough\n} case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b();\n// FALLS THROUGH\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b();\n// FALLS THROUGH\n} case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b();\n// Falls Through\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b();\n// Falls Through\n} case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b();\n// falls  through\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b();\n// falls  through\n} case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b();\n// falls\tthrough\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b();\n// falls\tthrough\n} case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b();\n// fall-through\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b();\n// fall-through\n} case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b();\n// fall through\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b();\n// fall through\n} case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b();\n// fall　through\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b();\n// fall　through\n} case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b();\n// fall﻿through\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b();\n// fall﻿through\n} case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b();\n// fall​through\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b();\n// fall​through\n} case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b();\n// fallſ through\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b();\n// fallſ through\n} case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b();\n// fallſthrough\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b();\n// fallſthrough\n} case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b();\n/* falls\nthrough */\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b();\n/* falls\nthrough */\n} case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b();\n/* falls\r\nthrough */\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b();\n/* falls\r\nthrough */\n} case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b();\n/* falls through */\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b();\n/* falls through */\n} case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b();\n// no break\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b();\n// no break\n} case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b();\n// eslint-disable-line falls through\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b();\n// eslint-disable-line falls through\n} case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b();\n// eslint falls through\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b();\n// eslint falls through\n} case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b();\n// eslintfalls through\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b();\n// eslintfalls through\n} case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b();\n// eslint-disable falls through\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b();\n// eslint-disable falls through\n} case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b();\n// eslint-disable-next-line falls through\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b();\n// eslint-disable-next-line falls through\n} case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b();\n// eslint-enable falls through\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b();\n// eslint-enable falls through\n} case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b();\n// eslint-env falls through\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b();\n// eslint-env falls through\n} case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b();\n// exported falls through\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b();\n// exported falls through\n} case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b();\n// global falls through\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b();\n// global falls through\n} case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b();\n// globals falls through\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b();\n// globals falls through\n} case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b();\n// globalsfalls through\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b();\n// globalsfalls through\n} case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b();\n//   eslint falls through\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b();\n//   eslint falls through\n} case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b();\n// eslint\tfalls through\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b();\n// eslint\tfalls through\n} case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b();\n/* eslint\nfalls through */\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b();\n/* eslint\nfalls through */\n} case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b();\n// eslint-disable-linefalls through\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b();\n// eslint-disable-linefalls through\n} case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b();\n// eslint-foo falls through\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b();\n// eslint-foo falls through\n} case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b();\n// exports falls through\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b();\n// exports falls through\n} case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b();\n/*falls through*/\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b();\n/*falls through*/\n} case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b();\n//falls through\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b();\n//falls through\n} case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b();\n/** falls through */\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b();\n/** falls through */\n} case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b();\n/* falls through */ /* x */\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b();\n/* falls through */ /* x */\n} case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b();\n/* x */ /* falls through */\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b();\n/* x */ /* falls through */\n} case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b();\n// falls through\n// x\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b();\n// falls through\n// x\n} case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b();\n// x\n// falls through\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b();\n// x\n// falls through\n} case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b();\n// falls through\n\n\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b();\n// falls through\n\n\n} case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b();\n/* falls through */\n\n\n\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b();\n/* falls through */\n\n\n\n} case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b(); /* falls through */ default: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b() /* falls through */; default: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: /* falls through */ b(); default: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case /* falls through */ 1: b(); default: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b(); default: /* falls through */ c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b(); case /* falls through */ 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { /* falls through */ case 1: b(); case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b(); } /* falls through */ case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b(); /* falls through */ } case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { /* falls through */ b(); } case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { /* falls through */ } case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { } /* falls through */ case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { { /* falls through */ } } case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b(); /* falls through */ }; case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b(); /* falls through */ } { } case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b(); { /* falls through */ } case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: if (x) { /* falls through */ } case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: L: { /* falls through */ } case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b(); /* falls through */ /* x */ } case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b(); /* x */ } /* falls through */ case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b(); /* falls through */ } /* x */ case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b(); /* eslint-disable falls through */ } /* falls through */ case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { ; /* falls through */ } case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { \"use strict\"; /* falls through */ } case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { \"use strict\" /* falls through */ } case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { /re/; /* falls through */ } case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { x = `}`; /* falls through */ } case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { x = `${ {a:1} }`; /* falls through */ } case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: x = /[/]case 2:/; \n/* falls through */ case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: x = \"// falls through\"; case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: x = `// falls through\n`; case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: x = /falls through/; case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1:\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1:\n\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1:\n\n\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1:\r\n\r\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1:\r\rcase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1:  case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: \ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1:\n // x\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: // x\n\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: /* x\n\n */ case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: /* falls through\n\n */ case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1:\n\n// falls through\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1\n\n:\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case\n\n1:\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1:\n\ndefault: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { default:\n\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { default\n\n:\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { default:\n\n}","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1:\n\n}","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: ;\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: ;\n\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: {}\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: break;\n\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case (1):\n\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case (1\n\n):\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case `\n\n`:\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case function(){\n\n}:\ncase 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: break; case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: return; case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"function f() { switch (a) { case 1: return; case 2: c(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: throw x; case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"for (;;) switch (a) { case 1: continue; case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: if (x) break; case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: if (x) break; else break; case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { break; } case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: while (true) {} case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: for (;;) {} case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: do {} while (true); case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: while (true) { break; } case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"L: switch (a) { case 1: break L; case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"L: for (;;) switch (a) { case 1: continue L; case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: try { break; } finally { } case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: try { b(); } finally { break; } case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: try { throw 1; } catch (e) { } case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"function f() { switch (a) { case 1: try { return; } catch (e) { return; } case 2: c(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: switch (b) { case 1: break; } case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: switch (b) { case 1: d(); case 2: e(); } break; case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: switch (b) { default: } case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: (function () { switch (b) { case 1: d(); default: } })(); break; case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: (() => { switch (b) { case 1: d(); default: } })(); case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case (() => { switch (b) { case 1: d(); default: } })(): case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b(); case (() => { switch (b) { case 1: break; default: } })(): c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b(); default: c(); case 2: d(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { default: c(); case 2: d(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { default: case 2: d(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { default: break; case 2: d(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b(); default: }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b(); case 2: c(); case 3: d(); default: e(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: class A { m() { switch (b) { case 1: d(); default: } } } case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: function f() { } case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: var x; case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: let x; case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: debugger; case 2: c(); }","ext":"js","lines":["(1,22): error no-debugger: Unexpected 'debugger' statement."]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: \"use strict\"; case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: L: ; case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"if (x) return; switch (a) { case 1: b(); case 2: c(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"function f() { return; switch (a) { case 1: b(); case 2: c(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"function f() { throw 1; switch (a) { case 1: case 2: c();\n\ncase 3: } }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b(); case 2: c(); } switch (d) { case 1: e(); case 2: f(); }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b()\n// falls through\ncase 2: c() }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b() // falls through\ncase 2: c() }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b(); // falls through\n\n\n  case 2: c() }","ext":"js","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b(); <!-- falls through\ncase 2: c() }","ext":"js","lines":["(1,28): error syntax: Unsupported syntax: Legacy HTML comments not implemented yet!"]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b();\n--> falls through\ncase 2: c() }","ext":"js","lines":["(2,1): warning syntax: Treating \"-->\" as the start of a legacy HTML single-line comment"]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: type T = number; case 2: c(); }","ext":"ts","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: interface I { } case 2: c(); }","ext":"ts","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: declare const x: number; case 2: c(); }","ext":"ts","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: enum E { } case 2: c(); }","ext":"ts","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: const enum E { } case 2: c(); }","ext":"ts","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: declare function f(): void; case 2: c(); }","ext":"ts","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: function f(): void; case 2: c(); }","ext":"ts","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: function f(): void; function f() {} case 2: c(); }","ext":"ts","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: import x = require(\"x\"); case 2: c(); }","ext":"ts","lines":["(1,29): error syntax: Unexpected x"]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: b() as any; case 2: c(); }","ext":"ts","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a as any) { case 1 as any: b(); case <any>2: c(); }","ext":"ts","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1 as any:\n\ncase 2: c(); }","ext":"ts","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1!:\n\ncase 2: c(); }","ext":"ts","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case <any>1\n\n:\ncase 2: c(); }","ext":"ts","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case x<T>:\n\ncase 2: c(); }","ext":"ts","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: type T = number;\n// falls through\ncase 2: c(); }","ext":"ts","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { type T = number; /* falls through */ } case 2: c(); }","ext":"ts","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { type T = number /* falls through */ } case 2: c(); }","ext":"ts","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: { b(); /* falls through */ } type T = number; case 2: c(); }","ext":"ts","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"function f(x: never): never { switch (a) { case 1: return f(a); case 2: c(); } }","ext":"ts","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: abstract class A { } case 2: c(); }","ext":"ts","lines":[]}
+{"list":"cases-edge-no-fallthrough.json","code":"switch (a) { case 1: declare class A { } case 2: c(); }","ext":"ts","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (B) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (B) { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (B) { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends ((B)) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends ((B)) { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends ((B)) { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B.c { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B.c { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B.c { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B[c] { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B[c] { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B[c] { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B() { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B() { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B() { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends new B { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends new B { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends new B { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends new B() { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends new B() { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends new B() { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B?.c { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B?.c { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B?.c { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (B?.c) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (B?.c) { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (B?.c) { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B?.() { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B?.() { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B?.() { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends this { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends this { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends this { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends class {} { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends class {} { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends class {} { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (class {}) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (class {}) { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (class {}) { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends function () {} { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends function () {} { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends function () {} { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (function () {}) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (function () {}) { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (function () {}) { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (() => {}) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (() => {}) { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (() => {}) { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (async () => {}) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (async () => {}) { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (async () => {}) { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends async function () {} { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends async function () {} { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends async function () {} { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends null { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends null { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends null { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (null) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (null) { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (null) { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends undefined { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends undefined { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends undefined { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (undefined) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (undefined) { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (undefined) { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends void 0 { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends void 0 { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends void 0 { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (void 0) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (void 0) { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (void 0) { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends 0 { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends 0 { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends 0 { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends 1n { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends 1n { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends 1n { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends \"s\" { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends \"s\" { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends \"s\" { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends `t` { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends `t` { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends `t` { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends `t${a}` { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends `t${a}` { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends `t${a}` { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends tag`t` { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends tag`t` { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends tag`t` { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends /r/ { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends /r/ { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends /r/ { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends true { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends true { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends true { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends [] { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends [] { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends [] { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends ({}) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends ({}) { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends ({}) { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends -a { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends -a { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends -a { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends !a { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends !a { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends !a { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends typeof a { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends typeof a { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends typeof a { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends a++ { constructor() { super(); } }","ext":"js","lines":["(1,18): error syntax: Expected \"{\" but found \"++\"","(1,21): error syntax: Expected identifier but found \"{\"","(1,39): error syntax: Unexpected \"super\""]}
+{"list":"cases-edge-constructors.json","code":"class A extends a++ { constructor() { } }","ext":"js","lines":["(1,18): error syntax: Expected \"{\" but found \"++\"","(1,21): error syntax: Expected identifier but found \"{\""]}
+{"list":"cases-edge-constructors.json","code":"class A extends a++ { constructor() { this.a; super(); } }","ext":"js","lines":["(1,18): error syntax: Expected \"{\" but found \"++\"","(1,21): error syntax: Expected identifier but found \"{\"","(1,47): error syntax: Unexpected \"super\""]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a, b) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a, b) { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a, b) { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a, b, null) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a, b, null) { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a, b, null) { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a, null, b) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a, null, b) { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a, null, b) { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (null, b) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (null, b) { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (null, b) { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a = b) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a = b) { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a = b) { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a = null) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a = null) { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a = null) { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a += b) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a += b) { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a += b) { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a -= b) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a -= b) { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a -= b) { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a &&= b) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a &&= b) { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a &&= b) { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a &&= null) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a &&= null) { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a &&= null) { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a ||= b) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a ||= b) { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a ||= b) { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a ||= null) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a ||= null) { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a ||= null) { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (null ||= b) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (null ||= b) { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (null ||= b) { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a ??= b) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a ??= b) { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a ??= b) { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a ??= 1) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a ??= 1) { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a ??= 1) { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a && b) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a && b) { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a && b) { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a && null) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a && null) { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a && null) { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (null && a) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (null && a) { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (null && a) { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a || b) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a || b) { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a || b) { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a || null) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a || null) { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a || null) { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (null || a) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (null || a) { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (null || a) { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (1 || 2) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (1 || 2) { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (1 || 2) { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a ?? b) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a ?? b) { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a ?? b) { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (null ?? a) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (null ?? a) { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (null ?? a) { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a ? b : c) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a ? b : c) { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a ? b : c) { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a ? null : c) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a ? null : c) { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a ? null : c) { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a ? b : null) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a ? b : null) { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a ? b : null) { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a ? 1 : 2) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a ? 1 : 2) { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a ? 1 : 2) { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a ? (b, null) : (c = null)) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a ? (b, null) : (c = null)) { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a ? (b, null) : (c = null)) { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a + b) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a + b) { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a + b) { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a in b) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a in b) { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a in b) { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends new.target { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends new.target { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends new.target { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends import.meta { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends import.meta { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends import.meta { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends import(\"x\") { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends import(\"x\") { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends import(\"x\") { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (yield) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (yield) { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (yield) { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (yield a) { constructor() { super(); } }","ext":"js","lines":["(1,18): error syntax: Cannot use \"yield\" outside a generator function","(1,24): error syntax: Expected \")\" but found \"a\"","(1,25): error syntax: Expected \"{\" but found \")\"","(1,27): error syntax: Expected identifier but found \"{\"","(1,45): error syntax: Unexpected \"super\""]}
+{"list":"cases-edge-constructors.json","code":"class A extends (yield a) { constructor() { } }","ext":"js","lines":["(1,18): error syntax: Cannot use \"yield\" outside a generator function","(1,24): error syntax: Expected \")\" but found \"a\"","(1,25): error syntax: Expected \"{\" but found \")\"","(1,27): error syntax: Expected identifier but found \"{\""]}
+{"list":"cases-edge-constructors.json","code":"class A extends (yield a) { constructor() { this.a; super(); } }","ext":"js","lines":["(1,18): error syntax: Cannot use \"yield\" outside a generator function","(1,24): error syntax: Expected \")\" but found \"a\"","(1,25): error syntax: Expected \"{\" but found \")\"","(1,27): error syntax: Expected identifier but found \"{\"","(1,53): error syntax: Unexpected \"super\""]}
+{"list":"cases-edge-constructors.json","code":"class A extends (await a) { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (await a) { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (await a) { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends super.x { constructor() { super(); } }","ext":"js","lines":["(1,17): error syntax: Unexpected \"super\""]}
+{"list":"cases-edge-constructors.json","code":"class A extends super.x { constructor() { } }","ext":"js","lines":["(1,17): error syntax: Unexpected \"super\""]}
+{"list":"cases-edge-constructors.json","code":"class A extends super.x { constructor() { this.a; super(); } }","ext":"js","lines":["(1,17): error syntax: Unexpected \"super\""]}
+{"list":"cases-edge-constructors.json","code":"class A extends arguments { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends arguments { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends arguments { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends NaN { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends NaN { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends NaN { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends Infinity { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends Infinity { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends Infinity { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends eval { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends eval { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends eval { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends a.b.c.d { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends a.b.c.d { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends a.b.c.d { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends a?.b?.c { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends a?.b?.c { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends a?.b?.c { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a, b).c { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a, b).c { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends (a, b).c { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends <div/> { constructor() { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends <div/> { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends <div/> { constructor() { this.a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"function* g() { class A extends (yield) { constructor() { super(); } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"function* g() { class A extends (yield a) { constructor() { super(); } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"async function g() { class A extends (await a) { constructor() { super(); } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"function g() { class A extends new.target { constructor() { super(); } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class O { m() { class A extends super.x { constructor() { super(); } } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"(class extends B { constructor() { } })","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { \"constructor\"() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"(class extends B { \"constructor\"() { } })","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { 'constructor'() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"(class extends B { 'constructor'() { } })","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { [\"constructor\"]() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"(class extends B { [\"constructor\"]() { } })","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { [`constructor`]() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"(class extends B { [`constructor`]() { } })","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { static constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"(class extends B { static constructor() { } })","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { static \"constructor\"() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"(class extends B { static \"constructor\"() { } })","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { } static constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"(class extends B { constructor() { } static constructor() { } })","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { foo() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"(class extends B { foo() { } })","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { get foo() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"(class extends B { get foo() { } })","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { set foo(v) { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"(class extends B { set foo(v) { } })","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { async foo() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"(class extends B { async foo() { } })","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { *foo() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"(class extends B { *foo() { } })","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { foo = function () { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"(class extends B { foo = function () { } })","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { static { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"(class extends B { static { } })","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { #constructor2() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"(class extends B { #constructor2() { } })","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor(a, b = 1, ...c) { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"(class extends B { constructor(a, b = 1, ...c) { } })","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor(a = super()) { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"(class extends B { constructor(a = super()) { } })","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor(a = this) { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"(class extends B { constructor(a = this) { super(); } })","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor(a = () => super()) { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"(class extends B { constructor(a = () => super()) { } })","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor({ a = this.b }) { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"(class extends B { constructor({ a = this.b }) { super(); } })","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor([a = super.b]) { super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"(class extends B { constructor([a = super.b]) { super(); } })","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"var o = { constructor() { } };","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"var o = { __proto__: B, constructor() { super.x; } };","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"export default class extends B { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"export class A extends B { constructor() { } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"export default (class extends B { constructor() { } });","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { class C extends D { constructor() { } } super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { class C extends D { constructor() { super(); } } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { class C { constructor() { this.x; } } super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { class C extends this.D { constructor() { super(); } } super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { class C { [this.k]() { } } super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { class C { [super.k] = 1; } super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { class C { f = this.k; static { this.s; } } super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { var o = { [this.k]: 1, m() { this.n; }, get g() { return this; } }; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { super(); super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { super(a, b); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { super(...a); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { (super()); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { ((super())); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { super(), a; } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { a, super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { super(), super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { a ? super() : super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { a ? super() : 0; } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { a ? 0 : super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { a && super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { a || super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { a ?? super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { super() && a; } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { super() || super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { (a && super()) || super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { a &&= super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { a ||= super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { a ??= super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { a = super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { var a = super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { const { a = super() } = b; } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { [a = super()] = b; } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { ({ a = super() } = b); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { foo(super()); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { foo(super(), super()); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { new Foo(super()); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { [super()]; } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { ({ a: super() }); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { ({ [super()]: 1 }); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { `${super()}`; } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { tag`${super()}`; } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { super().a; } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { super()[a]; } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { super()(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { super()?.a; } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { super()?.(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { a?.[super()]; } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { a?.(super()); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { a?.b(super()); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { !super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { typeof super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { void super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { super() + super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { super() , this; } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { this , super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { super(this); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { super(this.a); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { super(super.a); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { super(() => this); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { super(function () { this; }); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { super(a = this); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { super(), this.a; } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { this.a = super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { this[super()]; } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { this.a(super()); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { super.a(super()); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { super[super()]; } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { foo(this, super()); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { foo(super(), this); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { () => super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { (() => super())(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { (() => { super(); })(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { (function () { })(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { async () => { await super(); }; } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { if (a) super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { if (a) super(); else super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { if (a) super(); else { } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { if (a) { super(); } super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { if (a) { } else { super(); } this.b; } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { if (a) super(); this.b; } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { if (super()) this.a; else this.b; } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { if (a) return; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { if (a) return b; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { if (a) return b; else return c; } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { return; } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { return a; } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { return this; } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { return super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { return super(), a; } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { return a ? super() : b; } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { return (super()); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { throw a; } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { throw super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { throw this; } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { if (a) throw b; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { super(); return; } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { super(); return a; } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { return; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { throw a; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { return; this; } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { a: super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { a: { super(); break a; } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { a: { break a; super(); } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { a: { if (b) break a; super(); } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { a: { if (b) break a; super(); } this.c; } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { debugger; } }","ext":"js","lines":["(1,37): error no-debugger: Unexpected 'debugger' statement."]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { ; } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { \"use strict\"; super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { \"use strict\"; } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { with (a) super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { while (a) super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { while (a) { super(); break; } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { while (true) { super(); break; } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { while (true) { if (a) { super(); break; } } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { while (a) { this.b; } super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { super(); while (a) { this.b; } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { while (super()) { } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { while (a) { if (b) continue; super(); } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { do super(); while (a); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { do { super(); } while (a); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { do { super(); break; } while (a); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { do { this.a; } while (super()); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { do { if (a) break; super(); } while (b); this.c; } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { do { if (a) continue; super(); } while (b); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { for (;;) { super(); break; } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { for (;;) super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { for (super();;) { break; } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { for (; super();) { } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { for (;; super()) { } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { for (;; super()) { break; } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { for (;; super()) { if (a) break; } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { for (var i = 0; i < a; i++) super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { for (var i = 0; i < a; i++) { super(); break; } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { for (var i = super(); i < a; i++) { this.b; } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { for (;; a && super()) { if (b) break; } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { for (;; a ? super() : 0) { if (b) break; } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { for (;; (a, super())) { if (b) break; } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { for (;; a?.b(super())) { if (b) break; } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { for (;; function () { }) { if (b) break; } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { for (;; () => 1) { if (b) break; } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { for (a in b) super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { for (a in super()) { } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { for (var a in b) { super(); break; } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { for (a of b) super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { for (a of super()) { this.c; } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { for (const a of b) { super(); break; } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { for (this.a in b) { } super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { for (this.a of b) { } super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { for ([a = super()] of b) { break; } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { for (var a of b) { if (c) continue; super(); break; } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { L: for (;;) { for (;;) { super(); break L; } } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { L: for (;;) { for (;;) { if (a) continue L; super(); break L; } } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { L: while (a) { do { if (b) continue L; } while (c); super(); } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { switch (a) { case 0: super(); break; default: super(); } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { switch (a) { case 0: super(); default: super(); } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { switch (a) { case 0: super(); } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { switch (a) { default: super(); } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { switch (a) { case 0: break; default: super(); } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { switch (a) { case 0: super(); break; case 1: super(); break; default: super(); } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { switch (a) { case 0: super(); break; case 1: super(); break; } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { switch (super()) { case 0: this.a; } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { switch (a) { case super(): this.b; break; case 1: this.c; } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { switch (a) { case 0: case super(): this.b; } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { switch (a) { default: super(); break; case 1: break; } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { switch (super()) { default: super(); break; case 1: break; } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { switch (a) { default: super(); case 1: } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { switch (a) { default: this.x; case 1: super(); } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { switch (a) { case 0: super(); default: this.x; case 1: } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { switch (a) { case 0: super(); break; default: this.a; break; case 1: this.b } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { super(); switch (a) { case 0: default: super(); case 1: } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { switch (a) { default: case 0: super(); break; case 1: super(); } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { switch (a) { default: return; case 0: super(); } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { switch (a) { } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { switch (a) { case 0: } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { try { super(); } catch (e) { } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { try { super(); } catch (e) { super(); } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { try { super(); } catch { this.a; } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { try { super(); } finally { } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { try { super(); } finally { this.a; } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { try { } finally { super(); } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { try { this.a; } finally { super(); } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { try { a; } catch (e) { b; } finally { super(); } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { try { a; } catch (e) { b; } finally { super(); } this.c; } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { try { super(); } catch (e) { super(); } finally { this.a; } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { try { super(); } catch (e) { throw e; } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { try { super(); } catch (e) { return; } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { try { super(); } catch (e) { return a; } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { try { return; } finally { super(); } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { try { return a; } finally { super(); } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { try { throw a; } catch (e) { super(); } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { try { throw a; } finally { super(); } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { try { if (a) return; super(); } finally { this.b; } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { try { if (a) return b; } finally { super(); } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { try { super(); } finally { super(); } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { try { a; } finally { super(); super(); } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { try { try { super(); } finally { a; } } finally { b; } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { try { try { a; } finally { super(); } } finally { this.b; } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { try { try { throw a; } finally { b; } } catch (e) { super(); } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { try { a(); super(); } catch (e) { this.b; } this.c; } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { try { a(); } catch (e) { super(); return; } super(); } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { try { a.b; super(); } catch ({ c = this.d }) { } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { while (a) { try { super(); break; } finally { this.b; } } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { while (a) { try { continue; } finally { super(); } } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { for (;;) { try { if (a) break; } finally { super(); } } } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { L: { try { break L; } finally { super(); } } this.a; } }","ext":"js","lines":[]}
+{"list":"cases-edge-constructors.json","code":"class A extends B { constructor() { L: { try { break L; } finally { a; } super(); } this.a; } }","ext":"js","lines":[]}
+{"list":"cases-replay-pins.json","code":"class A extends 1 { constructor() { switch (super()) { default: super(); break; case 1: break; } } }","ext":"js","lines":[]}
+{"list":"cases-replay-pins.json","code":"class A extends null { constructor() { switch (super()) { default: super(); case 1: } } }","ext":"js","lines":[]}
+{"list":"cases-replay-pins.json","code":"class A extends (a, null) { constructor() { super(); switch (a) { default: super(); break; case 1: } } }","ext":"js","lines":[]}
+{"list":"cases-replay-pins.json","code":"class A extends 1 { constructor() { super(); switch (a) { case 0: default: super(); case 1: } } }","ext":"js","lines":[]}
+{"list":"cases-replay-pins.json","code":"class A extends B { constructor() { switch (super()) { default: super(); break; case 1: break; } } }","ext":"js","lines":[]}
+{"list":"cases-replay-pins.json","code":"class A extends ({}) { f = this.x; constructor(a) { do { switch (!super()) {\n\ncase function () { try { ; y = `a${false}b`; } finally { false; } throw ''; y.y; }: ;\n\ncase 1: { break; } default: { super(); break; }\ncase super(a):\n} b(); } while (this.m()); this; }  }","ext":"js","lines":[]}
+{"list":"cases-replay-pins.json","code":"class A extends (a = null) { static s = 1; constructor() { var y = x = (super(), super(a)); switch (class extends (a ||= null) {  }) { default: var y = b; super(); var c = a;\ncase super[a]: ; } } static { this.z; } }","ext":"js","lines":[]}
+{"list":"cases-replay-pins.json","code":"class A extends 1 { m() { this.x; } constructor() { L0: for (;;) { switch (super()) {\n\ncase b ??= c.c: ''; case new a(''): continue; var y = () => a?.y?.(1);\ndefault: { super(); break; throw super(); }\ncase this: break;\n} } }  }","ext":"js","lines":[]}
+{"list":"cases-replay-pins.json","code":"class A extends B() {  constructor(a) { L0: while (x()) { ; } super(); L1: while ((this ? super() : true)) { switch (this) {\n\ndefault: d.d; ; case 1:\ncase super.p: return; this; var c = c();\n} throw null; } this; } static { this.z; } }","ext":"js","lines":[]}
+{"list":"cases-replay-pins.json","code":"class A extends undefined { m() { this.x; } constructor(...r) { try { switch ((super() ? this : '')) { case super.p: return;\ncase !this.m(): { () => y.a; ; return; }\n\ndefault: super(); case null: super(); } var c = this.p; this; } catch { var d = b(); } this; return; }  }","ext":"js","lines":[]}
+{"list":"cases-replay-pins.json","code":"class A extends (async () => {}) {  constructor() { switch ((true ? b : super())) {\ndefault: { var c = super(a); var d = (super.p, c()); this; }\ncase this: ''; super(); } this; super(); true; this; } static { this.z; } }","ext":"js","lines":[]}
+{"list":"cases-replay-pins.json","code":"class A extends (a -= b) { static s = 1; constructor() { if (d ||= class extends (a && null) { constructor() { switch (foo(false, 1)) {\n\ncase foo(this, super()): { return super(a); return c.x; break; } default: var a = super(); this;\n\ncase this.p: case 1: { break; } } } }) { super.y; c; } else { super(); ; } return; this; } g; }","ext":"js","lines":[]}
+{"list":"cases-replay-pins.json","code":"class A extends B {  constructor() { L0: while (class extends (class {}) {  } && foo(c.d, this.m())) { super.y; super(); switch (class extends class {} { f = 1; }) {\ndefault: continue; return; super.y;\ncase super(a): throw this.m(); case true: return y(); } } ; super(); super(); }  }","ext":"js","lines":[]}
+{"list":"cases-replay-pins.json","code":"class A extends (a && b) {  constructor() { b.a; try { switch (super()) { case () => true:\n} do { this.x = 1; } while (0); } catch { for (const k in (super(a), super())) this.m(); L0: { super.y; } this; } } static { this.z; } }","ext":"js","lines":[]}
+{"list":"cases-replay-pins.json","code":"class A extends (!a) { static s = 1; constructor(...r) { if (super()) if (y) super(); else do { ; } while (0); this.m(); super.y; }  }","ext":"js","lines":[]}
+{"list":"cases-replay-pins.json","code":"class A extends (a ? null : 1) { f = this.x; constructor() { switch (!super()) {\n\ncase null: { switch (this) {\n} }\n} do { super.y; this.x = 1; } while (0); this.x = 1; ; } static { this.z; } }","ext":"js","lines":[]}
+{"list":"cases-replay-pins.json","code":"class A extends /r/ {  constructor(a = super()) { c?.b?.((false, 1)); L0: { switch (new a(true)) {\n\ndefault: super();\ncase super(): case true: super[a]; throw super.m(); } d(); } } g; }","ext":"js","lines":[]}
+{"list":"cases-replay-pins.json","code":"class A extends (a &&= null) {  constructor(a = this.x) { switch ((super(), true)) {\n\ndefault: L0: { try { break L0; } catch (e) { break; break; } finally { this.x = 1; } this.x = 1; } var c = ''; super(a); case super(a): { this.p; break; } case 0: } super.m(); } static { this.z; } }","ext":"js","lines":[]}
+{"list":"cases-replay-pins.json","code":"class A extends (B) {  constructor(a = this.x) { switch (super()) {\n\ndefault: if (true) if (y ||= super[a]) return; else super();\ncase this:\ncase true: return; } this; var y = super.p; throw super[a]; } g; }","ext":"js","lines":[]}
+{"list":"cases-replay-pins.json","code":"class A extends (void 0) { static s = 1; constructor(a = super()) { switch ((0) ?? (null)) { default: d; super();\ncase c: this; } } static { this.z; } }","ext":"js","lines":[]}
+{"list":"cases-replay-pins.json","code":"class A extends 1n { f = this.x; constructor(a = super()) { switch (foo(d, b.a)) { default: { L0: while ((super() ? a : super.p)) { new a(''); L1: { super(); continue L0; continue; } } ; 0; } case super.p: this;\ncase this: null;\n\ncase super(): this.x = 1; ; ;\n} 1; super(); super(); super.p; } g; }","ext":"js","lines":[]}
+{"list":"cases-replay-pins.json","code":"class A extends ({}) { f = this.x; constructor(a = super()) { switch (null) { default: try { super(); return; super(); } catch (e) { break; return this.p; break; } finally { return a; super(); super(); } throw true; case a: ; return this; } true; this; } g; }","ext":"js","lines":[]}
+{"list":"cases-replay-pins.json","code":"class A extends true { static s = 1; constructor() { L0: { for (var k of a) switch (`a${super()}b`) { case '': { b; break; } default: super(); this; case this: break;\n\ncase super.p: break; } } this.x = 1; var b = this; super(a); super.y; } static { this.z; } }","ext":"js","lines":[]}
+{"list":"cases-replay-pins.json","code":"class A extends B.c {  constructor({ a = this }) { switch ((super(a)) ?? (true)) { default: var x = c.x; case d: { ''; break; } case 1: this.x = 1; } this; d(); this.x = 1; } g; }","ext":"js","lines":[]}
+{"list":"cases-replay-pins.json","code":"class A extends ({}) { f = this.x; constructor() { switch (super(a) || a.y) {\n\ndefault: var c = () => x.d; super(); super.y;\ncase '': case super.p: super();\n} } g; }","ext":"js","lines":[]}
+{"list":"cases-replay-pins.json","code":"class A extends (await a) { f = this.x; constructor(a = super()) { switch (this) { default: super(); case this: !super(a);\n} this; } g; }","ext":"js","lines":[]}
+{"list":"cases-replay-pins.json","code":"class A extends ({}) { f = this.x; constructor(a) { super.p; for (;;) switch (super()) { case super(): { return super(); }\n\ndefault: { var c = super(); }\ncase false: } this.x = 1; } static { this.z; } }","ext":"js","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends (B as any) { constructor() { super(); } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends B! { constructor() { super(); } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends (<any>B) { constructor() { super(); } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends (B satisfies C) { constructor() { super(); } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends B<T> { constructor() { super(); } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends (B<T>) { constructor() { super(); } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends (B) { constructor() { super(); } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends (null as any) { constructor() { super(); } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends (null as any) { constructor() { } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends (B as any) { constructor() { } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends (a = B as any) { constructor() { super(); } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends (a || (B as any)) { constructor() { super(); } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends (a ? b! : 1) { constructor() { super(); } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends (a, b!) { constructor() { super(); } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends (a && b)! { constructor() { super(); } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A implements I { constructor() { } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends B implements I { constructor() { } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"abstract class A extends B { constructor() { super(); } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"abstract class A extends B { constructor() { } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends B { constructor(); constructor(a?: any) { super(); } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends B { constructor(); constructor(a?: any) { } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends B { constructor(a: number); constructor(a: string); constructor(a: any) { if (a) super(); } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"declare class A extends B { constructor(); }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends B { constructor(private x: number) { super(); } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends B { constructor(private x: number) { } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends B { public constructor() { } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends B { private constructor() { } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends B { protected   constructor() { } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends B { 'constructor'() { } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends B { constructor() { (super() as any); } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends B { constructor() { super()!; } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends B { constructor() { <any>super(); } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends B { constructor() { super<T>(); } }","ext":"ts","lines":["(1,37): error syntax: Unexpected \"super\""]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends B { constructor() { return <any>x; } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends B { constructor() { return x as any; } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends B { constructor() { return; } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends B { constructor() { for (;; (a && b) as any) { } super(); } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends B { constructor() { for (;; (a && super()) as any) { } } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends B { constructor() { for (;; a && super()) { } } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends B { constructor() { for (;; (a && super())) { } } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends B { constructor() { for (;; (a && super())!) { } } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"namespace N { class A extends B { constructor() { } } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"namespace N { export class A extends B { constructor() { } } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"declare namespace N { class A extends B { constructor(); } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"module M { class A extends B { constructor() { } } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"export default class extends B { constructor() { } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"export class A extends B { constructor() { } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"export default abstract class A extends B { constructor() { } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends B { constructor() { const f = (): void => { super(); }; } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A<T> extends B<T> { constructor() { } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends B.C<T> { constructor() { super(); } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends B { @dec constructor() { } }","ext":"ts","lines":["(1,21): error syntax: TypeScript does not allow decorators on class constructors"]}
+{"list":"cases-ts-constructor-super.json","code":"@dec class A extends B { constructor() { } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends B { constructor(@dec a) { } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends B { declare x: number; constructor() { } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends B { x: number = 1; constructor() { } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends B { constructor() { type T = number; } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends B { constructor() { enum E { a = super() } } }","ext":"ts","lines":["(1,50): error syntax: Unexpected \"super\""]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends B { constructor() { switch (a) { case 1: type T = number; default: super(); } } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends B { constructor() { <div a={super()} />; } }","ext":"tsx","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends B { constructor() { <this.x />; super(); } }","ext":"tsx","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends B { constructor() { this.x!; super(); } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends B { constructor() { (this as any).x; super(); } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends B { constructor() { <any>this; super(); } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends B { constructor() { super.x!; super(); } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends B { constructor() { let x: this; super(); } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends B { constructor() { let x: typeof this.y; super(); } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends B { constructor() { function f(this: A) {} super(); } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends B { constructor(public a = this.b) { super(); } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends (undefined as any) { constructor() { this.a; } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends null! { constructor() { this.a; } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends (void 0)! { constructor() { this.a; } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends (null) { constructor() { this.a; } }","ext":"ts","lines":[]}
+{"list":"cases-ts-constructor-super.json","code":"class A extends B { constructor() { try { super(); } catch (e: unknown) { this.a; } } }","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"class A { get a(): number { } }","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"class A { public get a(): number { } }","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"class A { private static get a(): number { } }","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"class A { static   get a(): number { } }","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"class A { public static override get a(): number { } }","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"class A { @dec get a(): number { } }","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"class A { @dec() public get a(): number { } }","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"class A { @dec\n  get a(): number { } }","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"abstract class A { abstract get a(): number; }","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"abstract class A { abstract get a(): number { } }","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"abstract class A { abstract get a(): number { return; } }","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"declare class A { get a(): number; }","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"interface I { get a(): number }","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"type T = { get a(): number }","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"class A { get a(): number { return; } }","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"class A { get a(): number { return 1 as any; } }","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"class A { get a(): number { if (x) return 1; } }","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"class A { get #a(): number { } }","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"class A { static get #a(): number { } }","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"class A { get ['a' as string](): number { } }","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"class A { get ['a'](): number { } }","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"class A { get [a!](): number { } }","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"class A { get a<T>(): number { } }","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"class A { get a() { function f(): void; function f() {} } }","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"class A { get a(); get a() { } }","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"var o = { get a(): number { } };","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"var o = { get a(): number { return; } };","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"var o = <T>{ get a(): number { } };","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"var o = { get a(): number { } } as T;","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"Object.defineProperty(o, 'a', { get(): number { } });","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"Object.defineProperty(o, 'a', { get: function(): number { } });","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"Object.defineProperty(o, 'a', { get: (): number => { } });","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"Object.defineProperty(o, 'a', { get: function(): number { } } as PropertyDescriptor);","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"Object.defineProperty(o, 'a', <PropertyDescriptor>{ get() { } });","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"Object.defineProperty(o, 'a', { get() { } } satisfies PropertyDescriptor);","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"Object.defineProperty(o, 'a', ({ get() { } })!);","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"Object.defineProperty(o, 'a', ({ get() { } }));","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"(Object as any).defineProperty(o, 'a', { get() { } });","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"Object!.defineProperty(o, 'a', { get() { } });","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"Object.defineProperty!(o, 'a', { get() { } });","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"(Object.defineProperty as any)(o, 'a', { get() { } });","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"(Object.defineProperty)(o, 'a', { get() { } });","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"(Object).defineProperty(o, 'a', { get() { } });","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"Object.defineProperty<T>(o, 'a', { get() { } });","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"Object['defineProperty' as string](o, 'a', { get() { } });","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"Object['defineProperty'](o, 'a', { get() { } });","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"Object.defineProperty(o, 'a', { get: (function() { }) as any });","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"Object.defineProperty(o, 'a', { get: <any>function() { } });","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"Object.defineProperty(o, 'a', { get: (function() { })! });","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"Object.defineProperty(o, 'a', { get: (function() { }) });","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"Object.defineProperty(o, 'a', { ['get' as string]: function() { } });","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"Object.defineProperty(o, 'a', { ['get']: function() { } });","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"Object.defineProperties(o, { a: { get() { } } as any });","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"Object.defineProperties(o, { a: { get() { } } });","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"Object.defineProperties(o, { a: ({ get() { } }) });","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"Object.defineProperties(o, { a: { get() { } } } as any);","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"Object.create(null, { a: { get: (): void => { } } });","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"Reflect.defineProperty(o, 'a', { get(): void { } });","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"Reflect!.defineProperty(o, 'a', { get(): void { } });","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"namespace Object { } Object.defineProperty(o, 'a', { get() { } });","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"declare const Object: any; Object.defineProperty(o, 'a', { get() { } });","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"import type Object from 'x'; Object.defineProperty(o, 'a', { get() { } });","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"type Object = number; Object.defineProperty(o, 'a', { get() { } });","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"interface Object { } Object.defineProperty(o, 'a', { get() { } });","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"enum Object { } Object.defineProperty(o, 'a', { get() { } });","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"function f<Object>() { Object.defineProperty(o, 'a', { get() { } }); }","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"class A { accessor x = 1; get y() { } }","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"class A { get a() { <div />; } }","ext":"tsx","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"class A { get a(this: A) { } }","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"class A { get a(): never { throw new Error(); } }","ext":"ts","lines":[]}
+{"list":"cases-ts-getter-return.json","code":"class A { get a() { switch (x) { case E.A: return 1; case E.B: return 2; } } }","ext":"ts","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() {} }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get\n a() {} }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get // c\n a() {} }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get /* c */ a() {} }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { /* c */ get a() {} }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get [b]() {} }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get [ (b) ]() {} }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get 'c d'() {} }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get 1e3() {} }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get 0x10() {} }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get 1n() {} }","ext":"js","lines":["(1,15): error syntax: Expected \"}\" but found \"1n\"","(1,20): error syntax: Expected \";\" but found \"{\"","(1,21): error syntax: Unexpected }"]}
+{"list":"edge-getter-return.json","code":"var o = { get get() {} }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get set() {}, set get(v) {} }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"class A { get a() {} }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"class A { static get a() {} }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"class A { static\n get\n a() {} }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"class A { get #p() {} static get #q() {} static get [x]() {} }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"class A { static get 'a'() {} get 1() {} }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"class A { static { } get x() { return } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"(class { get a() {} })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"class A { get; get get() {} }","ext":"js","lines":["(1,20): error no-dupe-class-members: Duplicate name 'get'."]}
+{"list":"edge-getter-return.json","code":"Object.defineProperty(a, 'b', { get: function () {} })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"Object.defineProperty(a, 'b', { get: function () { return; } })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"Object.defineProperty(a, 'b', { get() {} })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"Object.defineProperty(a, 'b', { get: () => {} })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"Object.defineProperty(a, 'b', { get: () => 1 })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"Object.defineProperty(a, 'b', { get: async () => {} })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"Object.defineProperty(a, 'b', { async get() {} })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"Object.defineProperty(a, 'b', { *get() {} })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"Object.defineProperty(a, 'b', { async *get() {} })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"Object.defineProperty(a, 'b', { get: async function* () {} })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"Object.defineProperty(a, 'b', { ['get']: function foo() {} })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"Object.defineProperty(a, 'b', { [ ('get') ]() {} })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"Object.defineProperty(a, 'b', { [`get`]: function () {} })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"Object.defineProperty(a, 'b', { [`g${e}t`]: function () {} })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"Object.defineProperty(a, 'b', { 'get': function () {} })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"Object.defineProperty(a, 'b', { get get() {} })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"Object.defineProperty(a, 'b', { set get(v) {} })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"Object.defineProperty(a, 'b', { get })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"Object.defineProperty(a, 'b', { get: function () {}, ...x })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"Object.defineProperty(a, 'b', { ...x, get: function () {} })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"Object.defineProperty(a, 'b', ({ get: function () {} }))","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"Object.defineProperty(a, 'b', { get: (function () {}) })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"Object.defineProperty(a, 'b', { get: (() => {}) })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"Object.defineProperty(a, 'b', { getter: function () {} })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"Object.defineProperty(a, 'b', { get: foo ? function () {} : function () {} })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"Object.defineProperty(a, 'b', { get: function () {} }, extra)","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"Object.defineProperty(a, { get: function () {} })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"Object.defineProperty({ get: function () {} })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"Object.defineProperty(...a, { get() {} })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"Object.defineProperty(a, ...b, { get() {} })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"Object['defineProperty'](a, 'b', { get() {} })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"Object[`defineProperty`](a, 'b', { get() {} })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"Object[defineProperty](a, 'b', { get() {} })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"Object.defineProperty?.(a, 'b', { get() {} })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"Object?.defineProperty?.(a, 'b', { get() {} })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"(Object).defineProperty(a, 'b', { get() {} })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"(Object.defineProperty)(a, 'b', { get() {} })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"new Object.defineProperty(a, 'b', { get() {} })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"Object.defineProperty`x`","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"window.Object.defineProperty(a, 'b', { get() {} })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"Object.prototype.defineProperty(a, 'b', { get() {} })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"Reflect.defineProperty(a, 'b', { get() {} })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"Reflect['defineProperty'](a, 'b', { get: () => {} })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"Reflect.defineProperties(a, { b: { get() {} } })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"Reflect.create(a, { b: { get() {} } })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"Object.defineProperties(a, { b: { get() {} }, ['c']: { get() {} }, d: ({ get() {} }), ...e, f() {}, get g() {} })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"Object.defineProperties(a, { b: { c: { get() {} } } })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"Object.defineProperties({ b: { get() {} } }, { c: { value: 1 } })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"Object.create(a, { b: { get: function () { if (x) return 1; } } })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"Object.create({ b: { get() {} } })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"Object.create(a, b, { c: { get() {} } })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"Object.freeze({ get: function () {} })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var Object; Object.defineProperty(a, 'b', { get() {} })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"function Object() {} Object.defineProperty(a, 'b', { get() {} })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"class Object {} Object.defineProperty(a, 'b', { get() {} })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"import Object from 'x'; Object.defineProperty(a, 'b', { get() {} })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"import * as Reflect from 'x'; Reflect.defineProperty(a, 'b', { get() {} })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"function f() { var Object; } Object.defineProperty(a, 'b', { get() {} })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"function f(Reflect) {} Reflect.defineProperty(a, 'b', { get() {} })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"try {} catch (Object) {} Object.defineProperty(a, 'b', { get() {} })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var Reflect; Object.defineProperty(a, 'b', { get() {} })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var Object; var o = { get a() {} }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"/* globals Object:off */ Object.defineProperty(a, 'b', { get() {} })","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"/* eslint-disable getter-return */ var o = { get a() {} }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { return; function f() { return 1; } } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { function f() { return 1; } } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { return (() => { return; })(); } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { var f = () => 1; } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { return x ? 1 : 2; } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { if (x) return 1; else return 2; } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { if (x) { return; } else { return 1; } } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { if (x) return 1; } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { x && y; return 1; } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { if (x && y || z) return 1; } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { if (x ?? y) return 1; else return 2; } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { x ||= 1; x &&= 2; x ??= 3; } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { while (true) {} } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { while (true) { if (x) break; } } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { while (x) { return 1; } } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { do { return 1; } while (x); } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { do { if (x) continue; return 1; } while (y); } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { for (;;) {} } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { for (;;) { if (x) break; } } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { for (var i = 0; i < n; i++) { return 1; } } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { for (var k in x) { return 1; } } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { for (var v of x) { return 1; } return 2; } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { L: for (;;) { for (;;) { break L; } } } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { L: { if (x) break L; return 1; } } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { throw new Error(); } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { if (x) throw 1; return 2; } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { switch (x) { case 1: return 1; default: return 2; } } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { switch (x) { case 1: return 1; } } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { switch (x) { default: return 2; case 1: } } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { switch (x) { case 1: case 2: return 1; default: throw 0; } } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { switch (x) { case 1: break; default: return 2; } } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { try { return 1; } finally { } } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { try { return 1; } catch (e) { } } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { try { foo(); return 1; } catch (e) { } } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { try { foo(); return 1; } catch (e) { return 2; } } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { try { foo(); } catch (e) { return 2; } finally { bar(); } } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { try { foo(); } finally { return 1; } } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { try { return foo; } catch { } } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { try { return a.b; } catch { return; } } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { try { return new F; } catch { throw 1; } } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { try { var [x = 1] = y; return 1; } catch { } } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { try { ({ x } = 1); return 1; } catch { } } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { try { return 1; } catch { } } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { return a?.b; } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { a?.b(); } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { return; } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { return void 0; } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { return\n1; } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { { return 1; } } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { debugger; ; } }","ext":"js","lines":["(1,21): error no-debugger: Unexpected 'debugger' statement."]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { 'use strict'; } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { with (x) { return 1; } } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { class B { get b() {} } return 1; } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { return { get b() {} }; } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"class A { x = function () {}; get = () => {}; static get = function () {}; }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"class A { get = { get() {} }; }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"class A { static { var o = { get a() {} }; } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"class A { get a() { return class { static { return1; } }; } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"function* g() { var o = { get a() { return 1; } }; yield o; }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { return 1; }, get b() {}, get c() { return; }, get d() { if (x) return 1; } }","ext":"js","lines":[]}
+{"list":"edge-getter-return.json","code":"var o = { get a() { return <div>{x}</div>; } }","ext":"js","lines":[]}

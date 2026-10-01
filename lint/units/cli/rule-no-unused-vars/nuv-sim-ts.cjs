@@ -6,6 +6,7 @@
 // usage: node nuv-sim-ts.cjs [--show N] [--unbuilt] <file.ts | cases.json | --code "..." | --list files.txt>...   (a .json: ["code"] or [{code, ext}])
 //   --unbuilt: the experiment of the fallback for what the parser does not build (the members and heritage of an interface, the type of
 //   an alias, a class index signature): no reference and no variable inside, every identifier token there a read by name. `extra` has to stay 0.
+//   --token-marks: the experiment that reads the names under the parameters of a setter or of a signature from the tokens of the parameter list.
 "use strict";
 const fs = require("fs");
 const path = require("path");
@@ -148,7 +149,13 @@ function unusedVars(scopeManager, ast, facts, filename, tokens) {
 	}
 	// M3 and M4: every Identifier node under a parameter of a setter or of a signature, looked up by its name from where it stands.
 	const idsUnder = (node, out) => { if (!node || typeof node.type !== "string") return out; if (node.type === "Identifier") out.push(node); for (const k of visitorKeys[node.type] || []) { const c = node[k]; if (Array.isArray(c)) c.forEach(x => idsUnder(x, out)); else idsUnder(c, out); } return out; };
-	for (const params of paramLists) for (const param of params) for (const id of idsUnder(param, [])) { const v = lookup(scopeOf(id), id.name); if (v) marked.add(v); }
+	if (!TOKEN_MARKS) for (const params of paramLists) for (const param of params) for (const id of idsUnder(param, [])) { const v = lookup(scopeOf(id), id.name); if (v) marked.add(v); }
+	// The experiment: the names are read from the tokens of the parameter list, and looked up from the scope of the signature.
+	else for (const params of paramLists) if (params.length) {
+		const from = params[0].range[0], to = params.at(-1).range[1];
+		const start = scopeOf(params[0]);
+		for (const token of tokens) if (token.range[0] >= from && token.range[1] <= to && token.type === "Identifier") { const v = lookup(start, token.value); if (v) marked.add(v); }
+	}
 	for (const g of globals) { const v = lookup(scopeOf(g.parent), "global"); if (v) marked.add(v); } // M8
 	for (const m of forMarks) { // M10
 		if (m.decl) { const v = scopeManager.getDeclaredVariables(m.decl)[0]; if (v) marked.add(v); }
@@ -230,13 +237,14 @@ function run(code, ext) {
 }
 const args = process.argv.slice(2);
 let show = 20, forceExt = null;
-var UNBUILT = false;
+var UNBUILT = false, TOKEN_MARKS = false;
 const inputs = [];
 while (args.length) {
 	const a = args.shift();
 	if (a === "--show") show = Number(args.shift());
 	else if (a === "--ext") forceExt = args.shift();
 	else if (a === "--unbuilt") UNBUILT = true;
+	else if (a === "--token-marks") TOKEN_MARKS = true;
 	else if (a === "--code") inputs.push({ code: args.shift() });
 	else if (a === "--list") for (const f of fs.readFileSync(args.shift(), "utf8").split("\n").filter(Boolean)) inputs.push({ file: f });
 	else if (a.endsWith(".json")) for (const c of JSON.parse(fs.readFileSync(a, "utf8"))) inputs.push(typeof c === "string" ? { code: c } : { code: c.code, ext: c.ext });

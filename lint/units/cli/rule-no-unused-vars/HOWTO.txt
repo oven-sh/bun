@@ -15,6 +15,16 @@ nuv-sim-ts.cjs    node nuv-sim-ts.cjs [--show N] <file.ts | list.json | --list f
                   The TypeScript side as planned (the marks M1 to M11 restated as facts of definitions, scopes and references), on
                   typescript-eslint's scopes, compared with @typescript-eslint/no-unused-vars. Run: cases/ts-*.json 330 cases,
                   TypeScript's tests/cases 11143 files that parse (44,260 reports), bun's .ts/.tsx 3436, 668 .d.ts: no difference.
+                  --unbuilt: the fallback for what the parser does not build (members and heritage of an interface, the type of an
+                  alias, a class index signature: X4.3, X4.4): no reference and no variable inside, every identifier token a read by
+                  name. --token-marks: the names under the parameters of a setter or signature read from the tokens of the list.
+                  Both only lose reports: `extra` stays 0 (the numbers are in the findings of the unit).
+probe/            sitesprobe: the site facts (assign target, update operand, unused value, in a loop, for-in/of exception, storable
+                  function) on bun's tree of Parser::parse_for_lint by one top-down walk, as the Referencer is to compute them.
+                  build:  /workspace/tools/lk python3 probe/build.py /tmp/nuv/sitesprobe
+sites-estree.cjs  node sites-estree.cjs [--probe /tmp/nuv/sitesprobe] [--list files.txt] <file>... : those facts against the same
+                  facts read off ESLint's tree with parent pointers (espree; typescript-eslint's parser for TypeScript).
+expected-differences.json   cases where bun is to be silent and ESLint reports, each with the reason.
 extract-default-cases.cjs   the cases of ESLint's own test that run with options equal to the defaults ("all" and an object that
                   restates defaults included): 376, 368 of them distinct. All parse with bun's parser.
 make-seed.cjs     node make-seed.cjs > seed/no-unused-vars.json : those cases and cases/*.json with ESLint's answer as `expect`

@@ -63,6 +63,8 @@ pub(crate) struct UpgradedDuplex {
     /// The transport delivered EOF (its 'end' event fired). Teardown payloads
     /// (close_notify) are dropped after this; see [`Self::call_write_or_end`].
     pub transport_eof: Cell<bool>,
+    /// [`Self::call_write_or_end`] is on the stack.
+    writing: Cell<bool>,
 }
 
 bun_event_loop::impl_timer_owner!(UpgradedDuplex; from_timer_ptr => event_loop_timer);
@@ -235,6 +237,9 @@ impl UpgradedDuplex {
         }
         // global is set in `from()` whenever origin is set.
         let Some(global) = self.global else { return };
+        let _restore_writing = scopeguard::guard(self.writing.replace(true), |was_writing| {
+            self.writing.set(was_writing)
+        });
 
         // Teardown-phase bytes (close_notify / the trailing end()) aimed at a
         // duplex whose write side already ended (TLS-inception teardown) only
@@ -406,6 +411,7 @@ impl UpgradedDuplex {
             pending_data: JsCell::new(Vec::new()),
             pending_close: Cell::new(false),
             transport_eof: Cell::new(false),
+            writing: Cell::new(false),
         }
     }
 
@@ -755,6 +761,10 @@ fn on_writable(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>
     if let Some(self_ptr) = host_fn::get_function_data(function) {
         // SAFETY: see host-fn note above.
         let this = unsafe { &*self_ptr.cast::<UpgradedDuplex>() };
+        // 'drain' from inside our call to write(): the sender on the stack would resend its bytes.
+        if this.writing.get() {
+            return Ok(JSValue::UNDEFINED);
+        }
         // flush pending data
         this.flush();
         // call onWritable (will flush on demand)

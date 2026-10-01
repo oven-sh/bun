@@ -1,0 +1,241 @@
+PASTE SOURCE FOR API.md, BLOCK C part 2 of 2 (directly after part 1). Describes be1ebe5295.
+
+### `erased`: statements and class members that the tree does not hold
+
+```rust
+/// Where an erased statement stood.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Place {
+    /// Before the statement at `index` of the statements of the file.
+    Module { index: u32 },
+    /// Before the statement at `index` of the list whose scope the parse pass pushed at `scope`.
+    Scope { scope: u32, index: u32 },
+    /// Before the statement at `index` of the statements of the erased statement that starts at `parent`.
+    Erased { parent: u32, index: u32 },
+    /// Not in a list: the tree has a statement at `loc` in its place.
+    InTree { loc: u32 },
+}
+
+bitflags! {
+    pub struct ErasedFlags: u16 {
+        const EXPORT; const DEFAULT; const DECLARE;
+        /// `declare`, or inside a `declare` block.
+        const AMBIENT;
+        const ABSTRACT;
+        /// `import type`, `export type`.
+        const TYPE_ONLY;
+        /// The inner part of a dotted namespace name.
+        const NESTED;
+        /// `export declare var` in a namespace: the tree has an `S::Local` of the names at `Place::InTree`.
+        const STAND_IN;
+        const NO_BODY; const STATIC;
+    }
+}
+
+/// A statement that the parse pass leaves out of the statement list.
+pub struct Erased {
+    /// Offset of its first token: a decorator, `export`, `declare`, or its keyword.
+    pub start: u32,
+    /// Offset after its last token, the `;` included.
+    pub end: u32,
+    pub place: Place,
+    pub flags: ErasedFlags,
+    pub data: ErasedData,
+}
+pub enum ErasedData {
+    Interface(Name),
+    TypeAlias(Name),
+    /// A function without a body, or what follows `declare`: a function, class, variable statement, enum or `;`.
+    Declaration(Stmt),
+    Module(StoreRef<ModuleDeclaration>),
+    /// `export as namespace name`.
+    NamespaceExport(Name),
+    Import(StoreRef<ImportDeclaration>),
+    ImportEquals(StoreRef<ImportEqualsDeclaration>),
+    Export(StoreRef<ExportDeclaration>),
+}
+/// An identifier, or a keyword read as a name. `text` is without escapes.
+pub struct Name { pub start: u32, pub end: u32, pub text: StoreStr }
+/// A string literal: the range holds the quotes, `value` is what it says.
+pub struct StringLiteral { pub start: u32, pub end: u32, pub value: StoreStr }
+#[repr(u8)]
+pub enum ModuleKeyword { Namespace, Module, Global }
+pub enum ModuleName { Identifier(Name), String(StringLiteral) }
+pub struct ModuleDeclaration {
+    pub keyword: ModuleKeyword,
+    pub name: ModuleName,
+    /// The statements that the parse pass keeps of the body. `None`: `declare module "m";`.
+    pub body: Option<StoreSlice<Stmt>>,
+}
+pub enum ImportClause { Default(Name), Namespace(Name), Named(StoreSlice<ClauseItem>) }
+pub struct ImportDeclaration {
+    /// Offset of the `type` after `import`.
+    pub type_keyword: Option<u32>,
+    pub clause: ImportClause,
+    pub module_specifier: StringLiteral,
+}
+pub enum ModuleReference { External(Expr), Entity(Expr) }
+pub struct ImportEqualsDeclaration { pub name: Name, pub module_reference: ModuleReference }
+pub enum ExportClause { Star, Namespace(Name), Named(StoreSlice<ClauseItem>) }
+pub struct ExportDeclaration { pub clause: ExportClause, pub module_specifier: Option<StringLiteral> }
+
+/// A class member that the parse pass leaves out of `G::Class::properties`.
+pub struct ErasedMember {
+    pub start: u32,
+    pub end: u32,
+    /// `G::Class::body_loc`.
+    pub class_body: u32,
+    /// How many members `G::Class::properties` has before it.
+    pub index: u32,
+    pub flags: ErasedFlags,
+    pub data: ErasedMemberData,
+}
+pub enum ErasedMemberData {
+    /// An overload, or an abstract or declared member, as the parse pass built it.
+    Property(StoreRef<G::Property>),
+    /// An index signature: the parse pass builds nothing of it.
+    IndexSignature,
+}
+
+#[derive(Default)]
+pub struct ErasedTables {
+    /// In the order the parse pass finishes them: a statement follows the statements inside it.
+    pub statements: Vec<Erased>,
+    /// In the order the parse pass finishes them.
+    pub members: Vec<ErasedMember>,
+    // private: what `export type` holds for its caller, and the lists around the statement being read
+}
+```
+
+`ImportClause::Named` and `ExportClause::Named` hold the names in braces that are not marked `type`.
+`ModuleReference::External` is the string of `require("m")`, `Entity` a name or a dotted name, both as the parse
+pass built them.
+
+What each source is:
+
+| source | `data` | flags beside `EXPORT`, `DEFAULT` |
+| --- | --- | --- |
+| `interface I {}` | `Interface(name)` | `DECLARE`, `AMBIENT` |
+| `type A = T` | `TypeAlias(name)` | `DECLARE`, `AMBIENT` |
+| `declare var/let/const x: T` | `Declaration(S::Local)` | `DECLARE`, `AMBIENT`, `STAND_IN` |
+| `function f(): void;`, `declare function f(): void` | `Declaration(S::Function)` | `NO_BODY`, `DECLARE`, `AMBIENT` |
+| `declare class C {}`, a class of a declaration file | `Declaration(S::Class)` | `AMBIENT`, `DECLARE`, `ABSTRACT` |
+| `declare enum E {}`, `declare const enum E {}` | `Declaration(S::Enum)` | `DECLARE`, `AMBIENT` |
+| `declare;` | `Declaration` of an empty statement | `DECLARE`, `AMBIENT` |
+| `declare namespace N {}`, `declare module "m" {}`, `declare module "m";`, `declare global {}`, `global {}`, a namespace without a value | `Module` | `DECLARE`, `AMBIENT`, `NESTED`, `NO_BODY` |
+| `export as namespace N` | `NamespaceExport(name)` | `AMBIENT` |
+| `import type d from "m"`, `import type * as n from "m"`, `import type { a } from "m"`, `import { type a } from "m"` | `Import` | `TYPE_ONLY` after `import type`, `AMBIENT` |
+| `import type x = require("m")`, `import type x = a.b`, and `import x = ...` in a `declare` block | `ImportEquals` | `TYPE_ONLY`, `AMBIENT`, `DECLARE` |
+| `export type { a }`, `export type { a } from "m"`, `export type * from "m"`, `export type * as n from "m"`, `export { type a }`, `export { type a } from "m"` | `Export` | `TYPE_ONLY` after `export type`, `AMBIENT` |
+
+The name of a declared function, class or enum is in its `Stmt`: `parsed.name_of(name.ref_)`. A namespace with a
+dotted name is one record for each part: the inner parts have `NESTED`, start at their own name and stand at
+`Place::InTree` with the offset of the `.` before them.
+
+How to put an erased statement back between the statements that stay: `place` says the list and the index, and
+`index` counts the list as its node holds it (`ParsedForLint::stmts`, `S::Block::stmts`, `G::FnBody::stmts`, ...).
+The records of one place are in the order of the source. The offset `scope` of `Place::Scope` is where the parse
+pass pushed the scope of the list, which the tree has for every list:
+
+| list | `scope` |
+| --- | --- |
+| the file | `Place::Module` |
+| `S::Block::stmts` | `Stmt::loc` of the block, its `{` |
+| `G::FnBody::stmts` of a function, method, accessor, constructor, or of an arrow function with braces | `G::FnBody::loc`, its `{` |
+| `S::Try::body` | `Stmt::loc` of the `S::Try`, the word `try` |
+| `Catch::body` | `Catch::body_loc` |
+| `Finally::stmts` | `Finally::loc`, the word `finally` |
+| `G::ClassStaticBlock::stmts` | `G::ClassStaticBlock::loc`, its `{` |
+| `S::Namespace::stmts` | `Stmt::loc` of the `S::Namespace`: the keyword, or the `.` before the name of an inner part |
+| the body of an erased namespace, module or `global` block | `Place::Erased`: `parent` is the `start` of the `Module` record, the list is its `ModuleDeclaration::body` |
+| a `case` clause; the body of `if`, `else`, `for`, `while`, `do`, `with` or a label | no index: the placeholder `S::TypeScript` stays in the tree and the record has `Place::InTree` with its `Stmt::loc` |
+
+`Place::InTree { loc }` means that the tree has a statement with that `Stmt::loc` where the erased statement stood:
+an `S::TypeScript`, or with `STAND_IN` the `S::Local` that stands for `export declare var` in a namespace. A list
+inside an erased `Declaration` (the body of a function after `declare`) has `Place::Scope` as any list, though its
+scope is no longer in `scopes_in_order`.
+
+How to put an erased class member back: the members of the class `c` are the records with
+`class_body == c.body_loc`, in list order, each before `c.properties[index]`. `Property` holds the `G::Property`
+as the parse pass built it (an overload has an `E::Function` without a body and `NO_BODY`); its annotations and
+return type are in `attached`. `IndexSignature` has its range and its flags and nothing else. A member with
+`declare` or `abstract` that has a decorator and no value stays in `G::Class::properties` with
+`PropertyKind::Declare` or `PropertyKind::Abstract` and has no record.
+
+### What the typecheck unit asked for (`typecheck/NEEDS.md`, L1), item by item
+
+| item | where it is at `be1ebe5295` |
+| --- | --- |
+| the entry, the statements as written | `Parser::parse_for_lint`, `ParsedForLint::stmts` |
+| type nodes | `bun_ast::ts`, built by the `Build` sink |
+| type annotations | `attached.annotation_of` (variables, parameters, catch bindings, class fields); return types and predicates `return_type_of`; `this` parameters `this_parameter_of` |
+| type parameters | functions, arrow functions, classes: `attached.type_parameters_of(Owner)`; interfaces, type aliases: `generics.type_parameters_of(&name)`; signatures inside a type: in the node |
+| type arguments of a call, of `new`, of a tagged template | `generics.type_arguments_after(&target_or_tag)`; JSX `attached.jsx_type_arguments_of`; heritage entries in the clause |
+| `as`, `satisfies`, `!`, `<T>expr` | `wrappers.records` with `wraps(&expr)`; parentheses too |
+| `implements` | `attached.heritage_of(class_keyword.loc)`, with `extends` and its type arguments |
+| modifiers | `static`: `G::Property::flags`, `ErasedFlags::STATIC`. `declare`, `abstract` of an erased statement or member: `ErasedFlags`. `in`, `out`, `const` of a type parameter and the modifiers of a type member: in the node. A parameter property: `G::Arg::is_typescript_ctor_field`, without the word. `public`, `private`, `protected`, `readonly`, `override` of a class member or a parameter: no record |
+| index signatures | in a type literal: `ts::IndexSignature`. In a class: `ErasedMemberData::IndexSignature`, range and flags only. In an interface: no record |
+| overloads | functions: `ErasedData::Declaration(S::Function)` with `NO_BODY`; methods, constructors, accessors: `ErasedMemberData::Property` with `NO_BODY` |
+| `declare` | `ErasedFlags::DECLARE` and `AMBIENT` on the record of the statement or member |
+| `abstract` | a member: `ErasedFlags::ABSTRACT`, or `PropertyKind::Abstract` in the tree. An erased class: `ErasedFlags::ABSTRACT`. A class that stays: no record; its `Stmt::loc` is at `abstract` (at `export` for `export default abstract class`) and `class_keyword.loc` at `class` |
+| `enum` | `S::Enum` in the tree; after `declare` `ErasedData::Declaration(S::Enum)`. `const`: no record; the `Stmt::loc` of a const enum is at `const` |
+| `namespace` | `S::Namespace` in the tree, or `ErasedData::Module` |
+| `interface` | `ErasedData::Interface(name)` and its type parameters. The `extends` clause and the members: no record |
+| `type` | `ErasedData::TypeAlias(name)` and its type parameters. The type after `=`: no record |
+| `import =` | `S::Local` with `origin: LocalOrigin::TsImportEquals` in the tree; type-only or in a `declare` block `ErasedData::ImportEquals` |
+| `export =` | `S::ExportEquals` in the tree, also in the body of an erased module |
+| `export as namespace` | `ErasedData::NamespaceExport(name)` |
+| the `?` of a parameter or a member | no record. In a type node: `question_token`, `postfix_token` |
+| `accessor` | `G::Property::kind == PropertyKind::AutoAccessor` in the tree |
+
+### What has no record at `be1ebe5295`
+
+- The type of a type alias, and the `extends` clause and the members of an interface: a lint parse reads them with
+  the `Discard` sink (`skip_type_script_type_stmt`, `skip_type_script_interface_stmt`).
+- The parameter and the types of an index signature of a class (`skip_class_index_signature`).
+- `?` and `!` after a binding or the name of a member; the `!` of `let x!: T`.
+- `public`, `private`, `protected`, `readonly`, `override` on a class member or a parameter; `abstract` before a
+  class that stays; `const` before an enum.
+- A name with `type` inside the braces of an import or export statement: `import { type A, b }` keeps `b` and
+  nothing of `A`.
+- The import attributes of an erased import or export, and the offset of `type` in `export type` and in
+  `import type x = ...`.
+- The wrappers, type arguments and annotations of an expression that a type node or an `implements` entry holds
+  (`ts::Parameter::initializer`, `ts::ComputedPropertyName::expression`, `ts::PropertySignature::initializer`,
+  `ts::ImportAttribute::value`, `ts::ExpressionWithTypeArguments::expression` of `implements`): such an expression
+  is read under a snapshot of the parser that is restored, which takes back what it recorded and declared. A `Ref`
+  with the tag `Symbol` inside it (a parameter of a function in it) indexes a slot that a later symbol took.
+- Comments, `@ts-ignore` and `@ts-expect-error`, triple-slash directives, `@ts-nocheck` and `@ts-check`.
+- The start of a class member that stays, the parameters of an async arrow function and the body of an arrow
+  function with an expression body: the three maps hold them and `ParsedForLint` has no reader.
+- Not built by the `Build` sink: `TypeData::JSDocAll`, `KeywordKind::Intrinsic`, `ts::Body` (`GetAccessor::body`
+  and `SetAccessor::body` are `None`), `TypeParameter::expression` (always `None`).
+
+### Offsets that a comment moves
+
+The lexer of a lint parse keeps no comment, so `ts::full_start` and the walk back of `erased.rs` stop at one. Wrong
+next to a comment until the comments are tracked:
+
+- `Erased::end` and `ErasedMember::end` when a comment follows the statement before the next token.
+- `ErasedFlags::EXPORT` and `Erased::start` when a comment stands between `export` (or a decorator) and the
+  declaration: the keyword is looked for directly before the statement and is not found.
+- `ErasedFlags::NO_BODY` of `declare module "m";` when a comment follows it, and `ModuleKeyword` of a dotted name
+  with a comment inside.
+- `Wrapper::end` of parentheses that are read as possible parameters (`x = (a) /* c */ + b`).
+- `ts::HeritageClause::end` of `extends` without type arguments, the `end` of an `ExpressionWithTypeArguments` of
+  `implements`, and the `end` of a type node that ends in an expression.
+- `DeclarationTypeParameters::name_end` with a comment between the name and `<`: `type_parameters_of` finds nothing.
+
+### Speculation
+
+Every list is cut back where the parser goes back: `P::sidecar_mark` before an attempt, `P::rewind_sidecar` after
+it. The points are `lexer_backtracker_bool`, `lexer_backtracker_result` and `lexer_backtracker_kept`
+(`parse_skip_typescript.rs`), `restore_parser_snapshot` (`p.rs`), `lint_type_parameters_before_paren`,
+`lint_type_arguments_before_paren` and `lint_class_implements_entry` (`generics.rs`), and
+`lint_try_arrow_return_type` (`parse/mod.rs`, which cuts `attached` alone). `erased` and `attached` are cut by the
+lengths they had; `wrappers` and `generics` by the offset the lexer was at: every record whose `op` or `lt` is at or
+after it goes. The three maps of `parse_only` are not cut: an entry is written again with the same value when the
+source is read again. Tests: seven in `parse_skip_typescript.rs` (one record in each of the thirteen lists, before
+and after each backtracker and the snapshot), `what_an_attempt_read_and_took_back_leaves_no_record` in
+`annotation_tests.rs`, the cases `speculation-arrow-*` of `erased_tests.rs`, `attempt-that-goes-back` and
+`arrow-body-read-twice` of `generics.rs`, `conditional-arrow-read-twice` of `wrappers.rs`.

@@ -246,22 +246,14 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
 
     // ── state queries ───────────────────────────────────────────────────────
 
-    /// Write that also returns the errno of a fatal send (0 = none, always 0 for a duplex or pipe).
+    /// Raw-TCP write that also reports a fatal send error as the positive
+    /// errno of the failed `send()` (0 = none); non-Connected and TLS-wrapped
+    /// sockets fall back to the plain write (no fatal signal).
     pub fn write_check_error(&self, data: &[u8]) -> (i32, i32) {
         on_socket!(self.socket;
             connected s => s.write_check_error(data),
             duplex d => (d.encode_and_write(data), 0),
             pipe p => (p.encode_and_write(data), 0),
-            else => (0, 0),
-        )
-    }
-
-    /// Bypass TLS: raw bytes to the fd even on a TLS socket, with the fatal signal of `write_check_error`.
-    pub fn raw_write_check_error(&self, data: &[u8]) -> (i32, i32) {
-        on_socket!(self.socket;
-            connected s => s.raw_write_check_error(data),
-            duplex d => (d.raw_write(data), 0),
-            pipe p => (p.raw_write(data), 0),
             else => (0, 0),
         )
     }
@@ -442,6 +434,16 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
                 }
                 total
             },
+            else => 0,
+        )
+    }
+
+    /// Bypass TLS — raw bytes to the fd even on a TLS socket.
+    pub fn raw_write(&self, data: &[u8]) -> i32 {
+        on_socket!(self.socket;
+            connected s => s.raw_write(data),
+            duplex d => d.raw_write(data),
+            pipe p => p.raw_write(data),
             else => 0,
         )
     }

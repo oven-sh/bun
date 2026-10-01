@@ -470,14 +470,16 @@ void us_internal_loop_post(struct us_loop_t *loop) {
 
 /* us_socket_defer_error_until_read: returns nonzero when the peer's reset is to stay in the kernel for now. */
 static int us_internal_socket_defers_error(struct us_socket_t *s, struct us_loop_t *loop) {
-    (void) loop;
-#ifdef LIBUS_USE_LIBUV
+#ifdef _WIN32
+    /* Windows discards the receive queue on a reset: nothing is there to deliver ahead of the error. */
     (void) s;
+    (void) loop;
     return 0;
 #else
-    /* The reads are over once the peer's FIN, or its close_notify, was delivered as on_end. */
-    const int reads = !s->flags.is_paused && !s->read_eof && !(s->ssl && s->ssl_end_delivered);
-    if (!s->defer_error_until_read || reads || s->flags.last_write_failed || s->flags.low_prio_state == 1) {
+    /* The reads are over once the peer's FIN was delivered as on_end. */
+    const int reads = !s->flags.is_paused && !s->read_eof;
+    /* Not a TLS socket: its write does not report a rejected send() yet, so nothing would report the reset. */
+    if (!s->defer_error_until_read || s->ssl || reads || s->flags.last_write_failed) {
         return 0;
     }
 #ifdef LIBUS_USE_EPOLL

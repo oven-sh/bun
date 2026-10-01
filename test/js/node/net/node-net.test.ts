@@ -1669,8 +1669,8 @@ describe.concurrent("socket that already sent FIN and is paused with unread data
 // Like libuv, usockets does not look at a node:net socket that neither reads nor has a write
 // pending, so a peer reset waits in the kernel behind the bytes queued ahead of it. The consumer
 // gets those bytes first, however late it reads, and then the error (or the FIN, if one came
-// before the reset). The libuv backend still reports the reset at once, and Windows discards
-// the receive queue on a reset itself.
+// before the reset). Windows still reports the reset at once: it discards the receive queue on
+// a reset itself.
 describe.concurrent("read-stopped socket whose peer resets behind unread data", () => {
   // Both ends live in one child. `watch(s)` records what the socket under test emits and prints
   // the result when it has closed. `afterPeerReset(fn)` runs `fn` two turns of the loop after the
@@ -2279,7 +2279,7 @@ describe.concurrent("pauseOnConnect", () => {
   });
 
   // Like node, a socket that opened paused does not look at its handle, so it meets a peer
-  // reset when it resumes. The libuv backend still reports it before that.
+  // reset when it resumes. Windows still reports it before that.
   it("reports a peer reset when it resumes", async () => {
     const server = createServer({ pauseOnConnect: true });
     const accepted = Promise.withResolvers<Socket>();

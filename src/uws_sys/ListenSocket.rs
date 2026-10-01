@@ -67,6 +67,19 @@ impl ListenSocket {
         unsafe { us_listen_socket_add_server_name(self, hostname.as_ptr(), ssl_ctx, user) == 0 }
     }
 
+    /// A node:tls name (`server.addContext()`): a connection that asks for it
+    /// keeps the listener's `SSL_CTX` and takes `ssl_ctx`'s certificate and
+    /// client-certificate trust, as in node. `ssl_ctx` is up-ref'd like in
+    /// `add_server_name`.
+    pub fn add_server_name_identity(
+        &mut self,
+        hostname: &core::ffi::CStr,
+        ssl_ctx: *mut SslCtx,
+    ) -> bool {
+        // SAFETY: as `add_server_name`.
+        unsafe { us_listen_socket_add_server_name_identity(self, hostname.as_ptr(), ssl_ctx) == 0 }
+    }
+
     pub fn remove_server_name(&mut self, hostname: &core::ffi::CStr) {
         // SAFETY: self and hostname are valid for the duration of the call.
         unsafe { us_listen_socket_remove_server_name(self, hostname.as_ptr()) }
@@ -98,6 +111,11 @@ unsafe extern "C" {
         hostname: *const c_char,
         ssl_ctx: *mut SslCtx,
         user: *mut c_void,
+    ) -> c_int;
+    fn us_listen_socket_add_server_name_identity(
+        ls: *mut ListenSocket,
+        hostname_pattern: *const c_char,
+        ssl_ctx: *mut SslCtx,
     ) -> c_int;
     fn us_listen_socket_remove_server_name(ls: *mut ListenSocket, hostname: *const c_char);
     fn us_listen_socket_set_default_ssl_ctx(ls: *mut ListenSocket, ctx: *mut SslCtx);

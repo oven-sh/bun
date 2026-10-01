@@ -611,6 +611,7 @@ impl ProxyTunnel {
                 on_session: None,
                 on_keylog: None,
                 server_identity: Some(server_identity),
+                on_server_name: None,
                 ctx: this.as_erased_ptr().as_ptr(),
             },
         ) {

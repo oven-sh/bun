@@ -386,6 +386,7 @@ impl WindowsNamedPipe {
             on_session: Some(Self::ssl_on_session),
             on_keylog: Some(Self::ssl_on_keylog),
             server_identity: Some(Self::ssl_server_identity),
+            on_server_name: None,
         }
     }
 

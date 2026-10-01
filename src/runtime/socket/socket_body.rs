@@ -4411,6 +4411,24 @@ impl DuplexUpgradeContext {
             })
     }
 
+    /// The stream engine paused the handshake on the ClientHello's server
+    /// name: ask the socket's `serverName` handler, like the fd-adopted socket
+    /// does from `us_dispatch_socket_server_name`. `Pending` is answered later
+    /// by `handle.resumeSNI(...)`.
+    fn on_server_name(this: bun_ptr::ThisPtr<Self>, name: &core::ffi::CStr) {
+        use super::listener::ServerNameAnswer;
+        let answer = match this.tls_this_ptr() {
+            Some(tls) => super::listener::ask_socket_server_name(tls, name),
+            None => ServerNameAnswer::Default,
+        };
+        match answer {
+            ServerNameAnswer::Pending => {}
+            ServerNameAnswer::Default => this.upgrade.resolve_server_name(Ok(None)),
+            ServerNameAnswer::Context(ctx) => this.upgrade.resolve_server_name(Ok(Some(ctx))),
+            ServerNameAnswer::Refused => this.upgrade.resolve_server_name(Err(())),
+        }
+    }
+
     fn on_handshake(
         this: bun_ptr::ThisPtr<Self>,
         success: bool,
@@ -4716,6 +4734,7 @@ pub(crate) fn js_upgrade_duplex_to_tls(
     )?;
     // Nothing holds the callback cell until the TLS wrapper below does.
     let _cell_root = handlers.root_cell(global);
+    let resolves_server_name = is_server && !handlers.on_server_name().is_empty();
 
     // Resolve the `SSL_CTX*`. Prefer a passed `SecureContext` (the memoised
     // `tls.createSecureContext` path — what `[buntls]` now returns) so the
@@ -4911,6 +4930,14 @@ pub(crate) fn js_upgrade_duplex_to_tls(
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
                 server_identity: |c: *mut (), ssl| {
                     DuplexUpgradeContext::server_identity(bun_ptr::ThisPtr::new(c.cast()), ssl)
+                },
+                on_server_name: if resolves_server_name {
+                    // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
+                    Some(|c: *mut (), name: &core::ffi::CStr| {
+                        DuplexUpgradeContext::on_server_name(bun_ptr::ThisPtr::new(c.cast()), name)
+                    })
+                } else {
+                    None
                 },
                 ctx: duplex_context.cast::<()>(),
             },

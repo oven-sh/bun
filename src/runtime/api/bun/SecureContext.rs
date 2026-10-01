@@ -423,11 +423,7 @@ impl SecureContext {
         this.digest.set(folded);
         // SAFETY: `this.ctx` is live; the call copies the 32 bytes.
         unsafe {
-            boringssl::SSL_CTX_set_session_id_context(
-                this.ctx.as_ptr(),
-                folded.as_ptr(),
-                folded.len(),
-            );
+            c::us_ssl_ctx_set_session_id_context(this.ctx.as_ptr(), folded.as_ptr(), folded.len());
         }
         Ok(JSValue::UNDEFINED)
     }

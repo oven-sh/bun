@@ -406,6 +406,11 @@ void us_listen_socket_close(struct us_listen_socket_t *ls) nonnull_fn_decl;
 int us_listen_socket_add_server_name(struct us_listen_socket_t *ls,
     const char *hostname_pattern, struct ssl_ctx_st *ssl_ctx, void *user)
     __attribute__((nonnull(1, 2, 3)));
+/* A node:tls name (server.addContext()): a connection that asks for it keeps
+ * the listener's SSL_CTX and takes ssl_ctx's certificate and client-certificate
+ * trust (us_ssl_use_sni_context). ssl_ctx is up_ref'd. */
+int us_listen_socket_add_server_name_identity(struct us_listen_socket_t *ls,
+    const char *hostname_pattern, struct ssl_ctx_st *ssl_ctx) nonnull_fn_decl;
 void us_listen_socket_remove_server_name(struct us_listen_socket_t *ls,
     const char *hostname_pattern) nonnull_fn_decl;
 void *us_listen_socket_find_server_name_userdata(struct us_listen_socket_t *ls,
@@ -437,6 +442,14 @@ void *us_socket_server_name_userdata(us_socket_r s);
  * resumed under it. Contexts without one keep the server-level policy. */
 void us_ssl_ctx_set_sni_policy(struct ssl_ctx_st *ctx, int request_cert,
     int reject_unauthorized);
+/* SSL_CTX_set_session_id_context, recorded so that us_ssl_use_sni_context can
+ * give it to a connection that selects this context by server name. */
+void us_ssl_ctx_set_session_id_context(struct ssl_ctx_st *ctx,
+    const unsigned char *sid_ctx, size_t length);
+/* A node:tls name selection: ssl keeps its SSL_CTX and takes ctx's certificate,
+ * client-certificate trust and session id context. 0 when the certificate
+ * could not be applied (fail the handshake). */
+int us_ssl_use_sni_context(struct ssl_st *ssl, struct ssl_ctx_st *ctx);
 /* 1 iff the SNI-selected context for this connection demands closing on a
  * client-certificate verification error. */
 int us_socket_server_name_reject_unauthorized(us_socket_r s);

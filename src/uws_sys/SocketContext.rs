@@ -185,12 +185,8 @@ impl BunSocketContextOptions {
         // SAFETY: `ctx` is live and not shared yet; the call copies `digest`
         // (32 bytes, the session id context maximum, so it cannot fail).
         unsafe {
-            bun_boringssl_sys::SSL_CTX_set_session_id_context(
-                ctx.as_ptr(),
-                digest.as_ptr(),
-                digest.len(),
-            );
-        }
+            c::us_ssl_ctx_set_session_id_context(ctx.as_ptr(), digest.as_ptr(), digest.len())
+        };
         Some(ctx)
     }
 
@@ -343,6 +339,13 @@ pub mod c {
             options: BunSocketContextOptions,
             err: *mut create_bun_socket_error_t,
         ) -> *mut SSL_CTX;
+        /// `SSL_CTX_set_session_id_context`, recorded for a node:tls name
+        /// selection (`us_ssl_use_sni_context`). Copies `sid_ctx`.
+        pub fn us_ssl_ctx_set_session_id_context(
+            ctx: *mut SSL_CTX,
+            sid_ctx: *const u8,
+            length: usize,
+        );
         // safe: no args; reads a process-global counter — no preconditions.
         pub safe fn us_ssl_ctx_live_count() -> c_long;
         /// Appends the certificates in the NUL-terminated PEM `content` to

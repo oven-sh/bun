@@ -734,6 +734,7 @@ pub unsafe fn sk_X509_value(sk: *const struct_stack_st_X509, i: usize) -> *mut X
 pub const SSL_ERROR_SSL: c_int = 1;
 pub const SSL_ERROR_WANT_READ: c_int = 2;
 pub const SSL_ERROR_WANT_WRITE: c_int = 3;
+pub const SSL_ERROR_WANT_X509_LOOKUP: c_int = 4;
 pub const SSL_ERROR_SYSCALL: c_int = 5;
 pub const SSL_ERROR_ZERO_RETURN: c_int = 6;
 pub const SSL_ERROR_WANT_RENEGOTIATE: c_int = 19;
@@ -895,6 +896,11 @@ unsafe extern "C" {
         sid_ctx_len: usize,
     ) -> c_int;
     pub fn SSL_set0_verify_cert_store(ssl: *mut SSL, store: *mut X509_STORE) -> c_int;
+    pub fn SSL_set_cert_cb(
+        ssl: *mut SSL,
+        cb: Option<unsafe extern "C" fn(ssl: *mut SSL, arg: *mut c_void) -> c_int>,
+        arg: *mut c_void,
+    );
     pub fn SSL_set_renegotiate_mode(ssl: *mut SSL, mode: ssl_renegotiate_mode_t);
     pub fn SSL_renegotiate(ssl: *mut SSL) -> c_int;
     pub fn SSL_get_servername(ssl: *const SSL, ty: c_int) -> *const c_char;

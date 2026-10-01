@@ -212,6 +212,11 @@ unsafe extern "C" {
     safe fn UpgradedDuplex__is_shutdown(this: &UpgradedDuplex) -> bool;
     safe fn UpgradedDuplex__ssl(this: &UpgradedDuplex) -> *mut bun_boringssl_sys::SSL;
     safe fn UpgradedDuplex__set_inline_reject(this: &UpgradedDuplex);
+    fn UpgradedDuplex__sni_resolve(
+        this: *const UpgradedDuplex,
+        ctx: *mut bun_boringssl_sys::SSL_CTX,
+        error: bool,
+    );
     safe fn UpgradedDuplex__latest_session(
         this: &UpgradedDuplex,
     ) -> *mut bun_boringssl_sys::SSL_SESSION;
@@ -253,6 +258,12 @@ impl UpgradedDuplex {
     #[inline]
     pub(crate) fn set_inline_reject(&self) {
         UpgradedDuplex__set_inline_reject(self)
+    }
+    /// Consumes the reference `ctx` carries (null: the default context).
+    #[inline]
+    pub(crate) fn sni_resolve(&self, ctx: *mut bun_boringssl_sys::SSL_CTX, error: bool) {
+        // SAFETY: `self` is a live handle; the callee takes the reference `ctx` carries.
+        unsafe { UpgradedDuplex__sni_resolve(self, ctx, error) }
     }
     #[inline]
     pub(crate) fn latest_session(&self) -> *mut bun_boringssl_sys::SSL_SESSION {

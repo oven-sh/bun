@@ -107,6 +107,9 @@ pub(crate) struct Handlers {
     pub(crate) on_keylog: fn(*mut (), &[u8]),
     pub(crate) server_identity:
         fn(*mut (), &mut bun_boringssl_sys::SSL) -> bun_boringssl::ServerIdentity,
+    /// Server wraps whose socket has a `serverName` handler: see
+    /// `ssl_wrapper::Handlers::on_server_name`.
+    pub(crate) on_server_name: Option<fn(*mut (), &CStr)>,
 }
 
 use crate::jsc_hooks::timer_all_mut as timer_all;
@@ -208,6 +211,25 @@ impl UpgradedDuplex {
         bun_output::scoped_log!(UpgradedDuplex, "onClose");
         // SAFETY: see handler note above.
         unsafe { &*this }.finish_close();
+    }
+
+    fn on_server_name(this: *mut Self, name: &CStr) {
+        bun_output::scoped_log!(UpgradedDuplex, "onServerName");
+        // SAFETY: see handler note above.
+        let this = unsafe { &*this };
+        if let Some(on_server_name) = this.handlers.on_server_name {
+            on_server_name(this.handlers.ctx, name);
+        }
+    }
+
+    /// Answers `Handlers::on_server_name`. A closed engine drops the answer.
+    pub(crate) fn resolve_server_name(
+        &self,
+        answer: Result<Option<bun_boringssl_sys::OwnedSslCtx>, ()>,
+    ) {
+        if let Some(w) = self.wrapper_ref() {
+            w.resolve_server_name(answer);
+        }
     }
 
     pub(super) fn finish_close(&self) {
@@ -478,6 +500,10 @@ impl UpgradedDuplex {
             on_session: Some(Self::on_session),
             on_keylog: Some(Self::on_keylog),
             server_identity: Some(Self::server_identity),
+            on_server_name: self
+                .handlers
+                .on_server_name
+                .map(|_| Self::on_server_name as fn(*mut UpgradedDuplex, &CStr)),
         }
     }
 
@@ -800,6 +826,23 @@ extern "C" fn UpgradedDuplex__set_inline_reject(this: *const c_void) {
     if let Some(wrapper) = unsafe { (*this.cast::<UpgradedDuplex>()).wrapper_ref() } {
         wrapper.set_inline_reject();
     }
+}
+
+/// `handle.resumeSNI(ctx, isError)`: takes the reference `ctx` carries.
+#[unsafe(no_mangle)]
+extern "C" fn UpgradedDuplex__sni_resolve(
+    this: *const c_void,
+    ctx: *mut bun_boringssl_sys::SSL_CTX,
+    error: bool,
+) {
+    // SAFETY: `ctx` is null or carries a reference the caller gives up.
+    let ctx = unsafe { bun_boringssl_sys::OwnedSslCtx::from_raw(ctx) };
+    // SAFETY: `this` is a live `*const UpgradedDuplex` from the uws_sys opaque handle.
+    unsafe { &*this.cast::<UpgradedDuplex>() }.resolve_server_name(if error {
+        Err(())
+    } else {
+        Ok(ctx)
+    });
 }
 
 #[unsafe(no_mangle)]

@@ -136,6 +136,9 @@ enum {
 struct sni_node_t {
   SSL_CTX *ctx;
   void *user;
+  /* A node:tls name (us_listen_socket_add_server_name_identity): selected with
+   * us_ssl_use_sni_context, not with a switch of the connection's SSL_CTX. */
+  unsigned char identity_only;
 };
 
 static _Atomic long ssl_ctx_live = 0;
@@ -149,6 +152,8 @@ long us_ssl_ctx_live_count(void) {
  *     free_func also decrements ssl_ctx_live so the counter tracks ACTUAL
  *     destruction (refcount→0), not every SSL_CTX_free.
  *   - us_sni_ex_idx (SSL_CTX): per-domain userdata (uWS HttpRouter*).
+ *   - us_ctx_sid_ex_idx (SSL_CTX): a copy of its session id context
+ *     (us_ssl_ctx_set_session_id_context); BoringSSL has no getter.
  *   - us_ssl_rare_ex_idx (SSL): us_ssl_rare_t.
  *   - us_ssl_wrapper_ex_idx (SSL): the owner of an SSL that no us_socket_t drives.
  *
@@ -174,6 +179,11 @@ static int us_ssl_bio_type = 0;
  * entry — see us_ssl_ctx_set_sni_policy. Absent on node:tls SecureContexts,
  * whose policy is server-level. */
 static int us_ctx_sni_policy_ex_idx = -1;
+static int us_ctx_sid_ex_idx = -1;
+struct us_ctx_sid_t {
+  unsigned char length;
+  unsigned char bytes[SSL_MAX_SID_CTX_LENGTH];
+};
 /* Defined in Rust (src/uws_sys/SocketKind.rs) so the ordinal tracks the enum. */
 extern const unsigned char BUN_SOCKET_KIND_BUN_SOCKET_TLS;
 extern const unsigned char BUN_SOCKET_KIND_UWS_HTTP_TLS;
@@ -364,12 +374,19 @@ static void ssl_flush_pending_events(struct us_socket_t *s) {
 extern void bun_ssl_ctx_cache_on_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
                                       int index, long argl, void *argp);
 
+static void us_ctx_sid_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
+                            int index, long argl, void *argp) {
+  (void)parent; (void)ad; (void)index; (void)argl; (void)argp;
+  us_free(ptr);
+}
+
 static void us_ex_idx_init(void) {
   us_ctx_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, us_ctx_ex_free);
   us_sni_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ctx_cache_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, bun_ssl_ctx_cache_on_free);
   us_ctx_user_ca_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ctx_sni_policy_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, NULL);
+  us_ctx_sid_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, us_ctx_sid_free);
   us_ssl_rare_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_rare_free);
   us_ssl_wrapper_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ssl_bio_type = BIO_get_new_index() | BIO_TYPE_SOURCE_SINK;
@@ -3014,6 +3031,61 @@ static void us_ssl_apply_selected_ctx(SSL *ssl, SSL_CTX *ctx) {
   SSL_set_verify(ssl, mode, us_verify_callback);
 }
 
+/* SSL_CTX_set_session_id_context, with a copy that us_ssl_use_sni_context can
+ * read back. For contexts that node:tls can select by server name. */
+void us_ssl_ctx_set_session_id_context(SSL_CTX *ctx, const unsigned char *sid_ctx, size_t length) {
+  if (!ctx || length > SSL_MAX_SID_CTX_LENGTH) return;
+  us_ex_idx_ensure();
+  SSL_CTX_set_session_id_context(ctx, sid_ctx, length);
+  struct us_ctx_sid_t *copy = SSL_CTX_get_ex_data(ctx, us_ctx_sid_ex_idx);
+  if (!copy) {
+    copy = us_malloc(sizeof(*copy));
+    if (!copy || !SSL_CTX_set_ex_data(ctx, us_ctx_sid_ex_idx, copy)) Bun__outOfMemory();
+  }
+  copy->length = (unsigned char)length;
+  memcpy(copy->bytes, sid_ctx, length);
+}
+
+/* A node:tls name selection (SNICallback, server.addContext()). Node keeps the
+ * connection's SSL_CTX and takes from the selected context its certificate
+ * (leaf, key, chain) and its client-certificate trust (TLSWrap::CertCbDone:
+ * SSLPointer::setSniContext, then SetCACerts). So the server's ciphers,
+ * signature algorithms, ALPN selection and key log stay in force, where
+ * SSL_set_SSL_CTX would take them from the selected context.
+ *
+ * The session id context also becomes the selected context's, as SSL_set_SSL_CTX
+ * makes it (see us_ssl_apply_selected_ctx): a session issued under another
+ * context is not resumed, so the client is authenticated again, against this
+ * context's CA.
+ *
+ * A context with no certificate changes nothing, as in node. Returns 0 when
+ * the certificate could not be put on the SSL: the caller must fail the
+ * handshake, or the default certificate would answer for this name. */
+int us_ssl_use_sni_context(SSL *ssl, SSL_CTX *ctx) {
+  X509 *leaf = SSL_CTX_get0_certificate(ctx);
+  EVP_PKEY *key = SSL_CTX_get0_privatekey(ctx);
+  if (!leaf || !key) return 1;
+  STACK_OF(X509) *chain = NULL;
+  if (SSL_CTX_get0_chain_certs(ctx, &chain) != 1) return 0;
+  /* A NULL chain clears the default context's intermediates. */
+  if (SSL_use_certificate(ssl, leaf) != 1 || SSL_use_PrivateKey(ssl, key) != 1 ||
+      SSL_set1_chain(ssl, chain) != 1) {
+    return 0;
+  }
+  X509_STORE *store = SSL_CTX_get_cert_store(ctx);
+  if (store && SSL_set1_verify_cert_store(ssl, store) != 1) return 0;
+  SSL_set_client_CA_list(ssl, SSL_dup_CA_list(SSL_CTX_get_client_CA_list(ctx)));
+  const struct us_ctx_sid_t *sid =
+      us_ctx_sid_ex_idx >= 0 ? SSL_CTX_get_ex_data(ctx, us_ctx_sid_ex_idx) : NULL;
+  if (sid) {
+    SSL_set_session_id_context(ssl, sid->bytes, sid->length);
+  } else {
+    /* No recorded context: partition by the context object itself. */
+    SSL_set_session_id_context(ssl, (const uint8_t *)&ctx, sizeof(ctx));
+  }
+  return 1;
+}
+
 /* Whether the SNI-selected context of this connection demands closing on a
  * client-certificate verification error (requestCert && rejectUnauthorized
  * of the per-serverName entry). */
@@ -3027,6 +3099,21 @@ int us_ssl_ctx_reject_unauthorized(SSL_CTX *ctx) {
 int us_socket_server_name_reject_unauthorized(struct us_socket_t *s) {
   if (!s->ssl) return 0;
   return us_ssl_ctx_reject_unauthorized(SSL_get_SSL_CTX(s_ssl(s)));
+}
+
+/* Applies an SNI tree entry. Returns 0 when a node:tls entry could not be applied. */
+static int us_ssl_apply_sni_node(SSL *ssl, const struct sni_node_t *node) {
+  if (node->identity_only) return us_ssl_use_sni_context(ssl, node->ctx);
+  us_ssl_apply_selected_ctx(ssl, node->ctx);
+  return 1;
+}
+
+/* A failed name selection drops the connection with no alert, like a refused
+ * SNICallback (the deferred-close + BIO-swallow path). */
+static enum ssl_select_cert_result_t us_select_cert_refuse(struct us_socket_t *s) {
+  s->ssl_pending_detach = 1;
+  s->ssl_pending_close_code = 0;
+  return ssl_select_cert_error;
 }
 
 /* Extracts the host_name from the ClientHello's server_name extension.
@@ -3082,9 +3169,9 @@ static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *h
     SSL_CTX *resolved_ctx = loop_ssl_data->ssl_sni_resolved_ctx;
     loop_ssl_data->ssl_sni_resolved_ctx = NULL;
     if (resolved_ctx) {
-      us_ssl_apply_selected_ctx(ssl, resolved_ctx);
+      int applied = us_ssl_use_sni_context(ssl, resolved_ctx);
       SSL_CTX_free(resolved_ctx);
-      return ssl_select_cert_success;
+      return applied ? ssl_select_cert_success : us_select_cert_refuse(s);
     }
     /* The asynchronous resolution selected nothing (cb(null, null)): fall
      * through to the static SNI tree below, exactly like a synchronous
@@ -3098,8 +3185,8 @@ static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *h
       char resumed_host[256];
       if (us_client_hello_servername(hello, resumed_host, sizeof(resumed_host))) {
         struct sni_node_t *resumed_node = resolve_listener_ctx(ls, resumed_host);
-        if (resumed_node) {
-          us_ssl_apply_selected_ctx(ssl, resumed_node->ctx);
+        if (resumed_node && !us_ssl_apply_sni_node(ssl, resumed_node)) {
+          return us_select_cert_refuse(s);
         }
       }
     }
@@ -3143,11 +3230,8 @@ static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *h
   us_internal_ssl_loop_state_restore(saved_loop_state);
 
   if (abort_handshake == 1) {
-    /* Error/invalid context: drop the connection without an alert (the
-     * deferred-close + BIO-swallow path, same as sni_cb). */
-    s->ssl_pending_detach = 1;
-    s->ssl_pending_close_code = 0;
-    return ssl_select_cert_error;
+    /* Error/invalid context. */
+    return us_select_cert_refuse(s);
   }
   if (abort_handshake == 2) {
     /* The JS resolver answered "pending": suspend until us_socket_sni_resolve. */
@@ -3155,24 +3239,25 @@ static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *h
     return ssl_select_cert_retry;
   }
   if (dyn) {
-    us_ssl_apply_selected_ctx(ssl, dyn);
+    /* The resolver is node:tls's (ServerHandlers.serverName). */
+    int applied = us_ssl_use_sni_context(ssl, dyn);
     SSL_CTX_free(dyn);
-    return ssl_select_cert_success;
+    return applied ? ssl_select_cert_success : us_select_cert_refuse(s);
   }
 
   /* No dynamic selection: fall back to the static SNI tree (the
    * addContext() entries). An adopted socket has no tree. */
   if (ls) {
     struct sni_node_t *node = resolve_listener_ctx(ls, hostname);
-    if (node) {
-      us_ssl_apply_selected_ctx(ssl, node->ctx);
+    if (node && !us_ssl_apply_sni_node(ssl, node)) {
+      return us_select_cert_refuse(s);
     }
   }
   return ssl_select_cert_success;
 }
 
 static int sni_cb(SSL *ssl, int *al, void *arg) {
-  (void)al; (void)arg;
+  (void)arg;
   if (!ssl) return SSL_TLSEXT_ERR_NOACK;
   /* The listener is per-SSL (set at accept), not the CTX-level arg — the
    * SSL_CTX is shared and may outlive any one listener. */
@@ -3192,16 +3277,17 @@ static int sni_cb(SSL *ssl, int *al, void *arg) {
     /* Static SNI tree only (no dynamic resolver registered for this
      * listener). */
     struct sni_node_t *node = resolve_listener_ctx(ls, hostname);
-    if (node) {
-      us_ssl_apply_selected_ctx(ssl, node->ctx);
+    if (node && !us_ssl_apply_sni_node(ssl, node)) {
+      *al = SSL_AD_INTERNAL_ERROR;
+      return SSL_TLSEXT_ERR_ALERT_FATAL;
     }
   }
   return SSL_TLSEXT_ERR_OK;
 }
 
-int us_listen_socket_add_server_name(struct us_listen_socket_t *ls,
-                                     const char *hostname_pattern,
-                                     SSL_CTX *ctx, void *user) {
+static int us_listen_socket_add_sni_node(struct us_listen_socket_t *ls,
+                                         const char *hostname_pattern,
+                                         SSL_CTX *ctx, void *user, int identity_only) {
   SSL_CTX *default_ctx = ls->ssl_ctx;
   if (!default_ctx) return -1;
 
@@ -3215,11 +3301,14 @@ int us_listen_socket_add_server_name(struct us_listen_socket_t *ls,
   struct sni_node_t *node = us_malloc(sizeof(struct sni_node_t));
   node->ctx = ctx;
   node->user = user;
+  node->identity_only = identity_only ? 1 : 0;
   SSL_CTX_up_ref(ctx);
-  /* Stash userdata on the SSL_CTX too so per-socket lookup via
-   * SSL_get_SSL_CTX works regardless of which ctx the SNI cb selected. */
-  us_ex_idx_ensure();
-  SSL_CTX_set_ex_data(ctx, us_sni_ex_idx, user);
+  if (!identity_only) {
+    /* Stash userdata on the SSL_CTX too so per-socket lookup via
+     * SSL_get_SSL_CTX works regardless of which ctx the SNI cb selected. */
+    us_ex_idx_ensure();
+    SSL_CTX_set_ex_data(ctx, us_sni_ex_idx, user);
+  }
 
   if (sni_add(ls->sni, hostname_pattern, node)) {
     /* Duplicate hostname — propagate so App.h's `if (result != 0)` rollback
@@ -3228,6 +3317,18 @@ int us_listen_socket_add_server_name(struct us_listen_socket_t *ls,
     return 1;
   }
   return 0;
+}
+
+int us_listen_socket_add_server_name(struct us_listen_socket_t *ls,
+                                     const char *hostname_pattern,
+                                     SSL_CTX *ctx, void *user) {
+  return us_listen_socket_add_sni_node(ls, hostname_pattern, ctx, user, 0);
+}
+
+int us_listen_socket_add_server_name_identity(struct us_listen_socket_t *ls,
+                                              const char *hostname_pattern,
+                                              SSL_CTX *ctx) {
+  return us_listen_socket_add_sni_node(ls, hostname_pattern, ctx, NULL, 1);
 }
 
 void us_listen_socket_remove_server_name(struct us_listen_socket_t *ls,

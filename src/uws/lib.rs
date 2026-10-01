@@ -159,16 +159,17 @@ pub mod ssl_wrapper {
     mod boring_sys {
         pub(super) use bun_boringssl::c::{
             BIO_ctrl_pending, BIO_free, BIO_new, BIO_read, BIO_reset, BIO_s_mem,
-            BIO_set_mem_eof_return, BIO_write, ERR_clear_error, OwnedSslCtx, SSL,
+            BIO_set_mem_eof_return, BIO_write, ERR_clear_error, OwnedSslCtx, SSL, SSL_CTX,
             SSL_CTX_get_verify_mode, SSL_ERROR_SSL, SSL_ERROR_SYSCALL, SSL_ERROR_WANT_READ,
-            SSL_ERROR_WANT_RENEGOTIATE, SSL_ERROR_WANT_WRITE, SSL_ERROR_ZERO_RETURN,
-            SSL_RECEIVED_SHUTDOWN, SSL_SESSION, SSL_SESSION_free, SSL_VERIFY_FAIL_IF_NO_PEER_CERT,
-            SSL_VERIFY_NONE, SSL_VERIFY_PEER, SSL_do_handshake, SSL_free, SSL_get_error,
-            SSL_get_rbio, SSL_get_shutdown, SSL_get_verify_result, SSL_get_wbio,
-            SSL_is_init_finished, SSL_new, SSL_pending, SSL_read, SSL_renegotiate,
-            SSL_set_accept_state, SSL_set_bio, SSL_set_connect_state, SSL_set_renegotiate_mode,
-            SSL_set_session_id_context, SSL_set_verify, SSL_set0_verify_cert_store, SSL_shutdown,
-            SSL_write, X509_STORE, X509_STORE_CTX, ssl_renegotiate_explicit, ssl_renegotiate_never,
+            SSL_ERROR_WANT_RENEGOTIATE, SSL_ERROR_WANT_WRITE, SSL_ERROR_WANT_X509_LOOKUP,
+            SSL_ERROR_ZERO_RETURN, SSL_RECEIVED_SHUTDOWN, SSL_SESSION, SSL_SESSION_free,
+            SSL_VERIFY_FAIL_IF_NO_PEER_CERT, SSL_VERIFY_NONE, SSL_VERIFY_PEER, SSL_do_handshake,
+            SSL_free, SSL_get_error, SSL_get_rbio, SSL_get_servername, SSL_get_shutdown,
+            SSL_get_verify_result, SSL_get_wbio, SSL_is_init_finished, SSL_new, SSL_pending,
+            SSL_read, SSL_renegotiate, SSL_set_accept_state, SSL_set_bio, SSL_set_cert_cb,
+            SSL_set_connect_state, SSL_set_renegotiate_mode, SSL_set_session_id_context,
+            SSL_set_verify, SSL_set0_verify_cert_store, SSL_shutdown, SSL_write, X509_STORE,
+            X509_STORE_CTX, ssl_renegotiate_explicit, ssl_renegotiate_never,
         };
     }
 
@@ -221,6 +222,7 @@ pub mod ssl_wrapper {
         inline_reject: Cell<bool>,
         verify_failed: Cell<bool>,
         identity_checked: Cell<bool>,
+        server_name: Cell<ServerName>,
         /// `SSLWrapper::<T>::server_identity`, which finds its wrapper from this field's address.
         server_identity: Option<
             unsafe fn(&CallbackState, &mut boring_sys::SSL) -> bun_boringssl::ServerIdentity,
@@ -230,6 +232,22 @@ pub mod ssl_wrapper {
         latest_session: Cell<Option<NonNull<boring_sys::SSL_SESSION>>>,
         sessions: RefCell<VecDeque<Box<[u8]>>>,
         keylog: RefCell<VecDeque<Box<[u8]>>>,
+    }
+
+    /// How far a server wrapper is in asking its owner which context serves
+    /// the ClientHello's server name (`Handlers::on_server_name`).
+    #[repr(u8)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum ServerName {
+        /// Nobody to ask, or the answer is applied: the handshake runs on.
+        Settled,
+        /// The owner has a resolver and no ClientHello has arrived.
+        Armed,
+        /// `pause_for_server_name` paused the handshake. The owner is asked
+        /// once `SSL_do_handshake` has returned.
+        Parked,
+        /// The owner was asked. `resolve_server_name` resumes the handshake.
+        Asked,
     }
 
     impl Drop for CallbackState {
@@ -263,9 +281,12 @@ pub mod ssl_wrapper {
         pub(crate) ctx: Cell<Option<boring_sys::OwnedSslCtx>>,
         pub flags: Flags,
         pub(crate) renegotiation_count: Cell<u8>,
-        pub(crate) renegotiation_window_start: Cell<Option<std::time::Instant>>,
         traffic: Cell<Traffic>,
+        pub(crate) renegotiation_window_start: Cell<Option<std::time::Instant>>,
     }
+
+    // One wrapper per proxied fetch / WebSocket tunnel: stay in mimalloc's 224-byte class.
+    const _: () = assert!(core::mem::size_of::<Inner<*mut ()>>() <= 224);
 
     /// Re-entrancy state of [`SSLWrapper::handle_traffic`].
     #[derive(Clone, Copy, PartialEq, Eq)]
@@ -275,6 +296,10 @@ pub mod ssl_wrapper {
         Running,
         /// A callback of the running pass called `handle_traffic` again.
         RerunRequested,
+        /// A callback of the running pass called `deinit`. `SSL_do_handshake`
+        /// can be below that callback on the stack, so the `SSL` is freed
+        /// when the pass has unwound.
+        FreeRequested,
     }
 
     /// CamelCase alias for callers that use the alternate spelling
@@ -415,6 +440,11 @@ pub mod ssl_wrapper {
         pub on_keylog: Option<fn(T, &[u8])>,
         /// The name check of the verify step. `None`: the owner checks after the handshake.
         pub server_identity: Option<fn(T, &mut boring_sys::SSL) -> bun_boringssl::ServerIdentity>,
+        /// Server only: asked once for a ClientHello that carries a server
+        /// name, with the handshake paused before the certificate is chosen.
+        /// The owner answers with `resolve_server_name`, inside the call or
+        /// later. It runs outside BoringSSL, so it may run JS.
+        pub on_server_name: Option<fn(T, &core::ffi::CStr)>,
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
@@ -548,6 +578,7 @@ pub mod ssl_wrapper {
                     inline_reject: Cell::new(false),
                     verify_failed: Cell::new(false),
                     identity_checked: Cell::new(false),
+                    server_name: Cell::new(ServerName::Settled),
                     server_identity: handlers
                         .server_identity
                         .is_some()
@@ -561,17 +592,24 @@ pub mod ssl_wrapper {
                 ctx: Cell::new(Some(ctx)),
                 ssl: Cell::new(Some(ssl)),
                 renegotiation_count: Cell::new(0),
-                renegotiation_window_start: Cell::new(None),
                 traffic: Cell::new(Traffic::Idle),
+                renegotiation_window_start: Cell::new(None),
             });
             let this = Self { inner };
+            let state = core::ptr::from_ref(&this.callbacks)
+                .cast_mut()
+                .cast::<c_void>();
             // SAFETY: `ssl` is live; the box outlives it, `deinit` frees `ssl` first.
-            unsafe {
-                us_ssl_set_wrapper(
-                    ssl.as_ptr(),
-                    core::ptr::from_ref(&this.callbacks).cast_mut().cast(),
-                )
-            };
+            unsafe { us_ssl_set_wrapper(ssl.as_ptr(), state) };
+            if !is_client && handlers.on_server_name.is_some() {
+                this.callbacks.server_name.set(ServerName::Armed);
+                // Per `SSL`, like node's TLSWrap: the `SSL_CTX` is shared with
+                // wrappers and listeners that have no resolver.
+                // SAFETY: `ssl` is live; `state` outlives it (see above).
+                unsafe {
+                    boring_sys::SSL_set_cert_cb(ssl.as_ptr(), Some(pause_for_server_name), state)
+                };
+            }
             Ok(this)
         }
 
@@ -923,6 +961,14 @@ pub mod ssl_wrapper {
 
         pub fn deinit(&self) {
             self.flags.set_closed_notified(true);
+            if self.traffic.get() != Traffic::Idle {
+                self.traffic.set(Traffic::FreeRequested);
+                return;
+            }
+            self.free();
+        }
+
+        fn free(&self) {
             if let Some(ssl) = self.ssl.take() {
                 // SAFETY: ssl was created by SSL_new and is owned by self; SSL_free also frees the input and output BIOs.
                 unsafe { boring_sys::SSL_free(ssl.as_ptr()) };
@@ -1028,6 +1074,12 @@ pub mod ssl_wrapper {
             // SAFETY: ssl is a live SSL*.
             let result = unsafe { boring_sys::SSL_do_handshake(ssl.as_ptr()) };
 
+            // A callback inside the handshake (ALPNCallback) closed the wrapper.
+            if self.flags.closed_notified() {
+                boring_sys::ERR_clear_error();
+                return false;
+            }
+
             // A rejecting client (`set_inline_reject`) saw the server's chain
             // fail. All output queued since that verdict is the flight that
             // carries the client certificate. TLS 1.2 queues it before the
@@ -1067,6 +1119,15 @@ pub mod ssl_wrapper {
                     self.handle_end_of_renegotiation();
                     return false;
                 }
+                if err == boring_sys::SSL_ERROR_WANT_X509_LOOKUP {
+                    self.flags
+                        .set_handshake_state(HandshakeState::HandshakePending);
+                    if self.callbacks.server_name.get() == ServerName::Parked {
+                        self.ask_server_name(ssl);
+                    }
+                    // Paused until `resolve_server_name`: nothing to read or write.
+                    return false;
+                }
                 // as far as I know these are the only errors we want to handle
                 if err != boring_sys::SSL_ERROR_WANT_READ && err != boring_sys::SSL_ERROR_WANT_WRITE
                 {
@@ -1096,6 +1157,56 @@ pub mod ssl_wrapper {
             self.trigger_handshake_callback(HandshakeOutcome::Established);
 
             true
+        }
+
+        fn ask_server_name(&self, ssl: NonNull<boring_sys::SSL>) {
+            let handlers = self.handlers.get();
+            // SAFETY: ssl is a live SSL*. The name belongs to it, and a `deinit`
+            // from inside this pass frees it only when the pass has unwound.
+            let name = unsafe { boring_sys::SSL_get_servername(ssl.as_ptr(), 0) };
+            let (Some(on_server_name), false) = (handlers.on_server_name, name.is_null()) else {
+                self.callbacks.server_name.set(ServerName::Settled);
+                self.handle_traffic();
+                return;
+            };
+            self.callbacks.server_name.set(ServerName::Asked);
+            // SAFETY: BoringSSL keeps the server name NUL-terminated.
+            on_server_name(handlers.ctx, unsafe { core::ffi::CStr::from_ptr(name) });
+        }
+
+        /// The owner's answer to `on_server_name`: `Ok(Some(ctx))` serves that
+        /// context's certificate and checks the client against its CA,
+        /// `Ok(None)` keeps the default context, `Err` refuses the connection
+        /// with no TLS alert, like node. An answer that nobody waits for (the
+        /// wrapper closed, or a second answer) is dropped.
+        pub fn resolve_server_name(&self, answer: Result<Option<boring_sys::OwnedSslCtx>, ()>) {
+            let Some(ssl) = self.ssl.get() else { return };
+            if self.flags.closed_notified() || self.callbacks.server_name.get() != ServerName::Asked
+            {
+                return;
+            }
+            self.callbacks.server_name.set(ServerName::Settled);
+            let applied = match answer {
+                Ok(None) => true,
+                Ok(Some(ctx)) => {
+                    // SAFETY: ssl is a live SSL*, paused before its certificate is chosen; `ctx` is live.
+                    let applied = unsafe { us_ssl_use_sni_context(ssl.as_ptr(), ctx.as_ptr()) };
+                    applied != 0
+                }
+                Err(()) => false,
+            };
+            if applied {
+                self.handle_traffic();
+                return;
+            }
+            boring_sys::ERR_clear_error();
+            // The handshake is not driven again, so BoringSSL queues no alert,
+            // and a fatal error keeps `shutdown` from writing a close_notify.
+            self.flags.set_fatal_error(true);
+            self.flags
+                .set_handshake_state(HandshakeState::HandshakeCompleted);
+            self.trigger_handshake_callback(HandshakeOutcome::HandshakeError);
+            self.trigger_close_callback();
         }
 
         /// Handle the end of a renegotiation if it was pending. This function
@@ -1296,18 +1407,31 @@ pub mod ssl_wrapper {
         /// would hand the owner the next chunk while it is still inside its
         /// callback for the previous one.
         fn handle_traffic(&self) {
-            if self.traffic.get() != Traffic::Idle {
-                log!("handleTraffic re-entered, flushing and deferring to the outer pass");
-                let mut buffer = IoBuffer::uninit();
-                self.handle_writing(&mut buffer);
-                self.traffic.set(Traffic::RerunRequested);
-                return;
+            match self.traffic.get() {
+                Traffic::Idle => {}
+                Traffic::FreeRequested => return,
+                Traffic::Running | Traffic::RerunRequested => {
+                    log!("handleTraffic re-entered, flushing and deferring to the outer pass");
+                    let mut buffer = IoBuffer::uninit();
+                    self.handle_writing(&mut buffer);
+                    // The flush can run a callback that calls `deinit`.
+                    if self.traffic.get() != Traffic::FreeRequested {
+                        self.traffic.set(Traffic::RerunRequested);
+                    }
+                    return;
+                }
             }
             loop {
                 self.traffic.set(Traffic::Running);
                 self.traffic_pass();
-                if self.traffic.get() != Traffic::RerunRequested {
-                    break;
+                match self.traffic.get() {
+                    Traffic::RerunRequested => {}
+                    Traffic::FreeRequested => {
+                        self.traffic.set(Traffic::Idle);
+                        self.free();
+                        return;
+                    }
+                    Traffic::Idle | Traffic::Running => break,
                 }
             }
             self.traffic.set(Traffic::Idle);
@@ -1372,7 +1496,32 @@ pub mod ssl_wrapper {
 
     impl<T: Copy> Drop for SSLWrapper<T> {
         fn drop(&mut self) {
-            self.deinit();
+            self.flags.set_closed_notified(true);
+            self.free();
+        }
+    }
+
+    /// The certificate callback (`SSL_set_cert_cb`) of a server wrapper whose
+    /// owner resolves server names. It runs no owner code inside BoringSSL: it
+    /// pauses the handshake, and `update_handshake_state` asks the owner.
+    unsafe extern "C" fn pause_for_server_name(
+        ssl: *mut boring_sys::SSL,
+        arg: *mut c_void,
+    ) -> c_int {
+        // SAFETY: `arg` is the `CallbackState` that `init_with_ctx` registered; it outlives `ssl`.
+        let state = unsafe { &*arg.cast::<CallbackState>() };
+        match state.server_name.get() {
+            ServerName::Settled => 1,
+            ServerName::Armed => {
+                // SAFETY: `ssl` is live for this callback.
+                if unsafe { boring_sys::SSL_get_servername(ssl, 0) }.is_null() {
+                    state.server_name.set(ServerName::Settled);
+                    return 1;
+                }
+                state.server_name.set(ServerName::Parked);
+                -1
+            }
+            ServerName::Parked | ServerName::Asked => -1,
         }
     }
 
@@ -1508,6 +1657,11 @@ pub mod ssl_wrapper {
         /// openssl.c: the pointer `us_ssl_set_wrapper` stored on the `SSL` that `ctx` verifies, or null.
         fn us_ssl_wrapper_from_verify(ctx: *mut boring_sys::X509_STORE_CTX) -> *mut c_void;
         fn i2d_SSL_SESSION(session: *mut boring_sys::SSL_SESSION, out: *mut *mut u8) -> c_int;
+        /// openssl.c: serves `ctx`'s certificate on `ssl` and checks the client against `ctx`'s CA. 0 on failure.
+        fn us_ssl_use_sni_context(
+            ssl: *mut boring_sys::SSL,
+            ctx: *mut boring_sys::SSL_CTX,
+        ) -> c_int;
     }
 }
 

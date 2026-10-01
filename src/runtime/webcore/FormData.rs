@@ -332,7 +332,7 @@ pub(crate) fn for_each_multipart_entry<C>(
                                 }
                                 // Unquoted value is an RFC 2045 token; leave `;` for the outer loop.
                                 b';' if !quoted => {
-                                    field_value = &field_value[..i];
+                                    field_value = strings::trim_right(&field_value[..i], b" \t");
                                     break;
                                 }
                                 b'\\' => {

@@ -373,6 +373,13 @@ describe("FormData", () => {
             `form-data; name=image; filename=test.jpg; filename*=utf-8''test.jpg`,
             [{ key: "image", file: "test.jpg", text: "v" }],
           ],
+          // Whitespace between an unquoted value and the next `;` is not part
+          // of the value, the same as at the end of the line.
+          [`form-data; name=a ; filename=b`, [{ key: "a", file: "b", text: "v" }]],
+          [`form-data; filename=b.txt ; name=a`, [{ key: "a", file: "b.txt", text: "v" }]],
+          [`form-data; name=a \t; filename=b`, [{ key: "a", file: "b", text: "v" }]],
+          [`form-data; filename=b; name=a `, [{ key: "a", file: "b", text: "v" }]],
+          [`form-data; name="a " ; filename="b "`, [{ key: "a ", file: "b ", text: "v" }]],
         ] as const)("%s", async (disposition, expected) => {
           expect(await parse(C, disposition)).toEqual(expected);
         });

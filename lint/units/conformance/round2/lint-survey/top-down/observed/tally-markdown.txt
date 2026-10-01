@@ -1,0 +1,174 @@
+check: /workspace/wt/conformance/build/debug/bun-debug --lint
+reports 9: instances selected 14914, run 12797 (E 7027, C 5770), skipped 2117, invalid 0; 2365 s in sweep.ts
+  1-upper-a-b.json: 2* A* C* D* E* F* I* M* N* P* T* V* Y* a* b*; selected 1482, run 1241 (E 733, C 508), skipped 241, invalid 0; 276.4 s
+  2-c.json: c*; selected 1728, run 1525 (E 807, C 718), skipped 203, invalid 0; 279 s
+  3-d-f-g.json: d* f* g*; selected 1845, run 1618 (E 777, C 841), skipped 227, invalid 0; 263.5 s
+  4-e-h-k-l-q.json: e* h* k* l* q*; selected 1725, run 1266 (E 584, C 682), skipped 459, invalid 0; 185 s
+  5-i-j.json: i* j*; selected 1693, run 1429 (E 847, C 582), skipped 264, invalid 0; 283.5 s
+  6-m-n-o.json: m* n* o*; selected 1729, run 1599 (E 880, C 719), skipped 130, invalid 0; 271.6 s
+  7-p-r.json: p* r*; selected 1801, run 1618 (E 1067, C 551), skipped 183, invalid 0; 222.7 s
+  8-s-u-v-w-y.json: s* u* v* w* y*; selected 1735, run 1399 (E 706, C 693), skipped 336, invalid 0; 304.2 s
+  9-t.json: t*; selected 1176, run 1102 (E 626, C 476), skipped 74, invalid 0; 278.7 s
+pass by sweep.ts: E 0 of 7027, C 5649 of 5770
+instances that pass and may enter a list: 0; that pass and may not: 5649 (quota 5647, platform-limited 2)
+
+| directory | run | not laid out | result | died | timeout | C silent | C diagnostic | E silent | E diagnostic | E pass |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| compiler | 6282 | 79 | 6203 | 0 | 0 | 3039 | 10 | 2706 | 448 | 0 |
+| conformance | 2 | 0 | 2 | 0 | 0 | 1 | 0 | 1 | 0 | 0 |
+| conformance/Symbols | 8 | 0 | 8 | 0 | 0 | 3 | 0 | 5 | 0 | 0 |
+| conformance/additionalChecks | 1 | 0 | 1 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| conformance/ambient | 20 | 0 | 20 | 0 | 0 | 11 | 0 | 7 | 2 | 0 |
+| conformance/async | 186 | 0 | 186 | 0 | 0 | 85 | 7 | 41 | 53 | 0 |
+| conformance/asyncGenerators | 5 | 0 | 5 | 0 | 0 | 2 | 0 | 3 | 0 | 0 |
+| conformance/classes | 591 | 0 | 591 | 0 | 0 | 234 | 0 | 272 | 85 | 0 |
+| conformance/constEnums | 9 | 0 | 9 | 0 | 0 | 3 | 0 | 5 | 1 | 0 |
+| conformance/controlFlow | 58 | 1 | 57 | 0 | 0 | 31 | 0 | 23 | 3 | 0 |
+| conformance/declarationEmit | 21 | 0 | 21 | 0 | 0 | 18 | 0 | 3 | 0 | 0 |
+| conformance/decorators | 88 | 0 | 88 | 0 | 0 | 44 | 0 | 18 | 26 | 0 |
+| conformance/directives | 6 | 1 | 5 | 0 | 0 | 2 | 0 | 3 | 0 | 0 |
+| conformance/dynamicImport | 38 | 0 | 38 | 0 | 0 | 24 | 0 | 9 | 5 | 0 |
+| conformance/emitter | 13 | 0 | 13 | 0 | 0 | 13 | 0 | 0 | 0 | 0 |
+| conformance/enums | 14 | 0 | 14 | 0 | 0 | 6 | 0 | 6 | 2 | 0 |
+| conformance/es2016 | 1 | 0 | 1 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| conformance/es2017 | 12 | 0 | 12 | 0 | 0 | 6 | 0 | 6 | 0 | 0 |
+| conformance/es2018 | 5 | 0 | 5 | 0 | 0 | 2 | 0 | 1 | 2 | 0 |
+| conformance/es2019 | 15 | 0 | 15 | 0 | 0 | 4 | 0 | 8 | 3 | 0 |
+| conformance/es2020 | 23 | 0 | 23 | 0 | 0 | 9 | 0 | 14 | 0 | 0 |
+| conformance/es2021 | 39 | 0 | 39 | 0 | 0 | 19 | 0 | 20 | 0 | 0 |
+| conformance/es2022 | 16 | 0 | 16 | 0 | 0 | 2 | 0 | 13 | 1 | 0 |
+| conformance/es2023 | 2 | 0 | 2 | 0 | 0 | 1 | 0 | 1 | 0 | 0 |
+| conformance/es2024 | 3 | 0 | 3 | 0 | 0 | 3 | 0 | 0 | 0 | 0 |
+| conformance/es2025 | 4 | 0 | 4 | 0 | 0 | 4 | 0 | 0 | 0 | 0 |
+| conformance/es5 | 1 | 0 | 1 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| conformance/es6 | 1028 | 0 | 1028 | 0 | 0 | 515 | 0 | 392 | 121 | 0 |
+| conformance/es7 | 45 | 0 | 45 | 0 | 0 | 16 | 0 | 20 | 9 | 0 |
+| conformance/esDecorators | 161 | 0 | 161 | 0 | 0 | 129 | 0 | 25 | 7 | 0 |
+| conformance/esnext | 4 | 0 | 4 | 0 | 0 | 4 | 0 | 0 | 0 | 0 |
+| conformance/expressions | 400 | 0 | 400 | 0 | 0 | 125 | 0 | 241 | 34 | 0 |
+| conformance/externalModules | 234 | 0 | 234 | 0 | 0 | 84 | 2 | 118 | 30 | 0 |
+| conformance/functions | 20 | 0 | 20 | 0 | 0 | 8 | 0 | 11 | 1 | 0 |
+| conformance/generators | 15 | 0 | 15 | 0 | 0 | 7 | 0 | 8 | 0 | 0 |
+| conformance/importAssertion | 10 | 0 | 10 | 0 | 0 | 1 | 0 | 4 | 5 | 0 |
+| conformance/importAttributes | 18 | 0 | 18 | 0 | 0 | 4 | 0 | 5 | 9 | 0 |
+| conformance/importDefer | 27 | 0 | 27 | 0 | 0 | 6 | 2 | 6 | 13 | 0 |
+| conformance/interfaces | 66 | 0 | 66 | 0 | 0 | 5 | 0 | 58 | 3 | 0 |
+| conformance/internalModules | 76 | 0 | 76 | 0 | 0 | 30 | 0 | 39 | 7 | 0 |
+| conformance/jsdoc | 333 | 3 | 330 | 0 | 0 | 151 | 0 | 170 | 9 | 0 |
+| conformance/jsx | 212 | 99 | 113 | 0 | 0 | 29 | 0 | 66 | 18 | 0 |
+| conformance/moduleResolution | 72 | 0 | 72 | 0 | 0 | 22 | 0 | 46 | 4 | 0 |
+| conformance/node | 334 | 0 | 334 | 0 | 0 | 105 | 0 | 205 | 24 | 0 |
+| conformance/nonjsExtensions | 14 | 0 | 14 | 0 | 0 | 5 | 2 | 6 | 1 | 0 |
+| conformance/override | 38 | 0 | 38 | 0 | 0 | 11 | 0 | 26 | 1 | 0 |
+| conformance/parser | 820 | 0 | 820 | 0 | 0 | 219 | 2 | 319 | 280 | 0 |
+| conformance/pedantic | 2 | 0 | 2 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| conformance/references | 15 | 1 | 14 | 0 | 0 | 12 | 0 | 2 | 0 | 0 |
+| conformance/salsa | 186 | 0 | 186 | 0 | 0 | 60 | 2 | 117 | 7 | 0 |
+| conformance/scanner | 35 | 0 | 35 | 0 | 0 | 10 | 0 | 11 | 14 | 0 |
+| conformance/statements | 318 | 0 | 318 | 0 | 0 | 206 | 0 | 69 | 43 | 0 |
+| conformance/types | 843 | 2 | 841 | 0 | 0 | 317 | 1 | 486 | 37 | 0 |
+| conformance/typings | 8 | 0 | 8 | 0 | 0 | 2 | 0 | 6 | 0 | 0 |
+| **compiler, all** | 6282 | 79 | 6203 | 0 | 0 | 3039 | 10 | 2706 | 448 | 0 |
+| **conformance, all** | 6515 | 107 | 6408 | 0 | 0 | 2610 | 18 | 2920 | 860 | 0 |
+| **total** | 12797 | 186 | 12611 | 0 | 0 | 5649 | 28 | 5626 | 1308 | 0 |
+
+check of the sums: not laid out 186 + result 12611 + died 0 + timeout 0 + internal-error, ts-coded and else 0 = 12797 of 12797 run
+result 12611 = C silent 5649 + C diagnostic 28 + E silent 5626 + E diagnostic 1308 + E pass 0
+
+not laid out, by the first obstacle: absolute-path-in-text 175, dos-root 8, case-insensitive-requested 3
+
+instances with a diagnostic of Bun, by class and the code of the first line that has a name for a code:
+    1299  E syntax
+      27  C syntax
+       7  E unsupported-extension
+       1  C no-empty-pattern
+       1  E no-debugger
+       1  E no-self-assign
+
+the same by top directory:
+  compiler                       C no-empty-pattern             1
+  compiler                       C syntax                       9
+  compiler                       E syntax                     445
+  compiler                       E unsupported-extension        3
+  conformance/ambient            E syntax                       2
+  conformance/async              C syntax                       7
+  conformance/async              E syntax                      53
+  conformance/classes            E syntax                      85
+  conformance/constEnums         E syntax                       1
+  conformance/controlFlow        E syntax                       3
+  conformance/decorators         E syntax                      26
+  conformance/dynamicImport      E syntax                       5
+  conformance/enums              E syntax                       2
+  conformance/es2018             E syntax                       2
+  conformance/es2019             E syntax                       3
+  conformance/es2022             E syntax                       1
+  conformance/es6                E syntax                     121
+  conformance/es7                E syntax                       9
+  conformance/esDecorators       E syntax                       7
+  conformance/expressions        E syntax                      34
+  conformance/externalModules    C syntax                       2
+  conformance/externalModules    E syntax                      30
+  conformance/functions          E syntax                       1
+  conformance/importAssertion    E syntax                       5
+  conformance/importAttributes   E syntax                       9
+  conformance/importDefer        C syntax                       2
+  conformance/importDefer        E syntax                      13
+  conformance/interfaces         E syntax                       3
+  conformance/internalModules    E syntax                       7
+  conformance/jsdoc              E no-debugger                  1
+  conformance/jsdoc              E no-self-assign               1
+  conformance/jsdoc              E syntax                       7
+  conformance/jsx                E syntax                      18
+  conformance/moduleResolution   E unsupported-extension        4
+  conformance/node               E syntax                      24
+  conformance/nonjsExtensions    C syntax                       2
+  conformance/nonjsExtensions    E syntax                       1
+  conformance/override           E syntax                       1
+  conformance/parser             C syntax                       2
+  conformance/parser             E syntax                     280
+  conformance/salsa              C syntax                       2
+  conformance/salsa              E syntax                       7
+  conformance/scanner            E syntax                      14
+  conformance/statements         E syntax                      43
+  conformance/types              C syntax                       1
+  conformance/types              E syntax                      37
+
+codes in the oracles of class E: 959; codes with an instance that passes: 0
+  the 12 most frequent (instances whose oracle has the code, of them pass): TS2322 1014/0, TS2304 670/0, TS2564 599/0, TS2339 471/0, TS2454 445/0, TS1005 301/0, TS2345 277/0, TS2307 165/0, TS2300 156/0, TS1109 147/0, TS2741 138/0, TS7006 118/0
+
+class C with a diagnostic of Bun: 28 instances
+  compiler/continueTarget3.ts	continueTarget3.ts	syntax
+  compiler/declarationEmitClassSetAccessorParamNameInJs2.ts	declarationEmitClassSetAccessorParamNameInJs2.ts	no-empty-pattern
+  compiler/duplicateVarAndImport.ts	duplicateVarAndImport.ts	syntax
+  compiler/elidedEmbeddedStatementsReplacedWithSemicolon.ts	elidedEmbeddedStatementsReplacedWithSemicolon.ts	syntax
+  compiler/fileWithNextLine2.ts	fileWithNextLine2.ts	syntax
+  compiler/isolatedModulesSketchyAliasLocalMerge.ts	isolatedModulesSketchyAliasLocalMerge(isolatedmodules=false,verbatimmodulesyntax=false).ts	syntax
+  compiler/sourceMap-LineBreaks.ts	sourceMap-LineBreaks(target=es2015).ts	syntax
+  compiler/strictModeEnumMemberNameReserved.ts	strictModeEnumMemberNameReserved.ts	syntax
+  compiler/symbolMergeValueAndImportedType.ts	symbolMergeValueAndImportedType.ts	syntax
+  compiler/usedImportNotElidedInJs.ts	usedImportNotElidedInJs.ts	syntax
+  conformance/async/es2017/asyncArrowFunction/asyncArrowFunction2_es2017.ts	asyncArrowFunction2_es2017.ts	syntax
+  conformance/async/es2017/asyncArrowFunction/asyncArrowFunction4_es2017.ts	asyncArrowFunction4_es2017.ts	syntax
+  conformance/async/es5/asyncArrowFunction/asyncArrowFunction2_es5.ts	asyncArrowFunction2_es5(target=es2015).ts	syntax
+  conformance/async/es5/asyncArrowFunction/asyncArrowFunction4_es5.ts	asyncArrowFunction4_es5(target=es2015).ts	syntax
+  conformance/async/es6/asyncArrowFunction/asyncArrowFunction2_es6.ts	asyncArrowFunction2_es6.ts	syntax
+  conformance/async/es6/asyncArrowFunction/asyncArrowFunction4_es6.ts	asyncArrowFunction4_es6.ts	syntax
+  conformance/async/es6/asyncWithVarShadowing_es6.ts	asyncWithVarShadowing_es6.ts	syntax
+  conformance/externalModules/typeOnly/namespaceImportTypeQuery2.ts	namespaceImportTypeQuery2.ts	syntax
+  conformance/externalModules/typeOnlyMerge1.ts	typeOnlyMerge1.ts	syntax
+  conformance/importDefer/dynamicImportDefer.ts	dynamicImportDefer(module=esnext).ts	syntax
+  conformance/importDefer/dynamicImportDefer.ts	dynamicImportDefer(module=preserve).ts	syntax
+  conformance/nonjsExtensions/declarationFileForHtmlFileWithinDeclarationFile.ts	declarationFileForHtmlFileWithinDeclarationFile.ts	syntax
+  conformance/nonjsExtensions/declarationFileForHtmlImport.ts	declarationFileForHtmlImport(allowarbitraryextensions=true).ts	syntax
+  conformance/parser/ecmascript5/EnumDeclarations/parserInterfaceKeywordInEnum1.ts	parserInterfaceKeywordInEnum1.ts	syntax
+  conformance/parser/ecmascript5/Statements/ContinueStatements/parser_continueTarget3.ts	parser_continueTarget3.ts	syntax
+  conformance/salsa/plainJSRedeclare3.ts	plainJSRedeclare3.ts	syntax
+  conformance/salsa/privateIdentifierExpando.ts	privateIdentifierExpando.ts	syntax
+  conformance/types/conditional/inferTypesWithExtends1.ts	inferTypesWithExtends1.ts	syntax
+
+died: 0
+timeout: 0
+internal-error: 0
+E ts-coded: 0
+C ts-coded: 0
+else: 0

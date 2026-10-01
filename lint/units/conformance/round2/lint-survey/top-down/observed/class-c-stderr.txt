@@ -1,0 +1,72 @@
+# the 28 instances of class C (typescript-go reports nothing) where the debug build 1.4.3-debug+3110ce85c prints a diagnostic: bottom-up/raw.ts with their names
+# case path | instance | exit code | root files, then the lines of stderr
+conformance/async/es2017/asyncArrowFunction/asyncArrowFunction2_es2017.ts | asyncArrowFunction2_es2017.ts | exit 2 | roots /.src/asyncArrowFunction2_es2017.ts
+    asyncArrowFunction2_es2017.ts(1,15): error syntax: Unexpected )
+conformance/async/es5/asyncArrowFunction/asyncArrowFunction2_es5.ts | asyncArrowFunction2_es5(target=es2015).ts | exit 2 | roots /.src/asyncArrowFunction2_es5.ts
+    asyncArrowFunction2_es5.ts(1,15): error syntax: Unexpected )
+conformance/async/es2017/asyncArrowFunction/asyncArrowFunction4_es2017.ts | asyncArrowFunction4_es2017.ts | exit 2 | roots /.src/asyncArrowFunction4_es2017.ts
+    asyncArrowFunction4_es2017.ts(1,5): error syntax: Cannot use "yield" or "await" here.
+conformance/async/es5/asyncArrowFunction/asyncArrowFunction4_es5.ts | asyncArrowFunction4_es5(target=es2015).ts | exit 2 | roots /.src/asyncArrowFunction4_es5.ts
+    asyncArrowFunction4_es5.ts(1,5): error syntax: Cannot use "yield" or "await" here.
+conformance/async/es6/asyncArrowFunction/asyncArrowFunction2_es6.ts | asyncArrowFunction2_es6.ts | exit 2 | roots /.src/asyncArrowFunction2_es6.ts
+    asyncArrowFunction2_es6.ts(1,15): error syntax: Unexpected )
+conformance/async/es6/asyncArrowFunction/asyncArrowFunction4_es6.ts | asyncArrowFunction4_es6.ts | exit 2 | roots /.src/asyncArrowFunction4_es6.ts
+    asyncArrowFunction4_es6.ts(1,5): error syntax: Cannot use "yield" or "await" here.
+conformance/async/es6/asyncWithVarShadowing_es6.ts | asyncWithVarShadowing_es6.ts | exit 2 | roots /.src/asyncWithVarShadowing_es6.ts
+    asyncWithVarShadowing_es6.ts(130,14): error syntax: x has already been declared
+compiler/declarationEmitClassSetAccessorParamNameInJs2.ts | declarationEmitClassSetAccessorParamNameInJs2.ts | exit 2 | roots /.src/foo.js
+    foo.js(7,13): error no-empty-pattern: Unexpected empty object pattern.
+conformance/nonjsExtensions/declarationFileForHtmlFileWithinDeclarationFile.ts | declarationFileForHtmlFileWithinDeclarationFile.ts | exit 2 | roots /.src/component.d.html.ts /.src/file.d.ts /.src/main.ts
+    component.d.html.ts(8,14): error syntax: The constant "blogPost" must be initialized
+compiler/continueTarget3.ts | continueTarget3.ts | exit 2 | roots /.src/continueTarget3.ts
+    continueTarget3.ts(4,3): error syntax: Cannot "continue" to label target1
+conformance/nonjsExtensions/declarationFileForHtmlImport.ts | declarationFileForHtmlImport(allowarbitraryextensions=true).ts | exit 2 | roots /.src/component.d.html.ts /.src/file.ts
+    component.d.html.ts(8,14): error syntax: The constant "blogPost" must be initialized
+conformance/importDefer/dynamicImportDefer.ts | dynamicImportDefer(module=esnext).ts | exit 2 | roots /.src/a.ts /.src/b.ts
+    b.ts(1,8): error syntax: Expected "meta" but found "defer"
+    b.ts(3,3): error syntax: Expected ")" but found ";"
+compiler/duplicateVarAndImport.ts | duplicateVarAndImport.ts | exit 2 | roots /.src/duplicateVarAndImport.ts
+    duplicateVarAndImport.ts(1,1): error syntax: "a" has already been declared
+conformance/importDefer/dynamicImportDefer.ts | dynamicImportDefer(module=preserve).ts | exit 2 | roots /.src/a.ts /.src/b.ts
+    b.ts(1,8): error syntax: Expected "meta" but found "defer"
+    b.ts(3,3): error syntax: Expected ")" but found ";"
+compiler/elidedEmbeddedStatementsReplacedWithSemicolon.ts | elidedEmbeddedStatementsReplacedWithSemicolon.ts | exit 2 | roots /.src/elidedEmbeddedStatementsReplacedWithSemicolon.ts
+    elidedEmbeddedStatementsReplacedWithSemicolon.ts(2,5): error syntax: Cannot use a declaration in a single-statement context
+    elidedEmbeddedStatementsReplacedWithSemicolon.ts(4,5): error syntax: Cannot use a declaration in a single-statement context
+    elidedEmbeddedStatementsReplacedWithSemicolon.ts(7,5): error syntax: Cannot use a declaration in a single-statement context
+    elidedEmbeddedStatementsReplacedWithSemicolon.ts(11,5): error syntax: Cannot use a declaration in a single-statement context
+    elidedEmbeddedStatementsReplacedWithSemicolon.ts(14,5): error syntax: Cannot use a declaration in a single-statement context
+    elidedEmbeddedStatementsReplacedWithSemicolon.ts(17,5): error syntax: Cannot use a declaration in a single-statement context
+    elidedEmbeddedStatementsReplacedWithSemicolon.ts(20,5): error syntax: Cannot use a declaration in a single-statement context
+    elidedEmbeddedStatementsReplacedWithSemicolon.ts(24,5): error syntax: Cannot use a declaration in a single-statement context
+conformance/types/conditional/inferTypesWithExtends1.ts | inferTypesWithExtends1.ts | exit 2 | roots /.src/inferTypesWithExtends1.ts
+    inferTypesWithExtends1.ts(102,61): error syntax: Expected "?" but found ";"
+    inferTypesWithExtends1.ts(103,6): error syntax: Expected ":" but found "X15"
+    inferTypesWithExtends1.ts(103,13): error syntax: Expected "(" but found "="
+    inferTypesWithExtends1.ts(103,79): error syntax: Expected ")" but found ";"
+compiler/fileWithNextLine2.ts | fileWithNextLine2.ts | exit 2 | roots /.src/fileWithNextLine2.ts
+    fileWithNextLine2.ts(3,8): error syntax: Unexpected 
+compiler/isolatedModulesSketchyAliasLocalMerge.ts | isolatedModulesSketchyAliasLocalMerge(isolatedmodules=false,verbatimmodulesyntax=false).ts | exit 2 | roots /.src/types.ts /.src/bad.ts /.src/good.ts
+    bad.ts(2,5): error syntax: "FC" has already been declared
+conformance/parser/ecmascript5/EnumDeclarations/parserInterfaceKeywordInEnum1.ts | parserInterfaceKeywordInEnum1.ts | exit 2 | roots /.src/parserInterfaceKeywordInEnum1.ts
+    parserInterfaceKeywordInEnum1.ts(4,5): error syntax: "interface" is a reserved word and cannot be used in strict mode
+conformance/externalModules/typeOnly/namespaceImportTypeQuery2.ts | namespaceImportTypeQuery2.ts | exit 2 | roots /z.ts /a.ts /b.ts
+    ../a.ts(2,7): error syntax: "A" has already been declared
+conformance/parser/ecmascript5/Statements/ContinueStatements/parser_continueTarget3.ts | parser_continueTarget3.ts | exit 2 | roots /.src/parser_continueTarget3.ts
+    parser_continueTarget3.ts(4,3): error syntax: Cannot "continue" to label target1
+conformance/salsa/plainJSRedeclare3.ts | plainJSRedeclare3.ts | exit 2 | roots /.src/plainJSRedeclare.js
+    plainJSRedeclare.js(2,5): error syntax: "orbitol" has already been declared
+conformance/salsa/privateIdentifierExpando.ts | privateIdentifierExpando.ts | exit 2 | roots /.src/privateIdentifierExpando.js
+    privateIdentifierExpando.js(2,3): error syntax: Expected identifier but found "#bar"
+    privateIdentifierExpando.js(2,8): error syntax: Expected ";" but found "baz"
+    privateIdentifierExpando.js(2,12): error syntax: Unexpected =
+compiler/strictModeEnumMemberNameReserved.ts | strictModeEnumMemberNameReserved.ts | exit 2 | roots /.src/strictModeEnumMemberNameReserved.ts
+    strictModeEnumMemberNameReserved.ts(3,5): error syntax: "static" is a reserved word and cannot be used in strict mode
+compiler/symbolMergeValueAndImportedType.ts | symbolMergeValueAndImportedType.ts | exit 2 | roots /.src/main.ts /.src/other.ts
+    main.ts(2,7): error syntax: "X" has already been declared
+conformance/externalModules/typeOnlyMerge1.ts | typeOnlyMerge1.ts | exit 2 | roots /.src/a.ts /.src/b.ts /.src/c.ts
+    b.ts(2,7): error syntax: "A" has already been declared
+compiler/usedImportNotElidedInJs.ts | usedImportNotElidedInJs.ts | exit 2 | roots /.src/test.js
+    test.js(3,14): error syntax: "moment" has already been declared
+compiler/sourceMap-LineBreaks.ts | sourceMap-LineBreaks(target=es2015).ts | exit 2 | roots /.src/sourceMap-LineBreaks.ts
+    sourceMap-LineBreaks.ts(3,26): error syntax: Unexpected 

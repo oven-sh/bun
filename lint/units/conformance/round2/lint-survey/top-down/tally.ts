@@ -1,4 +1,7 @@
-// usage: bun tally.ts <directory of reports of sweep.ts> [--markdown]
+// usage: bun tally.ts <directory of reports of sweep.ts | instances.tsv> [--markdown]
+// instances.tsv: the table that bottom-up/merge.ts writes of the same reports (name, class of the oracle, case path,
+// outcome, class of the run, code, reason); the counts of the reports themselves (selected, skipped, seconds, the
+// codes of the oracles, what may enter a list) are not in it.
 // The survey of E4 from the reports of the chunks of sweep.ts (report.instances[name] = {kind, casePath, outcome,
 // reason}), by the rules of runner/check_bun_lint.ts (readRun, toCheckResult) and runner/run.ts (attempt, compare):
 //   not laid out   outcome unsupported: the files cannot be written as the harness has them; no process started.
@@ -19,7 +22,7 @@
 //   timeout        outcome timeout ("the check did not end within n ms").
 //   else           anything that is none of these: printed line by line. It has to be empty.
 // It starts no process. The sums are checked: every instance is in one class, and a name is in one report.
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 const [directory, ...rest] = process.argv.slice(2);
@@ -96,9 +99,12 @@ type Column = (typeof columns)[number];
 type Row = Record<Column, number>;
 const emptyRow = (): Row => Object.fromEntries(columns.map(c => [c, 0])) as Row;
 
-const files = readdirSync(directory)
-  .filter(name => name.endsWith(".json"))
-  .sort();
+const fromTable = statSync(directory).isFile();
+const files = fromTable
+  ? [directory]
+  : readdirSync(directory)
+      .filter(name => name.endsWith(".json"))
+      .sort();
 const seen = new Map<string, string>();
 const rows = new Map<string, Row>();
 const suiteRows = new Map<string, Row>();
@@ -120,8 +126,24 @@ const oracleCodes = new Map<string, { instances: number; pass: number; diagnosti
 let refusedToEnter = 0;
 const refusedBy = new Map<string, number>();
 let mayEnter = 0;
+// A table as a report: the instances alone.
+function reportOfTable(path: string) {
+  const instances: Record<string, Reported> = {};
+  let E = 0;
+  let C = 0;
+  for (const line of readFileSync(path, "utf8").split("\n")) {
+    if (line === "") continue;
+    const [name, kind, casePath, outcome, , , reason] = line.split("\t");
+    instances[name] = { kind: kind as "E" | "C", casePath, outcome, reason: reason ?? "" };
+    if (kind === "E") E++;
+    else C++;
+  }
+  const run = E + C;
+  const totals = { selected: run, run, skipped: 0, invalid: 0, E: [0, E], C: [0, C] };
+  return { selectors: ["(table)"], totals, seconds: 0, check: "(table)", notListed: { E: [], C: [] }, refused: [], codes: {}, instances };
+}
 for (const file of files) {
-  const report = JSON.parse(readFileSync(join(directory, file), "utf8"));
+  const report = fromTable ? reportOfTable(file) : JSON.parse(readFileSync(join(directory, file), "utf8"));
   head.push(
     `  ${file}: ${report.selectors.join(" ")}; selected ${report.totals.selected}, run ${report.totals.run} (E ${report.totals.E[1]}, C ${report.totals.C[1]}), skipped ${report.totals.skipped}, invalid ${report.totals.invalid}; ${report.seconds} s`,
   );

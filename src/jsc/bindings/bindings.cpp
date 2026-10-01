@@ -6548,8 +6548,12 @@ CPP_DECL bool Bun__JSValue__materializeArrayBufferViewBuffer(JSC::EncodedJSValue
     JSC::JSValue value = JSValue::decode(encoded);
     if (!value || !value.isCell())
         return true;
-    if (auto* view = dynamicDowncast<JSArrayBufferView>(value.asCell()))
+    if (auto* view = dynamicDowncast<JSArrayBufferView>(value.asCell())) {
+        // Only fast-mode bytes move. A larger view with no ArrayBuffer keeps its address when it gets one.
+        if (view->mode() != JSC::FastTypedArray)
+            return true;
         return view->possiblySharedBuffer() != nullptr;
+    }
     // Not a view: nothing to materialize; the caller's type checks decide.
     return true;
 }

@@ -433,6 +433,13 @@ fn ptr_(global_this: &JSGlobalObject, value: JSValue, byte_offset: Option<JSValu
         return JSValue::NULL;
     }
 
+    // The address outlives this call. A fast-mode view keeps its bytes in GC
+    // storage, and they move when the engine gives the view an ArrayBuffer
+    // (a `.buffer` read, a pin, DFG tier-up).
+    if !value.materialize_array_buffer_view_buffer() {
+        return global_this.throw_out_of_memory_value();
+    }
+
     let Some(array_buffer) = value.as_array_buffer(global_this) else {
         return global_this.to_invalid_arguments(format_args!(
             "Expected ArrayBufferView but received {:?}",

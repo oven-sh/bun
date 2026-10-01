@@ -1,0 +1,52 @@
+js "a--.b;" => "(a--).b;\n" || scan ok
+js "a++\n[0];" => "(a++)[0];\n" || scan ok
+js "a++\n(b);" => "(a++)(b);\n" || scan ok
+js "a++\n`x`;" => "(a++)`x`;\n" || scan ok
+js "a++ ++;" => ERR @0+0 Invalid assignment target || scan ok
+js "a++ = b;" => ERR @0+0 Invalid assignment target || scan ok
+js "a + b = c;" => ERR @0+0 Invalid assignment target || scan ok
+js "-a = b;" => ERR @0+0 Invalid assignment target || scan ok
+js "++ delete a.b;" => ERR @3+0 Invalid assignment target || scan ok
+js "new A?.b();" => "new A?.b;\n" || scan ok
+js "new A?.();" => "new A;\n" || scan ok
+js "function* g() { yield*; }" => "function* g() {\n  yield;\n}\n" || scan ok
+js "a.\nb in c;" => "a.b in c;\n" || scan ok
+js "for (using of of []) {}" => "import { __callDispose as __callDispose_vyva085h, __using as __using_nccbhqtj } from \"bun:wrap\";\nfor (const __bun_temp_ref_1$ of []) {\n  let __bun_temp_ref_2$ = [];\n  try {\n    const of = __using_nccbhqtj(__bun_temp_ref_2$, __bun_temp_ref_1$, 0);\n  } catch (__bun_temp_ref_3$) {\n    var __bun_temp_ref_4$ = __bun_temp_ref_3$, __bun_temp_ref_5$ = 1;\n  } finally {\n    __callDispose_vyva085h(__bun_temp_ref_2$, __bun_temp_ref_4$, __bun_temp_ref_5$);\n  }\n}\n" || scan ok
+js "a[];" => ERR @2+1 Unexpected ] || scan ERR @2+1 Unexpected ]
+js "-x ** 2;" => ERR @3+2 Unexpected ** || scan ERR @3+2 Unexpected **
+js "class C extends B { m() { super; } }" => ERR @26+5 Unexpected "super" || scan ERR @26+5 Unexpected "super"
+js "class C { #a; m() { this?.#a } }" => "class C {\n  #a;\n  m() {\n    this?.#a;\n  }\n}\n" || scan ok
+ts "a<b>.c;" => "a.c;\n" || scan ok
+ts "<A>x ** 2;" => "x ** 2;\n" || scan ok
+ts "<A>x = 1;" => "x = 1;\n" || scan ok
+ts "class C extends B { m() { super<T>.x } }" => ERR @26+5 Unexpected "super" || scan ERR @26+5 Unexpected "super"
+js "async function f() { await x = y; }" => ERR @21+0 Invalid assignment target || scan ok
+js "++a++;" => ERR @2+0 Invalid assignment target || scan ok
+js "a++<b>(c);" => "a++ < b > c;\n" || scan ok
+ts "a++<b>(c);" => "(a++)(c);\n" || scan ok
+js "for (using of [a]) {}" => ERR @14+1 Expected ";" but found "[" | @16+1 Expected ";" but found "]" || scan ERR @14+1 Expected ";" but found "[" | @16+1 Expected ";" but found "]"
+js "for (using of of) {}" => ERR @16+1 Unexpected ) || scan ERR @16+1 Unexpected )
+js "for (using of of x) {}" => "import { __callDispose as __callDispose_vyva085h, __using as __using_nccbhqtj } from \"bun:wrap\";\nfor (const __bun_temp_ref_1$ of x) {\n  let __bun_temp_ref_2$ = [];\n  try {\n    const of = __using_nccbhqtj(__bun_temp_ref_2$, __bun_temp_ref_1$, 0);\n  } catch (__bun_temp_ref_3$) {\n    var __bun_temp_ref_4$ = __bun_temp_ref_3$, __bun_temp_ref_5$ = 1;\n  } finally {\n    __callDispose_vyva085h(__bun_temp_ref_2$, __bun_temp_ref_4$, __bun_temp_ref_5$);\n  }\n}\n" || scan ok
+js "function* g() { yield\n* x; }" => ERR @22+1 Unexpected * || scan ERR @22+1 Unexpected *
+js "function* g() { (yield*); }" => "function* g() {\n  yield;\n}\n" || scan ok
+js "a?.[];" => ERR @4+1 Unexpected ] || scan ERR @4+1 Unexpected ]
+js "a[b + ];" => ERR @6+1 Unexpected ] || scan ERR @6+1 Unexpected ]
+js "new a?.[b]();" => "new a?.[b];\n" || scan ok
+js "class C extends B { m() { new super() } }" => ERR @30+5 Unexpected "super" || scan ERR @30+5 Unexpected "super"
+js "function f() { super.x }" => ERR @15+5 Unexpected "super" || scan ERR @15+5 Unexpected "super"
+js "class C extends B { m() { super`x` } }" => ERR @26+5 Unexpected "super" || scan ERR @26+5 Unexpected "super"
+js "- -x ** 2;" => ERR @5+2 Unexpected ** || scan ERR @5+2 Unexpected **
+ts "-<A>x ** 2;" => ERR @6+2 Unexpected ** || scan ERR @6+2 Unexpected **
+ts "<A>-x ** 2;" => ERR @6+2 Unexpected ** || scan ERR @6+2 Unexpected **
+js "++-a;" => ERR @2+0 Invalid assignment target || scan ok
+ts "++<T>a;" => "++a;\n" || scan ok
+js "a.\nb c;" => ERR @5+1 Expected ";" but found "c" || scan ERR @5+1 Expected ";" but found "c"
+js "a + b\n= c;" => ERR @0+0 Invalid assignment target || scan ok
+js "(a + b = c);" => ERR @1+0 Invalid assignment target || scan ok
+ts "(a + b = c);" => ERR @1+0 Invalid assignment target || scan ok
+js "new X = 1;" => ERR @0+0 Invalid assignment target || scan ok
+js "/* @__PURE__ */ a = b;" => "a = b;\n" || scan ok
+ts "a<b>?.c;" => "a?.c;\n" || scan ok
+ts "class C { #c; m(a) { a?.b.#c } }" => "class C {\n  #c;\n  m(a) {\n    a?.b.#c;\n  }\n}\n" || scan ok
+ts "/* @__PURE__ */ <T>a = b;" => "a = b;\n" || scan ok
+ts "x as T = 1;" => ERR @7+1 Expected ";" but found "=" || scan ERR @7+1 Expected ";" but found "="

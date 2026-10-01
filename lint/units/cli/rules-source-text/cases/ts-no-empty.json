@@ -1,0 +1,166 @@
+[
+	{
+		"code": "{ type A = number }",
+		"ts": true
+	},
+	{
+		"code": "{ interface A {} }",
+		"ts": true
+	},
+	{
+		"code": "{ declare const a: number }",
+		"ts": true
+	},
+	{
+		"code": "{ declare function f(): void }",
+		"ts": true
+	},
+	{
+		"code": "if (a) { type A = 1 }",
+		"ts": true
+	},
+	{
+		"code": "{ enum E {} }",
+		"ts": true
+	},
+	{
+		"code": "{ namespace N {} }",
+		"ts": true
+	},
+	{
+		"code": "namespace N {}",
+		"ts": true
+	},
+	{
+		"code": "module M {}",
+		"ts": true
+	},
+	{
+		"code": "declare module 'm' {}",
+		"ts": true
+	},
+	{
+		"code": "declare global {}",
+		"ts": true
+	},
+	{
+		"code": "namespace N { {} }",
+		"ts": true
+	},
+	{
+		"code": "namespace N { export function f() {} }",
+		"ts": true
+	},
+	{
+		"code": "interface I {}",
+		"ts": true
+	},
+	{
+		"code": "enum E {}",
+		"ts": true
+	},
+	{
+		"code": "class A {}",
+		"ts": true
+	},
+	{
+		"code": "abstract class A { abstract m(): void }",
+		"ts": true
+	},
+	{
+		"code": "function f(): void {}",
+		"ts": true
+	},
+	{
+		"code": "function f<T>(a: T): asserts a is T {}",
+		"ts": true
+	},
+	{
+		"code": "const f = (): void => {}",
+		"ts": true
+	},
+	{
+		"code": "class A { m(): void {} constructor(private a: number) {} }",
+		"ts": true
+	},
+	{
+		"code": "try {} catch (e: unknown) {}",
+		"ts": true
+	},
+	{
+		"code": "try { a } catch (e: any) {} finally {}",
+		"ts": true
+	},
+	{
+		"code": "if (a as boolean) {}",
+		"ts": true
+	},
+	{
+		"code": "if (a!) {} else {}",
+		"ts": true
+	},
+	{
+		"code": "for (const a of b as number[]) {}",
+		"ts": true
+	},
+	{
+		"code": "switch (a as number) {}",
+		"ts": true
+	},
+	{
+		"code": "switch (<number>a) {}",
+		"ts": true
+	},
+	{
+		"code": "switch (a satisfies number) { }",
+		"ts": true
+	},
+	{
+		"code": "switch (a!) { /* c */ }",
+		"ts": true
+	},
+	{
+		"code": "label: {}",
+		"ts": true
+	},
+	{
+		"code": "{ import A = B.C }",
+		"ts": true
+	},
+	{
+		"code": "{ export {} }",
+		"ts": true
+	},
+	{
+		"code": "function f() { { type A = 1 } }",
+		"ts": true
+	},
+	{
+		"code": "{ abstract class A {} }",
+		"ts": true
+	},
+	{
+		"code": "{ declare class A {} }",
+		"ts": true
+	},
+	{
+		"code": "{ const enum E { A } }",
+		"ts": true
+	},
+	{
+		"code": "{ declare enum E { A } }",
+		"ts": true
+	},
+	{
+		"code": "{ declare namespace N {} }",
+		"ts": true
+	},
+	{
+		"code": "{ function f(): void; function f() {} }",
+		"ts": true
+	},
+	{
+		"code": "while (a) { type T = 1; }",
+		"ts": true
+	}
+]

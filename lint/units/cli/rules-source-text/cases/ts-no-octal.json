@@ -1,0 +1,34 @@
+[
+	{
+		"code": "const x = 017",
+		"ts": true
+	},
+	{
+		"code": "const x = 08",
+		"ts": true
+	},
+	{
+		"code": "type T = 017",
+		"ts": true
+	},
+	{
+		"code": "enum E { A = 017 }",
+		"ts": true
+	},
+	{
+		"code": "const x = 0o17",
+		"ts": true
+	},
+	{
+		"code": "const x = 0",
+		"ts": true
+	},
+	{
+		"code": "const x = 0.5",
+		"ts": true
+	},
+	{
+		"code": "const x = 00",
+		"ts": true
+	}
+]

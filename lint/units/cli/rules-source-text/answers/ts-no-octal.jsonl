@@ -1,0 +1,8 @@
+{"code":"const x = 017","type":"ts","fatal":"1:10 Parsing error: Octal literals are not allowed. Use the syntax '0o17'.","reports":[]}
+{"code":"const x = 08","type":"ts","fatal":"1:10 Parsing error: Decimals with leading zeros are not allowed.","reports":[]}
+{"code":"type T = 017","type":"ts","fatal":"1:9 Parsing error: Octal literals are not allowed. Use the syntax '0o17'.","reports":[]}
+{"code":"enum E { A = 017 }","type":"ts","fatal":"1:13 Parsing error: Octal literals are not allowed. Use the syntax '0o17'.","reports":[]}
+{"code":"const x = 0o17","type":"ts","reports":[]}
+{"code":"const x = 0","type":"ts","reports":[]}
+{"code":"const x = 0.5","type":"ts","reports":[]}
+{"code":"const x = 00","type":"ts","fatal":"1:10 Parsing error: Octal literals are not allowed. Use the syntax '0o0'.","reports":[]}

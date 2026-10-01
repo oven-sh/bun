@@ -51,7 +51,8 @@ const ALWAYS = [
 	"(?<n>a)|(?<n>b)", "(?<n>a)|((?<n>b))", "((?<n>a))|(?<n>b)", "((?<n>a))|((?<n>b))", "(?<n>a)(?<n>b)", "(?<n>a)|(?<n>b)(?<n>c)",
 	"(?:(?<n>a)|(?<n>b))\\k<n>", "(?<n>a)(?:b|(?<n>c))", "(?:(?<n>a)|b)(?<n>c)", "(?:(?:(?<n>a)|b)|c)|(?<n>d)", "(?<n>a)|(?:b(?:c|(?<n>d)))",
 	"(?<n>a)|(?<m>b)|(?<n>c)\\k<n>\\k<m>", "\\k<n>(?<n>a)", "\\k<m>(?<n>a)", "(?<n>\\k<n>)", "\\1(a)", "(a)\\2", "(a)(b)\\2\\1", "(?=(a))\\1", "(?<=(a))\\1", "(?!(?<n>a))\\k<n>",
-	"(((((((((((((((((((((?<n>a)(?<n>b)))))))))))))))))))))", "(((((((((((((((((((((?<n>a)|(?<n>b)))))))))))))))))))))",
+	// No deeper than this: regexpp's BranchID.separatedFrom takes four times as long for each level more.
+	"((((((((?<n>a)(?<n>b))))))))", "((((((((?<n>a)|(?<n>b))))))))",
 	"a{9007199254740993,9007199254740992}", "a{99999999999999999999999}", "a{0}", "a{0,0}?", "\\99999999999999999999999", "\\u{00000000000000000000000000000041}",
 	"[\\d-a]", "[a-\\d]", "[\\d-\\w]", "[a-]", "[-a]", "[a-b-c]", "[\\c]", "[\\c1-\\c_]", "\\c", "\\c1", "[^]", "[]", "[]]", "[[]]", "[^[]]",
 	"[a&&b&&c]", "[a--b--c]", "[a&&b--c]", "[a--b&&c]", "[[a]&&[b]]", "[^[a]--[b]]", "[\\q{a|bc}--\\q{a}]", "[^\\q{ab}]", "[^\\q{a}]", "[^\\q{}]", "[\\p{RGI_Emoji}--a]", "[^\\p{RGI_Emoji}]", "[a-z&&b]", "[&&]", "[a&&]", "[a&&&b]", "[a-]&&b]",
@@ -123,7 +124,11 @@ for (const group of GROUPS) {
 	const parser = new regexpp.RegExpParser(options);
 	const count = Math.round(unit * group.weight);
 	const seen = new Set();
-	const fixed = ALWAYS.slice();
+	// The whole list for what ESLint's rules run, and for one set of flags of each older edition.
+	const production = group.version === "-" && group.flags !== "uv";
+	const sample = group.strict === "0" && group.flags === { 5: "-", 2015: "u", 2017: "-", 2018: "u", 2019: "-", 2020: "-", 2021: "u", 2022: "-", 2023: "u", 2024: "v", 2025: "-" }[group.version];
+	const strict = group.strict === "1" && group.version === "2025";
+	const fixed = production || sample || strict ? ALWAYS.slice() : [];
 	for (let made = 0, tries = 0; fixed.length > 0 || (made < count && tries < count * 20); tries++) {
 		const pattern = fixed.length > 0 ? fixed.shift() : make();
 		if (seen.has(pattern)) continue;

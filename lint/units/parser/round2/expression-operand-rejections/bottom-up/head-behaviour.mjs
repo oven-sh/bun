@@ -1,0 +1,63 @@
+// usage: <bun under test> head-behaviour.mjs   prints, per source, what a parse without lint does: transformSync (parse and visit) and scanImports (parse pass alone)
+const t = new Bun.Transpiler({ loader: "js" });
+const tt = new Bun.Transpiler({ loader: "ts" });
+for (const [l, src] of [
+  ["js", "a--.b;"],
+  ["js", "a++\n[0];"],
+  ["js", "a++\n(b);"],
+  ["js", "a++\n`x`;"],
+  ["js", "a++ ++;"],
+  ["js", "a++ = b;"],
+  ["js", "a + b = c;"],
+  ["js", "-a = b;"],
+  ["js", "++ delete a.b;"],
+  ["js", "new A?.b();"],
+  ["js", "new A?.();"],
+  ["js", "function* g() { yield*; }"],
+  ["js", "a.\nb in c;"],
+  ["js", "for (using of of []) {}"],
+  ["js", "a[];"],
+  ["js", "-x ** 2;"],
+  ["js", "class C extends B { m() { super; } }"],
+  ["js", "class C { #a; m() { this?.#a } }"],
+  ["ts", "a<b>.c;"],
+  ["ts", "<A>x ** 2;"],
+  ["ts", "<A>x = 1;"],
+  ["ts", "class C extends B { m() { super<T>.x } }"],
+  ["js", "async function f() { await x = y; }"],
+  ["js", "++a++;"],
+  ["js", "a++<b>(c);"],
+  ["ts", "a++<b>(c);"],
+  ["js", "for (using of [a]) {}"],
+  ["js", "for (using of of) {}"],
+  ["js", "for (using of of x) {}"],
+  ["js", "function* g() { yield\n* x; }"],
+  ["js", "function* g() { (yield*); }"],
+  ["js", "a?.[];"],
+  ["js", "a[b + ];"],
+  ["js", "new a?.[b]();"],
+  ["js", "class C extends B { m() { new super() } }"],
+  ["js", "function f() { super.x }"],
+  ["js", "class C extends B { m() { super`x` } }"],
+  ["js", "- -x ** 2;"],
+  ["ts", "-<A>x ** 2;"],
+  ["ts", "<A>-x ** 2;"],
+  ["js", "++-a;"],
+  ["ts", "++<T>a;"],
+  ["js", "a.\nb c;"],
+  ["js", "a + b\n= c;"],
+  ["js", "(a + b = c);"],
+  ["ts", "(a + b = c);"],
+  ["js", "new X = 1;"],
+  ["js", "/* @__PURE__ */ a = b;"],
+  ["ts", "a<b>?.c;"],
+  ["ts", "class C { #c; m(a) { a?.b.#c } }"],
+  ["ts", "/* @__PURE__ */ <T>a = b;"],
+  ["ts", "x as T = 1;"],
+]) {
+  const tr = l === "js" ? t : tt;
+  let out, scan;
+  try { out = JSON.stringify(tr.transformSync(src)); } catch (e) { out = "ERR " + (e?.errors ?? [e]).map(x => `@${x.position?.offset ?? "?"}+${x.position?.length ?? "?"} ${x.message}`).join(" | "); }
+  try { tr.scanImports(src); scan = "scan ok"; } catch (e) { scan = "scan ERR " + (e?.errors ?? [e]).map(x => `@${x.position?.offset ?? "?"}+${x.position?.length ?? "?"} ${x.message}`).join(" | "); }
+  console.log(l, JSON.stringify(src), "=>", out, "||", scan);
+}

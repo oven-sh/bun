@@ -1,0 +1,41 @@
+{"code":"{ type A = number }","type":"ts","reports":[]}
+{"code":"{ interface A {} }","type":"ts","reports":[]}
+{"code":"{ declare const a: number }","type":"ts","reports":[]}
+{"code":"{ declare function f(): void }","type":"ts","reports":[]}
+{"code":"if (a) { type A = 1 }","type":"ts","reports":[]}
+{"code":"{ enum E {} }","type":"ts","reports":[]}
+{"code":"{ namespace N {} }","type":"ts","reports":[]}
+{"code":"namespace N {}","type":"ts","reports":[]}
+{"code":"module M {}","type":"ts","reports":[]}
+{"code":"declare module 'm' {}","type":"ts","reports":[]}
+{"code":"declare global {}","type":"ts","reports":[]}
+{"code":"namespace N { {} }","type":"ts","reports":["1:15-1:17 Empty block statement."]}
+{"code":"namespace N { export function f() {} }","type":"ts","reports":[]}
+{"code":"interface I {}","type":"ts","reports":[]}
+{"code":"enum E {}","type":"ts","reports":[]}
+{"code":"class A {}","type":"ts","reports":[]}
+{"code":"abstract class A { abstract m(): void }","type":"ts","reports":[]}
+{"code":"function f(): void {}","type":"ts","reports":[]}
+{"code":"function f<T>(a: T): asserts a is T {}","type":"ts","reports":[]}
+{"code":"const f = (): void => {}","type":"ts","reports":[]}
+{"code":"class A { m(): void {} constructor(private a: number) {} }","type":"ts","reports":[]}
+{"code":"try {} catch (e: unknown) {}","type":"ts","reports":["1:5-1:7 Empty block statement.","1:27-1:29 Empty block statement."]}
+{"code":"try { a } catch (e: any) {} finally {}","type":"ts","reports":["1:26-1:28 Empty block statement.","1:37-1:39 Empty block statement."]}
+{"code":"if (a as boolean) {}","type":"ts","reports":["1:19-1:21 Empty block statement."]}
+{"code":"if (a!) {} else {}","type":"ts","reports":["1:9-1:11 Empty block statement.","1:17-1:19 Empty block statement."]}
+{"code":"for (const a of b as number[]) {}","type":"ts","reports":["1:32-1:34 Empty block statement."]}
+{"code":"switch (a as number) {}","type":"ts","reports":["1:22-1:24 Empty switch statement."]}
+{"code":"switch (<number>a) {}","type":"ts","reports":["1:20-1:22 Empty switch statement."]}
+{"code":"switch (a satisfies number) { }","type":"ts","reports":["1:29-1:32 Empty switch statement."]}
+{"code":"switch (a!) { /* c */ }","type":"ts","reports":[]}
+{"code":"label: {}","type":"ts","reports":["1:8-1:10 Empty block statement."]}
+{"code":"{ import A = B.C }","type":"ts","reports":[]}
+{"code":"{ export {} }","type":"ts","reports":[]}
+{"code":"function f() { { type A = 1 } }","type":"ts","reports":[]}
+{"code":"{ abstract class A {} }","type":"ts","reports":[]}
+{"code":"{ declare class A {} }","type":"ts","reports":[]}
+{"code":"{ const enum E { A } }","type":"ts","reports":[]}
+{"code":"{ declare enum E { A } }","type":"ts","reports":[]}
+{"code":"{ declare namespace N {} }","type":"ts","reports":[]}
+{"code":"{ function f(): void; function f() {} }","type":"ts","reports":[]}
+{"code":"while (a) { type T = 1; }","type":"ts","reports":[]}

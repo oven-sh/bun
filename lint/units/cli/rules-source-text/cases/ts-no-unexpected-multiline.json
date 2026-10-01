@@ -1,0 +1,234 @@
+[
+	{
+		"code": "a\n(b)",
+		"ts": true
+	},
+	{
+		"code": "a\n[b]",
+		"ts": true
+	},
+	{
+		"code": "a\n`b`",
+		"ts": true
+	},
+	{
+		"code": "a!\n(b)",
+		"ts": true
+	},
+	{
+		"code": "a!\n[b]",
+		"ts": true
+	},
+	{
+		"code": "a!\n`b`",
+		"ts": true
+	},
+	{
+		"code": "a\n!(b)",
+		"ts": true
+	},
+	{
+		"code": "(a as any)\n(b)",
+		"ts": true
+	},
+	{
+		"code": "(a as any)\n[b]",
+		"ts": true
+	},
+	{
+		"code": "(<any>a)\n(b)",
+		"ts": true
+	},
+	{
+		"code": "a<T>\n(b)",
+		"ts": true
+	},
+	{
+		"code": "a\n<T>(b)",
+		"ts": true
+	},
+	{
+		"code": "a<T>(b)",
+		"ts": true
+	},
+	{
+		"code": "a<\nT>(b)",
+		"ts": true
+	},
+	{
+		"code": "a<T\n>(b)",
+		"ts": true
+	},
+	{
+		"code": "a<T>\n`b`",
+		"ts": true
+	},
+	{
+		"code": "a\n<T>`b`",
+		"ts": true
+	},
+	{
+		"code": "a<T>`b`",
+		"ts": true
+	},
+	{
+		"code": "a<\nT\n>`b`",
+		"ts": true
+	},
+	{
+		"code": "a<T> /*\n*/ `b`",
+		"ts": true
+	},
+	{
+		"code": "a<T> // c\n`b`",
+		"ts": true
+	},
+	{
+		"code": "new a<T>\n(b)",
+		"ts": true
+	},
+	{
+		"code": "a?.<T>\n(b)",
+		"ts": true
+	},
+	{
+		"code": "a?.b<T>\n(c)",
+		"ts": true
+	},
+	{
+		"code": "a.b<T>\n(c)",
+		"ts": true
+	},
+	{
+		"code": "a.b\n<T>(c)",
+		"ts": true
+	},
+	{
+		"code": "a\n  .b<T>(c)",
+		"ts": true
+	},
+	{
+		"code": "f(a)\n<T>(b)",
+		"ts": true
+	},
+	{
+		"code": "let x = a\n(b as any).c()",
+		"ts": true
+	},
+	{
+		"code": "let x = a\n[b as any].c()",
+		"ts": true
+	},
+	{
+		"code": "let x: A\n(b)",
+		"ts": true
+	},
+	{
+		"code": "let x: typeof a\n[b]",
+		"ts": true
+	},
+	{
+		"code": "type T = A\n[b]",
+		"ts": true
+	},
+	{
+		"code": "let x = a as any\n(b)",
+		"ts": true
+	},
+	{
+		"code": "let x = a as any\n[b]",
+		"ts": true
+	},
+	{
+		"code": "let x = a satisfies any\n`b`",
+		"ts": true
+	},
+	{
+		"code": "class A { x: number\n[y]: number }",
+		"ts": true
+	},
+	{
+		"code": "class A { x = a\n[y]: number }",
+		"ts": true
+	},
+	{
+		"code": "interface I { x: A\n[y: string]: B }",
+		"ts": true
+	},
+	{
+		"code": "let x = <T,>(a: T) => a\n(b)",
+		"ts": true
+	},
+	{
+		"code": "a\n/b/g.test(c as string)",
+		"ts": true
+	},
+	{
+		"code": "(a as number)\n/b/g.x",
+		"ts": true
+	},
+	{
+		"code": "a!\n/b/g.x",
+		"ts": true
+	},
+	{
+		"code": "abstract class A { abstract m(): void\n[a]: number }",
+		"ts": true
+	},
+	{
+		"code": "f<T>(\na)",
+		"ts": true
+	},
+	{
+		"code": "f\n<T>(\na)",
+		"ts": true
+	},
+	{
+		"code": "a[b as number]",
+		"ts": true
+	},
+	{
+		"code": "a\n[<number>b]",
+		"ts": true
+	},
+	{
+		"code": "a[\n<number>b]",
+		"ts": true
+	},
+	{
+		"code": "f(\n<number>b)",
+		"ts": true
+	},
+	{
+		"code": "f\n(<number>b)",
+		"ts": true
+	},
+	{
+		"code": "a\n[b!]",
+		"ts": true
+	},
+	{
+		"code": "a\n[(b)!]",
+		"ts": true
+	},
+	{
+		"code": "@dec\n(a) class A {}",
+		"ts": true
+	},
+	{
+		"code": "@dec(a)\nclass A {}",
+		"ts": true
+	},
+	{
+		"code": "@a.b\n(c) class A {}",
+		"ts": true
+	},
+	{
+		"code": "enum E { A = a\n(b) }",
+		"ts": true
+	},
+	{
+		"code": "namespace N { a\n(b) }",
+		"ts": true
+	}
+]

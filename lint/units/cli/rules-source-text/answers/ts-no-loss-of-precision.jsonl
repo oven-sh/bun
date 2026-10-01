@@ -1,0 +1,38 @@
+{"code":"const x = 9007199254740993","type":"ts","reports":["1:11-1:27 This number literal will lose precision at runtime."]}
+{"code":"const x: number = 9007199254740993","type":"ts","reports":["1:19-1:35 This number literal will lose precision at runtime."]}
+{"code":"type T = 9007199254740993","type":"ts","reports":["1:10-1:26 This number literal will lose precision at runtime."]}
+{"code":"type T = -9007199254740993","type":"ts","reports":["1:11-1:27 This number literal will lose precision at runtime."]}
+{"code":"let x: 9007199254740993 | 1","type":"ts","reports":["1:8-1:24 This number literal will lose precision at runtime."]}
+{"code":"enum E { A = 9007199254740993 }","type":"ts","reports":["1:14-1:30 This number literal will lose precision at runtime."]}
+{"code":"enum E { A = 1, B = 9007199254740993, C }","type":"ts","reports":["1:21-1:37 This number literal will lose precision at runtime."]}
+{"code":"declare const x = 9007199254740993","type":"ts","reports":["1:19-1:35 This number literal will lose precision at runtime."]}
+{"code":"const x = 9007199254740993 as number","type":"ts","reports":["1:11-1:27 This number literal will lose precision at runtime."]}
+{"code":"const x = <number>9007199254740993","type":"ts","reports":["1:19-1:35 This number literal will lose precision at runtime."]}
+{"code":"const x = 9007199254740993!","type":"ts","reports":["1:11-1:27 This number literal will lose precision at runtime."]}
+{"code":"const x = (9007199254740993 satisfies number)","type":"ts","reports":["1:12-1:28 This number literal will lose precision at runtime."]}
+{"code":"class A { 9007199254740993 = 1; x = 9007199254740993 }","type":"ts","reports":["1:11-1:27 This number literal will lose precision at runtime.","1:37-1:53 This number literal will lose precision at runtime."]}
+{"code":"class A { declare x: 9007199254740993 }","type":"ts","reports":["1:22-1:38 This number literal will lose precision at runtime."]}
+{"code":"abstract class A { abstract 9007199254740993(): void }","type":"ts","reports":["1:29-1:45 This number literal will lose precision at runtime."]}
+{"code":"interface I { 9007199254740993: string }","type":"ts","reports":["1:15-1:31 This number literal will lose precision at runtime."]}
+{"code":"type T = { 9007199254740993: string }","type":"ts","reports":["1:12-1:28 This number literal will lose precision at runtime."]}
+{"code":"type T = [9007199254740993]","type":"ts","reports":["1:11-1:27 This number literal will lose precision at runtime."]}
+{"code":"function f(a = 9007199254740993, b?: 9007199254740993) {}","type":"ts","reports":["1:16-1:32 This number literal will lose precision at runtime.","1:38-1:54 This number literal will lose precision at runtime."]}
+{"code":"function f(a: number = 9007199254740993) {}","type":"ts","reports":["1:24-1:40 This number literal will lose precision at runtime."]}
+{"code":"declare function f(a: 9007199254740993): void","type":"ts","reports":["1:23-1:39 This number literal will lose precision at runtime."]}
+{"code":"let x: Array<9007199254740993>","type":"ts","reports":["1:14-1:30 This number literal will lose precision at runtime."]}
+{"code":"f<9007199254740993>()","type":"ts","reports":["1:3-1:19 This number literal will lose precision at runtime."]}
+{"code":"namespace N { export const a = 9007199254740993 }","type":"ts","reports":["1:32-1:48 This number literal will lose precision at runtime."]}
+{"code":"declare namespace N { const a = 9007199254740993 }","type":"ts","reports":["1:33-1:49 This number literal will lose precision at runtime."]}
+{"code":"const x = 0x20000000000001","type":"ts","reports":["1:11-1:27 This number literal will lose precision at runtime."]}
+{"code":"type T = 0x20000000000001","type":"ts","reports":["1:10-1:26 This number literal will lose precision at runtime."]}
+{"code":"const x = 1e999","type":"ts","reports":["1:11-1:16 This number literal will lose precision at runtime."]}
+{"code":"const x = 5123000000000000000000000000001n","type":"ts","reports":[]}
+{"code":"type T = 5123000000000000000000000000001n","type":"ts","reports":[]}
+{"code":"const x = { 9007199254740993: 1 }","type":"ts","reports":["1:13-1:29 This number literal will lose precision at runtime."]}
+{"code":"const x = a[9007199254740993]","type":"ts","reports":["1:13-1:29 This number literal will lose precision at runtime."]}
+{"code":"type T = A[9007199254740993]","type":"ts","reports":["1:12-1:28 This number literal will lose precision at runtime."]}
+{"code":"export = 9007199254740993","type":"ts","reports":["1:10-1:26 This number literal will lose precision at runtime."]}
+{"code":"@dec(9007199254740993) class A {}","type":"ts","reports":["1:6-1:22 This number literal will lose precision at runtime."]}
+{"code":"type T = `${9007199254740993}`","type":"ts","reports":["1:13-1:29 This number literal will lose precision at runtime."]}
+{"code":"const enum E { A = 9007199254740993 }","type":"ts","reports":["1:20-1:36 This number literal will lose precision at runtime."]}
+{"code":"declare enum E { A = 9007199254740993 }","type":"ts","reports":["1:22-1:38 This number literal will lose precision at runtime."]}

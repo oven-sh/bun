@@ -1,0 +1,35 @@
+{"code":"type T = 'a b'","type":"ts","reports":[]}
+{"code":"let x: 'a b' | \"c　d\" ","type":"ts","reports":["1:21-1:22 Irregular whitespace not allowed."]}
+{"code":"enum E { 'a b' = 1 }","type":"ts","reports":[]}
+{"code":"enum E { A = 'a b' }","type":"ts","reports":[]}
+{"code":"declare module 'a b' {}","type":"ts","reports":[]}
+{"code":"import x = require('a b')","type":"ts","reports":[]}
+{"code":"type T = import('a b')","type":"ts","reports":[]}
+{"code":"type T = { 'a b': 1 }","type":"ts","reports":[]}
+{"code":"interface I { 'a b'(): void }","type":"ts","reports":[]}
+{"code":"let x = 'a b' as 'c d'","type":"ts","reports":[]}
+{"code":"let x = <'a b'>'c d'","type":"ts","reports":[]}
+{"code":"class A { 'a b'?: string; declare 'c d': string }","type":"ts","reports":[]}
+{"code":"abstract class A { abstract 'a b'(): void }","type":"ts","reports":[]}
+{"code":"namespace N { export const a = 'a b' }","type":"ts","reports":[]}
+{"code":"declare const a: 'a b'","type":"ts","reports":[]}
+{"code":"function f(a: 'a b' = 'c d') {}","type":"ts","reports":[]}
+{"code":"type T = `a b`","type":"ts","reports":["1:12-1:13 Irregular whitespace not allowed."]}
+{"code":"export = 'a b'","type":"ts","reports":[]}
+{"code":"let x = 'a b'!","type":"ts","reports":[]}
+{"code":"let x: string = 'a'","type":"ts","reports":["1:7-1:8 Irregular whitespace not allowed."]}
+{"code":"type T = string","type":"ts","reports":["1:9-1:10 Irregular whitespace not allowed."]}
+{"code":"interface I { a: 1 }","type":"ts","reports":["1:14-1:15 Irregular whitespace not allowed."]}
+{"code":"let x = ('a b' satisfies string)","type":"ts","reports":[]}
+{"code":"function f(this: 'a b') {}","type":"ts","reports":[]}
+{"code":"let x: typeof import('a b')","type":"ts","reports":[]}
+{"code":"type T<U extends 'a b' = 'c d'> = U","type":"ts","reports":[]}
+{"code":"@dec('a b') class A {}","type":"ts","reports":[]}
+{"code":"class A { constructor(private x: 'a b') {} }","type":"ts","reports":[]}
+{"code":"let x: { [k: string]: 'a b' }","type":"ts","reports":[]}
+{"code":"let x: ['a b', b?: 'c d']","type":"ts","reports":[]}
+{"code":"declare function f(a: 'a b'): 'c d'","type":"ts","reports":[]}
+{"code":"export declare namespace N { const a: 'a b' }","type":"ts","reports":[]}
+{"code":"declare global { var a: 'a b' }","type":"ts","reports":[]}
+{"code":"import type { A } from 'a b'","type":"ts","reports":[]}
+{"code":"export type { A } from 'a b'","type":"ts","reports":[]}

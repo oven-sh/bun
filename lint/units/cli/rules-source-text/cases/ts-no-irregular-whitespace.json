@@ -1,0 +1,142 @@
+[
+	{
+		"code": "type T = 'a b'",
+		"ts": true
+	},
+	{
+		"code": "let x: 'a b' | \"c　d\" ",
+		"ts": true
+	},
+	{
+		"code": "enum E { 'a b' = 1 }",
+		"ts": true
+	},
+	{
+		"code": "enum E { A = 'a b' }",
+		"ts": true
+	},
+	{
+		"code": "declare module 'a b' {}",
+		"ts": true
+	},
+	{
+		"code": "import x = require('a b')",
+		"ts": true
+	},
+	{
+		"code": "type T = import('a b')",
+		"ts": true
+	},
+	{
+		"code": "type T = { 'a b': 1 }",
+		"ts": true
+	},
+	{
+		"code": "interface I { 'a b'(): void }",
+		"ts": true
+	},
+	{
+		"code": "let x = 'a b' as 'c d'",
+		"ts": true
+	},
+	{
+		"code": "let x = <'a b'>'c d'",
+		"ts": true
+	},
+	{
+		"code": "class A { 'a b'?: string; declare 'c d': string }",
+		"ts": true
+	},
+	{
+		"code": "abstract class A { abstract 'a b'(): void }",
+		"ts": true
+	},
+	{
+		"code": "namespace N { export const a = 'a b' }",
+		"ts": true
+	},
+	{
+		"code": "declare const a: 'a b'",
+		"ts": true
+	},
+	{
+		"code": "function f(a: 'a b' = 'c d') {}",
+		"ts": true
+	},
+	{
+		"code": "type T = `a b`",
+		"ts": true
+	},
+	{
+		"code": "export = 'a b'",
+		"ts": true
+	},
+	{
+		"code": "let x = 'a b'!",
+		"ts": true
+	},
+	{
+		"code": "let x: string = 'a'",
+		"ts": true
+	},
+	{
+		"code": "type T = string",
+		"ts": true
+	},
+	{
+		"code": "interface I { a: 1 }",
+		"ts": true
+	},
+	{
+		"code": "let x = ('a b' satisfies string)",
+		"ts": true
+	},
+	{
+		"code": "function f(this: 'a b') {}",
+		"ts": true
+	},
+	{
+		"code": "let x: typeof import('a b')",
+		"ts": true
+	},
+	{
+		"code": "type T<U extends 'a b' = 'c d'> = U",
+		"ts": true
+	},
+	{
+		"code": "@dec('a b') class A {}",
+		"ts": true
+	},
+	{
+		"code": "class A { constructor(private x: 'a b') {} }",
+		"ts": true
+	},
+	{
+		"code": "let x: { [k: string]: 'a b' }",
+		"ts": true
+	},
+	{
+		"code": "let x: ['a b', b?: 'c d']",
+		"ts": true
+	},
+	{
+		"code": "declare function f(a: 'a b'): 'c d'",
+		"ts": true
+	},
+	{
+		"code": "export declare namespace N { const a: 'a b' }",
+		"ts": true
+	},
+	{
+		"code": "declare global { var a: 'a b' }",
+		"ts": true
+	},
+	{
+		"code": "import type { A } from 'a b'",
+		"ts": true
+	},
+	{
+		"code": "export type { A } from 'a b'",
+		"ts": true
+	}
+]

@@ -1,0 +1,595 @@
+"a + b = c;" [ts]
+   tsc @6+1 TS1005 ';' expected.   <<=>>
+"-a = b;" [ts]
+   tsc @3+1 TS1005 ';' expected.   <<=>>
+"a++ = b;" [ts]
+   tsc @4+1 TS1005 ';' expected.   <<=>>
+"async function f() { await x = y; }" [ts]
+   tsc @29+1 TS1005 ';' expected.   <<=>>
+"a++ ++;" [ts]
+   tsc @4+2 TS1005 ';' expected.   <<++>>
+   tsc @6+1 TS1109 Expression expected.   <<;>>
+"a--.b;" [ts]
+   tsc @3+1 TS1005 ';' expected.   <<.>>
+"++ delete a.b;" [ts]
+   tsc @3+6 TS1109 Expression expected.   <<delete>>
+"new A?.b();" [ts]
+   tsc @5+2 TS1209 Invalid optional chain from new expression. Did you mean to call 'A()'?   <<?.>>
+"function* g() { yield*; }" [ts]
+   tsc @22+1 TS1109 Expression expected.   <<;>>
+"function* g() { yield* }" [ts]
+   tsc @23+1 TS1109 Expression expected.   <<}>>
+"a.\nb in c;" [ts]
+   tsc @2+0 TS1003 Identifier expected.   <<>>
+"for (using of of []) {}" [ts]
+   tsc @18+0 TS1011 An element access expression should take an argument.   <<>>
+"a[];" [ts]
+   tsc @2+0 TS1011 An element access expression should take an argument.   <<>>
+"a<b>.c;" [ts]
+   tsc @1+3 TS1477 An instantiation expression cannot be followed by a property access.   <<<b>>>
+"<A>x ** 2;" [ts]
+   tsc @0+4 TS17007 A type assertion expression is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses.   <<<A>x>>
+"-x ** 2;" [ts]
+   tsc @0+2 TS17006 An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses.   <<-x>>
+"class C { #a; m() { this?.#a } }" [ts]
+   tsc @26+2 TS18030 An optional chain cannot contain private identifiers.   <<#a>>
+"class C extends B { m() { super<T>.x } }" [ts]
+   tsc @31+3 TS2754 'super' may not use type arguments.   <<<T>>>
+"class C extends B { m() { super; } }" [ts]
+   tsc @31+1 TS1034 'super' must be followed by an argument list or member access.   <<;>>
+"class C extends B { m() { super<T>(1) } }" [ts]
+   tsc @31+3 TS2754 'super' may not use type arguments.   <<<T>>>
+"class C extends B { constructor() { super<T>(1) } }" [ts]
+   tsc @41+3 TS2754 'super' may not use type arguments.   <<<T>>>
+"a + b = c;" [js]
+   tsc @6+1 TS1005 ';' expected.   <<=>>
+"-a = b;" [js]
+   tsc @3+1 TS1005 ';' expected.   <<=>>
+"a++ = b;" [js]
+   tsc @4+1 TS1005 ';' expected.   <<=>>
+"async function f() { await x = y; }" [js]
+   tsc @29+1 TS1005 ';' expected.   <<=>>
+"a++ ++;" [js]
+   tsc @4+2 TS1005 ';' expected.   <<++>>
+   tsc @6+1 TS1109 Expression expected.   <<;>>
+"a--.b;" [js]
+   tsc @3+1 TS1005 ';' expected.   <<.>>
+"++ delete a.b;" [js]
+   tsc @3+6 TS1109 Expression expected.   <<delete>>
+"new A?.b();" [js]
+   tsc @5+2 TS1209 Invalid optional chain from new expression. Did you mean to call 'A()'?   <<?.>>
+"function* g() { yield*; }" [js]
+   tsc @22+1 TS1109 Expression expected.   <<;>>
+"a.\nb in c;" [js]
+   tsc @2+0 TS1003 Identifier expected.   <<>>
+"for (using of of []) {}" [js]
+   tsc @18+0 TS1011 An element access expression should take an argument.   <<>>
+"a[];" [js]
+   tsc @2+0 TS1011 An element access expression should take an argument.   <<>>
+"-x ** 2;" [js]
+   tsc @0+2 TS17006 An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses.   <<-x>>
+"class C { #a; m() { this?.#a } }" [js]
+   tsc @26+2 TS18030 An optional chain cannot contain private identifiers.   <<#a>>
+"class C extends B { m() { super; } }" [js]
+   tsc @31+1 TS1034 'super' must be followed by an argument list or member access.   <<;>>
+"a<b>.c;" [tsx]
+   tsc @1+3 TS1477 An instantiation expression cannot be followed by a property access.   <<<b>>>
+"-x ** 2;" [tsx]
+   tsc @0+2 TS17006 An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses.   <<-x>>
+"++a++;" [ts]
+   tsc @3+2 TS1005 ';' expected.   <<++>>
+   tsc @5+1 TS1109 Expression expected.   <<;>>
+"a++!;" [ts]
+   tsc @3+1 TS1005 ';' expected.   <<!>>
+   tsc @4+1 TS1109 Expression expected.   <<;>>
+"a++();" [ts]
+   tsc @3+1 TS1005 ';' expected.   <<(>>
+   tsc @4+1 TS1109 Expression expected.   <<)>>
+"a++[0];" [ts]
+   tsc @3+1 TS1005 ';' expected.   <<[>>
+"a++`x`;" [ts]
+   tsc @3+3 TS1005 ';' expected.   <<`x`>>
+"a++?.b;" [ts]
+   tsc @3+2 TS1005 ';' expected.   <<?.>>
+"a++<T>(x);" [ts]
+   tsc parses
+"(a++).b;" [ts]
+   tsc parses
+"(a++)++;" [ts]
+   tsc parses
+"++(a++);" [ts]
+   tsc parses
+"a++ as T;" [ts]
+   tsc parses
+"(a++ as T).b;" [ts]
+   tsc parses
+"a!++ ++;" [ts]
+   tsc @5+2 TS1005 ';' expected.   <<++>>
+   tsc @7+1 TS1109 Expression expected.   <<;>>
+"a.b++ = c;" [ts]
+   tsc @6+1 TS1005 ';' expected.   <<=>>
+"x = a++ = b;" [ts]
+   tsc @8+1 TS1005 ';' expected.   <<=>>
+"(a++ = b);" [ts]
+   tsc @5+1 TS1005 ')' expected.   <<=>>
+   tsc @8+1 TS1005 ';' expected.   <<)>>
+"f(a++ ++);" [ts]
+   tsc @6+2 TS1005 ',' expected.   <<++>>
+   tsc @8+1 TS1109 Expression expected.   <<)>>
+"[a++ = b];" [ts]
+   tsc @5+1 TS1005 ',' expected.   <<=>>
+"x ? a++ = b : c;" [ts]
+   tsc @8+1 TS1005 ':' expected.   <<=>>
+"a++\n++;" [ts]
+   tsc @6+1 TS1109 Expression expected.   <<;>>
+"a++\n.b;" [ts]
+   tsc @4+1 TS1128 Declaration or statement expected.   <<.>>
+"a++ += b;" [ts]
+   tsc @4+2 TS1005 ';' expected.   <<+=>>
+"a-- --;" [ts]
+   tsc @4+2 TS1005 ';' expected.   <<-->>
+   tsc @6+1 TS1109 Expression expected.   <<;>>
+"a[i]++ ++;" [ts]
+   tsc @7+2 TS1005 ';' expected.   <<++>>
+   tsc @9+1 TS1109 Expression expected.   <<;>>
+"f(x)++ ++;" [ts]
+   tsc @7+2 TS1005 ';' expected.   <<++>>
+   tsc @9+1 TS1109 Expression expected.   <<;>>
+"++-a;" [ts]
+   tsc @2+1 TS1109 Expression expected.   <<->>
+"++<T>a;" [ts]
+   tsc @2+1 TS1109 Expression expected.   <<<>>
+"async function f() { ++await a; }" [ts]
+   tsc @23+5 TS1109 Expression expected.   <<await>>
+"++typeof a;" [ts]
+   tsc @2+6 TS1109 Expression expected.   <<typeof>>
+"++!a;" [ts]
+   tsc @2+1 TS1109 Expression expected.   <<!>>
+   tsc @3+1 TS1005 ';' expected.   <<a>>
+"++ ++a;" [ts]
+   tsc @3+2 TS1109 Expression expected.   <<++>>
+"--void a;" [ts]
+   tsc @2+4 TS1109 Expression expected.   <<void>>
+"++(delete a.b);" [ts]
+   tsc parses
+"++(-a);" [ts]
+   tsc parses
+"++a.b;" [ts]
+   tsc parses
+"++new A;" [ts]
+   tsc parses
+"++a();" [ts]
+   tsc parses
+"-a++;" [ts]
+   tsc parses
+"typeof a++;" [ts]
+   tsc parses
+"++a ** 2;" [ts]
+   tsc parses
+"a++ ** 2;" [ts]
+   tsc parses
+"++<a/>;" [tsx]
+   tsc @2+1 TS1109 Expression expected.   <<<>>
+   tsc @5+1 TS1109 Expression expected.   <<>>>
+   tsc @6+1 TS1109 Expression expected.   <<;>>
+"new a.b?.c();" [ts]
+   tsc @7+2 TS1209 Invalid optional chain from new expression. Did you mean to call 'a.b()'?   <<?.>>
+"new (a)?.b();" [ts]
+   tsc @7+2 TS1209 Invalid optional chain from new expression. Did you mean to call '(a)()'?   <<?.>>
+"new a?.[b]();" [ts]
+   tsc @5+2 TS1209 Invalid optional chain from new expression. Did you mean to call 'a()'?   <<?.>>
+"new a?.();" [ts]
+   tsc @5+2 TS1209 Invalid optional chain from new expression. Did you mean to call 'a()'?   <<?.>>
+"new A<T>?.b();" [ts]
+   tsc @8+2 TS1209 Invalid optional chain from new expression. Did you mean to call 'A()'?   <<?.>>
+"new (a?.b)();" [ts]
+   tsc parses
+"new a?.b;" [ts]
+   tsc @5+2 TS1209 Invalid optional chain from new expression. Did you mean to call 'a()'?   <<?.>>
+"new a?.b?.c();" [ts]
+   tsc @5+2 TS1209 Invalid optional chain from new expression. Did you mean to call 'a()'?   <<?.>>
+"new a /*x*/ ?. /*y*/ b();" [ts]
+   tsc @12+2 TS1209 Invalid optional chain from new expression. Did you mean to call 'a()'?   <<?.>>
+"new a?.`x`;" [ts]
+   tsc @5+2 TS1209 Invalid optional chain from new expression. Did you mean to call 'a()'?   <<?.>>
+"class C { #c; m(a) { a?.b.#c } }" [ts]
+   tsc @26+2 TS18030 An optional chain cannot contain private identifiers.   <<#c>>
+"class C { #c; m(a) { a?.b!.#c } }" [ts]
+   tsc @27+2 TS18030 An optional chain cannot contain private identifiers.   <<#c>>
+"class C { #c; m(a) { a?.#c } }" [ts]
+   tsc @24+2 TS18030 An optional chain cannot contain private identifiers.   <<#c>>
+"class C { #c; m(a) { a?.b().#c } }" [ts]
+   tsc @28+2 TS18030 An optional chain cannot contain private identifiers.   <<#c>>
+"class C { #c; m(a) { a?.[0].#c } }" [ts]
+   tsc @28+2 TS18030 An optional chain cannot contain private identifiers.   <<#c>>
+"class C { #c; m(a) { (a?.b).#c } }" [ts]
+   tsc parses
+"a?.#c" [ts]
+   tsc @3+2 TS18030 An optional chain cannot contain private identifiers.   <<#c>>
+"a++\n= b;" [ts]
+   tsc @4+1 TS1128 Declaration or statement expected.   <<=>>
+"a++\n?.b;" [ts]
+   tsc @4+2 TS1128 Declaration or statement expected.   <<?.>>
+"a++\n!b;" [ts]
+   tsc parses
+"a++\n`x`;" [ts]
+   tsc parses
+"a++\n(b);" [ts]
+   tsc parses
+"a++\n[0];" [ts]
+   tsc parses
+"a++\n+= b;" [ts]
+   tsc @4+2 TS1128 Declaration or statement expected.   <<+=>>
+"f(a++\n[0]);" [ts]
+   tsc @6+1 TS1005 ',' expected.   <<[>>
+"(a++\n.b);" [ts]
+   tsc @5+1 TS1005 ')' expected.   <<.>>
+   tsc @7+1 TS1005 ';' expected.   <<)>>
+"a++ /*c*/ = b;" [ts]
+   tsc @10+1 TS1005 ';' expected.   <<=>>
+"a++ // c\n= b;" [ts]
+   tsc @9+1 TS1128 Declaration or statement expected.   <<=>>
+"a++`x${1}`;" [ts]
+   tsc @3+4 TS1005 ';' expected.   <<`x${>>
+"a.\nb c;" [ts]
+   tsc @2+0 TS1003 Identifier expected.   <<>>
+   tsc @3+1 TS1434 Unexpected keyword or identifier.   <<b>>
+"a.\nb\nc;" [ts]
+   tsc parses
+"a.\n#b c;" [ts]
+   tsc @2+0 TS1003 Identifier expected.   <<>>
+   tsc @6+1 TS1005 ';' expected.   <<c>>
+"a?.\nb c;" [ts]
+   tsc @3+0 TS1003 Identifier expected.   <<>>
+   tsc @4+1 TS1434 Unexpected keyword or identifier.   <<b>>
+"a. // x\nb in c;" [ts]
+   tsc @2+0 TS1003 Identifier expected.   <<>>
+"a. /* x\n */ b in c;" [ts]
+   tsc @2+0 TS1003 Identifier expected.   <<>>
+"a.\nb.c;" [ts]
+   tsc parses
+"a.\nb(c);" [ts]
+   tsc parses
+"a.\nb = c;" [ts]
+   tsc parses
+"a.\nb #c;" [ts]
+   tsc @2+0 TS1003 Identifier expected.   <<>>
+   tsc @3+1 TS1434 Unexpected keyword or identifier.   <<b>>
+"a.\nb 1;" [ts]
+   tsc @5+1 TS1005 ';' expected.   <<1>>
+"a.\nb 'x';" [ts]
+   tsc @5+3 TS1005 ';' expected.   <<'x'>>
+"a.\nin c;" [ts]
+   tsc @2+0 TS1003 Identifier expected.   <<>>
+"a.\nb\n.c d;" [ts]
+   tsc @8+1 TS1005 ';' expected.   <<d>>
+"x = a.\nb in c;" [ts]
+   tsc @6+0 TS1003 Identifier expected.   <<>>
+"a.\nb as c;" [ts]
+   tsc @2+0 TS1003 Identifier expected.   <<>>
+"a.\nb instanceof c;" [ts]
+   tsc @2+0 TS1003 Identifier expected.   <<>>
+"a.\nb; c" [ts]
+   tsc parses
+"a.b.\nc d;" [ts]
+   tsc @4+0 TS1003 Identifier expected.   <<>>
+   tsc @5+1 TS1434 Unexpected keyword or identifier.   <<c>>
+"a.\n/*x*/b c;" [ts]
+   tsc @2+0 TS1003 Identifier expected.   <<>>
+   tsc @8+1 TS1434 Unexpected keyword or identifier.   <<b>>
+"<a.\nb c='1' />;" [tsx]
+   tsc @3+0 TS1003 Identifier expected.   <<>>
+"let x: A.\nB c;" [ts]
+   tsc @9+0 TS1003 Identifier expected.   <<>>
+   tsc @10+1 TS1434 Unexpected keyword or identifier.   <<B>>
+"a\n.b c;" [ts]
+   tsc @5+1 TS1005 ';' expected.   <<c>>
+"a<b>?.c;" [ts]
+   tsc @1+3 TS1477 An instantiation expression cannot be followed by a property access.   <<<b>>>
+"a<b>.c<d>.e;" [ts]
+   tsc @1+3 TS1477 An instantiation expression cannot be followed by a property access.   <<<b>>>
+   tsc @6+3 TS1477 An instantiation expression cannot be followed by a property access.   <<<d>>>
+"a<b>?.[c];" [ts]
+   tsc parses
+"a<b>.#c;" [ts]
+   tsc @1+3 TS1477 An instantiation expression cannot be followed by a property access.   <<<b>>>
+"a<b>\n.c;" [ts]
+   tsc @1+3 TS1477 An instantiation expression cannot be followed by a property access.   <<<b>>>
+"a<b>.;" [ts]
+   tsc @5+1 TS1003 Identifier expected.   <<;>>
+   tsc @1+3 TS1477 An instantiation expression cannot be followed by a property access.   <<<b>>>
+"a<b>?.();" [ts]
+   tsc parses
+"new a<b>.c();" [ts]
+   tsc @5+3 TS1477 An instantiation expression cannot be followed by a property access.   <<<b>>>
+"a<b>!.c;" [ts]
+   tsc @5+1 TS1109 Expression expected.   <<.>>
+"a<<T>() => void>.c;" [ts]
+   tsc @1+15 TS1477 An instantiation expression cannot be followed by a property access.   <<<<T>() => void>>>
+"a<b> .c;" [ts]
+   tsc @1+3 TS1477 An instantiation expression cannot be followed by a property access.   <<<b>>>
+"a<b /*x*/ > /*y*/ .c;" [ts]
+   tsc @1+10 TS1477 An instantiation expression cannot be followed by a property access.   <<<b /*x*/ >>>
+"(a<b>).c;" [ts]
+   tsc parses
+"a.b<c>.d;" [ts]
+   tsc @3+3 TS1477 An instantiation expression cannot be followed by a property access.   <<<c>>>
+"a<b>.c<d>();" [ts]
+   tsc @1+3 TS1477 An instantiation expression cannot be followed by a property access.   <<<b>>>
+"a<b>.\nc d;" [ts]
+   tsc @5+0 TS1003 Identifier expected.   <<>>
+   tsc @1+3 TS1477 An instantiation expression cannot be followed by a property access.   <<<b>>>
+   tsc @6+1 TS1434 Unexpected keyword or identifier.   <<c>>
+"(a + b = c);" [ts]
+   tsc @7+1 TS1005 ')' expected.   <<=>>
+   tsc @10+1 TS1005 ';' expected.   <<)>>
+"f(a + b = c);" [ts]
+   tsc @8+1 TS1005 ',' expected.   <<=>>
+"[a + b = c];" [ts]
+   tsc @7+1 TS1005 ',' expected.   <<=>>
+"x ? a + b = c : d;" [ts]
+   tsc @10+1 TS1005 ':' expected.   <<=>>
+"`${a + b = c}`;" [ts]
+   tsc @9+1 TS1005 '}' expected.   <<=>>
+   tsc @12+1 TS1128 Declaration or statement expected.   <<}>>
+   tsc @15+0 TS1160 Unterminated template literal.   <<>>
+"a[b + c = d];" [ts]
+   tsc @8+1 TS1005 ']' expected.   <<=>>
+   tsc @11+1 TS1005 ';' expected.   <<]>>
+"let x = a + b = c;" [ts]
+   tsc @14+1 TS1005 ',' expected.   <<=>>
+"if (a + b = c) {}" [ts]
+   tsc @10+1 TS1005 ')' expected.   <<=>>
+   tsc @13+1 TS1005 ';' expected.   <<)>>
+"x = a + b = c;" [ts]
+   tsc @10+1 TS1005 ';' expected.   <<=>>
+"a || b = c;" [ts]
+   tsc @7+1 TS1005 ';' expected.   <<=>>
+"a ?? b = c;" [ts]
+   tsc @7+1 TS1005 ';' expected.   <<=>>
+"a ** b = c;" [ts]
+   tsc @7+1 TS1005 ';' expected.   <<=>>
+"a + b += c;" [ts]
+   tsc @6+2 TS1005 ';' expected.   <<+=>>
+"!a = b;" [ts]
+   tsc @3+1 TS1005 ';' expected.   <<=>>
+"typeof a = b;" [ts]
+   tsc @9+1 TS1005 ';' expected.   <<=>>
+"++a = b;" [ts]
+   tsc @4+1 TS1005 ';' expected.   <<=>>
+"delete a.b = c;" [ts]
+   tsc @11+1 TS1005 ';' expected.   <<=>>
+"void a = b;" [ts]
+   tsc @7+1 TS1005 ';' expected.   <<=>>
+"new X = 1;" [ts]
+   tsc parses
+"(a + b) = c;" [ts]
+   tsc parses
+"x! = 1;" [ts]
+   tsc parses
+"<T>x = 1;" [ts]
+   tsc @5+1 TS1005 ';' expected.   <<=>>
+"x as T = 1;" [ts]
+   tsc @7+1 TS1005 ';' expected.   <<=>>
+"(x as T) = 1;" [ts]
+   tsc parses
+"a ? b : c = d;" [ts]
+   tsc parses
+"a + b\n= c;" [ts]
+   tsc @6+1 TS1128 Declaration or statement expected.   <<=>>
+"-a\n= b;" [ts]
+   tsc @3+1 TS1128 Declaration or statement expected.   <<=>>
+"a = b = c;" [ts]
+   tsc parses
+"a, b = c;" [ts]
+   tsc parses
+"a + b >>>= c;" [ts]
+   tsc @6+4 TS1005 ';' expected.   <<>>>=>>
+"a instanceof b = c;" [ts]
+   tsc @15+1 TS1005 ';' expected.   <<=>>
+"a in b = c;" [ts]
+   tsc @7+1 TS1005 ';' expected.   <<=>>
+"a < b = c;" [ts]
+   tsc @6+1 TS1005 ';' expected.   <<=>>
+"yield = 1;" [ts]
+   tsc parses
+"async function f() { await x += y; }" [ts]
+   tsc @29+2 TS1005 ';' expected.   <<+=>>
+"for (a + b = c;;) {}" [ts]
+   tsc @11+1 TS1005 ';' expected.   <<=>>
+   tsc @15+1 TS1109 Expression expected.   <<;>>
+   tsc @16+1 TS1128 Declaration or statement expected.   <<)>>
+"x = () => {} = 1;" [ts]
+   tsc @13+1 TS2809 Declaration or statement expected. This '=' follows a block of statements, so if you intended to write a destructuring assignment, you might need to wrap the whole assignment in parentheses.   <<=>>
+   tsc @15+1 TS1005 ';' expected.   <<1>>
+"({ a: b + c = d });" [ts]
+   tsc @12+1 TS1005 ',' expected.   <<=>>
+"class C { x = a + b = c; }" [ts]
+   tsc @20+1 TS1005 ';' expected.   <<=>>
+"1 = 2;" [ts]
+   tsc parses
+"this = 1;" [ts]
+   tsc parses
+"f() = 1;" [ts]
+   tsc parses
+"a?.b = 1;" [ts]
+   tsc parses
+"import.meta = 1;" [ts]
+   tsc parses
+"`a` = 1;" [ts]
+   tsc parses
+"a<b> = c;" [ts]
+   tsc parses
+"-a++ = b;" [ts]
+   tsc @5+1 TS1005 ';' expected.   <<=>>
+"a + -b = c;" [ts]
+   tsc @7+1 TS1005 ';' expected.   <<=>>
+"a = -b = c;" [ts]
+   tsc @7+1 TS1005 ';' expected.   <<=>>
+"<T>x += 1;" [ts]
+   tsc @5+2 TS1005 ';' expected.   <<+=>>
+"<T>x++ = 1;" [ts]
+   tsc @7+1 TS1005 ';' expected.   <<=>>
+"/* @__PURE__ */ a = b;" [ts]
+   tsc parses
+"/* @__PURE__ */ <T>a = b;" [ts]
+   tsc @21+1 TS1005 ';' expected.   <<=>>
+"<A>x.y ** 2;" [ts]
+   tsc @0+6 TS17007 A type assertion expression is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses.   <<<A>x.y>>
+"-<A>x ** 2;" [ts]
+   tsc @0+5 TS17006 An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses.   <<-<A>x>>
+"typeof x ** 2;" [ts]
+   tsc @0+8 TS17006 An unary expression with the 'typeof' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses.   <<typeof x>>
+"async function f() { await x ** 2; }" [ts]
+   tsc @21+7 TS17006 An unary expression with the 'await' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses.   <<await x>>
+"a ** <A>x ** 2;" [ts]
+   tsc @5+4 TS17007 A type assertion expression is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses.   <<<A>x>>
+"(<A>x) ** 2;" [ts]
+   tsc parses
+"+x ** 2;" [ts]
+   tsc @0+2 TS17006 An unary expression with the '+' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses.   <<+x>>
+"!x ** 2;" [ts]
+   tsc @0+2 TS17006 An unary expression with the '!' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses.   <<!x>>
+"delete x ** 2;" [ts]
+   tsc @0+8 TS17006 An unary expression with the 'delete' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses.   <<delete x>>
+"void x ** 2;" [ts]
+   tsc @0+6 TS17006 An unary expression with the 'void' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses.   <<void x>>
+"~x ** 2;" [ts]
+   tsc @0+2 TS17006 An unary expression with the '~' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses.   <<~x>>
+"a * -x ** 2;" [ts]
+   tsc @4+2 TS17006 An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses.   <<-x>>
+"- /*c*/ x /*d*/ ** 2;" [ts]
+   tsc @0+9 TS17006 An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses.   <<- /*c*/ x>>
+"<A> x /*d*/ ** 2;" [ts]
+   tsc @0+5 TS17007 A type assertion expression is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses.   <<<A> x>>
+"-x.y[0]() ** 2;" [ts]
+   tsc @0+9 TS17006 An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses.   <<-x.y[0]()>>
+"- -x ** 2;" [ts]
+   tsc @0+4 TS17006 An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses.   <<- -x>>
+"await ** 2;" [ts]
+   tsc @0+5 TS17006 An unary expression with the 'await' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses.   <<await>>
+"<A>x++ ** 2;" [ts]
+   tsc @0+6 TS17007 A type assertion expression is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses.   <<<A>x++>>
+"-x\n** 2;" [ts]
+   tsc @0+2 TS17006 An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses.   <<-x>>
+"y = -x ** 2;" [ts]
+   tsc @4+2 TS17006 An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses.   <<-x>>
+"<A><B>x ** 2;" [ts]
+   tsc @0+7 TS17007 A type assertion expression is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses.   <<<A><B>x>>
+"-x ** 2;" [tsx]
+   tsc @0+2 TS17006 An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses.   <<-x>>
+"typeof x ** 2;" [js]
+   tsc @0+8 TS17006 An unary expression with the 'typeof' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses.   <<typeof x>>
+"class C extends B { m() { super<T>; } }" [ts]
+   tsc @31+3 TS2754 'super' may not use type arguments.   <<<T>>>
+   tsc @34+1 TS1034 'super' must be followed by an argument list or member access.   <<;>>
+"class C extends B { m() { super <T>.x } }" [ts]
+   tsc @31+4 TS2754 'super' may not use type arguments.   << <T>>>
+   tsc @32+3 TS1477 An instantiation expression cannot be followed by a property access.   <<<T>>>
+"class C extends B { m() { new super() } }" [ts]
+   tsc parses
+"class C extends B { m() { new super } }" [ts]
+   tsc parses
+"class C extends B { m() { super } }" [ts]
+   tsc @32+1 TS1034 'super' must be followed by an argument list or member access.   <<}>>
+"class C extends B { m() { super`x` } }" [ts]
+   tsc @31+3 TS1034 'super' must be followed by an argument list or member access.   <<`x`>>
+"class C extends B { m() { super<T>`x` } }" [ts]
+   tsc @31+3 TS2754 'super' may not use type arguments.   <<<T>>>
+   tsc @34+3 TS1034 'super' must be followed by an argument list or member access.   <<`x`>>
+"class C extends B { m() { super<T>[0] } }" [ts]
+   tsc @31+1 TS1034 'super' must be followed by an argument list or member access.   <<<>>
+"class C extends B { m() { super++ } }" [ts]
+   tsc @31+2 TS1034 'super' must be followed by an argument list or member access.   <<++>>
+"class C extends B { m() { super?.x } }" [ts]
+   tsc @31+2 TS1034 'super' must be followed by an argument list or member access.   <<?.>>
+"class C extends B { m() { super!.x } }" [ts]
+   tsc @31+1 TS1034 'super' must be followed by an argument list or member access.   <<!>>
+"function f() { super.x }" [ts]
+   tsc parses
+"function f() { super() }" [ts]
+   tsc parses
+"super.x;" [ts]
+   tsc parses
+"class C extends B { m() { super() } }" [ts]
+   tsc parses
+"class C extends B { static x = super.y; }" [ts]
+   tsc parses
+"class C extends B { m() { super<T } }" [ts]
+   tsc @31+1 TS1034 'super' must be followed by an argument list or member access.   <<<>>
+"class C extends B { m() { -super } }" [ts]
+   tsc @33+1 TS1034 'super' must be followed by an argument list or member access.   <<}>>
+"super" [ts]
+   tsc @5+0 TS1034 'super' must be followed by an argument list or member access.   <<>>
+"class C extends B { m() { super<T>.x } }" [js]
+   tsc @31+1 TS1034 'super' must be followed by an argument list or member access.   <<<>>
+   tsc @34+1 TS1109 Expression expected.   <<.>>
+"class C extends B { m() { super\n.x } }" [ts]
+   tsc parses
+"class C extends B { m() { super<T>\n(1) } }" [ts]
+   tsc @31+3 TS2754 'super' may not use type arguments.   <<<T>>>
+"function* g() { (yield*); }" [ts]
+   tsc @23+1 TS1109 Expression expected.   <<)>>
+"function* g() { [yield*]; }" [ts]
+   tsc @23+1 TS1109 Expression expected.   <<]>>
+"function* g() { yield*\nx; }" [ts]
+   tsc parses
+"function* g() { yield\n* x; }" [ts]
+   tsc @22+1 TS1109 Expression expected.   <<*>>
+"function* g() { yield*, 1; }" [ts]
+   tsc @22+1 TS1109 Expression expected.   <<,>>
+"function* g() { x ? yield* : 1; }" [ts]
+   tsc @27+1 TS1109 Expression expected.   <<:>>
+"function* g() { yield*" [ts]
+   tsc @22+0 TS1109 Expression expected.   <<>>
+"function* g() { yield; yield\nx; (yield); }" [ts]
+   tsc parses
+"a?.[];" [ts]
+   tsc @4+0 TS1011 An element access expression should take an argument.   <<>>
+"a[ ];" [ts]
+   tsc @2+0 TS1011 An element access expression should take an argument.   <<>>
+"a[/*c*/];" [ts]
+   tsc @2+0 TS1011 An element access expression should take an argument.   <<>>
+"a[b + ];" [ts]
+   tsc @6+1 TS1109 Expression expected.   <<]>>
+"a[][0];" [ts]
+   tsc @2+0 TS1011 An element access expression should take an argument.   <<>>
+"a[\n];" [ts]
+   tsc @2+0 TS1011 An element access expression should take an argument.   <<>>
+"new A[]();" [ts]
+   tsc @6+0 TS1011 An element access expression should take an argument.   <<>>
+"a[b[]];" [ts]
+   tsc @4+0 TS1011 An element access expression should take an argument.   <<>>
+"a[,];" [ts]
+   tsc @2+1 TS1109 Expression expected.   <<,>>
+   tsc @3+1 TS1109 Expression expected.   <<]>>
+"a?.[];" [js]
+   tsc @4+0 TS1011 An element access expression should take an argument.   <<>>
+"for (using of = x;;) {}" [ts]
+   tsc parses
+"for (using of of x) {}" [ts]
+   tsc @17+1 TS1005 ')' expected.   <<x>>
+   tsc @18+1 TS1128 Declaration or statement expected.   <<)>>
+"for (using of in x) {}" [ts]
+   tsc @14+2 TS1109 Expression expected.   <<in>>
+"for (using x of y) {}" [ts]
+   tsc parses
+"for (using of;;) {}" [ts]
+   tsc parses
+"for (await using of of []) {}" [ts]
+   tsc parses
+"for (using of: T = x;;) {}" [ts]
+   tsc parses
+"for (using of of of) {}" [ts]
+   tsc @17+2 TS1005 ')' expected.   <<of>>
+   tsc @19+1 TS1128 Declaration or statement expected.   <<)>>
+"for (using\nof of []) {}" [ts]
+   tsc @18+0 TS1011 An element access expression should take an argument.   <<>>
+"for (using of\nof []) {}" [ts]
+   tsc @18+0 TS1011 An element access expression should take an argument.   <<>>
+"using of = 1;" [ts]
+   tsc parses
+"for (using of [a]) {}" [ts]
+   tsc parses
+"for (using of of) {}" [ts]
+   tsc parses

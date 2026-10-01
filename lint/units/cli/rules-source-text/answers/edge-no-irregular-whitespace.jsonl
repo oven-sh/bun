@@ -1,0 +1,91 @@
+{"code":"'a b'","type":"script","reports":[]}
+{"code":"\"a b\"; x = 1","type":"script","reports":["1:9-1:10 Irregular whitespace not allowed."]}
+{"code":"x = 'a b' + 'c　d'","type":"script","reports":["1:10-1:11 Irregular whitespace not allowed."]}
+{"code":"'a b'","type":"script","reports":[]}
+{"code":"'a  b'","type":"script","reports":[]}
+{"code":"'a  b c' ","type":"script","reports":["3:3-3:4 Irregular whitespace not allowed."]}
+{"code":" 'a'","type":"script","reports":["1:1-1:2 Irregular whitespace not allowed."]}
+{"code":"'a' ","type":"script","reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"code":"' ' ' '","type":"script","fatal":"1:5 Parsing error: Unexpected token ' '","reports":[]}
+{"code":"({'a b': 1, c : 2})","type":"script","reports":["1:14-1:15 Irregular whitespace not allowed."]}
+{"code":"({\"​\": 1})","type":"script","reports":[]}
+{"code":"class A { ' '() {} }","type":"script","reports":[]}
+{"code":"a[' ']","type":"script","reports":[]}
+{"code":"f(' ', \"　\", ` `)","type":"script","reports":["1:14-1:15 Irregular whitespace not allowed."]}
+{"code":"`a b`","type":"script","reports":["1:3-1:4 Irregular whitespace not allowed."]}
+{"code":"`a${' '}b`","type":"script","reports":[]}
+{"code":"`a${ 1}b`","type":"script","reports":["1:5-1:6 Irregular whitespace not allowed."]}
+{"code":"/a b/","type":"script","reports":["1:3-1:4 Irregular whitespace not allowed."]}
+{"code":"/[ ]/.test(' ')","type":"script","reports":["1:3-1:4 Irregular whitespace not allowed."]}
+{"code":"// a b","type":"script","reports":["1:5-1:6 Irregular whitespace not allowed."]}
+{"code":"/* a b */ ' '","type":"script","reports":["1:5-1:6 Irregular whitespace not allowed."]}
+{"code":"' ' //  ","type":"script","reports":["1:8-1:9 Irregular whitespace not allowed."]}
+{"code":"\"use strict\"","type":"script","reports":[]}
+{"code":"' '; x","type":"script","reports":[]}
+{"code":"function f() { ' '; }","type":"script","reports":[]}
+{"code":"(' ')","type":"script","reports":[]}
+{"code":"x  　y","type":"script","fatal":"1:5 Parsing error: Unexpected token y","reports":[]}
+{"code":"x   y","type":"script","fatal":"1:5 Parsing error: Unexpected token y","reports":[]}
+{"code":"x  y","type":"script","reports":["1:2-2:1 Irregular whitespace not allowed.","2:1-2:2 Irregular whitespace not allowed."]}
+{"code":"x  y","type":"script","reports":["1:2-1:3 Irregular whitespace not allowed.","1:3-2:1 Irregular whitespace not allowed."]}
+{"code":"x  y","type":"script","reports":["1:2-2:1 Irregular whitespace not allowed.","2:1-3:1 Irregular whitespace not allowed."]}
+{"code":"'👍' + 1","type":"script","reports":["1:5-1:6 Irregular whitespace not allowed."]}
+{"code":"'👍 ' + 1 ","type":"script","reports":["1:10-1:11 Irregular whitespace not allowed."]}
+{"code":"'café' ","type":"script","reports":["1:7-1:8 Irregular whitespace not allowed."]}
+{"code":"x = 1﻿","type":"script","reports":["1:6-1:7 Irregular whitespace not allowed."]}
+{"code":"x\u000b= 1","type":"script","reports":["1:2-1:3 Irregular whitespace not allowed."]}
+{"code":"x\f= 1","type":"script","reports":["1:2-1:3 Irregular whitespace not allowed."]}
+{"code":"'᠎​'","type":"script","reports":[]}
+{"code":"/* ᠎​ */","type":"script","reports":["1:4-1:7 Irregular whitespace not allowed."]}
+{"code":"`᠎​`","type":"script","reports":["1:2-1:5 Irregular whitespace not allowed."]}
+{"code":"/᠎​/","type":"script","reports":["1:2-1:5 Irregular whitespace not allowed."]}
+{"code":"'a\\ b '","type":"script","reports":[]}
+{"code":"'a\\\n b'","type":"script","reports":[]}
+{"code":"\"a b\" + 'c d' + `e f`","type":"script","reports":["1:19-1:20 Irregular whitespace not allowed."]}
+{"code":"switch (x) { case ' ': }","type":"script","reports":[]}
+{"code":"label: for (;;) break label","type":"script","reports":["1:7-1:8 Irregular whitespace not allowed."]}
+{"code":"if (a) { }","type":"script","reports":["1:7-1:8 Irregular whitespace not allowed.","1:9-1:10 Irregular whitespace not allowed."]}
+{"code":"x = { }","type":"script","reports":["1:6-1:7 Irregular whitespace not allowed."]}
+{"code":"x = [ ]","type":"script","reports":["1:6-1:7 Irregular whitespace not allowed."]}
+{"code":"x = ( 1 )","type":"script","reports":["1:6-1:7 Irregular whitespace not allowed.","1:8-1:9 Irregular whitespace not allowed."]}
+{"code":"x = - 1","type":"script","reports":["1:4-1:5 Irregular whitespace not allowed.","1:6-1:7 Irregular whitespace not allowed."]}
+{"code":"typeof x","type":"script","reports":["1:7-1:8 Irregular whitespace not allowed."]}
+{"code":"'a' + 'b'","type":"script","reports":["1:6-1:7 Irregular whitespace not allowed."]}
+{"code":"'a'  ","type":"script","reports":["1:4-1:6 Irregular whitespace not allowed."]}
+{"code":"'  '","type":"script","reports":[]}
+{"code":"\t \tx","type":"script","reports":["1:2-1:3 Irregular whitespace not allowed."]}
+{"code":"x      ","type":"script","reports":["1:3-1:4 Irregular whitespace not allowed.","1:5-1:6 Irregular whitespace not allowed.","1:7-1:8 Irregular whitespace not allowed."]}
+{"code":"x\n \n  \n","type":"script","reports":["2:1-2:2 Irregular whitespace not allowed.","3:1-3:3 Irregular whitespace not allowed."]}
+{"code":"x\r\n \r\n \r\n","type":"script","reports":["2:1-2:2 Irregular whitespace not allowed.","3:1-4:1 Irregular whitespace not allowed."]}
+{"code":"x\r \r \r","type":"script","reports":["2:1-2:2 Irregular whitespace not allowed.","3:1-4:1 Irregular whitespace not allowed."]}
+{"code":"import ' '","type":"module","reports":[]}
+{"code":"import a from 'b c'","type":"module","reports":[]}
+{"code":"export * from 'b c'","type":"module","reports":[]}
+{"code":"export {a} from 'b c'","type":"module","reports":[]}
+{"code":"import {'a b' as c} from 'd'","type":"module","reports":[]}
+{"code":"export {a as 'a b'}; var a","type":"module","reports":[]}
+{"code":"export * as 'a b' from 'd'","type":"module","reports":[]}
+{"code":"import a from 'b' with {type: 'j son'}","type":"module","reports":[]}
+{"code":"import a from 'b' with {'t ype': 'json'}","type":"module","reports":[]}
+{"code":"import a from 'b'","type":"module","reports":["1:7-1:8 Irregular whitespace not allowed."]}
+{"code":"export default ' '","type":"module","reports":[]}
+{"code":"export const a = ' ' ","type":"module","reports":["1:21-1:22 Irregular whitespace not allowed."]}
+{"code":"<a b=\" \"/>","type":"script","jsx":true,"reports":[]}
+{"code":"<a b='x y' c=\"　\"/>","type":"script","jsx":true,"reports":[]}
+{"code":"<a b={\" \"}/>","type":"script","jsx":true,"reports":[]}
+{"code":"<a b={' '} />","type":"script","jsx":true,"reports":["1:11-1:12 Irregular whitespace not allowed."]}
+{"code":"<a> </a>","type":"script","jsx":true,"reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"code":"<a>x y</a>","type":"script","jsx":true,"reports":["1:5-1:6 Irregular whitespace not allowed."]}
+{"code":"<a>{' '}</a>","type":"script","jsx":true,"reports":[]}
+{"code":"<a>{ 'x'}</a>","type":"script","jsx":true,"reports":["1:5-1:6 Irregular whitespace not allowed."]}
+{"code":"<a>\" \"</a>","type":"script","jsx":true,"reports":["1:5-1:6 Irregular whitespace not allowed."]}
+{"code":"<a>' '{' '}\" \"</a>","type":"script","jsx":true,"reports":["1:5-1:6 Irregular whitespace not allowed.","1:13-1:14 Irregular whitespace not allowed."]}
+{"code":"<a b=\"c\"/>","type":"script","jsx":true,"reports":["1:3-1:4 Irregular whitespace not allowed."]}
+{"code":"<a b=\"x \\\"/>","type":"script","jsx":true,"reports":[]}
+{"code":"<a b=\" \n \"/>","type":"script","jsx":true,"reports":[]}
+{"code":"<a b=<c d=\" \"/>/>","type":"script","jsx":true,"reports":[]}
+{"code":"<a {...{' ': 1}}/>","type":"script","jsx":true,"reports":[]}
+{"code":"<a>{/*   */}</a>","type":"script","jsx":true,"reports":["1:8-1:9 Irregular whitespace not allowed."]}
+{"code":"<a>{` `}</a>","type":"script","jsx":true,"reports":["1:6-1:7 Irregular whitespace not allowed."]}
+{"code":"<> </>","type":"script","jsx":true,"reports":["1:3-1:4 Irregular whitespace not allowed."]}
+{"code":"<a.b c=\" \"> </a.b>","type":"script","jsx":true,"reports":["1:12-1:13 Irregular whitespace not allowed."]}

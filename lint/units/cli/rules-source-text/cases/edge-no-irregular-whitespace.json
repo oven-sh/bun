@@ -1,0 +1,330 @@
+[
+	{
+		"code": "'a b'"
+	},
+	{
+		"code": "\"a b\"; x = 1"
+	},
+	{
+		"code": "x = 'a b' + 'c　d'"
+	},
+	{
+		"code": "'a b'"
+	},
+	{
+		"code": "'a  b'"
+	},
+	{
+		"code": "'a  b c' "
+	},
+	{
+		"code": " 'a'"
+	},
+	{
+		"code": "'a' "
+	},
+	{
+		"code": "' ' ' '"
+	},
+	{
+		"code": "({'a b': 1, c : 2})"
+	},
+	{
+		"code": "({\"​\": 1})"
+	},
+	{
+		"code": "class A { ' '() {} }"
+	},
+	{
+		"code": "a[' ']"
+	},
+	{
+		"code": "f(' ', \"　\", ` `)"
+	},
+	{
+		"code": "`a b`"
+	},
+	{
+		"code": "`a${' '}b`"
+	},
+	{
+		"code": "`a${ 1}b`"
+	},
+	{
+		"code": "/a b/"
+	},
+	{
+		"code": "/[ ]/.test(' ')"
+	},
+	{
+		"code": "// a b"
+	},
+	{
+		"code": "/* a b */ ' '"
+	},
+	{
+		"code": "' ' //  "
+	},
+	{
+		"code": "\"use strict\""
+	},
+	{
+		"code": "' '; x"
+	},
+	{
+		"code": "function f() { ' '; }"
+	},
+	{
+		"code": "(' ')"
+	},
+	{
+		"code": "x  　y"
+	},
+	{
+		"code": "x   y"
+	},
+	{
+		"code": "x  y"
+	},
+	{
+		"code": "x  y"
+	},
+	{
+		"code": "x  y"
+	},
+	{
+		"code": "'👍' + 1"
+	},
+	{
+		"code": "'👍 ' + 1 "
+	},
+	{
+		"code": "'café' "
+	},
+	{
+		"code": "x = 1﻿"
+	},
+	{
+		"code": "x\u000b= 1"
+	},
+	{
+		"code": "x\f= 1"
+	},
+	{
+		"code": "'᠎​'"
+	},
+	{
+		"code": "/* ᠎​ */"
+	},
+	{
+		"code": "`᠎​`"
+	},
+	{
+		"code": "/᠎​/"
+	},
+	{
+		"code": "'a\\ b '"
+	},
+	{
+		"code": "'a\\\n b'"
+	},
+	{
+		"code": "\"a b\" + 'c d' + `e f`"
+	},
+	{
+		"code": "switch (x) { case ' ': }"
+	},
+	{
+		"code": "label: for (;;) break label"
+	},
+	{
+		"code": "if (a) { }"
+	},
+	{
+		"code": "x = { }"
+	},
+	{
+		"code": "x = [ ]"
+	},
+	{
+		"code": "x = ( 1 )"
+	},
+	{
+		"code": "x = - 1"
+	},
+	{
+		"code": "typeof x"
+	},
+	{
+		"code": "'a' + 'b'"
+	},
+	{
+		"code": "'a'  "
+	},
+	{
+		"code": "'  '"
+	},
+	{
+		"code": "\t \tx"
+	},
+	{
+		"code": "x      "
+	},
+	{
+		"code": "x\n \n  \n"
+	},
+	{
+		"code": "x\r\n \r\n \r\n"
+	},
+	{
+		"code": "x\r \r \r"
+	},
+	{
+		"code": "import ' '",
+		"languageOptions": {
+			"sourceType": "module"
+		}
+	},
+	{
+		"code": "import a from 'b c'",
+		"languageOptions": {
+			"sourceType": "module"
+		}
+	},
+	{
+		"code": "export * from 'b c'",
+		"languageOptions": {
+			"sourceType": "module"
+		}
+	},
+	{
+		"code": "export {a} from 'b c'",
+		"languageOptions": {
+			"sourceType": "module"
+		}
+	},
+	{
+		"code": "import {'a b' as c} from 'd'",
+		"languageOptions": {
+			"sourceType": "module"
+		}
+	},
+	{
+		"code": "export {a as 'a b'}; var a",
+		"languageOptions": {
+			"sourceType": "module"
+		}
+	},
+	{
+		"code": "export * as 'a b' from 'd'",
+		"languageOptions": {
+			"sourceType": "module"
+		}
+	},
+	{
+		"code": "import a from 'b' with {type: 'j son'}",
+		"languageOptions": {
+			"sourceType": "module"
+		}
+	},
+	{
+		"code": "import a from 'b' with {'t ype': 'json'}",
+		"languageOptions": {
+			"sourceType": "module"
+		}
+	},
+	{
+		"code": "import a from 'b'",
+		"languageOptions": {
+			"sourceType": "module"
+		}
+	},
+	{
+		"code": "export default ' '",
+		"languageOptions": {
+			"sourceType": "module"
+		}
+	},
+	{
+		"code": "export const a = ' ' ",
+		"languageOptions": {
+			"sourceType": "module"
+		}
+	},
+	{
+		"code": "<a b=\" \"/>",
+		"jsx": true
+	},
+	{
+		"code": "<a b='x y' c=\"　\"/>",
+		"jsx": true
+	},
+	{
+		"code": "<a b={\" \"}/>",
+		"jsx": true
+	},
+	{
+		"code": "<a b={' '} />",
+		"jsx": true
+	},
+	{
+		"code": "<a> </a>",
+		"jsx": true
+	},
+	{
+		"code": "<a>x y</a>",
+		"jsx": true
+	},
+	{
+		"code": "<a>{' '}</a>",
+		"jsx": true
+	},
+	{
+		"code": "<a>{ 'x'}</a>",
+		"jsx": true
+	},
+	{
+		"code": "<a>\" \"</a>",
+		"jsx": true
+	},
+	{
+		"code": "<a>' '{' '}\" \"</a>",
+		"jsx": true
+	},
+	{
+		"code": "<a b=\"c\"/>",
+		"jsx": true
+	},
+	{
+		"code": "<a b=\"x \\\"/>",
+		"jsx": true
+	},
+	{
+		"code": "<a b=\" \n \"/>",
+		"jsx": true
+	},
+	{
+		"code": "<a b=<c d=\" \"/>/>",
+		"jsx": true
+	},
+	{
+		"code": "<a {...{' ': 1}}/>",
+		"jsx": true
+	},
+	{
+		"code": "<a>{/*   */}</a>",
+		"jsx": true
+	},
+	{
+		"code": "<a>{` `}</a>",
+		"jsx": true
+	},
+	{
+		"code": "<> </>",
+		"jsx": true
+	},
+	{
+		"code": "<a.b c=\" \"> </a.b>",
+		"jsx": true
+	}
+]

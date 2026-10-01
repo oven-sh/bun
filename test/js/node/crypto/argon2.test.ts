@@ -459,9 +459,10 @@ describe("crypto.argon2", () => {
       stderr: "pipe",
     });
 
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(JSON.parse(stdout.trim())).toEqual({
+    // stderr carries only ASAN's warning for each refused allocation.
+    expect(JSON.parse(stdout.trim() || JSON.stringify({ stderr }))).toEqual({
       syncMemory: "Argon2 derivation failed",
       withinLimit: 32,
       asyncMemory: "Argon2 derivation failed",

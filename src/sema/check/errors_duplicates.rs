@@ -293,7 +293,7 @@ impl Checker<'_> {
     }
 
     /// `getAdjustedNodeForError`: the start of the name of `decl`, or of `decl` itself if it has no name.
-    fn declaration_name_start(&self, file: FileId, decl: Decl) -> Option<u32> {
+    pub(super) fn declaration_name_start(&self, file: FileId, decl: Decl) -> Option<u32> {
         let hir = self.hir(file);
         match decl {
             // The name of `export { a as b }` is `b`.

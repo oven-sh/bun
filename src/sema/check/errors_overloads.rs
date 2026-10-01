@@ -5,6 +5,7 @@
 //! and one ends where another starts if that is the next in the list and the parser skipped no token in between.
 
 use super::errors::Diagnostic;
+use super::explain::Related;
 use super::*;
 use crate::bind::Decl;
 use smallvec::SmallVec;
@@ -342,7 +343,8 @@ impl Checker<'_> {
     ) {
         let hir = self.hir(file);
         let mut bodies = group.iter().filter(|g| has_body(&hir[g.0]));
-        let Some(&(implementation, _, _)) = bodies.next() else {
+        let Some(&(implementation, implementation_start, implementation_end)) = bodies.next()
+        else {
             return;
         };
         if bodies.next().is_some() {
@@ -368,6 +370,13 @@ impl Checker<'_> {
                 Some(false) => {
                     out.push(Diagnostic { start, code: 2394 });
                     self.note(start, end, 2394, Vec::new());
+                    self.relate(start, 2394, |_| {
+                        vec![Related {
+                            at: Some((file, implementation_start, implementation_end)),
+                            code: 2750,
+                            args: Vec::new(),
+                        }]
+                    });
                     break;
                 }
                 None => break,

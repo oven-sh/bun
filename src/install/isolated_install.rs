@@ -2096,8 +2096,7 @@ pub(crate) fn install_isolated_packages(
             .iter()
             .any(|r| r.tag == ResolutionTag::Symlink)
         {
-            // A bun.lock row never passes the resolver, so its trust rule is
-            // repeated here, before any dependent symlinks to the target.
+            // Rows loaded from bun.lock skip the resolver's check.
             for (pkg_id, res) in pkg_resolutions.iter().enumerate() {
                 if res.tag != ResolutionTag::Symlink {
                     continue;

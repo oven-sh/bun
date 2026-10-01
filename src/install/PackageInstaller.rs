@@ -1520,8 +1520,7 @@ impl<'a> PackageInstaller<'a> {
                 let folder_str = *resolution.symlink();
                 let folder = folder_str.slice(string_buf!());
 
-                // A bun.lock row never passes the resolver, so the trust rule of
-                // `enqueue_dependency_with_main_and_success_fn` is repeated here.
+                // Rows loaded from bun.lock skip the resolver's check.
                 if crate::dependency::link_path_escapes_root(folder)
                     && !self.lockfile().is_trusted_folder_package(package_id)
                 {

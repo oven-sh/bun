@@ -65,10 +65,13 @@ impl<'p> Checker<'p> {
         let ty = self.type_of_expr_as_written(file, e);
         // `instantiateTypeWithSingleGenericCallSignature`: a generic function met while type arguments are inferred from it is what
         // it is when called the way that is expected there. That holds for the inference, not for `e`: it is not kept.
-        if self.resolving.is_empty()
-            || !self.may_have_generic_signature(ty)
-            || self.is_accessed_or_called(file, e)
-        {
+        if self.resolving.is_empty() {
+            return ty;
+        }
+        if let Some(ty) = self.type_with_nested_generic_functions(file, e) {
+            return ty;
+        }
+        if !self.may_have_generic_signature(ty) || self.is_accessed_or_called(file, e) {
             return ty;
         }
         self.instantiated_where_it_stands(file, e, ty)

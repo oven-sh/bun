@@ -1704,6 +1704,25 @@ impl<'p> Checker<'p> {
         }
     }
 
+    /// `getBaseConstraintOrType`, of the same: through conditional types and indexed accesses. A type parameter is its own base
+    /// constraint, and so is whatever else is come to.
+    fn restrictive_base_constraint_or_type(&mut self, t: TypeId) -> TypeId {
+        let mut base = t;
+        for _ in 0..8 {
+            if !matches!(
+                self.data(base),
+                TypeData::Cond { .. } | TypeData::IndexedAccess { .. }
+            ) {
+                break;
+            }
+            match self.restrictive_constraint_of(base) {
+                Some(constraint) if constraint != base => base = constraint,
+                _ => break,
+            }
+        }
+        base
+    }
+
     /// `getConstraintFromIndexedAccess`. `undefined`: what the access has kept of how it was made (`accessFlags`).
     fn constraint_of_indexed_access(
         &mut self,
@@ -4441,11 +4460,19 @@ impl<'p> Checker<'p> {
                         return result;
                     }
                 }
-                // `S` fits `T[K]` if it fits what can be written to it whatever `T` and `K` are. That goes by what they extend, and
-                // the type parameters of a restrictive instantiation extend nothing.
-                if relation.is_lenient() && relation != Relation::Restrictive {
-                    let base_object = self.base_constraint_or_type(object);
-                    let base_index = self.base_constraint_or_type(index);
+                // `S` fits `T[K]` if it fits what can be written to it whatever `T` and `K` are. That goes by what they extend.
+                if relation.is_lenient() {
+                    let (base_object, base_index) = if relation == Relation::Restrictive {
+                        (
+                            self.restrictive_base_constraint_or_type(object),
+                            self.restrictive_base_constraint_or_type(index),
+                        )
+                    } else {
+                        (
+                            self.base_constraint_or_type(object),
+                            self.base_constraint_or_type(index),
+                        )
+                    };
                     if !self.is_generic_object_type(base_object)
                         && !self.is_generic_index_type(base_index)
                         && let Some(constraint) = self.indexed_access_for_writing(

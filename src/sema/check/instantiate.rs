@@ -209,6 +209,31 @@ impl<'p> Checker<'p> {
         }
     }
 
+    /// Whether `getOuterTypeParameters` of the object literal that `written` is a property of returns only type parameters declared
+    /// around it. A context sensitive function adds those of its contextual signature (`assignContextualParameterTypes`).
+    fn has_only_declared_outer_type_params(&self, file: FileId, written: PropId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let literal = bound.prop_owner[written.idx()];
+        if literal.is_none() || !matches!(hir[literal].kind, ExprKind::Object(_)) {
+            return false;
+        }
+        let mut scope = self.scope_of_expr(file, literal);
+        if scope.is_none() {
+            return false;
+        }
+        while scope.is_some() {
+            let enclosing = &bound.scopes[scope.idx()];
+            if let crate::bind::ScopeKind::Fn(func) = enclosing.kind
+                && let crate::bind::FnOwner::Expr(owner) = bound.fns[func.idx()].owner
+                && self.is_context_sensitive(file, owner)
+            {
+                return false;
+            }
+            scope = enclosing.parent;
+        }
+        true
+    }
+
     fn instantiate_uncached(&mut self, ty: TypeId, mapper: MapperId) -> TypeId {
         match self.data(ty) {
             // `instantiateTypeWorker`: what does not change stays as it is, unreduced if it was.
@@ -301,6 +326,13 @@ impl<'p> Checker<'p> {
                     match p.source {
                         PropSource::Type(t) => {
                             p.source = PropSource::Type(self.instantiate(t, mapper))
+                        }
+                        // `getObjectTypeInstantiation` maps the outer type parameters of the literal and nothing else.
+                        // `p.mapper` has a key for each of them.
+                        PropSource::Literal(file, written)
+                            if self.has_only_declared_outer_type_params(file, written) =>
+                        {
+                            p.mapper = self.map_mapper(p.mapper, mapper)
                         }
                         _ => p.mapper = self.compose(p.mapper, mapper),
                     }

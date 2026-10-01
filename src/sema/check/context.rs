@@ -2462,6 +2462,107 @@ impl<'p> Checker<'p> {
         self.param_type_at(&params, index)
     }
 
+    /// `getContextualType` of `e`, (part of) an argument of a call in `resolving`, derived from the parameter type that call has
+    /// there: during inference the declared one, which `checkExpressionWithContextualType` pushes and no mapper is applied to. Also
+    /// returns the index of the call in `resolving`. `None`: there is no such call, or the way up to it is not covered.
+    pub(super) fn pushed_contextual_type(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+    ) -> Option<(TypeId, usize)> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        match bound.expr_parent[e.idx()] {
+            Parent::Expr(parent) => match hir[parent].kind {
+                ExprKind::Call(c) | ExprKind::New(c) => {
+                    let args = hir[c].args;
+                    if hir
+                        .ids(args)
+                        .any(|a| matches!(hir[a].kind, ExprKind::Spread(_)))
+                    {
+                        return None;
+                    }
+                    let index = hir.ids(args).position(|a| a == e)?;
+                    let outer = self
+                        .resolving
+                        .iter()
+                        .rposition(|r| r.file == file && r.call == parent)?;
+                    let params = self.resolving[outer].params.clone();
+                    let param = self.context_of_arg_at(&params, index, Some(args.len()))?;
+                    Some((param, outer))
+                }
+                ExprKind::Cond { test, .. } if test != e => {
+                    self.pushed_contextual_type(file, parent)
+                }
+                ExprKind::Binary {
+                    op: BinOp::Or | BinOp::Nullish,
+                    ..
+                }
+                | ExprKind::NonNull(_) => self.pushed_contextual_type(file, parent),
+                ExprKind::Binary {
+                    op: BinOp::And | BinOp::Comma,
+                    right,
+                    ..
+                } if right == e => self.pushed_contextual_type(file, parent),
+                // `getContextualTypeForElementExpression`
+                ExprKind::Array(items) => {
+                    let (context, outer) = self.pushed_contextual_type(file, parent)?;
+                    let context = self.force(context);
+                    if !self.is_object_type(context) {
+                        return None;
+                    }
+                    let index = hir.ids(items).position(|i| i == e)?;
+                    let is_spread = |i: ExprId| matches!(hir[i].kind, ExprKind::Spread(_));
+                    let first = hir.ids(items).position(is_spread);
+                    let last = first.and_then(|_| hir.ids(items).rposition(is_spread));
+                    let element =
+                        self.contextual_element_at(context, index, Some(items.len()), first, last)?;
+                    Some((element, outer))
+                }
+                _ => None,
+            },
+            // `getContextualTypeForObjectLiteralElement`
+            Parent::Prop(p) => {
+                let literal = bound.prop_owner[p.idx()];
+                if literal.is_none()
+                    || !matches!(hir[literal].kind, ExprKind::Object(_))
+                    || !matches!(hir[p].kind, PropKind::Init | PropKind::Method)
+                {
+                    return None;
+                }
+                let (context, outer) = self.pushed_contextual_type(file, literal)?;
+                let context = self.force(context);
+                if !self.is_object_type(context) {
+                    return None;
+                }
+                let name = self.member_name(file, hir[p].key)?;
+                let member = self.contextual_property(context, name)?;
+                Some((member, outer))
+            }
+            // `getContextualReturnType`
+            parent @ (Parent::FnBody(_) | Parent::Stmt(_)) => {
+                if let Parent::Stmt(s) = parent
+                    && (s.is_none() || !matches!(hir[s].kind, StmtKind::Return(_)))
+                {
+                    return None;
+                }
+                let func = self.enclosing_fn(file, parent)?;
+                let function = self.takes_context(file, func)?;
+                if hir[func].ret.is_some()
+                    || hir[func].flags.intersects(Flags::ASYNC | Flags::GENERATOR)
+                {
+                    return None;
+                }
+                let (context, outer) = self.pushed_contextual_type(file, function)?;
+                let sig = self.contextual_signature_in(file, func, context)?;
+                if self.is_resolving_return_type(sig) || self.is_at_first_look(sig) {
+                    return None;
+                }
+                Some((self.sig_return(sig), outer))
+            }
+            _ => None,
+        }
+    }
+
     /// The type parameter `index` of `func` gets from where the function is used.
     pub fn contextual_param_type(
         &mut self,

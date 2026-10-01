@@ -613,6 +613,7 @@ impl Program {
             discriminants: FxHashMap::default(),
             flow_memo: Default::default(),
             skip_binding_patterns: 0,
+            keeps_boolean_in_arg_contexts: false,
             discriminated: FxHashMap::default(),
             optional_member: false,
             no_infer_parameter: None,
@@ -903,6 +904,8 @@ pub struct Checker<'p> {
     trace_slow_relations: bool,
     /// Asking what is expected regardless of what patterns imply.
     skip_binding_patterns: u32,
+    /// `inferTypeArguments` is reading the contextual type of a call: see `arg_context_keeping_boolean`.
+    keeps_boolean_in_arg_contexts: bool,
     /// `discriminatedContextualTypes`: what `discriminate_by_object_members` makes of an object literal and a union, where
     /// that holds for good.
     discriminated: FxHashMap<(FileId, ExprId, TypeId), TypeId>,

@@ -76,6 +76,11 @@ pub(super) struct Resolving<'p> {
     pub nested_generic_functions: Vec<NestedGenericFunction>,
     /// `inferredTypeParameters`, while the second round of `inferTypeArguments` checks an argument with such a function in it.
     pub inferred_type_params: Vec<TypeId>,
+    /// A type parameter of `sig` is in scope at the call (a function that calls itself, `new C` inside the generic class `C`): a type
+    /// at the call can mention it without meaning the one that is inferred.
+    pub has_type_params_in_scope: bool,
+    /// With `has_type_params_in_scope`: the argument that `inferTypeArguments` is checking and the declared type of its parameter.
+    pub checked_arg: Option<(ExprId, TypeId)>,
 }
 
 /// A generic function inside an array or object literal argument whose contextual type has a single signature of the same kind
@@ -114,6 +119,8 @@ impl<'p> Resolving<'p> {
             settles: Vec::new(),
             nested_generic_functions: Vec::new(),
             inferred_type_params: Vec::new(),
+            has_type_params_in_scope: false,
+            checked_arg: None,
         }
     }
 
@@ -222,6 +229,50 @@ impl<'p> Checker<'p> {
         }
     }
 
+    /// Whether checking `e` checks a context sensitive expression that `isContextSensitive(e)` does not report. `isContextSensitive`
+    /// has no case for `&&` and `,`, but `checkBinaryLikeExpression` checks the right operand in the check mode of the whole
+    /// expression, with its contextual type (`getContextualTypeForBinaryOperand`).
+    pub(super) fn has_context_sensitive_right_operand(&self, file: FileId, e: ExprId) -> bool {
+        match self.hir(file)[e].kind {
+            ExprKind::Binary {
+                op: BinOp::And | BinOp::Comma,
+                right,
+                ..
+            } => {
+                self.is_context_sensitive(file, right)
+                    || self.has_context_sensitive_right_operand(file, right)
+            }
+            ExprKind::Cond {
+                yes: left,
+                no: right,
+                ..
+            }
+            | ExprKind::Binary {
+                op: BinOp::Or | BinOp::Nullish,
+                left,
+                right,
+            } => {
+                self.has_context_sensitive_right_operand(file, left)
+                    || self.has_context_sensitive_right_operand(file, right)
+            }
+            _ => false,
+        }
+    }
+
+    /// The right operand of `&&` and `,`, repeatedly: it has the contextual type of `e`.
+    fn last_right_operand(&self, file: FileId, mut e: ExprId) -> ExprId {
+        let hir = self.hir(file);
+        while let ExprKind::Binary {
+            op: BinOp::And | BinOp::Comma,
+            right,
+            ..
+        } = hir[e].kind
+        {
+            e = right;
+        }
+        e
+    }
+
     /// Whether what is expected of `e` can change its type at all.
     pub(super) fn depends_on_context(&self, file: FileId, e: ExprId) -> bool {
         let hir = self.hir(file);
@@ -285,12 +336,14 @@ impl<'p> Checker<'p> {
         let asking = std::mem::replace(&mut self.asking_for_context, false);
         // A call that is resolved settles what its own arguments are expected to be, whatever is gone over again around it.
         let keeps = std::mem::replace(&mut self.keeps_arg_contexts, false);
+        let keeps_boolean = std::mem::replace(&mut self.keeps_boolean_in_arg_contexts, false);
         let resolved = self.resolve_call_uncached(file, call);
         let failure = self.pending_failure_sig.take();
         if is_under_way {
             self.report_call_resolved_again(file, call, resolved);
         }
         self.keeps_arg_contexts = keeps;
+        self.keeps_boolean_in_arg_contexts = keeps_boolean;
         self.asking_for_context = asking;
         self.resolution_start = resolution_start;
         if self.leave() && !is_under_way {
@@ -1510,7 +1563,8 @@ impl<'p> Checker<'p> {
         )
     }
 
-    /// Whether `e` has a single generic call or construct signature, or is an array or object literal with such an element or member.
+    /// Whether `e` has a single generic call or construct signature, or is an array or object literal with such an element or member,
+    /// or a `?:`, `||` or `??` with such an operand.
     /// `checkExpressionEx` and `checkObjectLiteralMethod` call `instantiateTypeWithSingleGenericCallSignature` for every expression,
     /// not only for arguments. `is_argument`: `e` is an argument, so its contextual type is already assigned.
     fn contains_generic_function(&mut self, file: FileId, e: ExprId, is_argument: bool) -> bool {
@@ -1519,6 +1573,23 @@ impl<'p> Checker<'p> {
             return false;
         }
         let hir = self.hir(file);
+        // `checkConditionalExpression` and `checkBinaryLikeExpression` pass the check mode on to their operands.
+        if let ExprKind::Cond {
+            yes: left,
+            no: right,
+            ..
+        }
+        | ExprKind::Binary {
+            op: BinOp::Or | BinOp::Nullish,
+            left,
+            right,
+        } = hir[e].kind
+            && !self.depends_on_context(file, e)
+            && (self.contains_generic_function(file, left, is_argument)
+                || self.contains_generic_function(file, right, is_argument))
+        {
+            return true;
+        }
         match hir[e].kind {
             ExprKind::Array(items) => hir
                 .ids(items)
@@ -1536,6 +1607,23 @@ impl<'p> Checker<'p> {
                     matches!(kind, ExprKind::Fn(f) if !hir[f].type_params.is_empty());
                 if !is_argument && !declares_type_params && self.depends_on_context(file, e) {
                     return false;
+                }
+                // The operands of an argument have its contextual type (`getContextualType`), which is assigned.
+                if is_argument
+                    && let ExprKind::Cond {
+                        yes: left,
+                        no: right,
+                        ..
+                    }
+                    | ExprKind::Binary {
+                        op: BinOp::Or | BinOp::Nullish,
+                        left,
+                        right,
+                    } = kind
+                    && (self.contains_generic_function(file, left, true)
+                        || self.contains_generic_function(file, right, true))
+                {
+                    return true;
                 }
                 let ty = self.type_of_expr(file, e);
                 // `getSingleSignature`, of either kind.
@@ -1567,10 +1655,16 @@ impl<'p> Checker<'p> {
         by_subtype: bool,
         plain_only: bool,
     ) -> Option<bool> {
+        // `CheckModeSkipContextSensitive` is set by a context sensitive argument, and applies to the functions in all of them.
+        let skips_operand_functions = plain_only
+            && args
+                .iter()
+                .any(|a| matches!(a, Arg::Expr(e) if self.is_context_sensitive(file, *e)));
         for (i, &arg) in args.iter().enumerate() {
             if let Arg::Expr(e) = arg
                 && (matches!(self.hir(file)[e].kind, ExprKind::Missing)
-                    || plain_only && self.is_context_sensitive(file, e))
+                    || plain_only && self.is_context_sensitive(file, e)
+                    || skips_operand_functions && self.has_context_sensitive_right_operand(file, e))
             {
                 continue;
             }
@@ -2546,7 +2640,10 @@ impl<'p> Checker<'p> {
                 break;
             };
             let waits = match arg {
-                Arg::Expr(x) => self.is_context_sensitive(file, x),
+                Arg::Expr(x) => {
+                    self.is_context_sensitive(file, x)
+                        || self.has_context_sensitive_right_operand(file, x)
+                }
                 Arg::Spread(..) => true,
                 Arg::Type(_) => false,
             };
@@ -2847,10 +2944,21 @@ impl<'p> Checker<'p> {
         // What is expected of the result says what a candidate's type parameters are, for a start.
         let mut from_result: SmallVec<[Option<MapperId>; 8]> = SmallVec::new();
         let mut plain: SmallVec<[Option<(bool, MapperId, MapperId)>; 8]> = SmallVec::new();
-        let is_sensitive: SmallVec<[bool; 8]> = args
+        let mut is_sensitive: SmallVec<[bool; 8]> = args
             .iter()
             .map(|a| matches!(a, Arg::Expr(e) if self.is_context_sensitive(file, *e)))
             .collect();
+        // `resolveCall`: one context sensitive argument sets `CheckModeSkipContextSensitive`, under which a function in the right
+        // operand of `&&` or `,` is `anyFunctionType` too.
+        if is_sensitive.contains(&true) {
+            for (i, &arg) in args.iter().enumerate() {
+                if let Arg::Expr(e) = arg
+                    && self.has_context_sensitive_right_operand(file, e)
+                {
+                    is_sensitive[i] = true;
+                }
+            }
+        }
         for (i, &arg) in args.iter().enumerate() {
             let Arg::Expr(e) = arg else { continue };
             if is_sensitive[i] || !self.depends_on_context(file, e) {
@@ -3053,7 +3161,14 @@ impl<'p> Checker<'p> {
             {
                 self.settle_nested_once(file, e, first);
             }
-            self.set_context(file, e, context);
+            // In the only round `inferTypeArguments` checks a function in the right operand of `&&` or `,` with the type parameters
+            // in its contextual signature fixed. The inference for the first generic candidate records that context.
+            if !(is_settled_once
+                && self.has_type_variables(context)
+                && self.has_context_sensitive_right_operand(file, e))
+            {
+                self.set_context(file, e, context);
+            }
         }
         // `isSignatureApplicable`: what it is called on counts, but for `new` and for a call of `super.m`.
         let hir = self.hir(file);
@@ -3175,6 +3290,13 @@ impl<'p> Checker<'p> {
                 args.len()
             };
             let mut applicable = true;
+            // `chooseOverload`: `inferTypeArguments` has skipped the generic functions among the arguments, so `argCheckMode` has
+            // `CheckModeSkipGenericFunctions` and there is a second round.
+            let defers_generic_functions = type_args.is_empty()
+                && rest.is_none()
+                && !is_sensitive.contains(&true)
+                && !self.sig_type_params(candidate).is_empty();
+            let mut is_generic_function_deferred = false;
             for (i, &arg) in args.iter().enumerate() {
                 // `isSignatureApplicable` checks the arguments from left to right, without an inference context.
                 if let Arg::Expr(e) = arg
@@ -3206,6 +3328,20 @@ impl<'p> Checker<'p> {
                     break;
                 };
                 let ty = self.arg_type(file, arg);
+                // `anyFunctionType` is related to every function type (`signaturesRelatedTo`).
+                if defers_generic_functions
+                    && let Some(wants_construct) =
+                        self.wants_plain_signature(param, MapperId::IDENTITY)
+                    && self.single_generic_signature(ty, wants_construct).is_some()
+                    && !(if by_subtype {
+                        self.is_subtype(ty, param)
+                    } else {
+                        self.is_assignable(ty, param)
+                    })
+                {
+                    is_generic_function_deferred = true;
+                    continue;
+                }
                 if by_subtype {
                     // What is not known is a subtype of nothing in particular: the choice is left to the second round.
                     if !self.is_known(ty) || !self.is_known(param) || !self.is_subtype(ty, param) {
@@ -3261,6 +3397,17 @@ impl<'p> Checker<'p> {
                 };
             }
             self.resolving.pop();
+            // The second round of `chooseOverload`: inference and `isSignatureApplicable` under `CheckModeNormal`.
+            if applicable && is_generic_function_deferred {
+                let outer = std::mem::replace(&mut self.keeps_arg_contexts, true);
+                let sig = self
+                    .instantiate_for_call(file, call, candidate, type_args, args, this_arg, false);
+                self.keeps_arg_contexts = outer;
+                let params = self.sig_params(sig);
+                applicable = self
+                    .are_arguments_related(file, args, &params, by_subtype, false)
+                    .unwrap_or(!by_subtype);
+            }
             if applicable {
                 return Some(candidate);
             }
@@ -3601,7 +3748,7 @@ impl<'p> Checker<'p> {
                     hir[prop.value].kind,
                     ExprKind::Template { .. } | ExprKind::TaggedTemplate(_)
                 )
-                && self.nested_generic_function(file, prop.value).is_none()
+                && !self.contains_nested_generic_function(file, prop.value)
             {
                 let given = self.type_of_expr(file, prop.value);
                 if self.is_known(given) && !self.is_uncertain(file, prop.value) {
@@ -3673,7 +3820,7 @@ impl<'p> Checker<'p> {
                     hir[item].kind,
                     ExprKind::Template { .. } | ExprKind::TaggedTemplate(_)
                 )
-                && self.nested_generic_function(file, item).is_none()
+                && !self.contains_nested_generic_function(file, item)
             {
                 let given = self.type_of_expr(file, item);
                 if self.is_known(given) && !self.is_uncertain(file, item) {
@@ -3859,6 +4006,19 @@ impl<'p> Checker<'p> {
         call: ExprId,
         type_params: &[TypeId],
     ) -> Option<(TypeId, bool)> {
+        let outer = std::mem::replace(&mut self.keeps_boolean_in_arg_contexts, true);
+        let expected = self.expected_result_keeping_boolean(file, call, type_params);
+        self.keeps_boolean_in_arg_contexts = outer;
+        expected
+    }
+
+    /// `expected_result`, with `keeps_boolean_in_arg_contexts` set.
+    fn expected_result_keeping_boolean(
+        &mut self,
+        file: FileId,
+        call: ExprId,
+        type_params: &[TypeId],
+    ) -> Option<(TypeId, bool)> {
         self.skip_binding_patterns += 1;
         let without_patterns = self.contextual_type(file, call);
         self.skip_binding_patterns -= 1;
@@ -3872,6 +4032,35 @@ impl<'p> Checker<'p> {
         }
         let expected = self.contextual_type(file, call)?;
         Some((expected, without_patterns != Some(expected)))
+    }
+
+    /// `inferTypeArguments` instantiates the contextual type of a call with `outerMapper`, in which a candidate from an argument of
+    /// the outer call outranks one from its return type. The recorded contextual type `contextual` of `call` can have the
+    /// `returnMapper` of the outer call applied. Returns the contextual type without it, if applying it gives `contextual`.
+    fn contextual_type_before_return_mapper(
+        &mut self,
+        file: FileId,
+        call: ExprId,
+        contextual: TypeId,
+    ) -> Option<TypeId> {
+        if self
+            .resolving
+            .iter()
+            .all(|r| r.return_mapper == MapperId::IDENTITY)
+        {
+            return None;
+        }
+        let (pushed, outer) = self.pushed_contextual_type(file, call)?;
+        let return_mapper = self.return_mapper_for_contexts(self.resolving[outer].return_mapper);
+        let instantiated = self.instantiate_with_expected_result(pushed, return_mapper);
+        if instantiated == pushed {
+            return None;
+        }
+        let instantiated = self.without_no_infer(instantiated);
+        if self.force(instantiated) != contextual {
+            return None;
+        }
+        Some(self.without_no_infer(pushed))
     }
 
     /// `getDefaultFromTypeParameter(param) != nil`
@@ -3900,8 +4089,13 @@ impl<'p> Checker<'p> {
 
     /// `createOuterReturnMapper`, applied to what is expected of a call among the arguments of the calls being resolved: none of
     /// their type parameters is left in it.
-    fn instantiate_with_outer_return_mappers(&mut self, mut ty: TypeId) -> TypeId {
-        for i in (0..self.resolving.len()).rev() {
+    fn instantiate_with_outer_return_mappers(
+        &mut self,
+        file: FileId,
+        call: ExprId,
+        mut ty: TypeId,
+    ) -> TypeId {
+        for i in self.inference_context_levels(file, call) {
             if !self.has_type_variables(ty) {
                 break;
             }
@@ -3912,6 +4106,61 @@ impl<'p> Checker<'p> {
             }
         }
         ty
+    }
+
+    /// `getInferenceContext`: the indices in `resolving` of the contexts whose mappers apply to the contextual type of `call`, innermost
+    /// first. tsgo applies the innermost context only. One further out maps nothing that is left by then, unless a type parameter of
+    /// its signature is in scope at its call: what is left can mention that one in its own right, so such a context is left out.
+    fn inference_context_levels(&self, file: FileId, call: ExprId) -> SmallVec<[usize; 8]> {
+        let mut levels = SmallVec::new();
+        let mut innermost = None;
+        for (i, resolving) in self.resolving.iter().enumerate().rev() {
+            let around = (resolving.file, resolving.call);
+            if innermost.is_none() && around != (file, call) {
+                innermost = Some(around);
+            }
+            if !resolving.has_type_params_in_scope || innermost == Some(around) {
+                levels.push(i);
+            }
+        }
+        levels
+    }
+
+    /// `getContextualType` of `e` while `inferTypeArguments` checks the argument that `e` is, or is an operand of (`?:`, `||`, `??`, `&&`,
+    /// `,`): the declared type of the parameter. `None`: that argument is no `Resolving::checked_arg`.
+    fn declared_type_of_checked_arg(&self, file: FileId, e: ExprId) -> Option<TypeId> {
+        if self.resolving.iter().all(|r| r.checked_arg.is_none()) {
+            return None;
+        }
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let mut at = e;
+        loop {
+            let checked = self
+                .resolving
+                .iter()
+                .rev()
+                .filter(|r| r.file == file)
+                .find_map(|r| r.checked_arg.filter(|checked| checked.0 == at));
+            if let Some((_, declared)) = checked {
+                return Some(declared);
+            }
+            let Parent::Expr(parent) = bound.expr_parent[at.idx()] else {
+                return None;
+            };
+            at = match hir[parent].kind {
+                ExprKind::Cond { test, .. } if test != at => parent,
+                ExprKind::Binary {
+                    op: BinOp::Or | BinOp::Nullish,
+                    ..
+                } => parent,
+                ExprKind::Binary {
+                    op: BinOp::And | BinOp::Comma,
+                    right,
+                    ..
+                } if right == at => parent,
+                _ => return None,
+            };
+        }
     }
 
     /// `ty` with the holes in `so_far` that come to nothing worked out. For a type parameter of a call around that has no candidates
@@ -4152,6 +4401,8 @@ impl<'p> Checker<'p> {
     /// and the inference that holds what came of it and nothing else.
     fn return_mapper(
         &mut self,
+        file: FileId,
+        call: ExprId,
         sig: SigId,
         type_params: &[TypeId],
         contextual: TypeId,
@@ -4160,7 +4411,7 @@ impl<'p> Checker<'p> {
         calls_itself: bool,
         inferred: Option<(TypeId, &Inference)>,
     ) -> MapperId {
-        let expected = self.instantiate_with_outer_return_mappers(contextual);
+        let expected = self.instantiate_with_outer_return_mappers(file, call, contextual);
         let expected = self.instantiate_with_candidate_holes(expected);
         if let Some((source, inference)) = inferred
             && source == expected
@@ -4193,8 +4444,13 @@ impl<'p> Checker<'p> {
         else {
             return MapperId::IDENTITY;
         };
+        let contextual = self
+            .declared_type_of_checked_arg(file, call)
+            .unwrap_or(contextual);
         let calls_itself = self.is_inside_declaration_of(file, call, &type_params);
         let return_mapper = self.return_mapper(
+            file,
+            call,
             sig,
             &type_params,
             contextual,
@@ -4278,6 +4534,27 @@ impl<'p> Checker<'p> {
             return return_mapper;
         }
         self.p.types.mapper(pairs.into_vec())
+    }
+
+    /// `return_mapper_for_contexts` without the removal of `boolean`. `None`: there is no `boolean` to remove.
+    fn return_mapper_keeping_boolean(&mut self, return_mapper: MapperId) -> Option<MapperId> {
+        if return_mapper == MapperId::IDENTITY {
+            return None;
+        }
+        let mapping = self.p.types.mapping(return_mapper);
+        let mut pairs: Vec<(TypeId, TypeId)> = Vec::with_capacity(mapping.len());
+        let mut has_boolean = false;
+        for &(param, ty) in mapping {
+            if !self.is_any(ty) && ty != TypeId::UNKNOWN {
+                has_boolean = has_boolean || self.without_boolean(ty) != ty;
+                pairs.push((param, ty));
+            }
+        }
+        if has_boolean {
+            Some(self.p.types.mapper(pairs))
+        } else {
+            None
+        }
     }
 
     /// What `param` is expected to be going by what is expected of the result. Not `boolean`: `f(true)` is to give a
@@ -4395,14 +4672,23 @@ impl<'p> Checker<'p> {
             && let Some((contextual, is_from_pattern)) =
                 self.expected_result(file, call, &type_params)
         {
+            // The recorded contextual type has `returnMapper` applied. The mappers of the same context would map what it put there.
+            let contextual = self
+                .declared_type_of_checked_arg(file, call)
+                .unwrap_or(contextual);
             // What the inference below was made from, if `return_mapper` would make the same of it.
             let mut inferred_from = None;
             // `const [a, b] = f()` expects a pair of anything. That helps the arguments along, but is no answer.
             if !is_from_pattern {
+                // For `outerMapper` only: `returnMapper` below is made from the recorded type.
+                let contextual = self
+                    .contextual_type_before_return_mapper(file, call, contextual)
+                    .unwrap_or(contextual);
                 // Type parameters of the calls around, which are still being worked out, are what is known of them by now.
                 let mut expected = contextual;
+                let levels = self.inference_context_levels(file, call);
                 // Where nothing is left of one that nothing is known of, that comes first: `UNRESOLVED` would take what is around it along.
-                for i in (0..self.resolving.len()).rev() {
+                for &i in &levels {
                     if !self.has_type_variables(expected) {
                         break;
                     }
@@ -4417,7 +4703,7 @@ impl<'p> Checker<'p> {
                         expected = self.without_holes_that_vanish(expected, so_far, 0);
                     }
                 }
-                for i in (0..self.resolving.len()).rev() {
+                for &i in &levels {
                     if !self.has_type_variables(expected) {
                         break;
                     }
@@ -4462,6 +4748,8 @@ impl<'p> Checker<'p> {
             }
             let any_default = std::mem::replace(&mut inference.any_default, false);
             from_result = self.return_mapper(
+                file,
+                call,
                 sig,
                 &type_params,
                 contextual,
@@ -4498,12 +4786,36 @@ impl<'p> Checker<'p> {
         let return_mapper = self.return_mapper_for_contexts(from_result);
         self.resolving.push(Resolving {
             is_trial: skip_sensitive,
+            has_type_params_in_scope: inference.calls_itself,
             ..Resolving::new(file, call, Some(sig), params.clone(), from_result)
         });
         let mut is_sensitive: SmallVec<[bool; 8]> = args
             .iter()
             .map(|a| !settled && matches!(a, Arg::Expr(e) if self.is_context_sensitive(file, *e)))
             .collect();
+        // The arguments with `has_context_sensitive_right_operand`, and that operand. Under `CheckModeSkipContextSensitive` a function
+        // in the operand is `anyFunctionType`, and the argument is checked in the second round. Without a context sensitive
+        // argument there is one round: the argument is checked in its turn, and the function fixes type parameters then.
+        let mut sensitive_operands: SmallVec<[Option<ExprId>; 8]> = smallvec![None; args.len()];
+        if !settled {
+            let skips_context_sensitive = is_sensitive.contains(&true);
+            for (i, &arg) in args.iter().enumerate().take(arg_count) {
+                let Arg::Expr(e) = arg else { continue };
+                if is_sensitive[i] || !self.has_context_sensitive_right_operand(file, e) {
+                    continue;
+                }
+                let operand = self.last_right_operand(file, e);
+                // `NodeCheckFlagsContextChecked`: a function that an earlier attempt checked is an argument like any other.
+                if !skips_context_sensitive
+                    && let Some(&first) = self.context_checked_for.get(&(file, operand))
+                    && first != inference.sig
+                {
+                    continue;
+                }
+                sensitive_operands[i] = Some(operand);
+                is_sensitive[i] = skips_context_sensitive;
+            }
+        }
         // `instantiateTypeWithSingleGenericCallSignature`: a generic function given where a function that is not generic is
         // expected waits as well: its own type parameters are worked out from what it will be called with. The same for
         // something generic to construct (`true`) where something to construct is expected.
@@ -4526,14 +4838,22 @@ impl<'p> Checker<'p> {
             }
         }
         // `checkExpressionEx` calls `instantiateTypeWithSingleGenericCallSignature` for every expression, so a generic function inside
-        // a literal argument is `anyFunctionType` in the first round as well (`CheckModeSkipGenericFunctions`), and the argument is
-        // checked again in the second round. Arguments that a generic rest parameter collects are not covered.
+        // a literal argument, or an operand of a `?:`, `||` or `??` argument, is `anyFunctionType` in the first round as well
+        // (`CheckModeSkipGenericFunctions`), and the argument is checked again in the second round. Arguments that a generic rest
+        // parameter collects are not covered.
         let mut nested_generic_functions: Vec<NestedGenericFunction> = Vec::new();
         for (i, &arg) in args.iter().enumerate().take(arg_count) {
             if let Arg::Expr(e) = arg
+                && generic_functions[i].is_none()
                 && matches!(
                     self.hir(file)[e].kind,
-                    ExprKind::Array(_) | ExprKind::Object(_)
+                    ExprKind::Array(_)
+                        | ExprKind::Object(_)
+                        | ExprKind::Cond { .. }
+                        | ExprKind::Binary {
+                            op: BinOp::Or | BinOp::Nullish,
+                            ..
+                        }
                 )
                 && let Some(param) = self.param_type_at(&params, i)
             {
@@ -4553,6 +4873,29 @@ impl<'p> Checker<'p> {
         if let Some(resolving) = self.resolving.last_mut() {
             resolving.nested_generic_functions = nested_generic_functions;
         }
+        // `checkConditionalExpression` and `checkBinaryLikeExpression` check each operand with `checkExpressionEx`: a generic function
+        // that is an operand of an argument is skipped in the first round and instantiated in the second one too.
+        let mut has_skipped_operand: SmallVec<[bool; 8]> = smallvec![false; args.len()];
+        for (i, &arg) in args.iter().enumerate().take(arg_count) {
+            if let Arg::Expr(e) = arg
+                && generic_functions[i].is_none()
+                && matches!(
+                    self.hir(file)[e].kind,
+                    ExprKind::Cond { .. }
+                        | ExprKind::Binary {
+                            op: BinOp::Or | BinOp::Nullish,
+                            ..
+                        }
+                )
+                && let Some(param) = self.param_type_at(&params, i)
+                && self.has_type_variables(param)
+                && let Some(wants_construct) = self.wants_plain_signature(param, from_result)
+                && self.has_skipped_generic_function_operand(file, e, wants_construct)
+            {
+                has_skipped_operand[i] = true;
+                is_sensitive[i] = true;
+            }
+        }
         // `resolveCallExpression` under `CheckModeSkipGenericFunctions`: a call, without type arguments, of a generic function
         // that returns a function waits too, so that what stands to its left has had its say. It is a plain argument for all
         // that: nothing is settled for its sake. While candidates are tried it is held against each of them, and does not wait.
@@ -4565,7 +4908,7 @@ impl<'p> Checker<'p> {
                 && !(skip_sensitive && anything_waits)
                 && let Some(param) = self.context_of_arg_at(&params, i, Some(args.len()))
                 && self.has_type_variables(param)
-                && self.is_call_of_generic_function_returning_function(file, e)
+                && self.defers_call_of_generic_function(file, e, param, from_result)
             {
                 anything_waits = true;
                 if !skip_sensitive {
@@ -4653,9 +4996,12 @@ impl<'p> Checker<'p> {
                 }
                 // Of a literal with functions in it, the rest has its say along with the plain arguments, and the functions
                 // theirs before the whole.
-                if is_sensitive[i]
+                // This round checks argument `i` with its context sensitive parts.
+                let is_checked = is_sensitive[i] == (pass == 1);
+                if (is_sensitive[i] || is_checked && sensitive_operands[i].is_some())
                     && generic_functions[i].is_none()
                     && !put_off[i]
+                    && !has_skipped_operand[i]
                     && let Arg::Expr(e) = arg
                     && let Some(param) = self.param_type_at(&params, i)
                     && self.has_type_variables(param)
@@ -4663,11 +5009,11 @@ impl<'p> Checker<'p> {
                 {
                     self.infer_from_literal(
                         file,
-                        e,
+                        sensitive_operands[i].unwrap_or(e),
                         param,
                         &mut inference,
                         return_mapper,
-                        pass == 1,
+                        is_checked,
                     );
                 }
                 if instantiates_generic_functions {
@@ -4706,13 +5052,28 @@ impl<'p> Checker<'p> {
                 if let Arg::Expr(e) = arg
                     && (pass == 1 || depends_on_context)
                 {
-                    let context = if pass == 1 && !put_off[i] && self.is_context_sensitive(file, e)
-                    {
+                    let sensitive =
+                        if pass == 1 && !put_off[i] && self.is_context_sensitive(file, e) {
+                            Some(e)
+                        } else {
+                            sensitive_operands[i]
+                        };
+                    let context = if let Some(sensitive) = sensitive {
                         // What it is to return is, for lack of anything better, what the expected result implies.
-                        let context =
-                            self.context_for_sensitive_arg(&mut inference, param, Some((file, e)));
-                        self.set_async_return_contexts(file, e, context, return_mapper);
-                        self.instantiate_with_expected_result(context, return_mapper)
+                        let context = self.context_for_sensitive_arg(
+                            &mut inference,
+                            param,
+                            Some((file, sensitive)),
+                        );
+                        self.set_async_return_contexts(file, sensitive, context, return_mapper);
+                        let context = self.instantiate_with_expected_result(context, return_mapper);
+                        // `contextual_type_in_expr` prefers the context recorded for a function to that of the expression around it.
+                        if sensitive != e
+                            && matches!(self.hir(file)[sensitive].kind, ExprKind::Fn(_))
+                        {
+                            self.set_context(file, sensitive, context);
+                        }
+                        context
                     } else {
                         // `instantiateContextualType`: the contextual signature of a function goes by all that is inferred so far.
                         let param = if matches!(self.hir(file)[e].kind, ExprKind::Fn(_)) {
@@ -4788,6 +5149,12 @@ impl<'p> Checker<'p> {
                         }
                     };
                     self.set_context(file, e, context);
+                    if inference.calls_itself {
+                        let declared = self.without_no_infer(param);
+                        if let Some(resolving) = self.resolving.last_mut() {
+                            resolving.checked_arg = Some((e, declared));
+                        }
+                    }
                 }
                 if !self.has_type_variables(param) {
                     continue;
@@ -4821,6 +5188,7 @@ impl<'p> Checker<'p> {
                         if pass == 0 {
                             generic_functions[i] = Some((generic, construct));
                             is_sensitive[i] = true;
+                            anything_waits = true;
                         } else {
                             let ret = *ret
                                 .get_or_insert_with(|| self.return_type_in_chain(file, call, sig));
@@ -4837,6 +5205,19 @@ impl<'p> Checker<'p> {
                         continue;
                     }
                     self.note_array_literals(file, e, &mut inference.array_literals);
+                    if has_skipped_operand[i] {
+                        let ret =
+                            *ret.get_or_insert_with(|| self.return_type_in_chain(file, call, sig));
+                        ty = self.instantiate_generic_function_operands(
+                            file,
+                            e,
+                            &mut inference,
+                            param,
+                            ret,
+                            from_result,
+                            &mut inferred_type_params,
+                        );
+                    }
                 }
                 // A literal given where there is room for one is meant as itself, and is not widened later on.
                 if self.some_type(ty, |c, m| c.is_literal(m)) {
@@ -5077,7 +5458,9 @@ impl<'p> Checker<'p> {
                     continue;
                 }
                 // `anyFunctionType` is related to every function type.
-                if self.contains_nested_generic_function(file, prop.value) {
+                if self.contains_nested_generic_function(file, prop.value)
+                    || self.has_context_sensitive_right_operand(file, prop.value)
+                {
                     continue;
                 }
                 let given = self.type_of_literal_prop(file, p);
@@ -5091,6 +5474,84 @@ impl<'p> Checker<'p> {
             }
         }
         true
+    }
+
+    /// Whether the first round of `inferTypeArguments` defers a call in `e`, the argument for `param`, and has nothing else in `e` to
+    /// infer from. `checkConditionalExpression` and `checkBinaryLikeExpression` pass `CheckModeSkipGenericFunctions` on to their operands.
+    fn defers_call_of_generic_function(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        param: TypeId,
+        from_result: MapperId,
+    ) -> bool {
+        let mut has_deferred_call = false;
+        self.has_call_operand(file, e)
+            && self.is_skipped_generic_function(file, e, param, from_result, &mut has_deferred_call)
+            && has_deferred_call
+    }
+
+    /// Whether `e` is a call, or a `?:` or `,` with a call for a result.
+    fn has_call_operand(&self, file: FileId, e: ExprId) -> bool {
+        match self.hir(file)[e].kind {
+            ExprKind::Call(_) => true,
+            ExprKind::Cond { yes, no, .. } => {
+                self.has_call_operand(file, yes) || self.has_call_operand(file, no)
+            }
+            ExprKind::Binary {
+                op: BinOp::Comma,
+                right,
+                ..
+            } => self.has_call_operand(file, right),
+            _ => false,
+        }
+    }
+
+    /// Whether `CheckModeSkipGenericFunctions` leaves nothing of `e` to infer from: a call that `resolveCallExpression` defers
+    /// (`silentNeverType`), a generic function where `param` has a signature without type parameters (`anyFunctionType`), or a `?:` or
+    /// `,` with only such results. `has_deferred_call`: set if there is such a call.
+    fn is_skipped_generic_function(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        param: TypeId,
+        from_result: MapperId,
+        has_deferred_call: &mut bool,
+    ) -> bool {
+        match self.hir(file)[e].kind {
+            ExprKind::Call(_) => {
+                let is_deferred = self.is_call_of_generic_function_returning_function(file, e);
+                *has_deferred_call |= is_deferred;
+                is_deferred
+            }
+            ExprKind::Cond { yes, no, .. } => {
+                self.is_skipped_generic_function(file, yes, param, from_result, has_deferred_call)
+                    && self.is_skipped_generic_function(
+                        file,
+                        no,
+                        param,
+                        from_result,
+                        has_deferred_call,
+                    )
+            }
+            ExprKind::Binary {
+                op: BinOp::Comma,
+                right,
+                ..
+            } => {
+                self.is_skipped_generic_function(file, right, param, from_result, has_deferred_call)
+            }
+            _ => {
+                if self.depends_on_context(file, e) {
+                    return false;
+                }
+                let Some(wants_construct) = self.wants_plain_signature(param, from_result) else {
+                    return false;
+                };
+                let ty = self.type_of_expr(file, e);
+                self.single_generic_signature(ty, wants_construct).is_some()
+            }
+        }
     }
 
     /// `isGenericFunctionReturningFunction`, of some signature of what the call `e` calls, if `e` is a call without type arguments.
@@ -5349,11 +5810,9 @@ impl<'p> Checker<'p> {
         if self.is_type_variable(ty) {
             return None;
         }
-        if !self.is_union(ty) {
-            return Some(ty);
-        }
+        // `getApparentTypeOfIntersectionType`: `F & (X extends T ? unknown : "message")` is `F`.
         Some(self.map_type(ty, |c, m| {
-            if c.is_type_variable(m) {
+            if c.is_type_variable(m) || matches!(c.data(m), TypeData::Intersection(_)) {
                 c.apparent_type(m)
             } else {
                 m
@@ -5414,7 +5873,7 @@ impl<'p> Checker<'p> {
     /// Collects the expressions in `e`, an array or object literal or an element or member of one, that
     /// `instantiateTypeWithSingleGenericCallSignature` applies to: the type has a single generic signature, and the contextual type
     /// has a single signature of the same kind without type parameters. `contextual`: the contextual type of `e`. Pushes them in
-    /// source order. Does not visit operands of `?:`, `||` and `??`, spread elements and members, or computed members.
+    /// source order. Does not visit operands of `&&` and `,`, spread elements and members, or computed members.
     fn collect_nested_generic_functions(
         &mut self,
         file: FileId,
@@ -5521,6 +5980,29 @@ impl<'p> Checker<'p> {
                         contextual,
                         instantiated: None,
                     });
+                } else if let ExprKind::Cond {
+                    yes: left,
+                    no: right,
+                    ..
+                }
+                | ExprKind::Binary {
+                    op: BinOp::Or | BinOp::Nullish,
+                    left,
+                    right,
+                } = kind
+                {
+                    // `checkConditionalExpression` and `checkBinaryLikeExpression` check the operands in the check mode of the whole.
+                    // They have its contextual type (`getContextualTypeForConditionalOperand`, `getContextualTypeForBinaryOperand`).
+                    for operand in [left, right] {
+                        self.collect_nested_generic_functions(
+                            file,
+                            operand,
+                            contextual,
+                            from_result,
+                            arg_index,
+                            out,
+                        );
+                    }
                 }
             }
         }
@@ -5563,6 +6045,19 @@ impl<'p> Checker<'p> {
                 for p in props.iter() {
                     self.instantiate_nested_generic_functions(file, hir[p].value, inference);
                 }
+            }
+            ExprKind::Cond {
+                yes: left,
+                no: right,
+                ..
+            }
+            | ExprKind::Binary {
+                op: BinOp::Or | BinOp::Nullish,
+                left,
+                right,
+            } if self.nested_generic_function(file, e).is_none() => {
+                self.instantiate_nested_generic_functions(file, left, inference);
+                self.instantiate_nested_generic_functions(file, right, inference);
             }
             _ => {
                 let Some(resolving) = self
@@ -5635,14 +6130,277 @@ impl<'p> Checker<'p> {
                     PropKind::Init | PropKind::Shorthand | PropKind::Method
                 ) && self.contains_nested_generic_function(file, hir[p].value)
             }),
+            ExprKind::Cond {
+                yes: left,
+                no: right,
+                ..
+            }
+            | ExprKind::Binary {
+                op: BinOp::Or | BinOp::Nullish,
+                left,
+                right,
+            } => {
+                self.nested_generic_function(file, e).is_some()
+                    || self.contains_nested_generic_function(file, left)
+                    || self.contains_nested_generic_function(file, right)
+            }
             _ => self.nested_generic_function(file, e).is_some(),
         }
+    }
+
+    /// `checkConditionalExpression`, `checkBinaryLikeExpression` under `CheckModeInferential`: the type of `e`, a `?:`, `||` or `??`
+    /// with an operand in `Resolving::nested_generic_functions`, from the types its operands have in the round under way. The type
+    /// that is kept for `e` has the operands as they are written. `None`: `e` is no such expression.
+    #[inline]
+    pub(super) fn type_with_nested_generic_functions(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+    ) -> Option<TypeId> {
+        if e.is_none()
+            || !matches!(
+                self.hir(file)[e].kind,
+                ExprKind::Cond { .. }
+                    | ExprKind::Binary {
+                        op: BinOp::Or | BinOp::Nullish,
+                        ..
+                    }
+            )
+            || self.nested_generic_function(file, e).is_some()
+            || !self.contains_nested_generic_function(file, e)
+        {
+            return None;
+        }
+        let ty = self.type_of_expr_uncached(file, e);
+        Some(self.force(ty))
     }
 
     /// Whether the first round of `inferTypeArguments` leaves out `e` or a part of it (`CheckModeSkipContextSensitive`,
     /// `CheckModeSkipGenericFunctions`).
     fn is_skipped_in_first_round(&self, file: FileId, e: ExprId) -> bool {
-        self.is_context_sensitive(file, e) || self.contains_nested_generic_function(file, e)
+        self.is_context_sensitive(file, e)
+            || self.has_context_sensitive_right_operand(file, e)
+            || self.contains_nested_generic_function(file, e)
+    }
+
+    /// Infers from the generic functions in `e`, a literal argument or a part of one, that the second round of `inferTypeArguments` has
+    /// instantiated, each to its contextual type: what `inferTypes` from the type of the argument makes of them.
+    fn infer_from_nested_generic_functions(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        inference: &mut Inference,
+    ) {
+        if !self.contains_nested_generic_function(file, e) {
+            return;
+        }
+        let entry = self
+            .resolving
+            .last()
+            .filter(|resolving| resolving.file == file && resolving.sig == inference.sig)
+            .and_then(|resolving| {
+                resolving
+                    .nested_generic_functions
+                    .iter()
+                    .find(|nested| nested.expr == e)
+            })
+            .copied();
+        if let Some(nested) = entry {
+            if let Some(instantiated) = nested.instantiated {
+                self.infer(inference, instantiated, nested.contextual, 0);
+            }
+            return;
+        }
+        let hir = self.hir(file);
+        match hir[e].kind {
+            ExprKind::Array(items) => {
+                for item in hir.ids(items) {
+                    self.infer_from_nested_generic_functions(file, item, inference);
+                }
+            }
+            ExprKind::Object(props) => {
+                for p in props.iter() {
+                    self.infer_from_nested_generic_functions(file, hir[p].value, inference);
+                }
+            }
+            ExprKind::Cond {
+                yes: left,
+                no: right,
+                ..
+            }
+            | ExprKind::Binary {
+                op: BinOp::Or | BinOp::Nullish,
+                left,
+                right,
+            } => {
+                self.infer_from_nested_generic_functions(file, left, inference);
+                self.infer_from_nested_generic_functions(file, right, inference);
+            }
+            _ => {}
+        }
+    }
+
+    /// Whether the first round of `inferTypeArguments` skips `e` or, if `e` is a `?:`, `||` or `??` expression, one of its operands
+    /// (`skippedGenericFunction`): a generic function (`instantiateTypeWithSingleGenericCallSignature`), or a call that
+    /// `resolveCallExpression` defers. No call is resolved here, so a call of something with a signature that returns a generic
+    /// function counts as skipped.
+    fn has_skipped_generic_function_operand(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        wants_construct: bool,
+    ) -> bool {
+        let hir = self.hir(file);
+        match hir[e].kind {
+            ExprKind::Cond {
+                yes: left,
+                no: right,
+                ..
+            }
+            | ExprKind::Binary {
+                op: BinOp::Or | BinOp::Nullish,
+                left,
+                right,
+            } => {
+                self.has_skipped_generic_function_operand(file, left, wants_construct)
+                    || self.has_skipped_generic_function_operand(file, right, wants_construct)
+            }
+            ExprKind::Call(c) => {
+                if self.is_call_of_generic_function_returning_function(file, e) {
+                    return true;
+                }
+                let data = &hir[c];
+                if matches!(hir[data.callee].kind, ExprKind::Super) {
+                    return false;
+                }
+                let mut callee = self.type_of_expr(file, data.callee);
+                if data.chain != Chain::No || self.is_in_optional_chain(file, data.callee) {
+                    callee = self.non_nullable(callee);
+                }
+                let callee = self.receiver_that_is_there(callee);
+                if self.is_any(callee) {
+                    return false;
+                }
+                for sig in self.signatures(callee, false) {
+                    let ret = self.sig_return(sig);
+                    if self
+                        .single_generic_signature(ret, wants_construct)
+                        .is_some()
+                    {
+                        return true;
+                    }
+                }
+                false
+            }
+            kind => {
+                let declares_type_params =
+                    matches!(kind, ExprKind::Fn(f) if !hir[f].type_params.is_empty());
+                if self.is_context_sensitive(file, e)
+                    || !declares_type_params && self.depends_on_context(file, e)
+                {
+                    return false;
+                }
+                let ty = self.type_of_expr(file, e);
+                self.single_generic_signature(ty, wants_construct).is_some()
+            }
+        }
+    }
+
+    /// `checkExpressionEx` in the second round of `inferTypeArguments`: the type of `e`, an argument given for `param` or an operand of
+    /// one. `checkConditionalExpression` and `checkBinaryLikeExpression` check their operands the same way, and
+    /// `instantiateTypeWithSingleGenericCallSignature` applies to each operand and to the result. The operands have been checked.
+    /// `ret`: the return type of the signature that is inferred for.
+    fn instantiate_generic_function_operands(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        inference: &mut Inference,
+        param: TypeId,
+        ret: TypeId,
+        from_result: MapperId,
+        inferred_type_params: &mut Vec<TypeId>,
+    ) -> TypeId {
+        let ty = match self.hir(file)[e].kind {
+            ExprKind::Cond { yes, no, .. } => {
+                let yes = self.instantiate_generic_function_operands(
+                    file,
+                    yes,
+                    inference,
+                    param,
+                    ret,
+                    from_result,
+                    inferred_type_params,
+                );
+                let no = self.instantiate_generic_function_operands(
+                    file,
+                    no,
+                    inference,
+                    param,
+                    ret,
+                    from_result,
+                    inferred_type_params,
+                );
+                self.union_reduced(&[yes, no])
+            }
+            ExprKind::Binary {
+                op: op @ (BinOp::Or | BinOp::Nullish),
+                left,
+                right,
+            } => {
+                let left = self.instantiate_generic_function_operands(
+                    file,
+                    left,
+                    inference,
+                    param,
+                    ret,
+                    from_result,
+                    inferred_type_params,
+                );
+                let right = self.instantiate_generic_function_operands(
+                    file,
+                    right,
+                    inference,
+                    param,
+                    ret,
+                    from_result,
+                    inferred_type_params,
+                );
+                let is_or = matches!(op, BinOp::Or);
+                let may_be_right = if is_or {
+                    self.can_be_falsy(left)
+                } else {
+                    self.can_be_nullish(left)
+                };
+                if may_be_right {
+                    let left = if is_or {
+                        self.remove_definitely_falsy(left)
+                    } else {
+                        left
+                    };
+                    let left = self.non_nullable_operand(left);
+                    self.union_reduced(&[left, right])
+                } else {
+                    left
+                }
+            }
+            _ => self.type_of_expr(file, e),
+        };
+        if let Some(wants_construct) = self.wants_plain_signature(param, from_result)
+            && let Some((generic, construct)) = self.single_generic_signature(ty, wants_construct)
+            && let Some(instantiated) = self.generic_function_in_context(
+                inference,
+                generic,
+                construct,
+                param,
+                ret,
+                from_result,
+                inferred_type_params,
+            )
+        {
+            instantiated
+        } else {
+            ty
+        }
     }
 
     /// Infers from `generic`, which is given for `param`, as what `generic_function_in_context` makes of it.
@@ -6383,6 +7141,13 @@ impl<'p> Checker<'p> {
 
     /// What `e` was settled to be expected to be.
     pub(super) fn explicit_context(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
+        // A contextual type recorded inside an argument has `boolean` removed too: see `arg_context_keeping_boolean`.
+        if self.keeps_boolean_in_arg_contexts
+            && let Some(return_mapper) = self.resolving.last().map(|r| r.return_mapper)
+            && self.return_mapper_keeping_boolean(return_mapper).is_some()
+        {
+            return None;
+        }
         if self.provisional > 0
             && let Some(&known) = self.provisional_arg_contexts.get(&(file, e))
         {
@@ -6492,6 +7257,13 @@ impl<'p> Checker<'p> {
                         for spread in &members.shape().props {
                             if let Some(member_param) = self.contextual_property(param, spread.name)
                                 && self.has_type_variables(member_param)
+                                && self.is_spreadable_property(spread)
+                                && !self.is_spread_property_replaced(
+                                    file,
+                                    props,
+                                    Some(p),
+                                    spread.name,
+                                )
                             {
                                 let ty = self.type_of_prop(spread, members.mapper);
                                 self.infer(inference, ty, member_param, 0);
@@ -6516,6 +7288,37 @@ impl<'p> Checker<'p> {
                 continue;
             };
             if !self.has_type_variables(member_param) {
+                continue;
+            }
+            // A function in the right operand of `&&` or `,` is `anyFunctionType` in the first round. In the second it fixes the type
+            // parameters of its contextual signature when `checkObjectLiteral` reaches the member, which is no intra-expression
+            // inference site: `isContextSensitive` has no case for those operators. JSX attributes are not covered.
+            let owner = self.bound(file).prop_owner[p.idx()];
+            if !is_sensitive
+                && prop.value.is_some()
+                && owner.is_some()
+                && matches!(hir[owner].kind, ExprKind::Object(_))
+                && self.has_context_sensitive_right_operand(file, prop.value)
+            {
+                if sensitive {
+                    let operand = self.last_right_operand(file, prop.value);
+                    let context = self.context_for_sensitive_arg(
+                        inference,
+                        member_param,
+                        Some((file, operand)),
+                    );
+                    let context = self.instantiate_with_expected_result(context, return_mapper);
+                    self.set_context(file, prop.value, context);
+                } else {
+                    self.infer_from_literal(
+                        file,
+                        prop.value,
+                        member_param,
+                        inference,
+                        return_mapper,
+                        false,
+                    );
+                }
                 continue;
             }
             // `CheckModeSkipGenericFunctions`: the first round infers nothing from a generic function.
@@ -6572,6 +7375,62 @@ impl<'p> Checker<'p> {
             self.optional_member = false;
         }
         inference.skip_intra_expression_sites = skip_sites_around;
+    }
+
+    /// `getSpreadType`: whether a property `name` that is spread into an object literal is replaced by one of `props`, the members
+    /// of the literal, written after the spread `after` (`None`: by any of them). A property that is optional in a later spread
+    /// replaces nothing.
+    fn is_spread_property_replaced(
+        &mut self,
+        file: FileId,
+        props: Span<PropId>,
+        after: Option<PropId>,
+        name: Atom,
+    ) -> bool {
+        let hir = self.hir(file);
+        for p in props.iter() {
+            if after.is_some_and(|after| p <= after) {
+                continue;
+            }
+            let prop = &hir[p];
+            if prop.kind != PropKind::Spread {
+                if self.member_name(file, prop.key) == Some(name) {
+                    return true;
+                }
+                continue;
+            }
+            if let ExprKind::Object(inner) = hir[prop.value].kind {
+                if self.is_spread_property_replaced(file, inner, None, name) {
+                    return true;
+                }
+                continue;
+            }
+            // Any other expression whose type depends on its contextual type is checked in its turn.
+            if self.depends_on_context(file, prop.value) {
+                continue;
+            }
+            let ty = self.type_of_expr(file, prop.value);
+            let ty = self.force(ty);
+            let parts = self.parts(ty);
+            let mut is_replaced = !parts.is_empty();
+            for &part in parts {
+                is_replaced = is_replaced
+                    && !self.is_primitive(part)
+                    && !self.is_any(part)
+                    && !self.is_generic_object_type(part)
+                    && self.prop_ref(part, name).is_some_and(|(later, _)| {
+                        later
+                            .flags
+                            .intersects(PropFlags::PRIVATE | PropFlags::PROTECTED)
+                            || !later.flags.contains(PropFlags::OPTIONAL)
+                                && self.is_spreadable_property(later)
+                    });
+            }
+            if is_replaced {
+                return true;
+            }
+        }
+        false
     }
 
     /// Whether `p`, a member of the object literal `props`, is a setter that goes with a getter: the two are one property, and the
@@ -7003,7 +7862,7 @@ impl<'p> Checker<'p> {
                     hir[prop.value].kind,
                     ExprKind::Template { .. } | ExprKind::TaggedTemplate(_)
                 )
-                && self.nested_generic_function(file, prop.value).is_none()
+                && !self.contains_nested_generic_function(file, prop.value)
                 && self.has_required_unit_property(target, name)
             {
                 let given = self.type_of_expr(file, prop.value);
@@ -7219,8 +8078,40 @@ impl<'p> Checker<'p> {
                     left
                 };
                 let left = self.non_nullable(left);
-                self.union_reduced(&[left, right])
+                let ty = self.union_reduced(&[left, right]);
+                // `checkExpressionEx` applies `instantiateTypeWithSingleGenericCallSignature` to the result as well. An operand that is
+                // skipped has the same contextual type.
+                if self.contains_nested_generic_function(file, e)
+                    && (self.single_generic_signature(ty, false).is_some()
+                        || self.single_generic_signature(ty, true).is_some())
+                {
+                    return blank;
+                }
+                ty
             }
+            ExprKind::Binary {
+                op: BinOp::And,
+                left,
+                right,
+            } => {
+                let left = self.type_of_expr(file, left);
+                if !self.can_be_truthy(left) {
+                    return left;
+                }
+                let right = self.partial_type(file, right);
+                let of = if self.p.files.options.strict_null_checks || left == TypeId::UNRESOLVED {
+                    left
+                } else {
+                    self.base_of_literal(right)
+                };
+                let falsy = self.definitely_falsy_part(of);
+                self.union(&[falsy, right])
+            }
+            ExprKind::Binary {
+                op: BinOp::Comma,
+                right,
+                ..
+            } => self.partial_type(file, right),
             ExprKind::Fn(f) => {
                 if !self.is_return_only_function(file, f) {
                     return blank;
@@ -7416,7 +8307,8 @@ impl<'p> Checker<'p> {
         e: ExprId,
         mut records_contexts: bool,
     ) {
-        if !self.is_context_sensitive(file, e) {
+        if !self.is_context_sensitive(file, e) && !self.has_context_sensitive_right_operand(file, e)
+        {
             return;
         }
         let hir = self.hir(file);
@@ -7497,6 +8389,11 @@ impl<'p> Checker<'p> {
                 self.fix_for_nested_functions(inference, file, left, records_contexts);
                 self.fix_for_nested_functions(inference, file, right, records_contexts);
             }
+            ExprKind::Binary {
+                op: BinOp::And | BinOp::Comma,
+                right,
+                ..
+            } => self.fix_for_nested_functions(inference, file, right, records_contexts),
             ExprKind::NonNull(x)
             | ExprKind::Satisfies { expr: x, .. }
             | ExprKind::Yield { value: x, .. } => {
@@ -7688,6 +8585,8 @@ impl<'p> Checker<'p> {
                 self.contextual.push((file, e, param));
                 self.fix_for_functions_inside(inference, file, e);
                 self.contextual.pop();
+                // The first round skips them, and the second has only instantiated them so far.
+                self.infer_from_nested_generic_functions(file, e, inference);
             }
             // In the end the literal is held against what the type parameters come to. It is looked at once, so that is anticipated
             // wherever there is something to go by. What was made out from the literal with its functions left out is only
@@ -7698,6 +8597,8 @@ impl<'p> Checker<'p> {
                 if c.fixed.is_none()
                     && (!c.covariant.is_empty() || !c.contravariant.is_empty())
                     && c.priority & PRIORITY_PARTIAL_HOMOMORPHIC == 0
+                    // `InferencePriorityReturnType`: the literal as a whole may have a better candidate, and `returnMapper` fixes nothing.
+                    && c.priority & PRIORITY_RETURN == 0
                     && !self.parts(param).contains(&inference.params[i])
                     && self.mentions(param, inference.params[i], 0)
                     && !self.has_open_constraint(inference, i)
@@ -7773,6 +8674,42 @@ impl<'p> Checker<'p> {
         self.instantiate(param, mapper)
     }
 
+    /// The contextual type of the argument `arg` of `call` for a call nested in `arg`, while the type arguments of `call` are
+    /// inferred. `inferTypeArguments` instantiates `getContextualType` of the nested call with `outerMapper` and
+    /// `createOuterReturnMapper`, which keep `boolean`: only `instantiateContextualType` removes it, from a contextual type that is
+    /// itself instantiable. `None`: the recorded contextual type is the same.
+    fn arg_context_keeping_boolean(
+        &mut self,
+        file: FileId,
+        call: ExprId,
+        arg: ExprId,
+    ) -> Option<TypeId> {
+        if !self.keeps_boolean_in_arg_contexts {
+            return None;
+        }
+        let resolving = self
+            .resolving
+            .iter()
+            .rev()
+            .find(|r| r.file == file && r.call == call)?;
+        let (params, return_mapper) = (resolving.params.clone(), resolving.return_mapper);
+        let return_mapper = self.return_mapper_keeping_boolean(return_mapper)?;
+        let hir = self.hir(file);
+        let (ExprKind::Call(id) | ExprKind::New(id)) = hir[call].kind else {
+            return None;
+        };
+        if hir
+            .ids(hir[id].args)
+            .any(|a| matches!(hir[a].kind, ExprKind::Spread(_)))
+        {
+            return None;
+        }
+        let index = hir.ids(hir[id].args).position(|a| a == arg)?;
+        let param = self.context_of_arg_at(&params, index, Some(hir[id].args.len()))?;
+        let context = self.instantiate(param, return_mapper);
+        Some(self.without_no_infer(context))
+    }
+
     /// What argument `arg` of `call` is expected to be.
     pub(super) fn contextual_type_of_arg(
         &mut self,
@@ -7807,10 +8744,16 @@ impl<'p> Checker<'p> {
             && let Some(&known) = self.provisional_arg_contexts.get(&(file, arg))
         {
             self.note_provisional_read();
-            return Some(known);
+            return Some(
+                self.arg_context_keeping_boolean(file, call, arg)
+                    .unwrap_or(known),
+            );
         }
         if let Some(known) = self.p.arg_contexts.get(&(file, arg)) {
-            return Some(known);
+            return Some(
+                self.arg_context_keeping_boolean(file, call, arg)
+                    .unwrap_or(known),
+            );
         }
         let hir = self.hir(file);
         // The pieces of text come first.

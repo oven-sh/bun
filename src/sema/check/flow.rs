@@ -1031,7 +1031,20 @@ impl<'p> Checker<'p> {
 
     /// Whether `e` is `reference?.a.b`: if it has a value, so has the reference.
     fn optional_chain_contains(&mut self, reference: &Reference, e: ExprId) -> bool {
+        self.optional_chain_contains_reference(reference, e, true)
+    }
+
+    /// `optionalChainContainsReference`. `names_keys`: whether `isMatchingReference` is asked, which names the keys of the links.
+    fn optional_chain_contains_reference(
+        &mut self,
+        reference: &Reference,
+        e: ExprId,
+        names_keys: bool,
+    ) -> bool {
         let hir = self.hir(reference.file);
+        // `matches` names the keys itself for a reference with a path. Nearly all callers in flow.go test `strictNullChecks` first.
+        let names_keys =
+            names_keys && reference.path.is_empty() && self.p.files.options.strict_null_checks;
         let mut at = e;
         loop {
             let (obj, chain) = match hir[at].kind {
@@ -1044,6 +1057,19 @@ impl<'p> Checker<'p> {
             };
             if chain == Chain::No {
                 return false;
+            }
+            // `isMatchingReference` has the link for its source and the reference for its target here: `getAccessedPropertyName`
+            // names the key of an element access before the target is looked at. `x!` is a link only inside a chain.
+            if names_keys && !matches!(hir[at].kind, ExprKind::NonNull(_)) {
+                let mut link = obj;
+                while let ExprKind::NonNull(x) | ExprKind::Satisfies { expr: x, .. } =
+                    hir[link].kind
+                {
+                    link = x;
+                }
+                if let ExprKind::Index { index, .. } = hir[link].kind {
+                    self.literal_key(reference.file, index);
+                }
             }
             if self.matches(reference, obj) {
                 return true;
@@ -2087,10 +2113,11 @@ impl<'p> Checker<'p> {
                 self.narrow_by_truthiness(reference, ty, e, sense)
             }
             ExprKind::Call(_) => {
-                // `x?.f()` came to something: `x` was there. (Not seen through `const ok = x?.f()`.)
+                // `x?.f()` came to something: `x` was there. (Not seen through `const ok = x?.f()`.) `narrowTypeByCallExpression` has no
+                // such test, so no key is named for it.
                 let ty = if sense
                     && self.inline_level == 0
-                    && self.optional_chain_contains(reference, e)
+                    && self.optional_chain_contains_reference(reference, e, false)
                 {
                     self.non_nullable(ty)
                 } else {

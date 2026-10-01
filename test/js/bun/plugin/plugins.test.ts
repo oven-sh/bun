@@ -1,7 +1,7 @@
 /// <reference types="./plugins" />
 import { plugin } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe } from "harness";
 import { resolve } from "path";
 
 declare global {
@@ -198,6 +198,7 @@ plugin({
 });
 
 // This is to test that it works when imported from a separate file
+import { tempDir } from "harness";
 import { render as svelteRender } from "svelte/server";
 import "../../third_party/svelte";
 import "./module-plugins";
@@ -1063,6 +1064,97 @@ it("object loader: an error thrown by a getter on the exports object rejects the
   });
   expect(() => require("object-loader-throwing-esmodule")).toThrow(boom);
 });
+
+it.concurrent("build.module() of a module whose import() is still loading its dependencies", async () => {
+  using dir = tempDir("plugin-module-import-in-flight", {
+    "a.ts": `import "./dependency"; export const from = "file";`,
+    "dependency.ts": `export {};`,
+    "entry.ts": `
+      import { join } from "node:path";
+      const dependencyRequested = Promise.withResolvers<void>();
+      const dependencyMayLoad = Promise.withResolvers<void>();
+      Bun.plugin({
+        name: "hold the dependency's load open",
+        setup(build) {
+          build.onLoad({ filter: /dependency\\.ts$/ }, async () => {
+            dependencyRequested.resolve();
+            await dependencyMayLoad.promise;
+            return { contents: "export {}", loader: "ts" };
+          });
+        },
+      });
+
+      const a = join(import.meta.dir, "a.ts");
+      const inFlight = import(a);
+      await dependencyRequested.promise;
+      Bun.plugin({
+        name: "replace a.ts",
+        setup(build) {
+          build.module(a, () => ({ exports: { from: "build.module()" }, loader: "object" }));
+        },
+      });
+      dependencyMayLoad.resolve();
+
+      console.log("in flight:", (await inFlight).from);
+      console.log("next:", (await import(a)).from);
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "in flight: file\nnext: build.module()\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// The loader resolves a path that import() has resolved twice more, so onResolve is fed its own results: a → b → c → d.
+// That leaves d.mjs registered under a key other than the one it was asked for by, which is what this is about.
+it.concurrent(
+  "import() after delete require.cache of a module that onResolve redirected a resolved path to",
+  async () => {
+    using dir = tempDir("plugin-onresolve-chain-removed", {
+      "a.mjs": `export const from = "a.mjs";`,
+      "b.mjs": `export const from = "b.mjs";`,
+      "c.mjs": `export const from = "c.mjs";`,
+      "d.mjs": `export const from = "d.mjs, evaluation " + (globalThis.evaluations = (globalThis.evaluations ?? 0) + 1);`,
+      "entry.ts": `
+      import { basename, join } from "node:path";
+      const next = { "a.mjs": "b.mjs", "b.mjs": "c.mjs", "c.mjs": "d.mjs" };
+      Bun.plugin({
+        name: "redirect a path that is already resolved, again and again",
+        setup(build) {
+          build.onResolve({ filter: /[abc]\\.mjs$/ }, ({ path }) => ({ path: join(import.meta.dir, next[basename(path)]) }));
+        },
+      });
+
+      const a = join(import.meta.dir, "a.mjs");
+      console.log("first:", (await import(a)).from);
+      console.log("deleted:", delete require.cache[join(import.meta.dir, "d.mjs")]);
+      console.log("again:", (await import(a)).from);
+    `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "first: d.mjs, evaluation 1\ndeleted: true\nagain: d.mjs, evaluation 2\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
 
 it.concurrent("an onResolve result longer than a path buffer is an error the importer can catch", async () => {
   // The path a plugin returns is not checked against anything, and the loader

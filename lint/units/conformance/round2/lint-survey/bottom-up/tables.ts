@@ -48,6 +48,7 @@ interface Alone {
   exitCode: number | null;
   signal: string | number | null;
   ms: number;
+  stdout?: string;
   stderr: string;
 }
 interface Raw {
@@ -246,11 +247,18 @@ for (const raw of dead) {
   if (raw.died !== undefined && raw.died !== "") {
     died.push(`  died: ${raw.died}; exit code ${raw.exitCode}, signal ${raw.signal}, ${raw.ms} ms, stderr ${raw.stderrBytes} bytes`);
     died.push(`  root files: ${(raw.roots ?? []).join(" ")} in ${raw.currentDirectory}`);
-    if ((raw.stdout ?? "") !== "") died.push(`  stdout: ${JSON.stringify(raw.stdout!.slice(0, 400))}`);
+    died.push("  stderr:");
     for (const line of (raw.stderr ?? "").split("\n").slice(0, 40)) died.push(`      ${line}`);
+    if ((raw.stdout ?? "") !== "") {
+      died.push("  stdout:");
+      for (const line of raw.stdout!.split("\n").slice(0, 45)) died.push(`      ${line}`);
+    }
     for (const alone of raw.alone ?? []) {
       died.push(`  alone ${alone.file}: ${alone.died === "" ? "does not reproduce" : alone.died}; exit code ${alone.exitCode}, signal ${alone.signal}, ${alone.ms} ms`);
-      if (alone.died !== "") for (const line of alone.stderr.split("\n").slice(0, 40)) died.push(`      ${line}`);
+      if (alone.died !== "") {
+        for (const line of alone.stderr.split("\n").slice(0, 40)) died.push(`      ${line}`);
+        for (const line of (alone.stdout ?? "").split("\n").slice(0, 45)) died.push(`      | ${line}`);
+      }
     }
     if (raw.kept !== undefined) died.push(`  files kept at ${raw.kept}`);
   }

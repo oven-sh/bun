@@ -141,7 +141,8 @@ async function start(operands: string[], cwd: string, root: string): Promise<Ran
     exitCode: proc.exitCode,
     signal: proc.signalCode,
     timedOut,
-    stdout: cut(stdout, 6000),
+    // A panic of a debug build writes its frames to stdout: the first of them are kept.
+    stdout: stdout.replaceAll(root, "").slice(0, 8000),
     stderr: cut(stderr.replaceAll(root, ""), 40000),
     stderrBytes: stderr.length,
     died,
@@ -192,6 +193,7 @@ async function one(line: Line, index: number): Promise<Record<string, unknown>> 
           exitCode: single.exitCode,
           signal: single.signal,
           ms: single.ms,
+          stdout: single.stdout.slice(0, 4000),
           stderr: single.stderr.split("\n").slice(0, 60).join("\n"),
         });
       }

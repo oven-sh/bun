@@ -1150,6 +1150,8 @@ unsafe extern "C" {
     pub fn SSL_get_peer_certificate(ssl: *const SSL) -> *mut X509;
     /// Returns a BORROWED reference to the local certificate, or null.
     pub fn SSL_get_certificate(ssl: *const SSL) -> *mut X509;
+    /// Returns a BORROWED reference to the context's leaf certificate, or null.
+    pub fn SSL_CTX_get0_certificate(ctx: *const SSL_CTX) -> *mut X509;
 
     pub fn SSL_set_session(ssl: *mut SSL, session: *mut SSL_SESSION) -> c_int;
     pub fn SSL_SESSION_free(session: *mut SSL_SESSION);

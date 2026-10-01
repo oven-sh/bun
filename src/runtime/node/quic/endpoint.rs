@@ -1495,7 +1495,7 @@ impl QuicEndpoint {
             // Arrival order: both push sites append, and a burst of Initials in
             // one recvmmsg batch must announce in the order the sessions loop
             // below then walks them.
-            let Some(session) = self.pending_new_sessions.with_mut(|v| {
+            let Some(announced) = self.pending_new_sessions.with_mut(|v| {
                 if v.is_empty() {
                     None
                 } else {
@@ -1504,7 +1504,7 @@ impl QuicEndpoint {
             }) else {
                 break;
             };
-            let Some(session) = self.live_session(session) else {
+            let Some(session) = self.live_session(announced) else {
                 continue;
             };
             let handle = session.handle();
@@ -1517,6 +1517,13 @@ impl QuicEndpoint {
                     self.this_value.get().get(),
                     &[handle],
                 );
+            }
+            // Node announces a server session before it reads the packet
+            // that selects the ALPN: the listen callback sees no application,
+            // and every event of the session sees the final one. The callback
+            // can destroy the session.
+            if let Some(session) = self.live_session(announced) {
+                session.install_application(self.server_is_http.get());
             }
         }
         let sessions: Vec<*mut QuicSession> = self.sessions.get().clone();
@@ -1809,6 +1816,13 @@ impl QuicEndpoint {
         }
         // SAFETY: as in `on_data`.
         let global = unsafe { &*global_ptr };
+        // lsquic promotes a server conn once its handshake is complete and
+        // never calls `on_hsk_done` for it, so this callback is where a
+        // server session learns of its handshake.
+        // SAFETY: `conn` is the live conn lsquic just created.
+        let Some(handshaken) = (unsafe { lsquic::Conn::from_raw(conn) }) else {
+            return null_mut();
+        };
         let endpoint_handle = self.this_value.get().get();
         let peer = conn_peer_addr(conn);
         let provisional = self.provisional.with_mut(|v| {
@@ -1820,7 +1834,7 @@ impl QuicEndpoint {
         if let Some(session) = provisional {
             if let Some(live) = self.live_session(session) {
                 live.bind_conn(conn);
-                live.push_event(session::SessionEvent::HandshakeDone { ok: true });
+                live.note_handshake_ok(handshaken);
                 return session;
             }
         }
@@ -1893,7 +1907,7 @@ impl QuicEndpoint {
                 self.pending_new_sessions.with_mut(|v| v.push(session));
                 self.add_stat(IDX_STATS_SERVER_SESSIONS, 1);
                 // SAFETY: session was just created.
-                unsafe { (*session).push_event(session::SessionEvent::HandshakeDone { ok: true }) };
+                unsafe { (*session).note_handshake_ok(handshaken) };
                 session
             }
             Err(e) => {
@@ -2354,6 +2368,10 @@ impl QuicEndpoint {
             null_mut(),
             false,
         )?;
+        // A client knows its ALPN up front, so node's Session constructor
+        // selects the application.
+        // SAFETY: `session` was just created.
+        unsafe { (*session).install_application(self.client_is_http.get()) };
         // `TlsConfig::from_js` defaults servername to "localhost\0" (Node parity).
         let sni = config.servername.as_ref();
         let local = self.local_addr.get();

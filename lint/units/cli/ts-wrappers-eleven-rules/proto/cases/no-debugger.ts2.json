@@ -1,0 +1,20 @@
+[
+	{"code":"namespace N { declare namespace M { debugger } }","ext":"ts"},
+	{"code":"declare namespace A.B.C { debugger }","ext":"ts"},
+	{"code":"declare module \"m\" { namespace N { debugger } }","ext":"ts"},
+	{"code":"class A { m(): void; m() { debugger } }","ext":"ts"},
+	{"code":"abstract class A { abstract m(): void; n() { debugger } }","ext":"ts"},
+	{"code":"declare class A { m(): void }; debugger","ext":"ts"},
+	{"code":"class A { x = (() => { debugger })(); declare y: number }","ext":"ts"},
+	{"code":"function f(): void; function f() { debugger }","ext":"ts"},
+	{"code":"switch (x) { case 1: type T = 1; debugger; case 2: interface I {} debugger }","ext":"ts"},
+	{"code":"if (x) { type T = 1; } else debugger;","ext":"ts"},
+	{"code":"for (const a of b as any) debugger;","ext":"ts"},
+	{"code":"label: { enum E { A } debugger }","ext":"ts"},
+	{"code":"export declare const x: number; debugger;","ext":"ts"},
+	{"code":"const x = <T,>(y: T) => { debugger };","ext":"ts"},
+	{"code":"const o = { m<T>(this: T) { debugger } } satisfies O;","ext":"ts"},
+	{"code":"(function () { debugger } as any)();","ext":"ts"},
+	{"code":"(<any>function () { debugger })();","ext":"ts"},
+	{"code":"const e = <div>{(() => { debugger })()}</div>;","ext":"tsx"}
+]

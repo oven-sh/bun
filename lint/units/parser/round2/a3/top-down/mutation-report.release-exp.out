@@ -1,0 +1,144 @@
+bun test v1.4.3-canary.1 (be1ebe529)
+
+lint-parse-visit.test.ts:
+288 |       // A child that died names the file it was in: the visit pass panics on a scope that the parse pass did not record.
+289 |       expect([normal.crash, lint.crash].filter(Boolean)).toEqual([]);
+290 |       // Each child proves its own mode.
+291 |       const [n, l] = [normal.results.get("-1 0"), lint.results.get("-1 0")];
+292 |       expect({ normal: n?.out !== undefined, lint: l?.errors !== undefined }).toEqual({ normal: true, lint: true });
+293 |       expect({ differing: shown, rejectedOnlyByLint, rejectedOnlyWithoutLint }).toEqual({
+                                                                                      ^
+error: expect(received).toEqual(expected)
+
+  {
+-   "differing": [],
++   "differing": [
++     "src/js/BakeSSRResponse.ts (minified)",
++     "src/js/CommonJS.ts (minified)",
++     "src/js/Ipc.ts (minified)",
++     "src/js/JSBufferPrototype.ts (minified)",
++     "src/js/Peek.ts (minified)",
++     "test/sub/App.tsx (minified)",
++     "test/sub/aliased-nested-scope-truncated-dep.tsx (minified)",
++     "test/sub/index.tsx (minified)",
++     "test/sub/jsx-production.tsx (minified)",
++     {
++       "at": 30,
++       "file": "src/js/BakeSSRResponse.ts (minified)",
++       "lint": "export function wrapComponent(component,responseObject,responseOptions,kind){const bakeGetAsyncLocalStorage=$n",
++       "normal": "export function wrapComponent(r,o,s,t){const c=$newCppFunction("BakeAdditionsToGlobalObject.cpp","jsFunctionBa",
++     },
++     {
++       "at": 111,
++       "file": "src/js/CommonJS.ts (minified)",
++       "lint": "return $requireMap.$get(Bun.main)}$visibility="Private";export function require(_){return $overridableRequire.$apply(this,arguments)}$overriddenName="require";$",
++       "normal": "return $requireMap.$get(Bun.main)}$visibility="Private";export function require(r){return $overridableRequire.$apply(this,arguments)}$overriddenName="require";$",
++     },
++     {
++       "at": 26,
++       "file": "src/js/Ipc.ts (minified)",
++       "lint": "export function serialize(message,handle,options){const net=require("node:net");if(handle instanceof net.S",
++       "normal": "export function serialize(t,e,o){const c=require("node:net");if(e instanceof c.Server){const n=e._handle;i",
++     },
++   ],
+    "rejectedOnlyByLint": [],
+    "rejectedOnlyWithoutLint": [],
+  }
+
+- Expected  - 1
++ Received  + 29
+
+      at <anonymous> (/tmp/a3-td/t5/lint-parse-visit.test.ts:293:81)
+(fail) a lint parse, visited and printed > is the normal transpile of every TypeScript file under test/ and src/js, shard 1 [941.43ms]
+288 |       // A child that died names the file it was in: the visit pass panics on a scope that the parse pass did not record.
+289 |       expect([normal.crash, lint.crash].filter(Boolean)).toEqual([]);
+290 |       // Each child proves its own mode.
+291 |       const [n, l] = [normal.results.get("-1 0"), lint.results.get("-1 0")];
+292 |       expect({ normal: n?.out !== undefined, lint: l?.errors !== undefined }).toEqual({ normal: true, lint: true });
+293 |       expect({ differing: shown, rejectedOnlyByLint, rejectedOnlyWithoutLint }).toEqual({
+                                                                                      ^
+error: expect(received).toEqual(expected)
+
+  {
+-   "differing": [],
++   "differing": [
++     "source 0: "const a = <Foo<string> value=\"x\" />;\nconst b = <Foo<A, B>>text</Foo>;\nconst c = <ns.Foo<A> {...p} />;\n" (minified)",
++     "source 1: "const f = async <T,>(x: T) => x;\nconst g = async <T>(x: T): Promise<T> => x;\n" (minified)",
++     "source 2: "const h = async <T extends object = {}>(x: T, ...r: T[]) => { await x; };\n" (minified)",
++     "source 3: "const f = async <T,>(x: T) => x;\nconst g = async <T extends object>(x: T): Promise<T> => x;\n" (minified)",
++     "source 6: "@x<y>() class A {}\n@x.y<z>() class B { @m<T>() n() {} }\n" (minified)",
++     "source 7: "import a = require(\"a\");\nimport b = a.b;\nexport import c = a.c;\nimport type d = require(\"d\");\nconsole.log(b);\n" (minified)",
++     "source 9: "export default function g(): void;\nexport default function g(a?: number): void {}\n" (minified)",
++     "source 10: "export default async function f(): Promise<void>;\nexport default async function f(a?: number): Promise<void> {}\n" (minified)",
++     "source 14: "import type X from \"x\";\nimport type { Y } from \"y\";\nimport type * as Z from \"z\";\nimport { type P, q } from \"p\";\nq();\n" (minified)",
++     "source 15: "class C implements A.B<T>, D {}\nclass E extends F<G> implements H {}\nclass I extends (J as any)<K> {}\n" (minified)",
++     "source 18: "let a: (x = 1) => void;\nlet b: { [Symbol.iterator](): void; [k: string]: any; get g(): number; set g(v) };\n" (minified)",
++     "source 19: "let c: typeof import(\"x\");\nlet d: import(\"y\").T<string>;\nlet e: typeof a<number>;\n" (minified)",
++     "source 20: "const v = <T>(x);\nconst w = <const>[\"a\"];\nconst z = <T,>(x: T) => x;\nconst y = <T>(x: T): T => x;\n" (minified)",
++     "source 21: "const u = <any>function () {};\nconst t = <A<B>>c;\n" (minified)",
++     "source 22: "const r = a ? (b): c => d : e;\nconst s = a ? (b) : c => d;\nconst q = a ? (b, c) : (d): e => f;\n" (minified)",
++     "source 23: "a!.b!()!;\n(a as any)!.b;\nx satisfies T as U;\n(<T>y)!;\nconst k = [1, 2] as const;\n(a as b) = c;\n(<b>a) = c;\na! = b;\n" (minified)",
++     "source 24: "const m = Map<string, number>;\nf<T>;\nnew X<T>;\nnew X<T>(1);\ng<T>`x`;\nh<A, B>?.(1);\n" (minified)",
++     "source 25: "const f1 = ({ a, b }: P = {}) => a;\nconst f2 = async (x: T): Promise<T> => x;\nconst f5 = (a): a is string => true;\n" (minified)",
++     "source 26: "const f3 = (a?: number, ...rest: string[]) => {};\nconst f4 = ([a, b]: [number, string], { c }: { c?: number } = {}) => a;\n" (minified)",
++     "source 27: "const id = <T,>(x: T) => x;\nconst id2 = <T extends object>(x: T) => x;\nconst el = <div>{(x as any) satisfies unknown}</div>;\n" (minified)",
++     "source 28: "abstract class A<in out T> extends B<T> implements I<T>, J {\n  constructor(private readonly x: T, public y?: string) { super(); }\n  static #p: number = 1;\n  declare w: string;\n  abstract n(): void;\n  [key: string]: any;\n  m?(): void;\n  o!: number;\n  get g(): T { return this.x; }\n  set g(v: T) {}\n  m2(a: number): void;\n  m2(a: any) {}\n  static { this.#p = 2; }\n  accessor q = 1;\n}\n" (minified)",
++     "source 31: "function isS(x: unknown): x is string { return true; }\nfunction assert(x: unknown): asserts x is string {}\n" (minified)",
++     "source 32: "function a2(this: Foo, x: unknown): asserts this is Bar {}\nfunction over(a: number): void;\nfunction over(a: any) {}\n" (minified)",
++     "source 33: "for (const x of y as T[]) {}\ntry {} catch (e: unknown) {}\nlet d1!: number, d2: string | undefined = undefined;\n" (minified)",
++     "source 34: "const enum E { A = 1, B = A << 1 }\ndeclare enum F { X }\nenum G { a = \"x\".length, b }\nconsole.log(E.B, G.b);\n" (minified)",
++     "source 35: "namespace N1.N2 { export const a = 1; export declare const b: number; export function c() { return b; } }\n" (minified)",
++     "source 37: "type as = 1;\ninterface as {}\nlet type = 1, declare = 2, namespace = 3, module = 4, abstract = 5;\ntype;\n" (minified)",
++     "source 38: "const o = { m<T>(this: void, a: T): T { return a; }, get g(): number { return 1; }, [k as string]: 1 };\n" (minified)",
++     "source 40: "let x1: A | B extends C ? D : E;\nlet x3: (new () => A)[] | (() => void)[];\nlet x4: A<B<C<D>>>;\nlet x5: A<B<C>>= d;\nlet x7 = a<b>>c;\n" (minified)",
++     "source 41: "class S {\n  constructor(@inject() private a: A, @opt() b?: B) {}\n  @m() run(@p() x: number, y: string | undefined): Promise<void> { return null!; }\n  @f() f1: Map<string, number>;\n  @f() f2: typeof S;\n  @f() f3?: A.B.C;\n  @f() f4: (a = 1) => void;\n  @f() f5: { [Symbol.iterator](): void };\n}\n" (minified)",
++     "source 42: "@c() class T<U> {\n  constructor(a: U, b: T<U>, c: typeof import(\"x\"), d: import(\"y\").Z, e: U extends string ? 1 : 2) {}\n  @m() n(this: T<U>, a: keyof U, b: U[], c: readonly string[], d: `a${string}`): asserts a is never {}\n  @f() declare p: number;\n}\n" (minified)",
++     "src/js/Bake.ts (minified)",
++     "src/js/BundlerPlugin.ts (minified)",
++     "src/js/ConsoleObject.ts (minified)",
++     "src/js/Glob.ts (minified)",
++     "src/js/JSBufferConstructor.ts (minified)",
++     "src/js/NodeModuleObject.ts (minified)",
++     "test/decorator-metadata.test.ts (minified)",
++     "test/sub/aliased-nested-scope-fn-expr.tsx (minified)",
++     "test/sub/jsx-dev.tsx (minified)",
++     {
++       "at": 69,
++       "file": "src/js/Bake.ts (minified)",
++       "lint": 
++ "//! JS code for bake
++ export async function renderRoutesForProdStatic(outBase,allServerFiles,renderStatic,getParams,clientEntryUrl,patterns,files,type"
++ ,
++       "normal": 
++ "//! JS code for bake
++ export async function renderRoutesForProdStatic(y,m,h,J,k,f,R,B,g,w,G){$debug({outBase:y,allServerFiles:m,renderStatic:h,clientE"
++ ,
++     },
++     {
++       "at": 46,
++       "file": "src/js/BundlerPlugin.ts (minified)",
++       "lint": "export function loadAndResolvePluginsForServe(plugins,bunfig_folder,runSetupFn){let config={experimentalCss:!0,experimentalHtm",
++       "normal": "export function loadAndResolvePluginsForServe(y,r,E){let p={experimentalCss:!0,experimentalHtml:!0,target:"browser",root:r};cl",
++     },
++     {
++       "at": 77,
++       "file": "src/js/ConsoleObject.ts (minified)",
++       "lint": "$overriddenName="[Symbol.asyncIterator]";export function asyncIterator(){var stream=Bun.stdin.stream(),decoder=new TextDecoder("utf-8",{fatal:!1}),indexOf=Bu",
++       "normal": "$overriddenName="[Symbol.asyncIterator]";export function asyncIterator(){var A=Bun.stdin.stream(),h=new TextDecoder("utf-8",{fatal:!1}),g=Bun.indexOfLine,i,s",
++     },
++   ],
+    "rejectedOnlyByLint": [],
+    "rejectedOnlyWithoutLint": [],
+  }
+
+- Expected  - 1
++ Received  + 66
+
+      at <anonymous> (/tmp/a3-td/t5/lint-parse-visit.test.ts:293:81)
+(fail) a lint parse, visited and printed > is the normal transpile of every TypeScript file under test/ and src/js, shard 0 [1045.87ms]
+lint parse, visited and printed: 119 results of 20 files and 43 sources equal, 2 rejected by both, 0 changed while read
+
+ 0 pass
+ 2 fail
+ 8 expect() calls
+Ran 2 tests across 1 file. [1106.00ms]

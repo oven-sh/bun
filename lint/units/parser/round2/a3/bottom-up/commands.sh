@@ -32,3 +32,13 @@ OUT=$S/out-debug RELAX=1 python3 $H/run_debug.py exp $S/root/exp
 (cd $S/gd && bun $H/gd/analyze.mjs diff.small.jsonl analysis.small.json && bun $H/gd/aa-check.cjs && bun $H/gd/ra.mjs)
 # 7. the debug sweep, the leak check of CI, and the draft of the test on the debug binary (dry copy: root from A3_ROOT, harness by tsconfig paths)
 /workspace/tools/lk sh $H/dbg/run.sh
+# 8. the proposed lines as they are (patch_final3.py = parse_entry.final3.diff): release assembly identical, debug flags clean,
+#    then a relinked debug binary runs the draft of the test, plain and with the leak check of CI
+python3 $H/patch_final3.py $S/root/final3   # after: cp -r /workspace/wt/parser/src/js_parser $S/root/final3/src/js_parser
+OUT=$S/asm EMIT=asm python3 $P/run.py final3 $S/root/final3 && diff $S/asm/base/asm/*.s $S/asm/final3/asm/*.s
+OUT=$S/out-debug python3 $H/run_debug.py final3 $S/root/final3
+/workspace/tools/lk sh $H/dbg/run-final3.sh
+# 9. the draft on the debug build of the worktree without the switch: it must fail at the sentinel
+/workspace/tools/lk sh $H/dbg/run-no-switch.sh
+# 10. existing test files with every parse of the process as the lint parse pass, against the same binary without it
+/workspace/tools/lk sh $H/suite/run.sh

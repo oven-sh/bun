@@ -281,8 +281,7 @@ impl<'c, 's> Tokens<'c, 's> {
     }
 }
 
-/// What ESLint compares of a node, its tokens, as bytes: read from its first token up to `end`, where it ends.
-/// `cooked`: a word is what it spells, as ESLint's own parser has it; typescript-eslint has the text of the word.
+/// What ESLint compares of a node, its tokens, as bytes: read from its first token up to `end`. `cooked`: a word is what it spells, as ESLint's own parser has it and typescript-eslint has not.
 pub(crate) fn key_until(
     tokens: &mut Tokens<'_, '_>,
     source: &[u8],
@@ -299,8 +298,8 @@ pub(crate) fn key_until(
             return None;
         }
         let raw = source.get(token.start as usize..token.end as usize)?;
-        // `>>` closes two lists of type arguments for typescript-eslint and is one operator elsewhere: each `<`, `>` and `=` of such a token is compared alone.
-        if !token.opaque && raw.len() > 1 && matches!(raw.first(), Some(b'<' | b'>')) {
+        // `>>` closes two lists of type arguments for typescript-eslint and is one operator elsewhere: each `>` and `=` of such a token is compared alone.
+        if !token.opaque && raw.len() > 1 && raw.first() == Some(&b'>') {
             for byte in raw {
                 key.extend_from_slice(&[0, 1, 0, 0, 0, *byte]);
             }

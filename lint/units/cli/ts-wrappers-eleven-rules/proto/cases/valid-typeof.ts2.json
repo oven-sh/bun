@@ -1,0 +1,23 @@
+[
+	{"code":"typeof x === \"strnig\"<T>","ext":"ts"},
+	{"code":"typeof x === undefined<T>","ext":"ts"},
+	{"code":"(typeof x)<T> === \"strnig\"","ext":"ts"},
+	{"code":"typeof x<T> === \"strnig\"","ext":"ts"},
+	{"code":"((typeof x)) === ((\"strnig\"))","ext":"ts"},
+	{"code":"(typeof x satisfies string) === \"strnig\"","ext":"ts"},
+	{"code":"typeof x === (\"strnig\" satisfies string)","ext":"ts"},
+	{"code":"typeof x === <any>(\"strnig\")","ext":"ts"},
+	{"code":"typeof x === (\"strnig\")!","ext":"ts"},
+	{"code":"typeof (x)! === \"strnig\"","ext":"ts"},
+	{"code":"typeof x === (undefined as any)!","ext":"ts"},
+	{"code":"typeof x === ((undefined))","ext":"ts"},
+	{"code":"typeof x === \"strnig\" === y","ext":"ts"},
+	{"code":"(typeof x === \"strnig\") as boolean","ext":"ts"},
+	{"code":"typeof x == null!","ext":"ts"},
+	{"code":"typeof x === (`strnig`)","ext":"ts"},
+	{"code":"typeof x === `strnig`!","ext":"ts"},
+	{"code":"typeof (typeof x as any) === \"strnig\"","ext":"ts"},
+	{"code":"typeof x === (typeof y)!","ext":"ts"},
+	{"code":"const e = <div>{typeof x === ('strnig' as string)}</div>;","ext":"tsx"},
+	{"code":"typeof x === \"strnig\"!","ext":"cts"}
+]

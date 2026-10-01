@@ -1,0 +1,6 @@
+queued 13:11:59
+lock acquired 13:23:10 pressure some avg10=17.46 avg60=21.42 avg300=22.14 total=6019815502
+final3 rc 0 seconds 30 load 750.69
+dry test rc=0 77s
+dry test with the leak check rc=0 145s
+done 13:27:23

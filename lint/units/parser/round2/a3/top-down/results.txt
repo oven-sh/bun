@@ -1,0 +1,92 @@
+A3 sweeps, 2026-10-01, HEAD be1ebe5295 of robobun/abbc0c92/lint-parser.
+Binaries: release = be1ebe5295 + the switch, relinked (sha256 86149313ef7f18c6..., its switch has no cfg gate and it checks the scope locations as a debug build does);
+          debug = be1ebe5295 + the switch, relinked (/tmp/a3-seam/link-debug/exp/bun-debug, debug assertions and ASAN).
+
+== corpus by Bun.Glob (**/*.{ts,tsx,mts,cts} under test and src/js, no node_modules)
+{"all":3214,"inNodeModules":8,"files":3206,"bytes":35322947,"tsOnly":3025,"tsx":153,"dts":9,"mts":15,"cts":13,"underTest":3013,"underSrcJs":193,"scanMs":306,"symlinks":0}
+
+== release, normal vs switch, per group (sweep-counts.mjs)
+plain  all      {"total":3206,"equal":3198,"differ":0,"normalFails":8,"bothFail":8,"normalOnly":0,"lintOnly":0}
+plain  ts+tsx   {"total":3178,"equal":3170,"differ":0,"normalFails":8,"bothFail":8,"normalOnly":0,"lintOnly":0}
+plain  d.ts     {"total":9,"equal":8,"differ":0,"normalFails":1,"bothFail":1,"normalOnly":0,"lintOnly":0}
+plain  tsx      {"total":153,"equal":150,"differ":0,"normalFails":3,"bothFail":3,"normalOnly":0,"lintOnly":0}
+plain  mts+cts  {"total":28,"equal":28,"differ":0,"normalFails":0,"bothFail":0,"normalOnly":0,"lintOnly":0}
+deco   all      {"total":3206,"equal":3197,"differ":0,"normalFails":9,"bothFail":9,"normalOnly":0,"lintOnly":0}
+deco   ts+tsx   {"total":3178,"equal":3169,"differ":0,"normalFails":9,"bothFail":9,"normalOnly":0,"lintOnly":0}
+deco   d.ts     {"total":9,"equal":8,"differ":0,"normalFails":1,"bothFail":1,"normalOnly":0,"lintOnly":0}
+deco   tsx      {"total":153,"equal":150,"differ":0,"normalFails":3,"bothFail":3,"normalOnly":0,"lintOnly":0}
+deco   mts+cts  {"total":28,"equal":28,"differ":0,"normalFails":0,"bothFail":0,"normalOnly":0,"lintOnly":0}
+min    all      {"total":3206,"equal":3198,"differ":0,"normalFails":8,"bothFail":8,"normalOnly":0,"lintOnly":0}
+min    ts+tsx   {"total":3178,"equal":3170,"differ":0,"normalFails":8,"bothFail":8,"normalOnly":0,"lintOnly":0}
+min    d.ts     {"total":9,"equal":8,"differ":0,"normalFails":1,"bothFail":1,"normalOnly":0,"lintOnly":0}
+min    tsx      {"total":153,"equal":150,"differ":0,"normalFails":3,"bothFail":3,"normalOnly":0,"lintOnly":0}
+min    mts+cts  {"total":28,"equal":28,"differ":0,"normalFails":0,"bothFail":0,"normalOnly":0,"lintOnly":0}
+
+== release, all 3,214 tracked files (8 more under node_modules of fixtures)
+plain  all      {"total":3214,"equal":3205,"differ":0,"normalFails":9,"bothFail":9,"normalOnly":0,"lintOnly":0}
+deco   all      {"total":3214,"equal":3204,"differ":0,"normalFails":10,"bothFail":10,"normalOnly":0,"lintOnly":0}
+min    all      {"total":3214,"equal":3205,"differ":0,"normalFails":9,"bothFail":9,"normalOnly":0,"lintOnly":0}
+
+== release, side table kept during the visit pass (value keep of the experimental switch) vs normal
+plain {"total":3214,"equal":3205,"differ":0,"aOnly":0,"bOnly":0,"bothFail":9,"bothFailSameErrors":9}
+deco {"total":3214,"equal":3204,"differ":0,"aOnly":0,"bOnly":0,"bothFail":10,"bothFailSameErrors":9}
+
+== debug, normal vs switch (plain), and release normal vs debug switch (deco on every file, min)
+plain {"total":3206,"equal":3198,"differ":0,"aOnly":0,"bOnly":0,"bothFail":8,"bothFailSameErrors":8}
+deco {"total":3206,"equal":3197,"differ":0,"aOnly":0,"bOnly":0,"bothFail":9,"bothFailSameErrors":8}
+min {"total":3206,"equal":3198,"differ":0,"aOnly":0,"bOnly":0,"bothFail":8,"bothFailSameErrors":8}
+
+== debug, cpu and rss of one child (half of the corpus, plain): normal then switch
+{"done":true,"files":1603,"wallMs":154301,"cpuMs":20949,"rssMB":412}
+{"done":true,"files":1603,"wallMs":161090,"cpuMs":19009,"rssMB":385}
+{"done":true,"files":1603,"wallMs":49129,"cpuMs":18372,"rssMB":427}
+{"done":true,"files":1603,"wallMs":48849,"cpuMs":15943,"rssMB":405}
+== debug, whole corpus in one child: deco on every file, then min
+{"done":true,"files":3206,"wallMs":75410,"cpuMs":34288,"rssMB":468}
+{"done":true,"files":3206,"wallMs":87905,"cpuMs":37120,"rssMB":509}
+
+== debug with the leak check of CI (BUN_DESTRUCT_VM_ON_EXIT=1, detect_leaks=1, test/leaksan.supp), switch on, plain + deco on every file: exit codes and last lines
+exit 0
+exit 0
+{"done":true,"files":1603,"wallMs":241254,"cpuMs":38435,"rssMB":476}
+{"done":true,"files":1603,"wallMs":234321,"cpuMs":35225,"rssMB":458}
+
+== files that the normal parse rejects (plain), first message
+test/bundler/transpiler/macro-test.test.ts [["Macro \"./macro.ts\" not found",16,8],["\"MacroNotFound\" error in macro",25,10]] 144
+test/integration/bun-types/fixture/bundle.ts [["`feature` from \"bun:bundle\" may only be imported once",12,10]] 1
+test/js/bun/test/fake-timers/sinonjs/fake-timers.test.ts [["\"timersModule\" has already been declared",30,5],["\"timersPromisesModule\" has already been declared",30,19]] 2
+test/js/node/test/fixtures/postject-copy/node_modules/commander/typings/index.d.ts [["The constant \"program\" must be initialized",891,14]] 1
+test/js/node/test/fixtures/typescript/ts/test-invalid-syntax.ts [["\"await\" can only be used inside an \"async\" function",2,9],["Unexpected .",2,16]] 2
+test/js/third_party/prisma/prisma/types.d.ts [["The constant \"prismaVersion\" must be initialized",243,16],["The constant \"DbNull\" must be initialized",343,16]] 11
+test/regression/issue/14477/builtin-mismatch.tsx [["Expected closing JSX tag to match opening tag \"<div>\"",1,20]] 1
+test/regression/issue/14477/component-mismatch.tsx [["Expected closing JSX tag to match opening tag \"<Foo>\"",2,20]] 1
+test/regression/issue/14477/non-identifier-mismatch.tsx [["Expected closing JSX tag to match opening tag \"<div-:button>\"",3,28]] 1
+
+== decorator metadata in the corpus (deco on every file): normal, then switch
+{"files":3206,"outputDiffersFromPlain":12,"filesWithDesignMetadata":13,"designCalls":252,"designType":128,"designParamtypes":76,"designReturntype":48}
+{"files":3206,"outputDiffersFromPlain":12,"filesWithDesignMetadata":13,"designCalls":252,"designType":128,"designParamtypes":76,"designReturntype":48}
+
+== tsc 6.0.2 parse diagnostics over the tracked files
+TS17002 test/regression/issue/14477/builtin-mismatch.tsx @19+1 Expected corresponding JSX closing tag for 'div'.
+TS17002 test/regression/issue/14477/component-mismatch.tsx @20+3 Expected corresponding JSX closing tag for 'Foo'.
+TS17002 test/regression/issue/14477/non-identifier-mismatch.tsx @126+1 Expected corresponding JSX closing tag for 'div-:button'.
+{"typescript":"6.0.2","files":3214,"withDiagnostics":3}
+exit 0
+
+== 417 declaration files outside the corpus (typescript/lib, bun-types, @types/react*, undici-types): normal vs switch, then normal vs switch with the top level forced ambient
+plain {"total":417,"equal":410,"differ":0,"aOnly":0,"bOnly":0,"bothFail":7,"bothFailSameErrors":7}
+plain {"total":417,"equal":392,"differ":18,"aOnly":0,"bOnly":3,"bothFail":4,"bothFailSameErrors":1}
+
+== the 10 tracked declaration files: normal vs ambient
+plain {"total":10,"equal":8,"differ":0,"aOnly":0,"bOnly":2,"bothFail":0,"bothFailSameErrors":0}
+--- run1/ambient.jsonl
+src/js/builtins.d.ts ""
+src/js/private.d.ts ""
+test/integration/vite-build/the-test-app/src/app.d.ts "import\"svelte/elements\";\n\nexport {};\n"
+test/js/bun/plugin/plugins.d.ts ""
+test/js/bun/test/expect-extend.types.d.ts ""
+test/js/bun/test/jest.d.ts ""
+test/js/node/test/fixtures/postject-copy/node_modules/commander/typings/index.d.ts "export {};\nexport const program;\n"
+test/js/node/test/fixtures/typescript/ts/test-types.d.ts ""
+test/js/third_party/pnpm/install_fixture/src/vite-env.d.ts ""
+test/js/third_party/prisma/prisma/types.d.ts "import * as runtime from \"./runtime/library\";\n"

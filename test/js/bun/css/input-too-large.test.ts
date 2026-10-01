@@ -16,10 +16,11 @@ import { join } from "node:path";
 // only becomes an import record when bundling). The comment body is all zero
 // bytes or spaces, so it is cheap to produce: untouched pages of a Uint8Array,
 // a hole in a sparse file, or one Buffer.alloc. Handing it to bun still costs
-// the child 2 to 4.5 GiB of memory, hence the memory gate (the same one
-// fs-oom.test.ts uses for its 2 GiB reads) and the timeout: a child takes 3 to
-// 8 s in a debug build. The tests are deliberately not concurrent, so at most
-// one such child exists at a time.
+// the child 2 GiB of memory (8.3 GiB peak for the attribute case, which
+// transcodes), hence the memory gates (10 GiB is the one fs-oom.test.ts uses
+// for its 2 GiB reads) and the timeout: a child takes 3 to 11 s in a debug
+// build. The tests are deliberately not concurrent, so at most one such child
+// exists at a time.
 const MAX_INPUT_LEN = 2 ** 31 - 2;
 const TAIL = "*/.a{composes:b}\n";
 const MESSAGE = "CSS file is too large to parse (2 GiB maximum)";
@@ -130,8 +131,10 @@ describe.skipIf(memory < 10 * 1024 ** 3)("stylesheet of 2 GiB or more", () => {
   // A style attribute goes through `StyleAttribute::parse`, the other entry
   // point with the bound. A JS string holds at most 2**31 - 1 code units, so
   // the tail is Latin-1 text that grows when encoded as UTF-8: that puts the
-  // `composes` past byte 2**31 and its offset out of i32 range.
-  test(
+  // `composes` past byte 2**31 and its offset out of i32 range. The transcode
+  // holds the 2 GiB Buffer, the string and two UTF-8 buffers at once: 8.3 GiB
+  // peak (VmHWM) in a debug build.
+  test.skipIf(memory < 16 * 1024 ** 3)(
     "StyleAttribute::parse reports an error",
     async () => {
       await using proc = Bun.spawn({

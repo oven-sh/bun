@@ -1,0 +1,52 @@
+RESEARCH "code-path-analysis-port" (cli, round 2): scripts and data. Nothing here is in the tree.
+The oracle is ESLint at the pin of src/lint/UPSTREAM_PORTED (/workspace/ref/eslint, espree) and the parser of
+typescript-eslint (/workspace/ref/tseslint); sh ../tools/eslint-oracle-setup.sh restores both.
+
+proto/bunshape.cjs     ESTree (espree) -> the shape of Bun's tree as written (what parse_only / parse_for_lint keep):
+                       nested comma binaries, E::Dot without a property node, patterns as literals in assignments and as
+                       bindings in declarations, S::SExpr in the head of a for, S::Return as the body of an expression
+                       arrow, `;` and "use strict" dropped from lists of parse_stmts_up_to and kept in case bodies, no
+                       ChainExpression (optional_chain start/continuation), class members as G::Property.
+proto/driver.cjs       code-path-analyzer.js with `node.parent` and `node.type` replaced by arguments (role, kind), and the
+                       walk over the tree of bunshape.cjs that names them. CodePathState, ForkContext, CodePathSegment
+                       are upstream's own files. This is the table of calls for code_path_analyzer.rs and linter.rs.
+                       Options: trapHeadStatement, trapArrowReturn, trapRightFirst, trapMissing (what walk.rs would do),
+                       dropVirtual (leave the two forwards of a virtual node out).
+proto/compare.cjs      node compare.cjs [--fixtures] [--dir d]... [--file f]... [--option o] [--drop A,B] [--events-only]
+                       ESLint on its tree against the driver on Bun's shape: every event, the final prev lists of each
+                       started segment, the arrows of each path, the current segments at the nodes the five rules read.
+proto/no-unreachable-model.cjs   node no-unreachable-model.cjs [--tests] [--cases list.json] [--dir d]...
+                       The rule no-unreachable written without node ends (range start, last node, "still inside it",
+                       previous sibling, the two tokens before the node) against ESLint's rule: line:column of each report.
+proto/fuzz.cjs         node fuzz.cjs <count> <seed> <out.json> [<out dir>]   random bodies with jumps and dead code.
+proto/count.cjs        node count.cjs <file.js>   code paths, segments, events, enter/leave calls of one file.
+proto/quirk-remove.cjs counts removeFromArray calls of upstream for a value the array does not hold (splice(-1, 1)).
+oracle/dot-oracle.cjs  the 243 fixtures of upstream against their /*expected blocks with ESLint at the pin (all equal).
+oracle/dot.cjs         node dot.cjs [--type t] <code>...   arrows and the number of segment ids of each path.
+oracle/ts-dot.cjs      the same with the parser of typescript-eslint.
+oracle/events.cjs      node events.cjs <out.txt> <dir>...   the events of each fixture without node places.
+oracle/make-fixtures.cjs  node make-fixtures.cjs cases/own-fixtures.json own-fixtures   fixtures in upstream's form.
+oracle/cross.cjs       node cross.cjs [--rules=a,b] [--json]   cases of test/cli/lint/rules/*.json of the worktree on
+                       which no-unreachable, getter-return, no-fallthrough, constructor-super, no-this-before-super report.
+
+own-fixtures/          26 files in the form of tests/fixtures/code-path-analysis for shapes where Bun's tree is not
+                       ESTree (head of a for as first throwable, shorthand keys, `;` in a case, parenthesized chains,
+                       expression arrows, class fields, JSX ...). /*expected is ESLint's answer. Bun parses all of them.
+answers/code-path-events.txt   events.cjs over upstream's 243 fixtures and the 26 own ones: 5136 events.
+cases/upstream-no-unreachable.json, answers/upstream-no-unreachable.jsonl   ESLint's own 32 + 38 cases and its answers.
+cases/edge-no-unreachable.json, answers/edge-no-unreachable.jsonl           256 JavaScript cases for the merging of ranges.
+answers/edge-no-unreachable.all-recommended.jsonl   which other recommended rules report on those cases.
+cases/ts-no-unreachable.json, answers/ts-no-unreachable.txt                 82 TypeScript cases, typescript-eslint's parser.
+answers/cross-existing-fixtures.jsonl   cross.cjs --json at be1ebe5295: 3 cases for no-unreachable.json (113 lines for all five rules).
+
+Results (2026-10-01, worktree at be1ebe5295):
+  compare.cjs: fixtures 243/243, own 26/26, ESLint lib+tests 742/742, its node_modules 2380/2380, Bun's test/js,
+  test/bundler, test/cli 6486/6486, fuzz 2789/2789 and 11106/11106 the same (3.6M events). trapRightFirst changes 43
+  fixtures, trapArrowReturn 1, trapHeadStatement `try { for (a; b; c) {} } catch (e) {}` and the two for-in/of forms.
+  --drop BlockStatement changes 182 of 3058 files; the other virtual nodes none.
+  no-unreachable-model.cjs: upstream tests 70/70, edge cases 256/256, 9589 real files (6 reports), fuzz 13895/13895
+  (13561 reports) the same as ESLint.
+  Baseline of `bun --lint` on typescript.js (9,144,216 bytes; release bun-profile of be1ebe5295, cachegrind):
+  646,782,622 Ir; bun_lint 153,992,514 Ir, of which compute_ecma_line_starts 110,735,861 and the walk with its
+  eleven rules about 43,300,000. The analysis of that file: 21,718 code paths, 158,202 segments, the largest path 629,
+  3,718 loops, 1,895,394 enter and leave calls (count.cjs).

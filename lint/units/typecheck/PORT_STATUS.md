@@ -81,6 +81,48 @@ declares it in `lib.rs`:
 | `tspath/extension.go` | `tspath/extension.rs` | tested | |
 | `tspath/ignoredpaths.go` | | not started | binder and checker do not call it |
 
+## Diagnostics (`diagnostics`)
+
+`diagnostics/mod.rs`, `diagnostics/diagnostics_generated.rs` and `diagnostics/tests.rs` are the files of the contract
+byte for byte (`checker-data-model-contract/bottom-up/crate/src/diagnostics/`): the constants are UPPER_SNAKE, as the 49
+files of the tree that import `crate::diagnostics` spell them (589 names, all in the table). The three files and
+`scripts/` came in with `2d9e7ee843`, the line `pub mod diagnostics;` of `lib.rs` with `a53def3305`. No `cargo check` and
+no `cargo test` was run with those commits: the survey that follows them is the first cargo compile of the module in
+the real crate, so the state below is `translated` until that run passes. What was checked before: `rustc` alone beside
+the five leaf packages with the rust lints of the workspace denied (the look-ahead of the round-3 survey, a scratch
+root in `/tmp`, on the same bytes); `cargo check`, `cargo clippy --all-targets`, `cargo fmt --check` and `cargo test`
+(the five tests of `diagnostics/tests.rs`) of the contract crate, which holds the same bytes
+(`checker-data-model-contract/bottom-up/data/run.log`); `rustfmt --check --edition 2024` on the three files in the tree.
+
+The table is generated. `bun src/typecheck/scripts/generate-diagnostics.ts` writes it from the two files beside the
+script: `scripts/diagnosticMessages.json` (TypeScript 5848bc5, `src/compiler/`) and
+`scripts/extraDiagnosticMessages.json` (typescript-go 89d5d5b, `internal/diagnostics/`), copies formatted by prettier,
+which the script pins by the sha256 of their parsed content. The extras win by code: 2,130 + 86 - 10 = 2,206 messages.
+The script is the one of `diagnostics-scratch/crate/scripts/` with one change: a constant is upstream's variable name
+in upper case (the 2,206 names stay distinct; the script fails when two collide). Run in the tree, it writes the table
+of the contract byte for byte. Compared with `diagnostics_generated.go` by a script: 2,206 of 2,206 equal in name
+(upper case), code, category, the three flags and text, in upstream's order; the numbers that `tests.rs` asserts (the
+bytes of the keys and their hash, the bytes of the texts, the counts by category, flag and argument count) are the ones
+recomputed from that file. No test of the tree compares the table with what the script writes: the scratch has one
+(`diagnostics-scratch/test/diagnostics-generated.test.ts`, names in mixed case), and until it is under
+`test/cli/lint/typecheck/` the check is the script followed by `git diff --exit-code src/typecheck/diagnostics`.
+
+| upstream file, lines | Rust module under `src/typecheck/` | state | not ported |
+| --- | --- | --- | --- |
+| `diagnostics/diagnostics.go` 20-41 (`Category`, `Name`) | `diagnostics/mod.rs` | translated | |
+| `diagnostics/diagnostics.go` 43-65 (`Key`, `Message` and its six accessors) | `diagnostics/mod.rs` (`MessageId`: the code is the id and `NIL` the nil message; category, flags and the number of arguments are one byte of `INFO`; `key()` is computed from the text) | translated | `String` |
+| `diagnostics/diagnostics.go` 67-85 (`Message.Localize`, `Localize`) | `diagnostics/mod.rs` (`localize`) | translated | the lookup by key, the localized texts: `Locale` is a unit |
+| `diagnostics/diagnostics.go` 87-113 (`getLocalizedMessages`) | | not ported | English only |
+| `diagnostics/diagnostics.go` 115-134 (`Format`) | `diagnostics/mod.rs` (`format`, `to_valid_utf8`) | translated | the panic is `Err(InvalidPlaceholder)` and the placeholder stays in the text |
+| `diagnostics/diagnostics.go` 136-150 (`StringifyArgs`) | | not ported | an argument is a byte string; `write_decimal` prints an integer for the caller that has one |
+| `diagnostics/diagnostics.go` 152-159 (`NewAdHocMessage`) | `diagnostics/mod.rs` (`MessageId::AD_HOC`, code -1; the text is an argument of `localize`) | translated | |
+| `diagnostics/diagnostics_generated.go` 5-4415 (the 2,206 messages) | `diagnostics/diagnostics_generated.rs` (generated) | translated | |
+| `diagnostics/diagnostics_generated.go` 4417-8834 (`keyToMessage`) | | not ported | only a diagnostic read back from build info has a key and no message (`execute/incremental`) |
+| `diagnostics/generate.go` 71-174, 340-361, 402-460 (`main`, `generateDiagnostics`, `readRawMessages`, `convertPropertyName`) | `scripts/generate-diagnostics.ts`; the key half of `convertPropertyName` is also `convert_property_name` of `diagnostics/mod.rs` | run (it writes the table that is in the tree) | |
+| `diagnostics/generate.go` 176-338, 363-400 (`generateLocalizations`, `readLocalizedMessages`), `loc_generated.go`, `loc/` | | not ported | English only |
+| `diagnostics/stringer_generated.go` | | not ported | `Category.String`, for debugging |
+| `diagnostics/diagnostics_test.go` | `diagnostics/tests.rs` (`format_is_one_pass` has the three English cases of `TestLocalize`) | translated | the other locales, `TestLocalize_ByKey` |
+
 ## Faults, the stand-in log and the loop budget (`internal`, no upstream file of its own)
 
 `internal.rs` is the file of the contract byte for byte (`checker-data-model-contract/bottom-up/crate/src/tscore/internal.rs`,

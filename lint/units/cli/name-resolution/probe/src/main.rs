@@ -188,6 +188,180 @@ impl<'ast> Visitor<'ast> for Dump<'_, '_> {
     }
 }
 
+
+/// `--check`: what the plan of the resolver takes for granted, counted over a file.
+#[derive(Default)]
+struct Check {
+    identifiers: Vec<i32>,
+    bindings: Vec<i32>,
+    lists: Vec<i32>,
+    placeholders: Vec<i32>,
+    stmt_locs: Vec<(i32, &'static str)>,
+    unbound_bindings: u32,
+    symbol_identifiers: u32,
+    negative_bindings: u32,
+}
+
+impl Check {
+    fn fn_body(&mut self, func: &G::Fn) {
+        self.lists.push(func.body.loc.start);
+    }
+    fn class(&mut self, class: &G::Class) {
+        for property in class.properties.slice() {
+            if let Some(block) = &property.class_static_block {
+                self.lists.push(block.loc.start);
+            }
+        }
+    }
+}
+
+impl<'ast> Visitor<'ast> for Check {
+    fn enter_stmt(&mut self, stmt: &'ast Stmt) {
+        self.stmt_locs.push((stmt.loc.start, <&'static str>::from(stmt.data.tag())));
+        match &stmt.data {
+            StmtData::SBlock(_) | StmtData::SNamespace(_) => self.lists.push(stmt.loc.start),
+            StmtData::STry(node) => {
+                self.lists.push(stmt.loc.start);
+                if let Some(catch) = &node.catch {
+                    self.lists.push(catch.body_loc.start);
+                }
+                if let Some(finally) = &node.finally {
+                    self.lists.push(finally.loc.start);
+                }
+            }
+            StmtData::SSwitch(node) => self.lists.push(node.body_loc.start),
+            StmtData::STypeScript(_) => self.placeholders.push(stmt.loc.start),
+            _ => {}
+        }
+    }
+    fn visit_e_identifier(&mut self, node: &'ast E::Identifier, loc: Loc) {
+        self.identifiers.push(loc.start);
+        if node.ref_.is_symbol() {
+            self.symbol_identifiers += 1;
+        }
+    }
+    fn visit_b_identifier(&mut self, node: &'ast B::Identifier, loc: Loc) {
+        if loc.start < 0 {
+            self.negative_bindings += 1;
+        } else {
+            self.bindings.push(loc.start);
+        }
+        if !node.r#ref.is_symbol() {
+            self.unbound_bindings += 1;
+        }
+    }
+    fn visit_s_function(&mut self, node: &'ast S::Function, _: Loc) {
+        self.fn_body(&node.func);
+        walk::walk_s_function(self, node);
+    }
+    fn visit_e_function(&mut self, node: &'ast E::Function, _: Loc) {
+        self.fn_body(&node.func);
+        walk::walk_e_function(self, node);
+    }
+    fn visit_e_arrow(&mut self, node: &'ast E::Arrow, _: Loc) {
+        self.lists.push(node.body.loc.start);
+        walk::walk_e_arrow(self, node);
+    }
+    fn visit_s_class(&mut self, node: &'ast S::Class, _: Loc) {
+        self.class(&node.class);
+        walk::walk_s_class(self, node);
+    }
+    fn visit_e_class(&mut self, node: &'ast E::Class, _: Loc) {
+        self.class(node);
+        walk::walk_e_class(self, node);
+    }
+    fn visit_e_binary(&mut self, node: &'ast E::Binary, _: Loc) -> Option<&'ast Expr> {
+        walk::walk_e_binary(self, node)
+    }
+}
+
+fn duplicates(list: &mut Vec<i32>) -> Vec<i32> {
+    list.sort_unstable();
+    let mut out = Vec::new();
+    for pair in list.windows(2) {
+        if pair[0] == pair[1] && out.last() != Some(&pair[0]) {
+            out.push(pair[0]);
+        }
+    }
+    out
+}
+
+fn check(parsed: &ParsedForLint<'_, '_>) -> String {
+    use bun_js_parser::parse::erased::{ErasedData, Place};
+    let mut check = Check::default();
+    for stmt in parsed.stmts {
+        check.visit_stmt(stmt);
+    }
+    // The statements that only the side table holds are walked too: their lists and names count.
+    for erased in &parsed.sidecar.erased.statements {
+        match &erased.data {
+            ErasedData::Declaration(stmt) => {
+                // SAFETY: a reference into the arena of the parse.
+                let stmt: &Stmt = unsafe { &*core::ptr::from_ref(stmt) };
+                check.visit_stmt(stmt);
+            }
+            ErasedData::Module(module) => {
+                if let Some(body) = &module.body {
+                    for stmt in body.slice() {
+                        // SAFETY: as above.
+                        let stmt: &Stmt = unsafe { &*core::ptr::from_ref(stmt) };
+                        check.visit_stmt(stmt);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = String::new();
+    let identifier_dups = duplicates(&mut check.identifiers);
+    let binding_dups = duplicates(&mut check.bindings);
+    check.lists.sort_unstable();
+    let mut scope_places = 0u32;
+    let mut missing_lists = Vec::new();
+    let mut in_tree = std::collections::BTreeMap::<&'static str, u32>::new();
+    let mut erased_parents = 0u32;
+    let mut module_places = 0u32;
+    for erased in &parsed.sidecar.erased.statements {
+        match erased.place {
+            Place::Module { .. } => module_places += 1,
+            Place::Scope { scope, .. } => {
+                scope_places += 1;
+                if check.lists.binary_search(&(scope as i32)).is_err() {
+                    missing_lists.push(scope);
+                }
+            }
+            Place::Erased { .. } => erased_parents += 1,
+            Place::InTree { loc } => {
+                let what = check
+                    .stmt_locs
+                    .iter()
+                    .find(|(at, _)| *at == loc as i32)
+                    .map_or("no-statement", |(_, tag)| *tag);
+                *in_tree.entry(what).or_default() += 1;
+            }
+        }
+    }
+    // Symbols of kind `other` that no node of the walk holds: placeholders of function names, and what dropped imports bound.
+    out.push_str(&format!(
+        "CHECK identifiers={} identifier_dups={:?} bindings={} binding_dups={:?} negative_bindings={} unbound_bindings={} symbol_identifiers={} erased={} module={} scope={} missing_lists={:?} erased_parent={} in_tree={:?} placeholders_in_tree={}\n",
+        check.identifiers.len(),
+        identifier_dups,
+        check.bindings.len(),
+        binding_dups,
+        check.negative_bindings,
+        check.unbound_bindings,
+        check.symbol_identifiers,
+        parsed.sidecar.erased.statements.len(),
+        module_places,
+        scope_places,
+        missing_lists,
+        erased_parents,
+        in_tree,
+        check.placeholders.len(),
+    ));
+    out
+}
+
 /// The two private fields of a `ScopeOrder`, found by what they look like: the address of the scope and the offset.
 fn order_fields<T: Copy>(order: &T) -> Option<(i32, *const Scope)> {
     if core::mem::size_of::<T>() != 16 {
@@ -199,7 +373,7 @@ fn order_fields<T: Copy>(order: &T) -> Option<(i32, *const Scope)> {
     Some((other as u32 as i32, pointer as usize as *const Scope))
 }
 
-fn dump(path: &str, tree: bool) -> Option<String> {
+fn dump(path: &str, tree: bool, check_only: bool) -> Option<String> {
     let text = std::fs::read(path).ok()?;
     let arena = bun_alloc::Arena::new();
     let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
@@ -223,6 +397,9 @@ fn dump(path: &str, tree: bool) -> Option<String> {
     let mut log = bun_ast::Log::init();
     let parser = bun_js_parser::Parser::init(options, &mut log, &source, &define, &arena).ok()?;
     let result = parser.parse_for_lint(|parsed| {
+        if check_only {
+            return check(parsed);
+        }
         let mut out = String::new();
         out.push_str(&format!("stmts={} scopes_in_order={} symbols={} erased={}\n", parsed.stmts.len(), parsed.scopes_in_order.len(), parsed.symbols.len(), parsed.sidecar.erased.statements.len()));
         // The scopes, by the address of each.
@@ -351,18 +528,23 @@ fn dump(path: &str, tree: bool) -> Option<String> {
 
 fn main() {
     let mut tree = true;
+    let mut check_only = false;
     for path in std::env::args().skip(1) {
         if path == "--no-tree" {
             tree = false;
             continue;
         }
+        if path == "--check" {
+            check_only = true;
+            continue;
+        }
         println!("== {path}");
-        if let Ok(text) = std::fs::read_to_string(&path) {
+        if !check_only && let Ok(text) = std::fs::read_to_string(&path) {
             for line in text.lines() {
                 println!("   | {line}");
             }
         }
-        match dump(&path, tree) {
+        match dump(&path, tree, check_only) {
             Some(out) => print!("{out}"),
             None => println!("CANNOT_READ_OR_INIT"),
         }

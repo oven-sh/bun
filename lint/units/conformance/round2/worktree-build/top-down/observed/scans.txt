@@ -1,0 +1,14 @@
+Robustness scans of 2026-10-01 (one process at a time; the corpus is the one sync.sh writes into a scratch clone: round2/scratch.sh).
+debug   = /workspace/wt/conformance/build/debug/bun-debug (1.4.3-debug+3110ce85c, ASAN), ASAN_OPTIONS=allow_user_segv_handler=1:abort_on_error=1
+release = copy of /workspace/wt/parser/build/release/bun (1.4.3-canary.1+be1ebe529; git diff be1ebe5295 3110ce85cf -- src is empty)
+
+rawscan.ts, every raw case file as an operand, 1000 per process (12,445 files, 13 processes):
+  release: every process exit 2, stdout empty, every stderr line a diagnostic; 6,505 "error syntax", 26 "warning syntax"; 29.0 s
+  debug:   the same 6,531 lines; no ASAN report, no signal; 24.8 s + 49.7 s
+  the two outputs differ in 12 lines, all by the suffix " (token: T...)" that a debug build adds in Lexer::expect_contextual_keyword (src/js_parser/lexer.rs:1118)
+jsscan.ts, the 1,275 .js/.jsx/.mjs/.cjs units of the 951 cases that have one (split-units.py style split), 450 per process:
+  debug 2.8 s, release 0.5 s: 266 "error syntax", 3 no-self-assign, 2 no-empty-pattern, 1 no-debugger; no crash; equal after the suffix
+allscan.ts, the 6,635 .ts/.tsx/.mts/.cts/.js/.jsx/.mjs/.cjs units of the 2,869 multi-file cases, 1500 per process:
+  debug 28.0 s: 745 "error syntax", 3 "warning syntax", 3 no-self-assign, 2 no-empty-pattern, 1 no-debugger; no ASAN report, no signal
+sweep.ts --jobs 4 with the release binary (default check), subsets: statements 318, salsa 186, parser 820, es6 1028, the cases with a JS unit 571 + 419 run instances:
+  every "crash" has the reason "the check threw: Error: stderr line N has the code <name>, which is no code of TypeScript"; no signal, no other exit code, no timeout

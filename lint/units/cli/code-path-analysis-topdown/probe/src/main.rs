@@ -14,6 +14,7 @@ use bun_js_parser::parse::wrappers::{ExprId, WrapperData};
 
 struct Walk<'p, 'a> {
     parsed: &'p ParsedForLint<'p, 'a>,
+    text: &'a [u8],
     out: String,
     /// Nodes that are assignment targets and are not walked yet, the next one to be walked last.
     targets: Vec<usize>,
@@ -709,6 +710,34 @@ impl<'ast> Visitor<'ast> for Walk<'_, 'ast> {
         }
     }
 
+    fn visit_s_enum(&mut self, node: &'ast S::Enum, _: Loc) {
+        // A TSEnumDeclaration: its name is an Identifier that `isIdentifierReference` takes for a reference.
+        self.op("makeFirstThrowablePathInTryOrCatchBlock");
+        self.f();
+        for value in node.values.slice() {
+            self.f();
+            let at = usize::try_from(value.loc.start).unwrap_or(usize::MAX);
+            let quoted = matches!(self.text.get(at), Some(b'"' | b'\'' | b'`'));
+            if !quoted {
+                self.f();
+                self.op("makeFirstThrowablePathInTryOrCatchBlock");
+            }
+            if let Some(init) = &value.value {
+                self.visit_expr(init);
+            }
+            self.f();
+        }
+    }
+
+    fn visit_s_namespace(&mut self, node: &'ast S::Namespace, _: Loc) {
+        // A TSModuleDeclaration: its name is an Identifier that `isIdentifierReference` takes for a reference.
+        self.op("makeFirstThrowablePathInTryOrCatchBlock");
+        self.f();
+        for stmt in node.stmts.slice() {
+            self.visit_stmt(stmt);
+        }
+    }
+
     fn visit_s_function(&mut self, node: &'ast S::Function, _: Loc) {
         self.func(&node.func);
     }
@@ -912,6 +941,7 @@ fn trace(path: &str, with_nodes: bool) -> Option<String> {
             .collect();
         let mut walk = Walk {
             parsed,
+            text: &source.contents,
             out: String::new(),
             targets: Vec::new(),
             label: None,

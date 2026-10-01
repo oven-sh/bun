@@ -1,0 +1,198 @@
+0	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
+1	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
+2	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
+3	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:m;}
+4	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:k;}
+5	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:'s';}
+6	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:1;}
+7	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:#p;}
+8	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:g;}
+9	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{static normal:y;}
+10	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:z;}
+11	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:constructor;}
+12	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+13	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
+14	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
+15	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
+16	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:m;}
+17	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:k;}
+18	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:'s';}
+19	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:1;}
+20	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:#p;}
+21	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:g;}
+22	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{static normal:y;}
+23	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:z;}
+24	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:constructor;}
+25	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+26	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
+27	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
+28	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
+29	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:m;}
+30	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:k;}
+31	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:'s';}
+32	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:1;}
+33	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:#p;}
+34	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:g;}
+35	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{static normal:y;}
+36	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:z;}
+37	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:constructor;}
+38	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+39	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
+40	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
+41	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
+42	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:m;}
+43	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:k;}
+44	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:'s';}
+45	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:1;}
+46	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:#p;}
+47	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:g;}
+48	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{static normal:y;}
+49	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:z;}
+50	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:constructor;}
+51	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+52	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
+53	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
+54	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
+55	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:m;}
+56	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:k;}
+57	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:'s';}
+58	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:1;}
+59	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:#p;}
+60	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:g;}
+61	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{static normal:y;}
+62	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:z;}
+63	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:constructor;}
+64	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+65	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{static normal:x;}
+66	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{static normal:x;}
+67	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{static normal:x;}
+68	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{static normal:m;}
+69	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{static normal:k;}
+70	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{static normal:'s';}
+71	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{static normal:1;}
+72	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{static normal:#p;}
+73	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{static normal:g;}
+74	ERR	TS1005 25 26 '';' expected.' || @25+1 Expected ";" but found "y"	TS1003 27 28 'Identifier expected.' || @27+1 Expected identifier but found "="
+75	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{static normal:z;}
+76	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{static normal:constructor;}
+77	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+78	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:declare;normal:x;}
+79	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:declare;normal:x;}
+80	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:declare;normal:x;}
+81	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:declare;normal:m;}
+82	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:declare;normal:k;}
+83	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:declare;normal:'s';}
+84	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:declare;normal:1;}
+85	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:declare;normal:#p;}
+86	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:declare;normal:g;}
+87	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:declare;static normal:y;}
+88	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:declare;normal:z;}
+89	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:declare;normal:constructor;}
+90	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{normal:declare;}
+91	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:abstract;normal:x;}
+92	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:abstract;normal:x;}
+93	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:abstract;normal:x;}
+94	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:abstract;normal:m;}
+95	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:abstract;normal:k;}
+96	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:abstract;normal:'s';}
+97	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:abstract;normal:1;}
+98	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:abstract;normal:#p;}
+99	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:abstract;normal:g;}
+100	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:abstract;static normal:y;}
+101	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:abstract;normal:z;}
+102	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:abstract;normal:constructor;}
+103	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{normal:abstract;}
+104	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:accessor;normal:x;}
+105	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:accessor;normal:x;}
+106	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:accessor;normal:x;}
+107	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:accessor;normal:m;}
+108	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:accessor;normal:k;}
+109	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:accessor;normal:'s';}
+110	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:accessor;normal:1;}
+111	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:accessor;normal:#p;}
+112	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:accessor;normal:g;}
+113	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:accessor;static normal:y;}
+114	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:accessor;normal:z;}
+115	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:accessor;normal:constructor;}
+116	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{normal:accessor;}
+117	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:async;normal:x;}
+118	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:async;normal:x;}
+119	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:async;normal:x;}
+120	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:async;normal:m;}
+121	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:async;normal:k;}
+122	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:async;normal:'s';}
+123	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:async;normal:1;}
+124	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:async;normal:#p;}
+125	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:async;normal:g;}
+126	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:async;static normal:y;}
+127	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:async;normal:z;}
+128	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:async;normal:constructor;}
+129	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{normal:async;}
+130	ERR	TS1005 17 18 ''(' expected.' || @17+1 Expected "(" but found "="	TS1003 19 20 'Identifier expected.' || @19+1 Expected identifier but found "1"	TS1005 21 22 '')' expected.' || @21+1 Expected ")" but found "}"
+131	ERR	TS1005 17 18 ''(' expected.' || @17+1 Expected "(" but found "}"	TS1003 18 18 'Identifier expected.' || @18+0 Expected identifier but found end of file
+132	ERR	TS1005 16 17 ''(' expected.' || @16+1 Expected "(" but found ":"	TS1005 25 26 '')' expected.' || @25+1 Expected ")" but found "}"	TS1005 26 26 ''}' expected.' || @26+0 Expected "}" but found end of file
+133	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{get:m;}
+134	ERR	TS1005 19 20 ''(' expected.' || @19+1 Expected "(" but found "="	TS1003 21 22 'Identifier expected.' || @21+1 Expected identifier but found "1"	TS1005 23 24 '')' expected.' || @23+1 Expected ")" but found "}"
+135	ERR	TS1005 19 20 ''(' expected.' || @19+1 Expected "(" but found "="	TS1003 21 22 'Identifier expected.' || @21+1 Expected identifier but found "1"	TS1005 23 24 '')' expected.' || @23+1 Expected ")" but found "}"
+136	ERR	TS1005 17 18 ''(' expected.' || @17+1 Expected "(" but found "="	TS1003 19 20 'Identifier expected.' || @19+1 Expected identifier but found "1"	TS1005 21 22 '')' expected.' || @21+1 Expected ")" but found "}"
+137	ERR	TS1005 18 19 ''(' expected.' || @18+1 Expected "(" but found "="	TS1003 20 21 'Identifier expected.' || @20+1 Expected identifier but found "1"	TS1005 22 23 '')' expected.' || @22+1 Expected ")" but found "}"
+138	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:get;normal:g;}
+139	ERR	TS1005 22 23 ''(' expected.' || @22+1 Expected "(" but found "y"	TS1003 24 25 'Identifier expected.' || @24+1 Expected identifier but found "="	TS1005 26 27 '')' expected.' || @26+1 Expected ")" but found "1"
+140	ERR	TS1005 24 25 ''(' expected.' || @24+1 Expected "(" but found "z"	TS1003 26 27 'Identifier expected.' || @26+1 Expected identifier but found "="	TS1005 28 29 '')' expected.' || @28+1 Expected ")" but found "1"
+141	ERR	nocode || @15+11 Class constructor cannot be a getter
+142	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+143	ERR	TS1005 17 18 ''(' expected.' || @17+1 Expected "(" but found "="	TS1003 19 20 'Identifier expected.' || @19+1 Expected identifier but found "1"	TS1005 21 22 '')' expected.' || @21+1 Expected ")" but found "}"
+144	ERR	TS1005 17 18 ''(' expected.' || @17+1 Expected "(" but found "}"	TS1003 18 18 'Identifier expected.' || @18+0 Expected identifier but found end of file
+145	ERR	TS1005 16 17 ''(' expected.' || @16+1 Expected "(" but found ":"	TS1005 25 26 '')' expected.' || @25+1 Expected ")" but found "}"	TS1005 26 26 ''}' expected.' || @26+0 Expected "}" but found end of file
+146	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{set:m;}
+147	ERR	TS1005 19 20 ''(' expected.' || @19+1 Expected "(" but found "="	TS1003 21 22 'Identifier expected.' || @21+1 Expected identifier but found "1"	TS1005 23 24 '')' expected.' || @23+1 Expected ")" but found "}"
+148	ERR	TS1005 19 20 ''(' expected.' || @19+1 Expected "(" but found "="	TS1003 21 22 'Identifier expected.' || @21+1 Expected identifier but found "1"	TS1005 23 24 '')' expected.' || @23+1 Expected ")" but found "}"
+149	ERR	TS1005 17 18 ''(' expected.' || @17+1 Expected "(" but found "="	TS1003 19 20 'Identifier expected.' || @19+1 Expected identifier but found "1"	TS1005 21 22 '')' expected.' || @21+1 Expected ")" but found "}"
+150	ERR	TS1005 18 19 ''(' expected.' || @18+1 Expected "(" but found "="	TS1003 20 21 'Identifier expected.' || @20+1 Expected identifier but found "1"	TS1005 22 23 '')' expected.' || @22+1 Expected ")" but found "}"
+151	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:set;normal:g;}
+152	ERR	TS1005 22 23 ''(' expected.' || @22+1 Expected "(" but found "y"	TS1003 24 25 'Identifier expected.' || @24+1 Expected identifier but found "="	TS1005 26 27 '')' expected.' || @26+1 Expected ")" but found "1"
+153	ERR	TS1005 24 25 ''(' expected.' || @24+1 Expected "(" but found "z"	TS1003 26 27 'Identifier expected.' || @26+1 Expected identifier but found "="	TS1005 28 29 '')' expected.' || @28+1 Expected ")" but found "1"
+154	ERR	nocode || @15+11 Class constructor cannot be a setter
+155	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+156	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{static normal:x;}
+157	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{static normal:x;}
+158	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{static normal:x;}
+159	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{static normal:x;}
+160	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
+161	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{static normal:x;}
+162	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{static normal:async;normal:m;}
+163	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{static get:x;}
+164	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{static get:x;}
+165	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{static normal:m;}
+166	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{static normal:g;}
+167	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{class_static_block:-;}
+168	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{static normal:k;}
+169	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
+170	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
+171	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
+172	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:readonly;}
+173	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:public;normal:x;}
+174	OK	stmts=1 ann=0 tp=0 ret=1 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{normal:abstract;}
+175	OK	stmts=1 ann=0 tp=0 ret=1 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{normal:abstract;}
+176	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:declare;normal:x;}
+177	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:accessor;static normal:x;}
+178	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
+179	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
+180	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:m;}
+181	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:async;normal:g;}
+182	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:get;normal:g;}
+183	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{static normal:static;}
+184	ERR	TS1005 25 26 '';' expected.' || @25+1 Expected ";" but found "x"
+185	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{static normal:static;normal:x;}
+186	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:public;}
+187	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:readonly;}
+188	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+189	ERR	TS1005 10 11 ''}' expected.' || @10+1 Expected "}" but found "x"	TS1005 14 15 '')' expected.' || @14+1 Expected ")" but found "{"	TS1128 15 16 'Declaration or statement expected.' || @15+1 Unexpected }
+190	ERR	TS1005 11 12 ''}' expected.' || @11+1 Expected "}" but found "x"	TS1005 15 16 '')' expected.' || @15+1 Expected ")" but found "{"	TS1128 16 17 'Declaration or statement expected.' || @16+1 Unexpected }
+191	ERR	TS1005 19 20 '')' expected.' || @19+1 Expected ")" but found "x"	TS1005 20 21 '';' expected.' || @20+1 Expected ";" but found ")"
+192	ERR	TS1005 20 21 '')' expected.' || @20+1 Expected ")" but found "x"	TS1005 21 22 '';' expected.' || @21+1 Expected ";" but found ")"	TS1003 23 24 'Identifier expected.' || @23+1 Expected identifier but found "{"
+193	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{static normal:x;}
+194	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:async;normal:m;}
+195	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{get:x;}
+196	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:accessor;normal:x;}
+197	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:public;normal:x;}

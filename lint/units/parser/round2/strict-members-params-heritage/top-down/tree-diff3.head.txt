@@ -1,0 +1,232 @@
+"class C { public\n x = 1 }"
+   tsc : class{normal:public;normal:x;}
+   lint: class{normal:x;}
+"class C { public\n x }"
+   tsc : class{normal:public;normal:x;}
+   lint: class{normal:x;}
+"class C { public\n x: number }"
+   tsc : class{normal:public;normal:x;}
+   lint: class{normal:x;}
+"class C { public\n m() {} }"
+   tsc : class{normal:public;normal:m;}
+   lint: class{normal:m;}
+"class C { public\n [k] = 1 }"
+   tsc : class{normal:public;normal:k;}
+   lint: class{normal:k;}
+"class C { public\n 's' = 1 }"
+   tsc : class{normal:public;normal:'s';}
+   lint: class{normal:'s';}
+"class C { public\n 1 = 1 }"
+   tsc : class{normal:public;normal:1;}
+   lint: class{normal:1;}
+"class C { public\n #p = 1 }"
+   tsc : class{normal:public;normal:#p;}
+   lint: class{normal:#p;}
+"class C { public\n *g() {} }"
+   tsc : class{normal:public;normal:g;}
+   lint: class{normal:g;}
+"class C { public\n static y = 1 }"
+   tsc : class{normal:public;static normal:y;}
+   lint: class{static normal:y;}
+"class C { public\n readonly z = 1 }"
+   tsc : class{normal:public;normal:z;}
+   lint: class{normal:z;}
+"class C { public\n constructor() {} }"
+   tsc : class{normal:public;normal:constructor;}
+   lint: class{normal:constructor;}
+"class C { public\n [k: string]: any }"
+   tsc : class{normal:public;}
+   lint: class{}
+"class C { private\n x = 1 }"
+   tsc : class{normal:private;normal:x;}
+   lint: class{normal:x;}
+"class C { private\n x }"
+   tsc : class{normal:private;normal:x;}
+   lint: class{normal:x;}
+"class C { private\n x: number }"
+   tsc : class{normal:private;normal:x;}
+   lint: class{normal:x;}
+"class C { private\n m() {} }"
+   tsc : class{normal:private;normal:m;}
+   lint: class{normal:m;}
+"class C { private\n [k] = 1 }"
+   tsc : class{normal:private;normal:k;}
+   lint: class{normal:k;}
+"class C { private\n 's' = 1 }"
+   tsc : class{normal:private;normal:'s';}
+   lint: class{normal:'s';}
+"class C { private\n 1 = 1 }"
+   tsc : class{normal:private;normal:1;}
+   lint: class{normal:1;}
+"class C { private\n #p = 1 }"
+   tsc : class{normal:private;normal:#p;}
+   lint: class{normal:#p;}
+"class C { private\n *g() {} }"
+   tsc : class{normal:private;normal:g;}
+   lint: class{normal:g;}
+"class C { private\n static y = 1 }"
+   tsc : class{normal:private;static normal:y;}
+   lint: class{static normal:y;}
+"class C { private\n readonly z = 1 }"
+   tsc : class{normal:private;normal:z;}
+   lint: class{normal:z;}
+"class C { private\n constructor() {} }"
+   tsc : class{normal:private;normal:constructor;}
+   lint: class{normal:constructor;}
+"class C { private\n [k: string]: any }"
+   tsc : class{normal:private;}
+   lint: class{}
+"class C { protected\n x = 1 }"
+   tsc : class{normal:protected;normal:x;}
+   lint: class{normal:x;}
+"class C { protected\n x }"
+   tsc : class{normal:protected;normal:x;}
+   lint: class{normal:x;}
+"class C { protected\n x: number }"
+   tsc : class{normal:protected;normal:x;}
+   lint: class{normal:x;}
+"class C { protected\n m() {} }"
+   tsc : class{normal:protected;normal:m;}
+   lint: class{normal:m;}
+"class C { protected\n [k] = 1 }"
+   tsc : class{normal:protected;normal:k;}
+   lint: class{normal:k;}
+"class C { protected\n 's' = 1 }"
+   tsc : class{normal:protected;normal:'s';}
+   lint: class{normal:'s';}
+"class C { protected\n 1 = 1 }"
+   tsc : class{normal:protected;normal:1;}
+   lint: class{normal:1;}
+"class C { protected\n #p = 1 }"
+   tsc : class{normal:protected;normal:#p;}
+   lint: class{normal:#p;}
+"class C { protected\n *g() {} }"
+   tsc : class{normal:protected;normal:g;}
+   lint: class{normal:g;}
+"class C { protected\n static y = 1 }"
+   tsc : class{normal:protected;static normal:y;}
+   lint: class{static normal:y;}
+"class C { protected\n readonly z = 1 }"
+   tsc : class{normal:protected;normal:z;}
+   lint: class{normal:z;}
+"class C { protected\n constructor() {} }"
+   tsc : class{normal:protected;normal:constructor;}
+   lint: class{normal:constructor;}
+"class C { protected\n [k: string]: any }"
+   tsc : class{normal:protected;}
+   lint: class{}
+"class C { readonly\n x = 1 }"
+   tsc : class{normal:readonly;normal:x;}
+   lint: class{normal:x;}
+"class C { readonly\n x }"
+   tsc : class{normal:readonly;normal:x;}
+   lint: class{normal:x;}
+"class C { readonly\n x: number }"
+   tsc : class{normal:readonly;normal:x;}
+   lint: class{normal:x;}
+"class C { readonly\n m() {} }"
+   tsc : class{normal:readonly;normal:m;}
+   lint: class{normal:m;}
+"class C { readonly\n [k] = 1 }"
+   tsc : class{normal:readonly;normal:k;}
+   lint: class{normal:k;}
+"class C { readonly\n 's' = 1 }"
+   tsc : class{normal:readonly;normal:'s';}
+   lint: class{normal:'s';}
+"class C { readonly\n 1 = 1 }"
+   tsc : class{normal:readonly;normal:1;}
+   lint: class{normal:1;}
+"class C { readonly\n #p = 1 }"
+   tsc : class{normal:readonly;normal:#p;}
+   lint: class{normal:#p;}
+"class C { readonly\n *g() {} }"
+   tsc : class{normal:readonly;normal:g;}
+   lint: class{normal:g;}
+"class C { readonly\n static y = 1 }"
+   tsc : class{normal:readonly;static normal:y;}
+   lint: class{static normal:y;}
+"class C { readonly\n readonly z = 1 }"
+   tsc : class{normal:readonly;normal:z;}
+   lint: class{normal:z;}
+"class C { readonly\n constructor() {} }"
+   tsc : class{normal:readonly;normal:constructor;}
+   lint: class{normal:constructor;}
+"class C { readonly\n [k: string]: any }"
+   tsc : class{normal:readonly;}
+   lint: class{}
+"class C { override\n x = 1 }"
+   tsc : class{normal:override;normal:x;}
+   lint: class{normal:x;}
+"class C { override\n x }"
+   tsc : class{normal:override;normal:x;}
+   lint: class{normal:x;}
+"class C { override\n x: number }"
+   tsc : class{normal:override;normal:x;}
+   lint: class{normal:x;}
+"class C { override\n m() {} }"
+   tsc : class{normal:override;normal:m;}
+   lint: class{normal:m;}
+"class C { override\n [k] = 1 }"
+   tsc : class{normal:override;normal:k;}
+   lint: class{normal:k;}
+"class C { override\n 's' = 1 }"
+   tsc : class{normal:override;normal:'s';}
+   lint: class{normal:'s';}
+"class C { override\n 1 = 1 }"
+   tsc : class{normal:override;normal:1;}
+   lint: class{normal:1;}
+"class C { override\n #p = 1 }"
+   tsc : class{normal:override;normal:#p;}
+   lint: class{normal:#p;}
+"class C { override\n *g() {} }"
+   tsc : class{normal:override;normal:g;}
+   lint: class{normal:g;}
+"class C { override\n static y = 1 }"
+   tsc : class{normal:override;static normal:y;}
+   lint: class{static normal:y;}
+"class C { override\n readonly z = 1 }"
+   tsc : class{normal:override;normal:z;}
+   lint: class{normal:z;}
+"class C { override\n constructor() {} }"
+   tsc : class{normal:override;normal:constructor;}
+   lint: class{normal:constructor;}
+"class C { override\n [k: string]: any }"
+   tsc : class{normal:override;}
+   lint: class{}
+"class C { static public\n x = 1 }"
+   tsc : class{static normal:public;normal:x;}
+   lint: class{static normal:x;}
+"class C { public\n static\n x = 1 }"
+   tsc : class{normal:public;static normal:x;}
+   lint: class{static normal:x;}
+"class C { static\n public\n x = 1 }"
+   tsc : class{static normal:public;normal:x;}
+   lint: class{static normal:x;}
+"class C { public readonly\n x = 1 }"
+   tsc : class{normal:readonly;normal:x;}
+   lint: class{normal:x;}
+"class C { static readonly\n x = 1 }"
+   tsc : class{static normal:readonly;normal:x;}
+   lint: class{static normal:x;}
+"class C { public // c\n x = 1 }"
+   tsc : class{normal:public;normal:x;}
+   lint: class{normal:x;}
+"class C { public /* a\n b */ x = 1 }"
+   tsc : class{normal:public;normal:x;}
+   lint: class{normal:x;}
+"class C { @dec\n public\n x = 1 }"
+   tsc : class{normal:public;normal:x;}
+   lint: class{normal:x;}
+"class C { @dec public\n x = 1 }"
+   tsc : class{normal:public;normal:x;}
+   lint: class{normal:x;}
+"class C { override\n m() {} }"
+   tsc : class{normal:override;normal:m;}
+   lint: class{normal:m;}
+"class C { public\n public }"
+   tsc : class{normal:public;normal:public;}
+   lint: class{normal:public;}
+"class C { readonly\n readonly: number }"
+   tsc : class{normal:readonly;normal:readonly;}
+   lint: class{normal:readonly;}
+# same 93, differ 77, not compared 28

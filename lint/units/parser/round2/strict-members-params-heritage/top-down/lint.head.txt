@@ -6,127 +6,127 @@
 5	ERR	TS1005 31 31 ''{' expected.' || @31+0 Expected "{" but found end of file
 6	ERR	TS1005 17 18 ''{' expected.' || @17+1 Expected "{" but found ","	TS1003 19 20 'Identifier expected.' || @19+1 Expected identifier but found "{"	TS1005 21 21 ''}' expected.' || @21+0 Expected "}" but found end of file
 7	ERR	TS1005 24 24 ''{' expected.' || @24+0 Expected "{" but found end of file
-8	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..18 n=1] erased_stmts=0 erased_members=0
-9	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..19 n=1] erased_stmts=0 erased_members=0
-10	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..21 n=1] erased_stmts=0 erased_members=0
+8	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..18 n=1] erased_stmts=0 erased_members=0 class{}+extends
+9	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..19 n=1] erased_stmts=0 erased_members=0 class{}+extends
+10	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..21 n=1] erased_stmts=0 erased_members=0 class{}+extends
 11	ERR	TS1005 18 19 ''{' expected.' || @18+1 Expected "{" but found "B"	TS1003 20 21 'Identifier expected.' || @20+1 Expected identifier but found "{"	TS1005 22 22 ''}' expected.' || @22+0 Expected "}" but found end of file
 12	ERR	TS1109 15 15 'Expression expected.' || @15+0 Unexpected end of file
 13	ERR	TS1005 27 28 ''{' expected.' || @27+1 Expected "{" but found "B"	TS1003 29 30 'Identifier expected.' || @29+1 Expected identifier but found "{"	TS1005 31 31 ''}' expected.' || @31+0 Expected "}" but found end of file
 14	ERR	TS1005 21 21 ''{' expected.' || @21+0 Expected "{" but found end of file
 15	ERR	TS1005 21 22 ''{' expected.' || @21+1 Expected "{" but found "B"	TS1003 23 24 'Identifier expected.' || @23+1 Expected identifier but found "{"	TS1005 25 25 ''}' expected.' || @25+0 Expected "}" but found end of file
 16	ERR	TS1005 20 21 ''{' expected.' || @20+1 Expected "{" but found "<"	TS1005 22 23 '';' expected.' || @22+1 Expected ";" but found ">"	TS1003 24 25 'Identifier expected.' || @24+1 Expected identifier but found "{"
-17	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..20 n=1] erased_stmts=0 erased_members=0
-18	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..22 n=1] erased_stmts=0 erased_members=0
-19	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..22 n=1] erased_stmts=0 erased_members=0
-20	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..22 n=1] erased_stmts=0 erased_members=0
-21	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..19 n=1] erased_stmts=0 erased_members=0
-22	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..19 n=1] erased_stmts=0 erased_members=0
-23	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..24 n=1] erased_stmts=0 erased_members=0
-24	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..29 n=1] erased_stmts=0 erased_members=0
-25	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..21 n=1] erased_stmts=0 erased_members=0
-26	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..23 n=1] erased_stmts=0 erased_members=0
+17	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..20 n=1] erased_stmts=0 erased_members=0 class{}+extends
+18	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..22 n=1] erased_stmts=0 erased_members=0 class{}+extends
+19	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..22 n=1] erased_stmts=0 erased_members=0 class{}+extends
+20	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..22 n=1] erased_stmts=0 erased_members=0 class{}+extends
+21	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..19 n=1] erased_stmts=0 erased_members=0 class{}+extends
+22	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..19 n=1] erased_stmts=0 erased_members=0 class{}+extends
+23	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..24 n=1] erased_stmts=0 erased_members=0 class{}+extends
+24	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..29 n=1] erased_stmts=0 erased_members=0 class{}+extends
+25	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..21 n=1] erased_stmts=0 erased_members=0 class{}+extends
+26	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..23 n=1] erased_stmts=0 erased_members=0 class{}+extends
 27	ERR	TS1005 18 19 ''{' expected.' || @18+1 Expected "{" but found "+"	TS1005 22 23 '';' expected.' || @22+1 Expected ";" but found "{"
-28	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..18 n=1] erased_stmts=0 erased_members=0
-29	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..18 n=1] erased_stmts=0 erased_members=0
-30	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..24 n=1] erased_stmts=0 erased_members=0
-31	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..22 n=1] erased_stmts=0 erased_members=0
-32	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..19 n=1] erased_stmts=0 erased_members=0
-33	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..26 n=1] erased_stmts=0 erased_members=0
+28	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..18 n=1] erased_stmts=0 erased_members=0 class{}+extends
+29	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..18 n=1] erased_stmts=0 erased_members=0 class{}+extends
+30	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..24 n=1] erased_stmts=0 erased_members=0 class{}+extends
+31	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..22 n=1] erased_stmts=0 erased_members=0 class{}+extends
+32	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..19 n=1] erased_stmts=0 erased_members=0 class{}+extends
+33	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..26 n=1] erased_stmts=0 erased_members=0 class{}+extends
 34	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 29..44 n=1] erased_stmts=0 erased_members=0
 35	ERR	nocode || @32+5 Cannot use a "yield" here without parentheses	TS1005 41 42 ''{' expected.' || @41+1 Expected "{" but found "}"	TS1005 42 42 ''}' expected.' || @42+0 Expected "}" but found end of file
-36	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..20 n=1] erased_stmts=0 erased_members=0
+36	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..20 n=1] erased_stmts=0 erased_members=0 class{}+extends
 37	ERR	TS1005 17 19 ''{' expected.' || @17+2 Expected "{" but found "++"	TS1003 20 21 'Identifier expected.' || @20+1 Expected identifier but found "{"	TS1005 22 22 ''}' expected.' || @22+0 Expected "}" but found end of file
 38	ERR	nocode || @25+2 Unexpected =>
 39	ERR	TS1005 18 20 ''{' expected.' || @18+2 Expected "{" but found "=>"	TS1005 23 24 '';' expected.' || @23+1 Expected ";" but found "{"
 40	ERR	TS1005 18 19 ''{' expected.' || @18+1 Expected "{" but found "?"	TS1005 26 27 '';' expected.' || @26+1 Expected ";" but found "{"
 41	ERR	TS1005 18 20 ''{' expected.' || @18+2 Expected "{" but found "as"	TS1005 23 24 '';' expected.' || @23+1 Expected ";" but found "{"
-42	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..18 n=1] erased_stmts=0 erased_members=0
-43	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..21 n=1] erased_stmts=0 erased_members=0
-44	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..27 n=1] erased_stmts=0 erased_members=0
-45	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..27 n=1] erased_stmts=0 erased_members=0
-46	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..20 n=1] erased_stmts=0 erased_members=0
-47	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..20 n=1] erased_stmts=0 erased_members=0
-48	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..17 n=1] erased_stmts=0 erased_members=0
-49	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..19 n=1] erased_stmts=0 erased_members=0
-50	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..19 n=1] erased_stmts=0 erased_members=0
-51	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..20 n=1] erased_stmts=0 erased_members=0
-52	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..22 n=1] erased_stmts=0 erased_members=0
-53	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..19 n=1] erased_stmts=0 erased_members=0
+42	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..18 n=1] erased_stmts=0 erased_members=0 class{}+extends
+43	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..21 n=1] erased_stmts=0 erased_members=0 class{}+extends
+44	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..27 n=1] erased_stmts=0 erased_members=0 class{}+extends
+45	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..27 n=1] erased_stmts=0 erased_members=0 class{}+extends
+46	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..20 n=1] erased_stmts=0 erased_members=0 class{}+extends
+47	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..20 n=1] erased_stmts=0 erased_members=0 class{}+extends
+48	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..17 n=1] erased_stmts=0 erased_members=0 class{}+extends
+49	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..19 n=1] erased_stmts=0 erased_members=0 class{}+extends
+50	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..19 n=1] erased_stmts=0 erased_members=0 class{}+extends
+51	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..20 n=1] erased_stmts=0 erased_members=0 class{}+extends
+52	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..22 n=1] erased_stmts=0 erased_members=0 class{}+extends
+53	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..19 n=1] erased_stmts=0 erased_members=0 class{}+extends
 54	ERR	nocode || @36+2 Unexpected #a
-55	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..29 n=1] erased_stmts=0 erased_members=0
+55	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..29 n=1] erased_stmts=0 erased_members=0 class{}+extends
 56	ERR	nocode || @16+5 Unexpected "super"
-57	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..24 n=1] erased_stmts=0 erased_members=0
-58	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=2[Extends 8..20 n=1][Implements 21..44 n=2] erased_stmts=0 erased_members=0
-59	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..23 n=1] erased_stmts=0 erased_members=0
-60	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..22 n=1] erased_stmts=0 erased_members=0
+57	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..24 n=1] erased_stmts=0 erased_members=0 class{}+extends
+58	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=2[Extends 8..20 n=1][Implements 21..44 n=2] erased_stmts=0 erased_members=0 class{}+extends
+59	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..23 n=1] erased_stmts=0 erased_members=0 class{}+extends
+60	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 8..22 n=1] erased_stmts=0 erased_members=0 class{}+extends
 61	ERR	TS1003 18 20 'Identifier expected.' || @18+2 Expected identifier but found "#b"	TS1005 22 23 ''{' expected.' || @22+1 Expected "{" but found "}"	TS1005 23 23 ''}' expected.' || @23+0 Expected "}" but found end of file
 62	ERR	TS1005 17 18 ''{' expected.' || @17+1 Expected "{" but found ","	TS1003 19 20 'Identifier expected.' || @19+1 Expected identifier but found "{"	TS1005 22 23 '';' expected.' || @22+1 Expected ";" but found "{"
 63	ERR	TS1109 16 17 'Expression expected.' || @16+1 Unexpected ,
 64	ERR	TS1005 17 18 ''{' expected.' || @17+1 Expected "{" but found ","	TS1003 18 19 'Identifier expected.' || @18+1 Expected identifier but found ","	TS1005 22 23 '';' expected.' || @22+1 Expected ";" but found "{"
 65	ERR	TS1005 17 18 ''{' expected.' || @17+1 Expected "{" but found ";"	TS1003 19 20 'Identifier expected.' || @19+1 Expected identifier but found "{"	TS1005 21 21 ''}' expected.' || @21+0 Expected "}" but found end of file
 66	ERR	TS1005 18 19 ''{' expected.' || @18+1 Expected "{" but found "="	TS1005 22 23 '';' expected.' || @22+1 Expected ";" but found "{"
-67	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 8..22 n=1] erased_stmts=0 erased_members=0
-68	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 8..23 n=1] erased_stmts=0 erased_members=0
-69	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 8..23 n=1] erased_stmts=0 erased_members=0
-70	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 8..22 n=1] erased_stmts=0 erased_members=0
-71	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 8..22 n=1] erased_stmts=0 erased_members=0
-72	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 8..27 n=1] erased_stmts=0 erased_members=0
-73	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 8..25 n=1] erased_stmts=0 erased_members=0
+67	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 8..22 n=1] erased_stmts=0 erased_members=0 class{}
+68	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 8..23 n=1] erased_stmts=0 erased_members=0 class{}
+69	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 8..23 n=1] erased_stmts=0 erased_members=0 class{}
+70	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 8..22 n=1] erased_stmts=0 erased_members=0 class{}
+71	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 8..22 n=1] erased_stmts=0 erased_members=0 class{}
+72	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 8..27 n=1] erased_stmts=0 erased_members=0 class{}
+73	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 8..25 n=1] erased_stmts=0 erased_members=0 class{}
 74	ERR	TS1005 21 22 ''{' expected.' || @21+1 Expected "{" but found "|"	TS1005 25 26 '';' expected.' || @25+1 Expected ";" but found "{"
 75	ERR	TS1005 21 22 ''{' expected.' || @21+1 Expected "{" but found "&"	TS1005 25 26 '';' expected.' || @25+1 Expected ";" but found "{"
 76	ERR	TS1109 21 22 'Expression expected.' || @21+1 Unexpected ]
-77	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 8..25 n=1] erased_stmts=0 erased_members=0
-78	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 8..32 n=1] erased_stmts=0 erased_members=0
+77	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 8..25 n=1] erased_stmts=0 erased_members=0 class{}
+78	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 8..32 n=1] erased_stmts=0 erased_members=0 class{}
 79	ERR	TS1109 24 25 'Expression expected.' || @24+1 Unexpected )
 80	ERR	TS1109 20 21 'Expression expected.' || @20+1 Unexpected )
 81	ERR	TS1005 26 26 ''{' expected.' || @26+0 Expected "{" but found end of file
-82	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 8..23 n=1] erased_stmts=0 erased_members=0
-83	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 8..23 n=1] erased_stmts=0 erased_members=0
+82	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 8..23 n=1] erased_stmts=0 erased_members=0 class{}
+83	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 8..23 n=1] erased_stmts=0 erased_members=0 class{}
 84	ERR	TS1005 26 32 ''{' expected.' || @26+6 Expected "{" but found "symbol"	TS1003 33 34 'Identifier expected.' || @33+1 Expected identifier but found "{"	TS1005 35 35 ''}' expected.' || @35+0 Expected "}" but found end of file
 85	ERR	TS1005 25 26 ''{' expected.' || @25+1 Expected "{" but found "A"	TS1003 27 28 'Identifier expected.' || @27+1 Expected identifier but found "{"	TS1005 29 29 ''}' expected.' || @29+0 Expected "}" but found end of file
 86	ERR	TS1005 28 29 ''{' expected.' || @28+1 Expected "{" but found "A"	TS1005 32 33 '';' expected.' || @32+1 Expected ";" but found "{"
-87	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 8..22 n=1] erased_stmts=0 erased_members=0
-88	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 8..22 n=1] erased_stmts=0 erased_members=0
-89	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 8..20 n=1] erased_stmts=0 erased_members=0
-90	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 8..21 n=1] erased_stmts=0 erased_members=0
-91	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 8..22 n=1] erased_stmts=0 erased_members=0
+87	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 8..22 n=1] erased_stmts=0 erased_members=0 class{}
+88	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 8..22 n=1] erased_stmts=0 erased_members=0 class{}
+89	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 8..20 n=1] erased_stmts=0 erased_members=0 class{}
+90	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 8..21 n=1] erased_stmts=0 erased_members=0 class{}
+91	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 8..22 n=1] erased_stmts=0 erased_members=0 class{}
 92	ERR	TS1005 21 28 ''{' expected.' || @21+7 Expected "{" but found "extends"	TS1005 33 34 '';' expected.' || @33+1 Expected ";" but found "C"	TS1003 35 36 'Identifier expected.' || @35+1 Expected identifier but found ":"
-93	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 8..22 n=1] erased_stmts=0 erased_members=0
-94	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 8..24 n=1] erased_stmts=0 erased_members=0
-95	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 8..27 n=1] erased_stmts=0 erased_members=0
+93	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 8..22 n=1] erased_stmts=0 erased_members=0 class{}
+94	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 8..24 n=1] erased_stmts=0 erased_members=0 class{}
+95	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 8..27 n=1] erased_stmts=0 erased_members=0 class{}
 96	ERR	TS1005 27 27 ''{' expected.' || @27+0 Expected "{" but found end of file
 97	ERR	TS1109 19 20 'Expression expected.' || @19+1 Unexpected ,
-98	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 8..21 n=1] erased_stmts=0 erased_members=0
-99	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 8..23 n=1] erased_stmts=0 erased_members=0
+98	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 8..21 n=1] erased_stmts=0 erased_members=0 class{}
+99	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 8..23 n=1] erased_stmts=0 erased_members=0 class{}
 100	ERR	TS1005 23 24 ''{' expected.' || @23+1 Expected "{" but found "<"	TS1005 25 26 '';' expected.' || @25+1 Expected ";" but found ">"	TS1003 27 28 'Identifier expected.' || @27+1 Expected identifier but found "{"
 101	ERR	TS1005 25 26 ''{' expected.' || @25+1 Expected "{" but found "A"	TS1003 27 28 'Identifier expected.' || @27+1 Expected identifier but found "{"	TS1005 29 29 ''}' expected.' || @29+0 Expected "}" but found end of file
 102	ERR	TS1005 27 28 ''{' expected.' || @27+1 Expected "{" but found "x"	TS1003 29 30 'Identifier expected.' || @29+1 Expected identifier but found "{"	TS1005 31 31 ''}' expected.' || @31+0 Expected "}" but found end of file
 103	ERR	TS1005 21 23 ''{' expected.' || @21+2 Expected "{" but found "is"	TS1005 26 27 '';' expected.' || @26+1 Expected ";" but found "{"
-104	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 8..22 n=1] erased_stmts=0 erased_members=0
-105	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 8..21 n=1] erased_stmts=0 erased_members=0
+104	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 8..22 n=1] erased_stmts=0 erased_members=0 class{}
+105	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 8..21 n=1] erased_stmts=0 erased_members=0 class{}
 106	ERR	TS1005 21 22 ''{' expected.' || @21+1 Expected "{" but found "+"	TS1005 25 26 '';' expected.' || @25+1 Expected ";" but found "{"
-107	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-108	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 17..29 n=1] erased_stmts=0 erased_members=0
+107	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{}
+108	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 17..29 n=1] erased_stmts=0 erased_members=0 class{}
 109	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Implements 7..19 n=1] erased_stmts=0 erased_members=0
 110	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=2[Extends 7..16 n=1][Implements 17..29 n=1] erased_stmts=0 erased_members=0
 111	ERR	TS1005 18 19 ''{' expected.' || @18+1 Expected "{" but found ","	TS1005 22 23 '';' expected.' || @22+1 Expected ";" but found "{"
 112	ERR	TS1003 6 7 'Identifier expected.' || @6+1 Expected identifier but found "{"
-113	OK	stmts=1 ann=0 tp=1 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-114	OK	stmts=1 ann=0 tp=1 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-115	OK	stmts=1 ann=0 tp=1 ret=0 this=0 kw=0 her=1[Extends 11..23 n=1] erased_stmts=0 erased_members=0
+113	OK	stmts=1 ann=0 tp=1 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{}
+114	OK	stmts=1 ann=0 tp=1 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{}
+115	OK	stmts=1 ann=0 tp=1 ret=0 this=0 kw=0 her=1[Extends 11..23 n=1] erased_stmts=0 erased_members=0 class{}+extends
 116	ERR	TS1005 7 7 ''{' expected.' || @7+0 Expected "{" but found end of file
 117	ERR	TS1005 9 9 ''}' expected.' || @9+0 Expected "}" but found end of file
 118	ERR	TS1005 8 9 ''{' expected.' || @8+1 Expected "{" but found "}"	TS1005 9 9 ''}' expected.' || @9+0 Expected "}" but found end of file
 119	ERR	TS1005 8 9 ''{' expected.' || @8+1 Expected "{" but found ";"	TS1005 9 9 ''}' expected.' || @9+0 Expected "}" but found end of file
 120	ERR	TS1005 10 11 ''>' expected.' || @10+1 Expected ">" but found "{"
 121	ERR	TS1003 6 7 'Identifier expected.' || @6+1 Expected identifier but found "1"
-122	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-123	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-124	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-125	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+122	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{}
+123	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{}
+124	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{}
+125	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{}
 126	ERR	TS1359 6 10 'Identifier expected. 'enum' is a reserved word that cannot be used here.' || @6+4 Expected identifier but found "enum"
-127	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-128	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+127	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{}
+128	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{}
 129	OK	stmts=0 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=1 erased_members=0
 130	OK	stmts=0 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=1 erased_members=0
 131	OK	stmts=0 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=1 erased_members=0
@@ -183,39 +183,39 @@
 182	ERR	TS1003 10 11 'Identifier expected.' || @10+1 Expected identifier but found "/"	TS1005 13 13 ''}' expected.' || @13+0 Expected "}" but found end of file
 183	ERR	TS1003 10 13 'Identifier expected.' || @10+3 Expected identifier but found "`a`"	TS1005 15 15 ''}' expected.' || @15+0 Expected "}" but found end of file
 184	ERR	TS1003 10 13 'Identifier expected.' || @10+3 Expected identifier but found "`a`"	TS1005 14 15 '';' expected.' || @14+1 Expected ";" but found ")"	TS1003 16 17 'Identifier expected.' || @16+1 Expected identifier but found "{"
-185	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-186	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-187	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-188	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-189	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-190	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-191	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-192	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
+185	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:'a';}
+186	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:1n;}
+187	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:1n;}
+188	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:#a;}
+189	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:a;}
+190	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:a;normal:b;normal:c;}
+191	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+192	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
 193	ERR	TS1005 16 17 '';' expected.' || @16+1 Expected ";" but found "("	TS1003 17 18 'Identifier expected.' || @17+1 Expected identifier but found ")"	TS1128 22 23 'Declaration or statement expected.' || @22+1 Unexpected }
 194	ERR	TS1005 13 14 '']' expected.' || @13+1 Expected "]" but found "}"	TS1005 14 14 ''}' expected.' || @14+0 Expected "}" but found end of file
 195	ERR	TS1003 15 16 'Identifier expected.' || @15+1 Expected identifier but found "}"	TS1005 16 16 ''}' expected.' || @16+0 Expected "}" but found end of file
 196	ERR	TS1003 15 16 'Identifier expected.' || @15+1 Expected identifier but found ";"	TS1005 18 18 ''}' expected.' || @18+0 Expected "}" but found end of file
 197	ERR	TS1109 12 13 'Expression expected.' || @12+1 Unexpected }
 198	ERR	TS1003 21 22 'Identifier expected.' || @21+1 Expected identifier but found "}"	TS1005 22 22 ''}' expected.' || @22+0 Expected "}" but found end of file
-199	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-200	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-201	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-202	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-203	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-204	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-205	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-206	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-207	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-208	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-209	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+199	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
+200	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:public;}
+201	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:public;}
+202	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:public;}
+203	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:public;}
+204	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:public;}
+205	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:public;}
+206	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:public;}
+207	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
+208	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{static normal:x;}
+209	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:static;}
 210	ERR	TS1005 24 25 '';' expected.' || @24+1 Expected ";" but found "x"
-211	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+211	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{static normal:static;}
 212	ERR	TS1005 24 30 '';' expected.' || @24+6 Expected ";" but found "static"
 213	ERR	TS1005 12 13 '';' expected.' || @12+1 Expected ";" but found "y"
 214	ERR	TS1005 12 13 '';' expected.' || @12+1 Expected ";" but found "y"	TS1003 13 14 'Identifier expected.' || @13+1 Expected identifier but found "("	TS1005 16 17 '';' expected.' || @16+1 Expected ";" but found "{"
-215	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+215	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;normal:y;}
 216	ERR	TS1005 11 12 '';' expected.' || @11+1 Expected ";" but found ","
-217	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+217	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;normal:y;}
 218	ERR	TS1005 16 17 '';' expected.' || @16+1 Expected ";" but found "y"	TS1003 18 19 'Identifier expected.' || @18+1 Expected identifier but found "="
 219	ERR	TS1005 20 21 '';' expected.' || @20+1 Expected ";" but found "y"
 220	ERR	TS1005 24 25 '';' expected.' || @24+1 Expected ";" but found "y"
@@ -226,8 +226,8 @@
 225	ERR	TS1005 16 17 '';' expected.' || @16+1 Expected ";" but found "x"	TS1003 18 19 'Identifier expected.' || @18+1 Expected identifier but found "="
 226	ERR	TS1005 16 17 '';' expected.' || @16+1 Expected ";" but found "x"
 227	ERR	TS1005 16 17 '';' expected.' || @16+1 Expected ";" but found "D"	TS1003 18 19 'Identifier expected.' || @18+1 Expected identifier but found "{"
-228	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-229	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+228	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:if;}
+229	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:return;}
 230	ERR	TS1005 17 18 '';' expected.' || @17+1 Expected ";" but found "x"	TS1005 24 27 '';' expected.' || @24+3 Expected ";" but found "'y'"
 231	ERR	TS1005 17 18 '';' expected.' || @17+1 Expected ";" but found "x"
 232	ERR	TS1005 17 24 '';' expected.' || @17+7 Expected ";" but found "default"
@@ -242,162 +242,162 @@
 241	ERR	TS1005 17 18 '';' expected.' || @17+1 Expected ";" but found "x"
 242	ERR	TS1005 13 14 '';' expected.' || @13+1 Expected ";" but found "x"
 243	ERR	TS1005 14 15 '';' expected.' || @14+1 Expected ";" but found "x"
-244	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-245	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-246	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+244	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:in;}
+245	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:out;}
+246	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:in;}
 247	ERR	TS1003 12 13 'Identifier expected.' || @12+1 Expected identifier but found "}"	TS1005 13 13 ''(' expected.' || @13+0 Expected "(" but found end of file
 248	ERR	TS1003 12 13 'Identifier expected.' || @12+1 Expected identifier but found ";"	TS1005 15 15 ''(' expected.' || @15+0 Expected "(" but found end of file
 249	ERR	TS1005 14 15 ''(' expected.' || @14+1 Expected "(" but found "}"	TS1003 15 15 'Identifier expected.' || @15+0 Expected identifier but found end of file
-250	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
+250	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
 251	ERR	nocode || @12+1 Unexpected *
-252	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-253	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-254	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-255	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+252	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:a;}
+253	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:'a';}
+254	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:1;}
+255	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:#a;}
 256	ERR	TS1005 16 17 ''(' expected.' || @16+1 Expected "(" but found "x"	TS1003 17 18 'Identifier expected.' || @17+1 Expected identifier but found "("
 257	ERR	TS1005 14 15 '';' expected.' || @14+1 Expected ";" but found "*"
-258	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+258	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
 259	ERR	TS1005 18 19 ''(' expected.' || @18+1 Expected "(" but found "x"	TS1003 19 20 'Identifier expected.' || @19+1 Expected identifier but found "("
 260	ERR	TS1003 17 18 'Identifier expected.' || @17+1 Expected identifier but found "="
-261	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-262	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+261	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:m;}
+262	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:m;normal:n;}
 263	ERR	TS1003 16 17 'Identifier expected.' || @16+1 Expected identifier but found ","
-264	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-265	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+264	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{}
+265	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
 266	ERR	TS1128 13 14 'Declaration or statement expected.' || @13+1 Unexpected }
 267	ERR	TS1005 11 11 ''}' expected.' || @11+0 Expected "}" but found end of file
 268	ERR	TS1128 15 15 'Declaration or statement expected.' || @15+0 Unexpected end of file
-269	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-270	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-271	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-272	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-273	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-274	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-275	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+269	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
+270	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
+271	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
+272	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{static normal:x;}
+273	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
+274	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{static normal:x;}
+275	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:m;}
 276	ERR	TS1005 22 23 ''(' expected.' || @22+1 Expected "(" but found "m"	TS1003 23 24 'Identifier expected.' || @23+1 Expected identifier but found "("
-277	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-278	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-279	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-280	OK	stmts=1 ann=0 tp=0 ret=1 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-281	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-282	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-283	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-284	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-285	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-286	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-287	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-288	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-289	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-290	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-291	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-292	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
+277	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+278	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+279	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+280	OK	stmts=1 ann=0 tp=0 ret=1 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+281	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+282	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+283	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+284	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+285	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+286	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+287	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+288	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+289	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+290	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+291	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+292	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
 293	ERR	TS1005 37 38 '';' expected.' || @37+1 Expected ";" but found "x"
-294	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-295	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-296	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-297	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-298	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-299	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-300	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-301	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-302	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-303	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-304	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-305	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-306	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-307	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-308	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-309	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-310	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-311	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
+294	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+295	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+296	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+297	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+298	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+299	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+300	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+301	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+302	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+303	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+304	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+305	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+306	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+307	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+308	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+309	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+310	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+311	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
 312	ERR	TS1005 17 18 '';' expected.' || @17+1 Expected ";" but found "x"
 313	ERR	TS1005 17 18 '';' expected.' || @17+1 Expected ";" but found "m"	TS1003 18 19 'Identifier expected.' || @18+1 Expected identifier but found "("	TS1005 21 22 '';' expected.' || @21+1 Expected ";" but found "{"
 314	ERR	TS1005 16 17 '';' expected.' || @16+1 Expected ";" but found "x"	TS1003 18 19 'Identifier expected.' || @18+1 Expected identifier but found "="
 315	ERR	TS1005 16 20 '';' expected.' || @16+4 Expected ";" but found "enum"
-316	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-317	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-318	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-319	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-320	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+316	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
+317	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
+318	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
+319	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
+320	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{auto_accessor:x;}
 321	ERR	TS1005 28 29 '';' expected.' || @28+1 Expected ";" but found "x"
 322	ERR	nocode || @19+1 auto-accessor properties cannot have a method body
 323	ERR	TS1005 28 29 '';' expected.' || @28+1 Expected ";" but found "x"
-324	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+324	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{auto_accessor:x;}
 325	ERR	TS1005 26 27 '';' expected.' || @26+1 Expected ";" but found "x"
-326	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+326	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{static auto_accessor:x;}
 327	ERR	TS1005 26 27 '';' expected.' || @26+1 Expected ";" but found "x"
 328	ERR	TS1005 27 28 '';' expected.' || @27+1 Expected ";" but found "x"
-329	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
+329	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
 330	ERR	TS1005 23 24 '';' expected.' || @23+1 Expected ";" but found "x"	TS1003 24 25 'Identifier expected.' || @24+1 Expected identifier but found "("	TS1005 27 28 '';' expected.' || @27+1 Expected ";" but found "{"
 331	ERR	nocode || @19+11 auto-accessor properties cannot have a method body
-332	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-333	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-334	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-335	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-336	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-337	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-338	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-339	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-340	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-341	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-342	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-343	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+332	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{auto_accessor:x;}
+333	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{auto_accessor:x;}
+334	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{auto_accessor:#x;}
+335	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+336	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:accessor;normal:x;}
+337	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:accessor;}
+338	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:accessor;}
+339	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:accessor;}
+340	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:m;}
+341	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{get:x;}
+342	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:constructor;}
+343	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{static normal:constructor;}
 344	ERR	nocode || @16+11 Class constructor cannot be an async function
-345	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-346	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-347	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-348	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
+345	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:constructor;}
+346	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:constructor;}
+347	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:constructor;}
+348	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
 349	ERR	nocode || @11+11 Class constructor cannot be a generator function
 350	ERR	nocode || @14+11 Class constructor cannot be a getter
 351	ERR	nocode || @14+11 Class constructor cannot be a setter
 352	ERR	TS1005 20 21 ''(' expected.' || @20+1 Expected "(" but found "x"	TS1003 21 22 'Identifier expected.' || @21+1 Expected identifier but found "("
 353	ERR	TS1005 18 19 ''(' expected.' || @18+1 Expected "(" but found "}"	TS1003 19 19 'Identifier expected.' || @19+0 Expected identifier but found end of file
 354	ERR	TS1005 18 19 ''(' expected.' || @18+1 Expected "(" but found "="	TS1003 20 21 'Identifier expected.' || @20+1 Expected identifier but found "1"	TS1005 22 23 '')' expected.' || @22+1 Expected ")" but found "}"
-355	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-356	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-357	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-358	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-359	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-360	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-361	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-362	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-363	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-364	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+355	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:async;normal:x;}
+356	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:async;}
+357	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:async;}
+358	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{static normal:m;}
+359	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{static normal:x;}
+360	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:#x;}
+361	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:#x;}
+362	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{static normal:#x;}
+363	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:#x;}
+364	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{static normal:static;}
 365	ERR	TS1005 33 34 '';' expected.' || @33+1 Expected ";" but found "x"
-366	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-367	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-368	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-369	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-370	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-371	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-372	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-373	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-374	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+366	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{static normal:x;}
+367	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{get:get;}
+368	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:get;}
+369	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:get;}
+370	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:get;}
+371	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:get;}
+372	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{get:x;}
+373	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{static get:x;}
+374	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:set;}
 375	ERR	TS1005 18 19 ''(' expected.' || @18+1 Expected "(" but found "x"	TS1003 19 20 'Identifier expected.' || @19+1 Expected identifier but found "("	nocode || @19+0 Getter set must have zero arguments
-376	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-377	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+376	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{static get:static;}
+377	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{get:x;}
 378	ERR	TS1005 21 22 ''(' expected.' || @21+1 Expected "(" but found "x"	TS1003 22 23 'Identifier expected.' || @22+1 Expected identifier but found "("	nocode || @22+0 Getter public must have zero arguments
-379	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+379	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
 380	ERR	TS1005 13 16 '';' expected.' || @13+3 Expected ";" but found "out"
-381	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-382	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-383	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-384	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-385	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-386	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-387	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-388	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-389	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-390	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-391	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-392	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-393	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-394	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-395	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+381	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:default;}
+382	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:export;}
+383	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:const;}
+384	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:const;}
+385	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:const;}
+386	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:const;}
+387	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:enum;}
+388	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{class_static_block:-;}
+389	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{class_static_block:-;class_static_block:-;}
+390	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{class_static_block:-;}
+391	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{class_static_block:-;}
+392	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{class_static_block:-;}
+393	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{class_static_block:-;}
+394	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{class_static_block:-;}
+395	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{class_static_block:-;}
 396	ERR	nocode || @19+5 The keyword "await" cannot be used here
 397	ERR	nocode || @19+6 A return statement cannot be used here
-398	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-399	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+398	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{class_static_block:-;}
+399	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{class_static_block:-;}
 400	ERR	TS1005 10 11 ''}' expected.' || @10+1 Expected "}" but found "x"	TS1005 15 16 '')' expected.' || @15+1 Expected ")" but found "}"	nocode || @11+1 Unexpected ":"
 401	ERR	TS1005 10 11 ''}' expected.' || @10+1 Expected "}" but found "x"	TS1005 14 15 '')' expected.' || @14+1 Expected ")" but found "{"	TS1128 15 16 'Declaration or statement expected.' || @15+1 Unexpected }
 402	ERR	TS1005 10 11 ''}' expected.' || @10+1 Expected "}" but found "x"	TS1005 14 15 '')' expected.' || @14+1 Expected ")" but found "{"	TS1128 15 16 'Declaration or statement expected.' || @15+1 Unexpected }
@@ -417,7 +417,7 @@
 416	ERR	TS1005 12 13 '';' expected.' || @12+1 Expected ";" but found "@"	TS1005 17 18 '';' expected.' || @17+1 Expected ";" but found "y"
 417	ERR	TS1005 20 21 '';' expected.' || @20+1 Expected ";" but found "@"	TS1005 25 26 '';' expected.' || @25+1 Expected ";" but found "y"
 418	ERR	TS1005 16 17 '';' expected.' || @16+1 Expected ";" but found "@"	TS1005 21 22 '';' expected.' || @21+1 Expected ";" but found "y"
-419	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+419	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;normal:y;}
 420	ERR	TS1005 20 21 '';' expected.' || @20+1 Expected ";" but found "("	TS1005 22 23 '';' expected.' || @22+1 Expected ";" but found ")"
 421	ERR	TS1005 15 16 '';' expected.' || @15+1 Expected ";" but found "("	TS1005 17 18 '';' expected.' || @17+1 Expected ";" but found ")"
 422	ERR	TS1005 20 21 '';' expected.' || @20+1 Expected ";" but found "1"
@@ -431,35 +431,35 @@
 430	ERR	TS1005 13 14 '';' expected.' || @13+1 Expected ";" but found "y"
 431	ERR	TS1005 13 14 '';' expected.' || @13+1 Expected ";" but found "y"
 432	ERR	TS1005 13 14 '';' expected.' || @13+1 Expected ";" but found "y"
-433	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-434	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+433	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
+434	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
 435	ERR	TS1005 12 13 '';' expected.' || @12+1 Expected ";" but found "!"
 436	ERR	TS1005 12 13 '';' expected.' || @12+1 Expected ";" but found "?"
 437	ERR	TS1005 12 13 '';' expected.' || @12+1 Expected ";" but found "!"	TS1003 13 14 'Identifier expected.' || @13+1 Expected identifier but found ":"
 438	ERR	TS1005 12 13 '';' expected.' || @12+1 Expected ";" but found "?"	TS1003 13 14 'Identifier expected.' || @13+1 Expected identifier but found ":"
 439	ERR	TS1005 11 13 '';' expected.' || @11+2 Expected ";" but found "??"
 440	ERR	TS1005 12 13 '';' expected.' || @12+1 Expected ";" but found "!"
-441	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-442	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-443	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-444	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+441	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
+442	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
+443	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
+444	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{static normal:x;}
 445	ERR	TS1003 12 13 'Identifier expected.' || @12+1 Expected identifier but found "!"	TS1005 15 21 '';' expected.' || @15+6 Expected ";" but found "number"
-446	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-447	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-448	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-449	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+446	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
+447	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
+448	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
+449	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
 450	ERR	TS1109 14 15 'Expression expected.' || @14+1 Unexpected }
 451	ERR	TS1110 13 14 'Type expected.' || @13+1 Unexpected }
 452	ERR	TS1110 13 14 'Type expected.' || @13+1 Unexpected ;
 453	ERR	TS1110 13 14 'Type expected.' || @13+1 Unexpected =
 454	ERR	TS1005 15 16 '';' expected.' || @15+1 Expected ";" but found ","
-455	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+455	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
 456	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
 457	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-458	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-459	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+458	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
+459	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
 460	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-461	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+461	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
 462	ERR	nocode || @10+11 Invalid field name
 463	ERR	nocode || @10+11 Invalid field name
 464	ERR	nocode || @10+11 Invalid field name
@@ -467,65 +467,65 @@
 466	ERR	nocode || @10+13 Invalid field name
 467	ERR	nocode || @10+13 Invalid field name
 468	ERR	nocode || @10+13 Invalid field name
-469	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-470	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+469	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:'constructor';}
+470	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:'constructor';}
 471	ERR	nocode || @17+11 Invalid field name
 472	ERR	nocode || @17+9 Invalid field name
 473	ERR	nocode || @17+9 Invalid static method name "prototype"
 474	ERR	nocode || @17+11 Invalid field name
-475	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+475	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:prototype;}
 476	ERR	nocode || @10+12 Invalid field name "#constructor"
 477	ERR	nocode || @10+12 Invalid method name "#constructor"
 478	ERR	TS1005 15 16 ''(' expected.' || @15+1 Expected "(" but found "}"	TS1003 16 16 'Identifier expected.' || @16+0 Expected identifier but found end of file
 479	ERR	TS1005 14 15 ''(' expected.' || @14+1 Expected "(" but found ":"	TS1005 23 24 '')' expected.' || @23+1 Expected ")" but found "}"	TS1005 24 24 ''}' expected.' || @24+0 Expected "}" but found end of file
-480	OK	stmts=1 ann=0 tp=1 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+480	OK	stmts=1 ann=0 tp=1 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
 481	ERR	TS1005 12 13 '';' expected.' || @12+1 Expected ";" but found "<"	TS1005 14 15 '';' expected.' || @14+1 Expected ";" but found ">"	TS1003 15 16 'Identifier expected.' || @15+1 Expected identifier but found "("
-482	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-483	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-484	OK	stmts=1 ann=0 tp=0 ret=1 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-485	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+482	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
+483	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
+484	OK	stmts=1 ann=0 tp=0 ret=1 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+485	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
 486	ERR	TS1005 19 20 '';' expected.' || @19+1 Expected ";" but found ","
-487	OK	stmts=1 ann=2 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-488	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-489	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-490	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-491	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-492	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-493	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-494	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-495	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-496	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-497	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-498	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-499	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-500	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-501	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-502	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-503	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-504	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-505	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-506	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-507	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-508	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-509	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-510	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-511	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-512	OK	stmts=1 ann=0 tp=1 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-513	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-514	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-515	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
+487	OK	stmts=1 ann=2 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;normal:y;}
+488	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:const;}
+489	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:var;}
+490	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:let;}
+491	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:interface;}
+492	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:type;}
+493	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:module;}
+494	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:namespace;}
+495	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:declare;}
+496	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:declare;}
+497	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:declare;}
+498	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:declare;}
+499	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:abstract;}
+500	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:abstract;}
+501	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:readonly;}
+502	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:readonly;}
+503	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:override;}
+504	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:override;}
+505	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:set;}
+506	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:static;}
+507	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:static;}
+508	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:static;}
+509	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:static;}
+510	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:static;}
+511	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:static;}
+512	OK	stmts=1 ann=0 tp=1 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:static;}
+513	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+514	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+515	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{normal:n;}
 516	ERR	TS1005 14 15 '';' expected.' || @14+1 Expected ";" but found "n"	TS1003 15 16 'Identifier expected.' || @15+1 Expected identifier but found "("	TS1005 18 19 '';' expected.' || @18+1 Expected ";" but found "{"
 517	ERR	TS1005 14 15 '';' expected.' || @14+1 Expected ";" but found "x"
 518	ERR	TS1005 14 16 '';' expected.' || @14+2 Expected ";" but found "=>"
 519	ERR	TS1005 20 22 '';' expected.' || @20+2 Expected ";" but found "=>"
 520	ERR	TS1110 16 17 'Type expected.' || @16+1 Unexpected }
-521	OK	stmts=1 ann=0 tp=0 ret=1 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-522	OK	stmts=1 ann=0 tp=0 ret=1 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-523	OK	stmts=1 ann=0 tp=0 ret=1 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+521	OK	stmts=1 ann=0 tp=0 ret=1 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+522	OK	stmts=1 ann=0 tp=0 ret=1 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{normal:m;}
+523	OK	stmts=1 ann=0 tp=0 ret=1 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:m;}
 524	ERR	TS1005 20 21 '';' expected.' || @20+1 Expected ";" but found "1"
-525	OK	stmts=1 ann=0 tp=1 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-526	OK	stmts=1 ann=0 tp=1 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-527	OK	stmts=1 ann=0 tp=1 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+525	OK	stmts=1 ann=0 tp=1 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+526	OK	stmts=1 ann=0 tp=1 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:m;}
+527	OK	stmts=1 ann=0 tp=1 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:m;}
 528	ERR	TS1005 14 15 ''>' expected.' || @14+1 Expected ">" but found "}"	TS1003 15 15 'Identifier expected.' || @15+0 Expected identifier but found end of file
 529	ERR	TS1005 14 15 ''(' expected.' || @14+1 Expected "(" but found ";"	TS1003 16 17 'Identifier expected.' || @16+1 Expected identifier but found "}"	TS1005 17 17 '')' expected.' || @17+0 Expected ")" but found end of file
 530	ERR	TS1003 13 14 'Identifier expected.' || @13+1 Expected identifier but found "}"	TS1005 14 14 '')' expected.' || @14+0 Expected ")" but found end of file
@@ -533,16 +533,16 @@
 532	ERR	TS1003 14 15 'Identifier expected.' || @14+1 Expected identifier but found ","	TS1005 16 17 '')' expected.' || @16+1 Expected ")" but found "b"	TS1005 17 18 '';' expected.' || @17+1 Expected ";" but found ")"
 533	ERR	TS1003 12 13 'Identifier expected.' || @12+1 Expected identifier but found ","
 534	ERR	TS1005 14 15 '')' expected.' || @14+1 Expected ")" but found "b"	TS1005 15 16 '';' expected.' || @15+1 Expected ";" but found ")"	TS1003 17 18 'Identifier expected.' || @17+1 Expected identifier but found "{"
-535	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-536	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-537	OK	stmts=1 ann=0 tp=0 ret=1 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-538	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-539	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-540	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-541	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-542	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-543	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-544	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
+535	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+536	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+537	OK	stmts=1 ann=0 tp=0 ret=1 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+538	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+539	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+540	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+541	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+542	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+543	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+544	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
 545	OK	stmts=0 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=1 erased_members=0
 546	OK	stmts=0 ann=0 tp=0 ret=1 this=0 kw=0 her=0 erased_stmts=1 erased_members=1
 547	OK	stmts=0 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=1 erased_members=1
@@ -586,25 +586,25 @@
 585	ERR	TS1005 8 9 ''{' expected.' || @8+1 Expected "{" but found "}"	TS1128 9 10 'Declaration or statement expected.' || @9+1 Unexpected )
 586	ERR	TS1005 13 14 ''{' expected.' || @13+1 Expected "{" but found "}"	TS1128 14 15 'Declaration or statement expected.' || @14+1 Unexpected )
 587	ERR	TS1005 16 17 ''(' expected.' || @16+1 Expected "(" but found "}"	TS1003 17 17 'Identifier expected.' || @17+0 Expected identifier but found end of file
-588	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-589	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
+588	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+589	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
 590	ERR	TS1005 18 19 '';' expected.' || @18+1 Expected ";" but found "x"
 591	ERR	TS1005 18 20 '';' expected.' || @18+2 Expected ";" but found "=>"
 592	ERR	nocode || @16+1 Getter x must have zero arguments
-593	OK	stmts=1 ann=0 tp=0 ret=0 this=1 kw=0 her=0 erased_stmts=0 erased_members=0
+593	OK	stmts=1 ann=0 tp=0 ret=0 this=1 kw=0 her=0 erased_stmts=0 erased_members=0 class{get:x;}
 594	ERR	nocode || @25+1 Getter x must have zero arguments
-595	OK	stmts=1 ann=0 tp=1 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-596	OK	stmts=1 ann=0 tp=0 ret=1 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-597	OK	stmts=1 ann=0 tp=0 ret=1 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-598	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+595	OK	stmts=1 ann=0 tp=1 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{get:x;}
+596	OK	stmts=1 ann=0 tp=0 ret=1 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{get:x;}
+597	OK	stmts=1 ann=0 tp=0 ret=1 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+598	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{get:x;}
 599	ERR	TS1005 15 16 ''(' expected.' || @15+1 Expected "(" but found "!"	TS1003 16 17 'Identifier expected.' || @16+1 Expected identifier but found "("	nocode || @16+0 Getter x must have zero arguments
 600	ERR	TS1005 15 16 ''(' expected.' || @15+1 Expected "(" but found ":"	TS1005 24 25 '')' expected.' || @24+1 Expected ")" but found "}"	TS1005 25 25 ''}' expected.' || @25+0 Expected "}" but found end of file
 601	ERR	TS1005 16 17 ''(' expected.' || @16+1 Expected "(" but found "="	TS1003 18 19 'Identifier expected.' || @18+1 Expected identifier but found "1"	TS1005 20 21 '')' expected.' || @20+1 Expected ")" but found "}"
 602	ERR	TS1005 15 16 ''(' expected.' || @15+1 Expected "(" but found ";"	TS1003 17 18 'Identifier expected.' || @17+1 Expected identifier but found "}"	TS1005 18 18 '')' expected.' || @18+0 Expected ")" but found end of file
-603	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-604	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-605	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-606	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+603	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{get:'x';}
+604	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{get:1;}
+605	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{get:a;}
+606	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{get:#x;}
 607	ERR	TS1005 14 16 '';' expected.' || @14+2 Expected ";" but found "1n"	TS1003 16 17 'Identifier expected.' || @16+1 Expected identifier but found "("	TS1005 19 20 '';' expected.' || @19+1 Expected ";" but found "{"
 608	ERR	TS1005 14 15 '';' expected.' || @14+1 Expected ";" but found "*"
 609	ERR	TS1005 20 21 ''(' expected.' || @20+1 Expected "(" but found "x"	TS1003 21 22 'Identifier expected.' || @21+1 Expected identifier but found "("	nocode || @21+0 Getter async must have zero arguments
@@ -613,20 +613,20 @@
 612	ERR	TS1005 16 17 ''(' expected.' || @16+1 Expected "(" but found "}"	TS1003 17 17 'Identifier expected.' || @17+0 Expected identifier but found end of file
 613	ERR	nocode || @15+0 Setter x must have exactly 1 argument (there are 0)
 614	ERR	nocode || @19+1 Setter x must have exactly 1 argument (there are 2)
-615	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-616	OK	stmts=1 ann=0 tp=0 ret=1 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-617	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-618	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-619	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-620	OK	stmts=1 ann=0 tp=0 ret=0 this=1 kw=0 her=0 erased_stmts=0 erased_members=0
+615	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+616	OK	stmts=1 ann=0 tp=0 ret=1 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{set:x;}
+617	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{set:x;}
+618	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{set:x;}
+619	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{set:x;}
+620	OK	stmts=1 ann=0 tp=0 ret=0 this=1 kw=0 her=0 erased_stmts=0 erased_members=0 class{set:x;}
 621	ERR	nocode || @15+0 Setter x must have exactly 1 argument (there are 0)
-622	OK	stmts=1 ann=0 tp=1 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-623	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-624	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-625	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-626	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-627	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-628	OK	stmts=1 ann=1 tp=0 ret=1 this=0 kw=0 her=0 erased_stmts=0 erased_members=2
+622	OK	stmts=1 ann=0 tp=1 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{set:x;}
+623	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{set:x;}
+624	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{set:x;}
+625	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{set:x;}
+626	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+627	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+628	OK	stmts=1 ann=1 tp=0 ret=1 this=0 kw=0 her=0 erased_stmts=0 erased_members=2 class{}
 629	OK	stmts=0 ann=1 tp=0 ret=1 this=0 kw=0 her=0 erased_stmts=1 erased_members=2
 630	OK	stmts=0 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=1 erased_members=1
 631	ERR	nocode || @9+1 Getter x must have zero arguments
@@ -640,30 +640,30 @@
 639	ERR	TS1005 8 9 ''(' expected.' || @8+1 Expected "(" but found ":"	TS1003 10 11 'Identifier expected.' || @10+1 Expected identifier but found "1"	TS1005 12 13 '')' expected.' || @12+1 Expected ")" but found "}"
 640	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
 641	ERR	TS1005 8 9 ''(' expected.' || @8+1 Expected "(" but found "?"	TS1003 9 10 'Identifier expected.' || @9+1 Expected identifier but found "("	nocode || @9+0 Getter x must have zero arguments
-642	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-643	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-644	OK	stmts=1 ann=0 tp=1 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-645	OK	stmts=1 ann=0 tp=0 ret=1 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-646	OK	stmts=1 ann=0 tp=0 ret=1 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+642	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+643	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{normal:constructor;}
+644	OK	stmts=1 ann=0 tp=1 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:constructor;}
+645	OK	stmts=1 ann=0 tp=0 ret=1 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:constructor;}
+646	OK	stmts=1 ann=0 tp=0 ret=1 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:constructor;}
 647	ERR	TS1005 24 26 '';' expected.' || @24+2 Expected ";" but found "=>"
 648	ERR	TS1005 24 25 '';' expected.' || @24+1 Expected ";" but found "x"
-649	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-650	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-651	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-652	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-653	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+649	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:constructor;}
+650	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:constructor;}
+651	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:constructor;}
+652	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:constructor;}
+653	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:constructor;}
 654	ERR	TS1005 29 32 '')' expected.' || @29+3 Expected ")" but found "..."	TS1005 32 33 '';' expected.' || @32+1 Expected ";" but found "x"	TS1003 33 34 'Identifier expected.' || @33+1 Expected identifier but found ")"
 655	ERR	TS1003 29 30 'Identifier expected.' || @29+1 Expected identifier but found "["	TS1005 31 32 '')' expected.' || @31+1 Expected ")" but found "]"	TS1005 32 33 '';' expected.' || @32+1 Expected ";" but found ")"
 656	ERR	TS1003 29 30 'Identifier expected.' || @29+1 Expected identifier but found "{"	TS1005 31 32 '')' expected.' || @31+1 Expected ")" but found "}"	TS1005 32 33 '';' expected.' || @32+1 Expected ";" but found ")"
-657	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-658	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-659	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-660	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-661	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-662	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-663	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-664	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-665	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+657	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:constructor;}
+658	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:constructor;}
+659	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:constructor;}
+660	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:constructor;}
+661	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:constructor;}
+662	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:constructor;}
+663	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:constructor;}
+664	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:constructor;}
+665	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:constructor;}
 666	ERR	TS1005 29 30 '')' expected.' || @29+1 Expected ")" but found "x"	TS1005 30 31 '';' expected.' || @30+1 Expected ";" but found ")"	TS1003 32 33 'Identifier expected.' || @32+1 Expected identifier but found "{"
 667	ERR	TS1005 30 31 '')' expected.' || @30+1 Expected ")" but found "x"	TS1005 31 32 '';' expected.' || @31+1 Expected ";" but found ")"	TS1003 33 34 'Identifier expected.' || @33+1 Expected identifier but found "{"
 668	ERR	TS1005 31 32 '')' expected.' || @31+1 Expected ")" but found "x"	TS1005 32 33 '';' expected.' || @32+1 Expected ";" but found ")"	TS1003 34 35 'Identifier expected.' || @34+1 Expected identifier but found "{"
@@ -673,31 +673,31 @@
 672	ERR	TS1359 22 27 'Identifier expected. 'const' is a reserved word that cannot be used here.' || @22+5 Expected identifier but found "const"	TS1005 28 29 '')' expected.' || @28+1 Expected ")" but found "x"	TS1005 29 30 '';' expected.' || @29+1 Expected ";" but found ")"
 673	ERR	TS1359 22 24 'Identifier expected. 'in' is a reserved word that cannot be used here.' || @22+2 Expected identifier but found "in"	TS1005 25 26 '')' expected.' || @25+1 Expected ")" but found "x"	TS1005 26 27 '';' expected.' || @26+1 Expected ";" but found ")"
 674	ERR	TS1005 26 27 '')' expected.' || @26+1 Expected ")" but found "x"	TS1005 27 28 '';' expected.' || @27+1 Expected ";" but found ")"	TS1003 29 30 'Identifier expected.' || @29+1 Expected identifier but found "{"
-675	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-676	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-677	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-678	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-679	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-680	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-681	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-682	OK	stmts=1 ann=0 tp=0 ret=0 this=1 kw=0 her=0 erased_stmts=0 erased_members=0
+675	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:constructor;}
+676	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:constructor;}
+677	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:constructor;}
+678	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:constructor;}
+679	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:constructor;}
+680	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:constructor;}
+681	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:constructor;}
+682	OK	stmts=1 ann=0 tp=0 ret=0 this=1 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:constructor;}
 683	ERR	TS1005 29 33 '')' expected.' || @29+4 Expected ")" but found "this"	TS1005 33 34 '';' expected.' || @33+1 Expected ";" but found ")"	TS1003 35 36 'Identifier expected.' || @35+1 Expected identifier but found "{"
-684	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-685	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-686	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+684	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{normal:constructor;}
+685	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:constructor;}
+686	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:constructor;}
 687	ERR	TS1005 29 30 '')' expected.' || @29+1 Expected ")" but found "@"	TS1005 30 33 '';' expected.' || @30+3 Expected ";" but found "dec"	TS1005 35 36 '';' expected.' || @35+1 Expected ";" but found ")"
-688	OK	stmts=1 ann=2 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-689	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-690	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-691	OK	stmts=1 ann=0 tp=0 ret=1 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-692	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-693	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-694	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+688	OK	stmts=1 ann=2 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:constructor;}
+689	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:'constructor';}
+690	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:'constructor';}
+691	OK	stmts=1 ann=0 tp=0 ret=1 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:"constructor";}
+692	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:constructor;normal:constructor;}
+693	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{static normal:'constructor';}
+694	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:'constructor';}
 695	OK	stmts=0 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=1 erased_members=1
 696	OK	stmts=0 ann=0 tp=0 ret=1 this=0 kw=0 her=0 erased_stmts=1 erased_members=1
-697	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-698	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-699	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+697	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:m;}
+698	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:m;}
+699	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:m;}
 700	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
 701	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
 702	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
@@ -732,66 +732,66 @@
 731	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
 732	OK	stmts=0 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=1 erased_members=0
 733	OK	stmts=0 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=1 erased_members=0
-734	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-735	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-736	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
+734	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+735	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+736	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
 737	ERR	TS1005 27 28 '';' expected.' || @27+1 Expected ";" but found "x"
-738	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-739	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
+738	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+739	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
 740	ERR	TS1110 23 24 'Type expected.' || @23+1 Unexpected }
 741	ERR	TS1005 22 23 '';' expected.' || @22+1 Expected ";" but found "="
 742	ERR	TS1005 27 28 '';' expected.' || @27+1 Expected ";" but found "="
 743	ERR	TS1005 21 22 '';' expected.' || @21+1 Expected ";" but found "("	TS1003 22 23 'Identifier expected.' || @22+1 Expected identifier but found ")"	TS1128 27 28 'Declaration or statement expected.' || @27+1 Unexpected }
 744	ERR	TS1005 21 22 '';' expected.' || @21+1 Expected ";" but found "?"	TS1003 22 23 'Identifier expected.' || @22+1 Expected identifier but found ":"
 745	ERR	TS1005 21 22 '';' expected.' || @21+1 Expected ";" but found "!"	TS1003 22 23 'Identifier expected.' || @22+1 Expected identifier but found ":"
-746	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-747	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-748	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-749	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-750	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-751	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-752	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-753	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-754	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-755	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-756	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
+746	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:k;}
+747	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+748	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+749	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+750	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+751	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+752	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+753	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+754	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+755	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+756	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
 757	ERR	TS1005 18 19 '']' expected.' || @18+1 Expected "]" but found "k"	TS1005 27 28 '';' expected.' || @27+1 Expected ";" but found "]"	TS1003 28 29 'Identifier expected.' || @28+1 Expected identifier but found ":"
 758	ERR	TS1005 18 19 '']' expected.' || @18+1 Expected "]" but found "k"	TS1005 19 20 '';' expected.' || @19+1 Expected ";" but found "]"	TS1003 20 21 'Identifier expected.' || @20+1 Expected identifier but found ":"
 759	ERR	TS1005 20 21 '']' expected.' || @20+1 Expected "]" but found "k"	TS1005 29 30 '';' expected.' || @29+1 Expected ";" but found "]"	TS1003 30 31 'Identifier expected.' || @30+1 Expected identifier but found ":"
 760	ERR	TS1005 18 19 '']' expected.' || @18+1 Expected "]" but found "k"	TS1005 27 28 '';' expected.' || @27+1 Expected ";" but found "]"	TS1003 28 29 'Identifier expected.' || @28+1 Expected identifier but found ":"
-761	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-762	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+761	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+762	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:k;}
 763	ERR	TS1005 15 16 '']' expected.' || @15+1 Expected "]" but found ":"	TS1005 17 23 '';' expected.' || @17+6 Expected ";" but found "string"	TS1003 23 24 'Identifier expected.' || @23+1 Expected identifier but found "]"
 764	ERR	TS1005 16 17 ''class' expected.' || @16+1 Expected "class" but found "k"
 765	ERR	TS1005 14 15 '']' expected.' || @14+1 Expected "]" but found ":"	TS1005 16 22 '';' expected.' || @16+6 Expected ";" but found "string"	TS1003 22 23 'Identifier expected.' || @22+1 Expected identifier but found "]"
 766	ERR	TS1005 14 15 '']' expected.' || @14+1 Expected "]" but found ":"	TS1005 16 22 '';' expected.' || @16+6 Expected ";" but found "string"	TS1003 22 23 'Identifier expected.' || @22+1 Expected identifier but found "]"
-767	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-768	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-769	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-770	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-771	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-772	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-773	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
+767	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+768	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+769	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+770	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+771	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+772	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+773	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
 774	ERR	TS1005 17 18 '';' expected.' || @17+1 Expected ";" but found "["	TS1005 27 28 '';' expected.' || @27+1 Expected ";" but found "]"	TS1003 28 29 'Identifier expected.' || @28+1 Expected identifier but found ":"
-775	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-776	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-777	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-778	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-779	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-780	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-781	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-782	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-783	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=2
+775	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+776	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+777	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+778	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+779	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+780	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+781	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+782	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:k;}
+783	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=2 class{}
 784	ERR	TS1005 29 30 '']' expected.' || @29+1 Expected "]" but found ":"	TS1005 31 37 '';' expected.' || @31+6 Expected ";" but found "number"	TS1003 37 38 'Identifier expected.' || @37+1 Expected identifier but found "]"
-785	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-786	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-787	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-788	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-789	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-790	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-791	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-792	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-793	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+785	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:async;}
+786	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:await;}
+787	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:yield;}
+788	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+789	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:public;}
+790	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+791	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:a;}
+792	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:a;}
+793	OK	stmts=1 ann=1 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:a;}
 794	ERR	TS1005 21 22 '']' expected.' || @21+1 Expected "]" but found "}"	TS1005 22 22 ''}' expected.' || @22+0 Expected "}" but found end of file
 795	ERR	TS1005 20 20 '']' expected.' || @20+0 Expected "]" but found end of file
 796	ERR	TS1110 14 15 'Type expected.' || @14+1 Unexpected }	TS1005 15 15 ''}' expected.' || @15+0 Expected "}" but found end of file
@@ -902,13 +902,13 @@
 901	ERR	nocode || @1+0 Invalid binding pattern
 902	ERR	nocode || @4+0 Invalid binding pattern
 903	ERR	TS1003 11 12 'Identifier expected.' || @11+1 Expected identifier but found "@"	TS1005 12 15 '')' expected.' || @12+3 Expected ")" but found "dec"	TS1005 16 17 '';' expected.' || @16+1 Expected ";" but found "a"
-904	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+904	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:m;}
 905	ERR	TS1003 16 17 'Identifier expected.' || @16+1 Expected identifier but found ")"	TS1005 18 19 '')' expected.' || @18+1 Expected ")" but found "{"	TS1128 21 22 'Declaration or statement expected.' || @21+1 Unexpected }
-906	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-907	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-908	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-909	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-910	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+906	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:m;}
+907	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:m;}
+908	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:m;}
+909	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:m;}
+910	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:m;}
 911	ERR	TS1003 15 16 'Identifier expected.' || @15+1 Expected identifier but found ")"	TS1005 17 18 '')' expected.' || @17+1 Expected ")" but found "{"	TS1128 20 21 'Declaration or statement expected.' || @20+1 Unexpected }
 912	ERR	TS1005 14 15 '')' expected.' || @14+1 Expected ")" but found "@"	TS1005 15 18 '';' expected.' || @15+3 Expected ";" but found "dec"	TS1003 18 19 'Identifier expected.' || @18+1 Expected identifier but found ")"
 913	ERR	TS1005 6 7 ''class' expected.' || @6+1 Expected "class" but found "a"
@@ -1056,13 +1056,13 @@
 1055	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
 1056	ERR	TS1005 6 7 ''{' expected.' || @6+1 Expected "{" but found ")"	TS1003 8 10 'Identifier expected.' || @8+2 Expected identifier but found "=>"	TS1005 12 12 ''}' expected.' || @12+0 Expected "}" but found end of file
 1057	ERR	TS1109 1 5 'Expression expected.' || @1+4 Unexpected enum
-1058	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-1059	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-1060	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+1058	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{}
+1059	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{}
+1060	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{}
 1061	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
 1062	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
 1063	ERR	TS1005 12 13 ''class' expected.' || @12+1 Expected "class" but found "@"
-1064	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+1064	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{}
 1065	OK	stmts=0 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=1 erased_members=0
 1066	ERR	TS1005 9 10 '';' expected.' || @9+1 Expected ";" but found "@"	TS1005 14 19 '';' expected.' || @14+5 Expected ";" but found "class"	TS1005 22 23 '';' expected.' || @22+1 Expected ";" but found "{"
 1067	OK	stmts=0 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=1 erased_members=0
@@ -1077,77 +1077,77 @@
 1076	ERR	TS1005 4 4 ''class' expected.' || @4+0 Expected "class" but found end of file
 1077	ERR	TS1005 4 5 ''class' expected.' || @4+1 Expected "class" but found ";"
 1078	ERR	TS1005 12 12 ''class' expected.' || @12+0 Expected "class" but found end of file
-1079	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-1080	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-1081	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-1082	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-1083	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-1084	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-1085	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-1086	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+1079	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{}
+1080	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{}
+1081	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{}
+1082	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{}
+1083	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{}
+1084	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{}
+1085	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{}
+1086	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{}
 1087	ERR	TS1005 2 3 ''class' expected.' || @2+1 Expected "class" but found "["	TS1005 6 11 '';' expected.' || @6+5 Expected ";" but found "class"	TS1005 14 15 '';' expected.' || @14+1 Expected ";" but found "{"
 1088	ERR	TS1005 2 3 ''class' expected.' || @2+1 Expected "class" but found "<"
-1089	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-1090	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+1089	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{}
+1090	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{}
 1091	ERR	TS1003 3 5 'Identifier expected.' || @3+2 Expected identifier but found "#b"	TS1005 12 13 ''class' expected.' || @12+1 Expected "class" but found "C"	TS1005 14 15 '';' expected.' || @14+1 Expected ";" but found "{"
-1092	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-1093	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-1094	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-1095	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-1096	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-1097	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+1092	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{}
+1093	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{}
+1094	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{}
+1095	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{}
+1096	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{}
+1097	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{}
 1098	ERR	nocode || @1+5 Unexpected "super"
-1099	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-1100	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-1101	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+1099	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{}
+1100	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{}
+1101	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{}
 1102	ERR	TS1005 3 4 ''class' expected.' || @3+1 Expected "class" but found "+"	TS1005 7 12 '';' expected.' || @7+5 Expected ";" but found "class"	TS1005 15 16 '';' expected.' || @15+1 Expected ";" but found "{"
 1103	ERR	TS1005 3 4 ''class' expected.' || @3+1 Expected "class" but found "="
 1104	ERR	TS1005 3 5 ''class' expected.' || @3+2 Expected "class" but found "=>"
-1105	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+1105	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{}
 1106	ERR	TS1005 39 40 ''class' expected.' || @39+1 Expected "class" but found "}"
 1107	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
 1108	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-1109	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+1109	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{}
 1110	ERR	nocode || @17+5 Cannot use a "yield" here without parentheses	TS1005 34 35 ''class' expected.' || @34+1 Expected "class" but found "}"
-1111	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-1112	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-1113	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-1114	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-1115	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+1111	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:m;}
+1112	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:m;}
+1113	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
+1114	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:x;}
+1115	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{static normal:x;}
 1116	ERR	TS1005 17 18 '';' expected.' || @17+1 Expected ";" but found "@"	TS1005 22 23 '';' expected.' || @22+1 Expected ";" but found "x"
 1117	ERR	TS1005 17 18 '';' expected.' || @17+1 Expected ";" but found "@"	TS1005 22 23 '';' expected.' || @22+1 Expected ";" but found "x"
 1118	ERR	TS1005 22 23 '';' expected.' || @22+1 Expected ";" but found "@"	TS1005 28 29 '';' expected.' || @28+1 Expected ";" but found "x"
-1119	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+1119	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{static normal:x;}
 1120	ERR	TS1005 17 18 '';' expected.' || @17+1 Expected ";" but found "@"	TS1005 22 28 '';' expected.' || @22+6 Expected ";" but found "static"
-1121	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+1121	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{get:x;}
 1122	ERR	TS1005 14 15 '';' expected.' || @14+1 Expected ";" but found "@"	TS1005 19 20 '';' expected.' || @19+1 Expected ";" but found "x"	TS1003 20 21 'Identifier expected.' || @20+1 Expected identifier but found "("
-1123	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+1123	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{get:x;set:x;}
 1124	ERR	nocode || @10+0 TypeScript does not allow decorators on class constructors
 1125	ERR	nocode || @10+0 TypeScript does not allow decorators on class constructors
-1126	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+1126	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{class_static_block:-;}
 1127	ERR	TS1003 15 16 'Identifier expected.' || @15+1 Expected identifier but found ";"	TS1005 18 18 ''}' expected.' || @18+0 Expected "}" but found end of file
-1128	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-1129	OK	stmts=1 ann=0 tp=0 ret=1 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-1130	OK	stmts=1 ann=0 tp=0 ret=1 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
-1131	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-1132	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-1133	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-1134	OK	stmts=1 ann=0 tp=0 ret=1 this=0 kw=0 her=0 erased_stmts=0 erased_members=1
+1128	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+1129	OK	stmts=1 ann=0 tp=0 ret=1 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{normal:m;}
+1130	OK	stmts=1 ann=0 tp=0 ret=1 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
+1131	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{declare:x;}
+1132	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{abstract:x;}
+1133	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{abstract:x;}
+1134	OK	stmts=1 ann=0 tp=0 ret=1 this=0 kw=0 her=0 erased_stmts=0 erased_members=1 class{}
 1135	ERR	TS1003 15 17 'Identifier expected.' || @15+2 Expected identifier but found "#x"
 1136	ERR	TS1003 15 17 'Identifier expected.' || @15+2 Expected identifier but found "#m"
-1137	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-1138	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-1139	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-1140	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-1141	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-1142	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-1143	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-1144	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-1145	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-1146	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-1147	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-1148	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
-1149	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+1137	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{auto_accessor:x;}
+1138	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:'x';}
+1139	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:'x';}
+1140	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:'x';}
+1141	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:'x';}
+1142	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:'x';}
+1143	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:'x';}
+1144	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:m;}
+1145	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:m;}
+1146	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:m;}
+1147	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:m;}
+1148	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:m;}
+1149	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:m;}
 1150	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
 1151	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=1[Extends 14..23 n=1] erased_stmts=0 erased_members=0
 1152	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
@@ -1164,7 +1164,7 @@
 1163	ERR	nocode || @14+1 Unexpected @
 1164	ERR	TS1131 9 10 'Property or signature expected.' || @9+1 Unexpected @
 1165	ERR	TS1003 11 12 'Identifier expected.' || @11+1 Expected identifier but found "@"	TS1005 12 15 '')' expected.' || @12+3 Expected ")" but found "dec"	TS1005 16 17 '';' expected.' || @16+1 Expected ";" but found "a"
-1166	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0
+1166	OK	stmts=1 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=0 erased_members=0 class{normal:constructor;}
 1167	OK	stmts=0 ann=0 tp=0 ret=0 this=0 kw=0 her=0 erased_stmts=1 erased_members=0
 1168	OK	stmts=0 ann=2 tp=0 ret=2 this=0 kw=0 her=0 erased_stmts=1 erased_members=4
 1169	ERR	TS1005 25 26 ''{' expected.' || @25+1 Expected "{" but found ","	TS1005 29 30 '';' expected.' || @29+1 Expected ";" but found "{"

@@ -1,0 +1,4 @@
+"class C { public\nconstructor() {} }"
+   tsc : class{normal:public;normal:constructor;}
+   lint: class{normal:constructor;}
+# same 162, differ 1, not compared 287

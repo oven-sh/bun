@@ -200,13 +200,35 @@ struct Check {
     unbound_bindings: u32,
     symbol_identifiers: u32,
     negative_bindings: u32,
+    /// By symbol index: a node of the walk holds the symbol.
+    seen: Vec<bool>,
+    /// For each function statement being walked: the lowest symbol index seen inside it.
+    lowest: Vec<u32>,
+    /// The name and the declared symbol of each function statement, with the lowest index seen inside.
+    functions: Vec<(u32, u32)>,
 }
 
 impl Check {
+    fn see(&mut self, r: Ref) {
+        if !r.is_symbol() {
+            return;
+        }
+        let index = r.inner_index();
+        if let Some(slot) = self.seen.get_mut(index as usize) {
+            *slot = true;
+        }
+        if let Some(lowest) = self.lowest.last_mut() {
+            *lowest = (*lowest).min(index);
+        }
+    }
     fn fn_body(&mut self, func: &G::Fn) {
         self.lists.push(func.body.loc.start);
+        self.see(func.arguments_ref);
     }
     fn class(&mut self, class: &G::Class) {
+        if let Some(name) = class.class_name {
+            self.see(name.ref_);
+        }
         for property in class.properties.slice() {
             if let Some(block) = &property.class_static_block {
                 self.lists.push(block.loc.start);
@@ -231,8 +253,45 @@ impl<'ast> Visitor<'ast> for Check {
             }
             StmtData::SSwitch(node) => self.lists.push(node.body_loc.start),
             StmtData::STypeScript(_) => self.placeholders.push(stmt.loc.start),
+            StmtData::SImport(node) => {
+                self.see(node.namespace_ref);
+                if let Some(name) = node.default_name {
+                    self.see(name.ref_);
+                }
+                for item in node.items.slice() {
+                    self.see(item.name.ref_);
+                }
+            }
+            StmtData::SExportDefault(node) => self.see(node.default_name.ref_),
+            StmtData::SExportFrom(node) => {
+                self.see(node.namespace_ref);
+                for item in node.items.slice() {
+                    self.see(item.name.ref_);
+                }
+            }
+            StmtData::SExportStar(node) => self.see(node.namespace_ref),
+            StmtData::SExportClause(node) => {
+                for item in node.items.slice() {
+                    self.see(item.name.ref_);
+                }
+            }
+            StmtData::SEnum(node) => {
+                self.see(node.name.ref_);
+                self.see(node.arg);
+                for value in node.values.slice() {
+                    self.see(value.ref_);
+                }
+            }
+            StmtData::SNamespace(node) => {
+                self.see(node.name.ref_);
+                self.see(node.arg);
+            }
+            StmtData::SLabel(node) => self.see(node.name.ref_),
             _ => {}
         }
+    }
+    fn visit_e_private_identifier(&mut self, node: &'ast E::PrivateIdentifier, _: Loc) {
+        self.see(node.ref_);
     }
     fn visit_e_identifier(&mut self, node: &'ast E::Identifier, loc: Loc) {
         self.identifiers.push(loc.start);
@@ -249,13 +308,29 @@ impl<'ast> Visitor<'ast> for Check {
         if !node.r#ref.is_symbol() {
             self.unbound_bindings += 1;
         }
+        self.see(node.r#ref);
     }
     fn visit_s_function(&mut self, node: &'ast S::Function, _: Loc) {
+        self.lowest.push(u32::MAX);
         self.fn_body(&node.func);
         walk::walk_s_function(self, node);
+        let lowest = self.lowest.pop().unwrap_or(u32::MAX);
+        if let Some(name) = node.func.name {
+            // The name is seen after the inside: the symbol that the statement declares comes last.
+            if name.ref_.is_symbol() {
+                self.functions.push((name.ref_.inner_index(), lowest.min(name.ref_.inner_index())));
+            }
+            self.see(name.ref_);
+        }
+        if let Some(outer) = self.lowest.last_mut() {
+            *outer = (*outer).min(lowest);
+        }
     }
     fn visit_e_function(&mut self, node: &'ast E::Function, _: Loc) {
         self.fn_body(&node.func);
+        if let Some(name) = node.func.name {
+            self.see(name.ref_);
+        }
         walk::walk_e_function(self, node);
     }
     fn visit_e_arrow(&mut self, node: &'ast E::Arrow, _: Loc) {
@@ -288,7 +363,7 @@ fn duplicates(list: &mut Vec<i32>) -> Vec<i32> {
 
 fn check(parsed: &ParsedForLint<'_, '_>) -> String {
     use bun_js_parser::parse::erased::{ErasedData, Place};
-    let mut check = Check::default();
+    let mut check = Check { seen: vec![false; parsed.symbols.len()], ..Default::default() };
     for stmt in parsed.stmts {
         check.visit_stmt(stmt);
     }
@@ -342,6 +417,31 @@ fn check(parsed: &ParsedForLint<'_, '_>) -> String {
         }
     }
     // Symbols of kind `other` that no node of the walk holds: placeholders of function names, and what dropped imports bound.
+    let mut placeholders_found = 0u32;
+    let mut placeholders_missed = 0u32;
+    for (declared, lowest) in core::mem::take(&mut check.functions) {
+        let name = parsed.symbols.get(declared as usize).map(|s| s.original_name.slice());
+        let at = lowest.checked_sub(1).map(|at| at as usize);
+        let placeholder = at.and_then(|at| parsed.symbols.get(at));
+        match (placeholder, at) {
+            (Some(symbol), Some(at)) if symbol.kind == bun_ast::symbol::Kind::Other && Some(symbol.original_name.slice()) == name && !check.seen[at] => {
+                check.seen[at] = true;
+                placeholders_found += 1;
+            }
+            _ => placeholders_missed += 1,
+        }
+    }
+    let mut unseen = std::collections::BTreeMap::<&'static str, u32>::new();
+    let mut unseen_other = Vec::new();
+    for (index, symbol) in parsed.symbols.iter().enumerate() {
+        if !check.seen[index] {
+            *unseen.entry(<&'static str>::from(symbol.kind)).or_default() += 1;
+            if symbol.kind == bun_ast::symbol::Kind::Other && unseen_other.len() < 6 {
+                unseen_other.push(format!("{}", bstr::BStr::new(symbol.original_name.slice())));
+            }
+        }
+    }
+    out.push_str(&format!("SYMBOLS total={} placeholders_found={placeholders_found} placeholders_missed={placeholders_missed} unseen={unseen:?} unseen_other={unseen_other:?}\n", parsed.symbols.len()));
     out.push_str(&format!(
         "CHECK identifiers={} identifier_dups={:?} bindings={} binding_dups={:?} negative_bindings={} unbound_bindings={} symbol_identifiers={} erased={} module={} scope={} missing_lists={:?} erased_parent={} in_tree={:?} placeholders_in_tree={}\n",
         check.identifiers.len(),

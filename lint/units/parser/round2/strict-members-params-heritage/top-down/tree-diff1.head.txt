@@ -1,0 +1,22 @@
+"class C { public\n x }"
+   tsc : class{normal:public;normal:x;}
+   lint: class{normal:x;}
+"@dec export default class {}"
+   tsc : class{}
+   lint:
+"export default @dec class {}"
+   tsc : class{}
+   lint:
+"declare @dec class C {}"
+   tsc : class{}
+   lint:
+"class C { @dec declare x }"
+   tsc : class{}
+   lint: class{declare:x;}
+"class C { @dec abstract x }"
+   tsc : class{}
+   lint: class{abstract:x;}
+"abstract class C { @dec abstract x }"
+   tsc : class{}
+   lint: class{abstract:x;}
+# same 609, differ 7, not compared 561

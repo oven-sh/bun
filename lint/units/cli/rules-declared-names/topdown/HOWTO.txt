@@ -1,0 +1,26 @@
+RESEARCH OF D4, "rules-declared-names", the pass that starts from the goal (1b): the twelve rules on the name resolution.
+Nothing here is in the tree. Read at be1ebe5295 of /workspace/wt/cli. The pass from the code has ../../rules-bindings (its
+prototypes proto/view-driven.cjs, proto/import-assign-down.cjs and proto/tracker-down.cjs were run over the lists of this
+directory); the earlier run of this pass left ../../rules-bindings/topdown.
+
+globals-table.txt   The table proposed for src/lint/globals.rs: 73 names of ESLint's es2026, 91 own names of globalThis of the
+                    debug build, 5 names of the module wrapper, 14 names of `bun test`; `:w` = writable (3 names).
+oracle.cjs          node oracle.cjs [--no-table] [--core] [--json] <rule,rule> <cases.json>...
+                    ESLint at the pin as a lint run is to answer after D4: the harness of D2 (.cjs and .cts commonjs, every other
+                    extension a module, a TypeScript extension through @typescript-eslint/parser, the plugin rule in place of a
+                    core rule that it extends) with globals-table.txt as languageOptions.globals. Cases: codes or { code, ext }.
+repo-rules.cjs      node repo-rules.cjs <list of files> [--show rule] [--core-redeclare]    the twelve rules over real files,
+                    configured the same way: reports and files per rule.
+repo-undef.cjs      node repo-undef.cjs <list of files> [--test-globals]    no-undef alone, each report as a type reference or
+                    a value reference, the names by the number of files.
+redeclare-meanings.cjs   node redeclare-meanings.cjs <list of files | cases.json> [--show]    @typescript-eslint/no-redeclare
+                    against the same rule where two declarations clash only when they share a meaning (type, value).
+cases/td-<rule>.json     own cases of each rule, { code, ext }: JavaScript, commonjs, JSX, TypeScript, TSX, .cts, .d.ts.
+                    The name fits `--cases` of ../../ts-entry-codes-harness/topdown/tools/regen.cjs.
+cases/*.json        the other lists behind the findings (wrappers in patterns, findVariable, .cts as a script, a parameter
+                    beside a namespace, an import beside a value of its name, no-undef in JSX).
+answers/td-<rule>.txt, .json   oracle.cjs over cases/td-<rule>.json.
+
+Measured with these (2026-10-01): test, bench and example files of the repository, 5708 JavaScript and 1981 TypeScript files;
+111 files of src/compiler, src/services, src/server, src/harness of microsoft/TypeScript 5848bc5; three lib files of
+TypeScript 6.0.3; 1500 JavaScript files of node_modules.

@@ -1,0 +1,120 @@
+import { describe, expect, test } from "bun:test";
+import { tempDir } from "harness";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { bun } from "./lint-helpers";
+
+type Report = { line: number; column: number; message: string };
+// The extension of the file that a case is for `bun --lint`: `ext`, else `jsx` with `jsx`, else `js`.
+type Extension = "js" | "jsx" | "mjs" | "cjs" | "ts" | "tsx" | "mts" | "cts" | "d.ts" | "d.mts" | "d.cts";
+// `eslintTest`: the case is in ESLint's own test of the rule. `differs`: how ESLint's answer, in `eslint`, is another.
+type Case = {
+  code: string;
+  jsx?: true;
+  ext?: Extension;
+  expect: Report[];
+  differs?: string;
+  eslint?: Report[];
+  eslintTest?: true;
+};
+
+const rulesDir = join(import.meta.dir, "rules");
+// `rules/<rule>.json` holds the cases of one rule.
+const rules = [...new Bun.Glob("*.json").scanSync(rulesDir)].map(file => file.slice(0, -".json".length)).sort();
+const ruleNames = new Set(rules);
+const extensionOf = (c: Case): Extension => c.ext ?? (c.jsx ? "jsx" : "js");
+// A line of the plain format in the file of a case: its name, the category and the code.
+const lineOfCase = /^(c\d+\.(?:d\.)?[cm]?[jt]sx?)\(\d+,\d+\): (\w+) ([\w@/-]+): /;
+// How many files one run is given: a command line of Windows holds 32,767 characters.
+const filesPerRun = 1000;
+
+describe("bun --lint rules", () => {
+  test.concurrent.each(rules)("%s", async rule => {
+    const cases: Case[] = JSON.parse(readFileSync(join(rulesDir, `${rule}.json`), "utf8"));
+    // Each case is a file of its own.
+    const names = cases.map((c, i) => `c${String(i).padStart(4, "0")}.${extensionOf(c)}`);
+    const indexOf = new Map(names.map((name, i) => [name, i]));
+    using dir = tempDir(`lint-${rule}`, Object.fromEntries(cases.map((c, i) => [names[i], c.code])));
+
+    // The plain format writes a line break inside a message as one space.
+    const expected = cases.map((c, i) =>
+      c.expect.map(r => `${names[i]}(${r.line},${r.column}): error ${rule}: ${r.message.replace(/\r\n?|\n/g, " ")}`),
+    );
+    const received: string[][] = cases.map(() => []);
+    const unexpected: string[] = [];
+    const stdout: string[] = [];
+    const exitCodes: { received: number | null; expected: number }[] = [];
+    for (let from = 0; from < names.length; from += filesPerRun) {
+      const run = await bun(String(dir), ["--lint", ...names.slice(from, from + filesPerRun)]);
+      if (run.stdout) stdout.push(run.stdout);
+      const lines = run.stderr.split("\n").filter(Boolean);
+      // 2 when a diagnostic of the run is an error, else 0.
+      exitCodes.push({ received: run.exitCode, expected: lines.some(line => lineOfCase.exec(line)?.[2] === "error") ? 2 : 0 });
+      for (const line of lines) {
+        const [, name, category, code] = lineOfCase.exec(line) ?? [];
+        const index = indexOf.get(name);
+        // A line of no case.
+        if (index === undefined) unexpected.push(line);
+        else if (code === rule) received[index].push(line);
+        // Every rule is on in every run: a line of another rule is checked by the cases of that rule, not here.
+        // What no rule wrote fails: a syntax error, an internal error. A warning of the parser is no report.
+        else if (!ruleNames.has(code) && !(category === "warning" && code === "syntax")) unexpected.push(line);
+      }
+    }
+    const wrong = cases
+      .map((c, i) => ({ code: c.code, ext: extensionOf(c), expected: expected[i], received: received[i] }))
+      .filter(c => !Bun.deepEquals(c.received, c.expected));
+    const wrongExitCodes = exitCodes.filter(run => run.received !== run.expected);
+
+    expect({ stdout, unexpected, wrong, wrongExitCodes }).toEqual({ stdout: [], unexpected: [], wrong: [], wrongExitCodes: [] });
+    // A test writes hundreds of files and reads hundreds of lines, which a debug build under load does slowly.
+  }, 60_000);
+
+  // The test of a rule passes over the lines of the other rules. This file pins them together: each line is ESLint's answer
+  // too, with every rule of its recommended configuration on, so a rule that is added later says nothing new here.
+  test.concurrent("several rules report in one file, each at its place", async () => {
+    const body = [
+      "  debugger;",
+      "  if (a === -0) return { a: 1, a: 2 };",
+      "  if (a == NaN) return [1, , 2];",
+      '  if (typeof a === "nunber") a = a;',
+      "  if (!a in b) return c;",
+      "  switch (a) {",
+      "    case 1:",
+      "      return 1;",
+      "    case 1:",
+      "      return 2;",
+      "  }",
+      "  const {} = b;",
+      "  return class {",
+      "    m() {}",
+      "    m() {}",
+      "  };",
+      "}",
+      "",
+    ].join("\n");
+    const typed = `export function several(a: number, b: { x: number }, c: unknown[]) {\n${body}`;
+    const untyped = `export function several(a, b, c) {\n${body}`;
+    const reports = [
+      "(2,3): error no-debugger: Unexpected 'debugger' statement.",
+      "(3,7): error no-compare-neg-zero: Do not use the '===' operator to compare against -0.",
+      "(3,32): error no-dupe-keys: Duplicate key 'a'.",
+      "(4,7): error use-isnan: Use the isNaN function to compare with NaN.",
+      "(4,28): error no-sparse-arrays: Unexpected comma in middle of array.",
+      "(5,20): error valid-typeof: Invalid typeof comparison value.",
+      "(5,34): error no-self-assign: 'a' is assigned to itself.",
+      "(6,7): error no-unsafe-negation: Unexpected negating the left operand of 'in' operator.",
+      "(10,5): error no-duplicate-case: Duplicate case label.",
+      "(13,9): error no-empty-pattern: Unexpected empty object pattern.",
+      "(16,5): error no-dupe-class-members: Duplicate name 'm'.",
+    ];
+    // In the order of the names, which is the order of the output.
+    const files = ["several.cjs", "several.cts", "several.js", "several.jsx", "several.mjs", "several.mts", "several.ts", "several.tsx"];
+    using dir = tempDir("lint-several", Object.fromEntries(files.map(file => [file, /\.[cm]?ts/.test(file) ? typed : untyped])));
+    expect(await bun(String(dir), ["--lint", ...files])).toEqual({
+      stdout: "",
+      stderr: files.flatMap(file => reports.map(report => `${file}${report}\n`)).join(""),
+      exitCode: 2,
+    });
+  });
+});

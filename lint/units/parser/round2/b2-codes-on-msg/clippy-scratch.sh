@@ -13,11 +13,14 @@ SEARCH=""
 for dir in "$BUILD"/*/*/out; do SEARCH="$SEARCH -L dependency=$dir"; done
 LINTS=$(awk '/^\[workspace.lints.clippy\]/{on=1;next} /^\[/{on=0} on && /^[a-z_]+ *= *"deny"/{sub(/ *=.*/,""); printf " -W clippy::%s", $0}' "$ROOT/Cargo.toml")
 RUST_LINTS="-W dead_code -W unreachable_pub -W unused_imports -W unused_variables -W unused_mut -W unused_assignments -W unused_macros -W unreachable_code -W unreachable_patterns -W unused_must_use"
+ALLOWS=$(awk '/^\[workspace.lints.clippy\]/{on=1;next} /^\[/{on=0} on && /^[a-z_]+ *= *"allow"/{sub(/ *=.*/,""); printf " -A clippy::%s", $0}' "$ROOT/Cargo.toml")
 cd "$ROOT"
-# shellcheck disable=SC2086
-CLIPPY_CONF_DIR="$ROOT" clippy-driver --crate-name bun_js_parser --edition=2024 "$SCRATCH/src/js_parser/lib.rs" --test --emit=metadata \
-  -o "$SCRATCH/out/clippy.rmeta" -W clippy::all $LINTS $RUST_LINTS --error-format=short \
-  $SEARCH $EXTERNS 2> "$SCRATCH/out/clippy.log"
-echo "clippy-driver exit: $?"
-grep -c . "$SCRATCH/out/clippy.log"
-grep -n "parse/syntax_errors.rs\|parse/parse_entry.rs" "$SCRATCH/out/clippy.log" | head -60
+for mode in lib test; do
+  flag=""; [ "$mode" = test ] && flag="--test"
+  # shellcheck disable=SC2086
+  CLIPPY_CONF_DIR="$ROOT" clippy-driver --crate-name bun_js_parser --edition=2024 "$SCRATCH/src/js_parser/lib.rs" $flag --crate-type lib --emit=metadata \
+    -o "$SCRATCH/out/clippy.$mode.rmeta" -W clippy::all $LINTS $ALLOWS $RUST_LINTS --error-format=short \
+    $SEARCH $EXTERNS 2> "$SCRATCH/out/clippy.$mode.log"
+  echo "$mode: clippy-driver exit $?, $(grep -c 'warning\|error' "$SCRATCH/out/clippy.$mode.log") lines with a warning or an error"
+  grep -n "parse/syntax_errors.rs\|parse/parse_entry.rs\|^error" "$SCRATCH/out/clippy.$mode.log" | head -40
+done

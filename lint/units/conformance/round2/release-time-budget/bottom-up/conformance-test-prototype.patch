@@ -1,86 +1,101 @@
 --- a/test/cli/lint/conformance.test.ts
 +++ b/test/cli/lint/conformance.test.ts
-@@ -28,6 +28,7 @@
+@@ -28,6 +28,8 @@
    utf8ToByteString,
  } from "./conformance/runner/gostrings";
  import { skippedEmitTests } from "./conformance/runner/harnessutil_options";
 +import { diffRootOf, loadOracleTable, oracleOf } from "./conformance/runner/oracle";
++import { corpusPaths } from "./conformance/runner/paths";
  import { type Origin, listErrorBaselines, roundTripFiles, sampleErrorBaselines } from "./conformance/runner/roundtrip";
  import { skipTrivia } from "./conformance/runner/scanner";
  import { toWriterInput } from "./conformance/runner/shape";
-@@ -275,6 +276,71 @@
+@@ -46,7 +48,7 @@
+ // Where sync.sh puts the cases, the test library, the baselines and the lists of the two projects.
+ const corpusRoot = join(home, "corpus");
+ 
+-// A debug or sanitizer build runs this file's JavaScript about a hundred times slower: it takes the samples and leaves the whole corpus to release builds.
++// A debug or sanitizer build runs this file's JavaScript about a hundred times slower: it leaves the tests that walk the whole list to release builds and runs a sample of expectations.json.
+ const small = isDebug || isASAN;
+ // A debug build needs more than the default time of a test for the processes that a test starts.
+ const spawnTimeout = small ? 60_000 : undefined;
+@@ -275,6 +277,76 @@
      expect(reasons).toEqual(reference().instances.skippedBecause);
    });
  
-+  test("the list is the run of the reference that is recorded: its subtests and the reasons of its skips", () => {
-+    const suiteRun = reference().suiteRun;
-+    // Without a recorded run only upstream's files hold the list, which update-reference.ts checks.
-+    if (suiteRun === undefined) return;
-+    const rows = listLines().map(line => line.split("\t"));
-+    const subtests = rows
-+      .map(([name, kind]) => `${kind === "skipped" ? "SKIP" : "PASS"}\t${goName(name)}`)
-+      .sort((a, b) => compareStrings(a.slice(5), b.slice(5)))
-+      .map(l => l + "\n")
-+      .join("");
-+    const skips = rows
-+      .filter(([, kind]) => kind === "skipped")
-+      .map(([name, , reason]) => `${goName(name)}\t${reason}`)
-+      .sort(compareStrings)
-+      .map(l => l + "\n")
-+      .join("");
-+    expect({ subtests: rows.length, sha256: sha256(subtests), skipReasonsSha256: sha256(skips) }).toEqual({
-+      subtests: suiteRun.subtests,
-+      sha256: suiteRun.sha256,
-+      skipReasonsSha256: suiteRun.skipReasonsSha256,
-+    });
-+  });
++  // The list is one file for every build, and a debug build needs seconds for its 14,915 lines; without a recorded run only upstream's files hold the list, which update-reference.ts checks.
++  test.skipIf(small || reference().suiteRun === undefined)(
++    "the list is the run of the reference that is recorded: its subtests and the reasons of its skips",
++    () => {
++      const suiteRun = reference().suiteRun;
++      const rows = listLines().map(line => line.split("\t"));
++      const subtests = rows
++        .map(([name, kind]) => `${kind === "skipped" ? "SKIP" : "PASS"}\t${goName(name)}`)
++        .sort((a, b) => compareStrings(a.slice(5), b.slice(5)))
++        .map(l => l + "\n")
++        .join("");
++      const skips = rows
++        .filter(([, kind]) => kind === "skipped")
++        .map(([name, , reason]) => `${goName(name)}\t${reason}`)
++        .sort(compareStrings)
++        .map(l => l + "\n")
++        .join("");
++      expect({ subtests: rows.length, sha256: sha256(subtests), skipReasonsSha256: sha256(skips) }).toEqual({
++        subtests: suiteRun.subtests,
++        sha256: suiteRun.sha256,
++        skipReasonsSha256: suiteRun.skipReasonsSha256,
++      });
++    },
++  );
 +
-+  test("the corpus gives every instance of the list that runs the oracle of its class, and the counts are those of the reference", () => {
-+    const table = loadOracleTable(corpus().paths);
-+    const suites = {
-+      compiler: { instances: 0, run: 0, skipped: 0, E: 0, C: 0 },
-+      conformance: { instances: 0, run: 0, skipped: 0, E: 0, C: 0 },
-+    };
-+    const counts = { accepted: 0, triaged: 0, typescriptGo: 0, typescript: 0 };
-+    const otherClass: string[] = [];
-+    const names = new Set<string>();
-+    for (const [path, lines] of linesOfCase()) {
-+      const suite = path.startsWith("compiler/") ? "compiler" : "conformance";
-+      for (const line of lines) {
-+        const [name, kind] = line.split("\t");
-+        names.add(caseBaseName(name));
-+        suites[suite].instances++;
-+        if (kind === "skipped") {
-+          suites[suite].skipped++;
-+          continue;
++  test.skipIf(small)(
++    "the corpus gives every instance of the list that runs the oracle of its class, and the counts are those of the reference",
++    () => {
++      const table = loadOracleTable(corpusPaths(corpusRoot));
++      const suites = {
++        compiler: { instances: 0, run: 0, skipped: 0, E: 0, C: 0 },
++        conformance: { instances: 0, run: 0, skipped: 0, E: 0, C: 0 },
++      };
++      const counts = { accepted: 0, triaged: 0, typescriptGo: 0, typescript: 0 };
++      const otherClass: string[] = [];
++      const names = new Set<string>();
++      for (const [path, lines] of linesOfCase()) {
++        const suite = path.startsWith("compiler/") ? "compiler" : "conformance";
++        for (const line of lines) {
++          const [name, kind] = line.split("\t");
++          names.add(caseBaseName(name));
++          suites[suite].instances++;
++          if (kind === "skipped") {
++            suites[suite].skipped++;
++            continue;
++          }
++          suites[suite].run++;
++          const oracle = oracleOf(table, suite, name);
++          suites[suite][oracle.class]++;
++          if (oracle.class !== kind) otherClass.push(line);
++          const diff = diffRootOf(table, suite, name);
++          if (diff.accepted) counts.accepted++;
++          if (diff.triaged) counts.triaged++;
++          if (oracle.source === "typescript-go") counts.typescriptGo++;
++          if (oracle.source === "typescript") counts.typescript++;
 +        }
-+        suites[suite].run++;
-+        const oracle = oracleOf(table, suite, name);
-+        suites[suite][oracle.class]++;
-+        if (oracle.class !== kind) otherClass.push(line);
-+        const diff = diffRootOf(table, suite, name);
-+        if (diff.accepted) counts.accepted++;
-+        if (diff.triaged) counts.triaged++;
-+        if (oracle.source === "typescript-go") counts.typescriptGo++;
-+        if (oracle.source === "typescript") counts.typescript++;
 +      }
-+    }
-+    expect(otherClass.slice(0, 20)).toEqual([]);
-+    expect({ cases: names.size, ...suites, ...counts }).toEqual({
-+      cases: reference().cases.files - reference().cases.droppedByName,
-+      compiler: reference().instances.compiler,
-+      conformance: reference().instances.conformance,
-+      accepted: reference().instances.accepted,
-+      triaged: reference().instances.triaged,
-+      typescriptGo: reference().oracle["typescript-go"],
-+      typescript: reference().oracle.typescript,
-+    });
-+  });
++      expect(otherClass.slice(0, 20)).toEqual([]);
++      expect({ cases: names.size, ...suites, ...counts }).toEqual({
++        cases: reference().cases.files - reference().cases.droppedByName,
++        compiler: reference().instances.compiler,
++        conformance: reference().instances.conformance,
++        accepted: reference().instances.accepted,
++        triaged: reference().instances.triaged,
++        typescriptGo: reference().oracle["typescript-go"],
++        typescript: reference().oracle.typescript,
++      });
++    },
++  );
 +
    test("the case and space tables are those of Go", () => {
      const parts: Record<string, string[]> = { lower: [], foldKey: [], space: [], white: [] };
      for (let r = 0; r <= 0x10ffff; r++) {
-@@ -421,13 +487,33 @@
+@@ -421,13 +493,33 @@
  
  describe("enumerator", () => {
    const { skippedTests } = runner;
@@ -117,11 +132,10 @@
    });
  
    test.each(groupsOf(sample, 40).map((g, k) => [k + 1, g] as const))(
-@@ -457,78 +543,6 @@
-       }),
+@@ -458,77 +550,7 @@
      ).toEqual(emitOnly.map(name => ({ name, run: true, flagged: true })));
    });
--
+ 
 -  // The whole corpus is a second of work in a release build and minutes in a debug build; the time limit is for a machine under load.
 -  test.skipIf(small)(
 -    "every instance is its line of the list, and the counts are those of the reference",
@@ -193,6 +207,7 @@
 -    },
 -    30_000,
 -  );
++  // Every case against the list is a step of AFTER-SYNC.txt, update-reference.ts --enumerate --check: it reads 12,399 files, which a disk that does not hold them in memory answers in tens of seconds.
  });
  
  describe("error baselines", () => {

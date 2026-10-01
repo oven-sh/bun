@@ -1,0 +1,68 @@
+
+#[test]
+fn a_syntax_error_is_what_the_reference_reports() {
+    let files = vec![file("/proj/a.ts", "a.ts", "let s = \"abc\nlet x y;\n")];
+    let source = files[0].source();
+    let messages = || {
+        let mut log = Log::init();
+        log.add_range_error_fmt(
+            Some(source),
+            Range {
+                loc: Loc { start: 8 },
+                len: 0,
+            },
+            format_args!("Unterminated string literal"),
+        );
+        log.add_range_error_with_code(
+            Some(source),
+            Range {
+                loc: Loc { start: 19 },
+                len: 1,
+            },
+            1005,
+            Cow::Borrowed(b"Expected \";\" but found \"y\""),
+            Box::default(),
+        );
+        log.add_warning(Some(source), Loc { start: 4 }, b"a warning" as &[u8]);
+        log.msgs
+    };
+    // Bun's lexer is at the opening quote, the reference at the end of the line.
+    let entries = [
+        SyntaxError {
+            msg: 0,
+            code: 1002,
+            start: 12,
+            end: 12,
+            text: Cow::Borrowed(b"Unterminated string literal."),
+        },
+        SyntaxError {
+            msg: 1,
+            code: 1005,
+            start: 19,
+            end: 20,
+            text: Cow::Borrowed(b"';' expected."),
+        },
+    ];
+    let with: Vec<Diagnostic> = messages()
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, msg)| Diagnostic::from_syntax_error(FileId(0), msg, entries.get(index)))
+        .collect();
+    assert_bytes(
+        &plain(&files, &with, "/proj"),
+        "a.ts(1,13): error TS1002: Unterminated string literal.\n\
+         a.ts(2,7): error TS1005: ';' expected.\n\
+         a.ts(1,5): warning syntax: a warning\n",
+    );
+    // Without an entry a message keeps Bun's text and has no number, whatever it carries.
+    let without: Vec<Diagnostic> = messages()
+        .into_iter()
+        .filter_map(|msg| Diagnostic::from_syntax_error(FileId(0), msg, None))
+        .collect();
+    assert_bytes(
+        &plain(&files, &without, "/proj"),
+        "a.ts(1,9): error syntax: Unterminated string literal\n\
+         a.ts(2,7): error syntax: Expected \";\" but found \"y\"\n\
+         a.ts(1,5): warning syntax: a warning\n",
+    );
+}

@@ -36,6 +36,8 @@ struct Walk<'p, 'a> {
     parenthesized: HashSet<ExprId>,
     /// Trace statements for the rule prototype.
     with_nodes: bool,
+    /// The statement before the next one in the same list.
+    list_prev: Option<usize>,
 }
 
 fn target_of(expr: &Expr) -> Option<usize> {
@@ -65,6 +67,146 @@ fn breakable(stmt: &Stmt) -> bool {
         stmt.data,
         StmtData::SWhile(_) | StmtData::SDoWhile(_) | StmtData::SFor(_) | StmtData::SForIn(_) | StmtData::SForOf(_) | StmtData::SSwitch(_)
     )
+}
+
+
+/// The statement that has the last token of `stmt`: itself, or the one at the end of it.
+fn innermost_tail(mut stmt: &Stmt) -> &Stmt {
+    loop {
+        stmt = match &stmt.data {
+            StmtData::SIf(node) => node.no.as_ref().unwrap_or(&node.yes),
+            StmtData::SWhile(node) => &node.body,
+            StmtData::SFor(node) => &node.body,
+            StmtData::SForIn(node) => &node.body,
+            StmtData::SForOf(node) => &node.body,
+            StmtData::SLabel(node) => &node.stmt,
+            StmtData::SWith(node) => &node.body,
+            _ => return stmt,
+        };
+    }
+}
+
+/// Whether a `;` after `stmt` can be its own last token.
+fn can_own_semicolon(stmt: &Stmt) -> bool {
+    match &innermost_tail(stmt).data {
+        StmtData::SExpr(_)
+        | StmtData::SLocal(_)
+        | StmtData::SReturn(_)
+        | StmtData::SThrow(_)
+        | StmtData::SBreak(_)
+        | StmtData::SContinue(_)
+        | StmtData::SDebugger(_)
+        | StmtData::SDoWhile(_)
+        | StmtData::SDirective(_)
+        | StmtData::SEmpty(_)
+        | StmtData::SExportClause(_)
+        | StmtData::SExportFrom(_)
+        | StmtData::SExportStar(_)
+        | StmtData::SExportEquals(_)
+        | StmtData::SImport(_)
+        | StmtData::STypeScript(_) => true,
+        StmtData::SExportDefault(node) => matches!(node.value, bun_ast::StmtOrExpr::Expr(_)),
+        _ => false,
+    }
+}
+
+/// The child of `stmt` that has its last token.
+fn tail_child(stmt: &Stmt) -> Option<usize> {
+    let id = |stmt: &Stmt| core::ptr::from_ref(stmt).addr();
+    match &stmt.data {
+        StmtData::SIf(node) => Some(id(node.no.as_ref().unwrap_or(&node.yes))),
+        StmtData::SWhile(node) => Some(id(&node.body)),
+        StmtData::SFor(node) => Some(id(&node.body)),
+        StmtData::SForIn(node) => Some(id(&node.body)),
+        StmtData::SForOf(node) => Some(id(&node.body)),
+        StmtData::SLabel(node) => Some(id(&node.stmt)),
+        StmtData::SWith(node) => Some(id(&node.body)),
+        StmtData::STry(node) => match (&node.finally, &node.catch) {
+            (Some(finally), _) => Some(core::ptr::from_ref(finally).addr()),
+            (None, Some(catch)) => Some(core::ptr::from_ref(catch).addr()),
+            (None, None) => None,
+        },
+        StmtData::SExportDefault(node) => match &node.value {
+            bun_ast::StmtOrExpr::Stmt(inner) => Some(id(inner)),
+            bun_ast::StmtOrExpr::Expr(_) => None,
+        },
+        _ => None,
+    }
+}
+
+/// What no-unreachable registers a handler for: `1`, `0`, or `x` for one that is exported.
+fn registered(stmt: &Stmt) -> &'static str {
+    match &stmt.data {
+        StmtData::SBlock(_)
+        | StmtData::SBreak(_)
+        | StmtData::SContinue(_)
+        | StmtData::SDebugger(_)
+        | StmtData::SDoWhile(_)
+        | StmtData::SExpr(_)
+        | StmtData::SDirective(_)
+        | StmtData::SForIn(_)
+        | StmtData::SForOf(_)
+        | StmtData::SFor(_)
+        | StmtData::SIf(_)
+        | StmtData::SLabel(_)
+        | StmtData::SReturn(_)
+        | StmtData::SSwitch(_)
+        | StmtData::SThrow(_)
+        | StmtData::STry(_)
+        | StmtData::SWhile(_)
+        | StmtData::SWith(_)
+        | StmtData::SExportClause(_)
+        | StmtData::SExportFrom(_)
+        | StmtData::SExportStar(_)
+        | StmtData::SExportDefault(_) => "1",
+        StmtData::SClass(node) => if node.is_export { "x" } else { "1" },
+        StmtData::SLocal(node) => {
+            if node.is_export {
+                "x"
+            } else if node.kind != S::Kind::KVar || node.decls.iter().any(|decl| decl.value.is_some()) {
+                "1"
+            } else {
+                "0"
+            }
+        }
+        StmtData::SFunction(node) => {
+            if node.func.flags.contains(bun_ast::flags::Function::IsExport) { "x" } else { "0" }
+        }
+        StmtData::SEnum(node) => if node.is_export { "x" } else { "0" },
+        StmtData::SNamespace(node) => if node.is_export { "x" } else { "0" },
+        _ => "0",
+    }
+}
+
+impl<'ast> Walk<'_, 'ast> {
+    /// The statements of one list: each knows the one before it.
+    fn list(&mut self, stmts: &'ast [Stmt]) {
+        let mut prev = None;
+        for stmt in stmts {
+            if matches!(stmt.data, StmtData::SComment(_)) {
+                continue;
+            }
+            self.list_prev = prev;
+            self.visit_stmt(stmt);
+            prev = Some(core::ptr::from_ref(stmt).addr());
+        }
+        self.list_prev = None;
+    }
+
+    /// A block that is no statement of the tree: the body of a function, of `try`, of `catch` or of `finally`.
+    fn block_enter(&mut self, id: usize, at: Loc) {
+        if self.with_nodes {
+            let text = format!("@stmt block {} {id} - 1 0", at.start);
+            self.op(&text);
+        }
+    }
+
+    fn block_leave(&mut self, id: usize) {
+        if self.with_nodes {
+            let text = format!("@leave {id} -");
+            self.op(&text);
+        }
+    }
 }
 
 fn json(name: &[u8]) -> String {
@@ -185,11 +327,12 @@ impl<'ast> Walk<'_, 'ast> {
     }
 
     fn body(&mut self, body: &'ast G::FnBody) {
+        let id = core::ptr::from_ref(body).addr();
         self.f();
-        for stmt in body.stmts.slice() {
-            self.visit_stmt(stmt);
-        }
+        self.block_enter(id, body.loc);
+        self.list(body.stmts.slice());
         self.f();
+        self.block_leave(id);
     }
 
     fn func(&mut self, func: &'ast G::Fn) {
@@ -209,9 +352,7 @@ impl<'ast> Walk<'_, 'ast> {
             if let Some(block) = &property.class_static_block {
                 self.op("start class-static-block");
                 self.f();
-                for stmt in block.stmts.iter() {
-                    self.visit_stmt(stmt);
-                }
+                self.list(&block.stmts);
                 self.f();
                 self.op("end");
                 continue;
@@ -225,8 +366,34 @@ impl<'ast> Walk<'_, 'ast> {
                     self.visit_expr(key);
                 }
             }
+            let is_constructor = property.kind == G::PropertyKind::Normal
+                && property.flags.contains(bun_ast::flags::Property::IsMethod)
+                && !property.flags.contains(bun_ast::flags::Property::IsStatic)
+                && !property.flags.contains(bun_ast::flags::Property::IsComputed)
+                && matches!(property.key.as_ref().map(|key| &key.data), Some(ExprData::EString(name)) if name.eql_comptime(b"constructor"));
+            if is_constructor && self.with_nodes {
+                self.op("@ctor-enter");
+            }
             if let Some(value) = &property.value {
                 self.visit_expr(value);
+            }
+            if is_constructor && self.with_nodes {
+                let mut text = format!("@ctor-exit {}", u8::from(class.extends.is_some()));
+                let mut prev: Option<usize> = None;
+                for element in class.properties.slice() {
+                    let id = core::ptr::from_ref(element).addr();
+                    let is_field = element.kind == G::PropertyKind::Normal
+                        && element.class_static_block.is_none()
+                        && !element.flags.contains(bun_ast::flags::Property::IsMethod)
+                        && !element.flags.contains(bun_ast::flags::Property::IsStatic);
+                    if is_field {
+                        let at = element.key.as_ref().map_or(-1, |key| key.loc.start);
+                        let before = prev.map_or("-".to_owned(), |id| id.to_string());
+                        text.push_str(&format!(" {at},{id},{before},{}", u8::from(element.flags.contains(bun_ast::flags::Property::IsComputed))));
+                    }
+                    prev = Some(id);
+                }
+                self.op(&text);
             }
             if let Some(initializer) = &property.initializer {
                 self.field_value = property.kind != G::PropertyKind::AutoAccessor;
@@ -280,12 +447,9 @@ impl<'ast> Walk<'_, 'ast> {
 impl<'ast> Visitor<'ast> for Walk<'_, 'ast> {
     fn visit_stmt(&mut self, stmt: &'ast Stmt) {
         let label = self.label.take();
+        let list_prev = self.list_prev.take();
         if matches!(stmt.data, StmtData::SComment(_)) {
             return;
-        }
-        if self.with_nodes {
-            let kind = <&'static str>::from(stmt.data.tag());
-            self.op(&format!("@stmt {kind} {}", stmt.loc.start));
         }
         // processCodePathToEnter
         match &stmt.data {
@@ -330,6 +494,18 @@ impl<'ast> Visitor<'ast> for Walk<'_, 'ast> {
             _ => {}
         }
         self.f();
+        if self.with_nodes {
+            let kind = <&'static str>::from(stmt.data.tag());
+            let prev = list_prev.map_or("-".to_owned(), |id| id.to_string());
+            let text = format!(
+                "@stmt {kind} {} {} {prev} {} {}",
+                stmt.loc.start,
+                core::ptr::from_ref(stmt).addr(),
+                registered(stmt),
+                u8::from(can_own_semicolon(stmt))
+            );
+            self.op(&text);
+        }
         walk::walk_stmt(self, stmt);
         // processCodePathToExit
         let mut dont_forward = false;
@@ -375,7 +551,9 @@ impl<'ast> Visitor<'ast> for Walk<'_, 'ast> {
             self.f();
         }
         if self.with_nodes {
-            self.op("@stmt-exit");
+            let tail = tail_child(stmt).map_or("-".to_owned(), |id| id.to_string());
+            let text = format!("@leave {} {tail}", core::ptr::from_ref(stmt).addr());
+            self.op(&text);
         }
         // postprocess
         if matches!(stmt.data, StmtData::SFunction(_)) {
@@ -654,12 +832,15 @@ impl<'ast> Visitor<'ast> for Walk<'_, 'ast> {
             }
             let is_default = case.value.is_none();
             let body = case.body.slice();
+            let mut prev = None;
             for (at, stmt) in body.iter().enumerate() {
                 if at == 0 {
                     let text = format!("makeSwitchCaseBody [false,{is_default}]");
                     self.op(&text);
                 }
+                self.list_prev = prev;
                 self.visit_stmt(stmt);
+                prev = Some(core::ptr::from_ref(stmt).addr());
             }
             // A SwitchCase: processCodePathToExit.
             if body.is_empty() {
@@ -671,31 +852,38 @@ impl<'ast> Visitor<'ast> for Walk<'_, 'ast> {
     }
 
     fn visit_s_try(&mut self, node: &'ast S::Try, _: Loc) {
+        let body_id = core::ptr::from_ref(&node.body_loc).addr();
         self.f();
-        for stmt in node.body.slice() {
-            self.visit_stmt(stmt);
-        }
+        self.block_enter(body_id, node.body_loc);
+        self.list(node.body.slice());
         self.f();
+        self.block_leave(body_id);
         if let Some(catch) = &node.catch {
+            let id = core::ptr::from_ref(catch).addr();
             self.op("makeCatchBlock");
             self.f();
             if let Some(binding) = &catch.binding {
                 self.visit_binding(binding);
             }
             self.f();
-            for stmt in catch.body.slice() {
-                self.visit_stmt(stmt);
-            }
+            self.block_enter(id, catch.body_loc);
+            self.list(catch.body.slice());
             self.f();
+            self.block_leave(id);
             self.f();
         }
         if let Some(finally) = &node.finally {
+            let id = core::ptr::from_ref(finally).addr();
             self.op("makeFinallyBlock");
             self.f();
-            for stmt in finally.stmts.slice() {
-                self.visit_stmt(stmt);
+            if self.with_nodes {
+                // Its `{` is the token after `finally`.
+                let text = format!("@stmt finally {} {id} - 1 0", finally.loc.start);
+                self.op(&text);
             }
+            self.list(finally.stmts.slice());
             self.f();
+            self.block_leave(id);
         }
     }
 
@@ -733,9 +921,11 @@ impl<'ast> Visitor<'ast> for Walk<'_, 'ast> {
         // A TSModuleDeclaration: its name is an Identifier that `isIdentifierReference` takes for a reference.
         self.op("makeFirstThrowablePathInTryOrCatchBlock");
         self.f();
-        for stmt in node.stmts.slice() {
-            self.visit_stmt(stmt);
-        }
+        self.list(node.stmts.slice());
+    }
+
+    fn visit_s_block(&mut self, node: &'ast S::Block, _: Loc) {
+        self.list(node.stmts.slice());
     }
 
     fn visit_s_function(&mut self, node: &'ast S::Function, _: Loc) {
@@ -798,6 +988,9 @@ impl<'ast> Visitor<'ast> for Walk<'_, 'ast> {
     }
 
     fn visit_e_call(&mut self, node: &'ast E::Call, _: Loc) {
+        if self.with_nodes && matches!(node.target.data, ExprData::ESuper(_)) {
+            self.op("@super-call");
+        }
         self.chain_target = node.optional_chain.is_some();
         self.visit_expr(&node.target);
         for (index, arg) in node.args.iter().enumerate() {
@@ -953,13 +1146,15 @@ fn trace(path: &str, with_nodes: bool) -> Option<String> {
             ts_wrapped,
             parenthesized,
             with_nodes,
+            list_prev: None,
         };
         walk.op("start program");
         walk.f();
-        for stmt in parsed.stmts {
-            walk.visit_stmt(stmt);
-        }
+        walk.list(parsed.stmts);
         walk.f();
+        if with_nodes {
+            walk.op("@program-exit");
+        }
         walk.op("end");
         walk.out
     });

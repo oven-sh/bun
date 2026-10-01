@@ -22,7 +22,7 @@ function eslint(c) {
 	}
 	return messages;
 }
-let total = 0, same = 0;
+let total = 0, same = 0, reports = 0;
 const kinds = {};
 for (const f of process.argv.slice(2).filter(a => a.endsWith(".json"))) {
 	const parsed = JSON.parse(fs.readFileSync(f, "utf8"));
@@ -45,16 +45,19 @@ for (const f of process.argv.slice(2).filter(a => a.endsWith(".json"))) {
 	let fileTotal = 0, fileSame = 0;
 	cases.forEach((c, i) => {
 		const messages = eslint(c);
-		if (messages.some(m => m.fatal) || ours[i] === null) { console.log(`left out (${ours[i] === null ? "Bun" : "ESLint"} rejects): ${JSON.stringify(c.code)}`); return; }
+		if (messages.some(m => m.fatal) || ours[i] === null) { console.log(`left out (${ours[i] === null ? "Bun" : "ESLint"} rejects): ${c.file || JSON.stringify(c.code)}`); return; }
 		fileTotal++;
+		reports += messages.length;
 		const theirs = [...new Set(messages.map(m => `${m.ruleId} ${m.line}:${m.column} ${m.message}`))].sort();
 		const mine = [...new Set(ours[i])].sort();
 		if (JSON.stringify(theirs) === JSON.stringify(mine)) { fileSame++; if (show) console.log(`same   ${JSON.stringify(c.code)}\n    ${theirs.join(" | ") || "(none)"}`); return; }
 		const kind = mine.every(x => theirs.includes(x)) ? "missing" : theirs.every(x => mine.includes(x)) ? "extra" : "other";
 		kinds[kind] = (kinds[kind] || 0) + 1;
-		console.log(`DIFFER ${kind} ${JSON.stringify(c.code)}\n    eslint: ${theirs.join(" | ") || "(none)"}\n    native: ${mine.join(" | ") || "(none)"}`);
+		const label = c.file || JSON.stringify(c.code);
+		const only = (a, b) => a.filter(x => !b.includes(x));
+		console.log(c.file ? `DIFFER ${kind} ${label}\n    only eslint: ${only(theirs, mine).join(" | ") || "(none)"}\n    only native: ${only(mine, theirs).join(" | ") || "(none)"}` : `DIFFER ${kind} ${label}\n    eslint: ${theirs.join(" | ") || "(none)"}\n    native: ${mine.join(" | ") || "(none)"}`);
 	});
 	console.log(`${path.basename(f)}: cases ${fileTotal}, same ${fileSame}, differ ${fileTotal - fileSame}`);
 	total += fileTotal; same += fileSame;
 }
-console.log(`all: cases ${total}, same ${same}, differ ${total - same} ${JSON.stringify(kinds)}`);
+console.log(`all: cases ${total}, same ${same}, differ ${total - same} ${JSON.stringify(kinds)}; reports of ESLint ${reports}`);

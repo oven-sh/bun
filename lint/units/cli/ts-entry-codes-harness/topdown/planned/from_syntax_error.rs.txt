@@ -1,0 +1,22 @@
+
+    /// A message that a lint parse logged. With `reference` it has the number, the range and the text of the reference.
+    pub fn from_syntax_error(
+        file: FileId,
+        msg: bun_ast::Msg,
+        reference: Option<&SyntaxError>,
+    ) -> Option<Diagnostic> {
+        let number = msg.code();
+        let mut diagnostic = Diagnostic::from_msg(file, msg)?;
+        match reference {
+            Some(reference) if diagnostic.category == Category::Error => {
+                diagnostic.file = Some(file);
+                diagnostic.start = reference.start;
+                diagnostic.length = reference.end.saturating_sub(reference.start);
+                diagnostic.code = Code::Ts(number.unwrap_or(reference.code));
+                diagnostic.text.clone_from(&reference.text);
+            }
+            // A number is printed with the text of the reference or not at all.
+            _ => diagnostic.code = Code::SYNTAX,
+        }
+        Some(diagnostic)
+    }

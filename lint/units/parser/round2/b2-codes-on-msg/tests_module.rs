@@ -535,7 +535,7 @@ mod tests {
             } else {
                 Parser::init(options(Loader::Ts), log, &source, &define, &arena)
             };
-            parser.ok().map(|parser| parser.lexer.all_comments.clone())
+            parser.ok().map(|parser| parser.lexer.all_comments)
         };
         assert_eq!(kept(false, &mut log), Some(Vec::new()));
         assert_eq!(kept(true, &mut log), Some(vec![range(0, 7), range(8, 4)]));

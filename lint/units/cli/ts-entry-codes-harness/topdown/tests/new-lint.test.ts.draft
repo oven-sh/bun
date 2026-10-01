@@ -1,0 +1,85 @@
+// SCRATCH: the tests that D2 adds to test/cli/lint/lint.test.ts (describe "bun --lint operands") and changes there.
+import { describe, expect, test } from "bun:test";
+import { tempDir } from "harness";
+import { bun } from "./lint-helpers";
+
+// Every place stderr reports, as `file:line:column`. A code frame has `at bad.ts:1:9`, a plain line starts `bad.ts(1,9)`.
+function positions(stderr: string) {
+  const found = new Set<string>();
+  for (const [, file, line, column] of stderr.matchAll(/^(?: +at )?([\w.-]+)[(:](\d+)[,:](\d+)/gm)) {
+    found.add(`${file}:${line}:${column}`);
+  }
+  return [...found].sort();
+}
+
+describe("bun --lint operands", () => {
+  // CHANGED: was `expect(stderr).toContain("Unexpected ;")` and `positions`.
+  test.concurrent("a syntax error is printed to stderr and the exit code is 2", async () => {
+    using dir = tempDir("lint-syntax-error", { "bad.ts": "let x = ;\n" });
+    expect(await bun(String(dir), ["--lint", "bad.ts"])).toEqual({
+      stdout: "",
+      stderr: "bad.ts(1,9): error TS1109: Expression expected.\n",
+      exitCode: 2,
+    });
+  });
+
+  test.concurrent("the rules run on a file of every extension", async () => {
+    const extensions = ["js", "jsx", "mjs", "cjs", "ts", "tsx", "mts", "cts", "d.ts", "d.mts", "d.cts"];
+    const files = extensions.map(extension => `dbg.${extension}`).sort();
+    using dir = tempDir("lint-rules-extensions", Object.fromEntries(files.map(file => [file, "debugger;\n"])));
+    expect(await bun(String(dir), ["--lint", ...files])).toEqual({
+      stdout: "",
+      stderr: files.map(file => `${file}(1,1): error no-debugger: Unexpected 'debugger' statement.\n`).join(""),
+      exitCode: 2,
+    });
+  });
+
+  test.concurrent("a declaration file is parsed as ambient, and its name says that it is one", async () => {
+    // Outside a declaration file the constant has to be initialized.
+    const ambient =
+      "export const x: number;\nexport function f(a: string): void;\ndeclare namespace N {\n  let y: string;\n}\n";
+    const declarations = ["a.d.cts", "a.d.mts", "a.d.ts", "styles.d.css.ts"];
+    const others = ["a.d.tsx", "a.ts", "a.tsx"];
+    using dir = tempDir(
+      "lint-ambient",
+      Object.fromEntries([...declarations, ...others].map(file => [file, ambient])),
+    );
+    const [clean, failing] = await Promise.all([
+      bun(String(dir), ["--lint", ...declarations]),
+      bun(String(dir), ["--lint", ...declarations, ...others]),
+    ]);
+    expect(clean).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+    expect(failing.stdout).toBe("");
+    expect(positions(failing.stderr)).toEqual(others.map(file => `${file}:1:14`));
+    expect(failing.exitCode).toBe(2);
+  });
+
+  test.concurrent("a syntax error in a declaration file is reported", async () => {
+    using dir = tempDir("lint-declaration-error", {
+      "a.d.ts": "export const x: ;\n",
+      "b.d.mts": "\nexport const x: ;\n",
+      "c.d.cts": "\n\nexport const x: ;\n",
+    });
+    expect(await bun(String(dir), ["--lint", "a.d.ts", "b.d.mts", "c.d.cts"])).toEqual({
+      stdout: "",
+      stderr:
+        "a.d.ts(1,17): error TS1110: Type expected.\n" +
+        "b.d.mts(2,17): error TS1110: Type expected.\n" +
+        "c.d.cts(3,17): error TS1110: Type expected.\n",
+      exitCode: 2,
+    });
+  });
+
+  // A pin: the column is where the parser stopped, which depends on the size of the stack.
+  test.concurrent("a file that is nested too deeply for the parser is one error", async () => {
+    const deep = `x = ${"[".repeat(300_000)}${"]".repeat(300_000)};\n`;
+    using dir = tempDir("lint-deep", { "deep.js": deep, "deep.ts": deep });
+    const { stdout, stderr, exitCode } = await bun(String(dir), ["--lint", "deep.js", "deep.ts"]);
+    expect(stdout).toBe("");
+    expect(stderr.replace(/\(1,\d+\)/g, "(1,N)")).toBe(
+      "deep.js(1,N): error syntax: Maximum call stack size exceeded\n" +
+        "deep.ts(1,N): error syntax: Maximum call stack size exceeded\n",
+    );
+    expect(exitCode).toBe(2);
+  });
+});

@@ -1,0 +1,63 @@
+Raw numbers of the research "release-time-budget", pass 1a (bottom-up), 2026-10-01, worktree at 3110ce85cf.
+Machine: cgroup of 12 CPUs and 32 GB on a host of 16 CPUs with a load average of 490 to 940; cpu.pressure of the cgroup "some" 35 to 66 percent, "full" up to 50 percent.
+bun = /workspace/bun/build/release/bun 1.4.3-canary.1+367d939d9. Trees: V0 = scratch clone with the corpus and the binding of round2/runner-corpus-binding/top-down,
+V1 = V0 with runner.patch, V3 = V1 with conformance-test-prototype.patch. One corpus directory for all three (V1 and V3 reach it through a link).
+CPU of a thread: /proc/thread-self/schedstat (on-CPU time and wait for a CPU); "blocked" = wall - on-CPU - wait.
+
+enumerateInstances(<corpus>/cases), one call in a fresh process, page cache warm, 9 processes each in turn (probes/bench2.ts): median (least-most), ms
+  before   wall 1457 (1228-1761)   main thread on CPU 696 (646-754)   process user+sys 1395 (1232-1512)   main thread waits for a CPU 533 (287-986)
+  after    wall 1316 (845-2311)    main thread on CPU 452 (414-497)   process user+sys 1111 (935-1233)    main thread waits for a CPU 560 (287-1282)
+the same call, page cache of the cases dropped before (probes/evict.py), before:
+  wall 36290   main thread on CPU 1963, waits for a CPU 10450, blocked 23877   process user 2127 sys 542   53.3 MB read from the disk for 8.4 MB of files
+threads of the process for one call (probes/threads.ts), ms of CPU
+  before   bun 719-774   JITWorker 638-748   HeapHelper 48-50   JSCWarmUp 11-12
+  after    bun 429-481   JITWorker 470-739   HeapHelper 39-47   JSCWarmUp 6-15
+  after, BUN_JSC_useFTLJIT=0   bun 470-497   JITWorker 116-117   HeapHelper 42-51     (all threads 646-681)
+  after, BUN_JSC_useDFGJIT=0   bun 678-722   JITWorker 6-7       HeapHelper 43-46
+  after, BUN_JSC_useJIT=0      bun 1866      HeapHelper 705
+six calls in one process, main thread on CPU per call (probes/steady.ts)
+  before   715 688 633 710 602 635   and   972 812 745 782 746 771
+  after    443 344 384 358 347 468   and   420 325 363 390 374 398   and   497 348 361 333 379 366
+the steps of one pass over the corpus, main thread on CPU (probes/phases.ts), before; first pass (page cache cold) / second / third
+  list files 40/26/22   skippedTests filter 4/4/3   readFileSync 695/80/68   decode 10/8/8   extractCompilerSettings 18/13/17
+  getFileBasedTestConfigurations 82/68/91   parseTestFilesAndSymlinks 82/65/64   getInstanceStatus 409/390/352   getConfiguredName 6/4/4
+  readFileSync of the first pass: wall 15551, waits for a CPU 6837, blocked 8019, 53.3 MB from the disk
+profile of one call, before, 896 samples at 1 ms, by number of samples (the time gaps of the profile are stretched by the load)
+  getInstanceStatus 50.0% (compileFilesOptions 29.5%: newCompilerOptions/cloneObject 15.1%, setOptionsFromTestConfig 11.3%; newParseConfigHost 13.8%: MemFs 7.5%, Buffer 3.3%)
+  getCompilerFileBasedTest 26.9% (readFile 11.7%, getFileBasedTestConfigurations 11.5%, extractCompilerSettings 3.1%)   find (getCommandLineOption) 10.7%
+  payload/parseTestFilesAndSymlinksWithOptions 13.1%   enumerateTestFiles 3.6%
+every case read once, 12,444 files (probes/coldread.ts)
+  warm   readFileSync: wall 413, main on CPU 93   Promise.all of Bun.file().arrayBuffer(): wall 89, main on CPU 32, process user+sys 170
+  cold   readFileSync: wall 15674 (waits for a CPU 4330, blocked 10959)   Bun.file().arrayBuffer(): wall 4056 and 4783   fs.promises.readFile: wall 4557
+copy of an object of 131 properties, 15,000 copies (probes/clone-bench*.ts)
+  filled name by name: 60-95 ms (4-6 us each)   made by a literal: 1.3-3.9 ms (0.1-0.26 us each)   filled name by name up to 129 properties: 1.5 ms; from 131: 83 ms
+corpus: 12,444 files, 12,399 cases, 14,915 instances, 1,644 cases with more than one instance (24 at most), 16,674 units (21,687 over the instances),
+  127 cases with a config unit (130 instances), 22 with links, 50 with @currentDirectory, 366,445 lines of which 43,772 start with "//", 30,193 settings of 103 names
+
+the test file, `USE_SYSTEM_BUN=1 bun test test/cli/lint/conformance.test.ts` under /workspace/tools/lk, page cache warm (observed/batch/*-warm-*.log), load average 720 to 755
+        pass  the runner's own seconds       real                              user                              sys                               the test of the whole corpus, ms
+  V0    105   5.76 6.45 6.34 3.54 4.64       5.863 6.557 7.089 3.666 4.680     2.224 2.227 1.839 1.787 1.831     0.497 0.467 0.468 0.446 0.416     1383 1442 1124 1046 1057
+  V1    105   5.45 5.76 5.86 4.38 3.40       5.645 5.940 6.429 4.406 3.459     1.573 1.706 1.624 1.500 1.742     0.426 0.400 0.424 0.403 0.515     1074  872  700  758  854
+  V3    106   4.55 5.42 5.82 3.57 3.97       4.606 5.587 5.942 3.889 4.009     0.898 0.875 0.896 0.848 0.979     0.339 0.260 0.293 0.312 0.343     (not in the file)
+  medians: V0 5.76 s and 2.31 s of user+sys; V1 5.45 s and 2.05 s; V3 4.55 s and 1.19 s
+  one run of V0 before that (12:11, load average 639, after 28 minutes of waiting for the lock): 6.89 s, user 2.236, sys 0.493, the test of the whole corpus 3267 ms
+the same with the page cache of the corpus dropped before each run (observed/batch/*-cold-*.log), load average 687 to 731
+  V0    105   16.93 15.77      user 2.646 2.544   sys 0.911 0.865   the test of the whole corpus 11768 11919 ms
+  V1    105   17.29 14.55      user 2.225 2.084   sys 0.954 0.833   the test of the whole corpus 12793  9759 ms
+  V3    106    3.61  4.84      user 0.978 0.929   sys 0.367 0.372
+in every run the 20 tests of "default check", which start processes side by side, end after 1.6 to 3.8 s (0.66 s in the run of 12:11)
+
+what the bodies of describe compute, main thread on CPU (probes/describetime.ts): release / debug build of the worktree, ms
+  imports of the runner 17/731   cases() 12/642   sample of one in 40: 3/695   listErrorBaselines of 9,730 names 11/220   sampleErrorBaselines 11/161   sample of one in 250: 1/131   expectations.json 1/16
+what the tests of the list compute (probes/listtests.ts): release / debug, ms
+  linesOfCase() 13/1549   the list test as it is 12/1425   the digests of the recorded run from the list 17/1963   loadOracleTable 10/349   the oracle of every line and the counts 28/4492
+the samples through enumerateCase (probes/small.ts), main thread on CPU, ms
+  debug    one in 40 (333 cases, 383 instances): before 3195 3258, after 2471 2697   one in 250 (54 cases): before 416 409, after 279 305
+  release  one in 40: before 40, after 35   one in 250: before 4, after 3
+sweep.ts --no-run, whole corpus (page cache warm): V0 real 2.3-2.6 s, user+sys 1.44-1.48 s; V1 real 2.2-2.5 s, user+sys 1.19-1.42 s; with a cold page cache V0 real 12.1 s
+
+parity of the runner after the change
+  probes/dump.ts: every field of the 14,915 instances of enumerateInstances, and of enumerateCase over the 12,445 paths: sha256 86729c947da87e9d3d1b416dcb1e3a19f2504982e56870487ffe4c097bd09e13 before and after
+  bun test/cli/lint/conformance/update-reference.ts --check /workspace/ref/typescript-go               "the list is the one that is there" ... "nothing changes" (this form does not call the enumerator)
+  bun test/cli/lint/conformance/update-reference.ts --enumerate --check /workspace/ref/typescript-go   "the list is the one of the enumerator of the runner" ... "nothing changes"
+  the test "every instance is its line of the list, and the counts are those of the reference" passes in the seven runs of V1

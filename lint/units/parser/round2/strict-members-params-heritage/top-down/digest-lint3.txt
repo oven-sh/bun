@@ -1,0 +1,203 @@
+## n a line break after a modifier of a class member
+F   "class C { public\n x = 1 }"  ref: ok  lint: accepts
+F   "class C { public\n x }"  ref: ok  lint: accepts
+F   "class C { public\n x: number }"  ref: ok  lint: accepts
+F   "class C { public\n m() {} }"  ref: ok  lint: accepts
+F   "class C { public\n [k] = 1 }"  ref: ok  lint: accepts
+F   "class C { public\n 's' = 1 }"  ref: ok  lint: accepts
+F   "class C { public\n 1 = 1 }"  ref: ok  lint: accepts
+F   "class C { public\n #p = 1 }"  ref: ok  lint: accepts
+F   "class C { public\n *g() {} }"  ref: ok  lint: accepts
+F   "class C { public\n static y = 1 }"  ref: ok  lint: accepts
+F   "class C { public\n readonly z = 1 }"  ref: ok  lint: accepts
+F   "class C { public\n constructor() {} }"  ref: ok  lint: accepts
+F   "class C { public\n [k: string]: any }"  ref: ok  lint: accepts
+F   "class C { private\n x = 1 }"  ref: ok  lint: accepts
+F   "class C { private\n x }"  ref: ok  lint: accepts
+F   "class C { private\n x: number }"  ref: ok  lint: accepts
+F   "class C { private\n m() {} }"  ref: ok  lint: accepts
+F   "class C { private\n [k] = 1 }"  ref: ok  lint: accepts
+F   "class C { private\n 's' = 1 }"  ref: ok  lint: accepts
+F   "class C { private\n 1 = 1 }"  ref: ok  lint: accepts
+F   "class C { private\n #p = 1 }"  ref: ok  lint: accepts
+F   "class C { private\n *g() {} }"  ref: ok  lint: accepts
+F   "class C { private\n static y = 1 }"  ref: ok  lint: accepts
+F   "class C { private\n readonly z = 1 }"  ref: ok  lint: accepts
+F   "class C { private\n constructor() {} }"  ref: ok  lint: accepts
+F   "class C { private\n [k: string]: any }"  ref: ok  lint: accepts
+F   "class C { protected\n x = 1 }"  ref: ok  lint: accepts
+F   "class C { protected\n x }"  ref: ok  lint: accepts
+F   "class C { protected\n x: number }"  ref: ok  lint: accepts
+F   "class C { protected\n m() {} }"  ref: ok  lint: accepts
+F   "class C { protected\n [k] = 1 }"  ref: ok  lint: accepts
+F   "class C { protected\n 's' = 1 }"  ref: ok  lint: accepts
+F   "class C { protected\n 1 = 1 }"  ref: ok  lint: accepts
+F   "class C { protected\n #p = 1 }"  ref: ok  lint: accepts
+F   "class C { protected\n *g() {} }"  ref: ok  lint: accepts
+F   "class C { protected\n static y = 1 }"  ref: ok  lint: accepts
+F   "class C { protected\n readonly z = 1 }"  ref: ok  lint: accepts
+F   "class C { protected\n constructor() {} }"  ref: ok  lint: accepts
+F   "class C { protected\n [k: string]: any }"  ref: ok  lint: accepts
+F   "class C { readonly\n x = 1 }"  ref: ok  lint: accepts
+F   "class C { readonly\n x }"  ref: ok  lint: accepts
+F   "class C { readonly\n x: number }"  ref: ok  lint: accepts
+F   "class C { readonly\n m() {} }"  ref: ok  lint: accepts
+F   "class C { readonly\n [k] = 1 }"  ref: ok  lint: accepts
+F   "class C { readonly\n 's' = 1 }"  ref: ok  lint: accepts
+F   "class C { readonly\n 1 = 1 }"  ref: ok  lint: accepts
+F   "class C { readonly\n #p = 1 }"  ref: ok  lint: accepts
+F   "class C { readonly\n *g() {} }"  ref: ok  lint: accepts
+F   "class C { readonly\n static y = 1 }"  ref: ok  lint: accepts
+F   "class C { readonly\n readonly z = 1 }"  ref: ok  lint: accepts
+F   "class C { readonly\n constructor() {} }"  ref: ok  lint: accepts
+F   "class C { readonly\n [k: string]: any }"  ref: ok  lint: accepts
+F   "class C { override\n x = 1 }"  ref: ok  lint: accepts
+F   "class C { override\n x }"  ref: ok  lint: accepts
+F   "class C { override\n x: number }"  ref: ok  lint: accepts
+F   "class C { override\n m() {} }"  ref: ok  lint: accepts
+F   "class C { override\n [k] = 1 }"  ref: ok  lint: accepts
+F   "class C { override\n 's' = 1 }"  ref: ok  lint: accepts
+F   "class C { override\n 1 = 1 }"  ref: ok  lint: accepts
+F   "class C { override\n #p = 1 }"  ref: ok  lint: accepts
+F   "class C { override\n *g() {} }"  ref: ok  lint: accepts
+F   "class C { override\n static y = 1 }"  ref: ok  lint: accepts
+F   "class C { override\n readonly z = 1 }"  ref: ok  lint: accepts
+F   "class C { override\n constructor() {} }"  ref: ok  lint: accepts
+F   "class C { override\n [k: string]: any }"  ref: ok  lint: accepts
+F   "class C { static\n x = 1 }"  ref: ok  lint: accepts
+F   "class C { static\n x }"  ref: ok  lint: accepts
+F   "class C { static\n x: number }"  ref: ok  lint: accepts
+F   "class C { static\n m() {} }"  ref: ok  lint: accepts
+F   "class C { static\n [k] = 1 }"  ref: ok  lint: accepts
+F   "class C { static\n 's' = 1 }"  ref: ok  lint: accepts
+F   "class C { static\n 1 = 1 }"  ref: ok  lint: accepts
+F   "class C { static\n #p = 1 }"  ref: ok  lint: accepts
+F   "class C { static\n *g() {} }"  ref: ok  lint: accepts
+B!  "class C { static\n static y = 1 }"  ref: TS1434@18+6 Unexpected keyword or identifier.  lint: TS1005@25+1 @25+1 Expected ";" but found "y"
+F   "class C { static\n readonly z = 1 }"  ref: ok  lint: accepts
+C   "class C { static\n constructor() {} }"  ref: checker TS1089@10+6 'static' modifier cannot appear on a constructor declaration.  lint: accepts
+F   "class C { static\n [k: string]: any }"  ref: ok  lint: accepts
+F   "class C { declare\n x = 1 }"  ref: ok  lint: accepts
+F   "class C { declare\n x }"  ref: ok  lint: accepts
+F   "class C { declare\n x: number }"  ref: ok  lint: accepts
+F   "class C { declare\n m() {} }"  ref: ok  lint: accepts
+F   "class C { declare\n [k] = 1 }"  ref: ok  lint: accepts
+F   "class C { declare\n 's' = 1 }"  ref: ok  lint: accepts
+F   "class C { declare\n 1 = 1 }"  ref: ok  lint: accepts
+F   "class C { declare\n #p = 1 }"  ref: ok  lint: accepts
+F   "class C { declare\n *g() {} }"  ref: ok  lint: accepts
+F   "class C { declare\n static y = 1 }"  ref: ok  lint: accepts
+F   "class C { declare\n readonly z = 1 }"  ref: ok  lint: accepts
+F   "class C { declare\n constructor() {} }"  ref: ok  lint: accepts
+F   "class C { declare\n [k: string]: any }"  ref: ok  lint: accepts
+F   "class C { abstract\n x = 1 }"  ref: ok  lint: accepts
+F   "class C { abstract\n x }"  ref: ok  lint: accepts
+F   "class C { abstract\n x: number }"  ref: ok  lint: accepts
+F   "class C { abstract\n m() {} }"  ref: ok  lint: accepts
+F   "class C { abstract\n [k] = 1 }"  ref: ok  lint: accepts
+F   "class C { abstract\n 's' = 1 }"  ref: ok  lint: accepts
+F   "class C { abstract\n 1 = 1 }"  ref: ok  lint: accepts
+F   "class C { abstract\n #p = 1 }"  ref: ok  lint: accepts
+F   "class C { abstract\n *g() {} }"  ref: ok  lint: accepts
+F   "class C { abstract\n static y = 1 }"  ref: ok  lint: accepts
+F   "class C { abstract\n readonly z = 1 }"  ref: ok  lint: accepts
+F   "class C { abstract\n constructor() {} }"  ref: ok  lint: accepts
+F   "class C { abstract\n [k: string]: any }"  ref: ok  lint: accepts
+F   "class C { accessor\n x = 1 }"  ref: ok  lint: accepts
+F   "class C { accessor\n x }"  ref: ok  lint: accepts
+F   "class C { accessor\n x: number }"  ref: ok  lint: accepts
+F   "class C { accessor\n m() {} }"  ref: ok  lint: accepts
+F   "class C { accessor\n [k] = 1 }"  ref: ok  lint: accepts
+F   "class C { accessor\n 's' = 1 }"  ref: ok  lint: accepts
+F   "class C { accessor\n 1 = 1 }"  ref: ok  lint: accepts
+F   "class C { accessor\n #p = 1 }"  ref: ok  lint: accepts
+F   "class C { accessor\n *g() {} }"  ref: ok  lint: accepts
+F   "class C { accessor\n static y = 1 }"  ref: ok  lint: accepts
+F   "class C { accessor\n readonly z = 1 }"  ref: ok  lint: accepts
+F   "class C { accessor\n constructor() {} }"  ref: ok  lint: accepts
+F   "class C { accessor\n [k: string]: any }"  ref: ok  lint: accepts
+F   "class C { async\n x = 1 }"  ref: ok  lint: accepts
+F   "class C { async\n x }"  ref: ok  lint: accepts
+F   "class C { async\n x: number }"  ref: ok  lint: accepts
+F   "class C { async\n m() {} }"  ref: ok  lint: accepts
+F   "class C { async\n [k] = 1 }"  ref: ok  lint: accepts
+F   "class C { async\n 's' = 1 }"  ref: ok  lint: accepts
+F   "class C { async\n 1 = 1 }"  ref: ok  lint: accepts
+F   "class C { async\n #p = 1 }"  ref: ok  lint: accepts
+F   "class C { async\n *g() {} }"  ref: ok  lint: accepts
+F   "class C { async\n static y = 1 }"  ref: ok  lint: accepts
+F   "class C { async\n readonly z = 1 }"  ref: ok  lint: accepts
+F   "class C { async\n constructor() {} }"  ref: ok  lint: accepts
+F   "class C { async\n [k: string]: any }"  ref: ok  lint: accepts
+B=  "class C { get\n x = 1 }"  ref: TS1005@17+1 '(' expected.  lint: TS1005@17+1 @17+1 Expected "(" but found "="
+B=  "class C { get\n x }"  ref: TS1005@17+1 '(' expected.  lint: TS1005@17+1 @17+1 Expected "(" but found "}"
+B=  "class C { get\n x: number }"  ref: TS1005@16+1 '(' expected.  lint: TS1005@16+1 @16+1 Expected "(" but found ":"
+F   "class C { get\n m() {} }"  ref: ok  lint: accepts
+B=  "class C { get\n [k] = 1 }"  ref: TS1005@19+1 '(' expected.  lint: TS1005@19+1 @19+1 Expected "(" but found "="
+B=  "class C { get\n 's' = 1 }"  ref: TS1005@19+1 '(' expected.  lint: TS1005@19+1 @19+1 Expected "(" but found "="
+B=  "class C { get\n 1 = 1 }"  ref: TS1005@17+1 '(' expected.  lint: TS1005@17+1 @17+1 Expected "(" but found "="
+B=  "class C { get\n #p = 1 }"  ref: TS1005@18+1 '(' expected.  lint: TS1005@18+1 @18+1 Expected "(" but found "="
+F   "class C { get\n *g() {} }"  ref: ok  lint: accepts
+B=  "class C { get\n static y = 1 }"  ref: TS1005@22+1 '(' expected.  lint: TS1005@22+1 @22+1 Expected "(" but found "y"
+B=  "class C { get\n readonly z = 1 }"  ref: TS1005@24+1 '(' expected.  lint: TS1005@24+1 @24+1 Expected "(" but found "z"
+D   "class C { get\n constructor() {} }"  ref: checker TS1341@15+11 Class constructor may not be an accessor.  lint: nocode @15+11 Class constructor cannot be a getter
+A   "class C { get\n [k: string]: any }"  ref: TS1005@17+1 ']' expected. | TS1005@25  lint: accepts
+B=  "class C { set\n x = 1 }"  ref: TS1005@17+1 '(' expected.  lint: TS1005@17+1 @17+1 Expected "(" but found "="
+B=  "class C { set\n x }"  ref: TS1005@17+1 '(' expected.  lint: TS1005@17+1 @17+1 Expected "(" but found "}"
+B=  "class C { set\n x: number }"  ref: TS1005@16+1 '(' expected.  lint: TS1005@16+1 @16+1 Expected "(" but found ":"
+F   "class C { set\n m(v) {} }"  ref: ok  lint: accepts
+B=  "class C { set\n [k] = 1 }"  ref: TS1005@19+1 '(' expected.  lint: TS1005@19+1 @19+1 Expected "(" but found "="
+B=  "class C { set\n 's' = 1 }"  ref: TS1005@19+1 '(' expected.  lint: TS1005@19+1 @19+1 Expected "(" but found "="
+B=  "class C { set\n 1 = 1 }"  ref: TS1005@17+1 '(' expected.  lint: TS1005@17+1 @17+1 Expected "(" but found "="
+B=  "class C { set\n #p = 1 }"  ref: TS1005@18+1 '(' expected.  lint: TS1005@18+1 @18+1 Expected "(" but found "="
+F   "class C { set\n *g(v) {} }"  ref: ok  lint: accepts
+B=  "class C { set\n static y = 1 }"  ref: TS1005@22+1 '(' expected.  lint: TS1005@22+1 @22+1 Expected "(" but found "y"
+B=  "class C { set\n readonly z = 1 }"  ref: TS1005@24+1 '(' expected.  lint: TS1005@24+1 @24+1 Expected "(" but found "z"
+D   "class C { set\n constructor(v) {} }"  ref: checker TS1341@15+11 Class constructor may not be an accessor.  lint: nocode @15+11 Class constructor cannot be a setter
+A   "class C { set\n [k: string]: any }"  ref: TS1005@17+1 ']' expected. | TS1005@25  lint: accepts
+## n a line break after two modifiers
+F   "class C { public static\n x = 1 }"  ref: ok  lint: accepts
+F   "class C { static public\n x = 1 }"  ref: ok  lint: accepts
+F   "class C { public\n static\n x = 1 }"  ref: ok  lint: accepts
+F   "class C { static\n public\n x = 1 }"  ref: ok  lint: accepts
+F   "class C { public readonly\n x = 1 }"  ref: ok  lint: accepts
+F   "class C { static readonly\n x = 1 }"  ref: ok  lint: accepts
+F   "class C { static async\n m() {} }"  ref: ok  lint: accepts
+F   "class C { static get\n x() { return 1 } }"  ref: ok  lint: accepts
+F   "class C { static\n get x() { return 1 } }"  ref: ok  lint: accepts
+F   "class C { static\n async m() {} }"  ref: ok  lint: accepts
+F   "class C { static\n *g() {} }"  ref: ok  lint: accepts
+F   "class C { static\n{ } }"  ref: ok  lint: accepts
+F   "class C { static\n[k] = 1 }"  ref: ok  lint: accepts
+F   "class C { public /* c */ x = 1 }"  ref: ok  lint: accepts
+F   "class C { public // c\n x = 1 }"  ref: ok  lint: accepts
+F   "class C { public /* a\n b */ x = 1 }"  ref: ok  lint: accepts
+F   "class C { readonly\n}"  ref: ok  lint: accepts
+F   "class C { public\n;x }"  ref: ok  lint: accepts
+C   "abstract class C { abstract\n m(): void }"  ref: checker TS2391@29+1 Function implementation is missing or not immediately following the declar  lint: accepts
+C   "abstract class C { public abstract\n m(): void }"  ref: checker TS2391@36+1 Function implementation is missing or not immediately following the declar  lint: accepts
+F   "class C { declare\n readonly x: number }"  ref: ok  lint: accepts
+F   "class C { accessor\n static x = 1 }"  ref: ok  lint: accepts
+F   "class C { @dec\n public\n x = 1 }"  ref: ok  lint: accepts
+F   "class C { @dec public\n x = 1 }"  ref: ok  lint: accepts
+F   "class C { override\n m() {} }"  ref: ok  lint: accepts
+F   "class C { async\n *g() {} }"  ref: ok  lint: accepts
+F   "class C { get\n *g() {} }"  ref: ok  lint: accepts
+F   "class C { static\n static }"  ref: ok  lint: accepts
+B!  "class C { static\n static x }"  ref: TS1434@18+6 Unexpected keyword or identifier.  lint: TS1005@25+1 @25+1 Expected ";" but found "x"
+F   "class C { static static\n x }"  ref: ok  lint: accepts
+C   "class C { public\n public }"  ref: checker TS2300@18+6 Duplicate identifier 'public'.  lint: accepts
+C   "class C { readonly\n readonly: number }"  ref: checker TS2300@20+8 Duplicate identifier 'readonly'. | TS2717@20+8 Subsequent property declarations must have the same type.  Property 'reado  lint: accepts
+## n the same words in an object literal and in parameters
+F   "({ get\n x() { return 1 } })"  ref: ok  lint: accepts
+B=  "({ async\n x() {} })"  ref: TS1005@10+1 ',' expected.  lint: TS1005@10+1 @10+1 Expected "}" but found "x"
+D   "({ static\n x() {} })"  ref: checker TS1042@3+6 'static' modifier cannot be used here. | TS1184@3+6 Modifiers cannot appear here.  lint: TS1005@11+1 @11+1 Expected "}" but found "x"
+B=  "function f(public\n x) {}"  ref: TS1005@19+1 ',' expected.  lint: TS1005@19+1 @19+1 Expected ")" but found "x"
+B=  "class C { m(public\n x) {} }"  ref: TS1005@20+1 ',' expected.  lint: TS1005@20+1 @20+1 Expected ")" but found "x"
+## n JavaScript
+F   [js] "class C { static\n x = 1 }"  ref: ok  lint: accepts
+F   [js] "class C { async\n m() {} }"  ref: ok  lint: accepts
+F   [js] "class C { get\n x() { return 1 } }"  ref: ok  lint: accepts
+F   [js] "class C { accessor\n x = 1 }"  ref: ok  lint: accepts
+F   [js] "class C { public\n x = 1 }"  ref: ok  lint: accepts
+# counts {"F":165,"B!":2,"C":5,"B=":21,"D":3,"A":2}

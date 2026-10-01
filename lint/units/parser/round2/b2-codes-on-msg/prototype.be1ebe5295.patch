@@ -1,0 +1,793 @@
+--- a/src/js_parser/parse/parse_entry.rs
++++ b/src/js_parser/parse/parse_entry.rs
+@@ -448,6 +448,45 @@
+             orig_error_count,
+         })
+     }
++
++    /// `init` for a lint parse: the comments before the first token are kept, and where that token is an error, its message has the code of the reference.
++    #[cold]
++    pub fn init_for_lint(
++        options: Options<'a>,
++        log: &mut bun_ast::Log,
++        source: &'a bun_ast::Source,
++        define: &'a Define,
++        bump: &'a Arena,
++    ) -> Result<Parser<'a>, Error> {
++        source.check_parseable_len(log, "File")?;
++        let orig_error_count = log.errors;
++        let first = log.msgs.len();
++        let mut lexer = js_lexer::Lexer::init_without_reading(log, source, bump);
++        // Must be set before the priming `next()` so leading comments are seen.
++        lexer.track_comments = true;
++        lexer.track_react_suppressions = options.features.react_compiler.is_enabled();
++        lexer.jsc_builtin_syntax = options.jsc_builtin_syntax;
++        lexer.step();
++        if let Err(err) = lexer.next() {
++            // No parser is made: what the lexer logged gets its code here.
++            crate::parse::syntax_errors::stamp_lexer_messages(
++                lexer.log(),
++                first,
++                source.contents(),
++            );
++            return Err(err.into());
++        }
++        let log_ptr = lexer.log;
++        Ok(Parser {
++            options,
++            bump,
++            lexer,
++            define,
++            source,
++            log: log_ptr,
++            orig_error_count,
++        })
++    }
+ }
+ 
+ // ── live `Parser::parse` / `Parser::scan_imports` symbols ────────────────
+--- a/src/js_parser/parse/syntax_errors.rs
++++ b/src/js_parser/parse/syntax_errors.rs
+@@ -3,7 +3,7 @@
+ use std::borrow::Cow;
+ 
+ use bun_ast::ts;
+-use bun_ast::{Kind, Loc, Log, Msg, Range};
++use bun_ast::{Kind, Loc, Log, Metadata, Msg, Range};
+ use bun_core::strings;
+ 
+ use crate::Error;
+@@ -83,13 +83,11 @@
+         b"Constructor type notation must be parenthesized when used in an intersection type.",
+     );
+ 
+-/// What the reference reports for one message that a lint parse left in the log.
++/// The range and the text that the reference reports for one message that a lint parse left in the log: `Msg::code` is its number.
+ #[derive(Clone, PartialEq, Eq, Debug)]
+ pub struct SyntaxError {
+     /// The index of the message in `Log::msgs`.
+     pub msg: u32,
+-    /// The number of the diagnostic: 1005 is TS1005.
+-    pub code: u32,
+     /// The offset of the first byte that the diagnostic marks.
+     pub start: u32,
+     /// The offset after the last byte that it marks: `start` where it marks a position.
+@@ -108,7 +106,6 @@
+     ) -> Option<Self> {
+         Some(SyntaxError {
+             msg: u32::try_from(msg).ok()?,
+-            code: message.code,
+             start: u32::try_from(start).ok()?,
+             end: u32::try_from(end).ok()?,
+             text: message.format(argument),
+@@ -116,20 +113,24 @@
+     }
+ }
+ 
+-/// A record of a running parse, and the address and length of the text of the message it was made for.
++/// A record of a running parse, and what tells its message: the code that the record put on it, its offset and a hash of its text.
+ struct Recorded {
+     error: SyntaxError,
+-    text: (usize, usize),
++    code: u32,
++    at: usize,
++    said: u64,
+ }
+ 
+-/// Where the text of `msg` is and how long it is: a message that the log drops takes its text with it.
+-fn text_of(msg: &Msg) -> (usize, usize) {
+-    (msg.data.text.as_ptr() as usize, msg.data.text.len())
++/// The offset of `msg` and a hash of its text.
++fn place_of(msg: &Msg) -> (usize, u64) {
++    let at = msg
++        .data
++        .location
++        .as_ref()
++        .map_or(usize::MAX, |location| location.offset);
++    (at, bun_wyhash::hash(&msg.data.text))
+ }
+ 
+-/// The count of records above which those of dropped messages are thrown away.
+-const RECORDED_MIN: usize = 64;
+-
+ /// The diagnostics of the reference for the messages that a lint parse left in the log.
+ #[derive(Default)]
+ pub struct SyntaxErrors {
+@@ -137,8 +138,6 @@
+     list: Vec<SyntaxError>,
+     /// Every record of the running parse, oldest first: the parser drops and restores messages while it backtracks.
+     recorded: Vec<Recorded>,
+-    /// The count of records at which `record` looks for those of dropped messages.
+-    sweep_at: usize,
+     /// The index in the log of the first message of the parse.
+     first: usize,
+ }
+@@ -166,10 +165,21 @@
+         self.list.get(index)
+     }
+ 
+-    /// Records `message` for the message that `log` got since it had `msgs_len` of them, if it got one.
++    /// The entries of the messages that `log` holds from index `first` on, where `Parser::init_for_lint` failed: the lexer logged them and no parser was made.
++    pub fn of_failed_init(log: &Log, first: usize, source: &bun_ast::Source) -> SyntaxErrors {
++        let mut errors = SyntaxErrors::starting_at(first);
++        for (index, msg) in log.msgs.iter().enumerate().skip(first) {
++            if let Some((_, entry)) = of_lexer_message(index, msg, source.contents()) {
++                errors.list.push(entry);
++            }
++        }
++        errors
++    }
++
++    /// Puts the code of `message` on the message that `log` got since it had `msgs_len` of them, if it got one, and records the range and the text.
+     fn record(
+         &mut self,
+-        log: &Log,
++        log: &mut Log,
+         msgs_len: usize,
+         message: Message,
+         argument: &[u8],
+@@ -178,10 +188,13 @@
+         let Some(index) = log.msgs.len().checked_sub(1) else {
+             return;
+         };
+-        let Some(msg) = log.msgs.get(index) else {
++        if index < msgs_len {
++            return;
++        }
++        let Some(msg) = log.msgs.get_mut(index) else {
+             return;
+         };
+-        if index < msgs_len {
++        if matches!(msg.metadata, Metadata::Resolve(_)) {
+             return;
+         }
+         let start = usize::try_from(range.loc.start).unwrap_or(0);
+@@ -189,54 +202,62 @@
+         let Some(error) = SyntaxError::new(index, message, argument, start, end) else {
+             return;
+         };
+-        if self.recorded.len() >= self.sweep_at.max(RECORDED_MIN) {
+-            self.recorded.retain(|record| record.is_live(log));
+-            self.sweep_at = self.recorded.len() * 2;
+-        }
++        msg.metadata = Metadata::Code(message.code);
++        let (at, said) = place_of(msg);
+         self.recorded.push(Recorded {
+             error,
+-            text: text_of(msg),
++            code: message.code,
++            at,
++            said,
+         });
+     }
+ 
+-    /// Replaces the last record with `to` if it is `from` at `start`.
+-    fn refine(&mut self, start: usize, from: Message, to: Message, argument: &[u8]) {
++    /// Replaces the last record with `to`, on its message too, if it is `from` at `start` and `log` still has its message.
++    fn refine(&mut self, log: &mut Log, start: usize, from: Message, to: Message, argument: &[u8]) {
+         let Some(last) = self.recorded.last_mut() else {
+             return;
+         };
+-        if last.error.code == from.code && last.error.start as usize == start {
+-            last.error.code = to.code;
+-            last.error.text = to.format(argument);
++        let Some(msg) = log.msgs.get_mut(last.error.msg as usize) else {
++            return;
++        };
++        if last.code != from.code || last.error.start as usize != start || !last.is_of(msg) {
++            return;
+         }
++        last.code = to.code;
++        last.error.text = to.format(argument);
++        msg.metadata = Metadata::Code(to.code);
+     }
+ 
+-    /// Ends the parse: keeps the last record of each message that `log` still has, and reads what the lexer expected from the text of the others.
+-    fn finish(&mut self, log: &Log, source: &[u8]) {
++    /// Ends the parse: keeps the last record of each message that `log` still has, and gives the others the code and the entry that the text of the lexer tells.
++    fn finish(&mut self, log: &mut Log, source: &[u8]) {
+         let first = self.first;
+         let count = log.msgs.len().saturating_sub(first);
+         let mut slots: Vec<Option<SyntaxError>> = Vec::new();
+         slots.resize_with(count, || None);
+         for record in core::mem::take(&mut self.recorded) {
+-            if !record.is_live(log) {
++            let index = record.error.msg as usize;
++            if !log.msgs.get(index).is_some_and(|msg| record.is_of(msg)) {
+                 continue;
+             }
+-            let slot = (record.error.msg as usize)
++            let slot = index
+                 .checked_sub(first)
+                 .and_then(|offset| slots.get_mut(offset));
+             if let Some(slot) = slot {
+                 *slot = Some(record.error);
+             }
+         }
+-        self.sweep_at = 0;
+         self.list.clear();
+         for (offset, slot) in slots.into_iter().enumerate() {
+             let index = first + offset;
+-            let entry = slot.or_else(|| {
+-                log.msgs
+-                    .get(index)
+-                    .and_then(|msg| of_lexer_message(index, msg, source))
+-            });
+-            if let Some(entry) = entry {
++            if let Some(entry) = slot {
++                self.list.push(entry);
++                continue;
++            }
++            let Some(msg) = log.msgs.get_mut(index) else {
++                continue;
++            };
++            if let Some((code, entry)) = of_lexer_message(index, msg, source) {
++                msg.metadata = Metadata::Code(code);
+                 self.list.push(entry);
+             }
+         }
+@@ -244,57 +265,67 @@
+ }
+ 
+ impl Recorded {
+-    /// Whether `log` still has the message that the record was made for.
+-    fn is_live(&self, log: &Log) -> bool {
+-        log.msgs
+-            .get(self.error.msg as usize)
+-            .is_some_and(|msg| text_of(msg) == self.text)
++    /// Whether `msg` is the message that the record was made for, or one that says the same at the same place.
++    fn is_of(&self, msg: &Msg) -> bool {
++        msg.code() == Some(self.code) && place_of(msg) == (self.at, self.said)
++    }
++}
++
++/// Gives each message that `log` holds from index `first` on the code that its text tells: the lexer logged it and no parser was made.
++#[cold]
++pub(crate) fn stamp_lexer_messages(log: &mut Log, first: usize, source: &[u8]) {
++    for (index, msg) in log.msgs.iter_mut().enumerate().skip(first) {
++        if let Some((code, _)) = of_lexer_message(index, msg, source) {
++            msg.metadata = Metadata::Code(code);
++        }
+     }
+ }
+ 
+-/// The entry of a message of the lexer that no site recorded, read from its text: `Lexer::expected_string` says what it expected.
+-fn of_lexer_message(index: usize, msg: &Msg, source: &[u8]) -> Option<SyntaxError> {
+-    if msg.kind != Kind::Err {
++/// The code and the entry of a message of the lexer that no site recorded, read from its text: `Lexer::expected_string` says what it expected.
++fn of_lexer_message(index: usize, msg: &Msg, source: &[u8]) -> Option<(u32, SyntaxError)> {
++    if msg.kind != Kind::Err || matches!(msg.metadata, Metadata::Resolve(_)) {
+         return None;
+     }
+     let location = msg.data.location.as_ref()?;
+     let start = location.offset;
+     let end = start + location.length;
+     let text: &[u8] = &msg.data.text;
+-    if text == b"Unterminated string literal" {
+-        // The scanner of the reference reports where the line or the file ends.
+-        return match source.get(start) {
+-            Some(b'"' | b'\'') => {
+-                let at = end_of_unterminated_string(source, start);
+-                SyntaxError::new(index, UNTERMINATED_STRING_LITERAL, b"", at, at)
+-            }
+-            Some(b'`' | b'}') => {
+-                let at = source.len();
+-                SyntaxError::new(index, UNTERMINATED_TEMPLATE_LITERAL, b"", at, at)
+-            }
+-            _ => None,
+-        };
+-    }
+-    if text == b"Expected \"*/\" to terminate multi-line comment" {
+-        return SyntaxError::new(index, ASTERISK_SLASH_EXPECTED, b"", start, end);
+-    }
+-    let (expected, found) = split_expected(text)?;
+-    if expected == b"identifier" {
+-        // createIdentifierWithDiagnostic
+-        return match unquote(found).filter(|word| js_lexer::keyword(word).is_some()) {
+-            Some(word) => SyntaxError::new(
+-                index,
+-                IDENTIFIER_EXPECTED_0_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE,
+-                word,
+-                start,
+-                end,
+-            ),
+-            None => SyntaxError::new(index, IDENTIFIER_EXPECTED, b"", start, end),
+-        };
+-    }
+-    // parseExpected
+-    let token = unquote(expected)?;
+-    SyntaxError::new(index, X_0_EXPECTED, token, start, end)
++    let (message, argument, start, end): (Message, &[u8], usize, usize) =
++        if text == b"Unterminated string literal" {
++            // The scanner of the reference reports where the line or the file ends.
++            match source.get(start) {
++                Some(b'"' | b'\'') => {
++                    let at = end_of_unterminated_string(source, start);
++                    (UNTERMINATED_STRING_LITERAL, b"".as_slice(), at, at)
++                }
++                Some(b'`' | b'}') => {
++                    let at = source.len();
++                    (UNTERMINATED_TEMPLATE_LITERAL, b"".as_slice(), at, at)
++                }
++                _ => return None,
++            }
++        } else if text == b"Expected \"*/\" to terminate multi-line comment" {
++            (ASTERISK_SLASH_EXPECTED, b"".as_slice(), start, end)
++        } else {
++            let (expected, found) = split_expected(text)?;
++            if expected == b"identifier" {
++                // createIdentifierWithDiagnostic
++                match unquote(found).filter(|word| js_lexer::keyword(word).is_some()) {
++                    Some(word) => (
++                        IDENTIFIER_EXPECTED_0_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE,
++                        word,
++                        start,
++                        end,
++                    ),
++                    None => (IDENTIFIER_EXPECTED, b"".as_slice(), start, end),
++                }
++            } else {
++                // parseExpected
++                (X_0_EXPECTED, unquote(expected)?, start, end)
++            }
++        };
++    let entry = SyntaxError::new(index, message, argument, start, end)?;
++    Some((message.code, entry))
+ }
+ 
+ /// `Expected a but found b`: `a` and `b`.
+@@ -325,7 +356,7 @@
+ }
+ 
+ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+-    /// Records, in a lint parse, that the reference reports `message` where the log got a message since it had `msgs_len` of them.
++    /// Puts, in a lint parse, the code of `message` on the message that the log got since it had `msgs_len` of them, and records what the reference reports there.
+     #[cold]
+     #[inline(never)]
+     fn code_syntax_error(
+@@ -573,10 +604,13 @@
+             _ => (DECLARATION_OR_STATEMENT_EXPECTED, b"".as_slice()),
+         };
+         let start = self.lexer.start;
++        let Some(starts) = &mut self.starts_for_parse_only else {
++            return err;
++        };
++        let mut errors = core::mem::take(&mut starts.syntax_errors);
++        errors.refine(self.log(), start, EXPRESSION_EXPECTED, message, argument);
+         if let Some(starts) = &mut self.starts_for_parse_only {
+-            starts
+-                .syntax_errors
+-                .refine(start, EXPRESSION_EXPECTED, message, argument);
++            starts.syntax_errors = errors;
+         }
+         err
+     }
+@@ -609,15 +643,36 @@
+         };
+         // The reference marks the node from the end of the token before it.
+         let start = ts::full_start(self.lexer.contents, &self.lexer.all_comments, node.start);
+-        let range = ts::range(start, node.end);
++        self.syntax_error_as(ts::range(start, node.end), message, b"");
++    }
++
++    /// Logs, in a lint parse, the diagnostic `message` of the reference at `range`, `argument` in its text. False in a parse without lint, which logs nothing here.
++    #[cold]
++    #[inline(never)]
++    pub(crate) fn syntax_error_as(
++        &mut self,
++        range: Range,
++        message: Message,
++        argument: &[u8],
++    ) -> bool {
++        if !self.is_lint_parse() {
++            return false;
++        }
++        // One error for one place, as the lexer reports.
+         if self.lexer.prev_error_loc.eql(range.loc) {
+-            return;
++            return true;
+         }
+         let msgs_len = self.log().msgs.len();
+-        self.log()
+-            .add_range_error(Some(self.source), range, message.text);
++        self.log().add_range_error_with_code(
++            Some(self.source),
++            range,
++            message.code,
++            message.format(argument),
++            Box::default(),
++        );
+         self.lexer.prev_error_loc = range.loc;
+-        self.code_syntax_error(msgs_len, message, b"", range);
++        self.code_syntax_error(msgs_len, message, argument, range);
++        true
+     }
+ }
+ 
+@@ -626,11 +681,30 @@
+     use super::*;
+     use crate::defines::Define;
+     use crate::parse::parse_entry::{Options, Parser};
++    use crate::parser::{ParseStatementOptions, StatementScope};
+     use bun_alloc::Arena;
+     use bun_ast::{Loader, Source};
++    use core::mem::MaybeUninit;
+ 
+-    /// The entry of the first message that the lint parse of `text` left, as code, start, end and text. `None`: it parses.
+-    fn first_error(
++    /// How a test makes the parser of a lint parse.
++    #[derive(Clone, Copy, PartialEq, Eq)]
++    enum Init {
++        /// `Parser::init_for_lint`
++        ForLint,
++        /// `Parser::init`
++        Plain,
++    }
++
++    fn options_of(loader: Loader) -> Options<'static> {
++        let mut options = Options::init(Default::default(), loader);
++        options.features.no_macros = true;
++        options.features.dont_bundle_twice = true;
++        options
++    }
++
++    /// The first error that the lint parse of `text` left: the code on its message, and the start, the end and the text of its entry. `None`: it parses.
++    fn first_error_after(
++        init: Init,
+         path: &'static [u8],
+         text: &'static [u8],
+         loader: Loader,
+@@ -639,24 +713,103 @@
+         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
+         let _ast_scope = ast_memory_allocator.enter();
+         let source = Source::init_path_string(path, text);
+-        let mut options = Options::init(Default::default(), loader);
+-        options.features.no_macros = true;
+-        options.features.dont_bundle_twice = true;
+         let define = Define::default();
+         let mut log = Log::init();
+         let mut errors = SyntaxErrors::default();
+-        let parser = Parser::init(options, &mut log, &source, &define, &arena).ok()?;
+-        if parser
+-            .parse_for_lint_with_codes(&mut errors, |_| ())
+-            .is_ok()
+-        {
+-            return None;
++        let options = options_of(loader);
++        let parser = match init {
++            Init::ForLint => Parser::init_for_lint(options, &mut log, &source, &define, &arena),
++            Init::Plain => Parser::init(options, &mut log, &source, &define, &arena),
++        };
++        match parser {
++            Ok(parser) => {
++                if parser
++                    .parse_for_lint_with_codes(&mut errors, |_| ())
++                    .is_ok()
++                {
++                    return None;
++                }
++            }
++            Err(_) if init == Init::ForLint => {
++                errors = SyntaxErrors::of_failed_init(&log, 0, &source);
++            }
++            // `Parser::init` puts no code on what the lexer logged.
++            Err(_) => {}
++        }
++        // A message has an entry where it has a code, and nowhere else.
++        for (index, msg) in log.msgs.iter().enumerate() {
++            assert_eq!(
++                msg.code().is_some(),
++                errors.get(index).is_some(),
++                "{}",
++                bstr::BStr::new(text)
++            );
+         }
+         let first = log.msgs.iter().position(|msg| msg.kind == Kind::Err)?;
++        let code = log.msgs.get(first).and_then(Msg::code).unwrap_or(0);
+         let Some(entry) = errors.get(first) else {
+-            return Some((0, 0, 0, Vec::new()));
++            return Some((code, 0, 0, Vec::new()));
+         };
+-        Some((entry.code, entry.start, entry.end, entry.text.to_vec()))
++        Some((code, entry.start, entry.end, entry.text.to_vec()))
++    }
++
++    fn first_error(
++        path: &'static [u8],
++        text: &'static [u8],
++        loader: Loader,
++    ) -> Option<(u32, u32, u32, Vec<u8>)> {
++        first_error_after(Init::ForLint, path, text, loader)
++    }
++
++    /// The code of each message that the parse pass of a parse without lint leaves for `text`, which has no side table.
++    fn codes_without_lint<const TS: bool>(text: &'static [u8]) -> Vec<Option<u32>> {
++        let path: &'static [u8] = if TS { b"/a.ts" } else { b"/a.js" };
++        let loader = if TS { Loader::Ts } else { Loader::Js };
++        let arena = Arena::new();
++        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
++        let _ast_scope = ast_memory_allocator.enter();
++        let source = Source::init_path_string(path, text);
++        let define = Define::default();
++        let mut log = Log::init();
++        if let Ok(parser) = Parser::init(options_of(loader), &mut log, &source, &define, &arena) {
++            let mut slot = MaybeUninit::<P<'_, TS, false>>::uninit();
++            let made = P::init(
++                &mut slot,
++                parser.bump,
++                parser.log,
++                parser.source,
++                parser.define,
++                parser.lexer,
++                parser.options,
++            );
++            if made.is_ok() {
++                // SAFETY: `init` returned `Ok`, so the slot holds a parser.
++                let p = unsafe { slot.assume_init_mut() };
++                let mut opts = ParseStatementOptions {
++                    scope: StatementScope::Module,
++                    ..Default::default()
++                };
++                let _ = p.parse_stmts_up_to(T::TEndOfFile, &mut opts);
++                // SAFETY: the slot holds the parser that `init` made, and nothing reads it after this.
++                unsafe { slot.assume_init_drop() };
++            }
++        }
++        log.msgs.iter().map(Msg::code).collect()
++    }
++
++    /// The code of each message that `Parser::parse_only` leaves for `text`: its side table is not the one of a lint parse.
++    fn codes_of_parse_only(text: &'static [u8]) -> Vec<Option<u32>> {
++        let arena = Arena::new();
++        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
++        let _ast_scope = ast_memory_allocator.enter();
++        let source = Source::init_path_string(&b"/a.js"[..], text);
++        let define = Define::default();
++        let mut log = Log::init();
++        if let Ok(parser) = Parser::init(options_of(Loader::Js), &mut log, &source, &define, &arena)
++        {
++            let _ = parser.parse_only(|_| ());
++        }
++        log.msgs.iter().map(Msg::code).collect()
+     }
+ 
+     fn range(start: i32, len: i32) -> Range {
+@@ -703,7 +856,8 @@
+ 
+         // What an attempt logs and takes back.
+         log.add_range_error(Some(&source), range(7, 1), b"Unexpected ;");
+-        errors.record(&log, 0, TYPE_EXPECTED, b"", range(7, 1));
++        errors.record(&mut log, 0, TYPE_EXPECTED, b"", range(7, 1));
++        assert_eq!(log.msgs.first().and_then(Msg::code), Some(1110));
+         log.msgs.clear();
+         log.errors = 0;
+ 
+@@ -713,15 +867,15 @@
+             range(18, 1),
+             format_args!("Expected identifier but found \"{}\"", "("),
+         );
+-        errors.finish(&log, source.contents());
++        errors.finish(&mut log, source.contents());
+ 
+         let expected = SyntaxError {
+             msg: 0,
+-            code: 1003,
+             start: 18,
+             end: 19,
+             text: Cow::Borrowed(b"Identifier expected."),
+         };
++        assert_eq!(log.msgs.first().and_then(Msg::code), Some(1003));
+         assert_eq!(errors.entries(), &[expected.clone()][..]);
+         assert_eq!(errors.get(0), Some(&expected));
+         assert_eq!(errors.get(1), None);
+@@ -734,26 +888,129 @@
+         let mut errors = SyntaxErrors::starting_at(0);
+ 
+         log.add_range_error(Some(&source), range(7, 1), b"Unexpected ;");
+-        errors.record(&log, 0, EXPRESSION_EXPECTED, b"", range(7, 1));
+-        errors.refine(7, EXPRESSION_EXPECTED, X_0_EXPECTED, b"export");
++        errors.record(&mut log, 0, EXPRESSION_EXPECTED, b"", range(7, 1));
++        errors.refine(&mut log, 7, EXPRESSION_EXPECTED, X_0_EXPECTED, b"export");
+         // A record for a message that was not logged is none.
+-        errors.record(&log, 1, TYPE_EXPECTED, b"", range(7, 1));
++        errors.record(&mut log, 1, TYPE_EXPECTED, b"", range(7, 1));
+         // The parser sets the message aside and puts it back.
+         let aside = log.msgs.split_off(0);
+         log.msgs.extend(aside);
+-        errors.finish(&log, source.contents());
++        errors.finish(&mut log, source.contents());
+ 
+         let expected = SyntaxError {
+             msg: 0,
+-            code: 1005,
+             start: 7,
+             end: 8,
+             text: Cow::Borrowed(b"'export' expected."),
+         };
++        assert_eq!(log.msgs.first().and_then(Msg::code), Some(1005));
+         assert_eq!(errors.entries(), &[expected][..]);
+     }
+ 
+     #[test]
++    fn a_message_set_aside_and_put_back_keeps_its_code() {
++        let source = Source::init_path_string(&b"/a.ts"[..], &b"let x: ;\n"[..]);
++        let mut log = Log::init();
++        let mut errors = SyntaxErrors::starting_at(0);
++
++        log.add_range_error(Some(&source), range(7, 1), b"Unexpected ;");
++        errors.record(&mut log, 0, TYPE_EXPECTED, b"", range(7, 1));
++        // Another reading of the same tokens logs the same text at the same index and is recorded with another code.
++        let aside = log.msgs.split_off(0);
++        log.add_range_error(Some(&source), range(7, 1), b"Unexpected ;");
++        errors.record(&mut log, 0, EXPRESSION_EXPECTED, b"", range(7, 1));
++        assert_eq!(log.msgs.first().and_then(Msg::code), Some(1109));
++        // It fails too: its message goes and the first one comes back.
++        log.msgs.clear();
++        log.msgs.extend(aside);
++        errors.finish(&mut log, source.contents());
++
++        let expected = SyntaxError {
++            msg: 0,
++            start: 7,
++            end: 8,
++            text: Cow::Borrowed(b"Type expected."),
++        };
++        assert_eq!(log.msgs.first().and_then(Msg::code), Some(1110));
++        assert_eq!(errors.entries(), &[expected][..]);
++    }
++
++    #[test]
++    fn a_message_that_no_site_recorded_takes_no_code_of_a_record() {
++        let source = Source::init_path_string(&b"/a.ts"[..], &b"let x: ;\n"[..]);
++        let mut log = Log::init();
++        let mut errors = SyntaxErrors::starting_at(0);
++
++        log.add_range_error(Some(&source), range(7, 1), b"Unexpected ;");
++        errors.record(&mut log, 0, TYPE_EXPECTED, b"", range(7, 1));
++        log.msgs.clear();
++        // The same text at the same index, logged where no site records.
++        log.add_range_error(Some(&source), range(7, 1), b"Unexpected ;");
++        errors.finish(&mut log, source.contents());
++
++        assert_eq!(log.msgs.first().and_then(Msg::code), None);
++        assert_eq!(errors.entries(), &[][..]);
++    }
++
++    #[test]
++    fn an_error_in_the_first_token_has_its_code() {
++        let cases: [(&'static [u8], Loader, u32, u32, u32, &str); 5] = [
++            (
++                b"\"abc",
++                Loader::Ts,
++                1002,
++                4,
++                4,
++                "Unterminated string literal.",
++            ),
++            (
++                b"'abc\n x",
++                Loader::Ts,
++                1002,
++                4,
++                4,
++                "Unterminated string literal.",
++            ),
++            (
++                b"`abc ",
++                Loader::Ts,
++                1160,
++                5,
++                5,
++                "Unterminated template literal.",
++            ),
++            (b"/* abc", Loader::Ts, 1010, 6, 6, "'*/' expected."),
++            (b"// c\n/* abc", Loader::Js, 1010, 11, 11, "'*/' expected."),
++        ];
++        for (text, loader, code, start, end, message) in cases {
++            let path: &'static [u8] = if loader == Loader::Js {
++                b"/a.js"
++            } else {
++                b"/a.ts"
++            };
++            assert_eq!(
++                first_error(path, text, loader),
++                Some((code, start, end, message.as_bytes().to_vec())),
++                "{}",
++                bstr::BStr::new(text)
++            );
++            // After `Parser::init` the message of the lexer is as it was.
++            assert_eq!(
++                first_error_after(Init::Plain, path, text, loader),
++                Some((0, 0, 0, Vec::new())),
++                "{}",
++                bstr::BStr::new(text)
++            );
++            let codes = if loader == Loader::Js {
++                codes_without_lint::<false>(text)
++            } else {
++                codes_without_lint::<true>(text)
++            };
++            assert_eq!(codes, [None], "{}", bstr::BStr::new(text));
++        }
++    }
++
++    #[test]
+     fn a_syntax_error_of_a_lint_parse_has_the_code_of_the_reference() {
+         let cases: [(&'static [u8], Loader, u32, u32, u32, &str); 19] = [
+             (b"x = a ? b", Loader::Ts, 1005, 9, 9, "':' expected."),
+@@ -838,16 +1095,54 @@
+             } else {
+                 b"/a.ts"
+             };
++            let expected = Some((code, start, end, message.as_bytes().to_vec()));
+             assert_eq!(
+                 first_error(path, text, loader),
+-                Some((code, start, end, message.as_bytes().to_vec())),
++                expected,
++                "{}",
++                bstr::BStr::new(text)
++            );
++            // A parser that `Parser::init` made parses for lint all the same.
++            assert_eq!(
++                first_error_after(Init::Plain, path, text, loader),
++                expected,
+                 "{}",
+                 bstr::BStr::new(text)
+             );
++            // A parse without lint rejects the source too, and none of its messages has a code.
++            let codes = if loader == Loader::Js {
++                codes_without_lint::<false>(text)
++            } else {
++                codes_without_lint::<true>(text)
++            };
++            assert!(!codes.is_empty(), "{}", bstr::BStr::new(text));
++            assert!(
++                codes.iter().all(Option::is_none),
++                "{}",
++                bstr::BStr::new(text)
++            );
++            if loader == Loader::Js {
++                let codes = codes_of_parse_only(text);
++                assert!(!codes.is_empty(), "{}", bstr::BStr::new(text));
++                assert!(
++                    codes.iter().all(Option::is_none),
++                    "{}",
++                    bstr::BStr::new(text)
++                );
++            }
+         }
+     }
+ 
+     #[test]
++    fn a_message_that_the_parser_sets_aside_and_puts_back_has_its_code() {
++        // The type in parentheses fails at "|", the reading as a function type fails at "&", and the first error stays.
++        assert_eq!(
++            first_error(b"/a.ts", b"let x: (A & | B);", Loader::Ts),
++            Some((1110, 12, 13, b"Type expected.".to_vec()))
++        );
++    }
++
++    #[test]
+     fn a_lint_parse_rejects_what_an_attempt_lets_pass() {
+         let cases: [(&'static [u8], u32, u32, u32, &str); 5] = [
+             (b"let x: (a: ) => void", 1110, 11, 12, "Type expected."),

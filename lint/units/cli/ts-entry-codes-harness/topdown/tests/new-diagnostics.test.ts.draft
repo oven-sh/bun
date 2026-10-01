@@ -1,0 +1,131 @@
+// SCRATCH: the tests that D2 adds to test/cli/lint/diagnostics.test.ts.
+import { describe, expect, test } from "bun:test";
+import { bunExe, tempDir } from "harness";
+import { bun, lintEnv } from "./lint-helpers";
+
+const lint = (cwd: string, operands: string[], env = lintEnv) => bun(cwd, ["--lint", ...operands], env);
+
+// SCRATCH ONLY: the probe writes frames when PROBE_FRAMES is set, the command when stderr is a terminal.
+async function lintOnTerminal(cwd: string, operands: string[], env = { ...lintEnv, PROBE_FRAMES: "1" }) {
+  let output = "";
+  const decoder = new TextDecoder();
+  const closed = Promise.withResolvers<void>();
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--lint", ...operands],
+    env,
+    cwd,
+    terminal: {
+      cols: 200,
+      rows: 50,
+      data(_terminal, chunk) {
+        output += decoder.decode(chunk, { stream: true });
+      },
+      exit() {
+        closed.resolve();
+      },
+    },
+  });
+  try {
+    const exitCode = await proc.exited;
+    await closed.promise;
+    return { output: output + decoder.decode(), exitCode };
+  } finally {
+    proc.terminal?.close();
+  }
+}
+const received = (...lines: string[]) => lines.map(line => `${line}\r\n`).join("");
+
+describe("bun --lint diagnostics", () => {
+  describe("stderr is not a terminal", () => {
+    test.concurrent("a syntax error of a TypeScript file has the code and the text of tsc", async () => {
+      using dir = tempDir("lint-ts-codes", {
+        "a.ts": "let x y;\n",
+        "b.tsx": "let x y;\n",
+        "c.mts": "let x y;\n",
+        "d.cts": "let x y;\n",
+        "e.d.ts": "export const x: ;\n",
+        // A JavaScript file keeps the text of Bun's parser.
+        "f.js": "let x y;\n",
+      });
+      const expected = {
+        stdout: "",
+        stderr:
+          "a.ts(1,7): error TS1005: ';' expected.\n" +
+          "b.tsx(1,7): error TS1005: ';' expected.\n" +
+          "c.mts(1,7): error TS1005: ';' expected.\n" +
+          "d.cts(1,7): error TS1005: ';' expected.\n" +
+          "e.d.ts(1,17): error TS1110: Type expected.\n" +
+          'f.js(1,7): error syntax: Expected ";" but found "y"\n',
+        exitCode: 2,
+      };
+      const operands = ["f.js", "e.d.ts", "d.cts", "c.mts", "b.tsx", "a.ts"];
+      const [plain, forcedColour] = await Promise.all([
+        lint(String(dir), operands),
+        lint(String(dir), operands, { ...lintEnv, FORCE_COLOR: "1" }),
+      ]);
+      expect(plain).toEqual(expected);
+      expect(forcedColour).toEqual(expected);
+    });
+
+    test.concurrent("a syntax error is where tsc reports it, and each error of a file is a line", async () => {
+      using dir = tempDir("lint-ts-places", {
+        // Bun's own place is the opening quote, 1:9.
+        "string.ts": 'let s = "abc\nlet t = 1;\n',
+        // Bun's own place is the backtick, 1:5.
+        "template.ts": "x = `abc\n",
+        "two.ts": "let a = 1 2;\nlet b = ;\n",
+      });
+      expect(await lint(String(dir), ["two.ts", "template.ts", "string.ts"])).toEqual({
+        stdout: "",
+        stderr:
+          "string.ts(1,13): error TS1002: Unterminated string literal.\n" +
+          "template.ts(2,1): error TS1160: Unterminated template literal.\n" +
+          "two.ts(1,11): error TS1005: ';' expected.\n" +
+          "two.ts(2,9): error TS1109: Expression expected.\n",
+        exitCode: 2,
+      });
+    });
+
+    test.concurrent("an error that tsc's parser does not report keeps the text of Bun's parser", async () => {
+      using dir = tempDir("lint-ts-uncoded", { "dup.ts": "let a;\nlet a;\n" });
+      expect(await lint(String(dir), ["dup.ts"])).toEqual({
+        stdout: "",
+        stderr: 'dup.ts(2,5): error syntax: "a" has already been declared\n',
+        exitCode: 2,
+      });
+    });
+  });
+
+  describe("stderr is a terminal", () => {
+    test.concurrent("a frame has the code of tsc, and the name of a rule in a TypeScript file", async () => {
+      using dir = tempDir("lint-ts-frames", {
+        "a.ts": "let x y;\n",
+        "b.tsx": "let x y;\n",
+        "c.mts": "let x y;\n",
+        "d.cts": "let x y;\n",
+        "e.d.ts": "export const x: ;\n",
+        "f.ts": "debugger;\n",
+      });
+      const { output, exitCode } = await lintOnTerminal(String(dir), ["a.ts", "b.tsx", "c.mts", "d.cts", "e.d.ts", "f.ts"]);
+      const frame = (file: string) => ["1 | let x y;", "          ^", "error: TS1005: ';' expected.", `    at ${file}:1:7`, ""];
+      expect(output).toBe(
+        received(
+          ...frame("a.ts"),
+          ...frame("b.tsx"),
+          ...frame("c.mts"),
+          ...frame("d.cts"),
+          "1 | export const x: ;",
+          "                    ^",
+          "error: TS1110: Type expected.",
+          "    at e.d.ts:1:17",
+          "",
+          "1 | debugger;",
+          "    ^",
+          "error: no-debugger: Unexpected 'debugger' statement.",
+          "    at f.ts:1:1",
+        ),
+      );
+      expect(exitCode).toBe(2);
+    });
+  });
+});

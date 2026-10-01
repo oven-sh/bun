@@ -1,0 +1,27 @@
+"\"abc" [ts] TS1002 [4,4) Unterminated string literal.
+"'abc\n x" [ts] TS1002 [4,4) Unterminated string literal.
+"`abc " [ts] TS1160 [5,5) Unterminated template literal.
+"/* abc" [ts] TS1010 [6,6) '*/' expected.
+"// c\n/* abc" [js] TS1010 [11,11) '*/' expected.
+"let x: (A & | B);" [ts] TS1110 [12,13) Type expected.
+"#!/usr/bin/env bun\n\"abc" [ts] TS1002 [23,23) Unterminated string literal.
+"x = a ? b" [ts] TS1005 [9,9) ':' expected.
+"f(1;" [ts] TS1005 [3,4) ')' expected.
+"function (" [ts] TS1003 [9,10) Identifier expected.
+"function class() {}" [ts] TS1359 [9,14) Identifier expected. 'class' is a reserved word that cannot be used here.
+"x = \"abc" [ts] TS1002 [8,8) Unterminated string literal.
+"x = `abc" [ts] TS1160 [8,8) Unterminated template literal.
+"let x = ;" [ts] TS1109 [8,9) Expression expected.
+"let x = ;" [js] TS1109 [8,9) Expression expected.
+"x = 1 +" [ts] TS1109 [7,7) Expression expected.
+"if (x) )" [ts] TS1109 [7,8) Expression expected.
+"in x" [ts] TS1109 [0,2) Expression expected.
+")" [ts] TS1128 [0,1) Declaration or statement expected.
+"{ ) }" [js] TS1128 [2,3) Declaration or statement expected.
+"function f() { default }" [ts] TS1128 [15,22) Declaration or statement expected.
+"default" [ts] TS1005 [0,7) 'export' expected.
+"catch (e) {}" [ts] TS1005 [0,5) 'try' expected.
+"let x: ;" [ts] TS1110 [7,8) Type expected.
+"function f(a: ) {}" [ts] TS1110 [14,15) Type expected.
+"let x: A<;" [ts] TS1005 [9,10) '>' expected.
+6.0.2

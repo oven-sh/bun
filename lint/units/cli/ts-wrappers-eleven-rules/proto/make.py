@@ -10,7 +10,7 @@ import glob, json, os, shutil, subprocess, sys
 
 WT = os.environ.get("WT", "/workspace/wt/cli")
 HERE = os.path.dirname(os.path.abspath(__file__))
-OUT = sys.argv[1] if len(sys.argv) > 1 else "/tmp/tsw/out"
+OUT = sys.argv[1] if len(sys.argv) > 1 else "/tmp/w1b-topdown/out"
 SRC = f"{OUT}/src"
 shutil.rmtree(SRC, ignore_errors=True)
 shutil.copytree(f"{WT}/src/lint", SRC, ignore=shutil.ignore_patterns("Cargo.toml", "LICENSE*", "UPSTREAM*"))

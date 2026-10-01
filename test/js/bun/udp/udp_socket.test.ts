@@ -636,9 +636,8 @@ describe("udpSocket()", () => {
         `
         const trace = [];
         const firstData = Promise.withResolvers();
-        // A socket error before the first datagram fails the fixture. The
-        // callback gets (error) or (socket, error), so take the last argument.
-        const onError = (...args) => firstData.reject(args.at(-1));
+        // The error callback gets (error) or (socket, error).
+        const rejectFirstData = (...args) => firstData.reject(args.at(-1));
         const server = await Bun.udpSocket({
           port: 0,
           hostname: "127.0.0.1",
@@ -650,10 +649,19 @@ describe("udpSocket()", () => {
                 firstData.resolve();
               }
             },
-            error: onError,
+            error(...args) {
+              trace.push("error:" + args.at(-1).code);
+              rejectFirstData(...args);
+            },
           },
         });
-        const client = await Bun.udpSocket({ port: 0, hostname: "127.0.0.1", socket: { error: onError } });
+        // After the first datagram a client error is not a failure: a datagram
+        // that reaches the closed server is answered with an ICMP error.
+        const client = await Bun.udpSocket({
+          port: 0,
+          hostname: "127.0.0.1",
+          socket: { error: rejectFirstData },
+        });
         const payload = [];
         for (let i = 0; i < 32; i++) payload.push("x", server.port, "127.0.0.1");
         // One sendmmsg syscall. On Linux the whole burst is in the kernel

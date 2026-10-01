@@ -36,6 +36,8 @@ pub(super) struct Note {
     args: Vec<String>,
     chain: Vec<Line>,
     related: Vec<Related>,
+    /// It is an error of its own, though another with the same code is at the same place.
+    is_another: bool,
 }
 
 /// [`Related`] as it is shown.
@@ -102,7 +104,27 @@ impl Checker<'_> {
             args,
             chain: Vec::new(),
             related: Vec::new(),
+            is_another: false,
         });
+    }
+
+    /// Notes an error that is reported besides another with the same code, from the same place to the same place, and says something else.
+    /// TypeScript keeps both. Without this the first one noted is the one.
+    pub(super) fn explain_another(
+        &mut self,
+        start: u32,
+        end: u32,
+        code: u32,
+        args: impl FnOnce(&mut Self) -> Vec<String>,
+    ) {
+        if !self.explains {
+            return;
+        }
+        let args = args(self);
+        self.note(start, end, code, args);
+        if let Some(note) = self.notes.borrow_mut().last_mut() {
+            note.is_another = true;
+        }
     }
 
     /// `AddRelatedInfo`: adds to what was last noted of the error `code` at `start`. `related` is only called if it will be read.
@@ -131,6 +153,7 @@ impl Checker<'_> {
                 args: Vec::new(),
                 chain: Vec::new(),
                 related,
+                is_another: false,
             }),
         }
     }
@@ -205,6 +228,7 @@ impl Checker<'_> {
                     level: 1,
                 }],
                 related: Vec::new(),
+                is_another: false,
             }),
         }
     }
@@ -241,7 +265,10 @@ impl Checker<'_> {
                 .filter(|n| n.start == d.start && n.code == d.code)
             {
                 let one = self.explained(file, d, Some(note));
-                if !explained[from..].iter().any(|e| e.end == one.end) {
+                if !explained[from..]
+                    .iter()
+                    .any(|e| e.end == one.end && (!note.is_another || e.text == one.text))
+                {
                     explained.push(one);
                 }
             }

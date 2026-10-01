@@ -890,6 +890,26 @@ impl<'p> Checker<'p> {
         if includes & tf::UNION == 0 {
             return self.intern(TypeData::Intersection(set.into_boxed_slice()));
         }
+        // `intersectionTypes`: what the same types came to before.
+        let key = (Box::<[TypeId]>::from(&set[..]), no_constraint_reduction);
+        if let Some(known) = self.p.distributed_intersections.get(&key) {
+            return known;
+        }
+        let before = (self.what_only_holds_for_now(), self.union_too_complex);
+        let result = self.distribute_intersection(types.len(), set, no_constraint_reduction);
+        if (self.what_only_holds_for_now(), self.union_too_complex) == before {
+            self.p.distributed_intersections.insert(key, result);
+        }
+        result
+    }
+
+    /// `getIntersectionType`, of types some of which are unions. `given`: how many types were asked for.
+    fn distribute_intersection(
+        &mut self,
+        given: usize,
+        mut set: Vec<TypeId>,
+        no_constraint_reduction: bool,
+    ) -> TypeId {
         if self.intersect_unions_of_primitive_types(&mut set) {
             // Once only: no more than one such union is left.
             return self.intersection_ex(&set, no_constraint_reduction);
@@ -921,7 +941,7 @@ impl<'p> Checker<'p> {
             return self.union_ex(&[rest, TypeId::NULL], !no_constraint_reduction);
         }
         // `A & B & C & D` is `(A & B) & (C & D)`: much of a half may come to never. Not from two types, which would go on for ever.
-        if set.len() >= 3 && types.len() > 2 {
+        if set.len() >= 3 && given > 2 {
             let middle = set.len() / 2;
             let left = self.intersection_ex(&set[..middle], no_constraint_reduction);
             let right = self.intersection_ex(&set[middle..], no_constraint_reduction);

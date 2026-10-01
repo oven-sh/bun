@@ -1189,32 +1189,7 @@ impl<'p> Printer<'_, 'p> {
     /// The first type alias without type parameters, outside the default library, that is written as a union or an intersection
     /// and has been found to stand for `ty`. The same members written out elsewhere are the same type here, and are named too.
     fn plain_alias_of(&self, ty: TypeId) -> Option<Sym> {
-        let files = self.c.files();
-        for (index, module) in files.modules.iter().enumerate() {
-            if module.is_lib {
-                continue;
-            }
-            for (a, alias) in module.hir.aliases.iter().enumerate() {
-                if !alias.type_params.is_empty()
-                    || alias.ty.is_none()
-                    || !matches!(
-                        module.hir[alias.ty].kind,
-                        TypeNodeKind::Union(_) | TypeNodeKind::Intersection(_)
-                    )
-                {
-                    continue;
-                }
-                let symbol = module.bound.alias_symbol[a];
-                if symbol.is_none() {
-                    continue;
-                }
-                let symbol = files.sym(FileId(index as u32), symbol);
-                if self.c.p.declared_types.get(&symbol) == Some(ty) {
-                    return Some(symbol);
-                }
-            }
-        }
-        None
+        self.c.p.plain_alias_of.get(&ty).flatten()
     }
 
     /// `IteratorResult<T, TReturn>` for `IteratorYieldResult<T> | IteratorReturnResult<TReturn>`: the generic type alias, written as
@@ -1227,8 +1202,15 @@ impl<'p> Printer<'_, 'p> {
         if !members.iter().all(|&m| is_generic_reference(&*self.c, m)) {
             return None;
         }
+        if self.c.p.generic_union_aliases.len() == 0 {
+            return None;
+        }
         let files = self.c.files();
         for (index, module) in files.modules.iter().enumerate() {
+            // Another thread may have it at hand.
+            if module.is_transient && !FileId(index as u32).is_local() {
+                continue;
+            }
             for (a, alias) in module.hir.aliases.iter().enumerate() {
                 if alias.type_params.is_empty() || alias.ty.is_none() {
                     continue;

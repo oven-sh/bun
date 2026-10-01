@@ -160,6 +160,11 @@ pub struct Program {
     /// arguments or without the alias. Types are hash-consed: `T | undefined` is the same type whoever wrote it, and has none.
     alias_of: ByIdKept<TypeId, (Sym, Arc<[TypeId]>)>,
     shapes: ByIdKept<TypeId, shape::Resolved>,
+    /// `intersectionTypes`, for those that have a union among them.
+    distributed_intersections: ByKey<(Box<[TypeId]>, bool), TypeId>,
+    /// See `note_alias_of_union`.
+    plain_alias_of: ById<TypeId, Option<Sym>>,
+    generic_union_aliases: NodeSet<Sym>,
     sig_params: ByIdKept<SigId, Box<[SigParam]>>,
     sig_type_params: ByIdKept<SigId, Box<[TypeId]>>,
     call_signatures: ByIdKept<TypeId, Box<[SigId]>>,
@@ -327,6 +332,9 @@ impl Program {
             union_origins: Default::default(),
             alias_of: Default::default(),
             shapes: Default::default(),
+            distributed_intersections: Default::default(),
+            plain_alias_of: Default::default(),
+            generic_union_aliases: NodeSet::new(&symbols),
             sig_params: Default::default(),
             sig_type_params: Default::default(),
             call_signatures: Default::default(),

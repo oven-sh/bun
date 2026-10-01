@@ -1234,8 +1234,43 @@ impl<'p> Checker<'p> {
         }
         if holds {
             self.p.declared_types.insert(sym, ty);
+            self.note_alias_of_union(sym, ty);
         }
         ty
+    }
+
+    /// For putting types into words: `sym` is a type alias written as a union or an intersection, and stands for `ty`. The same members
+    /// written out elsewhere are the same type here, and go by the name too. The first alias to be resolved is the one.
+    fn note_alias_of_union(&mut self, sym: Sym, ty: TypeId) {
+        if !matches!(
+            self.data(ty),
+            TypeData::Union(_) | TypeData::Intersection(_)
+        ) {
+            return;
+        }
+        let files = self.files();
+        if files.modules[sym.file.idx()].is_lib {
+            return;
+        }
+        for decl in files.decls_of(sym).iter() {
+            if let (file, Decl::Alias(alias)) = *decl {
+                let hir = self.hir(file);
+                let alias = &hir[alias];
+                if alias.ty.is_some()
+                    && matches!(
+                        hir[alias.ty].kind,
+                        TypeNodeKind::Union(_) | TypeNodeKind::Intersection(_)
+                    )
+                {
+                    if alias.type_params.is_empty() {
+                        self.p.plain_alias_of.insert(ty, Some(sym));
+                    } else {
+                        self.p.generic_union_aliases.insert(sym, ());
+                    }
+                }
+                return;
+            }
+        }
     }
 
     /// Of declarations that cannot be one symbol, the class or the interface among them has this to itself, whichever has the name.

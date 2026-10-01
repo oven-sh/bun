@@ -52,6 +52,12 @@ impl<T: MaybeLocal> MaybeLocal for Option<T> {
         self.as_ref().is_some_and(MaybeLocal::is_local)
     }
 }
+impl<T: MaybeLocal> MaybeLocal for Box<[T]> {
+    #[inline]
+    fn is_local(&self) -> bool {
+        self.iter().any(MaybeLocal::is_local)
+    }
+}
 impl<A: MaybeLocal, B: MaybeLocal> MaybeLocal for (A, B) {
     #[inline]
     fn is_local(&self) -> bool {

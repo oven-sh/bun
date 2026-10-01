@@ -37,6 +37,9 @@ typedef pthread_once_t uv_once_t;
 #define UV_ONCE_INIT PTHREAD_ONCE_INIT
 #endif
 
+// uv-polyfills-darwin.c calls it.
+UV_EXTERN void uv_once(uv_once_t* guard, void (*callback)(void));
+
 typedef enum {
     UV_CLOCK_PRECISE = 0, /* Use the highest resolution clock available. */
     UV_CLOCK_FAST = 1 /* Use the fastest clock with <= 1ms granularity. */

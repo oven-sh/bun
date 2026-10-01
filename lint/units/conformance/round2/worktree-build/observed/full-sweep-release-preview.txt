@@ -1,0 +1,60 @@
+Full sweep of the corpus with a RELEASE build, for a preview only: /workspace/wt/parser/build/release/bun copied (sha256 7e1111b4...), 1.4.3-canary.1+be1ebe529;
+git diff be1ebe5295 3110ce85cf -- src/ is empty, so it is the code of the conformance HEAD without ASAN. 2026-10-01T11:00:23Z to 11:16:35Z under /workspace/tools/lk,
+sweep.ts --bin <it> --jobs 4 --timeout 60000, env without ASAN_OPTIONS and LSAN_OPTIONS, BUN_ENABLE_CRASH_REPORTING=0. The numbers of record are to be taken with the debug build.
+
+check /tmp/conf-wb/bun-release-be1ebe529 --lint
+2000 of 12797
+4000 of 12797
+6000 of 12797
+8000 of 12797
+10000 of 12797
+12000 of 12797
+pass: E 0 of 7027, C 5649 of 5770
+by outcome, E: fail 5626, unsupported 93, crash 1308
+by outcome, C: pass 5649, unsupported 93, crash 28
+    5626  fail: no diagnostic where the oracle has a baseline
+    1326  crash: the check threw: Error: stderr line n has the code syntax, which is no code of TypeScript
+      67  unsupported: absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+       7  crash: the check threw: Error: stderr line n has the code unsupported-extension, which is no code of TypeSc
+       4  unsupported: absolute-path-in-text: /.src/n.tsx: /.lib/react.d.ts
+
+check /tmp/conf-wb/bun-release-be1ebe529 --lint; 12797 instances ran (E 7027, C 5770); 970.7 s
+  5649  E     0  C  5649  pass
+  5626  E  5626  C     0  silent (E: nothing printed)
+  1326  E  1299  C    27  printed a named code: syntax
+   175  E    89  C    86  unsupported: absolute-path-in-text
+     8  E     4  C     4  unsupported: dos-root
+     7  E     7  C     0  printed a named code: unsupported-extension
+     3  E     0  C     3  unsupported: case-insensitive-requested
+     1  E     0  C     1  printed a named code: no-empty-pattern
+     1  E     1  C     0  printed a named code: no-self-assign
+     1  E     1  C     0  printed a named code: no-debugger
+
+printed a named code: no-empty-pattern	C	declarationEmitClassSetAccessorParamNameInJs2.ts	compiler/declarationEmitClassSetAccessorParamNameInJs2.ts	the check threw: Error: stderr line 1 has the code no-empty-pattern, which is no code of TypeScript
+printed a named code: syntax	C	asyncArrowFunction2_es2017.ts	conformance/async/es2017/asyncArrowFunction/asyncArrowFunction2_es2017.ts	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+printed a named code: syntax	C	asyncArrowFunction2_es5(target=es2015).ts	conformance/async/es5/asyncArrowFunction/asyncArrowFunction2_es5.ts	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+printed a named code: syntax	C	asyncArrowFunction2_es6.ts	conformance/async/es6/asyncArrowFunction/asyncArrowFunction2_es6.ts	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+printed a named code: syntax	C	asyncArrowFunction4_es2017.ts	conformance/async/es2017/asyncArrowFunction/asyncArrowFunction4_es2017.ts	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+printed a named code: syntax	C	asyncArrowFunction4_es5(target=es2015).ts	conformance/async/es5/asyncArrowFunction/asyncArrowFunction4_es5.ts	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+printed a named code: syntax	C	asyncArrowFunction4_es6.ts	conformance/async/es6/asyncArrowFunction/asyncArrowFunction4_es6.ts	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+printed a named code: syntax	C	asyncWithVarShadowing_es6.ts	conformance/async/es6/asyncWithVarShadowing_es6.ts	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+printed a named code: syntax	C	continueTarget3.ts	compiler/continueTarget3.ts	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+printed a named code: syntax	C	declarationFileForHtmlFileWithinDeclarationFile.ts	conformance/nonjsExtensions/declarationFileForHtmlFileWithinDeclarationFile.ts	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+printed a named code: syntax	C	declarationFileForHtmlImport(allowarbitraryextensions=true).ts	conformance/nonjsExtensions/declarationFileForHtmlImport.ts	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+printed a named code: syntax	C	duplicateVarAndImport.ts	compiler/duplicateVarAndImport.ts	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+printed a named code: syntax	C	dynamicImportDefer(module=esnext).ts	conformance/importDefer/dynamicImportDefer.ts	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+printed a named code: syntax	C	dynamicImportDefer(module=preserve).ts	conformance/importDefer/dynamicImportDefer.ts	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+printed a named code: syntax	C	elidedEmbeddedStatementsReplacedWithSemicolon.ts	compiler/elidedEmbeddedStatementsReplacedWithSemicolon.ts	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+printed a named code: syntax	C	fileWithNextLine2.ts	compiler/fileWithNextLine2.ts	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+printed a named code: syntax	C	inferTypesWithExtends1.ts	conformance/types/conditional/inferTypesWithExtends1.ts	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+printed a named code: syntax	C	isolatedModulesSketchyAliasLocalMerge(isolatedmodules=false,verbatimmodulesyntax=false).ts	compiler/isolatedModulesSketchyAliasLocalMerge.ts	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+printed a named code: syntax	C	namespaceImportTypeQuery2.ts	conformance/externalModules/typeOnly/namespaceImportTypeQuery2.ts	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+printed a named code: syntax	C	parserInterfaceKeywordInEnum1.ts	conformance/parser/ecmascript5/EnumDeclarations/parserInterfaceKeywordInEnum1.ts	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+printed a named code: syntax	C	parser_continueTarget3.ts	conformance/parser/ecmascript5/Statements/ContinueStatements/parser_continueTarget3.ts	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+printed a named code: syntax	C	plainJSRedeclare3.ts	conformance/salsa/plainJSRedeclare3.ts	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+printed a named code: syntax	C	privateIdentifierExpando.ts	conformance/salsa/privateIdentifierExpando.ts	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+printed a named code: syntax	C	sourceMap-LineBreaks(target=es2015).ts	compiler/sourceMap-LineBreaks.ts	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+printed a named code: syntax	C	strictModeEnumMemberNameReserved.ts	compiler/strictModeEnumMemberNameReserved.ts	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+printed a named code: syntax	C	symbolMergeValueAndImportedType.ts	compiler/symbolMergeValueAndImportedType.ts	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+printed a named code: syntax	C	typeOnlyMerge1.ts	conformance/externalModules/typeOnlyMerge1.ts	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+printed a named code: syntax	C	usedImportNotElidedInJs.ts	compiler/usedImportNotElidedInJs.ts	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript

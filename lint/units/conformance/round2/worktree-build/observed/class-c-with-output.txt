@@ -1,0 +1,156 @@
+The 28 instances of class C (TypeScript and typescript-go report nothing) on which bun --lint prints a diagnostic. Release build be1ebe529 (src/ of 3110ce85cf), each instance written to disk and run as the default check runs it.
+
+asyncArrowFunction2_es2017.ts
+  operands: /.src/asyncArrowFunction2_es2017.ts
+  exit 2
+  | asyncArrowFunction2_es2017.ts(1,15): error syntax: Unexpected )
+
+asyncArrowFunction2_es5(target=es2015).ts
+  operands: /.src/asyncArrowFunction2_es5.ts
+  exit 2
+  | asyncArrowFunction2_es5.ts(1,15): error syntax: Unexpected )
+
+asyncArrowFunction2_es6.ts
+  operands: /.src/asyncArrowFunction2_es6.ts
+  exit 2
+  | asyncArrowFunction2_es6.ts(1,15): error syntax: Unexpected )
+
+asyncArrowFunction4_es2017.ts
+  operands: /.src/asyncArrowFunction4_es2017.ts
+  exit 2
+  | asyncArrowFunction4_es2017.ts(1,5): error syntax: Cannot use "yield" or "await" here.
+
+asyncArrowFunction4_es5(target=es2015).ts
+  operands: /.src/asyncArrowFunction4_es5.ts
+  exit 2
+  | asyncArrowFunction4_es5.ts(1,5): error syntax: Cannot use "yield" or "await" here.
+
+asyncArrowFunction4_es6.ts
+  operands: /.src/asyncArrowFunction4_es6.ts
+  exit 2
+  | asyncArrowFunction4_es6.ts(1,5): error syntax: Cannot use "yield" or "await" here.
+
+asyncWithVarShadowing_es6.ts
+  operands: /.src/asyncWithVarShadowing_es6.ts
+  exit 2
+  | asyncWithVarShadowing_es6.ts(130,14): error syntax: x has already been declared
+
+continueTarget3.ts
+  operands: /.src/continueTarget3.ts
+  exit 2
+  | continueTarget3.ts(4,3): error syntax: Cannot "continue" to label target1
+
+declarationEmitClassSetAccessorParamNameInJs2.ts
+  operands: /.src/foo.js
+  exit 2
+  | foo.js(7,13): error no-empty-pattern: Unexpected empty object pattern.
+
+declarationFileForHtmlFileWithinDeclarationFile.ts
+  operands: /.src/component.d.html.ts /.src/file.d.ts /.src/main.ts
+  exit 2
+  | component.d.html.ts(8,14): error syntax: The constant "blogPost" must be initialized
+
+declarationFileForHtmlImport(allowarbitraryextensions=true).ts
+  operands: /.src/component.d.html.ts /.src/file.ts
+  exit 2
+  | component.d.html.ts(8,14): error syntax: The constant "blogPost" must be initialized
+
+duplicateVarAndImport.ts
+  operands: /.src/duplicateVarAndImport.ts
+  exit 2
+  | duplicateVarAndImport.ts(1,1): error syntax: "a" has already been declared
+
+dynamicImportDefer(module=esnext).ts
+  operands: /.src/a.ts /.src/b.ts
+  exit 2
+  | b.ts(1,8): error syntax: Expected "meta" but found "defer"
+  | b.ts(3,3): error syntax: Expected ")" but found ";"
+
+dynamicImportDefer(module=preserve).ts
+  operands: /.src/a.ts /.src/b.ts
+  exit 2
+  | b.ts(1,8): error syntax: Expected "meta" but found "defer"
+  | b.ts(3,3): error syntax: Expected ")" but found ";"
+
+elidedEmbeddedStatementsReplacedWithSemicolon.ts
+  operands: /.src/elidedEmbeddedStatementsReplacedWithSemicolon.ts
+  exit 2
+  | elidedEmbeddedStatementsReplacedWithSemicolon.ts(2,5): error syntax: Cannot use a declaration in a single-statement context
+  | elidedEmbeddedStatementsReplacedWithSemicolon.ts(4,5): error syntax: Cannot use a declaration in a single-statement context
+  | elidedEmbeddedStatementsReplacedWithSemicolon.ts(7,5): error syntax: Cannot use a declaration in a single-statement context
+  | elidedEmbeddedStatementsReplacedWithSemicolon.ts(11,5): error syntax: Cannot use a declaration in a single-statement context
+  | elidedEmbeddedStatementsReplacedWithSemicolon.ts(14,5): error syntax: Cannot use a declaration in a single-statement context
+  | elidedEmbeddedStatementsReplacedWithSemicolon.ts(17,5): error syntax: Cannot use a declaration in a single-statement context
+  | elidedEmbeddedStatementsReplacedWithSemicolon.ts(20,5): error syntax: Cannot use a declaration in a single-statement context
+  | elidedEmbeddedStatementsReplacedWithSemicolon.ts(24,5): error syntax: Cannot use a declaration in a single-statement context
+
+fileWithNextLine2.ts
+  operands: /.src/fileWithNextLine2.ts
+  exit 2
+  | fileWithNextLine2.ts(3,8): error syntax: Unexpected 
+
+inferTypesWithExtends1.ts
+  operands: /.src/inferTypesWithExtends1.ts
+  exit 2
+  | inferTypesWithExtends1.ts(102,61): error syntax: Expected "?" but found ";"
+  | inferTypesWithExtends1.ts(103,6): error syntax: Expected ":" but found "X15"
+  | inferTypesWithExtends1.ts(103,13): error syntax: Expected "(" but found "="
+  | inferTypesWithExtends1.ts(103,79): error syntax: Expected ")" but found ";"
+
+isolatedModulesSketchyAliasLocalMerge(isolatedmodules=false,verbatimmodulesyntax=false).ts
+  operands: /.src/types.ts /.src/bad.ts /.src/good.ts
+  exit 2
+  | bad.ts(2,5): error syntax: "FC" has already been declared
+
+namespaceImportTypeQuery2.ts
+  operands: /z.ts /a.ts /b.ts
+  exit 2
+  | ../a.ts(2,7): error syntax: "A" has already been declared
+
+parserInterfaceKeywordInEnum1.ts
+  operands: /.src/parserInterfaceKeywordInEnum1.ts
+  exit 2
+  | parserInterfaceKeywordInEnum1.ts(4,5): error syntax: "interface" is a reserved word and cannot be used in strict mode
+
+parser_continueTarget3.ts
+  operands: /.src/parser_continueTarget3.ts
+  exit 2
+  | parser_continueTarget3.ts(4,3): error syntax: Cannot "continue" to label target1
+
+plainJSRedeclare3.ts
+  operands: /.src/plainJSRedeclare.js
+  exit 2
+  | plainJSRedeclare.js(2,5): error syntax: "orbitol" has already been declared
+
+privateIdentifierExpando.ts
+  operands: /.src/privateIdentifierExpando.js
+  exit 2
+  | privateIdentifierExpando.js(2,3): error syntax: Expected identifier but found "#bar"
+  | privateIdentifierExpando.js(2,8): error syntax: Expected ";" but found "baz"
+  | privateIdentifierExpando.js(2,12): error syntax: Unexpected =
+
+sourceMap-LineBreaks(target=es2015).ts
+  operands: /.src/sourceMap-LineBreaks.ts
+  exit 2
+  | sourceMap-LineBreaks.ts(3,26): error syntax: Unexpected 
+
+strictModeEnumMemberNameReserved.ts
+  operands: /.src/strictModeEnumMemberNameReserved.ts
+  exit 2
+  | strictModeEnumMemberNameReserved.ts(3,5): error syntax: "static" is a reserved word and cannot be used in strict mode
+
+symbolMergeValueAndImportedType.ts
+  operands: /.src/main.ts /.src/other.ts
+  exit 2
+  | main.ts(2,7): error syntax: "X" has already been declared
+
+typeOnlyMerge1.ts
+  operands: /.src/a.ts /.src/b.ts /.src/c.ts
+  exit 2
+  | b.ts(2,7): error syntax: "A" has already been declared
+
+usedImportNotElidedInJs.ts
+  operands: /.src/test.js
+  exit 2
+  | test.js(3,14): error syntax: "moment" has already been declared
+

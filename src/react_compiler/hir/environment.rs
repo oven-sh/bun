@@ -324,10 +324,6 @@ impl Environment {
         self.errors.has_invariant_errors()
     }
 
-    pub fn errors(&self) -> &CompilerError {
-        &self.errors
-    }
-
     pub fn take_errors(&mut self) -> CompilerError {
         let mut errors = std::mem::take(&mut self.errors);
         // Mark as not thrown — these are accumulated errors returned at the end
@@ -693,11 +689,6 @@ impl Environment {
     /// property resolution fallback when a property name looks like a hook.
     pub fn get_custom_hook_type_opt(&mut self) -> Option<Global> {
         Some(self.get_custom_hook_type())
-    }
-
-    /// Get a reference to the shapes registry.
-    pub fn shapes(&self) -> &ShapeRegistry {
-        &self.shapes
     }
 
     /// Get a reference to the globals registry.

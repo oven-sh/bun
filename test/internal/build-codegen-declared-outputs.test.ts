@@ -37,13 +37,15 @@ function mockToolchain(): Toolchain {
     cxx: "/fake/llvm/bin/clang++",
     hostCc: undefined,
     hostCxx: undefined,
-    clangVersion: "21.1.8",
-    clangResourceDir: "/fake/llvm/lib/clang/21",
+    clangVersion: "23.1.1",
+    clangResourceDir: "/fake/llvm/lib/clang/23",
     ar: "/fake/llvm/bin/llvm-ar",
+    ranlib: "/fake/llvm/bin/llvm-ranlib",
     ld: "/fake/llvm/bin/ld.lld",
     ld64Lld: "/fake/llvm/bin/ld64.lld",
-    rustLld: undefined,
-    rustLlvmVersion: "22.1.4",
+    rustLlvmVersion: "23.1.1",
+    rustSysroot: undefined,
+    rustHostTriple: undefined,
     strip: "/fake/bin/strip",
     llvmStrip: "/fake/llvm/bin/llvm-strip",
     nm: "/fake/llvm/bin/llvm-nm",
@@ -54,7 +56,6 @@ function mockToolchain(): Toolchain {
     bun: bunExe(),
     // A shell command prefix, quoted like the one configure makes.
     jsRuntime: quote(bunExe(), process.platform === "win32"),
-    jsRuntimeArgv: [bunExe()],
     esbuild: "/fake/bin/esbuild",
     ccache: undefined,
     cmake: "/fake/bin/cmake",
@@ -63,6 +64,7 @@ function mockToolchain(): Toolchain {
     rustupHome: undefined,
     msvcLinker: undefined,
     rc: undefined,
+    mt: undefined,
     nasm: undefined,
   };
 }
@@ -90,8 +92,8 @@ function configure(buildDir: string): Configured {
   registerCodegenRules(n, cfg);
   const o: CodegenOutputs = {
     all: [],
+    generatedTypes: [],
     rustInputs: [],
-    rustOrderOnly: [],
     cppSources: [],
     cppHeaders: [],
     cppAll: [],

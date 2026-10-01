@@ -2152,8 +2152,14 @@ function parseOptions(
     }
   }
 
+  // Only an own `rejectUnauthorized: false` turns certificate verification off.
+  const verifyOptedOut =
+    $isObject(tls) &&
+    ObjectPrototypeHasOwnProperty.$call(tls, "rejectUnauthorized") &&
+    tls.rejectUnauthorized === false;
+
   if ($isObject(tls) && sslMode < SSLMode.verify_ca) {
-    if (tls.rejectUnauthorized === true || (tls.rejectUnauthorized !== false && (tls.ca || tls.caFile))) {
+    if (tls.rejectUnauthorized === true || (!verifyOptedOut && (tls.ca || tls.caFile))) {
       sslMode = SSLMode.verify_full;
     }
   }
@@ -2166,15 +2172,8 @@ function parseOptions(
     }
   }
 
-  // A verify-* sslmode beats NODE_TLS_REJECT_UNAUTHORIZED=0; only an own `rejectUnauthorized: false` opts out.
-  if (
-    sslMode >= SSLMode.verify_ca &&
-    !(
-      $isObject(tls) &&
-      ObjectPrototypeHasOwnProperty.$call(tls, "rejectUnauthorized") &&
-      tls.rejectUnauthorized === false
-    )
-  ) {
+  // Without this, an unset rejectUnauthorized takes NODE_TLS_REJECT_UNAUTHORIZED and 0 skips the verify-* checks.
+  if (sslMode >= SSLMode.verify_ca && !verifyOptedOut) {
     tls = { ...($isObject(tls) ? tls : {}), rejectUnauthorized: true };
   }
 

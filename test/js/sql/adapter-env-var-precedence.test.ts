@@ -594,9 +594,15 @@ describe("SQL adapter environment variable precedence", () => {
     test("a polluted Object.prototype.rejectUnauthorized does not disable a verify mode", () => {
       (Object.prototype as any).rejectUnauthorized = false;
       try {
-        const tls = new SQL("postgres://u@h:5432/db?sslmode=verify-full").options.tls as object;
-        expect(Object.hasOwn(tls, "rejectUnauthorized")).toBe(true);
-        expect((tls as any).rejectUnauthorized).toBe(true);
+        for (const sql of [
+          new SQL("postgres://u@h:5432/db?sslmode=verify-full"),
+          new SQL("postgres://u@h:5432/db", { tls: { ca: "x" } }),
+        ]) {
+          const tls = sql.options.tls as object;
+          expect(sql.options.sslMode).toBe(4);
+          expect(Object.hasOwn(tls, "rejectUnauthorized")).toBe(true);
+          expect((tls as any).rejectUnauthorized).toBe(true);
+        }
       } finally {
         delete (Object.prototype as any).rejectUnauthorized;
       }
@@ -611,7 +617,7 @@ describe("SQL adapter environment variable precedence", () => {
       for (const key of ["tls", "ssl"] as const) {
         const options = new SQL({ adapter: "postgres", hostname: "h", [key]: ca });
         expect(options.options.sslMode).toBe(4); // SSLMode.verify_full
-        expect(options.options.tls).toEqual({ ca, serverName: "h" });
+        expect(options.options.tls).toEqual({ ca, serverName: "h", rejectUnauthorized: true });
         expect((options.options.tls as Bun.TLSOptions).ca).toBe(ca);
       }
 
@@ -623,7 +629,7 @@ describe("SQL adapter environment variable precedence", () => {
       // An sslmode that already verifies the chain is kept; the file is still the CA.
       const fromUrl = new SQL("postgres://u@h:5432/db?sslmode=verify-ca", { tls: ca });
       expect(fromUrl.options.sslMode).toBe(3);
-      expect(fromUrl.options.tls).toEqual({ ca, serverName: "h" });
+      expect(fromUrl.options.tls).toEqual({ ca, serverName: "h", rejectUnauthorized: true });
       expect((fromUrl.options.tls as Bun.TLSOptions).ca).toBe(ca);
     });
   });

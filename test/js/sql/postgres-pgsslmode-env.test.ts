@@ -22,7 +22,9 @@ import { listeningServer, pgAuthenticationOk, pgReadyForQuery, pgSSLResponse } f
 
 const fixture = /* js */ `
   import { SQL } from "bun";
-  const sql = new SQL({ max: 1, connectionTimeout: 5 });
+  const options = { max: 1, connectionTimeout: 5 };
+  if (process.env.SQL_TEST_CA_FILE) options.tls = { caFile: process.env.SQL_TEST_CA_FILE };
+  const sql = new SQL(options);
   try {
     await sql.connect();
     console.log("CONNECTED");
@@ -176,7 +178,7 @@ test.concurrent.each(["url", "PGSSLMODE"] as const)(
   },
 );
 
-test.concurrent("sslmode=require does not verify the certificate (the environment default applies)", async () => {
+test.concurrent("sslmode=require does not verify the certificate", async () => {
   const { server, port } = await selfSignedTlsServer();
   try {
     await using proc = Bun.spawn({
@@ -187,6 +189,32 @@ test.concurrent("sslmode=require does not verify the certificate (the environmen
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe("CONNECTED");
+    expect(exitCode).toBe(0);
+  } finally {
+    await new Promise<void>(r => server.close(() => r()));
+  }
+});
+
+// tls: { caFile } selects verify-full, so the server is checked against that CA
+// even under NODE_TLS_REJECT_UNAUTHORIZED=0.
+test.concurrent.each([
+  ["the CA that signed the server certificate", join("docker-tls", "server.crt"), "CONNECTED"],
+  ["an unrelated CA", join("mysql-tls", "ssl", "ca.pem"), "ERROR:DEPTH_ZERO_SELF_SIGNED_CERT"],
+] as const)("tls: { caFile } naming %s under NODE_TLS_REJECT_UNAUTHORIZED=0", async (_, caFile, expected) => {
+  const { server, port } = await selfSignedTlsServer();
+  try {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: pgEnv(port, {
+        NODE_TLS_REJECT_UNAUTHORIZED: "0",
+        PGHOST: "localhost",
+        SQL_TEST_CA_FILE: join(import.meta.dir, caFile),
+      }),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe(expected);
     expect(exitCode).toBe(0);
   } finally {
     await new Promise<void>(r => server.close(() => r()));

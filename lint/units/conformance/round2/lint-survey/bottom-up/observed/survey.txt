@@ -1,11 +1,12 @@
 check /workspace/wt/conformance/build/debug/bun-debug --lint
-reports 6; instances selected 10202, run 8678, skipped 1524; 1559 s in sweep.ts
+reports 7; instances selected 12003, run 10296, skipped 1707; 1782 s in sweep.ts
   1-upper-a-b.json: selectors 2* A* C* D* E* F* I* M* N* P* T* V* Y* a* b*; selected 1482, run 1241, skipped 241, invalid 0; 276.4 s; /workspace/wt/conformance/build/debug/bun-debug --lint
   2-c.json: selectors c*; selected 1728, run 1525, skipped 203, invalid 0; 279 s; /workspace/wt/conformance/build/debug/bun-debug --lint
   3-d-f-g.json: selectors d* f* g*; selected 1845, run 1618, skipped 227, invalid 0; 263.5 s; /workspace/wt/conformance/build/debug/bun-debug --lint
   4-e-h-k-l-q.json: selectors e* h* k* l* q*; selected 1725, run 1266, skipped 459, invalid 0; 185 s; /workspace/wt/conformance/build/debug/bun-debug --lint
   5-i-j.json: selectors i* j*; selected 1693, run 1429, skipped 264, invalid 0; 283.5 s; /workspace/wt/conformance/build/debug/bun-debug --lint
   6-m-n-o.json: selectors m* n* o*; selected 1729, run 1599, skipped 130, invalid 0; 271.6 s; /workspace/wt/conformance/build/debug/bun-debug --lint
+  7-p-r.json: selectors p* r*; selected 1801, run 1618, skipped 183, invalid 0; 222.7 s; /workspace/wt/conformance/build/debug/bun-debug --lint
 
 columns: run = instances that the reference runs; not laid out = outcome unsupported, no process started;
 result = the command ended with 0 or 2 and every line of stderr is a diagnostic; died = a signal, another exit
@@ -14,14 +15,14 @@ pass of the guard); C diagnostic = class C and Bun printed a diagnostic; E silen
 nothing; E diagnostic = class E and Bun printed a diagnostic; else = anything that is none of these.
 
 directory                        run  not laid out  result    died  timeout  C silent  C diagnostic  E silent  E diagnostic  internal-error    else
-compiler                        4717            53    4664       0        0      2339             6      1989           330               0       0
+compiler                        5200            64    5136       0        0      2547             6      2210           373               0       0
 conformance                        2             0       2       0        0         1             0         1             0               0       0
 conformance/Symbols                8             0       8       0        0         3             0         5             0               0       0
 conformance/additionalChecks       1             0       1       0        0         0             0         1             0               0       0
 conformance/ambient               20             0      20       0        0        11             0         7             2               0       0
 conformance/async                186             0     186       0        0        85             7        41            53               0       0
 conformance/asyncGenerators        5             0       5       0        0         2             0         3             0               0       0
-conformance/classes              318             0     318       0        0       131             0       160            27               0       0
+conformance/classes              511             0     511       0        0       199             0       234            78               0       0
 conformance/constEnums             9             0       9       0        0         3             0         5             1               0       0
 conformance/controlFlow           54             1      53       0        0        28             0        22             3               0       0
 conformance/declarationEmit       15             0      15       0        0        13             0         2             0               0       0
@@ -38,42 +39,43 @@ conformance/es2020                23             0      23       0        0     
 conformance/es2021                39             0      39       0        0        19             0        20             0               0       0
 conformance/es2022                16             0      16       0        0         2             0        13             1               0       0
 conformance/es2023                 2             0       2       0        0         1             0         1             0               0       0
-conformance/es2025                 2             0       2       0        0         2             0         0             0               0       0
+conformance/es2024                 1             0       1       0        0         1             0         0             0               0       0
+conformance/es2025                 3             0       3       0        0         3             0         0             0               0       0
 conformance/es5                    1             0       1       0        0         0             0         1             0               0       0
-conformance/es6                  663             0     663       0        0       306             0       278            79               0       0
+conformance/es6                  678             0     678       0        0       312             0       283            83               0       0
 conformance/es7                   42             0      42       0        0        16             0        20             6               0       0
 conformance/esDecorators         161             0     161       0        0       129             0        25             7               0       0
 conformance/esnext                 4             0       4       0        0         4             0         0             0               0       0
-conformance/expressions          259             0     259       0        0        85             0       149            25               0       0
-conformance/externalModules      157             0     157       0        0        60             1        76            20               0       0
-conformance/functions             11             0      11       0        0         4             0         6             1               0       0
-conformance/generators            13             0      13       0        0         6             0         7             0               0       0
+conformance/expressions          278             0     278       0        0        89             0       161            28               0       0
+conformance/externalModules      163             0     163       0        0        61             1        81            20               0       0
+conformance/functions             18             0      18       0        0         7             0        10             1               0       0
+conformance/generators            14             0      14       0        0         6             0         8             0               0       0
 conformance/importAssertion       10             0      10       0        0         1             0         4             5               0       0
 conformance/importAttributes      18             0      18       0        0         4             0         5             9               0       0
 conformance/importDefer           26             0      26       0        0         6             2         6            12               0       0
 conformance/interfaces            58             0      58       0        0         5             0        50             3               0       0
-conformance/internalModules       74             0      74       0        0        29             0        39             6               0       0
-conformance/jsdoc                284             3     281       0        0       124             0       149             8               0       0
+conformance/internalModules       75             0      75       0        0        30             0        39             6               0       0
+conformance/jsdoc                297             3     294       0        0       131             0       155             8               0       0
 conformance/jsx                   67            43      24       0        0         6             0         9             9               0       0
-conformance/moduleResolution      47             0      47       0        0        12             0        31             4               0       0
+conformance/moduleResolution      60             0      60       0        0        16             0        40             4               0       0
 conformance/node                 334             0     334       0        0       105             0       205            24               0       0
 conformance/nonjsExtensions       14             0      14       0        0         5             2         6             1               0       0
 conformance/override              38             0      38       0        0        11             0        26             1               0       0
-conformance/parser                20             0      20       0        0         9             0         5             6               0       0
+conformance/parser               820             0     820       0        0       219             2       319           280               0       0
 conformance/pedantic               2             0       2       0        0         0             0         2             0               0       0
 conformance/references            15             1      14       0        0        12             0         2             0               0       0
-conformance/salsa                 91             0      91       0        0        25             0        64             2               0       0
+conformance/salsa                118             0     118       0        0        33             2        76             7               0       0
 conformance/scanner                1             0       1       0        0         1             0         0             0               0       0
-conformance/statements           154             0     154       0        0        66             0        53            35               0       0
-conformance/types                522             2     520       0        0       204             1       294            21               0       0
-total                           8678           104    8574       0        0      3977            19      3839           739               0       0
+conformance/statements           157             0     157       0        0        68             0        54            35               0       0
+conformance/types                557             2     555       0        0       220             1       307            27               0       0
+total                          10296           115   10181       0        0      4517            23      4516          1125               0       0
 
-compiler                        4717            53    4664       0        0      2339             6      1989           330               0       0
-conformance                     3961            51    3910       0        0      1638            13      1850           409               0       0
+compiler                        5200            64    5136       0        0      2547             6      2210           373               0       0
+conformance                     5096            51    5045       0        0      1970            17      2306           752               0       0
 
 class and code of the first line of stderr that has a name for a code (the reason of sweep.ts names no other):
-     731  E syntax
-      18  C syntax
+    1117  E syntax
+      22  C syntax
        7  E unsupported-extension
        1  C no-empty-pattern
        1  E no-self-assign
@@ -81,12 +83,12 @@ class and code of the first line of stderr that has a name for a code (the reaso
 the same by top directory:
   compiler                      C no-empty-pattern               1
   compiler                      C syntax                         5
-  compiler                      E syntax                       327
+  compiler                      E syntax                       370
   compiler                      E unsupported-extension          3
   conformance/ambient           E syntax                         2
   conformance/async             C syntax                         7
   conformance/async             E syntax                        53
-  conformance/classes           E syntax                        27
+  conformance/classes           E syntax                        78
   conformance/constEnums        E syntax                         1
   conformance/controlFlow       E syntax                         3
   conformance/decorators        E syntax                        26
@@ -95,10 +97,10 @@ the same by top directory:
   conformance/es2018            E syntax                         2
   conformance/es2019            E syntax                         3
   conformance/es2022            E syntax                         1
-  conformance/es6               E syntax                        79
+  conformance/es6               E syntax                        83
   conformance/es7               E syntax                         6
   conformance/esDecorators      E syntax                         7
-  conformance/expressions       E syntax                        25
+  conformance/expressions       E syntax                        28
   conformance/externalModules   C syntax                         1
   conformance/externalModules   E syntax                        20
   conformance/functions         E syntax                         1
@@ -116,13 +118,15 @@ the same by top directory:
   conformance/nonjsExtensions   C syntax                         2
   conformance/nonjsExtensions   E syntax                         1
   conformance/override          E syntax                         1
-  conformance/parser            E syntax                         6
-  conformance/salsa             E syntax                         2
+  conformance/parser            C syntax                         2
+  conformance/parser            E syntax                       280
+  conformance/salsa             C syntax                         2
+  conformance/salsa             E syntax                         7
   conformance/statements        E syntax                        35
   conformance/types             C syntax                         1
-  conformance/types             E syntax                        21
+  conformance/types             E syntax                        27
 
-codes in the oracles of class E: 788; codes with an instance that passes: 0; oracles not read for their codes: 0
+codes in the oracles of class E: 892; codes with an instance that passes: 0; oracles not read for their codes: 0
 
 class E that pass: 0
 else: 0

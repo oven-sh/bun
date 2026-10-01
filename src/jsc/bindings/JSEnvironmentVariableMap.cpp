@@ -196,29 +196,31 @@ bool JSEnvironmentVariableMap::put(JSCell* cell, JSGlobalObject* globalObject, P
     JSString* string = coerceEnvValue(globalObject, scope, value);
     RETURN_IF_EXCEPTION(scope, false);
 
+    // Not `slot`: an inline cache would store `value` uncoerced. PutById: a dictionary after 512 properties, not 128.
+    PutPropertySlot ownSlot(cell, slot.isStrictMode(), PutPropertySlot::PutById);
+    auto* thisObject = static_cast<JSEnvironmentVariableMap*>(cell);
+
     // Node's RealEnvStore::Set name-matches TZ on every write, so delete-then-set still
     // updates Date caches. putDirect bypasses the accessor so the side effect fires once.
     if (uid && WTF::equal(uid, "TZ"_s)) [[unlikely]] {
         applyTimeZoneEnvValue(globalObject, string);
         RETURN_IF_EXCEPTION(scope, false);
-        static_cast<JSEnvironmentVariableMap*>(cell)->putDirect(vm, propertyName, string, 0);
+        thisObject->putDirect(vm, propertyName, string, 0, ownSlot);
         return true;
     }
     if (uid && WTF::equal(uid, "NODE_TLS_REJECT_UNAUTHORIZED"_s)) [[unlikely]] {
         applyTLSRejectEnvValue(globalObject, string);
         RETURN_IF_EXCEPTION(scope, false);
-        static_cast<JSEnvironmentVariableMap*>(cell)->putDirect(vm, propertyName, string, 0);
+        thisObject->putDirect(vm, propertyName, string, 0, ownSlot);
         return true;
     }
     // fetch() reads the proxy variables from the native env map.
     if (isProxyEnvVarName(vm, uid)) [[unlikely]] {
         setNativeEnvValue(globalObject, String(uid), string);
         RETURN_IF_EXCEPTION(scope, false);
-        static_cast<JSEnvironmentVariableMap*>(cell)->putDirect(vm, propertyName, string, 0);
+        thisObject->putDirect(vm, propertyName, string, 0, ownSlot);
         return true;
     }
-    // Not `slot`: an inline cache would store `value` uncoerced. PutById: a dictionary after 512 properties, not 128.
-    PutPropertySlot ownSlot(cell, slot.isStrictMode(), PutPropertySlot::PutById);
     RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, string, ownSlot));
 }
 
@@ -296,6 +298,14 @@ JSC_DEFINE_CUSTOM_GETTER(jsTimeZoneEnvironmentVariableGetter, (JSGlobalObject * 
     return JSValue::encode(jsString(vm, Zig::toStringCopy(value)));
 }
 
+// The setters of the three accessors keep the written value under a private name.
+// PutById, as in put(): the first write adds a property.
+static void putPrivateValue(VM& vm, JSObject* object, const Identifier& privateName, JSValue value)
+{
+    PutPropertySlot slot(object, false, PutPropertySlot::PutById);
+    object->putDirect(vm, privateName, value, 0, slot);
+}
+
 // Store-only: the TZ side effect fires from put() / jsProcessEnvCoerceForWrite on every
 // write. Firing here too would double-apply on Windows (writeEnvVar already ran it).
 JSC_DEFINE_CUSTOM_SETTER(jsTimeZoneEnvironmentVariableSetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
@@ -305,7 +315,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsTimeZoneEnvironmentVariableSetter, (JSGlobalObject * 
     if (!object)
         return false;
     auto* clientData = WebCore::clientData(vm);
-    object->putDirect(vm, clientData->builtinNames().dataPrivateName(), JSValue::decode(value), 0);
+    putPrivateValue(vm, object, clientData->builtinNames().dataPrivateName(), JSValue::decode(value));
     return true;
 }
 
@@ -398,7 +408,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsNodeTLSRejectUnauthorizedSetter, (JSGlobalObject * gl
     applyTLSRejectFromString(globalObject, str);
 
     const auto& privateName = NODE_TLS_REJECT_UNAUTHORIZED_PRIVATE_PROPERTY(vm);
-    object->putDirect(vm, privateName, JSValue::decode(value), 0);
+    putPrivateValue(vm, object, privateName, JSValue::decode(value));
 
     // TODO: this is an assertion failure
     // Recreate this because the property visibility needs to be set correctly
@@ -446,7 +456,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsBunConfigVerboseFetchSetter, (JSGlobalObject * global
     applyVerboseFetchFromString(globalObject, str);
 
     const auto& privateName = BUN_CONFIG_VERBOSE_FETCH_PRIVATE_PROPERTY(vm);
-    object->putDirect(vm, privateName, JSValue::decode(value), 0);
+    putPrivateValue(vm, object, privateName, JSValue::decode(value));
 
     // TODO: this is an assertion failure
     // Recreate this because the property visibility needs to be set correctly

@@ -568,6 +568,57 @@ it.concurrent.skipIf(isWindows)("reading process.env does not change its structu
   });
 });
 
+// With more than 128 properties, JSC makes an object a dictionary when native code adds one more with a default slot.
+it.concurrent.skipIf(isWindows)("a new variable does not make process.env a dictionary", async () => {
+  // TZ, NODE_TLS_REJECT_UNAUTHORIZED and BUN_CONFIG_VERBOSE_FETCH are accessors on the main thread only.
+  const names = ["HTTP_PROXY", "https_proxy", "NODE_TLS_REJECT_UNAUTHORIZED", "BUN_CONFIG_VERBOSE_FETCH", "NEW"];
+  const env = { ...bunEnv };
+  for (const name of names) delete env[name];
+  for (let i = Object.keys(env).length; i < 200; i++) env["STRUCTURE_TEST_" + i] = "value " + i;
+  using dir = tempDir("process-env-new-variable", {
+    "index.mjs": `
+      import { describe } from "bun:jsc";
+      import { Worker, isMainThread, parentPort } from "node:worker_threads";
+
+      // The writes after which process.env is a dictionary.
+      function probe() {
+        const dictionary = [];
+        const write = name => {
+          process.env[name] = "x";
+          if (describe(process.env).includes("Dictionary")) dictionary.push(name);
+        };
+        for (const name of ${JSON.stringify(names)}) write(name);
+        delete process.env.TZ;
+        write("TZ");
+        return dictionary;
+      }
+
+      if (isMainThread) {
+        // The worker starts with a copy of the variables, so it runs before the main thread adds any.
+        const worker = await new Promise((resolve, reject) => {
+          new Worker(import.meta.filename).once("message", resolve).once("error", reject);
+        });
+        console.log(JSON.stringify({ main: probe(), worker }));
+      } else {
+        parentPort.postMessage(probe());
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.mjs"],
+    env,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out: JSON.parse(stdout || "null"), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+    out: { main: [], worker: [] },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 // The values are read through getOwnPropertyDescriptor so that no inline cache is involved in the check.
 const countRawWrites = body => `
   ${body}

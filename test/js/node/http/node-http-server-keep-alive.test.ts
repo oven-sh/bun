@@ -120,7 +120,10 @@ class Peer {
    * A body with no Content-Length and no chunks is all bytes until the server ends the connection.
    */
   async response(method: string) {
-    const endOfHead = (bytes: string) => bytes.indexOf("\r\n\r\n") + 4 || -1;
+    const endOfHead = (bytes: string) => {
+      const at = bytes.indexOf("\r\n\r\n");
+      return at < 0 ? -1 : at + 4;
+    };
     if (!(await this.#have(endOfHead))) return this.#take();
     const head = this.#take(endOfHead(this.#bytes));
     const status = head.slice(9, 12);
@@ -1138,7 +1141,10 @@ describe("rules that only Bun has", () => {
   // A response that closes the connection is complete, and the client has not read all of it. RFC 9112 9.6:
   // the server does not process a request that arrives then. Node.js gives that request to the listener.
   for (const transport of ["tcp", "tls"] as const) {
-    bunOnly(
+    // Not over TCP on Windows: that kernel takes the whole body from a client that does not read, in one write
+    // and in two writes. So no response waits in the server there.
+    const waits = transport === "tls" || process.platform !== "win32";
+    (waits ? bunOnly : test.skip)(
       `a request behind a closing response that is not sent yet does not reach the listener (${transport})`,
       async () => {
         const secure = transport === "tls";
@@ -1151,10 +1157,7 @@ describe("rules that only Bun has", () => {
           first ??= res;
           res.shouldKeepAlive = false;
           res.setHeader("Content-Length", body.length);
-          // Two writes: Windows takes a first write of any size, also for a client that does not read. It
-          // refuses the next write.
-          res.write(body.subarray(0, -1));
-          res.end(body.subarray(-1));
+          res.end(body);
         };
         const server = secure
           ? https.createServer({ key: fixture("agent1-key.pem"), cert: fixture("agent1-cert.pem") }, listener)
@@ -1174,7 +1177,7 @@ describe("rules that only Bun has", () => {
           : connect(port, "127.0.0.1");
         try {
           await once(socket, secure ? "secureConnect" : "connect");
-          // The client reads nothing, so the end of the body waits in the server.
+          // The client reads nothing, so most of the body waits in the server.
           socket.pause();
           socket.write(asksToPersist("/1"));
           await ping();

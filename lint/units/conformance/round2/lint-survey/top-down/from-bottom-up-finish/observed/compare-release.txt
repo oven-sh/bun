@@ -1,0 +1,84 @@
+instances: here 12797, there 12797; only here 0, only there 0
+same class of run and first code in both: 12797; another: 0
+both have a raw run: the same exit code and bytes of stderr 1309, other 27
+  arbitraryModuleNamespaceIdentifiers_syntax.ts
+    here:  type-clause-bad-export.ts(1,15): error syntax: Expected identifier but found "" | type-clause-bad-import.ts(1,22): error syntax: Expected identifier but found ""invalid 2"" | type-clause-no-as.ts(1,27): error syntax: Expected "as" but found "}" | type-clause-type-as-as.ts(1,21): error syntax: Expected "}"
+    there: type-clause-bad-export.ts(1,15): error syntax: Expected identifier but found "" | type-clause-bad-import.ts(1,22): error syntax: Expected identifier but found ""invalid 2"" | type-clause-no-as.ts(1,27): error syntax: Expected "as" but found "}" | type-clause-type-as-as.ts(1,21): error syntax: Expected "}"
+  bigintArbirtraryIdentifier.ts
+    here:  badExport.ts(1,17): error syntax: Expected identifier but found "0n" | badExport.ts(1,21): error syntax: Expected "}" but found ";" | badExport2.ts(1,10): error syntax: Expected identifier but found "0n" | badExport2.ts(1,16): error syntax: Expected "}" but found "foo" | badExport2.ts(1,20): error syntax: U
+    there: badExport.ts(1,17): error syntax: Expected identifier but found "0n" | badExport.ts(1,21): error syntax: Expected "}" but found ";" | badExport2.ts(1,10): error syntax: Expected identifier but found "0n" | badExport2.ts(1,16): error syntax: Expected "}" but found "foo" | badExport2.ts(1,20): error syntax: U
+  declarationEmitUnknownImport2(target=es2015).ts
+    here:  declarationEmitUnknownImport2.ts(1,12): error syntax: Expected "from" but found "From" (token: TIdentifier) | 
+    there: declarationEmitUnknownImport2.ts(1,12): error syntax: Expected "from" but found "From" | 
+  es6ImportNamedImportParsingError.ts
+    here:  es6ImportNamedImportParsingError_1.ts(1,10): error syntax: Expected identifier but found "*" | es6ImportNamedImportParsingError_1.ts(1,14): error syntax: Expected "as" but found "from" | es6ImportNamedImportParsingError_1.ts(1,19): error syntax: Expected "from" but found ""./es6ImportNamedImportParsingE
+    there: es6ImportNamedImportParsingError_1.ts(1,10): error syntax: Expected identifier but found "*" | es6ImportNamedImportParsingError_1.ts(1,14): error syntax: Expected "as" but found "from" | es6ImportNamedImportParsingError_1.ts(1,19): error syntax: Expected "from" but found ""./es6ImportNamedImportParsingE
+  grammarErrors.ts
+    here:  ../a.js(1,13): error syntax: Expected "from" but found "A" (token: TIdentifier) | ../b.ts(1,14): error syntax: Expected "from" but found "," (token: TComma) | 
+    there: ../a.js(1,13): error syntax: Expected "from" but found "A" | ../b.ts(1,14): error syntax: Expected "from" but found "," | 
+  importDeferInvalidDefault.ts
+    here:  b.ts(1,14): error syntax: Expected "from" but found "foo" (token: TIdentifier) | 
+    there: b.ts(1,14): error syntax: Expected "from" but found "foo" | 
+  importDeferInvalidNamed.ts
+    here:  b.ts(1,14): error syntax: Expected "from" but found "{" (token: TOpenBrace) | 
+    there: b.ts(1,14): error syntax: Expected "from" but found "{" | 
+  importDeferTypeConflict1.ts
+    here:  b.ts(1,19): error syntax: Expected "from" but found "*" (token: TAsterisk) | 
+    there: b.ts(1,19): error syntax: Expected "from" but found "*" | 
+  importDeferTypeConflict2.ts
+    here:  b.ts(1,14): error syntax: Expected "from" but found "type" (token: TIdentifier) | 
+    there: b.ts(1,14): error syntax: Expected "from" but found "type" | 
+  importSpecifiers1.ts
+    here:  ../d.ts(1,24): error syntax: Expected "}" but found "as" | ../d.ts(1,27): error syntax: Expected "from" but found "}" (token: TCloseBrace) | ../f.ts(1,22): error syntax: Expected "as" but found "}" | ../f.ts(2,18): error syntax: Expected "}" but found "export" | ../f.ts(2,25): error syntax: Expected "from" 
+    there: ../d.ts(1,24): error syntax: Expected "}" but found "as" | ../d.ts(1,27): error syntax: Expected "from" but found "}" | ../f.ts(1,22): error syntax: Expected "as" but found "}" | ../f.ts(2,18): error syntax: Expected "}" but found "export" | ../f.ts(2,25): error syntax: Expected "from" but found "}" | 
+  importSpecifiers_js.ts
+    here:  a.js(1,15): error syntax: Expected "}" but found "A" | a.js(1,17): error syntax: Expected "from" but found "}" (token: TCloseBrace) | 
+    there: a.js(1,15): error syntax: Expected "}" but found "A" | a.js(1,17): error syntax: Expected "from" but found "}" | 
+  invalidSyntaxNamespaceImportWithCommonjs.ts
+    here:  1.ts(1,10): error syntax: Expected "as" but found "from" (token: TIdentifier) | 
+    there: 1.ts(1,10): error syntax: Expected "as" but found "from" | 
+  jsDeclarationsExportFormsErr(target=es2015).ts
+    here:  bar.js(1,11): error syntax: Expected "from" but found "=" (token: TEquals) | globalNs.js(2,8): error syntax: Unexpected as | 
+    there: bar.js(1,11): error syntax: Expected "from" but found "=" | globalNs.js(2,8): error syntax: Unexpected as | 
+  jsFileCompilationImportEqualsSyntax.ts
+    here:  a.js(1,10): error syntax: Expected "from" but found "=" (token: TEquals) | 
+    there: a.js(1,10): error syntax: Expected "from" but found "=" | 
+  modulePreserve4.ts
+    here:  ../main3.cjs(2,11): error syntax: Expected "from" but found "=" (token: TEquals) | 
+    there: ../main3.cjs(2,11): error syntax: Expected "from" but found "=" | 
+  nodeModulesAllowJs1(module=node16).ts
+    here:  index.cjs(51,12): error syntax: Expected "from" but found "=" (token: TEquals) | index.js(50,12): error syntax: Expected "from" but found "=" (token: TEquals) | index.mjs(50,12): error syntax: Expected "from" but found "=" (token: TEquals) | 
+    there: index.cjs(51,12): error syntax: Expected "from" but found "=" | index.js(50,12): error syntax: Expected "from" but found "=" | index.mjs(50,12): error syntax: Expected "from" but found "=" | 
+  nodeModulesAllowJs1(module=node18).ts
+    here:  index.cjs(51,12): error syntax: Expected "from" but found "=" (token: TEquals) | index.js(50,12): error syntax: Expected "from" but found "=" (token: TEquals) | index.mjs(50,12): error syntax: Expected "from" but found "=" (token: TEquals) | 
+    there: index.cjs(51,12): error syntax: Expected "from" but found "=" | index.js(50,12): error syntax: Expected "from" but found "=" | index.mjs(50,12): error syntax: Expected "from" but found "=" | 
+  nodeModulesAllowJs1(module=node20).ts
+    here:  index.cjs(51,12): error syntax: Expected "from" but found "=" (token: TEquals) | index.js(50,12): error syntax: Expected "from" but found "=" (token: TEquals) | index.mjs(50,12): error syntax: Expected "from" but found "=" (token: TEquals) | 
+    there: index.cjs(51,12): error syntax: Expected "from" but found "=" | index.js(50,12): error syntax: Expected "from" but found "=" | index.mjs(50,12): error syntax: Expected "from" but found "=" | 
+  nodeModulesAllowJs1(module=nodenext).ts
+    here:  index.cjs(51,12): error syntax: Expected "from" but found "=" (token: TEquals) | index.js(50,12): error syntax: Expected "from" but found "=" (token: TEquals) | index.mjs(50,12): error syntax: Expected "from" but found "=" (token: TEquals) | 
+    there: index.cjs(51,12): error syntax: Expected "from" but found "=" | index.js(50,12): error syntax: Expected "from" but found "=" | index.mjs(50,12): error syntax: Expected "from" but found "=" | 
+  nodeModulesAllowJsImportAssignment(module=node16).ts
+    here:  file.js(4,11): error syntax: Expected "from" but found "=" (token: TEquals) | index.js(2,11): error syntax: Expected "from" but found "=" (token: TEquals) | subfolder/index.js(2,11): error syntax: Expected "from" but found "=" (token: TEquals) | 
+    there: file.js(4,11): error syntax: Expected "from" but found "=" | index.js(2,11): error syntax: Expected "from" but found "=" | subfolder/index.js(2,11): error syntax: Expected "from" but found "=" | 
+  nodeModulesAllowJsImportAssignment(module=node18).ts
+    here:  file.js(4,11): error syntax: Expected "from" but found "=" (token: TEquals) | index.js(2,11): error syntax: Expected "from" but found "=" (token: TEquals) | subfolder/index.js(2,11): error syntax: Expected "from" but found "=" (token: TEquals) | 
+    there: file.js(4,11): error syntax: Expected "from" but found "=" | index.js(2,11): error syntax: Expected "from" but found "=" | subfolder/index.js(2,11): error syntax: Expected "from" but found "=" | 
+  nodeModulesAllowJsImportAssignment(module=node20).ts
+    here:  file.js(4,11): error syntax: Expected "from" but found "=" (token: TEquals) | index.js(2,11): error syntax: Expected "from" but found "=" (token: TEquals) | subfolder/index.js(2,11): error syntax: Expected "from" but found "=" (token: TEquals) | 
+    there: file.js(4,11): error syntax: Expected "from" but found "=" | index.js(2,11): error syntax: Expected "from" but found "=" | subfolder/index.js(2,11): error syntax: Expected "from" but found "=" | 
+  nodeModulesAllowJsImportAssignment(module=nodenext).ts
+    here:  file.js(4,11): error syntax: Expected "from" but found "=" (token: TEquals) | index.js(2,11): error syntax: Expected "from" but found "=" (token: TEquals) | subfolder/index.js(2,11): error syntax: Expected "from" but found "=" (token: TEquals) | 
+    there: file.js(4,11): error syntax: Expected "from" but found "=" | index.js(2,11): error syntax: Expected "from" but found "=" | subfolder/index.js(2,11): error syntax: Expected "from" but found "=" | 
+  nodeModulesAllowJsSynchronousCallErrors(module=node16).ts
+    here:  index.js(3,12): error syntax: Expected "from" but found "=" (token: TEquals) | subfolder/index.js(3,12): error syntax: Expected "from" but found "=" (token: TEquals) | 
+    there: index.js(3,12): error syntax: Expected "from" but found "=" | subfolder/index.js(3,12): error syntax: Expected "from" but found "=" | 
+  nodeModulesAllowJsSynchronousCallErrors(module=node18).ts
+    here:  index.js(3,12): error syntax: Expected "from" but found "=" (token: TEquals) | subfolder/index.js(3,12): error syntax: Expected "from" but found "=" (token: TEquals) | 
+    there: index.js(3,12): error syntax: Expected "from" but found "=" | subfolder/index.js(3,12): error syntax: Expected "from" but found "=" | 
+  nodeModulesAllowJsSynchronousCallErrors(module=node20).ts
+    here:  index.js(3,12): error syntax: Expected "from" but found "=" (token: TEquals) | subfolder/index.js(3,12): error syntax: Expected "from" but found "=" (token: TEquals) | 
+    there: index.js(3,12): error syntax: Expected "from" but found "=" | subfolder/index.js(3,12): error syntax: Expected "from" but found "=" | 
+  nodeModulesAllowJsSynchronousCallErrors(module=nodenext).ts
+    here:  index.js(3,12): error syntax: Expected "from" but found "=" (token: TEquals) | subfolder/index.js(3,12): error syntax: Expected "from" but found "=" (token: TEquals) | 
+    there: index.js(3,12): error syntax: Expected "from" but found "=" | subfolder/index.js(3,12): error syntax: Expected "from" but found "=" | 

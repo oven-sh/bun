@@ -1,0 +1,287 @@
+E4, the first numbers: `bun --lint` of 1.4.3-debug+3110ce85c (debug build of the worktree) over every run instance of the corpus
+
+When: 2026-10-01T16:09:36Z to 2026-10-01T17:01:36Z (one hold of the heavy lock). Corpus: typescript-go 89d5d5b, TypeScript 5848bc5. Runner: sweep.ts and runner/ of 3110ce85cf9ad3ce21a0396315b5213b2cc8c6df as they are, default check, --jobs 4 --timeout 120000, lists empty (--expectations round2/prototype/expectations.json). Script host: the installed bun.
+The driver, the helpers, the tables and how to run them again: round2/lint-survey/bottom-up/ (HOWTO.txt).
+
+  ### lock acquired 2026-10-01T16:09:36Z load 368.94 335.84 332.67 bin 1.4.3-debug+3110ce85c
+  chunk 1-upper-a-b: exit 0, 278 s, instances 1482: run 1241 (E 733, C 508), skipped 241; by outcome, E: fail 570, crash 163;by outcome, C: pass 500, unsupported 1, crash 7;
+  chunk 2-c: exit 0, 280 s, instances 1728: run 1525 (E 807, C 718), skipped 203; by outcome, E: fail 690, unsupported 20, crash 97;by outcome, C: pass 701, unsupported 16, crash 1;
+  chunk 3-d-f-g: exit 0, 264 s, instances 1845: run 1618 (E 777, C 841), skipped 227; by outcome, E: fail 668, unsupported 1, crash 108;by outcome, C: pass 833, unsupported 1, crash 7;
+  chunk 4-e-h-k-l-q: exit 0, 185 s, instances 1725: run 1266 (E 584, C 682), skipped 459; by outcome, E: fail 468, unsupported 1, crash 115;by outcome, C: pass 680, unsupported 1, crash 1;
+  chunk 5-i-j: exit 0, 284 s, instances 1693: run 1429 (E 847, C 582), skipped 264; by outcome, E: fail 674, unsupported 25, crash 148;by outcome, C: pass 545, unsupported 35, crash 2;
+  chunk 6-m-n-o: exit 0, 272 s, instances 1729: run 1599 (E 880, C 719), skipped 130; by outcome, E: fail 769, unsupported 3, crash 108;by outcome, C: pass 718, crash 1;
+  chunk 7-p-r: exit 0, 224 s, instances 1801: run 1618 (E 1067, C 551), skipped 183; by outcome, E: fail 677, unsupported 4, crash 386;by outcome, C: pass 540, unsupported 7, crash 4;
+  chunk 8-s-u-v-w-y: exit 0, 305 s, instances 1735: run 1399 (E 706, C 693), skipped 336; by outcome, E: fail 596, unsupported 3, crash 107;by outcome, C: pass 687, unsupported 2, crash 4;
+  chunk 9-t: exit 0, 279 s, instances 1176: run 1102 (E 626, C 476), skipped 74; by outcome, E: fail 514, unsupported 36, crash 76;by outcome, C: pass 445, unsupported 30, crash 1;
+  ### sweep finished 2026-10-01T16:50:15Z
+  raw.ts: exit 0, 291 s, raw.ts: 1336 instances in 290 s, the command died in 0
+  raw.ts with the leak check: exit 0, 388 s, raw.ts: 1336 instances in 387 s, the command died in 0
+  ### finished 2026-10-01T17:01:36Z
+
+columns: run = instances that the reference runs; not laid out = outcome unsupported, no process started;
+result = the command ended with 0 or 2 and every line of stderr is a diagnostic; died = a signal, another exit
+code, a text on stdout or a line of stderr that is no diagnostic; C silent = class C, stderr empty, exit 0 (the
+pass of the guard); C diagnostic = class C and Bun printed a diagnostic; E silent = class E and Bun printed
+nothing; E diagnostic = class E and Bun printed a diagnostic; else = anything that is none of these.
+
+directory                        run  not laid out  result    died  timeout  C silent  C diagnostic  E silent  E diagnostic  internal-error    else
+compiler                        6282            79    6203       0        0      3039            10      2706           448               0       0
+conformance                        2             0       2       0        0         1             0         1             0               0       0
+conformance/Symbols                8             0       8       0        0         3             0         5             0               0       0
+conformance/additionalChecks       1             0       1       0        0         0             0         1             0               0       0
+conformance/ambient               20             0      20       0        0        11             0         7             2               0       0
+conformance/async                186             0     186       0        0        85             7        41            53               0       0
+conformance/asyncGenerators        5             0       5       0        0         2             0         3             0               0       0
+conformance/classes              591             0     591       0        0       234             0       272            85               0       0
+conformance/constEnums             9             0       9       0        0         3             0         5             1               0       0
+conformance/controlFlow           58             1      57       0        0        31             0        23             3               0       0
+conformance/declarationEmit       21             0      21       0        0        18             0         3             0               0       0
+conformance/decorators            88             0      88       0        0        44             0        18            26               0       0
+conformance/directives             6             1       5       0        0         2             0         3             0               0       0
+conformance/dynamicImport         38             0      38       0        0        24             0         9             5               0       0
+conformance/emitter               13             0      13       0        0        13             0         0             0               0       0
+conformance/enums                 14             0      14       0        0         6             0         6             2               0       0
+conformance/es2016                 1             0       1       0        0         0             0         1             0               0       0
+conformance/es2017                12             0      12       0        0         6             0         6             0               0       0
+conformance/es2018                 5             0       5       0        0         2             0         1             2               0       0
+conformance/es2019                15             0      15       0        0         4             0         8             3               0       0
+conformance/es2020                23             0      23       0        0         9             0        14             0               0       0
+conformance/es2021                39             0      39       0        0        19             0        20             0               0       0
+conformance/es2022                16             0      16       0        0         2             0        13             1               0       0
+conformance/es2023                 2             0       2       0        0         1             0         1             0               0       0
+conformance/es2024                 3             0       3       0        0         3             0         0             0               0       0
+conformance/es2025                 4             0       4       0        0         4             0         0             0               0       0
+conformance/es5                    1             0       1       0        0         0             0         1             0               0       0
+conformance/es6                 1028             0    1028       0        0       515             0       392           121               0       0
+conformance/es7                   45             0      45       0        0        16             0        20             9               0       0
+conformance/esDecorators         161             0     161       0        0       129             0        25             7               0       0
+conformance/esnext                 4             0       4       0        0         4             0         0             0               0       0
+conformance/expressions          400             0     400       0        0       125             0       241            34               0       0
+conformance/externalModules      234             0     234       0        0        84             2       118            30               0       0
+conformance/functions             20             0      20       0        0         8             0        11             1               0       0
+conformance/generators            15             0      15       0        0         7             0         8             0               0       0
+conformance/importAssertion       10             0      10       0        0         1             0         4             5               0       0
+conformance/importAttributes      18             0      18       0        0         4             0         5             9               0       0
+conformance/importDefer           27             0      27       0        0         6             2         6            13               0       0
+conformance/interfaces            66             0      66       0        0         5             0        58             3               0       0
+conformance/internalModules       76             0      76       0        0        30             0        39             7               0       0
+conformance/jsdoc                333             3     330       0        0       151             0       170             9               0       0
+conformance/jsx                  212            99     113       0        0        29             0        66            18               0       0
+conformance/moduleResolution      72             0      72       0        0        22             0        46             4               0       0
+conformance/node                 334             0     334       0        0       105             0       205            24               0       0
+conformance/nonjsExtensions       14             0      14       0        0         5             2         6             1               0       0
+conformance/override              38             0      38       0        0        11             0        26             1               0       0
+conformance/parser               820             0     820       0        0       219             2       319           280               0       0
+conformance/pedantic               2             0       2       0        0         0             0         2             0               0       0
+conformance/references            15             1      14       0        0        12             0         2             0               0       0
+conformance/salsa                186             0     186       0        0        60             2       117             7               0       0
+conformance/scanner               35             0      35       0        0        10             0        11            14               0       0
+conformance/statements           318             0     318       0        0       206             0        69            43               0       0
+conformance/types                843             2     841       0        0       317             1       486            37               0       0
+conformance/typings                8             0       8       0        0         2             0         6             0               0       0
+total                          12797           186   12611       0        0      5649            28      5626          1308               0       0
+
+compiler                        6282            79    6203       0        0      3039            10      2706           448               0       0
+conformance                     6515           107    6408       0        0      2610            18      2920           860               0       0
+
+class and code of the first line of stderr that has a name for a code (the reason of sweep.ts names no other):
+    1299  E syntax
+      27  C syntax
+       7  E unsupported-extension
+       1  C no-empty-pattern
+       1  E no-debugger
+       1  E no-self-assign
+
+the same by top directory:
+  compiler                      C no-empty-pattern               1
+  compiler                      C syntax                         9
+  compiler                      E syntax                       445
+  compiler                      E unsupported-extension          3
+  conformance/ambient           E syntax                         2
+  conformance/async             C syntax                         7
+  conformance/async             E syntax                        53
+  conformance/classes           E syntax                        85
+  conformance/constEnums        E syntax                         1
+  conformance/controlFlow       E syntax                         3
+  conformance/decorators        E syntax                        26
+  conformance/dynamicImport     E syntax                         5
+  conformance/enums             E syntax                         2
+  conformance/es2018            E syntax                         2
+  conformance/es2019            E syntax                         3
+  conformance/es2022            E syntax                         1
+  conformance/es6               E syntax                       121
+  conformance/es7               E syntax                         9
+  conformance/esDecorators      E syntax                         7
+  conformance/expressions       E syntax                        34
+  conformance/externalModules   C syntax                         2
+  conformance/externalModules   E syntax                        30
+  conformance/functions         E syntax                         1
+  conformance/importAssertion   E syntax                         5
+  conformance/importAttributes  E syntax                         9
+  conformance/importDefer       C syntax                         2
+  conformance/importDefer       E syntax                        13
+  conformance/interfaces        E syntax                         3
+  conformance/internalModules   E syntax                         7
+  conformance/jsdoc             E no-debugger                    1
+  conformance/jsdoc             E no-self-assign                 1
+  conformance/jsdoc             E syntax                         7
+  conformance/jsx               E syntax                        18
+  conformance/moduleResolution  E unsupported-extension          4
+  conformance/node              E syntax                        24
+  conformance/nonjsExtensions   C syntax                         2
+  conformance/nonjsExtensions   E syntax                         1
+  conformance/override          E syntax                         1
+  conformance/parser            C syntax                         2
+  conformance/parser            E syntax                       280
+  conformance/salsa             C syntax                         2
+  conformance/salsa             E syntax                         7
+  conformance/scanner           E syntax                        14
+  conformance/statements        E syntax                        43
+  conformance/types             C syntax                         1
+  conformance/types             E syntax                        37
+
+codes in the oracles of class E: 959; codes with an instance that passes: 0; oracles not read for their codes: 0
+
+class E that pass: 0
+else: 0
+
+What Bun printed, from the raw runs of the instances whose outcome was crash or timeout (observed/codes.txt has every text):
+  raw runs 1336; ended by themselves with a list of diagnostics 1336
+  ms per process: median 625, p99 2856, max 4266; exit codes: 2: 1329, 0: 7
+  
+  diagnostic lines by class, category and code:
+      3505  E error syntax
+        41  C error syntax
+        22  E warning syntax
+        11  E error unsupported-extension
+         3  E error no-self-assign
+         1  C error no-empty-pattern
+         1  E error no-debugger
+  
+  instances by class and code (an instance counts once for each code that it has):
+      1299  E syntax
+        27  C syntax
+         7  E unsupported-extension
+         1  C no-empty-pattern
+         1  E no-debugger
+         1  E no-self-assign
+  
+  instances whose lines are all warnings (exit code 0): 7
+    E privateNameAccessors.ts (conformance/classes/members/privateNames/privateNameAccessors.ts)
+        privateNameAccessors.ts(9,14): warning syntax: Writing to getter-only property "#roProp" will throw
+    E privateNameMethodAssignment.ts (conformance/classes/members/privateNames/privateNameMethodAssignment.ts)
+        privateNameMethodAssignment.ts(4,14): warning syntax: Writing to read-only method "#method" will throw
+        privateNameMethodAssignment.ts(5,11): warning syntax: Writing to read-only method "#method" will throw
+        privateNameMethodAssignment.ts(6,11): warning syntax: Writing to read-only method "#method" will throw
+        privateNameMethodAssignment.ts(7,20): warning syntax: Writing to read-only method "#method" will throw
+        privateNameMethodAssignment.ts(9,11): warning syntax: Writing to read-only method "#method" will throw
+    E privateNameReadonly.ts (conformance/classes/members/privateNames/privateNameReadonly.ts)
+        privateNameReadonly.ts(4,14): warning syntax: Writing to read-only method "#bar" will throw
+    E privateNameSetterNoGetter.ts (conformance/classes/members/privateNames/privateNameSetterNoGetter.ts)
+        privateNameSetterNoGetter.ts(4,14): warning syntax: Reading from setter-only property "#x" will throw
+    E privateNameStaticAccessors.ts (conformance/classes/members/privateNames/privateNameStaticAccessors.ts)
+        privateNameStaticAccessors.ts(9,12): warning syntax: Writing to getter-only property "#roProp" will throw
+    E privateNameStaticMethodAssignment.ts (conformance/classes/members/privateNames/privateNameStaticMethodAssignment.ts)
+        privateNameStaticMethodAssignment.ts(4,12): warning syntax: Writing to read-only method "#method" will throw
+        privateNameStaticMethodAssignment.ts(5,11): warning syntax: Writing to read-only method "#method" will throw
+        privateNameStaticMethodAssignment.ts(6,11): warning syntax: Writing to read-only method "#method" will throw
+        privateNameStaticMethodAssignment.ts(7,18): warning syntax: Writing to read-only method "#method" will throw
+        privateNameStaticMethodAssignment.ts(9,11): warning syntax: Writing to read-only method "#method" will throw
+    E privateWriteOnlyAccessorRead.ts (conformance/classes/members/privateNames/privateWriteOnlyAccessorRead.ts)
+        privateWriteOnlyAccessorRead.ts(9,22): warning syntax: Reading from setter-only property "#value" will throw
+        privateWriteOnlyAccessorRead.ts(12,10): warning syntax: Reading from setter-only property "#value" will throw
+        privateWriteOnlyAccessorRead.ts(17,18): warning syntax: Reading from setter-only property "#value" will throw
+        privateWriteOnlyAccessorRead.ts(19,22): warning syntax: Reading from setter-only property "#value" will throw
+        privateWriteOnlyAccessorRead.ts(22,23): warning syntax: Reading from setter-only property "#value" will throw
+        privateWriteOnlyAccessorRead.ts(26,14): warning syntax: Reading from setter-only property "#valueOne" will throw
+        privateWriteOnlyAccessorRead.ts(27,17): warning syntax: Reading from setter-only property "#valueRest" will throw
+        privateWriteOnlyAccessorRead.ts(30,10): warning syntax: Reading from setter-only property "#valueCompound" will throw
+  
+
+Instances with a JavaScript root (the only files that the rules read), observed/javascript.txt:
+  instances with a JavaScript root: 946 (E 576, C 370)
+  by class of the oracle, class of the run and first code:
+       480  E silent
+       362  C silent
+        85  E diagnostic syntax
+         7  E diagnostic unsupported-extension
+         4  C not-laid-out
+         3  C diagnostic syntax
+         2  E not-laid-out
+         1  C diagnostic no-empty-pattern
+         1  E diagnostic no-debugger
+         1  E diagnostic no-self-assign
+  
+  reports of rules: lines, instances
+         3      1  no-self-assign
+         1      1  no-debugger
+         1      1  no-empty-pattern
+  
+  C declarationEmitClassSetAccessorParamNameInJs2.ts (compiler/declarationEmitClassSetAccessorParamNameInJs2.ts); root files /.src/foo.js
+      foo.js(7,13): error no-empty-pattern: Unexpected empty object pattern.
+  E jsdocTypeTagCast.ts (conformance/jsdoc/jsdocTypeTagCast.ts); root files /.src/a.ts /.src/b.js
+      b.js(44,36): error no-self-assign: 'someBase' is assigned to itself.
+      b.js(47,42): error no-self-assign: 'someDerived' is assigned to itself.
+      b.js(53,38): error no-self-assign: 'someOther' is assigned to itself.
+  E typedefOnStatements.ts (conformance/jsdoc/typedefOnStatements.ts); root files /.src/typedefOnStatements.js
+      typedefOnStatements.js(4,1): error no-debugger: Unexpected 'debugger' statement.
+  
+  instances with the code unsupported-extension: 7
+
+Crashes and hangs (CRASHES.md has each one):
+  instances that sweep.ts reports as died, timeout or anything else that is no result: 0
+  
+  raw runs that died, hung, threw or were not laid out: 0 of 1336
+  runs with the leak check of CI: 1336; died 0; another exit code, signal or stderr than without it: 0
+
+Class C instances where Bun prints a diagnostic and TypeScript none (CRASHES.md, last section, for the parser unit):
+  class C instances where Bun printed a diagnostic: 28, of 27 cases
+        27  error syntax
+         1  error no-empty-pattern
+  
+This build (here) against the release build of the same src/ (there: release/ of round2/lint-survey/bottom-up), observed/compare-release.txt:
+  instances: here 12797, there 12797; only here 0, only there 0
+  same class of run and first code in both: 12797; another: 0
+  both have a raw run: the same exit code and bytes of stderr 1309, other 27
+    arbitraryModuleNamespaceIdentifiers_syntax.ts
+      here:  type-clause-bad-export.ts(1,15): error syntax: Expected identifier but found "" | type-clause-bad-import.ts(1,22): error syntax: Expected identifier but found ""invalid 2"" | type-clause-no-as.ts(1,27): error syntax: Expected "as" but found "}" | type-clause-type-as-as.ts(1,21): error syntax: Expected "}"
+      there: type-clause-bad-export.ts(1,15): error syntax: Expected identifier but found "" | type-clause-bad-import.ts(1,22): error syntax: Expected identifier but found ""invalid 2"" | type-clause-no-as.ts(1,27): error syntax: Expected "as" but found "}" | type-clause-type-as-as.ts(1,21): error syntax: Expected "}"
+    bigintArbirtraryIdentifier.ts
+      here:  badExport.ts(1,17): error syntax: Expected identifier but found "0n" | badExport.ts(1,21): error syntax: Expected "}" but found ";" | badExport2.ts(1,10): error syntax: Expected identifier but found "0n" | badExport2.ts(1,16): error syntax: Expected "}" but found "foo" | badExport2.ts(1,20): error syntax: U
+      there: badExport.ts(1,17): error syntax: Expected identifier but found "0n" | badExport.ts(1,21): error syntax: Expected "}" but found ";" | badExport2.ts(1,10): error syntax: Expected identifier but found "0n" | badExport2.ts(1,16): error syntax: Expected "}" but found "foo" | badExport2.ts(1,20): error syntax: U
+    declarationEmitUnknownImport2(target=es2015).ts
+      here:  declarationEmitUnknownImport2.ts(1,12): error syntax: Expected "from" but found "From" (token: TIdentifier) | 
+      there: declarationEmitUnknownImport2.ts(1,12): error syntax: Expected "from" but found "From" | 
+    es6ImportNamedImportParsingError.ts
+      here:  es6ImportNamedImportParsingError_1.ts(1,10): error syntax: Expected identifier but found "*" | es6ImportNamedImportParsingError_1.ts(1,14): error syntax: Expected "as" but found "from" | es6ImportNamedImportParsingError_1.ts(1,19): error syntax: Expected "from" but found ""./es6ImportNamedImportParsingE
+      there: es6ImportNamedImportParsingError_1.ts(1,10): error syntax: Expected identifier but found "*" | es6ImportNamedImportParsingError_1.ts(1,14): error syntax: Expected "as" but found "from" | es6ImportNamedImportParsingError_1.ts(1,19): error syntax: Expected "from" but found ""./es6ImportNamedImportParsingE
+    grammarErrors.ts
+      here:  ../a.js(1,13): error syntax: Expected "from" but found "A" (token: TIdentifier) | ../b.ts(1,14): error syntax: Expected "from" but found "," (token: TComma) | 
+      there: ../a.js(1,13): error syntax: Expected "from" but found "A" | ../b.ts(1,14): error syntax: Expected "from" but found "," | 
+    importDeferInvalidDefault.ts
+      here:  b.ts(1,14): error syntax: Expected "from" but found "foo" (token: TIdentifier) | 
+      there: b.ts(1,14): error syntax: Expected "from" but found "foo" | 
+    importDeferInvalidNamed.ts
+      here:  b.ts(1,14): error syntax: Expected "from" but found "{" (token: TOpenBrace) | 
+      there: b.ts(1,14): error syntax: Expected "from" but found "{" | 
+    importDeferTypeConflict1.ts
+      here:  b.ts(1,19): error syntax: Expected "from" but found "*" (token: TAsterisk) | 
+      there: b.ts(1,19): error syntax: Expected "from" but found "*" | 
+    importDeferTypeConflict2.ts
+      here:  b.ts(1,14): error syntax: Expected "from" but found "type" (token: TIdentifier) | 
+      there: b.ts(1,14): error syntax: Expected "from" but found "type" | 
+    importSpecifiers1.ts
+      here:  ../d.ts(1,24): error syntax: Expected "}" but found "as" | ../d.ts(1,27): error syntax: Expected "from" but found "}" (token: TCloseBrace) | ../f.ts(1,22): error syntax: Expected "as" but found "}" | ../f.ts(2,18): error syntax: Expected "}" but found "export" | ../f.ts(2,25): error syntax: Expected "from" 
+      there: ../d.ts(1,24): error syntax: Expected "}" but found "as" | ../d.ts(1,27): error syntax: Expected "from" but found "}" | ../f.ts(1,22): error syntax: Expected "as" but found "}" | ../f.ts(2,18): error syntax: Expected "}" but found "export" | ../f.ts(2,25): error syntax: Expected "from" but found "}" | 
+    importSpecifiers_js.ts
+      here:  a.js(1,15): error syntax: Expected "}" but found "A" | a.js(1,17): error syntax: Expected "from" but found "}" (token: TCloseBrace) | 
+      there: a.js(1,15): error syntax: Expected "}" but found "A" | a.js(1,17): error syntax: Expected "from" but found "}" | 
+    invalidSyntaxNamespaceImportWithCommonjs.ts
+      here:  1.ts(1,10): error syntax: Expected "as" but found "from" (token: TIdentifier) | 
+      there: 1.ts(1,10): error syntax: Expected "as" but found "from" | 
+    jsDeclarationsExportFormsErr(target=es2015).ts
+
+expectations.json: no name enters. No instance of class E passes (the command prints no code of TypeScript: every
+line of Bun's parser has the code syntax), and plan() of runner/expectations.ts lets list C hold as many names of a
+directory as list E holds, so every class C pass is refused with the reason quota. The lists stay
+{ "level": "baseline", "E": [], "C": [] }.

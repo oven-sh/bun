@@ -1,0 +1,222 @@
+raw runs 1336; ended by themselves with a list of diagnostics 1336
+ms per process: median 625, p99 2856, max 4266; exit codes: 2: 1329, 0: 7
+
+diagnostic lines by class, category and code:
+    3505  E error syntax
+      41  C error syntax
+      22  E warning syntax
+      11  E error unsupported-extension
+       3  E error no-self-assign
+       1  C error no-empty-pattern
+       1  E error no-debugger
+
+instances by class and code (an instance counts once for each code that it has):
+    1299  E syntax
+      27  C syntax
+       7  E unsupported-extension
+       1  C no-empty-pattern
+       1  E no-debugger
+       1  E no-self-assign
+
+instances whose lines are all warnings (exit code 0): 7
+  E privateNameAccessors.ts (conformance/classes/members/privateNames/privateNameAccessors.ts)
+      privateNameAccessors.ts(9,14): warning syntax: Writing to getter-only property "#roProp" will throw
+  E privateNameMethodAssignment.ts (conformance/classes/members/privateNames/privateNameMethodAssignment.ts)
+      privateNameMethodAssignment.ts(4,14): warning syntax: Writing to read-only method "#method" will throw
+      privateNameMethodAssignment.ts(5,11): warning syntax: Writing to read-only method "#method" will throw
+      privateNameMethodAssignment.ts(6,11): warning syntax: Writing to read-only method "#method" will throw
+      privateNameMethodAssignment.ts(7,20): warning syntax: Writing to read-only method "#method" will throw
+      privateNameMethodAssignment.ts(9,11): warning syntax: Writing to read-only method "#method" will throw
+  E privateNameReadonly.ts (conformance/classes/members/privateNames/privateNameReadonly.ts)
+      privateNameReadonly.ts(4,14): warning syntax: Writing to read-only method "#bar" will throw
+  E privateNameSetterNoGetter.ts (conformance/classes/members/privateNames/privateNameSetterNoGetter.ts)
+      privateNameSetterNoGetter.ts(4,14): warning syntax: Reading from setter-only property "#x" will throw
+  E privateNameStaticAccessors.ts (conformance/classes/members/privateNames/privateNameStaticAccessors.ts)
+      privateNameStaticAccessors.ts(9,12): warning syntax: Writing to getter-only property "#roProp" will throw
+  E privateNameStaticMethodAssignment.ts (conformance/classes/members/privateNames/privateNameStaticMethodAssignment.ts)
+      privateNameStaticMethodAssignment.ts(4,12): warning syntax: Writing to read-only method "#method" will throw
+      privateNameStaticMethodAssignment.ts(5,11): warning syntax: Writing to read-only method "#method" will throw
+      privateNameStaticMethodAssignment.ts(6,11): warning syntax: Writing to read-only method "#method" will throw
+      privateNameStaticMethodAssignment.ts(7,18): warning syntax: Writing to read-only method "#method" will throw
+      privateNameStaticMethodAssignment.ts(9,11): warning syntax: Writing to read-only method "#method" will throw
+  E privateWriteOnlyAccessorRead.ts (conformance/classes/members/privateNames/privateWriteOnlyAccessorRead.ts)
+      privateWriteOnlyAccessorRead.ts(9,22): warning syntax: Reading from setter-only property "#value" will throw
+      privateWriteOnlyAccessorRead.ts(12,10): warning syntax: Reading from setter-only property "#value" will throw
+      privateWriteOnlyAccessorRead.ts(17,18): warning syntax: Reading from setter-only property "#value" will throw
+      privateWriteOnlyAccessorRead.ts(19,22): warning syntax: Reading from setter-only property "#value" will throw
+      privateWriteOnlyAccessorRead.ts(22,23): warning syntax: Reading from setter-only property "#value" will throw
+      privateWriteOnlyAccessorRead.ts(26,14): warning syntax: Reading from setter-only property "#valueOne" will throw
+      privateWriteOnlyAccessorRead.ts(27,17): warning syntax: Reading from setter-only property "#valueRest" will throw
+      privateWriteOnlyAccessorRead.ts(30,10): warning syntax: Reading from setter-only property "#valueCompound" will throw
+
+texts with quoted names and numbers left out: 170; lines, instances
+    1009    457  error syntax: Expected "…" but found "…"
+     357    183  error syntax: Expected identifier but found "…"
+     279     53  error syntax: Invalid assignment target
+     194     79  error syntax: "…" has already been declared
+     141     48  error syntax: Syntax Error
+     123    118  error syntax: Unexpected }
+     110     54  error syntax: Unexpected "…"
+      64     14  error syntax: Cannot use a declaration in a single-statement context
+      63     63  error syntax: Unexpected )
+      59     25  error syntax: "…" is a reserved word and cannot be used in strict mode
+      52     19  error syntax: There is no containing label named "…"
+      47      6  error syntax: "…" cannot be bound multiple times in the same parameter list
+      45     14  error syntax: Declarations with the name "…" cannot be used in strict mode
+      45     25  error syntax: The keyword "…" cannot be used here
+      44     36  error syntax: Cannot use "…" here
+      43     39  error syntax: Unexpected =
+      36     21  error syntax: Cannot use "…" or "…" here.
+      36     35  error syntax: Unexpected ]
+      35     15  error syntax: Expected "…" but found "…" (token: TEquals)
+      33     12  error syntax: Cannot use "…" as an identifier here
+      33     33  error syntax: Expected "…" but found end of file
+      33     23  error syntax: The constant "…" must be initialized
+      31     28  error syntax: Unexpected ;
+      29     29  error syntax: Unexpected end of file
+      26     23  error syntax: Multiple exports with the same name "…"
+      24     22  error syntax: Unexpected >
+      21     21  error syntax: Unexpected escape sequence
+      20      6  error syntax: "…" can only be used inside an "…" function
+      20     11  error syntax: Expected string but found "…"
+      20     20  error syntax: Unexpected export
+      20     20  error syntax: Unterminated string literal
+      18      4  error syntax: Invalid flag "…" in regular expression
+      17      1  error syntax: Cannot assign to "…" because it is a constant
+      16      5  error syntax: Cannot use "…" outside an async function
+      15     11  error syntax: Expected JSX element name but found "…"
+      14     14  error syntax: Unexpected {
+      13      9  error syntax: Private name "…" must be declared in an enclosing class
+      13     13  error syntax: Unexpected :
+      12     11  error syntax: Cannot use "…" outside a generator function
+      12     12  error syntax: Expected identifier but found end of file
+      12     10  error syntax: Invalid field name
+      12      9  error syntax: This constant must be initialized
+      12     12  error syntax: Unexpected ,
+      11      1  error syntax: Cannot access "…" here
+      11      7  error unsupported-extension: File '…' has an unsupported extension. The only supported extensions are '…', '…', '…', '…', '…', '…', '…', '…', '…', '…', '…'.
+      11      3  warning syntax: Writing to read-only method "…" will throw
+       9      2  warning syntax: Reading from setter-only property "…" will throw
+       8      2  error syntax: Duplicate flag "…" in regular expression
+       8      8  error syntax: Unexpected "…" after rest pattern
+       8      8  error syntax: Unexpected =>
+       7      4  error syntax: Expected "…" but found "…" (token: TCloseBrace)
+       7      2  error syntax: Expected "…" but found "…"./tN"…"
+       7      3  error syntax: Expected closing JSX tag to match opening tag "…"
+       7      7  error syntax: Unexpected default
+       7      7  error syntax: for-of loops must have a single declaration
+       6      1  error syntax: Unexpected !
+       5      5  error syntax: Expected "…" but found "…" (token: TIdentifier)
+       5      1  error syntax: Expected "…" but found "…"ok"…"
+       5      3  error syntax: Invalid static method name "…"
+       5      5  error syntax: Unexpected #field
+       5      5  error syntax: Unexpected **
+       5      5  error syntax: Unexpected ?
+       5      3  error syntax: v has already been declared
+       5      4  error syntax: x has already been declared
+       4      3  error syntax: A return statement cannot be used here
+       4      4  error syntax: An async function cannot be named "…"
+       4      1  error syntax: Cannot use "…" with a "…" declaration
+       4      4  error syntax: Invalid binding pattern
+       4      4  error syntax: Setter property must have exactly N argument (there are N)
+       4      4  error syntax: This declaration must be initialized
+       4      4  error syntax: Unexpected <<
+       4      4  error syntax: Unexpected return
+       4      4  error syntax: Unexpected var
+       4      4  error syntax: Unicode escape sequence is out of range
+       3      1  error no-self-assign: '…' is assigned to itself.
+       3      3  error syntax: Class constructor cannot be an async function
+       3      3  error syntax: Expected "…" but found "…"./a"…"
+       3      1  error syntax: Expected "…" but found "…"invalid N"…"
+       3      3  error syntax: Expected identifier after "…" in namespaced JSX name
+       3      1  error syntax: Expected identifier but found "…"invalid N"…"
+       3      3  error syntax: The declaration "…" must be initialized
+       3      2  error syntax: The modifier "…" is not valid here
+       3      3  error syntax: Unexpected 
+       3      3  error syntax: Unexpected ¬
+       3      3  error syntax: for-in loops must have a single declaration
+       2      2  error syntax: A decorator call expression cannot be followed by a property access; wrap the expression in parentheses to use it as a decorator
+       2      2  error syntax: An generator function expression cannot be named "…"
+       2      2  error syntax: Cannot "…" to label target
+       2      2  error syntax: Cannot "…" to label targetN
+       2      2  error syntax: Expected "…" to terminate multi-line comment
+       2      1  error syntax: Expected identifier but found "…"./server"…"
+       2      2  error syntax: Multiple default clauses are not allowed
+       2      2  error syntax: Setter Foo must have exactly N argument (there are N)
+       2      2  error syntax: Setter foo must have exactly N argument (there are N)
+       2      1  error syntax: The keyword "…" cannot be escaped
+       2      2  error syntax: Unexpected *
+       2      2  error syntax: Unexpected ...
+       2      2  error syntax: Unexpected case
+       2      2  error syntax: Unexpected catch
+       2      2  error syntax: Unexpected enum
+       2      2  error syntax: Unexpected newline before "…"
+       2      2  error syntax: Unexpected type
+       2      2  error syntax: Unexpected ||
+       2      2  error syntax: auto-accessor properties cannot have a method body
+       2      2  error syntax: for-of loop variables cannot have an initializer
+       2      2  warning syntax: Writing to getter-only property "…" will throw
+       1      1  error no-debugger: Unexpected '…' statement.
+       1      1  error no-empty-pattern: Unexpected empty object pattern.
+       1      1  error syntax: Class constructor cannot be a generator function
+       1      1  error syntax: Class constructor cannot be a getter
+       1      1  error syntax: Class constructor cannot be a setter
+       1      1  error syntax: Deleting the private name "…" is forbidden
+       1      1  error syntax: Expected "…" but found "…" (token: TAsterisk)
+       1      1  error syntax: Expected "…" but found "…" (token: TComma)
+       1      1  error syntax: Expected "…" but found "…" (token: TOpenBrace)
+       1      1  error syntax: Expected "…" but found "…" string"…"
+       1      1  error syntax: Expected "…" but found "…"./a.js"…"
+       1      1  error syntax: Expected "…" but found "…"./bar"…"
+       1      1  error syntax: Expected "…" but found "…"./esNImportNamedImportParsingError_N"…" (token: TStringLiteral)
+       1      1  error syntax: Expected "…" but found "…"Foo"…"
+       1      1  error syntax: Expected "…" but found "…"___"…"
+       1      1  error syntax: Expected "…" but found "…"a b"…"
+       1      1  error syntax: Expected "…" but found "…"app"…"
+       1      1  error syntax: Expected "…" but found "…"hello"…"
+       1      1  error syntax: Expected identifier but found "…""…"
+       1      1  error syntax: Expected identifier but found "…"s"…"
+       1      1  error syntax: Expected identifier but found "…"server"…"
+       1      1  error syntax: For loop initializers cannot start with "…"
+       1      1  error syntax: Getter Foo must have zero arguments
+       1      1  error syntax: Getter Goo must have zero arguments
+       1      1  error syntax: Getter foo must have zero arguments
+       1      1  error syntax: Getter mN must have zero arguments
+       1      1  error syntax: Getter pN must have zero arguments
+       1      1  error syntax: Getter x must have zero arguments
+       1      1  error syntax: Invalid JSX entity escape: #N*
+       1      1  error syntax: Invalid JSX entity escape: #x
+       1      1  error syntax: Invalid field name "…"
+       1      1  error syntax: Invalid identifier: "…"
+       1      1  error syntax: Invalid method name "…"
+       1      1  error syntax: Setter d must have exactly N argument (there are N)
+       1      1  error syntax: TypeScript does not allow decorators on class constructors
+       1      1  error syntax: Unexpected  
+       1      1  error syntax: Unexpected 
+       1      1  error syntax: Unexpected #abc
+       1      1  error syntax: Unexpected #bar
+       1      1  error syntax: Unexpected #foo
+       1      1  error syntax: Unexpected **=
+       1      1  error syntax: Unexpected *=
+       1      1  error syntax: Unexpected .
+       1      1  error syntax: Unexpected <
+       1      1  error syntax: Unexpected N
+       1      1  error syntax: Unexpected \uNar
+       1      1  error syntax: Unexpected \u{N}ar
+       1      1  error syntax: Unexpected as
+       1      1  error syntax: Unexpected await
+       1      1  error syntax: Unexpected bar
+       1      1  error syntax: Unexpected defer
+       1      1  error syntax: Unexpected escaped backslash '…'
+       1      1  error syntax: Unexpected extension
+       1      1  error syntax: Unexpected finally
+       1      1  error syntax: Unexpected import
+       1      1  error syntax: Unexpected interface
+       1      1  error syntax: Unexpected namespace
+       1      1  error syntax: Unexpected newline after "…"
+       1      1  error syntax: Unexpected public
+       1      1  error syntax: Unexpected targ
+       1      1  error syntax: Unexpected using
+       1      1  error syntax: Unexpected while
+       1      1  error syntax: Unexpected �
+       1      1  error syntax: xN has already been declared

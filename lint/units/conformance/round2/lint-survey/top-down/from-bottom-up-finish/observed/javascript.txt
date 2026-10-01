@@ -1,0 +1,46 @@
+instances with a JavaScript root: 946 (E 576, C 370)
+by class of the oracle, class of the run and first code:
+     480  E silent
+     362  C silent
+      85  E diagnostic syntax
+       7  E diagnostic unsupported-extension
+       4  C not-laid-out
+       3  C diagnostic syntax
+       2  E not-laid-out
+       1  C diagnostic no-empty-pattern
+       1  E diagnostic no-debugger
+       1  E diagnostic no-self-assign
+
+reports of rules: lines, instances
+       3      1  no-self-assign
+       1      1  no-debugger
+       1      1  no-empty-pattern
+
+C declarationEmitClassSetAccessorParamNameInJs2.ts (compiler/declarationEmitClassSetAccessorParamNameInJs2.ts); root files /.src/foo.js
+    foo.js(7,13): error no-empty-pattern: Unexpected empty object pattern.
+E jsdocTypeTagCast.ts (conformance/jsdoc/jsdocTypeTagCast.ts); root files /.src/a.ts /.src/b.js
+    b.js(44,36): error no-self-assign: 'someBase' is assigned to itself.
+    b.js(47,42): error no-self-assign: 'someDerived' is assigned to itself.
+    b.js(53,38): error no-self-assign: 'someOther' is assigned to itself.
+E typedefOnStatements.ts (conformance/jsdoc/typedefOnStatements.ts); root files /.src/typedefOnStatements.js
+    typedefOnStatements.js(4,1): error no-debugger: Unexpected 'debugger' statement.
+
+instances with the code unsupported-extension: 7
+  E bundlerImportTsExtensions(allowimportingtsextensions=false,noemit=false).ts (conformance/moduleResolution/bundler/bundlerImportTsExtensions.ts)
+      error unsupported-extension: File '/project/e' has an unsupported extension. The only supported extensions are '.ts', '.tsx', '.d.ts', '.js', '.jsx', '.cts', '.d.cts', '.cjs', '.mts', '.d.mts', '.mjs'.
+      error unsupported-extension: File '/project/e.txt' has an unsupported extension. The only supported extensions are '.ts', '.tsx', '.d.ts', '.js', '.jsx', '.cts', '.d.cts', '.cjs', '.mts', '.d.mts', '.mjs'.
+  E bundlerImportTsExtensions(allowimportingtsextensions=false,noemit=true).ts (conformance/moduleResolution/bundler/bundlerImportTsExtensions.ts)
+      error unsupported-extension: File '/project/e' has an unsupported extension. The only supported extensions are '.ts', '.tsx', '.d.ts', '.js', '.jsx', '.cts', '.d.cts', '.cjs', '.mts', '.d.mts', '.mjs'.
+      error unsupported-extension: File '/project/e.txt' has an unsupported extension. The only supported extensions are '.ts', '.tsx', '.d.ts', '.js', '.jsx', '.cts', '.d.cts', '.cjs', '.mts', '.d.mts', '.mjs'.
+  E bundlerImportTsExtensions(allowimportingtsextensions=true,noemit=false).ts (conformance/moduleResolution/bundler/bundlerImportTsExtensions.ts)
+      error unsupported-extension: File '/project/e' has an unsupported extension. The only supported extensions are '.ts', '.tsx', '.d.ts', '.js', '.jsx', '.cts', '.d.cts', '.cjs', '.mts', '.d.mts', '.mjs'.
+      error unsupported-extension: File '/project/e.txt' has an unsupported extension. The only supported extensions are '.ts', '.tsx', '.d.ts', '.js', '.jsx', '.cts', '.d.cts', '.cjs', '.mts', '.d.mts', '.mjs'.
+  E bundlerImportTsExtensions(allowimportingtsextensions=true,noemit=true).ts (conformance/moduleResolution/bundler/bundlerImportTsExtensions.ts)
+      error unsupported-extension: File '/project/e' has an unsupported extension. The only supported extensions are '.ts', '.tsx', '.d.ts', '.js', '.jsx', '.cts', '.d.cts', '.cjs', '.mts', '.d.mts', '.mjs'.
+      error unsupported-extension: File '/project/e.txt' has an unsupported extension. The only supported extensions are '.ts', '.tsx', '.d.ts', '.js', '.jsx', '.cts', '.d.cts', '.cjs', '.mts', '.d.mts', '.mjs'.
+  E jsFileCompilationWithMapFileAsJs.ts (compiler/jsFileCompilationWithMapFileAsJs.ts)
+      error unsupported-extension: File '/.src/b.js.map' has an unsupported extension. The only supported extensions are '.ts', '.tsx', '.d.ts', '.js', '.jsx', '.cts', '.d.cts', '.cjs', '.mts', '.d.mts', '.mjs'.
+  E jsFileCompilationWithMapFileAsJsWithInlineSourceMap.ts (compiler/jsFileCompilationWithMapFileAsJsWithInlineSourceMap.ts)
+      error unsupported-extension: File '/.src/b.js.map' has an unsupported extension. The only supported extensions are '.ts', '.tsx', '.d.ts', '.js', '.jsx', '.cts', '.d.cts', '.cjs', '.mts', '.d.mts', '.mjs'.
+  E jsFileCompilationWithMapFileAsJsWithOutDir.ts (compiler/jsFileCompilationWithMapFileAsJsWithOutDir.ts)
+      error unsupported-extension: File '/.src/b.js.map' has an unsupported extension. The only supported extensions are '.ts', '.tsx', '.d.ts', '.js', '.jsx', '.cts', '.d.cts', '.cjs', '.mts', '.d.mts', '.mjs'.

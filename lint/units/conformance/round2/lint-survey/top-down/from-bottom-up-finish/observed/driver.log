@@ -1,0 +1,14 @@
+### lock acquired 2026-10-01T16:09:36Z load 368.94 335.84 332.67 bin 1.4.3-debug+3110ce85c
+chunk 1-upper-a-b: exit 0, 278 s, instances 1482: run 1241 (E 733, C 508), skipped 241; by outcome, E: fail 570, crash 163;by outcome, C: pass 500, unsupported 1, crash 7;
+chunk 2-c: exit 0, 280 s, instances 1728: run 1525 (E 807, C 718), skipped 203; by outcome, E: fail 690, unsupported 20, crash 97;by outcome, C: pass 701, unsupported 16, crash 1;
+chunk 3-d-f-g: exit 0, 264 s, instances 1845: run 1618 (E 777, C 841), skipped 227; by outcome, E: fail 668, unsupported 1, crash 108;by outcome, C: pass 833, unsupported 1, crash 7;
+chunk 4-e-h-k-l-q: exit 0, 185 s, instances 1725: run 1266 (E 584, C 682), skipped 459; by outcome, E: fail 468, unsupported 1, crash 115;by outcome, C: pass 680, unsupported 1, crash 1;
+chunk 5-i-j: exit 0, 284 s, instances 1693: run 1429 (E 847, C 582), skipped 264; by outcome, E: fail 674, unsupported 25, crash 148;by outcome, C: pass 545, unsupported 35, crash 2;
+chunk 6-m-n-o: exit 0, 272 s, instances 1729: run 1599 (E 880, C 719), skipped 130; by outcome, E: fail 769, unsupported 3, crash 108;by outcome, C: pass 718, crash 1;
+chunk 7-p-r: exit 0, 224 s, instances 1801: run 1618 (E 1067, C 551), skipped 183; by outcome, E: fail 677, unsupported 4, crash 386;by outcome, C: pass 540, unsupported 7, crash 4;
+chunk 8-s-u-v-w-y: exit 0, 305 s, instances 1735: run 1399 (E 706, C 693), skipped 336; by outcome, E: fail 596, unsupported 3, crash 107;by outcome, C: pass 687, unsupported 2, crash 4;
+chunk 9-t: exit 0, 279 s, instances 1176: run 1102 (E 626, C 476), skipped 74; by outcome, E: fail 514, unsupported 36, crash 76;by outcome, C: pass 445, unsupported 30, crash 1;
+### sweep finished 2026-10-01T16:50:15Z
+raw.ts: exit 0, 291 s, raw.ts: 1336 instances in 290 s, the command died in 0
+raw.ts with the leak check: exit 0, 388 s, raw.ts: 1336 instances in 387 s, the command died in 0
+### finished 2026-10-01T17:01:36Z

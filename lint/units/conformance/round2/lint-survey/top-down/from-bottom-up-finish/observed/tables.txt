@@ -1,0 +1,32 @@
+raw runs 1336; ended by themselves with a list of diagnostics 1336
+ms per process: median 625, p99 2856, max 4266; exit codes: 2: 1329, 0: 7
+
+diagnostic lines by class, category and code:
+    3505  E error syntax
+      41  C error syntax
+      22  E warning syntax
+      11  E error unsupported-extension
+       3  E error no-self-assign
+       1  C error no-empty-pattern
+       1  E error no-debugger
+
+instances by class and code (an instance counts once for each code that it has):
+    1299  E syntax
+      27  C syntax
+       7  E unsupported-extension
+       1  C no-empty-pattern
+       1  E no-debugger
+       1  E no-self-assign
+
+instances whose lines are all warnings (exit code 0): 7
+  E privateNameAccessors.ts (conformance/classes/members/privateNames/privateNameAccessors.ts)
+      privateNameAccessors.ts(9,14): warning syntax: Writing to getter-only property "#roProp" will throw
+  E privateNameMethodAssignment.ts (conformance/classes/members/privateNames/privateNameMethodAssignment.ts)
+      privateNameMethodAssignment.ts(4,14): warning syntax: Writing to read-only method "#method" will throw
+      privateNameMethodAssignment.ts(5,11): warning syntax: Writing to read-only method "#method" will throw
+      privateNameMethodAssignment.ts(6,11): warning syntax: Writing to read-only method "#method" will throw
+      privateNameMethodAssignment.ts(7,20): warning syntax: Writing to read-only method "#method" will throw
+      privateNameMethodAssignment.ts(9,11): warning syntax: Writing to read-only method "#method" will throw
+  E privateNameReadonly.ts (conformance/classes/members/privateNames/privateNameReadonly.ts)
+class C with a diagnostic: 28 instances of 27 cases
+died or hung in the raw runs: 0; raw runs that differ from what sweep.ts said: 0

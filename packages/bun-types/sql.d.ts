@@ -222,20 +222,20 @@ declare module "bun" {
 
       /**
        * Database server port number
-       * @default 5432
+       * @default 5432 for the `postgres` adapter, 3306 for the `mysql` and `mariadb` adapters
        */
       port?: number | string | undefined;
 
       /**
        * Database user for authentication
-       * @default "postgres"
+       * @default "postgres" for the `postgres` adapter, "root" for the `mysql` and `mariadb` adapters
        */
       username?: string | undefined;
 
       /**
        * Database user for authentication (alias for username)
        * @deprecated Prefer {@link username}
-       * @default "postgres"
+       * @default "postgres" for the `postgres` adapter, "root" for the `mysql` and `mariadb` adapters
        */
       user?: string | undefined;
 
@@ -254,14 +254,14 @@ declare module "bun" {
 
       /**
        * Name of the database to connect to
-       * @default The username value
+       * @default The username value for the `postgres` adapter, "mysql" for the `mysql` adapter, "mariadb" for the `mariadb` adapter
        */
       database?: string | undefined;
 
       /**
        * Name of the database to connect to (alias for database)
        * @deprecated Prefer {@link database}
-       * @default The username value
+       * @default The username value for the `postgres` adapter, "mysql" for the `mysql` adapter, "mariadb" for the `mariadb` adapter
        */
       db?: string | undefined;
 

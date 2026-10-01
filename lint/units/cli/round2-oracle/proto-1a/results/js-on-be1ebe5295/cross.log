@@ -1,0 +1,2 @@
+{"cases":3265,"same":3112,"eslint-rejects":25,"bun-rejects":1,"both-reject":15,"explained":112,"uncovered":0,"contradicts":0}
+{"no-compare-neg-zero":{"explained":3,"uncovered":0,"contradicts":0},"no-dupe-class-members":{"explained":13,"uncovered":0,"contradicts":0},"no-dupe-keys":{"explained":2,"uncovered":0,"contradicts":0},"no-duplicate-case":{"explained":19,"uncovered":0,"contradicts":0},"no-self-assign":{"explained":8,"uncovered":0,"contradicts":0},"use-isnan":{"explained":39,"uncovered":0,"contradicts":0},"valid-typeof":{"explained":28,"uncovered":0,"contradicts":0}}

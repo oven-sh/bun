@@ -1,0 +1,73 @@
+valid-typeof: 50 cases: same 26, missing 24
+missing: "typeof x === \"strnig\"" [ts] [module]
+    eslint: 1:14 Invalid typeof comparison value.
+    bun:    (none)
+missing: "typeof x === (\"strnig\")" [ts] [module]
+    eslint: 1:15 Invalid typeof comparison value.
+    bun:    (none)
+missing: "(typeof x) === \"strnig\"" [ts] [module]
+    eslint: 1:16 Invalid typeof comparison value.
+    bun:    (none)
+missing: "typeof x! === \"strnig\"" [ts] [module]
+    eslint: 1:15 Invalid typeof comparison value.
+    bun:    (none)
+missing: "typeof (x as any) === \"strnig\"" [ts] [module]
+    eslint: 1:23 Invalid typeof comparison value.
+    bun:    (none)
+missing: "typeof <any>x === \"strnig\"" [ts] [module]
+    eslint: 1:19 Invalid typeof comparison value.
+    bun:    (none)
+missing: "typeof x === undefined" [ts] [module]
+    eslint: 1:14 Invalid typeof comparison value.
+    bun:    (none)
+missing: "typeof x === (undefined)" [ts] [module]
+    eslint: 1:15 Invalid typeof comparison value.
+    bun:    (none)
+missing: "typeof x === `strnig`" [ts] [module]
+    eslint: 1:14 Invalid typeof comparison value.
+    bun:    (none)
+missing: "\"strnig\" === typeof x" [ts] [module]
+    eslint: 1:1 Invalid typeof comparison value.
+    bun:    (none)
+missing: "let a: typeof x = y; typeof x === \"strnig\"" [ts] [module]
+    eslint: 1:35 Invalid typeof comparison value.
+    bun:    (none)
+missing: "type T = typeof x; if (typeof x === \"nunber\") {}" [ts] [module]
+    eslint: 1:37 Invalid typeof comparison value.
+    bun:    (none)
+missing: "type undefined = 1; typeof x === undefined" [ts] [module]
+    eslint: 1:34 Invalid typeof comparison value.
+    bun:    (none)
+missing: "typeof x == 1" [ts] [module]
+    eslint: 1:13 Invalid typeof comparison value.
+    bun:    (none)
+missing: "typeof x === /a/" [ts] [module]
+    eslint: 1:14 Invalid typeof comparison value.
+    bun:    (none)
+missing: "typeof x === 1n" [ts] [module]
+    eslint: 1:14 Invalid typeof comparison value.
+    bun:    (none)
+missing: "typeof x === true" [ts] [module]
+    eslint: 1:14 Invalid typeof comparison value.
+    bun:    (none)
+missing: "let t: typeof import(\"x\"); typeof x === \"strnig\"" [ts] [module]
+    eslint: 1:41 Invalid typeof comparison value.
+    bun:    (none)
+missing: "function f(x: unknown): x is string { return typeof x === \"strnig\" }" [ts] [module]
+    eslint: 1:59 Invalid typeof comparison value.
+    bun:    (none)
+missing: "enum E { undefined } typeof x === undefined" [ts] [module]
+    eslint: 1:35 Invalid typeof comparison value.
+    bun:    (none)
+missing: "enum E { A = typeof x === \"strnig\" ? 1 : 2 }" [ts] [module]
+    eslint: 1:27 Invalid typeof comparison value.
+    bun:    (none)
+missing: "const e = <div a={typeof x === \"strnig\"} />;" [tsx] [module]
+    eslint: 1:32 Invalid typeof comparison value.
+    bun:    (none)
+missing: "typeof x === \"strnig\"" [mts] [module]
+    eslint: 1:14 Invalid typeof comparison value.
+    bun:    (none)
+missing: "typeof x === \"strnig\"" [cts] [commonjs]
+    eslint: 1:14 Invalid typeof comparison value.
+    bun:    (none)

@@ -1,0 +1,88 @@
+use-isnan: 74 cases: same 45, missing 29
+missing: "x === NaN" [ts] [module]
+    eslint: 1:1 Use the isNaN function to compare with NaN.
+    bun:    (none)
+missing: "(x as number) === NaN" [ts] [module]
+    eslint: 1:1 Use the isNaN function to compare with NaN.
+    bun:    (none)
+missing: "x! === NaN" [ts] [module]
+    eslint: 1:1 Use the isNaN function to compare with NaN.
+    bun:    (none)
+missing: "<number>x === NaN" [ts] [module]
+    eslint: 1:1 Use the isNaN function to compare with NaN.
+    bun:    (none)
+missing: "x === (NaN)" [ts] [module]
+    eslint: 1:1 Use the isNaN function to compare with NaN.
+    bun:    (none)
+missing: "x === Number.NaN" [ts] [module]
+    eslint: 1:1 Use the isNaN function to compare with NaN.
+    bun:    (none)
+missing: "x === (Number).NaN" [ts] [module]
+    eslint: 1:1 Use the isNaN function to compare with NaN.
+    bun:    (none)
+missing: "x === Number[\"NaN\"]" [ts] [module]
+    eslint: 1:1 Use the isNaN function to compare with NaN.
+    bun:    (none)
+missing: "x === Number[(\"NaN\")]" [ts] [module]
+    eslint: 1:1 Use the isNaN function to compare with NaN.
+    bun:    (none)
+missing: "x === Number?.NaN" [ts] [module]
+    eslint: 1:1 Use the isNaN function to compare with NaN.
+    bun:    (none)
+missing: "x === (a, NaN)" [ts] [module]
+    eslint: 1:1 Use the isNaN function to compare with NaN.
+    bun:    (none)
+missing: "x! >= (NaN)" [ts] [module]
+    eslint: 1:1 Use the isNaN function to compare with NaN.
+    bun:    (none)
+missing: "(\n x as T) === NaN" [ts] [module]
+    eslint: 1:1 Use the isNaN function to compare with NaN.
+    bun:    (none)
+missing: "(/* c */ <T>x) === NaN" [ts] [module]
+    eslint: 1:1 Use the isNaN function to compare with NaN.
+    bun:    (none)
+missing: "switch ((NaN)) { }" [ts] [module]
+    eslint: 1:1 'switch(NaN)' can never match a case clause. Use Number.isNaN instead of the switch.
+    bun:    (none)
+missing: "switch (x) { case (NaN): }" [ts] [module]
+    eslint: 1:14 'case NaN' can never match. Use Number.isNaN before the switch.
+    bun:    (none)
+missing: "switch (x) { case NaN: }" [ts] [module]
+    eslint: 1:14 'case NaN' can never match. Use Number.isNaN before the switch.
+    bun:    (none)
+missing: "switch (x as number) { case NaN: }" [ts] [module]
+    eslint: 1:24 'case NaN' can never match. Use Number.isNaN before the switch.
+    bun:    (none)
+missing: "type NaN = number; x === NaN" [ts] [module]
+    eslint: 1:20 Use the isNaN function to compare with NaN.
+    bun:    (none)
+missing: "interface NaN {} x === NaN" [ts] [module]
+    eslint: 1:18 Use the isNaN function to compare with NaN.
+    bun:    (none)
+missing: "declare global { const NaN: number } x === NaN" [ts] [module]
+    eslint: 1:38 Use the isNaN function to compare with NaN.
+    bun:    (none)
+missing: "namespace N { const NaN = 1; } x === NaN" [ts] [module]
+    eslint: 1:32 Use the isNaN function to compare with NaN.
+    bun:    (none)
+missing: "declare module \"m\" { const NaN: number } x === NaN" [ts] [module]
+    eslint: 1:42 Use the isNaN function to compare with NaN.
+    bun:    (none)
+missing: "function f<NaN>(a: NaN) { return x === NaN }" [ts] [module]
+    eslint: 1:34 Use the isNaN function to compare with NaN.
+    bun:    (none)
+missing: "type T<NaN> = NaN; x === NaN" [ts] [module]
+    eslint: 1:20 Use the isNaN function to compare with NaN.
+    bun:    (none)
+missing: "enum E { NaN } x === NaN" [ts] [module]
+    eslint: 1:16 Use the isNaN function to compare with NaN.
+    bun:    (none)
+missing: "const e = <div a={x === NaN} />;" [tsx] [module]
+    eslint: 1:19 Use the isNaN function to compare with NaN.
+    bun:    (none)
+missing: "x === NaN" [mts] [module]
+    eslint: 1:1 Use the isNaN function to compare with NaN.
+    bun:    (none)
+missing: "x === NaN" [cts] [commonjs]
+    eslint: 1:1 Use the isNaN function to compare with NaN.
+    bun:    (none)

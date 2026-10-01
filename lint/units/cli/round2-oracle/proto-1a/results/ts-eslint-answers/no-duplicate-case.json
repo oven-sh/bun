@@ -1,0 +1,701 @@
+[
+	{
+		"code": "switch (a) { case 1: case 1: }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 22,
+				"endLine": 1,
+				"endColumn": 29,
+				"message": "Duplicate case label."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "switch (a) { case b as T: case b as T: }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 27,
+				"endLine": 1,
+				"endColumn": 39,
+				"message": "Duplicate case label."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "switch (a) { case b as T: case b as  T: }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 27,
+				"endLine": 1,
+				"endColumn": 40,
+				"message": "Duplicate case label."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "switch (a) { case b as T: case b as U: }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "switch (a) { case b as T: case b: }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "switch (a) { case b!: case b!: }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 23,
+				"endLine": 1,
+				"endColumn": 31,
+				"message": "Duplicate case label."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "switch (a) { case b!: case b: }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "switch (a) { case <T>b: case <T>b: }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 25,
+				"endLine": 1,
+				"endColumn": 35,
+				"message": "Duplicate case label."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "switch (a) { case <T>b: case <U>b: }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "switch (a) { case <T>b: case b: }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "switch (a) { case b satisfies T: case b satisfies T: }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 34,
+				"endLine": 1,
+				"endColumn": 53,
+				"message": "Duplicate case label."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "switch (a) { case (b): case b: }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 24,
+				"endLine": 1,
+				"endColumn": 31,
+				"message": "Duplicate case label."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "switch (a) { case (b as T): case b as T: }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 29,
+				"endLine": 1,
+				"endColumn": 41,
+				"message": "Duplicate case label."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "switch (a) { case (b)!: case b!: }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "switch (a) { case (b!): case b!: }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 25,
+				"endLine": 1,
+				"endColumn": 33,
+				"message": "Duplicate case label."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "switch (a) { case (<T>b): case <T>b: }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 27,
+				"endLine": 1,
+				"endColumn": 37,
+				"message": "Duplicate case label."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "switch (a) { case <T>(b): case <T>b: }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "switch (a) { case <T>(b): case <T>(b): }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 27,
+				"endLine": 1,
+				"endColumn": 39,
+				"message": "Duplicate case label."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "switch (a) { case f<T>(b): case f<T>(b): }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 28,
+				"endLine": 1,
+				"endColumn": 41,
+				"message": "Duplicate case label."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "switch (a) { case f<T>(b): case f< T >(b): }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 28,
+				"endLine": 1,
+				"endColumn": 43,
+				"message": "Duplicate case label."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "switch (a) { case f<T>(b): case f<U>(b): }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "switch (a) { case f<T>(b): case f(b): }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "switch (a) { case f<A<B>>(x): case f<A<B> >(x): }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 31,
+				"endLine": 1,
+				"endColumn": 48,
+				"message": "Duplicate case label."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "switch (a) { case x as A<B<C>>: case x as A<B<C> >: }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 33,
+				"endLine": 1,
+				"endColumn": 52,
+				"message": "Duplicate case label."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "switch (a) { case x >> y: case x >> y: }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 27,
+				"endLine": 1,
+				"endColumn": 39,
+				"message": "Duplicate case label."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "switch (a) { case x as A<B>>= y: case x as A<B> >= y: }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 34,
+				"endLine": 1,
+				"endColumn": 54,
+				"message": "Duplicate case label."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "switch (a) { case (x: number): number => x: break; case (x: number): string => x: break; }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "switch (a) { case (x: number): number => x: break; case (x: number): number => x: break; }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 52,
+				"endLine": 1,
+				"endColumn": 89,
+				"message": "Duplicate case label."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "switch (a) { case function (): void {}: break; case function (): void {}: break; }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 48,
+				"endLine": 1,
+				"endColumn": 81,
+				"message": "Duplicate case label."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "switch (a) { case b as { x: number }: case b as { x: number }: }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 39,
+				"endLine": 1,
+				"endColumn": 63,
+				"message": "Duplicate case label."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "switch (a) { case b as A extends B ? C : D: case b as A extends B ? C : D: }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 45,
+				"endLine": 1,
+				"endColumn": 75,
+				"message": "Duplicate case label."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "switch (a as T) { case 1: case 1 as number: }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "switch (a) { case E.A: case E.A: }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 24,
+				"endLine": 1,
+				"endColumn": 33,
+				"message": "Duplicate case label."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "switch (a) { case E.A!: case E.A: }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "switch (a) { case b.c!.d: case b.c.d: }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "switch (a) { case b.c!.d: case b.c!.d: }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 27,
+				"endLine": 1,
+				"endColumn": 39,
+				"message": "Duplicate case label."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "switch (a) { case b.c!.d: case b.c! .d: }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 27,
+				"endLine": 1,
+				"endColumn": 40,
+				"message": "Duplicate case label."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "switch (a) { case b<c>d: case b<c>d: }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 26,
+				"endLine": 1,
+				"endColumn": 37,
+				"message": "Duplicate case label."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "function f(a: number): void { switch (a) { case 1: break; case 1: break; } }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 59,
+				"endLine": 1,
+				"endColumn": 73,
+				"message": "Duplicate case label."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "switch (a) { case x as any as T: case x as any as T: }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 34,
+				"endLine": 1,
+				"endColumn": 53,
+				"message": "Duplicate case label."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "switch (a) { case <T><U>x: case <T> <U> x: }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 28,
+				"endLine": 1,
+				"endColumn": 43,
+				"message": "Duplicate case label."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "switch (a) { case x?.y!: case x?.y!: }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 26,
+				"endLine": 1,
+				"endColumn": 37,
+				"message": "Duplicate case label."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "switch (a) { case b as T: break; case\n b as T: break; }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 34,
+				"endLine": 2,
+				"endColumn": 16,
+				"message": "Duplicate case label."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "switch (a) { case b as T: break; case /* c */ (b as T): break; }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 34,
+				"endLine": 1,
+				"endColumn": 63,
+				"message": "Duplicate case label."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "switch (a) { case <T>b: break; case ( <T>b ): break; }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 32,
+				"endLine": 1,
+				"endColumn": 53,
+				"message": "Duplicate case label."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "namespace N { switch (a) { case 1: case 1: } }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 36,
+				"endLine": 1,
+				"endColumn": 43,
+				"message": "Duplicate case label."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "enum E { A } switch (e) { case E.A: break; case E.A: break; }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 44,
+				"endLine": 1,
+				"endColumn": 60,
+				"message": "Duplicate case label."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "switch (a) { case <b/>: case <b/>: }",
+		"ext": "tsx",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 25,
+				"endLine": 1,
+				"endColumn": 35,
+				"message": "Duplicate case label."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "switch (a) { case b as T: case b as T: }",
+		"ext": "tsx",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 27,
+				"endLine": 1,
+				"endColumn": 39,
+				"message": "Duplicate case label."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "switch (a) { case 1: case 1: }",
+		"ext": "mts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 22,
+				"endLine": 1,
+				"endColumn": 29,
+				"message": "Duplicate case label."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "switch (a) { case 1: case 1: }",
+		"ext": "cts",
+		"sourceType": "commonjs",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 22,
+				"endLine": 1,
+				"endColumn": 29,
+				"message": "Duplicate case label."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	}
+]

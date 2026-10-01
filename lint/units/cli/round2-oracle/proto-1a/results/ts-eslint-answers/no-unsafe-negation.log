@@ -1,0 +1,64 @@
+no-unsafe-negation: 35 cases: same 14, missing 20, bun-rejects 1
+missing: "!a in b" [ts] [module]
+    eslint: 1:1 Unexpected negating the left operand of 'in' operator.
+    bun:    (none)
+missing: "!a! in b" [ts] [module]
+    eslint: 1:1 Unexpected negating the left operand of 'in' operator.
+    bun:    (none)
+missing: "!<any>a in b" [ts] [module]
+    eslint: 1:1 Unexpected negating the left operand of 'in' operator.
+    bun:    (none)
+missing: "!a instanceof B" [ts] [module]
+    eslint: 1:1 Unexpected negating the left operand of 'instanceof' operator.
+    bun:    (none)
+missing: "!a! instanceof B" [ts] [module]
+    eslint: 1:1 Unexpected negating the left operand of 'instanceof' operator.
+    bun:    (none)
+missing: "!(a as any) in b" [ts] [module]
+    eslint: 1:1 Unexpected negating the left operand of 'in' operator.
+    bun:    (none)
+missing: "!a in (b as any)" [ts] [module]
+    eslint: 1:1 Unexpected negating the left operand of 'in' operator.
+    bun:    (none)
+missing: "!a in b!" [ts] [module]
+    eslint: 1:1 Unexpected negating the left operand of 'in' operator.
+    bun:    (none)
+missing: "!a instanceof B<T>" [ts] [module]
+    eslint: 1:1 Unexpected negating the left operand of 'instanceof' operator.
+    bun:    (none)
+missing: "!a in b as any" [ts] [module]
+    eslint: 1:1 Unexpected negating the left operand of 'in' operator.
+    bun:    (none)
+missing: "(!a in b) as any" [ts] [module]
+    eslint: 1:2 Unexpected negating the left operand of 'in' operator.
+    bun:    (none)
+missing: "<any>(!a in b)" [ts] [module]
+    eslint: 1:7 Unexpected negating the left operand of 'in' operator.
+    bun:    (none)
+missing: "! a! in b" [ts] [module]
+    eslint: 1:1 Unexpected negating the left operand of 'in' operator.
+    bun:    (none)
+missing: "!a.b! in c" [ts] [module]
+    eslint: 1:1 Unexpected negating the left operand of 'in' operator.
+    bun:    (none)
+missing: "!(a)! in b" [ts] [module]
+    eslint: 1:1 Unexpected negating the left operand of 'in' operator.
+    bun:    (none)
+bun-rejects: "class A { #p = 1; static m(o: object) { return !#p in o } }" [ts] [module]
+    eslint: 1:48 Unexpected negating the left operand of 'in' operator.
+    bun:    REJECTS syntax Unexpected #p
+missing: "enum E { A = !a in b ? 1 : 2 }" [ts] [module]
+    eslint: 1:14 Unexpected negating the left operand of 'in' operator.
+    bun:    (none)
+missing: "let x: boolean = !a in b;" [ts] [module]
+    eslint: 1:18 Unexpected negating the left operand of 'in' operator.
+    bun:    (none)
+missing: "const e = <div a={!a in b} />;" [tsx] [module]
+    eslint: 1:19 Unexpected negating the left operand of 'in' operator.
+    bun:    (none)
+missing: "!a in b" [mts] [module]
+    eslint: 1:1 Unexpected negating the left operand of 'in' operator.
+    bun:    (none)
+missing: "!a in b" [cts] [commonjs]
+    eslint: 1:1 Unexpected negating the left operand of 'in' operator.
+    bun:    (none)

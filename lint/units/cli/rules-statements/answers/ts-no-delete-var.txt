@@ -1,0 +1,12 @@
+"delete x"
+      => no-delete-var 1:1 Variables should not be deleted.
+"delete (x)"
+      => no-delete-var 1:1 Variables should not be deleted.
+"delete (x as any)"
+      => (none)
+"delete x!"
+      => (none)
+"delete <any>x"
+      => (none)
+"delete (x satisfies any)"
+      => (none)

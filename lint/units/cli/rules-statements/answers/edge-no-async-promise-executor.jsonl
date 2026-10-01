@@ -1,0 +1,28 @@
+{"code":"new Promise(async function* () {})","type":"script","reports":["1:13-1:18 Promise executor functions should not be async."]}
+{"code":"new Promise(async () => {}, 1)","type":"script","reports":["1:13-1:18 Promise executor functions should not be async."]}
+{"code":"new Promise(...[async () => {}])","type":"script","reports":[]}
+{"code":"new Promise","type":"script","reports":[]}
+{"code":"new Promise()","type":"script","reports":[]}
+{"code":"new (Promise)(async () => {})","type":"script","reports":["1:15-1:20 Promise executor functions should not be async."]}
+{"code":"new window.Promise(async () => {})","type":"script","reports":[]}
+{"code":"Promise(async () => {})","type":"script","reports":[]}
+{"code":"new Promise((async () => {}))","type":"script","reports":["1:14-1:19 Promise executor functions should not be async."]}
+{"code":"new Promise(/* c */ async () => {})","type":"script","reports":["1:21-1:26 Promise executor functions should not be async."]}
+{"code":"new Promise(async x => x)","type":"script","reports":["1:13-1:18 Promise executor functions should not be async."]}
+{"code":"class Promise {} new Promise(async () => {})","type":"script","reports":[]}
+{"code":"import Promise from 'bluebird'; new Promise(async () => {})","type":"module","reports":[]}
+{"code":"new Promise(async () => {}); function Promise() {}","type":"script","reports":[]}
+{"code":"new Promise(async () => {}); { let Promise }","type":"script","reports":["1:13-1:18 Promise executor functions should not be async."]}
+{"code":"new Promise(async () => {}); (function Promise() {})","type":"script","reports":["1:13-1:18 Promise executor functions should not be async."]}
+{"code":"new Promise(async () => {}); try {} catch (Promise) {}","type":"script","reports":["1:13-1:18 Promise executor functions should not be async."]}
+{"code":"new Promise(async\n() => {})","type":"script","fatal":"Parsing error: Unexpected token =>","reports":[]}
+{"code":"new Promise(async function () {})","type":"script","reports":["1:13-1:18 Promise executor functions should not be async."]}
+{"code":"new Promise(function () {}, async () => {})","type":"script","reports":[]}
+{"code":"new Promise(async (resolve) => { await x; resolve() })","type":"script","reports":["1:13-1:18 Promise executor functions should not be async."]}
+{"code":"new Promise(a ? async () => {} : b)","type":"script","reports":[]}
+{"code":"new Promise((0, async () => {}))","type":"script","reports":[]}
+{"code":"new globalThis.Promise(async () => {})","type":"script","reports":[]}
+{"code":"new Promise(async () => {})(1)","type":"script","reports":["1:13-1:18 Promise executor functions should not be async."]}
+{"code":"new new Promise(async () => {})","type":"script","reports":["1:17-1:22 Promise executor functions should not be async."]}
+{"code":"new Promise(async () => {}).then(x)","type":"script","reports":["1:13-1:18 Promise executor functions should not be async."]}
+{"code":"new Promise?.(async () => {})","type":"script","fatal":"Parsing error: Optional chaining cannot appear in the callee of new expressions","reports":[]}

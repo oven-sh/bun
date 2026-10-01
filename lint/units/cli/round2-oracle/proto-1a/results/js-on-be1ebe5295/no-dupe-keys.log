@@ -1,0 +1,52 @@
+no-dupe-keys: 493 cases: same 475, missing 2, eslint-rejects 15, both-reject 1
+missing: "({\"\\ud800\": 1, \"\\ud800\": 2})" [js] [script]
+    eslint: 1:16 Duplicate key '�'.
+    bun:    (none)
+missing: "var x = { '\\uD800': 1, '\\uD800': 2 };" [js] [script]
+    eslint: 1:24 Duplicate key '�'.
+    bun:    (none)
+eslint-rejects: "({__proto__: 1, __proto__: 2})" [js] [script]
+    eslint: FATAL Parsing error: Redefinition of __proto__ property
+    bun:    (none)
+eslint-rejects: "({\"__proto__\": 1, __proto__: 2})" [js] [script]
+    eslint: FATAL Parsing error: Redefinition of __proto__ property
+    bun:    (none)
+eslint-rejects: "[{a: 1, a: 2}] = b" [js] [script]
+    eslint: FATAL Parsing error: Assigning to rvalue
+    bun:    (none)
+eslint-rejects: "({x: {a: 1, a: 2}} = b)" [js] [script]
+    eslint: FATAL Parsing error: Assigning to rvalue
+    bun:    (none)
+eslint-rejects: "var x = { __proto__: 1, __proto__: 2 };" [js] [script]
+    eslint: FATAL Parsing error: Redefinition of __proto__ property
+    bun:    (none)
+eslint-rejects: "var x = { '__proto__': 1, \"__proto__\": 2 };" [js] [script]
+    eslint: FATAL Parsing error: Redefinition of __proto__ property
+    bun:    (none)
+eslint-rejects: "var x = { __proto__: 1, '__proto__': 2, a: 1, a: 2 };" [js] [script]
+    eslint: FATAL Parsing error: Redefinition of __proto__ property
+    bun:    1:47 Duplicate key 'a'.
+eslint-rejects: "({ \"__proto\\u005f_\": 1, __proto__: 2 });" [js] [script]
+    eslint: FATAL Parsing error: Redefinition of __proto__ property
+    bun:    (none)
+eslint-rejects: "({a, a}) = obj;" [js] [script]
+    eslint: FATAL Parsing error: Assigning to rvalue
+    bun:    (none)
+eslint-rejects: "[({a, a})] = obj;" [js] [script]
+    eslint: FATAL Parsing error: Assigning to rvalue
+    bun:    (none)
+eslint-rejects: "({a: 1, a: 2} = obj);" [js] [script]
+    eslint: FATAL Parsing error: Assigning to rvalue
+    bun:    (none)
+eslint-rejects: "({a, a} += obj);" [js] [script]
+    eslint: FATAL Parsing error: Assigning to rvalue
+    bun:    1:6 Duplicate key 'a'.
+eslint-rejects: "for ({a, a} = 1 of list);" [js] [script]
+    eslint: FATAL Parsing error: Assigning to rvalue
+    bun:    (none)
+eslint-rejects: "({a, a}) => 1;" [js] [script]
+    eslint: FATAL Parsing error: Argument name clash
+    bun:    (none)
+eslint-rejects: "async ({a, a}) => 1;" [js] [script]
+    eslint: FATAL Parsing error: Argument name clash
+    bun:    (none)

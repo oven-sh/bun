@@ -1,0 +1,23 @@
+[
+"foo.hasOwnProperty.call(bar)",
+"new foo.hasOwnProperty('x')",
+"foo.hasOwnProperty`x`",
+"this.hasOwnProperty('x')",
+"class A extends B { m() { return super.isPrototypeOf(x) } }",
+"foo.hasOwnProperty()",
+"(0, foo.hasOwnProperty)('x')",
+"foo.hasOwnProperty\n('x')",
+"foo . hasOwnProperty ('x')",
+"foo./* c */hasOwnProperty('x')",
+"foo[/* c */ 'hasOwnProperty']('x')",
+"foo[('hasOwnProperty')]('x')",
+"foo.propertyIsEnumerable(a).isPrototypeOf(b)",
+"a(foo.hasOwnProperty('x'), bar.isPrototypeOf(y))",
+"import.meta.hasOwnProperty('x')",
+"foo['has\\u004fwnProperty']('x')",
+"foo.has\\u004fwnProperty('x')",
+"foo[`hasOwnProperty`]?.('x')",
+"foo.hasOwnProperty(...a)",
+"async () => { await foo.hasOwnProperty('x') }",
+"x = <a b={foo.hasOwnProperty('x')} />"
+]

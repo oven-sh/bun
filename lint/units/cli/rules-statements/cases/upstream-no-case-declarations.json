@@ -1,0 +1,112 @@
+{
+	"valid": [
+		{
+			"code": "switch (a) { case 1: { let x = 1; break; } default: { let x = 2; break; } }",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "switch (a) { case 1: { const x = 1; break; } default: { const x = 2; break; } }",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "switch (a) { case 1: { function f() {} break; } default: { function f() {} break; } }",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "switch (a) { case 1: { class C {} break; } default: { class C {} break; } }",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "\n            switch (a) {\n                case 1:\n                case 2: {}\n            }\n        "
+		},
+		{
+			"code": "\n            switch (a) {\n                case 1: var x;\n            }\n        "
+		}
+	],
+	"invalid": [
+		{
+			"code": "\n                switch (a) {\n                    case 1:\n                        {}\n                        function f() {}\n                        break;\n                }\n            "
+		},
+		{
+			"code": "\n                switch (a) {\n                    case 1:\n                    case 2:\n                        let x;\n                }\n            ",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "\n                switch (a) {\n                    case 1:\n                        let x;\n                    case 2:\n                        let y;\n                }\n            ",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "\n                switch (a) {\n                    case 1:\n                        let x;\n                    default:\n                        let y;\n                }\n            ",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "switch (a) { case 1: let x = 1; break; }",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "switch (a) { default: let x = 2; break; }",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "switch (a) { case 1: const x = 1; break; }",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "switch (a) { default: const x = 2; break; }",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "switch (a) { case 1: function f() {} break; }",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "switch (a) { default: function f() {} break; }",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "switch (a) { case 1: class C {} break; }",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "switch (a) { default: class C {} break; }",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "\n                switch (\"foo\") {\n                    case \"bar\":\n                        function baz() { }\n                        break;\n                    default:\n                        baz();\n                }\n            ",
+			"languageOptions": {
+				"ecmaVersion": "latest"
+			}
+		}
+	],
+	"skipped": 0
+}

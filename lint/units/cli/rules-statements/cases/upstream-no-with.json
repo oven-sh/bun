@@ -1,0 +1,13 @@
+{
+	"valid": [
+		{
+			"code": "foo.bar()"
+		}
+	],
+	"invalid": [
+		{
+			"code": "with(foo) { bar() }"
+		}
+	],
+	"skipped": 0
+}

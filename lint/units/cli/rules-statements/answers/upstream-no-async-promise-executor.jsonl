@@ -1,0 +1,11 @@
+{"kind":"valid","code":"new Promise((resolve, reject) => {})","type":"script","reports":[]}
+{"kind":"valid","code":"new Promise((resolve, reject) => {}, async function unrelated() {})","type":"script","reports":[]}
+{"kind":"valid","code":"new Foo(async (resolve, reject) => {})","type":"script","reports":[]}
+{"kind":"valid","code":"/* global Promise:off */ new Promise(async (resolve, reject) => {})","type":"script","reports":[]}
+{"kind":"valid","code":"new Promise(async (resolve, reject) => {})","type":"script","skip":"globals","given":"{\"globals\":{\"Promise\":\"off\"}}","reports":["1:13-1:18 Promise executor functions should not be async."]}
+{"kind":"valid","code":"let Promise; new Promise(async (resolve, reject) => {})","type":"script","reports":[]}
+{"kind":"valid","code":"function f() { new Promise(async (resolve, reject) => {}); var Promise; }","type":"script","reports":[]}
+{"kind":"valid","code":"function f(Promise) { new Promise(async (resolve, reject) => {}); }","type":"script","reports":[]}
+{"kind":"invalid","code":"new Promise(async function foo(resolve, reject) {})","type":"script","reports":["1:13-1:18 Promise executor functions should not be async."]}
+{"kind":"invalid","code":"new Promise(async (resolve, reject) => {})","type":"script","reports":["1:13-1:18 Promise executor functions should not be async."]}
+{"kind":"invalid","code":"new Promise(((((async () => {})))))","type":"script","reports":["1:17-1:22 Promise executor functions should not be async."]}

@@ -1,0 +1,90 @@
+"class A { #x = 1; m() { return this.#x!; } }"
+      => (none)
+"class A { #x = 1; m() { this.#x!++; } }"
+      => (none)
+"class A { #x = 1; m() { (this.#x as any) = 2; } }"
+      => (none)
+"class A { #x = 1; m() { this.#x! = 2; } }"
+      => (none)
+"class A { #x = 1; m() { (this.#x++) as any; } }"
+      => (none)
+"class A { #x = 1; m() { (this.#x += 1)!; } }"
+      => (none)
+"class A { #x = 1; m() { [this.#x!] = bar; } }"
+      => (none)
+"class A { #x = 1; m() { ({ x: this.#x! } = bar); } }"
+      => (none)
+"class A { #x = 1; m() { [...this.#x!] = bar; } }"
+      => (none)
+"class A { private x = 1; }"
+      => (none)
+"class A { #x: number = 1; }"
+      => no-unused-private-class-members 1:11 '#x' is defined but never used.
+"class A { readonly #x = 1; }"
+      => no-unused-private-class-members 1:20 '#x' is defined but never used.
+"class A { static #x = 1; }"
+      => no-unused-private-class-members 1:18 '#x' is defined but never used.
+"class A { accessor #x = 1 }"
+      => (none)
+"class A { #x = 1; m() { class B { accessor #x = 2 } } }"
+      => (none)
+"class A { #m(): void; #m() {} }"
+      => no-unused-private-class-members 1:23 '#m' is defined but never used.
+"class A { #x = 1; m(o: A) { return #x in o; } }"
+      => (none)
+"class A { #x?: number; }"
+      => no-unused-private-class-members 1:11 '#x' is defined but never used.
+"class A<T> { #x!: T; }"
+      => no-unused-private-class-members 1:14 '#x' is defined but never used.
+"class A { #x = 1; m() { (this.#x) = 2; } }"
+      => no-unused-private-class-members 1:11 '#x' is defined but never used.
+"class A { #x = 1; m() { (this.#x)++; } }"
+      => no-unused-private-class-members 1:11 '#x' is defined but never used.
+"class A { #x = 1; m() { this.#x++, 1; } }"
+      => (none)
+"class A { #x = 1; m() { this.#x ||= 1; } }"
+      => no-unused-private-class-members 1:11 '#x' is defined but never used.
+"class A { #x = 1; m() { x = this.#x ||= 1; } }"
+      => (none)
+"class A { #x = 1; m() { ({ ...this.#x } = bar); } }"
+      => no-unused-private-class-members 1:11 '#x' is defined but never used.
+"class A { #x = 1; m() { ({ a: this.#x = 1 } = bar); } }"
+      => no-unused-private-class-members 1:11 '#x' is defined but never used.
+"class A { #x = 1; m() { for ([this.#x] of bar); } }"
+      => no-unused-private-class-members 1:11 '#x' is defined but never used.
+"class A { #x = 1; m() { for ({ a: this.#x } of bar); } }"
+      => no-unused-private-class-members 1:11 '#x' is defined but never used.
+"class A { #x = 1; m() { this?.#x; } }"
+      => FATAL  1:30 Parsing error: An optional chain cannot contain private identifiers.
+"class A { #x = 1; m() { this.#x; } }"
+      => (none)
+"class A { #x = 1; m() { delete this.#x.y; } }"
+      => (none)
+"class A { #x = 1; m() { this.#x.y = 1; } }"
+      => (none)
+"class A { #x = 1; m() { --this.#x; } }"
+      => no-unused-private-class-members 1:11 '#x' is defined but never used.
+"class A { #x = 1; m() { [this.#x.y] = bar; } }"
+      => (none)
+"class A { #x = 1; static { this.#x = 1; } }"
+      => no-unused-private-class-members 1:11 '#x' is defined but never used.
+"class A { get #x() { return 1 } m() { this.#x = 1; } }"
+      => (none)
+"class A { #x() {} m() { this.#x = 1; } }"
+      => no-unused-private-class-members 1:11 '#x' is defined but never used.
+"class A { #x = 1; [this.#x] = 2; }"
+      => (none)
+"class A { #x = 1; m() { return class B extends (this.#x) { #x = 2; n() { return this.#x } } } }"
+      => (none)
+"class A { #x = 1; m() { return class B extends (this.#x) { #x = 2; } } }"
+      => no-unused-private-class-members 1:60 '#x' is defined but never used.
+"declare class A { #x: number; }"
+      => no-unused-private-class-members 1:19 '#x' is defined but never used.
+"class A { #x = 1; m() { if (this.#x = 1) {} } }"
+      => no-unused-private-class-members 1:11 '#x' is defined but never used.
+"class A { #x = 1; m() { return this.#x = 1; } }"
+      => no-unused-private-class-members 1:11 '#x' is defined but never used.
+"class A { #x = 1; m() { () => this.#x++; } }"
+      => (none)
+"class A { #x = 1; m() { void this.#x++; } }"
+      => (none)

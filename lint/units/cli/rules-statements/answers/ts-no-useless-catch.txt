@@ -1,0 +1,22 @@
+"try { foo(); } catch (e: unknown) { throw e; }"
+      => no-useless-catch 1:1 Unnecessary try/catch wrapper.
+"try { foo(); } catch (e) { throw e as Error; }"
+      => (none)
+"try { foo(); } catch (e) { throw e!; }"
+      => (none)
+"try { foo(); } catch (e) { throw <Error>e; }"
+      => (none)
+"try { foo(); } catch (e) { throw (e); }"
+      => no-useless-catch 1:1 Unnecessary try/catch wrapper.
+"try { foo(); } catch (e: any) { throw e } finally { bar() }"
+      => no-useless-catch 1:16 Unnecessary catch clause.
+"try { foo(); } catch (e) { type T = 1; throw e; }"
+      => (none)
+"try { foo(); } catch (e) { ; throw e; }"
+      => (none)
+"try { foo(); } catch (e) { 'use strict'; throw e; }"
+      => (none)
+"try { foo(); } catch (e) { /*! legal */ throw e; }"
+      => no-useless-catch 1:1 Unnecessary try/catch wrapper.
+"try { foo(); } catch (e) { throw e satisfies Error; }"
+      => (none)

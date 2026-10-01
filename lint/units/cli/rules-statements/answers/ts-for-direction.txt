@@ -1,0 +1,140 @@
+"for (let i: number = 0; i < 10; i--) {}"
+      => for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (let i = 0; i < 10; i-- as any) {}"
+      => (none)
+"for (let i = 0; i < 10; i!--) {}"
+      => (none)
+"for (let i = 0; (i as number) < 10; i--) {}"
+      => (none)
+"for (let i = 0; i! < 10; i--) {}"
+      => (none)
+"for (let i = 0; i < 10; i += -1 as number) {}"
+      => for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (let i = 0; i < (n as number); i--) {}"
+      => for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (let i = 0; i < 10; (i--)) {}"
+      => for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (let i = 0; (i) < 10; i--) {}"
+      => for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (let i = 0; (i < 10); i--) {}"
+      => for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (let i = 0; (i < 10) as boolean; i--) {}"
+      => (none)
+"for (let i = 0; i < 10; i += <number>-1) {}"
+      => for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (let i = 0; i < 10; i += (-1)!) {}"
+      => for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (let i = 0; i < 10; i += -1 satisfies number) {}"
+      => for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (let i = 0; i < 10; (i as any) -= 1) {}"
+      => (none)
+"for (let i = 0; i < 10; i -= 1n) {}"
+      => for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (let i = 0; i < 10; i -= Infinity) {}"
+      => for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (let i = 0; i < 10; i -= Math.PI) {}"
+      => for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (let i = 0; i < 10; i -= Number.MAX_VALUE) {}"
+      => for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (let i = 0; i < 10; i -= Math.abs(-1)) {}"
+      => for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (let i = 0; i < 10; i -= 'a'.length) {}"
+      => for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (let i = 0; i < 10; i -= '1') {}"
+      => (none)
+"for (let i = 0; i < 10; i -= +'1') {}"
+      => for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (let i = 0; i < 10; i -= 1 + '1') {}"
+      => (none)
+"for (let i = 0; i < 10; i -= '3' - 1) {}"
+      => for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (let i = 0; i < 10; i -= `1`) {}"
+      => (none)
+"for (let i = 0; i < 10; i -= -`1`) {}"
+      => (none)
+"for (let i = 0; i < 10; i -= 1 < 2) {}"
+      => for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (let i = 0; i < 10; i -= null) {}"
+      => (none)
+"for (let i = 0; i < 10; i -= undefined) {}"
+      => (none)
+"for (let i = 0; i < 10; i -= void 0) {}"
+      => (none)
+"for (let i = 0; i < 10; i -= NaN) {}"
+      => (none)
+"for (let i = 0; i < 10; i -= true ? 1 : -1) {}"
+      => for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (let i = 0; i < 10; i -= (0, 1)) {}"
+      => for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (let i = 0; i < 10; i -= 1 || x) {}"
+      => for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (let i = 0; i < 10; i -= x || 1) {}"
+      => (none)
+"for (let i = 0; i < 10; i -= 0 || 1) {}"
+      => for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (let i = 0; i < 10; i -= null ?? 1) {}"
+      => for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (let i = 0; i < 10; i -= (x = 1)) {}"
+      => for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (let i = 0; i < 10; i -= 2 ** 3) {}"
+      => for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (let i = 0; i < 10; i -= 1n + 2n) {}"
+      => for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (let i = 0; i < 10; i -= 1n + 2) {}"
+      => (none)
+"for (let i = 0; i < 10; i -= -(-1n)) {}"
+      => for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (let i = 0; i < 10; i -= +1n) {}"
+      => (none)
+"for (let i = 0; i < 10; i -= ~0) {}"
+      => (none)
+"for (let i = 0; i < 10; i -= 1 << 2) {}"
+      => for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (let i = 0; i < 10; i -= 5 % 3) {}"
+      => for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (let i = 0; i < 10; i -= -5 % 3) {}"
+      => (none)
+"for (let i = 0; i < 10; i -= 1e400) {}"
+      => for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (let i = 0; i < 10; i -= typeof x) {}"
+      => (none)
+"for (let i = 0; i < 10; i -= !0) {}"
+      => for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (let i = 0; i < 10; i -= [1]) {}"
+      => (none)
+"for (let i = 0; i < 10; i -= [1][0]) {}"
+      => for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (let i = 0; i < 10; i -= {a: 1}.a) {}"
+      => for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (let i = 0; i < 10; i -= Number('1')) {}"
+      => for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (let i = 0; i < 10; i -= parseInt('1')) {}"
+      => for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (let i = 0; i < 10; i -= 1 in x) {}"
+      => (none)
+"for (let i = 0; i < j; i--, j++) {}"
+      => for-direction 1:1 The update clause in this loop moves the variable in the wrong direction. | for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+"const n = 1; for (let i = 0; i < 10; i -= n) {}"
+      => for-direction 1:14 The update clause in this loop moves the variable in the wrong direction.
+"let n = 1; for (let i = 0; i < 10; i -= n) {}"
+      => for-direction 1:12 The update clause in this loop moves the variable in the wrong direction.
+"let n = 1; n = 2; for (let i = 0; i < 10; i -= n) {}"
+      => (none)
+"for (let i = 0; i < 10; i = i - 1) {}"
+      => (none)
+"for (let i = 0; i < 10; i -= 0x10n) {}"
+      => for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (let i = 0; i < 10; i -= 0n) {}"
+      => (none)
+"for (let i = 0; i < 10; i -= -0) {}"
+      => (none)
+"for (let i = 0; i < 10; i -= 1_000) {}"
+      => for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (i.x = 0; i.x < 10; i.x--) {}"
+      => (none)
+"for (let i = 0; i < 10 && x; i--) {}"
+      => (none)
+"for (let i = 0; 0 < i < 10; i--) {}"
+      => (none)
+"for (let i = 0; i < 10; i--, i--) {}"
+      => (none)

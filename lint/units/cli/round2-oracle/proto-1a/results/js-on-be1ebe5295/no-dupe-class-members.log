@@ -1,0 +1,61 @@
+no-dupe-class-members: 434 cases: same 410, missing 13, eslint-rejects 7, both-reject 4
+missing: "class A { '\\ud800'() {} '\\ud800'() {} }" [js] [script]
+    eslint: 1:25 Duplicate name '�'.
+    bun:    (none)
+missing: "class A { '\\udc00\\ud800'; '\\udc00\\ud800'; }" [js] [script]
+    eslint: 1:27 Duplicate name '��'.
+    bun:    (none)
+missing: "class A { 'a\\ud800'; 'a\\ud800'; a; a; }" [js] [script]
+    eslint: 1:22 Duplicate name 'a�'. | 1:36 Duplicate name 'a'.
+    bun:    1:36 Duplicate name 'a'.
+eslint-rejects: "class A { constructor() {} constructor() {} }" [js] [script]
+    eslint: FATAL Parsing error: Duplicate constructor in the same class
+    bun:    (none)
+eslint-rejects: "class A { constructor() {} 'constructor'() {} }" [js] [script]
+    eslint: FATAL Parsing error: Duplicate constructor in the same class
+    bun:    (none)
+eslint-rejects: "class A { 'constructor'() {} 'constructor'() {} }" [js] [script]
+    eslint: FATAL Parsing error: Duplicate constructor in the same class
+    bun:    (none)
+eslint-rejects: "class A { accessor foo; accessor foo; }" [js] [script]
+    eslint: FATAL Parsing error: Unexpected token foo
+    bun:    (none)
+eslint-rejects: "class A { static accessor foo; static accessor foo; }" [js] [script]
+    eslint: FATAL Parsing error: Unexpected token foo
+    bun:    (none)
+eslint-rejects: "class A { accessor foo; foo() {} }" [js] [script]
+    eslint: FATAL Parsing error: Unexpected token foo
+    bun:    (none)
+eslint-rejects: "class A { accessor a; a; static accessor b; static b; }" [js] [script]
+    eslint: FATAL Parsing error: Unexpected token a
+    bun:    (none)
+missing: "\n  class A {\n\tfoo() {}\n    foo() {}\n  }\n\t\t" [ts] [module]
+    eslint: 4:5 Duplicate name 'foo'.
+    bun:    (none)
+missing: "\n\t\t  !class A {\n\t\t\tfoo() {}\n\t\t\tfoo() {}\n\t\t  };\n\t\t\t\t" [ts] [module]
+    eslint: 4:4 Duplicate name 'foo'.
+    bun:    (none)
+missing: "\n\t\t  class A {\n\t\t\t'foo'() {}\n\t\t\t'foo'() {}\n\t\t  }\n\t\t\t\t" [ts] [module]
+    eslint: 4:4 Duplicate name 'foo'.
+    bun:    (none)
+missing: "\n\t\t  class A {\n\t\t\t10() {}\n\t\t\t1e1() {}\n\t\t  }\n\t\t\t\t" [ts] [module]
+    eslint: 4:4 Duplicate name '10'.
+    bun:    (none)
+missing: "\n\t\t  class A {\n\t\t\tfoo() {}\n\t\t\tfoo() {}\n\t\t\tfoo() {}\n\t\t  }\n\t\t\t\t" [ts] [module]
+    eslint: 4:4 Duplicate name 'foo'. | 5:4 Duplicate name 'foo'.
+    bun:    (none)
+missing: "\n\t\t  class A {\n\t\t\tstatic foo() {}\n\t\t\tstatic foo() {}\n\t\t  }\n\t\t\t\t" [ts] [module]
+    eslint: 4:11 Duplicate name 'foo'.
+    bun:    (none)
+missing: "\n\t\t  class A {\n\t\t\tfoo() {}\n\t\t\tget foo() {}\n\t\t  }\n\t\t\t\t" [ts] [module]
+    eslint: 4:8 Duplicate name 'foo'.
+    bun:    (none)
+missing: "\n\t\t  class A {\n\t\t\tset foo(value) {}\n\t\t\tfoo() {}\n\t\t  }\n\t\t\t\t" [ts] [module]
+    eslint: 4:4 Duplicate name 'foo'.
+    bun:    (none)
+missing: "\n\t\t  class A {\n\t\t\tfoo;\n\t\t\tfoo = 42;\n\t\t  }\n\t\t\t\t" [ts] [module]
+    eslint: 4:4 Duplicate name 'foo'.
+    bun:    (none)
+missing: "\n\t\t  class A {\n\t\t\tfoo;\n\t\t\tfoo() {}\n\t\t  }\n\t\t\t\t" [ts] [module]
+    eslint: 4:4 Duplicate name 'foo'.
+    bun:    (none)

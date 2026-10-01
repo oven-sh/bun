@@ -1,0 +1,13 @@
+{
+	"valid": [
+		{
+			"code": "delete x.prop;"
+		}
+	],
+	"invalid": [
+		{
+			"code": "delete x"
+		}
+	],
+	"skipped": 0
+}

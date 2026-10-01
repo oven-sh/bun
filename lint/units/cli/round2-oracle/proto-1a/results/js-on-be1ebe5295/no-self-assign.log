@@ -1,0 +1,31 @@
+no-self-assign: 578 cases: same 561, merged 3, moved 3, missing 2, other-text 3, eslint-rejects 2, both-reject 4
+moved: "a.b = (\na).b" [js] [script]
+    eslint: 1:7 '(a).b' is assigned to itself.
+    bun:    2:1 '(a).b' is assigned to itself.
+other-text: "a.b = ( /* c */ a).b" [js] [script]
+    eslint: 1:7 '(/*c*/a).b' is assigned to itself.
+    bun:    1:17 '(a).b' is assigned to itself.
+other-text: "a.b = (// c\na).b" [js] [script]
+    eslint: 1:7 '(//ca).b' is assigned to itself.
+    bun:    2:1 '(a).b' is assigned to itself.
+moved: "a.b = (\n(a)).b" [js] [script]
+    eslint: 1:7 '((a)).b' is assigned to itself.
+    bun:    2:1 '((a)).b' is assigned to itself.
+other-text: "a[b] = ( /* c */ a)[b]" [js] [script]
+    eslint: 1:8 '(/*c*/a)[b]' is assigned to itself.
+    bun:    1:18 '(a)[b]' is assigned to itself.
+moved: "a.b = ( a).b" [js] [script]
+    eslint: 1:7 '(a).b' is assigned to itself.
+    bun:    1:9 '(a).b' is assigned to itself.
+missing: "a[\"\\ud800\"] = a[\"\\ud800\"]" [js] [script]
+    eslint: 1:15 'a["\ud800"]' is assigned to itself.
+    bun:    (none)
+missing: "({\"\\ud800\": a} = {\"\\ud800\": a})" [js] [script]
+    eslint: 1:29 'a' is assigned to itself.
+    bun:    (none)
+eslint-rejects: "a?.b.c = a.b.c" [js] [script]
+    eslint: FATAL Parsing error: Optional chaining cannot appear in left-hand side
+    bun:    1:10 'a.b.c' is assigned to itself.
+eslint-rejects: "a?.[b] = 1" [js] [script]
+    eslint: FATAL Parsing error: Optional chaining cannot appear in left-hand side
+    bun:    (none)

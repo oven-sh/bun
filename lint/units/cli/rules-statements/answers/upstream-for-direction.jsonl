@@ -1,0 +1,100 @@
+{"kind":"valid","code":"for(var i = 0; i < 10; i++){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 0; i <= 10; i++){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 10; i > 0; i--){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 10; i >= 0; i--){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 0; 10 > i; i++){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 0; 10 >= i; i++){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 10; 0 < i; i--){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 10; 0 <= i; i--){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 0; i < 0; i++){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 0; 0 > i; i++){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 0; i < 10; i+=1){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 0; i <= 10; i+=1){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 0; i < 10; i-=-1){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 0; i <= 10; i-=-1){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 10; i > 0; i-=1){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 10; i >= 0; i-=1){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 10; i > 0; i+=-1){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 10; i >= 0; i+=-1){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 0n; i > l; i-=1n){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 0n; i < l; i-=-1n){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = MIN; i <= MAX; i+=true){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 0; i < 10; i+=+5e-7){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 0; i < MAX; i -= ~2);","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 0, n = -1; i < MAX; i += -n);","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 0; 10 > i; i+=1){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 10; i > 0;){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 10; i >= 0;){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 10; i < 0;){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 10; i <= 0;){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 10; i <= 0; j++){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 10; i <= 0; j--){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 10; i >= 0; j++){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 10; i >= 0; j--){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 10; i >= 0; j += 2){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 10; i >= 0; j -= 2){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 10; i >= 0; i |= 2){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 10; i >= 0; i %= 2){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 0; i < MAX; i += STEP_SIZE);","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 0; i < MAX; i -= STEP_SIZE);","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 10; i > 0; i += STEP_SIZE);","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 10; i >= 0; i += 0);","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 10n; i >= 0n; i += 0n);","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 10; i >= 0; i += this.step);","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 10; i >= 0; i += 'foo');","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 10; i > 0; i += !foo);","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = MIN; i <= MAX; i -= false);","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = MIN; i <= MAX; i -= 0/0);","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 0; i !== 10; i+=1){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 0; i === 10; i+=1){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 0; i == 10; i+=1){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 0; i != 10; i+=1){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 0; i < 10; (i++, j++)){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 0; i <= 10; (i++, j++)){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 10; i > 0; (i--, j++)){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 10; i >= 0; (i--, j++)){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 0; i < 10; (j++, i++)){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 0; i < 10; (j++, k++)){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 0; i < 10; (i+=1, j++)){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 10; i > 0; (i-=1, j++)){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 10; i < 20; (i--, i++)){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 10; i < 20; (i--, i += 2)){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 0; i < 10; (i++, i--)){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 0; i < 10; (i-=1, i+=2)){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 0; i < 10; (j++, i++, k++)){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 10; i > 0; (j++, i--, k++)){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 10; i < 20; (i--, (i = 5, j++))){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 10; i < 20; ((i--, j++), i += 2)){}","type":"script","reports":[]}
+{"kind":"valid","code":"for(var i = 10; i < 20; (i--, i += STEP_SIZE)){}","type":"script","reports":[]}
+{"kind":"invalid","code":"for(var i = 0; i < 10; i--){}","type":"script","reports":["1:1-1:28 The update clause in this loop moves the variable in the wrong direction."]}
+{"kind":"invalid","code":"for(var i = 0; i <= 10; i--){}","type":"script","reports":["1:1-1:29 The update clause in this loop moves the variable in the wrong direction."]}
+{"kind":"invalid","code":"for(var i = 10; i > 10; i++){}","type":"script","reports":["1:1-1:29 The update clause in this loop moves the variable in the wrong direction."]}
+{"kind":"invalid","code":"for(var i = 10; i >= 0; i++){}","type":"script","reports":["1:1-1:29 The update clause in this loop moves the variable in the wrong direction."]}
+{"kind":"invalid","code":"for(var i = 0; 10 > i; i--){}","type":"script","reports":["1:1-1:28 The update clause in this loop moves the variable in the wrong direction."]}
+{"kind":"invalid","code":"for(var i = 0; 10 >= i; i--){}","type":"script","reports":["1:1-1:29 The update clause in this loop moves the variable in the wrong direction."]}
+{"kind":"invalid","code":"for(var i = 10; 10 < i; i++){}","type":"script","reports":["1:1-1:29 The update clause in this loop moves the variable in the wrong direction."]}
+{"kind":"invalid","code":"for(var i = 10; 0 <= i; i++){}","type":"script","reports":["1:1-1:29 The update clause in this loop moves the variable in the wrong direction."]}
+{"kind":"invalid","code":"for(var i = 0; i < 10; i-=1){}","type":"script","reports":["1:1-1:29 The update clause in this loop moves the variable in the wrong direction."]}
+{"kind":"invalid","code":"for(var i = 0; i <= 10; i-=1){}","type":"script","reports":["1:1-1:30 The update clause in this loop moves the variable in the wrong direction."]}
+{"kind":"invalid","code":"for(var i = 10; i > 10; i+=1){}","type":"script","reports":["1:1-1:30 The update clause in this loop moves the variable in the wrong direction."]}
+{"kind":"invalid","code":"for(var i = 10; i >= 0; i+=1){}","type":"script","reports":["1:1-1:30 The update clause in this loop moves the variable in the wrong direction."]}
+{"kind":"invalid","code":"for(var i = 0; i < 10; i+=-1){}","type":"script","reports":["1:1-1:30 The update clause in this loop moves the variable in the wrong direction."]}
+{"kind":"invalid","code":"for(var i = 0; i <= 10; i+=-1){}","type":"script","reports":["1:1-1:31 The update clause in this loop moves the variable in the wrong direction."]}
+{"kind":"invalid","code":"for(var i = 10; i > 10; i-=-1){}","type":"script","reports":["1:1-1:31 The update clause in this loop moves the variable in the wrong direction."]}
+{"kind":"invalid","code":"for(var i = 10; i >= 0; i-=-1){}","type":"script","reports":["1:1-1:31 The update clause in this loop moves the variable in the wrong direction."]}
+{"kind":"invalid","code":"for(var i = 0n; i > l; i+=1n){}","type":"script","reports":["1:1-1:30 The update clause in this loop moves the variable in the wrong direction."]}
+{"kind":"invalid","code":"for(var i = 0n; i < l; i+=-1n){}","type":"script","reports":["1:1-1:31 The update clause in this loop moves the variable in the wrong direction."]}
+{"kind":"invalid","code":"for(var i = MIN; i <= MAX; i-=true){}","type":"script","reports":["1:1-1:36 The update clause in this loop moves the variable in the wrong direction."]}
+{"kind":"invalid","code":"for(var i = 0; i < 10; i-=+5e-7){}","type":"script","reports":["1:1-1:33 The update clause in this loop moves the variable in the wrong direction."]}
+{"kind":"invalid","code":"for(var i = 0; i < MAX; i += (2 - 3));","type":"script","reports":["1:1-1:38 The update clause in this loop moves the variable in the wrong direction."]}
+{"kind":"invalid","code":"var n = -2; for(var i = 0; i < 10; i += n);","type":"script","reports":["1:13-1:43 The update clause in this loop moves the variable in the wrong direction."]}
+{"kind":"invalid","code":"for(var i = 0; 10 > i; i-=1){}","type":"script","reports":["1:1-1:29 The update clause in this loop moves the variable in the wrong direction."]}
+{"kind":"invalid","code":"for(var i = 0; i < 10; (i--, j++)){}","type":"script","reports":["1:1-1:35 The update clause in this loop moves the variable in the wrong direction."]}
+{"kind":"invalid","code":"for(var i = 0; i <= 10; (i--, j++)){}","type":"script","reports":["1:1-1:36 The update clause in this loop moves the variable in the wrong direction."]}
+{"kind":"invalid","code":"for(var i = 10; i > 0; (i++, j--)){}","type":"script","reports":["1:1-1:35 The update clause in this loop moves the variable in the wrong direction."]}
+{"kind":"invalid","code":"for(var i = 10; i >= 0; (i++, j--)){}","type":"script","reports":["1:1-1:36 The update clause in this loop moves the variable in the wrong direction."]}
+{"kind":"invalid","code":"for(var i = 0; i < 10; (j++, i--)){}","type":"script","reports":["1:1-1:35 The update clause in this loop moves the variable in the wrong direction."]}
+{"kind":"invalid","code":"for(var i = 0; i < 10; (i-=1, j++)){}","type":"script","reports":["1:1-1:36 The update clause in this loop moves the variable in the wrong direction."]}
+{"kind":"invalid","code":"for(var i = 10; i > 0; (i+=1, j--)){}","type":"script","reports":["1:1-1:36 The update clause in this loop moves the variable in the wrong direction."]}
+{"kind":"invalid","code":"for(var i = 0; 10 > i; (i--, j++)){}","type":"script","reports":["1:1-1:35 The update clause in this loop moves the variable in the wrong direction."]}
+{"kind":"invalid","code":"for(var i = 10; i < 20; (j++, (i--, k++))){}","type":"script","reports":["1:1-1:43 The update clause in this loop moves the variable in the wrong direction."]}

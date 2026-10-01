@@ -1,0 +1,23 @@
+[
+"with (a) { b }",
+"function f() { try {} finally { namespace N { throw x; } } }",
+"function f() { try {} finally { return 1 as any; } }",
+"function f() { try {} finally { (() => 1)(); } }",
+"function f() { try {} finally { (() => { return 1 })(); } }",
+"function f() { try {} finally { class C { m() { return 1 } } } }",
+"function f() { try {} finally { class C { static { throw 1 } } } }",
+"function f() { try {} finally { ({ m() { return 1 } }) } }",
+"function f() { try {} finally { try { throw 1 } catch (e) {} } }",
+"function f() { try {} catch (e) { return 1 } }",
+"function f() { a: try {} finally { b: { break a; } } }",
+"function f() { a: try {} finally { a: { break a; } } }",
+"function f() { for (;;) { try {} finally { for (;;) { break; } break; } } }",
+"function f() { try {} finally { for (const x of y) continue; do { break } while (1); for (k in o) break; } }",
+"A: type T = 1;",
+"A: enum E {}",
+"A: { break A; }",
+"A: for (;;) { (function () { break A; })() }",
+"A: var x: number = 1;",
+"A: B: for (;;) { continue B; }",
+"A: for (;;) { A: for (;;) { break A; } }"
+]

@@ -1,0 +1,72 @@
+"class A { set a(v: number) { return 1; } }"
+      => no-setter-return 1:30 Setter cannot return a value.
+"({ set a(v: number) { return 1 } })"
+      => no-setter-return 1:23 Setter cannot return a value.
+"Object.defineProperty(foo, 'bar', { set(v: number) { return 1; } } as PropertyDescriptor)"
+      => (none)
+"Object.defineProperty(foo, 'bar', { set: ((v) => 1) as any })"
+      => (none)
+"Object.defineProperty(foo, 'bar', <PropertyDescriptor>{ set(v) { return 1 } })"
+      => (none)
+"Object.defineProperty(foo, 'bar', { set(v) { return 1 } }!)"
+      => (none)
+"(Object as any).defineProperty(foo, 'bar', { set(v) { return 1 } })"
+      => (none)
+"Object.defineProperty!(foo, 'bar', { set(v) { return 1 } })"
+      => (none)
+"Object!.defineProperty(foo, 'bar', { set(v) { return 1 } })"
+      => (none)
+"Object.defineProperty<any>(foo, 'bar', { set(v) { return 1 } })"
+      => no-setter-return 1:51 Setter cannot return a value.
+"abstract class A { abstract set a(v: number); }"
+      => (none)
+"class A { set a(v) { return 1 as any; } }"
+      => no-setter-return 1:22 Setter cannot return a value.
+"declare class A { set a(v: number); }"
+      => (none)
+"Object.defineProperty(foo, 'bar', { set: (v): number => v })"
+      => no-setter-return 1:57 Setter cannot return a value.
+"Object.defineProperty(foo, 'bar', { set: v => (v as any) })"
+      => no-setter-return 1:48 Setter cannot return a value.
+"Object.defineProperty(foo, 'bar', { set: v => (a).b })"
+      => no-setter-return 1:47 Setter cannot return a value.
+"Object.defineProperty(foo, 'bar', { set: v => (a) + b })"
+      => no-setter-return 1:47 Setter cannot return a value.
+"Object.defineProperty(foo, 'bar', { set: v => (a) })"
+      => no-setter-return 1:48 Setter cannot return a value.
+"Object.defineProperty(foo, 'bar', { set: v => (a, b) })"
+      => no-setter-return 1:48 Setter cannot return a value.
+"Object.defineProperty(foo, 'bar', { get set() { return 1 } })"
+      => no-setter-return 1:49 Setter cannot return a value.
+"Object.defineProperty(foo, 'bar', { async set(v) { return 1 } })"
+      => no-setter-return 1:52 Setter cannot return a value.
+"Object.defineProperty(foo, 'bar', { *set(v) { return 1 } })"
+      => no-setter-return 1:47 Setter cannot return a value.
+"Object.create(foo, { bar: { set(v) { return 1 } } as PropertyDescriptor })"
+      => (none)
+"Object.create(foo, { bar: { set(v) { return 1 } } } as PropertyDescriptorMap)"
+      => (none)
+"Object.create(foo, { ...x, bar: { set(v) { return 1 } } })"
+      => no-setter-return 1:44 Setter cannot return a value.
+"Object.create(foo, { get bar() { return { set(v) { return 1 } } } })"
+      => (none)
+"Object.defineProperty(...a, { set(v) { return 1 } })"
+      => (none)
+"Object.defineProperty(a, ...b, { set(v) { return 1 } })"
+      => no-setter-return 1:43 Setter cannot return a value.
+"enum Object { A } Object.defineProperty(foo, 'bar', { set(v) { return 1 } })"
+      => (none)
+"namespace Object { export const x = 1 } Object.defineProperty(foo, 'bar', { set(v) { return 1 } })"
+      => (none)
+"declare const Object: any; Object.defineProperty(foo, 'bar', { set(v) { return 1 } })"
+      => (none)
+"interface Object {} Object.defineProperty(foo, 'bar', { set(v) { return 1 } })"
+      => no-setter-return 1:66 Setter cannot return a value.
+"type Object = 1; Object.defineProperty(foo, 'bar', { set(v) { return 1 } })"
+      => no-setter-return 1:63 Setter cannot return a value.
+"import Object from 'x'; Object.defineProperty(foo, 'bar', { set(v) { return 1 } })"
+      => (none)
+"import type Object from 'x'; Object.defineProperty(foo, 'bar', { set(v) { return 1 } })"
+      => (none)
+"import Object = require('x'); Object.defineProperty(foo, 'bar', { set(v) { return 1 } })"
+      => (none)

@@ -1,0 +1,20 @@
+{"code":"try { foo(); } catch (e) { ; throw e; }","type":"script","reports":[]}
+{"code":"try { foo(); } catch (e) { 'use strict'; throw e; }","type":"script","reports":[]}
+{"code":"try { foo(); } catch (e) { /*! legal */ throw e; }","type":"script","reports":["1:1-1:51 Unnecessary try/catch wrapper."]}
+{"code":"try { foo(); } catch (e) { throw (e); }","type":"script","reports":["1:1-1:40 Unnecessary try/catch wrapper."]}
+{"code":"try { foo(); } catch (e) { throw e; bar(); }","type":"script","reports":["1:1-1:45 Unnecessary try/catch wrapper."]}
+{"code":"try { foo(); } catch (e) { { throw e; } }","type":"script","reports":[]}
+{"code":"try { foo(); } catch (e) { throw e } finally {}","type":"script","reports":["1:16-1:37 Unnecessary catch clause."]}
+{"code":"try { try { a() } catch (e) { throw e } } catch (f) { throw f }","type":"script","reports":["1:1-1:64 Unnecessary try/catch wrapper.","1:7-1:40 Unnecessary try/catch wrapper."]}
+{"code":"try {} catch (e) { throw e, e; }","type":"script","reports":[]}
+{"code":"label: try { foo() } catch (e) { throw e }","type":"script","reports":["1:8-1:43 Unnecessary try/catch wrapper."]}
+{"code":"try { foo() } catch (\\u0065) { throw e; }","type":"script","reports":["1:1-1:42 Unnecessary try/catch wrapper."]}
+{"code":"try { foo() } catch (e) { throw \\u0065; }","type":"script","reports":["1:1-1:42 Unnecessary try/catch wrapper."]}
+{"code":"try { foo() } catch (e) { // c\n throw e; }","type":"script","reports":["1:1-2:12 Unnecessary try/catch wrapper."]}
+{"code":"try { foo() } catch (e) { throw e\n}","type":"script","reports":["1:1-2:2 Unnecessary try/catch wrapper."]}
+{"code":"try { foo() } catch (e) { 'use asm'; throw e; }","type":"script","reports":[]}
+{"code":"try { foo() } catch (e) { `x`; throw e; }","type":"script","reports":[]}
+{"code":"try { foo() } catch (e) { debugger; throw e; }","type":"script","reports":[]}
+{"code":"try { foo() } catch (e) { function f() {} throw e; }","type":"script","reports":[]}
+{"code":"try { foo() } catch (e) { throw e; function f() {} }","type":"script","reports":["1:1-1:53 Unnecessary try/catch wrapper."]}
+{"code":"async () => { try { await x } catch (e) { throw e } finally { y() } }","type":"script","reports":["1:31-1:52 Unnecessary catch clause."]}

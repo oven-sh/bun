@@ -1,0 +1,64 @@
+no-duplicate-case: 355 cases: same 330, moved 17, missing 2, bun-rejects 1, eslint-rejects 1, both-reject 4
+missing: "switch (a) { case <a/>: case <a/>: case <a />: }" [jsx] [script]
+    eslint: 1:25 Duplicate case label. | 1:36 Duplicate case label.
+    bun:    1:25 Duplicate case label.
+moved: "switch (a) { case a\n: break; case // c\n a: break; }" [js] [script]
+    eslint: 2:10 Duplicate case label.
+    bun:    3:2 Duplicate case label.
+moved: "switch (a) { case a: break; case // case\n a: break; }" [js] [script]
+    eslint: 1:29 Duplicate case label.
+    bun:    2:2 Duplicate case label.
+moved: "switch (a) { case a: break; case // case (\n a: break; }" [js] [script]
+    eslint: 1:29 Duplicate case label.
+    bun:    2:2 Duplicate case label.
+moved: "switch (a) { case a: break; case /* case /* x */ a: break; }" [js] [script]
+    eslint: 1:29 Duplicate case label.
+    bun:    1:50 Duplicate case label.
+moved: "switch (a) { case a: x = \"case /*\"; case /* x */ a: break; }" [js] [script]
+    eslint: 1:37 Duplicate case label.
+    bun:    1:50 Duplicate case label.
+moved: "switch (a) { case a: break; case/**/a: break; }" [js] [script]
+    eslint: 1:29 Duplicate case label.
+    bun:    1:37 Duplicate case label.
+moved: "switch (a) { case a: break; case\na: break; }" [js] [script]
+    eslint: 1:29 Duplicate case label.
+    bun:    2:1 Duplicate case label.
+moved: "switch (a) { case a: break; case\n\n(\n(\na\n)\n)\n: break; }" [js] [script]
+    eslint: 1:29 Duplicate case label.
+    bun:    5:1 Duplicate case label.
+moved: "switch (a) { case a: break; case ( // c\n a ): break; }" [js] [script]
+    eslint: 1:29 Duplicate case label.
+    bun:    2:2 Duplicate case label.
+moved: "switch (a) { case a: break; case ( /* ( */ a ): break; }" [js] [script]
+    eslint: 1:29 Duplicate case label.
+    bun:    1:44 Duplicate case label.
+moved: "switch (a) { case a: break; case /* ( */ a: break; }" [js] [script]
+    eslint: 1:29 Duplicate case label.
+    bun:    1:42 Duplicate case label.
+moved: "switch (a) { case a: break; case /* x; case */ a: break; }" [js] [script]
+    eslint: 1:29 Duplicate case label.
+    bun:    1:48 Duplicate case label.
+moved: "switch (a) { case a: break; case /* x;\n case */ a: break; }" [js] [script]
+    eslint: 1:29 Duplicate case label.
+    bun:    2:10 Duplicate case label.
+moved: "switch (a) { case a: break; case // x; case\n a: break; }" [js] [script]
+    eslint: 1:29 Duplicate case label.
+    bun:    2:2 Duplicate case label.
+missing: "switch (x) { case <a/>: break; case <a />: break; }" [jsx] [script]
+    eslint: 1:32 Duplicate case label.
+    bun:    (none)
+moved: "switch (a) { case a: break; case // c\n a: break; }" [js] [script]
+    eslint: 1:29 Duplicate case label.
+    bun:    2:2 Duplicate case label.
+moved: "switch (a) { case a: break;\n  case /* case */ a: break; }" [js] [script]
+    eslint: 2:3 Duplicate case label.
+    bun:    2:19 Duplicate case label.
+moved: "switch (a) { case a: break;\n  case // case\n a: break; }" [js] [script]
+    eslint: 2:3 Duplicate case label.
+    bun:    3:2 Duplicate case label.
+bun-rejects: "switch (a) { case await: case await: }" [js] [script]
+    eslint: 1:26 Duplicate case label.
+    bun:    REJECTS syntax Unexpected :
+eslint-rejects: "switch (a) { case new.target: break; case new.target: break; }" [js] [script]
+    eslint: FATAL Parsing error: 'new.target' can only be used in functions and class static block
+    bun:    1:38 Duplicate case label.

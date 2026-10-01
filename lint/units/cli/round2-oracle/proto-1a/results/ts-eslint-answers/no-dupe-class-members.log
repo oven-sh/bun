@@ -1,0 +1,103 @@
+no-dupe-class-members: 55 cases: same 21, missing 33, bun-rejects 1
+missing: "class A { foo(): void; foo() {} foo() {} }" [ts] [module]
+    eslint: 1:33 Duplicate name 'foo'.
+    bun:    (none)
+missing: "class A { declare x: number; x = 1 }" [ts] [module]
+    eslint: 1:30 Duplicate name 'x'.
+    bun:    (none)
+missing: "class A { x = 1; declare x: number }" [ts] [module]
+    eslint: 1:26 Duplicate name 'x'.
+    bun:    (none)
+missing: "class A { declare x: number; declare x: number }" [ts] [module]
+    eslint: 1:38 Duplicate name 'x'.
+    bun:    (none)
+missing: "class A { declare x; declare x }" [ts] [module]
+    eslint: 1:30 Duplicate name 'x'.
+    bun:    (none)
+missing: "class A { declare static x: number; static x = 1 }" [ts] [module]
+    eslint: 1:44 Duplicate name 'x'.
+    bun:    (none)
+missing: "class A { static declare x: number; static x = 1 }" [ts] [module]
+    eslint: 1:44 Duplicate name 'x'.
+    bun:    (none)
+missing: "class A { declare readonly x: number; declare x: string }" [ts] [module]
+    eslint: 1:47 Duplicate name 'x'.
+    bun:    (none)
+missing: "class A { @d declare x: number; x = 1 }" [ts] [module]
+    eslint: 1:33 Duplicate name 'x'.
+    bun:    (none)
+missing: "class A { @d x: number; @d x: string }" [ts] [module]
+    eslint: 1:28 Duplicate name 'x'.
+    bun:    (none)
+missing: "class A { x: number; x: string }" [ts] [module]
+    eslint: 1:22 Duplicate name 'x'.
+    bun:    (none)
+missing: "class A { x?: number; x!: string }" [ts] [module]
+    eslint: 1:23 Duplicate name 'x'.
+    bun:    (none)
+missing: "abstract class A { m() {} abstract m(): void; m() {} }" [ts] [module]
+    eslint: 1:47 Duplicate name 'm'.
+    bun:    (none)
+missing: "declare class A { x: number; x: string }" [ts] [module]
+    eslint: 1:30 Duplicate name 'x'.
+    bun:    (none)
+missing: "declare namespace N { class A { x: number; x: number } }" [ts] [module]
+    eslint: 1:44 Duplicate name 'x'.
+    bun:    (none)
+missing: "namespace N { export class A { x = 1; x = 2 } }" [ts] [module]
+    eslint: 1:39 Duplicate name 'x'.
+    bun:    (none)
+bun-rejects: "class A { constructor(public x: number, public x: number) {} }" [ts] [module]
+    eslint: (none)
+    bun:    REJECTS syntax "x" cannot be bound multiple times in the same parameter list | syntax "x" has already been declared
+missing: "class A { static x: number; static x: number }" [ts] [module]
+    eslint: 1:36 Duplicate name 'x'.
+    bun:    (none)
+missing: "class A { private x = 1; public x = 2 }" [ts] [module]
+    eslint: 1:33 Duplicate name 'x'.
+    bun:    (none)
+missing: "class A { readonly x = 1; x() {} }" [ts] [module]
+    eslint: 1:27 Duplicate name 'x'.
+    bun:    (none)
+missing: "class A { x = 1; get x(): number { return 1 } }" [ts] [module]
+    eslint: 1:22 Duplicate name 'x'.
+    bun:    (none)
+missing: "class A { [\"a\"]: number; a = 1 }" [ts] [module]
+    eslint: 1:26 Duplicate name 'a'.
+    bun:    (none)
+missing: "class A { [(\"a\")] = 1; a = 1 }" [ts] [module]
+    eslint: 1:24 Duplicate name 'a'.
+    bun:    (none)
+missing: "class A { a = 1; [(\"a\")] = 1 }" [ts] [module]
+    eslint: 1:20 Duplicate name 'a'.
+    bun:    (none)
+missing: "class A { foo?(): void {} foo() {} }" [ts] [module]
+    eslint: 1:27 Duplicate name 'foo'.
+    bun:    (none)
+missing: "class A { m<T>(x: T): T { return x } m(): void {} }" [ts] [module]
+    eslint: 1:38 Duplicate name 'm'.
+    bun:    (none)
+missing: "class A { override m() {} override m() {} }" [ts] [module]
+    eslint: 1:36 Duplicate name 'm'.
+    bun:    (none)
+missing: "class A { 1 = 1; 1.0 = 2 }" [ts] [module]
+    eslint: 1:18 Duplicate name '1'.
+    bun:    (none)
+missing: "class A<T> implements I { a: T; b: T; a: T }" [ts] [module]
+    eslint: 1:39 Duplicate name 'a'.
+    bun:    (none)
+missing: "const A = class<T> { x: T; x: T }" [ts] [module]
+    eslint: 1:28 Duplicate name 'x'.
+    bun:    (none)
+missing: "class A { static { } x; x }" [ts] [module]
+    eslint: 1:25 Duplicate name 'x'.
+    bun:    (none)
+missing: "const e = <div>{class { a = 1; a = 2 }}</div>;" [tsx] [module]
+    eslint: 1:32 Duplicate name 'a'.
+    bun:    (none)
+missing: "export class A { x = 1; x = 2 }" [mts] [module]
+    eslint: 1:25 Duplicate name 'x'.
+    bun:    (none)
+missing: "class A { x = 1; x = 2 }" [cts] [commonjs]
+    eslint: 1:18 Duplicate name 'x'.
+    bun:    (none)

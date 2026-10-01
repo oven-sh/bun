@@ -1,0 +1,34 @@
+"switch (a) { case 1: enum E {} }"
+      => (none)
+"switch (a) { case 1: const enum E {} }"
+      => (none)
+"switch (a) { case 1: type T = 1; }"
+      => (none)
+"switch (a) { case 1: interface I {} }"
+      => (none)
+"switch (a) { case 1: declare const x: number; }"
+      => no-case-declarations 1:22 Unexpected lexical declaration in case block.
+"switch (a) { case 1: namespace N {} }"
+      => (none)
+"switch (a) { case 1: abstract class A {} }"
+      => no-case-declarations 1:22 Unexpected lexical declaration in case block.
+"switch (a) { case 1: @dec class A {} }"
+      => no-case-declarations 1:22 Unexpected lexical declaration in case block.
+"switch (a) { case 1: using x = y; }"
+      => no-case-declarations 1:22 Unexpected lexical declaration in case block.
+"async function f() { switch (a) { case 1: await using x = y; } }"
+      => no-case-declarations 1:43 Unexpected lexical declaration in case block.
+"switch (a) { case 1: function f(): void; function f() {} }"
+      => no-case-declarations 1:42 Unexpected lexical declaration in case block.
+"switch (a) { case 1: let x: number; }"
+      => no-case-declarations 1:22 Unexpected lexical declaration in case block.
+"switch (a) { case 1: declare function f(): void; }"
+      => (none)
+"switch (a) { case 1: async function f() {} }"
+      => no-case-declarations 1:22 Unexpected lexical declaration in case block.
+"switch (a) { case 1: function* f() {} }"
+      => no-case-declarations 1:22 Unexpected lexical declaration in case block.
+"switch (a) { case 1: declare class A {} }"
+      => no-case-declarations 1:22 Unexpected lexical declaration in case block.
+"switch (a) { case 1: var x: number = 1; }"
+      => (none)

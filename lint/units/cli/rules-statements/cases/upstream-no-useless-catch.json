@@ -1,0 +1,70 @@
+{
+	"valid": [
+		{
+			"code": "\n            try {\n                foo();\n            } catch (err) {\n                console.error(err);\n            }\n        "
+		},
+		{
+			"code": "\n            try {\n                foo();\n            } catch (err) {\n                console.error(err);\n            } finally {\n                bar();\n            }\n        "
+		},
+		{
+			"code": "\n            try {\n                foo();\n            } catch (err) {\n                doSomethingBeforeRethrow();\n                throw err;\n            }\n        "
+		},
+		{
+			"code": "\n            try {\n                foo();\n            } catch (err) {\n                throw err.msg;\n            }\n        "
+		},
+		{
+			"code": "\n            try {\n                foo();\n            } catch (err) {\n                throw new Error(\"whoops!\");\n            }\n        "
+		},
+		{
+			"code": "\n            try {\n                foo();\n            } catch (err) {\n                throw bar;\n            }\n        "
+		},
+		{
+			"code": "\n            try {\n                foo();\n            } catch (err) { }\n        "
+		},
+		{
+			"code": "\n                try {\n                    foo();\n                } catch ({ err }) {\n                    throw err;\n                }\n            ",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "\n                try {\n                    foo();\n                } catch ([ err ]) {\n                    throw err;\n                }\n            ",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "\n                async () => {\n                    try {\n                        await doSomething();\n                    } catch (e) {\n                        doSomethingAfterCatch();\n                        throw e;\n                    }\n                }\n            ",
+			"languageOptions": {
+				"ecmaVersion": 8
+			}
+		},
+		{
+			"code": "\n                try {\n                    throw new Error('foo');\n                } catch {\n                    throw new Error('foo');\n                }\n            ",
+			"languageOptions": {
+				"ecmaVersion": 2019
+			}
+		}
+	],
+	"invalid": [
+		{
+			"code": "\n                try {\n                    foo();\n                } catch (err) {\n                    throw err;\n                }\n            "
+		},
+		{
+			"code": "\n                try {\n                    foo();\n                } catch (err) {\n                    throw err;\n                } finally {\n                    foo();\n                }\n            "
+		},
+		{
+			"code": "\n                try {\n                    foo();\n                } catch (err) {\n                    /* some comment */\n                    throw err;\n                }\n            "
+		},
+		{
+			"code": "\n                try {\n                    foo();\n                } catch (err) {\n                    /* some comment */\n                    throw err;\n                } finally {\n                    foo();\n                }\n            "
+		},
+		{
+			"code": "\n                async () => {\n                    try {\n                        await doSomething();\n                    } catch (e) {\n                        throw e;\n                    }\n                }\n            ",
+			"languageOptions": {
+				"ecmaVersion": 8
+			}
+		}
+	],
+	"skipped": 0
+}

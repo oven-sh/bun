@@ -1,0 +1,2 @@
+{"kind":"valid","code":"delete x.prop;","type":"script","reports":[]}
+{"kind":"invalid","code":"delete x","type":"script","reports":["1:1-1:9 Variables should not be deleted."]}

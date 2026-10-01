@@ -1,0 +1,568 @@
+[
+	{
+		"code": "typeof x === \"strnig\"",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "typeof x === (\"strnig\" as string)",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof x === \"strnig\"!",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof x === <string>\"strnig\"",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof x === (\"strnig\" satisfies string)",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof x === \"strnig\" as string",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof x === (\"strnig\")",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 15,
+				"endLine": 1,
+				"endColumn": 23,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "(typeof x) === \"strnig\"",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 16,
+				"endLine": 1,
+				"endColumn": 24,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "(typeof x as string) === \"strnig\"",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "(typeof x)! === \"strnig\"",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "<string>typeof x === \"strnig\"",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof x! === \"strnig\"",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 15,
+				"endLine": 1,
+				"endColumn": 23,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "typeof (x as any) === \"strnig\"",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 23,
+				"endLine": 1,
+				"endColumn": 31,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "typeof <any>x === \"strnig\"",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 19,
+				"endLine": 1,
+				"endColumn": 27,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "typeof x === undefined",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 23,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "typeof x === (undefined as any)",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof x === undefined!",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof x === (undefined)",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 15,
+				"endLine": 1,
+				"endColumn": 24,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "typeof x === `strnig`",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "typeof x === (`strnig` as string)",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "\"strnig\" === typeof x",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 9,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "(\"strnig\" as string) === typeof x",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "\"strnig\" === (typeof x as string)",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof x as string === \"strnig\"",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof x satisfies string === \"strnig\"",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "let a: typeof x = y; typeof x === \"strnig\"",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 35,
+				"endLine": 1,
+				"endColumn": 43,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "type T = typeof x; if (typeof x === \"nunber\") {}",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 37,
+				"endLine": 1,
+				"endColumn": 45,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "declare const undefined: any; typeof x === undefined",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "type undefined = 1; typeof x === undefined",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 34,
+				"endLine": 1,
+				"endColumn": 43,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "function f(undefined: any) { typeof x === undefined }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof x == 1",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 13,
+				"endLine": 1,
+				"endColumn": 14,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "typeof x == (1 as number)",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof x === null!",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof x === /a/",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 17,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "typeof x === 1n",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "typeof x === true",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "typeof x === typeof y",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof x === (typeof y as string)",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "let t: typeof import(\"x\"); typeof x === \"strnig\"",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 41,
+				"endLine": 1,
+				"endColumn": 49,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "function f(x: unknown): x is string { return typeof x === \"strnig\" }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 59,
+				"endLine": 1,
+				"endColumn": 67,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "const y = typeof x === \"strnig\" as unknown",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "import type { undefined } from \"m\"; typeof x === undefined",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "enum E { undefined } typeof x === undefined",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 35,
+				"endLine": 1,
+				"endColumn": 44,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "namespace undefined {} typeof x === undefined",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof x === \"string\" as string",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "enum E { A = typeof x === \"strnig\" ? 1 : 2 }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 27,
+				"endLine": 1,
+				"endColumn": 35,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "const e = <div a={typeof x === \"strnig\"} />;",
+		"ext": "tsx",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 32,
+				"endLine": 1,
+				"endColumn": 40,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "typeof x === (\"strnig\" as string)",
+		"ext": "tsx",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof x === \"strnig\"",
+		"ext": "mts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "typeof x === \"strnig\"",
+		"ext": "cts",
+		"sourceType": "commonjs",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	}
+]

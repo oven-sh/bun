@@ -1,0 +1,21 @@
+{"code":"foo.hasOwnProperty.call(bar)","type":"script","reports":[]}
+{"code":"new foo.hasOwnProperty('x')","type":"script","reports":[]}
+{"code":"foo.hasOwnProperty`x`","type":"script","reports":[]}
+{"code":"this.hasOwnProperty('x')","type":"script","reports":["1:6-1:20 Do not access Object.prototype method 'hasOwnProperty' from target object."]}
+{"code":"class A extends B { m() { return super.isPrototypeOf(x) } }","type":"script","reports":["1:40-1:53 Do not access Object.prototype method 'isPrototypeOf' from target object."]}
+{"code":"foo.hasOwnProperty()","type":"script","reports":["1:5-1:19 Do not access Object.prototype method 'hasOwnProperty' from target object."]}
+{"code":"(0, foo.hasOwnProperty)('x')","type":"script","reports":[]}
+{"code":"foo.hasOwnProperty\n('x')","type":"script","reports":["1:5-1:19 Do not access Object.prototype method 'hasOwnProperty' from target object."]}
+{"code":"foo . hasOwnProperty ('x')","type":"script","reports":["1:7-1:21 Do not access Object.prototype method 'hasOwnProperty' from target object."]}
+{"code":"foo./* c */hasOwnProperty('x')","type":"script","reports":["1:12-1:26 Do not access Object.prototype method 'hasOwnProperty' from target object."]}
+{"code":"foo[/* c */ 'hasOwnProperty']('x')","type":"script","reports":["1:13-1:29 Do not access Object.prototype method 'hasOwnProperty' from target object."]}
+{"code":"foo[('hasOwnProperty')]('x')","type":"script","reports":["1:6-1:22 Do not access Object.prototype method 'hasOwnProperty' from target object."]}
+{"code":"foo.propertyIsEnumerable(a).isPrototypeOf(b)","type":"script","reports":["1:5-1:25 Do not access Object.prototype method 'propertyIsEnumerable' from target object.","1:29-1:42 Do not access Object.prototype method 'isPrototypeOf' from target object."]}
+{"code":"a(foo.hasOwnProperty('x'), bar.isPrototypeOf(y))","type":"script","reports":["1:7-1:21 Do not access Object.prototype method 'hasOwnProperty' from target object.","1:32-1:45 Do not access Object.prototype method 'isPrototypeOf' from target object."]}
+{"code":"import.meta.hasOwnProperty('x')","type":"module","reports":["1:13-1:27 Do not access Object.prototype method 'hasOwnProperty' from target object."]}
+{"code":"foo['has\\u004fwnProperty']('x')","type":"script","reports":["1:5-1:26 Do not access Object.prototype method 'hasOwnProperty' from target object."]}
+{"code":"foo.has\\u004fwnProperty('x')","type":"script","reports":["1:5-1:24 Do not access Object.prototype method 'hasOwnProperty' from target object."]}
+{"code":"foo[`hasOwnProperty`]?.('x')","type":"script","reports":["1:5-1:21 Do not access Object.prototype method 'hasOwnProperty' from target object."]}
+{"code":"foo.hasOwnProperty(...a)","type":"script","reports":["1:5-1:19 Do not access Object.prototype method 'hasOwnProperty' from target object."]}
+{"code":"async () => { await foo.hasOwnProperty('x') }","type":"script","reports":["1:25-1:39 Do not access Object.prototype method 'hasOwnProperty' from target object."]}
+{"code":"x = <a b={foo.hasOwnProperty('x')} />","type":"script","jsx":true,"reports":["1:15-1:29 Do not access Object.prototype method 'hasOwnProperty' from target object."]}

@@ -1,0 +1,118 @@
+{
+	"valid": [
+		{
+			"code": "A: break A;"
+		},
+		{
+			"code": "A: { foo(); break A; bar(); }"
+		},
+		{
+			"code": "A: if (a) { foo(); if (b) break A; bar(); }"
+		},
+		{
+			"code": "A: for (var i = 0; i < 10; ++i) { foo(); if (a) break A; bar(); }"
+		},
+		{
+			"code": "A: for (var i = 0; i < 10; ++i) { foo(); if (a) continue A; bar(); }"
+		},
+		{
+			"code": "A: { B: break B; C: for (var i = 0; i < 10; ++i) { foo(); if (a) break A; if (c) continue C; bar(); } }"
+		},
+		{
+			"code": "A: { var A = 0; console.log(A); break A; console.log(A); }"
+		}
+	],
+	"invalid": [
+		{
+			"code": "A: var foo = 0;"
+		},
+		{
+			"code": "A: { foo(); bar(); }"
+		},
+		{
+			"code": "A: if (a) { foo(); bar(); }"
+		},
+		{
+			"code": "A: for (var i = 0; i < 10; ++i) { foo(); if (a) break; bar(); }"
+		},
+		{
+			"code": "A: for (var i = 0; i < 10; ++i) { foo(); if (a) continue; bar(); }"
+		},
+		{
+			"code": "A: for (var i = 0; i < 10; ++i) { B: break A; }"
+		},
+		{
+			"code": "A: { var A = 0; console.log(A); }"
+		},
+		{
+			"code": "A: /* comment */ foo"
+		},
+		{
+			"code": "A /* comment */: foo"
+		},
+		{
+			"code": "A: \"use strict\""
+		},
+		{
+			"code": "\"use strict\"; foo: \"bar\""
+		},
+		{
+			"code": "A: (\"use strict\")"
+		},
+		{
+			"code": "A: `use strict`",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "if (foo) { bar: 'baz' }"
+		},
+		{
+			"code": "A: B: 'foo'"
+		},
+		{
+			"code": "A: B: C: 'foo'"
+		},
+		{
+			"code": "A: B: C: D: 'foo'"
+		},
+		{
+			"code": "A: B: C: D: E: 'foo'"
+		},
+		{
+			"code": "A: 42"
+		},
+		{
+			"code": "foo()\nA: [1, 2, 3].forEach(x => x)"
+		},
+		{
+			"code": "foo()\nA: (function() {})()"
+		},
+		{
+			"code": "foo()\nA: /regex/.test(x)"
+		},
+		{
+			"code": "foo()\nA: +x"
+		},
+		{
+			"code": "foo()\nA: -x"
+		},
+		{
+			"code": "foo()\nA: `template` + bar",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "const foo = function() {}\nA: [1, 2, 3].forEach(x => x)"
+		},
+		{
+			"code": "foo();\nA: [1, 2, 3].forEach(x => x)"
+		},
+		{
+			"code": "OUTER: while (true) { A: [1, 2, 3].forEach(x => x); break OUTER; }"
+		}
+	],
+	"skipped": 0
+}

@@ -1,0 +1,41 @@
+{"code":"function* f() { ; }","type":"script","reports":["1:1-1:12 This generator function does not have 'yield'."]}
+{"code":"function* f() { 'use strict' }","type":"script","reports":["1:1-1:12 This generator function does not have 'yield'."]}
+{"code":"function* f() { /*! legal */ }","type":"script","reports":[]}
+{"code":"export async function* f() { return 1 }","type":"module","reports":["1:8-1:25 This generator function does not have 'yield'."]}
+{"code":"export default async function* () { return 1 }","type":"module","reports":["1:16-1:32 This generator function does not have 'yield'."]}
+{"code":"export default function* () { return 1 }","type":"module","reports":["1:16-1:26 This generator function does not have 'yield'."]}
+{"code":"export function* f() { return 1 }","type":"module","reports":["1:8-1:19 This generator function does not have 'yield'."]}
+{"code":"({ async *f() { return 1 } })","type":"script","reports":["1:4-1:12 This generator function does not have 'yield'."]}
+{"code":"({ *[k]() { return 1 } })","type":"script","reports":["1:4-1:8 This generator function does not have 'yield'."]}
+{"code":"({ [k]: function*() { return 1 } })","type":"script","reports":["1:4-1:18 This generator function does not have 'yield'."]}
+{"code":"({ 'f': function*() { return 1 } })","type":"script","reports":["1:4-1:18 This generator function does not have 'yield'."]}
+{"code":"({ f = function*() { return 1 } } = x)","type":"script","reports":["1:8-1:17 This generator function does not have 'yield'."]}
+{"code":"class A { static *f() { return 1 } }","type":"script","reports":["1:11-1:20 This generator function does not have 'yield'."]}
+{"code":"class A { static async *f() { return 1 } }","type":"script","reports":["1:11-1:26 This generator function does not have 'yield'."]}
+{"code":"class A { f = function*() { return 1 } }","type":"script","reports":["1:11-1:24 This generator function does not have 'yield'."]}
+{"code":"class A { static f = function*() { return 1 } }","type":"script","reports":["1:11-1:31 This generator function does not have 'yield'."]}
+{"code":"class A { *[k]() { return 1 } }","type":"script","reports":["1:11-1:15 This generator function does not have 'yield'."]}
+{"code":"class A { *'f'() { return 1 } }","type":"script","reports":["1:11-1:15 This generator function does not have 'yield'."]}
+{"code":"x = async function* () { return 1 }","type":"script","reports":["1:5-1:21 This generator function does not have 'yield'."]}
+{"code":"function* f() { yield* g(); }","type":"script","reports":[]}
+{"code":"function* f() { return yield; }","type":"script","reports":[]}
+{"code":"function* f(a = 1) { return a }","type":"script","reports":["1:1-1:12 This generator function does not have 'yield'."]}
+{"code":"({ * /* c */ f() { return 1 } })","type":"script","reports":["1:4-1:15 This generator function does not have 'yield'."]}
+{"code":"({ *\n f() { return 1 } })","type":"script","reports":["1:4-2:3 This generator function does not have 'yield'."]}
+{"code":"class A { *\n f() { return 1 } }","type":"script","reports":["1:11-2:3 This generator function does not have 'yield'."]}
+{"code":"var o = { a: 1, *f() { return 1 } }","type":"script","reports":["1:17-1:19 This generator function does not have 'yield'."]}
+{"code":"({ f: (function*() { return 1 }) })","type":"script","reports":["1:4-1:17 This generator function does not have 'yield'."]}
+{"code":"({ async * f() { return 1 } })","type":"script","reports":["1:4-1:13 This generator function does not have 'yield'."]}
+{"code":"({ async\t*f() { return 1 } })","type":"script","reports":["1:4-1:12 This generator function does not have 'yield'."]}
+{"code":"({ [(k)]: function*() { return 1 } })","type":"script","reports":["1:4-1:20 This generator function does not have 'yield'."]}
+{"code":"({ [ k ]: function*() { return 1 } })","type":"script","reports":["1:4-1:20 This generator function does not have 'yield'."]}
+{"code":"function* f() { function g() { return 1 } }","type":"script","reports":["1:1-1:12 This generator function does not have 'yield'."]}
+{"code":"function* f() { var g = function* () { yield 1 } }","type":"script","reports":["1:1-1:12 This generator function does not have 'yield'."]}
+{"code":"function* f() { class A { *m() { yield 1 } } }","type":"script","reports":["1:1-1:12 This generator function does not have 'yield'."]}
+{"code":"function* f() { return () => 1 }","type":"script","reports":["1:1-1:12 This generator function does not have 'yield'."]}
+{"code":"async function* f() { await 1 }","type":"script","reports":["1:1-1:18 This generator function does not have 'yield'."]}
+{"code":"x = { async: 1, *f() { return 1 } }","type":"script","reports":["1:17-1:19 This generator function does not have 'yield'."]}
+{"code":"label: function* f() { return 1 }","type":"script","fatal":"Parsing error: Unexpected token *","reports":[]}
+{"code":"if (a) (function* () { return 1 })","type":"script","reports":["1:9-1:19 This generator function does not have 'yield'."]}
+{"code":"export default (function* () { return 1 })","type":"module","reports":["1:17-1:27 This generator function does not have 'yield'."]}
+{"code":"x = <a f={function*(){ return 1 }} />","type":"script","jsx":true,"reports":["1:11-1:20 This generator function does not have 'yield'."]}

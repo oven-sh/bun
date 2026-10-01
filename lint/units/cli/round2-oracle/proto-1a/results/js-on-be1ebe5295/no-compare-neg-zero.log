@@ -1,0 +1,10 @@
+no-compare-neg-zero: 99 cases: same 94, merged 2, moved 3
+moved: "(/* c */ x) === -0" [js] [script]
+    eslint: 1:1 Do not use the '===' operator to compare against -0.
+    bun:    1:10 Do not use the '===' operator to compare against -0.
+moved: "(\n x) === -0" [js] [script]
+    eslint: 1:1 Do not use the '===' operator to compare against -0.
+    bun:    2:2 Do not use the '===' operator to compare against -0.
+moved: "( // c\n x) === -0" [js] [script]
+    eslint: 1:1 Do not use the '===' operator to compare against -0.
+    bun:    2:2 Do not use the '===' operator to compare against -0.

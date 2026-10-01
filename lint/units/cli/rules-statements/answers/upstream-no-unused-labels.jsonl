@@ -1,0 +1,35 @@
+{"kind":"valid","code":"A: break A;","type":"script","reports":[]}
+{"kind":"valid","code":"A: { foo(); break A; bar(); }","type":"script","reports":[]}
+{"kind":"valid","code":"A: if (a) { foo(); if (b) break A; bar(); }","type":"script","reports":[]}
+{"kind":"valid","code":"A: for (var i = 0; i < 10; ++i) { foo(); if (a) break A; bar(); }","type":"script","reports":[]}
+{"kind":"valid","code":"A: for (var i = 0; i < 10; ++i) { foo(); if (a) continue A; bar(); }","type":"script","reports":[]}
+{"kind":"valid","code":"A: { B: break B; C: for (var i = 0; i < 10; ++i) { foo(); if (a) break A; if (c) continue C; bar(); } }","type":"script","reports":[]}
+{"kind":"valid","code":"A: { var A = 0; console.log(A); break A; console.log(A); }","type":"script","reports":[]}
+{"kind":"invalid","code":"A: var foo = 0;","type":"script","reports":["1:1-1:2 'A:' is defined but never used."]}
+{"kind":"invalid","code":"A: { foo(); bar(); }","type":"script","reports":["1:1-1:2 'A:' is defined but never used."]}
+{"kind":"invalid","code":"A: if (a) { foo(); bar(); }","type":"script","reports":["1:1-1:2 'A:' is defined but never used."]}
+{"kind":"invalid","code":"A: for (var i = 0; i < 10; ++i) { foo(); if (a) break; bar(); }","type":"script","reports":["1:1-1:2 'A:' is defined but never used."]}
+{"kind":"invalid","code":"A: for (var i = 0; i < 10; ++i) { foo(); if (a) continue; bar(); }","type":"script","reports":["1:1-1:2 'A:' is defined but never used."]}
+{"kind":"invalid","code":"A: for (var i = 0; i < 10; ++i) { B: break A; }","type":"script","reports":["1:35-1:36 'B:' is defined but never used."]}
+{"kind":"invalid","code":"A: { var A = 0; console.log(A); }","type":"script","reports":["1:1-1:2 'A:' is defined but never used."]}
+{"kind":"invalid","code":"A: /* comment */ foo","type":"script","reports":["1:1-1:2 'A:' is defined but never used."]}
+{"kind":"invalid","code":"A /* comment */: foo","type":"script","reports":["1:1-1:2 'A:' is defined but never used."]}
+{"kind":"invalid","code":"A: \"use strict\"","type":"script","reports":["1:1-1:2 'A:' is defined but never used."]}
+{"kind":"invalid","code":"\"use strict\"; foo: \"bar\"","type":"script","reports":["1:15-1:18 'foo:' is defined but never used."]}
+{"kind":"invalid","code":"A: (\"use strict\")","type":"script","reports":["1:1-1:2 'A:' is defined but never used."]}
+{"kind":"invalid","code":"A: `use strict`","type":"script","given":"{\"ecmaVersion\":6}","reports":["1:1-1:2 'A:' is defined but never used."]}
+{"kind":"invalid","code":"if (foo) { bar: 'baz' }","type":"script","reports":["1:12-1:15 'bar:' is defined but never used."]}
+{"kind":"invalid","code":"A: B: 'foo'","type":"script","reports":["1:1-1:2 'A:' is defined but never used.","1:4-1:5 'B:' is defined but never used."]}
+{"kind":"invalid","code":"A: B: C: 'foo'","type":"script","reports":["1:1-1:2 'A:' is defined but never used.","1:4-1:5 'B:' is defined but never used.","1:7-1:8 'C:' is defined but never used."]}
+{"kind":"invalid","code":"A: B: C: D: 'foo'","type":"script","reports":["1:1-1:2 'A:' is defined but never used.","1:4-1:5 'B:' is defined but never used.","1:7-1:8 'C:' is defined but never used.","1:10-1:11 'D:' is defined but never used."]}
+{"kind":"invalid","code":"A: B: C: D: E: 'foo'","type":"script","reports":["1:1-1:2 'A:' is defined but never used.","1:4-1:5 'B:' is defined but never used.","1:7-1:8 'C:' is defined but never used.","1:10-1:11 'D:' is defined but never used.","1:13-1:14 'E:' is defined but never used."]}
+{"kind":"invalid","code":"A: 42","type":"script","reports":["1:1-1:2 'A:' is defined but never used."]}
+{"kind":"invalid","code":"foo()\nA: [1, 2, 3].forEach(x => x)","type":"script","reports":["2:1-2:2 'A:' is defined but never used."]}
+{"kind":"invalid","code":"foo()\nA: (function() {})()","type":"script","reports":["2:1-2:2 'A:' is defined but never used."]}
+{"kind":"invalid","code":"foo()\nA: /regex/.test(x)","type":"script","reports":["2:1-2:2 'A:' is defined but never used."]}
+{"kind":"invalid","code":"foo()\nA: +x","type":"script","reports":["2:1-2:2 'A:' is defined but never used."]}
+{"kind":"invalid","code":"foo()\nA: -x","type":"script","reports":["2:1-2:2 'A:' is defined but never used."]}
+{"kind":"invalid","code":"foo()\nA: `template` + bar","type":"script","given":"{\"ecmaVersion\":6}","reports":["2:1-2:2 'A:' is defined but never used."]}
+{"kind":"invalid","code":"const foo = function() {}\nA: [1, 2, 3].forEach(x => x)","type":"script","reports":["2:1-2:2 'A:' is defined but never used."]}
+{"kind":"invalid","code":"foo();\nA: [1, 2, 3].forEach(x => x)","type":"script","reports":["2:1-2:2 'A:' is defined but never used."]}
+{"kind":"invalid","code":"OUTER: while (true) { A: [1, 2, 3].forEach(x => x); break OUTER; }","type":"script","reports":["1:23-1:24 'A:' is defined but never used."]}

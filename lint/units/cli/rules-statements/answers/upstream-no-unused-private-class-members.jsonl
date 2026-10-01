@@ -1,0 +1,61 @@
+{"kind":"valid","code":"class Foo {}","type":"script","reports":[]}
+{"kind":"valid","code":"class Foo {\n    publicMember = 42;\n}","type":"script","reports":[]}
+{"kind":"valid","code":"class Foo {\n    #usedMember = 42;\n    method() {\n        return this.#usedMember;\n    }\n}","type":"script","reports":[]}
+{"kind":"valid","code":"class Foo {\n    #usedMember = 42;\n    anotherMember = this.#usedMember;\n}","type":"script","reports":[]}
+{"kind":"valid","code":"class Foo {\n    #usedMember = 42;\n    foo() {\n        anotherMember = this.#usedMember;\n    }\n}","type":"script","reports":[]}
+{"kind":"valid","code":"class C {\n    #usedMember;\n\n    foo() {\n        bar(this.#usedMember += 1);\n    }\n}","type":"script","reports":[]}
+{"kind":"valid","code":"class Foo {\n    #usedMember = 42;\n    method() {\n        return someGlobalMethod(this.#usedMember);\n    }\n}","type":"script","reports":[]}
+{"kind":"valid","code":"class C {\n    #usedInOuterClass;\n\n    foo() {\n        return class {};\n    }\n\n    bar() {\n        return this.#usedInOuterClass;\n    }\n}","type":"script","reports":[]}
+{"kind":"valid","code":"class Foo {\n    #usedInForInLoop;\n    method() {\n        for (const bar in this.#usedInForInLoop) {\n\n        }\n    }\n}","type":"script","reports":[]}
+{"kind":"valid","code":"class Foo {\n    #usedInForOfLoop;\n    method() {\n        for (const bar of this.#usedInForOfLoop) {\n\n        }\n    }\n}","type":"script","reports":[]}
+{"kind":"valid","code":"class Foo {\n    #usedInAssignmentPattern;\n    method() {\n        [bar = 1] = this.#usedInAssignmentPattern;\n    }\n}","type":"script","reports":[]}
+{"kind":"valid","code":"class Foo {\n    #usedInArrayPattern;\n    method() {\n        [bar] = this.#usedInArrayPattern;\n    }\n}","type":"script","reports":[]}
+{"kind":"valid","code":"class Foo {\n    #usedInAssignmentPattern;\n    method() {\n        [bar] = this.#usedInAssignmentPattern;\n    }\n}","type":"script","reports":[]}
+{"kind":"valid","code":"class C {\n    #usedInObjectAssignment;\n\n    method() {\n        ({ [this.#usedInObjectAssignment]: a } = foo);\n    }\n}","type":"script","reports":[]}
+{"kind":"valid","code":"class C {\n    set #accessorWithSetterFirst(value) {\n        doSomething(value);\n    }\n    get #accessorWithSetterFirst() {\n        return something();\n    }\n    method() {\n        this.#accessorWithSetterFirst += 1;\n    }\n}","type":"script","reports":[]}
+{"kind":"valid","code":"class Foo {\n    set #accessorUsedInMemberAccess(value) {}\n\n    method(a) {\n        [this.#accessorUsedInMemberAccess] = a;\n    }\n}","type":"script","reports":[]}
+{"kind":"valid","code":"class C {\n    get #accessorWithGetterFirst() {\n        return something();\n    }\n    set #accessorWithGetterFirst(value) {\n        doSomething(value);\n    }\n    method() {\n        this.#accessorWithGetterFirst += 1;\n    }\n}","type":"script","reports":[]}
+{"kind":"valid","code":"class C {\n    #usedInInnerClass;\n\n    method(a) {\n        return class {\n            foo = a.#usedInInnerClass;\n        }\n    }\n}","type":"script","reports":[]}
+{"kind":"valid","code":"class Foo {\n    #usedMethod() {\n        return 42;\n    }\n    anotherMethod() {\n        return this.#usedMethod();\n    }\n}","type":"script","reports":[]}
+{"kind":"valid","code":"class C {\n    set #x(value) {\n        doSomething(value);\n    }\n\n    foo() {\n        this.#x = 1;\n    }\n}","type":"script","reports":[]}
+{"kind":"invalid","code":"class Foo {\n    #unusedMember = 5;\n}","type":"script","reports":["2:5-2:18 '#unusedMember' is defined but never used."]}
+{"kind":"invalid","code":"class Foo {\n    /** docs */\n    #unusedMember = 1;\n}","type":"script","reports":["3:5-3:18 '#unusedMember' is defined but never used."]}
+{"kind":"invalid","code":"class Foo {\n    // remove me\n    #unusedMember = 1;\n}","type":"script","reports":["3:5-3:18 '#unusedMember' is defined but never used."]}
+{"kind":"invalid","code":"class Foo {\n    /* remove */ #unusedMember = 1;\n}","type":"script","reports":["2:18-2:31 '#unusedMember' is defined but never used."]}
+{"kind":"invalid","code":"class Foo {\n    /* keep */ #unusedMember = 1; foo = 1\n}","type":"script","reports":["2:16-2:29 '#unusedMember' is defined but never used."]}
+{"kind":"invalid","code":"class C {\n    #unused1; /* keep */ foo;\n}","type":"script","reports":["2:5-2:13 '#unused1' is defined but never used."]}
+{"kind":"invalid","code":"class C {\n    bar; #unused2; // keep\n}","type":"script","reports":["2:10-2:18 '#unused2' is defined but never used."]}
+{"kind":"invalid","code":"class C {\n    // comment\n    #unused; foo;\n}","type":"script","reports":["3:5-3:12 '#unused' is defined but never used."]}
+{"kind":"invalid","code":"class C {\n    // comment\n    #unused; /*\n    */ foo;\n}","type":"script","reports":["3:5-3:12 '#unused' is defined but never used."]}
+{"kind":"invalid","code":"class Foo {\n    #unusedMember = 1; // trailing\n}","type":"script","reports":["2:5-2:18 '#unusedMember' is defined but never used."]}
+{"kind":"invalid","code":"class Foo {\n    foo = 1; /*\n    */ #unusedMember = 1;\n}","type":"script","reports":["3:8-3:21 '#unusedMember' is defined but never used."]}
+{"kind":"invalid","code":"class Foo {\n    foo = 1; // keep this\n    #unusedMember = 1;\n}","type":"script","reports":["3:5-3:18 '#unusedMember' is defined but never used."]}
+{"kind":"invalid","code":"class First {}\nclass Second {\n    #unusedMemberInSecondClass = 5;\n}","type":"script","reports":["3:5-3:31 '#unusedMemberInSecondClass' is defined but never used."]}
+{"kind":"invalid","code":"class First {\n    #unusedMemberInFirstClass = 5;\n}\nclass Second {}","type":"script","reports":["2:5-2:30 '#unusedMemberInFirstClass' is defined but never used."]}
+{"kind":"invalid","code":"class First {\n    #firstUnusedMemberInSameClass = 5;\n    #secondUnusedMemberInSameClass = 5;\n}","type":"script","reports":["2:5-2:34 '#firstUnusedMemberInSameClass' is defined but never used.","3:5-3:35 '#secondUnusedMemberInSameClass' is defined but never used."]}
+{"kind":"invalid","code":"class Foo {\n    #usedOnlyInWrite = 5;\n    method() {\n        this.#usedOnlyInWrite = 42;\n    }\n}","type":"script","reports":["2:5-2:21 '#usedOnlyInWrite' is defined but never used."]}
+{"kind":"invalid","code":"class Foo {\n    #usedOnlyInWriteStatement = 5;\n    method() {\n        this.#usedOnlyInWriteStatement += 42;\n    }\n}","type":"script","reports":["2:5-2:30 '#usedOnlyInWriteStatement' is defined but never used."]}
+{"kind":"invalid","code":"class C {\n    #usedOnlyInIncrement;\n\n    foo() {\n        this.#usedOnlyInIncrement++;\n    }\n}","type":"script","reports":["2:5-2:25 '#usedOnlyInIncrement' is defined but never used."]}
+{"kind":"invalid","code":"class C {\n    #unusedInOuterClass;\n\n    foo() {\n        return class {\n            #unusedInOuterClass;\n\n            bar() {\n                return this.#unusedInOuterClass;\n            }\n        };\n    }\n}","type":"script","reports":["2:5-2:24 '#unusedInOuterClass' is defined but never used."]}
+{"kind":"invalid","code":"class C {\n    #unusedOnlyInSecondNestedClass;\n\n    foo() {\n        return class {\n            #unusedOnlyInSecondNestedClass;\n\n            bar() {\n                return this.#unusedOnlyInSecondNestedClass;\n            }\n        };\n    }\n\n    baz() {\n        return this.#unusedOnlyInSecondNestedClass;\n    }\n\n    bar() {\n        return class {\n            #unusedOnlyInSecondNestedClass;\n        }\n    }\n}","type":"script","reports":["20:13-20:43 '#unusedOnlyInSecondNestedClass' is defined but never used."]}
+{"kind":"invalid","code":"class Foo {\n    #unusedMethod() {}\n}","type":"script","reports":["2:5-2:18 '#unusedMethod' is defined but never used."]}
+{"kind":"invalid","code":"class Foo {\n    #unusedMethod() {}\n    #usedMethod() {\n        return 42;\n    }\n    publicMethod() {\n        return this.#usedMethod();\n    }\n}","type":"script","reports":["2:5-2:18 '#unusedMethod' is defined but never used."]}
+{"kind":"invalid","code":"class Foo {\n    set #unusedSetter(value) {}\n}","type":"script","reports":["2:9-2:22 '#unusedSetter' is defined but never used."]}
+{"kind":"invalid","code":"class Foo {\n    get #unusedAccessor() {\n        return 1;\n    }\n    set #unusedAccessor(value) {}\n}","type":"script","reports":["5:9-5:24 '#unusedAccessor' is defined but never used."]}
+{"kind":"invalid","code":"class Foo {\n    #unusedForInLoop;\n    method() {\n        for (this.#unusedForInLoop in bar) {\n\n        }\n    }\n}","type":"script","reports":["2:5-2:21 '#unusedForInLoop' is defined but never used."]}
+{"kind":"invalid","code":"class Foo {\n    #unusedForOfLoop;\n    method() {\n        for (this.#unusedForOfLoop of bar) {\n\n        }\n    }\n}","type":"script","reports":["2:5-2:21 '#unusedForOfLoop' is defined but never used."]}
+{"kind":"invalid","code":"class Foo {\n    #unusedInDestructuring;\n    method() {\n        ({ x: this.#unusedInDestructuring } = bar);\n    }\n}","type":"script","reports":["2:5-2:27 '#unusedInDestructuring' is defined but never used."]}
+{"kind":"invalid","code":"class Foo {\n    #unusedInRestPattern;\n    method() {\n        [...this.#unusedInRestPattern] = bar;\n    }\n}","type":"script","reports":["2:5-2:25 '#unusedInRestPattern' is defined but never used."]}
+{"kind":"invalid","code":"class Foo {\n    #unusedInAssignmentPattern;\n    method() {\n        [this.#unusedInAssignmentPattern = 1] = bar;\n    }\n}","type":"script","reports":["2:5-2:31 '#unusedInAssignmentPattern' is defined but never used."]}
+{"kind":"invalid","code":"class Foo {\n    #unusedInAssignmentPattern;\n    method() {\n        [this.#unusedInAssignmentPattern] = bar;\n    }\n}","type":"script","reports":["2:5-2:31 '#unusedInAssignmentPattern' is defined but never used."]}
+{"kind":"invalid","code":"class Foo {\n    foo = 1\n    #unusedMethod() {}\n    [0]() {}\n}","type":"script","reports":["3:5-3:18 '#unusedMethod' is defined but never used."]}
+{"kind":"invalid","code":"class Foo {\n    foo = 1\n    #unusedMethod() {}\n    *generator() {}\n}","type":"script","reports":["3:5-3:18 '#unusedMethod' is defined but never used."]}
+{"kind":"invalid","code":"class Foo {\n    foo = 1\n    #unusedMethod() {}\n    in = 2\n}","type":"script","reports":["3:5-3:18 '#unusedMethod' is defined but never used."]}
+{"kind":"invalid","code":"class Foo {\n    foo = 1\n    #unused\n    instanceof() {}\n}","type":"script","reports":["3:5-3:12 '#unused' is defined but never used."]}
+{"kind":"invalid","code":"class C {\n    foo = () => {}\n    #unused\n    [bar]\n}","type":"script","reports":["3:5-3:12 '#unused' is defined but never used."]}
+{"kind":"invalid","code":"class C {\n    foo\n    #unused\n    [bar]\n}","type":"script","reports":["3:5-3:12 '#unused' is defined but never used."]}
+{"kind":"invalid","code":"class Foo {\n    foo = 1\n    /** docs */\n    #unusedMethod() {}\n    [0]() {}\n}","type":"script","reports":["4:5-4:18 '#unusedMethod' is defined but never used."]}
+{"kind":"invalid","code":"class Foo {\n    // keep\n\n    /** remove */\n    #unusedMember = 1;\n}","type":"script","reports":["5:5-5:18 '#unusedMember' is defined but never used."]}
+{"kind":"invalid","code":"class Foo {\n    // keep one\n    // keep two\n\n    /** remove */\n    #unusedMember = 1;\n}","type":"script","reports":["6:5-6:18 '#unusedMember' is defined but never used."]}
+{"kind":"invalid","code":"class Foo {\n    // maybe unrelated\n\n    #unusedMember = 1;\n}","type":"script","reports":["4:5-4:18 '#unusedMember' is defined but never used."]}
+{"kind":"invalid","code":"class C {\n    #usedOnlyInTheSecondInnerClass;\n\n    method(a) {\n        return class {\n            #usedOnlyInTheSecondInnerClass;\n\n            method2(b) {\n                foo = b.#usedOnlyInTheSecondInnerClass;\n            }\n\n            method3(b) {\n                foo = b.#usedOnlyInTheSecondInnerClass;\n            }\n        }\n    }\n}","type":"script","reports":["2:5-2:35 '#usedOnlyInTheSecondInnerClass' is defined but never used."]}

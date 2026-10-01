@@ -1,0 +1,198 @@
+{
+	"valid": [
+		{
+			"code": "Object.prototype.hasOwnProperty.call(foo, 'bar')"
+		},
+		{
+			"code": "Object.prototype.isPrototypeOf.call(foo, 'bar')"
+		},
+		{
+			"code": "Object.prototype.propertyIsEnumerable.call(foo, 'bar')"
+		},
+		{
+			"code": "Object.prototype.hasOwnProperty.apply(foo, ['bar'])"
+		},
+		{
+			"code": "Object.prototype.isPrototypeOf.apply(foo, ['bar'])"
+		},
+		{
+			"code": "Object.prototype.propertyIsEnumerable.apply(foo, ['bar'])"
+		},
+		{
+			"code": "foo.hasOwnProperty"
+		},
+		{
+			"code": "foo.hasOwnProperty.bar()"
+		},
+		{
+			"code": "foo(hasOwnProperty)"
+		},
+		{
+			"code": "hasOwnProperty(foo, 'bar')"
+		},
+		{
+			"code": "isPrototypeOf(foo, 'bar')"
+		},
+		{
+			"code": "propertyIsEnumerable(foo, 'bar')"
+		},
+		{
+			"code": "({}.hasOwnProperty.call(foo, 'bar'))"
+		},
+		{
+			"code": "({}.isPrototypeOf.call(foo, 'bar'))"
+		},
+		{
+			"code": "({}.propertyIsEnumerable.call(foo, 'bar'))"
+		},
+		{
+			"code": "({}.hasOwnProperty.apply(foo, ['bar']))"
+		},
+		{
+			"code": "({}.isPrototypeOf.apply(foo, ['bar']))"
+		},
+		{
+			"code": "({}.propertyIsEnumerable.apply(foo, ['bar']))"
+		},
+		{
+			"code": "foo[hasOwnProperty]('bar')"
+		},
+		{
+			"code": "foo['HasOwnProperty']('bar')"
+		},
+		{
+			"code": "foo[`isPrototypeOff`]('bar')",
+			"languageOptions": {
+				"ecmaVersion": 2015
+			}
+		},
+		{
+			"code": "foo?.['propertyIsEnumerabl']('bar')",
+			"languageOptions": {
+				"ecmaVersion": 2020
+			}
+		},
+		{
+			"code": "foo[1]('bar')"
+		},
+		{
+			"code": "foo[null]('bar')"
+		},
+		{
+			"code": "class C { #hasOwnProperty; foo() { obj.#hasOwnProperty('bar'); } }",
+			"languageOptions": {
+				"ecmaVersion": 2022
+			}
+		},
+		{
+			"code": "foo['hasOwn' + 'Property']('bar')"
+		},
+		{
+			"code": "foo[`hasOwnProperty${''}`]('bar')",
+			"languageOptions": {
+				"ecmaVersion": 2015
+			}
+		}
+	],
+	"invalid": [
+		{
+			"code": "foo.hasOwnProperty('bar')"
+		},
+		{
+			"code": "foo.isPrototypeOf('bar')"
+		},
+		{
+			"code": "foo.propertyIsEnumerable('bar')"
+		},
+		{
+			"code": "foo.bar.hasOwnProperty('bar')"
+		},
+		{
+			"code": "foo.bar.baz.isPrototypeOf('bar')"
+		},
+		{
+			"code": "foo['hasOwnProperty']('bar')"
+		},
+		{
+			"code": "foo[`isPrototypeOf`]('bar').baz",
+			"languageOptions": {
+				"ecmaVersion": 2015
+			}
+		},
+		{
+			"code": "foo.bar[\"propertyIsEnumerable\"]('baz')"
+		},
+		{
+			"code": "(function(Object) {return foo.hasOwnProperty('bar');})"
+		},
+		{
+			"code": "foo.hasOwnProperty('bar')",
+			"languageOptions": {
+				"globals": {
+					"Object": "off"
+				}
+			}
+		},
+		{
+			"code": "foo?.hasOwnProperty('bar')",
+			"languageOptions": {
+				"ecmaVersion": 2020
+			}
+		},
+		{
+			"code": "foo?.bar.hasOwnProperty('baz')",
+			"languageOptions": {
+				"ecmaVersion": 2020
+			}
+		},
+		{
+			"code": "foo.hasOwnProperty?.('bar')",
+			"languageOptions": {
+				"ecmaVersion": 2020
+			}
+		},
+		{
+			"code": "foo?.hasOwnProperty('bar').baz",
+			"languageOptions": {
+				"ecmaVersion": 2020
+			}
+		},
+		{
+			"code": "foo.hasOwnProperty('bar')?.baz",
+			"languageOptions": {
+				"ecmaVersion": 2020
+			}
+		},
+		{
+			"code": "(a,b).hasOwnProperty('bar')",
+			"languageOptions": {
+				"ecmaVersion": 2020
+			}
+		},
+		{
+			"code": "(foo?.hasOwnProperty)('bar')",
+			"languageOptions": {
+				"ecmaVersion": 2020
+			}
+		},
+		{
+			"code": "(foo?.hasOwnProperty)?.('bar')",
+			"languageOptions": {
+				"ecmaVersion": 2020
+			}
+		},
+		{
+			"code": "foo?.['hasOwnProperty']('bar')",
+			"languageOptions": {
+				"ecmaVersion": 2020
+			}
+		},
+		{
+			"code": "(foo?.[`hasOwnProperty`])('bar')",
+			"languageOptions": {
+				"ecmaVersion": 2020
+			}
+		}
+	],
+	"skipped": 0
+}

@@ -1,0 +1,115 @@
+no-duplicate-case: 51 cases: same 13, missing 38
+missing: "switch (a) { case 1: case 1: }" [ts] [module]
+    eslint: 1:22 Duplicate case label.
+    bun:    (none)
+missing: "switch (a) { case b as T: case b as T: }" [ts] [module]
+    eslint: 1:27 Duplicate case label.
+    bun:    (none)
+missing: "switch (a) { case b as T: case b as  T: }" [ts] [module]
+    eslint: 1:27 Duplicate case label.
+    bun:    (none)
+missing: "switch (a) { case b!: case b!: }" [ts] [module]
+    eslint: 1:23 Duplicate case label.
+    bun:    (none)
+missing: "switch (a) { case <T>b: case <T>b: }" [ts] [module]
+    eslint: 1:25 Duplicate case label.
+    bun:    (none)
+missing: "switch (a) { case b satisfies T: case b satisfies T: }" [ts] [module]
+    eslint: 1:34 Duplicate case label.
+    bun:    (none)
+missing: "switch (a) { case (b): case b: }" [ts] [module]
+    eslint: 1:24 Duplicate case label.
+    bun:    (none)
+missing: "switch (a) { case (b as T): case b as T: }" [ts] [module]
+    eslint: 1:29 Duplicate case label.
+    bun:    (none)
+missing: "switch (a) { case (b!): case b!: }" [ts] [module]
+    eslint: 1:25 Duplicate case label.
+    bun:    (none)
+missing: "switch (a) { case (<T>b): case <T>b: }" [ts] [module]
+    eslint: 1:27 Duplicate case label.
+    bun:    (none)
+missing: "switch (a) { case <T>(b): case <T>(b): }" [ts] [module]
+    eslint: 1:27 Duplicate case label.
+    bun:    (none)
+missing: "switch (a) { case f<T>(b): case f<T>(b): }" [ts] [module]
+    eslint: 1:28 Duplicate case label.
+    bun:    (none)
+missing: "switch (a) { case f<T>(b): case f< T >(b): }" [ts] [module]
+    eslint: 1:28 Duplicate case label.
+    bun:    (none)
+missing: "switch (a) { case f<A<B>>(x): case f<A<B> >(x): }" [ts] [module]
+    eslint: 1:31 Duplicate case label.
+    bun:    (none)
+missing: "switch (a) { case x as A<B<C>>: case x as A<B<C> >: }" [ts] [module]
+    eslint: 1:33 Duplicate case label.
+    bun:    (none)
+missing: "switch (a) { case x >> y: case x >> y: }" [ts] [module]
+    eslint: 1:27 Duplicate case label.
+    bun:    (none)
+missing: "switch (a) { case x as A<B>>= y: case x as A<B> >= y: }" [ts] [module]
+    eslint: 1:34 Duplicate case label.
+    bun:    (none)
+missing: "switch (a) { case (x: number): number => x: break; case (x: number): number => x: break; }" [ts] [module]
+    eslint: 1:52 Duplicate case label.
+    bun:    (none)
+missing: "switch (a) { case function (): void {}: break; case function (): void {}: break; }" [ts] [module]
+    eslint: 1:48 Duplicate case label.
+    bun:    (none)
+missing: "switch (a) { case b as { x: number }: case b as { x: number }: }" [ts] [module]
+    eslint: 1:39 Duplicate case label.
+    bun:    (none)
+missing: "switch (a) { case b as A extends B ? C : D: case b as A extends B ? C : D: }" [ts] [module]
+    eslint: 1:45 Duplicate case label.
+    bun:    (none)
+missing: "switch (a) { case E.A: case E.A: }" [ts] [module]
+    eslint: 1:24 Duplicate case label.
+    bun:    (none)
+missing: "switch (a) { case b.c!.d: case b.c!.d: }" [ts] [module]
+    eslint: 1:27 Duplicate case label.
+    bun:    (none)
+missing: "switch (a) { case b.c!.d: case b.c! .d: }" [ts] [module]
+    eslint: 1:27 Duplicate case label.
+    bun:    (none)
+missing: "switch (a) { case b<c>d: case b<c>d: }" [ts] [module]
+    eslint: 1:26 Duplicate case label.
+    bun:    (none)
+missing: "function f(a: number): void { switch (a) { case 1: break; case 1: break; } }" [ts] [module]
+    eslint: 1:59 Duplicate case label.
+    bun:    (none)
+missing: "switch (a) { case x as any as T: case x as any as T: }" [ts] [module]
+    eslint: 1:34 Duplicate case label.
+    bun:    (none)
+missing: "switch (a) { case <T><U>x: case <T> <U> x: }" [ts] [module]
+    eslint: 1:28 Duplicate case label.
+    bun:    (none)
+missing: "switch (a) { case x?.y!: case x?.y!: }" [ts] [module]
+    eslint: 1:26 Duplicate case label.
+    bun:    (none)
+missing: "switch (a) { case b as T: break; case\n b as T: break; }" [ts] [module]
+    eslint: 1:34 Duplicate case label.
+    bun:    (none)
+missing: "switch (a) { case b as T: break; case /* c */ (b as T): break; }" [ts] [module]
+    eslint: 1:34 Duplicate case label.
+    bun:    (none)
+missing: "switch (a) { case <T>b: break; case ( <T>b ): break; }" [ts] [module]
+    eslint: 1:32 Duplicate case label.
+    bun:    (none)
+missing: "namespace N { switch (a) { case 1: case 1: } }" [ts] [module]
+    eslint: 1:36 Duplicate case label.
+    bun:    (none)
+missing: "enum E { A } switch (e) { case E.A: break; case E.A: break; }" [ts] [module]
+    eslint: 1:44 Duplicate case label.
+    bun:    (none)
+missing: "switch (a) { case <b/>: case <b/>: }" [tsx] [module]
+    eslint: 1:25 Duplicate case label.
+    bun:    (none)
+missing: "switch (a) { case b as T: case b as T: }" [tsx] [module]
+    eslint: 1:27 Duplicate case label.
+    bun:    (none)
+missing: "switch (a) { case 1: case 1: }" [mts] [module]
+    eslint: 1:22 Duplicate case label.
+    bun:    (none)
+missing: "switch (a) { case 1: case 1: }" [cts] [commonjs]
+    eslint: 1:22 Duplicate case label.
+    bun:    (none)

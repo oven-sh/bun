@@ -1,0 +1,94 @@
+no-debugger: 36 cases: same 4, missing 31, both-reject 1
+missing: "debugger;" [ts] [module]
+    eslint: 1:1 Unexpected 'debugger' statement.
+    bun:    (none)
+missing: "let x: number = 1; debugger" [ts] [module]
+    eslint: 1:20 Unexpected 'debugger' statement.
+    bun:    (none)
+missing: "namespace N { debugger }" [ts] [module]
+    eslint: 1:15 Unexpected 'debugger' statement.
+    bun:    (none)
+missing: "namespace A.B { debugger }" [ts] [module]
+    eslint: 1:17 Unexpected 'debugger' statement.
+    bun:    (none)
+missing: "namespace N { namespace M { debugger } }" [ts] [module]
+    eslint: 1:29 Unexpected 'debugger' statement.
+    bun:    (none)
+missing: "module M { debugger }" [ts] [module]
+    eslint: 1:12 Unexpected 'debugger' statement.
+    bun:    (none)
+missing: "export namespace N { export function f() { debugger } }" [ts] [module]
+    eslint: 1:44 Unexpected 'debugger' statement.
+    bun:    (none)
+missing: "declare namespace N { debugger }" [ts] [module]
+    eslint: 1:23 Unexpected 'debugger' statement.
+    bun:    (none)
+missing: "declare module \"m\" { debugger }" [ts] [module]
+    eslint: 1:22 Unexpected 'debugger' statement.
+    bun:    (none)
+missing: "declare global { debugger }" [ts] [module]
+    eslint: 1:18 Unexpected 'debugger' statement.
+    bun:    (none)
+missing: "abstract class A { m() { debugger } }" [ts] [module]
+    eslint: 1:26 Unexpected 'debugger' statement.
+    bun:    (none)
+missing: "export default abstract class { m() { debugger } }" [ts] [module]
+    eslint: 1:39 Unexpected 'debugger' statement.
+    bun:    (none)
+missing: "class A { static { debugger } }" [ts] [module]
+    eslint: 1:20 Unexpected 'debugger' statement.
+    bun:    (none)
+missing: "class A { declare x: number; m() { debugger } }" [ts] [module]
+    eslint: 1:36 Unexpected 'debugger' statement.
+    bun:    (none)
+missing: "function f(a: number): void; function f(a: any) { debugger }" [ts] [module]
+    eslint: 1:51 Unexpected 'debugger' statement.
+    bun:    (none)
+missing: "const f = <T,>(x: T): T => { debugger; return x }" [ts] [module]
+    eslint: 1:30 Unexpected 'debugger' statement.
+    bun:    (none)
+missing: "declare function f(): void; debugger" [ts] [module]
+    eslint: 1:29 Unexpected 'debugger' statement.
+    bun:    (none)
+missing: "declare const x: number; debugger" [ts] [module]
+    eslint: 1:26 Unexpected 'debugger' statement.
+    bun:    (none)
+missing: "enum E { A = 1 } debugger;" [ts] [module]
+    eslint: 1:18 Unexpected 'debugger' statement.
+    bun:    (none)
+missing: "interface I {} debugger" [ts] [module]
+    eslint: 1:16 Unexpected 'debugger' statement.
+    bun:    (none)
+missing: "type T = 1; debugger" [ts] [module]
+    eslint: 1:13 Unexpected 'debugger' statement.
+    bun:    (none)
+missing: "if (x) debugger; else debugger" [ts] [module]
+    eslint: 1:8 Unexpected 'debugger' statement. | 1:23 Unexpected 'debugger' statement.
+    bun:    (none)
+missing: "label: debugger" [ts] [module]
+    eslint: 1:8 Unexpected 'debugger' statement.
+    bun:    (none)
+missing: "function f(this: Window) { debugger }" [ts] [module]
+    eslint: 1:28 Unexpected 'debugger' statement.
+    bun:    (none)
+missing: "export = { f() { debugger } }" [ts] [module]
+    eslint: 1:18 Unexpected 'debugger' statement.
+    bun:    (none)
+missing: "import x = require(\"x\"); debugger" [ts] [module]
+    eslint: 1:26 Unexpected 'debugger' statement.
+    bun:    (none)
+missing: "@d class A { @d m() { debugger } }" [ts] [module]
+    eslint: 1:23 Unexpected 'debugger' statement.
+    bun:    (none)
+missing: "const a = <div onClick={() => { debugger }}/>;" [tsx] [module]
+    eslint: 1:33 Unexpected 'debugger' statement.
+    bun:    (none)
+missing: "debugger; const x = <T,>(y: T) => y;" [tsx] [module]
+    eslint: 1:1 Unexpected 'debugger' statement.
+    bun:    (none)
+missing: "debugger;" [mts] [module]
+    eslint: 1:1 Unexpected 'debugger' statement.
+    bun:    (none)
+missing: "debugger;" [cts] [commonjs]
+    eslint: 1:1 Unexpected 'debugger' statement.
+    bun:    (none)

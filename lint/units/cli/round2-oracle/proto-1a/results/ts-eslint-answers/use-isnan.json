@@ -1,0 +1,781 @@
+[
+	{
+		"code": "x === NaN",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 10,
+				"message": "Use the isNaN function to compare with NaN."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "x === (NaN as number)",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "x === NaN!",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "x === <number>NaN",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "x === (NaN satisfies number)",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "x === NaN as number",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "(x as number) === NaN",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "Use the isNaN function to compare with NaN."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "x! === NaN",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 11,
+				"message": "Use the isNaN function to compare with NaN."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "<number>x === NaN",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "Use the isNaN function to compare with NaN."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "x === (NaN)",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 12,
+				"message": "Use the isNaN function to compare with NaN."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "x === Number.NaN",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 17,
+				"message": "Use the isNaN function to compare with NaN."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "x === Number!.NaN",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "x === (Number as any).NaN",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "x === Number.NaN!",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "x === (Number).NaN",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 19,
+				"message": "Use the isNaN function to compare with NaN."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "x === Number[\"NaN\"]",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 20,
+				"message": "Use the isNaN function to compare with NaN."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "x === Number[\"NaN\" as string]",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "x === Number[(\"NaN\")]",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "Use the isNaN function to compare with NaN."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "x === Number?.NaN",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "Use the isNaN function to compare with NaN."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "x === (a, NaN)",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 15,
+				"message": "Use the isNaN function to compare with NaN."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "x === (a, NaN as number)",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "x === (a, NaN)!",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "x === ((a, NaN) as number)",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "x < NaN!",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "x! >= (NaN)",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 12,
+				"message": "Use the isNaN function to compare with NaN."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "(\n x as T) === NaN",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 2,
+				"endColumn": 17,
+				"message": "Use the isNaN function to compare with NaN."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "(/* c */ <T>x) === NaN",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 23,
+				"message": "Use the isNaN function to compare with NaN."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "switch (NaN as number) { }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "switch (NaN!) { }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "switch ((NaN)) { }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 19,
+				"message": "'switch(NaN)' can never match a case clause. Use Number.isNaN instead of the switch."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "switch (<number>NaN) { }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "switch (x) { case NaN as number: }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "switch (x) { case NaN!: }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "switch (x) { case (NaN): }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 25,
+				"message": "'case NaN' can never match. Use Number.isNaN before the switch."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "switch (x) { case <number>NaN: }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "switch (x) { case NaN: }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 23,
+				"message": "'case NaN' can never match. Use Number.isNaN before the switch."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "switch (x as number) { case NaN: }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 24,
+				"endLine": 1,
+				"endColumn": 33,
+				"message": "'case NaN' can never match. Use Number.isNaN before the switch."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "let NaN: number; x === NaN",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "declare const NaN: number; x === NaN",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "declare var NaN: number; x === NaN",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "function f(NaN: number) { return x === NaN }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "type NaN = number; x === NaN",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 20,
+				"endLine": 1,
+				"endColumn": 29,
+				"message": "Use the isNaN function to compare with NaN."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "interface NaN {} x === NaN",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 18,
+				"endLine": 1,
+				"endColumn": 27,
+				"message": "Use the isNaN function to compare with NaN."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "enum NaN { A } x === NaN",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "declare enum NaN { A } x === NaN",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "namespace NaN { export const a = 1 } x === NaN",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "namespace NaN { export type T = 1 } x === NaN",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "declare namespace NaN { const a: number } x === NaN",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "import type { NaN } from \"m\"; x === NaN",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "import { type NaN } from \"m\"; x === NaN",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "import { type NaN, b } from \"m\"; x === NaN",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "import type NaN from \"m\"; x === NaN",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "import type * as NaN from \"m\"; x === NaN",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "import NaN = require(\"m\"); x === NaN",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "import type NaN = require(\"m\"); x === NaN",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "import NaN = A.B; x === NaN",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "class NaN {} x === NaN",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "declare class NaN {} x === NaN",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "declare function NaN(): void; x === NaN",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "declare global { const NaN: number } x === NaN",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 38,
+				"endLine": 1,
+				"endColumn": 47,
+				"message": "Use the isNaN function to compare with NaN."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "namespace N { const NaN = 1; } x === NaN",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 32,
+				"endLine": 1,
+				"endColumn": 41,
+				"message": "Use the isNaN function to compare with NaN."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "namespace N { export const NaN = 1; x === NaN }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "declare module \"m\" { const NaN: number } x === NaN",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 42,
+				"endLine": 1,
+				"endColumn": 51,
+				"message": "Use the isNaN function to compare with NaN."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "function f<NaN>(a: NaN) { return x === NaN }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 34,
+				"endLine": 1,
+				"endColumn": 43,
+				"message": "Use the isNaN function to compare with NaN."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "type T<NaN> = NaN; x === NaN",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 20,
+				"endLine": 1,
+				"endColumn": 29,
+				"message": "Use the isNaN function to compare with NaN."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "enum E { NaN } x === NaN",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 16,
+				"endLine": 1,
+				"endColumn": 25,
+				"message": "Use the isNaN function to compare with NaN."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "enum E { NaN, B = x === NaN ? 1 : 0 }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "declare let Number: any; x === Number.NaN",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "enum Number { A } x === Number.NaN",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "class A { constructor(private NaN: number) { x === NaN } }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "const e = <div a={x === NaN} />;",
+		"ext": "tsx",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 19,
+				"endLine": 1,
+				"endColumn": 28,
+				"message": "Use the isNaN function to compare with NaN."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "x === (NaN as number)",
+		"ext": "tsx",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "x === NaN",
+		"ext": "mts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 10,
+				"message": "Use the isNaN function to compare with NaN."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "x === NaN",
+		"ext": "cts",
+		"sourceType": "commonjs",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 10,
+				"message": "Use the isNaN function to compare with NaN."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	}
+]

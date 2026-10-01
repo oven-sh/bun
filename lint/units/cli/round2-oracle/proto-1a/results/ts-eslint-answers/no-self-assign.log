@@ -1,0 +1,112 @@
+no-self-assign: 82 cases: same 45, missing 36, bun-rejects 1
+missing: "a = a" [ts] [module]
+    eslint: 1:5 'a' is assigned to itself.
+    bun:    (none)
+missing: "a = (a)" [ts] [module]
+    eslint: 1:6 'a' is assigned to itself.
+    bun:    (none)
+missing: "a = ((a))" [ts] [module]
+    eslint: 1:7 'a' is assigned to itself.
+    bun:    (none)
+missing: "(a) = a" [ts] [module]
+    eslint: 1:7 'a' is assigned to itself.
+    bun:    (none)
+missing: "a.b = a.b" [ts] [module]
+    eslint: 1:7 'a.b' is assigned to itself.
+    bun:    (none)
+missing: "a.b = (a).b" [ts] [module]
+    eslint: 1:7 '(a).b' is assigned to itself.
+    bun:    (none)
+missing: "a.b = (a.b)" [ts] [module]
+    eslint: 1:8 'a.b' is assigned to itself.
+    bun:    (none)
+missing: "a.b = ( a ).b" [ts] [module]
+    eslint: 1:7 '(a).b' is assigned to itself.
+    bun:    (none)
+missing: "a.b = (\n a).b" [ts] [module]
+    eslint: 1:7 '(a).b' is assigned to itself.
+    bun:    (none)
+missing: "a.b = ( /* c */ a).b" [ts] [module]
+    eslint: 1:7 '(/*c*/a).b' is assigned to itself.
+    bun:    (none)
+missing: "a.b = a . b" [ts] [module]
+    eslint: 1:7 'a.b' is assigned to itself.
+    bun:    (none)
+missing: "x.y = x/**/.y" [ts] [module]
+    eslint: 1:7 'x/**/.y' is assigned to itself.
+    bun:    (none)
+missing: "a[b] = a[b]" [ts] [module]
+    eslint: 1:8 'a[b]' is assigned to itself.
+    bun:    (none)
+missing: "a[(b)] = a[b]" [ts] [module]
+    eslint: 1:10 'a[b]' is assigned to itself.
+    bun:    (none)
+missing: "a[\"b\"] = a.b" [ts] [module]
+    eslint: 1:10 'a.b' is assigned to itself.
+    bun:    (none)
+missing: "a.b = a[\"b\"]" [ts] [module]
+    eslint: 1:7 'a["b"]' is assigned to itself.
+    bun:    (none)
+missing: "this.x = this.x" [ts] [module]
+    eslint: 1:10 'this.x' is assigned to itself.
+    bun:    (none)
+missing: "[a, b] = [a, b]" [ts] [module]
+    eslint: 1:11 'a' is assigned to itself. | 1:14 'b' is assigned to itself.
+    bun:    (none)
+missing: "[a, b] = [a as T, b]" [ts] [module]
+    eslint: 1:19 'b' is assigned to itself.
+    bun:    (none)
+missing: "[a as any, b] = [a, b]" [ts] [module]
+    eslint: 1:21 'b' is assigned to itself.
+    bun:    (none)
+missing: "[a, (b as T)] = [a, b]" [ts] [module]
+    eslint: 1:18 'a' is assigned to itself.
+    bun:    (none)
+missing: "[a] = [(a)]" [ts] [module]
+    eslint: 1:9 'a' is assigned to itself.
+    bun:    (none)
+missing: "[(a)] = [a]" [ts] [module]
+    eslint: 1:10 'a' is assigned to itself.
+    bun:    (none)
+missing: "({a, b} = {a, b})" [ts] [module]
+    eslint: 1:12 'a' is assigned to itself. | 1:15 'b' is assigned to itself.
+    bun:    (none)
+missing: "({a, b} = {a: a as T, b})" [ts] [module]
+    eslint: 1:23 'b' is assigned to itself.
+    bun:    (none)
+missing: "({a: a!, b} = {a, b})" [ts] [module]
+    eslint: 1:19 'b' is assigned to itself.
+    bun:    (none)
+missing: "({a, b} = {a: a!, b})" [ts] [module]
+    eslint: 1:19 'b' is assigned to itself.
+    bun:    (none)
+missing: "({ a } = { a: (a) })" [ts] [module]
+    eslint: 1:16 'a' is assigned to itself.
+    bun:    (none)
+missing: "a ||= a" [ts] [module]
+    eslint: 1:7 'a' is assigned to itself.
+    bun:    (none)
+bun-rejects: "a?.b.c = a?.b.c" [ts] [module]
+    eslint: 1:10 'a?.b.c' is assigned to itself.
+    bun:    REJECTS syntax Invalid assignment target
+missing: "a = a; let b: typeof a" [ts] [module]
+    eslint: 1:5 'a' is assigned to itself.
+    bun:    (none)
+missing: "class A { #x = 1; m() { this.#x = this.#x } }" [ts] [module]
+    eslint: 1:35 'this.#x' is assigned to itself.
+    bun:    (none)
+missing: "enum E { A = (a = a) }" [ts] [module]
+    eslint: 1:19 'a' is assigned to itself.
+    bun:    (none)
+missing: "namespace N { a = a }" [ts] [module]
+    eslint: 1:19 'a' is assigned to itself.
+    bun:    (none)
+missing: "const e = <div a={(a = a)} />;" [tsx] [module]
+    eslint: 1:24 'a' is assigned to itself.
+    bun:    (none)
+missing: "a = a" [mts] [module]
+    eslint: 1:5 'a' is assigned to itself.
+    bun:    (none)
+missing: "a = a" [cts] [commonjs]
+    eslint: 1:5 'a' is assigned to itself.
+    bun:    (none)

@@ -1,0 +1,164 @@
+{"kind":"valid","code":"function foo() { return 1; }","type":"script","reports":[]}
+{"kind":"valid","code":"function set(val) { return 1; }","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = function() { return 1; };","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = function set() { return 1; };","type":"script","reports":[]}
+{"kind":"valid","code":"var set = function() { return 1; };","type":"script","reports":[]}
+{"kind":"valid","code":"var set = function set(val) { return 1; };","type":"script","reports":[]}
+{"kind":"valid","code":"var set = val => { return 1; };","type":"script","reports":[]}
+{"kind":"valid","code":"var set = val => 1;","type":"script","reports":[]}
+{"kind":"valid","code":"({ set a(val) { }}); function foo() { return 1; }","type":"script","reports":[]}
+{"kind":"valid","code":"({ set a(val) { }}); (function () { return 1; });","type":"script","reports":[]}
+{"kind":"valid","code":"({ set a(val) { }}); (() => { return 1; });","type":"script","reports":[]}
+{"kind":"valid","code":"({ set a(val) { }}); (() => 1);","type":"script","reports":[]}
+{"kind":"valid","code":"return 1;","type":"commonjs","given":"{\"sourceType\":\"commonjs\"}","reports":[]}
+{"kind":"valid","code":"return 1;","type":"script","given":"{\"sourceType\":\"script\",\"parserOptions\":{\"ecmaFeatures\":{\"globalReturn\":true}}}","fatal":"Parsing error: 'return' outside of function","reports":[]}
+{"kind":"valid","code":"return 1; function foo(){ return 1; } return 1;","type":"commonjs","given":"{\"sourceType\":\"commonjs\"}","reports":[]}
+{"kind":"valid","code":"function foo(){} return 1; var bar = function*(){ return 1; }; return 1; var baz = () => {}; return 1;","type":"commonjs","given":"{\"sourceType\":\"commonjs\"}","reports":[]}
+{"kind":"valid","code":"({ set foo(val) { return; } })","type":"script","reports":[]}
+{"kind":"valid","code":"({ set foo(val) { if (val) { return; } } })","type":"script","reports":[]}
+{"kind":"valid","code":"class A { set foo(val) { return; } }","type":"script","reports":[]}
+{"kind":"valid","code":"(class { set foo(val) { if (val) { return; } else { return; } return; } })","type":"script","reports":[]}
+{"kind":"valid","code":"class A { set foo(val) { try {} catch(e) { return; } } }","type":"script","reports":[]}
+{"kind":"valid","code":"({ get foo() { return 1; } })","type":"script","reports":[]}
+{"kind":"valid","code":"({ get set() { return 1; } })","type":"script","reports":[]}
+{"kind":"valid","code":"({ set(val) { return 1; } })","type":"script","reports":[]}
+{"kind":"valid","code":"({ set: function(val) { return 1; } })","type":"script","reports":[]}
+{"kind":"valid","code":"({ foo: function set(val) { return 1; } })","type":"script","reports":[]}
+{"kind":"valid","code":"({ set: function set(val) { return 1; } })","type":"script","reports":[]}
+{"kind":"valid","code":"({ set: (val) => { return 1; } })","type":"script","reports":[]}
+{"kind":"valid","code":"({ set: (val) => 1 })","type":"script","reports":[]}
+{"kind":"valid","code":"set = { foo(val) { return 1; } };","type":"script","reports":[]}
+{"kind":"valid","code":"class A { constructor(val) { return 1; } }","type":"script","reports":[]}
+{"kind":"valid","code":"class set { constructor(val) { return 1; } }","type":"script","reports":[]}
+{"kind":"valid","code":"class set { foo(val) { return 1; } }","type":"script","reports":[]}
+{"kind":"valid","code":"var set = class { foo(val) { return 1; } }","type":"script","reports":[]}
+{"kind":"valid","code":"(class set { foo(val) { return 1; } })","type":"script","reports":[]}
+{"kind":"valid","code":"class A { get foo() { return val; } }","type":"script","reports":[]}
+{"kind":"valid","code":"class A { get set() { return val; } }","type":"script","reports":[]}
+{"kind":"valid","code":"class A { set(val) { return 1; } }","type":"script","reports":[]}
+{"kind":"valid","code":"class A { static set(val) { return 1; } }","type":"script","reports":[]}
+{"kind":"valid","code":"({ set: set = function set(val) { return 1; } } = {})","type":"script","reports":[]}
+{"kind":"valid","code":"({ set: set = (val) => 1 } = {})","type":"script","reports":[]}
+{"kind":"valid","code":"class C { set; foo() { return 1; } }","type":"script","reports":[]}
+{"kind":"valid","code":"({ set foo(val) { function foo(val) { return 1; } } })","type":"script","reports":[]}
+{"kind":"valid","code":"({ set foo(val) { var foo = function(val) { return 1; } } })","type":"script","reports":[]}
+{"kind":"valid","code":"({ set foo(val) { var foo = (val) => { return 1; } } })","type":"script","reports":[]}
+{"kind":"valid","code":"({ set foo(val) { var foo = (val) => 1; } })","type":"script","reports":[]}
+{"kind":"valid","code":"({ set [function() { return 1; }](val) {} })","type":"script","reports":[]}
+{"kind":"valid","code":"({ set [() => { return 1; }](val) {} })","type":"script","reports":[]}
+{"kind":"valid","code":"({ set [() => 1](val) {} })","type":"script","reports":[]}
+{"kind":"valid","code":"({ set foo(val = function() { return 1; }) {} })","type":"script","reports":[]}
+{"kind":"valid","code":"({ set foo(val = v => 1) {} })","type":"script","reports":[]}
+{"kind":"valid","code":"(class { set foo(val) { function foo(val) { return 1; } } })","type":"script","reports":[]}
+{"kind":"valid","code":"(class { set foo(val) { var foo = function(val) { return 1; } } })","type":"script","reports":[]}
+{"kind":"valid","code":"(class { set foo(val) { var foo = (val) => { return 1; } } })","type":"script","reports":[]}
+{"kind":"valid","code":"(class { set foo(val) { var foo = (val) => 1; } })","type":"script","reports":[]}
+{"kind":"valid","code":"(class { set [function() { return 1; }](val) {} })","type":"script","reports":[]}
+{"kind":"valid","code":"(class { set [() => { return 1; }](val) {} })","type":"script","reports":[]}
+{"kind":"valid","code":"(class { set [() => 1](val) {} })","type":"script","reports":[]}
+{"kind":"valid","code":"(class { set foo(val = function() { return 1; }) {} })","type":"script","reports":[]}
+{"kind":"valid","code":"(class { set foo(val = (v) => 1) {} })","type":"script","reports":[]}
+{"kind":"valid","code":"Object.defineProperty(foo, 'bar', { set(val) { return; } })","type":"script","reports":[]}
+{"kind":"valid","code":"Reflect.defineProperty(foo, 'bar', { set(val) { if (val) { return; } } })","type":"script","given":"{\"ecmaVersion\":6}","reports":[]}
+{"kind":"valid","code":"Object.defineProperties(foo, { bar: { set(val) { try { return; } catch(e){} } } })","type":"script","reports":[]}
+{"kind":"valid","code":"Object.create(foo, { bar: { set: function(val) { return; } } })","type":"script","reports":[]}
+{"kind":"valid","code":"x = { set(val) { return 1; } }","type":"script","reports":[]}
+{"kind":"valid","code":"x = { foo: { set(val) { return 1; } } }","type":"script","reports":[]}
+{"kind":"valid","code":"Object.defineProperty(foo, 'bar', { value(val) { return 1; } })","type":"script","reports":[]}
+{"kind":"valid","code":"Reflect.defineProperty(foo, 'bar', { value: function set(val) { return 1; } })","type":"script","given":"{\"ecmaVersion\":6}","reports":[]}
+{"kind":"valid","code":"Object.defineProperties(foo, { bar: { [set](val) { return 1; } } })","type":"script","reports":[]}
+{"kind":"valid","code":"Object.create(foo, { bar: { 'set ': function(val) { return 1; } } })","type":"script","reports":[]}
+{"kind":"valid","code":"Object.defineProperty(foo, 'bar', { [`set `]: (val) => { return 1; } })","type":"script","reports":[]}
+{"kind":"valid","code":"Reflect.defineProperty(foo, 'bar', { Set(val) { return 1; } })","type":"script","given":"{\"ecmaVersion\":6}","reports":[]}
+{"kind":"valid","code":"Object.defineProperties(foo, { bar: { value: (val) => 1 } })","type":"script","reports":[]}
+{"kind":"valid","code":"Object.create(foo, { set: { value: function(val) { return 1; } } })","type":"script","reports":[]}
+{"kind":"valid","code":"Object.defineProperty(foo, 'bar', { baz(val) { return 1; } })","type":"script","reports":[]}
+{"kind":"valid","code":"Reflect.defineProperty(foo, 'bar', { get(val) { return 1; } })","type":"script","given":"{\"ecmaVersion\":6}","reports":[]}
+{"kind":"valid","code":"Object.create(foo, { set: function(val) { return 1; } })","type":"script","reports":[]}
+{"kind":"valid","code":"Object.defineProperty(foo, { set: (val) => 1 })","type":"script","reports":[]}
+{"kind":"valid","code":"Object.defineProperty(foo, 'bar', { set(val) { function foo() { return 1; } } })","type":"script","reports":[]}
+{"kind":"valid","code":"Reflect.defineProperty(foo, 'bar', { set(val) { var foo = function() { return 1; } } })","type":"script","given":"{\"ecmaVersion\":6}","reports":[]}
+{"kind":"valid","code":"Object.defineProperties(foo, { bar: { set(val) { () => { return 1 }; } } })","type":"script","reports":[]}
+{"kind":"valid","code":"Object.create(foo, { bar: { set: (val) => { (val) => 1; } } })","type":"script","reports":[]}
+{"kind":"valid","code":"Object.defineProperty(foo, 'bar', 'baz', { set(val) { return 1; } })","type":"script","reports":[]}
+{"kind":"valid","code":"Object.defineProperty(foo, { set(val) { return 1; } }, 'bar')","type":"script","reports":[]}
+{"kind":"valid","code":"Object.defineProperty({ set(val) { return 1; } }, foo, 'bar')","type":"script","reports":[]}
+{"kind":"valid","code":"Reflect.defineProperty(foo, 'bar', 'baz', { set(val) { return 1; } })","type":"script","given":"{\"ecmaVersion\":6}","reports":[]}
+{"kind":"valid","code":"Reflect.defineProperty(foo, { set(val) { return 1; } }, 'bar')","type":"script","given":"{\"ecmaVersion\":6}","reports":[]}
+{"kind":"valid","code":"Reflect.defineProperty({ set(val) { return 1; } }, foo, 'bar')","type":"script","given":"{\"ecmaVersion\":6}","reports":[]}
+{"kind":"valid","code":"Object.defineProperties(foo, bar, { baz: { set(val) { return 1; } } })","type":"script","reports":[]}
+{"kind":"valid","code":"Object.defineProperties({ bar: { set(val) { return 1; } } }, foo)","type":"script","reports":[]}
+{"kind":"valid","code":"Object.create(foo, bar, { baz: { set(val) { return 1; } } })","type":"script","reports":[]}
+{"kind":"valid","code":"Object.create({ bar: { set(val) { return 1; } } }, foo)","type":"script","reports":[]}
+{"kind":"valid","code":"Object.DefineProperty(foo, 'bar', { set(val) { return 1; } })","type":"script","reports":[]}
+{"kind":"valid","code":"Reflect.DefineProperty(foo, 'bar', { set(val) { if (val) { return 1; } } })","type":"script","given":"{\"ecmaVersion\":6}","reports":[]}
+{"kind":"valid","code":"Object.DefineProperties(foo, { bar: { set(val) { try { return 1; } catch(e){} } } })","type":"script","reports":[]}
+{"kind":"valid","code":"Object.Create(foo, { bar: { set: function(val) { return 1; } } })","type":"script","reports":[]}
+{"kind":"valid","code":"object.defineProperty(foo, 'bar', { set(val) { return 1; } })","type":"script","reports":[]}
+{"kind":"valid","code":"reflect.defineProperty(foo, 'bar', { set(val) { if (val) { return 1; } } })","type":"script","given":"{\"ecmaVersion\":6}","reports":[]}
+{"kind":"valid","code":"Reflect.defineProperties(foo, { bar: { set(val) { try { return 1; } catch(e){} } } })","type":"script","given":"{\"ecmaVersion\":6}","reports":[]}
+{"kind":"valid","code":"object.create(foo, { bar: { set: function(val) { return 1; } } })","type":"script","reports":[]}
+{"kind":"valid","code":"Reflect.defineProperty(foo, 'bar', { set(val) { if (val) { return 1; } } })","type":"script","skip":"globals","given":"{\"globals\":{\"Reflect\":\"off\"}}","reports":["1:60-1:69 Setter cannot return a value."]}
+{"kind":"valid","code":"/* globals Object:off */ Object.defineProperty(foo, 'bar', { set(val) { return 1; } })","type":"script","reports":[]}
+{"kind":"valid","code":"Object.defineProperties(foo, { bar: { set(val) { try { return 1; } catch(e){} } } })","type":"script","skip":"globals","given":"{\"globals\":{\"Object\":\"off\"}}","reports":["1:56-1:65 Setter cannot return a value."]}
+{"kind":"valid","code":"let Object; Object.defineProperty(foo, 'bar', { set(val) { return 1; } })","type":"script","reports":[]}
+{"kind":"valid","code":"function f() { Reflect.defineProperty(foo, 'bar', { set(val) { if (val) { return 1; } } }); var Reflect;}","type":"script","given":"{\"ecmaVersion\":6}","reports":[]}
+{"kind":"valid","code":"function f(Object) { Object.defineProperties(foo, { bar: { set(val) { try { return 1; } catch(e){} } } }) }","type":"script","reports":[]}
+{"kind":"valid","code":"if (x) { const Object = getObject(); Object.create(foo, { bar: { set: function(val) { return 1; } } }) }","type":"script","reports":[]}
+{"kind":"valid","code":"x = function Object() { Object.defineProperty(foo, 'bar', { set(val) { return 1; } }) }","type":"script","reports":[]}
+{"kind":"invalid","code":"({ set a(val){ return val + 1; } })","type":"script","reports":["1:16-1:31 Setter cannot return a value."]}
+{"kind":"invalid","code":"({ set a(val) { return 1; } })","type":"script","reports":["1:17-1:26 Setter cannot return a value."]}
+{"kind":"invalid","code":"class A { set a(val) { return 1; } }","type":"script","reports":["1:24-1:33 Setter cannot return a value."]}
+{"kind":"invalid","code":"class A { static set a(val) { return 1; } }","type":"script","reports":["1:31-1:40 Setter cannot return a value."]}
+{"kind":"invalid","code":"(class { set a(val) { return 1; } })","type":"script","reports":["1:23-1:32 Setter cannot return a value."]}
+{"kind":"invalid","code":"({ set a(val) { return val; } })","type":"script","reports":["1:17-1:28 Setter cannot return a value."]}
+{"kind":"invalid","code":"class A { set a(val) { return undefined; } }","type":"script","reports":["1:24-1:41 Setter cannot return a value."]}
+{"kind":"invalid","code":"(class { set a(val) { return null; } })","type":"script","reports":["1:23-1:35 Setter cannot return a value."]}
+{"kind":"invalid","code":"({ set a(val) { return x + y; } })","type":"script","reports":["1:17-1:30 Setter cannot return a value."]}
+{"kind":"invalid","code":"class A { set a(val) { return foo(); } }","type":"script","reports":["1:24-1:37 Setter cannot return a value."]}
+{"kind":"invalid","code":"(class { set a(val) { return this._a; } })","type":"script","reports":["1:23-1:38 Setter cannot return a value."]}
+{"kind":"invalid","code":"({ set a(val) { return this.a; } })","type":"script","reports":["1:17-1:31 Setter cannot return a value."]}
+{"kind":"invalid","code":"({ set a(val) { if (foo) { return 1; }; } })","type":"script","reports":["1:28-1:37 Setter cannot return a value."]}
+{"kind":"invalid","code":"class A { set a(val) { try { return 1; } catch(e) {} } }","type":"script","reports":["1:30-1:39 Setter cannot return a value."]}
+{"kind":"invalid","code":"(class { set a(val) { while (foo){ if (bar) break; else return 1; } } })","type":"script","reports":["1:57-1:66 Setter cannot return a value."]}
+{"kind":"invalid","code":"({ set a(val) { return 1; }, set b(val) { return 1; } })","type":"script","reports":["1:17-1:26 Setter cannot return a value.","1:43-1:52 Setter cannot return a value."]}
+{"kind":"invalid","code":"class A { set a(val) { return 1; } set b(val) { return 1; } }","type":"script","reports":["1:24-1:33 Setter cannot return a value.","1:49-1:58 Setter cannot return a value."]}
+{"kind":"invalid","code":"(class { set a(val) { return 1; } static set b(val) { return 1; } })","type":"script","reports":["1:23-1:32 Setter cannot return a value.","1:55-1:64 Setter cannot return a value."]}
+{"kind":"invalid","code":"({ set a(val) { if(val) { return 1; } else { return 2 }; } })","type":"script","reports":["1:27-1:36 Setter cannot return a value.","1:46-1:54 Setter cannot return a value."]}
+{"kind":"invalid","code":"class A { set a(val) { switch(val) { case 1: return x; case 2: return y; default: return z } } }","type":"script","reports":["1:46-1:55 Setter cannot return a value.","1:64-1:73 Setter cannot return a value.","1:83-1:91 Setter cannot return a value."]}
+{"kind":"invalid","code":"(class { static set a(val) { if (val > 0) { this._val = val; return val; } return false; } })","type":"script","reports":["1:62-1:73 Setter cannot return a value.","1:76-1:89 Setter cannot return a value."]}
+{"kind":"invalid","code":"({ set a(val) { if(val) { return 1; } else { return; }; } })","type":"script","reports":["1:27-1:36 Setter cannot return a value."]}
+{"kind":"invalid","code":"class A { set a(val) { switch(val) { case 1: return x; case 2: return; default: return z } } }","type":"script","reports":["1:46-1:55 Setter cannot return a value.","1:81-1:89 Setter cannot return a value."]}
+{"kind":"invalid","code":"(class { static set a(val) { if (val > 0) { this._val = val; return; } return false; } })","type":"script","reports":["1:72-1:85 Setter cannot return a value."]}
+{"kind":"invalid","code":"({ set a(val) { function b(){} return b(); } })","type":"script","reports":["1:32-1:43 Setter cannot return a value."]}
+{"kind":"invalid","code":"class A { set a(val) { return () => {}; } }","type":"script","reports":["1:24-1:40 Setter cannot return a value."]}
+{"kind":"invalid","code":"(class { set a(val) { function b(){ return 1; } return 2; } })","type":"script","reports":["1:49-1:58 Setter cannot return a value."]}
+{"kind":"invalid","code":"({ set a(val) { function b(){ return; } return 1; } })","type":"script","reports":["1:41-1:50 Setter cannot return a value."]}
+{"kind":"invalid","code":"class A { set a(val) { var x = function() { return 1; }; return 2; } }","type":"script","reports":["1:58-1:67 Setter cannot return a value."]}
+{"kind":"invalid","code":"(class { set a(val) { var x = () => { return; }; return 2; } })","type":"script","reports":["1:50-1:59 Setter cannot return a value."]}
+{"kind":"invalid","code":"function f(){}; ({ set a(val) { return 1; } });","type":"script","reports":["1:33-1:42 Setter cannot return a value."]}
+{"kind":"invalid","code":"x = function f(){}; class A { set a(val) { return 1; } };","type":"script","reports":["1:44-1:53 Setter cannot return a value."]}
+{"kind":"invalid","code":"x = () => {}; A = class { set a(val) { return 1; } };","type":"script","reports":["1:40-1:49 Setter cannot return a value."]}
+{"kind":"invalid","code":"return; ({ set a(val) { return 1; } }); return 2;","type":"commonjs","given":"{\"sourceType\":\"commonjs\"}","reports":["1:25-1:34 Setter cannot return a value."]}
+{"kind":"invalid","code":"Object.defineProperty(foo, 'bar', { set(val) { return 1; } })","type":"script","reports":["1:48-1:57 Setter cannot return a value."]}
+{"kind":"invalid","code":"Reflect.defineProperty(foo, 'bar', { set(val) { return 1; } })","type":"script","given":"{\"ecmaVersion\":6}","reports":["1:49-1:58 Setter cannot return a value."]}
+{"kind":"invalid","code":"Object.defineProperties(foo, { baz: { set(val) { return 1; } } })","type":"script","reports":["1:50-1:59 Setter cannot return a value."]}
+{"kind":"invalid","code":"Object.create(null, { baz: { set(val) { return 1; } } })","type":"script","reports":["1:41-1:50 Setter cannot return a value."]}
+{"kind":"invalid","code":"Object.defineProperty(foo, 'bar', { set: val => val })","type":"script","reports":["1:49-1:52 Setter cannot return a value."]}
+{"kind":"invalid","code":"Reflect.defineProperty(foo, 'bar', { set: val => f(val) })","type":"script","given":"{\"ecmaVersion\":6}","reports":["1:50-1:56 Setter cannot return a value."]}
+{"kind":"invalid","code":"Object.defineProperties(foo, { baz: { set: val => a + b } })","type":"script","reports":["1:51-1:56 Setter cannot return a value."]}
+{"kind":"invalid","code":"Object.create({}, { baz: { set: val => this._val } })","type":"script","reports":["1:40-1:49 Setter cannot return a value."]}
+{"kind":"invalid","code":"Object.defineProperty(foo, 'bar', { set(val) { if (val) { return; } return false; }, get(val) { return 1; } })","type":"script","reports":["1:69-1:82 Setter cannot return a value."]}
+{"kind":"invalid","code":"Reflect.defineProperty(foo, 'bar', { set(val) { try { return f(val) } catch (e) { return e }; } })","type":"script","given":"{\"ecmaVersion\":6}","reports":["1:55-1:68 Setter cannot return a value.","1:83-1:91 Setter cannot return a value."]}
+{"kind":"invalid","code":"Object.defineProperties(foo, { bar: { get(){ return null; }, set(val) { return null; } } })","type":"script","reports":["1:73-1:85 Setter cannot return a value."]}
+{"kind":"invalid","code":"Object.create(null, { baz: { set(val) { return this._val; return; return undefined; } } })","type":"script","reports":["1:41-1:58 Setter cannot return a value.","1:67-1:84 Setter cannot return a value."]}
+{"kind":"invalid","code":"Object.defineProperties(foo, { baz: { set(val) { return 1; } }, bar: { set(val) { return 1; } } })","type":"script","reports":["1:50-1:59 Setter cannot return a value.","1:83-1:92 Setter cannot return a value."]}
+{"kind":"invalid","code":"Object.create({}, { baz: { set(val) { return 1; } }, bar: { set: (val) => 1 } })","type":"script","reports":["1:39-1:48 Setter cannot return a value.","1:75-1:76 Setter cannot return a value."]}
+{"kind":"invalid","code":"Object['defineProperty'](foo, 'bar', { set: function bar(val) { return 1; } })","type":"script","reports":["1:65-1:74 Setter cannot return a value."]}
+{"kind":"invalid","code":"Reflect.defineProperty(foo, 'bar', { 'set'(val) { return 1; } })","type":"script","given":"{\"ecmaVersion\":6}","reports":["1:51-1:60 Setter cannot return a value."]}
+{"kind":"invalid","code":"Object[`defineProperties`](foo, { baz: { ['set'](val) { return 1; } } })","type":"script","reports":["1:57-1:66 Setter cannot return a value."]}
+{"kind":"invalid","code":"Object.create({}, { baz: { [`set`]: (val) => { return 1; } } })","type":"script","reports":["1:48-1:57 Setter cannot return a value."]}
+{"kind":"invalid","code":"Object.defineProperty(foo, 'bar', { set: function Object(val) { return 1; } })","type":"script","reports":["1:65-1:74 Setter cannot return a value."]}
+{"kind":"invalid","code":"Object.defineProperty(foo, 'bar', { set: function(Object) { return 1; } })","type":"script","reports":["1:61-1:70 Setter cannot return a value."]}
+{"kind":"invalid","code":"Object?.defineProperty(foo, 'bar', { set(val) { return 1; } })","type":"script","given":"{\"ecmaVersion\":2020}","reports":["1:49-1:58 Setter cannot return a value."]}
+{"kind":"invalid","code":"(Object?.defineProperty)(foo, 'bar', { set(val) { return 1; } })","type":"script","given":"{\"ecmaVersion\":2020}","reports":["1:51-1:60 Setter cannot return a value."]}

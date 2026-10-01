@@ -1,0 +1,28 @@
+cases 3341 eslint-fatal 0
+for-direction: (none)
+no-async-promise-executor: (none)
+no-case-declarations: valid-typeof=2
+    "switch (a) { case 1: let undefined; typeof x === undefined }"  => 1:22
+    "switch (a) { case 1: let undefined; } typeof x === undefined"  => 1:22
+no-delete-var: valid-typeof=1
+    "delete a === \"strnig\""  => 1:1
+no-prototype-builtins: (none)
+no-setter-return: (none)
+no-unsafe-finally: (none)
+no-unused-labels: no-debugger=3 no-dupe-class-members=1 no-dupe-keys=1 no-duplicate-case=2 no-empty-pattern=1 no-self-assign=1 no-sparse-arrays=1 use-isnan=1
+    "x: debugger;"  => 1:1
+    "label: { debugger }"  => 1:1
+    "label: debugger;"  => 1:1
+    "label: { class A { a; a; } }"  => 1:1
+no-useless-catch: (none)
+no-with: no-debugger=1 use-isnan=3 valid-typeof=2
+    "with (a) debugger"  => 1:1
+    "with (o) { x === NaN }"  => 1:1
+    "with (o) { typeof x === undefined }"  => 1:1
+    "function f(undefined) { with (o) { typeof x === undefined } }"  => 1:25
+require-yield: (none)
+no-unused-private-class-members: no-dupe-class-members=13 no-empty-pattern=1 no-self-assign=4 valid-typeof=1
+    "class A { foo; #foo; }"  => 1:16
+    "class A { '#foo'; #foo; }"  => 1:19
+    "class A { #a(){} a(){} }"  => 1:11
+    "class A { get #a(){} set #a(v){} }"  => 1:26

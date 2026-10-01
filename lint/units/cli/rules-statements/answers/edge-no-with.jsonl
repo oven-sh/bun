@@ -1,0 +1,4 @@
+{"code":"with (a) with (b) c","type":"script","reports":["1:1-1:5 Unexpected use of 'with' statement.","1:10-1:14 Unexpected use of 'with' statement."]}
+{"code":"with (a) {}","type":"script","reports":["1:1-1:5 Unexpected use of 'with' statement."]}
+{"code":"function f() { with (a) { with (b) {} } }","type":"script","reports":["1:16-1:20 Unexpected use of 'with' statement.","1:27-1:31 Unexpected use of 'with' statement."]}
+{"code":"label: with (a) b","type":"script","reports":["1:8-1:12 Unexpected use of 'with' statement."]}

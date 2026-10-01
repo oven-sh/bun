@@ -1,0 +1,94 @@
+no-compare-neg-zero: 44 cases: same 13, missing 31
+missing: "x === -0" [ts] [module]
+    eslint: 1:1 Do not use the '===' operator to compare against -0.
+    bun:    (none)
+missing: "(x as number) === -0" [ts] [module]
+    eslint: 1:1 Do not use the '===' operator to compare against -0.
+    bun:    (none)
+missing: "x! === -0" [ts] [module]
+    eslint: 1:1 Do not use the '===' operator to compare against -0.
+    bun:    (none)
+missing: "<number>x === -0" [ts] [module]
+    eslint: 1:1 Do not use the '===' operator to compare against -0.
+    bun:    (none)
+missing: "(x satisfies number) === -0" [ts] [module]
+    eslint: 1:1 Do not use the '===' operator to compare against -0.
+    bun:    (none)
+missing: "x === -(0)" [ts] [module]
+    eslint: 1:1 Do not use the '===' operator to compare against -0.
+    bun:    (none)
+missing: "x === (-0)" [ts] [module]
+    eslint: 1:1 Do not use the '===' operator to compare against -0.
+    bun:    (none)
+missing: "x as number === -0" [ts] [module]
+    eslint: 1:1 Do not use the '===' operator to compare against -0.
+    bun:    (none)
+missing: "x as any as number === -0" [ts] [module]
+    eslint: 1:1 Do not use the '===' operator to compare against -0.
+    bun:    (none)
+missing: "f<T>(x) === -0" [ts] [module]
+    eslint: 1:1 Do not use the '===' operator to compare against -0.
+    bun:    (none)
+missing: "a.b!.c === -0" [ts] [module]
+    eslint: 1:1 Do not use the '===' operator to compare against -0.
+    bun:    (none)
+missing: "(<T>x) === -0" [ts] [module]
+    eslint: 1:1 Do not use the '===' operator to compare against -0.
+    bun:    (none)
+missing: "<T>(x) === -0" [ts] [module]
+    eslint: 1:1 Do not use the '===' operator to compare against -0.
+    bun:    (none)
+missing: "(\n x as T) === -0" [ts] [module]
+    eslint: 1:1 Do not use the '===' operator to compare against -0.
+    bun:    (none)
+missing: "(/* c */ x)! === -0" [ts] [module]
+    eslint: 1:1 Do not use the '===' operator to compare against -0.
+    bun:    (none)
+missing: "(x)! === -0" [ts] [module]
+    eslint: 1:1 Do not use the '===' operator to compare against -0.
+    bun:    (none)
+missing: "(\n<T>x) === -0" [ts] [module]
+    eslint: 1:1 Do not use the '===' operator to compare against -0.
+    bun:    (none)
+missing: "(x === -0) as boolean" [ts] [module]
+    eslint: 1:2 Do not use the '===' operator to compare against -0.
+    bun:    (none)
+missing: "<boolean>(x === -0)" [ts] [module]
+    eslint: 1:11 Do not use the '===' operator to compare against -0.
+    bun:    (none)
+missing: "x! > -0" [ts] [module]
+    eslint: 1:1 Do not use the '>' operator to compare against -0.
+    bun:    (none)
+missing: "enum E { A = x === -0 ? 1 : 2 }" [ts] [module]
+    eslint: 1:14 Do not use the '===' operator to compare against -0.
+    bun:    (none)
+missing: "type T = typeof x; x === -0" [ts] [module]
+    eslint: 1:20 Do not use the '===' operator to compare against -0.
+    bun:    (none)
+missing: "let a: number = x === -0 ? 1 : 2" [ts] [module]
+    eslint: 1:17 Do not use the '===' operator to compare against -0.
+    bun:    (none)
+missing: "x == -0.0" [ts] [module]
+    eslint: 1:1 Do not use the '==' operator to compare against -0.
+    bun:    (none)
+missing: "namespace N { export const b = x === -0 }" [ts] [module]
+    eslint: 1:32 Do not use the '===' operator to compare against -0.
+    bun:    (none)
+missing: "declare namespace N { const b = x === -0 }" [ts] [module]
+    eslint: 1:33 Do not use the '===' operator to compare against -0.
+    bun:    (none)
+missing: "class A { p: boolean = (this.q as number) === -0 }" [ts] [module]
+    eslint: 1:24 Do not use the '===' operator to compare against -0.
+    bun:    (none)
+missing: "const e = <div a={x === -0} />;" [tsx] [module]
+    eslint: 1:19 Do not use the '===' operator to compare against -0.
+    bun:    (none)
+missing: "(x as number) === -0" [tsx] [module]
+    eslint: 1:1 Do not use the '===' operator to compare against -0.
+    bun:    (none)
+missing: "x === -0" [mts] [module]
+    eslint: 1:1 Do not use the '===' operator to compare against -0.
+    bun:    (none)
+missing: "x === -0" [cts] [commonjs]
+    eslint: 1:1 Do not use the '===' operator to compare against -0.
+    bun:    (none)

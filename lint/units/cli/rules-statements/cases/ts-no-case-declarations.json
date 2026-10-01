@@ -1,0 +1,19 @@
+[
+"switch (a) { case 1: enum E {} }",
+"switch (a) { case 1: const enum E {} }",
+"switch (a) { case 1: type T = 1; }",
+"switch (a) { case 1: interface I {} }",
+"switch (a) { case 1: declare const x: number; }",
+"switch (a) { case 1: namespace N {} }",
+"switch (a) { case 1: abstract class A {} }",
+"switch (a) { case 1: @dec class A {} }",
+"switch (a) { case 1: using x = y; }",
+"async function f() { switch (a) { case 1: await using x = y; } }",
+"switch (a) { case 1: function f(): void; function f() {} }",
+"switch (a) { case 1: let x: number; }",
+"switch (a) { case 1: declare function f(): void; }",
+"switch (a) { case 1: async function f() {} }",
+"switch (a) { case 1: function* f() {} }",
+"switch (a) { case 1: declare class A {} }",
+"switch (a) { case 1: var x: number = 1; }"
+]

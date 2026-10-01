@@ -1,0 +1,15 @@
+[
+	"delete (x)",
+	"delete x.y",
+	"delete x[y]",
+	"delete this",
+	"delete 1",
+	"delete (x, y)",
+	"delete x?.y",
+	"typeof delete x",
+	"delete delete x",
+	"delete arguments",
+	"delete undefined",
+	"delete ((x))",
+	"a = delete x, delete y"
+]

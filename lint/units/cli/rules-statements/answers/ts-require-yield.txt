@@ -1,0 +1,72 @@
+"function* f(): Generator<number> { return 1; }"
+      => require-yield 1:1 This generator function does not have 'yield'.
+"class A { *f(): Generator { return 1 } }"
+      => require-yield 1:11 This generator function does not have 'yield'.
+"class A { private static async *f() { return 1 } }"
+      => require-yield 1:11 This generator function does not have 'yield'.
+"class A { @dec *f() { return 1 } }"
+      => require-yield 1:11 This generator function does not have 'yield'.
+"class A { @dec\n static *f() { return 1 } }"
+      => require-yield 1:11 This generator function does not have 'yield'.
+"class A { public *f() { return 1 } }"
+      => require-yield 1:11 This generator function does not have 'yield'.
+"class A { static f = function*() { return 1 } }"
+      => require-yield 1:11 This generator function does not have 'yield'.
+"class A { f = function*() { return 1 } }"
+      => require-yield 1:11 This generator function does not have 'yield'.
+"class A { [k] = function*() { return 1 } }"
+      => require-yield 1:11 This generator function does not have 'yield'.
+"class A { static *[k]() { return 1 } }"
+      => require-yield 1:11 This generator function does not have 'yield'.
+"class A { accessor f = function*() { return 1 } }"
+      => require-yield 1:24 This generator function does not have 'yield'.
+"({ f: function*() { return 1 } as any })"
+      => require-yield 1:7 This generator function does not have 'yield'.
+"({ f: (function*() { return 1 }) })"
+      => require-yield 1:4 This generator function does not have 'yield'.
+"({ async *f() { return 1 } })"
+      => require-yield 1:4 This generator function does not have 'yield'.
+"({ *[k]() { return 1 } })"
+      => require-yield 1:4 This generator function does not have 'yield'.
+"({ [k]: function*() { return 1 } })"
+      => require-yield 1:4 This generator function does not have 'yield'.
+"({ 'f': function*() { return 1 } })"
+      => require-yield 1:4 This generator function does not have 'yield'.
+"({ f = function*() { return 1 } } = x)"
+      => require-yield 1:8 This generator function does not have 'yield'.
+"export default function* () { return 1 }"
+      => require-yield 1:16 This generator function does not have 'yield'.
+"export async function* f() { return 1 }"
+      => require-yield 1:8 This generator function does not have 'yield'.
+"export default async function* () { return 1 }"
+      => require-yield 1:16 This generator function does not have 'yield'.
+"export function* f() { return 1 }"
+      => require-yield 1:8 This generator function does not have 'yield'.
+"function* f() { type T = 1 }"
+      => require-yield 1:1 This generator function does not have 'yield'.
+"function* f() { ; }"
+      => require-yield 1:1 This generator function does not have 'yield'.
+"function* f() { 'use strict' }"
+      => require-yield 1:1 This generator function does not have 'yield'.
+"function* f() { /*! legal */ }"
+      => (none)
+"function* f() { // c\n }"
+      => (none)
+"function* f<T>(x: T) { return x }"
+      => require-yield 1:1 This generator function does not have 'yield'.
+"x = async function* () { return 1 }"
+      => require-yield 1:5 This generator function does not have 'yield'.
+"x = { foo: async function* () { return 1 } }"
+      => require-yield 1:7 This generator function does not have 'yield'.
+"function* f(): any;\nfunction* f() { return 1 }"
+      => FATAL  1:0 Parsing error: A function signature cannot be declared as a generator.
+"declare function f(): any;"
+      => (none)
+"class A { *f(): any; *f() { return 1 } }"
+      => require-yield 1:22 This generator function does not have 'yield'.
+"namespace N { export function* f() { return 1 } }"
+      => require-yield 1:22 This generator function does not have 'yield'.
+"function* f() { interface I {} }"
+      => require-yield 1:1 This generator function does not have 'yield'.
+"function* f() { declare const x: number }"
+      => require-yield 1:1 This generator function does not have 'yield'.

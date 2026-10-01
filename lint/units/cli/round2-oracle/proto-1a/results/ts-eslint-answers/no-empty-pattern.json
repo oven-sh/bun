@@ -1,0 +1,945 @@
+[
+	{
+		"code": "const {} = x;",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 9,
+				"message": "Unexpected empty object pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "const {}: T = x;",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 12,
+				"message": "Unexpected empty object pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "const []: T = x;",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 12,
+				"message": "Unexpected empty array pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "const {} = x as T;",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 9,
+				"message": "Unexpected empty object pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "function f({}: T) {}",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 17,
+				"message": "Unexpected empty object pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "function f({}: T = {}) {}",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 17,
+				"message": "Unexpected empty object pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "function f([]: T) {}",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 17,
+				"message": "Unexpected empty array pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "function f({}?: T) {}",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "Unexpected empty object pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "function f(...[]: T) {}",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 15,
+				"endLine": 1,
+				"endColumn": 17,
+				"message": "Unexpected empty array pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "function f(...{}: T) {}",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 15,
+				"endLine": 1,
+				"endColumn": 17,
+				"message": "Unexpected empty object pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "function f(this: T, {}: U) {}",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 21,
+				"endLine": 1,
+				"endColumn": 26,
+				"message": "Unexpected empty object pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "function f({}: T): void; function f({}: T) {}",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 17,
+				"message": "Unexpected empty object pattern."
+			},
+			{
+				"line": 1,
+				"column": 37,
+				"endLine": 1,
+				"endColumn": 42,
+				"message": "Unexpected empty object pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "declare function f({}: T): void;",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 20,
+				"endLine": 1,
+				"endColumn": 25,
+				"message": "Unexpected empty object pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "declare function f([]: T): void;",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 20,
+				"endLine": 1,
+				"endColumn": 25,
+				"message": "Unexpected empty array pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "export declare function f({}: T): void;",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 27,
+				"endLine": 1,
+				"endColumn": 32,
+				"message": "Unexpected empty object pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "declare const {}: T;",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 15,
+				"endLine": 1,
+				"endColumn": 20,
+				"message": "Unexpected empty object pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "class A { m({}: T): void; m({}: T) {} }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 13,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "Unexpected empty object pattern."
+			},
+			{
+				"line": 1,
+				"column": 29,
+				"endLine": 1,
+				"endColumn": 34,
+				"message": "Unexpected empty object pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "class A { m?({}: T): void }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 19,
+				"message": "Unexpected empty object pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "abstract class A { abstract m({}: T): void }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 31,
+				"endLine": 1,
+				"endColumn": 36,
+				"message": "Unexpected empty object pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "abstract class A { abstract set x({}: T) }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 35,
+				"endLine": 1,
+				"endColumn": 40,
+				"message": "Unexpected empty object pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "declare class A { m({}: T): void }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 21,
+				"endLine": 1,
+				"endColumn": 26,
+				"message": "Unexpected empty object pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "declare class A { constructor({}: T) }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 31,
+				"endLine": 1,
+				"endColumn": 36,
+				"message": "Unexpected empty object pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "declare namespace N { function f({}: T): void }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 34,
+				"endLine": 1,
+				"endColumn": 39,
+				"message": "Unexpected empty object pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "declare module \"m\" { export function f({}: T): void }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 40,
+				"endLine": 1,
+				"endColumn": 45,
+				"message": "Unexpected empty object pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "namespace N { export function f({}: T) {} }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 33,
+				"endLine": 1,
+				"endColumn": 38,
+				"message": "Unexpected empty object pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "type F = ({}: T) => void;",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "Unexpected empty object pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "type F = ([]: T) => void;",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "Unexpected empty array pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "type F = new ({}: T) => X;",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 15,
+				"endLine": 1,
+				"endColumn": 20,
+				"message": "Unexpected empty object pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "interface I { m({}: T): void }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 17,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "Unexpected empty object pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "interface I { ({}: T): void }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 16,
+				"endLine": 1,
+				"endColumn": 21,
+				"message": "Unexpected empty object pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "interface I { new ({}: T): X }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 20,
+				"endLine": 1,
+				"endColumn": 25,
+				"message": "Unexpected empty object pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "let f: ({}: T) => void;",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 14,
+				"message": "Unexpected empty object pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "let x: { m({}: T): void };",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 17,
+				"message": "Unexpected empty object pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "type G = { new ({}: T): X; ({}: T): void; m({}: T): void }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 17,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "Unexpected empty object pattern."
+			},
+			{
+				"line": 1,
+				"column": 29,
+				"endLine": 1,
+				"endColumn": 34,
+				"message": "Unexpected empty object pattern."
+			},
+			{
+				"line": 1,
+				"column": 45,
+				"endLine": 1,
+				"endColumn": 50,
+				"message": "Unexpected empty object pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "function f<T extends ({}: U) => void>() {}",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 23,
+				"endLine": 1,
+				"endColumn": 28,
+				"message": "Unexpected empty object pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "let x = y as ({}: T) => void",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 15,
+				"endLine": 1,
+				"endColumn": 20,
+				"message": "Unexpected empty object pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "let x = <({}: T) => void>y",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "Unexpected empty object pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "function f(a: ({}: T) => void) {}",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 16,
+				"endLine": 1,
+				"endColumn": 21,
+				"message": "Unexpected empty object pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "const f = ({}: T): void => {};",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 17,
+				"message": "Unexpected empty object pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "const f = <T,>({}: T) => {};",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 16,
+				"endLine": 1,
+				"endColumn": 21,
+				"message": "Unexpected empty object pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "const f = function ({}: T) {} as F;",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 21,
+				"endLine": 1,
+				"endColumn": 26,
+				"message": "Unexpected empty object pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "for (const {} of xs as T[]) {}",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 14,
+				"message": "Unexpected empty object pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "for ([] of xs as T[]) {}",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 6,
+				"endLine": 1,
+				"endColumn": 8,
+				"message": "Unexpected empty array pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "try {} catch ({}: any) {}",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 15,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "Unexpected empty object pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "try {} catch ({}: unknown) {}",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 15,
+				"endLine": 1,
+				"endColumn": 26,
+				"message": "Unexpected empty object pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "({} = x as T);",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 2,
+				"endLine": 1,
+				"endColumn": 4,
+				"message": "Unexpected empty object pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "([] = x!);",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 2,
+				"endLine": 1,
+				"endColumn": 4,
+				"message": "Unexpected empty array pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "({ a: {} } = x);",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 9,
+				"message": "Unexpected empty object pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "({ a: {} as T } = x);",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "({ a: {}! } = x)",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "([{}!] = x)",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "([[]!] = x)",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "const { a: {} }: T = x;",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 14,
+				"message": "Unexpected empty object pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "const { a = {} }: T = x;",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "const [[]]: T = x;",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 8,
+				"endLine": 1,
+				"endColumn": 10,
+				"message": "Unexpected empty array pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "enum E { A = (({}) => 1)({}) }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 16,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "Unexpected empty object pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "class A { constructor(private x: T, {}: U) {} }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 37,
+				"endLine": 1,
+				"endColumn": 42,
+				"message": "Unexpected empty object pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "const f = ({}: T) => <div />;",
+		"ext": "tsx",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 17,
+				"message": "Unexpected empty object pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "export const f = ({}: T) => 1;",
+		"ext": "mts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 19,
+				"endLine": 1,
+				"endColumn": 24,
+				"message": "Unexpected empty object pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "const {} = require('x');",
+		"ext": "cts",
+		"sourceType": "commonjs",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 9,
+				"message": "Unexpected empty object pattern."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	}
+]

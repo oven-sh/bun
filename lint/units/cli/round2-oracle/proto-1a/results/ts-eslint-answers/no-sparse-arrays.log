@@ -1,0 +1,85 @@
+no-sparse-arrays: 30 cases: same 2, missing 28
+missing: "const a = [,];" [ts] [module]
+    eslint: 1:12 Unexpected comma in middle of array.
+    bun:    (none)
+missing: "const a = [1,,2] as const;" [ts] [module]
+    eslint: 1:14 Unexpected comma in middle of array.
+    bun:    (none)
+missing: "const a = <T>[,];" [ts] [module]
+    eslint: 1:15 Unexpected comma in middle of array.
+    bun:    (none)
+missing: "const a = [,]!;" [ts] [module]
+    eslint: 1:12 Unexpected comma in middle of array.
+    bun:    (none)
+missing: "const a = [1,,] satisfies T;" [ts] [module]
+    eslint: 1:14 Unexpected comma in middle of array.
+    bun:    (none)
+missing: "f<T>([,])" [ts] [module]
+    eslint: 1:7 Unexpected comma in middle of array.
+    bun:    (none)
+missing: "const a = [1, (2 as number), , 3];" [ts] [module]
+    eslint: 1:30 Unexpected comma in middle of array.
+    bun:    (none)
+missing: "const a = [(1), , <T>x,];" [ts] [module]
+    eslint: 1:17 Unexpected comma in middle of array.
+    bun:    (none)
+missing: "const a = [x!, , y!];" [ts] [module]
+    eslint: 1:16 Unexpected comma in middle of array.
+    bun:    (none)
+missing: "enum E { A = [,].length }" [ts] [module]
+    eslint: 1:15 Unexpected comma in middle of array.
+    bun:    (none)
+missing: "declare enum E { A = [,].length }" [ts] [module]
+    eslint: 1:23 Unexpected comma in middle of array.
+    bun:    (none)
+missing: "class A { x: number[] = [,] }" [ts] [module]
+    eslint: 1:26 Unexpected comma in middle of array.
+    bun:    (none)
+missing: "const a = [ , ] as [undefined?];" [ts] [module]
+    eslint: 1:13 Unexpected comma in middle of array.
+    bun:    (none)
+missing: "function f(a = [,]): void {}" [ts] [module]
+    eslint: 1:17 Unexpected comma in middle of array.
+    bun:    (none)
+missing: "declare const a: number[]; const b = [...a, , 1]" [ts] [module]
+    eslint: 1:45 Unexpected comma in middle of array.
+    bun:    (none)
+missing: "declare const a = [,];" [ts] [module]
+    eslint: 1:20 Unexpected comma in middle of array.
+    bun:    (none)
+missing: "declare function f(x = [,]): void" [ts] [module]
+    eslint: 1:25 Unexpected comma in middle of array.
+    bun:    (none)
+missing: "abstract class A { abstract m(x = [,]): void }" [ts] [module]
+    eslint: 1:36 Unexpected comma in middle of array.
+    bun:    (none)
+missing: "class A { m(x = [,]): void; m(x = [,]) {} }" [ts] [module]
+    eslint: 1:18 Unexpected comma in middle of array. | 1:36 Unexpected comma in middle of array.
+    bun:    (none)
+missing: "class A { constructor(private x = [,]) {} }" [ts] [module]
+    eslint: 1:36 Unexpected comma in middle of array.
+    bun:    (none)
+missing: "function f(x?: number, y = [,]) {}" [ts] [module]
+    eslint: 1:29 Unexpected comma in middle of array.
+    bun:    (none)
+missing: "([a, [,] as T] = x)" [ts] [module]
+    eslint: 1:7 Unexpected comma in middle of array.
+    bun:    (none)
+missing: "namespace N { export const a = [,] }" [ts] [module]
+    eslint: 1:33 Unexpected comma in middle of array.
+    bun:    (none)
+missing: "declare namespace N { const a = [,] }" [ts] [module]
+    eslint: 1:34 Unexpected comma in middle of array.
+    bun:    (none)
+missing: "type T = [a, b?]; const a: T = [1, , ];" [ts] [module]
+    eslint: 1:36 Unexpected comma in middle of array.
+    bun:    (none)
+missing: "const e = <div a={[,]} />;" [tsx] [module]
+    eslint: 1:20 Unexpected comma in middle of array.
+    bun:    (none)
+missing: "export const a = [,];" [mts] [module]
+    eslint: 1:19 Unexpected comma in middle of array.
+    bun:    (none)
+missing: "exports.a = [,];" [cts] [commonjs]
+    eslint: 1:14 Unexpected comma in middle of array.
+    bun:    (none)

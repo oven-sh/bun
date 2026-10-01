@@ -1,0 +1,15 @@
+{"kind":"valid","code":"function foo() { return 0; }","type":"script","reports":[]}
+{"kind":"valid","code":"function* foo() { yield 0; }","type":"script","reports":[]}
+{"kind":"valid","code":"function* foo() { }","type":"script","reports":[]}
+{"kind":"valid","code":"(function* foo() { yield 0; })();","type":"script","reports":[]}
+{"kind":"valid","code":"(function* foo() { })();","type":"script","reports":[]}
+{"kind":"valid","code":"var obj = { *foo() { yield 0; } };","type":"script","reports":[]}
+{"kind":"valid","code":"var obj = { *foo() { } };","type":"script","reports":[]}
+{"kind":"valid","code":"class A { *foo() { yield 0; } };","type":"script","reports":[]}
+{"kind":"valid","code":"class A { *foo() { } };","type":"script","reports":[]}
+{"kind":"invalid","code":"function* foo() { return 0; }","type":"script","reports":["1:1-1:14 This generator function does not have 'yield'."]}
+{"kind":"invalid","code":"(function* foo() { return 0; })();","type":"script","reports":["1:2-1:15 This generator function does not have 'yield'."]}
+{"kind":"invalid","code":"var obj = { *foo() { return 0; } }","type":"script","reports":["1:13-1:17 This generator function does not have 'yield'."]}
+{"kind":"invalid","code":"class A { *foo() { return 0; } }","type":"script","reports":["1:11-1:15 This generator function does not have 'yield'."]}
+{"kind":"invalid","code":"function* foo() { function* bar() { yield 0; } }","type":"script","reports":["1:1-1:14 This generator function does not have 'yield'."]}
+{"kind":"invalid","code":"function* foo() { function* bar() { return 0; } yield 0; }","type":"script","reports":["1:19-1:32 This generator function does not have 'yield'."]}

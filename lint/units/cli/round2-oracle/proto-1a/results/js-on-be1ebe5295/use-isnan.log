@@ -1,0 +1,118 @@
+use-isnan: 439 cases: same 392, merged 7, moved 10, missing 19, extra 10, both-reject 1
+moved: "switch (x) { case /* c */ NaN: }" [js] [script]
+    eslint: 1:14 'case NaN' can never match. Use Number.isNaN before the switch.
+    bun:    1:27 'case NaN' can never match. Use Number.isNaN before the switch.
+moved: "switch (x) { case\n NaN: }" [js] [script]
+    eslint: 1:14 'case NaN' can never match. Use Number.isNaN before the switch.
+    bun:    2:2 'case NaN' can never match. Use Number.isNaN before the switch.
+missing: "x === NaN; function g(NaN) {}" [js] [script]
+    eslint: 1:1 Use the isNaN function to compare with NaN.
+    bun:    (none)
+missing: "function g(Number) {} x === Number.NaN" [js] [script]
+    eslint: 1:23 Use the isNaN function to compare with NaN.
+    bun:    (none)
+missing: "function g(NaN) {} switch (NaN) { case NaN: }" [js] [script]
+    eslint: 1:20 'switch(NaN)' can never match a case clause. Use Number.isNaN instead of the switch. | 1:35 'case NaN' can never match. Use Number.isNaN before the switch.
+    bun:    (none)
+missing: "(function NaN() {}); x == NaN" [js] [script]
+    eslint: 1:22 Use the isNaN function to compare with NaN.
+    bun:    (none)
+missing: "(class NaN {}); x == NaN" [js] [script]
+    eslint: 1:17 Use the isNaN function to compare with NaN.
+    bun:    (none)
+missing: "function f(a = x === NaN) { var NaN; }" [js] [script]
+    eslint: 1:16 Use the isNaN function to compare with NaN.
+    bun:    (none)
+moved: "( /* c */ NaN) === x" [js] [script]
+    eslint: 1:1 Use the isNaN function to compare with NaN.
+    bun:    1:11 Use the isNaN function to compare with NaN.
+moved: "(\nNaN) === x" [js] [script]
+    eslint: 1:1 Use the isNaN function to compare with NaN.
+    bun:    2:1 Use the isNaN function to compare with NaN.
+moved: "(// c\nNaN) === x" [js] [script]
+    eslint: 1:1 Use the isNaN function to compare with NaN.
+    bun:    2:1 Use the isNaN function to compare with NaN.
+moved: "(/* c */ x) === NaN" [js] [script]
+    eslint: 1:1 Use the isNaN function to compare with NaN.
+    bun:    1:10 Use the isNaN function to compare with NaN.
+moved: "(\nx) === NaN" [js] [script]
+    eslint: 1:1 Use the isNaN function to compare with NaN.
+    bun:    2:1 Use the isNaN function to compare with NaN.
+moved: "( x) === NaN" [js] [script]
+    eslint: 1:1 Use the isNaN function to compare with NaN.
+    bun:    1:3 Use the isNaN function to compare with NaN.
+moved: "switch (x) { case (\nNaN): }" [js] [script]
+    eslint: 1:14 'case NaN' can never match. Use Number.isNaN before the switch.
+    bun:    2:1 'case NaN' can never match. Use Number.isNaN before the switch.
+moved: "switch (x) { case /* case */ NaN: }" [js] [script]
+    eslint: 1:14 'case NaN' can never match. Use Number.isNaN before the switch.
+    bun:    1:30 'case NaN' can never match. Use Number.isNaN before the switch.
+missing: "function f() { { let NaN; } return x === NaN }" [js] [script]
+    eslint: 1:36 Use the isNaN function to compare with NaN.
+    bun:    (none)
+missing: "function f() { return x === NaN } function g() { var NaN; }" [js] [script]
+    eslint: 1:23 Use the isNaN function to compare with NaN.
+    bun:    (none)
+missing: "(NaN) => 1; x === NaN" [js] [script]
+    eslint: 1:13 Use the isNaN function to compare with NaN.
+    bun:    (none)
+missing: "try {} catch (NaN) {} x === NaN" [js] [script]
+    eslint: 1:23 Use the isNaN function to compare with NaN.
+    bun:    (none)
+missing: "for (let NaN of y) {} x === NaN" [js] [script]
+    eslint: 1:23 Use the isNaN function to compare with NaN.
+    bun:    (none)
+missing: "function f({NaN}) {} x === NaN" [js] [script]
+    eslint: 1:22 Use the isNaN function to compare with NaN.
+    bun:    (none)
+missing: "class A { m(NaN) {} } x === NaN" [js] [script]
+    eslint: 1:23 Use the isNaN function to compare with NaN.
+    bun:    (none)
+missing: "class A { static { var NaN; } } x === NaN" [js] [script]
+    eslint: 1:33 Use the isNaN function to compare with NaN.
+    bun:    (none)
+missing: "{ function NaN() {} } x === NaN" [js] [script]
+    eslint: 1:23 Use the isNaN function to compare with NaN.
+    bun:    (none)
+missing: "var f = function NaN() {}; x === NaN" [js] [script]
+    eslint: 1:28 Use the isNaN function to compare with NaN.
+    bun:    (none)
+missing: "function f(a = () => x === NaN) { var NaN; }" [js] [script]
+    eslint: 1:22 Use the isNaN function to compare with NaN.
+    bun:    (none)
+missing: "function f(NaN, Number) {} NaN === Number.NaN" [js] [script]
+    eslint: 1:28 Use the isNaN function to compare with NaN.
+    bun:    (none)
+missing: "function f(Number) {} switch (NaN) { case Number.NaN: case NaN: }" [js] [script]
+    eslint: 1:23 'switch(NaN)' can never match a case clause. Use Number.isNaN instead of the switch. | 1:38 'case NaN' can never match. Use Number.isNaN before the switch. | 1:55 'case NaN' can never match. Use Number.isNaN before the switch.
+    bun:    1:23 'switch(NaN)' can never match a case clause. Use Number.isNaN instead of the switch. | 1:55 'case NaN' can never match. Use Number.isNaN before the switch.
+extra: "import { NaN } from \"./macros.js\" with { type: \"macro\" };\nconsole.log(x === NaN);" [js] [module]
+    eslint: (none)
+    bun:    2:13 Use the isNaN function to compare with NaN.
+extra: "import { Number } from \"macro:./macros.js\";\nswitch (Number.NaN) { case Number.NaN: }" [js] [module]
+    eslint: (none)
+    bun:    2:1 'switch(NaN)' can never match a case clause. Use Number.isNaN instead of the switch. | 2:23 'case NaN' can never match. Use Number.isNaN before the switch.
+extra: "import { feature as Number } from \"bun:bundle\";\nconsole.log(x === Number.NaN);" [js] [module]
+    eslint: (none)
+    bun:    2:13 Use the isNaN function to compare with NaN.
+extra: "import NaN from \"bun:bundle\";\nconsole.log(x === NaN);" [js] [module]
+    eslint: (none)
+    bun:    2:13 Use the isNaN function to compare with NaN.
+extra: "import * as NaN from \"bun:bundle\";\nconsole.log(x === NaN);" [js] [module]
+    eslint: (none)
+    bun:    2:13 Use the isNaN function to compare with NaN.
+extra: "import NaN from \"./macros.js\" with { type: \"macro\" };\nx === NaN;" [js] [module]
+    eslint: (none)
+    bun:    2:1 Use the isNaN function to compare with NaN.
+extra: "import * as Number from \"./macros.js\" with { type: \"macro\" };\nx === Number.NaN;" [js] [module]
+    eslint: (none)
+    bun:    2:1 Use the isNaN function to compare with NaN.
+extra: "import { a as NaN } from \"./macros.js\" with { type: \"macro\" };\nx === NaN;" [js] [module]
+    eslint: (none)
+    bun:    2:1 Use the isNaN function to compare with NaN.
+extra: "import { NaN, Number } from \"./macros.js\" with { type: \"macro\" };\nNaN === Number.NaN;" [js] [module]
+    eslint: (none)
+    bun:    2:1 Use the isNaN function to compare with NaN.
+extra: "import { feature as NaN } from \"bun:bundle\";\nswitch (NaN) { case NaN: }" [js] [module]
+    eslint: (none)
+    bun:    2:1 'switch(NaN)' can never match a case clause. Use Number.isNaN instead of the switch. | 2:16 'case NaN' can never match. Use Number.isNaN before the switch.

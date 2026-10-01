@@ -1,0 +1,16 @@
+{"code":"switch (a) { case 1: using x = y; }","type":"script","fatal":"Parsing error: Using declaration cannot appear in the top level when source type is `script` or in the bare case statement","reports":[]}
+{"code":"async function f() { switch (a) { case 1: await using x = y; } }","type":"script","fatal":"Parsing error: Using declaration cannot appear in the top level when source type is `script` or in the bare case statement","reports":[]}
+{"code":"switch (a) { case 1: ; function f() {} }","type":"script","reports":["1:24-1:39 Unexpected lexical declaration in case block."]}
+{"code":"switch (a) { case 1: l: function f() {} }","type":"script","reports":[]}
+{"code":"switch (a) { case 1: if (x) function f() {} }","type":"script","reports":[]}
+{"code":"switch (a) { case 1: { let x } let y; }","type":"script","reports":["1:32-1:38 Unexpected lexical declaration in case block."]}
+{"code":"switch (a) { case 1: async function f() {} }","type":"script","reports":["1:22-1:43 Unexpected lexical declaration in case block."]}
+{"code":"switch (a) { case 1: function* g(){} }","type":"script","reports":["1:22-1:37 Unexpected lexical declaration in case block."]}
+{"code":"switch (a) { case 1: let [b] = c; const {d} = e; var v; class A {} }","type":"script","reports":["1:22-1:34 Unexpected lexical declaration in case block.","1:35-1:49 Unexpected lexical declaration in case block.","1:57-1:67 Unexpected lexical declaration in case block."]}
+{"code":"switch (a) { default: }","type":"script","reports":[]}
+{"code":"switch (a) { case 1: switch (b) { case 2: let x; } }","type":"script","reports":["1:43-1:49 Unexpected lexical declaration in case block."]}
+{"code":"switch (a) { case 1: var x = class {}; var y = function () {}; }","type":"script","reports":[]}
+{"code":"switch (a) { case 1: let\nx; }","type":"script","reports":["1:22-2:3 Unexpected lexical declaration in case block."]}
+{"code":"switch (a) { case 1: let; }","type":"script","reports":[]}
+{"code":"switch (a) { case 1: let = 1; }","type":"script","reports":[]}
+{"code":"switch (a) { case 1: /*! c */ let x; }","type":"script","reports":["1:31-1:37 Unexpected lexical declaration in case block."]}

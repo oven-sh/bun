@@ -1,0 +1,12 @@
+[
+"new Promise(async () => {})",
+"new Promise<void>(async (resolve) => {})",
+"new Promise((async () => {}) as any)",
+"new Promise(<any>(async () => {}))",
+"new Promise((async () => {})!)",
+"new Promise(async <T,>(resolve: T) => {})",
+"new (Promise as any)(async () => {})",
+"new Promise!(async () => {})",
+"new Promise(async function <T>(this: any, resolve: T) {})",
+"new Promise(async function () {} satisfies any)"
+]

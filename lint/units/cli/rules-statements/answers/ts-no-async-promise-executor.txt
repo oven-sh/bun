@@ -1,0 +1,20 @@
+"new Promise(async () => {})"
+      => no-async-promise-executor 1:13 Promise executor functions should not be async.
+"new Promise<void>(async (resolve) => {})"
+      => no-async-promise-executor 1:19 Promise executor functions should not be async.
+"new Promise((async () => {}) as any)"
+      => (none)
+"new Promise(<any>(async () => {}))"
+      => (none)
+"new Promise((async () => {})!)"
+      => (none)
+"new Promise(async <T,>(resolve: T) => {})"
+      => no-async-promise-executor 1:13 Promise executor functions should not be async.
+"new (Promise as any)(async () => {})"
+      => (none)
+"new Promise!(async () => {})"
+      => (none)
+"new Promise(async function <T>(this: any, resolve: T) {})"
+      => no-async-promise-executor 1:13 Promise executor functions should not be async.
+"new Promise(async function () {} satisfies any)"
+      => (none)

@@ -1,0 +1,47 @@
+{"code":"Object.defineProperty(foo, 'bar', { set: v => (a).b })","type":"script","reports":["1:47-1:52 Setter cannot return a value."]}
+{"code":"Object.defineProperty(foo, 'bar', { set: v => (a) + b })","type":"script","reports":["1:47-1:54 Setter cannot return a value."]}
+{"code":"Object.defineProperty(foo, 'bar', { set: v => (a) })","type":"script","reports":["1:48-1:49 Setter cannot return a value."]}
+{"code":"Object.defineProperty(foo, 'bar', { set: v => (a, b) })","type":"script","reports":["1:48-1:52 Setter cannot return a value."]}
+{"code":"Object.defineProperty(foo, 'bar', { set: v => (a)[b] })","type":"script","reports":["1:47-1:53 Setter cannot return a value."]}
+{"code":"Object.defineProperty(foo, 'bar', { set: v => (a)() })","type":"script","reports":["1:47-1:52 Setter cannot return a value."]}
+{"code":"Object.defineProperty(foo, 'bar', { set: v => (a) ? b : c })","type":"script","reports":["1:47-1:58 Setter cannot return a value."]}
+{"code":"Object.defineProperty(foo, 'bar', { set: v => (a)`x` })","type":"script","reports":["1:47-1:53 Setter cannot return a value."]}
+{"code":"Object.defineProperty(foo, 'bar', { set: v => (a)++ })","type":"script","reports":["1:47-1:52 Setter cannot return a value."]}
+{"code":"Object.defineProperty(foo, 'bar', { set: v => ((a).b) })","type":"script","reports":["1:48-1:53 Setter cannot return a value."]}
+{"code":"Object.defineProperty(foo, 'bar', { set: v => ( a ).b })","type":"script","reports":["1:47-1:54 Setter cannot return a value."]}
+{"code":"Object.defineProperty(foo, 'bar', { set: v => (/* c */ a).b })","type":"script","reports":["1:47-1:60 Setter cannot return a value."]}
+{"code":"Object.defineProperty(foo, 'bar', { set: v => ({}) })","type":"script","reports":["1:48-1:50 Setter cannot return a value."]}
+{"code":"Object.defineProperty(foo, 'bar', { set: v => (a = b) })","type":"script","reports":["1:48-1:53 Setter cannot return a value."]}
+{"code":"Object.defineProperty(foo, 'bar', { get set() { return 1 } })","type":"script","reports":["1:49-1:57 Setter cannot return a value."]}
+{"code":"Object.defineProperty(foo, 'bar', { async set(v) { return 1 } })","type":"script","reports":["1:52-1:60 Setter cannot return a value."]}
+{"code":"Object.defineProperty(foo, 'bar', { *set(v) { return 1 } })","type":"script","reports":["1:47-1:55 Setter cannot return a value."]}
+{"code":"Object.defineProperty(foo, 'bar', { set set(v) { return 1 } })","type":"script","reports":["1:50-1:58 Setter cannot return a value."]}
+{"code":"Object.create(foo, { ...x, bar: { set(v) { return 1 } } })","type":"script","reports":["1:44-1:52 Setter cannot return a value."]}
+{"code":"Object.create(foo, { get bar() { return { set(v) { return 1 } } } })","type":"script","reports":[]}
+{"code":"Object.create(foo, { [bar]: { set(v) { return 1 } }, 'baz': { set(v) { return 2 } } })","type":"script","reports":["1:40-1:48 Setter cannot return a value.","1:72-1:80 Setter cannot return a value."]}
+{"code":"Object.defineProperty(...a, { set(v) { return 1 } })","type":"script","reports":[]}
+{"code":"Object.defineProperty(a, ...b, { set(v) { return 1 } })","type":"script","reports":["1:43-1:51 Setter cannot return a value."]}
+{"code":"new Object.defineProperty(foo, 'bar', { set(v) { return 1 } })","type":"script","reports":[]}
+{"code":"Object.defineProperty`${foo}`","type":"script","reports":[]}
+{"code":"Object.defineProperty(foo, 'bar', { set(v) { return 1 } }); { let Object }","type":"script","reports":["1:46-1:54 Setter cannot return a value."]}
+{"code":"Object.defineProperty(foo, 'bar', { set(v) { return 1 } }); class Reflect {}","type":"script","reports":["1:46-1:54 Setter cannot return a value."]}
+{"code":"Reflect.defineProperty(foo, 'bar', { set(v) { return 1 } }); class Reflect {}","type":"script","reports":[]}
+{"code":"window.Object.defineProperty(foo, 'bar', { set(v) { return 1 } })","type":"script","reports":[]}
+{"code":"Object.defineProperty(foo, 'bar', ({ set(v) { return 1 } }))","type":"script","reports":["1:47-1:55 Setter cannot return a value."]}
+{"code":"Object.defineProperty(foo, 'bar', { set: (function (v) { return 1 }) })","type":"script","reports":["1:58-1:66 Setter cannot return a value."]}
+{"code":"Object.defineProperty(foo, 'bar', { 'set': v => v, set: v => v })","type":"script","reports":["1:49-1:50 Setter cannot return a value.","1:62-1:63 Setter cannot return a value."]}
+{"code":"Object.defineProperty(foo, 'bar', { set() { return () => 1 } })","type":"script","reports":["1:45-1:59 Setter cannot return a value."]}
+{"code":"Object.defineProperty(foo, 'bar', { set: v => { } })","type":"script","reports":[]}
+{"code":"Object.defineProperty(foo, 'bar', { set: v => void 0 })","type":"script","reports":["1:47-1:53 Setter cannot return a value."]}
+{"code":"Object.defineProperty(foo, 'bar', x = { set(v) { return 1 } })","type":"script","reports":[]}
+{"code":"({ set a(v) { return (1) } })","type":"script","reports":["1:15-1:25 Setter cannot return a value."]}
+{"code":"({ set a(v) { return\n1 } })","type":"script","reports":[]}
+{"code":"class A { static set #a(v) { return 1 } }","type":"script","reports":["1:30-1:38 Setter cannot return a value."]}
+{"code":"({ set a(v) { label: return 1 } })","type":"script","reports":["1:22-1:30 Setter cannot return a value."]}
+{"code":"({ set a(v) { class B { m() { return 1 } } } })","type":"script","reports":[]}
+{"code":"({ set a(v) { class B { [(() => { return 1 })()]() {} } } })","type":"script","reports":[]}
+{"code":"({ set a(v) { return; } , get a() { return 1 } })","type":"script","reports":[]}
+{"code":"Object.defineProperties(foo, { bar: { set(v) { return 1 } } , baz: { get() { return 1 } } })","type":"script","reports":["1:48-1:56 Setter cannot return a value."]}
+{"code":"Object?.create?.(foo, { bar: { set(v) { return 1 } } })","type":"script","reports":["1:41-1:49 Setter cannot return a value."]}
+{"code":"Object['create'](foo, { bar: { ['set'](v) { return 1 } } })","type":"script","reports":["1:45-1:53 Setter cannot return a value."]}
+{"code":"Object[`create`](foo, { bar: { [`set`]: function (v) { return 1 } } })","type":"script","reports":["1:56-1:64 Setter cannot return a value."]}

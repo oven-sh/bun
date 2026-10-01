@@ -1,0 +1,42 @@
+"with (a) { b }"
+      => no-with 1:1 Unexpected use of 'with' statement.
+"function f() { try {} finally { namespace N { throw x; } } }"
+      => no-unsafe-finally 1:47 Unsafe usage of ThrowStatement.
+"function f() { try {} finally { return 1 as any; } }"
+      => no-unsafe-finally 1:33 Unsafe usage of ReturnStatement.
+"function f() { try {} finally { (() => 1)(); } }"
+      => (none)
+"function f() { try {} finally { (() => { return 1 })(); } }"
+      => (none)
+"function f() { try {} finally { class C { m() { return 1 } } } }"
+      => (none)
+"function f() { try {} finally { class C { static { throw 1 } } } }"
+      => (none)
+"function f() { try {} finally { ({ m() { return 1 } }) } }"
+      => (none)
+"function f() { try {} finally { try { throw 1 } catch (e) {} } }"
+      => no-unsafe-finally 1:39 Unsafe usage of ThrowStatement.
+"function f() { try {} catch (e) { return 1 } }"
+      => (none)
+"function f() { a: try {} finally { b: { break a; } } }"
+      => no-unused-labels 1:36 'b:' is defined but never used. | no-unsafe-finally 1:41 Unsafe usage of BreakStatement.
+"function f() { a: try {} finally { a: { break a; } } }"
+      => no-unused-labels 1:16 'a:' is defined but never used.
+"function f() { for (;;) { try {} finally { for (;;) { break; } break; } } }"
+      => no-unsafe-finally 1:64 Unsafe usage of BreakStatement.
+"function f() { try {} finally { for (const x of y) continue; do { break } while (1); for (k in o) break; } }"
+      => (none)
+"A: type T = 1;"
+      => no-unused-labels 1:1 'A:' is defined but never used.
+"A: enum E {}"
+      => no-unused-labels 1:1 'A:' is defined but never used.
+"A: { break A; }"
+      => (none)
+"A: for (;;) { (function () { break A; })() }"
+      => (none)
+"A: var x: number = 1;"
+      => no-unused-labels 1:1 'A:' is defined but never used.
+"A: B: for (;;) { continue B; }"
+      => no-unused-labels 1:1 'A:' is defined but never used.
+"A: for (;;) { A: for (;;) { break A; } }"
+      => no-unused-labels 1:1 'A:' is defined but never used.

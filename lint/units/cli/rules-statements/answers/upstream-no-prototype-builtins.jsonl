@@ -1,0 +1,47 @@
+{"kind":"valid","code":"Object.prototype.hasOwnProperty.call(foo, 'bar')","type":"script","reports":[]}
+{"kind":"valid","code":"Object.prototype.isPrototypeOf.call(foo, 'bar')","type":"script","reports":[]}
+{"kind":"valid","code":"Object.prototype.propertyIsEnumerable.call(foo, 'bar')","type":"script","reports":[]}
+{"kind":"valid","code":"Object.prototype.hasOwnProperty.apply(foo, ['bar'])","type":"script","reports":[]}
+{"kind":"valid","code":"Object.prototype.isPrototypeOf.apply(foo, ['bar'])","type":"script","reports":[]}
+{"kind":"valid","code":"Object.prototype.propertyIsEnumerable.apply(foo, ['bar'])","type":"script","reports":[]}
+{"kind":"valid","code":"foo.hasOwnProperty","type":"script","reports":[]}
+{"kind":"valid","code":"foo.hasOwnProperty.bar()","type":"script","reports":[]}
+{"kind":"valid","code":"foo(hasOwnProperty)","type":"script","reports":[]}
+{"kind":"valid","code":"hasOwnProperty(foo, 'bar')","type":"script","reports":[]}
+{"kind":"valid","code":"isPrototypeOf(foo, 'bar')","type":"script","reports":[]}
+{"kind":"valid","code":"propertyIsEnumerable(foo, 'bar')","type":"script","reports":[]}
+{"kind":"valid","code":"({}.hasOwnProperty.call(foo, 'bar'))","type":"script","reports":[]}
+{"kind":"valid","code":"({}.isPrototypeOf.call(foo, 'bar'))","type":"script","reports":[]}
+{"kind":"valid","code":"({}.propertyIsEnumerable.call(foo, 'bar'))","type":"script","reports":[]}
+{"kind":"valid","code":"({}.hasOwnProperty.apply(foo, ['bar']))","type":"script","reports":[]}
+{"kind":"valid","code":"({}.isPrototypeOf.apply(foo, ['bar']))","type":"script","reports":[]}
+{"kind":"valid","code":"({}.propertyIsEnumerable.apply(foo, ['bar']))","type":"script","reports":[]}
+{"kind":"valid","code":"foo[hasOwnProperty]('bar')","type":"script","reports":[]}
+{"kind":"valid","code":"foo['HasOwnProperty']('bar')","type":"script","reports":[]}
+{"kind":"valid","code":"foo[`isPrototypeOff`]('bar')","type":"script","given":"{\"ecmaVersion\":2015}","reports":[]}
+{"kind":"valid","code":"foo?.['propertyIsEnumerabl']('bar')","type":"script","given":"{\"ecmaVersion\":2020}","reports":[]}
+{"kind":"valid","code":"foo[1]('bar')","type":"script","reports":[]}
+{"kind":"valid","code":"foo[null]('bar')","type":"script","reports":[]}
+{"kind":"valid","code":"class C { #hasOwnProperty; foo() { obj.#hasOwnProperty('bar'); } }","type":"script","given":"{\"ecmaVersion\":2022}","reports":[]}
+{"kind":"valid","code":"foo['hasOwn' + 'Property']('bar')","type":"script","reports":[]}
+{"kind":"valid","code":"foo[`hasOwnProperty${''}`]('bar')","type":"script","given":"{\"ecmaVersion\":2015}","reports":[]}
+{"kind":"invalid","code":"foo.hasOwnProperty('bar')","type":"script","reports":["1:5-1:19 Do not access Object.prototype method 'hasOwnProperty' from target object."]}
+{"kind":"invalid","code":"foo.isPrototypeOf('bar')","type":"script","reports":["1:5-1:18 Do not access Object.prototype method 'isPrototypeOf' from target object."]}
+{"kind":"invalid","code":"foo.propertyIsEnumerable('bar')","type":"script","reports":["1:5-1:25 Do not access Object.prototype method 'propertyIsEnumerable' from target object."]}
+{"kind":"invalid","code":"foo.bar.hasOwnProperty('bar')","type":"script","reports":["1:9-1:23 Do not access Object.prototype method 'hasOwnProperty' from target object."]}
+{"kind":"invalid","code":"foo.bar.baz.isPrototypeOf('bar')","type":"script","reports":["1:13-1:26 Do not access Object.prototype method 'isPrototypeOf' from target object."]}
+{"kind":"invalid","code":"foo['hasOwnProperty']('bar')","type":"script","reports":["1:5-1:21 Do not access Object.prototype method 'hasOwnProperty' from target object."]}
+{"kind":"invalid","code":"foo[`isPrototypeOf`]('bar').baz","type":"script","given":"{\"ecmaVersion\":2015}","reports":["1:5-1:20 Do not access Object.prototype method 'isPrototypeOf' from target object."]}
+{"kind":"invalid","code":"foo.bar[\"propertyIsEnumerable\"]('baz')","type":"script","reports":["1:9-1:31 Do not access Object.prototype method 'propertyIsEnumerable' from target object."]}
+{"kind":"invalid","code":"(function(Object) {return foo.hasOwnProperty('bar');})","type":"script","reports":["1:31-1:45 Do not access Object.prototype method 'hasOwnProperty' from target object."]}
+{"kind":"invalid","code":"foo.hasOwnProperty('bar')","type":"script","skip":"globals","given":"{\"globals\":{\"Object\":\"off\"}}","reports":["1:5-1:19 Do not access Object.prototype method 'hasOwnProperty' from target object."]}
+{"kind":"invalid","code":"foo?.hasOwnProperty('bar')","type":"script","given":"{\"ecmaVersion\":2020}","reports":["1:6-1:20 Do not access Object.prototype method 'hasOwnProperty' from target object."]}
+{"kind":"invalid","code":"foo?.bar.hasOwnProperty('baz')","type":"script","given":"{\"ecmaVersion\":2020}","reports":["1:10-1:24 Do not access Object.prototype method 'hasOwnProperty' from target object."]}
+{"kind":"invalid","code":"foo.hasOwnProperty?.('bar')","type":"script","given":"{\"ecmaVersion\":2020}","reports":["1:5-1:19 Do not access Object.prototype method 'hasOwnProperty' from target object."]}
+{"kind":"invalid","code":"foo?.hasOwnProperty('bar').baz","type":"script","given":"{\"ecmaVersion\":2020}","reports":["1:6-1:20 Do not access Object.prototype method 'hasOwnProperty' from target object."]}
+{"kind":"invalid","code":"foo.hasOwnProperty('bar')?.baz","type":"script","given":"{\"ecmaVersion\":2020}","reports":["1:5-1:19 Do not access Object.prototype method 'hasOwnProperty' from target object."]}
+{"kind":"invalid","code":"(a,b).hasOwnProperty('bar')","type":"script","given":"{\"ecmaVersion\":2020}","reports":["1:7-1:21 Do not access Object.prototype method 'hasOwnProperty' from target object."]}
+{"kind":"invalid","code":"(foo?.hasOwnProperty)('bar')","type":"script","given":"{\"ecmaVersion\":2020}","reports":["1:7-1:21 Do not access Object.prototype method 'hasOwnProperty' from target object."]}
+{"kind":"invalid","code":"(foo?.hasOwnProperty)?.('bar')","type":"script","given":"{\"ecmaVersion\":2020}","reports":["1:7-1:21 Do not access Object.prototype method 'hasOwnProperty' from target object."]}
+{"kind":"invalid","code":"foo?.['hasOwnProperty']('bar')","type":"script","given":"{\"ecmaVersion\":2020}","reports":["1:7-1:23 Do not access Object.prototype method 'hasOwnProperty' from target object."]}
+{"kind":"invalid","code":"(foo?.[`hasOwnProperty`])('bar')","type":"script","given":"{\"ecmaVersion\":2020}","reports":["1:8-1:24 Do not access Object.prototype method 'hasOwnProperty' from target object."]}

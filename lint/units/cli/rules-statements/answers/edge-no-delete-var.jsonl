@@ -1,0 +1,13 @@
+{"code":"delete (x)","type":"script","reports":["1:1-1:11 Variables should not be deleted."]}
+{"code":"delete x.y","type":"script","reports":[]}
+{"code":"delete x[y]","type":"script","reports":[]}
+{"code":"delete this","type":"script","reports":[]}
+{"code":"delete 1","type":"script","reports":[]}
+{"code":"delete (x, y)","type":"script","reports":[]}
+{"code":"delete x?.y","type":"script","reports":[]}
+{"code":"typeof delete x","type":"script","reports":["1:8-1:16 Variables should not be deleted."]}
+{"code":"delete delete x","type":"script","reports":["1:8-1:16 Variables should not be deleted."]}
+{"code":"delete arguments","type":"script","reports":["1:1-1:17 Variables should not be deleted."]}
+{"code":"delete undefined","type":"script","reports":["1:1-1:17 Variables should not be deleted."]}
+{"code":"delete ((x))","type":"script","reports":["1:1-1:13 Variables should not be deleted."]}
+{"code":"a = delete x, delete y","type":"script","reports":["1:5-1:13 Variables should not be deleted.","1:15-1:23 Variables should not be deleted."]}

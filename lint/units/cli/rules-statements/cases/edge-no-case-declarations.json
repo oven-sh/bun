@@ -1,0 +1,18 @@
+[
+"switch (a) { case 1: using x = y; }",
+"async function f() { switch (a) { case 1: await using x = y; } }",
+"switch (a) { case 1: ; function f() {} }",
+"switch (a) { case 1: l: function f() {} }",
+"switch (a) { case 1: if (x) function f() {} }",
+"switch (a) { case 1: { let x } let y; }",
+"switch (a) { case 1: async function f() {} }",
+"switch (a) { case 1: function* g(){} }",
+"switch (a) { case 1: let [b] = c; const {d} = e; var v; class A {} }",
+"switch (a) { default: }",
+"switch (a) { case 1: switch (b) { case 2: let x; } }",
+"switch (a) { case 1: var x = class {}; var y = function () {}; }",
+"switch (a) { case 1: let\nx; }",
+"switch (a) { case 1: let; }",
+"switch (a) { case 1: let = 1; }",
+"switch (a) { case 1: /*! c */ let x; }"
+]

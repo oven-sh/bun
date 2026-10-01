@@ -1,0 +1,685 @@
+[
+	{
+		"code": "class A { foo(): void; foo(a?: number): void; foo(a?: number) {} }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "class A { foo(): void; foo() {} foo() {} }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 33,
+				"endLine": 1,
+				"endColumn": 36,
+				"message": "Duplicate name 'foo'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "class A { declare x: number; x = 1 }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 30,
+				"endLine": 1,
+				"endColumn": 31,
+				"message": "Duplicate name 'x'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "class A { x = 1; declare x: number }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 26,
+				"endLine": 1,
+				"endColumn": 27,
+				"message": "Duplicate name 'x'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "class A { declare x: number; declare x: number }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 38,
+				"endLine": 1,
+				"endColumn": 39,
+				"message": "Duplicate name 'x'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "class A { declare x; declare x }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 30,
+				"endLine": 1,
+				"endColumn": 31,
+				"message": "Duplicate name 'x'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "class A { declare static x: number; static x = 1 }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 44,
+				"endLine": 1,
+				"endColumn": 45,
+				"message": "Duplicate name 'x'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "class A { static declare x: number; static x = 1 }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 44,
+				"endLine": 1,
+				"endColumn": 45,
+				"message": "Duplicate name 'x'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "class A { declare readonly x: number; declare x: string }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 47,
+				"endLine": 1,
+				"endColumn": 48,
+				"message": "Duplicate name 'x'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "class A { @d declare x: number; x = 1 }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 33,
+				"endLine": 1,
+				"endColumn": 34,
+				"message": "Duplicate name 'x'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "abstract class A { @d abstract x: number; x = 1 }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "class A { @d x: number; @d x: string }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 28,
+				"endLine": 1,
+				"endColumn": 29,
+				"message": "Duplicate name 'x'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "class A { x: number; x: string }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 22,
+				"endLine": 1,
+				"endColumn": 23,
+				"message": "Duplicate name 'x'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "class A { x?: number; x!: string }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 23,
+				"endLine": 1,
+				"endColumn": 24,
+				"message": "Duplicate name 'x'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "abstract class A { abstract x: number; x = 1 }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "abstract class A { abstract m(): void; m() {} }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "abstract class A { abstract m(): void; abstract m(): void }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "abstract class A { m() {} abstract m(): void; m() {} }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 47,
+				"endLine": 1,
+				"endColumn": 48,
+				"message": "Duplicate name 'm'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "abstract class A { abstract accessor x: number; x = 1 }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "declare class A { x: number; x: string }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 30,
+				"endLine": 1,
+				"endColumn": 31,
+				"message": "Duplicate name 'x'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "declare class A { m(): void; m(): void }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "declare class A { get x(): number; get x(): number }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "declare class A { x: number; m(): void; x(): void }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "declare namespace N { class A { x: number; x: number } }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 44,
+				"endLine": 1,
+				"endColumn": 45,
+				"message": "Duplicate name 'x'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "namespace N { export class A { x = 1; x = 2 } }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 39,
+				"endLine": 1,
+				"endColumn": 40,
+				"message": "Duplicate name 'x'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "class A { [k: string]: any; [k: string]: any }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "class A { constructor(private x: number) {} x = 1 }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "class A { constructor(public x: number, public x: number) {} }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": null,
+		"differs": "bun-rejects"
+	},
+	{
+		"code": "class A { static x: number; x: number }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "class A { static x: number; static x: number }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 36,
+				"endLine": 1,
+				"endColumn": 37,
+				"message": "Duplicate name 'x'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "class A { private x = 1; public x = 2 }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 33,
+				"endLine": 1,
+				"endColumn": 34,
+				"message": "Duplicate name 'x'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "class A { readonly x = 1; x() {} }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 27,
+				"endLine": 1,
+				"endColumn": 28,
+				"message": "Duplicate name 'x'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "class A { x = 1; get x(): number { return 1 } }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 22,
+				"endLine": 1,
+				"endColumn": 23,
+				"message": "Duplicate name 'x'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "class A { get x(): number { return 1 } set x(v: number) {} }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "class A { accessor x = 1; x = 2 }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "class A { x = 1; accessor x = 2 }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "class A { [\"a\"]: number; a = 1 }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 26,
+				"endLine": 1,
+				"endColumn": 27,
+				"message": "Duplicate name 'a'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "class A { [\"a\" as string] = 1; a = 1 }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "class A { [(\"a\")] = 1; a = 1 }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 24,
+				"endLine": 1,
+				"endColumn": 25,
+				"message": "Duplicate name 'a'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "class A { [\"a\"!] = 1; a = 1 }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "class A { [<string>\"a\"] = 1; a = 1 }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "class A { [\"a\" satisfies string] = 1; a = 1 }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "class A { a = 1; [(\"a\")] = 1 }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 20,
+				"endLine": 1,
+				"endColumn": 23,
+				"message": "Duplicate name 'a'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "class A { foo?(): void; foo() {} }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "class A { foo?(): void {} foo() {} }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 27,
+				"endLine": 1,
+				"endColumn": 30,
+				"message": "Duplicate name 'foo'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "class A { m<T>(x: T): T { return x } m(): void {} }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 38,
+				"endLine": 1,
+				"endColumn": 39,
+				"message": "Duplicate name 'm'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "class A { override m() {} override m() {} }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 36,
+				"endLine": 1,
+				"endColumn": 37,
+				"message": "Duplicate name 'm'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "class A { 1 = 1; 1.0 = 2 }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 18,
+				"endLine": 1,
+				"endColumn": 21,
+				"message": "Duplicate name '1'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "class A { m(): void; }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "class A<T> implements I { a: T; b: T; a: T }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 39,
+				"endLine": 1,
+				"endColumn": 40,
+				"message": "Duplicate name 'a'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "const A = class<T> { x: T; x: T }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 28,
+				"endLine": 1,
+				"endColumn": 29,
+				"message": "Duplicate name 'x'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "class A { static { } x; x }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 25,
+				"endLine": 1,
+				"endColumn": 26,
+				"message": "Duplicate name 'x'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "const e = <div>{class { a = 1; a = 2 }}</div>;",
+		"ext": "tsx",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 32,
+				"endLine": 1,
+				"endColumn": 33,
+				"message": "Duplicate name 'a'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "export class A { x = 1; x = 2 }",
+		"ext": "mts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 25,
+				"endLine": 1,
+				"endColumn": 26,
+				"message": "Duplicate name 'x'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "class A { x = 1; x = 2 }",
+		"ext": "cts",
+		"sourceType": "commonjs",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 18,
+				"endLine": 1,
+				"endColumn": 19,
+				"message": "Duplicate name 'x'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	}
+]

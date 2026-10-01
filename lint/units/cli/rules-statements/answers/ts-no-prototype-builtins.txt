@@ -1,0 +1,24 @@
+"foo.hasOwnProperty!('bar')"
+      => (none)
+"(foo.hasOwnProperty as any)('bar')"
+      => (none)
+"foo!.hasOwnProperty('bar')"
+      => no-prototype-builtins 1:6 Do not access Object.prototype method 'hasOwnProperty' from target object.
+"foo.hasOwnProperty<string>('bar')"
+      => no-prototype-builtins 1:5 Do not access Object.prototype method 'hasOwnProperty' from target object.
+"(<any>foo.hasOwnProperty)('bar')"
+      => (none)
+"(foo as any).hasOwnProperty('bar')"
+      => no-prototype-builtins 1:14 Do not access Object.prototype method 'hasOwnProperty' from target object.
+"foo['hasOwnProperty' as string]('bar')"
+      => (none)
+"foo[('hasOwnProperty')]('bar')"
+      => no-prototype-builtins 1:6 Do not access Object.prototype method 'hasOwnProperty' from target object.
+"(foo.hasOwnProperty satisfies any)('bar')"
+      => (none)
+"foo?.hasOwnProperty!('bar')"
+      => (none)
+"super.hasOwnProperty('x')"
+      => no-prototype-builtins 1:7 Do not access Object.prototype method 'hasOwnProperty' from target object.
+"class A extends B { m() { return super.hasOwnProperty('x') } }"
+      => no-prototype-builtins 1:40 Do not access Object.prototype method 'hasOwnProperty' from target object.

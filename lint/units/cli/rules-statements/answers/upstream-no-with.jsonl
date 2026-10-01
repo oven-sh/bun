@@ -1,0 +1,2 @@
+{"kind":"valid","code":"foo.bar()","type":"script","reports":[]}
+{"kind":"invalid","code":"with(foo) { bar() }","type":"script","reports":["1:1-1:5 Unexpected use of 'with' statement."]}

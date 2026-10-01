@@ -1,0 +1,14 @@
+[
+"foo.hasOwnProperty!('bar')",
+"(foo.hasOwnProperty as any)('bar')",
+"foo!.hasOwnProperty('bar')",
+"foo.hasOwnProperty<string>('bar')",
+"(<any>foo.hasOwnProperty)('bar')",
+"(foo as any).hasOwnProperty('bar')",
+"foo['hasOwnProperty' as string]('bar')",
+"foo[('hasOwnProperty')]('bar')",
+"(foo.hasOwnProperty satisfies any)('bar')",
+"foo?.hasOwnProperty!('bar')",
+"super.hasOwnProperty('x')",
+"class A extends B { m() { return super.hasOwnProperty('x') } }"
+]

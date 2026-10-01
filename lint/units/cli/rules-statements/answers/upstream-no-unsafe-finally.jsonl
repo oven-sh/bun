@@ -1,0 +1,30 @@
+{"kind":"valid","code":"var foo = function() {\n try { \n return 1; \n } catch(err) { \n return 2; \n } finally { \n console.log('hola!') \n } \n }","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = function() { try { return 1 } catch(err) { return 2 } finally { console.log('hola!') } }","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = function() { try { return 1 } catch(err) { return 2 } finally { function a(x) { return x } } }","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = function() { try { return 1 } catch(err) { return 2 } finally { var a = function(x) { if(!x) { throw new Error() } } } }","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = function() { try { return 1 } catch(err) { return 2 } finally { var a = function(x) { while(true) { if(x) { break } else { continue } } } } }","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = function() { try { return 1 } catch(err) { return 2 } finally { var a = function(x) { label: while(true) { if(x) { break label; } else { continue } } } } }","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = function() { try {} finally { while (true) break; } }","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = function() { try {} finally { while (true) continue; } }","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = function() { try { return 1; } finally { a: while (true) { while (true) continue a; } } }","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = function() { try {} finally { switch (true) { case true: break; } } }","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = function() { try {} finally { do { break; } while (true) } }","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = function() { try { return 1; } catch(err) { return 2; } finally { var bar = () => { throw new Error(); }; } };","type":"script","given":"{\"ecmaVersion\":6}","reports":[]}
+{"kind":"valid","code":"var foo = function() { try { return 1; } catch(err) { return 2 } finally { (x) => x } }","type":"script","given":"{\"ecmaVersion\":6}","reports":[]}
+{"kind":"valid","code":"var foo = function() { try { return 1; } finally { class bar { constructor() {} static ehm() { return 'Hola!'; } } } };","type":"script","given":"{\"ecmaVersion\":6}","reports":[]}
+{"kind":"invalid","code":"var foo = function() { \n try { \n return 1; \n } catch(err) { \n return 2; \n } finally { \n return 3; \n } \n }","type":"script","reports":["7:2-7:11 Unsafe usage of ReturnStatement."]}
+{"kind":"invalid","code":"var foo = function() { try { return 1 } catch(err) { return 2 } finally { if(true) { return 3 } else { return 2 } } }","type":"script","reports":["1:86-1:94 Unsafe usage of ReturnStatement.","1:104-1:112 Unsafe usage of ReturnStatement."]}
+{"kind":"invalid","code":"var foo = function() { try { return 1 } catch(err) { return 2 } finally { return 3 } }","type":"script","reports":["1:75-1:83 Unsafe usage of ReturnStatement."]}
+{"kind":"invalid","code":"var foo = function() { try { return 1 } catch(err) { return 2 } finally { return function(x) { return y } } }","type":"script","reports":["1:75-1:106 Unsafe usage of ReturnStatement."]}
+{"kind":"invalid","code":"var foo = function() { try { return 1 } catch(err) { return 2 } finally { return { x: function(c) { return c } } } }","type":"script","reports":["1:75-1:113 Unsafe usage of ReturnStatement."]}
+{"kind":"invalid","code":"var foo = function() { try { return 1 } catch(err) { return 2 } finally { throw new Error() } }","type":"script","reports":["1:75-1:92 Unsafe usage of ThrowStatement."]}
+{"kind":"invalid","code":"var foo = function() { try { foo(); } finally { try { bar(); } finally { return; } } };","type":"script","reports":["1:74-1:81 Unsafe usage of ReturnStatement."]}
+{"kind":"invalid","code":"var foo = function() { label: try { return 0; } finally { break label; } return 1; }","type":"script","reports":["1:59-1:71 Unsafe usage of BreakStatement."]}
+{"kind":"invalid","code":"var foo = function() { \n a: try { \n return 1; \n } catch(err) { \n return 2; \n } finally { \n break a; \n } \n }","type":"script","reports":["7:2-7:10 Unsafe usage of BreakStatement."]}
+{"kind":"invalid","code":"var foo = function() { while (true) try {} finally { break; } }","type":"script","reports":["1:54-1:60 Unsafe usage of BreakStatement."]}
+{"kind":"invalid","code":"var foo = function() { while (true) try {} finally { continue; } }","type":"script","reports":["1:54-1:63 Unsafe usage of ContinueStatement."]}
+{"kind":"invalid","code":"var foo = function() { a: while (true) try {} finally { while (true) continue a; } }","type":"script","reports":["1:70-1:81 Unsafe usage of ContinueStatement."]}
+{"kind":"invalid","code":"var foo = function() { switch (true) { case true: try {} finally { break; } } }","type":"script","reports":["1:68-1:74 Unsafe usage of BreakStatement."]}
+{"kind":"invalid","code":"var foo = function() { a: while (true) try {} finally { switch (true) { case true: break a; } } }","type":"script","reports":["1:84-1:92 Unsafe usage of BreakStatement."]}
+{"kind":"invalid","code":"var foo = function() { a: while (true) try {} finally { switch (true) { case true: continue; } } }","type":"script","reports":["1:84-1:93 Unsafe usage of ContinueStatement."]}
+{"kind":"invalid","code":"var foo = function() { a: switch (true) { case true: try {} finally { switch (true) { case true: break a; } } } }","type":"script","reports":["1:98-1:106 Unsafe usage of BreakStatement."]}

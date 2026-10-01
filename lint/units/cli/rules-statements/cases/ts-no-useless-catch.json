@@ -1,0 +1,13 @@
+[
+"try { foo(); } catch (e: unknown) { throw e; }",
+"try { foo(); } catch (e) { throw e as Error; }",
+"try { foo(); } catch (e) { throw e!; }",
+"try { foo(); } catch (e) { throw <Error>e; }",
+"try { foo(); } catch (e) { throw (e); }",
+"try { foo(); } catch (e: any) { throw e } finally { bar() }",
+"try { foo(); } catch (e) { type T = 1; throw e; }",
+"try { foo(); } catch (e) { ; throw e; }",
+"try { foo(); } catch (e) { 'use strict'; throw e; }",
+"try { foo(); } catch (e) { /*! legal */ throw e; }",
+"try { foo(); } catch (e) { throw e satisfies Error; }"
+]

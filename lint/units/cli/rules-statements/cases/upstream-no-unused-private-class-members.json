@@ -1,0 +1,190 @@
+{
+	"valid": [
+		{
+			"code": "class Foo {}"
+		},
+		{
+			"code": "class Foo {\n    publicMember = 42;\n}"
+		},
+		{
+			"code": "class Foo {\n    #usedMember = 42;\n    method() {\n        return this.#usedMember;\n    }\n}"
+		},
+		{
+			"code": "class Foo {\n    #usedMember = 42;\n    anotherMember = this.#usedMember;\n}"
+		},
+		{
+			"code": "class Foo {\n    #usedMember = 42;\n    foo() {\n        anotherMember = this.#usedMember;\n    }\n}"
+		},
+		{
+			"code": "class C {\n    #usedMember;\n\n    foo() {\n        bar(this.#usedMember += 1);\n    }\n}"
+		},
+		{
+			"code": "class Foo {\n    #usedMember = 42;\n    method() {\n        return someGlobalMethod(this.#usedMember);\n    }\n}"
+		},
+		{
+			"code": "class C {\n    #usedInOuterClass;\n\n    foo() {\n        return class {};\n    }\n\n    bar() {\n        return this.#usedInOuterClass;\n    }\n}"
+		},
+		{
+			"code": "class Foo {\n    #usedInForInLoop;\n    method() {\n        for (const bar in this.#usedInForInLoop) {\n\n        }\n    }\n}"
+		},
+		{
+			"code": "class Foo {\n    #usedInForOfLoop;\n    method() {\n        for (const bar of this.#usedInForOfLoop) {\n\n        }\n    }\n}"
+		},
+		{
+			"code": "class Foo {\n    #usedInAssignmentPattern;\n    method() {\n        [bar = 1] = this.#usedInAssignmentPattern;\n    }\n}"
+		},
+		{
+			"code": "class Foo {\n    #usedInArrayPattern;\n    method() {\n        [bar] = this.#usedInArrayPattern;\n    }\n}"
+		},
+		{
+			"code": "class Foo {\n    #usedInAssignmentPattern;\n    method() {\n        [bar] = this.#usedInAssignmentPattern;\n    }\n}"
+		},
+		{
+			"code": "class C {\n    #usedInObjectAssignment;\n\n    method() {\n        ({ [this.#usedInObjectAssignment]: a } = foo);\n    }\n}"
+		},
+		{
+			"code": "class C {\n    set #accessorWithSetterFirst(value) {\n        doSomething(value);\n    }\n    get #accessorWithSetterFirst() {\n        return something();\n    }\n    method() {\n        this.#accessorWithSetterFirst += 1;\n    }\n}"
+		},
+		{
+			"code": "class Foo {\n    set #accessorUsedInMemberAccess(value) {}\n\n    method(a) {\n        [this.#accessorUsedInMemberAccess] = a;\n    }\n}"
+		},
+		{
+			"code": "class C {\n    get #accessorWithGetterFirst() {\n        return something();\n    }\n    set #accessorWithGetterFirst(value) {\n        doSomething(value);\n    }\n    method() {\n        this.#accessorWithGetterFirst += 1;\n    }\n}"
+		},
+		{
+			"code": "class C {\n    #usedInInnerClass;\n\n    method(a) {\n        return class {\n            foo = a.#usedInInnerClass;\n        }\n    }\n}"
+		},
+		{
+			"code": "class Foo {\n    #usedMethod() {\n        return 42;\n    }\n    anotherMethod() {\n        return this.#usedMethod();\n    }\n}"
+		},
+		{
+			"code": "class C {\n    set #x(value) {\n        doSomething(value);\n    }\n\n    foo() {\n        this.#x = 1;\n    }\n}"
+		}
+	],
+	"invalid": [
+		{
+			"code": "class Foo {\n    #unusedMember = 5;\n}"
+		},
+		{
+			"code": "class Foo {\n    /** docs */\n    #unusedMember = 1;\n}"
+		},
+		{
+			"code": "class Foo {\n    // remove me\n    #unusedMember = 1;\n}"
+		},
+		{
+			"code": "class Foo {\n    /* remove */ #unusedMember = 1;\n}"
+		},
+		{
+			"code": "class Foo {\n    /* keep */ #unusedMember = 1; foo = 1\n}"
+		},
+		{
+			"code": "class C {\n    #unused1; /* keep */ foo;\n}"
+		},
+		{
+			"code": "class C {\n    bar; #unused2; // keep\n}"
+		},
+		{
+			"code": "class C {\n    // comment\n    #unused; foo;\n}"
+		},
+		{
+			"code": "class C {\n    // comment\n    #unused; /*\n    */ foo;\n}"
+		},
+		{
+			"code": "class Foo {\n    #unusedMember = 1; // trailing\n}"
+		},
+		{
+			"code": "class Foo {\n    foo = 1; /*\n    */ #unusedMember = 1;\n}"
+		},
+		{
+			"code": "class Foo {\n    foo = 1; // keep this\n    #unusedMember = 1;\n}"
+		},
+		{
+			"code": "class First {}\nclass Second {\n    #unusedMemberInSecondClass = 5;\n}"
+		},
+		{
+			"code": "class First {\n    #unusedMemberInFirstClass = 5;\n}\nclass Second {}"
+		},
+		{
+			"code": "class First {\n    #firstUnusedMemberInSameClass = 5;\n    #secondUnusedMemberInSameClass = 5;\n}"
+		},
+		{
+			"code": "class Foo {\n    #usedOnlyInWrite = 5;\n    method() {\n        this.#usedOnlyInWrite = 42;\n    }\n}"
+		},
+		{
+			"code": "class Foo {\n    #usedOnlyInWriteStatement = 5;\n    method() {\n        this.#usedOnlyInWriteStatement += 42;\n    }\n}"
+		},
+		{
+			"code": "class C {\n    #usedOnlyInIncrement;\n\n    foo() {\n        this.#usedOnlyInIncrement++;\n    }\n}"
+		},
+		{
+			"code": "class C {\n    #unusedInOuterClass;\n\n    foo() {\n        return class {\n            #unusedInOuterClass;\n\n            bar() {\n                return this.#unusedInOuterClass;\n            }\n        };\n    }\n}"
+		},
+		{
+			"code": "class C {\n    #unusedOnlyInSecondNestedClass;\n\n    foo() {\n        return class {\n            #unusedOnlyInSecondNestedClass;\n\n            bar() {\n                return this.#unusedOnlyInSecondNestedClass;\n            }\n        };\n    }\n\n    baz() {\n        return this.#unusedOnlyInSecondNestedClass;\n    }\n\n    bar() {\n        return class {\n            #unusedOnlyInSecondNestedClass;\n        }\n    }\n}"
+		},
+		{
+			"code": "class Foo {\n    #unusedMethod() {}\n}"
+		},
+		{
+			"code": "class Foo {\n    #unusedMethod() {}\n    #usedMethod() {\n        return 42;\n    }\n    publicMethod() {\n        return this.#usedMethod();\n    }\n}"
+		},
+		{
+			"code": "class Foo {\n    set #unusedSetter(value) {}\n}"
+		},
+		{
+			"code": "class Foo {\n    get #unusedAccessor() {\n        return 1;\n    }\n    set #unusedAccessor(value) {}\n}"
+		},
+		{
+			"code": "class Foo {\n    #unusedForInLoop;\n    method() {\n        for (this.#unusedForInLoop in bar) {\n\n        }\n    }\n}"
+		},
+		{
+			"code": "class Foo {\n    #unusedForOfLoop;\n    method() {\n        for (this.#unusedForOfLoop of bar) {\n\n        }\n    }\n}"
+		},
+		{
+			"code": "class Foo {\n    #unusedInDestructuring;\n    method() {\n        ({ x: this.#unusedInDestructuring } = bar);\n    }\n}"
+		},
+		{
+			"code": "class Foo {\n    #unusedInRestPattern;\n    method() {\n        [...this.#unusedInRestPattern] = bar;\n    }\n}"
+		},
+		{
+			"code": "class Foo {\n    #unusedInAssignmentPattern;\n    method() {\n        [this.#unusedInAssignmentPattern = 1] = bar;\n    }\n}"
+		},
+		{
+			"code": "class Foo {\n    #unusedInAssignmentPattern;\n    method() {\n        [this.#unusedInAssignmentPattern] = bar;\n    }\n}"
+		},
+		{
+			"code": "class Foo {\n    foo = 1\n    #unusedMethod() {}\n    [0]() {}\n}"
+		},
+		{
+			"code": "class Foo {\n    foo = 1\n    #unusedMethod() {}\n    *generator() {}\n}"
+		},
+		{
+			"code": "class Foo {\n    foo = 1\n    #unusedMethod() {}\n    in = 2\n}"
+		},
+		{
+			"code": "class Foo {\n    foo = 1\n    #unused\n    instanceof() {}\n}"
+		},
+		{
+			"code": "class C {\n    foo = () => {}\n    #unused\n    [bar]\n}"
+		},
+		{
+			"code": "class C {\n    foo\n    #unused\n    [bar]\n}"
+		},
+		{
+			"code": "class Foo {\n    foo = 1\n    /** docs */\n    #unusedMethod() {}\n    [0]() {}\n}"
+		},
+		{
+			"code": "class Foo {\n    // keep\n\n    /** remove */\n    #unusedMember = 1;\n}"
+		},
+		{
+			"code": "class Foo {\n    // keep one\n    // keep two\n\n    /** remove */\n    #unusedMember = 1;\n}"
+		},
+		{
+			"code": "class Foo {\n    // maybe unrelated\n\n    #unusedMember = 1;\n}"
+		},
+		{
+			"code": "class C {\n    #usedOnlyInTheSecondInnerClass;\n\n    method(a) {\n        return class {\n            #usedOnlyInTheSecondInnerClass;\n\n            method2(b) {\n                foo = b.#usedOnlyInTheSecondInnerClass;\n            }\n\n            method3(b) {\n                foo = b.#usedOnlyInTheSecondInnerClass;\n            }\n        }\n    }\n}"
+		}
+	],
+	"skipped": 0
+}

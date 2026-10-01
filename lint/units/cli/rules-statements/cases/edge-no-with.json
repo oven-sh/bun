@@ -1,0 +1,6 @@
+[
+	"with (a) with (b) c",
+	"with (a) {}",
+	"function f() { with (a) { with (b) {} } }",
+	"label: with (a) b"
+]

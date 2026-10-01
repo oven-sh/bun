@@ -1,0 +1,22 @@
+[
+"try { foo(); } catch (e) { ; throw e; }",
+"try { foo(); } catch (e) { 'use strict'; throw e; }",
+"try { foo(); } catch (e) { /*! legal */ throw e; }",
+"try { foo(); } catch (e) { throw (e); }",
+"try { foo(); } catch (e) { throw e; bar(); }",
+"try { foo(); } catch (e) { { throw e; } }",
+"try { foo(); } catch (e) { throw e } finally {}",
+"try { try { a() } catch (e) { throw e } } catch (f) { throw f }",
+"try {} catch (e) { throw e, e; }",
+"label: try { foo() } catch (e) { throw e }",
+"try { foo() } catch (\\u0065) { throw e; }",
+"try { foo() } catch (e) { throw \\u0065; }",
+"try { foo() } catch (e) { // c\n throw e; }",
+"try { foo() } catch (e) { throw e\n}",
+"try { foo() } catch (e) { 'use asm'; throw e; }",
+"try { foo() } catch (e) { `x`; throw e; }",
+"try { foo() } catch (e) { debugger; throw e; }",
+"try { foo() } catch (e) { function f() {} throw e; }",
+"try { foo() } catch (e) { throw e; function f() {} }",
+"async () => { try { await x } catch (e) { throw e } finally { y() } }"
+]

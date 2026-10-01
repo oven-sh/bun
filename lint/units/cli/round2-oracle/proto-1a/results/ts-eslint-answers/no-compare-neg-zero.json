@@ -1,0 +1,589 @@
+[
+	{
+		"code": "x === -0",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 9,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "(x as number) === -0",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 21,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "x! === -0",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 10,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "<number>x === -0",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 17,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "(x satisfies number) === -0",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 28,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "x === (-0 as number)",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "x === -0!",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "x === (-0)!",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "x === <number>-0",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "x === (-0 satisfies number)",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "x === -(0 as number)",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "x === -(0)",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 11,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "x === (-0)",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 11,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "x === -<number>0",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "(-0 as number) === x",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "-0! === x",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "(-0)! === x",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "x as number === -0",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 19,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "x as any as number === -0",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 26,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "f<T>(x) === -0",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 15,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "a.b!.c === -0",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 14,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "(<T>x) === -0",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 14,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "<T>(x) === -0",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 14,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "(\n x as T) === -0",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 2,
+				"endColumn": 16,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "(/* c */ x)! === -0",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 20,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "(x)! === -0",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 12,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "(\n<T>x) === -0",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 2,
+				"endColumn": 13,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "x === -0 as number",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "x === -0 satisfies number",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "(x === -0) as boolean",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 2,
+				"endLine": 1,
+				"endColumn": 10,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "<boolean>(x === -0)",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 19,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "x! > -0",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 8,
+				"message": "Do not use the '>' operator to compare against -0."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "enum E { A = x === -0 ? 1 : 2 }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "type T = typeof x; x === -0",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 20,
+				"endLine": 1,
+				"endColumn": 28,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "let a: number = x === -0 ? 1 : 2",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 17,
+				"endLine": 1,
+				"endColumn": 25,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "x === -0n",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "x == -0.0",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 10,
+				"message": "Do not use the '==' operator to compare against -0."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "namespace N { export const b = x === -0 }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 32,
+				"endLine": 1,
+				"endColumn": 40,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "declare namespace N { const b = x === -0 }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 33,
+				"endLine": 1,
+				"endColumn": 41,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "class A { p: boolean = (this.q as number) === -0 }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 24,
+				"endLine": 1,
+				"endColumn": 49,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "const e = <div a={x === -0} />;",
+		"ext": "tsx",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 19,
+				"endLine": 1,
+				"endColumn": 27,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "(x as number) === -0",
+		"ext": "tsx",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 21,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "x === -0",
+		"ext": "mts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 9,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "x === -0",
+		"ext": "cts",
+		"sourceType": "commonjs",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 9,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	}
+]

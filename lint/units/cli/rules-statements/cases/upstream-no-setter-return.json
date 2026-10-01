@@ -1,0 +1,583 @@
+{
+	"valid": [
+		{
+			"code": "function foo() { return 1; }"
+		},
+		{
+			"code": "function set(val) { return 1; }"
+		},
+		{
+			"code": "var foo = function() { return 1; };"
+		},
+		{
+			"code": "var foo = function set() { return 1; };"
+		},
+		{
+			"code": "var set = function() { return 1; };"
+		},
+		{
+			"code": "var set = function set(val) { return 1; };"
+		},
+		{
+			"code": "var set = val => { return 1; };"
+		},
+		{
+			"code": "var set = val => 1;"
+		},
+		{
+			"code": "({ set a(val) { }}); function foo() { return 1; }"
+		},
+		{
+			"code": "({ set a(val) { }}); (function () { return 1; });"
+		},
+		{
+			"code": "({ set a(val) { }}); (() => { return 1; });"
+		},
+		{
+			"code": "({ set a(val) { }}); (() => 1);"
+		},
+		{
+			"code": "return 1;",
+			"languageOptions": {
+				"sourceType": "commonjs"
+			}
+		},
+		{
+			"code": "return 1;",
+			"languageOptions": {
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"globalReturn": true
+					}
+				}
+			}
+		},
+		{
+			"code": "return 1; function foo(){ return 1; } return 1;",
+			"languageOptions": {
+				"sourceType": "commonjs"
+			}
+		},
+		{
+			"code": "function foo(){} return 1; var bar = function*(){ return 1; }; return 1; var baz = () => {}; return 1;",
+			"languageOptions": {
+				"sourceType": "commonjs"
+			}
+		},
+		{
+			"code": "({ set foo(val) { return; } })"
+		},
+		{
+			"code": "({ set foo(val) { if (val) { return; } } })"
+		},
+		{
+			"code": "class A { set foo(val) { return; } }"
+		},
+		{
+			"code": "(class { set foo(val) { if (val) { return; } else { return; } return; } })"
+		},
+		{
+			"code": "class A { set foo(val) { try {} catch(e) { return; } } }"
+		},
+		{
+			"code": "({ get foo() { return 1; } })"
+		},
+		{
+			"code": "({ get set() { return 1; } })"
+		},
+		{
+			"code": "({ set(val) { return 1; } })"
+		},
+		{
+			"code": "({ set: function(val) { return 1; } })"
+		},
+		{
+			"code": "({ foo: function set(val) { return 1; } })"
+		},
+		{
+			"code": "({ set: function set(val) { return 1; } })"
+		},
+		{
+			"code": "({ set: (val) => { return 1; } })"
+		},
+		{
+			"code": "({ set: (val) => 1 })"
+		},
+		{
+			"code": "set = { foo(val) { return 1; } };"
+		},
+		{
+			"code": "class A { constructor(val) { return 1; } }"
+		},
+		{
+			"code": "class set { constructor(val) { return 1; } }"
+		},
+		{
+			"code": "class set { foo(val) { return 1; } }"
+		},
+		{
+			"code": "var set = class { foo(val) { return 1; } }"
+		},
+		{
+			"code": "(class set { foo(val) { return 1; } })"
+		},
+		{
+			"code": "class A { get foo() { return val; } }"
+		},
+		{
+			"code": "class A { get set() { return val; } }"
+		},
+		{
+			"code": "class A { set(val) { return 1; } }"
+		},
+		{
+			"code": "class A { static set(val) { return 1; } }"
+		},
+		{
+			"code": "({ set: set = function set(val) { return 1; } } = {})"
+		},
+		{
+			"code": "({ set: set = (val) => 1 } = {})"
+		},
+		{
+			"code": "class C { set; foo() { return 1; } }"
+		},
+		{
+			"code": "({ set foo(val) { function foo(val) { return 1; } } })"
+		},
+		{
+			"code": "({ set foo(val) { var foo = function(val) { return 1; } } })"
+		},
+		{
+			"code": "({ set foo(val) { var foo = (val) => { return 1; } } })"
+		},
+		{
+			"code": "({ set foo(val) { var foo = (val) => 1; } })"
+		},
+		{
+			"code": "({ set [function() { return 1; }](val) {} })"
+		},
+		{
+			"code": "({ set [() => { return 1; }](val) {} })"
+		},
+		{
+			"code": "({ set [() => 1](val) {} })"
+		},
+		{
+			"code": "({ set foo(val = function() { return 1; }) {} })"
+		},
+		{
+			"code": "({ set foo(val = v => 1) {} })"
+		},
+		{
+			"code": "(class { set foo(val) { function foo(val) { return 1; } } })"
+		},
+		{
+			"code": "(class { set foo(val) { var foo = function(val) { return 1; } } })"
+		},
+		{
+			"code": "(class { set foo(val) { var foo = (val) => { return 1; } } })"
+		},
+		{
+			"code": "(class { set foo(val) { var foo = (val) => 1; } })"
+		},
+		{
+			"code": "(class { set [function() { return 1; }](val) {} })"
+		},
+		{
+			"code": "(class { set [() => { return 1; }](val) {} })"
+		},
+		{
+			"code": "(class { set [() => 1](val) {} })"
+		},
+		{
+			"code": "(class { set foo(val = function() { return 1; }) {} })"
+		},
+		{
+			"code": "(class { set foo(val = (v) => 1) {} })"
+		},
+		{
+			"code": "Object.defineProperty(foo, 'bar', { set(val) { return; } })"
+		},
+		{
+			"code": "Reflect.defineProperty(foo, 'bar', { set(val) { if (val) { return; } } })",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "Object.defineProperties(foo, { bar: { set(val) { try { return; } catch(e){} } } })"
+		},
+		{
+			"code": "Object.create(foo, { bar: { set: function(val) { return; } } })"
+		},
+		{
+			"code": "x = { set(val) { return 1; } }"
+		},
+		{
+			"code": "x = { foo: { set(val) { return 1; } } }"
+		},
+		{
+			"code": "Object.defineProperty(foo, 'bar', { value(val) { return 1; } })"
+		},
+		{
+			"code": "Reflect.defineProperty(foo, 'bar', { value: function set(val) { return 1; } })",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "Object.defineProperties(foo, { bar: { [set](val) { return 1; } } })"
+		},
+		{
+			"code": "Object.create(foo, { bar: { 'set ': function(val) { return 1; } } })"
+		},
+		{
+			"code": "Object.defineProperty(foo, 'bar', { [`set `]: (val) => { return 1; } })"
+		},
+		{
+			"code": "Reflect.defineProperty(foo, 'bar', { Set(val) { return 1; } })",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "Object.defineProperties(foo, { bar: { value: (val) => 1 } })"
+		},
+		{
+			"code": "Object.create(foo, { set: { value: function(val) { return 1; } } })"
+		},
+		{
+			"code": "Object.defineProperty(foo, 'bar', { baz(val) { return 1; } })"
+		},
+		{
+			"code": "Reflect.defineProperty(foo, 'bar', { get(val) { return 1; } })",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "Object.create(foo, { set: function(val) { return 1; } })"
+		},
+		{
+			"code": "Object.defineProperty(foo, { set: (val) => 1 })"
+		},
+		{
+			"code": "Object.defineProperty(foo, 'bar', { set(val) { function foo() { return 1; } } })"
+		},
+		{
+			"code": "Reflect.defineProperty(foo, 'bar', { set(val) { var foo = function() { return 1; } } })",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "Object.defineProperties(foo, { bar: { set(val) { () => { return 1 }; } } })"
+		},
+		{
+			"code": "Object.create(foo, { bar: { set: (val) => { (val) => 1; } } })"
+		},
+		{
+			"code": "Object.defineProperty(foo, 'bar', 'baz', { set(val) { return 1; } })"
+		},
+		{
+			"code": "Object.defineProperty(foo, { set(val) { return 1; } }, 'bar')"
+		},
+		{
+			"code": "Object.defineProperty({ set(val) { return 1; } }, foo, 'bar')"
+		},
+		{
+			"code": "Reflect.defineProperty(foo, 'bar', 'baz', { set(val) { return 1; } })",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "Reflect.defineProperty(foo, { set(val) { return 1; } }, 'bar')",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "Reflect.defineProperty({ set(val) { return 1; } }, foo, 'bar')",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "Object.defineProperties(foo, bar, { baz: { set(val) { return 1; } } })"
+		},
+		{
+			"code": "Object.defineProperties({ bar: { set(val) { return 1; } } }, foo)"
+		},
+		{
+			"code": "Object.create(foo, bar, { baz: { set(val) { return 1; } } })"
+		},
+		{
+			"code": "Object.create({ bar: { set(val) { return 1; } } }, foo)"
+		},
+		{
+			"code": "Object.DefineProperty(foo, 'bar', { set(val) { return 1; } })"
+		},
+		{
+			"code": "Reflect.DefineProperty(foo, 'bar', { set(val) { if (val) { return 1; } } })",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "Object.DefineProperties(foo, { bar: { set(val) { try { return 1; } catch(e){} } } })"
+		},
+		{
+			"code": "Object.Create(foo, { bar: { set: function(val) { return 1; } } })"
+		},
+		{
+			"code": "object.defineProperty(foo, 'bar', { set(val) { return 1; } })"
+		},
+		{
+			"code": "reflect.defineProperty(foo, 'bar', { set(val) { if (val) { return 1; } } })",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "Reflect.defineProperties(foo, { bar: { set(val) { try { return 1; } catch(e){} } } })",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "object.create(foo, { bar: { set: function(val) { return 1; } } })"
+		},
+		{
+			"code": "Reflect.defineProperty(foo, 'bar', { set(val) { if (val) { return 1; } } })",
+			"languageOptions": {
+				"globals": {
+					"Reflect": "off"
+				}
+			}
+		},
+		{
+			"code": "/* globals Object:off */ Object.defineProperty(foo, 'bar', { set(val) { return 1; } })"
+		},
+		{
+			"code": "Object.defineProperties(foo, { bar: { set(val) { try { return 1; } catch(e){} } } })",
+			"languageOptions": {
+				"globals": {
+					"Object": "off"
+				}
+			}
+		},
+		{
+			"code": "let Object; Object.defineProperty(foo, 'bar', { set(val) { return 1; } })"
+		},
+		{
+			"code": "function f() { Reflect.defineProperty(foo, 'bar', { set(val) { if (val) { return 1; } } }); var Reflect;}",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "function f(Object) { Object.defineProperties(foo, { bar: { set(val) { try { return 1; } catch(e){} } } }) }"
+		},
+		{
+			"code": "if (x) { const Object = getObject(); Object.create(foo, { bar: { set: function(val) { return 1; } } }) }"
+		},
+		{
+			"code": "x = function Object() { Object.defineProperty(foo, 'bar', { set(val) { return 1; } }) }"
+		}
+	],
+	"invalid": [
+		{
+			"code": "({ set a(val){ return val + 1; } })"
+		},
+		{
+			"code": "({ set a(val) { return 1; } })"
+		},
+		{
+			"code": "class A { set a(val) { return 1; } }"
+		},
+		{
+			"code": "class A { static set a(val) { return 1; } }"
+		},
+		{
+			"code": "(class { set a(val) { return 1; } })"
+		},
+		{
+			"code": "({ set a(val) { return val; } })"
+		},
+		{
+			"code": "class A { set a(val) { return undefined; } }"
+		},
+		{
+			"code": "(class { set a(val) { return null; } })"
+		},
+		{
+			"code": "({ set a(val) { return x + y; } })"
+		},
+		{
+			"code": "class A { set a(val) { return foo(); } }"
+		},
+		{
+			"code": "(class { set a(val) { return this._a; } })"
+		},
+		{
+			"code": "({ set a(val) { return this.a; } })"
+		},
+		{
+			"code": "({ set a(val) { if (foo) { return 1; }; } })"
+		},
+		{
+			"code": "class A { set a(val) { try { return 1; } catch(e) {} } }"
+		},
+		{
+			"code": "(class { set a(val) { while (foo){ if (bar) break; else return 1; } } })"
+		},
+		{
+			"code": "({ set a(val) { return 1; }, set b(val) { return 1; } })"
+		},
+		{
+			"code": "class A { set a(val) { return 1; } set b(val) { return 1; } }"
+		},
+		{
+			"code": "(class { set a(val) { return 1; } static set b(val) { return 1; } })"
+		},
+		{
+			"code": "({ set a(val) { if(val) { return 1; } else { return 2 }; } })"
+		},
+		{
+			"code": "class A { set a(val) { switch(val) { case 1: return x; case 2: return y; default: return z } } }"
+		},
+		{
+			"code": "(class { static set a(val) { if (val > 0) { this._val = val; return val; } return false; } })"
+		},
+		{
+			"code": "({ set a(val) { if(val) { return 1; } else { return; }; } })"
+		},
+		{
+			"code": "class A { set a(val) { switch(val) { case 1: return x; case 2: return; default: return z } } }"
+		},
+		{
+			"code": "(class { static set a(val) { if (val > 0) { this._val = val; return; } return false; } })"
+		},
+		{
+			"code": "({ set a(val) { function b(){} return b(); } })"
+		},
+		{
+			"code": "class A { set a(val) { return () => {}; } }"
+		},
+		{
+			"code": "(class { set a(val) { function b(){ return 1; } return 2; } })"
+		},
+		{
+			"code": "({ set a(val) { function b(){ return; } return 1; } })"
+		},
+		{
+			"code": "class A { set a(val) { var x = function() { return 1; }; return 2; } }"
+		},
+		{
+			"code": "(class { set a(val) { var x = () => { return; }; return 2; } })"
+		},
+		{
+			"code": "function f(){}; ({ set a(val) { return 1; } });"
+		},
+		{
+			"code": "x = function f(){}; class A { set a(val) { return 1; } };"
+		},
+		{
+			"code": "x = () => {}; A = class { set a(val) { return 1; } };"
+		},
+		{
+			"code": "return; ({ set a(val) { return 1; } }); return 2;",
+			"languageOptions": {
+				"sourceType": "commonjs"
+			}
+		},
+		{
+			"code": "Object.defineProperty(foo, 'bar', { set(val) { return 1; } })"
+		},
+		{
+			"code": "Reflect.defineProperty(foo, 'bar', { set(val) { return 1; } })",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "Object.defineProperties(foo, { baz: { set(val) { return 1; } } })"
+		},
+		{
+			"code": "Object.create(null, { baz: { set(val) { return 1; } } })"
+		},
+		{
+			"code": "Object.defineProperty(foo, 'bar', { set: val => val })"
+		},
+		{
+			"code": "Reflect.defineProperty(foo, 'bar', { set: val => f(val) })",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "Object.defineProperties(foo, { baz: { set: val => a + b } })"
+		},
+		{
+			"code": "Object.create({}, { baz: { set: val => this._val } })"
+		},
+		{
+			"code": "Object.defineProperty(foo, 'bar', { set(val) { if (val) { return; } return false; }, get(val) { return 1; } })"
+		},
+		{
+			"code": "Reflect.defineProperty(foo, 'bar', { set(val) { try { return f(val) } catch (e) { return e }; } })",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "Object.defineProperties(foo, { bar: { get(){ return null; }, set(val) { return null; } } })"
+		},
+		{
+			"code": "Object.create(null, { baz: { set(val) { return this._val; return; return undefined; } } })"
+		},
+		{
+			"code": "Object.defineProperties(foo, { baz: { set(val) { return 1; } }, bar: { set(val) { return 1; } } })"
+		},
+		{
+			"code": "Object.create({}, { baz: { set(val) { return 1; } }, bar: { set: (val) => 1 } })"
+		},
+		{
+			"code": "Object['defineProperty'](foo, 'bar', { set: function bar(val) { return 1; } })"
+		},
+		{
+			"code": "Reflect.defineProperty(foo, 'bar', { 'set'(val) { return 1; } })",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "Object[`defineProperties`](foo, { baz: { ['set'](val) { return 1; } } })"
+		},
+		{
+			"code": "Object.create({}, { baz: { [`set`]: (val) => { return 1; } } })"
+		},
+		{
+			"code": "Object.defineProperty(foo, 'bar', { set: function Object(val) { return 1; } })"
+		},
+		{
+			"code": "Object.defineProperty(foo, 'bar', { set: function(Object) { return 1; } })"
+		},
+		{
+			"code": "Object?.defineProperty(foo, 'bar', { set(val) { return 1; } })",
+			"languageOptions": {
+				"ecmaVersion": 2020
+			}
+		},
+		{
+			"code": "(Object?.defineProperty)(foo, 'bar', { set(val) { return 1; } })",
+			"languageOptions": {
+				"ecmaVersion": 2020
+			}
+		}
+	],
+	"skipped": 0
+}

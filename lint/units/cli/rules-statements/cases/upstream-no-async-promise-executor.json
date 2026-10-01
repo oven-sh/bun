@@ -1,0 +1,45 @@
+{
+	"valid": [
+		{
+			"code": "new Promise((resolve, reject) => {})"
+		},
+		{
+			"code": "new Promise((resolve, reject) => {}, async function unrelated() {})"
+		},
+		{
+			"code": "new Foo(async (resolve, reject) => {})"
+		},
+		{
+			"code": "/* global Promise:off */ new Promise(async (resolve, reject) => {})"
+		},
+		{
+			"code": "new Promise(async (resolve, reject) => {})",
+			"languageOptions": {
+				"globals": {
+					"Promise": "off"
+				}
+			}
+		},
+		{
+			"code": "let Promise; new Promise(async (resolve, reject) => {})"
+		},
+		{
+			"code": "function f() { new Promise(async (resolve, reject) => {}); var Promise; }"
+		},
+		{
+			"code": "function f(Promise) { new Promise(async (resolve, reject) => {}); }"
+		}
+	],
+	"invalid": [
+		{
+			"code": "new Promise(async function foo(resolve, reject) {})"
+		},
+		{
+			"code": "new Promise(async (resolve, reject) => {})"
+		},
+		{
+			"code": "new Promise(((((async () => {})))))"
+		}
+	],
+	"skipped": 0
+}

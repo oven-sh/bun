@@ -1,0 +1,618 @@
+[
+	{
+		"code": "const o = { a: 1, a: 2 };",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 19,
+				"endLine": 1,
+				"endColumn": 20,
+				"message": "Duplicate key 'a'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "const o = { a: 1 as number, a: 2 };",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 29,
+				"endLine": 1,
+				"endColumn": 30,
+				"message": "Duplicate key 'a'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "const o = { [\"a\"]: 1, a: 2 };",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 23,
+				"endLine": 1,
+				"endColumn": 24,
+				"message": "Duplicate key 'a'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "const o = { [\"a\" as string]: 1, a: 2 };",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "const o = { [(\"a\")]: 1, a: 2 };",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 25,
+				"endLine": 1,
+				"endColumn": 26,
+				"message": "Duplicate key 'a'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "const o = { [\"a\"!]: 1, a: 2 };",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "const o = { [<string>\"a\"]: 1, a: 2 };",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "const o = { [\"a\" satisfies string]: 1, a: 2 };",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "const o = { [(\"a\" as string)]: 1, a: 2 };",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "const o = { [((\"a\"))]: 1, [\"a\"]: 2 };",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 28,
+				"endLine": 1,
+				"endColumn": 31,
+				"message": "Duplicate key 'a'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "const o = { a: 1, [(\"a\")]: 2 };",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 21,
+				"endLine": 1,
+				"endColumn": 24,
+				"message": "Duplicate key 'a'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "const o = { a: 1, [\"a\" as string]: 2 };",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "const o = { a: 1, a: 2 } as const;",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 19,
+				"endLine": 1,
+				"endColumn": 20,
+				"message": "Duplicate key 'a'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "const o = <T>{ a: 1, a: 2 };",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 22,
+				"endLine": 1,
+				"endColumn": 23,
+				"message": "Duplicate key 'a'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "const o = { a: 1, a: 2 } satisfies T;",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 19,
+				"endLine": 1,
+				"endColumn": 20,
+				"message": "Duplicate key 'a'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "const o = ({ a: 1, a: 2 })!;",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 20,
+				"endLine": 1,
+				"endColumn": 21,
+				"message": "Duplicate key 'a'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "const o: { a: number; a: number } = { a: 1 };",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "type T = { a: 1; a: 2 };",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "interface I { a: 1; a: 2 }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "declare const o: { a: 1, a: 2 };",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "const o = { m<T>(x: T) {}, m() {} };",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 28,
+				"endLine": 1,
+				"endColumn": 29,
+				"message": "Duplicate key 'm'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "const o = { get a(): number { return 1 }, get a(): number { return 2 } };",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 47,
+				"endLine": 1,
+				"endColumn": 48,
+				"message": "Duplicate key 'a'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "const o = { a, a };",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 16,
+				"endLine": 1,
+				"endColumn": 17,
+				"message": "Duplicate key 'a'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "const o = { a: 1, \"a\": 2, [`a`]: 3 };",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 19,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "Duplicate key 'a'."
+			},
+			{
+				"line": 1,
+				"column": 28,
+				"endLine": 1,
+				"endColumn": 31,
+				"message": "Duplicate key 'a'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "const o = { [`a` as const]: 1, a: 2 };",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "const o = { 1: 1, [1 as number]: 2 };",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "const o = { 1: 1, [1]: 2, [(1)]: 3 };",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 20,
+				"endLine": 1,
+				"endColumn": 21,
+				"message": "Duplicate key '1'."
+			},
+			{
+				"line": 1,
+				"column": 29,
+				"endLine": 1,
+				"endColumn": 30,
+				"message": "Duplicate key '1'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "enum E { A, A }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": null,
+		"differs": "bun-rejects"
+	},
+	{
+		"code": "enum E { A = 1, \"A\" = 2 }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": null,
+		"differs": "bun-rejects"
+	},
+	{
+		"code": "function f(a = { x: 1, x: 2 }): void {}",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 24,
+				"endLine": 1,
+				"endColumn": 25,
+				"message": "Duplicate key 'x'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "class A { p = { x: 1, x: 2 } }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 23,
+				"endLine": 1,
+				"endColumn": 24,
+				"message": "Duplicate key 'x'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "namespace N { export const o = { a: 1, a: 2 } }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 40,
+				"endLine": 1,
+				"endColumn": 41,
+				"message": "Duplicate key 'a'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "declare namespace N { const a = { x: 1, x: 2 }; }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 41,
+				"endLine": 1,
+				"endColumn": 42,
+				"message": "Duplicate key 'x'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "let x = { a: 1, a: 2 } as unknown as T;",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 17,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "Duplicate key 'a'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "f<T>({ a: 1, a: 2 })",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 15,
+				"message": "Duplicate key 'a'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "const o = { async *a() {}, a: 1 }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 28,
+				"endLine": 1,
+				"endColumn": 29,
+				"message": "Duplicate key 'a'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "const o = { a: (1)!, a: (2) as T }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 22,
+				"endLine": 1,
+				"endColumn": 23,
+				"message": "Duplicate key 'a'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "({ a: 1, a: 2 } = x);",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": null,
+		"differs": "bun-rejects"
+	},
+	{
+		"code": "({ a, a } = x as T);",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "let { a, a: b } = x;",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "({ a: { b: 1, b: 2 } as T } = x)",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 15,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "Duplicate key 'b'."
+			}
+		],
+		"expect": null,
+		"differs": "bun-rejects"
+	},
+	{
+		"code": "export = { a: 1, a: 2 };",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 18,
+				"endLine": 1,
+				"endColumn": 19,
+				"message": "Duplicate key 'a'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "export default { a: 1, a: 2 } as T;",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 24,
+				"endLine": 1,
+				"endColumn": 25,
+				"message": "Duplicate key 'a'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "const e = <div style={{ a: 1, a: 2 }} />;",
+		"ext": "tsx",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 31,
+				"endLine": 1,
+				"endColumn": 32,
+				"message": "Duplicate key 'a'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "const e = <T,>(x: T) => ({ a: 1, a: 2 });",
+		"ext": "tsx",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 34,
+				"endLine": 1,
+				"endColumn": 35,
+				"message": "Duplicate key 'a'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "export const o = { a: 1, a: 2 };",
+		"ext": "mts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 26,
+				"endLine": 1,
+				"endColumn": 27,
+				"message": "Duplicate key 'a'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "module.exports = { a: 1, a: 2 };",
+		"ext": "cts",
+		"sourceType": "commonjs",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 26,
+				"endLine": 1,
+				"endColumn": 27,
+				"message": "Duplicate key 'a'."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	}
+]

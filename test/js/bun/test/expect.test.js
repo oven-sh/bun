@@ -1101,9 +1101,19 @@ describe("expect()", () => {
       }
     });
 
+    test("a thrown promise is the thrown value", () => {
+      // toThrow does not wait for a promise that the function throws.
+      const rejected = Promise.reject(new Error("boom"));
+      rejected.catch(() => {});
+      const throwsPromise = () => {
+        throw rejected;
+      };
+      expect(throwsPromise).toThrow(expect.any(Promise));
+    });
+
     test_skipIf(!isBun)("a value reported during the call", async () => {
-      // Under bun test, toThrow also receives a value that reportError() or an unhandled rejection
-      // reports while the function runs. It does not stand in for the return value.
+      // Under bun test, toThrow also receives a value that reportError() reports while the function
+      // runs. It does not stand in for the return value.
       const reportsThenReturns = () => {
         reportError(42);
         return new TypeError("boom");

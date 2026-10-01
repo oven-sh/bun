@@ -1,0 +1,25 @@
+# The table of globals that research "rules-declared-names" proposes for src/lint/globals.rs: one name a word, `:w` = writable.
+# 1. ESLint conf/globals.js es2026 (73 names, all read-only).
+AggregateError Array ArrayBuffer AsyncDisposableStack Atomics BigInt BigInt64Array BigUint64Array Boolean DataView Date
+DisposableStack Error EvalError FinalizationRegistry Float16Array Float32Array Float64Array Function Infinity Int16Array
+Int32Array Int8Array Intl Iterator JSON Map Math NaN Number Object Promise Proxy RangeError ReferenceError Reflect RegExp Set
+SharedArrayBuffer String SuppressedError Symbol SyntaxError Temporal TypeError URIError Uint16Array Uint32Array Uint8Array
+Uint8ClampedArray WeakMap WeakRef WeakSet constructor decodeURI decodeURIComponent encodeURI encodeURIComponent escape eval
+globalThis hasOwnProperty isFinite isNaN isPrototypeOf parseFloat parseInt propertyIsEnumerable toLocaleString toString
+undefined unescape valueOf
+# 2. Object.getOwnPropertyNames(globalThis) of the debug build of the worktree (1.4.3-debug, be1ebe5295) without the names of 1 (91 names).
+AbortController AbortSignal Blob BroadcastChannel Buffer BuildError BuildMessage Bun ByteLengthQueuingStrategy CloseEvent
+CompressionStream CountQueuingStrategy Crypto CryptoKey CustomEvent DOMException DecompressionStream ErrorEvent Event
+EventTarget File FormData HTMLRewriter Headers MessageChannel MessageEvent MessagePort Performance PerformanceEntry
+PerformanceMark PerformanceMeasure PerformanceObserver PerformanceObserverEntryList PerformanceResourceTiming
+PerformanceServerTiming PerformanceTiming ReadableByteStreamController ReadableStream ReadableStreamBYOBReader
+ReadableStreamBYOBRequest ReadableStreamDefaultController ReadableStreamDefaultReader Request ResolveError ResolveMessage
+Response ShadowRealm SubtleCrypto TextDecoder TextDecoderStream TextEncoder TextEncoderStream TransformStream
+TransformStreamDefaultController URL URLPattern URLSearchParams WebAssembly WebSocket Worker WritableStream
+WritableStreamDefaultController WritableStreamDefaultWriter addEventListener alert atob btoa clearImmediate clearInterval
+clearTimeout confirm console crypto dispatchEvent fetch global navigator onerror:w onmessage:w performance postMessage
+process prompt queueMicrotask removeEventListener reportError self setImmediate setInterval setTimeout structuredClone
+# 3. The names of the module wrapper (5 names).
+require module exports:w __dirname __filename
+# 4. The names that `bun test` gives every file it loads (Jest::FIELDS, src/js_parser/parser.rs:1614; 14 names).
+test it describe expect expectTypeOf beforeAll beforeEach afterEach afterAll jest vi xit xtest xdescribe

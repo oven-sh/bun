@@ -5,6 +5,49 @@ use crate::watcher_impl::{Op, WatchEvent, Watcher};
 
 pub(crate) type Platform = KEventWatcher;
 
+/// XNU ties a kqueue to the event struct of the first call made on it. On
+/// Darwin that call is the `kevent64()` in `io_darwin_create_machport`, so
+/// every later call on this kqueue uses `kevent64_s` too: a plain `kevent()`
+/// there fails with EINVAL.
+#[cfg(target_os = "macos")]
+pub(crate) type KEvent = libc::kevent64_s;
+#[cfg(target_os = "freebsd")]
+pub(crate) type KEvent = libc::kevent;
+
+/// `kevent64()` on Darwin, `kevent()` on FreeBSD. Retries on EINTR.
+pub(crate) fn kevent_call(
+    fd: Fd,
+    changelist: &[KEvent],
+    eventlist: &mut [KEvent],
+    timeout: Option<&libc::timespec>,
+) -> bun_sys::Result<usize> {
+    #[cfg(target_os = "freebsd")]
+    {
+        bun_sys::kevent(fd, changelist, eventlist, timeout)
+    }
+    #[cfg(target_os = "macos")]
+    loop {
+        // SAFETY: fd is a valid kqueue; slices give exact (ptr,len); timeout
+        // is either null or a valid timespec.
+        let rc = unsafe {
+            libc::kevent64(
+                fd.native(),
+                changelist.as_ptr(),
+                changelist.len() as core::ffi::c_int,
+                eventlist.as_mut_ptr(),
+                eventlist.len() as core::ffi::c_int,
+                0,
+                timeout.map_or(core::ptr::null(), std::ptr::from_ref),
+            )
+        };
+        match bun_sys::get_errno(rc) {
+            bun_sys::E::SUCCESS => return Ok(rc as usize),
+            bun_sys::E::EINTR => continue,
+            e => return Err(bun_sys::Error::from_code(e, bun_sys::Tag::kevent).with_fd(fd)),
+        }
+    }
+}
+
 // Darwin: `src/io/io_darwin.cpp`. `bun_io::waker::KEventWaker` uses the first
 // two; `io_darwin_close_machport` is for this watcher only and has no
 // non-Darwin stub.
@@ -105,7 +148,7 @@ impl KEventWatcher {
     }
 }
 
-fn watch_event_from_kevent(kevent: &libc::kevent) -> WatchEvent {
+fn watch_event_from_kevent(kevent: &KEvent) -> WatchEvent {
     let mut op = Op::empty();
     if (kevent.fflags & libc::NOTE_DELETE) > 0 {
         op |= Op::DELETE;
@@ -131,9 +174,9 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     let _flush = Output::flush_guard();
     let fd = this.platform.fd;
 
-    let mut changelist: [libc::kevent; CHANGELIST_COUNT] = bun_core::ffi::zeroed();
+    let mut changelist: [KEvent; CHANGELIST_COUNT] = bun_core::ffi::zeroed();
 
-    let mut count = bun_sys::kevent(fd, &[], &mut changelist, None)?;
+    let mut count = kevent_call(fd, &[], &mut changelist, None)?;
 
     // Give the events more time to coalesce
     if count < CHANGELIST_COUNT / 2 {
@@ -141,13 +184,13 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
             tv_sec: 0,
             tv_nsec: 100_000,
         }; // 0.0001 seconds
-        count += bun_sys::kevent(fd, &[], &mut changelist[count..], Some(&ts))?;
+        count += kevent_call(fd, &[], &mut changelist[count..], Some(&ts))?;
     }
 
     let changes = &changelist[..count];
     let watchevents = &mut this.watch_events[..count];
     let mut out_len: usize = 0;
-    let mut prev_event: Option<&libc::kevent> = None;
+    let mut prev_event: Option<&KEvent> = None;
     for event in changes {
         // Only VNODE events map to watch items (filters out the wakeup event).
         if event.filter != libc::EVFILT_VNODE {

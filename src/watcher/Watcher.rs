@@ -511,8 +511,9 @@ impl Watcher {
         fd: Fd,
         watchlist_id: usize,
     ) {
-        use libc::{EV_ADD, EV_CLEAR, EV_ENABLE, EVFILT_VNODE, kevent as KEvent};
+        use libc::{EV_ADD, EV_CLEAR, EV_ENABLE, EVFILT_VNODE};
         use libc::{NOTE_DELETE, NOTE_RENAME, NOTE_WRITE};
+        use platform::KEvent;
 
         // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html
         let mut event: KEvent = bun_core::ffi::zeroed();
@@ -524,7 +525,7 @@ impl Watcher {
         event.fflags = (NOTE_WRITE | NOTE_RENAME | NOTE_DELETE) as _;
 
         // id
-        event.ident = usize::try_from(fd.native()).expect("int cast");
+        event.ident = fd.native().try_into().expect("int cast");
 
         // Store the index for fast filtering later
         event.udata = watchlist_id as _;
@@ -533,7 +534,7 @@ impl Watcher {
         // Basically:
         // - We register the event here.
         // our while(true) loop above receives notification of changes to any of the events created here.
-        let _ = bun_sys::kevent(self.platform.fd, &[event], &mut [], None);
+        let _ = platform::kevent_call(self.platform.fd, &[event], &mut [], None);
     }
 
     fn append_file_assume_capacity<const CLONE_FILE_PATH: bool>(

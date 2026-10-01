@@ -16,7 +16,7 @@
 #include <bun-uws/src/App.h>
 
 extern "C" void Bun__NodeHTTPResponse_setClosed(void* zigResponse);
-extern "C" void Bun__NodeHTTPResponse_grantConnection(void* zigResponse);
+extern "C" int32_t Bun__NodeHTTPResponse_grantConnection(void* zigResponse, JSC::EncodedJSValue jsValue);
 extern "C" void Bun__NodeHTTPResponse_onReadParsed(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_markTunneled(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_spillPendingWrite(void* zigResponse);
@@ -679,10 +679,10 @@ static void startPipelinedResponseImpl(us_socket_t* socket, bool isAncient, bool
     }
 }
 
-bool JSNodeHTTPServerSocket::startPipelinedResponse(JSC::VM& vm, WebCore::JSNodeHTTPResponse* response, bool isAncient, bool connectionClose)
+int32_t JSNodeHTTPServerSocket::startPipelinedResponse(JSC::VM& vm, WebCore::JSNodeHTTPResponse* response, bool isAncient, bool connectionClose, WTF::StringView trailers)
 {
     if (!socket || upgraded || us_socket_is_closed(socket)) {
-        return false;
+        return 0;
     }
 
     bool wasQueued;
@@ -692,7 +692,7 @@ bool JSNodeHTTPServerSocket::startPipelinedResponse(JSC::VM& vm, WebCore::JSNode
     }
     // Only a response that this connection queued can get it.
     if (!wasQueued || response->m_ctx == nullptr) {
-        return false;
+        return 0;
     }
 
     // Before the state reset: the response in flight leaves its last bytes in the buffer and its handler slots empty.
@@ -702,8 +702,9 @@ bool JSNodeHTTPServerSocket::startPipelinedResponse(JSC::VM& vm, WebCore::JSNode
     } else {
         startPipelinedResponseImpl<false>(socket, isAncient, connectionClose);
     }
-    Bun__NodeHTTPResponse_grantConnection(response->m_ctx);
-    return true;
+    // After the state reset, which clears them, and before the grant, which can write the end of the body.
+    setResponseTrailers(trailers);
+    return Bun__NodeHTTPResponse_grantConnection(response->m_ctx, JSValue::encode(response));
 }
 
 void JSNodeHTTPServerSocket::stopHTTPParsing()

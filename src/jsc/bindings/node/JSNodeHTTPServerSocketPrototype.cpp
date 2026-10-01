@@ -91,7 +91,7 @@ static const JSC::HashTableValue JSNodeHTTPServerSocketPrototypeTableValues[] = 
     { "readStart"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketReadStart, 0 } },
     { "setResponseTrailers"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketSetResponseTrailers, 1 } },
     { "isRequestTimedOut"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketIsRequestTimedOut, 2 } },
-    { "startPipelinedResponse"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketStartPipelinedResponse, 3 } },
+    { "startPipelinedResponse"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketStartPipelinedResponse, 4 } },
     { "stopParsing"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketStopParsing, 0 } },
     { "closeWhenDrained"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketCloseWhenDrained, 0 } },
     { "closeIfIdle"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketCloseIfIdle, 0 } },
@@ -215,12 +215,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketIsRequestTimedOut, (JSC::
 }
 
 // node:http HTTP/1.1 pipelining: make a queued pipelined response the
-// connection's current response right before its buffered output is flushed.
-// Arguments: (responseHandle, isAncient, connectionClose). Returns false when
-// the connection is already gone.
+// connection's current response and write what it recorded while it waited.
+// Arguments: (responseHandle, isAncient, connectionClose, trailers). Returns
+// false when the connection is already gone, a negative number while a part
+// of the recorded output is still buffered, and a positive number otherwise.
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketStartPipelinedResponse, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
         return JSValue::encode(JSC::jsBoolean(false));
@@ -231,7 +233,18 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketStartPipelinedResponse, (
     }
     bool isAncient = callFrame->argument(1).toBoolean(globalObject);
     bool connectionClose = callFrame->argument(2).toBoolean(globalObject);
-    return JSValue::encode(JSC::jsBoolean(thisObject->startPipelinedResponse(vm, response, isAncient, connectionClose)));
+    JSValue trailersValue = callFrame->argument(3);
+    WTF::String trailers;
+    if (trailersValue.isString()) {
+        trailers = trailersValue.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    int32_t started = thisObject->startPipelinedResponse(vm, response, isAncient, connectionClose, trailers);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (started == 0) {
+        return JSValue::encode(JSC::jsBoolean(false));
+    }
+    return JSValue::encode(JSC::jsNumber(started));
 }
 
 // node:http: stop parsing further HTTP requests on this connection (the user

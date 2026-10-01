@@ -185,6 +185,10 @@ export default [
         fn: "writeHeadAndEnd",
         length: 8,
       },
+      writeHeadAndWrite: {
+        fn: "writeHeadAndWrite",
+        length: 9,
+      },
       resume: {
         fn: "doResume",
         length: 0,

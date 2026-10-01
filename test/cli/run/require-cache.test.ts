@@ -146,6 +146,17 @@ describe.concurrent("require.cache", () => {
   });
 
   describe.skipIf(isBroken && isIntelMacOS)("files transpiled and loaded don't leak the output source code", () => {
+    // The harness turns the transpiler cache off, so each load parses the module again: ~15ms in release, 50 to 185ms
+    // under ASAN, where the full counts are a minute of work. The ASAN counts still leak past the limit with the bug
+    // (0.6 MB per load of the function-call module, 1.4 to 1.7 MB per load of the export-name module); its quarantine,
+    // which keeps up to 256 MB of what was freed in RSS, is off for these four.
+    const noQuarantine = {
+      ...bunEnv,
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
+        .filter(Boolean)
+        .join(":"),
+    };
+
     test("via require() with a lot of long export names", async () => {
       let text = "";
       for (let i = 0; i < 10000; i++) {
@@ -176,7 +187,7 @@ describe.concurrent("require.cache", () => {
           }
           gc(true);
           const baseline = rss();
-          for (let i = 0; i < 500; i++) {
+          for (let i = 0; i < ${isASAN ? 125 : 500}; i++) {
             require(path);
             bust(path);
           }
@@ -185,7 +196,7 @@ describe.concurrent("require.cache", () => {
           const diff = after - baseline;
           console.log("RSS diff", (diff / 1024 / 1024) | 0, "MB");
           console.log("RSS", (diff / 1024 / 1024) | 0, "MB");
-          if (diff > ${isASAN ? 400 : 100} * 1024 * 1024) {
+          if (diff > 100 * 1024 * 1024) {
             // Bun v1.1.21 reported 844 MB here on macOS arm64.
             throw new Error("Memory leak detected");
           }
@@ -196,23 +207,13 @@ describe.concurrent("require.cache", () => {
       console.log({ dir });
       await using proc = Bun.spawn({
         cmd: [bunExe(), "run", "--smol", join(dir, "require-cache-bug-leak-fixture.js")],
-        env: bunEnv,
+        env: noQuarantine,
         stdio: ["inherit", "inherit", "inherit"],
       });
 
       const exitCode = await proc.exited;
       expect(exitCode).toBe(0);
     }, 60000);
-
-    // The harness turns the transpiler cache off, so each import() parses the module again: ~15ms in release, 115 to
-    // 185ms under ASAN, where the full counts are a minute of work. The ASAN counts still leak past the limit with the
-    // bug (0.64 and 1.7 MB per import); its quarantine, which holds ~150 MB of what was freed, is off for these two.
-    const noQuarantine = {
-      ...bunEnv,
-      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
-        .filter(Boolean)
-        .join(":"),
-    };
 
     test("via await import() with a lot of function calls", async () => {
       let text = "function i() { return 1; }\n";
@@ -349,13 +350,13 @@ describe.concurrent("require.cache", () => {
             }
           }
 
-          for (let i = 0; i < 100; i++) {
+          for (let i = 0; i < ${isASAN ? 25 : 100}; i++) {
             require(path);
             bust();
           }
           gc(true);
           const baseline = rss();
-          for (let i = 0; i < 400; i++) {
+          for (let i = 0; i < ${isASAN ? 150 : 400}; i++) {
             require(path);
             bust(path);
           }
@@ -364,7 +365,7 @@ describe.concurrent("require.cache", () => {
           const diff = after - baseline;
           console.log("RSS diff", (diff / 1024 / 1024) | 0, "MB");
           console.log("RSS", (diff / 1024 / 1024) | 0, "MB");
-          if (diff > ${isASAN ? 320 : 64} * 1024 * 1024) {
+          if (diff > 64 * 1024 * 1024) {
             // Bun v1.1.22 reported 4 MB here on macoS arm64.
             // Bun v1.1.21 reported 248 MB here on macoS arm64.
             throw new Error("Memory leak detected");
@@ -375,7 +376,7 @@ describe.concurrent("require.cache", () => {
         });
         await using proc = Bun.spawn({
           cmd: [bunExe(), "run", "--smol", join(dir, "require-cache-bug-leak-fixture.js")],
-          env: bunEnv,
+          env: noQuarantine,
           stdio: ["inherit", "inherit", "inherit"],
         });
 

@@ -6,13 +6,13 @@
 	{"code":"onload = 0;","module":[],"commonjs":[],"bunJs":"ok","bunCjs":"ok"},
 	{"code":"require = 0;","module":[{"line":1,"column":1,"message":"Read-only global 'require' should not be modified."}],"commonjs":[{"line":1,"column":1,"message":"Read-only global 'require' should not be modified."}],"bunJs":"ok","bunCjs":"ok"},
 	{"code":"a = 1","module":[],"commonjs":[],"bunJs":"ok","bunCjs":"ok"},
-	{"code":"/*global a:true*/ a = 1","module":[{"line":1,"column":1,"message":"'/*global a:true*/' has no effect because you have 'noInlineConfig' setting in your config."}],"commonjs":[{"line":1,"column":1,"message":"'/*global a:true*/' has no effect because you have 'noInlineConfig' setting in your config."}],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"/*global a:true*/ a = 1","module":[],"commonjs":[],"bunJs":"ok","bunCjs":"ok"},
 	{"code":"String = 'hello world';","module":[{"line":1,"column":1,"message":"Read-only global 'String' should not be modified."}],"commonjs":[{"line":1,"column":1,"message":"Read-only global 'String' should not be modified."}],"bunJs":"ok","bunCjs":"ok"},
 	{"code":"String++;","module":[{"line":1,"column":1,"message":"Read-only global 'String' should not be modified."}],"commonjs":[{"line":1,"column":1,"message":"Read-only global 'String' should not be modified."}],"bunJs":"ok","bunCjs":"ok"},
 	{"code":"({Object = 0, String = 0} = {});","module":[{"line":1,"column":3,"message":"Read-only global 'Object' should not be modified."},{"line":1,"column":15,"message":"Read-only global 'String' should not be modified."}],"commonjs":[{"line":1,"column":3,"message":"Read-only global 'Object' should not be modified."},{"line":1,"column":15,"message":"Read-only global 'String' should not be modified."}],"bunJs":"ok","bunCjs":"ok"},
-	{"code":"/*global b:false*/ function f() { b = 1; }","module":[{"line":1,"column":1,"message":"'/*global b:false*/' has no effect because you have 'noInlineConfig' setting in your config."}],"commonjs":[{"line":1,"column":1,"message":"'/*global b:false*/' has no effect because you have 'noInlineConfig' setting in your config."}],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"/*global b:false*/ function f() { b = 1; }","module":[],"commonjs":[],"bunJs":"ok","bunCjs":"ok"},
 	{"code":"function f() { b = 1; }","module":[],"commonjs":[],"bunJs":"ok","bunCjs":"ok"},
-	{"code":"/*global b:false*/ function f() { b++; }","module":[{"line":1,"column":1,"message":"'/*global b:false*/' has no effect because you have 'noInlineConfig' setting in your config."}],"commonjs":[{"line":1,"column":1,"message":"'/*global b:false*/' has no effect because you have 'noInlineConfig' setting in your config."}],"bunJs":"ok","bunCjs":"ok"},
-	{"code":"/*global b*/ b = 1;","module":[{"line":1,"column":1,"message":"'/*global b*/' has no effect because you have 'noInlineConfig' setting in your config."}],"commonjs":[{"line":1,"column":1,"message":"'/*global b*/' has no effect because you have 'noInlineConfig' setting in your config."}],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"/*global b:false*/ function f() { b++; }","module":[],"commonjs":[],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"/*global b*/ b = 1;","module":[],"commonjs":[],"bunJs":"ok","bunCjs":"ok"},
 	{"code":"Array = 1;","module":[{"line":1,"column":1,"message":"Read-only global 'Array' should not be modified."}],"commonjs":[{"line":1,"column":1,"message":"Read-only global 'Array' should not be modified."}],"bunJs":"ok","bunCjs":"ok"}
 ]

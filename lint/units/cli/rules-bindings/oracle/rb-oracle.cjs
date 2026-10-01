@@ -38,7 +38,7 @@ codes.forEach((code, index) => {
 	};
 	const filename = ts ? (tsx ? "a.tsx" : type === "commonjs" ? "a.cts" : "a.ts") : type === "commonjs" ? "a.cjs" : "a.js";
 	const messages = linter.verify(code, [config], { filename });
-	const reports = messages.map(m => (m.fatal ? { fatal: m.message, line: m.line, column: m.column } : { rule: m.ruleId.replace("@typescript-eslint/", ""), line: m.line, column: m.column, endLine: m.endLine, endColumn: m.endColumn, message: m.message }));
+	const reports = messages.filter(m => m.fatal || m.ruleId).map(m => (m.fatal ? { fatal: m.message, line: m.line, column: m.column } : { rule: m.ruleId.replace("@typescript-eslint/", ""), line: m.line, column: m.column, endLine: m.endLine, endColumn: m.endColumn, message: m.message }));
 	out.push({ code, reports });
 	if (!json) {
 		console.log(`#${index} ${JSON.stringify(code)}`);

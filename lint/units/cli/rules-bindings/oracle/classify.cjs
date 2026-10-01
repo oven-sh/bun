@@ -40,7 +40,7 @@ function eslint(code, sourceType) {
 	const filename = ts ? (sourceType === "commonjs" ? "a.cts" : "a.ts") : sourceType === "commonjs" ? "a.cjs" : "a.js";
 	const messages = linter.verify(code, [config], { filename });
 	if (messages.some(m => m.fatal)) return null;
-	return messages.map(m => ({ line: m.line, column: m.column, message: m.message }));
+	return messages.filter(m => m.ruleId === ruleId).map(m => ({ line: m.line, column: m.column, message: m.message }));
 }
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rb-classify-"));
 const exts = ts ? ["ts", "cts"] : ["js", "cjs"];

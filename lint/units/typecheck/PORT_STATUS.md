@@ -259,7 +259,8 @@ signatures. `mod.rs` declares the three files and re-exports them. Layer 4 of ro
 `crate::{ast, collections, core, diagnostics, internal, scanner, tspath}` and `bun_core::StackCheck`, so
 `src/typecheck/Cargo.toml` is unchanged. Five things that they name were in no file of the tree, all of them in
 `core/` and `ast/`. They came in with `a9b14ab2d6` and `d0230a94c6` (both written by the job that commits the
-worktree, under its message "typecheck: compile the port, work in progress"):
+worktree, under its message "typecheck: compile the port, work in progress"; `6f844a8b93` after them changes one
+comment of `ast/file.rs`):
 
 - `crate::core::Text` (`core/golang.rs`, `a9b14ab2d6`): the last `core` row under "Leaf packages".
 - `crate::ast::DiagnosticId` (`ast/ids.rs`, `a9b14ab2d6`): one more id of `define_id!`, as the contract's
@@ -302,7 +303,7 @@ passes. What was checked before:
 Compared with upstream when the directory was declared, by name: each of the 167 functions of `binder.go`, the 13 of
 `nameresolver.go` and the 15 of `referenceresolver.go` has a function of its name in `binder/`
 (`python3 round2-layer4-binder/names.py <file.go>` of the notes). Read side by side, because they are the places that
-call what layer 4 added: `binder.go` 95-125 (`BindSourceFile` to `bindSourceFile`), 215-262 (the messages of a
+call what layer 4 added: `binder.go` 95-130 (`BindSourceFile` to `bindSourceFile`), 215-290 (the diagnostics of a
 declaration that conflicts, in `declareSymbolEx`), 1299-1330 (`checkContextualIdentifier`, `checkPrivateIdentifier`)
 and 2709-2728 (`errorOnNode` to `addDiagnostic`): no difference was found there besides the ones of the last column.
 No other body was compared when the directory was declared.

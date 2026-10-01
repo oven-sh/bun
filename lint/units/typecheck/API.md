@@ -325,7 +325,8 @@ This section says what the crate got so that cargo compiles them; the rows are i
 ## Binder: the wiring of `binder`
 
 Commits `a9b14ab2d6` (`core/golang.rs`, `ast/ids.rs`) and `d0230a94c6` (`ast/diagnostic.rs`, `ast/file.rs`,
-`ast/open.rs`, `ast/publish.rs`, and `pub mod binder;` in `lib.rs`), both written by the job that commits the worktree.
+`ast/open.rs`, `ast/publish.rs`, and `pub mod binder;` in `lib.rs`), both written by the job that commits the worktree;
+`6f844a8b93` after them changes one comment of `ast/file.rs`.
 The four files of `binder/` are those of round 1, unchanged. This section says what the crate got so that cargo
 compiles them; the rows are in PORT_STATUS.md, "Binder" and "Node table".
 

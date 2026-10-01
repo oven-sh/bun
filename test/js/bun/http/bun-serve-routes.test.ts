@@ -1109,11 +1109,141 @@ describe.concurrent("false route with no fetch handler", () => {
   });
 });
 
+describe("many routes", () => {
+  function buildFlatTable(n: number) {
+    const routes: Record<string, () => Response> = {};
+    for (let i = 0; i < n; i++) {
+      routes[`/leaf${i}`] = () => new Response(String(i));
+    }
+    return routes;
+  }
+
+  test("routes to the right handler in a large flat table", async () => {
+    const n = 1200;
+    using server = Bun.serve({ port: 0, routes: buildFlatTable(n) });
+    const base = `http://127.0.0.1:${server.port}`;
+
+    const results = await Promise.all(
+      [0, 1, 123, n - 2, n - 1].map(i => fetch(`${base}/leaf${i}`).then(r => r.text())),
+    );
+    expect(results).toEqual(["0", "1", "123", String(n - 2), String(n - 1)]);
+
+    const miss = await fetch(`${base}/leaf${n}`);
+    expect(miss.status).toBe(404);
+  });
+
+  test("param and wildcard precedence is preserved in a large table", async () => {
+    const routes: Record<string, (req: BunRequest) => Response> = {};
+    for (let i = 0; i < 1000; i++) {
+      routes[`/api/static${i}`] = () => new Response(`static${i}`);
+    }
+    routes["/api/:id"] = req => new Response(`param:${req.params.id}`);
+    routes["/api/*"] = () => new Response("wild");
+
+    using server = Bun.serve({ port: 0, routes });
+    const base = `http://127.0.0.1:${server.port}`;
+
+    expect(await fetch(`${base}/api/static0`).then(r => r.text())).toBe("static0");
+    expect(await fetch(`${base}/api/static999`).then(r => r.text())).toBe("static999");
+    expect(await fetch(`${base}/api/other`).then(r => r.text())).toBe("param:other");
+    expect(await fetch(`${base}/api/a/b`).then(r => r.text())).toBe("wild");
+  });
+
+  test("reload() replaces a large route table and routes correctly afterwards", async () => {
+    const n = 1000;
+    using server = Bun.serve({ port: 0, routes: buildFlatTable(n) });
+    const base = `http://127.0.0.1:${server.port}`;
+
+    expect(await fetch(`${base}/leaf0`).then(r => r.text())).toBe("0");
+    expect(await fetch(`${base}/leaf${n - 1}`).then(r => r.text())).toBe(String(n - 1));
+
+    const replacement: Record<string, () => Response> = {};
+    for (let i = 0; i < n; i++) {
+      replacement[`/other${i}`] = () => new Response(`other${i}`);
+    }
+    server.reload({ routes: replacement });
+
+    expect((await fetch(`${base}/leaf0`)).status).toBe(404);
+    expect(await fetch(`${base}/other0`).then(r => r.text())).toBe("other0");
+    expect(await fetch(`${base}/other${n - 1}`).then(r => r.text())).toBe(`other${n - 1}`);
+
+    server.reload({ routes: buildFlatTable(n) });
+
+    expect((await fetch(`${base}/other0`)).status).toBe(404);
+    expect(await fetch(`${base}/leaf500`).then(r => r.text())).toBe("500");
+  });
+
+  // A static route that names HEAD registers HEAD twice, and the second
+  // registration replaces the first.
+  test("static routes that name HEAD are all served in a large table", async () => {
+    const n = 1000;
+    const routes: Record<string, { GET: Response; HEAD: Response }> = {};
+    for (let i = 0; i < n; i++) {
+      routes[`/file${i}`] = { GET: new Response(`get${i}`), HEAD: new Response(`head-${i}`) };
+    }
+    using server = Bun.serve({ port: 0, routes, fetch: () => new Response("fallback", { status: 404 }) });
+    const base = `http://127.0.0.1:${server.port}`;
+
+    const seen: unknown[] = [];
+    for (const i of [0, 499, n - 1]) {
+      seen.push(await fetch(`${base}/file${i}`).then(r => r.text()));
+      const head = await fetch(`${base}/file${i}`, { method: "HEAD" });
+      seen.push([head.status, head.headers.get("content-length"), await head.text()]);
+    }
+    seen.push((await fetch(`${base}/file${n}`)).status);
+    expect(seen).toEqual(["get0", [200, "6", ""], "get499", [200, "8", ""], "get999", [200, "8", ""], 404]);
+  });
+
+  test("a route handler can reload() the table it was matched in", async () => {
+    const n = 300;
+    let generation = 0;
+    function table(g: number) {
+      const routes: Record<string, (req: BunRequest) => Response> = {};
+      for (let i = 0; i < n; i++) {
+        routes[`/g${g}/leaf${i}`] = () => new Response(`g${g}:${i}`);
+      }
+      routes["/swap"] = () => {
+        generation++;
+        server.reload({ routes: table(generation) });
+        return new Response(`swapped to ${generation}`);
+      };
+      routes["/:any"] = req => new Response(`param:${req.params.any}`);
+      return routes;
+    }
+    using server = Bun.serve({ port: 0, routes: table(0) });
+    const base = `http://127.0.0.1:${server.port}`;
+
+    const seen: string[] = [];
+    for (let round = 0; round < 3; round++) {
+      seen.push(await fetch(`${base}/g${generation}/leaf${n - 1}`).then(r => r.text()));
+      seen.push(await fetch(`${base}/swap`).then(r => r.text()));
+      seen.push(String((await fetch(`${base}/g${generation - 1}/leaf0`)).status));
+      seen.push(await fetch(`${base}/other`).then(r => r.text()));
+    }
+    expect(seen).toEqual([
+      "g0:299",
+      "swapped to 1",
+      "404",
+      "param:other",
+      "g1:299",
+      "swapped to 2",
+      "404",
+      "param:other",
+      "g2:299",
+      "swapped to 3",
+      "404",
+      "param:other",
+    ]);
+  });
+});
+
 // uWS::HttpRouter with no server around it. A script line is one router call:
 //
 //   add <H|M|L> <method,method,...> <pattern> <percent>   H, M, L is the priority: high, medium, low
 //   remove <H|M|L> <method> <pattern>                     prints r1 or r0
 //   route <method> <url>                                  prints 1 or 0, then " id(param,...)" for each handler that ran
+//   steps                                                 prints s and the loop iterations since the last steps or reset line
+//   sort                                                  ends a registration pass
 //   reset                                                 a new router
 //
 // Handlers are numbered in the order they are added. The percent of an `add`
@@ -1136,6 +1266,53 @@ describe("uWS::HttpRouter", () => {
     "route GET ",
   ])("a line that is not a router call is an error: %s", line => {
     expect(() => run(line)).toThrow(`httpRouterScript: cannot run the line "${line}"`);
+  });
+
+  // `steps` prints the loop iterations the router made since the last `steps`
+  // line. The count does not depend on the machine, and it is how the work for
+  // one route or one request grows with the number of sibling routes.
+  describe("work grows with the number of sibling routes", () => {
+    const methods = "GET,POST,PUT,DELETE";
+    function steps(routes: number, register: (i: number) => string[], requests: string[] = []) {
+      const lines: string[] = [];
+      for (let i = 0; i < routes; i++) lines.push(...register(i));
+      lines.push("sort", "steps");
+      for (const request of requests) lines.push(request, "steps");
+      return httpRouterScript(lines.join("\n"))
+        .split("\n")
+        .filter(line => line.startsWith("s"))
+        .map(line => Number(line.slice(1)));
+    }
+    const perRoute = (routes: number, register: (i: number) => string[]) => steps(routes, register)[0] / routes;
+
+    // 8 times the routes. The router on main scans the siblings of every node
+    // it passes, so each of these ratios was about 8.
+    test("registration", () => {
+      const register = (i: number) => [`add L ${methods} /leaf${i} 0`];
+      const small = perRoute(200, register);
+      const large = perRoute(1600, register);
+      expect({ small, large, linear: large < small * 2 }).toMatchObject({ linear: true });
+    });
+
+    test("registration of a route that is registered again", () => {
+      const register = (i: number) => [`add M HEAD /leaf${i} 0`, `add M GET /leaf${i} 0`, `add M HEAD /leaf${i} 0`];
+      const small = perRoute(200, register);
+      const large = perRoute(1600, register);
+      expect({ small, large, linear: large < small * 2 }).toMatchObject({ linear: true });
+    });
+
+    test("a request for the first route, the last route and no route", () => {
+      const register = (i: number) => [`add L ${methods} /leaf${i} 0`];
+      const requests = (routes: number) => ["route GET /leaf0", `route GET /leaf${routes - 1}`, "route GET /none"];
+      const [, firstSmall, lastSmall, noneSmall] = steps(200, register, requests(200));
+      const [, firstLarge, lastLarge, noneLarge] = steps(1600, register, requests(1600));
+      expect({
+        first: [firstSmall, firstLarge],
+        last: [lastSmall, lastLarge],
+        none: [noneSmall, noneLarge],
+        flat: firstLarge < firstSmall * 2 && lastLarge < lastSmall * 2 && noneLarge < noneSmall * 2,
+      }).toMatchObject({ flat: true });
+    });
   });
 
   // The cases of uWebSockets' tests/HttpRouter.cpp (Apache-2.0), with its
@@ -1421,8 +1598,16 @@ describe("uWS::HttpRouter", () => {
       return lines.join("\n");
     }
     const digest = (script: string) => new Bun.CryptoHasher("sha1").update(httpRouterScript(script)).digest("hex");
+    // A sequence is made once. The test with `sort` lines runs each of them again.
+    const scripts = new Map<string, string>();
+    const sequence = (seed: number, calls: number, names: number, anyStays: boolean) => {
+      const key = [seed, calls, names, anyStays].join();
+      let script = scripts.get(key);
+      if (script === undefined) scripts.set(key, (script = randomScript(seed, calls, names, anyStays)));
+      return script;
+    };
     const digests = (first: number, calls: number, names: number, anyStays: boolean, count: number) =>
-      Array.from({ length: count }, (_, i) => digest(randomScript(first + i, calls, names, anyStays)));
+      Array.from({ length: count }, (_, i) => digest(sequence(first + i, calls, names, anyStays)));
 
     // [first seed, calls in a sequence, names that the segments come from, one digest for each sequence]
     const anyStays: [number, number, number, string[]][] = [
@@ -1486,5 +1671,23 @@ describe("uWS::HttpRouter", () => {
         expect(digests(first, calls, names, false, expected.length)).toEqual(expected);
       },
     );
+
+    // A `sort` line lays the child lists out. Without one, the first request
+    // after a registration does it. Neither changes an answer: a `sort` before
+    // every call of a short sequence, and before one call in 7 of a long
+    // sequence, changes no digest.
+    test("a sort line changes no digest", () => {
+      const withSorts = (script: string, gap: number) =>
+        script
+          .split("\n")
+          .flatMap((line, i) => (i % gap === 0 ? ["sort", line] : [line]))
+          .join("\n");
+      const rows = [...anyStays.map(row => [true, ...row] as const), ...anyCanGo.map(row => [false, ...row] as const)];
+      expect(
+        rows.map(([stays, first, calls, names, expected]) =>
+          expected.map((_, i) => digest(withSorts(sequence(first + i, calls, names, stays), calls > 300 ? 7 : 1))),
+        ),
+      ).toEqual(rows.map(row => row[4]));
+    });
   });
 });

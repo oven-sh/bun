@@ -26,6 +26,11 @@ pub struct Ctx<'p, 'a> {
     pub stack_check: StackCheck,
     /// The names of `six::ES_GLOBALS` that the file declares anywhere, one bit each.
     pub declared: u128,
+    /// The walk is where ESLint's `getScope` of a node is not the scope of its references: the discriminant of a `switch`,
+    /// the object of a `with`, a decorator of a class or of a parameter.
+    pub detached: bool,
+    /// The type arguments after an expression, by their operand.
+    type_arguments: Vec<(Key, u32)>,
     /// `isConstant` and `isLogicalIdentity` for its own operator of a binary expression, by its address and the flag it was asked with.
     pub folded: std::collections::BTreeMap<(usize, bool), (bool, bool)>,
     pub reports: Vec<(&'static str, u32, Vec<u8>)>,
@@ -40,17 +45,20 @@ impl<'p, 'a> Ctx<'p, 'a> {
         let mut index: Vec<(Key, u32)> = records.iter().enumerate().map(|(i, record)| (key_of(&record.operand), i as u32)).collect();
         index.sort_unstable();
         let has_ts = records.iter().any(|record| !matches!(record.data, WrapperData::Parenthesized));
-        // A declaration anywhere in the file takes the name: the symbols of the parse pass are the declarations.
-        let mut declared = 0u128;
-        for symbol in parsed.symbols {
-            if symbol.kind == bun_ast::SymbolKind::Unbound {
-                continue;
-            }
-            if let Ok(at) = crate::six::ES_GLOBALS.binary_search(&symbol.original_name.slice()) {
-                declared |= 1u128 << at;
-            }
-        }
-        Ctx { parsed, source, arena, index, has_ts, stack_check: StackCheck::init(), declared, folded: Default::default(), reports: Vec::new(), last_start: Default::default() }
+        // A declaration anywhere in the file takes the name: known before the walk.
+        let declared = crate::seam::declared_names(parsed);
+        let mut type_arguments: Vec<(Key, u32)> = parsed
+            .sidecar
+            .generics
+            .type_arguments
+            .iter()
+            .enumerate()
+            .filter(|(_, record)| record.of == bun_js_parser::parse::generics::TypeArgumentsOf::Expression)
+            .map(|(i, record)| (key_of(&record.operand), i as u32))
+            .collect();
+        type_arguments.sort_unstable();
+        let has_ts = has_ts || !type_arguments.is_empty();
+        Ctx { parsed, source, arena, index, has_ts, stack_check: StackCheck::init(), declared, detached: false, type_arguments, folded: Default::default(), reports: Vec::new(), last_start: Default::default() }
     }
 
     pub fn wrappers<'s>(&'s self, expr: &Expr) -> impl Iterator<Item = &'s Wrapper> + 's {
@@ -59,9 +67,39 @@ impl<'p, 'a> Ctx<'p, 'a> {
         self.index[from..].iter().take_while(move |(k, _)| *k == key).map(|(_, i)| &self.parsed.sidecar.wrappers.records[*i as usize])
     }
 
-    /// What ESLint has at the place of `expr`: `expr`, or nothing behind `as`, `satisfies`, `!` or `<T>`.
+    /// What stands around `expr` and leaves no node, an inner piece first: (is TypeScript, is type arguments, is `!`, op, end). `around` of ts-wrappers-eleven-rules.
+    fn around(&self, expr: &Expr, callee: bool) -> Vec<(bool, bool, bool, u32, u32)> {
+        let mut around: Vec<(bool, bool, bool, u32, u32)> = self
+            .wrappers(expr)
+            .map(|w| (!matches!(w.data, WrapperData::Parenthesized), false, matches!(w.data, WrapperData::NonNull), w.op, w.end))
+            .collect();
+        let key = key_of(expr);
+        let from = self.type_arguments.partition_point(|(k, _)| *k < key);
+        for (_, at) in self.type_arguments[from..].iter().take_while(|(k, _)| *k == key) {
+            let record = &self.parsed.sidecar.generics.type_arguments[*at as usize];
+            let inside = around
+                .iter()
+                .rposition(|piece| if !piece.0 { piece.4 <= record.lt } else if piece.2 || piece.1 { piece.3 < record.lt } else { false })
+                .map_or(0, |at| at + 1);
+            around.insert(inside, (true, true, false, record.lt, record.end));
+        }
+        if callee && around.last().is_some_and(|piece| piece.1) {
+            around.pop();
+        }
+        around
+    }
+
+    /// What ESLint has at the place of `expr`: `expr`, or nothing behind `as`, `satisfies`, `!`, `<T>` or type arguments of its own.
     pub fn plain<'e>(&self, expr: &'e Expr) -> Option<&'e Expr> {
-        if self.has_ts && self.wrappers(expr).any(|w| !matches!(w.data, WrapperData::Parenthesized)) {
+        if self.has_ts && self.around(expr, false).iter().any(|piece| piece.0) {
+            return None;
+        }
+        Some(expr)
+    }
+
+    /// `plain` for the target of a call or of `new`: type arguments that stand last are those of the call.
+    pub fn plain_callee<'e>(&self, expr: &'e Expr) -> Option<&'e Expr> {
+        if self.has_ts && self.around(expr, true).iter().any(|piece| piece.0) {
             return None;
         }
         Some(expr)

@@ -6,6 +6,7 @@ mod dupe;
 mod eslint_utils;
 mod for_direction;
 mod rx;
+mod seam;
 mod shims;
 mod six;
 #[path = "/workspace/wt/cli/src/lint/tokens.rs"]

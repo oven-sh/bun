@@ -1,0 +1,71 @@
+PROPOSED TEXT for /workspace/notes/lint/units/cli/NEEDS.md, from the research unit "rules-code-path" (pass 1a).
+The numbers are the next free ones after X6, X7 and X8 of ../ts-wrappers-eleven-rules/topdown/needs.txt when this was
+written: renumber if they are taken. Both are for the parser unit (`src/js_parser/`). Neither blocks a rule: the lint side
+works around each, as written below. X6 of that file (`Case::loc`) is used by no-fallthrough too: see the end.
+
+## Where a class member starts, for a lint parse (X9)
+
+For the parser unit. File `src/js_parser/parse/parse_entry.rs`, `impl<'a> ParsedForLint<'_, 'a>` (line 117 at be1ebe5295),
+or `impl StartsForParseOnly` in `src/js_parser/p.rs` (line 247).
+
+The text: one reader, as `ParsedOnly` has it at `parse_entry.rs` line 82:
+
+```rust
+impl<'a> ParsedForLint<'_, 'a> {
+    /// Where the class element whose name or static block is at `at` starts.
+    pub fn class_element(&self, at: js_ast::Loc) -> Option<i32> {
+        self.sidecar.class_elements.get(&at.start).copied()
+    }
+}
+```
+
+(The two other readers of `ParsedOnly`, `async_arrow_parameters` and `arrow_expression_body`, have the same state: a
+rule that asks them after D2 needs them on `ParsedForLint` in the same way.)
+
+Why: `StartsForParseOnly::class_elements` is filled by every parse that has the side table (`parse/mod.rs`, lines 270 to
+279: the place of the key or of the static block -> `first_decorator_loc`, the first token of the member: its first
+decorator, `static`, `get`, `async`, `*`, an accessibility modifier, `[`), and the field is `pub(crate)`. `bun_lint`
+reads it through `ParsedOnly::class_element`, which a lint parse does not give. ESLint reports at the start of the
+member: `getter-return` for a getter of a class whose end is reached (`class A { static get a() {} }` is reported at
+`static`), `constructor-super` for a constructor without `super()` (`class A extends B { public constructor() {} }` is
+reported at `public`). The tree has the key of the member and no place before it.
+
+What it costs a parse without `--lint`: nothing. The table exists and is filled already when `starts_for_parse_only`
+is set; the reader is a new method.
+
+Until then: `Context::class_member_start(key)` reads back from the key over blanks for the words that can stand before
+it (`get`, `set`, `static`, `async`, `*`, `accessor`, and in a TypeScript file `public`, `private`, `protected`,
+`readonly`, `override`, `abstract`, `declare`), each at most once and only with blanks between. A comment or a
+decorator before the key ends the read: the report is then at the last word found, or at the key. For a constructor of
+a JavaScript file the key is the start (nothing can stand before it), so only `getter-return` and the TypeScript
+modifiers of a constructor depend on this.
+
+## The comments of a file: what no-fallthrough reads of them (X10)
+
+For the parser unit, beside its B1 (the side table gets every comment with its range and kind). Nothing to change in the
+plan of B1 as `round2/b1-comment-collection/top-down/comments.rs` has it (`Comments::list: Vec<Comment>`, `Comment {
+start, end, kind }`, in source order); this says what the first reader in `bun_lint` asks:
+
+- `sidecar.comments.list` is `pub` and sorted by `start`, and holds the comments between two clauses of a `switch` and
+  before the `}` of a block (every comment, so yes).
+- The reader is "the last comment before the token at offset `p`": the last entry with `end <= p`, taken when the token
+  after `end` starts at `p`. Its text is `source[start + 2..end]` for `Line` and `source[start + 2..end - 2]` for `Block`
+  and `JSDoc`.
+- A `-->` at the start of a line is a comment for ESLint's parser in a script and for Bun's lexer
+  (`scan_legacy_html_close_comment`, which does not pass `scan_comment_text`): if the list does not hold it, a
+  `--> falls through` line does not permit a fall through for `bun --lint` and does for ESLint (a difference of
+  no-fallthrough to write down, or an entry of kind `Line` to add).
+
+Until then (and this is exact, so no-fallthrough does not have to wait): the rule reads the text between two tokens.
+`Context::last_comment_before(from, target)` runs Bun's lexer (`tokens::Tokens`) from `from`, the start of a token that
+the tree has before `target` (the last statement of the clause before, else the `case` or `default` of that clause; for
+the `}` of a block its last statement, else its `{`), up to the token at `target`; the text between the end of the token
+before `target` and `target` holds blanks and comments only, and the last comment in it is the answer.
+
+## `Case::loc` (X6 of ../ts-wrappers-eleven-rules/topdown/needs.txt)
+
+no-fallthrough reports at the `case` or `default` of the clause after the one that falls through, and X6 gives that place
+for both words. Until then `Context::clause_start(switch, index)` reads it: the second token from `body_loc` for the
+first clause; the token after the `:` of the clause before when that clause has no statement; else the first `case` or
+`default` at the level of the clause, read from the last statement of the clause before, that no `.` and no `?.`
+precedes. `Context::case_start` of D2 (which has no answer for `default`) becomes this.

@@ -196,7 +196,7 @@ index 9e75f90bfb..cd967c26f2 100644
    "--tag",
    "--report",
 diff --git a/test/cli/lint/conformance/sweep.ts b/test/cli/lint/conformance/sweep.ts
-index 13d8caaa1e..ba85ad962e 100644
+index 13d8caaa1e..7d6047a937 100644
 --- a/test/cli/lint/conformance/sweep.ts
 +++ b/test/cli/lint/conformance/sweep.ts
 @@ -1,5 +1,6 @@
@@ -858,7 +858,21 @@ index 13d8caaa1e..ba85ad962e 100644
      if (byCode.length > 25) say(`  and ${byCode.length - 25} more codes in the report`);
    }
    if (codesUnread.length > 0) say(`${codesUnread.length} oracles were not read for their codes: the report names them`);
-@@ -790,7 +1136,8 @@ async function main(argv: readonly string[]): Promise<number> {
+@@ -773,7 +1119,12 @@ async function main(argv: readonly string[]): Promise<number> {
+     }
+   }
+   const planned = plan(lists, known, resultFacts);
+-  const mayEnter = reportText(planned, updateCommand(argv, checked.binary));
++  // The command that adds names holds instances against the lists: it is the command of this run without --each.
++  const command = updateCommand(
++    argv.filter(a => a !== "--each"),
++    checked.binary,
++  );
++  const mayEnter = reportText(planned, command);
+   if (mayEnter !== "") say(mayEnter);
+   const added = planned.added.E.length + planned.added.C.length;
+   if (o.update) {
+@@ -790,7 +1141,8 @@ async function main(argv: readonly string[]): Promise<number> {
      check: checked.name,
      corpus: corpusRoot,
      selectors: o.selectors,
@@ -868,7 +882,7 @@ index 13d8caaa1e..ba85ad962e 100644
      seconds: Math.round((performance.now() - started) / 100) / 10,
      totals: {
        selected: selected.length,
-@@ -803,7 +1150,12 @@ async function main(argv: readonly string[]): Promise<number> {
+@@ -803,7 +1155,12 @@ async function main(argv: readonly string[]): Promise<number> {
        headerOnly,
      },
      directories: Object.fromEntries(directories),
@@ -882,7 +896,7 @@ index 13d8caaa1e..ba85ad962e 100644
      codesUnread,
      standIns: Object.fromEntries(mostFirst(standIns)),
      notRun: Object.fromEntries(mostFirst(notRun)),
-@@ -829,10 +1181,15 @@ async function main(argv: readonly string[]): Promise<number> {
+@@ -829,10 +1186,15 @@ async function main(argv: readonly string[]): Promise<number> {
      text,
    };
    try {

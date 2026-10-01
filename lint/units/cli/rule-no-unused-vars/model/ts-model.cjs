@@ -190,7 +190,7 @@ module.exports = {
 					for (let s = scopeManager.acquire(module, true); s; s = s.upper) { const v = s.variables.find(x => x.name === "global"); if (v) { quirk.add(v); break; } }
 				}
 				// The model may read `parent` here: it stands for "the innermost scope at the identifier", which the scope pass knows.
-				const scopeAt = node => { for (let n = node; n; n = n.parent) { const s = scopeManager.acquire(n, n.type !== "Program"); if (s) return s.type === "functionExpressionName" ? s.childScopes[0] : s; } return scopeManager.scopes[0]; };
+				const scopeAt = node => { const inner = node.type !== "Program"; for (let n = node; n; n = n.parent) { const s = scopeManager.acquire(n, inner); if (s) return s.type === "functionExpressionName" ? s.childScopes[0] : s; } return scopeManager.scopes[0]; };
 				if (view === "chain") {
 					// every variable of the name on the way up from the scope of the declaration that holds the token
 					for (const token of weakAt) {

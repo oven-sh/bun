@@ -1,0 +1,16 @@
+   bun-types typescript-lib       src-js          tsx   js-control  symbol (Bi head20b - base20b)
+     +289240      +968880      +261780      +340000           +0  NEW <P<true, false>>::parse_type_operator_or_higher::<Discard>
+      +87520      +764720       +51580      +106000           +0  NEW <P<true, false>>::parse_type_member
+      +16540       +93980      +167040       +30000           +0      <P<true, false>>::parse_stmt
+      +34200      +139980       +21980       +48000           +0      <lexer::Lexer>::next
+       +5940       +20660        +4620       +16000           +0  NEW <P<true, false>>::next_is_start_of_mapped_type
+       +5600       +11100        +2180       +22000           +0      <bun_ast::lexer_tables::__ComptimeStringMap_KEYWORDS>::__key_index
+          +0           +0           +0       +14000           +0      <P<true, false>>::parse_jsx_element
+       +2340        +3420        +3080           +0           +0  NEW <P<true, false>>::is_start_of_type
+        +980           +0         +200           +0           +0      <lexer::Lexer>::parse_string_literal_inner::<34>
+         +20         +500         +440           +0           +0  NEW <P<true, false>>::skip_type_script_predicate_of_keyword_name
+         +40           +0           +0           +0           +0      <P<true, false>>::t_import
+        -400         -420         -100        -4000           +0      <lexer::Lexer>::is_contextual_keyword
+          +0           +0           +0       -14000           +0  GONE<alloc::vec::Vec<bun_ast::g::Property, bun_alloc::ast_alloc::AstAlloc> as bun_collections::vec_ext::VecExt<bun_ast::g::Property>>::move_from_list
+     -721900     -2385740      -597400     -1058000           +0  GONE<P<true, false>>::skip_type_script_type_with_opts::<Discard>
+     -279880      -382920       -84600      -500000           +0  SUM of the rows (14)

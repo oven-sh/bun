@@ -45,23 +45,44 @@ impl Ctx<'_, '_> {
         self.reports.push((rule, at, text.to_vec()));
     }
 
-    /// `name` is no declaration of the file: a reference to it is one to the global.
+    /// `sourceCode.isGlobalReference`: `name` is one of the table and no declaration of the file.
     pub fn is_global(&self, name: &[u8]) -> bool {
         ES_GLOBALS.binary_search(&name).is_ok_and(|at| self.declared & (1u128 << at) == 0)
     }
 
-    /// What ESLint has at the place of `place` is an identifier named one of `names`, and that name is the global.
-    pub fn is_global_identifier(&self, place: &Expr, names: &[&[u8]]) -> bool {
-        let Some(Expr { data: ExprData::EIdentifier(identifier), .. }) = self.plain(place) else {
+    /// `isReferenceToGlobalVariable(scope, node)` of ast-utils with the scope of the node that a rule checks: not where that scope is not the one of the reference.
+    fn is_global_variable(&self, name: &[u8]) -> bool {
+        !self.detached && self.is_global(name)
+    }
+
+    /// `sourceCode.isGlobalReference` of the callee `place`: an identifier named one of `names`, and that name is the global.
+    fn is_global_callee(&self, place: &Expr, names: &[&[u8]]) -> bool {
+        let Some(Expr { data: ExprData::EIdentifier(identifier), .. }) = self.plain_callee(place) else {
             return false;
         };
         let name = self.parsed.name_of(identifier.ref_);
         names.contains(&name) && self.is_global(name)
     }
 
-    /// A call that is no optional call, of a global of `names`.
+    /// What ESLint has at the place of `place` is an identifier named one of `names`, and `isReferenceToGlobalVariable` holds for it.
+    fn is_global_identifier(&self, place: &Expr, names: &[&[u8]]) -> bool {
+        let Some(Expr { data: ExprData::EIdentifier(identifier), .. }) = self.plain(place) else {
+            return false;
+        };
+        let name = self.parsed.name_of(identifier.ref_);
+        names.contains(&name) && self.is_global_variable(name)
+    }
+
+    /// A call that is no optional call, of a global of `names` for `isReferenceToGlobalVariable`.
     fn calls_global(&self, call: &E::Call, names: &[&[u8]]) -> bool {
-        call.optional_chain.is_none() && self.is_global_identifier(&call.target, names)
+        if call.optional_chain.is_some() {
+            return false;
+        }
+        let Some(Expr { data: ExprData::EIdentifier(identifier), .. }) = self.plain_callee(&call.target) else {
+            return false;
+        };
+        let name = self.parsed.name_of(identifier.ref_);
+        names.contains(&name) && self.is_global_variable(name)
     }
 }
 
@@ -385,8 +406,8 @@ fn is_always_new(ctx: &mut Ctx<'_, '_>, place: &Expr) -> bool {
     match &node.data {
         ExprData::EObject(_) | ExprData::EArray(_) | ExprData::EArrow(_) | ExprData::EFunction(_) | ExprData::EClass(_) => true,
         // `is_global` is true of a name of `ES_GLOBALS` only.
-        ExprData::ENew(new) => match ctx.plain(&new.target) {
-            Some(Expr { data: ExprData::EIdentifier(identifier), .. }) => ctx.is_global(ctx.parsed.name_of(identifier.ref_)),
+        ExprData::ENew(new) => match ctx.plain_callee(&new.target) {
+            Some(Expr { data: ExprData::EIdentifier(identifier), .. }) => ctx.is_global_variable(ctx.parsed.name_of(identifier.ref_)),
             _ => false,
         },
         ExprData::ERegExp(_) => true,
@@ -458,7 +479,7 @@ fn boolean_context(ctx: &mut Ctx<'_, '_>, place: &Expr) {
             }
         }
         // An optional call too: ESLint looks through the `ChainExpression` around it.
-        ExprData::ECall(call) if ctx.is_global_identifier(&call.target, &[b"Boolean"]) => {
+        ExprData::ECall(call) if ctx.is_global_callee(&call.target, &[b"Boolean"]) => {
             let at = ctx.start_of_node(node);
             ctx.report("no-extra-boolean-cast", at, b"Redundant Boolean call.");
         }
@@ -469,7 +490,7 @@ fn boolean_context(ctx: &mut Ctx<'_, '_>, place: &Expr) {
 /// The first argument of a call of the global `Boolean`, with `new` or without, is a boolean context.
 fn boolean_call(ctx: &mut Ctx<'_, '_>, target: &Expr, args: &[Expr]) {
     if let Some(first) = args.first() {
-        if ctx.is_global_identifier(target, &[b"Boolean"]) {
+        if ctx.is_global_callee(target, &[b"Boolean"]) {
             boolean_context(ctx, first);
         }
     }
@@ -565,6 +586,8 @@ struct Walk<'c, 'p, 'a> {
     else_if: Option<usize>,
     /// The loops with a constant test that are open in the function being walked and that no `yield` was met in.
     loops: u32,
+    /// How many decorators that the walk reaches next stand outside the scope that ESLint gives them: those of the class being entered, those of the parameters of the method being entered.
+    outside: usize,
 }
 
 impl Walk<'_, '_, '_> {
@@ -572,6 +595,22 @@ impl Walk<'_, '_, '_> {
         if let Some(extends) = &class.extends {
             unsafe_chain(self.ctx, extends);
         }
+    }
+
+    /// What `inside` walks is in a scope of its own; `outside` decorators come first and are not.
+    fn scope(&mut self, outside: usize, inside: impl FnOnce(&mut Self)) {
+        let detached = core::mem::replace(&mut self.ctx.detached, false);
+        let outer = core::mem::replace(&mut self.outside, outside);
+        inside(self);
+        self.outside = outer;
+        self.ctx.detached = detached;
+    }
+
+    /// `expr` is walked where the scope of `getScope` is not the scope of its references.
+    fn detached(&mut self, expr: &Expr) {
+        let detached = core::mem::replace(&mut self.ctx.detached, true);
+        self.visit_expr(expr);
+        self.ctx.detached = detached;
     }
 
     /// What a loop with the test `test` walks is walked by `inside`; the test is reported after it when it is constant and no `yield` was met.
@@ -655,7 +694,30 @@ impl<'ast> Visitor<'ast> for Walk<'_, '_, '_> {
 
     fn visit_s_with(&mut self, node: &'ast S::With, _: Loc) {
         unsafe_chain(self.ctx, &node.value);
-        walk::walk_s_with(self, node);
+        self.detached(&node.value);
+        self.visit_stmt(&node.body);
+    }
+
+    fn visit_s_switch(&mut self, node: &'ast S::Switch, _: Loc) {
+        self.detached(&node.test);
+        for case in node.cases.slice() {
+            if let Some(value) = &case.value {
+                self.visit_expr(value);
+            }
+            for stmt in case.body.slice() {
+                self.visit_stmt(stmt);
+            }
+        }
+    }
+
+    fn visit_decorator(&mut self, decorator: &'ast Expr) {
+        if self.outside == 0 {
+            return self.visit_expr(decorator);
+        }
+        let left = self.outside - 1;
+        self.outside = 0;
+        self.detached(decorator);
+        self.outside = left;
     }
 
     fn visit_s_local(&mut self, node: &'ast S::Local, _: Loc) {
@@ -672,30 +734,32 @@ impl<'ast> Visitor<'ast> for Walk<'_, '_, '_> {
     fn visit_s_function(&mut self, node: &'ast S::Function, _: Loc) {
         unsafe_args(self.ctx, node.func.args.slice());
         let loops = core::mem::replace(&mut self.loops, 0);
-        walk::walk_s_function(self, node);
+        let outside = node.func.args.slice().iter().map(|arg| arg.ts_decorators.len() as usize).sum();
+        self.scope(outside, |walk| walk::walk_s_function(walk, node));
         self.loops = loops;
     }
 
     fn visit_e_function(&mut self, node: &'ast E::Function, _: Loc) {
         unsafe_args(self.ctx, node.func.args.slice());
         let loops = core::mem::replace(&mut self.loops, 0);
-        walk::walk_e_function(self, node);
+        let outside = node.func.args.slice().iter().map(|arg| arg.ts_decorators.len() as usize).sum();
+        self.scope(outside, |walk| walk::walk_e_function(walk, node));
         self.loops = loops;
     }
 
     fn visit_e_arrow(&mut self, node: &'ast E::Arrow, _: Loc) {
         unsafe_args(self.ctx, node.args.slice());
-        walk::walk_e_arrow(self, node);
+        self.scope(0, |walk| walk::walk_e_arrow(walk, node));
     }
 
     fn visit_s_class(&mut self, node: &'ast S::Class, _: Loc) {
         self.class(&node.class);
-        walk::walk_s_class(self, node);
+        self.scope(node.class.ts_decorators.len() as usize, |walk| walk::walk_s_class(walk, node));
     }
 
     fn visit_e_class(&mut self, node: &'ast E::Class, _: Loc) {
         self.class(node);
-        walk::walk_e_class(self, node);
+        self.scope(node.ts_decorators.len() as usize, |walk| walk::walk_e_class(walk, node));
     }
 
     fn visit_b_array(&mut self, node: &'ast B::Array, _: Loc) {
@@ -820,9 +884,32 @@ pub fn run(path: &str) {
     let started = std::time::Instant::now();
     let reports = parser.parse_for_lint(|parsed| {
         let mut ctx = Ctx::new(parsed, &source, &arena);
-        let mut walk = Walk { ctx: &mut ctx, else_if: None, loops: 0 };
+        let mut walk = Walk { ctx: &mut ctx, else_if: None, loops: 0, outside: 0 };
         for stmt in parsed.stmts {
             walk.visit_stmt(stmt);
+        }
+        for record in &parsed.sidecar.erased.statements {
+            match &record.data {
+                bun_js_parser::parse::erased::ErasedData::Declaration(stmt) => walk.visit_stmt(stmt),
+                bun_js_parser::parse::erased::ErasedData::Module(module) => {
+                    if let Some(body) = &module.body {
+                        for stmt in body.slice() {
+                            walk.visit_stmt(stmt);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        for member in &parsed.sidecar.erased.members {
+            if let bun_js_parser::parse::erased::ErasedMemberData::Property(property) = &member.data {
+                for decorator in property.ts_decorators.iter() {
+                    walk.visit_decorator(decorator);
+                }
+                for expr in [&property.key, &property.value, &property.initializer].into_iter().flatten() {
+                    walk.visit_expr(expr);
+                }
+            }
         }
         ctx.reports
     });

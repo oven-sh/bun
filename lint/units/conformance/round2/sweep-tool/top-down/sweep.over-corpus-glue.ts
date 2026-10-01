@@ -994,7 +994,12 @@ async function main(argv: readonly string[]): Promise<number> {
     }
   }
   const planned = plan(lists, known, resultFacts);
-  const mayEnter = reportText(planned, updateCommand(argv, checked.binary));
+  // The command that adds names holds instances against the lists: it is the command of this run without --each.
+  const command = updateCommand(
+    argv.filter(a => a !== "--each"),
+    checked.binary,
+  );
+  const mayEnter = reportText(planned, command);
   if (mayEnter !== "") say(mayEnter);
   const added = planned.added.E.length + planned.added.C.length;
   if (o.update) {

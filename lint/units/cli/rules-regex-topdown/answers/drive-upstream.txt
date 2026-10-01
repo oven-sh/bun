@@ -1,0 +1,31 @@
+[no-regex-spaces missing] js "{ let RegExp = function() {}; } var foo = RegExp('bar    baz');"
+    eslint:  1:43 Spaces are hard to count. Use {4}.
+    planned: (none)
+[no-useless-backreference missing] js "const r = RegExp, p = '\\\\1', s = '(a)'; new r(p + s);"
+    eslint:  1:41 Backreference '\1' will be ignored. It references group '(a)' which appears later in the pattern.
+    planned: (none)
+[no-misleading-character-class missing] js "/[\ud83d\\udc4d]/u // U+D83D + Backslash + \"udc4d\""
+    eslint:  1:3 Unexpected surrogate pair in character class. Use 'u' flag.
+    planned: (none)
+[no-misleading-character-class missing] js "const flags = \"\"; var r = new RegExp(\"[👍]\", flags)"
+    eslint:  1:40 Unexpected surrogate pair in character class. Use 'u' flag.
+    planned: (none)
+[no-misleading-character-class missing] js "const pattern = \"[👍]\"; new RegExp(pattern);"
+    eslint:  1:36 Unexpected surrogate pair in character class. Use 'u' flag.
+    planned: (none)
+[no-misleading-character-class missing] js "const pattern = \"[\\x41\\u0301]\"; RegExp(pattern);"
+    eslint:  1:40 Unexpected combined character in character class.
+    planned: (none)
+[no-useless-escape missing] js "\"use\\ strict\";"
+    eslint:  1:5 Unnecessary escape character: \ .
+    planned: (none)
+733 cases
+  733	no-control-regex same
+  4	no-misleading-character-class missing
+  729	no-misleading-character-class same
+  1	no-regex-spaces missing
+  732	no-regex-spaces same
+  1	no-useless-backreference missing
+  732	no-useless-backreference same
+  1	no-useless-escape missing
+  732	no-useless-escape same

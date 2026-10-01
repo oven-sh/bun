@@ -676,6 +676,13 @@ function matcher(selector: string): (fact: Fact) => boolean {
     ),
 ]
 
+sweep += [
+    (
+        "  const mayEnter = reportText(planned, updateCommand(argv, checked.binary));\n",
+        "  // The command that adds names holds instances against the lists: it is the command of this run without --each.\n  const command = updateCommand(\n    argv.filter(a => a !== \"--each\"),\n    checked.binary,\n  );\n  const mayEnter = reportText(planned, command);\n",
+    ),
+]
+
 edit(f"{home}/sweep.ts", sweep)
 edit(
     f"{home}/runner/expectations.ts",

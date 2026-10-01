@@ -1,0 +1,12 @@
+==855095== Cachegrind, a high-precision tracing profiler
+==855095== Copyright (C) 2002-2025, and GNU GPL'd, by Nicholas Nethercote et al.
+==855095== Using Valgrind-3.27.1 and LibVEX; rerun with -h for copyright info
+==855095== Command: /workspace/notes/lint/measure/parser/head/bun-profile /workspace/notes/lint/units/parser/measure/deco-bench.mjs --iterations=1
+==855095== 
+deco-bench sources 7595 accepted 6611 rejected 984 output length 2345115 passes 1
+==855095== 
+==855095== I refs:        1,111,958,311
+==855095== 
+==855095== Branches:        436,337,442  (432,981,766 cond + 3,355,676 ind)
+==855095== Mispredicts:       7,990,812  (  6,993,352 cond +   997,460 ind)
+==855095== Mispred rate:            1.8% (        1.6%     +      29.7%   )

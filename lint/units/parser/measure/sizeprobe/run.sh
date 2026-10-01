@@ -1,6 +1,6 @@
 #!/bin/bash
 # Size probe outside the worktrees: a crate that depends on bun_js_parser and bun_ast of one tree by path.
-# usage: run.sh <tree> <tag> <codegen dir of that tree> <out dir>
+# usage: [PSIZE_REV=<sha of an exported tree>] run.sh <tree> <tag> <codegen dir of that tree> <out dir>
 #   tree: /workspace/wt/parser or a scratch worktree; codegen dir: <tree>/build/debug/codegen or build/release/codegen
 #   (bun_core's build script reads build_options.rs from it). Run it through /workspace/tools/lk.
 set -u
@@ -33,7 +33,7 @@ panic = "abort"
 EOT
 cp "$TREE/Cargo.lock" "$D/Cargo.lock"
 CH=$(sed -n 's/^channel = "\(.*\)"/\1/p' "$TREE/rust-toolchain.toml")
-echo "tree=$TREE rev=$(git -C "$TREE" rev-parse HEAD) toolchain=$CH codegen=$CODEGEN" > "$OUT/$TAG.info.txt"
+echo "tree=$TREE rev=${PSIZE_REV:-$(git -C "$TREE" rev-parse HEAD 2>/dev/null)} toolchain=$CH codegen=$CODEGEN" > "$OUT/$TAG.info.txt"
 for p in dev release; do
   flag=""; [ $p = release ] && flag="--release"
   s=$(date +%s)

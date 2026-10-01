@@ -17,6 +17,10 @@ oracle/ts.cjs        node ts.cjs <rule[,rule]> <cases.json | code...>   the same
 oracle/cross.cjs     node cross.cjs [--json]   the cases of test/cli/lint/rules/*.json of the worktree on which one of the twelve
                      rules reports: rules.test.ts takes a line of another rule only when the fixture of that rule has the case.
 oracle/show.cjs      node oracle.cjs <rule> | node show.cjs [width]   two lines per case, to read.
+oracle/make-fixture.cjs   node make-fixture.cjs <rule> --bun <bun-debug> [--out f] [--keep fixture.json] <list>...
+                     writes test/cli/lint/rules/<rule>.json from lists of cases: `expect` is what `bun --lint` prints for the
+                     rule, `differs` and `eslint` where ESLint at the pin answers otherwise. Tried with a stand-in for bun
+                     only (a script that prints ESLint's answers in the plain format): no build had `--lint` then.
 oracle/parsecheck.js bun parsecheck.js   which of ESLint's own cases the installed bun rejects (none; the full parse, not the parse pass).
 
 cases/upstream-<rule>.json   ESLint's own cases of the rule: ../rule-support-unification-bottomup/oracle/extract.cjs <rule>.

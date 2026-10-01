@@ -1638,12 +1638,15 @@ async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, fla
   }
 
   if (signal?.aborted) {
+    const abortError = $makeAbortError(undefined, { cause: signal.reason });
     if (mustClose) {
       try {
         await fs.close(fdOrPath);
-      } catch {}
+      } catch (closeError) {
+        throw require("internal/errors").aggregateTwoErrors(closeError as Error, abortError);
+      }
     }
-    throw $makeAbortError(undefined, { cause: signal.reason });
+    throw abortError;
   }
 
   let totalBytesWritten = 0;
@@ -1657,6 +1660,7 @@ async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, fla
   }
 
   // Handle cleanup outside of try-catch
+  let closeError: Error | undefined;
   if (mustClose) {
     if (flagTruncates(flag)) {
       try {
@@ -1666,15 +1670,19 @@ async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, fla
 
     try {
       await fs.close(fdOrPath);
-    } catch (closeError) {
-      // As node's handleFdClose, the error of the write keeps its place: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/promises.js#L1075-L1086
-      error = error ? require("internal/errors").aggregateTwoErrors(closeError as Error, error) : (closeError as Error);
+    } catch (err) {
+      closeError = err as Error;
     }
   }
 
   // Abort signal shadows other errors
   if (signal?.aborted) {
     error = $makeAbortError(undefined, { cause: signal.reason });
+  }
+
+  // As node's handleFdClose, the error of the write or the abort keeps its place: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/promises.js#L1075-L1086
+  if (closeError) {
+    error = error ? require("internal/errors").aggregateTwoErrors(closeError, error) : closeError;
   }
 
   if (error) {

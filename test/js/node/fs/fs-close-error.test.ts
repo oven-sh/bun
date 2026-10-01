@@ -56,22 +56,25 @@ const nodeFsFixture = /* js */ `
     () => new Promise((resolve, reject) => stream.on("error", reject).on("close", resolve).end(data)),
   );
 
-  // fs.promises.writeFile with an iterable closes the file itself. The writer closes a duplicate of the descriptor first.
-  async function* chunks(error) {
+  // fs.promises.writeFile with an iterable closes the file itself, after its writer closed a duplicate of the
+  // descriptor. The shim fails both closes. On NFS and SMB only the first one gets the error, and the writer drops it.
+  async function* chunks(then) {
     yield data;
-    if (error) throw error;
+    if (then) yield then();
   }
-  const controller = new AbortController();
-  const aborted = fs.promises
-    .writeFile("aborted.${fault}", chunks(), { signal: controller.signal })
-    .then(() => "returned", e => e.name);
-  controller.abort();
+  const codes = e => ({ code: e.code, errors: e.errors?.map(inner => inner.code) });
+  const writeFile = (path, then, signal) => fs.promises.writeFile(path, chunks(then), { signal }).then(() => "returned", codes);
+  const early = new AbortController();
+  const abortedAfterOpen = writeFile("abort-early.${fault}", undefined, early.signal);
+  early.abort();
+  const late = new AbortController();
   out.writeFileIterable = {
     close: await settle(() => fs.promises.writeFile("iterable.${fault}", chunks())),
-    iterableAndClose: await fs.promises
-      .writeFile("iterable-error.${fault}", chunks(Object.assign(new Error("from the iterable"), { code: "EITER" })))
-      .then(() => "returned", e => ({ code: e.code, errors: e.errors?.map(inner => inner.code) })),
-    abortAndClose: await aborted,
+    iterableAndClose: await writeFile("iterable-error.${fault}", () => {
+      throw Object.assign(new Error("from the iterable"), { code: "EITER" });
+    }),
+    abortAfterOpenAndClose: await abortedAfterOpen,
+    abortInIterableAndClose: await writeFile("abort-late.${fault}", () => (late.abort(), data), late.signal),
   };
 
   // These two close their own descriptor and drop the result of the close.
@@ -282,13 +285,14 @@ describe.skipIf(!cc)("a close(2) that reports an error", () => {
             close: "ENOSPC close",
             // Node's handleFdClose: the error that came first keeps its place, in an AggregateError.
             iterableAndClose: { code: "EITER", errors: ["EITER", "ENOSPC"] },
-            abortAndClose: "AbortError",
+            abortAfterOpenAndClose: { code: "ABORT_ERR", errors: ["ABORT_ERR", "ENOSPC"] },
+            abortInIterableAndClose: { code: "ABORT_ERR", errors: ["ABORT_ERR", "ENOSPC"] },
           },
           // A debug build asserts on a close whose result bun drops. The assert is for EBADF, a use after close.
           afterInternalCloses: "alive",
         },
-        // Each descriptor is closed once: 5 for closeSync, then 10 that report ENOSPC.
-        stderr: failed(ENOSPC, EDQUOT, EIO, EINTR, EINPROGRESS, ...Array(10).fill(ENOSPC)),
+        // Each descriptor is closed once: 5 for closeSync, then 12 that report ENOSPC.
+        stderr: failed(ENOSPC, EDQUOT, EIO, EINTR, EINPROGRESS, ...Array(12).fill(ENOSPC)),
         exitCode: 0,
       });
     },

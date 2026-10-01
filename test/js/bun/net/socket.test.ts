@@ -6361,7 +6361,7 @@ describe.concurrent.each(["tcp", "tls"] as const)("%s shutdown() after end(data)
   });
 });
 
-it("a close by the peer frees a queued end(data) tail and keeps bytesWritten", async () => {
+it.concurrent("a close by the peer frees a queued end(data) tail and keeps bytesWritten", async () => {
   const STEP = 1024 * 1024;
   const TAIL = 8 * 1024 * 1024;
   const sawFin = Promise.withResolvers<Socket>();
@@ -6408,6 +6408,7 @@ it("a close by the peer frees a queued end(data) tail and keeps bytesWritten", a
   });
 });
 
+// Not concurrent: the close waits only while this socket owns the loop's one ciphertext spill slot.
 it("close() on a TLS socket frees a queued end(data) tail at once, while the close waits for the peer", async () => {
   const STEP = 1024 * 1024;
   const TAIL = 8 * 1024 * 1024;
@@ -6459,7 +6460,7 @@ it("close() on a TLS socket frees a queued end(data) tail at once, while the clo
   });
 });
 
-it("terminate() over a queued end(data) tail keeps the tail in bytesWritten", async () => {
+it.concurrent("terminate() over a queued end(data) tail keeps the tail in bytesWritten", async () => {
   const STEP = 1024 * 1024;
   const TAIL = 4 * 1024 * 1024;
   const closed = Promise.withResolvers<void>();

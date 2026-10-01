@@ -3446,7 +3446,7 @@ describe.concurrent("uncaughtException from socket listeners", () => {
   });
 });
 
-describe("a write that is still queued natively", () => {
+describe.concurrent("a write that is still queued natively", () => {
   const STEP = 1024 * 1024;
   const chunk = Buffer.alloc(STEP, 120);
 

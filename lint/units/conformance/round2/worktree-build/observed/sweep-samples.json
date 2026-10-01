@@ -1,0 +1,360 @@
+[
+ {
+  "report": "rep-tuple.json",
+  "selectors": [
+   "conformance/types/tuple/"
+  ],
+  "binary": "debug 3110ce85c",
+  "env": "default (inherited shell env: ASAN_OPTIONS=allow_user_segv_handler=1:disable_coredump=0)",
+  "lock": "no lock",
+  "jobs": 4,
+  "seconds": 8.2,
+  "totals": {
+   "selected": 34,
+   "run": 34,
+   "skipped": 0,
+   "invalid": 0,
+   "E": [
+    0,
+    23
+   ],
+   "C": [
+    11,
+    11
+   ],
+   "outcomes": {
+    "E": {
+     "fail": 23
+    },
+    "C": {
+     "pass": 11
+    }
+   },
+   "headerOnly": 0
+  },
+  "reasons": {
+   "E fail: no diagnostic where the oracle has a baseline": 23,
+   "C pass: ": 11
+  },
+  "classCWithOutput": []
+ },
+ {
+  "report": "rep-es6.json",
+  "selectors": [
+   "conformance/parser/ecmascript6/"
+  ],
+  "binary": "debug 3110ce85c",
+  "env": "default",
+  "lock": "no lock",
+  "jobs": 4,
+  "seconds": 11.8,
+  "totals": {
+   "selected": 85,
+   "run": 85,
+   "skipped": 0,
+   "invalid": 0,
+   "E": [
+    0,
+    67
+   ],
+   "C": [
+    18,
+    18
+   ],
+   "outcomes": {
+    "E": {
+     "fail": 41,
+     "crash": 26
+    },
+    "C": {
+     "pass": 18
+    }
+   },
+   "headerOnly": 0
+  },
+  "reasons": {
+   "E crash: the check threw: Error: stderr line n has the code syntax, which is no code of TypeScript": 26,
+   "E fail: no diagnostic where the oracle has a baseline": 41,
+   "C pass: ": 18
+  },
+  "classCWithOutput": []
+ },
+ {
+  "report": "rep-7.json",
+  "selectors": [
+   "*7.ts"
+  ],
+  "binary": "debug 3110ce85c",
+  "env": "default",
+  "lock": "no lock",
+  "jobs": 4,
+  "seconds": 31.9,
+  "totals": {
+   "selected": 216,
+   "run": 209,
+   "skipped": 7,
+   "invalid": 0,
+   "E": [
+    0,
+    119
+   ],
+   "C": [
+    88,
+    90
+   ],
+   "outcomes": {
+    "E": {
+     "fail": 86,
+     "crash": 33
+    },
+    "C": {
+     "pass": 88,
+     "crash": 2
+    }
+   },
+   "headerOnly": 0
+  },
+  "reasons": {
+   "E fail: no diagnostic where the oracle has a baseline": 86,
+   "C pass: ": 88,
+   "C crash: the check threw: Error: stderr line n has the code syntax, which is no code of TypeScript": 2,
+   "E crash: the check threw: Error: stderr line n has the code syntax, which is no code of TypeScript": 33
+  },
+  "classCWithOutput": [
+   {
+    "name": "asyncArrowFunction2_es2017.ts",
+    "casePath": "conformance/async/es2017/asyncArrowFunction/asyncArrowFunction2_es2017.ts",
+    "reason": "the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript"
+   },
+   {
+    "name": "asyncArrowFunction4_es2017.ts",
+    "casePath": "conformance/async/es2017/asyncArrowFunction/asyncArrowFunction4_es2017.ts",
+    "reason": "the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript"
+   }
+  ]
+ },
+ {
+  "report": "rep-7-leak.json",
+  "selectors": [
+   "*7.ts"
+  ],
+  "binary": "debug 3110ce85c",
+  "env": "leak env of CI",
+  "lock": "no lock",
+  "jobs": 4,
+  "seconds": 58.4,
+  "totals": {
+   "selected": 216,
+   "run": 209,
+   "skipped": 7,
+   "invalid": 0,
+   "E": [
+    0,
+    119
+   ],
+   "C": [
+    88,
+    90
+   ],
+   "outcomes": {
+    "E": {
+     "fail": 86,
+     "crash": 33
+    },
+    "C": {
+     "pass": 88,
+     "crash": 2
+    }
+   },
+   "headerOnly": 0
+  },
+  "reasons": {
+   "E fail: no diagnostic where the oracle has a baseline": 86,
+   "C pass: ": 88,
+   "C crash: the check threw: Error: stderr line n has the code syntax, which is no code of TypeScript": 2,
+   "E crash: the check threw: Error: stderr line n has the code syntax, which is no code of TypeScript": 33
+  },
+  "classCWithOutput": [
+   {
+    "name": "asyncArrowFunction2_es2017.ts",
+    "casePath": "conformance/async/es2017/asyncArrowFunction/asyncArrowFunction2_es2017.ts",
+    "reason": "the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript"
+   },
+   {
+    "name": "asyncArrowFunction4_es2017.ts",
+    "casePath": "conformance/async/es2017/asyncArrowFunction/asyncArrowFunction4_es2017.ts",
+    "reason": "the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript"
+   }
+  ]
+ },
+ {
+  "report": "rep-7-release.json",
+  "selectors": [
+   "*7.ts"
+  ],
+  "binary": "release be1ebe529 (parser worktree, same src/)",
+  "env": "none",
+  "lock": "no lock",
+  "jobs": 4,
+  "seconds": 20.5,
+  "totals": {
+   "selected": 216,
+   "run": 209,
+   "skipped": 7,
+   "invalid": 0,
+   "E": [
+    0,
+    119
+   ],
+   "C": [
+    88,
+    90
+   ],
+   "outcomes": {
+    "E": {
+     "fail": 86,
+     "crash": 33
+    },
+    "C": {
+     "pass": 88,
+     "crash": 2
+    }
+   },
+   "headerOnly": 0
+  },
+  "reasons": {
+   "E fail: no diagnostic where the oracle has a baseline": 86,
+   "C pass: ": 88,
+   "C crash: the check threw: Error: stderr line n has the code syntax, which is no code of TypeScript": 2,
+   "E crash: the check threw: Error: stderr line n has the code syntax, which is no code of TypeScript": 33
+  },
+  "classCWithOutput": [
+   {
+    "name": "asyncArrowFunction2_es2017.ts",
+    "casePath": "conformance/async/es2017/asyncArrowFunction/asyncArrowFunction2_es2017.ts",
+    "reason": "the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript"
+   },
+   {
+    "name": "asyncArrowFunction4_es2017.ts",
+    "casePath": "conformance/async/es2017/asyncArrowFunction/asyncArrowFunction4_es2017.ts",
+    "reason": "the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript"
+   }
+  ]
+ },
+ {
+  "report": "rep-js.json",
+  "selectors": [
+   "conformance/salsa/",
+   "conformance/jsdoc/",
+   "conformance/jsx/"
+  ],
+  "binary": "release be1ebe529 (parser worktree, same src/)",
+  "env": "none",
+  "lock": "no lock",
+  "jobs": 4,
+  "seconds": 44.1,
+  "totals": {
+   "selected": 822,
+   "run": 731,
+   "skipped": 91,
+   "invalid": 0,
+   "E": [
+    0,
+    444
+   ],
+   "C": [
+    240,
+    287
+   ],
+   "outcomes": {
+    "E": {
+     "fail": 353,
+     "unsupported": 57,
+     "crash": 34
+    },
+    "C": {
+     "pass": 240,
+     "unsupported": 45,
+     "crash": 2
+    }
+   },
+   "headerOnly": 0
+  },
+  "reasons": {
+   "E fail: no diagnostic where the oracle has a baseline": 353,
+   "C pass: ": 240,
+   "E crash: the check threw: Error: stderr line n has the code syntax, which is no code of TypeScript": 32,
+   "C unsupported: absolute-path-in-text: ...": 45,
+   "E crash: the check threw: Error: stderr line n has the code no-self-assign, which is no code of TypeScript": 1,
+   "E crash: the check threw: Error: stderr line n has the code no-debugger, which is no code of TypeScript": 1,
+   "E unsupported: absolute-path-in-text: ...": 57,
+   "C crash: the check threw: Error: stderr line n has the code syntax, which is no code of TypeScript": 2
+  },
+  "classCWithOutput": [
+   {
+    "name": "plainJSRedeclare3.ts",
+    "casePath": "conformance/salsa/plainJSRedeclare3.ts",
+    "reason": "the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript"
+   },
+   {
+    "name": "privateIdentifierExpando.ts",
+    "casePath": "conformance/salsa/privateIdentifierExpando.ts",
+    "reason": "the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript"
+   }
+  ]
+ },
+ {
+  "report": "rep-es5.json",
+  "selectors": [
+   "conformance/parser/ecmascript5/"
+  ],
+  "binary": "debug 3110ce85c",
+  "env": "default, pinned",
+  "lock": "under /workspace/tools/lk",
+  "jobs": 4,
+  "seconds": 157.4,
+  "totals": {
+   "selected": 796,
+   "run": 716,
+   "skipped": 80,
+   "invalid": 0,
+   "E": [
+    0,
+    519
+   ],
+   "C": [
+    195,
+    197
+   ],
+   "outcomes": {
+    "E": {
+     "fail": 275,
+     "crash": 244
+    },
+    "C": {
+     "pass": 195,
+     "crash": 2
+    }
+   },
+   "headerOnly": 0
+  },
+  "reasons": {
+   "E fail: no diagnostic where the oracle has a baseline": 275,
+   "E crash: the check threw: Error: stderr line n has the code syntax, which is no code of TypeScript": 244,
+   "C pass: ": 195,
+   "C crash: the check threw: Error: stderr line n has the code syntax, which is no code of TypeScript": 2
+  },
+  "classCWithOutput": [
+   {
+    "name": "parserInterfaceKeywordInEnum1.ts",
+    "casePath": "conformance/parser/ecmascript5/EnumDeclarations/parserInterfaceKeywordInEnum1.ts",
+    "reason": "the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript"
+   },
+   {
+    "name": "parser_continueTarget3.ts",
+    "casePath": "conformance/parser/ecmascript5/Statements/ContinueStatements/parser_continueTarget3.ts",
+    "reason": "the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript"
+   }
+  ]
+ }
+]

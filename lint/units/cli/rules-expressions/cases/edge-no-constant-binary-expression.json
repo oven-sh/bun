@@ -167,7 +167,6 @@
 	"x = 1 < 2",
 	"x = 'a' < 'b'",
 	"x = a + 1 === 2",
-	"x = #p in a",
 	"var undefined; x = undefined ?? c",
 	"function Boolean() {} x = Boolean(a) ?? c",
 	"function f(String) { x = String(a) === true }",
@@ -179,8 +178,10 @@
 	"switch (a) { case undefined ?? b: }",
 	"with (new Boolean(1) === y) {}",
 	"with ({} === y) {}",
-	{"code":"x = <a/> ?? c","jsx":true},
-	{"code":"x = <a/> && c","jsx":true},
-	{"code":"x = <></> === y","jsx":true},
-	{"code":"x = true == <a/>","jsx":true}
+	{"code": "x = <a/> ?? c", "jsx": true},
+	{"code": "x = <a/> && c", "jsx": true},
+	{"code": "x = <></> === y", "jsx": true},
+	{"code": "x = true == <a/>", "jsx": true},
+	"class A { #p; m(a) { return #p in a === true; } }",
+	"class A { #p; m(a) { return (#p in a) ?? 1; } }"
 ]

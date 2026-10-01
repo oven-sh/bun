@@ -91,7 +91,6 @@
 	"(a?.b())()",
 	"(a?.b()).c",
 	"(a?.b)?.c()",
-	"super.a",
 	"a?.b in c",
 	"a?.b instanceof c",
 	"({a: b?.c} = d)",
@@ -103,10 +102,8 @@
 	"x = (a?.b).c ? 1 : 2",
 	"if ((a?.b).c) {}",
 	"class A { p = (a?.b).c; [(d?.e).f]() {} static { (g?.h)(); } }",
-	{"code":"x = <a b={(c?.d).e} {...f?.g}>{...h?.i}{(j?.k)()}</a>;","jsx":true},
+	{"code": "x = <a b={(c?.d).e} {...f?.g}>{...h?.i}{(j?.k)()}</a>;", "jsx": true},
 	"`${(a?.b).c}`",
 	"(a?.b)`${(c?.d)()}`",
-	"(a?.#b).c",
-	"a?.b.#c",
-	"(a?.b).#c"
+	"class A extends B { #b; #c; m() { (a?.#b).c; a?.b.#c; (a?.b).#c; super.a; (a?.b)?.#c; #b in a?.b; } }"
 ]

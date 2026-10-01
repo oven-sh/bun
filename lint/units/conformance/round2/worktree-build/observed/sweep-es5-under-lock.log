@@ -1,0 +1,4 @@
+### queued: 2026-10-01T10:34:02Z
+### lock acquired: 2026-10-01T10:42:20Z pressure: some avg10=40.09 avg60=39.35 avg300=33.04 total=3400363489
+### finished: 2026-10-01T10:44:59Z rc=0 run_secs=158 pressure: some avg10=30.75 avg60=37.28 avg300=35.28 total=3462239237
+### outer rc=0

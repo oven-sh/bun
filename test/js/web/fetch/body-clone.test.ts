@@ -632,75 +632,58 @@ test.each(["Request", "Response"])(
   },
 );
 
-// `new Request(request)` runs the same body-usability check as clone() before
-// transferring the body. A locked or disturbed input must throw a single
-// catchable TypeError, not also report it as uncaught (exit code 1) or surface
-// a bogus follow-up error.
-test("new Request(request) with a locked stream body throws a catchable TypeError and does not fail the process", async () => {
-  const script = `
-    const stream = new ReadableStream({ start() {} });
-    const source = new Request("http://example.com/", { method: "POST", body: stream, duplex: "half" });
-    source.body.getReader(); // lock the body stream
-    try {
-      new Request(source);
-      console.log("no throw");
-    } catch (e) {
-      console.log("caught " + e.constructor.name + ": " + e.message);
-    }
-    // Give the event loop a turn so a deferred error report would surface.
-    await new Promise(resolve => setImmediate(resolve));
-    console.log("done");
-  `;
+// `new Request()` runs the body-usability check before it takes a body from a
+// Request or a Response, as the input or as init (a Bun extension). A locked
+// stream must throw a single catchable TypeError. It must not also be reported
+// as uncaught (exit code 1) or surface a bogus follow-up error.
+test.each([
+  [
+    "new Request(request)",
+    `new Request("http://example.com/", { method: "POST", body: stream, duplex: "half" })`,
+    `new Request(source)`,
+    "Cannot construct a Request with a Request object that has already been used.",
+  ],
+  [
+    "new Request(url, request)",
+    `new Request("http://example.com/", { method: "POST", body: stream, duplex: "half" })`,
+    `new Request("http://example.com/other", source)`,
+    "Body is disturbed or locked",
+  ],
+  ["new Request(url, response)", `new Response(stream)`, `new Request("http://example.com/", source)`, "Body is disturbed or locked"],
+])(
+  "%s with a locked stream body throws a catchable TypeError and does not fail the process",
+  async (_, makeSource, construct, message) => {
+    const script = `
+      const stream = new ReadableStream({ start() {} });
+      const source = ${makeSource};
+      source.body.getReader(); // lock the body stream
+      try {
+        ${construct};
+        console.log("no throw");
+      } catch (e) {
+        console.log("caught " + e.constructor.name + ": " + e.message);
+      }
+      // Give the event loop a turn so a deferred error report would surface.
+      await new Promise(resolve => setImmediate(resolve));
+      console.log("done");
+    `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
-    stdout: ["caught TypeError: Cannot construct a Request with a Request object that has already been used.", "done"],
-    stderr: "",
-    exitCode: 0,
-  });
-});
-
-// A Request supplied as *init* (Bun extension) is not the spec input, so its
-// body is still teed. With a locked stream that reaches the readableStreamTee
-// C++ bridge, whose exception must surface as a single catchable TypeError.
-test("new Request(url, lockedRequestAsInit) throws a catchable TypeError from the tee and does not fail the process", async () => {
-  const script = `
-    const stream = new ReadableStream({ start() {} });
-    const source = new Request("http://example.com/", { method: "POST", body: stream, duplex: "half" });
-    source.body.getReader(); // lock the body stream
-    try {
-      new Request("http://example.com/other", source);
-      console.log("no throw");
-    } catch (e) {
-      console.log("caught " + e.constructor.name + ": " + e.message);
-    }
-    await new Promise(resolve => setImmediate(resolve));
-    console.log("done");
-  `;
-
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-  expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
-    stdout: ["caught TypeError: Invalid state: ReadableStream is locked", "done"],
-    stderr: "",
-    exitCode: 0,
-  });
-});
+    expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+      stdout: [`caught TypeError: ${message}`, "done"],
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
 
 // https://fetch.spec.whatwg.org/#dom-request-clone (step 1)
 // https://fetch.spec.whatwg.org/#dom-response-clone (step 1)
@@ -895,6 +878,165 @@ describe("clone() throws when the body is disturbed or locked", () => {
     expect(response.body!.locked).toBe(false);
     const cloned = response.clone();
     expect(await Promise.all([response.text(), cloned.text()])).toEqual(["hello world", "hello world"]);
+  });
+});
+
+// https://fetch.spec.whatwg.org/#dom-request: "If initBody is null and
+// inputBody is non-null, then: If input is unusable, then throw a TypeError."
+// Without the check the copy of a consumed Request silently carries an empty
+// body. The Request can arrive as `input`, or as `init` (a Bun extension that
+// copies the Request's fields the same way).
+describe("new Request() throws when the input Request's body is disturbed or locked", () => {
+  async function usedRequest() {
+    const request = new Request("http://example.com/used", { method: "POST", body: "once" });
+    await request.text();
+    expect(request.bodyUsed).toBe(true);
+    return request;
+  }
+
+  function expectUnusable(construct: () => Request) {
+    let error: unknown;
+    try {
+      construct();
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeInstanceOf(TypeError);
+    expect((error as Error).message).toBe("Body is disturbed or locked");
+    expect((error as Error & { code: string }).code).toBe("ERR_BODY_ALREADY_USED");
+  }
+
+  test("new Request(usedRequest)", async () => {
+    const used = await usedRequest();
+    expectUnusable(() => new Request(used));
+  });
+
+  test("new Request(url, usedRequest)", async () => {
+    const used = await usedRequest();
+    expectUnusable(() => new Request("http://example.com/other", used));
+  });
+
+  test("new Request(usedRequest, init) when init has no body", async () => {
+    const used = await usedRequest();
+    expectUnusable(() => new Request(used, {}));
+    expectUnusable(() => new Request(used, { method: "PUT" }));
+  });
+
+  test("new Request(usedRequest, { body }) takes the init body", async () => {
+    const used = await usedRequest();
+    const copy = new Request(used, { body: "fresh" });
+    expect([copy.method, await copy.text()]).toEqual(["POST", "fresh"]);
+  });
+
+  test("a locked input (reader acquired, never read) throws", () => {
+    const source = new Request("http://example.com/", {
+      method: "POST",
+      body: new ReadableStream({ start() {} }),
+    });
+    source.body!.getReader();
+    expectUnusable(() => new Request(source));
+    expectUnusable(() => new Request("http://example.com/other", source));
+    expectUnusable(() => new Request(source, {}));
+  });
+
+  test("a partially read stream input throws", async () => {
+    const source = new Request("http://example.com/", {
+      method: "POST",
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("a"));
+          controller.enqueue(new TextEncoder().encode("b"));
+        },
+      }),
+    });
+    const reader = source.body!.getReader();
+    await reader.read();
+    reader.releaseLock();
+    expect(source.bodyUsed).toBe(true);
+    expectUnusable(() => new Request(source));
+  });
+
+  test("new Request(url, usedResponse) throws, an unread Response as init still copies", async () => {
+    const used = new Response("once");
+    await used.text();
+    expectUnusable(() => new Request("http://example.com/other", used));
+
+    const unread = new Response("hello");
+    const copy = new Request("http://example.com/other", unread);
+    expect(await Promise.all([unread.text(), copy.text()])).toEqual(["hello", "hello"]);
+  });
+
+  test("a consumed GET request with no body still copies", async () => {
+    const get = new Request("http://example.com/get");
+    expect(await get.text()).toBe("");
+    expect(new Request(get).body).toBeNull();
+    expect(new Request("http://example.com/other", get).url).toBe("http://example.com/other");
+    expect(new Request(get, {}).body).toBeNull();
+  });
+
+  test("an unread input still copies and stays readable", async () => {
+    const source = new Request("http://example.com/", { method: "POST", body: "hello" });
+    const copy = new Request(source);
+    expect(await Promise.all([source.text(), copy.text()])).toEqual(["hello", "hello"]);
+  });
+
+  test("an empty-string body input is copied, not shared through the body getter", async () => {
+    const source = new Request("http://example.com/", { method: "POST", body: "" });
+    const copy = new Request(source, {});
+    expect(copy.body).not.toBe(source.body);
+    expect(await Promise.all([source.text(), copy.text()])).toEqual(["", ""]);
+
+    const response = new Response("");
+    const fromResponse = new Request("http://example.com/", response);
+    expect(await Promise.all([response.text(), fromResponse.text()])).toEqual(["", ""]);
+  });
+
+  test("Bun.serve: new Request(req) of an already-read incoming request throws", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    await using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        try {
+          const original = await req.text();
+          try {
+            new Request(req);
+            resolve(`no throw (original=${JSON.stringify(original)})`);
+          } catch (e) {
+            resolve(`${(e as Error).constructor.name}: ${(e as Error).message}`);
+          }
+        } catch (e) {
+          reject(e);
+        }
+        return new Response("ok");
+      },
+    });
+    const response = await fetch(server.url, { method: "POST", body: "hello" });
+    expect(response.status).toBe(200);
+    expect(await promise).toBe("TypeError: Body is disturbed or locked");
+  });
+
+  test("server.fetch(usedRequest) rejects instead of sending an empty body", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        return new Response(JSON.stringify(await req.text()));
+      },
+    });
+    const used = new Request(server.url, { method: "POST", body: "once" });
+    await used.text();
+    // Every bad argument to server.fetch() rejects the returned promise.
+    const promise = server.fetch(used);
+    expect(promise).toBeInstanceOf(Promise);
+    const error = await promise.then(
+      () => null,
+      e => e,
+    );
+    expect(error).toBeInstanceOf(TypeError);
+    expect(error.message).toBe("Body is disturbed or locked");
+    expect(error.code).toBe("ERR_BODY_ALREADY_USED");
+
+    const unread = new Request(server.url, { method: "POST", body: "twice" });
+    expect(await (await server.fetch(unread)).text()).toBe('"twice"');
   });
 });
 

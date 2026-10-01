@@ -379,12 +379,9 @@ impl Request {
             .set_cookies(cookie_map.map(|c| std::ptr::from_ref::<CookieMap>(c).cast_mut()));
     }
 
-    /// `BunRequest.prototype.clone` (the `Bun.serve` `routes:` subclass) goes
-    /// through `JSBunRequest::clone` -> here, not through [`Self::do_clone`],
-    /// so it needs the same fetch-spec step-1 usability check.
+    /// `BunRequest.prototype.clone` (`JSBunRequest::clone`) calls this, not [`Self::do_clone`].
     #[bun_uws::uws_callback(export = "Request__clone")]
     pub(crate) fn ffi_clone(&self, global_this: &JSGlobalObject) -> Option<Box<Request>> {
-        self.throw_if_body_unusable(global_this).ok()?;
         // `BunRequest.prototype.clone`, a C++ host function, calls this.
         let cx = global_this.js_thread_of_caller_no_frame();
         self.clone(&cx).ok()
@@ -1120,11 +1117,6 @@ impl Request {
                     // sibling Response-as-init branch below.
                     let is_input = value == url_or_object;
                     if values_to_try.len() == 1 {
-                        if is_input {
-                            if let Err(e) = request.throw_if_input_body_unusable(cx.global()) {
-                                bail!(Err(e));
-                            }
-                        }
                         match Request::clone_into(
                             request,
                             &mut req,
@@ -1196,8 +1188,10 @@ impl Request {
                                 transfer_input_body = true;
                                 fields.insert(Fields::Body);
                             }
-                            BodyValue::Used => {}
                             _ => {
+                                if let Err(e) = request.throw_if_body_unusable(cx.global()) {
+                                    bail!(Err(e));
+                                }
                                 match request.clone_body_value_via_cached_stream(cx) {
                                     Ok(v) => {
                                         *req.body_value_mut() = v;
@@ -1244,8 +1238,11 @@ impl Request {
 
                     if !fields.contains(Fields::Body) {
                         match response.get_body_value() {
-                            BodyValue::Null | BodyValue::Empty | BodyValue::Used => {}
+                            BodyValue::Null => {}
                             _ => {
+                                if let Err(e) = response.throw_if_body_unusable(cx.global()) {
+                                    bail!(Err(e));
+                                }
                                 match response.clone_body_value_via_cached_stream(cx) {
                                     Ok(v) => {
                                         *req.body_value_mut() = v;
@@ -1530,7 +1527,6 @@ impl Request {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        self.throw_if_body_unusable(global_this)?;
         let this_value = callframe.this();
         let cloned = self.clone(&global_this.js_thread_of_caller(callframe))?;
 
@@ -1548,6 +1544,11 @@ impl Request {
         preserve_url: bool,
         body_mode: BodyCloneMode,
     ) -> JsResult<()> {
+        // Every copy of a Request passes here, so the fetch-spec usability check lives here only.
+        match body_mode {
+            BodyCloneMode::Transfer => self.throw_if_input_body_unusable(cx.global())?,
+            BodyCloneMode::Tee => self.throw_if_body_unusable(cx.global())?,
+        }
         // allocator param dropped (global mimalloc)
         let _ = self.ensure_url();
         // Headers first: a transfer leaves `self` `Used`, so it must be the

@@ -24,22 +24,9 @@ extern "C" void Bun__DsaKeyPairJobCtx__runTask(DsaKeyPairJobCtx* ctx, JSGlobalOb
     ctx->runTask(globalObject, keyCtx);
 }
 
-extern "C" void Bun__DsaKeyPairJobCtx__runFromJS(DsaKeyPairJobCtx* ctx, JSGlobalObject* globalObject, EncodedJSValue callback)
+extern "C" void Bun__DsaKeyPairJobCtx__runFromJS(DsaKeyPairJobCtx* ctx, JSGlobalObject* globalObject, JSCallbackArgs* out)
 {
-    ctx->runFromJS(globalObject, JSValue::decode(callback));
-}
-
-extern "C" DsaKeyPairJob* Bun__DsaKeyPairJob__create(JSGlobalObject* globalObject, DsaKeyPairJobCtx* ctx, EncodedJSValue callback);
-DsaKeyPairJob* DsaKeyPairJob::create(JSGlobalObject* globalObject, DsaKeyPairJobCtx&& ctx, JSValue callback)
-{
-    DsaKeyPairJobCtx* ctxCopy = new DsaKeyPairJobCtx(WTF::move(ctx));
-    return Bun__DsaKeyPairJob__create(globalObject, ctxCopy, JSValue::encode(callback));
-}
-
-extern "C" void Bun__DsaKeyPairJob__schedule(DsaKeyPairJob* job);
-void DsaKeyPairJob::schedule()
-{
-    Bun__DsaKeyPairJob__schedule(this);
+    *out = ctx->runFromJS(globalObject);
 }
 
 extern "C" void Bun__DsaKeyPairJob__createAndSchedule(JSGlobalObject* globalObject, DsaKeyPairJobCtx* ctx, EncodedJSValue callback);

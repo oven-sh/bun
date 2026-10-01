@@ -48,15 +48,17 @@ using namespace JSC;
 
 class MarkdownTagStrings {
 public:
-#define MARKDOWN_TAG_STRINGS_ACCESSOR_DEFINITION(name, str, idx)        \
-    JSC::JSString* name##String(JSC::JSGlobalObject* globalObject)      \
-    {                                                                   \
-        return m_strings[idx].getInitializedOnMainThread(globalObject); \
-    }
+#define MARKDOWN_TAG_STRINGS_ACCESSOR_DEFINITION(name, str, idx) \
+    JSC::JSString* name##String(JSC::JSGlobalObject* globalObject) { return stringAt(globalObject, idx); }
 
     MARKDOWN_TAG_STRINGS_EACH_NAME(MARKDOWN_TAG_STRINGS_ACCESSOR_DEFINITION)
 
 #undef MARKDOWN_TAG_STRINGS_ACCESSOR_DEFINITION
+
+    JSC::JSString* stringAt(JSC::JSGlobalObject* globalObject, size_t index)
+    {
+        return m_strings[index].getInitializedOnMainThread(globalObject);
+    }
 
     void initialize();
 

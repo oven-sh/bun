@@ -153,4 +153,14 @@ Duplex.from = function (body) {
   return duplexify(body, "body");
 };
 
-export default Duplex as unknown as typeof import("node:stream").Duplex;
+type NodeDuplex = import("node:stream").Duplex;
+type NodeDuplexOptions = import("node:stream").DuplexOptions;
+
+interface DuplexOptions extends NodeDuplexOptions {
+  readable?: boolean;
+  writable?: boolean;
+}
+
+export default Duplex as unknown as typeof import("node:stream").Duplex & {
+  new (options?: DuplexOptions): NodeDuplex;
+};

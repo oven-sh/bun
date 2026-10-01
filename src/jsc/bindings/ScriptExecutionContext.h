@@ -1,17 +1,21 @@
 #pragma once
 
 #include "root.h"
+
+struct BunVmHandleRef;
+#include "BunLoopKind.h"
 #include "SharedEnvStore.h"
-#include <wtf/CrossThreadTask.h>
 #include <wtf/Function.h>
 #include <wtf/HashSet.h>
 #include <wtf/ObjectIdentifier.h>
+#include <wtf/WeakHashSet.h>
 #include <wtf/WeakPtr.h>
 #include <wtf/text/WTFString.h>
 #include <wtf/CompletionHandler.h>
 #include "CachedScript.h"
 #include "wtf/ThreadSafeWeakPtr.h"
 #include <wtf/URL.h>
+#include <JavaScriptCore/Weak.h>
 
 namespace uWS {
 template<bool isServer, bool isClient, typename UserData>
@@ -22,6 +26,10 @@ struct us_socket_t;
 struct us_socket_group_t;
 struct us_loop_t;
 
+namespace Zig {
+class GlobalObject;
+}
+
 namespace WebCore {
 
 class WebSocket;
@@ -29,6 +37,7 @@ class WebSocket;
 class ScriptExecutionContext;
 class EventLoopTask;
 
+class ActiveDOMObject;
 class ContextDestructionObserver;
 
 using ScriptExecutionContextIdentifier = uint32_t;
@@ -44,17 +53,21 @@ class ScriptExecutionContext : public CanMakeWeakPtr<ScriptExecutionContext>, pu
 #endif
 
 public:
-    ScriptExecutionContext(JSC::VM* vm, JSC::JSGlobalObject* globalObject);
-    ScriptExecutionContext(JSC::VM* vm, JSC::JSGlobalObject* globalObject, ScriptExecutionContextIdentifier identifier);
+    ScriptExecutionContext(JSC::VM* vm, Zig::GlobalObject* globalObject);
+    ScriptExecutionContext(JSC::VM* vm, Zig::GlobalObject* globalObject, ScriptExecutionContextIdentifier identifier);
+    // A graph's context in `parent`'s realm.
+    explicit ScriptExecutionContext(ScriptExecutionContext& parent);
+    // A further context in `parent`'s global, for a Bun.ModuleGraph: what the graph's
+    // script opens (ActiveDOMObjects here; native handles, timers and sockets in its Rust half)
+    // belongs to it and goes when it stops.
+    static Ref<ScriptExecutionContext> createForModuleGraph(ScriptExecutionContext& parent);
+    void setModuleGraph(JSC::JSObject*);
 
     ~ScriptExecutionContext();
 
     static ScriptExecutionContextIdentifier generateIdentifier();
 
-    JSC::JSGlobalObject* jsGlobalObject()
-    {
-        return m_globalObject;
-    }
+    JSC::JSGlobalObject* jsGlobalObject();
 
     static ScriptExecutionContext* getScriptExecutionContext(ScriptExecutionContextIdentifier identifier);
     void refEventLoop();
@@ -66,36 +79,59 @@ public:
     {
         return m_url;
     }
-    bool isMainThread() const { return m_identifier == 1; }
-    bool activeDOMObjectsAreSuspended() { return false; }
-    bool activeDOMObjectsAreStopped() { return false; }
+    bool isMainThread() const { return realm().m_identifier == 1; }
+    // The Rust half, `bun_jsc::ScriptExecutionContext`: it has this context's identifier. A
+    // graph's context makes and frees its own; a global's is bound to its VM's root context.
+    void* bunContext() const { return m_bunContext; }
+    // The JSModuleGraph a graph's context was made for, until it is collected.
+    JSC::JSObject* moduleGraph() const { return m_moduleGraph.get(); }
+    // A graph's context stops everything it owns, for good. The global keeps running.
+    void stop();
+    // `made` is the context of a graph that script running in this (graph's) context created: one
+    // more thing it opened, stopped with it (at once, if this one already has).
+    void ownGraphContext(ScriptExecutionContext& made);
+    // The graph was collected (a GC finalizer: nothing can be stopped here): stop() from the
+    // event loop, which is what then lets go of this context.
+    void moduleGraphDestroyed();
     bool isContextThread();
-    bool isDocument() { return false; }
-    bool isWorkerGlobalScope() { return true; }
+
+    // Active objects are not garbage collected even if inaccessible, e.g. because their activity may result in callbacks being invoked.
+    void stopActiveDOMObjects();
+    // Also read on the GC thread (isContextStopped() from isReachableFromOpaqueRoots).
+    bool activeDOMObjectsAreStopped() const { return m_activeDOMObjectsAreStopped.load(std::memory_order_relaxed); }
+    // A graph's context that was stopped (the graph was disposed or collected).
+    bool isStopped() const { return m_isStopped || activeDOMObjectsAreStopped(); }
+    // A Bun.ModuleGraph's context (its graph may already have been collected).
+    bool isForModuleGraph() const { return !!m_parent; }
+
+    // Called from the constructor and destructors of ActiveDOMObject.
+    void didCreateActiveDOMObject(ActiveDOMObject&);
+    void willDestroyActiveDOMObject(ActiveDOMObject&);
+
+    // Called once after an ActiveDOMObject is constructed: stops it if this context already stopped.
+    void suspendActiveDOMObjectIfNeeded(ActiveDOMObject&);
+
+    enum class ShouldContinue : bool { No,
+        Yes };
+    void forEachActiveDOMObject(NOESCAPE const Function<ShouldContinue(ActiveDOMObject&)>&) const;
+
+    // WorkerOrWorkletGlobalScope::prepareForDestruction(): the one point, while script may still
+    // run, where every ActiveDOMObject is stopped and every listener on context-owned targets is
+    // removed. Runs before VM teardown, and when a live VM retires this context's global.
+    void prepareForDestruction();
+    void removeAllEventListeners();
+    // The owning Zig::GlobalObject cell is being destroyed; from here on there is no global/VM.
+    void globalObjectDestroyed();
+
     bool isJSExecutionForbidden();
     void reportException(const String& errorMessage, int lineNumber, int columnNumber, const String& sourceURL, JSC::Exception* exception, RefPtr<void*>&&, CachedScript* = nullptr, bool = false)
     {
     }
-    // void reportUnhandledPromiseRejection(JSC::JSGlobalObject&, JSC::JSPromise&, RefPtr<Inspector::ScriptCallStack>&&)
-    // {
-    // }
-
-#if ENABLE(WEB_CRYPTO)
-    // These two methods are used when CryptoKeys are serialized into IndexedDB. As a side effect, it is also
-    // used for things that utilize the same structure clone algorithm, for example, message passing between
-    // worker and document.
-
-    // For now these will return false. In the future, we will want to implement these similar to how WorkerGlobalScope.cpp does.
-    // virtual bool wrapCryptoKey(const Vector<uint8_t>& key, Vector<uint8_t>& wrappedKey) = 0;
-    // virtual bool unwrapCryptoKey(const Vector<uint8_t>& wrappedKey, Vector<uint8_t>& key) = 0;
-    bool wrapCryptoKey(const Vector<uint8_t>& key, Vector<uint8_t>& wrappedKey) { return false; }
-    bool unwrapCryptoKey(const Vector<uint8_t>& wrappedKey, Vector<uint8_t>& key) { return false; }
-#endif
-
-    WEBCORE_EXPORT static bool postTaskTo(ScriptExecutionContextIdentifier identifier, Function<void(ScriptExecutionContext&)>&& task);
-    WEBCORE_EXPORT static bool postTaskTo(ScriptExecutionContextIdentifier identifier, NOESCAPE const WTF::Function<void()>& betweenLookupAndEnqueue, Function<void(ScriptExecutionContext&)>&& task);
+    // `loopKind`: which of the target VM's loops the task joins — currentLoopKind() captured on the
+    // target's thread when the work whose completion this is was initiated, or Regular for work no
+    // script there initiated.
+    WEBCORE_EXPORT static bool postTaskTo(ScriptExecutionContextIdentifier identifier, BunLoopKind loopKind, Function<void(ScriptExecutionContext&)>&& task);
     WEBCORE_EXPORT static bool ensureOnContextThread(ScriptExecutionContextIdentifier, Function<void(ScriptExecutionContext&)>&& task);
-    WEBCORE_EXPORT static bool ensureOnMainThread(Function<void(ScriptExecutionContext&)>&& task);
 
     WEBCORE_EXPORT JSC::JSGlobalObject* globalObject();
 
@@ -105,6 +141,12 @@ public:
     void checkConsistency() const;
 
     void regenerateIdentifier();
+
+    // bun:sqlite and node:sqlite databases are closed with the Bun.ModuleGraph whose script opened
+    // them, as they are with the VM that did. `ownerOfSQLiteDatabase`: the context to record for
+    // one that is being opened (0: the running script is not a graph's).
+    static ScriptExecutionContextIdentifier ownerOfSQLiteDatabase(JSC::JSGlobalObject*);
+    void closeSQLiteDatabases();
     void addToContextsMap();
     void removeFromContextsMap();
 
@@ -113,17 +155,17 @@ public:
     void postTask(Function<void(ScriptExecutionContext&)>&& lambda);
     // Executes the task on context's thread asynchronously.
     void postTask(EventLoopTask* task);
+    void postTaskAfterYield(Function<void(ScriptExecutionContext&)>&& lambda);
 
-    template<typename... Arguments>
-    void postCrossThreadTask(Arguments&&... arguments)
-    {
-        postTask([crossThreadTask = createCrossThreadTask(arguments...)](ScriptExecutionContext&) mutable {
-            crossThreadTask.performTask();
-        });
-    }
-
-    JSC::VM& vm() { return *m_vm; }
+    JSC::VM& vm() { return *realm().m_vm; }
     ScriptExecutionContextIdentifier identifier() const { return m_identifier; }
+    // This thread only: the loop the VM is running now. What an object that will later be posted to
+    // from another thread records alongside identifier() when script here sets it up.
+    BunLoopKind currentLoopKind()
+    {
+        ASSERT(isContextThread());
+        return Bun__VM__currentLoopKind(m_bunVM);
+    }
 
     bool isWorker = false;
 
@@ -140,33 +182,45 @@ public:
     Bun::SharedEnvStore* sharedEnvStore() const { return m_sharedEnvStore.get(); }
     void setSharedEnvStore(Bun::SharedEnvStore& store) { m_sharedEnvStore = &store; }
 
-    void setGlobalObject(JSC::JSGlobalObject* globalObject)
-    {
-        m_globalObject = globalObject;
-        m_vm = &globalObject->vm();
-    }
-
     static ScriptExecutionContext* getMainThreadScriptExecutionContext();
 
 private:
     std::atomic<bool> m_isTerminating { false };
     RefPtr<Bun::SharedEnvStore> m_sharedEnvStore;
     JSC::VM* m_vm = nullptr;
-    JSC::JSGlobalObject* m_globalObject = nullptr;
+    Zig::GlobalObject* m_globalObject = nullptr;
+    // The thread's Bun VM; outlives every global created on it and, during teardown, the JSC::VM.
+    void* const m_bunVM;
+    // What other threads use to reach the VM (see JSVMClientData::vmHandle).
+    const ::BunVmHandleRef* const m_vmHandle;
     WTF::URL m_url = WTF::URL();
     ScriptExecutionContextIdentifier m_identifier;
     // Snapshot of the creating thread's UID; used by isContextThread() so the
     // check stays valid after VM clientData / VMHolder are torn down on exit.
     uint32_t m_contextThreadUID;
+    // A graph's context: the context of the global the graph was made in, whose VM and global
+    // object are this one's.
+    RefPtr<ScriptExecutionContext> m_parent;
+    ScriptExecutionContext& realm() { return m_parent ? *m_parent : *this; }
+    const ScriptExecutionContext& realm() const { return m_parent ? *m_parent : *this; }
+    void* const m_bunContext;
+    JSC::Weak<JSC::JSObject> m_moduleGraph;
 
-    UncheckedKeyHashSet<ContextDestructionObserver*> m_destructionObservers;
+    WeakHashSet<ActiveDOMObject> m_activeDOMObjects;
+    WeakHashSet<ScriptExecutionContext> m_ownedGraphContexts;
+    // Registered in the observer's constructor, removed in its destructor, both
+    // on this context's thread: plain pointers, nothing allocated per observer.
+    HashSet<ContextDestructionObserver*> m_destructionObservers;
+
+    std::atomic<bool> m_activeDOMObjectsAreStopped { false };
+    // A graph's context: stop() ran (its ActiveDOMObjects are stopped one task later).
+    bool m_isStopped { false };
+    mutable bool m_activeDOMObjectAdditionForbidden { false };
 
 public:
 #if ASSERT_ENABLED
     bool m_inScriptExecutionContextDestructor = false;
 #endif
 };
-
-ScriptExecutionContext* executionContext(JSC::JSGlobalObject*);
 
 }

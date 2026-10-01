@@ -1,4 +1,4 @@
-import { define } from "../../codegen/class-definitions";
+import { define } from "../../codegen/class-definitions.ts";
 
 export default [
   define({
@@ -31,6 +31,10 @@ export default [
       },
       getCurrentState: {
         fn: "getCurrentState",
+        length: 0,
+      },
+      getFrameCounters: {
+        fn: "getFrameCounters",
         length: 0,
       },
       settings: {
@@ -73,10 +77,6 @@ export default [
         fn: "setStreamReading",
         length: 2,
       },
-      setStreamPriority: {
-        fn: "setStreamPriority",
-        length: 2,
-      },
       getStreamContext: {
         fn: "getStreamContext",
         length: 1,
@@ -89,10 +89,6 @@ export default [
         fn: "getEndAfterHeaders",
         length: 1,
       },
-      isStreamAborted: {
-        fn: "isStreamAborted",
-        length: 1,
-      },
       getStreamState: {
         fn: "getStreamState",
         length: 1,
@@ -100,10 +96,6 @@ export default [
       bufferSize: {
         fn: "getBufferSize",
         length: 0,
-      },
-      hasNativeRead: {
-        fn: "hasNativeRead",
-        length: 1,
       },
       setNextStreamID: {
         fn: "setNextStreamID",
@@ -130,7 +122,7 @@ export default [
         length: 4,
       },
     },
-    finalize: true,
+    refCounted: true,
     construct: true,
     constructNeedsThis: true,
     klass: {},

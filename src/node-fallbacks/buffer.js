@@ -379,14 +379,6 @@ function checked(length) {
   return length | 0;
 }
 
-function SlowBuffer(length) {
-  if (+length != length) {
-    // eslint-disable-line eqeqeq
-    length = 0;
-  }
-  return Buffer.alloc(+length);
-}
-
 Buffer.isBuffer = function isBuffer(b) {
   return b != null && b._isBuffer === true && b !== Buffer.prototype; // so Buffer.isBuffer(Buffer.prototype) will be false
 };

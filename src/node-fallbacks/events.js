@@ -323,39 +323,38 @@ function once(emitter, type, options) {
   if (signal?.aborted) {
     throw new AbortError(undefined, { cause: signal?.reason });
   }
-  const { resolve, reject, promise } = $newPromiseCapability(Promise);
-  const errorListener = err => {
-    emitter.removeListener(type, resolver);
+  return new Promise((resolve, reject) => {
+    const errorListener = err => {
+      emitter.removeListener(type, resolver);
+      if (signal != null) {
+        eventTargetAgnosticRemoveListener(signal, "abort", abortListener);
+      }
+      reject(err);
+    };
+    const resolver = (...args) => {
+      if (typeof emitter.removeListener === "function") {
+        emitter.removeListener("error", errorListener);
+      }
+      if (signal != null) {
+        eventTargetAgnosticRemoveListener(signal, "abort", abortListener);
+      }
+      resolve(args);
+    };
+    eventTargetAgnosticAddListener(emitter, type, resolver, { once: true });
+    if (type !== "error" && typeof emitter.once === "function") {
+      // EventTarget does not have `error` event semantics like Node
+      // EventEmitters, we listen to `error` events only on EventEmitters.
+      emitter.once("error", errorListener);
+    }
+    function abortListener() {
+      eventTargetAgnosticRemoveListener(emitter, type, resolver);
+      eventTargetAgnosticRemoveListener(emitter, "error", errorListener);
+      reject(new AbortError(undefined, { cause: signal?.reason }));
+    }
     if (signal != null) {
-      eventTargetAgnosticRemoveListener(signal, "abort", abortListener);
+      eventTargetAgnosticAddListener(signal, "abort", abortListener, { once: true });
     }
-    reject(err);
-  };
-  const resolver = (...args) => {
-    if (typeof emitter.removeListener === "function") {
-      emitter.removeListener("error", errorListener);
-    }
-    if (signal != null) {
-      eventTargetAgnosticRemoveListener(signal, "abort", abortListener);
-    }
-    resolve(args);
-  };
-  eventTargetAgnosticAddListener(emitter, type, resolver, { once: true });
-  if (type !== "error" && typeof emitter.once === "function") {
-    // EventTarget does not have `error` event semantics like Node
-    // EventEmitters, we listen to `error` events only on EventEmitters.
-    emitter.once("error", errorListener);
-  }
-  function abortListener() {
-    eventTargetAgnosticRemoveListener(emitter, type, resolver);
-    eventTargetAgnosticRemoveListener(emitter, "error", errorListener);
-    reject(new AbortError(undefined, { cause: signal?.reason }));
-  }
-  if (signal != null) {
-    eventTargetAgnosticAddListener(signal, "abort", abortListener, { once: true });
-  }
-
-  return promise;
+  });
 }
 
 function getEventListeners(emitter, type) {

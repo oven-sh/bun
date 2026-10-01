@@ -1,0 +1,6 @@
+{
+  "name": "monorepo",
+  "dependencies": {
+    "app": "file:./app"
+  }
+}

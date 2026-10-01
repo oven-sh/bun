@@ -1,0 +1,455 @@
+   Compiling proc-macro2 v1.0.106
+   Compiling quote v1.0.45
+   Compiling unicode-ident v1.0.24
+   Compiling rustversion v1.0.22
+    Checking memchr v2.8.0
+   Compiling libc v0.2.186
+   Compiling heck v0.5.0
+    Checking bstr v1.12.1
+    Checking allocator-api2 v0.2.21
+    Checking bun_opaque v0.0.0 (/workspace/wt/parser/src/opaque)
+    Checking konst_macro_rules v0.2.19
+   Compiling thiserror v2.0.18
+   Compiling unicode-xid v0.2.6
+    Checking bun_mimalloc_sys v0.0.0 (/workspace/wt/parser/src/mimalloc_sys)
+    Checking bun_wyhash v0.0.0 (/workspace/wt/parser/src/wyhash)
+    Checking konst v0.2.20
+    Checking bun_highway v0.0.0 (/workspace/wt/parser/src/highway)
+   Compiling syn v2.0.117
+   Compiling bun_core v0.0.0 (/workspace/wt/parser/src/bun_core)
+   Compiling bun_output_tags v0.0.0 (/workspace/wt/parser/src/bun_output_tags)
+    Checking bun_hash v0.0.0 (/workspace/wt/parser/src/hash)
+    Checking bun_alloc v0.0.0 (/workspace/wt/parser/src/bun_alloc)
+   Compiling const_format_proc_macros v0.2.34
+    Checking bun_simdutf_sys v0.0.0 (/workspace/wt/parser/src/simdutf_sys)
+    Checking bytemuck v1.25.0
+    Checking itoa v1.0.18
+    Checking scopeguard v1.2.0
+   Compiling paste v1.0.15
+    Checking bun_windows_sys v0.0.0 (/workspace/wt/parser/src/windows_sys)
+    Checking hashbrown v0.15.5
+    Checking smallvec v1.15.1
+    Checking rustc-hash v2.1.2
+    Checking bitflags v2.11.1
+   Compiling ident_case v1.0.1
+   Compiling fnv v1.0.7
+   Compiling rustix v0.38.44
+    Checking const_format v0.2.36
+   Compiling darling_core v0.21.3
+    Checking linux-raw-sys v0.4.15
+   Compiling strum_macros v0.26.4
+   Compiling thiserror-impl v2.0.18
+   Compiling bun_dispatch v0.0.0 (/workspace/wt/parser/src/dispatch)
+   Compiling bun_core_macros v0.0.0 (/workspace/wt/parser/src/bun_core_macros)
+   Compiling enum-map-derive v0.17.0
+   Compiling darling_macro v0.21.3
+    Checking enum-map v2.7.3
+   Compiling darling v0.21.3
+   Compiling enumset_derive v0.14.0
+    Checking strum v0.26.3
+    Checking bun_libuv_sys v0.0.0 (/workspace/wt/parser/src/libuv_sys)
+    Checking enumset v1.1.10
+    Checking bun_errno v0.0.0 (/workspace/wt/parser/src/errno)
+    Checking bun_ptr v0.0.0 (/workspace/wt/parser/src/ptr)
+    Checking bun_boringssl_sys v0.0.0 (/workspace/wt/parser/src/boringssl_sys)
+    Checking bun_safety v0.0.0 (/workspace/wt/parser/src/safety)
+    Checking bun_zlib_sys v0.0.0 (/workspace/wt/parser/src/zlib_sys)
+    Checking bun_base64 v0.0.0 (/workspace/wt/parser/src/base64)
+    Checking bun_paths v0.0.0 (/workspace/wt/parser/src/paths)
+    Checking bun_collections v0.0.0 (/workspace/wt/parser/src/collections)
+    Checking bun_sys v0.0.0 (/workspace/wt/parser/src/sys)
+    Checking bun_semver v0.0.0 (/workspace/wt/parser/src/semver)
+    Checking bun_url v0.0.0 (/workspace/wt/parser/src/url)
+    Checking bun_zlib v0.0.0 (/workspace/wt/parser/src/zlib)
+    Checking bun_http_types v0.0.0 (/workspace/wt/parser/src/http_types)
+    Checking bun_analytics v0.0.0 (/workspace/wt/parser/src/analytics)
+    Checking bun_uws_sys v0.0.0 (/workspace/wt/parser/src/uws_sys)
+    Checking bun_perf v0.0.0 (/workspace/wt/parser/src/perf)
+    Checking bun_which v0.0.0 (/workspace/wt/parser/src/which)
+    Checking bun_threading v0.0.0 (/workspace/wt/parser/src/threading)
+    Checking bun_spawn_sys v0.0.0 (/workspace/wt/parser/src/spawn_sys)
+    Checking bun_ast v0.0.0 (/workspace/wt/parser/src/ast)
+    Checking bun_dotenv v0.0.0 (/workspace/wt/parser/src/dotenv)
+    Checking bun_io v0.0.0 (/workspace/wt/parser/src/io)
+    Checking bun_install_types v0.0.0 (/workspace/wt/parser/src/install_types)
+    Checking bun_react_compiler v0.0.0 (/workspace/wt/parser/src/react_compiler)
+    Checking bun_options_types v0.0.0 (/workspace/wt/parser/src/options_types)
+    Checking bun_crash_handler v0.0.0 (/workspace/wt/parser/src/crash_handler)
+    Checking bun_js_parser v0.0.0 (/workspace/wt/parser/src/js_parser)
+    Checking psize_probe v0.0.0 (/workspace/notes/lint/units/parser/measure/sizeprobe/trees/head)
+error[E0308]: mismatched types
+ --> /workspace/notes/lint/units/parser/measure/sizeprobe/src/lib.rs:8:20
+  |
+8 | const _: [(); 0] = [(); core::mem::size_of::<P<'static, true, false>>()];
+  |          -------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected an array with a size of 0, found one with a size of 3888
+  |          |
+  |          expected because of the type of the constant
+  |
+help: consider specifying the actual array length
+  |
+8 - const _: [(); 0] = [(); core::mem::size_of::<P<'static, true, false>>()];
+8 + const _: [(); 3888] = [(); core::mem::size_of::<P<'static, true, false>>()];
+  |
+
+error[E0308]: mismatched types
+ --> /workspace/notes/lint/units/parser/measure/sizeprobe/src/lib.rs:9:20
+  |
+9 | const _: [(); 0] = [(); core::mem::size_of::<P<'static, false, false>>()];
+  |          -------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected an array with a size of 0, found one with a size of 3888
+  |          |
+  |          expected because of the type of the constant
+  |
+help: consider specifying the actual array length
+  |
+9 - const _: [(); 0] = [(); core::mem::size_of::<P<'static, false, false>>()];
+9 + const _: [(); 3888] = [(); core::mem::size_of::<P<'static, false, false>>()];
+  |
+
+error[E0308]: mismatched types
+  --> /workspace/notes/lint/units/parser/measure/sizeprobe/src/lib.rs:10:20
+   |
+10 | const _: [(); 0] = [(); core::mem::size_of::<P<'static, true, true>>()];
+   |          -------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected an array with a size of 0, found one with a size of 3888
+   |          |
+   |          expected because of the type of the constant
+   |
+help: consider specifying the actual array length
+   |
+10 - const _: [(); 0] = [(); core::mem::size_of::<P<'static, true, true>>()];
+10 + const _: [(); 3888] = [(); core::mem::size_of::<P<'static, true, true>>()];
+   |
+
+error[E0308]: mismatched types
+  --> /workspace/notes/lint/units/parser/measure/sizeprobe/src/lib.rs:11:20
+   |
+11 | const _: [(); 0] = [(); core::mem::size_of::<P<'static, false, true>>()];
+   |          -------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected an array with a size of 0, found one with a size of 3888
+   |          |
+   |          expected because of the type of the constant
+   |
+help: consider specifying the actual array length
+   |
+11 - const _: [(); 0] = [(); core::mem::size_of::<P<'static, false, true>>()];
+11 + const _: [(); 3888] = [(); core::mem::size_of::<P<'static, false, true>>()];
+   |
+
+error[E0308]: mismatched types
+  --> /workspace/notes/lint/units/parser/measure/sizeprobe/src/lib.rs:12:20
+   |
+12 | const _: [(); 0] = [(); core::mem::align_of::<P<'static, true, false>>()];
+   |          -------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected an array with a size of 0, found one with a size of 8
+   |          |
+   |          expected because of the type of the constant
+   |
+help: consider specifying the actual array length
+   |
+12 - const _: [(); 0] = [(); core::mem::align_of::<P<'static, true, false>>()];
+12 + const _: [(); 8] = [(); core::mem::align_of::<P<'static, true, false>>()];
+   |
+
+error[E0308]: mismatched types
+  --> /workspace/notes/lint/units/parser/measure/sizeprobe/src/lib.rs:13:20
+   |
+13 | const _: [(); 0] = [(); core::mem::size_of::<Lexer<'static>>()];
+   |          -------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected an array with a size of 0, found one with a size of 336
+   |          |
+   |          expected because of the type of the constant
+   |
+help: consider specifying the actual array length
+   |
+13 - const _: [(); 0] = [(); core::mem::size_of::<Lexer<'static>>()];
+13 + const _: [(); 336] = [(); core::mem::size_of::<Lexer<'static>>()];
+   |
+
+error[E0308]: mismatched types
+  --> /workspace/notes/lint/units/parser/measure/sizeprobe/src/lib.rs:14:20
+   |
+14 | const _: [(); 0] = [(); core::mem::size_of::<LexerSnapshot<'static>>()];
+   |          -------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected an array with a size of 0, found one with a size of 240
+   |          |
+   |          expected because of the type of the constant
+   |
+help: consider specifying the actual array length
+   |
+14 | const _: [(); 240] = [(); core::mem::size_of::<LexerSnapshot<'static>>()];
+   |               ++
+
+error[E0308]: mismatched types
+  --> /workspace/notes/lint/units/parser/measure/sizeprobe/src/lib.rs:15:20
+   |
+15 | const _: [(); 0] = [(); core::mem::size_of::<bun_ast::Msg>()];
+   |          -------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected an array with a size of 0, found one with a size of 152
+   |          |
+   |          expected because of the type of the constant
+   |
+help: consider specifying the actual array length
+   |
+15 - const _: [(); 0] = [(); core::mem::size_of::<bun_ast::Msg>()];
+15 + const _: [(); 152] = [(); core::mem::size_of::<bun_ast::Msg>()];
+   |
+
+error[E0308]: mismatched types
+  --> /workspace/notes/lint/units/parser/measure/sizeprobe/src/lib.rs:16:20
+   |
+16 | const _: [(); 0] = [(); core::mem::size_of::<bun_ast::Expr>()];
+   |          -------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected an array with a size of 0, found one with a size of 16
+   |          |
+   |          expected because of the type of the constant
+   |
+help: consider specifying the actual array length
+   |
+16 - const _: [(); 0] = [(); core::mem::size_of::<bun_ast::Expr>()];
+16 + const _: [(); 16] = [(); core::mem::size_of::<bun_ast::Expr>()];
+   |
+
+error[E0308]: mismatched types
+  --> /workspace/notes/lint/units/parser/measure/sizeprobe/src/lib.rs:17:20
+   |
+17 | const _: [(); 0] = [(); core::mem::size_of::<bun_ast::Stmt>()];
+   |          -------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected an array with a size of 0, found one with a size of 16
+   |          |
+   |          expected because of the type of the constant
+   |
+help: consider specifying the actual array length
+   |
+17 - const _: [(); 0] = [(); core::mem::size_of::<bun_ast::Stmt>()];
+17 + const _: [(); 16] = [(); core::mem::size_of::<bun_ast::Stmt>()];
+   |
+
+error[E0308]: mismatched types
+  --> /workspace/notes/lint/units/parser/measure/sizeprobe/src/lib.rs:18:20
+   |
+18 | const _: [(); 0] = [(); core::mem::size_of::<bun_ast::Binding>()];
+   |          -------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected an array with a size of 0, found one with a size of 16
+   |          |
+   |          expected because of the type of the constant
+   |
+help: consider specifying the actual array length
+   |
+18 - const _: [(); 0] = [(); core::mem::size_of::<bun_ast::Binding>()];
+18 + const _: [(); 16] = [(); core::mem::size_of::<bun_ast::Binding>()];
+   |
+
+error[E0308]: mismatched types
+  --> /workspace/notes/lint/units/parser/measure/sizeprobe/src/lib.rs:19:20
+   |
+19 | const _: [(); 0] = [(); core::mem::size_of::<E::Arrow>()];
+   |          -------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected an array with a size of 0, found one with a size of 32
+   |          |
+   |          expected because of the type of the constant
+   |
+help: consider specifying the actual array length
+   |
+19 - const _: [(); 0] = [(); core::mem::size_of::<E::Arrow>()];
+19 + const _: [(); 32] = [(); core::mem::size_of::<E::Arrow>()];
+   |
+
+error[E0308]: mismatched types
+  --> /workspace/notes/lint/units/parser/measure/sizeprobe/src/lib.rs:20:20
+   |
+20 | const _: [(); 0] = [(); core::mem::size_of::<G::Decl>()];
+   |          -------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected an array with a size of 0, found one with a size of 32
+   |          |
+   |          expected because of the type of the constant
+   |
+help: consider specifying the actual array length
+   |
+20 - const _: [(); 0] = [(); core::mem::size_of::<G::Decl>()];
+20 + const _: [(); 32] = [(); core::mem::size_of::<G::Decl>()];
+   |
+
+error[E0308]: mismatched types
+  --> /workspace/notes/lint/units/parser/measure/sizeprobe/src/lib.rs:21:20
+   |
+21 | const _: [(); 0] = [(); core::mem::size_of::<G::Arg>()];
+   |          -------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected an array with a size of 0, found one with a size of 80
+   |          |
+   |          expected because of the type of the constant
+   |
+help: consider specifying the actual array length
+   |
+21 | const _: [(); 80] = [(); core::mem::size_of::<G::Arg>()];
+   |               +
+
+error[E0308]: mismatched types
+  --> /workspace/notes/lint/units/parser/measure/sizeprobe/src/lib.rs:22:20
+   |
+22 | const _: [(); 0] = [(); core::mem::size_of::<G::Fn>()];
+   |          -------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected an array with a size of 0, found one with a size of 76
+   |          |
+   |          expected because of the type of the constant
+   |
+help: consider specifying the actual array length
+   |
+22 - const _: [(); 0] = [(); core::mem::size_of::<G::Fn>()];
+22 + const _: [(); 76] = [(); core::mem::size_of::<G::Fn>()];
+   |
+
+error[E0308]: mismatched types
+  --> /workspace/notes/lint/units/parser/measure/sizeprobe/src/lib.rs:23:20
+   |
+23 | const _: [(); 0] = [(); core::mem::size_of::<G::Property>()];
+   |          -------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected an array with a size of 0, found one with a size of 104
+   |          |
+   |          expected because of the type of the constant
+   |
+help: consider specifying the actual array length
+   |
+23 - const _: [(); 0] = [(); core::mem::size_of::<G::Property>()];
+23 + const _: [(); 104] = [(); core::mem::size_of::<G::Property>()];
+   |
+
+error[E0308]: mismatched types
+  --> /workspace/notes/lint/units/parser/measure/sizeprobe/src/lib.rs:24:20
+   |
+24 | const _: [(); 0] = [(); core::mem::size_of::<G::Class>()];
+   |          -------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected an array with a size of 0, found one with a size of 88
+   |          |
+   |          expected because of the type of the constant
+   |
+help: consider specifying the actual array length
+   |
+24 - const _: [(); 0] = [(); core::mem::size_of::<G::Class>()];
+24 + const _: [(); 88] = [(); core::mem::size_of::<G::Class>()];
+   |
+
+error[E0308]: mismatched types
+  --> /workspace/notes/lint/units/parser/measure/sizeprobe/src/lib.rs:25:20
+   |
+25 | const _: [(); 0] = [(); core::mem::size_of::<G::FnBody>()];
+   |          -------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected an array with a size of 0, found one with a size of 16
+   |          |
+   |          expected because of the type of the constant
+   |
+help: consider specifying the actual array length
+   |
+25 - const _: [(); 0] = [(); core::mem::size_of::<G::FnBody>()];
+25 + const _: [(); 16] = [(); core::mem::size_of::<G::FnBody>()];
+   |
+
+error[E0308]: mismatched types
+  --> /workspace/notes/lint/units/parser/measure/sizeprobe/src/lib.rs:26:20
+   |
+26 | const _: [(); 0] = [(); core::mem::size_of::<E::Function>()];
+   |          -------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected an array with a size of 0, found one with a size of 76
+   |          |
+   |          expected because of the type of the constant
+   |
+help: consider specifying the actual array length
+   |
+26 - const _: [(); 0] = [(); core::mem::size_of::<E::Function>()];
+26 + const _: [(); 76] = [(); core::mem::size_of::<E::Function>()];
+   |
+
+error[E0308]: mismatched types
+  --> /workspace/notes/lint/units/parser/measure/sizeprobe/src/lib.rs:27:20
+   |
+27 | const _: [(); 0] = [(); core::mem::size_of::<bun_ast::ts::Metadata>()];
+   |          -------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected an array with a size of 0, found one with a size of 16
+   |          |
+   |          expected because of the type of the constant
+   |
+help: consider specifying the actual array length
+   |
+27 - const _: [(); 0] = [(); core::mem::size_of::<bun_ast::ts::Metadata>()];
+27 + const _: [(); 16] = [(); core::mem::size_of::<bun_ast::ts::Metadata>()];
+   |
+
+error[E0308]: mismatched types
+  --> /workspace/notes/lint/units/parser/measure/sizeprobe/src/lib.rs:28:20
+   |
+28 | const _: [(); 0] = [(); core::mem::size_of::<bun_ast::Metadata>()];
+   |          -------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected an array with a size of 0, found one with a size of 8
+   |          |
+   |          expected because of the type of the constant
+   |
+help: consider specifying the actual array length
+   |
+28 - const _: [(); 0] = [(); core::mem::size_of::<bun_ast::Metadata>()];
+28 + const _: [(); 8] = [(); core::mem::size_of::<bun_ast::Metadata>()];
+   |
+
+error[E0308]: mismatched types
+  --> /workspace/notes/lint/units/parser/measure/sizeprobe/src/lib.rs:29:20
+   |
+29 | const _: [(); 0] = [(); core::mem::size_of::<bun_ast::Data>()];
+   |          -------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected an array with a size of 0, found one with a size of 120
+   |          |
+   |          expected because of the type of the constant
+   |
+help: consider specifying the actual array length
+   |
+29 | const _: [(); 120] = [(); core::mem::size_of::<bun_ast::Data>()];
+   |               ++
+
+error[E0308]: mismatched types
+  --> /workspace/notes/lint/units/parser/measure/sizeprobe/src/lib.rs:30:20
+   |
+30 | const _: [(); 0] = [(); core::mem::size_of::<bun_ast::Log>()];
+   |          -------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected an array with a size of 0, found one with a size of 72
+   |          |
+   |          expected because of the type of the constant
+   |
+help: consider specifying the actual array length
+   |
+30 - const _: [(); 0] = [(); core::mem::size_of::<bun_ast::Log>()];
+30 + const _: [(); 72] = [(); core::mem::size_of::<bun_ast::Log>()];
+   |
+
+error[E0308]: mismatched types
+  --> /workspace/notes/lint/units/parser/measure/sizeprobe/src/lib.rs:31:20
+   |
+31 | const _: [(); 0] = [(); core::mem::size_of::<bun_ast::Symbol>()];
+   |          -------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected an array with a size of 0, found one with a size of 48
+   |          |
+   |          expected because of the type of the constant
+   |
+help: consider specifying the actual array length
+   |
+31 - const _: [(); 0] = [(); core::mem::size_of::<bun_ast::Symbol>()];
+31 + const _: [(); 48] = [(); core::mem::size_of::<bun_ast::Symbol>()];
+   |
+
+error[E0308]: mismatched types
+  --> /workspace/notes/lint/units/parser/measure/sizeprobe/src/lib.rs:32:20
+   |
+32 | const _: [(); 0] = [(); core::mem::size_of::<StartsForParseOnly>()];
+   |          -------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected an array with a size of 0, found one with a size of 600
+   |          |
+   |          expected because of the type of the constant
+   |
+help: consider specifying the actual array length
+   |
+32 | const _: [(); 600] = [(); core::mem::size_of::<StartsForParseOnly>()];
+   |               ++
+
+error[E0308]: mismatched types
+  --> /workspace/notes/lint/units/parser/measure/sizeprobe/src/lib.rs:33:20
+   |
+33 | const _: [(); 0] = [(); core::mem::size_of::<Option<Box<StartsForParseOnly>>>()];
+   |          -------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected an array with a size of 0, found one with a size of 8
+   |          |
+   |          expected because of the type of the constant
+   |
+help: consider specifying the actual array length
+   |
+33 - const _: [(); 0] = [(); core::mem::size_of::<Option<Box<StartsForParseOnly>>>()];
+33 + const _: [(); 8] = [(); core::mem::size_of::<Option<Box<StartsForParseOnly>>>()];
+   |
+
+error[E0308]: mismatched types
+  --> /workspace/notes/lint/units/parser/measure/sizeprobe/src/lib.rs:34:20
+   |
+34 | const _: [(); 0] = [(); core::mem::size_of::<ParserOptions<'static>>()];
+   |          -------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected an array with a size of 0, found one with a size of 392
+   |          |
+   |          expected because of the type of the constant
+   |
+help: consider specifying the actual array length
+   |
+34 - const _: [(); 0] = [(); core::mem::size_of::<ParserOptions<'static>>()];
+34 + const _: [(); 392] = [(); core::mem::size_of::<ParserOptions<'static>>()];
+   |
+
+For more information about this error, try `rustc --explain E0308`.
+error: could not compile `psize_probe` (lib) due to 27 previous errors

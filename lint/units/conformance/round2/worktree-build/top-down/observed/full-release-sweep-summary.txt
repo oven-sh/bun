@@ -1,0 +1,104 @@
+Summary of /tmp/conf-wb/rep-full-release.json, the report of the full sweep that the other pass of this research unit ran
+under /workspace/tools/lk on 2026-10-01 11:00:23 to 11:16:35 UTC (972 s): sweep.ts --bin <release copy of be1ebe529> --jobs 4 --timeout 60000,
+children with BUN_ENABLE_CRASH_REPORTING=0 and no ASAN_OPTIONS. This file only reads that report.
+check /tmp/conf-wb/bun-release-be1ebe529 --lint | seconds 970.7
+totals {"selected": 14915, "run": 12797, "skipped": 2118, "invalid": 0, "E": [0, 7027], "C": [5649, 5770], "outcomes": {"E": {"fail": 5626, "unsupported": 93, "crash": 1308}, "C": {"pass": 5649, "unsupported": 93, "crash": 28}}, "headerOnly": 0}
+
+  5649  class C  pass
+  5626  class E  fail, no diagnostic where the oracle has a baseline
+  1299  class E  crash, named code syntax
+    89  class E  unsupported, absolute-path-in-text
+    86  class C  unsupported, absolute-path-in-text
+    27  class C  crash, named code syntax
+     7  class E  crash, named code unsupported-extension
+     4  class C  unsupported, dos-root
+     4  class E  unsupported, dos-root
+     3  class C  unsupported, case-insensitive-requested
+     1  class C  crash, named code no-empty-pattern
+     1  class E  crash, named code no-self-assign
+     1  class E  crash, named code no-debugger
+
+directory                                   run  C pass/C    E pass/E    E fail  crash*  unsup 
+compiler                                   6282  3039/3095   0/3187      2706    458     79    
+conformance/Symbols                           8  3/3         0/5         5       0       0     
+conformance/additionalChecks                  1  0/0         0/1         1       0       0     
+conformance/ambient                          20  11/11       0/9         7       2       0     
+conformance/async                           186  85/92       0/94        41      60      0     
+conformance/asyncGenerators                   5  2/2         0/3         3       0       0     
+conformance/classes                         591  234/234     0/357       272     85      0     
+conformance/constEnums                        9  3/3         0/6         5       1       0     
+conformance/controlFlow                      58  31/31       0/27        23      3       1     
+conformance/declarationEmit                  21  18/18       0/3         3       0       0     
+conformance/decorators                       88  44/44       0/44        18      26      0     
+conformance/directives                        6  2/2         0/4         3       0       1     
+conformance/dynamicImport                    38  24/24       0/14        9       5       0     
+conformance/emitter                          13  13/13       0/0         0       0       0     
+conformance/enums                            14  6/6         0/8         6       2       0     
+conformance/es2016                            1  0/0         0/1         1       0       0     
+conformance/es2017                           12  6/6         0/6         6       0       0     
+conformance/es2018                            5  2/2         0/3         1       2       0     
+conformance/es2019                           15  4/4         0/11        8       3       0     
+conformance/es2020                           23  9/9         0/14        14      0       0     
+conformance/es2021                           39  19/19       0/20        20      0       0     
+conformance/es2022                           16  2/2         0/14        13      1       0     
+conformance/es2023                            2  1/1         0/1         1       0       0     
+conformance/es2024                            3  3/3         0/0         0       0       0     
+conformance/es2025                            4  4/4         0/0         0       0       0     
+conformance/es5                               1  0/0         0/1         1       0       0     
+conformance/es6                            1028  515/515     0/513       392     121     0     
+conformance/es7                              45  16/16       0/29        20      9       0     
+conformance/esDecorators                    161  129/129     0/32        25      7       0     
+conformance/esnext                            4  4/4         0/0         0       0       0     
+conformance/expressions                     400  125/125     0/275       241     34      0     
+conformance/externalModules                 234  84/86       0/148       118     32      0     
+conformance/fixSignatureCaching.ts            1  0/0         0/1         1       0       0     
+conformance/functions                        20  8/8         0/12        11      1       0     
+conformance/generators                       15  7/7         0/8         8       0       0     
+conformance/importAssertion                  10  1/1         0/9         4       5       0     
+conformance/importAttributes                 18  4/4         0/14        5       9       0     
+conformance/importDefer                      27  6/8         0/19        6       15      0     
+conformance/inferFromBindingPattern.ts        1  1/1         0/0         0       0       0     
+conformance/interfaces                       66  5/5         0/61        58      3       0     
+conformance/internalModules                  76  30/30       0/46        39      7       0     
+conformance/jsdoc                           333  151/154     0/179       170     9       3     
+conformance/jsx                             212  29/71       0/141       66      18      99    
+conformance/moduleResolution                 72  22/22       0/50        46      4       0     
+conformance/node                            334  105/105     0/229       205     24      0     
+conformance/nonjsExtensions                  14  5/7         0/7         6       3       0     
+conformance/override                         38  11/11       0/27        26      1       0     
+conformance/parser                          820  219/221     0/599       319     282     0     
+conformance/pedantic                          2  0/0         0/2         2       0       0     
+conformance/references                       15  12/13       0/2         2       0       1     
+conformance/salsa                           186  60/62       0/124       117     9       0     
+conformance/scanner                          35  10/10       0/25        11      14      0     
+conformance/statements                      318  206/206     0/112       69      43      0     
+conformance/types                           843  317/319     0/524       486     38      2     
+conformance/typings                           8  2/2         0/6         6       0       0     
+* every "crash" of this run is a line with a code that is a name (syntax, unsupported-extension, a rule): the check throws on it. No signal, no other exit code, no timeout.
+
+codes of the oracle, instances that have the code (top 25):
+  TS2322   instances  1014  pass 0  diagnostics 3286
+  TS2304   instances   670  pass 0  diagnostics 3155
+  TS2564   instances   599  pass 0  diagnostics 1591
+  TS2339   instances   471  pass 0  diagnostics 1193
+  TS2454   instances   445  pass 0  diagnostics 4229
+  TS1005   instances   301  pass 0  diagnostics 893
+  TS2345   instances   277  pass 0  diagnostics 742
+  TS2307   instances   165  pass 0  diagnostics 542
+  TS2300   instances   156  pass 0  diagnostics 817
+  TS1109   instances   147  pass 0  diagnostics 301
+  TS2741   instances   138  pass 0  diagnostics 269
+  TS7006   instances   118  pass 0  diagnostics 496
+  TS6133   instances   105  pass 0  diagnostics 273
+  TS2353   instances    92  pass 0  diagnostics 181
+  TS2554   instances    90  pass 0  diagnostics 254
+  TS2683   instances    87  pass 0  diagnostics 189
+  TS1128   instances    79  pass 0  diagnostics 260
+  TS2403   instances    77  pass 0  diagnostics 170
+  TS1003   instances    65  pass 0  diagnostics 133
+  TS7026   instances    64  pass 0  diagnostics 418
+  TS2552   instances    63  pass 0  diagnostics 297
+  TS2411   instances    60  pass 0  diagnostics 259
+  TS2769   instances    60  pass 0  diagnostics 220
+  TS1212   instances    58  pass 0  diagnostics 175
+  TS2695   instances    58  pass 0  diagnostics 136

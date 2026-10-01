@@ -1,0 +1,87 @@
+diff --git a/test/cli/lint/conformance/runner/harnessutil_options.ts b/test/cli/lint/conformance/runner/harnessutil_options.ts
+index 485d6cb836..c180b18229 100644
+--- a/test/cli/lint/conformance/runner/harnessutil_options.ts
++++ b/test/cli/lint/conformance/runner/harnessutil_options.ts
+@@ -1,5 +1,5 @@
+ // Port of the options half of internal/testutil/harnessutil/harnessutil.go and of the skip rules of internal/testrunner/compiler_runner.go, typescript-go 89d5d5b.
+-import { atoi, compareStrings, equalFold, toLower, utf8String } from "./gostrings";
++import { atoi, compareStrings, toLower, utf8String } from "./gostrings";
+ import {
+   type CompilerOptions,
+   type JsonValue,
+@@ -15,7 +15,7 @@ import {
+   parseJsonSourceFileConfigFileContent,
+   parseListTypeOption,
+ } from "./tsconfig";
+-import { type CommandLineOption, elements, enumMap, optionsDeclarations } from "./tsoptions";
++import { type CommandLineOption, elements, enumMap, optionFinder, optionsDeclarations } from "./tsoptions";
+ import { getBaseFileName, getDirectoryPath, getNormalizedAbsolutePath, isRootedDiskPath } from "./tspath";
+ import { MemFs, MemFsPanic, type MemInput, decodeBytes } from "./vfs";
+ 
+@@ -100,14 +100,10 @@ export const harnessCommandLineOptions: readonly CommandLineOption[] = [
+ ];
+ 
+ // harnessutil.go:1182
+-export function getCommandLineOption(option: string): CommandLineOption | undefined {
+-  return compilerOptions.find(optionDecl => equalFold(optionDecl.name, option));
+-}
++export const getCommandLineOption = optionFinder(compilerOptions);
+ 
+ // harnessutil.go:399
+-export function getHarnessOption(name: string): CommandLineOption | undefined {
+-  return harnessCommandLineOptions.find(option => equalFold(option.name, name));
+-}
++export const getHarnessOption = optionFinder(harnessCommandLineOptions);
+ 
+ // harnessutil.go:405; returns the text of t.Fatalf, undefined when the option is set.
+ export function parseHarnessOption(key: string, value: unknown, harnessOptions: HarnessOptions): string | undefined {
+diff --git a/test/cli/lint/conformance/runner/harnessutil_variations.ts b/test/cli/lint/conformance/runner/harnessutil_variations.ts
+index 21819ba1ac..0631544a84 100644
+--- a/test/cli/lint/conformance/runner/harnessutil_variations.ts
++++ b/test/cli/lint/conformance/runner/harnessutil_variations.ts
+@@ -1,6 +1,6 @@
+ // Port of the variations half of internal/testutil/harnessutil/harnessutil.go (:1026 to :1226) of typescript-go 89d5d5b: the configurations of a test case from its settings.
+-import { compareStrings, equalFold, toLower, trimSpace } from "./gostrings";
+-import { type CommandLineOption, compilerOptions, enumMap } from "./tsoptions";
++import { compareStrings, toLower, trimSpace } from "./gostrings";
++import { compilerOptions, enumMap, optionFinder } from "./tsoptions";
+ 
+ // harnessutil.go:59; config is a TestConfiguration (:57): a compiler setting, its name in lower case, to one of its values.
+ export interface NamedTestConfiguration {
+@@ -140,9 +140,7 @@ export function tryGetValueOfOptionString(option: string, value: string): Compil
+ }
+ 
+ // harnessutil.go:1182
+-export function getCommandLineOption(option: string): CommandLineOption | undefined {
+-  return compilerOptions.find(optionDecl => equalFold(optionDecl.name, option));
+-}
++export const getCommandLineOption = optionFinder(compilerOptions);
+ 
+ // harnessutil.go:1188; the values of an enum come in the order of the keys of its map.
+ export function getAllValuesForOption(option: string): string[] {
+diff --git a/test/cli/lint/conformance/runner/tsoptions.ts b/test/cli/lint/conformance/runner/tsoptions.ts
+index 34d392ce63..85ca2a02c7 100644
+--- a/test/cli/lint/conformance/runner/tsoptions.ts
++++ b/test/cli/lint/conformance/runner/tsoptions.ts
+@@ -1,4 +1,5 @@
+ // Port of the option tables of internal/tsoptions of typescript-go 89d5d5b (declscompiler.go, commandlineoption.go, enummaps.go), with the fields that the test harness reads, and of compilerOptions of internal/testutil/harnessutil/harnessutil.go.
++import { equalFold, isAscii } from "./gostrings";
+ 
+ // commandlineoption.go:9
+ export type CommandLineOptionKind = "string" | "number" | "boolean" | "object" | "list" | "listOrElement" | "enum";
+@@ -522,3 +523,15 @@ export function elements(o: CommandLineOption): CommandLineOption | undefined {
+   if (o.kind !== "list" && o.kind !== "listOrElement") return undefined;
+   return commandLineOptionElements.get(o.name);
+ }
++
++// The first option of a list whose name is equal to a name under strings.EqualFold, as a search through the list finds it: two ASCII names fold together exactly when their lower case is one.
++export function optionFinder(options: readonly CommandLineOption[]): (name: string) => CommandLineOption | undefined {
++  const byLowerName = new Map<string, CommandLineOption>();
++  for (const option of options) {
++    const key = option.name.toLowerCase();
++    if (!byLowerName.has(key)) byLowerName.set(key, option);
++  }
++  const ascii = options.every(option => isAscii(option.name));
++  return name =>
++    ascii && isAscii(name) ? byLowerName.get(name.toLowerCase()) : options.find(option => equalFold(option.name, name));
++}

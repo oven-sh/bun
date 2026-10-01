@@ -1,0 +1,66 @@
+### 2026-10-01T14:41:41Z release 1.4.3-canary.1+367d939d9, cold
+repo-cold1 load 358.72:  105 pass 0 fail  Ran 105 tests across 1 file. [18.34s] TIME wall 18.440 s user 2.484 s sys 0.731 s
+after-cold1 load 363.46:  106 pass 0 fail  Ran 106 tests across 1 file. [7.00s] TIME wall 7.023 s user 1.038 s sys 0.336 s
+repo-cold2 load 377.40:  105 pass 0 fail  Ran 105 tests across 1 file. [18.10s] TIME wall 18.154 s user 2.461 s sys 0.682 s
+after-cold2 load 403.37:  106 pass 0 fail  Ran 106 tests across 1 file. [7.46s] TIME wall 7.770 s user 0.868 s sys 0.312 s
+### warm
+repo-warm1 load 507.04:  105 pass 0 fail  Ran 105 tests across 1 file. [5.22s] TIME wall 5.386 s user 1.796 s sys 0.408 s
+after-warm1 load 514.25:  106 pass 0 fail  Ran 106 tests across 1 file. [3.59s] TIME wall 4.138 s user 0.916 s sys 0.280 s
+repo-warm2 load 507.28:  105 pass 0 fail  Ran 105 tests across 1 file. [6.46s] TIME wall 6.559 s user 1.858 s sys 0.430 s
+after-warm2 load 495.57:  106 pass 0 fail  Ran 106 tests across 1 file. [4.51s] TIME wall 4.882 s user 0.852 s sys 0.320 s
+repo-warm3 load 487.67:  105 pass 0 fail  Ran 105 tests across 1 file. [6.01s] TIME wall 6.096 s user 2.104 s sys 0.509 s
+after-warm3 load 475.29:  106 pass 0 fail  Ran 106 tests across 1 file. [3.79s] TIME wall 4.154 s user 0.865 s sys 0.302 s
+repo-warm4 load 470.42:  105 pass 0 fail  Ran 105 tests across 1 file. [5.16s] TIME wall 5.555 s user 1.742 s sys 0.427 s
+after-warm4 load 470.71:  106 pass 0 fail  Ran 106 tests across 1 file. [3.35s] TIME wall 3.550 s user 0.839 s sys 0.269 s
+repo-warm5 load 465.92:  105 pass 0 fail  Ran 105 tests across 1 file. [4.63s] TIME wall 4.925 s user 2.086 s sys 0.552 s
+after-warm5 load 464.97:  106 pass 0 fail  Ran 106 tests across 1 file. [4.95s] TIME wall 5.063 s user 0.967 s sys 0.334 s
+### a runner with one rule broken: the tests of enumerator that fail
+repo-broken-umd load 459.61:  11 pass 1 fail  Ran 12 tests across 1 file. [2.24s] TIME wall 2.336 s user 1.402 s sys 0.262 s
+    (fail) enumerator > every instance is its line of the list, and the counts are those of the reference [1369.86ms]
+repo-broken-node10 load 454.43:  11 pass 1 fail  Ran 12 tests across 1 file. [2.00s] TIME wall 2.437 s user 1.162 s sys 0.185 s
+    (fail) enumerator > every instance is its line of the list, and the counts are those of the reference [1344.08ms]
+repo-broken-interop load 449.43:  11 pass 1 fail  Ran 12 tests across 1 file. [2.55s] TIME wall 2.739 s user 1.209 s sys 0.214 s
+    (fail) enumerator > every instance is its line of the list, and the counts are those of the reference [1254.57ms]
+repo-broken-star load 441.79:  11 pass 1 fail  Ran 12 tests across 1 file. [2.70s] TIME wall 2.903 s user 1.297 s sys 0.228 s
+    (fail) enumerator > every instance is its line of the list, and the counts are those of the reference [1280.61ms]
+repo-broken-utf16 load 431.40:  11 pass 1 fail  Ran 12 tests across 1 file. [1.80s] TIME wall 1.882 s user 1.319 s sys 0.227 s
+    (fail) enumerator > every instance is its line of the list, and the counts are those of the reference [1271.85ms]
+repo-broken-extends load 431.40:  11 pass 1 fail  Ran 12 tests across 1 file. [2.25s] TIME wall 2.361 s user 1.674 s sys 0.314 s
+    (fail) enumerator > every instance is its line of the list, and the counts are those of the reference [1758.31ms]
+after-broken-umd load 421.60:  10 pass 1 fail  Ran 11 tests across 1 file. [790.00ms] TIME wall 0.830 s user 0.212 s sys 0.087 s
+    (fail) enumerator > the instances of one of 40 cases and of the named cases are their lines of the list: group 2 [23.00ms]
+after-broken-node10 load 421.60:  10 pass 1 fail  Ran 11 tests across 1 file. [577.00ms] TIME wall 0.617 s user 0.266 s sys 0.072 s
+    (fail) enumerator > the instances of one of 40 cases and of the named cases are their lines of the list: group 4 [16.47ms]
+after-broken-interop load 440.69:  10 pass 1 fail  Ran 11 tests across 1 file. [1230.00ms] TIME wall 1.630 s user 0.239 s sys 0.077 s
+    (fail) enumerator > the instances of one of 40 cases and of the named cases are their lines of the list: group 8 [3.54ms]
+after-broken-star load 440.69:  9 pass 2 fail  Ran 11 tests across 1 file. [592.00ms] TIME wall 0.657 s user 0.216 s sys 0.071 s
+    (fail) enumerator > the instances of one of 40 cases and of the named cases are their lines of the list: group 2 [40.25ms]
+    (fail) enumerator > the instances of one of 40 cases and of the named cases are their lines of the list: group 7 [9.63ms]
+after-broken-utf16 load 440.69:  10 pass 1 fail  Ran 11 tests across 1 file. [939.00ms] TIME wall 1.114 s user 0.268 s sys 0.077 s
+    (fail) enumerator > the instances of one of 40 cases and of the named cases are their lines of the list: group 1 [54.21ms]
+after-broken-extends load 433.34:  10 pass 1 fail  Ran 11 tests across 1 file. [948.00ms] TIME wall 0.968 s user 0.258 s sys 0.064 s
+    (fail) enumerator > the instances of one of 40 cases and of the named cases are their lines of the list: group 4 [14.63ms]
+### 2026-10-01T14:45:04Z debug build, the changed tree: reference and enumerator, --timeout 180000
+(pass) reference > the pinned answers are those of the commits that UPSTREAM names [26.16ms]
+(pass) reference > the corpus holds the cases, the baselines and the lists of the pinned commits [374.00ms]
+(pass) reference > the list has the instances of the reference's run: 14,915, of which 12,797 run and 2,118 are skipped [2979.22ms]
+(skip) reference > the list has the digests of the reference's own run of its suite
+(skip) reference > the corpus has the oracle that the list says for every instance that runs
+(pass) reference > the case and space tables are those of Go [2766.12ms]
+(pass) enumerator > the sample holds cases of both suites, the named cases, and an instance of every reason of a skip [213.64ms]
+(pass) enumerator > the instances of one of 40 cases and of the named cases are their lines of the list: group 1 [3640.04ms]
+(pass) enumerator > the instances of one of 40 cases and of the named cases are their lines of the list: group 2 [2110.07ms]
+(pass) enumerator > the instances of one of 40 cases and of the named cases are their lines of the list: group 3 [1362.71ms]
+(pass) enumerator > the instances of one of 40 cases and of the named cases are their lines of the list: group 4 [2156.40ms]
+(pass) enumerator > the instances of one of 40 cases and of the named cases are their lines of the list: group 5 [854.91ms]
+(pass) enumerator > the instances of one of 40 cases and of the named cases are their lines of the list: group 6 [2028.35ms]
+(pass) enumerator > the instances of one of 40 cases and of the named cases are their lines of the list: group 7 [954.13ms]
+(pass) enumerator > the instances of one of 40 cases and of the named cases are their lines of the list: group 8 [1236.59ms]
+(pass) enumerator > the instances of one of 40 cases and of the named cases are their lines of the list: group 9 [600.13ms]
+(pass) enumerator > 45 cases are left out by name and 8 are run for their diagnostics alone [210.56ms]
+ 15 pass
+ 2 skip
+ 0 fail
+Ran 17 tests across 1 file. [30.02s]
+TIME wall 30.776 s user 26.044 s sys 0.649 s
+### 2026-10-01T14:45:36Z done

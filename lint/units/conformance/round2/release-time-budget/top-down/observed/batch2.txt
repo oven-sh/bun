@@ -1,0 +1,37 @@
+### 2026-10-01T14:17:48Z release 1.4.3-canary.1+367d939d9, cold: the data pages of the corpus are put out of the page cache before each run
+repo-cold1 load 409.13:  105 pass 0 fail  Ran 105 tests across 1 file. [15.98s] TIME wall 16.051 s user 2.741 s sys 0.729 s
+kp-cold1 load 363.06:  105 pass 0 fail  Ran 105 tests across 1 file. [14.74s] TIME wall 14.834 s user 2.132 s sys 0.673 s
+after-cold1 load 342.34:  106 pass 0 fail  Ran 106 tests across 1 file. [3.55s] TIME wall 3.781 s user 0.896 s sys 0.282 s
+repo-cold2 load 311.38:  105 pass 0 fail  Ran 105 tests across 1 file. [28.43s] TIME wall 28.565 s user 2.701 s sys 0.854 s
+kp-cold2 load 304.80:  105 pass 0 fail  Ran 105 tests across 1 file. [15.88s] TIME wall 15.899 s user 2.280 s sys 0.610 s
+after-cold2 load 304.80:  106 pass 0 fail  Ran 106 tests across 1 file. [2.12s] TIME wall 2.164 s user 0.942 s sys 0.268 s
+### warm: the three corpora are read once before
+repo-warm1 load 309.62:  105 pass 0 fail  Ran 105 tests across 1 file. [9.82s] TIME wall 9.835 s user 2.349 s sys 0.506 s
+kp-warm1 load 320.46:  105 pass 0 fail  Ran 105 tests across 1 file. [5.95s] TIME wall 6.105 s user 1.878 s sys 0.451 s
+after-warm1 load 338.12:  106 pass 0 fail  Ran 106 tests across 1 file. [5.11s] TIME wall 5.425 s user 0.902 s sys 0.316 s
+repo-warm2 load 357.24:  105 pass 0 fail  Ran 105 tests across 1 file. [9.03s] TIME wall 9.081 s user 2.150 s sys 0.556 s
+kp-warm2 load 385.37:  105 pass 0 fail  Ran 105 tests across 1 file. [12.83s] TIME wall 12.910 s user 2.003 s sys 0.648 s
+after-warm2 load 393.03:  106 pass 0 fail  Ran 106 tests across 1 file. [3.96s] TIME wall 4.015 s user 0.860 s sys 0.293 s
+repo-warm3 load 423.11:  105 pass 0 fail  Ran 105 tests across 1 file. [13.05s] TIME wall 13.193 s user 2.338 s sys 0.622 s
+kp-warm3 load 454.76:  105 pass 0 fail  Ran 105 tests across 1 file. [8.75s] TIME wall 9.006 s user 1.845 s sys 0.523 s
+after-warm3 load 468.87:  106 pass 0 fail  Ran 106 tests across 1 file. [7.10s] TIME wall 7.131 s user 0.954 s sys 0.302 s
+repo-warm4 load 490.89:  105 pass 0 fail  Ran 105 tests across 1 file. [6.76s] TIME wall 6.854 s user 1.945 s sys 0.430 s
+kp-warm4 load 506.27:  105 pass 0 fail  Ran 105 tests across 1 file. [6.59s] TIME wall 6.655 s user 1.763 s sys 0.440 s
+after-warm4 load 523.56:  106 pass 0 fail  Ran 106 tests across 1 file. [5.11s] TIME wall 5.254 s user 0.886 s sys 0.287 s
+repo-warm5 load 536.34:  105 pass 0 fail  Ran 105 tests across 1 file. [7.89s] TIME wall 8.093 s user 1.820 s sys 0.442 s
+kp-warm5 load 553.22:  105 pass 0 fail  Ran 105 tests across 1 file. [8.96s] TIME wall 9.603 s user 1.747 s sys 0.435 s
+after-warm5 load 574.76:  106 pass 0 fail  Ran 106 tests across 1 file. [7.43s] TIME wall 7.639 s user 0.849 s sys 0.314 s
+### 2026-10-01T14:22:29Z debug build 1.4.3-debug+3110ce85c, the changed tree: while the describe blocks are read
+import of the runner modules                               wall   3372 ms, user+sys   1616 ms  22
+enumerator: cases(), the walk of 386 directories           wall    890 ms, user+sys    882 ms  12444
+enumerator: the sample of one case in 40                   wall   1099 ms, user+sys   1095 ms  333
+error baselines: listErrorBaselines of three directories   wall    475 ms, user+sys    657 ms  9730
+error baselines: sampleErrorBaselines                      wall    473 ms, user+sys    570 ms  200
+run: the sample of one case in 250                         wall    307 ms, user+sys    340 ms  54
+expectations.json: read, parsed, sampled                   wall     23 ms, user+sys     14 ms  0
+in all: user+sys 5175 ms; cases in either sample 371
+### 2026-10-01T14:22:40Z debug build, the whole file of repo, --timeout 180000
+debug-repo:  104 pass 1 skip 0 fail  Ran 105 tests across 1 file. [62.60s] TIME wall 62.844 s user 65.940 s sys 3.458 s
+### 2026-10-01T14:23:43Z debug build, the whole file of after, --timeout 180000
+debug-after:  104 pass 2 skip 0 fail  Ran 106 tests across 1 file. [75.16s] TIME wall 75.549 s user 65.760 s sys 3.773 s
+### 2026-10-01T14:24:59Z done

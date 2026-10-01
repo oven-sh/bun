@@ -1,0 +1,21 @@
+diff --git a/test/cli/lint/conformance/runner/tsconfig.ts b/test/cli/lint/conformance/runner/tsconfig.ts
+index c809aa22d6..3098181aae 100644
+--- a/test/cli/lint/conformance/runner/tsconfig.ts
++++ b/test/cli/lint/conformance/runner/tsconfig.ts
+@@ -171,12 +171,13 @@ function zeroValue(kind: FieldKind): unknown {
+   return kind === "tristate" || kind === "enum" ? 0 : kind === "string" ? "" : undefined;
+ }
+ 
+-const zeroCompilerOptions: Record<string, unknown> = {};
+-for (const [name, kind] of fieldKinds) zeroCompilerOptions[name] = zeroValue(kind);
++// The engine makes the object of a literal with its shape, and copies an object that was filled name by name property by property: the zero options are a literal.
++const zeroLiteral = [...fieldKinds].map(([name, kind]) => `${name}: ${JSON.stringify(zeroValue(kind)) ?? "undefined"}`);
++const zeroCompilerOptions = new Function(`return { ${zeroLiteral.join(", ")} };`) as () => CompilerOptions;
+ 
+ // The zero value of core.CompilerOptions.
+ export function newCompilerOptions(): CompilerOptions {
+-  return { ...zeroCompilerOptions } as CompilerOptions;
++  return zeroCompilerOptions();
+ }
+ 
+ // core/compileroptions.go:176, a shallow copy.

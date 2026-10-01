@@ -1,0 +1,36 @@
+### 2026-10-01T12:50:06Z as found
+before-asfound load 533.10:  105 pass 0 fail  Ran 105 tests across 1 file. [16.49s] TIME wall 16.551 s user 2.299 s sys 0.539 s
+after-asfound load 569.05:  106 pass 0 fail  Ran 106 tests across 1 file. [5.99s] TIME wall 6.088 s user 0.950 s sys 0.268 s
+### cold: the data pages of the corpus are put out of the page cache before each run
+before-cold1 load 591.85:  105 pass 0 fail  Ran 105 tests across 1 file. [19.22s] TIME wall 19.247 s user 2.733 s sys 0.735 s
+after-cold1 load 616.15:  106 pass 0 fail  Ran 106 tests across 1 file. [5.48s] TIME wall 5.839 s user 0.906 s sys 0.261 s
+before-cold2 load 654.40:  105 pass 0 fail  Ran 105 tests across 1 file. [16.67s] TIME wall 16.964 s user 2.402 s sys 0.616 s
+after-cold2 load 659.41:  106 pass 0 fail  Ran 106 tests across 1 file. [4.04s] TIME wall 4.126 s user 0.872 s sys 0.272 s
+### warm: both corpora are read once before
+before-warm1 load 374.18:  105 pass 0 fail  Ran 105 tests across 1 file. [9.85s] TIME wall 9.896 s user 2.164 s sys 0.442 s
+after-warm1 load 373.53:  106 pass 0 fail  Ran 106 tests across 1 file. [4.82s] TIME wall 4.837 s user 0.904 s sys 0.271 s
+before-warm2 load 380.44:  105 pass 0 fail  Ran 105 tests across 1 file. [9.34s] TIME wall 9.362 s user 2.002 s sys 0.455 s
+after-warm2 load 374.47:  106 pass 0 fail  Ran 106 tests across 1 file. [5.97s] TIME wall 5.991 s user 0.886 s sys 0.244 s
+before-warm3 load 361.66:  105 pass 0 fail  Ran 105 tests across 1 file. [6.24s] TIME wall 6.294 s user 1.799 s sys 0.423 s
+after-warm3 load 361.66:  106 pass 0 fail  Ran 106 tests across 1 file. [2.81s] TIME wall 2.826 s user 0.778 s sys 0.267 s
+before-warm4 load 354.00:  105 pass 0 fail  Ran 105 tests across 1 file. [6.02s] TIME wall 6.059 s user 2.109 s sys 0.406 s
+after-warm4 load 354.00:  106 pass 0 fail  Ran 106 tests across 1 file. [2.96s] TIME wall 2.975 s user 0.801 s sys 0.235 s
+before-warm5 load 346.39:  105 pass 0 fail  Ran 105 tests across 1 file. [7.44s] TIME wall 7.454 s user 2.144 s sys 0.495 s
+after-warm5 load 342.35:  106 pass 0 fail  Ran 106 tests across 1 file. [5.41s] TIME wall 5.480 s user 0.840 s sys 0.269 s
+### debug build, the changed tree: the parts of the tests of the list
+cases(): the walk of the directories     wall    790 ms, user+sys    721 ms  12444
+listLines() and linesOfCase()            wall   3250 ms, user+sys   1769 ms  12399
+the list test as it is, with the suites  wall   3850 ms, user+sys   1885 ms  {"same":true,"kinds":{"compiler":{"E":3187,"C":3095,"skipped":953},"conformance":{"
+the digests of the reference's run       wall   4217 ms, user+sys   2825 ms  {"same":true}
+loadOracleTable                          wall    870 ms, user+sys    538 ms  9056
+the oracle of every line that runs       wall   5193 ms, user+sys   6343 ms  {"differ":0,"counts":{"typescript-go":674,"expects-no-errors":23,"typescript":6353,
+### debug build, the changed tree: the tests of the list alone
+(pass) reference > the corpus holds the cases, the baselines and the lists of the pinned commits [272.07ms]
+(pass) reference > the list has the instances of the reference's run: 14,915, of which 12,797 run and 2,118 are skipped [4739.98ms]
+(fail) reference > the list has the digests of the reference's own run of its suite [5264.76ms]
+(fail) reference > the corpus has the oracle that the list says for every instance that runs [10016.94ms]
+ 2 pass
+ 2 fail
+Ran 4 tests across 1 file. [33.30s]
+TIME wall 33.506 s user 17.858 s sys 0.439 s
+### 2026-10-01T12:55:05Z done

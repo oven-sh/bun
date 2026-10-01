@@ -1,0 +1,328 @@
+diff --git a/test/cli/lint/conformance.test.ts b/test/cli/lint/conformance.test.ts
+index 0f294fa055..a561442221 100644
+--- a/test/cli/lint/conformance.test.ts
++++ b/test/cli/lint/conformance.test.ts
+@@ -28,6 +28,8 @@ import {
+   utf8ToByteString,
+ } from "./conformance/runner/gostrings";
+ import { skippedEmitTests } from "./conformance/runner/harnessutil_options";
++import { diffRootOf, loadOracleTable, oracleStepOf } from "./conformance/runner/oracle";
++import { corpusPaths } from "./conformance/runner/paths";
+ import { type Origin, listErrorBaselines, roundTripFiles, sampleErrorBaselines } from "./conformance/runner/roundtrip";
+ import { skipTrivia } from "./conformance/runner/scanner";
+ import { toWriterInput } from "./conformance/runner/shape";
+@@ -46,7 +48,7 @@ const fixtures = join(home, "fixtures");
+ // Where sync.sh puts the cases, the test library, the baselines and the lists of the two projects.
+ const corpusRoot = join(home, "corpus");
+ 
+-// A debug or sanitizer build runs this file's JavaScript about a hundred times slower: it takes the samples and leaves the whole corpus to release builds.
++// A debug or sanitizer build runs this file's JavaScript about a hundred times slower and starts a process in about a second: it leaves the two tests that walk the whole list to release builds and runs a sample of the listed instances.
+ const small = isDebug || isASAN;
+ // A debug build needs more than the default time of a test for the processes that a test starts.
+ const spawnTimeout = small ? 60_000 : undefined;
+@@ -273,6 +275,74 @@ describe("reference", () => {
+       C: 5770,
+     });
+     expect(reasons).toEqual(reference().instances.skippedBecause);
++    const suite = ({ E, C, skipped }: { E: number; C: number; skipped: number }) => ({
++      instances: E + C + skipped,
++      run: E + C,
++      skipped,
++      E,
++      C,
++    });
++    expect({
++      cases: linesOfCase().size,
++      compiler: suite(kinds.compiler),
++      conformance: suite(kinds.conformance),
++    }).toEqual({
++      cases: reference().cases.files - reference().cases.droppedByName,
++      compiler: reference().instances.compiler,
++      conformance: reference().instances.conformance,
++    });
++  });
++
++  // The subtests and the skip reasons as the reference's own run printed them. The list is the same bytes in every build: a debug build, which needs seconds for this, leaves it to the release builds.
++  test.skipIf(small)("the list has the digests of the reference's own run of its suite", () => {
++    const suiteRun = reference().suiteRun;
++    if (suiteRun === undefined) return;
++    const rows = listLines().map(line => line.split("\t"));
++    const subtests = rows
++      .map(([name, kind]) => `${kind === "skipped" ? "SKIP" : "PASS"}\t${goName(name)}`)
++      .sort((a, b) => compareStrings(a.slice(5), b.slice(5)))
++      .map(l => l + "\n")
++      .join("");
++    const reasons = rows
++      .filter(([, kind]) => kind === "skipped")
++      .map(([name, , reason]) => `${goName(name)}\t${reason}`)
++      .sort(compareStrings)
++      .map(l => l + "\n")
++      .join("");
++    expect({ subtests: rows.length, sha256: sha256(subtests), skipReasonsSha256: sha256(reasons) }).toEqual({
++      subtests: suiteRun.subtests,
++      sha256: suiteRun.sha256,
++      skipReasonsSha256: suiteRun.skipReasonsSha256,
++    });
++  });
++
++  // From the names of the baselines and the three lists of the corpus alone: no case is read. A debug build leaves it to the release builds, as above.
++  test.skipIf(small)("the corpus has the oracle that the list says for every instance that runs", () => {
++    const table = loadOracleTable(corpusPaths(corpusRoot));
++    const counts = { "typescript-go": 0, "expects-no-errors": 0, typescript: 0, none: 0, accepted: 0, triaged: 0 };
++    const sources = ["typescript-go", "expects-no-errors", "typescript", "none"] as const;
++    const differ: string[] = [];
++    for (const [path, lines] of linesOfCase()) {
++      const suite = path.startsWith("compiler/") ? "compiler" : "conformance";
++      for (const line of lines) {
++        const [name, kind] = line.split("\t");
++        if (kind === "skipped") continue;
++        const step = oracleStepOf(table, suite, name);
++        counts[sources[step - 1]]++;
++        // An error baseline is the oracle of class E, and only that.
++        if ((step === 1 || step === 3) !== (kind === "E")) differ.push(line);
++        const diff = diffRootOf(table, suite, name);
++        if (diff.fatal !== undefined) differ.push(`${name}: ${diff.fatal}`);
++        if (diff.accepted) counts.accepted++;
++        if (diff.triaged) counts.triaged++;
++      }
++    }
++    expect(differ).toEqual([]);
++    expect(counts).toEqual({
++      ...reference().oracle,
++      accepted: reference().instances.accepted,
++      triaged: reference().instances.triaged,
++    });
+   });
+ 
+   test("the case and space tables are those of Go", () => {
+@@ -421,17 +491,42 @@ describe("variations", () => {
+ 
+ describe("enumerator", () => {
+   const { skippedTests } = runner;
+-  const sample = [...cases().values()].filter(path => sampled(path, 40)).sort();
+-
+-  test("the sample holds cases of both suites", () => {
++  // One case in 40 holds no case of three of the rules that skip an instance, none with a link, none whose config extends another, none with "*" for every value and none in UTF-16: these stand for them, with the cases whose output is not compared.
++  const named = [
++    "emitHelpersWithLocalCollisions.ts",
++    "callChainWithSuper.ts",
++    "esmModuleExports2.ts",
++    "moduleResolutionWithSuffixes_one.ts",
++    "pathMappingInheritedBaseUrl.ts",
++    "tsconfigExtendsPackageJsonExportsWildcard.ts",
++    "declarationEmitSymlinkPaths.ts",
++    "bom-utf16be.ts",
++    "bom-utf16le.ts",
++    ...skippedEmitTests.keys(),
++  ];
++  const sample = [
++    ...new Set([
++      ...[...cases().values()].filter(path => sampled(path, 40)),
++      ...named.flatMap(name => cases().get(name) ?? []),
++    ]),
++  ].sort();
++
++  test("the sample holds cases of both suites, the named cases, and an instance of every reason of a skip", () => {
+     expect({
+       compiler: sample.filter(p => p.startsWith("compiler/")).length > 100,
+       conformance: sample.filter(p => p.startsWith("conformance/")).length > 100,
+-    }).toEqual({ compiler: true, conformance: true });
++      notInTheCorpus: named.filter(name => !cases().has(name)),
++    }).toEqual({ compiler: true, conformance: true, notInTheCorpus: [] });
++    const reasons = new Set<string>();
++    for (const line of sample.flatMap(path => linesOfCase().get(path) ?? [])) {
++      const [, kind, reason] = line.split("\t");
++      if (kind === "skipped") reasons.add(reason.replace(/^(unsupported (?:baseUrl|outFile)) .*/, "$1"));
++    }
++    expect([...reasons].sort()).toEqual(Object.keys(reference().instances.skippedBecause).sort());
+   });
+ 
+   test.each(groupsOf(sample, 40).map((g, k) => [k + 1, g] as const))(
+-    "the instances of one of 40 cases are their lines of the list: group %d",
++    "the instances of one of 40 cases and of the named cases are their lines of the list: group %d",
+     (_k, group) => {
+       const got = group.flatMap(path => corpus().enumerateCase(path).map(lineOf));
+       const want = group.flatMap(path => linesOfCase().get(path) ?? []);
+@@ -458,77 +553,7 @@ describe("enumerator", () => {
+     ).toEqual(emitOnly.map(name => ({ name, run: true, flagged: true })));
+   });
+ 
+-  // The whole corpus is a second of work in a release build and minutes in a debug build; the time limit is for a machine under load.
+-  test.skipIf(small)(
+-    "every instance is its line of the list, and the counts are those of the reference",
+-    () => {
+-      const instances = corpus().enumerateInstances();
+-      // The lines that differ, not two lists of 14,915 lines.
+-      const got = new Set(instances.map(lineOf));
+-      const want = new Set(listLines());
+-      expect({
+-        notInTheList: [...got].filter(l => !want.has(l)).slice(0, 20),
+-        notEnumerated: [...want].filter(l => !got.has(l)).slice(0, 20),
+-      }).toEqual({ notInTheList: [], notEnumerated: [] });
+-      const count = (f: (i: CorpusInstance) => boolean) => instances.filter(f).length;
+-      const run = (i: CorpusInstance) => i.status === "run";
+-      expect({
+-        instances: instances.length,
+-        run: count(run),
+-        skipped: count(i => !run(i)),
+-        E: count(i => run(i) && i.oracle.class === "E"),
+-        C: count(i => run(i) && i.oracle.class === "C"),
+-      }).toEqual({ instances: 14915, run: 12797, skipped: 2118, E: 7027, C: 5770 });
+-      const suite = (s: string) => {
+-        const of = (f: (i: CorpusInstance) => boolean) => count(i => i.suite === s && f(i));
+-        return {
+-          instances: of(() => true),
+-          run: of(run),
+-          skipped: of(i => !run(i)),
+-          E: of(i => run(i) && i.oracle.class === "E"),
+-          C: of(i => run(i) && i.oracle.class === "C"),
+-        };
+-      };
+-      expect({
+-        cases: new Set(instances.map(i => caseBaseName(i.name))).size,
+-        compiler: suite("compiler"),
+-        conformance: suite("conformance"),
+-        accepted: count(i => run(i) && i.accepted),
+-        triaged: count(i => run(i) && i.triaged),
+-        typescriptGo: count(i => run(i) && i.oracle.source === "typescript-go"),
+-        typescript: count(i => run(i) && i.oracle.source === "typescript"),
+-      }).toEqual({
+-        cases: reference().cases.files - reference().cases.droppedByName,
+-        compiler: reference().instances.compiler,
+-        conformance: reference().instances.conformance,
+-        accepted: reference().instances.accepted,
+-        triaged: reference().instances.triaged,
+-        typescriptGo: reference().oracle["typescript-go"],
+-        typescript: reference().oracle.typescript,
+-      });
+-      // The subtests and the skip reasons as the reference's own run printed them.
+-      const suiteRun = reference().suiteRun;
+-      if (suiteRun !== undefined) {
+-        const subtests = instances
+-          .map(i => `${run(i) ? "PASS" : "SKIP"}\t${goName(i.name)}`)
+-          .sort((a, b) => compareStrings(a.slice(5), b.slice(5)))
+-          .map(l => l + "\n")
+-          .join("");
+-        const reasons = instances
+-          .filter(i => !run(i))
+-          .map(i => `${goName(i.name)}\t${i.skipReason}`)
+-          .sort(compareStrings)
+-          .map(l => l + "\n")
+-          .join("");
+-        expect({ subtests: instances.length, sha256: sha256(subtests), skipReasonsSha256: sha256(reasons) }).toEqual({
+-          subtests: suiteRun.subtests,
+-          sha256: suiteRun.sha256,
+-          skipReasonsSha256: suiteRun.skipReasonsSha256,
+-        });
+-      }
+-    },
+-    30_000,
+-  );
++  // Every case against the list is a sweep, `bun test/cli/lint/conformance/sweep.ts --no-run`: it reads 12,444 files, which a disk that does not hold them in memory answers in tens of seconds.
+ });
+ 
+ describe("error baselines", () => {
+diff --git a/test/cli/lint/conformance/AFTER-SYNC.txt b/test/cli/lint/conformance/AFTER-SYNC.txt
+index 7494abb353..0569bd1789 100644
+--- a/test/cli/lint/conformance/AFTER-SYNC.txt
++++ b/test/cli/lint/conformance/AFTER-SYNC.txt
+@@ -51,10 +51,14 @@ prints what it changes, and its --help says the rest.
+ 5. The proof
+      bun H/update-reference.ts --check GO                          nothing changes
+      bun H/sweep.ts --round-trip                                   every error baseline is written back with its bytes
+-     bun bd test test/cli/lint/conformance.test.ts                 the enumerator against the list, the parser
+-                                                                   against the vectors, the listed instances
+-     bun H/sweep.ts --no-run --since <revision before the sync>    the lists of expectations.json on the new corpus:
++     bun bd test test/cli/lint/conformance.test.ts                 the enumerator against the list for one case in 40,
++                                                                   the parser against the vectors, the listed instances
++     bun H/sweep.ts --no-run --since <revision before the sync>    the enumerator against the list for every case, and
++                                                                   the lists of expectations.json on the new corpus:
+                                                                    a listed name that has no instance any more
++   No test reads all 12,444 cases. A sweep of the whole corpus does, and ends with the exit code 1 where an instance is
++   not its line of the list. The test file holds the list against the digests of the reference's run and against the
++   baselines of the corpus in a release build (USE_SYSTEM_BUN=1 bun test ...); a debug build skips those two tests.
+ 
+ The digest of the corpus in reference_counts.json (corpus.sha256) is over one line "<blob id> <path below corpus/>"
+ for each of its files, in the byte order of the paths. A commit has that digest when git holds the bytes that
+diff --git a/test/cli/lint/conformance/sweep.ts b/test/cli/lint/conformance/sweep.ts
+index 13d8caaa1e..9ed3a0b6d3 100644
+--- a/test/cli/lint/conformance/sweep.ts
++++ b/test/cli/lint/conformance/sweep.ts
+@@ -71,9 +71,12 @@ An instance is swept when one selector takes it. Without a selector every instan
+   --corpus <directory>   the corpus (default: corpus beside this script)
+   -h, --help
+ 
+-Exit code 0: every listed instance of the selection passes and no name left a list that may hold it; with --round-trip,
+-every error baseline is written back with its bytes. 1: not so. 2: the command line is wrong, or the corpus, the lists,
+-the module of the check or the file of the report cannot be used.`;
++A sweep that reads every case of the corpus beside this script (no selector without --listed, or a selector with "*")
++also holds the instances against fixtures/instances.tsv, the list of the reference's run, line for line.
++
++Exit code 0: every listed instance of the selection passes, no name left a list that may hold it and no instance differs
++from the list of the reference's run; with --round-trip, every error baseline is written back with its bytes. 1: not so.
++2: the command line is wrong, or the corpus, the lists, the module of the check or the file of the report cannot be used.`;
+ 
+ const tags = ["accepted", "triaged"] as const;
+ type Tag = (typeof tags)[number];
+@@ -365,6 +368,24 @@ function platformLimitedOf(paths: CorpusPaths, instance: RunInstance): string |
+   return undefined;
+ }
+ 
++// The lines in which the instances of every case differ from fixtures/instances.tsv, the list of the reference's run of its suite; the reference fails no instance, so an invalid one has no line there.
++function linesOffTheList(facts: Iterable<Fact>): string[] {
++  const listPath = join(import.meta.dir, "fixtures", "instances.tsv");
++  let list: Set<string>;
++  try {
++    list = new Set(readFileSync(listPath, "utf8").split("\n").slice(0, -1));
++  } catch (error) {
++    throw new FileError(`${listPath}: ${messageOf(error)}`);
++  }
++  const lineOf = (fact: Fact) =>
++    fact.status === "run" ? `${fact.name}\t${fact.kind}` : `${fact.name}\t${fact.status}\t${fact.reason}`;
++  const lines = new Set([...facts].map(lineOf));
++  return [
++    ...[...lines].filter(line => !list.has(line)).map(line => `not in the list: ${line}`),
++    ...[...list].filter(line => !lines.has(line)).map(line => `not enumerated: ${line}`),
++  ];
++}
++
+ function matcher(selector: string): (fact: Fact) => boolean {
+   if (selector.includes("*")) {
+     const parts = selector.split("*").map(part => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+@@ -576,6 +597,9 @@ async function main(argv: readonly string[]): Promise<number> {
+       facts.set(enumerated.name, factOf(enumerated, casePath, table, paths));
+     }
+   }
++  // A sweep that read every case of the corpus beside it holds the enumerator against the list; the test file does so for one case in 40.
++  const ofTheList = reached.length === cases.length && corpusRoot === resolve(join(import.meta.dir, "corpus"));
++  const offTheList = ofTheList ? linesOffTheList(facts.values()) : [];
+   const selection = select(facts.values(), o, listed);
+   if (selection.empty.length > 0) {
+     const isDirectory = (selector: string) => cases.some(path => path.startsWith(`${selector}/`));
+@@ -604,6 +628,8 @@ async function main(argv: readonly string[]): Promise<number> {
+   if (invalid > 0) counts.push(`invalid ${invalid}`);
+   say(`instances ${selected.length}: ${counts.join(", ")}`);
+   for (const [reason, n] of mostFirst(notRun)) say(`  ${String(n).padStart(6)}  ${reason}`);
++  for (const line of offTheList.slice(0, 20)) say(`  FAIL fixtures/instances.tsv: ${line}`);
++  if (offTheList.length > 20) say(`  FAIL fixtures/instances.tsv: and ${offTheList.length - 20} more lines`);
+ 
+   // What needs no run: every listed name is an instance that runs, whose oracle is of the class of its list and whose files every platform of the test run holds.
+   const inScope = (name: string) => whole || read.has(caseOf(name) ?? "");
+@@ -633,7 +659,7 @@ async function main(argv: readonly string[]): Promise<number> {
+     say(`  since ${o.since}: ${l.name} ${l.went}; ${l.from} may not hold it: ${against.get(l.name)}`);
+   }
+   for (const loss of losses) say(`  FAIL since ${o.since}: ${loss}`);
+-  if (checked === undefined) return notInstances.length > 0 || losses.length > 0 ? 1 : 0;
++  if (checked === undefined) return notInstances.length > 0 || losses.length > 0 || offTheList.length > 0 ? 1 : 0;
+ 
+   say(`check ${checked.name}`);
+   const directory = o.files && ran.length > 0 ? makeTemporaryDirectory("bun-lint-sweep-") : undefined;
+@@ -834,7 +860,7 @@ async function main(argv: readonly string[]): Promise<number> {
+     throw new FileError(`--report ${reportPath}: ${messageOf(error)}`);
+   }
+   console.log(`report ${reportPath}`);
+-  return notInstances.length > 0 || losses.length > 0 || notPassing.length > 0 ? 1 : 0;
++  return notInstances.length > 0 || losses.length > 0 || notPassing.length > 0 || offTheList.length > 0 ? 1 : 0;
+ }
+ 
+ let exitCode: number;

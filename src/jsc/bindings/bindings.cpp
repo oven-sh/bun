@@ -1350,9 +1350,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         if (!eql) return false;
     }
 
-    // Every name of the second object that the first one does not enumerate must be
-    // undefined, or an asymmetric matcher that accepts what the first object reads there.
-    // In strict mode the name counts are equal, so the first loop covers every name.
+    // names only the second object enumerates must be undefined or a matcher that accepts o1's read
     if constexpr (!isStrict) {
         for (size_t j = 0; j < propertyArrayLength2; j++) {
             Identifier i2 = a2[j];
@@ -1362,20 +1360,12 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             if (j < propertyArrayLength1 && a1[j] == i2) {
                 continue;
             }
-            // otherwise look it up the way a1 was built (own names for node, the chain for Bun)
-            bool has1;
-            if constexpr (checkPrototypes) {
-                PropertySlot slot1(o1, PropertySlot::InternalMethodType::GetOwnProperty);
-                has1 = o1->methodTable()->getOwnPropertySlot(o1, globalObject, propertyName2, slot1);
-                RETURN_IF_EXCEPTION(scope, false);
-                has1 = has1 && !(slot1.attributes() & PropertyAttribute::DontEnum);
-            } else {
-                PropertySlot slot1(o1, PropertySlot::InternalMethodType::HasProperty);
-                has1 = o1->getPropertySlot(globalObject, propertyName2, slot1);
-                RETURN_IF_EXCEPTION(scope, false);
-                has1 = has1 && !(slot1.attributes() & PropertyAttribute::DontEnum);
-            }
-            if (has1) {
+            // the chain lookup matches how a1 was built (the node entry point is strict only)
+            static_assert(!checkPrototypes);
+            PropertySlot slot1(o1, PropertySlot::InternalMethodType::HasProperty);
+            bool has1 = o1->getPropertySlot(globalObject, propertyName2, slot1);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (has1 && !(slot1.attributes() & PropertyAttribute::DontEnum)) {
                 continue;
             }
 
@@ -1387,6 +1377,15 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             }
 
             if constexpr (enableAsymmetricMatchers) {
+                // Jest counts an own non-enumerable key as present, so it stays a mismatch
+                if (has1) {
+                    PropertySlot ownSlot(o1, PropertySlot::InternalMethodType::GetOwnProperty);
+                    bool own1 = o1->methodTable()->getOwnPropertySlot(o1, globalObject, propertyName2, ownSlot);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    if (own1) {
+                        return false;
+                    }
+                }
                 if (isAsymmetricMatcher(prop2)) {
                     JSValue prop1 = o1->get(globalObject, propertyName2);
                     RETURN_IF_EXCEPTION(scope, false);
@@ -1735,8 +1734,7 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
                 }
             }
 
-            // Every name of the right Error that the left one does not enumerate must be
-            // undefined, or an asymmetric matcher that accepts what the left one reads there.
+            // names only the right Error enumerates must be undefined or a matcher that accepts left's read
             for (size_t j = 0; !mode.isStrict && j < propertyArrayLength2; j++) {
                 Identifier i2 = a2[j];
                 if (i2 == vm.propertyNames->stack) continue;
@@ -1760,6 +1758,15 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
                 }
 
                 if (mode.enableAsymmetricMatchers && isAsymmetricMatcher(prop2)) {
+                    // Jest counts an own non-enumerable key as present, so it stays a mismatch
+                    if (has1) {
+                        PropertySlot ownSlot(left, PropertySlot::InternalMethodType::GetOwnProperty);
+                        bool own1 = left->methodTable()->getOwnPropertySlot(left, globalObject, propertyName2, ownSlot);
+                        RETURN_IF_EXCEPTION(scope, {});
+                        if (own1) {
+                            return false;
+                        }
+                    }
                     JSValue prop1 = left->get(globalObject, propertyName2);
                     RETURN_IF_EXCEPTION(scope, {});
                     bool propertiesEqual = mode.deepEquals(globalObject, prop1, prop2, gcBuffer, stack, scope, true);

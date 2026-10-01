@@ -29,6 +29,8 @@ proto/cases/use-isnan.ts4.json, no-sparse-arrays.ts3.json   25 forms that declar
 api-sections.txt, needs.txt   proposed text for API.md (the rule framework, differences 4 and 11, TypeScript files) and for NEEDS.md (X6, X7, X8).
 proto/oracle/vectors/, logs/   diff.cjs over the fixture of the tree and the lists, per rule.
 fixtures/<rule>.json     the planned fixtures (make-fixtures.cjs): the cases of the tree and 1,071 cases with a TypeScript extension.
+fixtures-js-only/        the fixtures of the tree with the 36 cases of difference 11 at ESLint's answer and no other change:
+                         for a commit that lands the code before the TypeScript cases. The rules of the tree fail exactly these 36.
 test-cli-lint/rules.test.ts, rules.test.patch   the test with `ext`; the patch applies in the worktree.
 
 Results (prototype binary, 2026-10-01):
@@ -42,5 +44,9 @@ Results (prototype binary, 2026-10-01):
   files): 230,194 expressions, 229,663 equal. Every other one is of a known kind: a comma expression inside a comma
   expression (ESLint has one flat node), the function of a method with type parameters (ESLint's starts at the `<`), the
   target of `new A<T>` without arguments, a call that the parse pass makes for `import x = require()`, nodes inside JSX.
+- real.cjs (the eleven rules, probe against ESLint, whole files): 9,419 files of TypeScript's tests/cases/compiler and
+  tests/cases/conformance (the first 3,000); 7,999 that both parsers take; 7,997 with the same reports (379 reports); the
+  two others are a file of patterns inside types (emptyOptionalBindingPatternInDeclarationSignature.ts) and a file that
+  declares `NaN` as a parameter (nanEquality.ts, difference 10). 45 files of src/compiler and src/services: no report, same.
 - Without the loop over the erased records in linter::run, 75 of the 1,071 TypeScript cases get another answer.
 - Time: checker.ts (3.1 MB) 1.8 s with and without the change (debug build with ASAN). 200,000 chained comparisons 3 s.

@@ -1,6 +1,6 @@
 diff -ruN a/src/js_parser/parse/erased.rs b/src/js_parser/parse/erased.rs
---- a/src/js_parser/parse/erased.rs	2026-10-01 15:36:16.460453277 +0000
-+++ b/src/js_parser/parse/erased.rs	2026-10-01 15:36:17.641582459 +0000
+--- a/src/js_parser/parse/erased.rs	2026-10-01 15:40:52.486857814 +0000
++++ b/src/js_parser/parse/erased.rs	2026-10-01 15:40:54.766686971 +0000
 @@ -1,13 +1,17 @@
  //! Statements and class members that the parse pass leaves out of the tree, kept for a lint parse.
  
@@ -32,7 +32,7 @@ diff -ruN a/src/js_parser/parse/erased.rs b/src/js_parser/parse/erased.rs
      /// A function without a body, or what follows `declare`: a function, class, variable statement, enum or `;`.
      Declaration(Stmt),
      Module(StoreRef<ModuleDeclaration>),
-@@ -98,6 +102,24 @@
+@@ -98,6 +102,27 @@
      pub text: StoreStr,
  }
  
@@ -54,10 +54,13 @@ diff -ruN a/src/js_parser/parse/erased.rs b/src/js_parser/parse/erased.rs
 +    pub type_node: ts::Type,
 +}
 +
++const _: () = assert!(core::mem::size_of::<InterfaceDeclaration>() == 52);
++const _: () = assert!(core::mem::size_of::<TypeAliasDeclaration>() == 40);
++
  /// A string literal: the range holds the quotes, `value` is what it says.
  #[derive(Clone, Copy)]
  pub struct StringLiteral {
-@@ -197,8 +219,8 @@
+@@ -197,8 +222,8 @@
  pub enum ErasedMemberData {
      /// An overload, or an abstract or declared member, as the parse pass built it.
      Property(StoreRef<G::Property>),
@@ -68,7 +71,7 @@ diff -ruN a/src/js_parser/parse/erased.rs b/src/js_parser/parse/erased.rs
  }
  
  /// The `class_body` of a member that `parse_class` has not placed yet.
-@@ -409,7 +431,7 @@
+@@ -409,7 +434,7 @@
          self.push(cursor, offset(loc), None, flags, exported, data);
      }
  
@@ -77,7 +80,7 @@ diff -ruN a/src/js_parser/parse/erased.rs b/src/js_parser/parse/erased.rs
      #[cold]
      #[inline(never)]
      pub(crate) fn statement_after_type(
-@@ -418,10 +440,10 @@
+@@ -418,10 +443,10 @@
          loc: Loc,
          flags: ErasedFlags,
          exported: Exported,
@@ -91,7 +94,7 @@ diff -ruN a/src/js_parser/parse/erased.rs b/src/js_parser/parse/erased.rs
                  self.statement(
                      cursor,
                      loc,
-@@ -430,7 +452,10 @@
+@@ -430,7 +455,10 @@
                      data,
                  );
              }
@@ -103,7 +106,7 @@ diff -ruN a/src/js_parser/parse/erased.rs b/src/js_parser/parse/erased.rs
          }
      }
  
-@@ -726,44 +751,62 @@
+@@ -726,44 +754,62 @@
          self.member(flags, ErasedMemberData::Property(property));
      }
  
@@ -185,7 +188,7 @@ diff -ruN a/src/js_parser/parse/erased.rs b/src/js_parser/parse/erased.rs
      fn member(&mut self, flags: ErasedFlags, data: ErasedMemberData) {
          self.members.push(ErasedMember {
              start: 0,
-@@ -864,6 +907,126 @@
+@@ -864,6 +910,126 @@
      }
  }
  
@@ -312,7 +315,7 @@ diff -ruN a/src/js_parser/parse/erased.rs b/src/js_parser/parse/erased.rs
  fn offset(loc: Loc) -> u32 {
      u32::try_from(loc.start).unwrap_or(0)
  }
-@@ -872,6 +1035,78 @@
+@@ -872,6 +1038,78 @@
      u32::try_from(at).unwrap_or(u32::MAX)
  }
  
@@ -391,7 +394,7 @@ diff -ruN a/src/js_parser/parse/erased.rs b/src/js_parser/parse/erased.rs
  /// The address of the scope that `in_order` has at `order`.
  fn scope_in_order(in_order: &[Option<ScopeOrder<'_>>], order: usize) -> Option<usize> {
      let entry = in_order.get(order)?.as_ref()?;
-@@ -1093,6 +1328,31 @@
+@@ -1093,6 +1331,31 @@
          }
      }
  
@@ -423,7 +426,7 @@ diff -ruN a/src/js_parser/parse/erased.rs b/src/js_parser/parse/erased.rs
      fn placeholder(start: i32) -> Stmt {
          Stmt {
              loc: Loc { start },
-@@ -1173,23 +1433,21 @@
+@@ -1173,23 +1436,21 @@
              in_order: &[],
          };
          let mut tables = ErasedTables::default();
@@ -449,7 +452,7 @@ diff -ruN a/src/js_parser/parse/erased.rs b/src/js_parser/parse/erased.rs
          );
          tables.dropped(Loc { start: 99 }, 1, scopes);
          let [first, second] = tables.statements.as_slice() else {
-@@ -1251,7 +1509,7 @@
+@@ -1251,7 +1512,7 @@
      fn declare_takes_the_record_and_its_statements() {
          let source = b"declare namespace N { type A = 1 }";
          let mut tables = ErasedTables::default();
@@ -458,7 +461,7 @@ diff -ruN a/src/js_parser/parse/erased.rs b/src/js_parser/parse/erased.rs
          let ambient = ErasedFlags::AMBIENT;
          tables.statement(
              cursor(source, &[], 33),
-@@ -1337,7 +1595,7 @@
+@@ -1337,7 +1598,7 @@
          let source = b"type A = 1; type B = 2;";
          let mut tables = ErasedTables::default();
          let empty = ErasedFlags::empty();
@@ -467,7 +470,7 @@ diff -ruN a/src/js_parser/parse/erased.rs b/src/js_parser/parse/erased.rs
          tables.statement(
              cursor(source, &[], 12),
              Loc { start: 0 },
-@@ -1353,6 +1611,8 @@
+@@ -1353,6 +1614,8 @@
              Exported::No,
              alias,
          );
@@ -476,7 +479,7 @@ diff -ruN a/src/js_parser/parse/erased.rs b/src/js_parser/parse/erased.rs
          tables.member_modifier(ErasedFlags::DECLARE);
          tables.hold(alias);
          tables.rewind(mark);
-@@ -1360,36 +1620,100 @@
+@@ -1360,36 +1623,100 @@
          assert!(tables.held.is_none());
      }
  
@@ -581,8 +584,8 @@ diff -ruN a/src/js_parser/parse/erased.rs b/src/js_parser/parse/erased.rs
      }
  }
 diff -ruN a/src/js_parser/parse/erased_tests.rs b/src/js_parser/parse/erased_tests.rs
---- a/src/js_parser/parse/erased_tests.rs	2026-10-01 15:36:16.461115293 +0000
-+++ b/src/js_parser/parse/erased_tests.rs	2026-10-01 15:36:17.653582550 +0000
+--- a/src/js_parser/parse/erased_tests.rs	2026-10-01 15:40:52.486910361 +0000
++++ b/src/js_parser/parse/erased_tests.rs	2026-10-01 15:40:54.820975036 +0000
 @@ -4,9 +4,13 @@
      ErasedData, ErasedFlags, ErasedMemberData, ModuleName, Name, Place, StringLiteral,
  };
@@ -1265,8 +1268,8 @@ diff -ruN a/src/js_parser/parse/erased_tests.rs b/src/js_parser/parse/erased_tes
  fn records_are_those_of_the_known_sources() {
      let mut failed = Vec::new();
 diff -ruN a/src/js_parser/parse/generics.rs b/src/js_parser/parse/generics.rs
---- a/src/js_parser/parse/generics.rs	2026-10-01 15:36:16.461164719 +0000
-+++ b/src/js_parser/parse/generics.rs	2026-10-01 15:36:16.979044863 +0000
+--- a/src/js_parser/parse/generics.rs	2026-10-01 15:40:52.486960221 +0000
++++ b/src/js_parser/parse/generics.rs	2026-10-01 15:40:53.167313546 +0000
 @@ -2,13 +2,14 @@
  
  use bun_ast::op::Level;
@@ -1478,8 +1481,8 @@ diff -ruN a/src/js_parser/parse/generics.rs b/src/js_parser/parse/generics.rs
              && let Some(starts) = &mut self.starts_for_parse_only
          {
 diff -ruN a/src/js_parser/parse/mod.rs b/src/js_parser/parse/mod.rs
---- a/src/js_parser/parse/mod.rs	2026-10-01 15:36:16.461209853 +0000
-+++ b/src/js_parser/parse/mod.rs	2026-10-01 15:36:17.038403393 +0000
+--- a/src/js_parser/parse/mod.rs	2026-10-01 15:40:52.487008069 +0000
++++ b/src/js_parser/parse/mod.rs	2026-10-01 15:40:53.215848605 +0000
 @@ -310,10 +310,12 @@
                      if let Some(starts) = &mut p.starts_for_parse_only {
                          starts.erased.member_read(
@@ -1494,8 +1497,8 @@ diff -ruN a/src/js_parser/parse/mod.rs b/src/js_parser/parse/mod.rs
                      }
                  }
 diff -ruN a/src/js_parser/parse/parse_property.rs b/src/js_parser/parse/parse_property.rs
---- a/src/js_parser/parse/parse_property.rs	2026-10-01 15:36:16.474156779 +0000
-+++ b/src/js_parser/parse/parse_property.rs	2026-10-01 15:36:17.687582808 +0000
+--- a/src/js_parser/parse/parse_property.rs	2026-10-01 15:40:52.487375023 +0000
++++ b/src/js_parser/parse/parse_property.rs	2026-10-01 15:40:54.952688379 +0000
 @@ -421,18 +421,31 @@
  
                      if Self::IS_TYPESCRIPT_ENABLED && opts.is_class && p.is_class_index_signature()
@@ -1534,8 +1537,8 @@ diff -ruN a/src/js_parser/parse/parse_property.rs b/src/js_parser/parse/parse_pr
                                  js_ast::ExprData::EIdentifier(_) => {
                                      p.lexer.next()?;
 diff -ruN a/src/js_parser/parse/parse_skip_typescript.rs b/src/js_parser/parse/parse_skip_typescript.rs
---- a/src/js_parser/parse/parse_skip_typescript.rs	2026-10-01 15:36:16.474206761 +0000
-+++ b/src/js_parser/parse/parse_skip_typescript.rs	2026-10-01 15:36:17.452001030 +0000
+--- a/src/js_parser/parse/parse_skip_typescript.rs	2026-10-01 15:40:52.487428201 +0000
++++ b/src/js_parser/parse/parse_skip_typescript.rs	2026-10-01 15:40:53.843429980 +0000
 @@ -2262,7 +2262,7 @@
      }
  
@@ -1687,8 +1690,8 @@ diff -ruN a/src/js_parser/parse/parse_skip_typescript.rs b/src/js_parser/parse/p
              let attached = &mut starts.attached;
              attached.annotation(at, any);
 diff -ruN a/src/js_parser/parse/parse_stmt.rs b/src/js_parser/parse/parse_stmt.rs
---- a/src/js_parser/parse/parse_stmt.rs	2026-10-01 15:36:16.474351879 +0000
-+++ b/src/js_parser/parse/parse_stmt.rs	2026-10-01 15:36:17.036739031 +0000
+--- a/src/js_parser/parse/parse_stmt.rs	2026-10-01 15:40:52.487524811 +0000
++++ b/src/js_parser/parse/parse_stmt.rs	2026-10-01 15:40:53.214683917 +0000
 @@ -960,21 +960,15 @@
                                      is_export: true,
                                      ..Default::default()
@@ -1774,8 +1777,8 @@ diff -ruN a/src/js_parser/parse/parse_stmt.rs b/src/js_parser/parse/parse_stmt.r
                      return Ok(Some(p.s(S::TypeScript {}, loc)));
                  }
 diff -ruN a/src/js_parser/parse/type_sink.rs b/src/js_parser/parse/type_sink.rs
---- a/src/js_parser/parse/type_sink.rs	2026-10-01 15:36:16.474711544 +0000
-+++ b/src/js_parser/parse/type_sink.rs	2026-10-01 15:36:17.009368666 +0000
+--- a/src/js_parser/parse/type_sink.rs	2026-10-01 15:40:52.487790362 +0000
++++ b/src/js_parser/parse/type_sink.rs	2026-10-01 15:40:53.202094823 +0000
 @@ -1484,6 +1484,14 @@
          Ok(Some((list, close_end)))
      }
@@ -1915,8 +1918,8 @@ diff -ruN a/src/js_parser/parse/type_sink.rs b/src/js_parser/parse/type_sink.rs
              ts::Member::alloc(self.arena, payload, start, end)
          })
 diff -ruN a/src/js_parser/type_sink_tests.rs b/src/js_parser/type_sink_tests.rs
---- a/src/js_parser/type_sink_tests.rs	2026-10-01 15:36:16.475671709 +0000
-+++ b/src/js_parser/type_sink_tests.rs	2026-10-01 15:36:17.396135394 +0000
+--- a/src/js_parser/type_sink_tests.rs	2026-10-01 15:40:52.488325897 +0000
++++ b/src/js_parser/type_sink_tests.rs	2026-10-01 15:40:53.791648434 +0000
 @@ -66,7 +66,7 @@
  }
  
@@ -1927,8 +1930,8 @@ diff -ruN a/src/js_parser/type_sink_tests.rs b/src/js_parser/type_sink_tests.rs
      let mut line = format!("{kind}[{},{})", node.start, node.end);
      if let Some(list) = type_arguments(&node.data) {
 diff -ruN a/src/js_parser/typescript.rs b/src/js_parser/typescript.rs
---- a/src/js_parser/typescript.rs	2026-10-01 15:36:16.475710661 +0000
-+++ b/src/js_parser/typescript.rs	2026-10-01 15:36:17.026646616 +0000
+--- a/src/js_parser/typescript.rs	2026-10-01 15:40:52.488366383 +0000
++++ b/src/js_parser/typescript.rs	2026-10-01 15:40:53.210958560 +0000
 @@ -111,7 +111,7 @@
  
      // This function is taken from the official TypeScript compiler source code:

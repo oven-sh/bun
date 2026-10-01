@@ -1,0 +1,58 @@
+// TS2880 assert
+A (b"import a from \"m\" assert { type: \"json\" };", Loader::Ts, 2880, 18, 24, "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'."),
+= b"import a from \"m\" with { type: \"json\" };", Loader::Ts  parses
+A (b"import \"m\" assert { type: \"json\" };", Loader::Ts, 2880, 11, 17, "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'."),
+A (b"import * as a from \"m\" assert { type: \"json\" };", Loader::Ts, 2880, 23, 29, "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'."),
+A (b"import { a } from \"m\" assert { type: \"json\" };", Loader::Ts, 2880, 22, 28, "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'."),
+A (b"import {} from \"m\" assert {};", Loader::Ts, 2880, 19, 25, "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'."),
+A (b"import a from \"m\" assert {};", Loader::Ts, 2880, 18, 24, "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'."),
+! (b"import a from \"m\"\nassert { type: \"json\" };", Loader::Ts, 1435, 18, 24, "Unknown keyword or identifier. Did you mean 'asserts'?"),
+= b"import a from \"m\"\nwith { type: \"json\" };", Loader::Ts  parses
+A (b"import a from \"m\" assert\n{ type: \"json\" };", Loader::Ts, 2880, 18, 24, "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'."),
+A (b"import type a from \"m\" assert { type: \"json\" };", Loader::Ts, 2880, 23, 29, "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'."),
+A (b"import type { a } from \"m\" assert { \"resolution-mode\": \"import\" };", Loader::Ts, 2880, 27, 33, "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'."),
+= (b"import a = require(\"m\") assert { type: \"json\" };", Loader::Ts, 1005, 24, 30, "';' expected."),
+A (b"export * from \"m\" assert { type: \"json\" };", Loader::Ts, 2880, 18, 24, "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'."),
+A (b"export * as ns from \"m\" assert { type: \"json\" };", Loader::Ts, 2880, 24, 30, "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'."),
+A (b"export { a } from \"m\" assert { type: \"json\" };", Loader::Ts, 2880, 22, 28, "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'."),
+= b"export { a } from \"m\" with { type: \"json\" };", Loader::Ts  parses
+A (b"export {} from \"m\" assert {};", Loader::Ts, 2880, 19, 25, "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'."),
+! (b"export * from \"m\"\nassert { type: \"json\" };", Loader::Ts, 1435, 18, 24, "Unknown keyword or identifier. Did you mean 'asserts'?"),
+A (b"export * from \"m\"\nwith { type: \"json\" };", Loader::Ts, 1005, 23, 24, "'(' expected."),
+A (b"export { a } from \"m\"\nwith { type: \"json\" };", Loader::Ts, 1005, 27, 28, "'(' expected."),
+A (b"export type { a } from \"m\" assert { type: \"json\" };", Loader::Ts, 2880, 27, 33, "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'."),
+A (b"export type * from \"m\" assert { type: \"json\" };", Loader::Ts, 2880, 23, 29, "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'."),
+= (b"export { a } assert { type: \"json\" };", Loader::Ts, 1005, 13, 19, "';' expected."),
+A (b"type T = import(\"m\", { assert: { type: \"json\" } });", Loader::Ts, 2880, 23, 29, "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'."),
+= b"type T = import(\"m\", { with: { type: \"json\" } });", Loader::Ts  parses
+A (b"type T = typeof import(\"m\", { assert: { type: \"json\" } });", Loader::Ts, 2880, 30, 36, "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'."),
+A (b"type T = import(\"m\", { assert: {} }).A<B>;", Loader::Ts, 2880, 23, 29, "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'."),
+A (b"let x: import(\"m\", { assert: { \"resolution-mode\": \"import\" } }).A;", Loader::Ts, 2880, 21, 27, "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'."),
+A (b"x as import(\"m\", { assert: { type: \"json\" } });", Loader::Ts, 2880, 19, 25, "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'."),
+A (b"type T = import(\"m\", { foo: { type: \"json\" } });", Loader::Ts, 1005, 23, 26, "'with' expected."),
+A (b"type T = import(\"m\", { assert });", Loader::Ts, 2880, 23, 29, "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'."),
+A (b"type T = import(\"m\", { assert: { type: \"json\" }, });", Loader::Ts, 2880, 23, 29, "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'."),
+A (b"function f(a: import(\"m\", { assert: {} })) {}", Loader::Ts, 2880, 28, 34, "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'."),
+A (b"class C { @d x: import(\"m\", { assert: {} }); }", Loader::Ts, 2880, 30, 36, "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'."),
+= b"import(\"m\", { assert: { type: \"json\" } });", Loader::Ts  parses
+B b"const x = await import(\"m\", { with: { type: \"json\" } });", Loader::Ts  parses
+= b"import assert from \"m\";", Loader::Ts  parses
+= b"import { assert } from \"m\";", Loader::Ts  parses
+= b"import a from \"m\"; assert(a);", Loader::Ts  parses
+= b"import a from \"m\"\nassert(a);", Loader::Ts  parses
+= b"export * from \"m\"; assert;", Loader::Ts  parses
+! (b"import a from \"m\" \\u0061ssert { type: \"json\" };", Loader::Ts, 2880, 18, 29, "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'."),
+! (b"import a from \"m\" assert { type: };", Loader::Ts, 2880, 18, 24, "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'."),
+! (b"import a from \"m\" assert { 1: \"json\" };", Loader::Ts, 2880, 18, 24, "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'."),
+! (b"import a from \"m\" assert", Loader::Ts, 2880, 18, 24, "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'."),
+! (b"import a from \"m\" assert;", Loader::Ts, 2880, 18, 24, "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'."),
+A (b"import a from \"m\" assert { type: \"json\" }; import b from \"n\" assert { type: \"json\" };", Loader::Ts, 2880, 18, 24, "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'."),
+// TS2880 assert (js)
+A (b"import a from \"m\" assert { type: \"json\" };", Loader::Js, 2880, 18, 24, "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'."),
+A (b"export * from \"m\" assert { type: \"json\" };", Loader::Js, 2880, 18, 24, "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'."),
+= b"import a from \"m\"\nwith { type: \"json\" };", Loader::Js  parses
+// TS2880 assert (d.ts)
+A (b"import a from \"m\" assert { type: \"json\" };", Loader::Ts /* .d.ts */, 2880, 18, 24, "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'."),
+A (b"export * from \"m\" assert { type: \"json\" };", Loader::Ts /* .d.ts */, 2880, 18, 24, "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'."),
+A (b"declare module \"x\" { import a from \"m\" assert { type: \"json\" }; }", Loader::Ts /* .d.ts */, 2880, 39, 45, "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'."),
+A (b"type T = import(\"m\", { assert: { type: \"json\" } });", Loader::Ts /* .d.ts */, 2880, 23, 29, "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'."),

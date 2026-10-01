@@ -1,0 +1,84 @@
+// TS1357 enum
+! (b"enum E { a b }", Loader::Ts, 1357, 11, 12, "An enum member name must be followed by a ',', '=', or '}'."),
+! (b"enum E { a = 1 b }", Loader::Ts, 1357, 15, 16, "An enum member name must be followed by a ',', '=', or '}'."),
+! (b"enum E { a b c }", Loader::Ts, 1357, 11, 12, "An enum member name must be followed by a ',', '=', or '}'."),
+! (b"enum E { a\nb }", Loader::Ts, 1357, 11, 12, "An enum member name must be followed by a ',', '=', or '}'."),
+! (b"enum E { a = 1\nb = 2 }", Loader::Ts, 1357, 15, 16, "An enum member name must be followed by a ',', '=', or '}'."),
+A (b"enum E { a; b }", Loader::Ts, 1357, 10, 11, "An enum member name must be followed by a ',', '=', or '}'."),
+A (b"enum E { a; }", Loader::Ts, 1357, 10, 11, "An enum member name must be followed by a ',', '=', or '}'."),
+A (b"enum E { a;\nb }", Loader::Ts, 1357, 10, 11, "An enum member name must be followed by a ',', '=', or '}'."),
+= b"enum E { a, b }", Loader::Ts  parses
+= b"enum E { a, b, }", Loader::Ts  parses
+! (b"enum E { a,, b }", Loader::Ts, 1132, 11, 12, "Enum member expected."),
+! (b"enum E { , a }", Loader::Ts, 1132, 9, 10, "Enum member expected."),
+A (b"enum E { a = 1; b = 2 }", Loader::Ts, 1357, 14, 15, "An enum member name must be followed by a ',', '=', or '}'."),
+! (b"enum E { \"a\" \"b\" }", Loader::Ts, 1357, 13, 16, "An enum member name must be followed by a ',', '=', or '}'."),
+! (b"enum E { \"a\" b }", Loader::Ts, 1357, 13, 14, "An enum member name must be followed by a ',', '=', or '}'."),
+! (b"enum E { [\"a\"] b }", Loader::Ts, 1357, 15, 16, "An enum member name must be followed by a ',', '=', or '}'."),
+! (b"enum E { a \"b\" }", Loader::Ts, 1357, 11, 14, "An enum member name must be followed by a ',', '=', or '}'."),
+! (b"enum E { a 1 }", Loader::Ts, 1357, 11, 12, "An enum member name must be followed by a ',', '=', or '}'."),
+! (b"enum E { a: 1 }", Loader::Ts, 1357, 10, 11, "An enum member name must be followed by a ',', '=', or '}'."),
+= (b"enum E { a = }", Loader::Ts, 1109, 13, 14, "Expression expected."),
+= (b"enum E { a = , b }", Loader::Ts, 1109, 13, 14, "Expression expected."),
+! (b"enum E { a( }", Loader::Ts, 1357, 10, 11, "An enum member name must be followed by a ',', '=', or '}'."),
+! (b"enum E { a ) }", Loader::Ts, 1357, 11, 12, "An enum member name must be followed by a ',', '=', or '}'."),
+! (b"enum E { a ] }", Loader::Ts, 1357, 11, 12, "An enum member name must be followed by a ',', '=', or '}'."),
+! (b"enum E { a + b }", Loader::Ts, 1357, 11, 12, "An enum member name must be followed by a ',', '=', or '}'."),
+= (b"enum E { a = 1 + }", Loader::Ts, 1109, 17, 18, "Expression expected."),
+! (b"enum E { a = b c }", Loader::Ts, 1357, 15, 16, "An enum member name must be followed by a ',', '=', or '}'."),
+! (b"enum E { a = b\nc }", Loader::Ts, 1357, 15, 16, "An enum member name must be followed by a ',', '=', or '}'."),
+! (b"enum E { a = b, c d }", Loader::Ts, 1357, 18, 19, "An enum member name must be followed by a ',', '=', or '}'."),
+= b"enum E { a }", Loader::Ts  parses
+= b"enum E { }", Loader::Ts  parses
+= (b"enum E { a", Loader::Ts, 1005, 10, 10, "'}' expected."),
+! (b"enum E { a b", Loader::Ts, 1357, 11, 12, "An enum member name must be followed by a ',', '=', or '}'."),
+! (b"enum E { a,", Loader::Ts, 1005, 11, 11, "'}' expected."),
+B b"enum E { 1 }", Loader::Ts  parses
+B b"enum E { 1n }", Loader::Ts  parses
+B b"enum E { [x] }", Loader::Ts  parses
+B b"enum E { [x] = 1 }", Loader::Ts  parses
+B b"enum E { [\"a\" + \"b\"] }", Loader::Ts  parses
+= b"enum E { [`a`] }", Loader::Ts  parses
+B b"enum E { #a }", Loader::Ts  parses
+! (b"enum E { `a` }", Loader::Ts, 1132, 9, 12, "Enum member expected."),
+= b"enum E { class }", Loader::Ts  parses
+= b"enum E { a = 1, class = 2 }", Loader::Ts  parses
+! (b"enum E { a.b }", Loader::Ts, 1357, 10, 11, "An enum member name must be followed by a ',', '=', or '}'."),
+! (b"enum E { a? }", Loader::Ts, 1357, 10, 11, "An enum member name must be followed by a ',', '=', or '}'."),
+! (b"enum E { a! }", Loader::Ts, 1357, 10, 11, "An enum member name must be followed by a ',', '=', or '}'."),
+! (b"enum E { public a }", Loader::Ts, 1357, 16, 17, "An enum member name must be followed by a ',', '=', or '}'."),
+= b"enum E { a = 1 as const }", Loader::Ts  parses
+= b"enum E { a = <any>1 }", Loader::Ts  parses
+= b"enum E { a = yield }", Loader::Ts  parses
+= b"enum E { a = await }", Loader::Ts  parses
+! (b"const enum E { a b }", Loader::Ts, 1357, 17, 18, "An enum member name must be followed by a ',', '=', or '}'."),
+! (b"declare enum E { a b }", Loader::Ts, 1357, 19, 20, "An enum member name must be followed by a ',', '=', or '}'."),
+! (b"export enum E { a b }", Loader::Ts, 1357, 18, 19, "An enum member name must be followed by a ',', '=', or '}'."),
+! (b"declare const enum E { a = 1 b }", Loader::Ts, 1357, 29, 30, "An enum member name must be followed by a ',', '=', or '}'."),
+! (b"namespace N { enum E { a b } }", Loader::Ts, 1357, 25, 26, "An enum member name must be followed by a ',', '=', or '}'."),
+! (b"enum E { a = 1 /* c */ b }", Loader::Ts, 1357, 23, 24, "An enum member name must be followed by a ',', '=', or '}'."),
+= b"enum E { a\n= 1 }", Loader::Ts  parses
+= b"enum E { a =\n1 }", Loader::Ts  parses
+! (b"enum E { a, ...b }", Loader::Ts, 1132, 12, 15, "Enum member expected."),
+! (b"enum E { ...b }", Loader::Ts, 1132, 9, 12, "Enum member expected."),
+= (b"enum { a }", Loader::Ts, 1003, 5, 6, "Identifier expected."),
+= (b"enum E", Loader::Ts, 1005, 6, 6, "'{' expected."),
+= (b"enum E;", Loader::Ts, 1005, 6, 7, "'{' expected."),
+= (b"enum E a }", Loader::Ts, 1005, 7, 8, "'{' expected."),
+= (b"enum class { a }", Loader::Ts, 1359, 5, 10, "Identifier expected. 'class' is a reserved word that cannot be used here."),
+= (b"enum E extends F { a }", Loader::Ts, 1005, 7, 14, "'{' expected."),
+= (b"enum E<T> { a }", Loader::Ts, 1005, 6, 7, "'{' expected."),
+= b"enum E { a } b", Loader::Ts  parses
+= (b"enum E { a = 1 } = 2", Loader::Ts, 1128, 17, 18, "Declaration or statement expected."),
+! (b"enum E { a = () => { return 1 } b }", Loader::Ts, 1357, 32, 33, "An enum member name must be followed by a ',', '=', or '}'."),
+! (b"enum E { a = function() {} b }", Loader::Ts, 1357, 27, 28, "An enum member name must be followed by a ',', '=', or '}'."),
+! (b"enum E { a = x ? y : z w }", Loader::Ts, 1357, 23, 24, "An enum member name must be followed by a ',', '=', or '}'."),
+= b"enum E { a = b in c }", Loader::Ts  parses
+= b"enum E { a = 1, } ;", Loader::Ts  parses
+// TS1357 enum (js)
+! (b"enum E { a b }", Loader::Js, 1357, 11, 12, "An enum member name must be followed by a ',', '=', or '}'."),
+B b"enum E { a }", Loader::Js  parses
+// TS1357 enum (d.ts)
+! (b"enum E { a b }", Loader::Ts /* .d.ts */, 1357, 11, 12, "An enum member name must be followed by a ',', '=', or '}'."),
+A (b"declare enum E { a; b }", Loader::Ts /* .d.ts */, 1357, 18, 19, "An enum member name must be followed by a ',', '=', or '}'."),
+! (b"export enum E { a = 1 b }", Loader::Ts /* .d.ts */, 1357, 22, 23, "An enum member name must be followed by a ',', '=', or '}'."),

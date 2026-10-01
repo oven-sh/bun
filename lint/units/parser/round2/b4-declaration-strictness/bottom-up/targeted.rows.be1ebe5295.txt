@@ -1,0 +1,908 @@
+// parseModifiers: order, repeats, place (checker)
+= b"class C { public public x; }", Loader::Ts  parses
+= b"class C { public private x; }", Loader::Ts  parses
+! (b"class C { static static x; }", Loader::Ts, 1434, 17, 23, "Unexpected keyword or identifier."),
+= b"class C { readonly readonly x; }", Loader::Ts  parses
+= b"class C { declare declare x; }", Loader::Ts  parses
+B b"abstract class C { abstract abstract x; }", Loader::Ts  parses
+B b"class C { accessor accessor x; }", Loader::Ts  parses
+= b"class C { override override x; }", Loader::Ts  parses
+B b"class C { async async m() {} }", Loader::Ts  parses
+= b"class C { static public x; }", Loader::Ts  parses
+= b"class C { readonly public x; }", Loader::Ts  parses
+= b"class C { readonly static x; }", Loader::Ts  parses
+= b"class C { async public m() {} }", Loader::Ts  parses
+B b"class C { async static m() {} }", Loader::Ts  parses
+= b"class C { override public x; }", Loader::Ts  parses
+= b"class C { readonly override x; }", Loader::Ts  parses
+B b"class C { accessor static x; }", Loader::Ts  parses
+B b"class C { accessor readonly x; }", Loader::Ts  parses
+= b"class C { readonly accessor x; }", Loader::Ts  parses
+B b"class C { accessor public x; }", Loader::Ts  parses
+B b"class C { accessor declare x; }", Loader::Ts  parses
+= b"class C { declare accessor x; }", Loader::Ts  parses
+B b"class C { accessor override x; }", Loader::Ts  parses
+= b"abstract class C { abstract static x; }", Loader::Ts  parses
+= b"abstract class C { static abstract x; }", Loader::Ts  parses
+= b"abstract class C { abstract private x; }", Loader::Ts  parses
+= b"abstract class C { private abstract x; }", Loader::Ts  parses
+= b"abstract class C { abstract public x; }", Loader::Ts  parses
+= b"abstract class C { abstract override x; }", Loader::Ts  parses
+= b"abstract class C { abstract accessor x; }", Loader::Ts  parses
+= b"abstract class C { abstract async m(); }", Loader::Ts  parses
+= b"abstract class C { async abstract m(); }", Loader::Ts  parses
+= b"class C { abstract x; }", Loader::Ts  parses
+= b"class C { abstract m(); }", Loader::Ts  parses
+= b"abstract class C { abstract m() {} }", Loader::Ts  parses
+= b"abstract class C { abstract get a() { return 1 } }", Loader::Ts  parses
+= b"abstract class C { abstract x = 1; }", Loader::Ts  parses
+= b"abstract class C { abstract #x; }", Loader::Ts  parses
+= b"class C { declare m() {} }", Loader::Ts  parses
+= b"class C { declare get a() { return 1 } }", Loader::Ts  parses
+= b"class C { declare #x; }", Loader::Ts  parses
+= b"class C { declare x = 1; }", Loader::Ts  parses
+= b"class C { declare async m() {} }", Loader::Ts  parses
+= b"class C { async declare m() {} }", Loader::Ts  parses
+= b"class C { declare override x; }", Loader::Ts  parses
+= b"class C { override declare x; }", Loader::Ts  parses
+= b"class C { public #x; }", Loader::Ts  parses
+= b"class C { private #x; }", Loader::Ts  parses
+B b"class C { export x; }", Loader::Ts  parses
+B b"class C { export m() {} }", Loader::Ts  parses
+! (b"class C { default x; }", Loader::Ts, 1434, 10, 17, "Unexpected keyword or identifier."),
+B b"class C { const x = 1; }", Loader::Ts  parses
+= b"class C { const\n x = 1; }", Loader::Ts  parses
+B b"class C { in x; }", Loader::Ts  parses
+B b"class C { out x; }", Loader::Ts  parses
+B b"class C { async x; }", Loader::Ts  parses
+B b"class C { async get a() { return 1 } }", Loader::Ts  parses
+B b"class C { async constructor() {} }", Loader::Ts  parses
+= b"class C { static constructor() {} }", Loader::Ts  parses
+= b"class C { override constructor() {} }", Loader::Ts  parses
+= b"class C { public constructor() {} }", Loader::Ts  parses
+= b"class C { readonly m() {} }", Loader::Ts  parses
+= b"class C { readonly get a() { return 1 } }", Loader::Ts  parses
+B b"class C { accessor m() {} }", Loader::Ts  parses
+B b"class C { accessor get a() { return 1 } }", Loader::Ts  parses
+B b"class C { accessor constructor() {} }", Loader::Ts  parses
+= b"class C { public static {} }", Loader::Ts  parses
+= b"class C { @dec static {} }", Loader::Ts  parses
+= b"class C { async static {} }", Loader::Ts  parses
+= b"class C { static static {} }", Loader::Ts  parses
+= b"class C { readonly [k: string]: any; }", Loader::Ts  parses
+= b"class C { public [k: string]: any; }", Loader::Ts  parses
+= b"class C { static [k: string]: any; }", Loader::Ts  parses
+= b"class C { declare [k: string]: any; }", Loader::Ts  parses
+= b"class C { abstract [k: string]: any; }", Loader::Ts  parses
+= b"class C { async [k: string]: any; }", Loader::Ts  parses
+= b"class C { @dec [k: string]: any; }", Loader::Ts  parses
+= b"class C { accessor [k: string]: any; }", Loader::Ts  parses
+= b"class C { override [k: string]: any; }", Loader::Ts  parses
+// parseModifiers: a line break or a token that follows no modifier
+= b"class C { public\n x }", Loader::Ts  parses
+= b"class C { private\n x = 1 }", Loader::Ts  parses
+= b"class C { protected\n x: number }", Loader::Ts  parses
+= b"class C { readonly\n x }", Loader::Ts  parses
+= b"class C { override\n x }", Loader::Ts  parses
+= b"class C { static\n x }", Loader::Ts  parses
+= b"class C { declare\n x }", Loader::Ts  parses
+= b"class C { abstract\n x }", Loader::Ts  parses
+= b"class C { accessor\n x }", Loader::Ts  parses
+= b"class C { async\n m() {} }", Loader::Ts  parses
+= b"class C { get\n a() { return 1 } }", Loader::Ts  parses
+= b"class C { set\n a(v) {} }", Loader::Ts  parses
+= b"class C { public static\n x }", Loader::Ts  parses
+= b"class C { static public\n x }", Loader::Ts  parses
+= b"class C { public\n static x }", Loader::Ts  parses
+= b"class C { public }", Loader::Ts  parses
+= b"class C { public; static; readonly = 1; declare() {} abstract<T>() {} override?: number; accessor!: number; async: any }", Loader::Ts  parses
+! (b"class C { public ...x }", Loader::Ts, 1146, 16, 16, "Declaration expected."),
+! (b"class C { public {} }", Loader::Ts, 1146, 16, 16, "Declaration expected."),
+= b"class C { public * g() {} }", Loader::Ts  parses
+= b"class C { public 1() {} }", Loader::Ts  parses
+= b"class C { public 'a'() {} }", Loader::Ts  parses
+B b"class C { public 1n() {} }", Loader::Ts  parses
+= b"class C { public #p }", Loader::Ts  parses
+= b"class C { public [a] }", Loader::Ts  parses
+B b"class C { get 1n() { return 1 } }", Loader::Ts  parses
+B b"class C { set 1n(v) {} }", Loader::Ts  parses
+B b"class C { static 1n = 1 }", Loader::Ts  parses
+B b"class C { async 1n() {} }", Loader::Ts  parses
+! (b"class C { get *g() {} }", Loader::Ts, 1434, 10, 13, "Unexpected keyword or identifier."),
+! (b"class C { set *g() {} }", Loader::Ts, 1434, 10, 13, "Unexpected keyword or identifier."),
+= b"class C { static *g() {} }", Loader::Ts  parses
+= b"class C { async *g() {} }", Loader::Ts  parses
+= (b"class C { * async g() {} }", Loader::Ts, 1005, 18, 19, "'(' expected."),
+= (b"class C { * get a() {} }", Loader::Ts, 1005, 16, 17, "'(' expected."),
+! (b"class C { * * g() {} }", Loader::Ts, 1003, 12, 13, "Identifier expected."),
+= (b"class C { get get a() { return 1 } }", Loader::Ts, 1005, 18, 19, "'(' expected."),
+= (b"class C { get set a() { return 1 } }", Loader::Ts, 1005, 18, 19, "'(' expected."),
+= (b"class C { get static a() { return 1 } }", Loader::Ts, 1005, 21, 22, "'(' expected."),
+= (b"class C { get public a() { return 1 } }", Loader::Ts, 1005, 21, 22, "'(' expected."),
+= (b"class C { get async a() { return 1 } }", Loader::Ts, 1005, 20, 21, "'(' expected."),
+= (b"class C { static get static a() { return 1 } }", Loader::Ts, 1005, 28, 29, "'(' expected."),
+// parseClassElement: what starts no member, Declaration expected
+! (b"class C { @dec }", Loader::Ts, 1146, 14, 14, "Declaration expected."),
+! (b"class C { @dec ; }", Loader::Ts, 1146, 14, 14, "Declaration expected."),
+! (b"class C { @dec @dec2 }", Loader::Ts, 1146, 20, 20, "Declaration expected."),
+! (b"class C { public @dec x }", Loader::Ts, 1436, 17, 18, "Decorators must precede the name and all keywords of property declarations."),
+= b"class C { @dec public x }", Loader::Ts  parses
+! (b"class C { public @dec }", Loader::Ts, 1436, 17, 18, "Decorators must precede the name and all keywords of property declarations."),
+! (b"class C { static @dec x }", Loader::Ts, 1436, 17, 18, "Decorators must precede the name and all keywords of property declarations."),
+! (b"class C { + }", Loader::Ts, 1068, 10, 11, "Unexpected token. A constructor, method, accessor, or property was expected."),
+! (b"class C { = 1 }", Loader::Ts, 1068, 10, 11, "Unexpected token. A constructor, method, accessor, or property was expected."),
+! (b"class C { ( }", Loader::Ts, 1068, 10, 11, "Unexpected token. A constructor, method, accessor, or property was expected."),
+! (b"class C { ? }", Loader::Ts, 1068, 10, 11, "Unexpected token. A constructor, method, accessor, or property was expected."),
+! (b"class C { ! }", Loader::Ts, 1068, 10, 11, "Unexpected token. A constructor, method, accessor, or property was expected."),
+! (b"class C { . }", Loader::Ts, 1068, 10, 11, "Unexpected token. A constructor, method, accessor, or property was expected."),
+! (b"class C { , }", Loader::Ts, 1068, 10, 11, "Unexpected token. A constructor, method, accessor, or property was expected."),
+! (b"class C { => }", Loader::Ts, 1068, 10, 12, "Unexpected token. A constructor, method, accessor, or property was expected."),
+! (b"class C { < }", Loader::Ts, 1068, 10, 11, "Unexpected token. A constructor, method, accessor, or property was expected."),
+! (b"class C { ... }", Loader::Ts, 1068, 10, 13, "Unexpected token. A constructor, method, accessor, or property was expected."),
+! (b"class C { var x; }", Loader::Ts, 1068, 10, 13, "Unexpected token. A constructor, method, accessor, or property was expected."),
+! (b"class C { let x; }", Loader::Ts, 1068, 10, 13, "Unexpected token. A constructor, method, accessor, or property was expected."),
+! (b"class C { function f() {} }", Loader::Ts, 1068, 10, 18, "Unexpected token. A constructor, method, accessor, or property was expected."),
+! (b"class C { class D {} }", Loader::Ts, 1068, 10, 15, "Unexpected token. A constructor, method, accessor, or property was expected."),
+= b"class C { if (x) {} }", Loader::Ts  parses
+= b"class C { return; }", Loader::Ts  parses
+! (b"class C { x y }", Loader::Ts, 1434, 10, 11, "Unexpected keyword or identifier."),
+! (b"class C { x; y z }", Loader::Ts, 1434, 13, 14, "Unexpected keyword or identifier."),
+= (b"class C { 1 2 }", Loader::Ts, 1005, 12, 13, "';' expected."),
+= (b"class C { 'a' b }", Loader::Ts, 1005, 14, 15, "';' expected."),
+= (b"class C { [a] b }", Loader::Ts, 1005, 14, 15, "';' expected."),
+= (b"class C { #a b }", Loader::Ts, 1005, 13, 14, "';' expected."),
+! (b"class C { static static x }", Loader::Ts, 1434, 17, 23, "Unexpected keyword or identifier."),
+! (b"class C { typ x }", Loader::Ts, 1435, 10, 13, "Unknown keyword or identifier. Did you mean 'type'?"),
+! (b"class C { functio f() {} }", Loader::Ts, 1435, 10, 17, "Unknown keyword or identifier. Did you mean 'function'?"),
+= b"class C { declare }", Loader::Ts  parses
+! (b"class C { type x }", Loader::Ts, 1068, 10, 14, "Unexpected token. A constructor, method, accessor, or property was expected."),
+! (b"class C { interface x }", Loader::Ts, 1068, 10, 19, "Unexpected token. A constructor, method, accessor, or property was expected."),
+! (b"class C { x is y }", Loader::Ts, 1434, 10, 11, "Unexpected keyword or identifier."),
+// parsePropertyDeclaration and parseSemicolonAfterPropertyName
+= b"class C { x! }", Loader::Ts  parses
+= b"class C { x!: number }", Loader::Ts  parses
+= b"class C { x!: number = 1 }", Loader::Ts  parses
+= b"class C { x! = 1 }", Loader::Ts  parses
+= b"class C { static x!: number }", Loader::Ts  parses
+! (b"class C { x\n!: number }", Loader::Ts, 1068, 12, 13, "Unexpected token. A constructor, method, accessor, or property was expected."),
+! (b"class C { x?!: number }", Loader::Ts, 1434, 10, 11, "Unexpected keyword or identifier."),
+! (b"class C { x!?: number }", Loader::Ts, 1434, 10, 11, "Unexpected keyword or identifier."),
+! (b"class C { x?? }", Loader::Ts, 1434, 10, 11, "Unexpected keyword or identifier."),
+= b"class C { x?: number }", Loader::Ts  parses
+= b"class C { x? }", Loader::Ts  parses
+= b"class C { x? = 1 }", Loader::Ts  parses
+= b"class C { accessor x?: number }", Loader::Ts  parses
+= b"class C { accessor x!: number }", Loader::Ts  parses
+A (b"class C { x!() {} }", Loader::Ts, 1441, 12, 13, "Cannot start a function call in a type annotation."),
+! (b"class C { x!<T>() {} }", Loader::Ts, 1434, 10, 11, "Unexpected keyword or identifier."),
+= b"class C { x?() {} }", Loader::Ts  parses
+= b"class C { x?<T>(): void }", Loader::Ts  parses
+! (b"class C { x: number() }", Loader::Ts, 1441, 19, 20, "Cannot start a function call in a type annotation."),
+= b"class C { x = 1() }", Loader::Ts  parses
+= b"class C { x() }", Loader::Ts  parses
+= (b"class C { x: number = }", Loader::Ts, 1109, 22, 23, "Expression expected."),
+= (b"class C { x = }", Loader::Ts, 1109, 14, 15, "Expression expected."),
+= (b"class C { x: }", Loader::Ts, 1110, 13, 14, "Type expected."),
+! (b"class C { x: number y }", Loader::Ts, 1442, 20, 21, "Expected '=' for property initializer."),
+= (b"class C { x = 1 y }", Loader::Ts, 1005, 16, 17, "';' expected."),
+= (b"class C { x = 1, y = 2 }", Loader::Ts, 1005, 15, 16, "';' expected."),
+! (b"class C { x, y }", Loader::Ts, 1434, 10, 11, "Unexpected keyword or identifier."),
+! (b"class C { x: number, y: string }", Loader::Ts, 1442, 19, 20, "Expected '=' for property initializer."),
+= b"class C { x = yield }", Loader::Ts  parses
+B b"class C { x = await 1 }", Loader::Ts  parses
+= b"async function f() { class C { x = await 1 } }", Loader::Ts  parses
+= b"function* g() { class C { x = yield 1 } }", Loader::Ts  parses
+= b"class C { x = 1 in y }", Loader::Ts  parses
+= (b"class C { [a, b] = 1 }", Loader::Ts, 1005, 17, 18, "';' expected."),
+= (b"class C { [a, b]() {} }", Loader::Ts, 1005, 16, 17, "';' expected."),
+= b"class C { [a = 1] }", Loader::Ts  parses
+= b"class C { [] }", Loader::Ts  parses
+= b"class C { []: number }", Loader::Ts  parses
+= b"class C { [...a]: number }", Loader::Ts  parses
+= b"class C { [a?]: number }", Loader::Ts  parses
+= b"class C { [a?: string]: number }", Loader::Ts  parses
+B b"class C { [public a: string]: number }", Loader::Ts  parses
+= b"class C { [a: string, b: number]: any }", Loader::Ts  parses
+= b"class C { [a: string,]: any }", Loader::Ts  parses
+= b"class C { [a: string] }", Loader::Ts  parses
+= (b"class C { [a: string]: }", Loader::Ts, 1110, 23, 24, "Type expected."),
+= (b"class C { [a: string]: any = 1 }", Loader::Ts, 1005, 27, 28, "';' expected."),
+= (b"class C { [a: string]?: any }", Loader::Ts, 1005, 21, 22, "';' expected."),
+= (b"class C { [a: string]!: any }", Loader::Ts, 1005, 21, 22, "';' expected."),
+= (b"class C { [a: string](): any }", Loader::Ts, 1005, 21, 22, "';' expected."),
+= b"class C { [a: string]: any, [b: number]: any }", Loader::Ts  parses
+= (b"class C { [a = 1: string]: any }", Loader::Ts, 1005, 16, 17, "']' expected."),
+= b"class C { [a: string = 1]: any }", Loader::Ts  parses
+A (b"class C { [k!: string]: any }", Loader::Ts, 1005, 13, 14, "']' expected."),
+= (b"class C { [(k): string]: any }", Loader::Ts, 1005, 14, 15, "']' expected."),
+A (b"class C { [k as any: string]: any }", Loader::Ts, 1005, 19, 20, "']' expected."),
+= (b"class C { [<T>k: string]: any }", Loader::Ts, 1005, 15, 16, "']' expected."),
+A (b"class C { [k<T>: string]: any }", Loader::Ts, 1005, 15, 16, "']' expected."),
+A (b"class C { get [k: string]: any }", Loader::Ts, 1005, 16, 17, "']' expected."),
+A (b"class C { set [k: string]: any }", Loader::Ts, 1005, 16, 17, "']' expected."),
+A (b"class C { * [k: string]: any }", Loader::Ts, 1005, 14, 15, "']' expected."),
+= b"class C { async [k: string]: any }", Loader::Ts  parses
+A (b"class C { static * [k: string]: any }", Loader::Ts, 1005, 21, 22, "']' expected."),
+A (b"class C { static get [k: string]: any }", Loader::Ts, 1005, 23, 24, "']' expected."),
+A (b"class C { get []: any }", Loader::Ts, 1109, 15, 16, "Expression expected."),
+A (b"class C { * [...a]: any }", Loader::Ts, 1109, 13, 16, "Expression expected."),
+= (b"class C { [this: string]: any }", Loader::Ts, 1005, 15, 16, "']' expected."),
+= b"class C { [await: string]: any }", Loader::Ts  parses
+= b"class C { [yield: string]: any }", Loader::Ts  parses
+= b"class C { [k: string]\n: any }", Loader::Ts  parses
+// parseMethodDeclaration, accessors, constructors
+= b"class C { m }", Loader::Ts  parses
+! (b"class C { m( }", Loader::Ts, 1138, 13, 14, "Parameter declaration expected."),
+= b"class C { m() }", Loader::Ts  parses
+= b"class C { m();\n m() {} }", Loader::Ts  parses
+! (b"class C { m() => 1 }", Loader::Ts, 1144, 14, 16, "'{' or ';' expected."),
+= (b"class C { m(): }", Loader::Ts, 1110, 15, 16, "Type expected."),
+= b"class C { m<>() {} }", Loader::Ts  parses
+= b"class C { m<T,>() {} }", Loader::Ts  parses
+= b"class C { *m(); }", Loader::Ts  parses
+= b"class C { async m(); }", Loader::Ts  parses
+= b"class C { get a() }", Loader::Ts  parses
+= b"class C { get a(); }", Loader::Ts  parses
+= b"class C { set a(v) }", Loader::Ts  parses
+= (b"class C { get a }", Loader::Ts, 1005, 16, 17, "'(' expected."),
+= (b"class C { get a = 1 }", Loader::Ts, 1005, 16, 17, "'(' expected."),
+= (b"class C { get a: number }", Loader::Ts, 1005, 15, 16, "'(' expected."),
+= b"class C { get a<T>() { return 1 } }", Loader::Ts  parses
+= b"class C { set a<T>(v) {} }", Loader::Ts  parses
+B b"class C { get a(x) { return 1 } }", Loader::Ts  parses
+= b"class C { get a(this: C) { return 1 } }", Loader::Ts  parses
+B b"class C { get a(this: C, x) { return 1 } }", Loader::Ts  parses
+B b"class C { set a() {} }", Loader::Ts  parses
+B b"class C { set a(x, y) {} }", Loader::Ts  parses
+= b"class C { set a(this: C, x) {} }", Loader::Ts  parses
+= b"class C { set a(...x) {} }", Loader::Ts  parses
+= b"class C { set a(x?) {} }", Loader::Ts  parses
+= b"class C { set a(x = 1) {} }", Loader::Ts  parses
+= b"class C { set a(x): void {} }", Loader::Ts  parses
+A (b"class C { get a?() { return 1 } }", Loader::Ts, 1005, 15, 16, "'(' expected."),
+A (b"class C { set a?(v) {} }", Loader::Ts, 1005, 15, 16, "'(' expected."),
+= (b"class C { get a!() { return 1 } }", Loader::Ts, 1005, 15, 16, "'(' expected."),
+A (b"class C { static get a?() { return 1 } }", Loader::Ts, 1005, 22, 23, "'(' expected."),
+A (b"class C { get #a?() { return 1 } }", Loader::Ts, 1005, 16, 17, "'(' expected."),
+A (b"class C { get [a]?() { return 1 } }", Loader::Ts, 1005, 17, 18, "'(' expected."),
+A (b"class C { get 'a'?() { return 1 } }", Loader::Ts, 1005, 17, 18, "'(' expected."),
+! (b"class C { constructor }", Loader::Ts, 1005, 22, 23, "'(' expected."),
+! (b"class C { constructor; }", Loader::Ts, 1005, 21, 22, "'(' expected."),
+! (b"class C { constructor = 1 }", Loader::Ts, 1005, 22, 23, "'(' expected."),
+! (b"class C { constructor: number }", Loader::Ts, 1005, 21, 22, "'(' expected."),
+A (b"class C { constructor?() {} }", Loader::Ts, 1005, 21, 22, "'(' expected."),
+A (b"class C { constructor!() {} }", Loader::Ts, 1005, 21, 22, "'(' expected."),
+! (b"class C { constructor?: number }", Loader::Ts, 1005, 21, 22, "'(' expected."),
+= b"class C { constructor<T>() {} }", Loader::Ts  parses
+= b"class C { constructor(): void {} }", Loader::Ts  parses
+= b"class C { constructor(): C; constructor() {} }", Loader::Ts  parses
+= b"class C { constructor();\n constructor() {} }", Loader::Ts  parses
+B b"class C { 'constructor' }", Loader::Ts  parses
+B b"class C { 'constructor' = 1 }", Loader::Ts  parses
+= b"class C { 'constructor'() {} }", Loader::Ts  parses
+= b"class C { 'constructor'?() {} }", Loader::Ts  parses
+A (b"class C { 'constructor'!() {} }", Loader::Ts, 1441, 24, 25, "Cannot start a function call in a type annotation."),
+= b"class C { 'constructor'<T>() {} }", Loader::Ts  parses
+B b"class C { \"constructor\": number }", Loader::Ts  parses
+! (b"class C { static constructor }", Loader::Ts, 1005, 29, 30, "'(' expected."),
+= b"class C { static 'constructor'() {} }", Loader::Ts  parses
+B b"class C { get constructor() { return 1 } }", Loader::Ts  parses
+B b"class C { set constructor(v) {} }", Loader::Ts  parses
+B b"class C { *constructor() {} }", Loader::Ts  parses
+B b"class C { async constructor() {} }", Loader::Ts  parses
+B b"class C { async *constructor() {} }", Loader::Ts  parses
+B b"class C { get 'constructor'() { return 1 } }", Loader::Ts  parses
+= b"class C { constructor() {} constructor() {} }", Loader::Ts  parses
+B b"class C { #constructor }", Loader::Ts  parses
+B b"class C { #constructor() {} }", Loader::Ts  parses
+B b"class C { static prototype }", Loader::Ts  parses
+B b"class C { static prototype() {} }", Loader::Ts  parses
+B b"class C { static 'prototype' = 1 }", Loader::Ts  parses
+B b"class C { static get prototype() { return 1 } }", Loader::Ts  parses
+= b"class C { prototype }", Loader::Ts  parses
+B b"class C { @dec constructor() {} }", Loader::Ts  parses
+= b"class C { @dec get a() { return 1 } @dec set a(v) {} }", Loader::Ts  parses
+= b"class C { @dec m(); m() {} }", Loader::Ts  parses
+= b"class C { m(): void\n n(): void {} }", Loader::Ts  parses
+= b"class C { m()\n {} }", Loader::Ts  parses
+B b"class C { static { await 1 } }", Loader::Ts  parses
+B b"class C { static { return } }", Loader::Ts  parses
+= b"class C { static { yield } }", Loader::Ts  parses
+= b"class C { static { arguments } }", Loader::Ts  parses
+! (b"class C { static {} {} }", Loader::Ts, 1068, 20, 21, "Unexpected token. A constructor, method, accessor, or property was expected."),
+= b"class C { static\n{} }", Loader::Ts  parses
+! (b"class C { static async {} }", Loader::Ts, 1146, 22, 22, "Declaration expected."),
+// parseParameter and parseParameters
+= b"function f(this) {}", Loader::Ts  parses
+= b"function f(this: T) {}", Loader::Ts  parses
+= b"function f(a, this: T) {}", Loader::Ts  parses
+= b"function f(this: T, this: U) {}", Loader::Ts  parses
+~ (b"function f(this?: T) {}", Loader::Ts, 1005, 15, 16, "',' expected."),
+~ (b"function f(this = 1) {}", Loader::Ts, 1005, 16, 17, "',' expected."),
+= (b"function f(...this) {}", Loader::Ts, 1359, 14, 18, "Identifier expected. 'this' is a reserved word that cannot be used here."),
+! (b"function f(public this) {}", Loader::Ts, 1433, 11, 17, "Neither decorators nor modifiers may be applied to 'this' parameters."),
+! (b"function f(readonly this: T) {}", Loader::Ts, 1433, 11, 19, "Neither decorators nor modifiers may be applied to 'this' parameters."),
+! (b"class C { m(@dec this) {} }", Loader::Ts, 1433, 12, 16, "Neither decorators nor modifiers may be applied to 'this' parameters."),
+! (b"class C { m(@dec this: C) {} }", Loader::Ts, 1433, 12, 16, "Neither decorators nor modifiers may be applied to 'this' parameters."),
+! (b"class C { constructor(public this) {} }", Loader::Ts, 1433, 22, 28, "Neither decorators nor modifiers may be applied to 'this' parameters."),
+= b"function f(this,) {}", Loader::Ts  parses
+B b"const a = (this) => 1;", Loader::Ts  parses
+B b"const a = (this: T) => 1;", Loader::Ts  parses
+= b"const a = function (this: T) {};", Loader::Ts  parses
+B b"function f(...a, b) {}", Loader::Ts  parses
+B b"function f(...a,) {}", Loader::Ts  parses
+B b"function f(...a = 1) {}", Loader::Ts  parses
+= b"function f(...a?) {}", Loader::Ts  parses
+= b"function f(...a?: T[]) {}", Loader::Ts  parses
+B b"function f(...a: T[] = []) {}", Loader::Ts  parses
+= (b"function f(......a) {}", Loader::Ts, 1003, 14, 17, "Identifier expected."),
+= (b"function f(... ...a) {}", Loader::Ts, 1003, 15, 18, "Identifier expected."),
+= b"function f(...{ a }) {}", Loader::Ts  parses
+= b"function f(...[a]) {}", Loader::Ts  parses
+B b"declare function f(...a, b);", Loader::Ts  parses
+= b"declare function f(...a,);", Loader::Ts  parses
+= b"declare class C { m(...a,); }", Loader::Ts  parses
+= b"class C { m(...a,); m(...a) {} }", Loader::Ts  parses
+B b"class C { m(...a,) {} }", Loader::Ts  parses
+= b"function f(a?, b) {}", Loader::Ts  parses
+= b"function f(a? = 1) {}", Loader::Ts  parses
+= b"function f(a?: number = 1) {}", Loader::Ts  parses
+= (b"function f(a = 1?) {}", Loader::Ts, 1109, 17, 18, "Expression expected."),
+B b"function f(a: number?) {}", Loader::Ts  parses
+~ (b"function f(a!) {}", Loader::Ts, 1005, 12, 13, "',' expected."),
+~ (b"function f(a!: number) {}", Loader::Ts, 1005, 12, 13, "',' expected."),
+~ (b"function f(a?!) {}", Loader::Ts, 1005, 13, 14, "',' expected."),
+~ (b"function f(a??) {}", Loader::Ts, 1005, 12, 14, "',' expected."),
+~ (b"function f(a = 1: number) {}", Loader::Ts, 1005, 16, 17, "',' expected."),
+= b"function f(a: number = 1 = 2) {}", Loader::Ts  parses
+= b"function f(a, a) {}", Loader::Ts  parses
+! (b"function f(a,, b) {}", Loader::Ts, 1138, 13, 14, "Parameter declaration expected."),
+! (b"function f(, a) {}", Loader::Ts, 1138, 11, 12, "Parameter declaration expected."),
+= b"function f(a,) {}", Loader::Ts  parses
+~ (b"function f(a b) {}", Loader::Ts, 1005, 13, 14, "',' expected."),
+~ (b"function f(a; b) {}", Loader::Ts, 1005, 12, 13, "',' expected."),
+~ (b"function f(a {}", Loader::Ts, 1005, 13, 14, "',' expected."),
+= (b"function f(1) {}", Loader::Ts, 1003, 11, 12, "Identifier expected."),
+= (b"function f('a') {}", Loader::Ts, 1003, 11, 14, "Identifier expected."),
+~ (b"function f(a.b) {}", Loader::Ts, 1005, 12, 13, "',' expected."),
+! (b"function f(#a) {}", Loader::Ts, 18009, 11, 13, "Private identifiers cannot be used as parameters."),
+! (b"function f(class) {}", Loader::Ts, 1390, 11, 16, "'class' is not allowed as a parameter name."),
+! (b"function f(if) {}", Loader::Ts, 1390, 11, 13, "'if' is not allowed as a parameter name."),
+! (b"function f(enum) {}", Loader::Ts, 1390, 11, 15, "'enum' is not allowed as a parameter name."),
+= (b"function f(null) {}", Loader::Ts, 1359, 11, 15, "Identifier expected. 'null' is a reserved word that cannot be used here."),
+= (b"function f(void) {}", Loader::Ts, 1359, 11, 15, "Identifier expected. 'void' is a reserved word that cannot be used here."),
+= b"function f(static) {}", Loader::Ts  parses
+= b"function f(public) {}", Loader::Ts  parses
+= b"function f(let) {}", Loader::Ts  parses
+= b"function f(yield) {}", Loader::Ts  parses
+= b"function f(await) {}", Loader::Ts  parses
+B b"async function f(await) {}", Loader::Ts  parses
+B b"function* g(yield) {}", Loader::Ts  parses
+= b"function f(async) {}", Loader::Ts  parses
+= b"function f(of) {}", Loader::Ts  parses
+= b"function f(type) {}", Loader::Ts  parses
+B b"function f(@dec a) {}", Loader::Ts  parses
+= b"function f(public a) {}", Loader::Ts  parses
+= b"function f(private a: number) {}", Loader::Ts  parses
+= b"function f(readonly a) {}", Loader::Ts  parses
+= b"function f(override a) {}", Loader::Ts  parses
+~ (b"function f(public\n a) {}", Loader::Ts, 1005, 19, 20, "',' expected."),
+B b"function f(static a) {}", Loader::Ts  parses
+B b"function f(declare a) {}", Loader::Ts  parses
+B b"function f(abstract a) {}", Loader::Ts  parses
+B b"function f(async a) {}", Loader::Ts  parses
+B b"function f(export a) {}", Loader::Ts  parses
+B b"function f(accessor a) {}", Loader::Ts  parses
+= (b"function f(const a) {}", Loader::Ts, 1359, 11, 16, "Identifier expected. 'const' is a reserved word that cannot be used here."),
+B b"function f(in a) {}", Loader::Ts  parses
+B b"function f(out a) {}", Loader::Ts  parses
+= (b"function f(default a) {}", Loader::Ts, 1359, 11, 18, "Identifier expected. 'default' is a reserved word that cannot be used here."),
+= b"function f(public public a) {}", Loader::Ts  parses
+= b"function f(public private a) {}", Loader::Ts  parses
+= b"function f(readonly public a) {}", Loader::Ts  parses
+= b"function f(public readonly a) {}", Loader::Ts  parses
+B b"function f(public {a}) {}", Loader::Ts  parses
+B b"function f(public [a]) {}", Loader::Ts  parses
+B b"function f(public ...a) {}", Loader::Ts  parses
+~ (b"function f(...public a) {}", Loader::Ts, 1005, 21, 22, "',' expected."),
+= b"function f(public a?) {}", Loader::Ts  parses
+= b"function f(public = 1) {}", Loader::Ts  parses
+= b"function f(public: number) {}", Loader::Ts  parses
+= b"function f(public, private) {}", Loader::Ts  parses
+= b"function f(readonly) {}", Loader::Ts  parses
+= b"function f(readonly: number, override?: string) {}", Loader::Ts  parses
+= b"class C { constructor(public a) {} }", Loader::Ts  parses
+A (b"class C { constructor(public\n a) {} }", Loader::Ts, 1005, 30, 31, "',' expected."),
+A (b"class C { constructor(readonly\n a) {} }", Loader::Ts, 1005, 32, 33, "',' expected."),
+A (b"class C { constructor(public readonly\n a) {} }", Loader::Ts, 1005, 39, 40, "',' expected."),
+= b"class C { constructor(public public a) {} }", Loader::Ts  parses
+= b"class C { constructor(public private a) {} }", Loader::Ts  parses
+= b"class C { constructor(readonly readonly a) {} }", Loader::Ts  parses
+= b"class C { constructor(readonly public a) {} }", Loader::Ts  parses
+= b"class C { constructor(override readonly a) {} }", Loader::Ts  parses
+= b"class C { constructor(readonly override a) {} }", Loader::Ts  parses
+B b"class C { constructor(static a) {} }", Loader::Ts  parses
+B b"class C { constructor(declare a) {} }", Loader::Ts  parses
+B b"class C { constructor(abstract a) {} }", Loader::Ts  parses
+B b"class C { constructor(async a) {} }", Loader::Ts  parses
+B b"class C { constructor(export a) {} }", Loader::Ts  parses
+B b"class C { constructor(accessor a) {} }", Loader::Ts  parses
+= (b"class C { constructor(const a) {} }", Loader::Ts, 1359, 22, 27, "Identifier expected. 'const' is a reserved word that cannot be used here."),
+B b"class C { constructor(public {a}) {} }", Loader::Ts  parses
+B b"class C { constructor(public [a]) {} }", Loader::Ts  parses
+B b"class C { constructor(public ...a) {} }", Loader::Ts  parses
+A (b"class C { constructor(...public a) {} }", Loader::Ts, 1005, 32, 33, "',' expected."),
+= b"class C { constructor(public a?) {} }", Loader::Ts  parses
+~ (b"class C { constructor(public a!) {} }", Loader::Ts, 1005, 30, 31, "',' expected."),
+= b"class C { constructor(public a = 1) {} }", Loader::Ts  parses
+= b"class C { constructor(public) {} }", Loader::Ts  parses
+= b"class C { constructor(public = 1) {} }", Loader::Ts  parses
+= b"class C { constructor(public: number) {} }", Loader::Ts  parses
+= b"class C { constructor(public, private) {} }", Loader::Ts  parses
+= b"class C { constructor(public?: number) {} }", Loader::Ts  parses
+= b"class C { constructor(@dec public a) {} }", Loader::Ts  parses
+~ (b"class C { constructor(public @dec a) {} }", Loader::Ts, 1005, 29, 30, "',' expected."),
+= b"class C { constructor(public a); constructor(a) {} }", Loader::Ts  parses
+= b"class C { m(public a) {} }", Loader::Ts  parses
+~ (b"class C { m(public\n a) {} }", Loader::Ts, 1005, 20, 21, "',' expected."),
+= b"class C { set s(public a) {} }", Loader::Ts  parses
+= b"declare class C { constructor(public a); }", Loader::Ts  parses
+= b"const o = { m(public a) {} };", Loader::Ts  parses
+B b"const a = (public a) => 1;", Loader::Ts  parses
+= b"const a = (public) => 1;", Loader::Ts  parses
+B b"const a = (readonly a: number) => 1;", Loader::Ts  parses
+= b"const a = function (public a) {};", Loader::Ts  parses
+= b"type F = (public a: number) => void;", Loader::Ts  parses
+= b"type F = new (public a: number) => C;", Loader::Ts  parses
+= b"interface I { m(public a): void }", Loader::Ts  parses
+= b"interface I { new (public a): I }", Loader::Ts  parses
+= b"interface I { (public a): void }", Loader::Ts  parses
+= b"type F = (this: T, a) => void;", Loader::Ts  parses
+= b"type F = (a, this: T) => void;", Loader::Ts  parses
+= b"type F = (...a, b) => void;", Loader::Ts  parses
+= b"type F = (a?, b) => void;", Loader::Ts  parses
+= b"type F = (a = 1) => void;", Loader::Ts  parses
+A (b"type F = (...this) => void;", Loader::Ts, 1359, 13, 17, "Identifier expected. 'this' is a reserved word that cannot be used here."),
+= (b"type F = (@dec a) => void;", Loader::Ts, 1110, 10, 11, "Type expected."),
+// binding patterns of a parameter
+= b"function f({ a }) {}", Loader::Ts  parses
+= b"function f({ a, }) {}", Loader::Ts  parses
+= b"function f({ a: b }) {}", Loader::Ts  parses
+= b"function f({ a = 1 }) {}", Loader::Ts  parses
+= b"function f({ a: b = 1 }) {}", Loader::Ts  parses
+= b"function f({ ...a }) {}", Loader::Ts  parses
+B b"function f({ ...a, }) {}", Loader::Ts  parses
+B b"function f({ ...a, b }) {}", Loader::Ts  parses
+= (b"function f({ ...{ a } }) {}", Loader::Ts, 1003, 16, 17, "Identifier expected."),
+! (b"function f({ ...[a] }) {}", Loader::Ts, 1005, 20, 21, "':' expected."),
+B b"function f({ ...a = 1 }) {}", Loader::Ts  parses
+~ (b"function f({ ...a.b }) {}", Loader::Ts, 1005, 17, 18, "',' expected."),
+~ (b"function f({ a.b }) {}", Loader::Ts, 1005, 14, 15, "',' expected."),
+= (b"function f({ 'a' }) {}", Loader::Ts, 1005, 17, 18, "':' expected."),
+= (b"function f({ 1 }) {}", Loader::Ts, 1005, 15, 16, "':' expected."),
+= (b"function f({ [a] }) {}", Loader::Ts, 1005, 17, 18, "':' expected."),
+= b"function f({ 'a': b, 1: c, [d]: e, 2n: g }) {}", Loader::Ts  parses
+A (b"function f({ class }) {}", Loader::Ts, 1005, 19, 20, "':' expected."),
+A (b"function f({ if }) {}", Loader::Ts, 1005, 16, 17, "':' expected."),
+A (b"function f({ export, default: d }) {}", Loader::Ts, 1005, 19, 20, "':' expected."),
+A (b"function f({ this }) {}", Loader::Ts, 1005, 18, 19, "':' expected."),
+A (b"function f({ null }) {}", Loader::Ts, 1005, 18, 19, "':' expected."),
+A (b"function f({ new }) {}", Loader::Ts, 1005, 17, 18, "':' expected."),
+= b"function f({ static }) {}", Loader::Ts  parses
+= b"function f({ let }) {}", Loader::Ts  parses
+= b"function f({ yield }) {}", Loader::Ts  parses
+= b"function f({ await }) {}", Loader::Ts  parses
+= b"async function f({ await }) {}", Loader::Ts  parses
+= b"function* g({ yield }) {}", Loader::Ts  parses
+= b"function f({ class: c }) {}", Loader::Ts  parses
+A (b"function f({ class = 1 }) {}", Loader::Ts, 1005, 19, 20, "':' expected."),
+= (b"function f({ a: class }) {}", Loader::Ts, 1359, 16, 21, "Identifier expected. 'class' is a reserved word that cannot be used here."),
+= (b"function f({ a: 1 }) {}", Loader::Ts, 1003, 16, 17, "Identifier expected."),
+~ (b"function f({ a: b.c }) {}", Loader::Ts, 1005, 17, 18, "',' expected."),
+= (b"function f({ a: (b) }) {}", Loader::Ts, 1003, 16, 17, "Identifier expected."),
+~ (b"function f({ a b }) {}", Loader::Ts, 1005, 15, 16, "',' expected."),
+~ (b"function f({ a; b }) {}", Loader::Ts, 1005, 14, 15, "',' expected."),
+! (b"function f({ , a }) {}", Loader::Ts, 1180, 13, 14, "Property destructuring pattern expected."),
+! (b"function f({ a,, b }) {}", Loader::Ts, 1180, 15, 16, "Property destructuring pattern expected."),
+~ (b"function f({ a() {} }) {}", Loader::Ts, 1005, 14, 15, "',' expected."),
+~ (b"function f({ get a() {} }) {}", Loader::Ts, 1005, 17, 18, "',' expected."),
+! (b"function f({ #a }) {}", Loader::Ts, 1005, 16, 17, "':' expected."),
+B b"function f({ #a: b }) {}", Loader::Ts  parses
+! (b"function f({ a: #b }) {}", Loader::Ts, 18016, 16, 18, "Private identifiers are not allowed outside class bodies."),
+= (b"function f({ a }: ) {}", Loader::Ts, 1110, 18, 19, "Type expected."),
+= b"function f({ a }?) {}", Loader::Ts  parses
+= b"function f({ a }?: T) {}", Loader::Ts  parses
+~ (b"function f({ a }!) {}", Loader::Ts, 1005, 16, 17, "',' expected."),
+= b"function f([a]) {}", Loader::Ts  parses
+= b"function f([a,]) {}", Loader::Ts  parses
+= b"function f([, a, , b, ,]) {}", Loader::Ts  parses
+= b"function f([a = 1]) {}", Loader::Ts  parses
+= b"function f([...a]) {}", Loader::Ts  parses
+B b"function f([...a,]) {}", Loader::Ts  parses
+B b"function f([...a, b]) {}", Loader::Ts  parses
+B b"function f([...a = 1]) {}", Loader::Ts  parses
+= b"function f([...[a]]) {}", Loader::Ts  parses
+= b"function f([...{ a }]) {}", Loader::Ts  parses
+= (b"function f([... ...a]) {}", Loader::Ts, 1003, 16, 19, "Identifier expected."),
+~ (b"function f([a.b]) {}", Loader::Ts, 1005, 13, 14, "',' expected."),
+! (b"function f([1]) {}", Loader::Ts, 1181, 12, 13, "Array element destructuring pattern expected."),
+! (b"function f([class]) {}", Loader::Ts, 1181, 12, 17, "Array element destructuring pattern expected."),
+! (b"function f([this]) {}", Loader::Ts, 1181, 12, 16, "Array element destructuring pattern expected."),
+~ (b"function f([a b]) {}", Loader::Ts, 1005, 14, 15, "',' expected."),
+~ (b"function f([a; b]) {}", Loader::Ts, 1005, 13, 14, "',' expected."),
+~ (b"function f([a: b]) {}", Loader::Ts, 1005, 13, 14, "',' expected."),
+~ (b"function f([a?]) {}", Loader::Ts, 1005, 13, 14, "',' expected."),
+~ (b"function f([a!]) {}", Loader::Ts, 1005, 13, 14, "',' expected."),
+! (b"function f([#a]) {}", Loader::Ts, 18016, 12, 14, "Private identifiers are not allowed outside class bodies."),
+! (b"function f([(a)]) {}", Loader::Ts, 1181, 12, 13, "Array element destructuring pattern expected."),
+= b"function f([a]?) {}", Loader::Ts  parses
+A (b"let { class } = x;", Loader::Ts, 1005, 12, 13, "':' expected."),
+= b"let { export: e, if: i } = x;", Loader::Ts  parses
+! (b"let [class] = x;", Loader::Ts, 1181, 5, 10, "Array element destructuring pattern expected."),
+A (b"let { a: { class } } = x;", Loader::Ts, 1005, 17, 18, "':' expected."),
+= (b"const a = ({ class }) => 1;", Loader::Ts, 1005, 19, 20, "':' expected."),
+= (b"const a = ([class]) => 1;", Loader::Ts, 1005, 17, 18, "'{' expected."),
+A (b"try {} catch ({ class }) {}", Loader::Ts, 1005, 22, 23, "':' expected."),
+// parseHeritageClauses, parseHeritageClause, parseExpressionWithTypeArguments
+B b"class C extends {}", Loader::Ts  parses
+= b"class C extends {} {}", Loader::Ts  parses
+B b"class C extends {}, B {}", Loader::Ts  parses
+= b"class C extends {} implements I {}", Loader::Ts  parses
+B b"class C extends {} extends B {}", Loader::Ts  parses
+= b"class C extends { a: 1 } {}", Loader::Ts  parses
+= b"class C extends { a: 1 }.a {}", Loader::Ts  parses
+A (b"class C extends {}.a {}", Loader::Ts, 1128, 18, 19, "Declaration or statement expected."),
+A (b"class C extends {}() {}", Loader::Ts, 1005, 21, 22, "'=>' expected."),
+A (b"class C extends {}[a] {}", Loader::Ts, 1005, 22, 23, "';' expected."),
+! (b"class C extends", Loader::Ts, 1005, 15, 15, "'{' expected."),
+= (b"class C extends ;", Loader::Ts, 1109, 16, 17, "Expression expected."),
+= (b"class C extends B", Loader::Ts, 1005, 17, 17, "'{' expected."),
+~ (b"class C extends B;", Loader::Ts, 1005, 17, 18, "',' expected."),
+B b"class C extends B, D {}", Loader::Ts  parses
+B b"class C extends B, {}", Loader::Ts  parses
+B b"class C extends B, {} {}", Loader::Ts  parses
+! (b"class C extends B, {", Loader::Ts, 1005, 20, 20, "'}' expected."),
+B b"class C extends B extends D {}", Loader::Ts  parses
+B b"class C extends B implements I extends D {}", Loader::Ts  parses
+B b"class C implements I extends B {}", Loader::Ts  parses
+B b"class C implements I implements J {}", Loader::Ts  parses
+B b"class C implements {}", Loader::Ts  parses
+B b"class C implements I, {}", Loader::Ts  parses
+! (b"class C implements", Loader::Ts, 1005, 18, 18, "'{' expected."),
+! (b"class C implements I,", Loader::Ts, 1005, 21, 21, "'{' expected."),
+B b"class C extends B, implements I {}", Loader::Ts  parses
+B b"class C extends implements I {}", Loader::Ts  parses
+B b"class C extends extends B {}", Loader::Ts  parses
+B b"class C extends B implements {}", Loader::Ts  parses
+B b"class C extends B implements implements I {}", Loader::Ts  parses
+! (b"class C extends B,, D {}", Loader::Ts, 1109, 18, 19, "Expression expected."),
+= (b"class C extends , B {}", Loader::Ts, 1109, 16, 17, "Expression expected."),
+~ (b"class C extends B D {}", Loader::Ts, 1005, 18, 19, "',' expected."),
+= b"class C extends B.D {}", Loader::Ts  parses
+= b"class C extends B.D<T> {}", Loader::Ts  parses
+A (b"class C extends B<T>.D {}", Loader::Ts, 1477, 17, 20, "An instantiation expression cannot be followed by a property access."),
+~ (b"class C extends B<T><U> {}", Loader::Ts, 1005, 20, 21, "',' expected."),
+= b"class C extends B<> {}", Loader::Ts  parses
+= b"class C extends B<T,> {}", Loader::Ts  parses
+= (b"class C extends B<T {}", Loader::Ts, 1005, 20, 21, "'>' expected."),
+= b"class C extends B?.D {}", Loader::Ts  parses
+= b"class C extends B! {}", Loader::Ts  parses
+= b"class C extends B!.D {}", Loader::Ts  parses
+~ (b"class C extends B<T>! {}", Loader::Ts, 1005, 20, 21, "',' expected."),
+~ (b"class C extends B as any {}", Loader::Ts, 1005, 18, 20, "',' expected."),
+= b"class C extends (B as any) {}", Loader::Ts  parses
+A (b"class C extends <any>B {}", Loader::Ts, 1109, 16, 17, "Expression expected."),
+~ (b"class C extends B satisfies X {}", Loader::Ts, 1005, 18, 27, "',' expected."),
+= b"class C extends B() {}", Loader::Ts  parses
+= b"class C extends B()<T> {}", Loader::Ts  parses
+= b"class C extends B<T>() {}", Loader::Ts  parses
+= b"class C extends B`t` {}", Loader::Ts  parses
+= b"class C extends B<T>`t` {}", Loader::Ts  parses
+= b"class C extends B[0] {}", Loader::Ts  parses
+= b"class C extends new B {}", Loader::Ts  parses
+= b"class C extends new B() {}", Loader::Ts  parses
+= b"class C extends new B<T>() {}", Loader::Ts  parses
+= b"class C extends new B<T> {}", Loader::Ts  parses
+= b"class C extends class {} {}", Loader::Ts  parses
+= b"class C extends class D extends E {} {}", Loader::Ts  parses
+= b"class C extends function () {} {}", Loader::Ts  parses
+= b"class C extends async function () {} {}", Loader::Ts  parses
+! (b"class C extends async () => {} {}", Loader::Ts, 1005, 25, 27, "',' expected."),
+= (b"class C extends () => {} {}", Loader::Ts, 1109, 17, 18, "Expression expected."),
+~ (b"class C extends a => a {}", Loader::Ts, 1005, 18, 20, "',' expected."),
+= b"class C extends (a) {}", Loader::Ts  parses
+= b"class C extends (a, b) {}", Loader::Ts  parses
+= b"class C extends [] {}", Loader::Ts  parses
+= b"class C extends [B][0] {}", Loader::Ts  parses
+= b"class C extends `t` {}", Loader::Ts  parses
+= b"class C extends /re/ {}", Loader::Ts  parses
+= b"class C extends 1 {}", Loader::Ts  parses
+= b"class C extends 1n {}", Loader::Ts  parses
+= b"class C extends 'a' {}", Loader::Ts  parses
+= b"class C extends null {}", Loader::Ts  parses
+= b"class C extends undefined {}", Loader::Ts  parses
+= b"class C extends true {}", Loader::Ts  parses
+= b"class C extends this {}", Loader::Ts  parses
+= b"class C extends this.B {}", Loader::Ts  parses
+! (b"class C extends super {}", Loader::Ts, 1034, 22, 23, "'super' must be followed by an argument list or member access."),
+B b"class C extends super.B {}", Loader::Ts  parses
+B b"class C extends super() {}", Loader::Ts  parses
+= b"class C extends import('a') {}", Loader::Ts  parses
+= b"class C extends import.meta {}", Loader::Ts  parses
+= b"class C extends import.meta.B {}", Loader::Ts  parses
+! (b"class C extends import {}", Loader::Ts, 1109, 16, 22, "Expression expected."),
+= b"class C extends new.target {}", Loader::Ts  parses
+A (b"class C extends !B {}", Loader::Ts, 1109, 16, 17, "Expression expected."),
+A (b"class C extends -B {}", Loader::Ts, 1109, 16, 17, "Expression expected."),
+A (b"class C extends +B {}", Loader::Ts, 1109, 16, 17, "Expression expected."),
+A (b"class C extends ~B {}", Loader::Ts, 1109, 16, 17, "Expression expected."),
+A (b"class C extends typeof B {}", Loader::Ts, 1109, 16, 22, "Expression expected."),
+A (b"class C extends void B {}", Loader::Ts, 1109, 16, 20, "Expression expected."),
+A (b"class C extends delete B {}", Loader::Ts, 1109, 16, 22, "Expression expected."),
+A (b"class C extends ++B {}", Loader::Ts, 1109, 16, 18, "Expression expected."),
+A (b"class C extends --B {}", Loader::Ts, 1109, 16, 18, "Expression expected."),
+~ (b"class C extends B++ {}", Loader::Ts, 1005, 17, 19, "',' expected."),
+! (b"class C extends await B {}", Loader::Ts, 1005, 22, 23, "',' expected."),
+= b"class C extends yield {}", Loader::Ts  parses
+! (b"class C extends yield B {}", Loader::Ts, 1005, 22, 23, "',' expected."),
+A (b"async function f() { class C extends await B {} }", Loader::Ts, 1109, 37, 42, "Expression expected."),
+! (b"function* g() { class C extends yield {} }", Loader::Ts, 1109, 32, 37, "Expression expected."),
+! (b"function* g() { class C extends yield B {} }", Loader::Ts, 1109, 32, 37, "Expression expected."),
+= b"function* g() { class C extends (yield B) {} }", Loader::Ts  parses
+! (b"export class C extends await B {}", Loader::Ts, 1109, 23, 28, "Expression expected."),
+~ (b"class C extends B + D {}", Loader::Ts, 1005, 18, 19, "',' expected."),
+~ (b"class C extends B = D {}", Loader::Ts, 1005, 18, 19, "',' expected."),
+~ (b"class C extends B ? D : E {}", Loader::Ts, 1005, 18, 19, "',' expected."),
+~ (b"class C extends B || D {}", Loader::Ts, 1005, 18, 20, "',' expected."),
+~ (b"class C extends B ?? D {}", Loader::Ts, 1005, 18, 20, "',' expected."),
+~ (b"class C extends B in D {}", Loader::Ts, 1005, 18, 20, "',' expected."),
+~ (b"class C extends B instanceof D {}", Loader::Ts, 1005, 18, 28, "',' expected."),
+A (b"class C extends @dec class {} {}", Loader::Ts, 1109, 16, 17, "Expression expected."),
+! (b"class C extends #p {}", Loader::Ts, 1109, 16, 18, "Expression expected."),
+B b"class C extends B.#p {}", Loader::Ts  parses
+= b"class C extends let {}", Loader::Ts  parses
+= b"class C extends static {}", Loader::Ts  parses
+= b"class C extends async {}", Loader::Ts  parses
+= b"class C extends implements {}", Loader::Ts  parses
+= b"class C extends implements implements I {}", Loader::Ts  parses
+= b"class C extends public {}", Loader::Ts  parses
+= (b"class C extends if {}", Loader::Ts, 1109, 16, 18, "Expression expected."),
+= (b"class C extends var {}", Loader::Ts, 1109, 16, 19, "Expression expected."),
+= (b"class C extends enum {}", Loader::Ts, 1109, 16, 20, "Expression expected."),
+= (b"class C extends = B {}", Loader::Ts, 1109, 16, 17, "Expression expected."),
+= (b"class C extends ) {}", Loader::Ts, 1109, 16, 17, "Expression expected."),
+= (b"class C extends ... B {}", Loader::Ts, 1109, 16, 19, "Expression expected."),
+= b"class implements {}", Loader::Ts  parses
+= b"class implements implements I {}", Loader::Ts  parses
+= b"class implements extends B {}", Loader::Ts  parses
+B b"class extends {}", Loader::Ts  parses
+B b"class extends extends B {}", Loader::Ts  parses
+= b"class C implements I {}", Loader::Ts  parses
+= b"class C implements I<T>, a.J, a.b.K<T, U> {}", Loader::Ts  parses
+= b"class C implements I() {}", Loader::Ts  parses
+= b"class C implements I[0] {}", Loader::Ts  parses
+= b"class C implements new I {}", Loader::Ts  parses
+= b"class C implements (I) {}", Loader::Ts  parses
+A (b"class C implements typeof I {}", Loader::Ts, 1109, 19, 25, "Expression expected."),
+~ (b"class C implements keyof I {}", Loader::Ts, 1005, 25, 26, "',' expected."),
+~ (b"class C implements readonly I[] {}", Loader::Ts, 1005, 28, 29, "',' expected."),
+! (b"class C implements I[] {}", Loader::Ts, 1011, 21, 21, "An element access expression should take an argument."),
+~ (b"class C implements I | J {}", Loader::Ts, 1005, 21, 22, "',' expected."),
+~ (b"class C implements I & J {}", Loader::Ts, 1005, 21, 22, "',' expected."),
+= b"class C implements { a: 1 } {}", Loader::Ts  parses
+= b"class C implements [I] {}", Loader::Ts  parses
+= b"class C implements string {}", Loader::Ts  parses
+! (b"class C implements void {}", Loader::Ts, 1109, 19, 23, "Expression expected."),
+= b"class C implements null {}", Loader::Ts  parses
+= b"class C implements this {}", Loader::Ts  parses
+= b"class C implements 'a' {}", Loader::Ts  parses
+= b"class C implements 1 {}", Loader::Ts  parses
+= (b"class C implements () => void {}", Loader::Ts, 1109, 20, 21, "Expression expected."),
+~ (b"class C implements I? {}", Loader::Ts, 1005, 20, 21, "',' expected."),
+= b"class C implements I! {}", Loader::Ts  parses
+~ (b"class C implements I<T>! {}", Loader::Ts, 1005, 23, 24, "',' expected."),
+= b"class C implements I.J.K {}", Loader::Ts  parses
+= b"class C implements I?.J {}", Loader::Ts  parses
+= b"class C implements I.#p {}", Loader::Ts  parses
+= b"class C implements import('a') {}", Loader::Ts  parses
+= b"class C implements import('a').I {}", Loader::Ts  parses
+= b"class C implements I<> {}", Loader::Ts  parses
+= b"class C implements I<T,> {}", Loader::Ts  parses
+B b"class C implements I, {}", Loader::Ts  parses
+~ (b"class C implements I J {}", Loader::Ts, 1005, 21, 22, "',' expected."),
+A (b"class C implements !I {}", Loader::Ts, 1109, 19, 20, "Expression expected."),
+B b"class C implements I extends B {}", Loader::Ts  parses
+A (b"class C implements super {}", Loader::Ts, 1034, 25, 26, "'super' must be followed by an argument list or member access."),
+A (b"class C implements super<T> {}", Loader::Ts, 1034, 24, 25, "'super' must be followed by an argument list or member access."),
+= b"class C implements class {} {}", Loader::Ts  parses
+= b"class C implements function () {} {}", Loader::Ts  parses
+~ (b"class C implements I as J {}", Loader::Ts, 1005, 21, 23, "',' expected."),
+A (b"class C implements a.<T> {}", Loader::Ts, 1003, 21, 22, "Identifier expected."),
+= (b"class C implements a. {}", Loader::Ts, 1003, 22, 23, "Identifier expected."),
+A (b"class C implements a.b<T>.c {}", Loader::Ts, 1477, 22, 25, "An instantiation expression cannot be followed by a property access."),
+= b"const k = class extends B {};", Loader::Ts  parses
+A (b"const k = class extends !B {};", Loader::Ts, 1109, 24, 25, "Expression expected."),
+B b"const k = class extends B, D {};", Loader::Ts  parses
+= b"const k = class implements I {};", Loader::Ts  parses
+= b"const k = class K extends {} {};", Loader::Ts  parses
+= b"export default class extends B {}", Loader::Ts  parses
+A (b"export default class extends !B {}", Loader::Ts, 1109, 29, 30, "Expression expected."),
+A (b"declare class C extends !B {}", Loader::Ts, 1109, 24, 25, "Expression expected."),
+B b"declare class C extends B, D {}", Loader::Ts  parses
+B b"declare class C extends B extends D {}", Loader::Ts  parses
+= b"abstract class C extends B implements I {}", Loader::Ts  parses
+= b"@dec class C extends B {}", Loader::Ts  parses
+= b"interface I extends A {}", Loader::Ts  parses
+= b"interface I extends A, B<T>, c.D {}", Loader::Ts  parses
+= b"interface I extends {}", Loader::Ts  parses
+! (b"interface I extends", Loader::Ts, 1005, 19, 19, "'{' expected."),
+= b"interface I extends A, {}", Loader::Ts  parses
+! (b"interface I extends A,, B {}", Loader::Ts, 1109, 22, 23, "Expression expected."),
+~ (b"interface I extends A B {}", Loader::Ts, 1005, 22, 23, "',' expected."),
+= b"interface I extends A extends B {}", Loader::Ts  parses
+= b"interface I implements A {}", Loader::Ts  parses
+= b"interface I extends A implements B {}", Loader::Ts  parses
+= b"interface I extends A() {}", Loader::Ts  parses
+= b"interface I extends A[0] {}", Loader::Ts  parses
+A (b"interface I extends !A {}", Loader::Ts, 1109, 20, 21, "Expression expected."),
+A (b"interface I extends typeof A {}", Loader::Ts, 1109, 20, 26, "Expression expected."),
+A (b"interface I extends keyof A {}", Loader::Ts, 1005, 26, 27, "',' expected."),
+A (b"interface I extends A | B {}", Loader::Ts, 1005, 22, 23, "',' expected."),
+A (b"interface I extends A[] {}", Loader::Ts, 1011, 22, 22, "An element access expression should take an argument."),
+= b"interface I extends string {}", Loader::Ts  parses
+A (b"interface I extends void {}", Loader::Ts, 1109, 20, 24, "Expression expected."),
+= b"interface I extends 'a' {}", Loader::Ts  parses
+= b"interface I extends { a: 1 } {}", Loader::Ts  parses
+= b"interface I extends (A) {}", Loader::Ts  parses
+= b"interface I extends new A {}", Loader::Ts  parses
+= b"interface I extends A! {}", Loader::Ts  parses
+= b"interface I extends A?.B {}", Loader::Ts  parses
+= b"interface I extends A.B.C<T> {}", Loader::Ts  parses
+A (b"interface I extends A<T>.B {}", Loader::Ts, 1477, 21, 24, "An instantiation expression cannot be followed by a property access."),
+= b"interface I extends A<> {}", Loader::Ts  parses
+= b"interface I extends A<T,> {}", Loader::Ts  parses
+= b"interface I extends import('a').A {}", Loader::Ts  parses
+= b"interface I extends this {}", Loader::Ts  parses
+= b"interface I extends class {} {}", Loader::Ts  parses
+= b"interface I<T> extends A<T> {}", Loader::Ts  parses
+= b"declare class C { } interface I extends C {}", Loader::Ts  parses
+// decorators: parseDecorator, parseDecoratorExpression
+= b"class C { @dec x }", Loader::Ts  parses
+= b"class C { @dec() x }", Loader::Ts  parses
+= b"class C { @a.b.c x }", Loader::Ts  parses
+= b"class C { @a.b() x }", Loader::Ts  parses
+= b"class C { @a().b x }", Loader::Ts  parses
+= (b"class C { @a[0] x }", Loader::Ts, 1005, 16, 17, "';' expected."),
+= b"class C { @a['b']() {} }", Loader::Ts  parses
+= b"class C { @(a) x }", Loader::Ts  parses
+= b"class C { @(a, b) x }", Loader::Ts  parses
+= b"class C { @new A x }", Loader::Ts  parses
+= b"class C { @new A() x }", Loader::Ts  parses
+= b"class C { @class {} x }", Loader::Ts  parses
+= b"class C { @function () {} x }", Loader::Ts  parses
+! (b"class C { @a<T> x }", Loader::Ts, 1146, 12, 12, "Declaration expected."),
+= b"class C { @a<T>() x }", Loader::Ts  parses
+= b"class C { @a! x }", Loader::Ts  parses
+= b"class C { @a!.b x }", Loader::Ts  parses
+= b"class C { @a?.b x }", Loader::Ts  parses
+= b"class C { @a?.() x }", Loader::Ts  parses
+= b"class C { @a`t` x }", Loader::Ts  parses
+A (b"class C { @!a x }", Loader::Ts, 1109, 11, 12, "Expression expected."),
+A (b"class C { @-a x }", Loader::Ts, 1109, 11, 12, "Expression expected."),
+A (b"class C { @typeof a x }", Loader::Ts, 1109, 11, 17, "Expression expected."),
+A (b"class C { @void a x }", Loader::Ts, 1109, 11, 15, "Expression expected."),
+A (b"class C { @<T>a x }", Loader::Ts, 1109, 11, 12, "Expression expected."),
+A (b"class C { @++a x }", Loader::Ts, 1109, 11, 13, "Expression expected."),
+! (b"class C { @a++ x }", Loader::Ts, 1146, 12, 12, "Declaration expected."),
+! (b"class C { @a + b x }", Loader::Ts, 1146, 12, 12, "Declaration expected."),
+! (b"class C { @a = b }", Loader::Ts, 1146, 12, 12, "Declaration expected."),
+! (b"class C { @await a x }", Loader::Ts, 1434, 17, 18, "Unexpected keyword or identifier."),
+B b"class C { @yield x }", Loader::Ts  parses
+A (b"async function f() { class C { @await a x } }", Loader::Ts, 1109, 32, 37, "Expression expected."),
+! (b"async function f() { class C { @await x } }", Loader::Ts, 1109, 32, 37, "Expression expected."),
+= b"class C { @this.a x }", Loader::Ts  parses
+B b"class C { @super.a x }", Loader::Ts  parses
+= b"class C { @1 x }", Loader::Ts  parses
+= b"class C { @'a' x }", Loader::Ts  parses
+= b"class C { @[a] x }", Loader::Ts  parses
+= b"class C { @{} x }", Loader::Ts  parses
+B b"class C { @#p x }", Loader::Ts  parses
+= b"class C { @a.#p x }", Loader::Ts  parses
+! (b"class C { @ x }", Loader::Ts, 1146, 13, 13, "Declaration expected."),
+! (b"class C { @@a x }", Loader::Ts, 1109, 13, 13, "Expression expected."),
+= b"class C { @a @b x }", Loader::Ts  parses
+= b"class C { @a\n@b\nx }", Loader::Ts  parses
+= b"class C { @a\nx }", Loader::Ts  parses
+= b"class C { @import('a') x }", Loader::Ts  parses
+= b"class C { @import.meta x }", Loader::Ts  parses
+= b"@dec class C {}", Loader::Ts  parses
+A (b"@!dec class C {}", Loader::Ts, 1109, 1, 2, "Expression expected."),
+= b"@dec export class C {}", Loader::Ts  parses
+= b"export @dec class C {}", Loader::Ts  parses
+= b"@dec export default class {}", Loader::Ts  parses
+= b"export default @dec class {}", Loader::Ts  parses
+B b"@a export @b class C {}", Loader::Ts  parses
+= b"@dec abstract class C {}", Loader::Ts  parses
+= b"@dec declare class C {}", Loader::Ts  parses
+B b"@dec function f() {}", Loader::Ts  parses
+B b"@dec let x;", Loader::Ts  parses
+B b"@dec interface I {}", Loader::Ts  parses
+B b"@dec enum E {}", Loader::Ts  parses
+B b"@dec type T = 1;", Loader::Ts  parses
+B b"@dec namespace N {}", Loader::Ts  parses
+! (b"@dec", Loader::Ts, 1146, 4, 4, "Declaration expected."),
+= b"const k = @dec class {};", Loader::Ts  parses
+A (b"const k = @!dec class {};", Loader::Ts, 1109, 11, 12, "Expression expected."),
+= b"class C { m(@dec a, @dec() b, @a.b c, @(d) e) {} }", Loader::Ts  parses
+A (b"class C { m(@!dec a) {} }", Loader::Ts, 1109, 13, 14, "Expression expected."),
+= (b"class C { m(@dec) {} }", Loader::Ts, 1003, 16, 17, "Identifier expected."),
+= b"class C { m(@dec ...a) {} }", Loader::Ts  parses
+= (b"class C { m(...@dec a) {} }", Loader::Ts, 1003, 15, 16, "Identifier expected."),
+= b"class C { m(@dec { a }) {} }", Loader::Ts  parses
+= b"class C { m(@dec @dec2 a) {} }", Loader::Ts  parses
+= b"class C { constructor(@dec a) {} }", Loader::Ts  parses
+B b"function f(@dec a) {}", Loader::Ts  parses
+B b"const o = { m(@dec a) {} };", Loader::Ts  parses
+! (b"const a = (@dec a) => 1;", Loader::Ts, 1109, 15, 15, "Expression expected."),
+! (b"const o = { @dec m() {} };", Loader::Ts, 1136, 12, 13, "Property assignment expected."),
+! (b"const o = { @dec a: 1 };", Loader::Ts, 1136, 12, 13, "Property assignment expected."),
+// object literal members with class syntax (parseObjectLiteralElement)
+B b"const o = { public a: 1 };", Loader::Ts  parses
+B b"const o = { static a: 1 };", Loader::Ts  parses
+B b"const o = { readonly a: 1 };", Loader::Ts  parses
+B b"const o = { async a: 1 };", Loader::Ts  parses
+B b"const o = { public m() {} };", Loader::Ts  parses
+B b"const o = { static m() {} };", Loader::Ts  parses
+B b"const o = { declare m() {} };", Loader::Ts  parses
+B b"const o = { a?: 1 };", Loader::Ts  parses
+B b"const o = { a!: 1 };", Loader::Ts  parses
+B b"const o = { m?() {} };", Loader::Ts  parses
+B b"const o = { m!() {} };", Loader::Ts  parses
+B b"const o = { a? };", Loader::Ts  parses
+B b"const o = { a! };", Loader::Ts  parses
+= (b"const o = { get a?() { return 1 } };", Loader::Ts, 1005, 17, 18, "'(' expected."),
+B b"const o = { m(); };", Loader::Ts  parses
+B b"const o = { m() };", Loader::Ts  parses
+= b"const o = { m<T>(a: T): T { return a } };", Loader::Ts  parses
+= b"const o = { get a<T>() { return 1 } };", Loader::Ts  parses
+B b"const o = { get a(x) { return 1 } };", Loader::Ts  parses
+B b"const o = { set a() {} };", Loader::Ts  parses
+B b"const o = { a = 1 };", Loader::Ts  parses
+= (b"const o = { [k: string]: 1 };", Loader::Ts, 1005, 14, 15, "']' expected."),
+= b"const o = { constructor() {}, 'constructor': 1 };", Loader::Ts  parses
+B b"const o = { #a: 1 };", Loader::Ts  parses
+~ (b"const o = { a: 1; b: 2 };", Loader::Ts, 1005, 16, 17, "',' expected."),
+// JavaScript files: the same productions
+B b"class C { public x }", Loader::Js  parses
+B b"class C { x?: number }", Loader::Js  parses
+B b"class C { x! }", Loader::Js  parses
+B b"class C { m(): void {} }", Loader::Js  parses
+B b"class C { constructor(public a) {} }", Loader::Js  parses
+B b"class C { declare x }", Loader::Js  parses
+B b"class C { abstract x }", Loader::Js  parses
+B b"class C { readonly x }", Loader::Js  parses
+B b"class C { [k: string]: any }", Loader::Js  parses
+! (b"class C { static static x }", Loader::Js, 1434, 17, 23, "Unexpected keyword or identifier."),
+= (b"class C { get a?() { return 1 } }", Loader::Js, 1005, 15, 16, "'(' expected."),
+B b"class C implements I {}", Loader::Js  parses
+B b"class C extends B<T> {}", Loader::Js  parses
+B b"class C<T> {}", Loader::Js  parses
+A (b"class C extends !B {}", Loader::Js, 1109, 16, 17, "Expression expected."),
+= b"class C extends {} {}", Loader::Js  parses
+B b"class C extends B, D {}", Loader::Js  parses
+B b"function f(a?) {}", Loader::Js  parses
+B b"function f(a: number) {}", Loader::Js  parses
+B b"function f(this) {}", Loader::Js  parses
+B b"function f(public a) {}", Loader::Js  parses
+B b"function f<T>() {}", Loader::Js  parses
+B b"function f(): void {}", Loader::Js  parses
+A (b"function f({ class }) {}", Loader::Js, 1005, 19, 20, "':' expected."),
+B b"function f(...a, b) {}", Loader::Js  parses
+B b"function f(...a,) {}", Loader::Js  parses
+B b"class C { m(); }", Loader::Js  parses
+= b"class C { accessor x }", Loader::Js  parses
+B b"class C { @dec x }", Loader::Js  parses
+= b"class C { static {} }", Loader::Js  parses
+! (b"class C { x y }", Loader::Js, 1434, 10, 11, "Unexpected keyword or identifier."),
+! (b"class C { m!() {} }", Loader::Js, 1441, 12, 13, "Cannot start a function call in a type annotation."),
+! (b"class C { constructor?() {} }", Loader::Js, 1005, 21, 22, "'(' expected."),

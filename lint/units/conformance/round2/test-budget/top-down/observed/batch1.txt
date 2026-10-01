@@ -1,0 +1,46 @@
+### 2026-10-01T15:22:32Z glue: release 1.4.3-canary.1+367d939d9, cold: the data pages of the corpus and the fixtures are put out of the page cache
+evicted 22219 files, 33631134 bytes, in 0.5 s
+glue release cold load 294.61:  106 pass 0 fail Ran 106 tests across 1 file. [24.51s] TIME wall 24.554 s user 2.768 s sys 0.859 s exit 0 sanitizer-lines 0
+glue release warm1 load 296.57:  106 pass 0 fail Ran 106 tests across 1 file. [4.46s] TIME wall 4.551 s user 2.082 s sys 0.474 s exit 0 sanitizer-lines 0
+glue release warm2 load 296.57:  106 pass 0 fail Ran 106 tests across 1 file. [3.43s] TIME wall 3.790 s user 1.856 s sys 0.437 s exit 0 sanitizer-lines 0
+glue release-ci load 293.72:  106 pass 0 fail Ran 106 tests across 1 file. [3.47s] TIME wall 3.486 s user 2.170 s sys 0.622 s exit 0 sanitizer-lines 0
+glue release-ci-exact load 292.86: 106 pass 0 fail Ran 106 tests across 1 file. [4.54s] TIME wall 4.570 s user 2.391 s sys 0.680 s exit 0 sanitizer-lines 0
+### 2026-10-01T15:23:15Z glue: debug 1.4.3-debug+3110ce85c
+glue debug load 381.46:  102 pass 1 skip 3 fail Ran 106 tests across 1 file. [101.22s] TIME wall 101.434 s user 74.274 s sys 4.606 s exit 1 sanitizer-lines 0
+(pass) default check > stderr is read in the plain format, chain lines too: the first section is the oracle's, and that is no pass [10902.22ms]
+(pass) default check > a command that lints gets the written unit as its operand, and no diagnostic passes an instance without errors [9196.75ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: the exit code of a refusal [7666.44ms]
+(fail) reference > the list has the instances of the reference's run: 14,915, of which 12,797 run and 2,118 are skipped [7310.31ms]
+(fail) reference > the list has the instances of the reference's run: 14,915, of which 12,797 run and 2,118 are skipped [7310.31ms]
+(fail) enumerator > the instances of one of 40 cases are their lines of the list: group 1 [6822.68ms]
+(fail) enumerator > the instances of one of 40 cases are their lines of the list: group 1 [6822.68ms]
+(pass) default check > the probe: a command that lints [5979.63ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: an exit code that is none of 0, 1 and 2 [5889.19ms]
+(fail) error baselines > read and written again, the bytes are the same: group 10 [5206.43ms]
+(fail) error baselines > read and written again, the bytes are the same: group 10 [5206.43ms]
+(pass) default check > never equal to an oracle without errors: a stand-in [4655.50ms]
+(pass) error baselines > read and written again, the bytes are the same: group 1 [4469.16ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: an error and the exit code 0 [4204.26ms]
+(fail) reference > the list has the instances of the reference's run: 14,915, of which 12,797 run and 2,118 are skipped [7310.31ms]
+(fail) enumerator > the instances of one of 40 cases are their lines of the list: group 1 [6822.68ms]
+(fail) error baselines > read and written again, the bytes are the same: group 10 [5206.43ms]
+(fail) reference > the list has the instances of the reference's run: 14,915, of which 12,797 run and 2,118 are skipped [7310.31ms]
+(fail) enumerator > the instances of one of 40 cases are their lines of the list: group 1 [6822.68ms]
+(fail) error baselines > read and written again, the bytes are the same: group 10 [5206.43ms]
+glue debug-leak load 311.24:  105 pass 1 skip 0 fail Ran 106 tests across 1 file. [87.52s] TIME wall 89.055 s user 79.200 s sys 4.703 s exit 0 sanitizer-lines 0
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: an exit code that is none of 0, 1 and 2 [12350.79ms]
+(pass) default check > stderr is read in the plain format, chain lines too: the first section is the oracle's, and that is no pass [9903.98ms]
+(pass) default check > a command that lints gets the written unit as its operand, and no diagnostic passes an instance without errors [8702.61ms]
+(pass) default check > the probe: a command that lints [6537.77ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: a file that is not of the instance [5655.54ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: a signal [4740.45ms]
+(pass) error baselines > read and written again, the bytes are the same: group 1 [4513.18ms]
+(pass) default check > never equal to an oracle without errors: a stand-in [4317.98ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: the exit code of a refusal [4272.94ms]
+(pass) error baselines > read and written again, the bytes are the same: group 4 [3884.08ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: an error of the command [3872.26ms]
+(pass) default check > a command that runs its operand gets no instance [3853.51ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: no error and the exit code 2 [3755.01ms]
+(pass) reference > the list has the instances of the reference's run: 14,915, of which 12,797 run and 2,118 are skipped [3708.54ms]
+glue debug-ci load 468.51:  105 pass 1 skip 0 fail Ran 106 tests across 1 file. [130.21s] TIME wall 131.410 s user 113.373 s sys 4.877 s exit 0 sanitizer-lines 0
+### 2026-10-01T15:28:47Z done

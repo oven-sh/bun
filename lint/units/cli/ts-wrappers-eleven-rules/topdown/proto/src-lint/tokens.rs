@@ -294,26 +294,30 @@ pub(crate) fn key_until(
         if token.start >= end {
             break;
         }
-        if token.end > end {
-            return None;
-        }
-        let raw = source.get(token.start as usize..token.end as usize)?;
-        // `>>` closes two lists of type arguments for typescript-eslint and is one operator elsewhere: each `>` and `=` of such a token is compared alone.
-        if !token.opaque && raw.len() > 1 && raw.first() == Some(&b'>') {
+        let raw = source.get(token.start as usize..token.end.min(end) as usize)?;
+        // `>>` closes two lists of type arguments for typescript-eslint and is one operator elsewhere: each `>` and `=` of such a token is compared alone, and the node may end inside it.
+        if !token.opaque && token.end - token.start > 1 && raw.first() == Some(&b'>') {
             for byte in raw {
                 key.extend_from_slice(&[0, 1, 0, 0, 0, *byte]);
             }
-            continue;
-        }
-        let spelled = if token.opaque || !cooked {
-            None
         } else {
-            spelled_word(raw)
-        };
-        let text = spelled.as_deref().unwrap_or(raw);
-        key.push(u8::from(token.opaque));
-        key.extend_from_slice(&u32::try_from(text.len()).ok()?.to_le_bytes());
-        key.extend_from_slice(text);
+            if token.end > end {
+                return None;
+            }
+            let spelled = if token.opaque || !cooked {
+                None
+            } else {
+                spelled_word(raw)
+            };
+            let text = spelled.as_deref().unwrap_or(raw);
+            key.push(u8::from(token.opaque));
+            key.extend_from_slice(&u32::try_from(text.len()).ok()?.to_le_bytes());
+            key.extend_from_slice(text);
+        }
+        // The last token of the node: nothing after it is read, the text may end there.
+        if token.end >= end {
+            break;
+        }
     }
     Some(key)
 }

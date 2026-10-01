@@ -651,6 +651,9 @@ impl<'p, 'a> Context<'p, 'a> {
     pub(crate) fn tokens_of(&self, expr: &Expr) -> Option<Vec<u8>> {
         let start = offset_of(self.node_start(expr))?;
         let end = self.node_end(expr)?;
+        if start >= end {
+            return None;
+        }
         let spans = tokens::spans_under(self.text(), &[expr], self.stack_check)?;
         let mut log = Log::init();
         let mut tokens = Tokens::new(&mut log, self.source, self.parsed.arena, &spans, start);

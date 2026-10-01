@@ -298,14 +298,15 @@ This section says what the crate got so that cargo compiles them; the rows are i
   of `ast/` and the two of `scanner/` read in place beside layers 1 and 2, against the real `bun_core` and
   `bun_collections`, the rust lints of the workspace denied, with the contract's `List` and the bare enum `Arg`: exit
   0, no warning.
-- `core/golang.rs` and `ast/diagnostic.rs` as committed, alone (both name `std` only): `rustc` with the rust lints of
-  the workspace denied, as a library and with `--test`: exit 0, no warning; the test `list_is_a_go_slice` passes, and
-  fails at the nil list when the body of `sub` is the contract's.
+- `core/golang.rs` and `ast/diagnostic.rs` as committed, alone (both name `std` only): `rustc` and `clippy-driver`
+  (the clippy table of the workspace, the repository's `clippy.toml`) with the rust lints of the workspace denied, as
+  a library and with `--test`: exit 0, no warning; the test `list_is_a_go_slice` passes, and fails at the nil list
+  when the body of `sub` is the contract's.
 - `rustfmt --check --edition 2024 src/typecheck/lib.rs` (it follows every `mod` line): exit 0.
   `python3 /workspace/notes/lint/tools/undeclared.py src/typecheck`: 76 of 179 files are reached, none of `ast/` or
   `scanner/` is outside.
-- Not looked at: clippy on the new body of `sub` and on the test; `ast/tests.rs` (`#[cfg(test)]`, which `cargo check`
-  does not compile: it imports `crate::core::{List, new_text_range}`); any body of `ast/` against upstream.
+- Not looked at: clippy on the 28 files of round 1; `ast/tests.rs` (`#[cfg(test)]`, which `cargo check` does not
+  compile: it imports `crate::core::{List, new_text_range}`); any body of `ast/` against upstream.
 
 ### What waits
 

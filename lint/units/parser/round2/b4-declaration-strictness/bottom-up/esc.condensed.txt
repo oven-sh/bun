@@ -1,0 +1,134 @@
+## TS1260 escaped keyword
+"v\\u0061r x = 1;" [ts]  ||  tsc @0+8 TS1260 Keywords cannot contain escape characters.  ||  bun @0+8 Unexpected v\u0061r  ||  lint @0+8 Unexpected v\u0061r  => TS1128 @0+8 Declaration or statement expected.
+"\\u0076ar x = 1;" [ts]  ||  tsc @0+8 TS1260 Keywords cannot contain escape characters.  ||  bun @0+8 Unexpected \u0076ar  ||  lint @0+8 Unexpected \u0076ar  => TS1128 @0+8 Declaration or statement expected.
+"va\\u{72} x = 1;" [ts]  ||  tsc @0+8 TS1260 Keywords cannot contain escape characters.  ||  bun @0+8 Unexpected va\u{72}  ||  lint @0+8 Unexpected va\u{72}  => TS1128 @0+8 Declaration or statement expected.
+"c\\u006fnst x = 1;" [ts]  ||  tsc @0+10 TS1260 Keywords cannot contain escape characters.  ||  bun @0+10 Unexpected c\u006fnst  ||  lint @0+10 Unexpected c\u006fnst  => TS1128 @0+10 Declaration or statement expected.
+"\\u0069f (x) {}" [ts]  ||  tsc @0+7 TS1260 Keywords cannot contain escape characters.  ||  bun @0+7 Unexpected \u0069f  ||  lint @0+7 Unexpected \u0069f  => TS1128 @0+7 Declaration or statement expected.
+"f\\u006fr (;;) {}" [ts]  ||  tsc @0+8 TS1260 Keywords cannot contain escape characters.  ||  bun @0+8 Unexpected f\u006fr  ||  lint @0+8 Unexpected f\u006fr  => TS1128 @0+8 Declaration or statement expected.
+"whil\\u0065 (x) {}" [ts]  ||  tsc @0+10 TS1260 Keywords cannot contain escape characters.  ||  bun @0+10 Unexpected whil\u0065  ||  lint @0+10 Unexpected whil\u0065  => TS1128 @0+10 Declaration or statement expected.
+"d\\u006f {} while (x)" [ts]  ||  tsc @0+7 TS1260 Keywords cannot contain escape characters.  ||  bun @0+7 Unexpected d\u006f  ||  lint @0+7 Unexpected d\u006f  => TS1128 @0+7 Declaration or statement expected.
+"r\\u0065turn;" [ts]  ||  tsc @0+11 TS1260 Keywords cannot contain escape characters.  ||  bun @0+11 Unexpected r\u0065turn  ||  lint @0+11 Unexpected r\u0065turn  => TS1128 @0+11 Declaration or statement expected.
+"function f() { r\\u0065turn 1; }" [ts]  ||  tsc @15+11 TS1260 Keywords cannot contain escape characters.  ||  bun @15+11 Unexpected r\u0065turn  ||  lint @15+11 Unexpected r\u0065turn  => TS1128 @15+11 Declaration or statement expected.
+"thr\\u006fw x;" [ts]  ||  tsc @0+10 TS1260 Keywords cannot contain escape characters.  ||  bun @0+10 Unexpected thr\u006fw  ||  lint @0+10 Unexpected thr\u006fw  => TS1128 @0+10 Declaration or statement expected.
+"tr\\u0079 {} catch {}" [ts]  ||  tsc @0+8 TS1260 Keywords cannot contain escape characters.  ||  bun @0+8 Unexpected tr\u0079  ||  lint @0+8 Unexpected tr\u0079  => TS1128 @0+8 Declaration or statement expected.
+"try {} c\\u0061tch {}" [ts]  ||  tsc @7+10 TS1260 Keywords cannot contain escape characters.  ||  bun @7+10 Expected "finally" but found "c\u0061tch"  ||  lint @7+10 Expected "finally" but found "c\u0061tch"  => TS1005 @7+10 'finally' expected.
+"try {} fin\\u0061lly {}" [ts]  ||  tsc @7+12 TS1260 Keywords cannot contain escape characters.  ||  bun @7+12 Expected "finally" but found "fin\u0061lly"  ||  lint @7+12 Expected "finally" but found "fin\u0061lly"  => TS1005 @7+12 'finally' expected.
+"if (x) {} \\u0065lse {}" [ts]  ||  tsc @10+9 TS1260 Keywords cannot contain escape characters.  ||  bun @10+9 Unexpected \u0065lse  ||  lint @10+9 Unexpected \u0065lse  => TS1128 @10+9 Declaration or statement expected.
+"sw\\u0069tch (x) {}" [ts]  ||  tsc @0+11 TS1260 Keywords cannot contain escape characters.  ||  bun @0+11 Unexpected sw\u0069tch  ||  lint @0+11 Unexpected sw\u0069tch  => TS1128 @0+11 Declaration or statement expected.
+"switch (x) { c\\u0061se 1: }" [ts]  ||  tsc @13+9 TS1260 Keywords cannot contain escape characters.  ||  bun @13+9 Expected "case" but found "c\u0061se"  ||  lint @13+9 Expected "case" but found "c\u0061se"  => TS1005 @13+9 'case' expected.
+"switch (x) { d\\u0065fault: }" [ts]  ||  tsc @13+12 TS1260 Keywords cannot contain escape characters.  ||  bun @13+12 Expected "case" but found "d\u0065fault" / @25+1 Unexpected :  ||  lint @13+12 Expected "case" but found "d\u0065fault"  => TS1005 @13+12 'case' expected.  (2 messages)
+"br\\u0065ak;" [ts]  ||  tsc @0+10 TS1260 Keywords cannot contain escape characters.  ||  bun @0+10 Unexpected br\u0065ak  ||  lint @0+10 Unexpected br\u0065ak  => TS1128 @0+10 Declaration or statement expected.
+"for (;;) { br\\u0065ak; }" [ts]  ||  tsc @11+10 TS1260 Keywords cannot contain escape characters.  ||  bun @11+10 Unexpected br\u0065ak  ||  lint @11+10 Unexpected br\u0065ak  => TS1128 @11+10 Declaration or statement expected.
+"for (;;) { c\\u006fntinue; }" [ts]  ||  tsc @11+13 TS1260 Keywords cannot contain escape characters.  ||  bun @11+13 Unexpected c\u006fntinue  ||  lint @11+13 Unexpected c\u006fntinue  => TS1128 @11+13 Declaration or statement expected.
+"d\\u0065bugger;" [ts]  ||  tsc @0+13 TS1260 Keywords cannot contain escape characters.  ||  bun @0+13 Unexpected d\u0065bugger  ||  lint @0+13 Unexpected d\u0065bugger  => TS1128 @0+13 Declaration or statement expected.
+"w\\u0069th (x) {}" [ts]  ||  tsc @0+9 TS1260 Keywords cannot contain escape characters.  ||  bun @0+9 Unexpected w\u0069th  ||  lint @0+9 Unexpected w\u0069th  => TS1128 @0+9 Declaration or statement expected.
+"cl\\u0061ss C {}" [ts]  ||  tsc @0+10 TS1260 Keywords cannot contain escape characters.  ||  bun @0+10 Unexpected cl\u0061ss  ||  lint @0+10 Unexpected cl\u0061ss  => TS1128 @0+10 Declaration or statement expected.
+"functi\\u006fn f() {}" [ts]  ||  tsc @0+13 TS1260 Keywords cannot contain escape characters.  ||  bun @0+13 Unexpected functi\u006fn  ||  lint @0+13 Unexpected functi\u006fn  => TS1128 @0+13 Declaration or statement expected.
+"\\u0065xport {};" [ts]  ||  tsc @0+11 TS1260 Keywords cannot contain escape characters.  ||  bun @0+11 Unexpected \u0065xport  ||  lint @0+11 Unexpected \u0065xport  => TS1128 @0+11 Declaration or statement expected.
+"\\u0065xport const x = 1;" [ts]  ||  tsc @0+11 TS1260 Keywords cannot contain escape characters.  ||  bun @0+11 Unexpected \u0065xport  ||  lint @0+11 Unexpected \u0065xport  => TS1128 @0+11 Declaration or statement expected.
+"export d\\u0065fault 1;" [ts]  ||  tsc @7+12 TS1260 Keywords cannot contain escape characters.  ||  bun @7+12 Unexpected d\u0065fault  ||  lint @7+12 Unexpected d\u0065fault  => no code
+"\\u0069mport a from \"m\";" [ts]  ||  tsc @0+11 TS1260 Keywords cannot contain escape characters.  ||  bun @0+11 Unexpected \u0069mport  ||  lint @0+11 Unexpected \u0069mport  => TS1128 @0+11 Declaration or statement expected.
+"\\u0065num E { a }" [ts]  ||  tsc @0+9 TS1260 Keywords cannot contain escape characters.  ||  bun @0+9 Unexpected \u0065num  ||  lint @0+9 Unexpected \u0065num  => TS1128 @0+9 Declaration or statement expected.
+"class C \\u0065xtends B {}" [ts]  ||  tsc @8+12 TS1260 Keywords cannot contain escape characters.  ||  bun @8+12 Expected "{" but found "\u0065xtends" / @23+1 Expected ";" but found "{"  ||  lint @8+12 Expected "{" but found "\u0065xtends"  => TS1005 @8+12 '{' expected.  (2 messages)
+"x = th\\u0069s;" [ts]  ||  tsc @4+9 TS1260 Keywords cannot contain escape characters.  ||  bun @4+9 Unexpected th\u0069s  ||  lint @4+9 Unexpected th\u0069s  => TS1109 @4+9 Expression expected.
+"x = n\\u0075ll;" [ts]  ||  tsc @4+9 TS1260 Keywords cannot contain escape characters.  ||  bun @4+9 Unexpected n\u0075ll  ||  lint @4+9 Unexpected n\u0075ll  => TS1109 @4+9 Expression expected.
+"x = tru\\u0065;" [ts]  ||  tsc @4+9 TS1260 Keywords cannot contain escape characters.  ||  bun @4+9 Unexpected tru\u0065  ||  lint @4+9 Unexpected tru\u0065  => TS1109 @4+9 Expression expected.
+"x = f\\u0061lse;" [ts]  ||  tsc @4+10 TS1260 Keywords cannot contain escape characters.  ||  bun @4+10 Unexpected f\u0061lse  ||  lint @4+10 Unexpected f\u0061lse  => TS1109 @4+10 Expression expected.
+"x = n\\u0065w C();" [ts]  ||  tsc @4+8 TS1260 Keywords cannot contain escape characters.  ||  bun @4+8 Unexpected n\u0065w  ||  lint @4+8 Unexpected n\u0065w  => TS1109 @4+8 Expression expected.
+"x = typ\\u0065of y;" [ts]  ||  tsc @4+11 TS1260 Keywords cannot contain escape characters.  ||  bun @4+11 Unexpected typ\u0065of  ||  lint @4+11 Unexpected typ\u0065of  => TS1109 @4+11 Expression expected.
+"x = v\\u006fid 0;" [ts]  ||  tsc @4+9 TS1260 Keywords cannot contain escape characters.  ||  bun @4+9 Unexpected v\u006fid  ||  lint @4+9 Unexpected v\u006fid  => TS1109 @4+9 Expression expected.
+"x = d\\u0065lete y.z;" [ts]  ||  tsc @4+11 TS1260 Keywords cannot contain escape characters.  ||  bun @4+11 Unexpected d\u0065lete  ||  lint @4+11 Unexpected d\u0065lete  => TS1109 @4+11 Expression expected.
+"x = a \\u0069n b;" [ts]  ||  tsc @6+7 TS1260 Keywords cannot contain escape characters.  ||  bun @6+7 Expected ";" but found "\u0069n"  ||  lint @6+7 Expected ";" but found "\u0069n"  => TS1005 @6+7 ';' expected.
+"x = a inst\\u0061nceof b;" [ts]  ||  tsc @6+15 TS1260 Keywords cannot contain escape characters.  ||  bun @6+15 Expected ";" but found "inst\u0061nceof"  ||  lint @6+15 Expected ";" but found "inst\u0061nceof"  => TS1005 @6+15 ';' expected.
+"class C extends B { m() { return sup\\u0065r.m(); } }" [ts]  ||  tsc @33+10 TS1260 Keywords cannot contain escape characters.  ||  bun @33+10 Unexpected sup\u0065r  ||  lint @33+10 Unexpected sup\u0065r  => TS1109 @33+10 Expression expected.
+"x = functi\\u006fn () {};" [ts]  ||  tsc @4+13 TS1260 Keywords cannot contain escape characters.  ||  bun @4+13 Unexpected functi\u006fn  ||  lint @4+13 Unexpected functi\u006fn  => TS1109 @4+13 Expression expected.
+"x = cl\\u0061ss {};" [ts]  ||  tsc @4+10 TS1260 Keywords cannot contain escape characters.  ||  bun @4+10 Unexpected cl\u0061ss  ||  lint @4+10 Unexpected cl\u0061ss  => TS1109 @4+10 Expression expected.
+"x = \\u0069mport(\"m\");" [ts]  ||  tsc @4+11 TS1260 Keywords cannot contain escape characters.  ||  bun @4+11 Unexpected \u0069mport  ||  lint @4+11 Unexpected \u0069mport  => TS1109 @4+11 Expression expected.
+"x = v\\u0061r;" [ts]  ||  tsc @4+8 TS1109 Expression expected.  ||  bun @4+8 Unexpected v\u0061r  ||  lint @4+8 Unexpected v\u0061r  => TS1109 @4+8 Expression expected.
+"var v\\u0061r;" [ts]  ||  tsc @4+8 TS1389 'var' is not allowed as a variable declaration name.  ||  bun @4+8 Expected identifier but found "v\u0061r"  ||  lint @4+8 Expected identifier but found "v\u0061r"  => TS1003 @4+8 Identifier expected.
+"let cl\\u0061ss = 1;" [ts]  ||  tsc @0+3 TS1440 Variable declaration not allowed at this location. (+2)  ||  bun @4+10 Expected ";" but found "cl\u0061ss" / @15+1 Unexpected =  ||  lint @4+10 Expected ";" but found "cl\u0061ss"  => TS1005 @4+10 ';' expected.  (2 messages)
+"function v\\u0061r() {}" [ts]  ||  tsc @9+8 TS1359 Identifier expected. 'v\u0061r' is a reserved word that cannot be used here. (+2)  ||  bun @9+8 Expected identifier but found "v\u0061r"  ||  lint @9+8 Expected identifier but found "v\u0061r"  => TS1003 @9+8 Identifier expected.
+"function f(v\\u0061r) {}" [ts]  ||  tsc @11+8 TS1390 'var' is not allowed as a parameter name. (+1)  ||  bun @11+8 Expected identifier but found "v\u0061r"  ||  lint @11+8 Expected identifier but found "v\u0061r"  => TS1003 @11+8 Identifier expected.
+"x = \\u0069f;" [ts]  ||  tsc @4+7 TS1109 Expression expected. (+1)  ||  bun @4+7 Unexpected \u0069f  ||  lint @4+7 Unexpected \u0069f  => TS1109 @4+7 Expression expected.
+"(cl\\u0061ss);" [ts]  ||  tsc @1+10 TS1260 Keywords cannot contain escape characters. (+1)  ||  bun @1+10 Unexpected cl\u0061ss  ||  lint @1+10 Unexpected cl\u0061ss  => TS1109 @1+10 Expression expected.
+"x.v\\u0061r;" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"x = { v\\u0061r: 1 };" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { v\\u0061r() {} }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"x?.cl\\u0061ss;" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"import { v\\u0061r as y } from \"m\";" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"export { y as v\\u0061r };" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"enum E { v\\u0061r }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"interface I { v\\u0061r: 1 }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"type T = { cl\\u0061ss: 1 };" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"label\\u0061: for (;;) {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"\\u0061sync function f() {}" [ts]  ||  tsc @0+10 TS1260 Keywords cannot contain escape characters.  ||  bun @11+8 Expected ";" but found "function" / @24+1 Expected ";" but found "{"  ||  lint @11+8 Expected ";" but found "function"  => TS1005 @11+8 ';' expected.  (3 messages)
+"x = \\u0061sync () => 1;" [ts]  ||  tsc @4+10 TS1260 Keywords cannot contain escape characters.  ||  bun @18+2 Expected ";" but found "=>"  ||  lint @18+2 Expected ";" but found "=>"  => TS1005 @18+2 ';' expected.
+"x = \\u0061sync function () {};" [ts]  ||  tsc @4+10 TS1260 Keywords cannot contain escape characters.  ||  bun @15+8 Expected ";" but found "function" / @27+1 Expected "=>" but found "{"  ||  lint @15+8 Expected ";" but found "function"  => TS1005 @15+8 ';' expected.  (2 messages)
+"async function f() { \\u0061wait x; }" [ts]  ||  tsc @21+10 TS1260 Keywords cannot contain escape characters.  ||  bun @21+10 The keyword "await" cannot be escaped / @32+1 Expected ";" but found "x"  ||  lint @21+10 The keyword "await" cannot be escaped  => no code  (2 messages)
+"function* g() { yi\\u0065ld 1; }" [ts]  ||  tsc @16+10 TS1260 Keywords cannot contain escape characters.  ||  bun @16+10 The keyword "yield" cannot be escaped / @27+1 Expected ";" but found "1"  ||  lint @16+10 The keyword "yield" cannot be escaped  => no code  (2 messages)
+"l\\u0065t x = 1;" [ts]  ||  tsc @0+8 TS1260 Keywords cannot contain escape characters.  ||  bun @9+1 Expected ";" but found "x" / @11+1 Unexpected =  ||  lint @9+1 Expected ";" but found "x"  => TS1005 @9+1 ';' expected.  (2 messages)
+"for (x \\u006ff y) {}" [ts]  ||  tsc @7+7 TS1260 Keywords cannot contain escape characters.  ||  bun @7+7 Expected ";" but found "\u006ff" / @16+1 Expected ";" but found ")"  ||  lint @7+7 Expected ";" but found "\u006ff"  => TS1005 @7+7 ';' expected.  (3 messages)
+"for (const x \\u006ff y) {}" [ts]  ||  tsc @13+7 TS1260 Keywords cannot contain escape characters.  ||  bun @11+1 The constant "x" must be initialized / @13+7 Expected ";" but found "\u006ff"  ||  lint @11+1 The constant "x" must be initialized  => no code  (4 messages)
+"t\\u0079pe T = 1;" [ts]  ||  tsc @0+9 TS1260 Keywords cannot contain escape characters.  ||  bun accepts  ||  lint parses
+"\\u0069nterface I {}" [ts]  ||  tsc @0+14 TS1260 Keywords cannot contain escape characters.  ||  bun accepts  ||  lint parses
+"n\\u0061mespace N {}" [ts]  ||  tsc @0+14 TS1260 Keywords cannot contain escape characters.  ||  bun accepts  ||  lint parses
+"m\\u006fdule N {}" [ts]  ||  tsc @0+11 TS1260 Keywords cannot contain escape characters.  ||  bun accepts  ||  lint parses
+"d\\u0065clare const x: number;" [ts]  ||  tsc @0+12 TS1260 Keywords cannot contain escape characters.  ||  bun accepts  ||  lint parses
+"\\u0061bstract class C {}" [ts]  ||  tsc @0+13 TS1260 Keywords cannot contain escape characters.  ||  bun accepts  ||  lint parses
+"x \\u0061s T;" [ts]  ||  tsc @2+7 TS1260 Keywords cannot contain escape characters.  ||  bun @2+7 Expected ";" but found "\u0061s"  ||  lint @2+7 Expected ";" but found "\u0061s"  => TS1005 @2+7 ';' expected.
+"x s\\u0061tisfies T;" [ts]  ||  tsc @2+14 TS1260 Keywords cannot contain escape characters.  ||  bun @2+14 Expected ";" but found "s\u0061tisfies"  ||  lint @2+14 Expected ";" but found "s\u0061tisfies"  => TS1005 @2+14 ';' expected.
+"class C { st\\u0061tic x }" [ts]  ||  tsc @10+11 TS1260 Keywords cannot contain escape characters.  ||  bun @22+1 Expected ";" but found "x"  ||  lint @22+1 Expected ";" but found "x"  => TS1005 @22+1 ';' expected.
+"class C { g\\u0065t x() { return 1 } }" [ts]  ||  tsc @10+8 TS1260 Keywords cannot contain escape characters.  ||  bun @19+1 Expected ";" but found "x" / @20+1 Expected identifier but found "("  ||  lint @19+1 Expected ";" but found "x"  => TS1005 @19+1 ';' expected.  (5 messages)
+"class C { s\\u0065t x(v) {} }" [ts]  ||  tsc @10+8 TS1260 Keywords cannot contain escape characters.  ||  bun @19+1 Expected ";" but found "x" / @20+1 Expected identifier but found "("  ||  lint @19+1 Expected ";" but found "x"  => TS1005 @19+1 ';' expected.  (4 messages)
+"class C { \\u0061sync m() {} }" [ts]  ||  tsc @10+10 TS1260 Keywords cannot contain escape characters.  ||  bun @21+1 Expected ";" but found "m" / @22+1 Expected identifier but found "("  ||  lint @21+1 Expected ";" but found "m"  => TS1005 @21+1 ';' expected.  (4 messages)
+"class C { p\\u0075blic x }" [ts]  ||  tsc @10+11 TS1260 Keywords cannot contain escape characters.  ||  bun @22+1 Expected ";" but found "x"  ||  lint @22+1 Expected ";" but found "x"  => TS1005 @22+1 ';' expected.
+"class C { r\\u0065adonly x }" [ts]  ||  tsc @10+13 TS1260 Keywords cannot contain escape characters.  ||  bun @24+1 Expected ";" but found "x"  ||  lint @24+1 Expected ";" but found "x"  => TS1005 @24+1 ';' expected.
+"class C { d\\u0065clare x }" [ts]  ||  tsc @10+12 TS1260 Keywords cannot contain escape characters.  ||  bun @23+1 Expected ";" but found "x"  ||  lint @23+1 Expected ";" but found "x"  => TS1005 @23+1 ';' expected.
+"class C { \\u0061ccessor x }" [ts]  ||  tsc @10+13 TS1260 Keywords cannot contain escape characters.  ||  bun @24+1 Expected ";" but found "x"  ||  lint @24+1 Expected ";" but found "x"  => TS1005 @24+1 ';' expected.
+"class C { c\\u006fnstructor() {} }" [ts]  ||  tsc @10+16 TS1260 Keywords cannot contain escape characters.  ||  bun accepts  ||  lint parses
+"class C { constructor(p\\u0075blic x) {} }" [ts]  ||  tsc @22+11 TS1260 Keywords cannot contain escape characters.  ||  bun accepts  ||  lint parses
+"class C \\u0069mplements I {}" [ts]  ||  tsc @8+15 TS1260 Keywords cannot contain escape characters.  ||  bun @8+15 Expected "{" but found "\u0069mplements" / @26+1 Expected ";" but found "{"  ||  lint @8+15 Expected "{" but found "\u0069mplements"  => TS1005 @8+15 '{' expected.  (2 messages)
+"import a fr\\u006fm \"m\";" [ts]  ||  tsc @9+9 TS1260 Keywords cannot contain escape characters.  ||  bun @9+0 Expected "from" but found "fr\u006fm"  ||  lint @9+0 Expected "from" but found "fr\u006fm" (token: TIdentifier)  => TS1005 @9+0 'from' expected.
+"import * \\u0061s a from \"m\";" [ts]  ||  tsc @9+7 TS1260 Keywords cannot contain escape characters.  ||  bun @9+0 Expected "as" but found "\u0061s"  ||  lint @9+0 Expected "as" but found "\u0061s" (token: TIdentifier)  => TS1005 @9+0 'as' expected.
+"import { a \\u0061s b } from \"m\";" [ts]  ||  tsc @11+7 TS1260 Keywords cannot contain escape characters.  ||  bun @11+7 Expected "}" but found "\u0061s" / @19+0 Expected "from" but found "b"  ||  lint @11+7 Expected "}" but found "\u0061s"  => TS1005 @11+7 '}' expected.  (2 messages)
+"import t\\u0079pe { a } from \"m\";" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"export * fr\\u006fm \"m\";" [ts]  ||  tsc @9+9 TS1260 Keywords cannot contain escape characters.  ||  bun @9+0 Expected "from" but found "fr\u006fm"  ||  lint @9+0 Expected "from" but found "fr\u006fm" (token: TIdentifier)  => TS1005 @9+0 'from' expected.
+"let x: k\\u0065yof T;" [ts]  ||  tsc @7+10 TS1260 Keywords cannot contain escape characters.  ||  bun accepts  ||  lint parses
+"let x: r\\u0065adonly T[];" [ts]  ||  tsc @7+13 TS1260 Keywords cannot contain escape characters.  ||  bun accepts  ||  lint parses
+"let x: \\u0075nique symbol;" [ts]  ||  tsc @7+11 TS1260 Keywords cannot contain escape characters.  ||  bun accepts  ||  lint parses
+"type T = A extends \\u0069nfer U ? U : never;" [ts]  ||  tsc @19+10 TS1260 Keywords cannot contain escape characters.  ||  bun accepts  ||  lint parses
+"function f(x): x \\u0069s string {}" [ts]  ||  tsc @17+7 TS1260 Keywords cannot contain escape characters.  ||  bun @17+7 Expected ";" but found "\u0069s" / @32+1 Expected ";" but found "{"  ||  lint @17+7 Expected ";" but found "\u0069s"  => TS1005 @17+7 ';' expected.  (3 messages)
+"function f(x): \\u0061sserts x {}" [ts]  ||  tsc @15+12 TS1260 Keywords cannot contain escape characters.  ||  bun accepts  ||  lint parses
+"let x: n\\u0075mber;" [ts]  ||  tsc @7+11 TS1260 Keywords cannot contain escape characters.  ||  bun accepts  ||  lint parses
+"let x: \\u0061ny;" [ts]  ||  tsc @7+8 TS1260 Keywords cannot contain escape characters.  ||  bun accepts  ||  lint parses
+"let x: typ\\u0065of y;" [ts]  ||  tsc @7+11 TS1260 Keywords cannot contain escape characters.  ||  bun @7+11 Unexpected typ\u0065of  ||  lint @7+11 Unexpected typ\u0065of  => TS1110 @7+11 Type expected.
+"let x: v\\u006fid;" [ts]  ||  tsc @7+9 TS1260 Keywords cannot contain escape characters.  ||  bun @7+9 Unexpected v\u006fid  ||  lint @7+9 Unexpected v\u006fid  => TS1110 @7+9 Type expected.
+"let x: n\\u0075ll;" [ts]  ||  tsc @7+9 TS1260 Keywords cannot contain escape characters.  ||  bun @7+9 Unexpected n\u0075ll  ||  lint @7+9 Unexpected n\u0075ll  => TS1110 @7+9 Type expected.
+"let x: th\\u0069s;" [ts]  ||  tsc @7+9 TS1260 Keywords cannot contain escape characters.  ||  bun @7+9 Unexpected th\u0069s  ||  lint @7+9 Unexpected th\u0069s  => TS1110 @7+9 Type expected.
+"type T = n\\u0065w () => void;" [ts]  ||  tsc @9+8 TS1260 Keywords cannot contain escape characters.  ||  bun @9+8 Unexpected n\u0065w / @28+1 Unexpected ;  ||  lint @9+8 Unexpected n\u0065w  => TS1110 @9+8 Type expected.  (2 messages)
+"x = { g\\u0065t a() { return 1 } };" [ts]  ||  tsc @6+8 TS1260 Keywords cannot contain escape characters.  ||  bun @15+1 Expected "}" but found "a" / @19+1 Expected ";" but found "{"  ||  lint @15+1 Expected "}" but found "a"  => TS1005 @15+1 '}' expected.  (3 messages)
+"x = { \\u0061sync m() {} };" [ts]  ||  tsc @6+10 TS1260 Keywords cannot contain escape characters.  ||  bun @17+1 Expected "}" but found "m" / @21+1 Expected ";" but found "{"  ||  lint @17+1 Expected "}" but found "m"  => TS1005 @17+1 '}' expected.  (3 messages)
+"using\\u0020x = y;" [ts]  ||  tsc @5+0 TS1127 Invalid character.  ||  GO @5+1 TS1127 Invalid character.  ||  bun @0+12 Invalid identifier: "using x"  ||  lint @0+12 Invalid identifier: "using x"  => no code
+"\\u0075sing x = y;" [ts]  ||  tsc @0+10 TS1260 Keywords cannot contain escape characters.  ||  bun @11+1 Expected ";" but found "x" / @13+1 Unexpected =  ||  lint @11+1 Expected ";" but found "x"  => TS1005 @11+1 ';' expected.  (2 messages)
+"x = n\\u0065w.target;" [ts]  ||  tsc @4+8 TS1260 Keywords cannot contain escape characters.  ||  bun @4+8 Unexpected n\u0065w  ||  lint @4+8 Unexpected n\u0065w  => TS1109 @4+8 Expression expected.
+"x = import.m\\u0065ta;" [ts]  ||  tsc parses  ||  bun @11+9 Expected "meta" but found "m\u0065ta" / @20+1 Unexpected ;  ||  lint @11+9 Expected "meta" but found "m\u0065ta"  => TS1005 @11+9 'meta' expected.  (2 messages)
+"function f() { return new.t\\u0061rget; }" [ts]  ||  tsc parses  ||  bun @26+11 Unexpected t\u0061rget  ||  lint @26+11 Unexpected t\u0061rget  => no code
+"({ g\\u0065t: 1 });" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"var \\u0061sync = 1;" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"\\u0061sync = 1;" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"var t\\u0079pe = 1; t\\u0079pe;" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"x.\\u0061s;" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"var \\u006ff = 1;" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"var l\\u0065t = 1;" [ts]  ||  tsc parses; checker @4+8 TS1212 Identifier expected. 'l\u0065t' is a reserved word in strict mode.  ||  bun accepts  ||  lint parses
+"l\\u0065t = 1;" [ts]  ||  tsc parses; checker @0+8 TS1212 Identifier expected. 'l\u0065t' is a reserved word in strict mode.  ||  bun accepts  ||  lint parses
+"var \\u0061wait = 1;" [ts]  ||  tsc parses  ||  bun @4+10 Cannot use "yield" or "await" here.  ||  lint parses
+"var yi\\u0065ld = 1;" [ts]  ||  tsc parses; checker @4+10 TS1212 Identifier expected. 'yi\u0065ld' is a reserved word in strict mode.  ||  bun accepts  ||  lint parses
+"var \\u0061bc = 1;" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"var a\\u{62}c = 1;" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+## TS1260 escaped keyword (js)
+"v\\u0061r x = 1;" [js]  ||  tsc @0+8 TS1260 Keywords cannot contain escape characters.  ||  bun @0+8 Unexpected v\u0061r  ||  lint @0+8 Unexpected v\u0061r  => TS1128 @0+8 Declaration or statement expected.
+"x = v\\u0061r;" [js]  ||  tsc @4+8 TS1109 Expression expected.  ||  bun @4+8 Unexpected v\u0061r  ||  lint @4+8 Unexpected v\u0061r  => TS1109 @4+8 Expression expected.
+"l\\u0065t x = 1;" [js]  ||  tsc @0+8 TS1260 Keywords cannot contain escape characters.  ||  bun @9+1 Expected ";" but found "x" / @11+1 Unexpected =  ||  lint @9+1 Expected ";" but found "x"  => TS1005 @9+1 ';' expected.  (2 messages)
+"\\u0061sync function f() {}" [js]  ||  tsc @0+10 TS1260 Keywords cannot contain escape characters.  ||  bun @11+8 Expected ";" but found "function" / @24+1 Expected ";" but found "{"  ||  lint @11+8 Expected ";" but found "function"  => TS1005 @11+8 ';' expected.  (3 messages)
+"cl\\u0061ss C {}" [js]  ||  tsc @0+10 TS1260 Keywords cannot contain escape characters.  ||  bun @0+10 Unexpected cl\u0061ss  ||  lint @0+10 Unexpected cl\u0061ss  => TS1128 @0+10 Declaration or statement expected.
+  ||  tsc ?  ||  bun ?

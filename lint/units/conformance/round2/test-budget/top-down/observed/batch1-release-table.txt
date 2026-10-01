@@ -1,0 +1,25 @@
+[1] glue-release-cold.log
+[2] glue-release-warm1.log
+[3] glue-release-warm2.log
+[4] glue-release-ci.log
+  21223    1656    1252    1322  enumerator > every instance is its line of the list, and the counts are those of the reference
+     67     342     291      53  default check > the probe: a command that dies
+    231     347     514      59  default check > the probe: a command that runs its operand
+    157     410     338      74  default check > the probe: a command that takes the flag and does nothing
+     70      71     709      72  default check > a command that runs its operand gets no instance
+    441     730     542     143  default check > the probe: a command that lints
+    346    1443     722     801  default check > stderr is read in the plain format, chain lines too: the first section is the oracle's, and th
+    349    1453     784     789  default check > a command that lints gets the written unit as its operand, and no diagnostic passes an instanc
+    336    1428     708     777  default check > a run that breaks the rules is a crash and never an empty list of diagnostics: an error and th
+    336    1428     708     777  default check > a run that breaks the rules is a crash and never an empty list of diagnostics: no error and th
+    335    1427     718     781  default check > a run that breaks the rules is a crash and never an empty list of diagnostics: a signal
+    337    1434     714     809  default check > a run that breaks the rules is a crash and never an empty list of diagnostics: the exit code o
+    338    1428     971     777  default check > a run that breaks the rules is a crash and never an empty list of diagnostics: a file that is 
+    338    1858     971     777  default check > a run that breaks the rules is a crash and never an empty list of diagnostics: an error of the
+    338    1429     971     777  default check > a run that breaks the rules is a crash and never an empty list of diagnostics: text on stdout
+    339    1435     714     794  default check > a run that breaks the rules is a crash and never an empty list of diagnostics: an exit code th
+    339    1435     708     782  default check > a run that breaks the rules is a crash and never an empty list of diagnostics: a line of no fo
+    325    1429     970     777  default check > never equal to an oracle without errors: a stand-in
+    338    1428     966     777  default check > a run that breaks the rules is a crash and never an empty list of diagnostics: a diagnostic of
+    325    1535     970     776  default check > never equal to an oracle without errors: the code -1
+  28966   24705   16004   13410  sum of the times of all tests (tests that run at the same time count each)

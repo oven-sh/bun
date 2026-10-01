@@ -42,6 +42,7 @@ export interface Corpus {
   input(instance: Instance, root: string | undefined): InputResult;
   // The oracle option of a run: the bytes of the error baseline of an instance of class E.
   oracle(instance: Instance): Uint8Array;
+  // What the lists need to know of an instance; platformLimited lays the instance out when it is first read.
   facts(instance: CorpusInstance): CorpusFacts;
 }
 

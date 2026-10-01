@@ -1,0 +1,19 @@
+1:### queued: 2026-10-01T10:25:13Z
+2:### lock acquired: 2026-10-01T10:27:03Z
+3:=== test/cli/lint/diagnostics.test.ts
+26: 17 pass
+27: 0 fail
+29:Ran 17 tests across 1 file. [6.47s]
+30:=== rc=0 secs=17
+31:=== test/cli/lint/rules.test.ts
+48: 11 pass
+49: 0 fail
+51:Ran 11 tests across 1 file. [13.55s]
+52:=== rc=0 secs=38
+53:=== test/cli/lint/lint.test.ts
+110: 61 pass
+111: 0 fail
+113:Ran 61 tests across 1 file. [34.23s]
+114:=== rc=0 secs=80
+115:### finished: 2026-10-01T10:28:24Z run_secs=81
+116:### outer rc=0

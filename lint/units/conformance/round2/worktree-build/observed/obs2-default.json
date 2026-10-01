@@ -1,0 +1,725 @@
+[
+ {
+  "name": "warn2.ts (-->)",
+  "cmd": [
+   "/workspace/wt/conformance/build/debug/bun-debug",
+   "--lint",
+   "warn2.ts"
+  ],
+  "exitCode": 0,
+  "signal": null,
+  "stdout": "",
+  "stderr": "warn2.ts(2,1): warning syntax: Treating \"-->\" as the start of a legacy HTML single-line comment\n",
+  "ms": 227,
+  "cpuMs": 132,
+  "maxRssMb": 218
+ },
+ {
+  "name": "keywarn.tsx",
+  "cmd": [
+   "/workspace/wt/conformance/build/debug/bun-debug",
+   "--lint",
+   "keywarn.tsx"
+  ],
+  "exitCode": 0,
+  "signal": null,
+  "stdout": "",
+  "stderr": "keywarn.tsx(2,21): warning syntax: \"key\" prop ignored. Must be a string, number or symbol.\n",
+  "ms": 624,
+  "cpuMs": 183,
+  "maxRssMb": 219
+ },
+ {
+  "name": "keywarn.jsx",
+  "cmd": [
+   "/workspace/wt/conformance/build/debug/bun-debug",
+   "--lint",
+   "keywarn.jsx"
+  ],
+  "exitCode": 0,
+  "signal": null,
+  "stdout": "",
+  "stderr": "keywarn.jsx(2,21): warning syntax: \"key\" prop ignored. Must be a string, number or symbol.\n",
+  "ms": 374,
+  "cpuMs": 161,
+  "maxRssMb": 218
+ },
+ {
+  "name": "privwrite.ts (visit-pass warning)",
+  "cmd": [
+   "/workspace/wt/conformance/build/debug/bun-debug",
+   "--lint",
+   "privwrite.ts"
+  ],
+  "exitCode": 0,
+  "signal": null,
+  "stdout": "",
+  "stderr": "privwrite.ts(4,10): warning syntax: Writing to read-only method \"#m\" will throw\n",
+  "ms": 432,
+  "cpuMs": 169,
+  "maxRssMb": 218
+ },
+ {
+  "name": "privwrite.js (no visit pass)",
+  "cmd": [
+   "/workspace/wt/conformance/build/debug/bun-debug",
+   "--lint",
+   "privwrite.js"
+  ],
+  "exitCode": 0,
+  "signal": null,
+  "stdout": "",
+  "stderr": "",
+  "ms": 1342,
+  "cpuMs": 104,
+  "maxRssMb": 216
+ },
+ {
+  "name": "jsxrt.tsx (@jsxRuntime preserve)",
+  "cmd": [
+   "/workspace/wt/conformance/build/debug/bun-debug",
+   "--lint",
+   "jsxrt.tsx"
+  ],
+  "exitCode": 0,
+  "signal": null,
+  "stdout": "",
+  "stderr": "jsxrt.tsx(1,23): warning syntax: Unsupported JSX runtime: \"preserve\"\n",
+  "ms": 1351,
+  "cpuMs": 107,
+  "maxRssMb": 220
+ },
+ {
+  "name": "m.mts",
+  "cmd": [
+   "/workspace/wt/conformance/build/debug/bun-debug",
+   "--lint",
+   "m.mts"
+  ],
+  "exitCode": 0,
+  "signal": null,
+  "stdout": "",
+  "stderr": "",
+  "ms": 689,
+  "cpuMs": 103,
+  "maxRssMb": 217
+ },
+ {
+  "name": "c.cts",
+  "cmd": [
+   "/workspace/wt/conformance/build/debug/bun-debug",
+   "--lint",
+   "c.cts"
+  ],
+  "exitCode": 0,
+  "signal": null,
+  "stdout": "",
+  "stderr": "",
+  "ms": 422,
+  "cpuMs": 172,
+  "maxRssMb": 217
+ },
+ {
+  "name": "m.mjs",
+  "cmd": [
+   "/workspace/wt/conformance/build/debug/bun-debug",
+   "--lint",
+   "m.mjs"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "m.mjs(1,1): error no-debugger: Unexpected 'debugger' statement.\n",
+  "ms": 777,
+  "cpuMs": 107,
+  "maxRssMb": 214
+ },
+ {
+  "name": "c.cjs",
+  "cmd": [
+   "/workspace/wt/conformance/build/debug/bun-debug",
+   "--lint",
+   "c.cjs"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "c.cjs(1,1): error no-debugger: Unexpected 'debugger' statement.\n",
+  "ms": 434,
+  "cpuMs": 96,
+  "maxRssMb": 216
+ },
+ {
+  "name": "j.jsx",
+  "cmd": [
+   "/workspace/wt/conformance/build/debug/bun-debug",
+   "--lint",
+   "j.jsx"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "j.jsx(1,1): error no-debugger: Unexpected 'debugger' statement.\n",
+  "ms": 373,
+  "cpuMs": 101,
+  "maxRssMb": 218
+ },
+ {
+  "name": "with space.ts",
+  "cmd": [
+   "/workspace/wt/conformance/build/debug/bun-debug",
+   "--lint",
+   "with space.ts"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "with space.ts(1,7): error syntax: This constant must be initialized\nwith space.ts(1,7): error syntax: Expected identifier but found \"=\"\n",
+  "ms": 412,
+  "cpuMs": 96,
+  "maxRssMb": 217
+ },
+ {
+  "name": "paren(1,2).ts",
+  "cmd": [
+   "/workspace/wt/conformance/build/debug/bun-debug",
+   "--lint",
+   "paren(1,2).ts"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "paren(1,2).ts(1,7): error syntax: This constant must be initialized\nparen(1,2).ts(1,7): error syntax: Expected identifier but found \"=\"\n",
+  "ms": 306,
+  "cpuMs": 100,
+  "maxRssMb": 217
+ },
+ {
+  "name": "unicode name",
+  "cmd": [
+   "/workspace/wt/conformance/build/debug/bun-debug",
+   "--lint",
+   "hé😀.ts"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "hé😀.ts(1,7): error syntax: This constant must be initialized\nhé😀.ts(1,7): error syntax: Expected identifier but found \"=\"\n",
+  "ms": 219,
+  "cpuMs": 123,
+  "maxRssMb": 216
+ },
+ {
+  "name": "./-dash.ts",
+  "cmd": [
+   "/workspace/wt/conformance/build/debug/bun-debug",
+   "--lint",
+   "./-dash.ts"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "-dash.ts(1,7): error syntax: This constant must be initialized\n-dash.ts(1,7): error syntax: Expected identifier but found \"=\"\n",
+  "ms": 1070,
+  "cpuMs": 120,
+  "maxRssMb": 215
+ },
+ {
+  "name": "-dash.ts as first operand",
+  "cmd": [
+   "/workspace/wt/conformance/build/debug/bun-debug",
+   "--lint",
+   "-dash.ts"
+  ],
+  "exitCode": 1,
+  "signal": null,
+  "stdout": "",
+  "stderr": "error: --lint needs one or more files\n",
+  "ms": 543,
+  "cpuMs": 175,
+  "maxRssMb": 204
+ },
+ {
+  "name": "-- -dash.ts",
+  "cmd": [
+   "/workspace/wt/conformance/build/debug/bun-debug",
+   "--lint",
+   "--",
+   "-dash.ts"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "-dash.ts(1,7): error syntax: This constant must be initialized\n-dash.ts(1,7): error syntax: Expected identifier but found \"=\"\n",
+  "ms": 434,
+  "cpuMs": 107,
+  "maxRssMb": 215
+ },
+ {
+  "name": "warn2.ts -dash.ts (dash after first)",
+  "cmd": [
+   "/workspace/wt/conformance/build/debug/bun-debug",
+   "--lint",
+   "warn2.ts",
+   "-dash.ts"
+  ],
+  "exitCode": 1,
+  "signal": null,
+  "stdout": "",
+  "stderr": "error: --lint cannot be used with \"-dash.ts\" after the first file\n",
+  "ms": 717,
+  "cpuMs": 173,
+  "maxRssMb": 206
+ },
+ {
+  "name": "dir.ts (a directory)",
+  "cmd": [
+   "/workspace/wt/conformance/build/debug/bun-debug",
+   "--lint",
+   "dir.ts"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "error cannot-read-file: Cannot read file 'dir.ts': EISDIR.\n",
+  "ms": 253,
+  "cpuMs": 100,
+  "maxRssMb": 209
+ },
+ {
+  "name": "symlinked cwd: in.ts",
+  "cmd": [
+   "/workspace/wt/conformance/build/debug/bun-debug",
+   "--lint",
+   "in.ts"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "in.ts(1,7): error syntax: This constant must be initialized\nin.ts(1,7): error syntax: Expected identifier but found \"=\"\n",
+  "ms": 769,
+  "cpuMs": 111,
+  "maxRssMb": 214
+ },
+ {
+  "name": "symlinked cwd: absolute via link",
+  "cmd": [
+   "/workspace/wt/conformance/build/debug/bun-debug",
+   "--lint",
+   "/tmp/conf-wb/fx2/link/in.ts"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "../link/in.ts(1,7): error syntax: This constant must be initialized\n../link/in.ts(1,7): error syntax: Expected identifier but found \"=\"\n",
+  "ms": 754,
+  "cpuMs": 153,
+  "maxRssMb": 217
+ },
+ {
+  "name": "symlinked cwd: absolute via real",
+  "cmd": [
+   "/workspace/wt/conformance/build/debug/bun-debug",
+   "--lint",
+   "/tmp/conf-wb/fx2/real/in.ts"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "in.ts(1,7): error syntax: This constant must be initialized\nin.ts(1,7): error syntax: Expected identifier but found \"=\"\n",
+  "ms": 118,
+  "cpuMs": 102,
+  "maxRssMb": 217
+ },
+ {
+  "name": "operand through symlink: link/in.ts",
+  "cmd": [
+   "/workspace/wt/conformance/build/debug/bun-debug",
+   "--lint",
+   "link/in.ts"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "link/in.ts(1,7): error syntax: This constant must be initialized\nlink/in.ts(1,7): error syntax: Expected identifier but found \"=\"\n",
+  "ms": 184,
+  "cpuMs": 97,
+  "maxRssMb": 217
+ },
+ {
+  "name": "tsinjs.js (type annotation in .js)",
+  "cmd": [
+   "/workspace/wt/conformance/build/debug/bun-debug",
+   "--lint",
+   "tsinjs.js"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "tsinjs.js(1,6): error syntax: Expected \";\" but found \":\"\n",
+  "ms": 1076,
+  "cpuMs": 98,
+  "maxRssMb": 217
+ },
+ {
+  "name": "deco.ts",
+  "cmd": [
+   "/workspace/wt/conformance/build/debug/bun-debug",
+   "--lint",
+   "deco.ts"
+  ],
+  "exitCode": 0,
+  "signal": null,
+  "stdout": "",
+  "stderr": "",
+  "ms": 903,
+  "cpuMs": 113,
+  "maxRssMb": 219
+ },
+ {
+  "name": "nul.ts",
+  "cmd": [
+   "/workspace/wt/conformance/build/debug/bun-debug",
+   "--lint",
+   "nul.ts"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "nul.ts(1,11): error syntax: Unexpected \u0000\n",
+  "ms": 1196,
+  "cpuMs": 166,
+  "maxRssMb": 217
+ },
+ {
+  "name": "badutf8.ts",
+  "cmd": [
+   "/workspace/wt/conformance/build/debug/bun-debug",
+   "--lint",
+   "badutf8.ts"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "badutf8.ts(1,21): error syntax: This constant must be initialized\nbadutf8.ts(1,21): error syntax: Expected identifier but found \"=\"\n",
+  "ms": 214,
+  "cpuMs": 104,
+  "maxRssMb": 218
+ },
+ {
+  "name": "constassign.js",
+  "cmd": [
+   "/workspace/wt/conformance/build/debug/bun-debug",
+   "--lint",
+   "constassign.js"
+  ],
+  "exitCode": 0,
+  "signal": null,
+  "stdout": "",
+  "stderr": "",
+  "ms": 1330,
+  "cpuMs": 167,
+  "maxRssMb": 215
+ },
+ {
+  "name": "constassign.ts",
+  "cmd": [
+   "/workspace/wt/conformance/build/debug/bun-debug",
+   "--lint",
+   "constassign.ts"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "constassign.ts(2,1): error syntax: Cannot assign to \"x\" because it is a constant\n",
+  "ms": 505,
+  "cpuMs": 128,
+  "maxRssMb": 219
+ },
+ {
+  "name": "redecl.ts",
+  "cmd": [
+   "/workspace/wt/conformance/build/debug/bun-debug",
+   "--lint",
+   "redecl.ts"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "redecl.ts(2,5): error syntax: \"a\" has already been declared\n",
+  "ms": 515,
+  "cpuMs": 119,
+  "maxRssMb": 217
+ },
+ {
+  "name": "redecl.js",
+  "cmd": [
+   "/workspace/wt/conformance/build/debug/bun-debug",
+   "--lint",
+   "redecl.js"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "redecl.js(2,5): error syntax: \"a\" has already been declared\n",
+  "ms": 1215,
+  "cpuMs": 122,
+  "maxRssMb": 217
+ },
+ {
+  "name": "imp.ts (import of a missing module)",
+  "cmd": [
+   "/workspace/wt/conformance/build/debug/bun-debug",
+   "--lint",
+   "imp.ts"
+  ],
+  "exitCode": 0,
+  "signal": null,
+  "stdout": "",
+  "stderr": "",
+  "ms": 789,
+  "cpuMs": 119,
+  "maxRssMb": 214
+ },
+ {
+  "name": "rules.js",
+  "cmd": [
+   "/workspace/wt/conformance/build/debug/bun-debug",
+   "--lint",
+   "rules.js"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "rules.js(1,5): error no-compare-neg-zero: Do not use the '===' operator to compare against -0.\nrules.js(2,15): error no-dupe-keys: Duplicate key 'a'.\n",
+  "ms": 600,
+  "cpuMs": 101,
+  "maxRssMb": 218
+ },
+ {
+  "name": "rules.ts (rules do not run on TypeScript)",
+  "cmd": [
+   "/workspace/wt/conformance/build/debug/bun-debug",
+   "--lint",
+   "rules.ts"
+  ],
+  "exitCode": 0,
+  "signal": null,
+  "stdout": "",
+  "stderr": "",
+  "ms": 615,
+  "cpuMs": 111,
+  "maxRssMb": 216
+ },
+ {
+  "name": "x.d.js.ts",
+  "cmd": [
+   "/workspace/wt/conformance/build/debug/bun-debug",
+   "--lint",
+   "x.d.js.ts"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "x.d.js.ts(1,7): error syntax: This constant must be initialized\nx.d.js.ts(1,7): error syntax: Expected identifier but found \"=\"\n",
+  "ms": 843,
+  "cpuMs": 125,
+  "maxRssMb": 217
+ },
+ {
+  "name": "deep.ts (200000 parentheses)",
+  "cmd": [
+   "/workspace/wt/conformance/build/debug/bun-debug",
+   "--lint",
+   "deep.ts"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "deep.ts(1,1796): error syntax: Maximum call stack size exceeded\n",
+  "ms": 952,
+  "cpuMs": 232,
+  "maxRssMb": 223
+ },
+ {
+  "name": "deep.js (200000 parentheses)",
+  "cmd": [
+   "/workspace/wt/conformance/build/debug/bun-debug",
+   "--lint",
+   "deep.js"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "deep.js(1,1908): error syntax: Maximum call stack size exceeded\n",
+  "ms": 1219,
+  "cpuMs": 238,
+  "maxRssMb": 222
+ },
+ {
+  "name": "deep-arr.js (200000 brackets)",
+  "cmd": [
+   "/workspace/wt/conformance/build/debug/bun-debug",
+   "--lint",
+   "deep-arr.js"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "deep-arr.js(1,4272): error syntax: Maximum call stack size exceeded\n",
+  "ms": 1362,
+  "cpuMs": 203,
+  "maxRssMb": 226
+ },
+ {
+  "name": "deep-obj.ts (100000 objects)",
+  "cmd": [
+   "/workspace/wt/conformance/build/debug/bun-debug",
+   "--lint",
+   "deep-obj.ts"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "deep-obj.ts(1,1927): error syntax: Maximum call stack size exceeded\n",
+  "ms": 834,
+  "cpuMs": 184,
+  "maxRssMb": 225
+ },
+ {
+  "name": "deep-type.ts (100000 type arguments)",
+  "cmd": [
+   "/workspace/wt/conformance/build/debug/bun-debug",
+   "--lint",
+   "deep-type.ts"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "deep-type.ts(1,20834): error syntax: Maximum call stack size exceeded\n",
+  "ms": 525,
+  "cpuMs": 152,
+  "maxRssMb": 225
+ },
+ {
+  "name": "big.ts (20000 functions, 1.5 MB)",
+  "cmd": [
+   "/workspace/wt/conformance/build/debug/bun-debug",
+   "--lint",
+   "big.ts"
+  ],
+  "exitCode": 0,
+  "signal": null,
+  "stdout": "",
+  "stderr": "",
+  "ms": 3086,
+  "cpuMs": 1586,
+  "maxRssMb": 269
+ },
+ {
+  "name": "big.js (20000 functions, 1.0 MB)",
+  "cmd": [
+   "/workspace/wt/conformance/build/debug/bun-debug",
+   "--lint",
+   "big.js"
+  ],
+  "exitCode": 0,
+  "signal": null,
+  "stdout": "",
+  "stderr": "",
+  "ms": 2415,
+  "cpuMs": 956,
+  "maxRssMb": 256
+ },
+ {
+  "name": "gate unset",
+  "cmd": [
+   "/workspace/wt/conformance/build/debug/bun-debug",
+   "--lint",
+   "warn2.ts"
+  ],
+  "exitCode": 1,
+  "signal": null,
+  "stdout": "",
+  "stderr": "error: --lint is experimental. Set the environment variable BUN_FEATURE_FLAG_EXPERIMENTAL_LINT=1 to enable it\n",
+  "ms": 197,
+  "cpuMs": 115,
+  "maxRssMb": 204
+ },
+ {
+  "name": "gate =0",
+  "cmd": [
+   "/workspace/wt/conformance/build/debug/bun-debug",
+   "--lint",
+   "warn2.ts"
+  ],
+  "exitCode": 1,
+  "signal": null,
+  "stdout": "",
+  "stderr": "error: --lint is experimental. Set the environment variable BUN_FEATURE_FLAG_EXPERIMENTAL_LINT=1 to enable it\n",
+  "ms": 262,
+  "cpuMs": 116,
+  "maxRssMb": 204
+ },
+ {
+  "name": "FORCE_COLOR=1 on a pipe",
+  "cmd": [
+   "/workspace/wt/conformance/build/debug/bun-debug",
+   "--lint",
+   "x.d.js.ts"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "x.d.js.ts(1,7): error syntax: This constant must be initialized\nx.d.js.ts(1,7): error syntax: Expected identifier but found \"=\"\n",
+  "ms": 216,
+  "cpuMs": 118,
+  "maxRssMb": 217
+ },
+ {
+  "name": "BUN_DEBUG_QUIET_LOGS unset",
+  "cmd": [
+   "/workspace/wt/conformance/build/debug/bun-debug",
+   "--lint",
+   "x.d.js.ts"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "x.d.js.ts(1,7): error syntax: This constant must be initialized\nx.d.js.ts(1,7): error syntax: Expected identifier but found \"=\"\n",
+  "ms": 123,
+  "cpuMs": 106,
+  "maxRssMb": 217
+ },
+ {
+  "name": "bun run --lint",
+  "cmd": [
+   "/workspace/wt/conformance/build/debug/bun-debug",
+   "run",
+   "--lint",
+   "x.d.js.ts"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "x.d.js.ts(1,7): error syntax: This constant must be initialized\nx.d.js.ts(1,7): error syntax: Expected identifier but found \"=\"\n",
+  "ms": 842,
+  "cpuMs": 170,
+  "maxRssMb": 216
+ },
+ {
+  "name": "--lint=value",
+  "cmd": [
+   "/workspace/wt/conformance/build/debug/bun-debug",
+   "--lint=value",
+   "warn2.ts"
+  ],
+  "exitCode": 1,
+  "signal": null,
+  "stdout": "Bun is a fast JavaScript runtime, package manager, bundler, and test runner. (1.4.3-debug+3110ce85c)\n\nUsage: bun <command> [...flags] [...args]\n\nCommands:\n  run       ./my-script.ts       Execute a file with Bun\n            lint                 Run a package.json script\n  test                           Run unit tests with Bun\n  x         eslint               Execute a package binary (CLI), installing if needed (bunx)\n  repl                           Start a REPL session with Bun\n  exec                           Run a shell script directly with Bun\n\n  install                        Install dependencies for a package.json (bun i)\n  add       @zarfjs/zarf         Add a dependency to package.json (bun a)\n  remove    left-pad             Remove a dependency from package.json (bun rm)\n  update    zod                  Update outdated dependencies\n  audit                          Check installed packages for vulnerabilities\n  dedupe                         Remove duplicate versions from the lockfile\n  prune                          Remove packages that are not in the lockfile from node_modules\n  outdated                       Display latest versions of outdated dependencies\n  link      [<package>]          Register or link a local npm package\n  unlink                         Unregister a local npm package\n  publish                        Publish a package to the npm registry\n  patch <pkg>                    Prepare a package for patching\n  pm <subcommand>                Additional package management utilities\n  info      tailwindcss          Display package metadata from the registry\n  why       elysia               Explain why a package is installed\n\n  build     ./a.ts ./b.jsx       Bundle TypeScript & JavaScript into a single file\n\n  init                           Start an empty Bun project from a built-in template\n  create    next-app             Create a new project from a template (bun c)\n  upgrade                        Upgrade to latest version of Bun.\n\n  <command> --help               Print help text for command.\n\nLearn more about Bun:            https://bun.com/docs\nJoin our Discord community:      https://bun.com/discord\n",
+  "stderr": "error: The argument '--lint' does not take a value.\n",
+  "ms": 559,
+  "cpuMs": 92,
+  "maxRssMb": 203
+ }
+]

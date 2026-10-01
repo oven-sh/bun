@@ -1,0 +1,46 @@
+The binding of the runner to one corpus root (E2 of round 2), as measured on 2026-10-01 against the worktree at 3110ce85cf.
+H is test/cli/lint/conformance. Nothing here is committed to the worktree: these files are what was run in a scratch clone.
+
+Files
+  corpus.ts          H/runner/corpus.ts, new: openCorpus, listCases, caseBaseName, the types Corpus, CorpusInstance, CorpusFacts
+  index.ts.patch     H/runner/index.ts: four export lines (corpus.ts, getCompilerVaryByMap, skippedTests, getFileBasedTestConfigurations)
+  sweep.ts.patch     H/sweep.ts: its six functions of glue leave it (116 lines), it opens the corpus through runner/corpus.ts
+  expectations.json  H/expectations.json: formatExpectations({ level: "baseline", E: [], C: [] }), 48 bytes
+  apply.sh           lays the four over a tree; a patch that is there already is left
+  replay-check.ts    a module for --check of sweep.ts that reports what the oracle holds (RUNNER names H/runner of the tree)
+  mini.sh            a corpus of six cases with an instance of every kind, two of which the pinned corpus does not have:
+                     one at which the reference stops and one whose diff is in both lists of typescript-go
+  compare.sh         sweep.ts before and after the binding on 23 command lines: text, exit code and report
+
+The causes of the failing tests (release build, corpus in place, tree as committed): 66 pass, 38 fail, 1 error
+  21  runner.openCorpus is no function: 9 + 1 of enumerator, 7 of run and "the sample had instances with errors and
+      without" that counts what those 7 saw, 1 of plain format, 2 of listed instances
+  17  getCompilerVaryByMap, getFileBasedTestConfigurations and skippedTests are no exports of runner/index.ts: the 16
+      of variations and "45 cases are left out by name" of enumerator
+   1  error between tests: H/expectations.json is not there, readFileSync throws in describe("expectations.json"), and its
+      test "is in the form that the update writes" is never made: the file has 105 tests, not 104
+  A debug build skips "every instance is its line of the list": 37 fail there.
+
+Reproduce
+  bash ../scratch.sh /tmp/x/repo                      a clone with the corpus, tree as committed
+  cd /tmp/x/repo && USE_SYSTEM_BUN=1 /workspace/tools/lk bun test test/cli/lint/conformance.test.ts      66 pass, 38 fail, 1 error
+  bash compare.sh /tmp/x/repo /tmp/x/cmp              "same 41, different 0"; it leaves the binding in the tree
+  bash ../typecheck.sh /tmp/x/repo                    no type error below test/cli/lint
+  cd /tmp/x/repo && USE_SYSTEM_BUN=1 /workspace/tools/lk bun test test/cli/lint/conformance.test.ts      105 pass, 0 fail
+  cd /tmp/x/repo && BUN_DEBUG_QUIET_LOGS=1 /workspace/tools/lk /workspace/wt/conformance/build/debug/bun-debug test test/cli/lint/conformance.test.ts
+                                                      104 pass, 1 skip, 0 fail
+  The format of the three TypeScript files (bun run prettier does not reach them: its pattern takes *.test.* below test/):
+  cd <tree> && bun --bun <worktree>/node_modules/.bin/prettier --plugin=<worktree>/node_modules/prettier-plugin-organize-imports/index.js \
+    --config .prettierrc --check test/cli/lint/conformance/runner/corpus.ts test/cli/lint/conformance/runner/index.ts test/cli/lint/conformance/sweep.ts
+
+Measured with the binding (installed release build 1.4.3, debug build of the worktree, load average of the machine 570 to 760)
+  release                105 pass, 0 fail: 9.80 s, 6.32 s, 5.91 s
+  debug                  104 pass, 1 skip, 0 fail: 80.5 s
+  debug, leak check      103 pass, 1 skip, 1 fail: "reference > the list has the instances of the reference's run" ran
+                         6154 ms against the default limit of 5000 ms. It calls nothing of the binding.
+  the same, --timeout 180000   104 pass, 1 skip, 0 fail, exit code 0, no leak report: 93.4 s. That test: 5931 ms.
+  sweep.ts before and after: the same text, exit code and report (but for its seconds) on the whole corpus with a check
+  that replays the oracle, without files (12,797 of 12,797 pass) and with files (12,611 pass, 186 unsupported on this
+  disk), on conformance/types/tuple/ (34 instances), with --tag, --kind, --listed, --since, selectors of every form,
+  the corpus of mini.sh ("instances 7: run 4 (E 1, C 3), skipped 1, invalid 2"), a corpus that is not there and one
+  with two cases of one name.

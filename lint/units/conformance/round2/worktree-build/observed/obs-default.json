@@ -1,0 +1,450 @@
+[
+ {
+  "name": "clean.ts",
+  "cwd": "/tmp/conf-wb/fx",
+  "args": [
+   "clean.ts"
+  ],
+  "exitCode": 0,
+  "signal": null,
+  "stdout": "",
+  "stderr": "",
+  "ms": 272
+ },
+ {
+  "name": "bad.ts (const = ;)",
+  "cwd": "/tmp/conf-wb/fx",
+  "args": [
+   "bad.ts"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "bad.ts(1,7): error syntax: This constant must be initialized\nbad.ts(1,7): error syntax: Expected identifier but found \"=\"\n",
+  "ms": 431
+ },
+ {
+  "name": "clean.tsx",
+  "cwd": "/tmp/conf-wb/fx",
+  "args": [
+   "clean.tsx"
+  ],
+  "exitCode": 0,
+  "signal": null,
+  "stdout": "",
+  "stderr": "",
+  "ms": 163
+ },
+ {
+  "name": "bad.tsx",
+  "cwd": "/tmp/conf-wb/fx",
+  "args": [
+   "bad.tsx"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "bad.tsx(1,16): error syntax: Syntax Error\n",
+  "ms": 762
+ },
+ {
+  "name": "dbg.js (debugger)",
+  "cwd": "/tmp/conf-wb/fx",
+  "args": [
+   "dbg.js"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "dbg.js(1,1): error no-debugger: Unexpected 'debugger' statement.\n",
+  "ms": 1006
+ },
+ {
+  "name": "bad.d.ts (syntax error)",
+  "cwd": "/tmp/conf-wb/fx",
+  "args": [
+   "bad.d.ts"
+  ],
+  "exitCode": 0,
+  "signal": null,
+  "stdout": "",
+  "stderr": "",
+  "ms": 672
+ },
+ {
+  "name": "ok.d.ts",
+  "cwd": "/tmp/conf-wb/fx",
+  "args": [
+   "ok.d.ts"
+  ],
+  "exitCode": 0,
+  "signal": null,
+  "stdout": "",
+  "stderr": "",
+  "ms": 320
+ },
+ {
+  "name": "data.json",
+  "cwd": "/tmp/conf-wb/fx",
+  "args": [
+   "data.json"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "error unsupported-extension: File 'data.json' has an unsupported extension. The only supported extensions are '.ts', '.tsx', '.d.ts', '.js', '.jsx', '.cts', '.d.cts', '.cjs', '.mts', '.d.mts', '.mjs'.\n",
+  "ms": 332
+ },
+ {
+  "name": "missing.ts",
+  "cwd": "/tmp/conf-wb/fx",
+  "args": [
+   "missing.ts"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "error cannot-read-file: File 'missing.ts' not found.\n",
+  "ms": 298
+ },
+ {
+  "name": "missing.d.ts",
+  "cwd": "/tmp/conf-wb/fx",
+  "args": [
+   "missing.d.ts"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "error cannot-read-file: File 'missing.d.ts' not found.\n",
+  "ms": 612
+ },
+ {
+  "name": "two: bad.ts dbg.js",
+  "cwd": "/tmp/conf-wb/fx",
+  "args": [
+   "bad.ts",
+   "dbg.js"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "bad.ts(1,7): error syntax: This constant must be initialized\nbad.ts(1,7): error syntax: Expected identifier but found \"=\"\ndbg.js(1,1): error no-debugger: Unexpected 'debugger' statement.\n",
+  "ms": 407
+ },
+ {
+  "name": "two: dbg.js bad.ts",
+  "cwd": "/tmp/conf-wb/fx",
+  "args": [
+   "dbg.js",
+   "bad.ts"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "bad.ts(1,7): error syntax: This constant must be initialized\nbad.ts(1,7): error syntax: Expected identifier but found \"=\"\ndbg.js(1,1): error no-debugger: Unexpected 'debugger' statement.\n",
+  "ms": 478
+ },
+ {
+  "name": "two: clean.ts bad.ts",
+  "cwd": "/tmp/conf-wb/fx",
+  "args": [
+   "clean.ts",
+   "bad.ts"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "bad.ts(1,7): error syntax: This constant must be initialized\nbad.ts(1,7): error syntax: Expected identifier but found \"=\"\n",
+  "ms": 765
+ },
+ {
+  "name": "two: missing.ts bad.ts data.json",
+  "cwd": "/tmp/conf-wb/fx",
+  "args": [
+   "missing.ts",
+   "bad.ts",
+   "data.json"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "error cannot-read-file: File 'missing.ts' not found.\nerror unsupported-extension: File 'data.json' has an unsupported extension. The only supported extensions are '.ts', '.tsx', '.d.ts', '.js', '.jsx', '.cts', '.d.cts', '.cjs', '.mts', '.d.mts', '.mjs'.\nbad.ts(1,7): error syntax: This constant must be initialized\nbad.ts(1,7): error syntax: Expected identifier but found \"=\"\n",
+  "ms": 643
+ },
+ {
+  "name": "twice: bad.ts bad.ts",
+  "cwd": "/tmp/conf-wb/fx",
+  "args": [
+   "bad.ts",
+   "bad.ts"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "bad.ts(1,7): error syntax: This constant must be initialized\nbad.ts(1,7): error syntax: Expected identifier but found \"=\"\n",
+  "ms": 447
+ },
+ {
+  "name": "crlf.ts",
+  "cwd": "/tmp/conf-wb/fx",
+  "args": [
+   "crlf.ts"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "crlf.ts(2,7): error syntax: This constant must be initialized\ncrlf.ts(2,7): error syntax: Expected identifier but found \"=\"\n",
+  "ms": 431
+ },
+ {
+  "name": "crlf.js",
+  "cwd": "/tmp/conf-wb/fx",
+  "args": [
+   "crlf.js"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "crlf.js(2,1): error no-debugger: Unexpected 'debugger' statement.\n",
+  "ms": 656
+ },
+ {
+  "name": "cr.ts (lone CR)",
+  "cwd": "/tmp/conf-wb/fx",
+  "args": [
+   "cr.ts"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "cr.ts(2,7): error syntax: This constant must be initialized\ncr.ts(2,7): error syntax: Expected identifier but found \"=\"\n",
+  "ms": 494
+ },
+ {
+  "name": "bom.ts",
+  "cwd": "/tmp/conf-wb/fx",
+  "args": [
+   "bom.ts"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "bom.ts(1,7): error syntax: This constant must be initialized\nbom.ts(1,7): error syntax: Expected identifier but found \"=\"\n",
+  "ms": 508
+ },
+ {
+  "name": "bom.js",
+  "cwd": "/tmp/conf-wb/fx",
+  "args": [
+   "bom.js"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "bom.js(1,1): error no-debugger: Unexpected 'debugger' statement.\n",
+  "ms": 257
+ },
+ {
+  "name": "utf16.ts",
+  "cwd": "/tmp/conf-wb/fx",
+  "args": [
+   "utf16.ts"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "utf16.ts(1,22): error syntax: This constant must be initialized\nutf16.ts(1,22): error syntax: Expected identifier but found \"=\"\n",
+  "ms": 867
+ },
+ {
+  "name": "warn.ts (return newline)",
+  "cwd": "/tmp/conf-wb/fx",
+  "args": [
+   "warn.ts"
+  ],
+  "exitCode": 0,
+  "signal": null,
+  "stdout": "",
+  "stderr": "",
+  "ms": 660
+ },
+ {
+  "name": "warn.js (return newline)",
+  "cwd": "/tmp/conf-wb/fx",
+  "args": [
+   "warn.js"
+  ],
+  "exitCode": 0,
+  "signal": null,
+  "stdout": "",
+  "stderr": "",
+  "ms": 702
+ },
+ {
+  "name": "warn2.js (-->)",
+  "cwd": "/tmp/conf-wb/fx",
+  "args": [
+   "warn2.js"
+  ],
+  "exitCode": 0,
+  "signal": null,
+  "stdout": "",
+  "stderr": "warn2.js(2,1): warning syntax: Treating \"-->\" as the start of a legacy HTML single-line comment\n",
+  "ms": 646
+ },
+ {
+  "name": "empty.ts",
+  "cwd": "/tmp/conf-wb/fx",
+  "args": [
+   "empty.ts"
+  ],
+  "exitCode": 0,
+  "signal": null,
+  "stdout": "",
+  "stderr": "",
+  "ms": 612
+ },
+ {
+  "name": "noeol.js",
+  "cwd": "/tmp/conf-wb/fx",
+  "args": [
+   "noeol.js"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "noeol.js(1,1): error no-debugger: Unexpected 'debugger' statement.\n",
+  "ms": 164
+ },
+ {
+  "name": "mixed.ts",
+  "cwd": "/tmp/conf-wb/fx",
+  "args": [
+   "mixed.ts"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "mixed.ts(2,13): error syntax: Expected \">\" but found \"/\"\n",
+  "ms": 589
+ },
+ {
+  "name": "tsonly.ts",
+  "cwd": "/tmp/conf-wb/fx",
+  "args": [
+   "tsonly.ts"
+  ],
+  "exitCode": 0,
+  "signal": null,
+  "stdout": "",
+  "stderr": "",
+  "ms": 387
+ },
+ {
+  "name": "relative from other cwd: ../fx/bad.ts",
+  "cwd": "/tmp/conf-wb/other",
+  "args": [
+   "../fx/bad.ts"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "../fx/bad.ts(1,7): error syntax: This constant must be initialized\n../fx/bad.ts(1,7): error syntax: Expected identifier but found \"=\"\n",
+  "ms": 192
+ },
+ {
+  "name": "relative from other cwd: ../fx/sub/inner.js",
+  "cwd": "/tmp/conf-wb/other",
+  "args": [
+   "../fx/sub/inner.js"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "../fx/sub/inner.js(1,1): error no-debugger: Unexpected 'debugger' statement.\n",
+  "ms": 781
+ },
+ {
+  "name": "absolute from other cwd: bad.ts",
+  "cwd": "/tmp/conf-wb/other",
+  "args": [
+   "/tmp/conf-wb/fx/bad.ts"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "../fx/bad.ts(1,7): error syntax: This constant must be initialized\n../fx/bad.ts(1,7): error syntax: Expected identifier but found \"=\"\n",
+  "ms": 765
+ },
+ {
+  "name": "absolute from other cwd: sub/inner.js",
+  "cwd": "/tmp/conf-wb/other",
+  "args": [
+   "/tmp/conf-wb/fx/sub/inner.js"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "../fx/sub/inner.js(1,1): error no-debugger: Unexpected 'debugger' statement.\n",
+  "ms": 372
+ },
+ {
+  "name": "absolute from own cwd: bad.ts",
+  "cwd": "/tmp/conf-wb/fx",
+  "args": [
+   "/tmp/conf-wb/fx/bad.ts"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "bad.ts(1,7): error syntax: This constant must be initialized\nbad.ts(1,7): error syntax: Expected identifier but found \"=\"\n",
+  "ms": 1079
+ },
+ {
+  "name": "absolute from a subdirectory: bad.ts",
+  "cwd": "/tmp/conf-wb/fx/sub",
+  "args": [
+   "/tmp/conf-wb/fx/bad.ts"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "../bad.ts(1,7): error syntax: This constant must be initialized\n../bad.ts(1,7): error syntax: Expected identifier but found \"=\"\n",
+  "ms": 663
+ },
+ {
+  "name": "relative ./sub/inner.ts",
+  "cwd": "/tmp/conf-wb/fx",
+  "args": [
+   "./sub/inner.ts"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "sub/inner.ts(1,7): error syntax: This constant must be initialized\nsub/inner.ts(1,7): error syntax: Expected identifier but found \"=\"\n",
+  "ms": 627
+ },
+ {
+  "name": "no operand",
+  "cwd": "/tmp/conf-wb/fx",
+  "args": [],
+  "exitCode": 1,
+  "signal": null,
+  "stdout": "",
+  "stderr": "error: --lint needs one or more files\n",
+  "ms": 1130
+ },
+ {
+  "name": "directory operand: sub",
+  "cwd": "/tmp/conf-wb/fx",
+  "args": [
+   "sub"
+  ],
+  "exitCode": 2,
+  "signal": null,
+  "stdout": "",
+  "stderr": "error unsupported-extension: File 'sub' has an unsupported extension. The only supported extensions are '.ts', '.tsx', '.d.ts', '.js', '.jsx', '.cts', '.d.cts', '.cjs', '.mts', '.d.mts', '.mjs'.\n",
+  "ms": 229
+ }
+]

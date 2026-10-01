@@ -1,0 +1,6 @@
+### queued: 2026-10-01T09:19:49Z
+### lock acquired: 2026-10-01T09:50:25Z
+$ BUN_DEBUG_QUIET_LOGS=1 bun scripts/build.ts --profile=debug --quiet "-j8" --version
+1.4.3-debug
+### finished: 2026-10-01T09:50:35Z rc=0 run_secs=9
+### outer rc=0

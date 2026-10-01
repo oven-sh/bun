@@ -1,0 +1,22 @@
+[
+	{
+		"code": "const a = <B<\"c\\d\"> e=\"f\\g\">{\"h\\i\"}</B>;",
+		"ext": "tsx"
+	},
+	{
+		"code": "const a = <b c=\"d\\e\" />; type F = \"g\\h\";",
+		"ext": "tsx"
+	},
+	{
+		"code": "const a = <b>{\"c\\d\" as string}</b>;",
+		"ext": "tsx"
+	},
+	{
+		"code": "const a = <b c={\"d\\e\"!} />;",
+		"ext": "tsx"
+	},
+	{
+		"code": "const a = <T,>(x: T) => <b c=\"d\\e\">{'f\\g'}</b>;",
+		"ext": "tsx"
+	}
+]

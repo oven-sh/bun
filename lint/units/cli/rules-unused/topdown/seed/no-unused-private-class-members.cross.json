@@ -1,0 +1,21 @@
+[
+	{"code":"class A { foo; #foo; }","expect":[{"line":1,"column":16,"message":"'#foo' is defined but never used."}]},
+	{"code":"class A { '#foo'; #foo; }","expect":[{"line":1,"column":19,"message":"'#foo' is defined but never used."}]},
+	{"code":"class A { #a(){} a(){} }","expect":[{"line":1,"column":11,"message":"'#a' is defined but never used."}]},
+	{"code":"class A { get #a(){} set #a(v){} }","expect":[{"line":1,"column":26,"message":"'#a' is defined but never used."}]},
+	{"code":"class A { #a; a; static a; }","expect":[{"line":1,"column":11,"message":"'#a' is defined but never used."}]},
+	{"code":"class A { static #a(){} static a(){} static a(){} }","expect":[{"line":1,"column":18,"message":"'#a' is defined but never used."}]},
+	{"code":"class A { #foo; foo; }","expect":[{"line":1,"column":11,"message":"'#foo' is defined but never used."}]},
+	{"code":"class A { #foo() {} foo() {} }","expect":[{"line":1,"column":11,"message":"'#foo' is defined but never used."}]},
+	{"code":"class A { get #a() {} set #a(v) {} }","expect":[{"line":1,"column":27,"message":"'#a' is defined but never used."}]},
+	{"code":"class A { static #foo; foo; static foo; }","expect":[{"line":1,"column":18,"message":"'#foo' is defined but never used."}]},
+	{"code":"class A { #a; a; }","expect":[{"line":1,"column":11,"message":"'#a' is defined but never used."}]},
+	{"code":"class A { get #a() {} set #a(v) {} a() {} }","expect":[{"line":1,"column":27,"message":"'#a' is defined but never used."}]},
+	{"code":"class A { #a = class { a; a }; b(x = class { c; c }) {} }","expect":[{"line":1,"column":11,"message":"'#a' is defined but never used."}]},
+	{"code":"class A { constructor({}) {} static m([]) {} #p({}) {} }","expect":[{"line":1,"column":46,"message":"'#p' is defined but never used."}]},
+	{"code":"class C { #field; foo() { this.#field = this['#field']; } }","expect":[{"line":1,"column":11,"message":"'#field' is defined but never used."}]},
+	{"code":"class C { #f; #g; foo() { this.#f = this.#g; } }","expect":[{"line":1,"column":11,"message":"'#f' is defined but never used."}]},
+	{"code":"class C { #f; foo() { this.#f = this.f; } }","expect":[{"line":1,"column":11,"message":"'#f' is defined but never used."}]},
+	{"code":"class A { m() { this.#a = this.a; } #a }","expect":[{"line":1,"column":37,"message":"'#a' is defined but never used."}]},
+	{"code":"class C { #undefined; m() { return typeof x === undefined } }","expect":[{"line":1,"column":11,"message":"'#undefined' is defined but never used."}]}
+]

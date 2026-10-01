@@ -30,6 +30,8 @@ pub struct Rx<'c, 'p, 'a> {
     pub out: Vec<String>,
     /// The strings that are the value of a JSX attribute written as a string, by the address of their payload.
     pub jsx_attr: Vec<usize>,
+    /// An identifier named `RegExp` (1) or `globalThis` (2) is the target of an assignment somewhere.
+    pub written: u8,
 }
 
 impl Rx<'_, '_, '_> {
@@ -71,6 +73,35 @@ impl Rx<'_, '_, '_> {
     /// Whether a symbol of the parse pass has the name: the file declares it somewhere.
     fn declares(&self, name: &[u8]) -> bool {
         self.ctx.parsed.symbols.iter().any(|symbol| symbol.kind != bun_ast::SymbolKind::Unbound && symbol.original_name.slice() == name)
+    }
+
+    /// `expr` stands where a value is assigned to it.
+    fn target(&mut self, expr: &Expr, depth: u32) {
+        if depth > 64 {
+            return;
+        }
+        match &expr.data {
+            ExprData::EIdentifier(identifier) => match self.ctx.parsed.name_of(identifier.ref_) {
+                b"RegExp" => self.written |= 1,
+                b"globalThis" => self.written |= 2,
+                _ => {}
+            },
+            ExprData::EArray(array) => {
+                for item in array.items.as_slice() {
+                    self.target(item, depth + 1);
+                }
+            }
+            ExprData::EObject(object) => {
+                for property in object.properties.iter() {
+                    if let Some(value) = &property.value {
+                        self.target(value, depth + 1);
+                    }
+                }
+            }
+            ExprData::ESpread(spread) => self.target(&spread.value, depth + 1),
+            ExprData::EBinary(binary) if binary.op == OpCode::BinAssign => self.target(&binary.left, depth + 1),
+            _ => {}
+        }
     }
 
     fn call(&mut self, expr: &Expr, target: &Expr, args: &[Expr], is_new: bool) {
@@ -183,8 +214,24 @@ impl<'ast> Visitor<'ast> for Rx<'_, '_, '_> {
                 }
             }
             ExprData::EJsxElement(element) => self.jsx(element),
+            ExprData::EBinary(binary) if is_assign(binary.op) => self.target(&binary.left, 0),
+            ExprData::EUnary(unary) if matches!(unary.op, OpCode::UnPreDec | OpCode::UnPreInc | OpCode::UnPostDec | OpCode::UnPostInc) => self.target(&unary.value, 0),
             _ => {}
         }
+    }
+
+    fn visit_s_for_in(&mut self, node: &'ast S::ForIn, _: Loc) {
+        if let bun_ast::StmtData::SExpr(head) = &node.init.data {
+            self.target(&head.value, 0);
+        }
+        walk::walk_s_for_in(self, node);
+    }
+
+    fn visit_s_for_of(&mut self, node: &'ast S::ForOf, _: Loc) {
+        if let bun_ast::StmtData::SExpr(head) = &node.init.data {
+            self.target(&head.value, 0);
+        }
+        walk::walk_s_for_of(self, node);
     }
 
     fn visit_s_directive(&mut self, _: &'ast S::Directive, loc: Loc) {
@@ -219,7 +266,7 @@ impl<'ast> Visitor<'ast> for Rx<'_, '_, '_> {
 
 pub fn run(ctx: &Ctx<'_, '_>, text: &[u8], stmts: &[Stmt]) -> Vec<String> {
     use bun_js_parser::parse::erased::{ErasedData, ErasedMemberData, ModuleName};
-    let mut rx = Rx { ctx, text, out: Vec::new(), jsx_attr: Vec::new() };
+    let mut rx = Rx { ctx, text, out: Vec::new(), jsx_attr: Vec::new(), written: 0 };
     for stmt in stmts {
         rx.visit_stmt(stmt);
     }
@@ -256,6 +303,6 @@ pub fn run(ctx: &Ctx<'_, '_>, text: &[u8], stmts: &[Stmt]) -> Vec<String> {
             }
         }
     }
-    rx.out.push(format!("{{\"k\":\"seam\",\"RegExp\":{},\"globalThis\":{}}}", ctx.is_global(b"RegExp"), ctx.is_global(b"globalThis")));
+    rx.out.push(format!("{{\"k\":\"seam\",\"RegExp\":{},\"globalThis\":{},\"written\":{}}}", ctx.is_global(b"RegExp"), ctx.is_global(b"globalThis"), rx.written));
     rx.out
 }

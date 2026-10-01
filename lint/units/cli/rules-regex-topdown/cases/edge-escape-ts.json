@@ -1,0 +1,250 @@
+[
+	{
+		"code": "type A = \"a\\d\";",
+		"ext": "ts"
+	},
+	{
+		"code": "type A = `a\\d`;",
+		"ext": "ts"
+	},
+	{
+		"code": "type A = `a\\d${B}\\e`;",
+		"ext": "ts"
+	},
+	{
+		"code": "let a: \"b\\d\";",
+		"ext": "ts"
+	},
+	{
+		"code": "function f(a: \"b\\d\"): 'c\\e' {}",
+		"ext": "ts"
+	},
+	{
+		"code": "a as \"b\\d\";",
+		"ext": "ts"
+	},
+	{
+		"code": "<\"b\\d\">a;",
+		"ext": "ts"
+	},
+	{
+		"code": "a satisfies \"b\\d\";",
+		"ext": "ts"
+	},
+	{
+		"code": "type A = { \"b\\d\": 1 };",
+		"ext": "ts"
+	},
+	{
+		"code": "interface A { \"b\\d\": 1; 'c\\e'(): void }",
+		"ext": "ts"
+	},
+	{
+		"code": "type A = B[\"c\\d\"];",
+		"ext": "ts"
+	},
+	{
+		"code": "enum E { \"a\\d\" = 1 }",
+		"ext": "ts"
+	},
+	{
+		"code": "enum E { A = \"a\\d\" }",
+		"ext": "ts"
+	},
+	{
+		"code": "enum E { 'a\\d' }",
+		"ext": "ts"
+	},
+	{
+		"code": "const enum E { \"a\\d\" = \"b\\e\" }",
+		"ext": "ts"
+	},
+	{
+		"code": "declare enum E { \"a\\d\" = \"b\\e\" }",
+		"ext": "ts"
+	},
+	{
+		"code": "declare module \"m\\d\" {}",
+		"ext": "ts"
+	},
+	{
+		"code": "declare module \"m\\d\";",
+		"ext": "ts"
+	},
+	{
+		"code": "declare module \"m\\d\" { const a: \"b\\e\"; }",
+		"ext": "ts"
+	},
+	{
+		"code": "module \"m\\d\" {}",
+		"ext": "ts"
+	},
+	{
+		"code": "namespace N { \"a\\d\"; }",
+		"ext": "ts"
+	},
+	{
+		"code": "import a = require(\"m\\d\");",
+		"ext": "ts"
+	},
+	{
+		"code": "export import a = require(\"m\\d\");",
+		"ext": "ts"
+	},
+	{
+		"code": "import type A from \"m\\d\";",
+		"ext": "ts"
+	},
+	{
+		"code": "import type { A } from \"m\\d\";",
+		"ext": "ts"
+	},
+	{
+		"code": "import { type A } from \"m\\d\";",
+		"ext": "ts"
+	},
+	{
+		"code": "import { type A, b } from \"m\\d\";",
+		"ext": "ts"
+	},
+	{
+		"code": "export type { A } from \"m\\d\";",
+		"ext": "ts"
+	},
+	{
+		"code": "export type * from \"m\\d\";",
+		"ext": "ts"
+	},
+	{
+		"code": "export type * as a from \"m\\d\";",
+		"ext": "ts"
+	},
+	{
+		"code": "let a: import(\"m\\d\").B;",
+		"ext": "ts"
+	},
+	{
+		"code": "type A = typeof import(\"m\\d\");",
+		"ext": "ts"
+	},
+	{
+		"code": "declare const a = \"b\\d\";",
+		"ext": "ts"
+	},
+	{
+		"code": "declare function f(a?: \"b\\d\"): void;",
+		"ext": "ts"
+	},
+	{
+		"code": "abstract class A { abstract \"a\\d\": 1; }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { declare \"a\\d\": 1; }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { \"a\\d\": string = \"b\\e\"; }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { \"a\\d\"(): void; \"a\\d\"() {} }",
+		"ext": "ts"
+	},
+	{
+		"code": "function f(a: string = \"b\\d\") {}",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { constructor(private a = \"b\\d\") {} }",
+		"ext": "ts"
+	},
+	{
+		"code": "\"a\\d\" as string;",
+		"ext": "ts"
+	},
+	{
+		"code": "\"a\\d\"!;",
+		"ext": "ts"
+	},
+	{
+		"code": "<string>\"a\\d\";",
+		"ext": "ts"
+	},
+	{
+		"code": "\"a\\d\" satisfies string;",
+		"ext": "ts"
+	},
+	{
+		"code": "`a\\d` as string;",
+		"ext": "ts"
+	},
+	{
+		"code": "`a\\d${b}\\e` as string;",
+		"ext": "ts"
+	},
+	{
+		"code": "@dec(\"a\\d\") class A {}",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { @dec(\"a\\d\") m() {} }",
+		"ext": "ts"
+	},
+	{
+		"code": "let a = /\\a/ as any;",
+		"ext": "ts"
+	},
+	{
+		"code": "let a = <any>/\\a/;",
+		"ext": "ts"
+	},
+	{
+		"code": "/\\a/!;",
+		"ext": "ts"
+	},
+	{
+		"code": "export = \"a\\d\";",
+		"ext": "ts"
+	},
+	{
+		"code": "export default \"a\\d\" as any;",
+		"ext": "ts"
+	},
+	{
+		"code": "function f(this: \"a\\d\") {}",
+		"ext": "ts"
+	},
+	{
+		"code": "let a: { [k: string]: \"b\\d\" };",
+		"ext": "ts"
+	},
+	{
+		"code": "type A<T = \"b\\d\"> = T;",
+		"ext": "ts"
+	},
+	{
+		"code": "f<\"a\\d\">(\"b\\e\");",
+		"ext": "ts"
+	},
+	{
+		"code": "new A<\"a\\d\">(\"b\\e\");",
+		"ext": "ts"
+	},
+	{
+		"code": "tag<string>`\\d`;",
+		"ext": "ts"
+	},
+	{
+		"code": "tag<\"a\\d\">`\\e`;",
+		"ext": "ts"
+	},
+	{
+		"code": "let a = \"b\\d\" as \"c\\e\";",
+		"ext": "ts"
+	},
+	{
+		"code": "type A = B extends \"c\\d\" ? 'e\\f' : never;",
+		"ext": "ts"
+	}
+]

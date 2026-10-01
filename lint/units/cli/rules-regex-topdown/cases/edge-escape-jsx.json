@@ -1,0 +1,170 @@
+[
+	{
+		"code": "<a b=\"c\\d\" />;",
+		"ext": "jsx"
+	},
+	{
+		"code": "<a b='c\\d' />;",
+		"ext": "jsx"
+	},
+	{
+		"code": "<a b={\"c\\d\"} />;",
+		"ext": "jsx"
+	},
+	{
+		"code": "<a b={'c\\d'} />;",
+		"ext": "jsx"
+	},
+	{
+		"code": "<a b={`c\\d`} />;",
+		"ext": "jsx"
+	},
+	{
+		"code": "<a b = \"c\\d\" />;",
+		"ext": "jsx"
+	},
+	{
+		"code": "<a b = {\"c\\d\"} />;",
+		"ext": "jsx"
+	},
+	{
+		"code": "<a b=/* c */\"c\\d\" />;",
+		"ext": "jsx"
+	},
+	{
+		"code": "<a b={/* c */\"c\\d\"} />;",
+		"ext": "jsx"
+	},
+	{
+		"code": "<a b={/* { */\"c\\d\"} />;",
+		"ext": "jsx"
+	},
+	{
+		"code": "<a b=/* { */\"c\\d\" />;",
+		"ext": "jsx"
+	},
+	{
+		"code": "<a b=// c\n\"c\\d\" />;",
+		"ext": "jsx"
+	},
+	{
+		"code": "<a b={// c\n\"c\\d\"} />;",
+		"ext": "jsx"
+	},
+	{
+		"code": "<a>b\\d</a>;",
+		"ext": "jsx"
+	},
+	{
+		"code": "<a>\"b\\d\"</a>;",
+		"ext": "jsx"
+	},
+	{
+		"code": "<a>{\"b\\d\"}</a>;",
+		"ext": "jsx"
+	},
+	{
+		"code": "<a>{'b\\d'}</a>;",
+		"ext": "jsx"
+	},
+	{
+		"code": "<a>{`b\\d`}</a>;",
+		"ext": "jsx"
+	},
+	{
+		"code": "<a>{}\"b\\d\"</a>;",
+		"ext": "jsx"
+	},
+	{
+		"code": "<a>{/* c */}'b\\d'</a>;",
+		"ext": "jsx"
+	},
+	{
+		"code": "<a> {\"b\\d\"} 'c\\e' </a>;",
+		"ext": "jsx"
+	},
+	{
+		"code": "<>b\\d</>;",
+		"ext": "jsx"
+	},
+	{
+		"code": "<>{\"b\\d\"}</>;",
+		"ext": "jsx"
+	},
+	{
+		"code": "<a><b c=\"d\\e\" />{\"f\\g\"}</a>;",
+		"ext": "jsx"
+	},
+	{
+		"code": "<a b={<c d=\"e\\f\" />} />;",
+		"ext": "jsx"
+	},
+	{
+		"code": "<a b=<c d=\"e\\f\" /> />;",
+		"ext": "jsx"
+	},
+	{
+		"code": "<a {...{ b: \"c\\d\" }} />;",
+		"ext": "jsx"
+	},
+	{
+		"code": "<a b={{ c: \"d\\e\" }} />;",
+		"ext": "jsx"
+	},
+	{
+		"code": "<a b={f(\"c\\d\")} />;",
+		"ext": "jsx"
+	},
+	{
+		"code": "<a b=\"c\\d\" e={\"f\\g\"} h='i\\j' />;",
+		"ext": "jsx"
+	},
+	{
+		"code": "<a-b c:d=\"e\\f\" />;",
+		"ext": "jsx"
+	},
+	{
+		"code": "<a.b c=\"d\\e\">{\"f\\g\"}</a.b>;",
+		"ext": "jsx"
+	},
+	{
+		"code": "<a b=\"c\" d={/\\e/} />;",
+		"ext": "jsx"
+	},
+	{
+		"code": "<a>{/\\e/}</a>;",
+		"ext": "jsx"
+	},
+	{
+		"code": "<a b=\"&amp;\\d\" />;",
+		"ext": "jsx"
+	},
+	{
+		"code": "<a b=\"c\\\"d\" />;",
+		"ext": "jsx"
+	},
+	{
+		"code": "f(<a b=\"c\\d\" />, \"e\\f\");",
+		"ext": "jsx"
+	},
+	{
+		"code": "<a b={\"c\\d\"}>{\"e\\f\"}<g h=\"i\\j\">k\\l</g></a>;",
+		"ext": "jsx"
+	},
+	{
+		"code": "<a key=\"b\\d\" />;",
+		"ext": "jsx"
+	},
+	{
+		"code": "<a ref=\"b\\d\" children={\"c\\e\"} />;",
+		"ext": "jsx"
+	},
+	{
+		"code": "<a b />;",
+		"ext": "jsx"
+	},
+	{
+		"code": "<a b=\"1\" c={2} />; \"d\\e\";",
+		"ext": "jsx"
+	}
+]

@@ -1,0 +1,67 @@
+program Ir  5,118,791,555 ->  5,114,273,025 (-4,518,530)  Bc   706,838,082 ->   706,230,732 (-607,350)  Bi  53,862,512 ->  53,862,702 (+190)
+parser  Ir  3,315,540,179 ->  3,313,745,149 (-1,795,030)  Bc   343,413,670 ->   343,384,730 (-28,940)  Bi  42,778,315 ->  42,778,315 (+0)
+rest    Ir  1,803,251,376 ->  1,800,527,876 (-2,723,500)  Bc   363,424,412 ->   362,846,002 (-578,410)  Bi  11,084,197 ->  11,084,387 (+190)
+21 parser symbols differ, 566 other symbols differ
+-- parser symbols with |dBc| >= 0, by dBc
+  Bc    +127,020  Ir       -2,920  Bi        +0  (a Bc 2,961,980) <bun_js_parser::p::P<false, false>>::s_local
+  Bc     +10,980  Ir      +88,500  Bi        +0  (a Bc 2,123,380) <bun_js_parser::p::P<false, false>>::parse_fn
+  Bc      +5,480  Ir      +50,600  Bi        +0  (a Bc 0) NEW <bun_js_parser::p::P<false, false>>::parse_arrow_body_with_flags
+  Bc        +100  Ir     +596,180  Bi        +0  (a Bc 7,077,980) <bun_js_parser::visit::visit_binary::BinaryExpressionVisitor>::visit_right_and_finish::<false, false>
+  Bc         +84  Ir         +147  Bi        +0  (a Bc 1,323) core::ptr::drop_glue::<bun_js_parser::p::P<false, false>>
+  Bc          +0  Ir     +111,160  Bi        +0  (a Bc 1,372,101) <bun_js_parser::p::P<false, false>>::visit_args
+  Bc          +0  Ir       +5,980  Bi        +0  (a Bc 2,286,560) <bun_js_parser::p::P<false, false>>::parse_property
+  Bc          +0  Ir     -995,200  Bi        +0  (a Bc 845,920) <bun_js_parser::p::P<false, false>>::parse_fn_stmt
+  Bc          +0  Ir      -99,520  Bi        +0  (a Bc 694,900) <bun_js_parser::p::P<false, false>>::s_function
+  Bc          +0  Ir          +21  Bi        +0  (a Bc 189) <bun_js_parser::p::P<false, false>>::init
+  Bc          +0  Ir     -132,440  Bi        +0  (a Bc 977,260) <bun_js_parser::p::P<false, false>>::visit_func
+  Bc          +0  Ir     -514,460  Bi        +0  (a Bc 13,964,440) <bun_js_parser::p::P<false, false>>::parse_prefix
+  Bc          +0  Ir      -49,140  Bi        +0  (a Bc 131,040) <bun_js_parser::p::P<false, false>>::parse_fn_expr
+  Bc          +0  Ir     +118,040  Bi        +0  (a Bc 177,060) <bun_alloc::baby_vec::BabyVec<bun_ast::g::Arg>>::grow_exact
+  Bc         -40  Ir         -120  Bi        +0  (a Bc 2,215,140) <bun_js_parser::p::P<false, false>>::parse_and_declare_decls
+  Bc         -84  Ir         -378  Bi        +0  (a Bc 84) GONE core::ptr::drop_glue::<bun_js_parser::parser::MacroState>
+  Bc      -5,580  Ir      -50,560  Bi        +0  (a Bc 5,580) GONE <bun_js_parser::p::P<false, false>>::parse_arrow_body
+  Bc     -16,460  Ir     -197,520  Bi        +0  (a Bc 98,760) <bun_js_parser::p::P<false, false>>::e_function
+  Bc     -17,860  Ir     -267,900  Bi        +0  (a Bc 17,860) GONE core::ptr::drop_glue::<bun_ast::e::JSXElement>
+  Bc     -21,960  Ir     -252,540  Bi        +0  (a Bc 21,960) GONE core::ptr::drop_glue::<bun_alloc::baby_vec::BabyVec<bun_ast::g::Arg>>
+  Bc    -110,620  Ir     -202,960  Bi        +0  (a Bc 3,459,960) <bun_js_parser::p::P<false, false>>::parse_stmt
+-- other symbols, top by |dBc|
+  Bc    -304,762  Ir     -359,629  Bi        +0  (a Bc 62,499,352) __memcpy_avx_unaligned_erms
+  Bc    -132,442  Ir     -133,978  Bi        +0  (a Bc 10,306,714) __memset_avx2_unaligned_erms
+  Bc     +44,904  Ir     +223,290  Bi        +0  (a Bc 163,784) void JSC::ConservativeRoots::genericAddPointer<false, JSC::CompositeMarkHook>(char*, unsigned int, unsigned int, JSC::TinyBloomFilter<unsigned long>, JSC::TinyBloomFilter
+  Bc     -33,492  Ir     -138,429  Bi    -3,270  (a Bc 216,713) JSC::SlotVisitor::drain(WTF::MonotonicTime)::$_0::operator()(JSC::MarkStackArray&) const
+  Bc     -27,726  Ir     -179,961  Bi        +0  (a Bc 1,019,076) mi_page_queue_find_free_ex(mi_theap_s*, mi_page_queue_s*, bool)
+  Bc     -22,790  Ir     -155,796  Bi        +0  (a Bc 138,886) void JSC::SlotVisitor::setMarkedAndAppendToMarkStack<JSC::MarkedBlock>(JSC::MarkedBlock&, JSC::JSCell*, WTF::Dependency)
+  Bc     -20,431  Ir     -119,218  Bi        +0  (a Bc 121,154) JSC::JSObjectWithButterfly::visitChildren(JSC::JSCell*, JSC::SlotVisitor&)
+  Bc     -15,659  Ir      -72,023  Bi        +0  (a Bc 96,610) JSC::Structure::visitChildren(JSC::JSCell*, JSC::SlotVisitor&)
+  Bc     -15,067  Ir      -56,574  Bi        +0  (a Bc 726,552) mi_page_free_collect_ex(mi_page_s*, bool, bool)
+  Bc     -12,089  Ir      -81,948  Bi        +0  (a Bc 896,799) _mi_malloc_generic(mi_theap_s*, unsigned long, unsigned long, mi_page_s**)
+  Bc     -11,076  Ir      -48,391  Bi        +0  (a Bc 76,592) mi_stats_add(mi_stats_s*, mi_stats_s const*)
+  Bc      +9,473  Ir      +41,194  Bi       +30  (a Bc 15,098) JSC::CodeBlock::reconcileWeakReferencesAtGCEnd(JSC::VM&, JSC::CollectionScope)
+  Bc      -7,790  Ir      -53,979  Bi        +0  (a Bc 367,969) mi_page_queue_remove(mi_page_queue_s*, mi_page_s*)
+  Bc      -6,696  Ir      -49,848  Bi        +0  (a Bc 347,427) mi_page_extend_free(mi_theap_s*, mi_page_s*)
+  Bc      +6,517  Ir      +23,251  Bi        +0  (a Bc 13,513) __pthread_mutex_unlock_usercnt
+  Bc      -6,134  Ir      -67,265  Bi        +0  (a Bc 36,592) JSC::SlotVisitor::appendSlow(JSC::JSCell*, WTF::Dependency)
+  Bc      -6,075  Ir      -36,450  Bi        +0  (a Bc 36,545) JSC::JSString::visitChildren(JSC::JSCell*, JSC::SlotVisitor&)
+  Bc      +5,187  Ir      +23,201  Bi        +5  (a Bc 5,283) JSC::SlotVisitor::drainFromShared(JSC::SlotVisitor::SharedDrainMode, WTF::MonotonicTime)
+  Bc      +5,182  Ir      +35,467  Bi      +516  (a Bc 8,093) WTF::ParkingLot::parkConditionallyImpl(void const*, WTF::ScopedLambda<bool ()> const&, WTF::ScopedLambda<void ()> const&, WTF::TimeWithDynamicClockType const&)
+  Bc      -5,099  Ir      -38,887  Bi        +0  (a Bc 4,377,686) mi_page_free_list_extend(mi_page_s*, unsigned long, unsigned long)
+  Bc      +4,786  Ir      +21,392  Bi        +0  (a Bc 7,876) JSC::CodeBlock::updateAllArrayProfilePredictions()
+  Bc      +4,767  Ir      +21,077  Bi        +0  (a Bc 11,102) pthread_mutex_lock@@GLIBC_2.2.5
+  Bc      +4,114  Ir      +23,471  Bi        +0  (a Bc 9,069) void JSC::CodeBlock::propagateTransitions<JSC::SlotVisitor>(JSC::ConcurrentJSLocker const&, JSC::SlotVisitor&)
+  Bc      +4,025  Ir      +21,384  Bi        +0  (a Bc 8,941) JSC::CodeBlock::visitChildren(JSC::JSCell*, JSC::SlotVisitor&)
+  Bc      +4,012  Ir      +22,207  Bi        +0  (a Bc 5,364) JSC::SlotVisitor::drain(WTF::MonotonicTime)
+  Bc      -3,960  Ir      -44,187  Bi        +0  (a Bc 52,342) JSC::MarkedBlock::Handle::stopAllocating(JSC::FreeList const&, JSC::MarkedBlock::Handle::StopAllocatingMode)
+  Bc      -3,924  Ir      -24,852  Bi        +0  (a Bc 23,484) JSC::NativeExecutable::visitChildren(JSC::JSCell*, JSC::SlotVisitor&)
+  Bc      -3,905  Ir      -25,312  Bi        +0  (a Bc 23,440) JSC::JSCallee::visitChildren(JSC::JSCell*, JSC::SlotVisitor&)
+  Bc      -3,796  Ir      -21,102  Bi        +0  (a Bc 25,156) JSC::FunctionExecutable::visitChildren(JSC::JSCell*, JSC::SlotVisitor&)
+  Bc      -3,738  Ir      -23,218  Bi        +0  (a Bc 169,663) mi_page_queue_push_at_end(mi_theap_s*, mi_page_queue_s*, mi_page_s*)
+  Bc      -3,692  Ir      -35,436  Bi        +0  (a Bc 22,576) JSC::JSFunction::visitChildren(JSC::JSCell*, JSC::SlotVisitor&)
+  Bc      +3,494  Ir      +20,415  Bi        +0  (a Bc 6,269) JSC::CodeBlock::updateAllNonLazyValueProfilePredictionsAndCountLiveness(unsigned int&, unsigned int&, JSC::CodeBlock::ValueProfileSamples)
+  Bc      +3,450  Ir       +6,767  Bi        +0  (a Bc 4,628) WTF::ThreadSafeRefCounted<WTF::(anonymous namespace)::ThreadData, (WTF::DestructionThread)0>::deref() const
+  Bc      +3,409  Ir      +24,664  Bi        +0  (a Bc 4,075) pthread_cond_signal@@GLIBC_2.3.2
+  Bc      -3,147  Ir      -22,828  Bi        +0  (a Bc 20,093) JSC::UnlinkedCodeBlock::visitChildren(JSC::JSCell*, JSC::SlotVisitor&)
+  Bc      -3,007  Ir      -26,513  Bi        +0  (a Bc 166,098) mi_bitmap_setN(mi_bitmap_s*, unsigned long, unsigned long, unsigned long*)
+  Bc      -2,889  Ir      -18,197  Bi        +0  (a Bc 163,229) mi_theap_page_update_stats(mi_theap_s*, mi_page_s*)
+  Bc      +2,794  Ir      +22,020  Bi      +139  (a Bc 3,457) WTF::ParkingLot::unparkOneImpl(void const*, WTF::ScopedLambda<long (WTF::ParkingLot::UnparkResult)> const&)
+  Bc      +2,781  Ir      +24,682  Bi        +0  (a Bc 3,225) pthread_cond_wait@@GLIBC_2.3.2
+  Bc      -2,442  Ir       -8,640  Bi       -29  (a Bc 4,884) __nptl_deallocate_tsd

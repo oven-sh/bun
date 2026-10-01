@@ -1,0 +1,114 @@
+program Ir    496,158,220 ->    529,667,335 (+33,509,115)  Bc    95,124,978 ->   100,458,617 (+5,333,639)  Bi   5,514,657 ->   5,235,836 (-278,821)
+parser  Ir    331,255,477 ->    363,963,487 (+32,708,010)  Bc    46,592,991 ->    51,854,631 (+5,261,640)  Bi   4,923,576 ->   4,643,696 (-279,880)
+rest    Ir    164,902,743 ->    165,703,848 (+801,105)  Bc    48,531,987 ->    48,603,986 (+71,999)  Bi     591,081 ->     592,140 (+1,059)
+68 parser symbols differ, 175 other symbols differ
+-- parser symbols with |dBc| >= 0, by dBc
+  Bc  +2,084,180  Ir  +14,348,380  Bi        +0  (a Bc 0) NEW <bun_js_parser::p::P<true, false>>::parse_type::<bun_js_parser::parse::type_sink::Discard>
+  Bc  +1,560,340  Ir  +11,205,780  Bi  +289,240  (a Bc 0) NEW <bun_js_parser::p::P<true, false>>::parse_type_operator_or_higher::<bun_js_parser::parse::type_sink::Discard>
+  Bc    +934,000  Ir   +5,218,160  Bi        +0  (a Bc 0) NEW <bun_js_parser::p::P<true, false>>::parse_type_reference::<bun_js_parser::parse::type_sink::Discard>
+  Bc    +843,700  Ir   +6,729,360  Bi        +0  (a Bc 0) NEW <bun_js_parser::p::P<true, false>>::parse_postfix_type_rest::<bun_js_parser::parse::type_sink::Discard>
+  Bc    +810,740  Ir   +4,944,840  Bi        +0  (a Bc 0) NEW <bun_js_parser::p::P<true, false>>::parse_property_or_method_signature
+  Bc    +791,580  Ir   +4,790,840  Bi   +34,200  (a Bc 21,552,976) <bun_js_parser::lexer::Lexer>::next
+  Bc    +597,780  Ir   +3,937,820  Bi   +87,520  (a Bc 0) NEW <bun_js_parser::p::P<true, false>>::parse_type_member
+  Bc    +434,500  Ir   +3,702,500  Bi        +0  (a Bc 0) NEW <bun_js_parser::p::P<true, false>>::skip_type_script_type_arguments_in::<bun_js_parser::parse::type_sink::Discard, false, false>
+  Bc    +172,400  Ir   +1,211,340  Bi        +0  (a Bc 0) NEW <bun_js_parser::p::P<true, false>>::parse_function_or_constructor_type_to_error::<bun_js_parser::parse::type_sink::Discard, true>
+  Bc    +171,320  Ir   +1,049,460  Bi        +0  (a Bc 0) NEW <bun_js_parser::p::P<true, false>>::skip_type_script_interface_stmt
+  Bc    +149,840  Ir   +2,758,080  Bi        +0  (a Bc 0) NEW <bun_js_parser::p::P<true, false>>::parse_stmt_named_like_cast
+  Bc    +135,660  Ir   +1,266,160  Bi        +0  (a Bc 0) NEW <bun_js_parser::p::P<true, false>>::parse_union_or_intersection_type::<bun_js_parser::parse::type_sink::Discard, false>
+  Bc    +125,860  Ir     +837,140  Bi        +0  (a Bc 0) NEW <bun_js_parser::p::P<true, false>>::skip_typescript_return_type
+  Bc     +82,220  Ir     +566,080  Bi        +0  (a Bc 329,740) <bun_js_parser::p::P<true, false>>::skip_typescript_fn_args
+  Bc     +67,900  Ir     +542,120  Bi        +0  (a Bc 31,940) <bun_js_parser::p::P<true, false>>::skip_type_script_paren_or_fn_type::<bun_js_parser::parse::type_sink::Discard>
+  Bc     +67,580  Ir     +535,120  Bi   +16,540  (a Bc 316,040) <bun_js_parser::p::P<true, false>>::parse_stmt
+  Bc     +66,200  Ir     +760,440  Bi        +0  (a Bc 0) NEW <bun_js_parser::p::P<true, false>>::parse_tuple_element_name_or_tuple_element_type
+  Bc     +44,400  Ir     +256,960  Bi        +0  (a Bc 0) NEW <bun_js_parser::p::P<true, false>>::parse_type_literal
+  Bc     +28,420  Ir     +184,440  Bi    +5,600  (a Bc 1,527,364) <bun_ast::lexer_tables::__ComptimeStringMap_KEYWORDS>::__key_index
+  Bc     +26,680  Ir     +401,160  Bi    +5,940  (a Bc 0) NEW <bun_js_parser::p::P<true, false>>::next_is_start_of_mapped_type
+  Bc     +23,560  Ir     +103,800  Bi        +0  (a Bc 0) NEW <bun_js_parser::p::P<true, false>>::parse_import_type::<bun_js_parser::parse::type_sink::Discard>
+  Bc     +23,520  Ir     +152,880  Bi        +0  (a Bc 0) NEW <bun_js_parser::p::P<true, false>>::parse_conditional_type_rest::<bun_js_parser::parse::type_sink::Discard>
+  Bc     +19,540  Ir     +102,720  Bi      +980  (a Bc 474,321) <bun_js_parser::lexer::Lexer>::parse_string_literal_inner::<34>
+  Bc     +18,480  Ir     +111,840  Bi        +0  (a Bc 0) NEW <bun_js_parser::p::P<true, false>>::skip_type_script_bracketed_name
+  Bc     +15,520  Ir     +480,960  Bi        +0  (a Bc 825,440) <bun_js_parser::p::P<true, false>>::parse_fn
+  Bc     +11,140  Ir      +47,160  Bi        +0  (a Bc 0) NEW <bun_js_parser::p::P<true, false>>::parse_mapped_type
+  Bc     +10,440  Ir      +66,660  Bi        +0  (a Bc 0) NEW <bun_js_parser::p::P<true, false>>::parse_function_or_constructor_type::<bun_js_parser::parse::type_sink::Discard>
+  Bc      +8,640  Ir      +21,640  Bi        +0  (a Bc 51,920) <bun_js_parser::p::P<true, false>>::skip_type_script_type_stmt
+  Bc      +6,840  Ir     +171,000  Bi        +0  (a Bc 0) NEW <bun_js_parser::p::P<true, false>>::parse_bracketed_name
+  Bc      +6,400  Ir       +1,380  Bi        +0  (a Bc 103,020) <bun_js_parser::parse::parse_entry::Parser>::_parse::<true>
+  Bc      +2,340  Ir      +25,740  Bi    +2,340  (a Bc 0) NEW <bun_js_parser::p::P<true, false>>::is_start_of_type
+  Bc      +2,260  Ir      +31,740  Bi        +0  (a Bc 0) NEW <bun_js_parser::p::P<true, false>>::parse_entity_name_rest::<bun_js_parser::parse::type_sink::Discard>
+  Bc      +1,800  Ir      +30,300  Bi        +0  (a Bc 185,860) <bun_js_parser::p::P<true, false>>::parse_suffix
+  Bc      +1,560  Ir      +28,080  Bi        +0  (a Bc 0) NEW <bun_js_parser::p::P<true, false>>::parse_right_side_of_dot::<bun_js_parser::parse::type_sink::Discard>
+  Bc      +1,440  Ir      +27,360  Bi        +0  (a Bc 0) NEW <bun_js_parser::p::P<true, false>>::is_class_index_signature
+  Bc      +1,440  Ir      +10,080  Bi        +0  (a Bc 0) NEW <bun_js_parser::p::P<true, false>>::skip_type_script_type_arguments_in::<bun_js_parser::parse::type_sink::Discard, false, true>
+  Bc        +680  Ir       -2,140  Bi        +0  (a Bc 9,080) <bun_js_parser::p::P<true, false>>::parse_typescript_enum_stmt
+  Bc        +620  Ir       +8,600  Bi        +0  (a Bc 0) NEW <bun_js_parser::p::P<true, false>>::try_skip_type_script_constraint_of_infer_type_with_backtracking::<bun_js_parser::parse::type_sink::Discard>
+  Bc        +420  Ir       +2,160  Bi        +0  (a Bc 0) NEW <bun_js_parser::p::P<true, false>>::parse_asserts_type_predicate::<bun_js_parser::parse::type_sink::Discard>
+  Bc        +300  Ir         +600  Bi        +0  (a Bc 2,400) <bun_js_parser::p::P<false, false>>::parse_path
+  Bc        +100  Ir       +1,140  Bi       +20  (a Bc 0) NEW <bun_js_parser::p::P<true, false>>::skip_type_script_predicate_of_keyword_name
+  Bc         +60  Ir         +220  Bi        +0  (a Bc 95,040) <bun_js_parser::p::P<true, false>>::skip_type_script_binding
+  Bc         +40  Ir       -2,080  Bi        +0  (a Bc 15,160) <bun_js_parser::p::P<true, false>>::parse_class_stmt
+  Bc         +40  Ir         +160  Bi        +0  (a Bc 0) NEW <bun_js_parser::p::P<true, false>>::parse_type_arguments_of_import_type::<bun_js_parser::parse::type_sink::Discard>
+  Bc         +20  Ir         +420  Bi        +0  (a Bc 0) NEW <bun_js_parser::p::P<true, false>>::skip_type_script_parameter_modifiers
+  Bc          +4  Ir           +7  Bi        +0  (a Bc 63) core::ptr::drop_glue::<bun_js_parser::p::P<false, false>>
+  Bc          +0  Ir      +33,860  Bi        +0  (a Bc 33,860) <bun_js_parser::p::P<true, false>>::parse_type_script_decorators
+  Bc          +0  Ir      +17,240  Bi        +0  (a Bc 139,760) <bun_js_parser::p::P<true, false>>::parse_prefix
+  Bc          +0  Ir           +1  Bi        +0  (a Bc 9) <bun_js_parser::p::P<false, false>>::init
+  Bc          +0  Ir      +27,160  Bi        +0  (a Bc 40,740) <bun_alloc::baby_vec::BabyVec<bun_ast::g::Arg>>::grow_exact
+  Bc          +0  Ir          +20  Bi        +0  (a Bc 20) <bun_js_parser::p::P<true, true>>::default_name_for_expr
+  Bc          +0  Ir       -4,440  Bi        +0  (a Bc 87,700) <bun_js_parser::p::P<true, false>>::parse_and_declare_decls
+  Bc        -180  Ir       -3,040  Bi       +40  (a Bc 5,080) <bun_js_parser::p::P<true, false>>::t_import
+  Bc        -220  Ir       -3,880  Bi        +0  (a Bc 220) GONE <bun_js_parser::p::P<true, false>>::try_skip_type_script_constraint_of_infer_type_with_backtracking
+  Bc      -1,060  Ir      +35,080  Bi        +0  (a Bc 122,780) <bun_js_parser::p::P<true, false>>::parse_class
+  Bc      -2,060  Ir      -14,420  Bi      -400  (a Bc 2,520) <bun_js_parser::lexer::Lexer>::is_contextual_keyword
+  Bc      -2,324  Ir      -10,458  Bi        +0  (a Bc 2,324) GONE core::ptr::drop_glue::<bun_js_parser::parser::MacroState>
+  Bc      -2,700  Ir      -32,040  Bi        +0  (a Bc 2,700) GONE <bun_js_parser::p::P<true, false>>::try_skip_type_script_type_arguments_with_backtracking
+  Bc      -3,920  Ir      -19,600  Bi        +0  (a Bc 105,720) <bun_js_parser::p::P<true, false>>::parse_fn_stmt
+  Bc      -4,520  Ir      -51,980  Bi        +0  (a Bc 4,520) GONE core::ptr::drop_glue::<bun_alloc::baby_vec::BabyVec<bun_ast::g::Arg>>
+  Bc      -6,040  Ir      -18,120  Bi        +0  (a Bc 28,020) <bun_js_parser::lexer::Lexer>::expect_or_insert_semicolon
+  Bc     -17,540  Ir     -578,480  Bi        +0  (a Bc 222,700) <bun_js_parser::p::P<true, false>>::skip_type_script_type_parameters
+  Bc     -22,340  Ir     -231,860  Bi        +0  (a Bc 566,320) <bun_js_parser::p::P<true, false>>::parse_property
+  Bc     -30,900  Ir      -61,800  Bi        +0  (a Bc 38,360) <bun_js_parser::lexer::Lexer>::expect
+  Bc     -54,640  Ir     -208,300  Bi        +0  (a Bc 119,120) <bun_js_parser::p::P<true, false>>::parse_stmt_fallthrough_ts_keyword
+  Bc    -305,780  Ir   -3,299,360  Bi        +0  (a Bc 305,780) GONE <bun_js_parser::p::P<true, true>>::skip_type_script_type_arguments::<false, false>
+  Bc    -965,600  Ir   -4,495,280  Bi        +0  (a Bc 965,600) GONE <bun_js_parser::p::P<true, false>>::skip_type_script_object_type
+  Bc  -2,671,040  Ir  -25,040,900  Bi  -721,900  (a Bc 2,671,040) GONE <bun_js_parser::p::P<true, false>>::skip_type_script_type_with_opts::<bun_js_parser::parse::type_sink::Discard>
+-- other symbols, top by |dBc|
+  Bc     -12,123  Ir     +109,127  Bi        +0  (a Bc 1,607,069) __memcmp_avx2_movbe
+  Bc      +9,532  Ir      +40,693  Bi      +225  (a Bc 0) NEW _RINvNtNtCs6SMPMrlLntq_11bun_runtime4node4path18normalize_string_thKVNtNtNtCsel3xT4Vu5A2_9bun_paths12resolve_path8Platform5PosixUEB6_
+  Bc      -9,532  Ir      -40,693  Bi      -225  (a Bc 9,532) GONE _RINvNtNtCscaMuynz9uUo_11bun_runtime4node4path18normalize_string_thKVNtNtNtCsel3xT4Vu5A2_9bun_paths12resolve_path8Platform5PosixUEB6_
+  Bc      +8,000  Ir      +73,280  Bi        +0  (a Bc 226,077) mi_arenas_page_alloc_fresh(mi_theap_s*, unsigned long, unsigned long, unsigned long, bool)
+  Bc      +7,760  Ir      +45,100  Bi        +0  (a Bc 290,147) mi_heap_release_pages(mi_heap_s*, mi_heap_s*) [clone .llvm.4777501368710607264]
+  Bc      +6,840  Ir      +37,440  Bi        +0  (a Bc 1,275,083) mi_page_free_list_extend(mi_page_s*, unsigned long, unsigned long)
+  Bc      +6,580  Ir      +57,660  Bi        +0  (a Bc 241,612) mi_bitmap_setN(mi_bitmap_s*, unsigned long, unsigned long, unsigned long*)
+  Bc      +5,200  Ir      +34,940  Bi        +0  (a Bc 111,527) mi_page_queue_push(mi_theap_s*, mi_page_queue_s*, mi_page_s*)
+  Bc      +4,120  Ir      +27,800  Bi        +0  (a Bc 125,982) mi_arenas_page_free_ex(mi_page_s*, mi_theap_s*, bool)
+  Bc      +3,960  Ir      +20,180  Bi        +0  (a Bc 37,929) _mi_page_retire(mi_page_s*)
+  Bc      +3,846  Ir      +36,500  Bi        +0  (a Bc 109,582) mi_arena_try_alloc_at(mi_arena_s*, unsigned long, bool, unsigned long, mi_memid_s*)
+  Bc      +3,400  Ir      +28,040  Bi        +0  (a Bc 220,190) mi_theap_page_update_stats(mi_theap_s*, mi_page_s*)
+  Bc      +3,200  Ir      +23,040  Bi        +0  (a Bc 89,532) mi_arena_schedule_purge(mi_arena_s*, unsigned long, unsigned long)
+  Bc      +2,880  Ir      +30,720  Bi        +0  (a Bc 108,396) mi_arenas_page_free_prim(mi_page_s*, mi_subproc_s*, mi_arena_pages_s*)
+  Bc      +2,880  Ir      +15,360  Bi        +0  (a Bc 80,577) _mi_arenas_free(mi_subproc_s*, void*, unsigned long, mi_memid_s)
+  Bc      +2,560  Ir      +28,480  Bi        +0  (a Bc 69,326) mi_arenas_page_regular_alloc(mi_theap_s*, unsigned long, unsigned long)
+  Bc      +2,560  Ir      +23,680  Bi        +0  (a Bc 72,090) mi_arenas_try_find_free(mi_heap_s*, unsigned long, unsigned long, bool, bool, mi_arena_s*, unsigned long, int, mi_memid_s*)
+  Bc      +2,560  Ir      +18,880  Bi        +0  (a Bc 79,088) mi_bbitmap_setN(mi_bbitmap_s*, unsigned long, unsigned long)
+  Bc      +2,148  Ir      +11,620  Bi       +87  (a Bc 49,302) bun_core::string::immutable::copy_lowercase_if_needed
+  Bc      +2,042  Ir       +3,407  Bi        +0  (a Bc 1,266,071) mi_stats_add(mi_stats_s*, mi_stats_s const*)
+  Bc      +1,920  Ir      +56,640  Bi      +320  (a Bc 83,834) mi_bbitmap_try_find_and_clear_generic(mi_bbitmap_s*, unsigned long, unsigned long, unsigned long*, bool (*)(mi_bchunk_s*, unsigned long, unsigned long*, bool*))
+  Bc      +1,620  Ir      +12,060  Bi        +0  (a Bc 93,492) mi_page_extend_free(mi_theap_s*, mi_page_s*)
+  Bc      +1,506  Ir       +6,514  Bi        +0  (a Bc 38,249) bun::N_AVX2::IndexOfCharImpl(unsigned char const*, unsigned long, unsigned char)
+  Bc      +1,136  Ir      +10,557  Bi        +0  (a Bc 156,272) _mi_malloc_generic(mi_theap_s*, unsigned long, unsigned long, mi_page_s**)
+  Bc      +1,039  Ir      +12,547  Bi        +0  (a Bc 74,438) _mi_page_map_register(mi_page_s*)
+  Bc        +960  Ir       +9,280  Bi        +0  (a Bc 53,041) mi_bchunk_try_find_and_clear(mi_bchunk_s*, unsigned long*)
+  Bc        +756  Ir       +4,410  Bi        +0  (a Bc 16,864) _mi_prim_getenv(char const*, char*, unsigned long)
+  Bc        +724  Ir       +6,552  Bi      +102  (a Bc 18,502) <bun_resolver::fs_full::DirEntry>::add_entry_with_store::<()>
+  Bc        -700  Ir       -2,120  Bi        +0  (a Bc 33,890) mi_heap_delete_page(mi_heap_s const*, mi_heap_area_s const*, void*, unsigned long, void*)
+  Bc        +680  Ir       +9,860  Bi        +0  (a Bc 49,400) bun::N_AVX2::IndexOfInterestingCharacterInStringLiteralImpl(unsigned char const*, unsigned long, unsigned char)
+  Bc        +640  Ir       +3,200  Bi        +0  (a Bc 18,068) clock_gettime@@GLIBC_2.17
+  Bc        +640  Ir       +8,960  Bi        +0  (a Bc 22,093) mi_heap_ensure_arena_pages(mi_heap_s*, mi_arena_s*)
+  Bc        +640  Ir       +2,560  Bi        +0  (a Bc 20,015) _mi_arenas_page_alloc(mi_theap_s*, unsigned long, unsigned long)
+  Bc        +588  Ir       +2,072  Bi        +0  (a Bc 5,904,499) __memcpy_avx_unaligned_erms
+  Bc        +549  Ir       +3,274  Bi       +33  (a Bc 15,816) <bun_sys::dir_iterator::State>::next
+  Bc        +452  Ir       +4,967  Bi       +97  (a Bc 2,472) strcmp
+  Bc        +393  Ir         +973  Bi        +0  (a Bc 68,203) free
+  Bc        -386  Ir       -4,381  Bi        +0  (a Bc 5,424) WTF::HashTableAddResult<WTF::HashTableIterator<WTF::HashTable<std::pair<long, JSC::SourceCodeRepresentation>, WTF::KeyValuePair<std::pair<long, JSC::SourceCodeRepresentat
+  Bc        +320  Ir       +1,792  Bi        +0  (a Bc 4,187) JSC::BytecodeGenerator::getAvailablePrivateAccessNames()
+  Bc        +320  Ir       +8,640  Bi        +0  (a Bc 9,030) mi_arenas_try_alloc(mi_heap_s*, unsigned long, unsigned long, bool, bool, mi_arena_s*, unsigned long, int, mi_memid_s*)

@@ -1,0 +1,6 @@
+base js: mi_heap_malloc=163,726 bool)=5,283 
+head js: mi_heap_malloc=163,726 bool)=5,484 
+base jsnofn: mi_heap_malloc=55,526 bool)=2,878 
+head jsnofn: mi_heap_malloc=55,526 bool)=2,879 
+base ts: mi_heap_malloc=167,926 bool)=5,283 
+head ts: mi_heap_malloc=167,926 bool)=5,484 

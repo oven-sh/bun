@@ -1,0 +1,47 @@
+#0 "import { a } from 'x'; var a = 1;"
+    no-redeclare 1:28-1:29 'a' is already defined.
+    no-import-assign 1:28-1:29 'a' is read-only.
+#1 "import { a } from 'x'; var a;"
+    no-redeclare 1:28-1:29 'a' is already defined.
+#2 "import { a } from 'x'; for (var a of []) {}"
+    no-import-assign 1:24-1:44 'a' is read-only.
+    no-redeclare 1:33-1:34 'a' is already defined.
+#3 "import { a } from 'x'; for (var a in {}) {}"
+    no-import-assign 1:24-1:44 'a' is read-only.
+    no-redeclare 1:33-1:34 'a' is already defined.
+#4 "import { a } from 'x'; var [a = 1] = [];"
+    no-redeclare 1:29-1:30 'a' is already defined.
+    no-import-assign 1:29-1:30 'a' is read-only.
+#5 "import { a } from 'x'; var { a } = { a: 1 };"
+    no-redeclare 1:30-1:31 'a' is already defined.
+    no-import-assign 1:30-1:31 'a' is read-only.
+#6 "import * as ns from 'x'; var ns = { b: 1 }; ns.b = 2;"
+    no-redeclare 1:30-1:32 'ns' is already defined.
+    no-import-assign 1:30-1:32 'ns' is read-only.
+    no-import-assign 1:45-1:53 The members of 'ns' are read-only.
+#7 "import { a } from 'x'; function f() { var a = 1; } { var a = 2; }"
+    no-redeclare 1:58-1:59 'a' is already defined.
+    no-import-assign 1:58-1:59 'a' is read-only.
+#8 "import a from 'x'; namespace N { var a = 1; }"
+#9 "import a from 'x'; const b = (a = 1);"
+    no-import-assign 1:31-1:36 'a' is read-only.
+#10 "import type { a } from 'x'; let a2 = 1; var a = 3;"
+    no-redeclare 1:45-1:46 'a' is already defined.
+    no-import-assign 1:45-1:46 'a' is read-only.
+#11 "import { a } from 'x'; try {} catch (e) { var a = e; }"
+    no-redeclare 1:47-1:48 'a' is already defined.
+    no-import-assign 1:47-1:48 'a' is read-only.
+#12 "import { a } from 'x'; label: for (var a = 0; a < 1; a++) {}"
+    no-redeclare 1:40-1:41 'a' is already defined.
+    no-import-assign 1:40-1:41 'a' is read-only.
+    no-import-assign 1:54-1:57 'a' is read-only.
+#13 "import { a } from 'x'; export var a = 1;"
+    no-redeclare 1:35-1:36 'a' is already defined.
+    no-import-assign 1:35-1:36 'a' is read-only.
+#14 "import { a } from 'x'; declare var a: number; var a = 1;"
+    no-redeclare 1:36-1:45 'a' is already defined.
+    no-redeclare 1:51-1:52 'a' is already defined.
+    no-import-assign 1:51-1:52 'a' is read-only.
+#15 "import { a } from 'x'; using a = null;"
+    no-redeclare 1:30-1:31 'a' is already defined.
+    no-import-assign 1:30-1:31 'a' is read-only.

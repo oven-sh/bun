@@ -1,0 +1,51 @@
+RESEARCH "rules-code-path" (cli, round 2, pass 1a, bottom-up): getter-return, no-fallthrough, constructor-super and
+no-this-before-super on the code paths of ESLint. Scripts and data. Nothing here is in the tree (worktree clean at be1ebe5295).
+The oracle is ESLint at the pin of src/lint/UPSTREAM_PORTED (/workspace/ref/eslint) and the parser of typescript-eslint
+(/workspace/ref/tseslint); sh ../tools/eslint-oracle-setup.sh restores both. The scripts use ../code-path-analysis/proto
+(bunshape.cjs, driver.cjs) and ../round2-oracle/proto-1b (eslint-side.cjs, extract.cjs). A unit with another lens works beside
+this one in ../rules-code-path-topdown.
+
+model.cjs              The four rules as they can be written on Bun's tree, on the tree of bunshape.cjs driven by driver.cjs:
+                       no parent pointer (the class, the object literal and the call say from above which function is a getter
+                       or a constructor, which object is a property descriptor), getter-return and no-fallthrough read the
+                       current segments while the walk runs, the two constructor rules keep the steps of a constructor of a
+                       class with `extends` and run ESLint's handlers over them when its code path ends. Compared with
+                       ESLint's four rules: rule, line:column, message.
+                       node model.cjs [--upstream] [--list cases.json]... [--files list.txt] [--live] [--update-enter-only] [--show]
+                       --live: also runs the two constructor rules without the replay and counts where that differs.
+                       --update-enter-only: only the segments that start when the update of a `for` is entered get the flag.
+fuzz.cjs               node fuzz.cjs <count> <seed> <out.json> [ctor|getter|switch|all]   random constructors of classes with
+                       `extends` (71 forms of superclass), getters and descriptors, `switch` with comments and blank lines.
+tokens-check.cjs       The forward reads of tokens that give a place where the tree has none, on ESLint's tokens against its
+                       nodes: where a property of an object literal starts, where a clause of a `switch` starts (one rule for
+                       `case` and `default`), the `:` of a clause.  node tokens-check.cjs [--cases corpus.json] [--files list.txt]
+comment-matcher.cjs    `isFallThroughComment` without a regular expression, on UTF-8 bytes, against ESLint's two patterns on
+                       random texts; writes answers/fallthrough-comment-table.json (120 texts with ESLint's answer, for a test).
+probe-eslint.cjs       node probe-eslint.cjs [--ext ts] [--rules a,b] -e "src" ...   what ESLint reports.
+cases/make.cjs         -> cases/{edge,ts}-{no-fallthrough,constructor-super,no-this-before-super}.json and answers/*.jsonl
+                       (ESLint's answers). cases/edge-getter-return.json: 65 more cases beside the lists of
+                       ../walk-order-code-paths/cases. cases/upstream-<rule>.raw.json: extract.cjs of ESLint's own tests.
+                       The lists are in the form that ../round2-oracle/proto-1b/regen.cjs reads (cases/*-<rule>.json).
+probe/                 ../walk-order-code-paths/probe with more trace lines (`--nodes`): before a function that is a getter
+                       `@getter <start> <global|-> <name>`, before a constructor `@ctor <key> <member start> <has extends>
+                       <possible constructor> <extends is not null>`, `@return`, `@fn-exit`, `@this`, `@super`, `@super-exit`,
+                       `@for-update`, `@switch`, `@case-enter <index> <start> <is default> <comment in block> <comment before>`,
+                       `@case-exit <index> <statements> <is last> <after the colon>`. The places come from Bun's lexer
+                       (src/tokens.rs is the planned tokens.rs of ../ts-wrappers-eleven-rules/topdown/proto): property_starts,
+                       next_clause, clause_colon, comment_before; the member starts of JavaScript classes come from
+                       Parser::parse_only (ParsedOnly::class_element), a TypeScript parse has no reader for them.
+                       Build: /workspace/tools/lk python3 probe/build.py /tmp/rcp/rcpprobe   (needs build/debug of /workspace/wt/cli)
+rules-sim.cjs          node rules-sim.cjs [--probe bin] [--list cases.json]... [--cases corpus.json] [--files list.txt]
+                       The trace of the probe on ESLint's own CodePathState, the four rules on its events and `@` lines,
+                       against ESLint (typescript-eslint's parser for TypeScript).
+
+Results (2026-10-01):
+  model.cjs: ESLint's own tests of the four rules 265/265 (135 reports); edge lists 134 + 171 + 133 + 65 the same; every
+  JavaScript case of ESLint's rule tests 25,161/25,161 (785 reports); 2,922 real files the same (75 reports); fuzz: 47,416
+  constructors (110,991 reports), 14,722 getters, 14,878 switches, all the same. Without the replay 31 of the first 32,619
+  constructors get another answer (a `default` that is not the last clause: its body gets its previous segments when the
+  statement ends). --update-enter-only changes nothing in 13,945 constructors.
+  tokens-check.cjs: ESLint's rule tests (27,894 sources), 2,922 JavaScript files and 1,734 TypeScript files: 6,821 properties
+  that do not start with their key, 880 `default` clauses, 8,434 `case` clauses, 9,314 colons, 7,670 clauses by the one rule:
+  no difference.
+  comment-matcher.cjs: 700,000 random texts, no difference.

@@ -25,6 +25,7 @@ const opt = name => (args.includes(name) ? args[args.indexOf(name) + 1] : null);
 const probe = opt("--probe") || "/tmp/rcp/rcpprobe";
 const showMax = Number(opt("--show") || 20);
 const only = opt("--only");
+const strictHeritage = args.includes("--strict-heritage");
 
 const FALLS = /falls?\s?through/iu;
 const DIRECTIVE = /^(eslint(?:-env|-enable|-disable(?:(?:-next)?-line)?)?|exported|globals?)(?:\s|$)/u;
@@ -91,7 +92,8 @@ function simulate(lines, buf) {
 					break;
 				}
 				case "@ctor":
-					pendingCtor = { keyAt: Number(parts[1]), memberAt: Number(parts[2]), hasExtends: parts[3] === "1", possible: parts[4] === "1", valid: parts[5] === "1" };
+					// `--strict-heritage`: `as`, `satisfies`, `!` and `<T>` around the superclass make it a node the rules do not know.
+					pendingCtor = { keyAt: Number(parts[1]), memberAt: Number(parts[2]), hasExtends: parts[3] === "1", possible: parts[strictHeritage ? 6 : 4] === "1", valid: parts[strictHeritage ? 7 : 5] === "1" };
 					break;
 				case "@return":
 					if (top.getter) {

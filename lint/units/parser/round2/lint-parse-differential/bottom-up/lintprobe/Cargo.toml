@@ -1,0 +1,22 @@
+# A lint parse of many sources in one process: what `Parser::parse_for_lint_with_codes` accepts, and its first error.
+# The crate is outside the worktree and reads it by path: nothing is written there.
+# build (after one `bun bd --version` in the worktree, from the worktree, so that its .cargo/config.toml and toolchain apply):
+#   cd /workspace/wt/parser && cp Cargo.lock <this directory>/Cargo.lock
+#   /workspace/tools/lk cargo build --manifest-path <this directory>/Cargo.toml --offline --target-dir /tmp/lpd-1a/target
+# run: /tmp/lpd-1a/target/debug/lintprobe <inputs.hex> <out.tsv> [lint|plain]
+[package]
+name = "lintprobe"
+version = "0.0.0"
+edition = "2024"
+
+[[bin]]
+name = "lintprobe"
+path = "src/main.rs"
+
+[dependencies]
+bun_js_parser = { path = "/workspace/wt/parser/src/js_parser" }
+bun_ast = { path = "/workspace/wt/parser/src/ast" }
+bun_alloc = { path = "/workspace/wt/parser/src/bun_alloc" }
+bun_core = { path = "/workspace/wt/parser/src/bun_core" }
+
+[workspace]

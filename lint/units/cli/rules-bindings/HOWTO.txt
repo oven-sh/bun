@@ -26,6 +26,6 @@ proto/tracker-down.cjs    node tracker-down.cjs [--ts] <list.json>...    Referen
 proto/gen-tracker-random.cjs   node gen-tracker-random.cjs <count> <seed> > list.json    random programs that alias the tracked globals.
 proto/import-assign-down.cjs   node import-assign-down.cjs [--ts] <list.json>...    no-import-assign made at the node that writes, against ESLint.
 
-cases/upstream-<rule>.json   extract.cjs. cases/js-probe-1..4.json, js-probe-redeclare.json, ts-probe-1..5.json: written here.
+cases/upstream-<rule>.json   extract.cjs. cases/js-probe-1..4.json, js-probe-redeclare.json, ts-probe-1..6.json: written here.
 vectors/upstream-<rule>.json, vectors/probe-<rule>.json   classify.cjs over them.
 answers/                  the output of the prototypes and of rb-oracle.cjs over the probe lists.

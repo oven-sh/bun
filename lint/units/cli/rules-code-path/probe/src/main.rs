@@ -513,8 +513,11 @@ impl<'a> Walk<'_, 'a> {
         last_comment_in(self.text, last.end as usize, target as usize)
     }
 
-    /// `isPossibleConstructor` of constructor-super.
-    fn is_possible_constructor(&self, expr: &Expr) -> bool {
+    /// `isPossibleConstructor` of constructor-super. `strict`: `as`, `satisfies`, `!` and `<T>` around an expression make it a node that the rule does not know, as for ESLint with typescript-eslint's parser.
+    fn is_possible_constructor(&self, expr: &Expr, strict: bool) -> bool {
+        if strict && self.is_ts_wrapped(expr) {
+            return false;
+        }
         match &expr.data {
             ExprData::EClass(_)
             | ExprData::EFunction(_)
@@ -530,25 +533,28 @@ impl<'a> Walk<'_, 'a> {
             ExprData::EIdentifier(identifier) => self.parsed.name_of(identifier.ref_) != b"undefined",
             ExprData::EBinary(binary) => match binary.op {
                 OpCode::BinAssign | OpCode::BinLogicalAndAssign | OpCode::BinLogicalAnd | OpCode::BinComma => {
-                    self.is_possible_constructor(&binary.right)
+                    self.is_possible_constructor(&binary.right, strict)
                 }
                 OpCode::BinLogicalOrAssign
                 | OpCode::BinNullishCoalescingAssign
                 | OpCode::BinLogicalOr
                 | OpCode::BinNullishCoalescing => {
-                    self.is_possible_constructor(&binary.left) || self.is_possible_constructor(&binary.right)
+                    self.is_possible_constructor(&binary.left, strict) || self.is_possible_constructor(&binary.right, strict)
                 }
                 _ => false,
             },
             ExprData::EIf(conditional) => {
-                self.is_possible_constructor(&conditional.no) || self.is_possible_constructor(&conditional.yes)
+                self.is_possible_constructor(&conditional.no, strict) || self.is_possible_constructor(&conditional.yes, strict)
             }
             _ => false,
         }
     }
 
     /// `astUtils.isNullOrUndefined`.
-    fn is_null_or_undefined(&self, expr: &Expr) -> bool {
+    fn is_null_or_undefined(&self, expr: &Expr, strict: bool) -> bool {
+        if strict && self.is_ts_wrapped(expr) {
+            return false;
+        }
         match &expr.data {
             ExprData::ENull(_) | ExprData::EUndefined(_) => true,
             ExprData::EIdentifier(identifier) => self.parsed.name_of(identifier.ref_) == b"undefined",
@@ -761,15 +767,22 @@ impl<'ast> Walk<'_, 'ast> {
                 }
                 if is_constructor {
                     if let Some(value) = &property.value {
-                        let (possible, valid) = match &class.extends {
-                            Some(extends) => (self.is_possible_constructor(extends), !self.is_null_or_undefined(extends)),
-                            None => (false, false),
+                        let facts = match &class.extends {
+                            Some(extends) => [
+                                self.is_possible_constructor(extends, false),
+                                !self.is_null_or_undefined(extends, false),
+                                self.is_possible_constructor(extends, true),
+                                !self.is_null_or_undefined(extends, true),
+                            ],
+                            None => [false; 4],
                         };
                         let line = format!(
-                            "@ctor {key_at} {member_at} {} {} {}",
+                            "@ctor {key_at} {member_at} {} {} {} {} {}",
                             u8::from(class.extends.is_some()),
-                            u8::from(possible),
-                            u8::from(valid)
+                            u8::from(facts[0]),
+                            u8::from(facts[1]),
+                            u8::from(facts[2]),
+                            u8::from(facts[3])
                         );
                         self.pending.push((core::ptr::from_ref(value).addr(), line));
                     }

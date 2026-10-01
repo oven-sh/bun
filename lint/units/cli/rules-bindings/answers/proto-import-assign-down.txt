@@ -1,2 +1,2 @@
 cases 142: same 140, different 0, ESLint's parser rejects 2; 102 reports of ESLint
-cases 192: same 192, different 0, ESLint's parser rejects 0; 152 reports of ESLint
+cases 354: same 354, different 0, ESLint's parser rejects 0; 169 reports of ESLint

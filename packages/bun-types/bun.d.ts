@@ -4739,7 +4739,9 @@ declare module "bun" {
 
     /**
      * If set to `false`, any certificate is accepted.
-     * Default is `$NODE_TLS_REJECT_UNAUTHORIZED` environment variable, or `true` if it is not set.
+     *
+     * For a server, the default is `true`. `$NODE_TLS_REJECT_UNAUTHORIZED` does not change it.
+     * For a client, the default is the `$NODE_TLS_REJECT_UNAUTHORIZED` environment variable, or `true` if it is not set.
      */
     rejectUnauthorized?: boolean;
 

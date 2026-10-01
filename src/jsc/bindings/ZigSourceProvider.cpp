@@ -21,6 +21,7 @@
 #include <JavaScriptCore/AOTFunction.h>
 #include <zstd.h>
 #include "BunBuiltinNames.h"
+#include "ModuleGraph.h"
 
 #if OS(DARWIN)
 #include <execinfo.h>
@@ -129,7 +130,8 @@ Ref<SourceProvider> SourceProvider::create(
             bytecode->setEntryOffset(resolvedSource.bytecode_cache_entry_offset);
             // The static heap refers to the provider by its address, so it is constructed there and never moves.
             JSC::SourceProvider* made = nullptr;
-            void* place = resolvedSource.bytecode_cache_persistent ? JSC::StaticHeap::takePlaceForSourceProvider(globalObject->vm(), resolvedSource.bytecode_cache_entry_offset, sizeof(SourceProvider), made) : nullptr;
+            // (For the program itself. A Bun.ModuleGraph is a further instance of it, which may come first.)
+            void* place = resolvedSource.bytecode_cache_persistent && !Bun::currentModuleGraph(globalObject) ? JSC::StaticHeap::takePlaceForSourceProvider(globalObject->vm(), resolvedSource.bytecode_cache_entry_offset, sizeof(SourceProvider), made) : nullptr;
             // Another thread's VM has already loaded the module, and all VMs share its provider. (Analyzing a module from its
             // module_info consumes the provider's copy, so in that case a new provider is needed.)
             if (made && !resolvedSource.module_info)

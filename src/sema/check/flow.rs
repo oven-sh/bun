@@ -3328,7 +3328,10 @@ impl<'p> Checker<'p> {
             | Root::NewTarget
             | Root::Pattern(_)
             | Root::Params(_) => false,
-        } && reference.path.is_empty();
+        } && reference.path.is_empty()
+            // `getTypeAtFlowNode` stops at the start of a function for a property or element access expression. `a.b` in `typeof a.b`
+            // is a qualified name, and goes on.
+            || !reference.path.is_empty() && self.bound(file).is_in_type_query(e);
         // `checkIdentifier`: in the function that declares it, it is `undefined` until something is assigned. In another one it is
         // whatever it was left as (`isOuterVariable`), unless nothing ever assigns to it (`isNeverInitialized`). For `x!` it is
         // `undefined` to begin with wherever that is written (`isAutomaticTypeInNonNull`).

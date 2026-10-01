@@ -5789,11 +5789,36 @@ impl<'p> Checker<'p> {
         // object literal as written is, so that `{ [x: string]: X }` is one of `{}` and not the other way round as well.
         if state & STATE_SOURCE == 0
             && (r.relation != Relation::StrictSubtype || self.is_object_literal_type(source))
-            && self.is_object_type_with_inferable_index(source)
         {
-            return self.members_related_to_index_info(r, &sm, key, wanted, state);
+            let looks = self.apparent_type_of_intersection(source);
+            if self.is_object_type_with_inferable_index(looks) {
+                return self.members_related_to_index_info(r, &sm, key, wanted, state);
+            }
         }
         Ternary::FALSE
+    }
+
+    /// `getApparentTypeOfIntersectionType`: the intersection of what the members of `ty` look like. `apparent_type` leaves an
+    /// intersection whose members all look like objects as it is, and `members` puts its shape together from what they look like.
+    fn apparent_type_of_intersection(&mut self, ty: TypeId) -> TypeId {
+        let TypeData::Intersection(parts) = self.data(ty) else {
+            return ty;
+        };
+        if !parts.iter().any(|&p| self.is_deferred(p)) {
+            return ty;
+        }
+        let looks: Vec<TypeId> = parts
+            .to_vec()
+            .into_iter()
+            .map(|p| {
+                if self.is_deferred(p) {
+                    self.apparent_type(p)
+                } else {
+                    p
+                }
+            })
+            .collect();
+        self.intersection(&looks)
     }
 
     /// `isObjectTypeWithInferableIndex`: known to have nothing but what is seen.

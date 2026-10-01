@@ -860,8 +860,10 @@ where
 
             match kind {
                 bun_watcher::Kind::File => {
-                    if event.op.contains(WatchOp::DELETE)
-                        || (event.op.contains(WatchOp::RENAME) && IS_KQUEUE)
+                    // Windows watches a file by its path, which still names it once it is back.
+                    if !cfg!(windows)
+                        && (event.op.contains(WatchOp::DELETE)
+                            || (event.op.contains(WatchOp::RENAME) && IS_KQUEUE))
                     {
                         // SAFETY: the Watcher outlives this call (it owns the
                         // Reloader that calls us); `remove_at_index::<false>`

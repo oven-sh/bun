@@ -13,6 +13,13 @@ pub struct ResolvedCall {
     pub ret: TypeId,
 }
 
+impl crate::local::MaybeLocal for ResolvedCall {
+    #[inline]
+    fn is_local(&self) -> bool {
+        self.sig.is_local() || self.ret.is_local()
+    }
+}
+
 impl crate::table::Packed for ResolvedCall {
     type Cell = std::sync::atomic::AtomicU64;
     #[inline]

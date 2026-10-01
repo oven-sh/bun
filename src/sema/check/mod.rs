@@ -59,11 +59,12 @@ mod unions;
 use crate::atom::{Atom, known};
 use crate::bind::{Bound, SymFlags};
 use crate::hir::{self, *};
+use crate::local::MaybeLocal;
 use crate::program::{FileId, Files, Sym};
-use crate::table::{Bases, ById, ByIdKept, ByNode, ByNodeKept, IdSet, NodeSet, RawWord};
+use crate::table::{Bases, ById, ByIdKept, ByKey, ByNode, ByNodeKept, IdSet, NodeSet, RawWord};
 use crate::types::Prop;
 use crate::types::*;
-use crate::util::{FxHashMap, List, ShardedMap};
+use crate::util::{FxHashMap, List};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
@@ -101,12 +102,16 @@ impl Slots {
     }
     #[inline]
     fn set_uncertain(&self, file: FileId, index: usize, ty: TypeId) {
-        self.0
-            .set_raw((file, index as u32), (ty.0 + 1) | Self::UNCERTAIN);
+        self.0.set_raw(
+            (file, index as u32),
+            (ty.0 + 1) | Self::UNCERTAIN,
+            ty.is_local(),
+        );
     }
     #[inline]
     fn set(&self, file: FileId, index: usize, ty: TypeId) {
-        self.0.set_raw((file, index as u32), ty.0 + 1);
+        self.0
+            .set_raw((file, index as u32), ty.0 + 1, ty.is_local());
     }
 }
 
@@ -161,7 +166,7 @@ pub struct Program {
     construct_signatures: ByIdKept<TypeId, Box<[SigId]>>,
     /// What `members` says of a type, once that holds for good.
     members: ById<TypeId, shape::KeptMembers>,
-    instantiations: ShardedMap<(TypeId, MapperId), TypeId>,
+    instantiations: ByKey<(TypeId, MapperId), TypeId>,
     outer_type_params: ByNodeKept<(FileId, crate::bind::ScopeId), Arc<[TypeId]>>,
     base_types: ByNodeKept<Sym, Arc<[TypeId]>>,
     calls: ByNode<(FileId, ExprId), ResolvedCall>,
@@ -172,28 +177,28 @@ pub struct Program {
     arg_contexts: ByNode<(FileId, ExprId), TypeId>,
     /// Calls with a `const` type parameter in some overload that are resolved to an overload before it, or that it does not apply to.
     calls_outside_const_context: NodeSet<(FileId, ExprId)>,
-    relations: ShardedMap<(TypeId, TypeId, u8), u8>,
+    relations: ByKey<(TypeId, TypeId, u8), u8>,
     variances: ByNodeKept<Sym, Arc<[u8]>>,
     member_types: ByNode<(FileId, MemberId), TypeId>,
     /// `resolvedType` of a property declared by assignment declarations, keyed by the first declaration.
     assigned_prop_types: ByNode<(FileId, ExprId), TypeId>,
     /// `resolvedType` of a property of a mapped type, keyed by the mapped type and the property name. `getTypeOfMappedSymbol`
-    mapped_prop_types: ShardedMap<(TypeId, Atom), TypeId>,
-    intersected_props: ShardedMap<(TypeId, Atom), TypeId>,
+    mapped_prop_types: ByKey<(TypeId, Atom), TypeId>,
+    intersected_props: ByKey<(TypeId, Atom), TypeId>,
     never_intersections: ById<TypeId, bool>,
     inferred_constraints: ById<TypeId, Option<TypeId>>,
     constraints: ById<TypeId, TypeId>,
     /// The types whose base constraint depends on itself (`circularConstraintType`).
     circular_constraints: IdSet<TypeId>,
     enum_values: ByNodeKept<(FileId, EnumMemberId), Option<EnumValue>>,
-    conditionals: ShardedMap<(FileId, TypeNodeId, MapperId), TypeId>,
+    conditionals: ByKey<(FileId, TypeNodeId, MapperId), TypeId>,
     /// Memo entries whose evaluation hit an instantiation limit, and those 2589 has been reported for. See `note_depth`.
-    excessive: ShardedMap<Deep, ()>,
-    excessive_reported: ShardedMap<Deep, ()>,
+    excessive: ByKey<Deep, ()>,
+    excessive_reported: ByKey<Deep, ()>,
     /// Whether `excessive` has an entry. Saves the lookup on every memo hit.
     has_excessive: AtomicBool,
     /// What `global_type_of_arity` found, by name and number of type parameters.
-    global_types: ShardedMap<(Atom, u8), Option<Sym>>,
+    global_types: ByKey<(Atom, u8), Option<Sym>>,
     /// The parent type node of each type node, per file. See `type_parents`.
     type_parents: ByIdKept<FileId, Arc<Vec<TypeNodeId>>>,
 }
@@ -283,8 +288,9 @@ impl Program {
     }
 
     pub fn new(files: Files) -> Program {
-        let bases =
-            |len: fn(&crate::program::Module) -> usize| Bases::new(files.modules.iter().map(len));
+        let bases = |len: fn(&crate::program::Module) -> usize| {
+            Bases::new(files.modules.iter().map(|m| len(m)))
+        };
         let exprs = bases(|m| m.hir.exprs.len());
         let type_nodes = bases(|m| m.hir.types.len());
         let fns = bases(|m| m.hir.fns.len());
@@ -326,29 +332,29 @@ impl Program {
             call_signatures: Default::default(),
             construct_signatures: Default::default(),
             members: Default::default(),
-            instantiations: ShardedMap::default(),
+            instantiations: Default::default(),
             outer_type_params: ByNodeKept::new(&scopes),
             base_types: ByNodeKept::new(&symbols),
             calls: ByNode::new(&exprs),
             failure_sigs: ByNode::new(&exprs),
             arg_contexts: ByNode::new(&exprs),
             calls_outside_const_context: NodeSet::new(&exprs),
-            relations: ShardedMap::default(),
+            relations: Default::default(),
             variances: ByNodeKept::new(&symbols),
             member_types: ByNode::new(&members),
             assigned_prop_types: ByNode::new(&exprs),
-            mapped_prop_types: ShardedMap::default(),
-            intersected_props: ShardedMap::default(),
+            mapped_prop_types: Default::default(),
+            intersected_props: Default::default(),
             never_intersections: Default::default(),
             inferred_constraints: Default::default(),
             constraints: Default::default(),
             circular_constraints: Default::default(),
             enum_values: ByNodeKept::new(&enum_members),
-            conditionals: ShardedMap::default(),
-            excessive: ShardedMap::default(),
-            excessive_reported: ShardedMap::default(),
+            conditionals: Default::default(),
+            excessive: Default::default(),
+            excessive_reported: Default::default(),
             has_excessive: AtomicBool::new(false),
-            global_types: ShardedMap::default(),
+            global_types: Default::default(),
             type_parents: Default::default(),
             files,
         }
@@ -499,6 +505,16 @@ pub(super) enum Deep {
     Instantiation(TypeId, MapperId),
     /// `Program::conditionals`
     Conditional(FileId, TypeNodeId, MapperId),
+}
+
+impl MaybeLocal for Deep {
+    #[inline]
+    fn is_local(&self) -> bool {
+        match self {
+            Deep::Instantiation(ty, mapper) => ty.is_local() || mapper.is_local(),
+            Deep::Conditional(file, _, mapper) => file.is_local() || mapper.is_local(),
+        }
+    }
 }
 
 /// `Checker.currentNode`

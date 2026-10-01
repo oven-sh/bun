@@ -11,6 +11,7 @@ pub mod config;
 pub mod describe;
 pub mod hir;
 pub mod json;
+pub mod local;
 pub mod messages;
 pub mod program;
 pub mod resolve;

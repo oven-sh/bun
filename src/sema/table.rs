@@ -8,6 +8,7 @@
 //! The memory comes zero-filled from the allocator, which for arrays this size means from the system: a page nobody touches is never
 //! there.
 
+use crate::local::{self, LOCAL, MaybeLocal, is_local_number};
 use crate::program::{FileId, Sym};
 use crate::util::AppendVec;
 use std::alloc::Layout;
@@ -22,6 +23,8 @@ use std::sync::atomic::{AtomicPtr, AtomicU32, AtomicU64, Ordering};
 /// That has to be true.
 pub unsafe trait Cell: Sync + Send {
     type Raw: Copy + PartialEq + Default;
+    fn widen(raw: Self::Raw) -> u64;
+    fn narrow(raw: u64) -> Self::Raw;
     fn load(&self) -> Self::Raw;
     /// What the cell holds afterwards: `raw`, or what was there first.
     fn put_if_empty(&self, raw: Self::Raw) -> Self::Raw;
@@ -33,6 +36,14 @@ macro_rules! cell {
         // SAFETY: an atomic integer has the layout of the integer.
         unsafe impl Cell for $atomic {
             type Raw = $raw;
+            #[inline]
+            fn widen(raw: $raw) -> u64 {
+                u64::from(raw)
+            }
+            #[inline]
+            fn narrow(raw: u64) -> $raw {
+                raw as $raw
+            }
             #[inline]
             fn load(&self) -> $raw {
                 self.load(Ordering::Acquire)
@@ -55,7 +66,7 @@ cell!(AtomicU32, u32);
 cell!(AtomicU64, u64);
 
 /// A value that fits a cell. It is never packed as zero.
-pub trait Packed: Copy {
+pub trait Packed: Copy + MaybeLocal {
     type Cell: Cell;
     fn pack(self) -> <Self::Cell as Cell>::Raw;
     fn unpack(raw: <Self::Cell as Cell>::Raw) -> Self;
@@ -77,6 +88,12 @@ impl Packed for bool {
 pub trait Id: Copy {
     fn number(self) -> u32;
     fn from_number(number: u32) -> Self;
+    /// `Some`: it is local, and this is its number among the local ones.
+    #[inline]
+    fn local_number(self) -> Option<u32> {
+        let number = self.number();
+        is_local_number(number).then_some(number & !LOCAL)
+    }
 }
 
 #[macro_export]
@@ -90,6 +107,12 @@ macro_rules! packed_ids {
             #[inline]
             fn from_number(number: u32) -> Self {
                 Self(number)
+            }
+        }
+        impl $crate::local::MaybeLocal for $id {
+            #[inline]
+            fn is_local(&self) -> bool {
+                $crate::local::is_local_number(self.0)
             }
         }
         impl $crate::table::Packed for $id {
@@ -116,7 +139,42 @@ macro_rules! packed_ids {
         }
     )*};
 }
-packed_ids!(FileId);
+impl Id for FileId {
+    #[inline]
+    fn number(self) -> u32 {
+        self.0
+    }
+    #[inline]
+    fn from_number(number: u32) -> Self {
+        FileId(number)
+    }
+    #[inline]
+    fn local_number(self) -> Option<u32> {
+        (self.0 == local::file()).then_some(0)
+    }
+}
+
+impl MaybeLocal for FileId {
+    #[inline]
+    fn is_local(&self) -> bool {
+        self.0 == local::file()
+    }
+}
+
+/// A node is as local as the file that goes with it.
+impl MaybeLocal for crate::hir::TypeNodeId {
+    #[inline]
+    fn is_local(&self) -> bool {
+        false
+    }
+}
+
+impl MaybeLocal for Sym {
+    #[inline]
+    fn is_local(&self) -> bool {
+        self.file.is_local()
+    }
+}
 
 impl Packed for Option<Sym> {
     type Cell = AtomicU64;
@@ -357,6 +415,7 @@ impl NodeKey for Sym {
 pub struct ByNode<K, V: Packed> {
     bases: Bases,
     cells: Flat<V::Cell>,
+    slot: u32,
     key: PhantomData<fn(K)>,
 }
 
@@ -373,6 +432,7 @@ impl<K: NodeKey, V: Packed> ByNode<K, V> {
         ByNode {
             cells: Flat::new(bases.total()),
             bases: bases.clone(),
+            slot: local::new_slot(),
             key: PhantomData,
         }
     }
@@ -384,7 +444,11 @@ impl<K: NodeKey, V: Packed> ByNode<K, V> {
 
     #[inline]
     pub fn get(&self, key: &K) -> Option<V> {
-        let raw = self.cell(*key)?.load();
+        let raw = match self.cell(*key) {
+            Some(cell) => cell.load(),
+            None if key.file().is_local() => V::Cell::narrow(local::cell(self.slot, key.index())),
+            None => return None,
+        };
         (raw != Default::default()).then(|| V::unpack(raw))
     }
 
@@ -392,7 +456,12 @@ impl<K: NodeKey, V: Packed> ByNode<K, V> {
     #[inline]
     pub fn insert(&self, key: K, value: V) -> V {
         match self.cell(key) {
+            // What is local is gone before what is shared is.
+            Some(_) if value.is_local() => value,
             Some(cell) => V::unpack(cell.put_if_empty(value.pack())),
+            None if key.file().is_local() && key.index() != u32::MAX => V::unpack(V::Cell::narrow(
+                local::put_if_empty(self.slot, key.index(), V::Cell::widen(value.pack())),
+            )),
             None => value,
         }
     }
@@ -401,13 +470,22 @@ impl<K: NodeKey, V: Packed> ByNode<K, V> {
 impl<K: NodeKey> ByNode<K, RawWord> {
     #[inline]
     pub fn raw(&self, key: K) -> u32 {
-        self.cell(key).map_or(0, Cell::load)
+        match self.cell(key) {
+            Some(cell) => Cell::load(cell),
+            None if key.file().is_local() => local::cell(self.slot, key.index()) as u32,
+            None => 0,
+        }
     }
-    /// Whatever was there is gone.
+    /// Whatever was there is gone. `is_local`: what `raw` stands for is.
     #[inline]
-    pub fn set_raw(&self, key: K, raw: u32) {
-        if let Some(cell) = self.cell(key) {
-            Cell::store(cell, raw);
+    pub fn set_raw(&self, key: K, raw: u32, is_local: bool) {
+        match self.cell(key) {
+            Some(_) if is_local => {}
+            Some(cell) => Cell::store(cell, raw),
+            None if key.file().is_local() && key.index() != u32::MAX => {
+                local::store(self.slot, key.index(), u64::from(raw));
+            }
+            None => {}
         }
     }
 }
@@ -415,6 +493,13 @@ impl<K: NodeKey> ByNode<K, RawWord> {
 /// For a table whose owner lays out the bits.
 #[derive(Copy, Clone)]
 pub struct RawWord(pub u32);
+
+impl MaybeLocal for RawWord {
+    #[inline]
+    fn is_local(&self) -> bool {
+        false
+    }
+}
 
 impl Packed for RawWord {
     type Cell = AtomicU32;
@@ -433,6 +518,7 @@ pub struct NodeSet<K> {
     bases: Bases,
     bits: Flat<AtomicU32>,
     len: AtomicU32,
+    slot: u32,
     key: PhantomData<fn(K)>,
 }
 
@@ -442,23 +528,37 @@ impl<K: NodeKey> NodeSet<K> {
             bits: Flat::new(bases.total().div_ceil(32)),
             bases: bases.clone(),
             len: AtomicU32::new(0),
+            slot: local::new_slot(),
             key: PhantomData,
         }
     }
 
     #[inline]
     pub fn get(&self, key: &K) -> Option<()> {
-        let at = self.bases.at(key.file(), key.index())?;
-        (self.bits.cell(at / 32).load(Ordering::Acquire) & 1 << (at % 32) != 0).then_some(())
+        match self.bases.at(key.file(), key.index()) {
+            Some(at) => (self.bits.cell(at / 32).load(Ordering::Acquire) & 1 << (at % 32) != 0)
+                .then_some(()),
+            None if key.file().is_local() => local::bit(self.slot, key.index()).then_some(()),
+            None => None,
+        }
     }
 
     #[inline]
     pub fn insert(&self, key: K, (): ()) {
-        if let Some(at) = self.bases.at(key.file(), key.index()) {
-            let bit = 1 << (at % 32);
-            if self.bits.cell(at / 32).fetch_or(bit, Ordering::AcqRel) & bit == 0 {
-                self.len.fetch_add(1, Ordering::Relaxed);
+        match self.bases.at(key.file(), key.index()) {
+            Some(at) => {
+                let bit = 1 << (at % 32);
+                if self.bits.cell(at / 32).fetch_or(bit, Ordering::AcqRel) & bit == 0 {
+                    self.len.fetch_add(1, Ordering::Relaxed);
+                }
             }
+            None if key.file().is_local() && key.index() != u32::MAX => {
+                // Counted with the rest, and never taken off again: all the count is asked is whether it is zero.
+                if local::set_bit(self.slot, key.index()) {
+                    self.len.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+            None => {}
         }
     }
 
@@ -468,18 +568,19 @@ impl<K: NodeKey> NodeSet<K> {
     }
 }
 
-/// Where in an `AppendVec` something is kept.
+/// Where something is kept.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct Handle(pub u32);
 packed_ids!(Handle);
 
-/// Something that does not fit a cell for some of the nodes of one kind. It is kept on the side, for good, and never moves.
+/// Something that does not fit a cell for some of the nodes of one kind. It is kept on the side and never moves.
 pub struct ByNodeKept<K, T> {
     handles: ByNode<K, Handle>,
     kept: AppendVec<T>,
+    slot: u32,
 }
 
-impl<K: NodeKey, T> ByNodeKept<K, T> {
+impl<K: NodeKey, T: 'static> ByNodeKept<K, T> {
     pub fn fill(&self) -> (usize, usize, usize) {
         self.handles.fill()
     }
@@ -492,18 +593,32 @@ impl<K: NodeKey, T> ByNodeKept<K, T> {
         ByNodeKept {
             handles: ByNode::new(bases),
             kept: AppendVec::new(),
+            slot: local::new_slot(),
+        }
+    }
+
+    #[inline]
+    fn at(&self, handle: Handle) -> &T {
+        match handle.local_number() {
+            // SAFETY: nothing that is handed out here outlives the check of the file at hand.
+            Some(index) => unsafe { local::kept(self.slot, index) },
+            None => self.kept.get(handle.0),
         }
     }
 
     #[inline]
     pub fn get_ref(&self, key: &K) -> Option<&T> {
-        self.handles.get(key).map(|handle| self.kept.get(handle.0))
+        self.handles.get(key).map(|handle| self.at(handle))
     }
 
     /// Keeps what is there already, and returns what is kept.
     pub fn insert_ref(&self, key: K, value: T) -> &T {
-        let handle = self.handles.insert(key, Handle(self.kept.push(value)));
-        self.kept.get(handle.0)
+        let handle = if key.file().is_local() {
+            Handle(local::keep(self.slot, value) | LOCAL)
+        } else {
+            Handle(self.kept.push(value))
+        };
+        self.at(self.handles.insert(key, handle))
     }
 
     #[inline]
@@ -527,6 +642,7 @@ impl<K: NodeKey, T> ByNodeKept<K, T> {
 /// A value for each of the things that are numbered as they are made.
 pub struct ById<I, V: Packed> {
     cells: Segmented<V::Cell>,
+    slot: u32,
     key: PhantomData<fn(I)>,
 }
 
@@ -534,6 +650,7 @@ impl<I: Id, V: Packed> Default for ById<I, V> {
     fn default() -> Self {
         ById {
             cells: Segmented::new(),
+            slot: local::new_slot(),
             key: PhantomData,
         }
     }
@@ -542,20 +659,33 @@ impl<I: Id, V: Packed> Default for ById<I, V> {
 impl<I: Id, V: Packed> ById<I, V> {
     #[inline]
     pub fn get(&self, key: &I) -> Option<V> {
-        let raw = self.cells.existing_cell(key.number())?.load();
+        let raw = match key.local_number() {
+            Some(index) => V::Cell::narrow(local::cell(self.slot, index)),
+            None => self.cells.existing_cell(key.number())?.load(),
+        };
         (raw != Default::default()).then(|| V::unpack(raw))
     }
 
     /// Keeps what is there already, and returns what is kept.
     #[inline]
     pub fn insert(&self, key: I, value: V) -> V {
-        V::unpack(self.cells.cell(key.number()).put_if_empty(value.pack()))
+        match key.local_number() {
+            Some(index) => V::unpack(V::Cell::narrow(local::put_if_empty(
+                self.slot,
+                index,
+                V::Cell::widen(value.pack()),
+            ))),
+            // What is local is gone before what is shared is.
+            None if value.is_local() => value,
+            None => V::unpack(self.cells.cell(key.number()).put_if_empty(value.pack())),
+        }
     }
 }
 
 /// Some of the things that are numbered as they are made: a bit for each.
 pub struct IdSet<I> {
     bits: Segmented<AtomicU32>,
+    slot: u32,
     key: PhantomData<fn(I)>,
 }
 
@@ -563,6 +693,7 @@ impl<I: Id> Default for IdSet<I> {
     fn default() -> Self {
         IdSet {
             bits: Segmented::new(),
+            slot: local::new_slot(),
             key: PhantomData,
         }
     }
@@ -571,6 +702,9 @@ impl<I: Id> Default for IdSet<I> {
 impl<I: Id> IdSet<I> {
     #[inline]
     pub fn get(&self, key: &I) -> Option<()> {
+        if let Some(index) = key.local_number() {
+            return local::bit(self.slot, index).then_some(());
+        }
         let at = key.number();
         let word = self.bits.existing_cell(at / 32)?.load(Ordering::Acquire);
         (word & 1 << (at % 32) != 0).then_some(())
@@ -578,6 +712,10 @@ impl<I: Id> IdSet<I> {
 
     #[inline]
     pub fn insert(&self, key: I, (): ()) {
+        if let Some(index) = key.local_number() {
+            local::set_bit(self.slot, index);
+            return;
+        }
         let at = key.number();
         self.bits
             .cell(at / 32)
@@ -589,6 +727,7 @@ impl<I: Id> IdSet<I> {
 pub struct ByIdKept<I, T> {
     handles: ById<I, Handle>,
     kept: AppendVec<T>,
+    slot: u32,
 }
 
 impl<I: Id, T> Default for ByIdKept<I, T> {
@@ -596,18 +735,19 @@ impl<I: Id, T> Default for ByIdKept<I, T> {
         ByIdKept {
             handles: ById::default(),
             kept: AppendVec::new(),
+            slot: local::new_slot(),
         }
     }
 }
 
-impl<I: Id, T> ByIdKept<I, T> {
+impl<I: Id, T: 'static> ByIdKept<I, T> {
     pub fn kept(&self) -> impl Iterator<Item = &T> {
         (0..self.kept.len()).map(|i| self.kept.get(i))
     }
 
     #[inline]
     pub fn get_ref(&self, key: &I) -> Option<&T> {
-        self.handles.get(key).map(|handle| self.kept.get(handle.0))
+        self.handles.get(key).map(|handle| self.at(handle))
     }
 
     #[inline]
@@ -617,13 +757,22 @@ impl<I: Id, T> ByIdKept<I, T> {
 
     #[inline]
     pub fn at(&self, handle: Handle) -> &T {
-        self.kept.get(handle.0)
+        match handle.local_number() {
+            // SAFETY: nothing that is handed out here outlives the check of the file at hand.
+            Some(index) => unsafe { local::kept(self.slot, index) },
+            None => self.kept.get(handle.0),
+        }
     }
 
     /// Keeps what is there already, and returns what is kept.
     pub fn insert_ref(&self, key: I, value: T) -> (Handle, &T) {
-        let handle = self.handles.insert(key, Handle(self.kept.push(value)));
-        (handle, self.kept.get(handle.0))
+        let handle = if key.local_number().is_some() {
+            Handle(local::keep(self.slot, value) | LOCAL)
+        } else {
+            Handle(self.kept.push(value))
+        };
+        let handle = self.handles.insert(key, handle);
+        (handle, self.at(handle))
     }
 
     #[inline]
@@ -643,6 +792,49 @@ impl<I: Id, T> ByIdKept<I, T> {
 
     pub fn len(&self) -> usize {
         self.kept.len() as usize
+    }
+}
+
+/// A memo table for what goes by more than a number.
+pub struct ByKey<K, V> {
+    shared: crate::util::ShardedMap<K, V>,
+    slot: u32,
+}
+
+impl<K: std::hash::Hash + Eq, V> Default for ByKey<K, V> {
+    fn default() -> Self {
+        ByKey {
+            shared: Default::default(),
+            slot: local::new_slot(),
+        }
+    }
+}
+
+impl<K: std::hash::Hash + Eq + MaybeLocal + 'static, V: Clone + MaybeLocal + 'static> ByKey<K, V> {
+    #[inline]
+    pub fn get(&self, key: &K) -> Option<V> {
+        if key.is_local() {
+            local::map_get(self.slot, key)
+        } else {
+            self.shared.get(key)
+        }
+    }
+
+    /// Keeps what is there already, and returns what is kept.
+    #[inline]
+    pub fn insert(&self, key: K, value: V) -> V {
+        if key.is_local() {
+            local::map_insert(self.slot, key, value)
+        } else if value.is_local() {
+            // What is local is gone before what is shared is.
+            value
+        } else {
+            self.shared.insert(key, value)
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.shared.len()
     }
 }
 

@@ -152,6 +152,8 @@ pub fn load_project(config: &str) -> bun_sema::program::Files {
         bun_sema::resolve::Options::from_tsconfig(&disk, config).expect("tsconfig.json");
     options.lib_dir =
         find_lib_dir(config).expect("TypeScript's lib directory (set BUN_SEMA_TS_LIB)");
+    // `BUN_SEMA_TRANSIENT=1`: as `bun check` does it.
+    options.drops_what_nothing_refers_to = std::env::var_os("BUN_SEMA_TRANSIENT").is_some();
     // The checker asks `options.files` which files are root files.
     let files = options.files.clone();
     bun_sema::program::Files::load(&disk, options, &files)
@@ -163,6 +165,7 @@ pub fn load_tree(tree: &str, roots: &[&str], threads: usize) -> bun_sema::progra
         bun_sema::resolve::Options::from_tsconfig(&disk, &format!("{tree}/tsconfig.json"))
             .expect("tsconfig.json");
     options.lib_dir = find_lib_dir(tree).expect("TypeScript's lib directory (set BUN_SEMA_TS_LIB)");
+    options.drops_what_nothing_refers_to = std::env::var_os("BUN_SEMA_TRANSIENT").is_some();
     let mut files = Vec::new();
     for root in roots {
         files.extend(source_files(&format!("{tree}/{root}")));

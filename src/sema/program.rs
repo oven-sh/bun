@@ -67,6 +67,64 @@ pub struct Module {
     pub extensionless_imports: Vec<(Atom, bool)>,
     /// The files it refers to, in the order it does: `/// <reference>`s, then imports.
     pub edges: Vec<FileId>,
+    /// Nothing refers to it, and it adds nothing to what all files see. So `hir` and `bound` are only there while a thread has it at hand:
+    /// see `Files::bring_in`.
+    pub is_transient: bool,
+}
+
+/// A module in the list of all. One that `is_transient` is filled in and emptied again by the one thread that checks it, which is the
+/// only one to look at it.
+pub struct ModuleCell(std::cell::UnsafeCell<Module>);
+
+// SAFETY: a module is only changed through `&mut Files`, or by the thread that has it at hand while no other looks at it.
+unsafe impl Sync for ModuleCell {}
+
+impl std::ops::Deref for ModuleCell {
+    type Target = Module;
+    #[inline(always)]
+    fn deref(&self) -> &Module {
+        // SAFETY: see above.
+        unsafe { &*self.0.get() }
+    }
+}
+
+impl std::ops::DerefMut for ModuleCell {
+    #[inline(always)]
+    fn deref_mut(&mut self) -> &mut Module {
+        self.0.get_mut()
+    }
+}
+
+/// While it is around, a file is at hand in this thread. Whatever was found out about the file has to be gone before it is.
+pub struct AtHand<'a> {
+    module: Option<&'a ModuleCell>,
+}
+
+impl Drop for AtHand<'_> {
+    fn drop(&mut self) {
+        let Some(module) = self.module else {
+            return;
+        };
+        // SAFETY: this thread is the only one to look at the module, and is done with it.
+        let module = unsafe { &mut *module.0.get() };
+        module.hir = stub_of(&module.hir);
+        module.bound = Bound::default();
+        crate::local::end();
+        crate::types::TypeStore::end_local();
+    }
+}
+
+/// What is known of a file whose syntax tree is not there.
+fn stub_of(hir: &hir::File) -> hir::File {
+    hir::File {
+        kind: hir.kind,
+        is_js: hir.is_js,
+        source_len: hir.source_len,
+        has_module_syntax: hir.has_module_syntax,
+        is_module_by_decree: hir.is_module_by_decree,
+        has_errors: hir.has_errors,
+        ..Default::default()
+    }
 }
 
 impl Module {
@@ -115,7 +173,7 @@ impl Module {
 pub struct Files {
     pub atoms: Interner,
     pub options: Options,
-    pub modules: Vec<Module>,
+    pub modules: Vec<ModuleCell>,
     pub by_path: FxHashMap<String, FileId>,
 
     pub globals: FxHashMap<Atom, Sym>,
@@ -514,7 +572,7 @@ fn automatic_type_directives(host: &dyn Host, options: &Options) -> Vec<String> 
 /// are written to. Only output that is written next to its source is looked at. A `.map` file collides only if what it maps does.
 fn output_path_errors(
     options: &Options,
-    modules: &[Module],
+    modules: &[ModuleCell],
     by_path: &FxHashMap<String, FileId>,
 ) -> Vec<u32> {
     let mut errors = Vec::new();
@@ -814,7 +872,10 @@ impl Files {
         }
 
         drop(resolver);
-        let modules: Vec<Module> = modules.into_iter().map(Option::unwrap).collect();
+        let modules: Vec<ModuleCell> = modules
+            .into_iter()
+            .map(|module| ModuleCell(module.unwrap().into()))
+            .collect();
         program_errors.extend(output_path_errors(&options, &modules, &by_path));
         let has_type_only_stars = modules
             .iter()
@@ -850,15 +911,16 @@ impl Files {
         files
     }
 
-    fn load_one(
+    /// All that goes by the file alone.
+    fn parse_and_bind(
         host: &dyn Host,
-        resolver: &Resolver,
         options: &Options,
         atoms: &Interner,
         id: FileId,
         path: &str,
         is_lib: bool,
-    ) -> Loaded {
+        says_esm: bool,
+    ) -> (hir::File, Bound) {
         let text = host.read(path).unwrap_or_default();
         let mut hir = if path.ends_with(".json") {
             json_to_hir(&text, atoms)
@@ -869,13 +931,6 @@ impl Files {
         if hir.kind != FileKind::Json && !is_lib {
             hir.text = text;
         }
-        // `GetImpliedNodeFormatForFile`: a JSON file is neither kind of module, whatever its package says.
-        let says_esm = !path.ends_with(".json")
-            && (options.resolves_like_node || path.contains("/node_modules/"))
-            && resolver.is_ecmascript_module(path);
-        let is_esm = options.resolves_like_node && says_esm;
-        let implied_format = resolver.implied_format(path);
-        let default_mode = options.default_mode(implied_format);
         // `getExternalModuleIndicator`: what else makes a module of a file that neither imports nor exports.
         if !hir.has_module_syntax && hir.kind != FileKind::Declaration {
             let (mut has_import_meta, mut has_jsx) = (false, false);
@@ -915,6 +970,75 @@ impl Files {
             atoms,
         );
         rename_private_names(&mut hir, &bound, atoms, id);
+        (hir, bound)
+    }
+
+    /// Has `file` at hand in this thread for as long as what is returned is around. Nothing is to be asked about a file that `is_transient`
+    /// otherwise.
+    pub fn bring_in(&self, host: &dyn Host, file: FileId) -> AtHand<'_> {
+        let cell = &self.modules[file.idx()];
+        if !cell.is_transient {
+            return AtHand { module: None };
+        }
+        let (hir, bound) = Self::parse_and_bind(
+            host,
+            &self.options,
+            &self.atoms,
+            file,
+            &cell.path,
+            cell.is_lib,
+            cell.says_esm,
+        );
+        // SAFETY: nothing refers to the file, so no other thread looks at the module.
+        let module = unsafe { &mut *cell.0.get() };
+        module.hir = hir;
+        module.bound = bound;
+        crate::local::begin(file.0, std::ptr::null());
+        AtHand { module: Some(cell) }
+    }
+
+    /// Which files need only be there while they are checked: those nothing refers to that add nothing to what all files see.
+    fn settle_what_is_transient(&mut self) {
+        let mut is_referred_to = vec![false; self.modules.len()];
+        for module in &self.modules {
+            for &target in module.edges.iter().chain(module.imports.values()) {
+                is_referred_to[target.idx()] = true;
+            }
+        }
+        for (i, module) in self.modules.iter_mut().enumerate() {
+            let (hir, bound) = (&module.hir, &module.bound);
+            module.is_transient = !is_referred_to[i]
+                && !module.is_lib
+                && matches!(hir.kind, FileKind::Ts | FileKind::Tsx)
+                && !hir.is_js
+                && hir.has_module_syntax
+                && bound.global_augmentations.is_empty()
+                && bound.ambient_modules.is_empty()
+                && bound.umd_globals.is_empty();
+            if module.is_transient {
+                module.hir = stub_of(&module.hir);
+                module.bound = Bound::default();
+            }
+        }
+    }
+
+    fn load_one(
+        host: &dyn Host,
+        resolver: &Resolver,
+        options: &Options,
+        atoms: &Interner,
+        id: FileId,
+        path: &str,
+        is_lib: bool,
+    ) -> Loaded {
+        // `GetImpliedNodeFormatForFile`: a JSON file is neither kind of module, whatever its package says.
+        let says_esm = !path.ends_with(".json")
+            && (options.resolves_like_node || path.contains("/node_modules/"))
+            && resolver.is_ecmascript_module(path);
+        let is_esm = options.resolves_like_node && says_esm;
+        let implied_format = resolver.implied_format(path);
+        let default_mode = options.default_mode(implied_format);
+        let (hir, bound) = Self::parse_and_bind(host, options, atoms, id, path, is_lib, says_esm);
         let mut imports = Vec::new();
         let (mut untyped_imports, mut jsx_imports, mut untyped_package_imports) =
             (Vec::new(), Vec::new(), Vec::new());
@@ -1125,6 +1249,7 @@ impl Files {
             implied_format,
             default_mode,
             edges: Vec::new(),
+            is_transient: false,
         };
         Loaded {
             module,
@@ -1364,6 +1489,9 @@ impl Files {
                 // `mergeModuleAugmentation`: what adds to a module that is not there adds to nothing.
                 None => {}
             }
+        }
+        if self.options.drops_what_nothing_refers_to {
+            self.settle_what_is_transient();
         }
         // What an alias was found to stand for while symbols were being put together may be a part of something by now.
         let symbols = Bases::new(self.modules.iter().map(|m| m.bound.symbols.len()));
@@ -1778,7 +1906,7 @@ impl Files {
         if RESOLVING.with(|r| r.borrow().circles) == circles {
             self.memo
                 .symbol_flags
-                .set_raw(sym, flags.bits() | FLAGS_KNOWN);
+                .set_raw(sym, flags.bits() | FLAGS_KNOWN, false);
         }
         flags
     }

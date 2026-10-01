@@ -70,6 +70,8 @@ pub struct Request<'a> {
     pub global_node_modules: Option<&'a str>,
     /// How long a single file may take. One that takes longer has run into a bug, and nothing is said about it but that.
     pub file_time_limit: Duration,
+    /// Nothing is forgotten once it is checked: for whoever goes on to ask about the program. It takes several times the memory.
+    pub keeps_everything: bool,
     /// Called with everything that was loaded, before any of it is checked.
     pub loaded: Option<&'a (dyn Fn(&Program) + Sync)>,
     /// Called with it again when all of it is checked.
@@ -335,6 +337,7 @@ pub fn check(request: &Request) -> Report {
         project.options.skip_default_lib_check,
     );
 
+    project.options.drops_what_nothing_refers_to = !request.keeps_everything;
     let files = Files::load(&disk, project.options, &project.files);
     let program = Program::new(files);
     report.files_loaded = program.files.modules.len();
@@ -370,6 +373,8 @@ pub fn check(request: &Request) -> Report {
     let gave_up: Mutex<Vec<String>> = Mutex::new(Vec::new());
     for_each_parallel(threads, to_check.len(), &|i| {
         let file = to_check[i];
+        // Dropped last, after all that was found out about the file.
+        let _at_hand = program.files.bring_in(&disk, file);
         let module = &program.files.modules[file.idx()];
         let mut checker = program.checker();
         checker.set_stack_limit(STACK);

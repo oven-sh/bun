@@ -5,7 +5,9 @@
 
 use crate::atom::Atom;
 use crate::hir::{ExprId, FnId, TypeNodeId, TypeParamId};
+use crate::local::{self, Chunked, Found, LOCAL, MaybeLocal};
 use crate::program::{FileId, Sym};
+use crate::table::Id;
 use crate::util::{AppendVec, GrowingPlaces, SHARDS, shard_of, spread_hash};
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -403,6 +405,12 @@ impl<V> Interned<V> {
         }
     }
 
+    /// The number of `key`, whose hash is `spread`, if it is there.
+    #[inline]
+    fn find<K: Eq>(&self, spread: u64, key: &K, key_of: impl Fn(&V) -> &K) -> Option<u32> {
+        self.shards[shard_of(spread)].find(spread, |i| key_of(self.items.get(i)) == key)
+    }
+
     /// `key_of`: what an item was interned by. `make`: the item for `key`, which it takes over, and the number it gets.
     fn intern<K: std::hash::Hash + Eq>(
         &self,
@@ -433,6 +441,169 @@ impl<V> Interned<V> {
 }
 
 crate::packed_ids!(TypeId, SigId, MapperId);
+
+/// The types, signatures and mappers that mention the file at hand: see `local`.
+#[derive(Default)]
+struct LocalStore {
+    types: Chunked<TypeRecord>,
+    sigs: Chunked<SigData>,
+    mappers: Chunked<(Mapping, TypeFlags)>,
+    found_types: Found,
+    found_sigs: Found,
+    found_mappers: Found,
+}
+
+thread_local! {
+    static LOCAL_STORE: std::cell::UnsafeCell<LocalStore> = Default::default();
+}
+
+/// What is in it does not move, and is there until `TypeStore::end_local`.
+#[inline]
+fn local_store() -> &'static LocalStore {
+    // SAFETY: it is the thread's own. It is only changed through `local_store_mut`, by functions of this file that hold no reference to the
+    // store itself meanwhile, only to what is in it, which stays where it is.
+    LOCAL_STORE.with(|store| unsafe { &*store.get() })
+}
+
+/// # Safety
+/// No reference from `local_store` or from here may be in use, other than to what is in the lists.
+#[inline]
+#[allow(clippy::mut_from_ref)]
+unsafe fn local_store_mut() -> &'static mut LocalStore {
+    // SAFETY: see above.
+    LOCAL_STORE.with(|store| unsafe { &mut *store.get() })
+}
+
+// Out of line: what is shared is looked up in thousands of places, each of which would carry a copy.
+#[inline(never)]
+fn local_record<'a>(id: TypeId) -> &'a TypeRecord {
+    local_store().types.get((id.0 & !LOCAL) as usize)
+}
+
+#[inline(never)]
+fn local_mapper<'a>(id: MapperId) -> &'a (Mapping, TypeFlags) {
+    local_store().mappers.get((id.0 & !LOCAL) as usize)
+}
+
+#[inline(never)]
+fn local_sig<'a>(id: SigId) -> &'a SigData {
+    local_store().sigs.get((id.0 & !LOCAL) as usize)
+}
+
+impl MaybeLocal for Atom {
+    #[inline]
+    fn is_local(&self) -> bool {
+        false
+    }
+}
+
+fn is_prop_local(prop: &Prop, file: FileId) -> bool {
+    prop.mapper.is_local()
+        || match &prop.source {
+            PropSource::Type(t) => t.is_local(),
+            PropSource::Members(members) => members.iter().any(|m| m.0 == file),
+            PropSource::Parameter(f, _)
+            | PropSource::Literal(f, _)
+            | PropSource::Assigned(f, _) => *f == file,
+            PropSource::Symbol(sym) => sym.file == file,
+            PropSource::Intersected(t, props) => {
+                t.is_local() || props.iter().any(|p| is_prop_local(p, file))
+            }
+            PropSource::Mapped(t, _) => t.is_local(),
+        }
+}
+
+/// Whether `data` mentions `file`, which is the one at hand, or anything that does.
+fn is_type_local(data: &TypeData, file: FileId) -> bool {
+    let any = |ids: &[TypeId]| ids.iter().any(MaybeLocal::is_local);
+    match data {
+        TypeData::Intrinsic(_)
+        | TypeData::StringLit { .. }
+        | TypeData::NumberLit { .. }
+        | TypeData::BigIntLit { .. }
+        | TypeData::BoolLit { .. }
+        | TypeData::Marker(_) => false,
+        TypeData::EnumLit { member: sym, .. }
+        | TypeData::Enum { symbol: sym, .. }
+        | TypeData::ThisParam(sym) => sym.file == file,
+        TypeData::UniqueSymbol { file: f, .. } => *f == file,
+        TypeData::TypeParam(f, _, mapper)
+        | TypeData::Cond {
+            file: f, mapper, ..
+        } => *f == file || mapper.is_local(),
+        TypeData::EvolvingArray(t)
+        | TypeData::Keyof(t)
+        | TypeData::NoInfer(t)
+        | TypeData::StringMapping { ty: t, .. } => t.is_local(),
+        TypeData::Union(t) | TypeData::Intersection(t) => any(t),
+        TypeData::Ref { target: sym, args } | TypeData::LazyAlias { sym, args } => {
+            sym.file == file || any(args)
+        }
+        TypeData::Tuple { elems, .. } => any(elems),
+        TypeData::Anon { origin, mapper } => {
+            mapper.is_local()
+                || match origin {
+                    Origin::TypeLiteral(f, _)
+                    | Origin::Mapped(f, _)
+                    | Origin::ObjectLiteral(f, _)
+                    | Origin::WidenedLiteral(f, _) => *f == file,
+                    Origin::ClassStatic(sym)
+                    | Origin::Function(sym)
+                    | Origin::EnumObject(sym)
+                    | Origin::Module(sym)
+                    | Origin::Namespace { module: sym, .. } => sym.file == file,
+                    Origin::GlobalThis => false,
+                }
+        }
+        TypeData::Fns { decls, mapper } => mapper.is_local() || decls.iter().any(|d| d.0 == file),
+        TypeData::Synth(shape) => {
+            shape.props.iter().any(|p| is_prop_local(p, file))
+                || shape
+                    .index
+                    .iter()
+                    .any(|i| i.key.is_local() || i.value.is_local())
+                || shape
+                    .call
+                    .iter()
+                    .chain(&shape.construct)
+                    .any(MaybeLocal::is_local)
+        }
+        TypeData::ReverseMapped { source, mapped, of } => {
+            source.is_local() || mapped.is_local() || of.is_local()
+        }
+        TypeData::IndexedAccess { obj, index, .. } => obj.is_local() || index.is_local(),
+        TypeData::Template { types, .. } => any(types),
+    }
+}
+
+fn is_sig_local(data: &SigData, file: FileId) -> bool {
+    match data {
+        SigData::Decl {
+            file: f, mapper, ..
+        } => *f == file || mapper.is_local(),
+        SigData::DefaultConstruct { class, mapper, .. } => class.file == file || mapper.is_local(),
+        SigData::Construct {
+            class,
+            file: f,
+            mapper,
+            ..
+        } => class.file == file || *f == file || mapper.is_local(),
+        SigData::Synth {
+            type_params,
+            params,
+            ret,
+            this,
+            of,
+        } => {
+            ret.is_local()
+                || this.is_local()
+                || type_params.iter().any(MaybeLocal::is_local)
+                || params.iter().any(|p| p.ty.is_local())
+                || of.iter().any(MaybeLocal::is_local)
+        }
+        SigData::WithReturn { sig, ret } => sig.is_local() || ret.is_local(),
+    }
+}
 
 pub type Mapping = Box<[(TypeId, TypeId)]>;
 
@@ -626,13 +797,13 @@ impl TypeStore {
 
     #[inline]
     pub fn get(&self, id: TypeId) -> &TypeData {
-        &self.types.items.get(id.0).data
+        &self.record(id).data
     }
 
     /// The members of a union, nothing for `never`, and any other type on its own.
     #[inline]
     pub fn parts(&self, id: TypeId) -> &[TypeId] {
-        let record = self.types.items.get(id.0);
+        let record = self.record(id);
         match &record.data {
             TypeData::Union(members) => members,
             TypeData::Intrinsic(Intrinsic::Never) => &[],
@@ -642,7 +813,7 @@ impl TypeStore {
 
     #[inline]
     pub fn flags(&self, id: TypeId) -> TypeFlags {
-        self.types.items.get(id.0).flags
+        self.record(id).flags
     }
 
     pub fn len(&self) -> u32 {
@@ -660,7 +831,7 @@ impl TypeStore {
             // `reportUnreliableMapper` is asked about the parameter, not about what is in its mapper.
             TypeData::TypeParam(_, _, around) => {
                 TypeFlags::HAS_TYPE_VARIABLES
-                    | (self.mappers.items.get(around.0).1 & TypeFlags::HAS_UNRESOLVED)
+                    | (self.mapper_record(*around).1 & TypeFlags::HAS_UNRESOLVED)
             }
             TypeData::ThisParam(_) => TypeFlags::HAS_TYPE_VARIABLES,
             TypeData::Marker(_) => TypeFlags::HAS_TYPE_VARIABLES | TypeFlags::HAS_MARKER,
@@ -670,14 +841,14 @@ impl TypeStore {
             // Whoever makes one leaves the mapper out unless there are type parameters around the origin.
             TypeData::Anon { mapper, .. }
             | TypeData::Fns { mapper, .. }
-            | TypeData::Cond { mapper, .. } => self.mappers.items.get(mapper.0).1,
+            | TypeData::Cond { mapper, .. } => self.mapper_record(*mapper).1,
             TypeData::Synth(shape) => {
                 let mut flags = TypeFlags::empty();
                 for p in &shape.props {
                     if let PropSource::Type(t) = p.source {
                         flags |= self.flags(t);
                     }
-                    flags |= self.mappers.items.get(p.mapper.0).1;
+                    flags |= self.mapper_record(p.mapper).1;
                 }
                 for i in &shape.index {
                     flags |= self.flags(i.key) | self.flags(i.value);
@@ -709,7 +880,7 @@ impl TypeStore {
         match self.sig(sig) {
             SigData::Decl { mapper, .. }
             | SigData::DefaultConstruct { mapper, .. }
-            | SigData::Construct { mapper, .. } => self.mappers.items.get(mapper.0).1,
+            | SigData::Construct { mapper, .. } => self.mapper_record(*mapper).1,
             SigData::Synth {
                 params,
                 ret,
@@ -729,17 +900,93 @@ impl TypeStore {
         }
     }
 
-    pub fn intern(&self, data: TypeData) -> TypeId {
-        TypeId(self.types.intern(
+    #[inline(always)]
+    fn record(&self, id: TypeId) -> &TypeRecord {
+        if id.0 & LOCAL == 0 {
+            self.types.items.get(id.0)
+        } else {
+            local_record(id)
+        }
+    }
+
+    #[inline(always)]
+    fn mapper_record(&self, id: MapperId) -> &(Mapping, TypeFlags) {
+        if id.0 & LOCAL == 0 {
+            self.mappers.items.get(id.0)
+        } else {
+            local_mapper(id)
+        }
+    }
+
+    /// The file at hand is done: what mentions it goes.
+    pub fn end_local() {
+        // SAFETY: nothing is being interned or looked at.
+        let store = unsafe { local_store_mut() };
+        store.types.clear();
+        store.sigs.clear();
+        store.mappers.clear();
+        store.found_types.clear();
+        store.found_sigs.clear();
+        store.found_mappers.clear();
+    }
+
+    fn new_record(&self, data: TypeData, id: u32) -> TypeRecord {
+        TypeRecord {
+            flags: self.flags_of(&data),
             data,
-            |record| &record.data,
-            |data, id| TypeRecord {
-                flags: self.flags_of(&data),
+            id: TypeId(id),
+            manifest: AtomicBool::new(false),
+        }
+    }
+
+    pub fn intern(&self, data: TypeData) -> TypeId {
+        if !local::is_any_on() {
+            return TypeId(self.types.intern(
                 data,
-                id: TypeId(id),
-                manifest: AtomicBool::new(false),
-            },
-        ))
+                |record| &record.data,
+                |data, id| self.new_record(data, id),
+            ));
+        }
+        self.intern_with_local(data)
+    }
+
+    #[inline(never)]
+    fn intern_with_local(&self, data: TypeData) -> TypeId {
+        let file = local::file();
+        if file == u32::MAX {
+            return TypeId(self.types.intern(
+                data,
+                |record| &record.data,
+                |data, id| self.new_record(data, id),
+            ));
+        }
+        // Where it was last found or put by this thread, then among what all threads share.
+        let spread = spread_hash(&data);
+        if let Some(id) = local_store()
+            .found_types
+            .find(spread, |id| *self.get(TypeId(id)) == data)
+        {
+            return TypeId(id);
+        }
+        let id = if is_type_local(&data, FileId(file)) {
+            let id = local_store().types.len() as u32 | LOCAL;
+            let record = self.new_record(data, id);
+            // SAFETY: no reference to the store is in use.
+            unsafe { local_store_mut() }.types.push(record);
+            id
+        } else {
+            match self.types.find(spread, &data, |record| &record.data) {
+                Some(id) => id,
+                None => self.types.intern(
+                    data,
+                    |record| &record.data,
+                    |data, id| self.new_record(data, id),
+                ),
+            }
+        };
+        // SAFETY: no reference to the store is in use.
+        unsafe { local_store_mut() }.found_types.add(spread, id);
+        TypeId(id)
     }
 
     /// `ObjectFlagsFromTypeNode`, `ObjectFlagsArrayLiteral`: `id` was made by a type node or an array literal, not by
@@ -747,22 +994,22 @@ impl TypeStore {
     /// was first made as (`createTypeReferenceEx`).
     pub fn mark_manifest(&self, id: TypeId, made_before: u32) {
         if id.0 >= made_before {
-            self.types
-                .items
-                .get(id.0)
-                .manifest
-                .store(true, Ordering::Relaxed);
+            self.record(id).manifest.store(true, Ordering::Relaxed);
         }
     }
 
     #[inline]
     pub fn is_manifest(&self, id: TypeId) -> bool {
-        self.types.items.get(id.0).manifest.load(Ordering::Relaxed)
+        self.record(id).manifest.load(Ordering::Relaxed)
     }
 
     #[inline]
     pub fn sig(&self, id: SigId) -> &SigData {
-        self.sigs.items.get(id.0)
+        if id.0 & LOCAL == 0 {
+            self.sigs.items.get(id.0)
+        } else {
+            local_sig(id)
+        }
     }
 
     /// The signature `sig` is a clone of, all the way down: the one to ask for the declaration (`Signature.declaration`).
@@ -783,29 +1030,82 @@ impl TypeStore {
         {
             *sig = *inner;
         }
-        SigId(self.sigs.intern(data, |data| data, |data, _| data))
+        let file = if local::is_any_on() {
+            local::file()
+        } else {
+            u32::MAX
+        };
+        if file == u32::MAX {
+            return SigId(self.sigs.intern(data, |data| data, |data, _| data));
+        }
+        let spread = spread_hash(&data);
+        if let Some(id) = local_store()
+            .found_sigs
+            .find(spread, |id| *self.sig(SigId(id)) == data)
+        {
+            return SigId(id);
+        }
+        let id = if is_sig_local(&data, FileId(file)) {
+            // SAFETY: no reference to the store is in use.
+            unsafe { local_store_mut() }.sigs.push(data) as u32 | LOCAL
+        } else {
+            self.sigs.intern(data, |data| data, |data, _| data)
+        };
+        // SAFETY: no reference to the store is in use.
+        unsafe { local_store_mut() }.found_sigs.add(spread, id);
+        SigId(id)
     }
 
     /// `pairs` need not be sorted. A parameter mapped to itself stays: it says that the origin depends on it.
     pub fn mapper(&self, mut pairs: Vec<(TypeId, TypeId)>) -> MapperId {
         pairs.sort_unstable_by_key(|p| p.0);
         pairs.dedup_by_key(|p| p.0);
+        let flags_of = |key: &Mapping| {
+            key.iter()
+                .fold(TypeFlags::empty(), |f, p| f | self.flags(p.1))
+        };
+        if !local::is_on() {
+            let key: Mapping = pairs.into_boxed_slice();
+            return MapperId(self.mappers.intern(
+                key,
+                |mapper| &mapper.0,
+                |key, _| {
+                    let flags = flags_of(&key);
+                    (key, flags)
+                },
+            ));
+        }
+        let spread = spread_hash(&pairs[..]);
+        if let Some(id) = local_store()
+            .found_mappers
+            .find(spread, |id| *self.mapping(MapperId(id)) == pairs[..])
+        {
+            return MapperId(id);
+        }
+        let is_local = pairs.iter().any(|p| p.0.is_local() || p.1.is_local());
         let key: Mapping = pairs.into_boxed_slice();
-        MapperId(self.mappers.intern(
-            key,
-            |mapper| &mapper.0,
-            |key, _| {
-                let flags = key
-                    .iter()
-                    .fold(TypeFlags::empty(), |f, p| f | self.flags(p.1));
-                (key, flags)
-            },
-        ))
+        let id = if is_local {
+            let flags = flags_of(&key);
+            // SAFETY: no reference to the store is in use.
+            unsafe { local_store_mut() }.mappers.push((key, flags)) as u32 | LOCAL
+        } else {
+            self.mappers.intern(
+                key,
+                |mapper| &mapper.0,
+                |key, _| {
+                    let flags = flags_of(&key);
+                    (key, flags)
+                },
+            )
+        };
+        // SAFETY: no reference to the store is in use.
+        unsafe { local_store_mut() }.found_mappers.add(spread, id);
+        MapperId(id)
     }
 
     #[inline]
     pub fn mapping(&self, id: MapperId) -> &[(TypeId, TypeId)] {
-        &self.mappers.items.get(id.0).0
+        &self.mapper_record(id).0
     }
 
     #[inline]

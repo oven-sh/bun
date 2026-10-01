@@ -74,6 +74,13 @@ pub(super) struct KeptMembers {
     mapper: MapperId,
 }
 
+impl crate::local::MaybeLocal for KeptMembers {
+    #[inline]
+    fn is_local(&self) -> bool {
+        self.shape.is_local() || self.mapper.is_local()
+    }
+}
+
 impl crate::table::Packed for KeptMembers {
     type Cell = std::sync::atomic::AtomicU64;
     #[inline]

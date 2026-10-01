@@ -140,6 +140,7 @@ fn run(cwd: &str, project: Option<&str>, paths: &[String], threads: usize) -> Re
         lib_dir: None,
         global_node_modules: global.as_deref(),
         file_time_limit: core::time::Duration::from_secs(10),
+        keeps_everything: false,
         loaded: None,
         checked: None,
     })

@@ -233,6 +233,7 @@ pub fn compare(
         let started = std::time::Instant::now();
         // As it is in use: nothing has been asked about the file before its errors are.
         let mut local = Comparison::default();
+        let _at_hand = program.files.bring_in(&crate::Disk { threads: 1 }, file);
         compare_errors(program, file, expected, &mut local);
         local.merge(compare_file(program, file, expected, &oracle.descriptions));
         if trace {
@@ -302,6 +303,7 @@ pub fn suite(root: &str, oracle: &Oracle, threads: usize, only: Option<&str>) ->
             {
                 Some(&file) => {
                     // As it is in use: nothing has been asked about the file before its errors are.
+                    let _at_hand = program.files.bring_in(&crate::Disk { threads: 1 }, file);
                     compare_errors(&program, file, expected, &mut local);
                     local.merge(compare_file(&program, file, expected, &oracle.descriptions));
                 }

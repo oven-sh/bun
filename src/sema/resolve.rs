@@ -123,6 +123,9 @@ pub struct Options {
     /// `skipLibCheck`: declaration files are not checked. `skipDefaultLibCheck`: TypeScript's own are not.
     pub skip_lib_check: bool,
     pub skip_default_lib_check: bool,
+    /// A file nothing refers to is only parsed when it is checked, and forgotten afterwards with all that was found out about it. Not an
+    /// option of TypeScript's. Whoever wants to ask about such a file afterwards leaves it off.
+    pub drops_what_nothing_refers_to: bool,
     /// Where `lib.*.d.ts` are.
     pub lib_dir: String,
     /// The `N` of each `lib.N.d.ts` to start from: what `compilerOptions.lib` names, or what goes with the target.

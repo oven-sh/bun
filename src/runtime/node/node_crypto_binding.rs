@@ -80,7 +80,7 @@ impl JsCallbackArgs {
 
 macro_rules! extern_crypto_job {
     ($Name:ident, $name_str:literal) => {
-        pub mod $Name {
+        pub(crate) mod $Name {
             use super::*;
 
             // `Ctx` is `opaque {}` — Nomicon FFI opaque-handle pattern.
@@ -199,7 +199,7 @@ extern_crypto_job!(SignJob, "SignJob");
 // CryptoJob<Ctx>
 // ───────────────────────────────────────────────────────────────────────────
 
-pub mod random {
+pub(crate) mod random {
     use super::*;
 
     // No `Clone`: `value` is JSC-protected in `init`/unprotected in `deinit`, and
@@ -758,7 +758,7 @@ pub mod random {
         }
     } // mod _hostfns
 
-    pub use _hostfns::*;
+    pub(crate) use _hostfns::*;
 }
 
 // ───────────────────────────────────────────────────────────────────────────

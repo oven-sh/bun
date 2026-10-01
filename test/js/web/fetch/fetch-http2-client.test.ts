@@ -388,6 +388,84 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     );
   });
 
+  test("ReadableStream body that does not match its declared content-length rejects", async () => {
+    await withH2Server(
+      (req, res) => {
+        req.on("error", () => {});
+        req.resume();
+        req.on("end", () => res.end("unreachable"));
+      },
+      async url => {
+        await using proc = await spawnFetch(`
+          for (const declared of ["2", "50"]) {
+            const body = new ReadableStream({
+              start(ctrl) { ctrl.enqueue(new TextEncoder().encode("nr1-nr2")); ctrl.close(); },
+            });
+            const outcome = await fetch("${url}/upload", {
+              method: "POST",
+              body,
+              duplex: "half",
+              headers: { "content-length": declared },
+              tls: { rejectUnauthorized: false },
+            }).then(r => r.status, e => e.code);
+            console.log(declared, outcome);
+          }
+        `);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(stdout.trim().split("\n")).toEqual([
+          "2 ERR_HTTP_CONTENT_LENGTH_MISMATCH",
+          "50 ERR_HTTP_CONTENT_LENGTH_MISMATCH",
+        ]);
+        expect(exitCode).toBe(0);
+      },
+    );
+  });
+
+  test("303 on a ReadableStream POST: the follow-up GET carries no framing header from the caller", async () => {
+    await withH2Server(
+      (req, res) => {
+        if (req.url === "/upload") {
+          req.resume();
+          req.on("end", () => {
+            res.writeHead(303, { location: "/target" });
+            res.end();
+          });
+          return;
+        }
+        res.end(
+          JSON.stringify({
+            method: req.method,
+            contentLength: req.headers["content-length"] ?? null,
+            transferEncoding: req.headers["transfer-encoding"] ?? null,
+          }),
+        );
+      },
+      async url => {
+        await using proc = await spawnFetch(`
+          for (const headers of [{ "content-length": "7" }, { "transfer-encoding": "gzip, chunked" }, {}]) {
+            const body = new ReadableStream({
+              start(ctrl) { ctrl.enqueue(new TextEncoder().encode("nr1-nr2")); ctrl.close(); },
+            });
+            const res = await fetch("${url}/upload", {
+              method: "POST",
+              body,
+              duplex: "half",
+              headers,
+              tls: { rejectUnauthorized: false },
+            });
+            console.log(res.status, res.redirected, await res.text());
+          }
+        `);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        const followUp = '200 true {"method":"GET","contentLength":null,"transferEncoding":null}';
+        expect(stdout.trim().split("\n")).toEqual([followUp, followUp, followUp]);
+        expect(exitCode).toBe(0);
+      },
+    );
+  });
+
   test("concurrent ReadableStream uploads route each chunk to its own stream", async () => {
     // Exercises the async_http_id -> stream index on the client session: each
     // JS-side body chunk wakes the HTTP thread which must resolve the target

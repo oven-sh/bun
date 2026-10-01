@@ -6,7 +6,7 @@
 
 use crate::shell::interpreter::{NodeId, ShellExecEnv};
 
-pub struct Base {
+pub(crate) struct Base {
     /// Index of the parent node in `Interpreter::nodes`, or
     /// `NodeId::INTERPRETER` if the parent is the interpreter itself.
     pub(crate) parent: NodeId,
@@ -33,7 +33,7 @@ impl Base {
     }
 
     #[inline]
-    pub fn shell(&self) -> &ShellExecEnv {
+    pub(crate) fn shell(&self) -> &ShellExecEnv {
         // SAFETY: `shell` is set in `new()` from a live env owned either by
         // the interpreter (root) or by an ancestor node that outlives this
         // node's slot (deinit order is child→parent).

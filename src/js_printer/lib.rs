@@ -7452,8 +7452,6 @@ pub struct BufferWriter {
     /// reslice on read (`written()` / `written_without_trailing_zero()`). Avoids the O(n)
     /// `to_vec().into_boxed_slice()` copy the previous port did on every `done()`.
     pub(crate) written_len: usize,
-    // `done()` appends a NUL terminator when `append_null_byte` is true.
-    pub append_null_byte: bool,
     pub append_newline: bool,
 }
 
@@ -7475,7 +7473,6 @@ impl BufferWriter {
         BufferWriter {
             buffer: MutableString::init_empty(),
             written_len: 0,
-            append_null_byte: false,
             append_newline: false,
         }
     }
@@ -7489,7 +7486,6 @@ impl BufferWriter {
         BufferWriter {
             buffer: MutableString::init(capacity).unwrap_or_else(|_| MutableString::init_empty()),
             written_len: 0,
-            append_null_byte: false,
             append_newline: false,
         }
     }
@@ -7554,16 +7550,6 @@ impl BufferWriter {
         if self.append_newline {
             self.append_newline = false;
             self.buffer.list.push(b'\n');
-        }
-        if self.append_null_byte {
-            // Append a NUL unless the buffer already ends with one; the NUL is
-            // *included* in `written` (consumers strip it via
-            // `written_without_trailing_zero`).
-            //
-            // For an *empty* buffer we still append the NUL.
-            if self.buffer.list.last().copied() != Some(0) {
-                self.buffer.list.push(0);
-            }
         }
         self.written_len = self.buffer.list.len();
     }
@@ -7714,7 +7700,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     _writer: W,
     bump: &'a bun_alloc::Arena,
     tree: &'a Ast,
-    symbols: js_ast::symbol::Map,
+    mut symbols: js_ast::symbol::Map,
     source: &'a bun_ast::Source,
     opts: Options<'a>,
 ) -> crate::Result<usize> {
@@ -7736,6 +7722,21 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     let module_scope = &tree.module_scope;
     let stable_source_indices = [source.index.0];
     let renamer: rename::Renamer<'_, '_> = if opts.minify_identifiers {
+        // Pinned before the reserved names are computed so no slot takes one of these names.
+        let dont_break_the_code = [tree.module_ref, tree.exports_ref, tree.require_ref]
+            .into_iter()
+            .chain(tree.named_exports.values().iter().map(|export| export.ref_));
+        for mut ref_ in dont_break_the_code {
+            // `export var t; var t` exports a linked ref, and the renamer names the symbol it links to.
+            while let Some(symbol) = symbols.get_mut(ref_) {
+                symbol.set_must_not_be_renamed(true);
+                if !symbol.has_link() {
+                    break;
+                }
+                ref_ = symbol.link.get();
+            }
+        }
+
         let mut reserved_names = rename::compute_initial_reserved_names(opts.module_type)?;
         for child in module_scope.children.slice() {
             // `StoreRef<Scope>` has safe `DerefMut`; copy the handle to a mut
@@ -7758,21 +7759,6 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         let exports_ref = tree.exports_ref;
         let module_ref = tree.module_ref;
         let parts = &tree.parts;
-
-        // `symbols` was moved into `minify_renamer`; reach it through
-        // the renamer for the post-init `must_not_be_renamed` pass.
-        let dont_break_the_code = [tree.module_ref, tree.exports_ref, tree.require_ref];
-        for ref_ in dont_break_the_code {
-            if let Some(symbol) = minify_renamer.symbols.get_mut(ref_) {
-                symbol.set_must_not_be_renamed(true);
-            }
-        }
-
-        for named_export in tree.named_exports.values() {
-            if let Some(symbol) = minify_renamer.symbols.get_mut(named_export.ref_) {
-                symbol.set_must_not_be_renamed(true);
-            }
-        }
 
         if uses_exports_ref {
             minify_renamer.accumulate_symbol_use_count(

@@ -1212,10 +1212,10 @@ test("removeAllListeners() releases an explicit ref() like off() does", async ()
 // unref()'d only if that removed its last 'message' listener. Clearing a handler that
 // was never set, or while on() listeners remain, leaves the ref state alone.
 //
-// A non-callable object is installed as the handler (the getter returns it) and counts as a
-// listener while it is there, as in node. Replacing a function with one unrefs the port, as
-// in node, which only counts functions. Clearing an object handler releases the port here
-// (the listener is gone), where node stays ref'd.
+// A non-callable object is installed as the handler (the getter returns it) but can never
+// run, so it is not counted as a 'message' listener: node counts functions only. Replacing
+// a function with one is the removal of that function. node differs in one case: its first
+// install of any handler refs the port, so `onmessage = {}` on an empty port is ref'd there.
 test("onmessage = <non-function> releases the port only when it removed the last 'message' listener", async () => {
   const f = () => {};
   const g = () => {};
@@ -1271,6 +1271,26 @@ test("onmessage = <non-function> releases the port only when it removed the last
       p.onmessage = g;
       p.onmessage = {} as any;
     }),
+    functionReplacedByObjectThenLastOnListenerRemoved: await hasRefAfter(p => {
+      p.on("message", f);
+      p.onmessage = g;
+      p.onmessage = {} as any;
+      p.off("message", f);
+    }),
+    functionReplacedByObjectThenOnListener: await hasRefAfter(p => {
+      p.onmessage = f;
+      p.onmessage = {} as any;
+      p.on("message", g);
+    }),
+    refdObjectHandlerInstalled: await hasRefAfter(p => {
+      p.ref();
+      p.onmessage = {} as any;
+    }),
+    refdObjectHandlerCleared: await hasRefAfter(p => {
+      p.ref();
+      p.onmessage = {} as any;
+      p.onmessage = null;
+    }),
   };
   expect(results).toEqual({
     handlerCleared: false,
@@ -1279,12 +1299,16 @@ test("onmessage = <non-function> releases the port only when it removed the last
     nothingToClear: true,
     onListenerRemains: true,
     onListenerOnly: true,
-    objectHandlerInstalled: true,
+    objectHandlerInstalled: false,
     functionReplacedByObject: false,
     objectHandlerCleared: false,
-    objectReplacedByObject: true,
+    objectReplacedByObject: false,
     functionReplacedByObjectThenFunction: true,
     functionReplacedByObjectWhileOnListenerRemains: true,
+    functionReplacedByObjectThenLastOnListenerRemoved: false,
+    functionReplacedByObjectThenOnListener: true,
+    refdObjectHandlerInstalled: true,
+    refdObjectHandlerCleared: true,
   });
 });
 

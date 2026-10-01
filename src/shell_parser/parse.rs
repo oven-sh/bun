@@ -439,8 +439,8 @@ pub mod ast {
             const STDOUT        = 1 << 1;
             const STDERR        = 1 << 2;
             const APPEND        = 1 << 3;
-            /// 1>&2 === stdout=true and duplicate_out=true
-            /// 2>&1 === stderr=true and duplicate_out=true
+            /// 2>&1 === stdout=true and duplicate_out=true
+            /// 1>&2 === stderr=true and duplicate_out=true
             const DUPLICATE_OUT = 1 << 4;
         }
     }
@@ -1390,8 +1390,8 @@ impl<'bump> Parser<'bump> {
         };
         let redirect_file: Option<ast::Redirect<'bump>> = 'redirect_file: {
             if has_redirect {
-                // `n>&m` is complete on its own and takes no file operand; the
-                // following word (if any) belongs to the enclosing command.
+                // `2>&1` and `1>&2` are complete on their own. The next word is an
+                // argument of the command, not a file operand.
                 if redirect.duplicate_out() {
                     break 'redirect_file None;
                 }
@@ -1413,7 +1413,6 @@ impl<'bump> Parser<'bump> {
             }
             None
         };
-        // TODO check for multiple redirects and error
         Ok(ParsedRedirect {
             flags: redirect,
             redirect: redirect_file,

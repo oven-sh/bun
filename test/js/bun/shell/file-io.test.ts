@@ -50,11 +50,14 @@ describe("IOWriter file output redirection", () => {
       .stderr("")
       .runAsTest("word after < file is a file operand, not a new command");
 
+    // `2>&1` and `1>&2` take no file operand: the next word is an argument and
+    // no file of that name is created or overwritten.
     TestBuilder.command`echo A 2>&1 B C`
       .ensureTempDir()
       .exitCode(0)
       .stdout("A B C\n")
       .stderr("")
+      .doesNotExist("B")
       .runAsTest("words after 2>&1 stay as arguments (fd-dup takes no file operand)");
 
     TestBuilder.command`echo A 1>&2 B`
@@ -62,9 +65,27 @@ describe("IOWriter file output redirection", () => {
       .exitCode(0)
       .stdout("")
       .stderr("A B\n")
+      .doesNotExist("B")
       .runAsTest("words after 1>&2 stay as arguments");
 
+    TestBuilder.command`echo x 2>&1 important.txt`
+      .ensureTempDir()
+      .file("important.txt", "PRECIOUS\n")
+      .exitCode(0)
+      .stdout("x important.txt\n")
+      .fileEquals("important.txt", "PRECIOUS\n")
+      .runAsTest("2>&1 does not overwrite the file named by the next word");
+
+    // The tail of an interpolated array in the target slot must not run.
+    TestBuilder.command`echo hi > ${["out", "touch", "INJECTED"]}`
+      .ensureTempDir()
+      .exitCode(0)
+      .fileEquals("out", "hi touch INJECTED\n")
+      .doesNotExist("INJECTED")
+      .runAsTest("interpolated array after > keeps its tail as arguments");
+
     TestBuilder.command`echo a > f1 b > f2`
+      .ensureTempDir()
       .error("Multiple redirects are not supported yet. Please open a GitHub issue.")
       .runAsTest("second redirect after intervening words is rejected at parse time");
   });

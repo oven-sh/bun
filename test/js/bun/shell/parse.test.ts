@@ -96,6 +96,14 @@ describe("parse shell", () => {
       redirect_file: null,
     };
     expect(JSON.parse(parse`echo A 2>&1 B C`)).toEqual({ stmts: [{ exprs: [{ cmd: dupCmd }] }] });
+
+    const dupErrCmd = { ...dupCmd, redirect: redirect({ stderr: true, duplicate_out: true }) };
+    expect(JSON.parse(parse`echo A 1>&2 B C`)).toEqual({ stmts: [{ exprs: [{ cmd: dupErrCmd }] }] });
+
+    // With no word after it the fd-dup still stands on its own.
+    expect(JSON.parse(parse`echo A 2>&1`)).toEqual({
+      stmts: [{ exprs: [{ cmd: { ...dupCmd, name_and_args: dupCmd.name_and_args.slice(0, 2) } }] }],
+    });
   });
 
   test("single atom", () => {
@@ -1105,5 +1113,9 @@ describe("parse shell invalid input", () => {
     await TestBuilder.command`echo (echo foo && echo hi)`.error("Unexpected token: `(`").run();
 
     await TestBuilder.command`echo foo >`.error("Redirection with no file").run();
+
+    await TestBuilder.command`echo a 2>&1 b > f`
+      .error("Multiple redirects are not supported yet. Please open a GitHub issue.")
+      .run();
   });
 });

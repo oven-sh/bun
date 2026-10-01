@@ -1,7 +1,4 @@
-{"files":12444,"headOk":10553,"protoOk":10550,"bothOk":10549,"bothErr":1890,"newlyRejected":4,"newlyAccepted":1,"errChanged":5,"panics":0,"records":21988}
-NEWLY-REJECTED compiler/accessorBodyInTypeContext.ts
-   proto: TS1005 [46,47) ';' expected.
-   tsc  : parses
+{"files":12444,"headOk":10553,"protoOk":10551,"bothOk":10550,"bothErr":1890,"newlyRejected":3,"newlyAccepted":1,"errChanged":5,"panics":0,"records":21992}
 ERR-CHANGED compiler/indexSignatureWithAccessibilityModifier.ts
    head : TS1005 [47,48) ']' expected.
    proto: TS1005 [96,97) ']' expected.

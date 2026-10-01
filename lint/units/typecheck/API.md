@@ -174,7 +174,8 @@ are `#[cfg_attr(miri, ignore)]` (two loops over all code points, three long repl
 Seen in files of other packages on 2026-09-30, for whoever owns them:
 - `crate::core::{List, Map, Text, binary_search_func, sort_stable_func}`: Go's slice and map values and Go's
   `slices` sorting are not upstream's `internal/core` and are not in this commit. `core/mod.rs` is where a module
-  that holds them is declared and re-exported.
+  that holds them is declared and re-exported. Since `0aa0a67449` that module is `core/golang.rs`, with `List` and
+  `GoIndex` ("Node table: the wiring of `ast`" below); `Map` and `Text` are not in it yet.
 - `checker/nodebuilderimpl.rs` writes `ModuleKind::ESNext`, `ModuleKind::None`, `ModuleKind::CommonJS`,
   `LanguageVariant::Standard`, `ModuleResolutionKind::NodeNext`, `ModuleResolutionKind::Node16`: the constants are
   `ES_NEXT`, `NONE`, `COMMON_JS`, `STANDARD`, `NODE_NEXT`, `NODE16`, as the other files write them.
@@ -184,7 +185,8 @@ Seen in files of other packages on 2026-09-30, for whoever owns them:
 Commits `2d9e7ee843` (the files) and `a53def3305` (`pub mod diagnostics;`). The port of `internal/diagnostics`: the
 message table and what formats a message. The three Rust files are those of
 `checker-data-model-contract/bottom-up/crate/src/diagnostics/`, byte for byte. The diagnostic itself (`ast.Diagnostic`,
-its arguments, its chain and related information) is `internal/ast/diagnostic.go` and is not in the tree.
+its arguments, its chain and related information) is `internal/ast/diagnostic.go` and is not in the tree; since
+`a8b48548a6` the type of one argument, `ast::Arg`, is (`ast/diagnostic.rs`), and nothing else of that file.
 
 ### How a caller writes the calls
 

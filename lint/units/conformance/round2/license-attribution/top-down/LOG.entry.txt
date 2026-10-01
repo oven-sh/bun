@@ -17,7 +17,9 @@ Three entries under "Additional credits", the same bytes in both files, before t
 
 `LICENSE.md` still ends without a line break. `docs/project/license.mdx` passes the check of `format.yml`:
 `bun --bun ./node_modules/.bin/prettier --plugin=prettier-plugin-organize-imports --config .prettierrc --check docs/project/license.mdx`.
-`LICENSE.md` is in no glob of `bun run prettier` (`package.json:80`). No other job of CI reads either file.
+`LICENSE.md` is in no glob of `bun run prettier` (`package.json:80`). No other check of CI is about either file. The
+page is also copied into the npm package `bun-types` (`packages/bun-types/scripts/build.ts:30-51`, which rewrites
+links that start with `/`; the entries have none).
 
 ### What each sentence rests on (read at 3110ce85cf)
 
@@ -43,7 +45,9 @@ Three entries under "Additional credits", the same bytes in both files, before t
   `- Bun's lint rules are a port of rules of [ESLint](https://github.com/eslint/eslint) (MIT, notice in src/lint/LICENSE.eslint).`
   Granted with other words. "Bun's lint rules" names a feature, and `--lint` is behind
   `BUN_FEATURE_FLAG_EXPERIMENTAL_LINT`, has no help text and no page in `docs/`: the entry names directories. It also
-  names the copied test cases, which the proposal leaves out.
+  names the copied test cases, which the proposal leaves out. The check of that point in the cli notes
+  (`git grep -n -i 'eslint' HEAD -- LICENSE.md docs/project/license.mdx`) prints one line for each file from this
+  commit on.
 - `src/js_parser` is named. The round-2 goal names `src/lint` and the runner only. `src/js_parser/UPSTREAM_PORTED`
   came with the merge of the parser work, and that code is in every build of `bun`.
 - `src/typecheck` is not named. At 3110ce85cf, and at the head of the pull request branch (d763100482), it is

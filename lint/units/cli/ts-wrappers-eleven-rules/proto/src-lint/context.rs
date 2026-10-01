@@ -57,7 +57,7 @@ pub(crate) enum TsWrapper {
     NonNull,
     /// `<T>operand`.
     TypeAssertion,
-    /// `operand<T>` that no call, `new` or template takes as its type arguments.
+    /// `operand<T>` with no argument list and no template after it: an instantiation expression.
     Instantiation,
 }
 

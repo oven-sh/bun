@@ -148,6 +148,56 @@ which cargo does not compile yet.
 | the stand-in log of typecheck.md K3: a callee that is not ported records its name | `StandIns` (`record`, `is_empty`, `count_of`, `snapshot`) | translated | `is_empty`, `count_of`, `snapshot` |
 | the loops whose end depends on checker state (`checker-data-model-contract/bottom-up/data/loops-with-budget.tsv`; four of them are in the tree) | `LOOP_LIMIT` (1 << 20 turns), `LoopGuard` (`new`, `with_limit`, `turn`) | translated | `with_limit` |
 
+## Node table and `internal/ast` (`ast`)
+
+The 28 files of round 1 came in with `4d40783efe` (`ast.rs`, `functionflags.rs`, `precedence.rs`, `utilities.rs`),
+`2e8dd33ffd` (the node table and the other ports; its `mod.rs` declares all 27 others), `f4787aa475` (`publish.rs`,
+`tests.rs`) and `3febf04ee5` (three readers of `builder.rs`). Layer 3 of round 2 declares the directory: the line
+`pub mod ast;` of `lib.rs` is `887629cf2c`. What the 28 files name and the crate did not have came in before it:
+
+- `0aa0a67449`: `core/golang.rs` with `crate::core::List` (and `GoIndex`), which `ast/ast.rs`, `ast/node_methods.rs`,
+  `ast/reader.rs`, `ast/symbol.rs` and `ast/tests.rs` import (the last `core` row under "Leaf packages").
+- `a8b48548a6`: `bun_collections.workspace = true` and `bun_core.workspace = true` in `src/typecheck/Cargo.toml`
+  (`ast/utilities.rs` names `bun_collections::HashMap` and `bun_core::strings`; `ast/ast.rs` and `ast/utilities.rs` name
+  `bun_core::StackCheck`), with the `dependencies` list of `bun_typecheck` in `Cargo.lock`, written by hand in the form
+  that cargo writes; and `ast/diagnostic.rs` with `crate::ast::Arg`, which `scanner/scanner.rs` imports, with its two
+  lines of `ast/mod.rs`.
+
+No `cargo check`, `cargo clippy` or `cargo test` was run with these commits: the survey that follows them is the first
+cargo compile of the 29 files of `ast/` and of `core/golang.rs` in the real crate, so the state below is `translated`
+until that run passes. `translated` says less here than under the checker headings: the file is written, a `mod` line
+reaches it, and the checks of this paragraph were made; no body was compared with upstream when the directory was
+declared. What was checked before: the look-ahead of the round-4 survey (`rustc` alone from a scratch root in `/tmp`:
+the 28 files and the two of `scanner/` read in place beside layers 1 and 2, against the real `bun_core` and
+`bun_collections`, the rust lints of the workspace denied, with a `List` that is line for line the one of
+`core/golang.rs` and with the bare enum `Arg`: exit 0, no warning); `cargo check`, `cargo clippy --all-targets`,
+`cargo fmt --check` and the tests of the contract crate on the same bytes of `GoIndex`, `List` and `Arg`
+(`checker-data-model-contract/bottom-up/data/run.log`); `rustfmt --check --edition 2024 src/typecheck/lib.rs`, which
+follows every `mod` line: exit 0; `undeclared.py`: 76 of 179 files are reached, and no file of `ast/` or `scanner/` is
+outside. No compiler has seen `ast/tests.rs` (728 lines, `#[cfg(test)]`) in the real crate. The 28 files of `ast/`
+outside the tests have no `unsafe`, `unwrap()`, `expect(`, `panic!`, `todo!`, `unimplemented!`, `unreachable!` and no
+`allow(`.
+
+The counts of the last column are by name only: a Go function counts as present when some file of `ast/` has a function
+of its name, underscores and case aside (`python3 round2-layer3-ast/names.py <file.go>` of the notes). They say nothing
+about a body.
+
+| upstream file, lines | Rust module under `src/typecheck/` | state | not ported |
+| --- | --- | --- | --- |
+| `ast/kind_generated.go`, `ast/ast_generated.go` (the kinds, the node records, their constructors, the `Is` and `As` functions, the children of a node) | `ast/kind_generated.rs`, `ast/ast_generated.rs` (written by `ast/generate.ts` from `ast/ast.json`), `ast/layout.rs` | translated | by name, 1,348 of the 1,386 functions of `ast_generated.go`; the other 38 are `computeSubtreeFacts` of a node |
+| `ast/ids.go`; no upstream file: the table of a file, the tree context and the open store that stand for upstream's pointers | `ast/ids.rs`, `ast/file.rs`, `ast/reader.rs` (`Ast`), `ast/open.rs`, `ast/stable.rs`, `ast/builder.rs`, `ast/factory.rs`, `ast/publish.rs`, `ast/flags.rs` | translated | |
+| `ast/ast.go` (the hand-written part, 307 functions) | `ast/node_methods.rs` (the methods of `Node`), `ast/ast.rs` (write access, the records beside a source file, pragmas) | translated | by name, 137 are in `ast/`, 4 only in other directories (`visit`, `NewNodeFactory`, `Node.Type`, `SourceFile.copyFrom`) and 166 nowhere in the tree: 102 that compute or propagate subtree facts (1210-2355, 2834), and 64 others that the script lists, among them the accessors of Go's node representation (`AsNode`, `DeclarationData`, `FlowNodeData`, ...), the data that a program, a content mapper or the language service keeps at a source file (2413-2990: `SourceFile.Diagnostics`, `GetNameTable`, `GetPositionMap`, `GetOrCreateToken`, `GetDeclarationMap`, ...), `newNode`, `UpdateSourceFile`, `ReleaseArenas`. Which of the 64 the binder or the checker calls was not looked at |
+| `ast/utilities.go` (416 functions) | `ast/utilities.rs` | translated | by name, 414; `SetImportsOfSourceFile` (906) and `ContainsObjectRestOrSpread` (3987) are nowhere in the tree |
+| `ast/symbol.go`, `ast/symbolflags.go`, `ast/checkflags.go` | `ast/symbol.rs`, `ast/symbolflags.rs`, `ast/checkflags.rs` | translated | by name, the 7 functions of `symbol.go` |
+| `ast/flow.go` | `ast/flow.rs` | translated | by name, its 3 functions |
+| `ast/nodeflags.go`, `ast/modifierflags.go`, `ast/tokenflags.go`, `ast/functionflags.go` | the files of the same names | translated | |
+| `ast/subtreefacts.go` 1-87 (the flags) | `ast/subtreefacts.rs` | translated | 89-133, the seven `propagate...SubtreeFacts` functions: the binder and the checker do not read subtree facts |
+| `ast/precedence.go` | `ast/precedence.rs` | translated | by name, its 6 functions |
+| `ast/visitor.go` | `ast/visitor.rs` | translated | by name, its 18 functions |
+| `ast/diagnostic.go`: the `any` of `args ...any` (194, 208, 215) | `ast/diagnostic.rs` (`Arg::{Str, Int, Bool}` with `Default` and seven `From` impls: lines 18 to 66 of `checker-data-model-contract/bottom-up/crate/src/ast_diagnostic.rs`, byte for byte) | translated | the rest of the file, 15-503: `RepopulateDiagnosticKind`, `RepopulateDiagnosticInfo`, `Diagnostic` and its accessors, `NewDiagnosticFromSerialized` to `NewExternalDiagnostic`, `DiagnosticsCollection`, `EqualDiagnostics`, `CompareDiagnostics`. The contract's file holds a port of them on paths that the tree does not have (`crate::tscore`). No file that cargo compiles names them; `binder` and `checker` name `DiagnosticId`, `DiagnosticStore`, `Diagnostics`, `DiagnosticsCollection`, `RepopulateDiagnosticInfo` and `RepopulateDiagnosticKind` of `crate::ast` |
+| `ast/deepclone.go`, `ast/parseoptions.go`, `ast/positionmap.go` | | not started in `ast/` | `DeepCloneReparse`, `DeepCloneReparseModifiers` and the statement loop of `isFileProbablyExternalModule` are in `importer/javascript/tree.rs` (rows under "Parser pieces"); one file of `printer/` names `crate::ast::deep_clone_node`, which no file defines |
+| `ast/kind_stringer_generated.go`, `ast/*_test.go` | | not started | `ast/tests.rs` holds tests of the node table, not upstream's |
+
 ## Scanner (`scanner`)
 
 `scanner/scanner.rs` (3,722 lines) and `scanner/utilities.rs` (232) came in with `4d40783efe`; `941cbf415f` took the

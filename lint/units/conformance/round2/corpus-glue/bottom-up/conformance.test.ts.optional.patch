@@ -1,0 +1,41 @@
+diff --git a/test/cli/lint/conformance.test.ts b/test/cli/lint/conformance.test.ts
+index 0f294fa055..265ae017aa 100644
+--- a/test/cli/lint/conformance.test.ts
++++ b/test/cli/lint/conformance.test.ts
+@@ -458,6 +458,36 @@ describe("enumerator", () => {
+     ).toEqual(emitOnly.map(name => ({ name, run: true, flagged: true })));
+   });
+ 
++  test("an instance that the reference fails is no skip: it does not run and its facts are invalid", () => {
++    const both = "compiler/both.errors.txt.diff\n";
++    using dir = tempDir("lint-conformance-corpus", {
++      "cases/compiler/bad.ts": "// @target: nosuch,es2015\nvar x = 1;\n",
++      "cases/compiler/both.ts": "var both = 1;\n",
++      "cases/compiler/clean.ts": "var y = 1;\n",
++      "cases/compiler/skipme.ts": "// @target: es5\nvar w = 1;\n",
++      "cases/conformance": {},
++      "baselines/typescript": {},
++      "baselines/typescript-go/NO_ERRORS.txt": "",
++      "submoduleAccepted.txt": both,
++      "submoduleTriaged.txt": both,
++    });
++    const made = runner.openCorpus(String(dir));
++    const unknown = "Unknown value 'nosuch' for option 'target'";
++    const inBoth =
++      "diff file compiler/both.errors.txt.diff is in both submoduleAccepted and submoduleTriaged; it should only be in one";
++    expect(
++      made.enumerateInstances().map(i => {
++        const facts = made.facts(i);
++        return [i.name, i.status, i.skipReason, i.invalidReason, facts.status, facts.reason, facts.kind];
++      }),
++    ).toEqual([
++      ["bad.ts", "invalid", undefined, unknown, "invalid", unknown, undefined],
++      ["both.ts", "invalid", undefined, inBoth, "invalid", inBoth, undefined],
++      ["clean.ts", "run", undefined, undefined, "run", "", "C"],
++      ["skipme.ts", "skip", "unsupported target ES5", undefined, "skipped", "unsupported target ES5", undefined],
++    ]);
++  });
++
+   // The whole corpus is a second of work in a release build and minutes in a debug build; the time limit is for a machine under load.
+   test.skipIf(small)(
+     "every instance is its line of the list, and the counts are those of the reference",

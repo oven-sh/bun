@@ -1,0 +1,1671 @@
+--- a/src/lint/lib.rs
++++ b/src/lint/lib.rs
+@@ -15,19 +15,19 @@
+ mod tokens;
+ pub mod tspath;
+ 
+-use bun_js_parser::parse::parse_entry::ParsedOnly;
++use bun_js_parser::parse::parse_entry::ParsedForLint;
+ 
+ pub use diagnostic::{Category, Code, Diagnostic, FileId, MessageChain, SourceFile};
+ 
+-/// Every rule over the statements of one file as they were written, in one walk. Not sorted, not deduplicated.
++/// Every rule over one file as it was written, in one walk of its statements and of what the parse pass keeps beside them. Not sorted, not deduplicated. `typescript`: the loader of the file is TypeScript.
+ pub fn lint<'a>(
+     file: FileId,
+-    parsed: &ParsedOnly<'_, 'a>,
++    parsed: &ParsedForLint<'_, 'a>,
+     source: &'a bun_ast::Source,
+-    arena: &'a bun_alloc::Arena,
++    typescript: bool,
+ ) -> Vec<Diagnostic> {
+     linter::run(
+-        context::Context::new(file, parsed, source, arena),
+-        parsed.stmts,
++        context::Context::new(file, parsed, source, typescript),
++        parsed,
+     )
+ }
+--- a/src/lint/context.rs
++++ b/src/lint/context.rs
+@@ -1,17 +1,22 @@
+-//! What a rule handler is given: the text, the names, the reports, and the services that read the text again.
++//! What a rule handler is given: the text, the names, the reports, and what the side table of the parse knows of a node.
+ 
++use core::cell::RefCell;
+ use std::borrow::Cow;
+ use std::collections::BTreeMap;
+ 
+ use bun_ast::lexer_tables::T;
+-use bun_ast::{E, Expr, ExprData, Loc, Log, OpCode, Ref, Source};
++use bun_ast::{E, Expr, ExprData, G, Loc, Log, OpCode, Ref, S, Source, StmtData};
+ use bun_core::StackCheck;
+-use bun_js_parser::parse::parse_entry::ParsedOnly;
++use bun_js_parser::parse::attached::ModuleExportName;
++use bun_js_parser::parse::erased::{ErasedFlags, ErasedMemberData};
++use bun_js_parser::parse::generics::TypeArgumentsOf;
++use bun_js_parser::parse::parse_entry::ParsedForLint;
++use bun_js_parser::parse::wrappers::{ExprId, WrapperData};
+ 
+ use crate::FileId;
+ use crate::diagnostic::{Category, Code, Diagnostic};
+ use crate::rule::Rule;
+-use crate::tokens::{self, Tokens};
++use crate::tokens::{self, Token, Tokens};
+ 
+ /// The global names that a report can depend on.
+ #[derive(Clone, Copy, PartialEq, Eq)]
+@@ -41,40 +46,172 @@
+     }
+ }
+ 
++/// The TypeScript node that ESLint has where the tree holds its operand.
++#[derive(Clone, Copy, PartialEq, Eq, Debug)]
++pub(crate) enum TsWrapper {
++    /// `operand as T`.
++    As,
++    /// `operand satisfies T`.
++    Satisfies,
++    /// `operand!`.
++    NonNull,
++    /// `<T>operand`.
++    TypeAssertion,
++    /// `operand<T>` that no call, `new` or template takes as its type arguments.
++    Instantiation,
++}
++
++/// One piece of syntax around a node that leaves no node: `kind` is `None` for parentheses.
++#[derive(Clone, Copy)]
++struct Around {
++    kind: Option<TsWrapper>,
++    /// Offset of its first own token: `(`, `<`, `as`, `satisfies` or `!`.
++    op: u32,
++    /// Offset after its last own token. Of `<T>operand` that is the `>`.
++    end: u32,
++}
++
++impl Around {
++    /// `(` and `<T>` stand before all they hold.
++    fn opens(&self) -> bool {
++        matches!(self.kind, None | Some(TsWrapper::TypeAssertion))
++    }
++}
++
++/// `ExprId` as a key that has an order.
++type ExprKey = (i32, u8, usize);
++
++fn key_of(expr: &Expr) -> ExprKey {
++    let id = ExprId::of(expr);
++    (id.loc, id.tag as u8, id.payload)
++}
++
++/// The places in a list of records of the entries of `index` with `key`, in the order of the list.
++fn entries(index: &[(ExprKey, u32)], key: ExprKey) -> impl Iterator<Item = usize> + '_ {
++    let from = index.partition_point(|(other, _)| *other < key);
++    index
++        .get(from..)
++        .unwrap_or(&[])
++        .iter()
++        .take_while(move |(other, _)| *other == key)
++        .map(|(_, at)| *at as usize)
++}
++
++fn loc_at(offset: u32) -> Loc {
++    Loc {
++        start: i32::try_from(offset).unwrap_or(i32::MAX),
++    }
++}
++
++fn offset_of(loc: Loc) -> Option<u32> {
++    u32::try_from(loc.start).ok()
++}
++
++/// What the text of `expr` starts with when that is another expression.
++fn first_operand(expr: &Expr) -> Option<&Expr> {
++    match &expr.data {
++        ExprData::EBinary(binary) => Some(&binary.left),
++        ExprData::EDot(dot) => Some(&dot.target),
++        ExprData::EIndex(index) => Some(&index.target),
++        ExprData::ECall(call) => Some(&call.target),
++        ExprData::EIf(conditional) => Some(&conditional.test),
++        ExprData::ETemplate(template) => template.tag.as_ref(),
++        ExprData::EUnary(unary) if matches!(unary.op, OpCode::UnPostDec | OpCode::UnPostInc) => {
++            Some(&unary.value)
++        }
++        _ => None,
++    }
++}
++
++/// Where the first own token of `expr` is, the one after its first operand: it grows from a node to the node around it.
++fn own_token(expr: &Expr) -> Option<u32> {
++    match &expr.data {
++        ExprData::EBinary(binary) => offset_of(binary.right.loc),
++        ExprData::EDot(dot) => offset_of(dot.name_loc),
++        ExprData::EIndex(index) => offset_of(index.index.loc),
++        ExprData::ECall(call) => offset_of(call.close_paren_loc),
++        ExprData::EIf(conditional) => offset_of(conditional.yes.loc),
++        _ => None,
++    }
++}
++
+ pub(crate) struct Context<'p, 'a> {
+     /// The file of every diagnostic that is reported here.
+     file: FileId,
+-    parsed: &'p ParsedOnly<'p, 'a>,
++    parsed: &'p ParsedForLint<'p, 'a>,
+     source: &'a Source,
+-    arena: &'a bun_alloc::Arena,
++    /// The file is TypeScript: a rule that typescript-eslint has its own text of answers as that text does.
++    typescript: bool,
+     pub(crate) stack_check: StackCheck,
+     reports: Vec<Diagnostic>,
+     /// Reports that hold only when one of their names is not declared in the file.
+     held: Vec<(Diagnostic, Globals)>,
+     declared: Globals,
+     cut: bool,
+-    /// By the first own token of a chain of binary expressions: where the scan from it ended, and each `)` before that end that closed one more `(` from before the token.
+-    chains: BTreeMap<u32, (u32, Vec<u32>)>,
++    /// The wrapper records by their operand: those of one operand keep their order, an inner one first.
++    wrappers: Vec<(ExprKey, u32)>,
++    /// The type arguments after an expression by their operand, in the order of their `<`.
++    type_arguments: Vec<(ExprKey, u32)>,
++    /// The class members that leave no node and are fields with `declare`, by the body of their class.
++    declared_fields: Vec<(u32, u32)>,
++    /// By the first token of a chain of first operands: a start, and the nodes of the chain that have it, those whose own token is after the first offset and not after the second.
++    chain_starts: RefCell<BTreeMap<i32, (u32, u32, Loc)>>,
+ }
+ 
+ impl<'p, 'a> Context<'p, 'a> {
+     pub(crate) fn new(
+         file: FileId,
+-        parsed: &'p ParsedOnly<'p, 'a>,
++        parsed: &'p ParsedForLint<'p, 'a>,
+         source: &'a Source,
+-        arena: &'a bun_alloc::Arena,
++        typescript: bool,
+     ) -> Self {
++        let sidecar = parsed.sidecar;
++        let mut wrappers: Vec<(ExprKey, u32)> = sidecar
++            .wrappers
++            .records
++            .iter()
++            .enumerate()
++            .map(|(at, record)| (key_of(&record.operand), at as u32))
++            .collect();
++        wrappers.sort_unstable();
++        let mut type_arguments: Vec<(ExprKey, u32)> = sidecar
++            .generics
++            .type_arguments
++            .iter()
++            .enumerate()
++            .filter(|(_, record)| record.of == TypeArgumentsOf::Expression)
++            .map(|(at, record)| (key_of(&record.operand), at as u32))
++            .collect();
++        type_arguments.sort_unstable();
++        let mut declared_fields: Vec<(u32, u32)> = sidecar
++            .erased
++            .members
++            .iter()
++            .enumerate()
++            .filter(|(_, member)| {
++                matches!(member.data, ErasedMemberData::Property(_))
++                    && member.flags.contains(ErasedFlags::DECLARE)
++                    && !member
++                        .flags
++                        .intersects(ErasedFlags::ABSTRACT.union(ErasedFlags::NO_BODY))
++            })
++            .map(|(at, member)| (member.class_body, at as u32))
++            .collect();
++        declared_fields.sort_unstable();
+         Context {
+             file,
+             parsed,
+             source,
+-            arena,
++            typescript,
+             stack_check: StackCheck::init(),
+             reports: Vec::new(),
+             held: Vec::new(),
+             declared: Globals::NONE,
+             cut: false,
+-            chains: BTreeMap::new(),
++            wrappers,
++            type_arguments,
++            declared_fields,
++            chain_starts: RefCell::new(BTreeMap::new()),
+         }
+     }
+ 
+@@ -83,6 +220,12 @@
+         &self.source.contents
+     }
+ 
++    /// Whether the file is TypeScript.
++    #[inline]
++    pub(crate) fn is_typescript(&self) -> bool {
++        self.typescript
++    }
++
+     /// The spelling of an identifier or of a binding. Empty for a reference that names nothing.
+     pub(crate) fn name_of(&self, r#ref: Ref) -> &'a [u8] {
+         if r#ref.is_valid() {
+@@ -94,7 +237,24 @@
+ 
+     /// A declaration of `ref` is somewhere in the file.
+     pub(crate) fn declare(&mut self, r#ref: Ref) {
+-        self.declared = self.declared.or(Globals::named(self.name_of(r#ref)));
++        self.declare_name(self.name_of(r#ref));
++    }
++
++    /// A declaration of `name` is somewhere in the file.
++    pub(crate) fn declare_name(&mut self, name: &[u8]) {
++        self.declared = self.declared.or(Globals::named(name));
++    }
++
++    /// The names with `type` in the clause of the import statement that starts at `statement` leave no item: ESLint has them declared.
++    pub(crate) fn declare_type_only_names(&mut self, statement: u32) {
++        let Ok(start) = i32::try_from(statement) else {
++            return;
++        };
++        for record in self.parsed.sidecar.attached.specifiers_of(Loc { start }) {
++            if let ModuleExportName::Identifier(name) = &record.specifier.name {
++                self.declared = self.declared.or(Globals::named(name.text.slice()));
++            }
++        }
+     }
+ 
+     /// A diagnostic of `rule` at the token that starts at `at`. Its length is that token.
+@@ -165,127 +325,407 @@
+         self.reports
+     }
+ 
+-    /// How many `)` between `from` and the token at `to` close a `(` that stands before `from`. `None`: not known.
+-    pub(crate) fn closes(&self, from: Loc, to: Loc, under: &[&Expr]) -> Option<u32> {
+-        let (from, to) = (
+-            u32::try_from(from.start).ok()?,
+-            u32::try_from(to.start).ok()?,
+-        );
+-        let spans = tokens::spans_under(self.text(), under, self.stack_check)?;
+-        let mut log = Log::init();
+-        let mut tokens = Tokens::new(&mut log, self.source, self.arena, &spans, from);
+-        tokens::closes_between(&mut tokens, to)
+-    }
+-
+-    /// Each `)` between `from` and the token at `to` that closes one more `(` standing before `from`, by where it is. `None`: not known.
+-    fn closing(&self, from: u32, to: u32, under: &[&Expr]) -> Option<Vec<u32>> {
+-        let spans = tokens::spans_under(self.text(), under, self.stack_check)?;
+-        let mut log = Log::init();
+-        let mut tokens = Tokens::new(&mut log, self.source, self.arena, &spans, from);
+-        let mut depth = 0i32;
+-        let mut lowest = 0i32;
+-        let mut closing = Vec::new();
+-        loop {
+-            let token = tokens.next()?;
+-            if token.start >= to {
+-                return (token.start == to).then_some(closing);
+-            }
+-            if token.opaque {
++    /// What stands around `expr` in its place and leaves no node, an inner piece first.
++    fn around(&self, expr: &Expr) -> Vec<Around> {
++        if self.wrappers.is_empty() && self.type_arguments.is_empty() {
++            return Vec::new();
++        }
++        let key = key_of(expr);
++        let sidecar = self.parsed.sidecar;
++        let mut around: Vec<Around> = entries(&self.wrappers, key)
++            .filter_map(|at| sidecar.wrappers.records.get(at))
++            .map(|record| Around {
++                kind: match record.data {
++                    WrapperData::As(_) => Some(TsWrapper::As),
++                    WrapperData::Satisfies(_) => Some(TsWrapper::Satisfies),
++                    WrapperData::NonNull => Some(TsWrapper::NonNull),
++                    WrapperData::TypeAssertion(_) => Some(TsWrapper::TypeAssertion),
++                    WrapperData::Parenthesized => None,
++                },
++                op: record.op,
++                end: record.end,
++            })
++            .collect();
++        for at in entries(&self.type_arguments, key) {
++            let Some(record) = sidecar.generics.type_arguments.get(at) else {
++                continue;
++            };
++            // Before the arguments of a call and before a template they are those of the call: no node of their own.
++            if matches!(
++                self.next_token(record.end),
++                Some(Token {
++                    t: T::TOpenParen | T::TNoSubstitutionTemplateLiteral | T::TTemplateHead,
++                    ..
++                })
++            ) {
+                 continue;
+             }
+-            match token.t {
+-                T::TOpenParen => depth += 1,
+-                T::TCloseParen => {
+-                    depth -= 1;
+-                    if depth < lowest {
+-                        lowest = depth;
+-                        closing.push(token.start);
+-                    }
+-                }
+-                _ => {}
++            // They stand after what ends before their `<`: a `!`, other type arguments, or parentheses that close there.
++            let inside = around
++                .iter()
++                .rposition(|piece| match piece.kind {
++                    None => piece.end <= record.lt,
++                    Some(TsWrapper::NonNull | TsWrapper::Instantiation) => piece.op < record.lt,
++                    Some(_) => false,
++                })
++                .map_or(0, |at| at + 1);
++            around.insert(
++                inside,
++                Around {
++                    kind: Some(TsWrapper::Instantiation),
++                    op: record.lt,
++                    end: record.end,
++                },
++            );
++        }
++        around
++    }
++
++    /// After the type arguments of `expr` whose `<` is at `at` or after it, which a `new` or a template takes; `at` without them.
++    fn after_type_arguments(&self, expr: &Expr, at: u32) -> u32 {
++        entries(&self.type_arguments, key_of(expr))
++            .filter_map(|index| self.parsed.sidecar.generics.type_arguments.get(index))
++            .find(|record| record.lt >= at)
++            .map_or(at, |record| record.end)
++    }
++
++    /// The TypeScript node that ESLint has in the place of `expr`: the outermost `as`, `satisfies`, `!`, `<T>` or instantiation on it. Parentheses are no node.
++    pub(crate) fn ts_wrapper(&self, expr: &Expr) -> Option<TsWrapper> {
++        self.around(expr).iter().rev().find_map(|piece| piece.kind)
++    }
++
++    /// How many pairs of parentheses stand directly around what ESLint has in the place of `expr`.
++    pub(crate) fn paren_count(&self, expr: &Expr) -> u32 {
++        let count = self
++            .around(expr)
++            .iter()
++            .rev()
++            .take_while(|piece| piece.kind.is_none())
++            .count();
++        u32::try_from(count).unwrap_or(u32::MAX)
++    }
++
++    /// Whether parentheses or a TypeScript node stand around `expr` in its place: a literal there is no pattern.
++    pub(crate) fn is_wrapped(&self, expr: &Expr) -> bool {
++        !self.around(expr).is_empty()
++    }
++
++    /// Where the node that ESLint has in the place of `expr` starts: at the `(` or `<` of its first operand. Parentheses around the node itself are no part of it.
++    pub(crate) fn node_start(&self, expr: &Expr) -> Loc {
++        let around = self.around(expr);
++        let outermost = around.iter().rposition(|piece| piece.kind.is_some());
++        let open = outermost
++            .and_then(|outermost| around.get(..=outermost))
++            .and_then(|inside| inside.iter().rev().find(|piece| piece.opens()));
++        match open {
++            Some(piece) => loc_at(piece.op),
++            None => self.own_start(expr),
++        }
++    }
++
++    /// Where the binary expression `node` starts, whose first own token is at `own`: `node_start` for a node that a handler has without its `Expr`.
++    pub(crate) fn binary_start(&self, node: &E::Binary, own: Loc) -> Loc {
++        self.chain_start(&node.left, own, offset_of(node.right.loc))
++    }
++
++    /// Where the text in the place of `expr` starts, every `(` and `<T>` around it included.
++    fn full_start(&self, expr: &Expr) -> Loc {
++        match self.around(expr).iter().rev().find(|piece| piece.opens()) {
++            Some(piece) => loc_at(piece.op),
++            None => self.own_start(expr),
++        }
++    }
++
++    /// Where `expr` itself starts: where its first operand does, else at its first own token.
++    fn own_start(&self, expr: &Expr) -> Loc {
++        match first_operand(expr) {
++            Some(first) => self.chain_start(first, expr.loc, own_token(expr)),
++            None => self.leaf_start(expr),
++        }
++    }
++
++    /// `full_start` of `first`, the first operand of a node whose first token is at `own` and whose own token is at `token`. What is found is kept for the nodes of the chain inside that node: a long chain is gone down once.
++    fn chain_start(&self, first: &Expr, own: Loc, token: Option<u32>) -> Loc {
++        if let (Some(token), Some((below, upto, start))) =
++            (token, self.chain_starts.borrow().get(&own.start).copied())
++            && below < token
++            && token <= upto
++        {
++            return start;
++        }
++        let mut expr = first;
++        let (below, start) = loop {
++            if let Some(piece) = self.around(expr).iter().rev().find(|piece| piece.opens()) {
++                // A node without a token of its own is not told from the nodes inside it: nothing is kept then.
++                let below = match first_operand(expr) {
++                    Some(_) => own_token(expr),
++                    None => Some(0),
++                };
++                break (below, loc_at(piece.op));
+             }
+-        }
++            match first_operand(expr) {
++                Some(next) => expr = next,
++                None => break (Some(0), self.leaf_start(expr)),
++            }
++        };
++        if let (Some(below), Some(upto)) = (below, token) {
++            self.chain_starts
++                .borrow_mut()
++                .insert(own.start, (below, upto, start));
++        }
++        start
+     }
+ 
+-    /// Where the binary expression `node` starts whose first own token is at `own`: at the `(` of a left operand in them.
+-    pub(crate) fn binary_start(&mut self, node: &E::Binary, own: Loc) -> Loc {
+-        let (Ok(at), Ok(to)) = (
+-            u32::try_from(own.start),
+-            u32::try_from(node.right.loc.start),
+-        ) else {
+-            return own;
++    /// Where a node without a first operand starts: at its first token, which for a class is the `@` of its first decorator.
++    fn leaf_start(&self, expr: &Expr) -> Loc {
++        let ExprData::EClass(class) = &expr.data else {
++            return expr.loc;
++        };
++        let Some(decorator) = class.ts_decorators.first() else {
++            return expr.loc;
++        };
++        if !self.stack_check.is_safe_to_recurse() {
++            return expr.loc;
++        }
++        let Some(named) = offset_of(self.full_start(decorator)) else {
++            return expr.loc;
++        };
++        let mut at = named as usize;
++        while at > 0 && matches!(self.text().get(at - 1), Some(b' ' | b'\t' | b'\n' | b'\r')) {
++            at -= 1;
++        }
++        if at > 0 && self.text().get(at - 1) == Some(&b'@') {
++            return loc_at(u32::try_from(at - 1).unwrap_or(named));
++        }
++        expr.loc
++    }
++
++    /// After the last token of the node that ESLint has in the place of `expr`. `None`: the tree and the text do not say where.
++    pub(crate) fn node_end(&self, expr: &Expr) -> Option<u32> {
++        let own = self.own_end(expr)?;
++        let around = self.around(expr);
++        let Some(outermost) = around.iter().rposition(|piece| piece.kind.is_some()) else {
++            return Some(own);
+         };
+-        // No `(` stands right before the first token: no scan would move the start.
+-        if tokens::before_opens(self.text(), at, 1).1 == 1 {
+-            return own;
++        Some(
++            around
++                .get(..=outermost)?
++                .iter()
++                .filter(|piece| piece.kind != Some(TsWrapper::TypeAssertion))
++                .fold(own, |end, piece| end.max(piece.end)),
++        )
++    }
++
++    /// After the last token of the text in the place of `expr`, everything around it included.
++    fn full_end(&self, expr: &Expr) -> Option<u32> {
++        let own = self.own_end(expr)?;
++        Some(
++            self.around(expr)
++                .iter()
++                .filter(|piece| piece.kind != Some(TsWrapper::TypeAssertion))
++                .fold(own, |end, piece| end.max(piece.end)),
++        )
++    }
++
++    /// After the last token of `expr` itself: after its last operand, or after the token that closes it.
++    fn own_end(&self, expr: &Expr) -> Option<u32> {
++        if !self.stack_check.is_safe_to_recurse() {
++            return None;
+         }
+-        // Every link of a chain has the first token of the chain, and the walk reaches the outermost link first: its scan answers for each link inside it.
+-        let closes = match self.chains.get(&at) {
+-            Some((scanned, closing)) if to <= *scanned => {
+-                closing.partition_point(|&close| close < to)
++        let after = |loc: Loc| offset_of(loc)?.checked_add(1);
++        match &expr.data {
++            ExprData::EBinary(binary) => self.full_end(&binary.right),
++            ExprData::EIf(conditional) => self.full_end(&conditional.no),
++            ExprData::EUnary(unary) => {
++                let value = self.full_end(&unary.value)?;
++                if matches!(unary.op, OpCode::UnPostDec | OpCode::UnPostInc) {
++                    Some(self.next_token(value)?.end)
++                } else {
++                    Some(value)
++                }
+             }
+-            _ => {
+-                // The scan ends at the `loc` of the right operand: what it meets of that operand is the decorators of a class expression, which stand before the `loc`.
+-                let closing = if starts_with_decorators(&node.right) {
+-                    self.closing(at, to, &[&node.left, &node.right])
++            ExprData::ESpread(spread) => self.full_end(&spread.value),
++            ExprData::EAwait(awaited) => self.full_end(&awaited.value),
++            ExprData::EYield(yielded) => match &yielded.value {
++                Some(value) => self.full_end(value),
++                None => self.token_end(expr.loc),
++            },
++            ExprData::EDot(dot) => self.token_end(dot.name_loc),
++            ExprData::EIndex(index) => {
++                if matches!(index.index.data, ExprData::EPrivateIdentifier(_)) {
++                    return self.token_end(index.index.loc);
++                }
++                let close = self.next_token(self.full_end(&index.index)?)?;
++                (close.t == T::TCloseBracket).then_some(close.end)
++            }
++            ExprData::ECall(call) => after(call.close_paren_loc),
++            ExprData::ENew(new) => {
++                if new.close_parens_loc.start >= 0 {
++                    after(new.close_parens_loc)
+                 } else {
+-                    self.closing(at, to, &[&node.left])
+-                };
+-                let Some(closing) = closing else {
+-                    return own;
+-                };
+-                let closes = closing.len();
+-                self.chains.insert(at, (to, closing));
+-                closes
+-            }
+-        };
+-        let closes = u32::try_from(closes).unwrap_or(u32::MAX);
+-        let (start, _) = tokens::before_opens(self.text(), at, closes);
+-        i32::try_from(start).map_or(own, |start| Loc { start })
+-    }
+-
+-    /// Where the node starts whose first own token is at `own`: at the `(` of its first operand, which ends before `to`.
+-    pub(crate) fn start_of(&self, own: Loc, to: Loc, under: &[&Expr]) -> Option<(Loc, u32)> {
+-        let closes = self.closes(own, to, under)?;
+-        let (start, missing) =
+-            tokens::before_opens(self.text(), u32::try_from(own.start).ok()?, closes);
+-        Some((
+-            Loc {
+-                start: i32::try_from(start).ok()?,
++                    Some(self.after_type_arguments(&new.target, self.full_end(&new.target)?))
++                }
++            }
++            ExprData::EArray(array) => after(array.close_bracket_loc),
++            ExprData::EObject(object) => after(object.close_brace_loc),
++            ExprData::EClass(class) => after(class.close_brace_loc),
++            ExprData::EFunction(function) => self.body_end(&function.func.body),
++            ExprData::EArrow(arrow) => {
++                if !arrow.prefer_expr {
++                    return self.body_end(&arrow.body);
++                }
++                match arrow.body.stmts.slice() {
++                    [stmt] => match &stmt.data {
++                        StmtData::SReturn(returned) => self.full_end(returned.value.as_ref()?),
++                        _ => None,
++                    },
++                    _ => None,
++                }
++            }
++            ExprData::ETemplate(template) => match template.parts().last() {
++                Some(part) => {
++                    let tail = usize::try_from(part.tail_loc.start).ok()?.checked_add(1)?;
++                    match tokens::template_text_end(self.text(), tail)? {
++                        (end, false) => Some(end),
++                        (_, true) => None,
++                    }
++                }
++                None => {
++                    let tag = template.tag.as_ref()?;
++                    let text =
++                        self.next_token(self.after_type_arguments(tag, self.full_end(tag)?))?;
++                    (text.t == T::TNoSubstitutionTemplateLiteral).then_some(text.end)
++                }
+             },
+-            missing,
+-        ))
++            ExprData::EJsxElement(element) => tokens::jsx_end(
++                self.text(),
++                usize::try_from(element.close_tag_loc.start).ok()?,
++            ),
++            ExprData::ERegExp(reg_exp) => {
++                offset_of(expr.loc)?.checked_add(u32::try_from(reg_exp.value.slice().len()).ok()?)
++            }
++            ExprData::EImport(import) => {
++                let last = if matches!(import.options.data, ExprData::EMissing(_)) {
++                    &import.expr
++                } else {
++                    &import.options
++                };
++                let mut close = self.next_token(self.full_end(last)?)?;
++                if close.t == T::TComma {
++                    close = self.next_token(close.end)?;
++                }
++                (close.t == T::TCloseParen).then_some(close.end)
++            }
++            ExprData::ENewTarget(target) => {
++                let len = u32::try_from(target.range.len).ok()?;
++                offset_of(target.range.loc)?.checked_add(len)
++            }
++            ExprData::EImportMeta(_) => {
++                let dot = self.next_token(self.token_end(expr.loc)?)?;
++                Some(self.next_token(dot.end)?.end)
++            }
++            ExprData::EIdentifier(_)
++            | ExprData::EPrivateIdentifier(_)
++            | ExprData::ENumber(_)
++            | ExprData::EBigInt(_)
++            | ExprData::EString(_)
++            | ExprData::EBoolean(_)
++            | ExprData::ENull(_)
++            | ExprData::EUndefined(_)
++            | ExprData::EThis(_)
++            | ExprData::ESuper(_) => self.token_end(expr.loc),
++            _ => None,
++        }
+     }
+ 
+-    /// What ESLint compares of the test of a `case`. `None`: its text does not read, or decorators stand before its `loc`.
+-    pub(crate) fn case_test(&self, value: &Expr) -> Option<Vec<u8>> {
+-        // The scan starts at the `loc`: two tests that differ only in the decorators before it would be equal.
+-        if starts_with_decorators(value) {
+-            return None;
+-        }
+-        let from = u32::try_from(value.loc.start).ok()?;
+-        let spans = tokens::spans_under(self.text(), &[value], self.stack_check)?;
++    /// After the `}` of the body of a function or of an arrow function.
++    fn body_end(&self, body: &G::FnBody) -> Option<u32> {
++        let from = offset_of(body.loc)?;
++        let spans = tokens::spans_under_stmts(self.text(), body.stmts.slice(), self.stack_check)?;
+         let mut log = Log::init();
+-        let mut tokens = Tokens::new(&mut log, self.source, self.arena, &spans, from);
+-        tokens::case_key(&mut tokens, self.text())
++        let mut tokens = Tokens::new(&mut log, self.source, self.parsed.arena, &spans, from);
++        tokens::matching_close(&mut tokens)
+     }
+ 
+-    /// Where the clause with the test `value` starts: the `case` that the text before the test shows, else the test.
+-    pub(crate) fn case_start(&self, value: &Expr) -> Loc {
+-        u32::try_from(value.loc.start)
+-            .ok()
+-            .and_then(|own| tokens::case_before(self.text(), own))
+-            .and_then(|start| i32::try_from(start).ok())
+-            .map_or(value.loc, |start| Loc { start })
+-    }
+-
+-    /// The `]` after the index expression of a member.
+-    pub(crate) fn close_bracket(&self, index: &Expr) -> Option<u32> {
+-        let from = u32::try_from(index.loc.start).ok()?;
+-        let spans = tokens::spans_under(self.text(), &[index], self.stack_check)?;
++    /// What ESLint compares of the node in the place of `expr`: its tokens, as bytes. `None`: its end is not known, or its text does not read as the tree says.
++    pub(crate) fn tokens_of(&self, expr: &Expr) -> Option<Vec<u8>> {
++        let start = offset_of(self.node_start(expr))?;
++        let end = self.node_end(expr)?;
++        let spans = tokens::spans_under(self.text(), &[expr], self.stack_check)?;
+         let mut log = Log::init();
+-        let mut tokens = Tokens::new(&mut log, self.source, self.arena, &spans, from);
+-        tokens::close_bracket(&mut tokens)
++        let mut tokens = Tokens::new(&mut log, self.source, self.parsed.arena, &spans, start);
++        // ESLint's own parser has a word as what it spells; typescript-eslint has its text.
++        tokens::key_until(&mut tokens, self.text(), end, !self.typescript)
++    }
++
++    /// Where the clause at `index` of `node` starts: at its `case`. Where no `case` is found, at the first token of its test.
++    pub(crate) fn case_start(&self, node: &S::Switch, index: usize) -> Loc {
++        let cases = node.cases.slice();
++        let Some(case) = cases.get(index) else {
++            return Loc::EMPTY;
++        };
++        if case.loc.start >= 0 {
++            return case.loc;
++        }
++        let Some(test) = &case.value else {
++            return Loc::EMPTY;
++        };
++        let Some(target) = offset_of(self.full_start(test)) else {
++            return test.loc;
++        };
++        // The token before the test is read from a place before it: the last statement of a clause before, else its test, else the `{` of the statement.
++        let mut from = offset_of(node.body_loc);
++        let mut spans = Some(Vec::new());
++        for earlier in cases.get(..index).unwrap_or(&[]).iter().rev() {
++            if let Some(last) = earlier.body.slice().last() {
++                from = offset_of(last.loc);
++                spans = tokens::spans_under_stmts(
++                    self.text(),
++                    core::slice::from_ref(last),
++                    self.stack_check,
++                );
++                break;
++            }
++            if let Some(value) = &earlier.value {
++                from = offset_of(self.full_start(value));
++                spans = tokens::spans_under(self.text(), &[value], self.stack_check);
++                break;
++            }
++        }
++        if let (Some(from), Some(spans)) = (from, spans) {
++            let mut log = Log::init();
++            let mut tokens = Tokens::new(&mut log, self.source, self.parsed.arena, &spans, from);
++            if let Some(before) = tokens::last_before(&mut tokens, target)
++                && before.t == T::TCase
++            {
++                return loc_at(before.start);
++            }
++        }
++        test.loc
++    }
++
++    /// The fields with `declare` of `class` that leave no node, each with how many members of `class.properties` stand before it.
++    pub(crate) fn declared_fields(
++        &self,
++        class: &G::Class,
++    ) -> impl Iterator<Item = (u32, &'p G::Property)> + '_ {
++        let body = offset_of(class.body_loc).unwrap_or(u32::MAX);
++        let members = &self.parsed.sidecar.erased.members;
++        let from = self
++            .declared_fields
++            .partition_point(|(other, _)| *other < body);
++        self.declared_fields
++            .get(from..)
++            .unwrap_or(&[])
++            .iter()
++            .take_while(move |(other, _)| *other == body)
++            .filter_map(move |(_, at)| {
++                let member = members.get(*at as usize)?;
++                match &member.data {
++                    ErasedMemberData::Property(property) => Some((member.index, &**property)),
++                    ErasedMemberData::IndexSignature => None,
++                }
++            })
+     }
+ 
+     /// After the token that starts at `at`. `None` when the text there does not read.
+@@ -297,37 +737,20 @@
+         }
+     }
+ 
++    /// The token after the offset `after`, with blanks and comments between them at most.
++    fn next_token(&self, after: u32) -> Option<Token> {
++        let mut log = Log::init();
++        let mut tokens = Tokens::new(&mut log, self.source, self.parsed.arena, &[], after);
++        tokens.next()
++    }
++
+     /// The length of the token that starts at `at`, read without the tree. 0 when the text there does not read.
+     fn token_len(&self, at: u32) -> u32 {
+         let mut log = Log::init();
+-        let mut tokens = Tokens::new(&mut log, self.source, self.arena, &[], at);
++        let mut tokens = Tokens::new(&mut log, self.source, self.parsed.arena, &[], at);
+         match tokens.next() {
+             Some(token) if token.start == at => token.end.saturating_sub(token.start),
+             _ => 0,
+         }
+     }
+ }
+-
+-/// Whether decorators stand before the `loc` of `expr`: its first operand is a class expression that has them.
+-fn starts_with_decorators(mut expr: &Expr) -> bool {
+-    loop {
+-        expr = match &expr.data {
+-            ExprData::EClass(class) => return !class.ts_decorators.is_empty(),
+-            ExprData::EBinary(binary) => &binary.left,
+-            ExprData::EDot(dot) => &dot.target,
+-            ExprData::EIndex(index) => &index.target,
+-            ExprData::ECall(call) => &call.target,
+-            ExprData::EIf(conditional) => &conditional.test,
+-            ExprData::ETemplate(template) => match &template.tag {
+-                Some(tag) => tag,
+-                None => return false,
+-            },
+-            ExprData::EUnary(unary)
+-                if matches!(unary.op, OpCode::UnPostDec | OpCode::UnPostInc) =>
+-            {
+-                &unary.value
+-            }
+-            _ => return false,
+-        };
+-    }
+-}
+--- a/src/lint/tokens.rs
++++ b/src/lint/tokens.rs
+@@ -37,11 +37,25 @@
+     for root in roots {
+         collector.visit_expr(root);
+     }
+-    if collector.cut {
+-        return None;
++    collector.finish()
++}
++
++/// The spans under `stmts`, sorted. `None` as for [`spans_under`].
++pub(crate) fn spans_under_stmts(
++    source: &[u8],
++    stmts: &[Stmt],
++    stack_check: StackCheck,
++) -> Option<Vec<Span>> {
++    let mut collector = Collector {
++        source,
++        spans: Vec::new(),
++        stack_check,
++        cut: false,
++    };
++    for stmt in stmts {
++        collector.visit_stmt(stmt);
+     }
+-    collector.spans.sort_unstable_by_key(|span| span.start);
+-    Some(collector.spans)
++    collector.finish()
+ }
+ 
+ struct Collector<'s> {
+@@ -53,6 +67,14 @@
+ }
+ 
+ impl Collector<'_> {
++    fn finish(mut self) -> Option<Vec<Span>> {
++        if self.cut {
++            return None;
++        }
++        self.spans.sort_unstable_by_key(|span| span.start);
++        Some(self.spans)
++    }
++
+     /// Whether the walk goes one node deeper: not after a cut, and not without the stack for it.
+     fn descends(&mut self) -> bool {
+         if self.cut || !self.stack_check.is_safe_to_recurse() {
+@@ -110,7 +132,7 @@
+ }
+ 
+ /// After the `>` that ends the closing tag whose `/`, name or `>` is at `at`.
+-fn jsx_end(source: &[u8], mut at: usize) -> Option<u32> {
++pub(crate) fn jsx_end(source: &[u8], mut at: usize) -> Option<u32> {
+     loop {
+         match *source.get(at)? {
+             b'>' => return u32::try_from(at + 1).ok(),
+@@ -134,7 +156,7 @@
+ }
+ 
+ /// After the backtick that ends the template text at `at`, or after its `${` (then `true`).
+-fn template_text_end(source: &[u8], mut at: usize) -> Option<(u32, bool)> {
++pub(crate) fn template_text_end(source: &[u8], mut at: usize) -> Option<(u32, bool)> {
+     loop {
+         match *source.get(at)? {
+             b'\\' => at += 2,
+@@ -259,82 +281,31 @@
+     }
+ }
+ 
+-/// What ESLint compares of a `case` test, its tokens, as bytes: read from its first own token to the `:` of its clause.
+-pub(crate) fn case_key(tokens: &mut Tokens<'_, '_>, source: &[u8]) -> Option<Vec<u8>> {
+-    let mut out: Vec<Token> = Vec::new();
+-    // One entry per open bracket: the token that closes it, and the `?` of the level around it that wait.
+-    let mut stack: Vec<(T, u32)> = Vec::new();
+-    let mut waiting = 0u32;
+-    // The `)` that no `(` of the test opens: all of them, and those at the end of what is read.
+-    let mut leading = 0u32;
+-    let mut trailing = 0u32;
++/// What ESLint compares of a node, its tokens, as bytes: read from its first token up to `end`. `cooked`: a word is what it spells, as ESLint's own parser has it and typescript-eslint has not.
++pub(crate) fn key_until(
++    tokens: &mut Tokens<'_, '_>,
++    source: &[u8],
++    end: u32,
++    cooked: bool,
++) -> Option<Vec<u8>> {
++    let mut key = Vec::new();
+     loop {
+         let token = tokens.next()?;
+-        if !token.opaque {
+-            match token.t {
+-                T::TOpenParen => {
+-                    stack.push((T::TCloseParen, waiting));
+-                    waiting = 0;
+-                }
+-                T::TOpenBracket => {
+-                    stack.push((T::TCloseBracket, waiting));
+-                    waiting = 0;
+-                }
+-                T::TOpenBrace => {
+-                    stack.push((T::TCloseBrace, waiting));
+-                    waiting = 0;
+-                }
+-                T::TCloseParen | T::TCloseBracket | T::TCloseBrace => match stack.pop() {
+-                    Some((close, around)) => {
+-                        if close != token.t {
+-                            return None;
+-                        }
+-                        waiting = around;
+-                    }
+-                    None => {
+-                        if token.t != T::TCloseParen {
+-                            return None;
+-                        }
+-                        leading += 1;
+-                        trailing += 1;
+-                        out.push(token);
+-                        continue;
+-                    }
+-                },
+-                T::TQuestion => waiting += 1,
+-                T::TColon => {
+-                    if waiting > 0 {
+-                        waiting -= 1;
+-                    } else if stack.is_empty() {
+-                        break;
+-                    }
+-                }
+-                _ => {}
+-            }
+-        } else if token.t == T::TTemplateHead {
+-            stack.push((T::TTemplateTail, waiting));
+-            waiting = 0;
+-        } else if token.t == T::TTemplateTail {
+-            let (close, around) = stack.pop()?;
+-            if close != T::TTemplateTail {
+-                return None;
+-            }
+-            waiting = around;
+-        } else if token.t == T::TTemplateMiddle
+-            && !matches!(stack.last(), Some((T::TTemplateTail, _)))
+-        {
++        if token.start >= end {
++            break;
++        }
++        if token.end > end {
+             return None;
+         }
+-        trailing = 0;
+-        out.push(token);
+-    }
+-    // The `)` at the end close parentheses around the whole test: ESLint's node has neither.
+-    out.truncate(out.len().saturating_sub(trailing as usize));
+-    // `(a).b`: the `(` before the first token that the test closes are part of it.
+-    let mut key = leading.saturating_sub(trailing).to_le_bytes().to_vec();
+-    for token in &out {
+         let raw = source.get(token.start as usize..token.end as usize)?;
+-        let spelled = if token.opaque {
++        // `>>` closes two lists of type arguments for typescript-eslint and is one operator elsewhere: each `>` and `=` of such a token is compared alone.
++        if !token.opaque && raw.len() > 1 && raw.first() == Some(&b'>') {
++            for byte in raw {
++                key.extend_from_slice(&[0, 1, 0, 0, 0, *byte]);
++            }
++            continue;
++        }
++        let spelled = if token.opaque || !cooked {
+             None
+         } else {
+             spelled_word(raw)
+@@ -394,31 +365,8 @@
+     Some(out)
+ }
+ 
+-/// How many `)` between `from` and `to` close a `(` that stands before `from`. `to` is where a token starts.
+-pub(crate) fn closes_between(tokens: &mut Tokens<'_, '_>, to: u32) -> Option<u32> {
+-    let mut depth = 0i32;
+-    let mut lowest = 0i32;
+-    loop {
+-        let token = tokens.next()?;
+-        if token.start >= to {
+-            return (token.start == to).then_some(lowest.unsigned_abs());
+-        }
+-        if token.opaque {
+-            continue;
+-        }
+-        match token.t {
+-            T::TOpenParen => depth += 1,
+-            T::TCloseParen => {
+-                depth -= 1;
+-                lowest = lowest.min(depth);
+-            }
+-            _ => {}
+-        }
+-    }
+-}
+-
+-/// The `]` that closes a `[` standing before the first token read.
+-pub(crate) fn close_bracket(tokens: &mut Tokens<'_, '_>) -> Option<u32> {
++/// After the `}` that closes the `{` which is the first token read.
++pub(crate) fn matching_close(tokens: &mut Tokens<'_, '_>) -> Option<u32> {
+     let mut depth = 0u32;
+     loop {
+         let token = tokens.next()?;
+@@ -426,59 +374,30 @@
+             continue;
+         }
+         match token.t {
+-            T::TOpenBracket => depth += 1,
+-            T::TCloseBracket => {
++            T::TOpenBrace => depth += 1,
++            T::TCloseBrace => {
++                depth = depth.checked_sub(1)?;
+                 if depth == 0 {
+-                    return Some(token.start);
++                    return Some(token.end);
++                }
++            }
++            _ => {
++                if depth == 0 {
++                    return None;
+                 }
+-                depth -= 1;
+             }
+-            _ => {}
+-        }
+-    }
+-}
+-
+-/// Back from `own` over blanks and one `(`, up to `closes` times: where that ends, and how many `(` were not found.
+-pub(crate) fn before_opens(source: &[u8], own: u32, closes: u32) -> (u32, u32) {
+-    let mut at = own as usize;
+-    let mut missing = closes;
+-    while missing > 0 {
+-        let open = before_blanks(source, at);
+-        if open == 0 || source.get(open - 1) != Some(&b'(') {
+-            break;
+         }
+-        at = open - 1;
+-        missing -= 1;
+     }
+-    (u32::try_from(at).unwrap_or(own), missing)
+ }
+ 
+-fn before_blanks(source: &[u8], mut at: usize) -> usize {
+-    while at > 0 && matches!(source.get(at - 1), Some(b' ' | b'\t')) {
+-        at -= 1;
+-    }
+-    at
+-}
+-
+-/// The `case` that stands before the test whose first own token is at `own`, with blanks and `(` between them only.
+-pub(crate) fn case_before(source: &[u8], own: u32) -> Option<u32> {
+-    let mut at = own as usize;
++/// The last token before the one that starts at `target`. `None`: no token starts there.
++pub(crate) fn last_before(tokens: &mut Tokens<'_, '_>, target: u32) -> Option<Token> {
++    let mut last = None;
+     loop {
+-        at = before_blanks(source, at);
+-        if at > 0 && source.get(at - 1) == Some(&b'(') {
+-            at -= 1;
+-        } else {
+-            break;
+-        }
+-    }
+-    let start = at.checked_sub(4)?;
+-    if source.get(start..at)? != b"case" {
+-        return None;
+-    }
+-    if let Some(&before) = start.checked_sub(1).and_then(|index| source.get(index)) {
+-        if before.is_ascii_alphanumeric() || matches!(before, b'_' | b'$' | b'\\' | b'#') {
+-            return None;
++        let token = tokens.next()?;
++        if token.start >= target {
++            return if token.start == target { last } else { None };
+         }
++        last = Some(token);
+     }
+-    u32::try_from(start).ok()
+ }
+--- a/src/lint/ast_utils.rs
++++ b/src/lint/ast_utils.rs
+@@ -1,6 +1,7 @@
+ //! Ported from ESLint lib/rules/utils/ast-utils.js: the helpers that the rules share, on Bun's nodes.
+ 
+-use bun_ast::{E, Expr, ExprData};
++use bun_ast::flags::Property as Flag;
++use bun_ast::{E, Expr, ExprData, G};
+ 
+ use crate::context::Context;
+ 
+@@ -42,15 +43,35 @@
+     }
+ }
+ 
+-/// `getStaticPropertyName` of a member expression.
+-pub(crate) fn get_static_property_name(member: &Expr) -> Option<Name<'_>> {
++/// `getStaticPropertyName` of a member expression. A TypeScript node in the brackets is no literal.
++pub(crate) fn get_static_property_name<'e>(
++    context: &Context<'_, '_>,
++    member: &'e Expr,
++) -> Option<Name<'e>> {
+     match &member.data {
+         ExprData::EDot(dot) => Some(Name::Borrowed(dot.name.slice())),
+-        ExprData::EIndex(index) => get_static_string_value(&index.index),
++        ExprData::EIndex(index) => {
++            if context.ts_wrapper(&index.index).is_some() {
++                return None;
++            }
++            get_static_string_value(&index.index)
++        }
+         _ => None,
+     }
+ }
+ 
++/// `getStaticPropertyName` of a property of an object or of a class member: its key. A TypeScript node in the brackets is no literal.
++pub(crate) fn get_static_key_name<'e>(
++    context: &Context<'_, '_>,
++    property: &'e G::Property,
++) -> Option<Name<'e>> {
++    let key = property.key.as_ref()?;
++    if property.flags.contains(Flag::IsComputed) && context.ts_wrapper(key).is_some() {
++        return None;
++    }
++    get_static_string_value(key)
++}
++
+ fn of_string(string: &E::EString) -> Option<Name<'_>> {
+     if string.next.is_some() {
+         return None;
+@@ -129,6 +150,10 @@
+     if !context.stack_check.is_safe_to_recurse() {
+         return false;
+     }
++    // A TypeScript node is no reference for ESLint: `a!.b` is not `a.b`, and not `a!.b` either.
++    if context.ts_wrapper(left).is_some() || context.ts_wrapper(right).is_some() {
++        return false;
++    }
+     match (&left.data, &right.data) {
+         (ExprData::EThis(_), ExprData::EThis(_)) | (ExprData::ESuper(_), ExprData::ESuper(_)) => {
+             true
+@@ -144,8 +169,8 @@
+             else {
+                 return false;
+             };
+-            if let Some(name) = get_static_property_name(left) {
+-                return get_static_property_name(right)
++            if let Some(name) = get_static_property_name(context, left) {
++                return get_static_property_name(context, right)
+                     .is_some_and(|other| other.bytes() == name.bytes())
+                     && is_same_reference(context, left_target, right_target);
+             }
+--- a/src/lint/linter.rs
++++ b/src/lint/linter.rs
+@@ -2,19 +2,71 @@
+ 
+ use bun_ast::walk::{self, Visitor};
+ use bun_ast::{B, E, Expr, ExprData, G, Loc, OpCode, S, Stmt, StmtData};
++use bun_js_parser::parse::erased::{ErasedData, ErasedMemberData, ImportClause, ModuleName};
++use bun_js_parser::parse::parse_entry::ParsedForLint;
+ 
+ use crate::context::Context;
+ use crate::diagnostic::Diagnostic;
+ use crate::rules;
+ 
+-pub(crate) fn run(context: Context<'_, '_>, stmts: &[Stmt]) -> Vec<Diagnostic> {
++pub(crate) fn run(context: Context<'_, '_>, parsed: &ParsedForLint<'_, '_>) -> Vec<Diagnostic> {
+     let mut linter = Linter {
+         context,
+         targets: Vec::new(),
+     };
+-    for stmt in stmts {
++    for stmt in parsed.stmts {
+         linter.visit_stmt(stmt);
+     }
++    // What the parse pass leaves out of the statements and keeps beside them: ESLint has nodes for it all the same.
++    let erased = &parsed.sidecar.erased;
++    for record in &erased.statements {
++        match &record.data {
++            ErasedData::Declaration(stmt) => linter.visit_stmt(stmt),
++            ErasedData::Module(module) => {
++                if let ModuleName::Identifier(name) = &module.name {
++                    linter.context.declare_name(name.text.slice());
++                }
++                if let Some(body) = &module.body {
++                    for stmt in body.slice() {
++                        linter.visit_stmt(stmt);
++                    }
++                }
++            }
++            ErasedData::ImportEquals(import) => {
++                linter.context.declare_name(import.name.text.slice());
++            }
++            ErasedData::Import(import) => {
++                match &import.clause {
++                    ImportClause::Default(name) | ImportClause::Namespace(name) => {
++                        linter.context.declare_name(name.text.slice());
++                    }
++                    ImportClause::Named(items) => {
++                        for item in items.slice() {
++                            linter.context.declare_name(item.alias.slice());
++                        }
++                    }
++                }
++                linter.context.declare_type_only_names(record.start);
++            }
++            ErasedData::Interface(_)
++            | ErasedData::TypeAlias(_)
++            | ErasedData::NamespaceExport(_)
++            | ErasedData::Export(_) => {}
++        }
++    }
++    for member in &erased.members {
++        if let ErasedMemberData::Property(property) = &member.data {
++            for decorator in property.ts_decorators.iter() {
++                linter.visit_decorator(decorator);
++            }
++            for expr in [&property.key, &property.value, &property.initializer]
++                .into_iter()
++                .flatten()
++            {
++                linter.visit_expr(expr);
++            }
++        }
++    }
+     linter.context.finish()
+ }
+ 
+@@ -41,8 +93,15 @@
+ }
+ 
+ impl Linter<'_, '_> {
+-    /// `expr` is written where a target is expected.
++    /// `expr` is written where a target is expected. In parentheses or in a TypeScript node it is an expression there, as for typescript-eslint: no pattern.
+     fn mark(&mut self, expr: &Expr) {
++        let written = match &expr.data {
++            ExprData::ESpread(spread) => &spread.value,
++            _ => expr,
++        };
++        if self.context.is_wrapped(written) {
++            return;
++        }
+         if let Some(address) = target_of(expr) {
+             self.targets.push(address);
+         }
+@@ -106,6 +165,20 @@
+         rules::no_debugger::s_debugger(&mut self.context, loc);
+     }
+ 
++    fn visit_s_enum(&mut self, node: &'ast S::Enum, _: Loc) {
++        self.context.declare(node.name.ref_);
++        // A member is a name inside the enum, where ESLint resolves it.
++        for value in node.values.slice() {
++            self.context.declare_name(value.name.slice());
++        }
++        walk::walk_s_enum(self, node);
++    }
++
++    fn visit_s_namespace(&mut self, node: &'ast S::Namespace, _: Loc) {
++        self.context.declare(node.name.ref_);
++        walk::walk_s_namespace(self, node);
++    }
++
+     fn visit_s_switch(&mut self, node: &'ast S::Switch, loc: Loc) {
+         rules::no_duplicate_case::s_switch(&mut self.context, node);
+         rules::use_isnan::s_switch(&mut self.context, node, loc);
+@@ -150,7 +223,10 @@
+         walk::walk_e_class(self, node);
+     }
+ 
+-    fn visit_s_import(&mut self, node: &'ast S::Import, _: Loc) {
++    fn visit_s_import(&mut self, node: &'ast S::Import, loc: Loc) {
++        if let Ok(statement) = u32::try_from(loc.start) {
++            self.context.declare_type_only_names(statement);
++        }
+         // A macro import and `bun:bundle` are not in the tree, not even as `S::Empty`: nothing declares their names.
+         if let Some(name) = &node.default_name {
+             self.context.declare(name.ref_);
+--- a/src/lint/rules/no_compare_neg_zero.rs
++++ b/src/lint/rules/no_compare_neg_zero.rs
+@@ -12,17 +12,24 @@
+ };
+ 
+ /// `isNegZero`: a `-` before a number literal that is zero. The `0n` of `-0n` is a BigInt: ESLint's `=== 0` is false for it.
+-fn is_neg_zero(node: &Expr) -> bool {
++fn is_neg_zero(context: &Context<'_, '_>, node: &Expr) -> bool {
++    // A TypeScript node around the `-0` or around its `0` is what ESLint has there: `-0 as number` is no `-0`.
++    if context.ts_wrapper(node).is_some() {
++        return false;
++    }
+     let ExprData::EUnary(unary) = &node.data else {
+         return false;
+     };
+     unary.op == OpCode::UnNeg
++        && context.ts_wrapper(&unary.value).is_none()
+         && matches!(&unary.value.data, ExprData::ENumber(number) if number.value() == 0.0)
+ }
+ 
+ /// The `BinaryExpression` handler: one of `OPERATORS_TO_CHECK` with a `-0` on either side, reported once where the comparison starts.
+ pub(crate) fn e_binary(context: &mut Context<'_, '_>, node: &E::Binary, loc: Loc) {
+-    if !is_comparison(node.op) || !(is_neg_zero(&node.left) || is_neg_zero(&node.right)) {
++    if !is_comparison(node.op)
++        || !(is_neg_zero(context, &node.left) || is_neg_zero(context, &node.right))
++    {
+         return;
+     }
+     let start = context.binary_start(node, loc);
+--- a/src/lint/rules/no_dupe_class_members.rs
++++ b/src/lint/rules/no_dupe_class_members.rs
+@@ -36,43 +36,55 @@
+     }
+ }
+ 
++/// What `property` is to the rule. `None`: ESLint's handler does not see it, or its name is not known without running the program.
++fn member<'a>(context: &Context<'_, '_>, property: &'a G::Property) -> Option<Member<'a>> {
++    let (clashes, defines) = match property.kind {
++        // A field with `declare` is a field for ESLint.
++        G::PropertyKind::Normal | G::PropertyKind::Declare => (INIT | GET | SET, INIT),
++        G::PropertyKind::Get => (INIT | GET, GET),
++        G::PropertyKind::Set => (INIT | SET, SET),
++        // ESLint's rule visits methods and fields only: an auto-accessor, a static block and an abstract member are neither.
++        _ => return None,
++    };
++    // The rule of this name of typescript-eslint does not look at a member with a computed key.
++    if context.is_typescript() && property.flags.contains(Flag::IsComputed) {
++        return None;
++    }
++    let key = property.key.as_ref()?;
++    let name = ast_utils::get_static_key_name(context, property)?;
++    let is_static = property.flags.contains(Flag::IsStatic);
++    // Not static, not computed and named `constructor`: only the constructor parses so, and ESLint skips it.
++    if !is_static && !property.flags.contains(Flag::IsComputed) && name.bytes() == b"constructor" {
++        return None;
++    }
++    Some(Member {
++        name,
++        is_static,
++        clashes,
++        defines,
++        at: key.loc,
++    })
++}
++
+ /// `class` is one class, declared or in an expression. What ESLint keeps on a stack of classes is local here.
+ pub(crate) fn class(context: &mut Context<'_, '_>, class: &G::Class) {
+     let properties = class.properties.slice();
++    // The fields with `declare` leave no node: the side table has them, each with its place among the others. A method without a body is not there: ESLint skips it.
++    let declared: Vec<(u32, &G::Property)> = context.declared_fields(class).collect();
+     // One member repeats no name.
+-    if properties.len() < 2 {
++    if properties.len() + declared.len() < 2 {
+         return;
+     }
+-    let mut members: Vec<Member<'_>> = Vec::with_capacity(properties.len());
+-    for property in properties {
+-        let (clashes, defines) = match property.kind {
+-            G::PropertyKind::Normal => (INIT | GET | SET, INIT),
+-            G::PropertyKind::Get => (INIT | GET, GET),
+-            G::PropertyKind::Set => (INIT | SET, SET),
+-            // ESLint's rule visits methods and fields only: an auto-accessor and a static block are neither.
+-            _ => continue,
+-        };
+-        let Some(key) = &property.key else {
+-            continue;
+-        };
+-        let Some(name) = ast_utils::get_static_string_value(key) else {
+-            continue;
+-        };
+-        let is_static = property.flags.contains(Flag::IsStatic);
+-        // Not static, not computed and named `constructor`: only the constructor parses so, and ESLint skips it.
+-        if !is_static
+-            && !property.flags.contains(Flag::IsComputed)
+-            && name.bytes() == b"constructor"
+-        {
+-            continue;
++    let mut members: Vec<Member<'_>> = Vec::with_capacity(properties.len() + declared.len());
++    let mut declared = declared.into_iter().peekable();
++    for (index, property) in properties.iter().enumerate() {
++        while let Some((_, field)) = declared.next_if(|(before, _)| *before as usize <= index) {
++            members.extend(member(context, field));
+         }
+-        members.push(Member {
+-            name,
+-            is_static,
+-            clashes,
+-            defines,
+-            at: key.loc,
+-        });
++        members.extend(member(context, property));
++    }
++    for (_, field) in declared {
++        members.extend(member(context, field));
+     }
+     // A stable sort: the members of one name stay in the order they were written.
+     members.sort_by(|a, b| a.state_key().cmp(&b.state_key()));
+--- a/src/lint/rules/no_dupe_keys.rs
++++ b/src/lint/rules/no_dupe_keys.rs
+@@ -35,7 +35,7 @@
+         let Some(key) = &property.key else {
+             continue;
+         };
+-        let Some(name) = ast_utils::get_static_string_value(key) else {
++        let Some(name) = ast_utils::get_static_key_name(context, property) else {
+             continue;
+         };
+         // `__proto__: value` sets the prototype: it is not a key.
+--- a/src/lint/rules/no_duplicate_case.rs
++++ b/src/lint/rules/no_duplicate_case.rs
+@@ -21,16 +21,16 @@
+     }
+     // `previousTests`, each test as its key: what `equal` compares of it.
+     let mut previous_tests: BTreeSet<Vec<u8>> = BTreeSet::new();
+-    for case in cases {
++    for (index, case) in cases.iter().enumerate() {
+         let Some(test) = &case.value else {
+             continue;
+         };
+-        // A test whose text does not read has no key: it is not compared.
+-        let Some(key) = context.case_test(test) else {
++        // `equal`: the tokens of the two nodes. A test whose text does not read has no key: it is not compared.
++        let Some(key) = context.tokens_of(test) else {
+             continue;
+         };
+         if !previous_tests.insert(key) {
+-            let start = context.case_start(test);
++            let start = context.case_start(node, index);
+             context.report(&RULE, start, b"Duplicate case label.");
+         }
+     }
+--- a/src/lint/rules/no_self_assign.rs
++++ b/src/lint/rules/no_self_assign.rs
+@@ -1,7 +1,7 @@
+ //! Ported from ESLint lib/rules/no-self-assign.js, with its default: properties are checked.
+ 
+ use bun_ast::flags::Property as Flag;
+-use bun_ast::{E, Expr, ExprData, G, Loc, OpCode};
++use bun_ast::{E, Expr, ExprData, G, OpCode};
+ 
+ use crate::ast_utils::{self, is_same_reference};
+ use crate::context::Context;
+@@ -36,6 +36,14 @@
+         context.too_deep(right.loc);
+         return;
+     }
++    // A TypeScript node is no identifier, no pattern, no literal and no member: `a = a!` is no self-assignment for ESLint.
++    if context.ts_wrapper(left).is_some() || context.ts_wrapper(right).is_some() {
++        return;
++    }
++    // A literal in parentheses on the left is an expression for typescript-eslint, no pattern, and a syntax error for ESLint's parser.
++    if matches!(left.data, ExprData::EArray(_) | ExprData::EObject(_)) && context.is_wrapped(left) {
++        return;
++    }
+     match (&left.data, &right.data) {
+         (ExprData::EMissing(_), _) | (_, ExprData::EMissing(_)) => {}
+         (ExprData::EIdentifier(l), ExprData::EIdentifier(r)) => {
+@@ -88,14 +96,12 @@
+     {
+         return;
+     }
+-    let (Some(left_key), Some(right_key), Some(left_value), Some(right_value)) =
+-        (&left.key, &right.key, &left.value, &right.value)
+-    else {
++    let (Some(left_value), Some(right_value)) = (&left.value, &right.value) else {
+         return;
+     };
+     let same = match (
+-        ast_utils::get_static_string_value(left_key),
+-        ast_utils::get_static_string_value(right_key),
++        ast_utils::get_static_key_name(context, left),
++        ast_utils::get_static_key_name(context, right),
+     ) {
+         (Some(left), Some(right)) => left.bytes() == right.bytes(),
+         _ => false,
+@@ -105,30 +111,10 @@
+     }
+ }
+ 
+-/// Where ESTree starts `node`, how many `(` of it were not found before that, and where it ends.
+-fn range_of(context: &Context<'_, '_>, node: &Expr) -> Option<(Loc, u32, u32)> {
+-    match &node.data {
+-        ExprData::EIdentifier(_) => Some((node.loc, 0, context.token_end(node.loc)?)),
+-        ExprData::EDot(dot) => {
+-            let (start, missing) = context.start_of(node.loc, dot.name_loc, &[&dot.target])?;
+-            Some((start, missing, context.token_end(dot.name_loc)?))
+-        }
+-        ExprData::EIndex(index) => {
+-            let (start, missing) = context.start_of(node.loc, index.index.loc, &[&index.target])?;
+-            let end = if matches!(index.index.data, ExprData::EPrivateIdentifier(_)) {
+-                context.token_end(index.index.loc)?
+-            } else {
+-                context.close_bracket(&index.index)?.checked_add(1)?
+-            };
+-            Some((start, missing, end))
+-        }
+-        _ => None,
+-    }
+-}
+-
+ fn report(context: &mut Context<'_, '_>, node: &Expr) {
+-    // The name of a node is its text, which is not read where the stack ends the look for spans under the node.
+-    let Some((start, missing, end)) = range_of(context, node) else {
++    // The name of a node is its text, from where it starts to where it ends: the end is not known where the stack ends the look for it.
++    let start = context.node_start(node);
++    let Some(end) = context.node_end(node) else {
+         context.too_deep(node.loc);
+         return;
+     };
+@@ -138,8 +124,7 @@
+     else {
+         return;
+     };
+-    // A `(` of the node that the look-back did not reach: the name has it all the same.
+-    let mut name = vec![b'('; missing as usize];
++    let mut name = Vec::new();
+     without_white_space(source, &mut name);
+     context.report(
+         &RULE,
+--- a/src/lint/rules/no_unsafe_negation.rs
++++ b/src/lint/rules/no_unsafe_negation.rs
+@@ -1,6 +1,6 @@
+ //! Ported from ESLint lib/rules/no-unsafe-negation.js, with its default: `<`, `>`, `<=`, `>=` are not checked.
+ 
+-use bun_ast::{E, ExprData, Loc, OpCode};
++use bun_ast::{E, ExprData, OpCode};
+ 
+ use crate::context::Context;
+ use crate::rule::{Rule, RuleCategory};
+@@ -22,12 +22,12 @@
+     if unary.op != OpCode::UnNot {
+         return;
+     }
+-    // `astUtils.isParenthesised`, from the tokens: the tree does not say whether a `!` stands in parentheses. In `(!a) in b` a `)` before the right operand closes a `(` from before the `!`.
+-    let after_not = Loc {
+-        start: node.left.loc.start.saturating_add(1),
+-    };
+-    // The spans of both operands: the scan ends at the `loc` of the right one, and the decorators of a class stand before its `loc`. Text that does not read is not reported.
+-    if context.closes(after_not, node.right.loc, &[&unary.value, &node.right]) != Some(0) {
++    // A TypeScript node around the `!` is the left operand for ESLint: `!a as any in b` has no negation there.
++    if context.ts_wrapper(&node.left).is_some() {
++        return;
++    }
++    // `astUtils.isParenthesised`: `(!a) in b` is what the rule asks for.
++    if context.paren_count(&node.left) > 0 {
+         return;
+     }
+     let operator = bun_ast::Op::TABLE.get_ptr_const(node.op).text;
+--- a/src/lint/rules/use_isnan.rs
++++ b/src/lint/rules/use_isnan.rs
+@@ -14,8 +14,17 @@
+ 
+ /// `isNaNIdentifier`: the global that makes `expr` a NaN, as `NaN`, `Number.NaN` or the last of a sequence that is one.
+ fn nan(context: &Context<'_, '_>, expr: &Expr) -> Globals {
++    // A TypeScript node is no sequence, no identifier and no member: `NaN as number` and `Number!.NaN` are no NaN for ESLint.
++    if context.ts_wrapper(expr).is_some() {
++        return Globals::NONE;
++    }
+     let expr = match &expr.data {
+-        ExprData::EBinary(binary) if binary.op == OpCode::BinComma => &binary.right,
++        ExprData::EBinary(binary) if binary.op == OpCode::BinComma => {
++            if context.ts_wrapper(&binary.right).is_some() {
++                return Globals::NONE;
++            }
++            &binary.right
++        }
+         _ => expr,
+     };
+     let target = match &expr.data {
+@@ -33,8 +42,12 @@
+     let ExprData::EIdentifier(object) = &target.data else {
+         return Globals::NONE;
+     };
++    if context.ts_wrapper(target).is_some() {
++        return Globals::NONE;
++    }
+     if context.name_of(object.ref_) == b"Number"
+-        && ast_utils::get_static_property_name(expr).is_some_and(|name| name.bytes() == b"NaN")
++        && ast_utils::get_static_property_name(context, expr)
++            .is_some_and(|name| name.bytes() == b"NaN")
+     {
+         return Globals::NUMBER;
+     }
+@@ -70,7 +83,7 @@
+             names,
+         );
+     }
+-    for case in node.cases.slice() {
++    for (index, case) in node.cases.slice().iter().enumerate() {
+         let Some(value) = &case.value else {
+             continue;
+         };
+@@ -78,7 +91,7 @@
+         if names.is_none() {
+             continue;
+         }
+-        let start = context.case_start(value);
++        let start = context.case_start(node, index);
+         context.report_if_global(
+             &RULE,
+             start,
+--- a/src/lint/rules/valid_typeof.rs
++++ b/src/lint/rules/valid_typeof.rs
+@@ -12,9 +12,10 @@
+     category: RuleCategory::Correctness,
+ };
+ 
+-/// `isTypeofExpression`.
+-fn is_typeof_expression(node: &Expr) -> bool {
++/// `isTypeofExpression`, for an operand of the comparison: a `typeof` in a TypeScript node has that node as its parent.
++fn is_typeof_expression(context: &Context<'_, '_>, node: &Expr) -> bool {
+     matches!(&node.data, ExprData::EUnary(unary) if unary.op == OpCode::UnTypeof)
++        && context.ts_wrapper(node).is_none()
+ }
+ 
+ /// `VALID_TYPES`: the strings that `typeof` gives.
+@@ -37,16 +38,20 @@
+     if !is_equality(node.op) {
+         return;
+     }
+-    if is_typeof_expression(&node.left) {
++    if is_typeof_expression(context, &node.left) {
+         check_sibling(context, &node.right);
+     }
+-    if is_typeof_expression(&node.right) {
++    if is_typeof_expression(context, &node.right) {
+         check_sibling(context, &node.left);
+     }
+ }
+ 
+ /// What a `typeof` is compared with: a literal that is no type name is reported, and an `undefined` that is the global.
+ fn check_sibling(context: &mut Context<'_, '_>, sibling: &Expr) {
++    // A TypeScript node is no literal and no identifier.
++    if context.ts_wrapper(sibling).is_some() {
++        return;
++    }
+     let names = match &sibling.data {
+         // A template without a substitution is a string in Bun's tree: `isStaticTemplateLiteral` is this arm too.
+         ExprData::EString(_) => {

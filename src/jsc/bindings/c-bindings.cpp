@@ -689,12 +689,10 @@ extern "C" int32_t bun_is_stdio_null[3] = { 0, 0, 0 };
 static void (*quickExitHandlers[32])(void);
 static size_t quickExitHandlerCount = 0;
 
-static int Bun__at_quick_exit(void (*handler)(void))
+static void Bun__at_quick_exit(void (*handler)(void))
 {
-    if (quickExitHandlerCount == std::size(quickExitHandlers))
-        return -1;
+    RELEASE_ASSERT(quickExitHandlerCount < std::size(quickExitHandlers));
     quickExitHandlers[quickExitHandlerCount++] = handler;
-    return 0;
 }
 
 extern "C" [[noreturn]] void Bun__quick_exit(int code)

@@ -613,6 +613,19 @@ pub fn cached_github_folder_name_print_auto(
     ZStr::EMPTY
 }
 
+/// A folder name shows the host only when it is a plain name. The hash after it is the identity.
+fn folder_name_host(hostname: &[u8]) -> &[u8] {
+    let shown = &hostname[..hostname.len().min(32)];
+    if shown
+        .iter()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-'))
+    {
+        shown
+    } else {
+        b""
+    }
+}
+
 /// `<registry>/<name>/-/…`, the layout `ExtractTarball::build_url` writes. A
 /// registry nested under `registry` has more path before `<name>` and does not match.
 fn is_package_tarball_on_registry(url: &[u8], registry: &[u8], name: &[u8]) -> bool {
@@ -673,7 +686,7 @@ pub fn cached_npm_package_folder_name_print<'a>(
         at: spanned_len,
     };
     w.put(b"@@");
-    w.put(&hostname[..hostname.len().min(32)]);
+    w.put(folder_name_host(hostname));
     w.put(b"__");
     w.put_u64_hex16::<true>(hash);
     w.put_cache_version(Some(CacheVersion::CURRENT));

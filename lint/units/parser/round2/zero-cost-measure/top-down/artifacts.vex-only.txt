@@ -1,0 +1,6 @@
+symbols whose Bc differs between base and head ONLY when VEX joins jump pairs (default); with --vex-guest-chase=no the difference is +0 in all five groups
+   bun-types typescript-lib       src-js          tsx   js-control  symbol
+          +0           +0      +164440       +22000           +0  <P<true, false>>::s_local
+          +0           +0           +0           +0      +127020  <P<false, false>>::s_local
+        +300           +0         +540        +4000           +0  <P<false, false>>::parse_path
+          +0           +0           +0           +0         +100  <visit::visit_binary::BinaryExpressionVisitor>::visit_right_and_finish::<false, false>

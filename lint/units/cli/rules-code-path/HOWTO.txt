@@ -21,6 +21,8 @@ tokens-check.cjs       The forward reads of tokens that give a place where the t
                        `case` and `default`), the `:` of a clause.  node tokens-check.cjs [--cases corpus.json] [--files list.txt]
 comment-matcher.cjs    `isFallThroughComment` without a regular expression, on UTF-8 bytes, against ESLint's two patterns on
                        random texts; writes answers/fallthrough-comment-table.json (120 texts with ESLint's answer, for a test).
+member-start-check.cjs The read back from the key of a class member over blanks for the words before it (what the lint
+                       side does until a lint parse has a reader for the start of a member), against ESLint's node.
 probe-eslint.cjs       node probe-eslint.cjs [--ext ts] [--rules a,b] -e "src" ...   what ESLint reports.
 cases/make.cjs         -> cases/{edge,ts}-{no-fallthrough,constructor-super,no-this-before-super}.json and answers/*.jsonl
                        (ESLint's answers). cases/edge-getter-return.json: 65 more cases beside the lists of
@@ -73,3 +75,5 @@ Results (2026-10-01):
   What the probe showed that reading had not: a `;` statement has no place (`Stmt::empty()`, loc -1): a read of the text
   cannot start at it. probe/src/main.rs has the fix (`placed_tail`) and the `-->` arm of the comment scan; that text is
   NOT built yet (the second build waited for the lock when this was written: /tmp/rcp-1a/build2.done says whether it ran).
+  member-start-check.cjs: ESLint's rule tests: constructors 580/580, getters 601/745 (every miss has a decorator before
+  the member); 1,734 TypeScript files: getters 420/420, constructors 192/192.

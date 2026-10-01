@@ -359,10 +359,52 @@ and 17030-17130, `c33` 18960-19405 and 19612-19918, `c34` 20240-20564 and 20649-
 
 ## Lowering of Bun's parse (`lowering`, no upstream file of its own)
 
-Commit `9684ef6a7d`. Not compiled by cargo (`lib.rs` does not declare `lowering`). `tested` means: compiled with
-`rustc` alone from a scratch root and compared with trees of typescript-go (API.md, "Lowering", "Verified"). Each
-function reads the tokens of the function of `internal/parser/parser.go` that its comment names; the grammar
-decisions are Bun's, so these rows are not a port of the parser.
+Commit `9684ef6a7d`: the seven files of `lowering/` (`mod.rs`, `declarations.rs`, `expressions.rs`, `modules.rs`,
+`statements.rs`, `type_arguments.rs`, `tests.rs`) and `testdata/`, unchanged since. `tested` in the rows below means:
+compiled with `rustc` alone from a scratch root and compared there with trees of typescript-go (API.md, "Lowering",
+"Verified"): no test of the directory has run through cargo. Each function reads the tokens of the function of
+`internal/parser/parser.go` that its comment names; the grammar decisions are Bun's, so these rows are not a port of
+the parser.
+
+Layer 5 of round 2 declares the directory: the line `pub mod lowering;` of `lib.rs`, the line
+`bun_ast.workspace = true` of `src/typecheck/Cargo.toml` and the line `"bun_ast",` of the entry of `bun_typecheck` in
+`Cargo.lock` are `5d5a6e614a` (written by the job that commits the worktree, under its message "typecheck: compile the
+port, work in progress"; the commit holds these three lines and nothing else). `lowering/mod.rs` declares the other six
+files, `tests.rs` under `#[cfg(test)]`. The six files that `cargo check` compiles (4,006 lines) name
+`crate::{ast, core, diagnostics, scanner}`, `bun_core::StackCheck`, `std` and `bun_ast`: five `use` lines (`mod.rs` 18,
+`declarations.rs` 6, `expressions.rs` 9, `modules.rs` 5, `statements.rs` 6) and `bun_ast::flags::{Function, Property}`
+by path at nine places. `bun_ast` was the one thing the crate did not have: no file of layers 1 to 4 changed for this
+directory. The line of `Cargo.lock` was written by hand and not by cargo, at the place where cargo sorts it (before
+`"bun_collections"`); the lock held `bun_ast` and every crate under it already, since it is a member of the workspace.
+No cargo command was run on the lock when the line was written. No `cargo check`, no `cargo clippy` and no `cargo test`
+was run with that commit: the survey that follows it is the first cargo compile of the six files in the real crate and
+the first build of `bun_ast` in the target directory of this worktree (19 crates that it has not built: `bun_ast`,
+`bun_sys`, `bun_paths`, `bun_perf`, `bun_errno`, `bun_libuv_sys`, `bun_windows_sys` and 12 of crates.io), and until
+that run passes the real crate has the six files declared and not compiled. What was checked before:
+
+- The look-ahead of the round-6 survey (`/tmp/rdr-sweep-r6.log`; `rustc` alone from a scratch root in `/tmp`: the ten
+  `pub mod` lines of `lib.rs` at `6f844a8b93` and `pub mod lowering;`, every file read in place, `--extern` for
+  `bun_core`, `bun_collections` and `bun_ast` and for no other crate, the rust lints of the workspace denied, against
+  the `.rmeta` files that the worktree of the cli unit had built, since this worktree had no `bun_ast`): exit 0, no
+  warning. The same with `pub mod importer;` as well, which is the set of modules that `lib.rs` has at `5d5a6e614a`:
+  exit 0, no warning. The same without `bun_ast`: 14 errors, each of them the unresolved crate at one of the 14 places
+  above. Compared again when the line was written: `src/ast` and nine directories of path crates under it (`bun_core`,
+  `collections`, `bun_alloc`, `sys`, `paths`, `perf`, `ptr`, `dispatch`, `wyhash`) have the same git tree in both
+  worktrees. The survey's log says so for all 20 path crates of the closure.
+- `rustfmt --check --edition 2024 src/typecheck/lowering/mod.rs`, which follows every `mod` line of the directory, the
+  `#[cfg(test)]` one too: exit 0. The same on `lib.rs` with the new line, which follows every `mod` line of the crate:
+  exit 0.
+- `python3 /workspace/notes/lint/tools/undeclared.py src/typecheck` on the tree of `5d5a6e614a`: 94 of 179 files are
+  reached, and no file of `lowering/` is outside (the 85 files of the seven directories of layers 6 and 7 are).
+- The six files have no `unsafe`, `unwrap()`, `panic!`, `todo!`, `unimplemented!`, `unreachable!` and no `allow(`.
+  Every `expect(` in them is `Lowerer::expect(kind)`, a function of `lowering/mod.rs` that answers `Err` with
+  `OutOfStep`. None of the seven files has a run of two comment lines.
+- Not run on these bytes in the real crate: clippy (the scratch root had it clean at `9684ef6a7d`, API.md).
+  `cargo check` does not compile `lowering/tests.rs` (567 lines, `#[cfg(test)]`). That file names `bun_js_parser` and
+  `bun_alloc` (lines 49 to 59), which `src/typecheck/Cargo.toml` does not have: since the line of `lib.rs`,
+  `cargo test -p bun_typecheck` cannot compile the tests of the crate until the two are dev-dependencies, and a test
+  binary needs the native stand-ins that API.md names ("Lowering", "What the crate needs for this module"). No
+  compiler has seen `tests.rs` beside the `ast` and the `scanner` of today, so whether it still compiles is not known.
 
 | upstream functions of `parser/parser.go` that the module follows | Rust module under `src/typecheck/` | state | not done |
 | --- | --- | --- | --- |

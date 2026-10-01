@@ -1,0 +1,44 @@
+{"code":"var o = { a: f<A, B>(x), get b() {} };","ext":"ts","eslint":[{"rule":"getter-return","line":1,"column":26,"message":"Expected to return a value in getter 'b'."}]}
+{"code":"var o = { a: x as Map<K, V>, get b() {} };","ext":"ts","eslint":[{"rule":"getter-return","line":1,"column":30,"message":"Expected to return a value in getter 'b'."}]}
+{"code":"var o = { a: <Map<K, V>>x, get b() {} };","ext":"ts","eslint":[{"rule":"getter-return","line":1,"column":28,"message":"Expected to return a value in getter 'b'."}]}
+{"code":"var o = { m<T, U>(a: T, b: U) {}, get b() {} };","ext":"ts","eslint":[{"rule":"getter-return","line":1,"column":35,"message":"Expected to return a value in getter 'b'."}]}
+{"code":"var o = { a: (x: Map<K, V>, y: [A, B]) => 1, get [k as string]() {} };","ext":"ts","eslint":[{"rule":"getter-return","line":1,"column":46,"message":"Expected to return a value in getter."}]}
+{"code":"var o = { a: new Map<K, V>(), get 'b'(): number {} };","ext":"ts","eslint":[{"rule":"getter-return","line":1,"column":31,"message":"Expected to return a value in getter 'b'."}]}
+{"code":"var o = { a: x satisfies Record<K, V>, /* c */ get /* d */ b() {} };","ext":"ts","eslint":[{"rule":"getter-return","line":1,"column":48,"message":"Expected to return a value in getter 'b'."}]}
+{"code":"var o = { a: `t${f<A, B>(x)}`, get b() {}, c: 1, get d() {} };","ext":"ts","eslint":[{"rule":"getter-return","line":1,"column":32,"message":"Expected to return a value in getter 'b'."},{"rule":"getter-return","line":1,"column":50,"message":"Expected to return a value in getter 'd'."}]}
+{"code":"var o = { a: x! , get b(this: X) {} };","ext":"ts","eslint":[{"rule":"getter-return","line":1,"column":19,"message":"Expected to return a value in getter 'b'."}]}
+{"code":"var o = { ...(x as Y<A, B>), get b() {} };","ext":"ts","eslint":[{"rule":"getter-return","line":1,"column":30,"message":"Expected to return a value in getter 'b'."}]}
+{"code":"var o = { a: function <T, U>(this: T, u: U) {}, b: class<T, U> {}, get c() {} };","ext":"ts","eslint":[{"rule":"getter-return","line":1,"column":68,"message":"Expected to return a value in getter 'c'."}]}
+{"code":"var o = { a: x < y, b: z > (w), get c() {} };","ext":"ts","eslint":[{"rule":"getter-return","line":1,"column":33,"message":"Expected to return a value in getter 'c'."}]}
+{"code":"Object.defineProperty(o, 'k', { value: x as Map<K, V>, get: function (): Map<K, V> {} });","ext":"ts","eslint":[{"rule":"getter-return","line":1,"column":56,"message":"Expected to return a value in method 'get'."}]}
+{"code":"Object.defineProperty(o, 'k', { enumerable: f<A, B>(1), async get<T, U>() {} });","ext":"ts","eslint":[{"rule":"getter-return","line":1,"column":57,"message":"Expected to return a value in async method 'get'."}]}
+{"code":"Object.defineProperties(o, { k: { writable: <A, B>(a: A, b: B) => a, *get() {} } });","ext":"ts","eslint":[{"rule":"getter-return","line":1,"column":70,"message":"Expected to return a value in generator method 'get'."}]}
+{"code":"var o = { a: <div<T, U> x={1}>{y}</div>, get b() {} };","ext":"tsx","eslint":[{"rule":"getter-return","line":1,"column":42,"message":"Expected to return a value in getter 'b'."}]}
+{"code":"class A { get a(): number {} static get b(): Map<K, V> {} get #c() {} get [d]() {} }","ext":"ts","eslint":[{"rule":"getter-return","line":1,"column":11,"message":"Expected to return a value in getter 'a'."},{"rule":"getter-return","line":1,"column":30,"message":"Expected to return a value in static getter 'b'."},{"rule":"getter-return","line":1,"column":59,"message":"Expected to return a value in private getter #c."},{"rule":"getter-return","line":1,"column":71,"message":"Expected to return a value in getter."}]}
+{"code":"class A { @dec get a() {} @dec() static get b() {} public static get c() {} private get d(): number {} protected static override get e() {} }","ext":"ts","eslint":[{"rule":"getter-return","line":1,"column":11,"message":"Expected to return a value in getter 'a'."},{"rule":"getter-return","line":1,"column":27,"message":"Expected to return a value in static getter 'b'."},{"rule":"getter-return","line":1,"column":52,"message":"Expected to return a value in static getter 'c'."},{"rule":"getter-return","line":1,"column":77,"message":"Expected to return a value in getter 'd'."},{"rule":"getter-return","line":1,"column":104,"message":"Expected to return a value in static getter 'e'."}]}
+{"code":"abstract class A { abstract get a(): number; get b() {} }","ext":"ts","eslint":[{"rule":"getter-return","line":1,"column":46,"message":"Expected to return a value in getter 'b'."}]}
+{"code":"declare class A { get a(): number; }","ext":"ts","eslint":[]}
+{"code":"class A { get a(): number; get a() {} }","ext":"ts","eslint":[{"rule":"getter-return","line":1,"column":28,"message":"Expected to return a value in getter 'a'."}]}
+{"code":"interface I { get a(): number } type T = { get a(): number }","ext":"ts","eslint":[]}
+{"code":"Object.defineProperty(o, 'k', { get() {} } as PropertyDescriptor);","ext":"ts","eslint":[]}
+{"code":"Object.defineProperty(o, 'k', <PropertyDescriptor>{ get() {} });","ext":"ts","eslint":[]}
+{"code":"Object.defineProperty(o, 'k', { get() {} } satisfies PropertyDescriptor);","ext":"ts","eslint":[]}
+{"code":"Object.defineProperty(o, 'k', { get() {} }!);","ext":"ts","eslint":[]}
+{"code":"Object.defineProperty(o, 'k', ({ get() {} }));","ext":"ts","eslint":[{"rule":"getter-return","line":1,"column":34,"message":"Expected to return a value in method 'get'."}]}
+{"code":"(Object as any).defineProperty(o, 'k', { get() {} });","ext":"ts","eslint":[]}
+{"code":"Object!.defineProperty(o, 'k', { get() {} });","ext":"ts","eslint":[]}
+{"code":"Object.defineProperty!(o, 'k', { get() {} });","ext":"ts","eslint":[]}
+{"code":"(Object.defineProperty as any)(o, 'k', { get() {} });","ext":"ts","eslint":[]}
+{"code":"Object.defineProperty<T>(o, 'k', { get() {} });","ext":"ts","eslint":[{"rule":"getter-return","line":1,"column":36,"message":"Expected to return a value in method 'get'."}]}
+{"code":"Object['defineProperty' as string](o, 'k', { get() {} });","ext":"ts","eslint":[]}
+{"code":"Object.defineProperty(o, 'k', { get: function () {} as any });","ext":"ts","eslint":[]}
+{"code":"Object.defineProperty(o, 'k', { get: (() => {}) as any });","ext":"ts","eslint":[]}
+{"code":"Object.defineProperty(o, 'k', { get: function (): number {} });","ext":"ts","eslint":[{"rule":"getter-return","line":1,"column":33,"message":"Expected to return a value in method 'get'."}]}
+{"code":"Object.defineProperty(o, 'k', { get: (): number => {} });","ext":"ts","eslint":[{"rule":"getter-return","line":1,"column":33,"message":"Expected to return a value in method 'get'."}]}
+{"code":"Object.defineProperty(o, 'k', { ['get' as string]() {} });","ext":"ts","eslint":[]}
+{"code":"Object.defineProperties(o, { k: { get() {} } as PropertyDescriptor });","ext":"ts","eslint":[]}
+{"code":"Object.defineProperties(o, { k: { get() {} } } as PropertyDescriptorMap);","ext":"ts","eslint":[]}
+{"code":"Object.defineProperties(o, { k: ({ get() {} }) });","ext":"ts","eslint":[{"rule":"getter-return","line":1,"column":36,"message":"Expected to return a value in method 'get'."}]}
+{"code":"Object.create(null, { k: { get(this: X) {} } });","ext":"ts","eslint":[{"rule":"getter-return","line":1,"column":28,"message":"Expected to return a value in method 'get'."}]}
+{"code":"var o = { get [function () {} as any]() { return 1; } };","ext":"ts","eslint":[]}
+{"code":"class A { get a() { return; } get b() { return undefined as any; } get c() { if (x) return 1 as number; } }","ext":"ts","eslint":[{"rule":"getter-return","line":1,"column":21,"message":"Expected to return a value in getter 'a'."},{"rule":"getter-return","line":1,"column":68,"message":"Expected getter 'c' to always return a value."}]}

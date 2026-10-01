@@ -535,7 +535,9 @@ Commit `9684ef6a7d`. `src/typecheck/lowering/`: `mod.rs` (entry, tokens, source 
 `statements.rs`, `expressions.rs`, `declarations.rs` (functions, classes, parameters, binding patterns), `modules.rs`
 (imports, exports), `type_arguments.rs`, `tests.rs`, `testdata/` (25 inputs, each with the tree of typescript-go).
 It reads `bun_ast` and writes nothing to it: no `Ref`, `Symbol` or `Scope` is touched, and nothing in
-`src/js_parser`, `src/ast` or `src/runtime` changed. NOT wired: `lib.rs` has no `pub mod lowering;`.
+`src/js_parser`, `src/ast` or `src/runtime` changed. `lib.rs` declares the module since `5d5a6e614a`
+(`pub mod lowering;`, with `bun_ast` in `Cargo.toml`). No file of the tree calls `lower_source_file` but
+`lowering/tests.rs`.
 
 ### Entry
 
@@ -618,8 +620,10 @@ typescript-go reads the tokens another way than Bun. `StackLimit`: `bun_core::St
 
 ### Verified
 
-Not built by cargo (no `pub mod lowering;`, and `crate::diagnostics`, `crate::internal`, `crate::ast::Arg` are not
-in the tree). Compiled with `rustc` alone from a scratch root outside the repository: `ast`, `collections`, `core`,
+Not built by cargo at that commit: its `lib.rs` had no `pub mod lowering;`, and `crate::diagnostics`,
+`crate::internal`, `crate::ast::Arg` were not in the tree. `5d5a6e614a` declares the module: PORT_STATUS.md, "Lowering
+of Bun's parse", says what was checked with that commit and what was not, and that the tests have not run in the real
+crate. Compiled with `rustc` alone from a scratch root outside the repository: `ast`, `collections`, `core`,
 `jsnum`, `scanner`, `stringutil`, `tspath`, `lowering` with stand-ins for the three missing names, against the
 `bun_ast`, `bun_core`, `bun_alloc`, `bun_js_parser` of this worktree (the rlibs of the parse-only probe,
 `oracle-toolchain-and-goldens/bottom-up/bunprobe.sh`). Clean with `-D warnings -D dead_code -D unreachable_pub`,
@@ -646,11 +650,15 @@ different: JSDoc in 459 of them, and the same 2. No panic, and the deepest input
 - `lib.rs`: `pub mod lowering;`. `Cargo.toml`: `bun_ast` and `bun_core` (`StackCheck`) as dependencies;
   `bun_js_parser` and `bun_alloc` as dev-dependencies for `lowering/tests.rs`, and the native stand-ins of
   `src/parsers/native_test_shims.rs` plus the mimalloc ones of `bunprobe/src/shims.rs` to link a test binary.
+  The crate has the line of `lib.rs` and `bun_ast` since `5d5a6e614a`, and `bun_core` since `a8b48548a6`. It has
+  neither dev-dependency and no stand-in: `cargo test -p bun_typecheck` cannot compile `lowering/tests.rs`, which
+  names the two crates, and with it no test of the crate, until they are there.
 - `crate::diagnostics`: `MessageId` and the constants `KEYWORDS_CANNOT_CONTAIN_ESCAPE_CHARACTERS`,
   `IDENTIFIER_EXPECTED`, `AN_OPTIONAL_CHAIN_CANNOT_CONTAIN_PRIVATE_IDENTIFIERS`,
   `IMPORT_ASSERTIONS_HAVE_BEEN_REPLACED_BY_IMPORT_ATTRIBUTES_USE_WITH_INSTEAD_OF_ASSERT`; the tests also name
   `OCTAL_LITERALS_ARE_NOT_ALLOWED_USE_THE_SYNTAX_0` and `DECIMALS_WITH_LEADING_ZEROS_ARE_NOT_ALLOWED`.
-  `crate::ast::Arg` with `Str`, `Int`, `Bool`, as the scanner uses it.
+  `crate::ast::Arg` with `Str`, `Int`, `Bool`, as the scanner uses it. The tree has all of them since layers 2 and 3
+  of round 2 (`diagnostics/mod.rs`, `diagnostics/diagnostics_generated.rs`, `ast/diagnostic.rs`).
 - `lowering::ParseDiagnostic` and `importer::javascript::ParseDiagnostic` are two types with the same first three
   fields: one of them can go when a diagnostic type of `ast` exists.
 - A golden is made with `/tmp/rr/dumpast -nojsdoc <out dir> <name>=<path>` (or `tsgoprobe tree -nojsdoc`), the
@@ -790,7 +798,9 @@ Measured on the 1,276 JavaScript units of the conformance corpus (goldens: upstr
 
 ### Verified
 
-Nothing was built with cargo or `bun bd`: `lib.rs` does not declare the modules. The files were compiled in place
+Nothing was built with cargo or `bun bd` at that commit: its `lib.rs` did not declare the modules (`ebb836b39f`
+declares `importer`; PORT_STATUS.md, "Parser pieces for JavaScript trees", says what has compiled the files in the
+real crate since, and that the tests have not run there). The files were compiled in place
 with `rustc` alone from a scratch root (`jsdoc-reparser-js-trees/port/scratch`: the node table files of the
 worktree by path, stand-ins for `core`, `internal`, `tspath`, `diagnostics`, five scanner functions, `ast.rs` and
 `utilities.rs`; `stringutil` of the worktree), with the `deny` set of the workspace, then with `clippy-driver`, the
@@ -812,9 +822,11 @@ workspace lint flags and `clippy.toml` (library and tests), and `rustfmt --check
   reparsed clones: 1,249 of 1,251. External module indicator: 1,251 of 1,251 (one unit has a reparsed overload
   signature as indicator). No internal diagnostic of the builder in any unit.
 
-### What these files expect and the tree does not have
+### What these files expect
 
-- `lib.rs`: `pub mod importer;` (and `ast`, `core`, `diagnostics`, `internal`, `scanner`, `stringutil`).
+The tree did not have the first four when the files came in. It has them now (layers 1 to 5 of round 2):
+
+- `lib.rs`: `pub mod importer;` (`ebb836b39f`) and `ast`, `core`, `diagnostics`, `internal`, `scanner`, `stringutil`.
 - `crate::diagnostics`: `MessageId` (with `Clone`, `Debug`, `PartialEq`, `Eq`) and the 18 constants `IDENTIFIER_EXPECTED`,
   `DECORATORS_ARE_NOT_VALID_HERE`, `DECORATOR_USED_BEFORE_EXPORT_HERE`,
   `DECORATORS_MAY_NOT_APPEAR_AFTER_EXPORT_OR_EXPORT_DEFAULT_IF_THEY_ALSO_APPEAR_BEFORE_EXPORT`,
@@ -827,6 +839,9 @@ workspace lint flags and `clippy.toml` (library and tests), and `rustfmt --check
 - `crate::internal::{Fault, FaultKind}` with `FaultKind::Panic` and `FaultKind::StackLimit`, as `ast/` uses them.
 - `crate::scanner::{is_valid_identifier, is_identifier_start, is_identifier_part, skip_trivia, token_to_string}`
   from a `scanner/mod.rs` that re-exports `scanner.rs`.
+
+The tree does not have:
+
 - The reader of the dump (the rest of `importer/`) and the dump script in `test/cli/lint/typecheck/`: nothing calls
   `convert_javascript_file` yet. The reader also has to run `collectExternalModuleReferences` after the step: the
   module specifiers of `JSImportDeclaration` nodes are imports of the file (24 units).

@@ -21,7 +21,8 @@ class FakeRuleTester {
 	defineRule() {}
 	run(name, rule, tests) { runs.push({ name, config: this.config, tests }); }
 }
-const noFormat = (raw, ...keys) => String.raw({ raw: raw.raw || raw }, ...keys);
+// The cooked strings stand in as the raw ones, as in packages/rule-tester/src/noFormat.ts.
+const noFormat = (raw, ...keys) => String.raw({ raw }, ...keys);
 const fakeRequire = request => {
 	if (request === "@typescript-eslint/rule-tester") return { RuleTester: FakeRuleTester, noFormat };
 	if (/src\/rules\//.test(request)) return { default: {} };

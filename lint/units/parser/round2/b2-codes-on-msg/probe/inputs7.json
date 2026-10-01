@@ -1,0 +1,30 @@
+[
+ [
+  "ts",
+  "import * ass x from 'y'"
+ ],
+ [
+  "ts",
+  "export * as x frm 'y'"
+ ],
+ [
+  "ts",
+  "import x frm 'y'"
+ ],
+ [
+  "ts",
+  "async function f() { for await (x in y) {} }"
+ ],
+ [
+  "ts",
+  "import {a} frm 'y'"
+ ],
+ [
+  "ts",
+  "export {a} frm 'y'"
+ ],
+ [
+  "ts",
+  "import type {a} frm 'y'"
+ ]
+]

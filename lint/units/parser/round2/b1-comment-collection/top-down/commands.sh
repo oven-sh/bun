@@ -1,5 +1,8 @@
 #!/bin/sh
 # Probes of the research on the comment list of a lint parse (round 2, B1, the list). Nothing is written into the worktree.
+# apply-prototype.py is the second version of the edits (a byte `every_comment` beside `track_comments`, the JSX arms hand
+# over to a cold copy). v1-enum/ is the first (an enum in place of the bool, a cold push called inside the loop): the same
+# lists, but a parse without lint pays for it (v1-enum/cg/ against cg/; measure.sh made both).
 # Tree: /workspace/wt/parser at be1ebe5295. tsc 6.0.2 from /workspace/wt/parser/node_modules/typescript.
 # The scratch test binaries need the target directory that `cargo test -p bun_js_parser --lib` left in the worktree.
 set -e

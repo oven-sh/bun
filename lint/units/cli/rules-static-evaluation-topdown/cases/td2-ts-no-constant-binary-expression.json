@@ -1,0 +1,74 @@
+[
+ {
+  "code": "@(undefined && a) class A {}",
+  "ext": "ts"
+ },
+ {
+  "code": "@(new Map() === a) class A {}",
+  "ext": "ts"
+ },
+ {
+  "code": "declare class Map<K, V> {} x = new Map() === y",
+  "ext": "ts"
+ },
+ {
+  "code": "x = new Map<any, any>() === y",
+  "ext": "ts"
+ },
+ {
+  "code": "x = new (Map<any, any>)() === y",
+  "ext": "ts"
+ },
+ {
+  "code": "x = new Map!() === y",
+  "ext": "ts"
+ },
+ {
+  "code": "x = (undefined<any>) ?? y",
+  "ext": "ts"
+ },
+ {
+  "code": "x = undefined! ?? y",
+  "ext": "ts"
+ },
+ {
+  "code": "x = (undefined as any) === null",
+  "ext": "ts"
+ },
+ {
+  "code": "x = null === undefined!",
+  "ext": "ts"
+ },
+ {
+  "code": "x = ({} as any) === undefined",
+  "ext": "ts"
+ },
+ {
+  "code": "x = {}! === undefined",
+  "ext": "ts"
+ },
+ {
+  "code": "x = <any>{} === undefined",
+  "ext": "ts"
+ },
+ {
+  "code": "x = (true as any) && y",
+  "ext": "ts"
+ },
+ {
+  "code": "x = true! && y",
+  "ext": "ts"
+ },
+ {
+  "code": "x = (true) && y",
+  "ext": "ts"
+ },
+ {
+  "code": "x = ((true)) && y",
+  "ext": "ts"
+ },
+ {
+  "code": "x = (a as any, true) && y",
+  "ext": "ts"
+ }
+]

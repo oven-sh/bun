@@ -64,3 +64,14 @@ InterfaceDeclaration[162,185) name[172,173) typeParameters[173,176) members[178,
 # comment-before-type-parameters: "type A /* c */ <T> = T;\ninterface B // d\n<U> { u: U }\n"
 TypeAliasDeclaration[0,23) name[5,6) typeParameters[15,18) TypeReference[21,22)
 InterfaceDeclaration[24,53) name[34,35) typeParameters[41,44) members[46,51) PropertySignature[47,51) name[47,48) TypeReference[50,51)
+# export-type-forms: "export type { A };\nexport type * from 'm';\nexport type * as N from 'n';\nexport type T = A;\nexport interface U { a: T }\nexport declare type V = 1;\n"
+TypeAliasDeclaration[72,90) name[84,85) TypeReference[88,89)
+InterfaceDeclaration[91,118) name[108,109) members[111,116) PropertySignature[112,116) name[112,113) TypeReference[115,116)
+TypeAliasDeclaration[119,145) name[139,140) LiteralType[143,144)
+# computed-names-and-initializers: "interface I { [Symbol.iterator](): I; [a + b]: 1; c: number = d as number; e?(f = 1, { g }: H, [i]: J = []): void }\n"
+InterfaceDeclaration[0,115) name[10,11) members[13,113) MethodSignature[14,37) name[14,31) parameters[32,32) TypeReference[35,36) PropertySignature[38,49) name[38,45) LiteralType[47,48) PropertySignature[50,74) name[50,51) NumberKeyword[53,59) MethodSignature[75,113) name[75,76) ?[76,77) parameters[78,106) Parameter[78,83) Parameter[85,93) TypeReference[92,93) Parameter[95,106) TypeReference[100,101) VoidKeyword[109,113)
+# named-like-a-cast: "type as<T> = T;\ninterface satisfies<U> extends B<U> { a: U }\ntype satisfies = 1;\ninterface as {}\n"
+TypeAliasDeclaration[0,15) name[5,7) typeParameters[7,10) TypeReference[13,14)
+InterfaceDeclaration[16,60) name[26,35) typeParameters[35,38) extends[39,51) TypeReference[47,51)<49,50> TypeReference[49,50) members[53,58) PropertySignature[54,58) name[54,55) TypeReference[57,58)
+TypeAliasDeclaration[61,80) name[66,75) LiteralType[78,79)
+InterfaceDeclaration[81,96) name[91,93) members[95,95)

@@ -1,0 +1,97 @@
+DIFFER missing "var n = -2; for(var i = 0; i < 10; i += n);"
+    eslint: for-direction 1:13 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+upstream-for-direction.json: cases 100, same 99, differ 1
+DIFFER missing "for (var i = 0; i < 10; i -= [1].length);"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0; i < 10; i -= Number('1'));"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0; i < 10; i -= parseInt('1'));"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "const n = -1; for (var i = 0; i < 10; i += n);"
+    eslint: for-direction 1:15 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "let n = -1; for (var i = 0; i < 10; i += n);"
+    eslint: for-direction 1:13 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0, n = -1; i < 10; i += n);"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+js-for-direction-static-values.json: cases 70, same 64, differ 6
+left out (Bun rejects): "for (let i: number = 0; i < 10; i--) {}"
+left out (Bun rejects): "for (let i = 0; (i as number) < 10; i--) {}"
+left out (Bun rejects): "for (let i = 0; i! < 10; i--) {}"
+left out (Bun rejects): "for (let i = 0; <number>i < 10; i--) {}"
+left out (Bun rejects): "for (let i = 0; (i satisfies number) < 10; i--) {}"
+left out (Bun rejects): "for (let i = 0; i < 10; i!--) {}"
+left out (Bun rejects): "for (let i = 0; i < 10; (i as number)--) {}"
+left out (Bun rejects): "for (let i = 0; i < 10; i -= 1 as number) {}"
+left out (Bun rejects): "for (let i = 0; i < 10; i -= <number>1) {}"
+left out (Bun rejects): "for (let i = 0; i < 10; i -= 1!) {}"
+left out (Bun rejects): "for (let i = 0; i < 10; i -= (1 satisfies number)) {}"
+left out (Bun rejects): "for (let i = 0; (i < 10) as boolean; i--) {}"
+left out (Bun rejects): "for (let i = 0; i < (10 as number); i--) {}"
+left out (Bun rejects): "for (let i = 0; i < 10; (i--) as number) {}"
+left out (Bun rejects): "for (let i = 0; i < 10; (i satisfies number, i--)) {}"
+left out (Bun rejects): "for (let i = 0; i < 10; (i! -= 1)) {}"
+left out (Bun rejects): "for (let i = 0; i < 10; i += -1 as const) {}"
+left out (Bun rejects): "for (let i = 0; i < arr.length!; i--) {}"
+left out (Bun rejects): "for (let i = 10; i >= 0; i++) { const x: number = i; }"
+left out (Bun rejects): "enum E { A = -1 } for (let i = 0; i < 10; i += E.A) {}"
+DIFFER missing "const n = -1; for (let i = 0; i < 10; i += n) {}"
+    eslint: for-direction 1:15 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+left out (Bun rejects): "const n: number = -1; for (let i = 0; i < 10; i += n) {}"
+left out (Bun rejects): "for (let i = 0; i < 10; i += -1n as any) {}"
+ts-for-direction.json: cases 4, same 3, differ 1
+DIFFER missing "for (var i = 0; i < 10; i -= [1].length);"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0; i < 10; i -= Number('1'));"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0; i < 10; i -= parseInt('1'));"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "const n = -1; for (var i = 0; i < 10; i += n);"
+    eslint: for-direction 1:15 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "let n = -1; for (var i = 0; i < 10; i += n);"
+    eslint: for-direction 1:13 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0, n = -1; i < 10; i += n);"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+edge-for-direction.json: cases 70, same 64, differ 6
+DIFFER missing "for (let i = 0; i < 10; i -= Math.abs(-1)) {}"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (let i = 0; i < 10; i -= [1][0]) {}"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (let i = 0; i < 10; i -= {a: 1}.a) {}"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (let i = 0; i < 10; i -= Number('1')) {}"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (let i = 0; i < 10; i -= parseInt('1')) {}"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "const n = 1; for (let i = 0; i < 10; i -= n) {}"
+    eslint: for-direction 1:14 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "let n = 1; for (let i = 0; i < 10; i -= n) {}"
+    eslint: for-direction 1:12 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "const n = -1; for (let i = 0; i < 10; i += n) {}"
+    eslint: for-direction 1:15 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "const n: number = -1; for (let i = 0; i < 10; i += n) {}"
+    eslint: for-direction 1:23 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+ts-for-direction.json: cases 96, same 87, differ 9
+all: cases 340, same 317, differ 23 {"missing":23}; reports of ESLint 193

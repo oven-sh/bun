@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """Applies the test side of the prototype to a COPY of src/js_parser: the tests that name the old payloads, and the new ones.
 
-usage: apply_tests.py <copy of src/js_parser> [rows.rs]      rows.rs: the table that `payload-oracle.cjs --rust` prints
+usage: apply_tests.py <copy of src/js_parser> [rows.rs] [rejection-rows.rs]
+rows.rs: the table that `payload-oracle.cjs --rust inputs.json` prints; rejection-rows.rs: a row for each source of inputs-rejections.json
 """
 import sys
 from pathlib import Path
 
 root = Path(sys.argv[1])
 rows = Path(sys.argv[2]).read_text() if len(sys.argv) > 2 else ""
+rejections = Path(sys.argv[3]).read_text() if len(sys.argv) > 3 else ""
+rejection_count = rejections.count("\n")
 
 
 def edit(rel, old, new, count=1):
@@ -499,4 +502,85 @@ edit(K, """            starts.erased.member_read(cursor, at, at, 0, false);
                 .erased
                 .member_read(cursor, p.arena, at, at, 0, false, &[]);
 """)
+
+# ───────────── parse/erased_tests.rs: what a lint parse rejects in these statements, and how often it records one ─────────────
+edit(T, """use super::parse_entry::{Options, ParsedForLint, Parser};
+""", """use super::parse_entry::{Options, ParsedForLint, Parser};
+use super::syntax_errors::SyntaxErrors;
+""")
+edit(T, """#[test]
+fn records_are_those_of_the_known_sources() {""", """/// The entry of the first error that the lint parse of `text` logs, as code, start, end and text. `None`: it parses.
+fn first_error(text: &'static [u8]) -> Option<(u32, u32, u32, Vec<u8>)> {
+    let arena = Arena::new();
+    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
+    let _ast_scope = ast_memory_allocator.enter();
+    let source = bun_ast::Source::init_path_string(&b"/a.ts"[..], text);
+    let mut options = Options::init(Default::default(), bun_ast::Loader::Ts);
+    options.features.no_macros = true;
+    options.features.dont_bundle_twice = true;
+    let define = Define::default();
+    let mut log = bun_ast::Log::init();
+    let mut errors = SyntaxErrors::default();
+    let parser = Parser::init(options, &mut log, &source, &define, &arena).ok()?;
+    if parser
+        .parse_for_lint_with_codes(&mut errors, |_| ())
+        .is_ok()
+    {
+        return None;
+    }
+    let first = log
+        .msgs
+        .iter()
+        .position(|msg| msg.kind == bun_ast::Kind::Err)?;
+    let Some(entry) = errors.get(first) else {
+        return Some((0, 0, 0, Vec::new()));
+    };
+    Some((entry.code, entry.start, entry.end, entry.text.to_vec()))
+}
+
+#[test]
+fn an_erased_statement_is_read_as_the_reference_reads_it() {
+    // The code, the range and the text are the first diagnostic of tsc 6.0.2 and of typescript-go for each text.
+    let cases: [(&'static [u8], u32, u32, u32, &str); REJECTION_COUNT] = [
+REJECTIONS    ];
+    let mut failed = Vec::new();
+    for (text, code, start, end, message) in cases {
+        let found = first_error(text);
+        if found != Some((code, start, end, message.as_bytes().to_vec())) {
+            failed.push(format!("{}: {found:?}", bstr::BStr::new(text)));
+        }
+    }
+    assert!(failed.is_empty(), "{}", failed.join("\\n"));
+}
+
+#[test]
+fn a_declaration_named_like_a_cast_is_recorded_once() {
+    let text: &'static [u8] = b"type as<T> = T;\\ninterface satisfies<U> extends B<U> { a: U }\\n";
+    let arena = Arena::new();
+    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
+    let _ast_scope = ast_memory_allocator.enter();
+    let source = bun_ast::Source::init_path_string(&b"/a.ts"[..], text);
+    let mut options = Options::init(Default::default(), bun_ast::Loader::Ts);
+    options.features.no_macros = true;
+    options.features.dont_bundle_twice = true;
+    let define = Define::default();
+    let mut log = bun_ast::Log::init();
+    let counts = Parser::init(options, &mut log, &source, &define, &arena)
+        .ok()
+        .and_then(|parser| {
+            parser
+                .parse_for_lint(|parsed| {
+                    let sidecar = parsed.sidecar;
+                    (
+                        sidecar.erased.statements.len(),
+                        sidecar.generics.type_parameters.len(),
+                    )
+                })
+                .ok()
+        });
+    assert_eq!(counts, Some((2, 2)));
+}
+
+#[test]
+fn records_are_those_of_the_known_sources() {""".replace("REJECTION_COUNT", str(rejection_count)).replace("REJECTIONS", rejections))
 print("applied tests")

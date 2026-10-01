@@ -354,6 +354,9 @@
     (b"a?.\nb in c;", Loader::Js, 1003, 3, 3, "Identifier expected."),
     (b"<a.\nb c='1' />;", Loader::Tsx, 1003, 3, 3, "Identifier expected."),
     (b"<a.b.\nc d='1' />;", Loader::Tsx, 1003, 5, 5, "Identifier expected."),
+    (b"<a.\nb c='1'>x</a.b>;", Loader::Tsx, 1003, 3, 3, "Identifier expected."),
+    (b"<a.\nb data-c='1'>x</a.b>;", Loader::Tsx, 1003, 3, 3, "Identifier expected."),
+    (b"<x><a.\nb c='1'>y</a.b></x>;", Loader::Tsx, 1003, 6, 6, "Identifier expected."),
     (b"<a.\nb c='1' />;", Loader::Jsx, 1003, 3, 3, "Identifier expected."),
 // parses
     (b"(a + b) = c;", Loader::Ts),
@@ -470,6 +473,9 @@
     (b"<a.\nb\nc='1' />;", Loader::Tsx),
     (b"<a><b/>.c</a>;", Loader::Tsx),
     (b"a++<T>(x);", Loader::Tsx),
+    (b"<a.b c='1'>x</a.\nb>;", Loader::Tsx),
+    (b"<a.\nb>x</a.b>;", Loader::Tsx),
+    (b"<a.\nb<T> c='1' />;", Loader::Tsx),
 // the-reference-inserts-a-semicolon
     (b"a++\n(b);", Loader::Ts),
     (b"a++\n[0];", Loader::Ts),

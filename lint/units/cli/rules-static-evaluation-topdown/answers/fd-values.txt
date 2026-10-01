@@ -1,0 +1,378 @@
+"for (var i = 0; i < 10; i -= (+\"1\" === 1));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (+\"  12  \" === 12));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (+\"\" === 0));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (+\" \" === 0));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (+\"\\n\" === 0));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (+\"0x1F\" === 31));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (+\"0b11\" === 3));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (+\"0o17\" === 15));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (+\"0X1f\" === 31));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (+\"1e3\" === 1000));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (+\".5\" === 0.5));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (+\"5.\" === 5));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (+\"+5\" === 5));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (+\"-5\" === -5));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (+\"Infinity\" === Infinity));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (+\"-Infinity\" === -Infinity));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (+\"+Infinity\" === Infinity));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (+\"abc\" !== +\"abc\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (+\"1_0\" !== +\"1_0\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (+\"0x\" !== +\"0x\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (+\"1n\" !== +\"1n\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (+\"-0x1\" !== +\"-0x1\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (+\"infinity\" !== +\"infinity\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (+\"1e\" !== +\"1e\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (+\".\" !== +\".\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (+\"\\u00a01\\ufeff\" === 1));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (+\"\\u20281\\u2029\" === 1));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (+\"1 2\" !== +\"1 2\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (+\"\\u180e1\" !== +\"\\u180e1\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (+\"\\u30001\\u1680\" === 1));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (+\"1e1000\" === Infinity));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (+\"-1e-1000\" === 0));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (1 / +\"-0\" === -Infinity));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (+\"00012\" === 12));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (+\"1.5e+2\" === 150));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (+\"1e-2\" === 0.01));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (+\"0.1\" + +\"0.2\" === 0.30000000000000004));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (+\"9007199254740993\" === 9007199254740992));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (+null === 0));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (+undefined !== +undefined));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (+true === 1));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (+false === 0));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (-\"3\" === -3));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (~\"5\" === -6));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (+`7` === 7));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (typeof 1 === \"number\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (typeof 1n === \"bigint\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (typeof \"\" === \"string\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (typeof null === \"object\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (typeof undefined === \"undefined\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (typeof void 0 === \"undefined\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (typeof true === \"boolean\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (typeof /a/ === \"object\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (typeof NaN === \"number\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (typeof typeof 1 === \"string\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (`${1e21}` === \"1e+21\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (`${1e-7}` === \"1e-7\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (`${0.000001}` === \"0.000001\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (`${-0}` === \"0\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (`${123456789012345680000}` === \"123456789012345680000\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (`${0.1 + 0.2}` === \"0.30000000000000004\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (`${NaN}` === \"NaN\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (`${-Infinity}` === \"-Infinity\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (`${null}` === \"null\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (`${undefined}` === \"undefined\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (`${true}` === \"true\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (`${10n}` === \"10\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (`${-0x10n}` === \"-16\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (`${/a/gi}` === \"/a/gi\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (`${/a/ig}` === \"/a/gi\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (`${/[/]\\//}` === \"/[/]\\\\//\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (\"\" + 1.5 === \"1.5\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (1 + \"2\" === \"12\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (\"3\" + 4n === \"34\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (1 + 2 + \"3\" === \"33\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (\"1\" + null === \"1null\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (\"\" + /x/ === \"/x/\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (`a${1}b${\"c\"}` === \"a1bc\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (`${1.0}` === \"1\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (`${100}` === \"100\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (`${1e300 * 10}` === \"1e+301\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (`${5e-324}` === \"5e-324\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (`${0xff}` === \"255\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (`${1.7976931348623157e308}` === \"1.7976931348623157e+308\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (`${4.35}` === \"4.35\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (`${0.1 * 3}` === \"0.30000000000000004\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (`${2 ** 53}` === \"9007199254740992\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (`${-1e-7}` === \"-1e-7\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (`${1e21 + 1}` === \"1e+21\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (0.1 + 0.2 === 0.30000000000000004));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (5 % 3 === 2));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (-5 % 3 === -2));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (5 % -3 === 2));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (5.5 % 2 === 1.5));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (1 / (-5 % 5) === -Infinity));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (2 ** 10 === 1024));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (2 ** -1 === 0.5));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((-8) ** (1 / 3) !== (-8) ** (1 / 3)));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (1 ** Infinity !== 1 ** Infinity));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((-1) ** -Infinity !== (-1) ** -Infinity));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (NaN ** 0 === 1));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (0 ** 0 === 1));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (2 ** 3 ** 2 === 512));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (7 / 2 === 3.5));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (1 / 0 === Infinity));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (\"6\" / \"2\" === 3));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (\"6\" * \"2\" === 12));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (\"6\" - \"2\" === 4));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (null + 1 === 1));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (undefined + 1 !== undefined + 1));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (true + true === 2));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (\"a\" * 1 !== \"a\" * 1));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (1 ** NaN !== 1 ** NaN));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (Infinity % 2 !== Infinity % 2));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (5 % Infinity === 5));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (1 / (0 * -1) === -Infinity));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((-2) ** 2 === 4));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (2 ** 0.5 > 1.41));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (10 / 3 === 3.3333333333333335));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (0.1 * 3 === 0.30000000000000004));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (9007199254740992 + 1 === 9007199254740992));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((5 & 3) === 1));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((5 | 3) === 7));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((5 ^ 3) === 6));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (~5 === -6));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (~~3.7 === 3));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((1 << 31) === -2147483648));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((1 << 32) === 1));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((-1 >>> 0) === 4294967295));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((-1 >> 1) === -1));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((2 ** 32 + 5 | 0) === 5));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((2 ** 31 | 0) === -2147483648));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((-(2 ** 31) - 1 | 0) === 2147483647));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((1e21 | 0) === -559939584));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((NaN | 0) === 0));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((Infinity | 0) === 0));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((\"12\" | 0) === 12));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((1.9 | 0) === 1));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((-1.9 | 0) === -1));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((5 >>> 33) === 2));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((5 << -1) === -2147483648));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((-5 >>> 28) === 15));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((2 ** 53 | 0) === 0));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((-(2 ** 32) - 7 | 0) === -7));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((4294967295.9 | 0) === -1));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (~NaN === -1));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((null | undefined) === 0));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((true << true) === 2));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (1n + 2n === 3n));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (5n / 2n === 2n));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (-5n / 2n === -2n));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (-5n % 2n === -1n));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (2n ** 64n === 18446744073709551616n));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((-2n) ** 3n === -8n));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (~5n === -6n));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((5n & 3n) === 1n));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((-5n & 3n) === 3n));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((-5n | 3n) === -5n));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((-5n ^ 3n) === -8n));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((1n << 70n) === 1180591620717411303424n));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((-5n >> 1n) === -3n));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((5n >> 200n) === 0n));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((-5n >> 200n) === -1n));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((1n << -1n) === 0n));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (1n == 1));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (2n > 1));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (1n < 1.5));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (1n < \"2\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (\"2\" > 1n));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (1n == \"1\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (0n == \"\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (0n == \" \"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (1n == true));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (2n > true));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (9007199254740993n > 9007199254740992));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (9007199254740993n != 9007199254740992));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (1n < Infinity));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (-1n > -Infinity));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (0n == -0));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (0x10n === 16n));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (0b101n === 5n));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (0o17n === 15n));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (1_000n === 1000n));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (-(-3n) === 3n));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (0n ** 0n === 1n));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (1n ** 9999999999n === 1n));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((-1n) ** 9999999999n === -1n));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (1n == \"0x1\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (-1n == \"-1\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (10n > \"9\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (!0n));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (!!1n));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (2n * 3n - 7n === -1n));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (170141183460469231731687303715884105727n > 0n));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (-170141183460469231731687303715884105727n < 0n));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (\"a\" < \"b\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (\"10\" < \"9\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (null >= 0));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (undefined == null));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (\"\" == 0));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (\"0\" == false));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (null === null));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (\"abc\" == \"abc\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (1 == \"1\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (true == \"1\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (\"\\ud83d\" < \"\\ue000\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (\"\\u{1F600}\" < \"\\uffff\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (\"a\" < \"ab\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (\"\" < \"a\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (1 < 2 === true));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (\"b\" > \"a\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (2 >= 2));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (\"2\" >= 2));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (null <= 0));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (0 === -0));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (\"1\" != 2));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (NaN != NaN));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (1 !== \"1\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (null != 0));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (undefined != 0));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (null != false));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (\"true\" != true));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (\"\\t1\\n\" == 1));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (/a/ != /a/));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (/a/ !== /a/));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (/a/ == \"/a/\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (/a/ != null));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (undefined === void 0));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((0 || 5) === 5));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((1 && 0) === 0));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((null ?? 3) === 3));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((0 ?? 3) === 0));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((1, 2) === 2));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((true ? 1 : x) === 1));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((false ? x : 2) === 2));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((x = 5) === 5));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((1 || x) === 1));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((0 && x) === 0));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((1 ?? x) === 1));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((\"\" || null || 7) === 7));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((x, y, 3) === 3));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((1 ? 2 ? 3 : 4 : 5) === 3));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((x = y = 4) === 4));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (!(x = 0)));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (\"abc\".length === 3));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (\"abc\"[1] === \"b\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (\"abc\"[5] === undefined));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (\"abc\"[\"length\"] === 3));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (\"\\u{1F600}\".length === 2));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (`a${1}b`.length === 3));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (\"abc\"?.length === 3));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (null?.x === undefined));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (undefined?.x.y.z === undefined));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((null)?.[0] === undefined));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (Math.PI > 3));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (Number.MAX_SAFE_INTEGER === 9007199254740991));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (Number.MIN_VALUE > 0));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (Number.EPSILON < 1));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (Math[\"E\"] > 2));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (Number.NaN !== Number.NaN));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (\"abc\"[\"1\"] === \"b\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (\"abc\"[1.0] === \"b\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (\"abc\"[-0] === \"a\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (\"abc\"[`2`] === \"c\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (Math.SQRT2 * Math.SQRT2 > 2));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (Number.MAX_VALUE * 2 === Infinity));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (Number.MIN_SAFE_INTEGER < 0));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (Math.LN2 < Math.LN10));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (Math.LOG2E > Math.LOG10E));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (Math.SQRT1_2 < 1));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (Number.POSITIVE_INFINITY === Infinity));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (Number.NEGATIVE_INFINITY === -Infinity));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (Math?.PI > 3));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((Math).PI > 3));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (Number[\"MAX_\" + \"VALUE\"] > 1e308));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (/a/.source === \"a\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (/a/gi.flags === \"gi\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (/a/g.global === true));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (/a/.global === false));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (/a\\/b/.source === \"a\\\\/b\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (/a/y.sticky));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (/a/.lastIndex === 0));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (Number(\"5\") === 5));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (String(5) === \"5\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (Boolean(0) === false));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (parseInt(\"7\") === 7));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (Math.abs(-1) === 1));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (\"a\".concat(\"b\") === \"ab\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ([1, 2].length === 2));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (\"abc\".toUpperCase() === \"ABC\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (String.raw`a\\n` === \"a\\\\n\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (Math.max(1, 2) === 2));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (Number.isNaN(NaN)));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (isNaN(\"x\")));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (new Number(1) + 1 === 2));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (Number() === 0));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (String() === \"\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (Boolean() === false));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (Number(1n) === 1));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (String(null) === \"null\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (Number(\"0x10\") === 16));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (String.raw`${1}\\u` === \"1\\\\u\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ([] + \"\" === \"\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ([1, 2] + \"\" === \"1,2\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (({}) + \"\" === \"[object Object]\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (!![]));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (!!{}));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (({ a: 1 }).a === 1));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ([1, 2][1] === 2));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (typeof [] === \"object\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (typeof Math === \"object\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (typeof String === \"function\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (\"abc\".slice(1) === \"bc\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (\"abc\".charAt(0) === \"a\"));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (Number.parseFloat(\"1.5\") === 1.5));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (parseFloat(\"1.5x\") === 1.5));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (BigInt(5) === 5n));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (Math.floor(1.5) === 1));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (Math.round(-0.5) === 0));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (Math.sign(-3) === -1));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (Math.trunc(-1.5) === -1));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (Math.min() === Infinity));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((0, Number)(\"3\") === 3));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (2n ** 130n > 0n));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= ((1n << 200n) > 1n));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (340282366920938463463374607431768211456n > 0n));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (-(2n ** 127n) < 0n));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (0xffffffffffffffffffffffffffffffffffn > 0n));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (1n === 1));" => (none)
+"for (var i = 0; i < 10; i -= (\"10\" < 9));" => (none)
+"for (var i = 0; i < 10; i -= (1 ** Infinity === 1));" => (none)
+"for (var i = 0; i < 10; i -= (NaN == NaN));" => (none)
+"for (var i = 0; i < 10; i -= (null == 0));" => (none)
+"for (var i = 0; i < 10; i -= (undefined == 0));" => (none)
+"for (var i = 0; i < 10; i -= (null == false));" => (none)
+"for (var i = 0; i < 10; i -= (\"true\" == true));" => (none)
+"for (var i = 0; i < 10; i -= (\"a\" < \"B\"));" => (none)
+"for (var i = 0; i < 10; i -= (undefined >= 0));" => (none)
+"for (var i = 0; i < 10; i -= (1n == \"1.0\"));" => (none)
+"for (var i = 0; i < 10; i -= (1n < \"x\"));" => (none)
+"for (var i = 0; i < 10; i -= (1n > \"x\"));" => (none)
+"for (var i = 0; i < 10; i -= (1n == \"x\"));" => (none)
+"for (var i = 0; i < 10; i -= (+\"0x1g\" === 1));" => (none)
+"for (var i = 0; i < 10; i -= (9007199254740993n == 9007199254740992));" => (none)
+"for (var i = 0; i < 10; i -= (\"\\u{1F600}\" > \"\\uffff\"));" => (none)
+"for (var i = 0; i < 10; i -= (/a/ == /a/));" => (none)
+"for (var i = 0; i < 10; i -= (/a/ === /a/));" => (none)
+"for (var i = 0; i < 10; i -= (typeof null === \"null\"));" => (none)
+"for (var i = 0; i < 10; i -= (`${-0}` === \"-0\"));" => (none)
+"for (var i = 0; i < 10; i -= (0.1 + 0.2 === 0.3));" => (none)
+"for (var i = 0; i < 10; i -= ((1 << 32) === 0));" => (none)
+"for (var i = 0; i < 10; i -= (-5n / 2n === -3n));" => (none)
+"for (var i = 0; i < 10; i -= ((-5n >> 1n) === -2n));" => (none)
+"for (var i = 0; i < 10; i -= (\"abc\"[5] === null));" => (none)
+"for (var i = 0; i < 10; i -= (\"abc\".length === 2));" => (none)
+"for (var i = 0; i < 10; i -= (1 / +\"-0\" === Infinity));" => (none)
+"for (var i = 0; i < 10; i -= ((-1 >>> 0) === -1));" => (none)
+"for (var i = 0; i < 10; i -= (5 % -3 === -1));" => (none)
+"for (var i = 0; i < 10; i -= (2n > 2));" => (none)
+"for (var i = 0; i < 10; i -= (\"2\" > \"12\" === false));" => (none)
+"for (var i = 0; i < 10; i -= (null > -1 === false));" => (none)
+"for (var i = 0; i < 10; i -= (+\" \" !== 0));" => (none)
+"for (var i = 0; i < 10; i -= (!1n));" => (none)
+"for (var i = 0; i < 10; i -= ((0 ?? 3) === 3));" => (none)
+"var Infinity = -1; for (var i = 0; i < 10; i -= Infinity);" => (none)
+"function f(NaN) {} for (var i = 0; i < 10; i -= (NaN !== NaN));" => 1:20 The update clause in this loop moves the variable in the wrong direction.
+"let undefined; for (var i = 0; i < 10; i -= (undefined === void 0));" => (none)
+"var Math; for (var i = 0; i < 10; i -= Math.PI);" => (none)
+"function f(Number) { for (var i = 0; i < 10; i -= Number.MAX_VALUE); }" => (none)
+"const n = 1; for (var i = 0; i < 10; i -= n);" => 1:14 The update clause in this loop moves the variable in the wrong direction.
+"let n = 1; for (var i = 0; i < 10; i -= n);" => 1:12 The update clause in this loop moves the variable in the wrong direction.
+"var n = 1; n = 2; for (var i = 0; i < 10; i -= n);" => (none)
+"for (var i = 0; i < 10; i -= Infinity);" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i += -Infinity);" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i += NaN);" => (none)
+"for (var i = 0; i < 10; i -= undefined);" => (none)
+"for (var i = 0; i < 10; i -= (undefined ?? 1));" => 1:1 The update clause in this loop moves the variable in the wrong direction.
+"for (var i = 0; i < 10; i -= (NaN || 1));" => 1:1 The update clause in this loop moves the variable in the wrong direction.

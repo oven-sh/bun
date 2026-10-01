@@ -53,7 +53,32 @@ for (const r of rows) {
   let best = null;
   const visit = n => { if (n.kind === K.PostfixUnaryExpression && n.end <= at && (!best || n.end > best.end || (n.end === best.end && n.pos < best.pos))) best = n; ts.forEachChild(n, visit); };
   visit(sf);
-  if (!best) { skipped++; continue; }
+  if (!best) {
+    // No postfix update in tsc's tree: the operand is a JSX element (one token is read after it), or a prefix update came first (`++a++`: the scan starts at its operand).
+    let jsx = null, prefix = null;
+    const seek = n => {
+      if ((n.kind === K.JsxSelfClosingElement || n.kind === K.JsxElement || n.kind === K.JsxFragment) && n.end <= at && (!jsx || n.end > jsx.end)) jsx = n;
+      if (n.kind === K.PrefixUnaryExpression && (n.operator === K.PlusPlusToken || n.operator === K.MinusMinusToken) && n.end <= at && (!prefix || n.end > prefix.end)) prefix = n;
+      ts.forEachChild(n, seek);
+    };
+    seek(sf);
+    const want = [at, toUnits(r.end)];
+    if (jsx && (!prefix || jsx.end >= prefix.end)) {
+      const s = ts.createScanner(ts.ScriptTarget.Latest, true, ts.LanguageVariant.Standard, r.text);
+      s.resetTokenState(jsx.end);
+      s.scan();
+      checked++;
+      if (s.getTokenStart() !== want[0] || s.getTokenEnd() !== want[1]) { failed++; console.log("MISMATCH after JSX", JSON.stringify(r.text), want, [s.getTokenStart(), s.getTokenEnd()]); }
+      continue;
+    }
+    if (prefix) {
+      const found = scan(r.text, prefix.operand.getStart(sf), false);
+      checked++;
+      if (!found || found.operator[0] !== want[0] || found.operator[1] !== want[1]) { failed++; console.log("MISMATCH after a prefix update", JSON.stringify(r.text), want, JSON.stringify(found)); }
+      continue;
+    }
+    skipped++; console.log("SKIPPED", JSON.stringify(r.text)); continue;
+  }
   // `++a++`: the reference reports the operator itself.
   const operatorIsTheToken = best.end > at - 0 ? false : r.text.slice(best.end).trimStart().length !== r.text.slice(at).length;
   const found = scan(r.text, best.operand.getStart(sf), r.loader === "Tsx" || r.loader === "Jsx");
@@ -62,4 +87,4 @@ for (const r of rows) {
   const ok = found && ((found.next[0] === want[0] && found.next[1] === want[1]) || (found.operator[0] === want[0] && found.operator[1] === want[1]));
   if (!ok) { failed++; console.log("MISMATCH", JSON.stringify(r.text), r.loader, "want", want, "found", JSON.stringify(found)); }
 }
-console.log(`${checked} rows checked, ${failed} mismatches, ${skipped} rows without a postfix update before the diagnostic (JSX operands)`);
+console.log(`${checked} rows checked, ${failed} mismatches, ${skipped} rows skipped`);

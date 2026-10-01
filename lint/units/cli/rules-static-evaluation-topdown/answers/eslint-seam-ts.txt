@@ -1,0 +1,210 @@
+"@(undefined ? a : b) class A {}"
+      => (none)
+"@(void 0 ? a : b) class A {}"
+      => no-constant-condition 1:3 Unexpected constant condition.
+"@(undefined && a) class A {}"
+      => (none)
+"@(new Map() === a) class A {}"
+      => (none)
+"@(Boolean(1) ? a : b) class A {}"
+      => (none)
+"x = @(undefined ? a : b) class {}"
+      => (none)
+"@d @(undefined ? a : b) class A {}"
+      => (none)
+"@(undefined ? a : b) @d class A { @(undefined ? a : b) m() {} }"
+      => no-constant-condition 1:37 Unexpected constant condition.
+"@((a = undefined ? 1 : 2) => a) class A {}"
+      => no-constant-condition 1:8 Unexpected constant condition.
+"@(class { [undefined ? 1 : 2]() {} }) class A {}"
+      => no-constant-condition 1:12 Unexpected constant condition.
+"@(@(undefined ? a : b) class {}) class A {}"
+      => (none)
+"class A { @(undefined ? a : b) m() {} }"
+      => no-constant-condition 1:13 Unexpected constant condition.
+"class A { @(undefined ? a : b) x = 1 }"
+      => no-constant-condition 1:13 Unexpected constant condition.
+"class A { @(undefined ? a : b) static s() {} }"
+      => no-constant-condition 1:13 Unexpected constant condition.
+"class A { @(undefined ? a : b) accessor x = 1 }"
+      => no-constant-condition 1:13 Unexpected constant condition.
+"class A { m(@(undefined ? a : b) p) {} }"
+      => (none)
+"class A { constructor(@(undefined ? a : b) q) {} }"
+      => (none)
+"class A { static m(@(undefined ? a : b) q) {} }"
+      => (none)
+"class A { set x(@(undefined ? a : b) q) {} }"
+      => (none)
+"class A { m(@d p = undefined ? 1 : 2, @(undefined ? a : b) q) {} }"
+      => no-constant-condition 1:20 Unexpected constant condition.
+"class A { m(@d p = class { @(undefined ? a : b) x }, @(undefined ? a : b) q) {} }"
+      => no-constant-condition 1:30 Unexpected constant condition.
+"class A { m(@((x = undefined ? 1 : 2) => x) p) { if (undefined) {} } }"
+      => no-constant-condition 1:20 Unexpected constant condition. | no-constant-condition 1:54 Unexpected constant condition.
+"class A { m(p = undefined ? 1 : 2) {} }"
+      => no-constant-condition 1:17 Unexpected constant condition.
+"class A extends (undefined ? B : C) {}"
+      => no-constant-condition 1:18 Unexpected constant condition.
+"abstract class A { abstract m(@(undefined ? a : b) p): void }"
+      => FATAL 1:30 Parsing error: Decorators are not valid here.
+"abstract class A { @(undefined ? a : b) abstract m(): void }"
+      => FATAL 1:19 Parsing error: A decorator can only decorate a method implementation, not an overload.
+"class A { m(@(undefined ? a : b) p): void; m(p: any) {} }"
+      => FATAL 1:12 Parsing error: Decorators are not valid here.
+"switch (undefined ? 1 : 2) {}"
+      => (none)
+"switch (undefined as any ? 1 : 2) {}"
+      => (none)
+"enum E { A = undefined ? 1 : 2 }"
+      => no-constant-condition 1:14 Unexpected constant condition.
+"namespace N { if (undefined) {} }"
+      => no-constant-condition 1:19 Unexpected constant condition.
+"declare const undefined: any; if (undefined) {}"
+      => (none)
+"declare let undefined: any, x: any; if (undefined) {}"
+      => (none)
+"declare const { undefined }: any; if (undefined) {}"
+      => (none)
+"declare function Boolean(x: any): boolean; if (Boolean(1)) {}"
+      => (none)
+"declare class Map<K, V> {} x = new Map() === y"
+      => (none)
+"declare global { var undefined: any } if (undefined) {}"
+      => no-constant-condition 1:43 Unexpected constant condition.
+"declare module 'm' { const undefined: any } if (undefined) {}"
+      => no-constant-condition 1:49 Unexpected constant condition.
+"declare namespace N { const undefined: any } if (undefined) {}"
+      => no-constant-condition 1:50 Unexpected constant condition.
+"declare namespace undefined { } if (undefined) {}"
+      => (none)
+"declare enum undefined { A } if (undefined) {}"
+      => (none)
+"namespace N { const undefined = 1 } if (undefined) {}"
+      => no-constant-condition 1:41 Unexpected constant condition.
+"namespace undefined { export const a = 1 } if (undefined) {}"
+      => (none)
+"enum undefined { A } if (undefined) {}"
+      => (none)
+"enum E { undefined = 1 } if (undefined) {}"
+      => no-constant-condition 1:30 Unexpected constant condition.
+"import undefined = require('x'); if (undefined) {}"
+      => (none)
+"import type undefined from 'x'; if (undefined) {}"
+      => (none)
+"import type * as undefined from 'x'; if (undefined) {}"
+      => (none)
+"import type { undefined } from 'x'; if (undefined) {}"
+      => (none)
+"import { type undefined } from 'x'; if (undefined) {}"
+      => (none)
+"import { type a as undefined } from 'x'; if (undefined) {}"
+      => (none)
+"import type { a as undefined } from 'x'; if (undefined) {}"
+      => (none)
+"import type { undefined as a } from 'x'; if (undefined) {}"
+      => no-constant-condition 1:46 Unexpected constant condition.
+"import { type undefined as a } from 'x'; if (undefined) {}"
+      => no-constant-condition 1:46 Unexpected constant condition.
+"interface Boolean {} if (Boolean(1)) {}"
+      => no-constant-condition 1:26 Unexpected constant condition.
+"type undefined = 1; if (undefined) {}"
+      => no-constant-condition 1:25 Unexpected constant condition.
+"function f(x: number): void; function f(x: any) {} if (undefined) {}"
+      => no-constant-condition 1:56 Unexpected constant condition.
+"function Boolean(x: number): boolean; if (Boolean(1)) {}"
+      => (none)
+"declare function f(undefined: any): void; if (undefined) {}"
+      => no-constant-condition 1:47 Unexpected constant condition.
+"type F = (undefined: any) => void; if (undefined) {}"
+      => no-constant-condition 1:40 Unexpected constant condition.
+"class C { constructor(private undefined: any) {} } if (undefined) {}"
+      => no-constant-condition 1:56 Unexpected constant condition.
+"declare namespace D { let z = 1 ? 2 : 3 }"
+      => no-constant-condition 1:31 Unexpected constant condition.
+"declare enum E { A = 1 ? 2 : 3 }"
+      => no-constant-condition 1:22 Unexpected constant condition.
+"if (undefined as any) {}"
+      => (none)
+"if (undefined!) {}"
+      => (none)
+"if (<any>undefined) {}"
+      => (none)
+"if (undefined satisfies any) {}"
+      => (none)
+"if ((undefined)) {}"
+      => no-constant-condition 1:6 Unexpected constant condition.
+"if (undefined<any>) {}"
+      => (none)
+"if ((undefined<any>)) {}"
+      => (none)
+"if (Boolean<T>(1)) {}"
+      => no-constant-condition 1:5 Unexpected constant condition.
+"if (Boolean!(1)) {}"
+      => (none)
+"if ((Boolean as any)(1)) {}"
+      => (none)
+"if ((Boolean<any>)(1)) {}"
+      => (none)
+"if (Boolean<T>!(1)) {}"
+      => (none)
+"if (Boolean(1 as any)) {}"
+      => (none)
+"if (!(1 as any)) {}"
+      => (none)
+"if (`${1 as any}`) {}"
+      => (none)
+"if (`a${x as any}`) {}"
+      => no-constant-condition 1:5 Unexpected constant condition.
+"if ([1 as any] + '') {}"
+      => (none)
+"if (typeof (x as any)) {}"
+      => no-constant-condition 1:5 Unexpected constant condition.
+"if ((a, 1 as any)) {}"
+      => (none)
+"if ((a, 1) as any) {}"
+      => (none)
+"if (x = 1 as any) {}"
+      => (none)
+"if (x = (1)) {}"
+      => no-constant-condition 1:5 Unexpected constant condition.
+"while (true as any) {}"
+      => (none)
+"while ((true)) {}"
+      => (none)
+"while (true!) {}"
+      => (none)
+"while (<boolean>true) {}"
+      => (none)
+"do {} while (true as boolean)"
+      => (none)
+"x = new Map<any, any>() === y"
+      => no-constant-binary-expression 1:5 Unexpected comparison to newly constructed object. These two values can never be equal.
+"x = new (Map<any, any>)() === y"
+      => (none)
+"x = new Map!() === y"
+      => (none)
+"x = (undefined<any>) ?? y"
+      => (none)
+"x = undefined! ?? y"
+      => (none)
+"x = (undefined as any) === null"
+      => (none)
+"x = null === undefined!"
+      => (none)
+"x = ({} as any) === undefined"
+      => (none)
+"x = {}! === undefined"
+      => (none)
+"x = <any>{} === undefined"
+      => (none)
+"x = (true as any) && y"
+      => (none)
+"x = true! && y"
+      => (none)
+"x = (true) && y"
+      => no-constant-binary-expression 1:6 Unexpected constant truthiness on the left-hand side of a `&&` expression.
+"x = ((true)) && y"
+      => no-constant-binary-expression 1:7 Unexpected constant truthiness on the left-hand side of a `&&` expression.
+"x = (a as any, true) && y"
+      => no-constant-binary-expression 1:6 Unexpected constant truthiness on the left-hand side of a `&&` expression.

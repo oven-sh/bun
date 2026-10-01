@@ -1,0 +1,224 @@
+"switch (undefined ? 1 : 2) {}"
+      => (none)
+"switch (void 0 ? 1 : 2) {}"
+      => no-constant-condition 1:9 Unexpected constant condition.
+"switch (undefined && a) {}"
+      => (none)
+"switch (undefined ?? a) {}"
+      => (none)
+"switch (undefined == null) {}"
+      => (none)
+"switch (null == undefined) {}"
+      => (none)
+"switch (Boolean() ? 1 : 2) {}"
+      => (none)
+"switch (Boolean(1) && a) {}"
+      => (none)
+"switch (new Boolean() === a) {}"
+      => (none)
+"switch (new Map() === a) {}"
+      => (none)
+"switch ({} === a) {}"
+      => no-constant-binary-expression 1:9 Unexpected comparison to newly constructed object. These two values can never be equal.
+"switch (f(undefined ? 1 : 2)) {}"
+      => (none)
+"switch ([undefined ? 1 : 2]) {}"
+      => (none)
+"switch (a) { case undefined ? 1 : 2: }"
+      => no-constant-condition 1:19 Unexpected constant condition.
+"switch (a) { case 1: if (undefined) {} }"
+      => no-constant-condition 1:26 Unexpected constant condition.
+"switch (a) { default: x = undefined ?? 1 }"
+      => no-constant-binary-expression 1:27 Unexpected constant nullishness on the left-hand side of a `??` expression.
+"switch (() => undefined ? 1 : 2) {}"
+      => no-constant-condition 1:15 Unexpected constant condition.
+"switch (function () { return undefined ? 1 : 2 }) {}"
+      => no-constant-condition 1:30 Unexpected constant condition.
+"switch (class { [undefined ? 1 : 2]() {} }) {}"
+      => no-constant-condition 1:18 Unexpected constant condition.
+"switch (class extends (undefined ? A : B) {}) {}"
+      => no-constant-condition 1:24 Unexpected constant condition.
+"switch (class { x = undefined ? 1 : 2 }) {}"
+      => no-constant-condition 1:21 Unexpected constant condition.
+"switch (class { static { if (undefined) {} } }) {}"
+      => no-constant-condition 1:30 Unexpected constant condition.
+"switch ((a = undefined ? 1 : 2) => a) {}"
+      => no-constant-condition 1:14 Unexpected constant condition.
+"switch (a) { case 1: switch (undefined ? 1 : 2) {} }"
+      => (none)
+"switch (x ? (undefined ? 1 : 2) : 3) { case undefined ? 1 : 2: }"
+      => no-constant-condition 1:45 Unexpected constant condition.
+"with (undefined ? a : b) {}"
+      => (none)
+"with (undefined && a) {}"
+      => (none)
+"with (new Boolean(1) === y) {}"
+      => (none)
+"with (a) { if (undefined) {} }"
+      => no-constant-condition 1:16 Unexpected constant condition.
+"with (a) with (undefined ? b : c) {}"
+      => (none)
+"with (() => undefined ? 1 : 2) {}"
+      => no-constant-condition 1:13 Unexpected constant condition.
+"with (void 0 ? a : b) {}"
+      => no-constant-condition 1:7 Unexpected constant condition.
+"class A extends (undefined ? B : C) {}"
+      => no-constant-condition 1:18 Unexpected constant condition.
+"class A extends (undefined && B) {}"
+      => no-constant-binary-expression 1:18 Unexpected constant truthiness on the left-hand side of a `&&` expression.
+"class A extends (new Boolean() === a) {}"
+      => no-constant-binary-expression 1:18 Unexpected comparison to newly constructed object. These two values can never be equal.
+"for (let i = undefined ? 1 : 2;;) {}"
+      => no-constant-condition 1:14 Unexpected constant condition.
+"for (let i of (undefined ? a : b)) {}"
+      => no-constant-condition 1:16 Unexpected constant condition.
+"for (var k in (undefined ? a : b)) {}"
+      => no-constant-condition 1:16 Unexpected constant condition.
+"try {} catch (e) { if (undefined) {} }"
+      => no-constant-condition 1:24 Unexpected constant condition.
+"function f(a = undefined ? 1 : 2) {}"
+      => no-constant-condition 1:16 Unexpected constant condition.
+"(function f(a = undefined ? 1 : 2) {})"
+      => no-constant-condition 1:17 Unexpected constant condition.
+"(a = undefined ? 1 : 2) => {}"
+      => no-constant-condition 1:6 Unexpected constant condition.
+"x = { [undefined ? 1 : 2]: 1, m(a = undefined ? 1 : 2) {} }"
+      => no-constant-condition 1:8 Unexpected constant condition. | no-constant-condition 1:37 Unexpected constant condition.
+"label: if (undefined) {}"
+      => no-constant-condition 1:12 Unexpected constant condition.
+"if (a) {} else if (undefined) {}"
+      => no-constant-condition 1:20 Unexpected constant condition.
+"do {} while (undefined)"
+      => no-constant-condition 1:14 Unexpected constant condition.
+"for (; undefined; ) {}"
+      => no-constant-condition 1:8 Unexpected constant condition.
+"while (Boolean(undefined)) {}"
+      => no-constant-condition 1:8 Unexpected constant condition.
+"({}) === undefined"
+      => no-constant-binary-expression 1:2 Unexpected constant binary expression. Compares constantly with the right-hand side of the `===`.
+"function f(undefined) { ({}) === undefined }"
+      => no-constant-binary-expression 1:26 Unexpected comparison to newly constructed object. These two values can never be equal.
+"var undefined; ({}) === undefined"
+      => no-constant-binary-expression 1:17 Unexpected comparison to newly constructed object. These two values can never be equal.
+"function f(undefined) {} ({}) === undefined"
+      => no-constant-binary-expression 1:27 Unexpected constant binary expression. Compares constantly with the right-hand side of the `===`.
+"new Boolean(x) === undefined"
+      => no-constant-binary-expression 1:1 Unexpected constant binary expression. Compares constantly with the right-hand side of the `===`.
+"function f(undefined) { new Boolean(x) === undefined }"
+      => no-constant-binary-expression 1:25 Unexpected comparison to newly constructed object. These two values can never be equal.
+"function f(Boolean) { new Boolean(x) === undefined }"
+      => no-constant-binary-expression 1:23 Unexpected constant binary expression. Compares constantly with the right-hand side of the `===`.
+"function f(Boolean, undefined) { new Boolean(x) === undefined }"
+      => (none)
+"var Boolean; new Boolean(x) === undefined"
+      => no-constant-binary-expression 1:14 Unexpected constant binary expression. Compares constantly with the right-hand side of the `===`.
+"var Boolean, undefined; new Boolean(x) === undefined"
+      => (none)
+"undefined === {}"
+      => no-constant-binary-expression 1:15 Unexpected constant binary expression. Compares constantly with the left-hand side of the `===`.
+"function f(undefined) { undefined === {} }"
+      => no-constant-binary-expression 1:39 Unexpected comparison to newly constructed object. These two values can never be equal.
+"var undefined; undefined === {}"
+      => no-constant-binary-expression 1:30 Unexpected comparison to newly constructed object. These two values can never be equal.
+"[] == undefined"
+      => no-constant-binary-expression 1:1 Unexpected constant binary expression. Compares constantly with the right-hand side of the `==`.
+"function f(undefined) { [] == undefined }"
+      => (none)
+"({}) == Boolean()"
+      => no-constant-binary-expression 1:2 Unexpected constant binary expression. Compares constantly with the right-hand side of the `==`.
+"function f(Boolean) { ({}) == Boolean() }"
+      => (none)
+"(() => {}) == !undefined"
+      => no-constant-binary-expression 1:2 Unexpected constant binary expression. Compares constantly with the right-hand side of the `==`.
+"function f(undefined) { (() => {}) == !undefined }"
+      => (none)
+"Boolean(undefined) === /a/"
+      => no-constant-binary-expression 1:24 Unexpected constant binary expression. Compares constantly with the left-hand side of the `===`.
+"function f(undefined){ Boolean(undefined) === /a/ }"
+      => no-constant-binary-expression 1:47 Unexpected comparison to newly constructed object. These two values can never be equal.
+"function f(Boolean){ Boolean(undefined) === /a/ }"
+      => no-constant-binary-expression 1:45 Unexpected comparison to newly constructed object. These two values can never be equal.
+"var Boolean; Boolean(undefined) === /a/"
+      => no-constant-binary-expression 1:37 Unexpected comparison to newly constructed object. These two values can never be equal.
+"new Foo() === undefined"
+      => no-constant-binary-expression 1:1 Unexpected constant binary expression. Compares constantly with the right-hand side of the `===`.
+"new Map() === undefined; function f(Map) {}"
+      => no-constant-binary-expression 1:1 Unexpected constant binary expression. Compares constantly with the right-hand side of the `===`.
+"new Map() === x; function f(Map) {}"
+      => no-constant-binary-expression 1:1 Unexpected comparison to newly constructed object. These two values can never be equal.
+"new Map() === x"
+      => no-constant-binary-expression 1:1 Unexpected comparison to newly constructed object. These two values can never be equal.
+"new Map() == new Set()"
+      => no-constant-binary-expression 1:1 Unexpected comparison of two newly constructed objects. These two values can never be equal.
+"var Set; new Map() == new Set()"
+      => (none)
+"x = Boolean(a) ?? b"
+      => no-constant-binary-expression 1:5 Unexpected constant nullishness on the left-hand side of a `??` expression.
+"var Boolean; x = Boolean(a) ?? b"
+      => (none)
+"x = String(a) ?? b; function String() {}"
+      => (none)
+"x = Symbol() === true"
+      => no-constant-binary-expression 1:5 Unexpected constant binary expression. Compares constantly with the right-hand side of the `===`.
+"import Symbol from 'x'; x = Symbol() === true"
+      => (none)
+"new Array() === x"
+      => no-constant-binary-expression 1:1 Unexpected comparison to newly constructed object. These two values can never be equal.
+"new Object() === x"
+      => no-constant-binary-expression 1:1 Unexpected comparison to newly constructed object. These two values can never be equal.
+"new Date() === x"
+      => no-constant-binary-expression 1:1 Unexpected comparison to newly constructed object. These two values can never be equal.
+"new Promise(f) === x"
+      => no-constant-binary-expression 1:1 Unexpected comparison to newly constructed object. These two values can never be equal.
+"new WeakRef(a) === x"
+      => no-constant-binary-expression 1:1 Unexpected comparison to newly constructed object. These two values can never be equal.
+"new Temporal() === x"
+      => no-constant-binary-expression 1:1 Unexpected comparison to newly constructed object. These two values can never be equal.
+"new Iterator() === x"
+      => no-constant-binary-expression 1:1 Unexpected comparison to newly constructed object. These two values can never be equal.
+"new globalThis() === x"
+      => no-constant-binary-expression 1:1 Unexpected comparison to newly constructed object. These two values can never be equal.
+"new undefined() === x"
+      => no-constant-binary-expression 1:1 Unexpected comparison to newly constructed object. These two values can never be equal.
+"new NaN() === x"
+      => no-constant-binary-expression 1:1 Unexpected comparison to newly constructed object. These two values can never be equal.
+"new Infinity() === x"
+      => no-constant-binary-expression 1:1 Unexpected comparison to newly constructed object. These two values can never be equal.
+"new eval() === x"
+      => no-constant-binary-expression 1:1 Unexpected comparison to newly constructed object. These two values can never be equal.
+"new toString() === x"
+      => no-constant-binary-expression 1:1 Unexpected comparison to newly constructed object. These two values can never be equal.
+"new hasOwnProperty() === x"
+      => no-constant-binary-expression 1:1 Unexpected comparison to newly constructed object. These two values can never be equal.
+"new constructor() === x"
+      => no-constant-binary-expression 1:1 Unexpected comparison to newly constructed object. These two values can never be equal.
+"new Foo() === x"
+      => (none)
+"new require() === x"
+      => (none)
+"new console() === x"
+      => (none)
+"new window() === x"
+      => (none)
+"new Buffer() === x"
+      => (none)
+"new URL(a) === x"
+      => (none)
+"import { undefined } from './m.js' with { type: 'macro' };\nif (undefined) {}"
+      => (none)
+"import { feature as Boolean } from 'bun:bundle';\nif (Boolean(1)) {}"
+      => (none)
+"undefined: if (undefined) {}"
+      => no-constant-condition 1:16 Unexpected constant condition.
+"x = { undefined: 1 }; if (undefined) {}"
+      => no-constant-condition 1:27 Unexpected constant condition.
+"class A { undefined() {} } if (undefined) {}"
+      => no-constant-condition 1:32 Unexpected constant condition.
+"class A { #undefined; } if (undefined) {}"
+      => no-constant-condition 1:29 Unexpected constant condition.
+"x.undefined = 1; if (undefined) {}"
+      => no-constant-condition 1:22 Unexpected constant condition.
+"undefined = 1; if (undefined) {}"
+      => no-constant-condition 1:20 Unexpected constant condition.
+"Boolean = f; if (Boolean(1)) {}"
+      => no-constant-condition 1:18 Unexpected constant condition.

@@ -682,6 +682,43 @@ edit(K, """    /// isValidHeritageClauseObjectLiteral
 edit(K, """    fn is_end_of_heritage_clause_element(&self) -> bool {""",
      """    pub(crate) fn is_end_of_heritage_clause_element(&self) -> bool {""")
 
+# ───────────────────────── the block of an accessor of a type: the sink that builds reads it too ─────────────────────────
+edit(K, """    /// parseFunctionBlock of an accessor of a type, at "{".
+    fn parse_function_block_of_accessor(&mut self) -> Result<(), Error> {""", """    /// parseFunctionBlock of an accessor of a type, at "{": the statements of the block.
+    pub(crate) fn parse_function_block_of_accessor(
+        &mut self,
+    ) -> Result<bun_ast::StoreSlice<bun_ast::Stmt>, Error> {""")
+edit(K, """        self.parse_fn_body(&mut data).map(|_| ())
+    }""", """        Ok(self.parse_fn_body(&mut data)?.stmts)
+    }""")
+edit(K, """            Dropped::FunctionBlock => self.parse_function_block_of_accessor(),""",
+     """            Dropped::FunctionBlock => self.parse_function_block_of_accessor().map(|_| ()),""")
+edit(S, """        let name = self.build_property_name()?;
+        let (type_parameters, parameters, type_node, end) = self.build_signature()?;
+        let end = self.build_type_member_semicolon(end)?;
+        Ok(if is_get {""", """        let name = self.build_property_name()?;
+        let (type_parameters, parameters, type_node, end) = self.build_signature()?;
+        // parseFunctionBlockOrSemicolon: the reference reads a block here, and its checker rejects it.
+        let mut body = None;
+        let end = if self.lexer.token == T::TOpenBrace {
+            let block_start = self.lexer.start as u32;
+            let (stmts, block_end) = self.build_in_type(Self::parse_function_block_of_accessor)?;
+            body = Some(ts::Body {
+                start: block_start,
+                end: block_end,
+                stmts,
+            });
+            block_end
+        } else {
+            self.build_type_member_semicolon(end)?
+        };
+        Ok(if is_get {""")
+edit(S, """                type_node,
+                body: None,
+            };""", """                type_node,
+                body,
+            };""", count=2)
+
 # ───────────────────────── typescript.rs: the predicates of the reference, for the heritage reader ─────────────────────────
 Y = "typescript.rs"
 edit(Y, """    fn is_start_of_left_hand_side_expression(&mut self) -> bool {""",
@@ -778,13 +815,24 @@ R = "parse/parse_property.rs"
 edit(R, """                    if Self::IS_TYPESCRIPT_ENABLED && opts.is_class && p.is_class_index_signature()
                     {
                         p.skip_class_index_signature()?;
+
+                        // Skip this property entirely
+                        return Ok(None);
+                    }
 """, """                    if Self::IS_TYPESCRIPT_ENABLED && opts.is_class && p.is_class_index_signature()
                     {
-                        if p.starts_for_parse_only.is_some() {
-                            p.lint_class_index_signature(key_range.loc)?;
-                        } else {
+                        if p.starts_for_parse_only.is_none() {
                             p.skip_class_index_signature()?;
+
+                            // Skip this property entirely
+                            return Ok(None);
                         }
+                        // After `get`, `set` or `*` the reference reads a name in brackets: a lint parse reads no index signature there.
+                        if !matches!(kind, PropertyKind::Get | PropertyKind::Set) && !opts.is_generator {
+                            p.lint_class_index_signature(key_range.loc)?;
+                            return Ok(None);
+                        }
+                    }
 """)
 edit(R, """                        if p.lexer.token == T::TColon && was_identifier && opts.is_class {""",
      """                        // `[a!: T]: U` is no index signature for the reference: a lint parse asks for the "]".

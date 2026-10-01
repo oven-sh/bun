@@ -1,0 +1,358 @@
+[
+ {
+  "code": "@(undefined ? a : b) class A {}",
+  "ext": "ts"
+ },
+ {
+  "code": "@(void 0 ? a : b) class A {}",
+  "ext": "ts"
+ },
+ {
+  "code": "@(Boolean(1) ? a : b) class A {}",
+  "ext": "ts"
+ },
+ {
+  "code": "x = @(undefined ? a : b) class {}",
+  "ext": "ts"
+ },
+ {
+  "code": "@d @(undefined ? a : b) class A {}",
+  "ext": "ts"
+ },
+ {
+  "code": "@(undefined ? a : b) @d class A { @(undefined ? a : b) m() {} }",
+  "ext": "ts"
+ },
+ {
+  "code": "@((a = undefined ? 1 : 2) => a) class A {}",
+  "ext": "ts"
+ },
+ {
+  "code": "@(class { [undefined ? 1 : 2]() {} }) class A {}",
+  "ext": "ts"
+ },
+ {
+  "code": "@(@(undefined ? a : b) class {}) class A {}",
+  "ext": "ts"
+ },
+ {
+  "code": "class A { @(undefined ? a : b) m() {} }",
+  "ext": "ts"
+ },
+ {
+  "code": "class A { @(undefined ? a : b) x = 1 }",
+  "ext": "ts"
+ },
+ {
+  "code": "class A { @(undefined ? a : b) static s() {} }",
+  "ext": "ts"
+ },
+ {
+  "code": "class A { @(undefined ? a : b) accessor x = 1 }",
+  "ext": "ts"
+ },
+ {
+  "code": "class A { m(@(undefined ? a : b) p) {} }",
+  "ext": "ts"
+ },
+ {
+  "code": "class A { constructor(@(undefined ? a : b) q) {} }",
+  "ext": "ts"
+ },
+ {
+  "code": "class A { static m(@(undefined ? a : b) q) {} }",
+  "ext": "ts"
+ },
+ {
+  "code": "class A { set x(@(undefined ? a : b) q) {} }",
+  "ext": "ts"
+ },
+ {
+  "code": "class A { m(@d p = undefined ? 1 : 2, @(undefined ? a : b) q) {} }",
+  "ext": "ts"
+ },
+ {
+  "code": "class A { m(@d p = class { @(undefined ? a : b) x }, @(undefined ? a : b) q) {} }",
+  "ext": "ts"
+ },
+ {
+  "code": "class A { m(@((x = undefined ? 1 : 2) => x) p) { if (undefined) {} } }",
+  "ext": "ts"
+ },
+ {
+  "code": "class A { m(p = undefined ? 1 : 2) {} }",
+  "ext": "ts"
+ },
+ {
+  "code": "class A extends (undefined ? B : C) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "abstract class A { abstract m(@(undefined ? a : b) p): void }",
+  "ext": "ts"
+ },
+ {
+  "code": "abstract class A { @(undefined ? a : b) abstract m(): void }",
+  "ext": "ts"
+ },
+ {
+  "code": "class A { m(@(undefined ? a : b) p): void; m(p: any) {} }",
+  "ext": "ts"
+ },
+ {
+  "code": "switch (undefined ? 1 : 2) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "switch (undefined as any ? 1 : 2) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "enum E { A = undefined ? 1 : 2 }",
+  "ext": "ts"
+ },
+ {
+  "code": "namespace N { if (undefined) {} }",
+  "ext": "ts"
+ },
+ {
+  "code": "declare const undefined: any; if (undefined) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "declare let undefined: any, x: any; if (undefined) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "declare const { undefined }: any; if (undefined) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "declare function Boolean(x: any): boolean; if (Boolean(1)) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "declare global { var undefined: any } if (undefined) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "declare module 'm' { const undefined: any } if (undefined) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "declare namespace N { const undefined: any } if (undefined) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "declare namespace undefined { } if (undefined) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "declare enum undefined { A } if (undefined) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "namespace N { const undefined = 1 } if (undefined) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "namespace undefined { export const a = 1 } if (undefined) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "enum undefined { A } if (undefined) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "enum E { undefined = 1 } if (undefined) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "import undefined = require('x'); if (undefined) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "import type undefined from 'x'; if (undefined) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "import type * as undefined from 'x'; if (undefined) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "import type { undefined } from 'x'; if (undefined) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "import { type undefined } from 'x'; if (undefined) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "import { type a as undefined } from 'x'; if (undefined) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "import type { a as undefined } from 'x'; if (undefined) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "import type { undefined as a } from 'x'; if (undefined) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "import { type undefined as a } from 'x'; if (undefined) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "interface Boolean {} if (Boolean(1)) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "type undefined = 1; if (undefined) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "function f(x: number): void; function f(x: any) {} if (undefined) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "function Boolean(x: number): boolean; if (Boolean(1)) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "declare function f(undefined: any): void; if (undefined) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "type F = (undefined: any) => void; if (undefined) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "class C { constructor(private undefined: any) {} } if (undefined) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "declare namespace D { let z = 1 ? 2 : 3 }",
+  "ext": "ts"
+ },
+ {
+  "code": "declare enum E { A = 1 ? 2 : 3 }",
+  "ext": "ts"
+ },
+ {
+  "code": "if (undefined as any) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "if (undefined!) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "if (<any>undefined) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "if (undefined satisfies any) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "if ((undefined)) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "if (undefined<any>) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "if ((undefined<any>)) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "if (Boolean<T>(1)) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "if (Boolean!(1)) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "if ((Boolean as any)(1)) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "if ((Boolean<any>)(1)) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "if (Boolean<T>!(1)) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "if (Boolean(1 as any)) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "if (!(1 as any)) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "if (`${1 as any}`) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "if (`a${x as any}`) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "if ([1 as any] + '') {}",
+  "ext": "ts"
+ },
+ {
+  "code": "if (typeof (x as any)) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "if ((a, 1 as any)) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "if ((a, 1) as any) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "if (x = 1 as any) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "if (x = (1)) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "while (true as any) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "while ((true)) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "while (true!) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "while (<boolean>true) {}",
+  "ext": "ts"
+ },
+ {
+  "code": "do {} while (true as boolean)",
+  "ext": "ts"
+ },
+ {
+  "code": "x = (undefined<any>) ?? y",
+  "ext": "ts"
+ },
+ {
+  "code": "x = undefined! ?? y",
+  "ext": "ts"
+ }
+]

@@ -1,11 +1,54 @@
 [
- {"name": "type-aliases", "text": "type A = string;\ntype B<T> = T extends (infer U)[] ? U : never\nexport type C = { a: A; b?: B<A> } | undefined;\ndeclare type D = import(\"m\").X<string>;\ntype E = intrinsic;\ntype F = intrinsic.G;\ntype as = 1;\ntype G<in out T, const U = A> = | A | B<T>;\n"},
- {"name": "type-aliases-nested", "text": "namespace N { export type T = 1 }\nfunction f() { type L = { [k: string]: L } }\n{ type M = typeof f }\ndeclare namespace O { type P = keyof O }\n"},
- {"name": "interfaces", "text": "interface A {}\ninterface B<T> extends C<T>, D.E { a: T; b?(x: T): void; (x: T): T; new (x: T): B<T>; readonly [k: string]: T; get c(): T; set c(v: T) }\nexport default interface F extends G {}\ndeclare interface H { m(): void }\nexport interface I<T = {}> { <U>(u: U, ...rest: T[]): U }\n"},
- {"name": "interface-heritage", "text": "interface A extends B, {}\ninterface C extends (D) {}\ninterface E extends F<G>() {}\ninterface H extends I implements J, K<L> {}\ninterface M extends string, N.O<P> {}\ninterface Q extends {} {}\ninterface R extends S\n{}\ninterface as {}\ninterface T extends U extends V {}\n"},
- {"name": "interface-members", "text": "interface S { a: 1, b: 2; c: 3\n d: 4 }\ninterface T { 'x': 1; 2: 2; [y]: 3; #z: 4; new: 5; get: 6; set?: 7; readonly: 8; static a: 9 }\ninterface U { m<T extends A = B>(this: U, a?: T, ...b: T[]): asserts a is T; get(): void; set(v: 1): void; new?(): U }\ninterface V { a: number = 1; readonly b?: string; c? = 2 }\n"},
- {"name": "class-index-signatures", "text": "class C { [k: string]: any }\nclass D { static [k: string]: number; readonly [k: number]: string; static readonly [s: symbol]: unknown }\nclass E { declare [k: string]: any }\nabstract class F { abstract [k: string]: any; a = 1; private [j: number]: 1, public static override [i: string]: 2 }\nclass G { [k: string] }\nclass H { [k: string, j: number]: any; [...r: string[]]: any; [o?: string]: any; []: any }\ndeclare class I { [k: string]: I }\nconst J = class { accessor [k: string]: 1; async [j: string]: 2 }\n"},
- {"name": "class-index-signature-decorators", "text": "class C { @d [k: string]: any; @e.static readonly [j: number]: 1; @(f) static [i: string]: 2; @readonly\n static [h: string]: 3 }\n"},
- {"name": "speculation", "text": "const r = a ? (b): c => { type T = A | B; interface I extends J { a: 1 } class K { static [k: string]: T } return K } : e;\nconst s = a ? (b) : c => { type U = 1; interface V<W> { w: W } return c };\n"},
- {"name": "comment-before-type-parameters", "text": "type A /* c */ <T> = T;\ninterface B // d\n<U> { u: U }\n"}
+ {
+  "name": "type-aliases",
+  "text": "type A = string;\ntype B<T> = T extends (infer U)[] ? U : never\nexport type C = { a: A; b?: B<A> } | undefined;\ndeclare type D = import(\"m\").X<string>;\ntype E = intrinsic;\ntype F = intrinsic.G;\ntype as = 1;\ntype G<in out T, const U = A> = | A | B<T>;\n"
+ },
+ {
+  "name": "type-aliases-nested",
+  "text": "namespace N { export type T = 1 }\nfunction f() { type L = { [k: string]: L } }\n{ type M = typeof f }\ndeclare namespace O { type P = keyof O }\n"
+ },
+ {
+  "name": "interfaces",
+  "text": "interface A {}\ninterface B<T> extends C<T>, D.E { a: T; b?(x: T): void; (x: T): T; new (x: T): B<T>; readonly [k: string]: T; get c(): T; set c(v: T) }\nexport default interface F extends G {}\ndeclare interface H { m(): void }\nexport interface I<T = {}> { <U>(u: U, ...rest: T[]): U }\n"
+ },
+ {
+  "name": "interface-heritage",
+  "text": "interface A extends B, {}\ninterface C extends (D) {}\ninterface E extends F<G>() {}\ninterface H extends I implements J, K<L> {}\ninterface M extends string, N.O<P> {}\ninterface Q extends {} {}\ninterface R extends S\n{}\ninterface as {}\ninterface T extends U extends V {}\n"
+ },
+ {
+  "name": "interface-members",
+  "text": "interface S { a: 1, b: 2; c: 3\n d: 4 }\ninterface T { 'x': 1; 2: 2; [y]: 3; #z: 4; new: 5; get: 6; set?: 7; readonly: 8; static a: 9 }\ninterface U { m<T extends A = B>(this: U, a?: T, ...b: T[]): asserts a is T; get(): void; set(v: 1): void; new?(): U }\ninterface V { a: number = 1; readonly b?: string; c? = 2 }\n"
+ },
+ {
+  "name": "class-index-signatures",
+  "text": "class C { [k: string]: any }\nclass D { static [k: string]: number; readonly [k: number]: string; static readonly [s: symbol]: unknown }\nclass E { declare [k: string]: any }\nabstract class F { abstract [k: string]: any; a = 1; private [j: number]: 1, public static override [i: string]: 2 }\nclass G { [k: string] }\nclass H { [k: string, j: number]: any; [...r: string[]]: any; [o?: string]: any; []: any }\ndeclare class I { [k: string]: I }\nconst J = class { accessor [k: string]: 1; async [j: string]: 2 }\n"
+ },
+ {
+  "name": "class-index-signature-decorators",
+  "text": "class C { @d [k: string]: any; @e.static readonly [j: number]: 1; @(f) static [i: string]: 2; @readonly\n static [h: string]: 3 }\n"
+ },
+ {
+  "name": "speculation",
+  "text": "const r = a ? (b): c => { type T = A | B; interface I extends J { a: 1 } class K { static [k: string]: T } return K } : e;\nconst s = a ? (b) : c => { type U = 1; interface V<W> { w: W } return c };\n"
+ },
+ {
+  "name": "comment-before-type-parameters",
+  "text": "type A /* c */ <T> = T;\ninterface B // d\n<U> { u: U }\n"
+ },
+ {
+  "name": "export-type-forms",
+  "text": "export type { A };\nexport type * from 'm';\nexport type * as N from 'n';\nexport type T = A;\nexport interface U { a: T }\nexport declare type V = 1;\n"
+ },
+ {
+  "name": "computed-names-and-initializers",
+  "text": "interface I { [Symbol.iterator](): I; [a + b]: 1; c: number = d as number; e?(f = 1, { g }: H, [i]: J = []): void }\n"
+ },
+ {
+  "name": "named-like-a-cast",
+  "text": "type as<T> = T;\ninterface satisfies<U> extends B<U> { a: U }\ntype satisfies = 1;\ninterface as {}\n"
+ },
+ {
+  "name": "accessor-bodies",
+  "text": "interface X { get a() { return 0 } set a(v: number) { type T = 1 } b: 1 }\ntype Y = { get c(): number { return 1 }; d: 2 };\n"
+ }
 ]

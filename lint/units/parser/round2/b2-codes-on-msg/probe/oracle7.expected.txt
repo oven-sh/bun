@@ -1,0 +1,21 @@
+"import * ass x from 'y'" [ts]
+   tsc  @9+3 TS1005 'as' expected. | @13+1 TS1005 'from' expected. | @15+4 TS1005 ';' expected.
+   tsgo @9+3 TS1005 'as' expected. | @13+1 TS1005 'from' expected. | @15+4 TS1005 ';' expected.
+"export * as x frm 'y'" [ts]
+   tsc  @14+3 TS1005 'from' expected. | @18+3 TS1005 ';' expected.
+   tsgo @14+3 TS1005 'from' expected. | @18+3 TS1005 ';' expected.
+"import x frm 'y'" [ts]
+   tsc  @9+3 TS1005 '=' expected. | @13+3 TS1005 ';' expected.
+   tsgo @9+3 TS1005 '=' expected. | @13+3 TS1005 ';' expected.
+"async function f() { for await (x in y) {} }" [ts]
+   tsc  @34+2 TS1005 'of' expected.
+   tsgo @34+2 TS1005 'of' expected.
+"import {a} frm 'y'" [ts]
+   tsc  @11+3 TS1005 'from' expected. | @15+3 TS1005 ';' expected.
+   tsgo @11+3 TS1005 'from' expected. | @15+3 TS1005 ';' expected.
+"export {a} frm 'y'" [ts]
+   tsc  @11+3 TS1005 ';' expected.
+   tsgo @11+3 TS1005 ';' expected.
+"import type {a} frm 'y'" [ts]
+   tsc  @16+3 TS1005 'from' expected. | @20+3 TS1005 ';' expected.
+   tsgo @16+3 TS1005 'from' expected. | @20+3 TS1005 ';' expected.

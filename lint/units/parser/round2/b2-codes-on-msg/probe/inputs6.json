@@ -1,0 +1,42 @@
+[
+ [
+  "ts",
+  "a < b | !c;\nexport ;"
+ ],
+ [
+  "ts",
+  "a < b | !c; export ;"
+ ],
+ [
+  "ts",
+  "a < b & !c;\nexport )"
+ ],
+ [
+  "ts",
+  "x = a < b | !c;\nexport ;"
+ ],
+ [
+  "ts",
+  "a < b | !c;\na < b | !c;\nexport ;"
+ ],
+ [
+  "ts",
+  "a < keyof !c;\nexport ;"
+ ],
+ [
+  "ts",
+  "a < b | !c;\nexport ]"
+ ],
+ [
+  "ts",
+  "f(a < b | !c);\nexport ;"
+ ],
+ [
+  "ts",
+  "a < b | !c;\nlet x = 1;\nexport ;"
+ ],
+ [
+  "ts",
+  "a < b | !c;"
+ ]
+]

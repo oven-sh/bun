@@ -61,7 +61,7 @@ add("name-after-a-line-break", "ts", "a.\nb in c;", "a.\nb instanceof c;", "a.\n
   "class C extends B { m() { super.\nb in c; } }", "import.meta.\nb in c;", "new.target.\nb in c;", "this.\nb in c;", "a.\nb in c + d = e;",
   "let x: A.\nB extends C ? D : E;", "type T = A.\nB extends C ? D : E;", "let x = y as A.\nB as C;", "let x: typeof a.\nb extends C ? D : E;", "type T = { [K in A.\nB as C]: D };", "interface I extends A.\nB extends C {}");
 add("name-after-a-line-break", "js", "a.\nb in c;", "a.\nb instanceof c;", "for (a.\nb of c) {}", "a?.\nb in c;");
-add("name-after-a-line-break", "tsx", "<a.\nb c='1' />;", "<a.b.\nc d='1' />;");
+add("name-after-a-line-break", "tsx", "<a.\nb c='1' />;", "<a.b.\nc d='1' />;", "<a.\nb c='1'>x</a.b>;", "<a.\nb data-c='1'>x</a.b>;", "<x><a.\nb c='1'>y</a.b></x>;");
 add("name-after-a-line-break", "jsx", "<a.\nb c='1' />;");
 // What the reference parses.
 add("parses", "ts", "(a + b) = c;", "a! = c;", "a!! = 1;", "(x as T) = 1;", "(<T>x) = 1;", "(a ? b : c) = d;", "a ? b : c = d;", "a = b = c;", "a, b = c;", "a = b => c = d;", "1 = 2;", "this = 1;", "f() = 1;", "a?.b = 1;", "new X = 1;", "import.meta = 1;", "`a` = 1;", "a<b> = c;", "using [a] = null;",
@@ -72,7 +72,7 @@ add("parses", "ts", "(a + b) = c;", "a! = c;", "a!! = 1;", "(x as T) = 1;", "(<T
   "let x: A.\nB;", "let x: A.\nB = c;", "let x: A.\nB | C;", "import a = b.\nc;",
   "function* g() { yield*\nx; }", "function* g() { yield; yield\nx; (yield); [yield]; f(yield, 1); x ? yield : 1; }", "function* g() { yield* x; yield *x; yield\n; }", "function* g() { x ? yield y : z; }", "function* g() { x = yield y; }", "function* g() { f(yield y); }");
 add("parses", "js", "(a + b) = c;", "1 = 2;", "f() = 1;", "(a++).b;", "a++<b>(c);", "a.\nb\nin c;");
-add("parses", "tsx", "(<a/>).b;", "<a/> = 1;", "(<a/>)++;", "++(<a/>);", "<a/> as T;", "<a/> + 1;", "<a/> ? 1 : 2;", "-<a/>;", "<a.\nb/>;", "<a.\nb></a.b>;", "<a.\nb {...c} />;", "<a.\nb\nc='1' />;", "<a><b/>.c</a>;", "a++<T>(x);");
+add("parses", "tsx", "(<a/>).b;", "<a/> = 1;", "(<a/>)++;", "++(<a/>);", "<a/> as T;", "<a/> + 1;", "<a/> ? 1 : 2;", "-<a/>;", "<a.\nb/>;", "<a.\nb></a.b>;", "<a.\nb {...c} />;", "<a.\nb\nc='1' />;", "<a><b/>.c</a>;", "a++<T>(x);", "<a.b c='1'>x</a.\nb>;", "<a.\nb>x</a.b>;", "<a.\nb<T> c='1' />;");
 // What the reference parses and Bun's parse pass reads another way, in every mode.
 add("the-reference-inserts-a-semicolon", "ts", "a++\n(b);", "a++\n[0];", "a++\n`x`;", "x = a++\n(b);", "let x = a++\n(b);", "function f() { return a++\n(b); }", "a++ /* c\n */ (b);", "a++ // c\n(b);", "a++\n(b).c(d) + e;", "class C { x = a++\n[0]; }");
 add("the-reference-inserts-a-semicolon", "js", "a++\n(b);", "a++\n[0];", "a++\n`x`;");

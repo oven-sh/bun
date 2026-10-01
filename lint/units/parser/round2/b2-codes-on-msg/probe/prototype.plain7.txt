@@ -1,0 +1,7 @@
+"import * ass x from 'y'" [ts] err bun @9+0 "Expected \"as\" but found \"ass\" (token: TIdentifier)" msgs=1 | entry code=1005 9..9 "'as' expected."
+"export * as x frm 'y'" [ts] err bun @14+0 "Expected \"from\" but found \"frm\" (token: TIdentifier)" msgs=1 | entry code=1005 14..14 "'from' expected."
+"import x frm 'y'" [ts] err bun @9+0 "Expected \"from\" but found \"frm\" (token: TIdentifier)" msgs=1 | entry code=1005 9..9 "'from' expected."
+"async function f() { for await (x in y) {} }" [ts] err bun @34+2 "Expected \"of\" but found \"in\"" msgs=1 | entry code=1005 34..36 "'of' expected."
+"import {a} frm 'y'" [ts] err bun @11+0 "Expected \"from\" but found \"frm\" (token: TIdentifier)" msgs=1 | entry code=1005 11..11 "'from' expected."
+"export {a} frm 'y'" [ts] err bun @11+3 "Expected \";\" but found \"frm\"" msgs=1 | entry code=1005 11..14 "';' expected."
+"import type {a} frm 'y'" [ts] err bun @16+0 "Expected \"from\" but found \"frm\" (token: TIdentifier)" msgs=1 | entry code=1005 16..16 "'from' expected."

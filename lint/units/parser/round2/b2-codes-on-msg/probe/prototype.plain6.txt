@@ -1,0 +1,10 @@
+"a < b | !c;\nexport ;" [ts] err bun @19+1 "Unexpected ;" msgs=1 | entry code=0 0..0 ""
+"a < b | !c; export ;" [ts] err bun @19+1 "Unexpected ;" msgs=1 | entry code=0 0..0 ""
+"a < b & !c;\nexport )" [ts] err bun @19+1 "Unexpected )" msgs=1 | entry code=0 0..0 ""
+"x = a < b | !c;\nexport ;" [ts] err bun @23+1 "Unexpected ;" msgs=1 | entry code=0 0..0 ""
+"a < b | !c;\na < b | !c;\nexport ;" [ts] err bun @31+1 "Unexpected ;" msgs=1 | entry code=0 0..0 ""
+"a < keyof !c;\nexport ;" [ts] err bun @11+1 "Expected \";\" but found \"c\"" msgs=2 | entry code=1005 11..12 "';' expected."
+"a < b | !c;\nexport ]" [ts] err bun @19+1 "Unexpected ]" msgs=1 | entry code=0 0..0 ""
+"f(a < b | !c);\nexport ;" [ts] err bun @22+1 "Unexpected ;" msgs=1 | entry code=0 0..0 ""
+"a < b | !c;\nlet x = 1;\nexport ;" [ts] err bun @30+1 "Unexpected ;" msgs=1 | entry code=0 0..0 ""
+"a < b | !c;" [ts] ok

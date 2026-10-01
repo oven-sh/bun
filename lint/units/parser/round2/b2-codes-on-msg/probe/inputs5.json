@@ -1,0 +1,42 @@
+[
+ [
+  "ts",
+  "a < !b;\nexport ;"
+ ],
+ [
+  "ts",
+  "a < !b;\nexport )"
+ ],
+ [
+  "ts",
+  "a < !b; export ;"
+ ],
+ [
+  "ts",
+  "a < !b;\nexport ]"
+ ],
+ [
+  "ts",
+  "a < !b;\nfunction* g() { yield\n* 1 }"
+ ],
+ [
+  "ts",
+  "x < !y; export ;"
+ ],
+ [
+  "ts",
+  "if (a < !b) {}\nexport ;"
+ ],
+ [
+  "ts",
+  "a < ~b;\nexport ;"
+ ],
+ [
+  "ts",
+  "a < !b;\na < !b;\nexport ;"
+ ],
+ [
+  "ts",
+  "export ;"
+ ]
+]

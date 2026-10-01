@@ -1,0 +1,143 @@
+DIFFER missing "for (var i = 0; i < 10; i -= (Number(\"5\") === 5));"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0; i < 10; i -= (String(5) === \"5\"));"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0; i < 10; i -= (Boolean(0) === false));"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0; i < 10; i -= (parseInt(\"7\") === 7));"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0; i < 10; i -= (Math.abs(-1) === 1));"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0; i < 10; i -= (\"a\".concat(\"b\") === \"ab\"));"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0; i < 10; i -= ([1, 2].length === 2));"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0; i < 10; i -= (\"abc\".toUpperCase() === \"ABC\"));"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0; i < 10; i -= (Math.max(1, 2) === 2));"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0; i < 10; i -= (Number.isNaN(NaN)));"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0; i < 10; i -= (isNaN(\"x\")));"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0; i < 10; i -= (new Number(1) + 1 === 2));"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0; i < 10; i -= (Number() === 0));"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0; i < 10; i -= (String() === \"\"));"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0; i < 10; i -= (Boolean() === false));"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0; i < 10; i -= (Number(1n) === 1));"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0; i < 10; i -= (String(null) === \"null\"));"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0; i < 10; i -= (Number(\"0x10\") === 16));"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0; i < 10; i -= ([] + \"\" === \"\"));"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0; i < 10; i -= ([1, 2] + \"\" === \"1,2\"));"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0; i < 10; i -= (({}) + \"\" === \"[object Object]\"));"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0; i < 10; i -= (!![]));"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0; i < 10; i -= (!!{}));"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0; i < 10; i -= (({ a: 1 }).a === 1));"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0; i < 10; i -= ([1, 2][1] === 2));"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0; i < 10; i -= (typeof [] === \"object\"));"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0; i < 10; i -= (typeof Math === \"object\"));"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0; i < 10; i -= (typeof String === \"function\"));"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0; i < 10; i -= (\"abc\".slice(1) === \"bc\"));"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0; i < 10; i -= (\"abc\".charAt(0) === \"a\"));"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0; i < 10; i -= (Number.parseFloat(\"1.5\") === 1.5));"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0; i < 10; i -= (parseFloat(\"1.5x\") === 1.5));"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0; i < 10; i -= (BigInt(5) === 5n));"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0; i < 10; i -= (Math.floor(1.5) === 1));"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0; i < 10; i -= (Math.round(-0.5) === 0));"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0; i < 10; i -= (Math.sign(-3) === -1));"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0; i < 10; i -= (Math.trunc(-1.5) === -1));"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0; i < 10; i -= (Math.min() === Infinity));"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0; i < 10; i -= ((0, Number)(\"3\") === 3));"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0; i < 10; i -= (2n ** 130n > 0n));"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0; i < 10; i -= ((1n << 200n) > 1n));"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0; i < 10; i -= (340282366920938463463374607431768211456n > 0n));"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0; i < 10; i -= (-(2n ** 127n) < 0n));"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "for (var i = 0; i < 10; i -= (0xffffffffffffffffffffffffffffffffffn > 0n));"
+    eslint: for-direction 1:1 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "function f(NaN) {} for (var i = 0; i < 10; i -= (NaN !== NaN));"
+    eslint: for-direction 1:20 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "const n = 1; for (var i = 0; i < 10; i -= n);"
+    eslint: for-direction 1:14 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+DIFFER missing "let n = 1; for (var i = 0; i < 10; i -= n);"
+    eslint: for-direction 1:12 The update clause in this loop moves the variable in the wrong direction.
+    native: (none)
+fd-values.json: cases 378, same 331, differ 47
+all: cases 378, same 331, differ 47 {"missing":47}; reports of ESLint 335

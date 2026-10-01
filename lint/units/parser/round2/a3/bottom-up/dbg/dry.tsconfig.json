@@ -1,0 +1,1 @@
+{ "compilerOptions": { "baseUrl": ".", "paths": { "harness": ["/workspace/wt/parser/test/harness.ts"] } } }

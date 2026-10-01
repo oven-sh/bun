@@ -1,0 +1,14 @@
+queued 12:14:18
+lock acquired 12:39:24 load 742.89 pressure some avg10=14.55 avg60=13.64 avg300=13.22 total=5401452689
+sweep four children: 52s
+/tmp/a3-seam/dbg/half0.lint.time: rc 0 wall 51.6s user 30.9s sys 0.5s maxrss 469 MB
+/tmp/a3-seam/dbg/half0.normal.time: rc 0 wall 49.7s user 32.2s sys 0.5s maxrss 454 MB
+/tmp/a3-seam/dbg/half1.lint.time: rc 0 wall 48.6s user 29.8s sys 0.5s maxrss 450 MB
+/tmp/a3-seam/dbg/half1.normal.time: rc 0 wall 46.1s user 29.0s sys 0.6s maxrss 434 MB
+leak check four children: 67s
+/tmp/a3-seam/dbg/half0.lint-leak.out: rc 0 wall 67.3s user 32.7s sys 0.7s maxrss 485 MB lines 3
+/tmp/a3-seam/dbg/half0.normal-leak.out: rc 0 wall 64.5s user 32.1s sys 0.6s maxrss 481 MB lines 3
+/tmp/a3-seam/dbg/half1.lint-leak.out: rc 0 wall 65.7s user 29.0s sys 0.6s maxrss 464 MB lines 1
+/tmp/a3-seam/dbg/half1.normal-leak.out: rc 0 wall 57.6s user 28.6s sys 0.6s maxrss 447 MB lines 1
+dry test rc=0 52s
+done 12:42:19

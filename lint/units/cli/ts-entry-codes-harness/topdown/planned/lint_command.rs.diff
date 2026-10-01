@@ -1,0 +1,107 @@
+--- /workspace/wt/cli/src/runtime/cli/lint_command.rs	2026-10-01 04:32:13.068695965 +0000
++++ lint_command.rs	2026-10-01 13:00:39.648878136 +0000
+@@ -1,7 +1,8 @@
+-//! `bun --lint <files>`: parses each operand, runs the rules on JavaScript, prints the diagnostics sorted and each once. No file is run.
++//! `bun --lint <files>`: parses each operand, runs the rules on it, prints the diagnostics sorted and each once. No file is run.
+ 
+ use bstr::BStr;
+ use bun_core::{Global, Output, ZBox, ZStr};
++use bun_js_parser::parse::syntax_errors::SyntaxErrors;
+ use bun_lint::code_frame::write_code_frames;
+ use bun_lint::diagnosticwriter::{FormattingOptions, write_format_diagnostics};
+ use bun_lint::program::sort_and_deduplicate_diagnostics;
+@@ -143,11 +144,6 @@
+         .filter(|loader| loader.is_javascript_like())
+ }
+ 
+-/// Declaration files are read and not parsed: the parser has no ambient top level.
+-fn is_declaration_file(operand: &[u8]) -> bool {
+-    operand.ends_with(b".d.ts") || operand.ends_with(b".d.mts") || operand.ends_with(b".d.cts")
+-}
+-
+ /// An error that belongs to no file.
+ fn error_without_file(code: Code, text: core::fmt::Arguments<'_>) -> Diagnostic {
+     Diagnostic {
+@@ -202,9 +198,6 @@
+             return;
+         }
+     };
+-    if is_declaration_file(operand) {
+-        return;
+-    }
+     // The place of the file in `files` when it is kept.
+     let file = FileId(u32::try_from(files.len()).unwrap_or(u32::MAX));
+     let found = parse(file, loader, &source);
+@@ -217,39 +210,29 @@
+     diagnostics.extend(found);
+ }
+ 
+-/// What is found in one file: what the parser reports and, in a JavaScript file, what the rules report.
++/// What is found in one file: what the parser reports and, in a file that parses, what the rules report.
+ fn parse(file: FileId, loader: bun_ast::Loader, source: &bun_ast::Source) -> Vec<Diagnostic> {
+     bun_ast::initialize_store();
+     let _reset = bun_ast::StoreResetGuard::new();
+     let arena = bun_alloc::Arena::new();
+-    let options = || {
+-        let mut options = bun_js_parser::ParserOptions::init(Default::default(), loader);
+-        // A macro call stays a call: nothing is evaluated.
+-        options.features.no_macros = true;
+-        options.features.is_macro_runtime = true;
+-        options.features.top_level_await = true;
+-        options.features.standard_decorators = true;
+-        options
+-    };
++    let mut options = bun_js_parser::ParserOptions::init(Default::default(), loader);
++    // A macro call stays a call: nothing is evaluated.
++    options.features.no_macros = true;
++    options.features.is_macro_runtime = true;
++    options.features.top_level_await = true;
++    options.features.standard_decorators = true;
+     let define = bun_js_parser::Define::default();
+     let mut log = bun_ast::Log::init();
+     log.level = bun_ast::Level::Warn;
+-    let parser = bun_js_parser::Parser::init(options(), &mut log, source, &define, &arena);
+-    let parsed = parser.and_then(|parser| match loader {
+-        // The rules read the statements as they were written: the visit pass of `Parser::parse` rewrites them.
+-        bun_ast::Loader::Js | bun_ast::Loader::Jsx => {
+-            parser.parse_only(|tree| bun_lint::lint(file, tree, source, &arena))
+-        }
+-        // `Parser::parse_only` is the parser without TypeScript: a TypeScript file gets the full parse and no rule.
+-        _ => parser.parse().map(|_| Vec::new()),
+-    });
+-    if matches!(parsed, Err(bun_js_parser::Error::StackOverflow)) {
+-        // `Parser::parse_only` only returns a stack overflow: `Parser::parse` logs it, at the place the lexer reached.
+-        log = bun_ast::Log::init();
+-        log.level = bun_ast::Level::Warn;
+-        let _ = bun_js_parser::Parser::init(options(), &mut log, source, &define, &arena)
+-            .and_then(|parser| parser.parse());
+-    }
++    let mut errors = SyntaxErrors::default();
++    // One entry for every loader: the rules read the statements as they were written and the side table beside them.
++    let parsed = bun_js_parser::Parser::init(options, &mut log, source, &define, &arena).and_then(
++        |parser| {
++            parser.parse_for_lint_with_codes(&mut errors, |parsed| {
++                bun_lint::lint(file, parsed, source)
++            })
++        },
++    );
+     let reports = match parsed {
+         Ok(reports) => reports,
+         Err(err) => {
+@@ -259,9 +242,15 @@
+             Vec::new()
+         }
+     };
++    // A TypeScript file has a syntax error as tsc has it. A JavaScript file keeps the text of Bun's parser.
++    let is_coded = loader.is_typescript();
+     core::mem::take(&mut log.msgs)
+         .into_iter()
+-        .filter_map(|msg| Diagnostic::from_msg(file, msg))
++        .enumerate()
++        .filter_map(|(index, msg)| {
++            let reference = if is_coded { errors.get(index) } else { None };
++            Diagnostic::from_syntax_error(file, msg, reference)
++        })
+         .chain(reports)
+         .collect()
+ }

@@ -1,0 +1,64 @@
+=== V0, run 2
+   n   wall  main: cpu   runq blocked | process user+sys | tests
+   1     88         53     35       0 |               69 | (before the first test)
+   1      0          0      0       0 |                0 | reference > the pinned answers are those of the commits that UPSTREAM names
+   1     10          6      3       0 |                7 | reference > the corpus holds the cases, the baselines and the lists of the pinned commits
+   1     42         27     15       0 |               35 | reference > the list has the instances of the reference's run: 14,915, of which 12,797 run and 2,118 are skipped
+   1    104         48     56       0 |               85 | reference > the case and space tables are those of Go
+   1      9          7      2       0 |                9 | directives > *
+  16      8          1      5       0 |                3 | variations > *
+   1      0          0      0       0 |                0 | enumerator > the sample holds cases of both suites
+   9    130         51     76       1 |              114 | enumerator > the instances of one of 40 cases are their lines of the list: group *
+   1      5          2      4       0 |                2 | enumerator > 45 cases are left out by name and 8 are run for their diagnostics alone
+   1   1577        844    723      10 |             1367 | enumerator > every instance is its line of the list, and the counts are those of the reference
+  13    144         70     72       1 |              144 | error baselines > *
+  12     38         37      0       0 |               67 | run > *
+   4      1          1      0       0 |                2 | expectations > *
+  20     10          9      0       1 |               21 | plain format > *
+  20   2406        272    931    1200 |              408 | default check > (20 tests side by side)
+   2     25          9     16       0 |               14 | listed instances > *
+   1      0          0      0       0 |                0 | expectations.json > *
+   1   2733       1217   1103     413 |             2029 | (whole process, up to the end of the tests)
+=== V1, run 2
+   n   wall  main: cpu   runq blocked | process user+sys | tests
+   1     79         47     32       0 |               66 | (before the first test)
+   1      0          0      0       0 |                0 | reference > the pinned answers are those of the commits that UPSTREAM names
+   1      8          6      2       0 |                8 | reference > the corpus holds the cases, the baselines and the lists of the pinned commits
+   1     55         24     30       1 |               38 | reference > the list has the instances of the reference's run: 14,915, of which 12,797 run and 2,118 are skipped
+   1     59         38     21       0 |               68 | reference > the case and space tables are those of Go
+   1      8          5      3       0 |                9 | directives > *
+  16      3          2      0       0 |                5 | variations > *
+   1      0          0      0       0 |                0 | enumerator > the sample holds cases of both suites
+   9     84         34     47       2 |               76 | enumerator > the instances of one of 40 cases are their lines of the list: group *
+   1      2          2      0      -1 |               10 | enumerator > 45 cases are left out by name and 8 are run for their diagnostics alone
+   1   1038        452    564      22 |              931 | enumerator > every instance is its line of the list, and the counts are those of the reference
+  13    116         49     64       0 |              113 | error baselines > *
+  12     85         33     50       0 |               72 | run > *
+   4      1          1      0       0 |                2 | expectations > *
+  20     10          6      3       0 |                9 | plain format > *
+  20   3471        356   1601    1516 |              484 | default check > (20 tests side by side)
+   2     21          8     13       0 |               11 | listed instances > *
+   1      0          0      0       0 |                0 | expectations.json > *
+   1   1927        749    955     223 |             1473 | (whole process, up to the end of the tests)
+=== V3, run 2
+   n   wall  main: cpu   runq blocked | process user+sys | tests
+   1     56         40     16       0 |               55 | (before the first test)
+   1      0          0      0       0 |                0 | reference > the pinned answers are those of the commits that UPSTREAM names
+   1      9          5      4       0 |                6 | reference > the corpus holds the cases, the baselines and the lists of the pinned commits
+   1     28         19      9       0 |               28 | reference > the list has the instances of the reference's run: 14,915, of which 12,797 run and 2,118 are skipped
+   1     26         10     16       0 |               22 | reference > the list is the run of the reference that is recorded: its subtests and the reasons of its skips
+   1     60         33     27       0 |               59 | reference > the corpus gives every instance of the list that runs the oracle of its class, and the counts are those of the referen
+   1     71         40     31       0 |               71 | reference > the case and space tables are those of Go
+   1     13          6      7       0 |               13 | directives > *
+  16      4          1      2       0 |                4 | variations > *
+   1      2          1      0       0 |                1 | enumerator > the sample holds cases of both suites, and an instance of every reason of a skip
+   9     86         38     47       0 |               83 | enumerator > the instances of one of 40 cases are their lines of the list: group *
+   1     15          4     11       0 |               15 | enumerator > 45 cases are left out by name and 8 are run for their diagnostics alone
+  13    146         55     94       0 |              129 | error baselines > *
+  12    100         34     44      23 |               73 | run > *
+   4      4          1      3       0 |                4 | expectations > *
+  20     15          7      7       0 |               15 | plain format > *
+  20   5581        310   1816    3459 |              511 | default check > (20 tests side by side)
+   2     16          9      7       0 |               12 | listed instances > *
+   1      0          0      0       0 |                0 | expectations.json > *
+   1   1312        344    498     470 |              655 | (whole process, up to the end of the tests)

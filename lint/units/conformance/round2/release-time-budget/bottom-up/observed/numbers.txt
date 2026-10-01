@@ -11,7 +11,7 @@ the same call, page cache of the cases dropped before (probes/evict.py), before:
   wall 36290   main thread on CPU 1963, waits for a CPU 10450, blocked 23877   process user 2127 sys 542   53.3 MB read from the disk for 8.4 MB of files
 threads of the process for one call (probes/threads.ts), ms of CPU
   before   bun 719-774   JITWorker 638-748   HeapHelper 48-50   JSCWarmUp 11-12
-  after    bun 429-481   JITWorker 470-739   HeapHelper 39-47   JSCWarmUp 6-15
+  after    bun 401-524   JITWorker 470-739   HeapHelper 39-50   JSCWarmUp 6-15
   after, BUN_JSC_useFTLJIT=0   bun 470-497   JITWorker 116-117   HeapHelper 42-51     (all threads 646-681)
   after, BUN_JSC_useDFGJIT=0   bun 678-722   JITWorker 6-7       HeapHelper 43-46
   after, BUN_JSC_useJIT=0      bun 1866      HeapHelper 705
@@ -61,3 +61,22 @@ parity of the runner after the change
   bun test/cli/lint/conformance/update-reference.ts --check /workspace/ref/typescript-go               "the list is the one that is there" ... "nothing changes" (this form does not call the enumerator)
   bun test/cli/lint/conformance/update-reference.ts --enumerate --check /workspace/ref/typescript-go   "the list is the one of the enumerator of the runner" ... "nothing changes"
   the test "every instance is its line of the list, and the counts are those of the reference" passes in the seven runs of V1
+
+the test file with a preload that meters every test (probes/percpu-preload.ts; observed/batch3, observed/per-test-cpu.txt), page cache warm, load average 318 to 341, three runs each
+  V0   the runner's own seconds 3.79 2.80 3.12   user+sys with the processes that the tests start 2.37 2.43 2.26
+       the test of the whole corpus: wall 1546 1577 1309 ms, main thread on CPU 767 844 711, waits for a CPU 765 723 591, process user+sys 1297 1367 1225
+       the test process up to the end of the tests: main thread on CPU 1110 1217 1053, process user+sys 1922 2029 1834
+  V1   3 runs: 1.94 1.98 2.56   user+sys 1.94 2.05 1.92
+       the test of the whole corpus: wall 937 1038 1198 ms, main thread on CPU 453 452 465, waits for a CPU 442 564 710, process user+sys 967 931 959
+       the test process: main thread on CPU 761 749 768, process user+sys 1530 1473 1521
+  V3   (the prototype as it is in conformance-test-prototype.patch) 1.55 1.36 1.71   user+sys 1.03 1.07 1.13
+       the test process: main thread on CPU 350 344 373, process user+sys 624 655 701
+  before the first test (the imports and the bodies of describe), all nine runs: wall 51-143 ms, main thread on CPU 40-53 ms, process user+sys 55-69 ms
+
+a runner whose skip rule forgets the module kind UMD (probes/sample-check.ts on a copy of V3):
+  one case in 40: 333 cases, 0 differ from the list        one case in 40 and the five named cases: 338 cases, 1 differs (anonymousDefaultExportsUmd.ts)
+  update-reference.ts --enumerate --check: "the list is not the run of the reference that is recorded for 89d5d5b...: sha256 is c73b1adf...", exit code 1
+
+the prototype as it is in conformance-test-prototype.patch, without a preload (observed/batch4), load average 428 to 456
+  page cache warm: 106 pass, 2.47 4.24 2.45 s, user+sys 1.09 1.13 1.14       page cache of the corpus dropped: 106 pass, 3.47 s, user+sys 1.15
+  bun test/cli/lint/conformance/update-reference.ts --enumerate --check /workspace/ref/typescript-go in that tree: "nothing changes", exit code 0

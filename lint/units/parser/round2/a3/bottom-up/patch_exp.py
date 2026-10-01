@@ -44,3 +44,10 @@ rep('''        let mut visit_tracer = bun_core::perf::trace("JSParser::visit");
         p.prepare_for_visit_pass()?;''')
 open(path, 'w').write(text)
 print('patched', path)
+# 4. the offset of a scope is compared in every build, as a build with debug assertions does
+path = sys.argv[1] + '/src/js_parser/p.rs'
+text = open(path).read()
+rep('if (cfg!(debug_assertions) && order.loc.start != loc.start) || order_scope.kind != kind {',
+    'if order.loc.start != loc.start || order_scope.kind != kind {')
+open(path, 'w').write(text)
+print('patched', path)

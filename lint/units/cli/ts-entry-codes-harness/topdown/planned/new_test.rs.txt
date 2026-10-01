@@ -46,7 +46,9 @@ fn a_syntax_error_is_what_the_reference_reports() {
     let with: Vec<Diagnostic> = messages()
         .into_iter()
         .enumerate()
-        .filter_map(|(index, msg)| Diagnostic::from_syntax_error(FileId(0), msg, entries.get(index)))
+        .filter_map(|(index, msg)| {
+            Diagnostic::from_syntax_error(FileId(0), msg, entries.get(index))
+        })
         .collect();
     assert_bytes(
         &plain(&files, &with, "/proj"),

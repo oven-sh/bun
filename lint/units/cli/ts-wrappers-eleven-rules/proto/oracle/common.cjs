@@ -9,7 +9,7 @@ const { spawn } = require("child_process");
 
 const ESLINT_DIR = process.env.ESLINT_DIR || "/workspace/ref/eslint";
 const TSESLINT_DIR = process.env.TSESLINT_DIR || "/workspace/ref/tseslint";
-const BUN = process.env.BUN_LINT_EXE || "/tmp/tsw/out/tsentry";
+const BUN = process.env.BUN_LINT_EXE || "/tmp/w1b-topdown/out/tsentry";
 const FIXTURES = process.env.LINT_FIXTURES || "/workspace/wt/cli/test/cli/lint/rules";
 
 const TS_EXTS = new Set(["ts", "tsx", "mts", "cts"]);

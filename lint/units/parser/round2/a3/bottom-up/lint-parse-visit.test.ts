@@ -19,9 +19,11 @@ const fs = require("node:fs");
 const [listPath, outPath] = process.argv.slice(2);
 const { root, sentinel, files, withCode } = JSON.parse(fs.readFileSync(listPath, "utf8"));
 const tsconfig = JSON.stringify({ compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true } });
+// No macro runs: a child transpiles and executes nothing of what it reads.
+const make = (loader, tsconfig) => new Bun.Transpiler({ loader, tsconfig, macro: false });
 const transpilers = [
-  { ts: new Bun.Transpiler({ loader: "ts" }), tsx: new Bun.Transpiler({ loader: "tsx" }) },
-  { ts: new Bun.Transpiler({ loader: "ts", tsconfig }), tsx: new Bun.Transpiler({ loader: "tsx", tsconfig }) },
+  { ts: make("ts"), tsx: make("tsx") },
+  { ts: make("ts", tsconfig), tsx: make("tsx", tsconfig) },
 ];
 const out = fs.openSync(outPath, "w");
 const digest = bytes => bytes.length + ":" + Bun.hash(bytes).toString(16);

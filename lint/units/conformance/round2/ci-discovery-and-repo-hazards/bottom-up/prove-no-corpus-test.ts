@@ -144,14 +144,52 @@ const probes = [
   "corpus/cases/conformance/js/node/test/sequential/a.js",
   "corpus/cases/conformance/js/bun/test/parallel/a.tsx",
   "corpus/cases/conformance/js/node/cluster/test-a.ts",
+  "corpus/cases/compiler/a.test.d.ts",
+  "corpus/cases/compiler/inspec.ts",
+  "corpus/cases/compiler/my.testing.cjs",
+];
+// Names that look alike and that no discoverer takes: a refusal of one of them stops a sync for nothing.
+const harmless = [
+  "corpus/cases/compiler/castTest.ts",
+  "corpus/cases/compiler/typeSpec.ts",
+  "corpus/cases/compiler/a_test.d.ts",
+  "corpus/cases/compiler/accessors_spec_section-4.5_error-cases.ts",
+  "corpus/baselines/typescript/a.test.errors.txt",
+  "corpus/cases/conformance/js/node/test/parallel/readme.txt",
+  "corpus/cases/conformance/js/node/cluster/test-a.js",
 ];
 const isTaken = (p: string) => taken(`${home}/${p}`) || bunTakes(p);
 const refused = new Set(
-  spawnSync("bash", ["-c", `rel='${home}/'; tab=$(printf '\\t'); ${refusal}`], { input: probes.join("\n") + "\n", encoding: "utf8" }).stdout.split("\n"),
+  spawnSync("bash", ["-c", `rel='${home}/'; tab=$(printf '\\t'); ${refusal}`], { input: [...probes, ...harmless].join("\n") + "\n", encoding: "utf8" }).stdout.split("\n"),
 );
 const let_through = probes.filter(p => isTaken(p) && !refused.has(p));
-check(probes.every(isTaken), `${probes.length} names that a discoverer takes`);
-check(let_through.length === 0, `sync.sh line ${stopAt}: refuses each of them`, let_through);
+const mistaken = [...probes.filter(p => !isTaken(p)), ...harmless.filter(isTaken)];
+check(mistaken.length === 0, `${probes.length} names that a discoverer takes, ${harmless.length} that none takes`, mistaken);
+check(let_through.length === 0, `sync.sh line ${stopAt}: refuses each of the ${probes.length}`, let_through);
+const for_nothing = harmless.filter(p => refused.has(p));
+console.log(`      sync.sh line ${stopAt}: refuses ${for_nothing.length} of the ${harmless.length} that none takes${for_nothing.length ? `: ${for_nothing.join(", ")}` : ""}`);
+
+// 6b. The generator of test/parallel-allowlist.json walks test/ with a copy of the rule: its own function, on the paths of the revision.
+const allowlist = git(repo, "show", `${rev}:scripts/update-parallel-allowlist.mjs`);
+const nodeStyle = /^const isNodeStyle = [^]*?;$/m.exec(allowlist);
+const lister = /^function listBunTestFiles\(\) \{[^]*?^}$/m.exec(allowlist);
+if (nodeStyle === null || lister === null) throw new Error("scripts/update-parallel-allowlist.mjs has no isNodeStyle or listBunTestFiles: this script has to follow it");
+const entriesOf = new Map<string, { name: string; isDirectory: () => boolean }[]>();
+for (const p of git(repo, "ls-tree", "-r", "--name-only", "-z", rev, "--", "test").split("\0").filter(Boolean)) {
+  const parts = p.slice("test/".length).split("/");
+  for (let i = 0; i < parts.length; i++) {
+    const dir = parts.slice(0, i).join("/");
+    const list = entriesOf.get(dir) ?? entriesOf.set(dir, []).get(dir)!;
+    if (!list.some(e => e.name === parts[i])) list.push({ name: parts[i], isDirectory: () => i < parts.length - 1 });
+  }
+}
+const listed: string[] = new Function("readdirSync", "join", "testDir", `${nodeStyle[0]}\n${lister[0]}\nreturn listBunTestFiles();`)(
+  (dir: string) => entriesOf.get(dir) ?? [],
+  (_: string, rel: string) => rel,
+  "",
+);
+const listedInside = listed.filter(p => p.startsWith("cli/lint/conformance/"));
+check(listed.includes("cli/lint/conformance.test.ts") && listedInside.length === 0, `allowlist generator: listBunTestFiles() lists ${listed.length} files of the revision, none below cli/lint/conformance/`, listedInside);
 
 // 7. The directory on disk: the walk of the runner and the scan of `bun test`.
 if (disk) {

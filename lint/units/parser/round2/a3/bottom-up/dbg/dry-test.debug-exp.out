@@ -1,0 +1,16 @@
+bun test v1.4.3 (be1ebe529)
+
+lint-parse-visit.test.ts:
+lint parse, visited and printed, part 2 of 4: 800 of 802 files equal (and 6 of 6 again with experimental decorators), 0 differing, 0 parsed only without lint, 2 not parsed, 0 changed
+(pass) a lint parse, visited and printed, is the normal transpile > of the TypeScript files under test/ and src/js, part 2 of 4 [45657.80ms]
+lint parse, visited and printed, part 4 of 4: 799 of 801 files equal (and 14 of 14 again with experimental decorators), 0 differing, 0 parsed only without lint, 2 not parsed, 0 changed
+(pass) a lint parse, visited and printed, is the normal transpile > of the TypeScript files under test/ and src/js, part 4 of 4 [45884.04ms]
+lint parse, visited and printed, part 1 of 4: 800 of 802 files equal (and 12 of 12 again with experimental decorators), 0 differing, 0 parsed only without lint, 2 not parsed, 0 changed
+lint parse, visited and printed, part 3 of 4: 799 of 801 files equal (and 9 of 9 again with experimental decorators), 0 differing, 0 parsed only without lint, 2 not parsed, 0 changed
+(pass) a lint parse, visited and printed, is the normal transpile > of the TypeScript files under test/ and src/js, part 1 of 4 [48868.61ms]
+(pass) a lint parse, visited and printed, is the normal transpile > of the TypeScript files under test/ and src/js, part 3 of 4 [46225.24ms]
+
+ 4 pass
+ 0 fail
+ 24 expect() calls
+Ran 4 tests across 1 file. [51.95s]

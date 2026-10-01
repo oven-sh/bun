@@ -1,6 +1,6 @@
 // SCRATCH of the research unit "ts-wrappers-eleven-rules": runs a probe binary (the planned `bun --lint`) over the
 // fixtures of the tree and says which cases do not get their `expect`.
-// usage: BUN_LINT_EXE=/tmp/tsw/out/tsentry node run-fixtures.cjs [--show] [--dir <fixtures dir>] [rule...]
+// usage: BUN_LINT_EXE=/tmp/w1b-topdown/out/tsentry node run-fixtures.cjs [--show] [--dir <fixtures dir>] [rule...]
 // A case whose answer is now ESLint's (`eslint` of a case with `differs`) is counted as "now-eslint".
 "use strict";
 const fs = require("fs");
@@ -8,7 +8,7 @@ const os = require("os");
 const path = require("path");
 const { spawnSync } = require("child_process");
 
-const BUN = process.env.BUN_LINT_EXE || "/tmp/tsw/out/tsentry";
+const BUN = process.env.BUN_LINT_EXE || "/tmp/w1b-topdown/out/tsentry";
 const args = process.argv.slice(2);
 let show = false;
 let dir = "/workspace/wt/cli/test/cli/lint/rules";

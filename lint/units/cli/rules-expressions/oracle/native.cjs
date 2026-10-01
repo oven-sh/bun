@@ -10,14 +10,16 @@ const linter = new Linter({ configType: "flat" });
 const six = ["no-cond-assign", "no-constant-binary-expression", "no-constant-condition", "no-dupe-else-if", "no-extra-boolean-cast", "no-unsafe-optional-chaining"];
 const rules = Object.fromEntries(six.map(r => [r, "error"]));
 const show = process.argv.includes("--show");
+// No comment configures a run of `bun --lint`: a corpus of real files is compared without ESLint's comments too.
+const linterOptions = { noInlineConfig: true, reportUnusedDisableDirectives: "off" };
 function eslint(c) {
 	if (c.ext) {
 		const tsx = c.ext === "tsx";
-		return linter.verify(c.code, [{ files: ["**/*.ts", "**/*.tsx"], languageOptions: { parser: tsParser, parserOptions: { ecmaFeatures: { jsx: tsx } }, sourceType: "module" }, rules }], { filename: tsx ? "a.tsx" : "a.ts" });
+		return linter.verify(c.code, [{ files: ["**/*.ts", "**/*.tsx"], linterOptions, languageOptions: { parser: tsParser, parserOptions: { ecmaFeatures: { jsx: tsx } }, sourceType: "module" }, rules }], { filename: tsx ? "a.tsx" : "a.ts" });
 	}
 	let messages;
 	for (const [t, j] of [["script", !!c.jsx], ["module", !!c.jsx], ["script", true], ["module", true]]) {
-		messages = linter.verify(c.code, [{ languageOptions: { ecmaVersion: "latest", sourceType: t, parserOptions: { ecmaFeatures: { jsx: j } } }, rules }]);
+		messages = linter.verify(c.code, [{ linterOptions, languageOptions: { ecmaVersion: "latest", sourceType: t, parserOptions: { ecmaFeatures: { jsx: j } } }, rules }]);
 		if (!messages.some(m => m.fatal)) break;
 	}
 	return messages;
@@ -47,8 +49,8 @@ for (const f of process.argv.slice(2).filter(a => a.endsWith(".json"))) {
 		const messages = eslint(c);
 		if (messages.some(m => m.fatal) || ours[i] === null) { console.log(`left out (${ours[i] === null ? "Bun" : "ESLint"} rejects): ${c.file || JSON.stringify(c.code)}`); return; }
 		fileTotal++;
-		reports += messages.length;
-		const theirs = [...new Set(messages.map(m => `${m.ruleId} ${m.line}:${m.column} ${m.message}`))].sort();
+		reports += messages.filter(m => six.includes(m.ruleId)).length;
+		const theirs = [...new Set(messages.filter(m => six.includes(m.ruleId)).map(m => `${m.ruleId} ${m.line}:${m.column} ${m.message}`))].sort();
 		const mine = [...new Set(ours[i])].sort();
 		if (JSON.stringify(theirs) === JSON.stringify(mine)) { fileSame++; if (show) console.log(`same   ${JSON.stringify(c.code)}\n    ${theirs.join(" | ") || "(none)"}`); return; }
 		const kind = mine.every(x => theirs.includes(x)) ? "missing" : theirs.every(x => mine.includes(x)) ? "extra" : "other";

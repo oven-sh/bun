@@ -1,0 +1,105 @@
+--- /workspace/wt/cli/src/lint/lib.rs	2026-10-01 04:32:13.008098313 +0000
++++ lib.rs	2026-10-01 13:00:04.444665519 +0000
+@@ -15,19 +15,15 @@
+ mod tokens;
+ pub mod tspath;
+ 
+-use bun_js_parser::parse::parse_entry::ParsedOnly;
++use bun_js_parser::parse::parse_entry::ParsedForLint;
+ 
+ pub use diagnostic::{Category, Code, Diagnostic, FileId, MessageChain, SourceFile};
+ 
+ /// Every rule over the statements of one file as they were written, in one walk. Not sorted, not deduplicated.
+ pub fn lint<'a>(
+     file: FileId,
+-    parsed: &ParsedOnly<'_, 'a>,
++    parsed: &ParsedForLint<'_, 'a>,
+     source: &'a bun_ast::Source,
+-    arena: &'a bun_alloc::Arena,
+ ) -> Vec<Diagnostic> {
+-    linter::run(
+-        context::Context::new(file, parsed, source, arena),
+-        parsed.stmts,
+-    )
++    linter::run(context::Context::new(file, parsed, source), parsed.stmts)
+ }
+--- /workspace/wt/cli/src/lint/context.rs	2026-10-01 04:32:13.008098313 +0000
++++ context.rs	2026-10-01 13:00:04.444844134 +0000
+@@ -6,7 +6,7 @@
+ use bun_ast::lexer_tables::T;
+ use bun_ast::{E, Expr, ExprData, Loc, Log, OpCode, Ref, Source};
+ use bun_core::StackCheck;
+-use bun_js_parser::parse::parse_entry::ParsedOnly;
++use bun_js_parser::parse::parse_entry::ParsedForLint;
+ 
+ use crate::FileId;
+ use crate::diagnostic::{Category, Code, Diagnostic};
+@@ -44,7 +44,7 @@
+ pub(crate) struct Context<'p, 'a> {
+     /// The file of every diagnostic that is reported here.
+     file: FileId,
+-    parsed: &'p ParsedOnly<'p, 'a>,
++    parsed: &'p ParsedForLint<'p, 'a>,
+     source: &'a Source,
+     arena: &'a bun_alloc::Arena,
+     pub(crate) stack_check: StackCheck,
+@@ -58,17 +58,12 @@
+ }
+ 
+ impl<'p, 'a> Context<'p, 'a> {
+-    pub(crate) fn new(
+-        file: FileId,
+-        parsed: &'p ParsedOnly<'p, 'a>,
+-        source: &'a Source,
+-        arena: &'a bun_alloc::Arena,
+-    ) -> Self {
++    pub(crate) fn new(file: FileId, parsed: &'p ParsedForLint<'p, 'a>, source: &'a Source) -> Self {
+         Context {
+             file,
+             parsed,
+             source,
+-            arena,
++            arena: parsed.arena,
+             stack_check: StackCheck::init(),
+             reports: Vec::new(),
+             held: Vec::new(),
+--- /workspace/wt/cli/src/lint/diagnostic.rs	2026-10-01 04:32:13.008098313 +0000
++++ diagnostic.rs	2026-10-01 13:00:04.444968766 +0000
+@@ -5,6 +5,8 @@
+ use std::borrow::Cow;
+ use std::sync::OnceLock;
+ 
++use bun_js_parser::parse::syntax_errors::SyntaxError;
++
+ use crate::scanner;
+ 
+ /// The index of a file in the list that the run keeps.
+@@ -157,6 +159,28 @@
+         diagnostic.related = related;
+         Some(diagnostic)
+     }
++
++    /// A message that a lint parse logged. With `reference` it has the number, the range and the text of the reference.
++    pub fn from_syntax_error(
++        file: FileId,
++        msg: bun_ast::Msg,
++        reference: Option<&SyntaxError>,
++    ) -> Option<Diagnostic> {
++        let number = msg.code();
++        let mut diagnostic = Diagnostic::from_msg(file, msg)?;
++        match reference {
++            Some(reference) if diagnostic.category == Category::Error => {
++                diagnostic.file = Some(file);
++                diagnostic.start = reference.start;
++                diagnostic.length = reference.end.saturating_sub(reference.start);
++                diagnostic.code = Code::Ts(number.unwrap_or(reference.code));
++                diagnostic.text.clone_from(&reference.text);
++            }
++            // A number is printed with the text of the reference or not at all.
++            _ => diagnostic.code = Code::SYNTAX,
++        }
++        Some(diagnostic)
++    }
+ }
+ 
+ fn from_data(file: FileId, data: bun_ast::Data, category: Category, code: Code) -> Diagnostic {

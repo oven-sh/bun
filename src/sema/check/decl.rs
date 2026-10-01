@@ -3505,7 +3505,7 @@ impl<'p> Checker<'p> {
             SigData::Synth { ret, .. } | SigData::WithReturn { ret, .. } => ret,
             SigData::Decl { file, func, mapper } => {
                 let declared = self.return_type_of_fn(file, func);
-                self.instantiate(declared, mapper)
+                self.instantiate_result_of_sig(declared, file, func, mapper)
             }
             SigData::Construct { class, mapper, .. }
             | SigData::DefaultConstruct { class, mapper, .. } => {
@@ -3558,7 +3558,8 @@ impl<'p> Checker<'p> {
         let f = &hir[func];
         if f.ret.is_none() {
             return self.inferred_predicate(file, func).map(|mut p| {
-                p.ty = p.ty.map(|t| self.instantiate(t, mapper));
+                p.ty =
+                    p.ty.map(|t| self.instantiate_result_of_sig(t, file, func, mapper));
                 p
             });
         }
@@ -3575,7 +3576,7 @@ impl<'p> Checker<'p> {
             };
         let ty = if ty.is_some() {
             let declared = self.type_from_node(file, ty);
-            Some(self.instantiate(declared, mapper))
+            Some(self.instantiate_result_of_sig(declared, file, func, mapper))
         } else {
             None
         };

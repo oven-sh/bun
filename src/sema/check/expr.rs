@@ -524,10 +524,24 @@ impl<'p> Checker<'p> {
                             return false;
                         }
                         // By the time the function is looked at the type parameter may have been settled.
-                        return returned.is_none()
-                            || self
-                                .contextual_type(file, returned)
-                                .is_some_and(|c| self.is_const_type_variable(c, 0));
+                        return returned.is_none() || self.is_const_by_contextual_type(file, e);
+                    }
+                    // What a generator written where one is expected yields: on from the generator.
+                    ExprKind::Yield { star: false, .. } => {
+                        let Some(func) = self.enclosing_fn_of_expr(file, parent) else {
+                            return false;
+                        };
+                        let FnOwner::Expr(function) = bound.fns[func.idx()].owner else {
+                            return false;
+                        };
+                        if hir[func].ret.is_some() {
+                            return false;
+                        }
+                        path.push(Some(known::returned));
+                        if returned.is_none() {
+                            returned = at;
+                        }
+                        at = function;
                     }
                     ExprKind::Array(_) => {
                         path.push(None);
@@ -544,6 +558,24 @@ impl<'p> Checker<'p> {
                         at = parent;
                     }
                     ExprKind::Cond { test, .. } if test != at => {
+                        broken.get_or_insert(path.len());
+                        at = parent;
+                    }
+                    // `getContextualTypeForBinaryOperand`, `getContextualTypeForAwaitOperand`
+                    ExprKind::NonNull(_)
+                    | ExprKind::Await(_)
+                    | ExprKind::Binary {
+                        op: BinOp::Or | BinOp::Nullish,
+                        ..
+                    } => {
+                        broken.get_or_insert(path.len());
+                        at = parent;
+                    }
+                    ExprKind::Binary {
+                        op: BinOp::And | BinOp::Comma,
+                        right,
+                        ..
+                    } if right == at => {
                         broken.get_or_insert(path.len());
                         at = parent;
                     }
@@ -582,9 +614,7 @@ impl<'p> Checker<'p> {
                     let FnOwner::Expr(function) = bound.fns[func.idx()].owner else {
                         return false;
                     };
-                    if hir[func].ret.is_some()
-                        || hir[func].flags.intersects(Flags::ASYNC | Flags::GENERATOR)
-                    {
+                    if hir[func].ret.is_some() {
                         return false;
                     }
                     path.push(Some(known::returned));
@@ -595,6 +625,36 @@ impl<'p> Checker<'p> {
                 }
                 _ => return false,
             }
+        }
+    }
+
+    /// `isConstContext` of `e`, going by `getContextualType` alone: `e`, or a literal it is part of, is expected to be a `const` type
+    /// variable.
+    fn is_const_by_contextual_type(&mut self, file: FileId, e: ExprId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let mut at = e;
+        loop {
+            if self.is_valid_const_assertion_argument(file, at)
+                && self
+                    .contextual_type(file, at)
+                    .is_some_and(|c| self.is_const_type_variable(c, 0))
+            {
+                return true;
+            }
+            at = match bound.expr_parent[at.idx()] {
+                Parent::Expr(parent)
+                    if matches!(
+                        hir[parent].kind,
+                        ExprKind::Array(_) | ExprKind::Spread(_) | ExprKind::Template { .. }
+                    ) =>
+                {
+                    parent
+                }
+                Parent::Prop(p) if matches!(hir[p].kind, PropKind::Init | PropKind::Shorthand) => {
+                    bound.prop_owner[p.idx()]
+                }
+                _ => return false,
+            };
         }
     }
 
@@ -749,11 +809,16 @@ impl<'p> Checker<'p> {
                 }
                 let next = match steps.next() {
                     None => break,
-                    // Not the name of a property: what is returned.
+                    // Not the name of a property: what is returned or yielded. What is expected of that is asked where it is written.
                     Some(Some(known::returned)) => {
                         let function = self.non_nullable(ty);
-                        self.single_call_signature(function, false)
-                            .map(|s| self.sig_return(s))
+                        if let Some(s) = self.single_call_signature(function, false) {
+                            let returns = self.sig_return(s);
+                            if self.has_type_variables(returns) {
+                                return true;
+                            }
+                        }
+                        break;
                     }
                     // `getTypeOfPropertyOfContextualType`
                     Some(Some(name)) => self.contextual_property(ty, *name),
@@ -2818,7 +2883,12 @@ impl<'p> Checker<'p> {
     }
 
     /// `inTupleContext`, of the array literal `e`, which is expected to be a `context`.
-    fn is_in_tuple_context(&mut self, file: FileId, e: ExprId, context: Option<TypeId>) -> bool {
+    pub(super) fn is_in_tuple_context(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        context: Option<TypeId>,
+    ) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         // `isSpreadIntoCallOrNew`
         if let Parent::Expr(spread) = bound.expr_parent[e.idx()]
@@ -3982,11 +4052,12 @@ impl<'p> Checker<'p> {
                 .any(|&child| self.is_context_sensitive(file, child));
         self.jsx_resolving.push((file, e, param));
         for sensitive in [false, true] {
-            // `chooseOverload`: a signature that what does not wait does not fit is rejected as it is instantiated by then.
+            // `chooseOverload`: a signature that what does not wait does not fit is rejected as it is instantiated by then. The
+            // attributes are read with that expected of them, not `param` (`checkApplicableSignatureForJsxCallLikeElement`).
             if sensitive && waits {
                 let early = self.inference_mapper(&inference);
                 let props = self.instantiate(param, early);
-                if !self.jsx_fits_without_sensitive(file, e, props, false) {
+                if !self.jsx_fits(file, e, props, false, true) {
                     self.jsx_resolving.pop();
                     return Some(self.instantiate_sig(sig, early));
                 }

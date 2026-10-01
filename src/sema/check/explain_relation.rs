@@ -685,6 +685,11 @@ impl<'p> Checker<'p> {
         x.budget -= 1;
         let source = self.normalized_for_report(original_source, false);
         let mut target = self.normalized_for_report(original_target, true);
+        let state = if state & STATE_REGULAR != 0 && !self.is_object_literal_type(source) {
+            state & !STATE_REGULAR
+        } else {
+            state
+        };
         if source == target {
             return Ternary::TRUE;
         }
@@ -1418,21 +1423,18 @@ impl<'p> Checker<'p> {
         }
         if self.is_union(target) {
             let report = !self.has_primitive_flag(source) && !self.has_primitive_flag(target);
-            let is_jsx = matches!(self.data(source), TypeData::Synth(shape) if shape.literal == Literalness::JsxAttributes);
-            let (regular, state) = if !self.is_object_literal_type(source) {
-                (source, state)
-            } else if x.r.relation.is_subtype() || is_jsx {
-                (source, state | STATE_REGULAR)
+            let state = if self.is_object_literal_type(source) {
+                state | STATE_REGULAR
             } else {
-                (self.regular_object(source), state)
+                state
             };
-            let related = self.type_related_to_some_type(&mut x.r, regular, target, state);
+            let related = self.type_related_to_some_type(&mut x.r, source, target, state);
             if related.holds() || !report {
                 return related;
             }
             // `typeRelatedToSomeType`: only against the member it is most likely meant for.
             if let Some(best) = self.best_matching_type(source, target) {
-                self.is_related_to_ex_reporting(x, regular, best, REC_TARGET, None, state);
+                self.is_related_to_ex_reporting(x, source, best, REC_TARGET, None, state);
             }
             return Ternary::FALSE;
         }
@@ -3364,6 +3366,8 @@ impl<'p> Checker<'p> {
         target: (TypeId, TypeId),
         state: u8,
     ) -> Ternary {
+        // `getRegularTypeOfObjectLiteral` leaves the index signatures as they are.
+        let state = state & !STATE_REGULAR;
         let related = self.is_related_to_ex_reporting(x, source.1, target.1, REC_BOTH, None, state);
         if !related.holds() {
             let source_key = self.type_to_string(source.0);

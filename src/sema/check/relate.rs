@@ -2590,6 +2590,12 @@ impl<'p> Checker<'p> {
         }
         let (source, sd) = self.normalized_as(original_source, original_sd, false);
         let (mut target, mut td) = self.normalized_as(original_target, original_td, true);
+        // `getRegularTypeOfObjectLiteral` goes into the properties that are object literals themselves and no further.
+        let state = if state & STATE_REGULAR != 0 && !is_object_literal_kind(sd) {
+            state & !STATE_REGULAR
+        } else {
+            state
+        };
         if source == target {
             return Ternary::TRUE;
         }
@@ -3113,20 +3119,15 @@ impl<'p> Checker<'p> {
             };
         }
         if target_is_union {
-            // No longer fresh, it is an object literal still, which is what a subtype may leave optional properties out for, and the
-            // attributes of a JSX element still, where a name with a hyphen is always known.
-            let is_jsx =
-                matches!(sd, TypeData::Synth(shape) if shape.literal == Literalness::JsxAttributes);
-            let is_object_literal = is_object_literal_kind(sd);
-            if (r.relation.is_subtype() || is_jsx) && is_object_literal {
-                return self.type_related_to_some_type(r, source, target, state | STATE_REGULAR);
-            }
-            let regular = if is_object_literal {
-                self.regular_object(source)
+            // `getRegularTypeOfObjectLiteral`: no longer fresh, it is an object literal still, which is what a subtype may leave
+            // optional properties out for, and the attributes of a JSX element still, where a name with a hyphen is always known.
+            // Nothing in it is widened: alternatives do not get each other's properties.
+            let state = if is_object_literal_kind(sd) {
+                state | STATE_REGULAR
             } else {
-                source
+                state
             };
-            return self.type_related_to_some_type(r, regular, target, state);
+            return self.type_related_to_some_type(r, source, target, state);
         }
         if matches!(td, TypeData::Intersection(_)) {
             return self.type_related_to_each_type(r, source, target, STATE_TARGET);
@@ -4859,7 +4860,12 @@ impl<'p> Checker<'p> {
             let object_only =
                 self.filter(target, |c, m| c.is_object_type(m) || c.is_intersection(m));
             if self.is_union(object_only) {
-                let result = self.type_related_to_discriminated_type(r, source, object_only);
+                let result = self.type_related_to_discriminated_type(
+                    r,
+                    source,
+                    object_only,
+                    state & STATE_REGULAR,
+                );
                 if result.holds() {
                     return result;
                 }
@@ -5204,12 +5210,13 @@ impl<'p> Checker<'p> {
         result & self.is_related_to(r, st, tt, REC_BOTH)
     }
 
-    /// `typeRelatedToDiscriminatedType`
+    /// `typeRelatedToDiscriminatedType`. `state`: `STATE_REGULAR` if `source` is an object literal that is no longer fresh.
     fn type_related_to_discriminated_type(
         &mut self,
         r: &mut Relater,
         source: TypeId,
         target: TypeId,
+        state: u8,
     ) -> Ternary {
         let Some(sm) = self.members(source) else {
             return Ternary::FALSE;
@@ -5257,7 +5264,7 @@ impl<'p> Checker<'p> {
                             chosen,
                             target_prop,
                             target_mapper,
-                            STATE_NONE,
+                            state,
                             skip_optional,
                         )
                         .holds()
@@ -5278,13 +5285,13 @@ impl<'p> Checker<'p> {
             if !matching[m] {
                 continue;
             }
-            result &= self.properties_related_to(r, source, t, &excluded, false, STATE_NONE);
+            result &= self.properties_related_to(r, source, t, &excluded, false, state);
             if result.holds() {
                 result &= self.signatures_related_to(r, source, t, false, STATE_NONE);
                 if result.holds() {
                     result &= self.signatures_related_to(r, source, t, true, STATE_NONE);
                     if result.holds() && !(self.is_tuple(source) && self.is_tuple(t)) {
-                        result &= self.index_signatures_related_to(r, source, t, false, STATE_NONE);
+                        result &= self.index_signatures_related_to(r, source, t, false, state);
                     }
                 }
             }
@@ -6654,7 +6661,8 @@ impl<'p> Checker<'p> {
             return Ternary::FALSE;
         };
         if let Some(given) = self.applicable_index_info(&sm, key, None) {
-            return self.is_related_to_ex(r, given, wanted, REC_BOTH, state);
+            // `getRegularTypeOfObjectLiteral` leaves the index signatures as they are.
+            return self.is_related_to_ex(r, given, wanted, REC_BOTH, state & !STATE_REGULAR);
         }
         // A part of an intersection is never taken to have an index signature for what it has. For a strict subtype only an
         // object literal as written is, so that `{ [x: string]: X }` is one of `{}` and not the other way round as well.
@@ -6831,7 +6839,8 @@ impl<'p> Checker<'p> {
                 || self.is_assignable(info.key, key);
             if applies {
                 let given = self.instantiate(info.value, sm.mapper);
-                let related = self.is_related_to_ex(r, given, wanted, REC_BOTH, state);
+                let related =
+                    self.is_related_to_ex(r, given, wanted, REC_BOTH, state & !STATE_REGULAR);
                 if !related.holds() {
                     return Ternary::FALSE;
                 }

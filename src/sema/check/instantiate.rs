@@ -821,4 +821,58 @@ impl<'p> Checker<'p> {
         }
         self.p.types.mapper_of(&pairs)
     }
+
+    /// `getReturnTypeOfSignature`, `getTypePredicateOfSignature`: what `signature.target` has, through `signature.mapper`. `ty`: what
+    /// `func` is declared to return or to assert. A signature of `func` that was given type arguments is an instantiation of the
+    /// one found where the type parameters around it stand for what `mapper` says, so `ty` goes through that first and through
+    /// the type arguments after. By then `unknown | U` is `unknown` and `any & U` is `any`, which only `any` and `never` for `U`
+    /// would have come out on top of: with other type arguments one step comes to the same. The types of parameters go
+    /// through both at once (`instantiateSymbol`).
+    pub(super) fn instantiate_result_of_sig(
+        &mut self,
+        ty: TypeId,
+        file: FileId,
+        func: FnId,
+        mapper: MapperId,
+    ) -> TypeId {
+        let own = self.hir(file)[func].type_params;
+        let may_differ = !own.is_empty()
+            && self.p.types.mapping(mapper).iter().any(|pair| {
+                matches!(pair.1, TypeId::ANY | TypeId::NEVER)
+                    && self.is_declared_among(pair.0, file, own)
+            });
+        if !may_differ {
+            return self.instantiate(ty, mapper);
+        }
+        let mut first: smallvec::SmallVec<[(TypeId, TypeId); 8]> = self
+            .p
+            .types
+            .mapping(mapper)
+            .iter()
+            .copied()
+            .filter(|pair| !self.is_declared_among(pair.0, file, own))
+            .collect();
+        // Nothing is filled in around it: it is an instantiation of the declared one.
+        if first.iter().all(|pair| pair.0 == pair.1) {
+            return self.instantiate(ty, mapper);
+        }
+        let around = self.p.types.mapper_of(&first);
+        let mut second: smallvec::SmallVec<[(TypeId, TypeId); 4]> = smallvec::SmallVec::new();
+        for tp in own.iter() {
+            let declared = self.type_param(file, tp);
+            if let Some(given) = self.p.types.map(mapper, declared) {
+                let open = self.cloned_type_param(file, tp, around);
+                first.push((declared, open));
+                if given != open {
+                    second.push((open, given));
+                }
+            }
+        }
+        let (first, second) = (
+            self.p.types.mapper_of(&first),
+            self.p.types.mapper_of(&second),
+        );
+        let open = self.instantiate(ty, first);
+        self.instantiate(open, second)
+    }
 }

@@ -1076,9 +1076,9 @@ impl<'p> Checker<'p> {
         (answer, is_certain)
     }
 
-    /// `chooseOverload` for as long as the arguments that wait are left out (`CheckModeSkipContextSensitive`): whether the others
-    /// rule out every one of `candidates`, and then the last of `candidatesForArgumentError`, if there is any. `None`: they
-    /// do not, or it cannot be told.
+    /// `chooseOverload` for as long as the functions that wait are left out (`CheckModeSkipContextSensitive`): whether what is left
+    /// of the arguments rules out every one of `candidates`, and then the last of `candidatesForArgumentError`, if there is any.
+    /// `None`: it does not, or it cannot be told.
     fn ruled_out_by_plain_arguments(
         &mut self,
         file: FileId,
@@ -1113,7 +1113,12 @@ impl<'p> Checker<'p> {
             }
             self.resolving
                 .push(Resolving::trial(file, call, candidate, params.clone()));
-            let fits = self.are_arguments_related(file, args, &params, false, true);
+            let fits = match self.are_arguments_related(file, args, &params, false, true) {
+                Some(true) if self.is_waiting_argument_ruled_out(file, args, &params) => {
+                    Some(false)
+                }
+                fits => fits,
+            };
             self.resolving.pop();
             if fits != Some(false) {
                 return None;
@@ -1121,6 +1126,27 @@ impl<'p> Checker<'p> {
             last = Some(sig);
         }
         Some(last)
+    }
+
+    /// `isSignatureApplicable` under `CheckModeSkipContextSensitive`, of the arguments that wait: a function in them is
+    /// `anyFunctionType`, and what is left has to fit `params`. Whether one of them does not. In doubt they all do.
+    fn is_waiting_argument_ruled_out(
+        &mut self,
+        file: FileId,
+        args: &[Arg],
+        params: &[SigParam],
+    ) -> bool {
+        for (i, &arg) in args.iter().enumerate() {
+            if let Arg::Expr(e) = arg
+                && self.is_context_sensitive(file, e)
+                && let Some(param) = self.context_of_arg_at(params, i, Some(args.len()))
+                && (!self.has_room_for_literal(file, e, param)
+                    || !self.do_plain_members_fit(file, e, param, false))
+            {
+                return true;
+            }
+        }
+        false
     }
 
     /// `reportCallResolutionErrors` holds the arguments against `last`, the last candidate they do not fit, one by one until it
@@ -1417,9 +1443,11 @@ impl<'p> Checker<'p> {
             let params = self.sig_params(first_round);
             self.resolving
                 .push(Resolving::trial(file, call, implementation, params.clone()));
-            let is_applicable = self.are_arguments_related(file, args, &params, false, true);
+            let is_applicable = self.are_arguments_related(file, args, &params, false, true)
+                == Some(true)
+                && !self.is_waiting_argument_ruled_out(file, args, &params);
             self.resolving.pop();
-            if is_applicable != Some(true) {
+            if !is_applicable {
                 return;
             }
         }
@@ -2404,6 +2432,30 @@ impl<'p> Checker<'p> {
         inference
     }
 
+    /// Whether all in `e` that goes by what is expected of it is worked out once (`resolvedSignature`, `NodeCheckFlagsContextChecked`):
+    /// a call or a function, under operators that hand down what is expected of them (`getContextualType`).
+    fn is_settled_by_first_candidate(&self, file: FileId, e: ExprId) -> bool {
+        match self.hir(file)[e].kind {
+            ExprKind::Call(_) | ExprKind::New(_) | ExprKind::Fn(_) => true,
+            ExprKind::Await(x) | ExprKind::NonNull(x) => {
+                self.is_settled_by_first_candidate(file, x)
+            }
+            ExprKind::Cond {
+                yes: left,
+                no: right,
+                ..
+            }
+            | ExprKind::Binary {
+                op: BinOp::Or | BinOp::Nullish | BinOp::And | BinOp::Comma,
+                left,
+                right,
+            } => [left, right].into_iter().all(|x| {
+                !self.depends_on_context(file, x) || self.is_settled_by_first_candidate(file, x)
+            }),
+            _ => false,
+        }
+    }
+
     /// The calls, and the functions that do not wait for the types of their parameters, inside the object literal `e`: like such an
     /// argument they are worked out once, for the first candidate, which expects `e` to be `context`.
     fn settle_nested_once(&mut self, file: FileId, e: ExprId, context: TypeId) {
@@ -2541,10 +2593,7 @@ impl<'p> Checker<'p> {
             // A call, and a function that does not wait for the types of its parameters, are worked out once and stay what they came
             // to (`resolvedSignature`, `NodeCheckFlagsContextChecked`): for the first candidate that gets as far as them.
             // `isSignatureApplicable` goes from left to right, so that is none that an argument before them rules out.
-            let is_settled_once = matches!(
-                self.hir(file)[e].kind,
-                ExprKind::Call(_) | ExprKind::New(_) | ExprKind::Fn(_)
-            );
+            let is_settled_once = self.is_settled_by_first_candidate(file, e);
             let mut reaches: SmallVec<[bool; 8]> = smallvec![true; lists.len()];
             if is_settled_once && type_args.is_empty() && i > 0 {
                 for (k, list) in lists.iter().enumerate() {
@@ -2957,7 +3006,8 @@ impl<'p> Checker<'p> {
             .is_some()
     }
 
-    /// The type of the object literal `arg` under `CheckModeSkipContextSensitive`, or `None` if that type is not related to `param`.
+    /// The type of the object or array literal `arg` under `CheckModeSkipContextSensitive`, or `None` if that type is not related to
+    /// `param`.
     /// `UNRESOLVED` stands for a member that is not checked, and for the whole literal when its type cannot be determined.
     fn check_literal_skipping_sensitive(
         &mut self,
@@ -2967,8 +3017,12 @@ impl<'p> Checker<'p> {
         by_subtype: bool,
     ) -> Option<TypeId> {
         let hir = self.hir(file);
-        let ExprKind::Object(props) = hir[arg].kind else {
-            return Some(TypeId::UNRESOLVED);
+        let props = match hir[arg].kind {
+            ExprKind::Object(props) => props,
+            ExprKind::Array(items) => {
+                return self.check_array_skipping_sensitive(file, arg, items, param, by_subtype);
+            }
+            _ => return Some(TypeId::UNRESOLVED),
         };
         if self.has_type_variables(param) || !self.is_known(param) {
             return Some(TypeId::UNRESOLVED);
@@ -3059,6 +3113,77 @@ impl<'p> Checker<'p> {
         if self.is_any(literal_type) {
             return Some(TypeId::UNRESOLVED);
         }
+        let is_related = if by_subtype {
+            self.is_subtype(literal_type, param)
+        } else {
+            self.is_assignable(literal_type, param)
+        };
+        is_related.then_some(literal_type)
+    }
+
+    /// `check_literal_skipping_sensitive`, of the array literal `arg` with the elements `items` (`checkArrayLiteral`). An element that
+    /// does not fit what `param` expects at its place counts as `unknown`: a member of `param` that says nothing of elements may
+    /// take the array all the same.
+    fn check_array_skipping_sensitive(
+        &mut self,
+        file: FileId,
+        arg: ExprId,
+        items: IdList<ExprId>,
+        param: TypeId,
+        by_subtype: bool,
+    ) -> Option<TypeId> {
+        let hir = self.hir(file);
+        if self.has_type_variables(param)
+            || !self.is_known(param)
+            || hir
+                .ids(items)
+                .any(|item| matches!(hir[item].kind, ExprKind::Spread(_) | ExprKind::Missing))
+            || self.in_const_context(file, arg)
+        {
+            return Some(TypeId::UNRESOLVED);
+        }
+        let mut types: SmallVec<[TypeId; 8]> = SmallVec::with_capacity(items.len());
+        for (i, item) in hir.ids(items).enumerate() {
+            let wanted = self.contextual_element_at(param, i, Some(items.len()), None, None);
+            // What is not looked at fits anything, whichever way it is compared.
+            let mut ty = TypeId::UNRESOLVED;
+            if matches!(hir[item].kind, ExprKind::Object(_))
+                || self.is_context_sensitive(file, item)
+            {
+                if let Some(wanted) = wanted {
+                    ty = if self.has_room_for_literal(file, item, wanted) {
+                        self.check_literal_skipping_sensitive(file, item, wanted, by_subtype)
+                            .unwrap_or(TypeId::UNKNOWN)
+                    } else {
+                        TypeId::UNKNOWN
+                    };
+                }
+            } else if !self.depends_on_context(file, item)
+                && !matches!(
+                    hir[item].kind,
+                    ExprKind::Template { .. } | ExprKind::TaggedTemplate(_)
+                )
+                && self.nested_generic_function(file, item).is_none()
+            {
+                let given = self.type_of_expr(file, item);
+                if self.is_known(given) && !self.is_uncertain(file, item) {
+                    // `checkExpressionForMutableLocation`: what is asserted is what it is said to be.
+                    ty = if matches!(hir[item].kind, ExprKind::As { .. } | ExprKind::AsConst(_)) {
+                        given
+                    } else {
+                        self.widen_literal_for_context(given, wanted)
+                    };
+                }
+            }
+            types.push(ty);
+        }
+        let literal_type = if self.is_in_tuple_context(file, arg, Some(param)) {
+            let flags: SmallVec<[ElemFlags; 8]> = smallvec![ElemFlags::REQUIRED; types.len()];
+            self.tuple(&types, &flags, false)
+        } else {
+            let element = self.union(&types);
+            self.array_of(element)
+        };
         let is_related = if by_subtype {
             self.is_subtype(literal_type, param)
         } else {
@@ -3261,7 +3386,7 @@ impl<'p> Checker<'p> {
                     holes
                 }
             };
-            ty = self.without_what_nothing_is_known_of(ty, holes, 0);
+            ty = self.remove_unresolved_params_from_unions(ty, holes, 0);
             ty = self.instantiate(ty, holes);
         }
         ty
@@ -3270,7 +3395,7 @@ impl<'p> Checker<'p> {
     /// `silentNeverType`, which a type parameter nothing is known of yet stands for (`InferenceFlagsNoDefault`), is no member of a
     /// union: of `T | undefined` there is `undefined` left, and of `PromiseLike<T | undefined>` a `PromiseLike<undefined>`. Here such
     /// a parameter is mapped to what is not known, which leaves nothing of a union it is in, so it is taken out first.
-    fn without_what_nothing_is_known_of(
+    fn remove_unresolved_params_from_unions(
         &mut self,
         ty: TypeId,
         mapper: MapperId,
@@ -3294,7 +3419,7 @@ impl<'p> Checker<'p> {
                 }
                 let left: SmallVec<[TypeId; 8]> = left
                     .iter()
-                    .map(|&m| self.without_what_nothing_is_known_of(m, mapper, depth + 1))
+                    .map(|&m| self.remove_unresolved_params_from_unions(m, mapper, depth + 1))
                     .collect();
                 if left[..] == members[..] {
                     return ty;
@@ -3304,7 +3429,7 @@ impl<'p> Checker<'p> {
             TypeData::Ref { target, args } => {
                 let new: SmallVec<[TypeId; 8]> = args
                     .iter()
-                    .map(|&a| self.without_what_nothing_is_known_of(a, mapper, depth + 1))
+                    .map(|&a| self.remove_unresolved_params_from_unions(a, mapper, depth + 1))
                     .collect();
                 if new[..] == args[..] {
                     return ty;
@@ -3650,7 +3775,7 @@ impl<'p> Checker<'p> {
                         break;
                     }
                     let so_far = self.resolving[i].so_far;
-                    expected = self.without_what_nothing_is_known_of(expected, so_far, 0);
+                    expected = self.remove_unresolved_params_from_unions(expected, so_far, 0);
                     expected = self.instantiate(expected, so_far);
                 }
                 let expected = self.instantiate_with_candidate_holes(expected);

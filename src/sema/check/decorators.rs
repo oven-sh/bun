@@ -471,6 +471,26 @@ impl<'p> Checker<'p> {
                 }
                 continue;
             }
+            // `checkClassDeclaration`, on the first decorator of the class.
+            if hir.legacy_decorators
+                && !hir.has_parse_diagnostics
+                && let DecoratorOwner::Class(class) = owner
+                && hir
+                    .decorators
+                    .iter()
+                    .find(|d| d.0 == owner)
+                    .is_some_and(|d| d.1 == e)
+                && hir[class].members.iter().any(|m| {
+                    hir[m].flags.contains(Flags::STATIC)
+                        && matches!(hir[m].key, PropKey::Private(_))
+                })
+            {
+                out.push(Diagnostic {
+                    start: at_sign,
+                    code: 18036,
+                });
+                self.note(at_sign, written.end, 18036, Vec::new());
+            }
             // The two accessors of a property are one thing to decorate.
             if hir.legacy_decorators
                 && let DecoratorOwner::Member(m) = owner

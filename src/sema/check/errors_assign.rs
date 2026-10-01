@@ -4216,6 +4216,82 @@ impl Checker<'_> {
                 return None;
             }
         }
+        // `signaturesRelatedTo` comes next, and of what it finds something else is said. Against an intersection only an object
+        // literal as written goes on to the index signatures (`structuredTypeRelatedTo`).
+        if !tm.shape().call.is_empty()
+            || !tm.shape().construct.is_empty()
+            || self.is_generic_mapped_type(source)
+            || self.is_intersection(target) && !self.is_object_literal_type(source)
+        {
+            return None;
+        }
+        // `indexSignaturesRelatedTo`: up to the first index signature of `target` that is not related. What is said of it goes on top.
+        let target_has_string_index = tm.shape().index.iter().any(|i| i.key == TypeId::STRING);
+        for info in &tm.shape().index {
+            let wanted = self.instantiate(info.value, tm.mapper);
+            if target_has_string_index && self.is_any(wanted) {
+                continue;
+            }
+            // `typeRelatedToIndexInfo`
+            let unfit = match self.applicable_index_info(&sm, info.key, None) {
+                Some(given) => (!self.related(given, wanted, relation)).then_some(given),
+                None if self.is_object_type_with_inferable_index(source) => {
+                    self.first_member_unfit_for_index_signature(&sm, info.key, wanted, relation)
+                }
+                None => return None,
+            };
+            if let Some(given) = unfit {
+                let found =
+                    self.excess_within(given, wanted, relation, at, end, head, depth + 1)?;
+                return Some(Diagnostic {
+                    start: found.start,
+                    code: head,
+                });
+            }
+        }
+        None
+    }
+
+    /// `membersRelatedToIndexer`: what the first of the members `sm` holds that is not related to `wanted`, which is what an index
+    /// signature for `key` gives.
+    fn first_member_unfit_for_index_signature(
+        &mut self,
+        sm: &Members,
+        key: TypeId,
+        wanted: TypeId,
+        relation: Relation,
+    ) -> Option<TypeId> {
+        for prop in &sm.shape().props {
+            if !self.is_name_applicable_to_index(prop.name, key) {
+                continue;
+            }
+            let declared = self.type_of_prop_as_read(prop, sm.mapper);
+            let given = if self.p.files.options.exact_optional_property_types
+                || declared.is_undefined()
+                || key == TypeId::NUMBER
+                || !prop.flags.contains(PropFlags::OPTIONAL)
+            {
+                declared
+            } else {
+                self.without_undefined(declared)
+            };
+            if !self.related(given, wanted, relation) {
+                return Some(given);
+            }
+        }
+        for info in &sm.shape().index {
+            // `isApplicableIndexType`
+            let applies = info.key == key
+                || key == TypeId::STRING && info.key != TypeId::SYMBOL
+                || key == TypeId::NUMBER && self.is_numeric_string_type(info.key)
+                || self.is_assignable(info.key, key);
+            if applies {
+                let given = self.instantiate(info.value, sm.mapper);
+                if !self.related(given, wanted, relation) {
+                    return Some(given);
+                }
+            }
+        }
         None
     }
 

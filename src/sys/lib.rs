@@ -9470,11 +9470,14 @@ mod normalize_path_windows_tests {
     }
 
     #[test]
-    fn drive_qualified_bare_name_passes_through() {
+    fn drive_qualified_bare_name_is_resolved() {
         let _g = crate::file::tests::FD_TEST_LOCK.lock();
-        // The bypass copies the ORIGINAL path (drive prefix included); only
-        // the post-strip remainder decides the routing.
-        assert_eq!(normalize(Fd::INVALID, "C:foo"), "C:foo");
+        // Passed through, `C:foo` would be the stream `foo` of a file `C`.
+        let resolved = normalize(Fd::INVALID, "C:foo");
+        assert!(
+            resolved.ends_with("\\foo") && !resolved.contains(':'),
+            "{resolved}"
+        );
     }
 
     #[test]

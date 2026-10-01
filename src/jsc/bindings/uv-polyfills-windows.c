@@ -26,14 +26,11 @@ UV_EXTERN void uv_once(uv_once_t* guard, void (*callback)(void))
 
 UV_EXTERN uint64_t uv_hrtime(void)
 {
-    static LARGE_INTEGER frequency;
+    LARGE_INTEGER frequency;
     LARGE_INTEGER counter;
 
-    // QueryPerformanceFrequency always writes the same value, so racing
-    // first calls are harmless.
-    if (frequency.QuadPart == 0)
-        QueryPerformanceFrequency(&frequency);
-
+    // Reads a word every process has mapped: nothing to gain from keeping it.
+    QueryPerformanceFrequency(&frequency);
     QueryPerformanceCounter(&counter);
 
     // Split so the multiplication cannot overflow.

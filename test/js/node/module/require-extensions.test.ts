@@ -1,5 +1,6 @@
 import assert from "assert";
 import { describe, expect, mock, test } from "bun:test";
+import { readdirSync, readFileSync } from "fs";
 import { bunEnv, bunExe, bunRun, tempDir } from "harness";
 import path from "path";
 
@@ -162,7 +163,7 @@ test("wrapping an existing extension but it's secretly sync esm", () => {
     require.extensions[".cjs"] = original;
   }
 });
-test("default loader throws when module._compile was replaced with a non-function", async () => {
+test.concurrent("default loader throws when module._compile was replaced with a non-function", async () => {
   // Spawned because the unfixed behavior for primitives is a segfault, not an exception.
   using dir = tempDir("extensions-bad-compile", {
     "plain.js": `module.exports = "plain";`,
@@ -238,7 +239,7 @@ test("default loader throws when module._compile was replaced with a non-functio
   });
   expect(exitCode).toBe(0);
 });
-test("custom require extension still applies when the entry is a transpiler cache hit", async () => {
+test.concurrent("custom require extension still applies when the entry is a transpiler cache hit", async () => {
   // A main module restored from the runtime transpiler cache used to leave the
   // VM in its pre-load state, so require() of an unknown extension skipped
   // require.extensions and fell back to the JS loader on warm-cache runs.
@@ -253,9 +254,10 @@ test("custom require extension still applies when the entry is a transpiler cach
 console.log(require("./c.custom"));
 ${padding}`,
   });
+  const cacheDir = path.join(String(dir), "transpiler-cache");
   const env = {
     ...bunEnv,
-    BUN_RUNTIME_TRANSPILER_CACHE_PATH: path.join(String(dir), "transpiler-cache"),
+    BUN_RUNTIME_TRANSPILER_CACHE_PATH: cacheDir,
     // Debug builds save cache entries but ignore them on load unless this is set.
     BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: "1",
   };
@@ -273,9 +275,12 @@ ${padding}`,
     expect(stderr).toBe("");
     expect(stdout).toBe("custom\n");
     expect(exitCode).toBe(0);
+    // Without a cache entry from the first run, the second run is another cold
+    // run and does not exercise the cache-hit path.
+    expect(readdirSync(cacheDir).filter(name => name.endsWith(".pile"))).not.toBeEmpty();
   }
 });
-test("custom require extension still applies when the entry is a prebundled module", async () => {
+test.concurrent("custom require extension still applies when the entry is a prebundled module", async () => {
   // An already-bundled main module (the `// @bun` pragma emitted by
   // `bun build --target=bun`) takes the same early return as a transpiler
   // cache hit and used to leave the VM in its pre-load state.
@@ -302,6 +307,8 @@ console.log(require("./c.custom"));
   ]);
   expect(buildStderr).toBe("");
   expect(buildExit).toBe(0);
+  // The pragma is what routes the entry through the already-bundled path.
+  expect(readFileSync(path.join(String(dir), "out.js"), "utf8")).toStartWith("// @bun");
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "out.js"],

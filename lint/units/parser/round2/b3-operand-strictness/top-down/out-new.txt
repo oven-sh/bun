@@ -1,0 +1,298 @@
+## new, extends and a decorator before what is no left-hand side
+"new -a;" [ts]
+    go : TS1109@4+1 "Expression expected." <<->>   [tsc first: same]
+    bun: accepts => "new (-a);\n"
+"new +a;" [ts]
+    go : TS1109@4+1 "Expression expected." <<+>>   [tsc first: same]
+    bun: accepts => "new (+a);\n"
+"new ~a;" [ts]
+    go : TS1109@4+1 "Expression expected." <<~>>   [tsc first: same]
+    bun: accepts => "new (~a);\n"
+"new !a;" [ts]
+    go : TS1109@4+1 "Expression expected." <<!>> | TS1005@5+1 "';' expected." <<a>>   [tsc first: same]
+    bun: accepts => "new (!a);\n"
+"new ++a;" [ts]
+    go : TS1109@4+2 "Expression expected." <<++>> | TS1005@6+1 "';' expected." <<a>>   [tsc first: same]
+    bun: accepts => "new (++a);\n"
+"new --a;" [ts]
+    go : TS1109@4+2 "Expression expected." <<-->> | TS1005@6+1 "';' expected." <<a>>   [tsc first: same]
+    bun: accepts => "new (--a);\n"
+"new typeof a;" [ts]
+    go : TS1109@4+6 "Expression expected." <<typeof>>   [tsc first: same]
+    bun: accepts => "new (typeof a);\n"
+"new void a;" [ts]
+    go : TS1109@4+4 "Expression expected." <<void>>   [tsc first: same]
+    bun: accepts => "new (void a);\n"
+"new delete a.b;" [ts]
+    go : TS1109@4+6 "Expression expected." <<delete>>   [tsc first: same]
+    bun: accepts => "new (delete a.b);\n"
+"async function f() { new await a; }" [ts]
+    go : TS1109@25+5 "Expression expected." <<await>>   [tsc first: same]
+    bun: accepts => "async function f() {\n  new (await a);\n}\n"
+"new <T>a;" [ts]
+    go : TS1109@4+1 "Expression expected." <<<>>   [tsc first: same]
+    bun: accepts => "new a;\n"
+"new <T>(a);" [ts]
+    go : TS1109@4+1 "Expression expected." <<<>>   [tsc first: same]
+    bun: accepts => "new a;\n"
+"new -a();" [ts]
+    go : TS1109@4+1 "Expression expected." <<->>   [tsc first: same]
+    bun: accepts => "new (-a());\n"
+"new -a.b;" [ts]
+    go : TS1109@4+1 "Expression expected." <<->>   [tsc first: same]
+    bun: accepts => "new (-a.b);\n"
+"new ++a();" [ts]
+    go : TS1109@4+2 "Expression expected." <<++>> | TS1005@6+1 "';' expected." <<a>>   [tsc first: same]
+    bun: parse ok, visit ERR @6+0 Invalid assignment target
+"new - a;" [ts]
+    go : TS1109@4+1 "Expression expected." <<->>   [tsc first: same]
+    bun: accepts => "new (-a);\n"
+"new /* c */ -a;" [ts]
+    go : TS1109@12+1 "Expression expected." <<->>   [tsc first: same]
+    bun: accepts => "new (-a);\n"
+"new\n-a;" [ts]
+    go : TS1109@4+1 "Expression expected." <<->>   [tsc first: same]
+    bun: accepts => "new (-a);\n"
+"new (-a);" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "new (-a);\n"
+"new (-a)();" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "new (-a);\n"
+"new (++a);" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "new (++a);\n"
+"new a++;" [ts]
+    go : (parses)   [tsc first: same]
+    bun: parse ok, visit ERR @0+0 Invalid assignment target
+"new a!;" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "new a;\n"
+"new a<T>;" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "new a;\n"
+"new new A;" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "new new A();\n"
+"new class {};" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "new class {\n};\n"
+"new function () {};" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "new function() {};\n"
+"new (a, b);" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "new (a, b);\n"
+"new a.b.c;" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "new a.b.c;\n"
+"new a[0];" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "new a[0];\n"
+"new this;" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "new exports;\n"
+"new import.meta;" [ts]
+    go : TS1109@4+6 "Expression expected." <<import>>   [tsc first: same]
+    bun: accepts => "new import.meta;\n"
+"new a`x`;" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "new a`x`;\n"
+"new `x`;" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "new `x`;\n"
+"new 1;" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "new 1;\n"
+"new 'x';" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "new \"x\";\n"
+"new [a];" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "new [a];\n"
+"new {};" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "new {};\n"
+"new /x/;" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "new /x/;\n"
+"new () => {};" [ts]
+    go : TS1109@5+1 "Expression expected." <<)>> | TS1005@7+2 "';' expected." <<=>>>   [tsc first: same]
+    bun: parse ERR @5+1 Unexpected )
+"new x => x;" [ts]
+    go : TS1005@6+2 "';' expected." <<=>>>   [tsc first: same]
+    bun: parse ERR @6+2 Expected ";" but found "=>"
+"new async () => {};" [ts]
+    go : TS1005@13+2 "';' expected." <<=>>>   [tsc first: same]
+    bun: parse ERR @13+2 Expected ";" but found "=>"
+"function* g() { new yield; }" [ts]
+    go : TS1109@20+5 "Expression expected." <<yield>>   [tsc first: same]
+    bun: parse ERR @20+5 Cannot use a "yield" here without parentheses
+"new new -a;" [ts]
+    go : TS1109@8+1 "Expression expected." <<->>   [tsc first: same]
+    bun: accepts => "new new (-a)();\n"
+"x = new -a;" [ts]
+    go : TS1109@8+1 "Expression expected." <<->>   [tsc first: same]
+    bun: accepts => "x = new (-a);\n"
+"f(new -a);" [ts]
+    go : TS1109@6+1 "Expression expected." <<->>   [tsc first: same]
+    bun: accepts => "f(new (-a));\n"
+"(new -a);" [ts]
+    go : TS1109@5+1 "Expression expected." <<->>   [tsc first: same]
+    bun: accepts => "new (-a);\n"
+"new -a = b;" [ts]
+    go : TS1109@4+1 "Expression expected." <<->> | TS1005@7+1 "';' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @0+0 Invalid assignment target
+"new -a++;" [ts]
+    go : TS1109@4+1 "Expression expected." <<->>   [tsc first: same]
+    bun: accepts => "new (-a++);\n"
+"++new -a;" [ts]
+    go : TS1109@6+1 "Expression expected." <<->>   [tsc first: same]
+    bun: parse ok, visit ERR @2+0 Invalid assignment target
+"new ++a++;" [ts]
+    go : TS1109@4+2 "Expression expected." <<++>> | TS1005@6+1 "';' expected." <<a>>   [tsc first: same]
+    bun: parse ok, visit ERR @6+0 Invalid assignment target
+"new -a;" [js]
+    go : TS1109@4+1 "Expression expected." <<->>   [tsc first: same]
+    bun: accepts => "new (-a);\n"
+"new ++a;" [js]
+    go : TS1109@4+2 "Expression expected." <<++>> | TS1005@6+1 "';' expected." <<a>>   [tsc first: same]
+    bun: accepts => "new (++a);\n"
+"new typeof a;" [js]
+    go : TS1109@4+6 "Expression expected." <<typeof>>   [tsc first: same]
+    bun: accepts => "new (typeof a);\n"
+"async function f() { new await a; }" [js]
+    go : TS1109@25+5 "Expression expected." <<await>>   [tsc first: same]
+    bun: accepts => "async function f() {\n  new (await a);\n}\n"
+"new (-a);" [js]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "new (-a);\n"
+"new <a/>;" [tsx]
+    go : TS1109@4+1 "Expression expected." <<<>> | TS1109@7+1 "Expression expected." <<>>>   [tsc first: same]
+    bun: accepts => "new (jsxDEV_7x81h0kn(\"a\", {}, undefined, false, undefined, this));\n"
+"new <a/>();" [tsx]
+    go : TS1109@4+1 "Expression expected." <<<>> | TS1109@7+1 "Expression expected." <<>>>   [tsc first: same]
+    bun: accepts => "new (jsxDEV_7x81h0kn(\"a\", {}, undefined, false, undefined, this));\n"
+"new (<a/>);" [tsx]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "new (jsxDEV_7x81h0kn(\"a\", {}, undefined, false, undefined, this));\n"
+"new <a/>;" [jsx]
+    go : TS1109@4+1 "Expression expected." <<<>> | TS1109@7+1 "Expression expected." <<>>>   [tsc first: same]
+    bun: accepts => "new (jsxDEV_7x81h0kn(\"a\", {}, undefined, false, undefined, this));\n"
+"class C extends -a {}" [ts]
+    go : TS1109@16+1 "Expression expected." <<->> | TS1005@19+1 "';' expected." <<{>>   [tsc first: same]
+    bun: accepts => "class C extends (-a) {\n}\n"
+"class C extends ++a {}" [ts]
+    go : TS1109@16+2 "Expression expected." <<++>> | TS1005@20+1 "';' expected." <<{>>   [tsc first: same]
+    bun: accepts => "class C extends (++a) {\n}\n"
+"class C extends typeof a {}" [ts]
+    go : TS1109@16+6 "Expression expected." <<typeof>> | TS1005@25+1 "';' expected." <<{>>   [tsc first: same]
+    bun: accepts => "class C extends (typeof a) {\n}\n"
+"async function f() { class C extends await a {} }" [ts]
+    go : TS1109@37+5 "Expression expected." <<await>> | TS1005@45+1 "';' expected." <<{>>   [tsc first: same]
+    bun: accepts => "async function f() {\n  class C extends (await a) {\n  }\n}\n"
+"class C extends <T>a {}" [ts]
+    go : TS1109@16+1 "Expression expected." <<<>> | TS1005@21+1 "';' expected." <<{>>   [tsc first: same]
+    bun: accepts => "class C extends a {\n}\n"
+"class C extends a++ {}" [ts]
+    go : TS1005@17+2 "',' expected." <<++>>   [tsc first: same]
+    bun: parse ERR @17+2 Expected "{" but found "++"
+"class C extends a + b {}" [ts]
+    go : TS1005@18+1 "',' expected." <<+>> | TS1005@22+1 "';' expected." <<{>>   [tsc first: same]
+    bun: parse ERR @18+1 Expected "{" but found "+"
+"class C extends (a + b) {}" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "class C extends (a + b) {\n}\n"
+"class C extends (-a) {}" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "class C extends (-a) {\n}\n"
+"class C extends a.b {}" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "class C extends a.b {\n}\n"
+"class C extends a() {}" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "class C extends a() {\n}\n"
+"class C extends new A {}" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "class C extends new A() {\n}\n"
+"class C extends a! {}" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "class C extends a {\n}\n"
+"class C extends a<T> {}" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "class C extends a {\n}\n"
+"class C extends a = b {}" [ts]
+    go : TS1005@18+1 "',' expected." <<=>>   [tsc first: same]
+    bun: parse ERR @18+1 Expected "{" but found "="
+"class C extends a ? b : c {}" [ts]
+    go : TS1005@18+1 "',' expected." <<?>> | TS1005@22+1 "',' expected." <<:>>   [tsc first: same]
+    bun: parse ERR @18+1 Expected "{" but found "?"
+"var C = class extends -a {};" [ts]
+    go : TS1109@22+1 "Expression expected." <<->> | TS1005@25+1 "',' expected." <<{>>   [tsc first: same]
+    bun: accepts => "var C = class extends (-a) {\n};\n"
+"class C extends -a implements I {}" [ts]
+    go : TS1109@16+1 "Expression expected." <<->> | TS1005@19+10 "';' expected." <<implements>>   [tsc first: same]
+    bun: accepts => "class C extends (-a) {\n}\n"
+"class C extends -a {}" [js]
+    go : TS1109@16+1 "Expression expected." <<->> | TS1005@19+1 "';' expected." <<{>>   [tsc first: same]
+    bun: accepts => "class C extends (-a) {\n}\n"
+"class C extends ++a {}" [js]
+    go : TS1109@16+2 "Expression expected." <<++>> | TS1005@20+1 "';' expected." <<{>>   [tsc first: same]
+    bun: accepts => "class C extends (++a) {\n}\n"
+"class C extends (-a) {}" [js]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "class C extends (-a) {\n}\n"
+"class C extends <a/> {}" [tsx]
+    go : TS1109@16+1 "Expression expected." <<<>> | TS1005@21+1 "';' expected." <<{>>   [tsc first: same]
+    bun: accepts => "class C extends jsxDEV_7x81h0kn(\"a\", {}, undefined, false, undefined, "
+"@-a class C {}" [ts]
+    go : TS1109@1+1 "Expression expected." <<->> | TS1005@4+5 "';' expected." <<class>>   [tsc first: same]
+    bun: parse ok, visit ERR @1+1 Expected identifier but found "-"
+"@++a class C {}" [ts]
+    go : TS1109@1+2 "Expression expected." <<++>> | TS1005@5+5 "';' expected." <<class>>   [tsc first: same]
+    bun: parse ok, visit ERR @1+2 Expected identifier but found "++"
+"@typeof a class C {}" [ts]
+    go : TS1109@1+6 "Expression expected." <<typeof>> | TS1005@10+5 "';' expected." <<class>>   [tsc first: same]
+    bun: parse ok, visit ERR @1+6 Expected identifier but found "typeof"
+"@<T>a class C {}" [ts]
+    go : TS1109@1+1 "Expression expected." <<<>> | TS1005@6+5 "';' expected." <<class>>   [tsc first: same]
+    bun: parse ok, visit ERR @1+1 Expected identifier but found "<"
+"@(-a) class C {}" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorS"
+"@a.b class C {}" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorS"
+"@a() class C {}" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorS"
+"@new A class C {}" [ts]
+    go : (parses)   [tsc first: same]
+    bun: parse ok, visit ERR @1+3 Expected identifier but found "new"
+"@a++ class C {}" [ts]
+    go : TS1146@2+0 "Declaration expected." <<>>   [tsc first: same]
+    bun: parse ERR @2+2 Expected "class" but found "++"
+"@a! class C {}" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorS"
+"class C { @-a m() {} }" [ts]
+    go : TS1109@11+1 "Expression expected." <<->> | TS1005@14+1 "';' expected." <<m>>   [tsc first: same]
+    bun: parse ok, visit ERR @11+1 Expected identifier but found "-"
+"class C { @++a m() {} }" [ts]
+    go : TS1109@11+2 "Expression expected." <<++>> | TS1005@15+1 "';' expected." <<m>>   [tsc first: same]
+    bun: parse ok, visit ERR @11+2 Expected identifier but found "++"
+"class C { @(-a) m() {} }" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorM"
+"@a + b class C {}" [ts]
+    go : TS1146@2+0 "Declaration expected." <<>> | TS1005@7+5 "';' expected." <<class>>   [tsc first: same]
+    bun: parse ERR @3+1 Expected "class" but found "+"
+"@a = b class C {}" [ts]
+    go : TS1146@2+0 "Declaration expected." <<>> | TS1128@3+1 "Declaration or statement expected." <<=>>   [tsc first: same]
+    bun: parse ERR @3+1 Expected "class" but found "="
+"@-a class C {}" [js]
+    go : TS1109@1+1 "Expression expected." <<->> | TS1005@4+5 "';' expected." <<class>>   [tsc first: same]
+    bun: parse ERR @0+1 Unexpected @
+"@(-a) class C {}" [js]
+    go : (parses)   [tsc first: same]
+    bun: parse ERR @0+1 Unexpected @

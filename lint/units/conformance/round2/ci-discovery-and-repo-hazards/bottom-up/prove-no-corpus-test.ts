@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
-// Proves that no file below test/cli/lint/conformance is taken for a test by the runner of CI, by `bun test`, or by prettier.
+// Proves that no file below test/cli/lint/conformance is taken for a test by the runner of CI, by the generator of the
+// parallel allowlist, by `bun test`, or by the glob of prettier, and that the refusal of sync.sh stops every name that one of them takes.
 // usage: bun prove-no-corpus-test.ts [--repo <checkout>] [--rev <revision>] [--bun <binary>] [--no-disk]
 //   --repo   a checkout of the repository (default: the one that holds the current directory)
 //   --rev    the revision whose tree and whose scripts/runner.node.ts are read (default HEAD)

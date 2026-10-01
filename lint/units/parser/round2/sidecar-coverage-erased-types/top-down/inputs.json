@@ -49,6 +49,6 @@
  },
  {
   "name": "accessor-bodies",
-  "text": "interface X { get a() { return 0 } set a(v: number) { type T = 1 } b: 1 }\ntype Y = { get c(): number { return 1 }; d: 2 };\n"
+  "text": "interface X { get a() { return 0 } set a(v: number) { v } b: 1 }\ntype Y = { get c(): number { return 1 } d: 2 };\n"
  }
 ]

@@ -41,7 +41,7 @@ rows.forEach((r, id) => {
   const before = r.s.slice(0, d[1]).trimEnd();
   const prev = /(\+\+|--|[\w$]+|\S)$/.exec(before)?.[1] ?? "";
   const cls = t => (/^(\+\+|--)$/.test(t) ? "update" : /^[+\-*/%&|^<>?]*=$/.test(t) && t !== "==" ? "assign" : /^[\w$]+$/.test(t) ? (/(^typeof$|^await$|^new$|^delete$|^void$)/.test(t) ? t : "word") : t);
-  const k = `TS${d[0]} at ${JSON.stringify(cls(token))} after ${JSON.stringify(cls(prev))}`;
+  const k = [1005, 1109, 1128, 1003].includes(d[0]) ? `TS${d[0]} at ${JSON.stringify(cls(token))} after ${JSON.stringify(cls(prev))}` : `TS${d[0]} ${d[5].slice(0, 60)}`;
   const v = kinds.get(k) || { n: 0, ex: [] };
   v.n++; if (v.ex.length < 4) v.ex.push(`[${r.l}] ${r.e}`);
   kinds.set(k, v);

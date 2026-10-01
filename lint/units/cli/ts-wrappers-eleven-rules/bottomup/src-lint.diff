@@ -22,7 +22,7 @@
  
  use crate::FileId;
  use crate::diagnostic::{Category, Code, Diagnostic};
-@@ -41,40 +47,123 @@
+@@ -41,40 +47,127 @@
      }
  }
  
@@ -59,6 +59,10 @@
 +    open: Option<u32>,
 +    /// The first `(` or `<` of the node of the slot: the parentheses around that node are not part of it.
 +    node_open: Option<u32>,
++    /// After the last `)`, `!`, type or `>` of all that stands around the operand and ends after it.
++    close: Option<u32>,
++    /// After the last token of the node of the slot, where a wrapper ends it. `None`: the operand ends it.
++    node_close: Option<u32>,
 +}
 +
  pub(crate) struct Context<'p, 'a> {
@@ -153,7 +157,7 @@
          }
      }
  
-@@ -83,6 +172,12 @@
+@@ -83,6 +176,12 @@
          &self.source.contents
      }
  
@@ -166,7 +170,7 @@
      /// The spelling of an identifier or of a binding. Empty for a reference that names nothing.
      pub(crate) fn name_of(&self, r#ref: Ref) -> &'a [u8] {
          if r#ref.is_valid() {
-@@ -135,6 +230,90 @@
+@@ -135,6 +234,90 @@
          }
      }
  
@@ -257,7 +261,7 @@
      /// The walk stops going deeper at `loc`. Said once.
      pub(crate) fn too_deep(&mut self, loc: Loc) {
          if !core::mem::replace(&mut self.cut, true) {
-@@ -165,122 +344,285 @@
+@@ -165,122 +348,301 @@
          self.reports
      }
  
@@ -307,10 +311,6 @@
 -        let mut depth = 0i32;
 -        let mut lowest = 0i32;
 -        let mut closing = Vec::new();
--        loop {
--            let token = tokens.next()?;
--            if token.start >= to {
--                return (token.start == to).then_some(closing);
 +    /// What stands around `expr` where the tree has it.
 +    fn slot(&self, expr: &Expr) -> Slot {
 +        let mut slot = Slot::default();
@@ -331,35 +331,33 @@
 +        });
 +        let mut pending = type_arguments.is_some();
 +        for (record, index) in self.wrappers_of(expr).zip(0usize..) {
-+            if pending && index == inside {
++            if let (true, Some(list)) = (pending && index == inside, type_arguments) {
 +                pending = false;
++                slot.closed(list.end);
 +                slot.wrapped(TsWrapper::Instantiation);
-             }
--            if token.opaque {
--                continue;
-+            match record.data {
++            }
++            let wrapper = match record.data {
 +                WrapperData::Parenthesized => {
 +                    slot.parens += 1;
 +                    slot.opened(record.op);
++                    slot.closed(record.end);
++                    continue;
 +                }
++                // The `end` of the record is its `>`: the node ends where its operand does.
 +                WrapperData::TypeAssertion(_) => {
 +                    slot.opened(record.op);
 +                    slot.wrapped(TsWrapper::TypeAssertion);
++                    continue;
 +                }
-+                WrapperData::As(_) => slot.wrapped(TsWrapper::As),
-+                WrapperData::Satisfies(_) => slot.wrapped(TsWrapper::Satisfies),
-+                WrapperData::NonNull => slot.wrapped(TsWrapper::NonNull),
-             }
--            match token.t {
--                T::TOpenParen => depth += 1,
--                T::TCloseParen => {
--                    depth -= 1;
--                    if depth < lowest {
--                        lowest = depth;
--                        closing.push(token.start);
--                    }
++                WrapperData::As(_) => TsWrapper::As,
++                WrapperData::Satisfies(_) => TsWrapper::Satisfies,
++                WrapperData::NonNull => TsWrapper::NonNull,
++            };
++            slot.closed(record.end);
++            slot.wrapped(wrapper);
 +        }
-+        if pending {
++        if let (true, Some(list)) = (pending, type_arguments) {
++            slot.closed(list.end);
 +            slot.wrapped(TsWrapper::Instantiation);
 +        }
 +        slot
@@ -385,14 +383,25 @@
 +    fn operand_start(&self, first: &Expr) -> Loc {
 +        match self.slot(first).open {
 +            Some(open) => loc_at(open).unwrap_or(first.loc),
-+            None => self.node_start(first),
++            None => self.own_start(first),
 +        }
 +    }
 +
-+    /// Where ESTree starts the node `expr`, what stands around it aside: at the first `(` or `<` of its first operand.
++    /// Where the node that ESLint has where the tree has `expr` starts: a `<T>` or a `(` inside the outermost TypeScript wrapper is part of it, the parentheses around the node are not.
 +    pub(crate) fn node_start(&self, expr: &Expr) -> Loc {
++        match self.slot(expr).node_open {
++            Some(open) => loc_at(open).unwrap_or(expr.loc),
++            None => self.own_start(expr),
++        }
++    }
++
++    /// Where `expr` itself starts, what stands around it aside: at the first `(` or `<` of its first operand.
++    fn own_start(&self, expr: &Expr) -> Loc {
 +        let mut node = expr;
-+        loop {
+         loop {
+-            let token = tokens.next()?;
+-            if token.start >= to {
+-                return (token.start == to).then_some(closing);
 +            let first = match &node.data {
 +                ExprData::EBinary(binary) => &binary.left,
 +                ExprData::EDot(dot) => &dot.target,
@@ -407,25 +416,19 @@
 +                    if matches!(unary.op, OpCode::UnPostDec | OpCode::UnPostInc) =>
 +                {
 +                    &unary.value
-                 }
--                _ => {}
++                }
 +                ExprData::EClass(class) => return self.class_start(class, node.loc),
 +                _ => return node.loc,
 +            };
 +            if let Some(open) = self.slot(first).open {
 +                return loc_at(open).unwrap_or(first.loc);
              }
+-            if token.opaque {
+-                continue;
 +            node = first;
-         }
-     }
- 
--    /// Where the binary expression `node` starts whose first own token is at `own`: at the `(` of a left operand in them.
--    pub(crate) fn binary_start(&mut self, node: &E::Binary, own: Loc) -> Loc {
--        let (Ok(at), Ok(to)) = (
--            u32::try_from(own.start),
--            u32::try_from(node.right.loc.start),
--        ) else {
--            return own;
++        }
++    }
++
 +    /// Where a binary expression starts: where its left operand does. Every link of a chain that the way down passes starts there too, and is kept: a long chain is gone down once.
 +    pub(crate) fn binary_start(&mut self, node: &E::Binary) -> Loc {
 +        let address = core::ptr::from_ref(node).addr();
@@ -437,16 +440,44 @@
 +        let start = loop {
 +            if let Some(open) = self.slot(first).open {
 +                break loc_at(open).unwrap_or(first.loc);
-+            }
+             }
+-            match token.t {
+-                T::TOpenParen => depth += 1,
+-                T::TCloseParen => {
+-                    depth -= 1;
+-                    if depth < lowest {
+-                        lowest = depth;
+-                        closing.push(token.start);
+-                    }
+-                }
+-                _ => {}
 +            let ExprData::EBinary(inner) = &first.data else {
-+                break self.node_start(first);
++                break self.own_start(first);
 +            };
 +            let address = core::ptr::from_ref::<E::Binary>(inner).addr();
 +            if let Some(start) = self.binary_starts.get(&address) {
 +                break *start;
-+            }
+             }
 +            passed.push(address);
 +            first = &inner.left;
++        };
++        for address in passed {
++            self.binary_starts.insert(address, start);
+         }
++        start
+     }
+ 
+-    /// Where the binary expression `node` starts whose first own token is at `own`: at the `(` of a left operand in them.
+-    pub(crate) fn binary_start(&mut self, node: &E::Binary, own: Loc) -> Loc {
+-        let (Ok(at), Ok(to)) = (
+-            u32::try_from(own.start),
+-            u32::try_from(node.right.loc.start),
+-        ) else {
+-            return own;
++    /// Where a class expression starts: at the `@` of its first decorator, which the text before that decorator shows.
++    fn class_start(&self, class: &G::Class, keyword: Loc) -> Loc {
++        let Some(first) = class.ts_decorators.first() else {
++            return keyword;
          };
 -        // No `(` stands right before the first token: no scan would move the start.
 -        if tokens::before_opens(self.text(), at, 1).1 == 1 {
@@ -461,17 +492,6 @@
 -                // The scan ends at the `loc` of the right operand: what it meets of that operand is the decorators of a class expression, which stand before the `loc`.
 -                let closing = if starts_with_decorators(&node.right) {
 -                    self.closing(at, to, &[&node.left, &node.right])
-+        for address in passed {
-+            self.binary_starts.insert(address, start);
-+        }
-+        start
-+    }
-+
-+    /// Where a class expression starts: at the `@` of its first decorator, which the text before that decorator shows.
-+    fn class_start(&self, class: &G::Class, keyword: Loc) -> Loc {
-+        let Some(first) = class.ts_decorators.first() else {
-+            return keyword;
-+        };
 +        u32::try_from(self.operand_start(first).start)
 +            .ok()
 +            .and_then(|start| tokens::at_before(self.text(), start))
@@ -479,16 +499,16 @@
 +            .unwrap_or(keyword)
 +    }
 +
-+    /// Where the node that ESLint has where the tree has `expr` starts: a `<T>` or a `(` inside the outermost TypeScript wrapper is part of it.
-+    fn wrapped_start(&self, expr: &Expr) -> Loc {
-+        match self.slot(expr).node_open {
-+            Some(open) => loc_at(open).unwrap_or(expr.loc),
-+            None => self.node_start(expr),
++    /// After the last token of the node that ESLint has where the tree has `expr`. `None`: the kind of node has no end here, or its text does not read.
++    pub(crate) fn node_end(&self, expr: &Expr) -> Option<u32> {
++        match self.slot(expr).node_close {
++            Some(close) => Some(close),
++            None => self.own_end(expr),
 +        }
 +    }
 +
-+    /// Where ESTree ends the node `expr`, what stands around it aside. `None`: the kind of node has no end here, or its text does not read.
-+    pub(crate) fn node_end(&self, expr: &Expr) -> Option<u32> {
++    /// After the last token of `expr` itself, what stands around it aside.
++    fn own_end(&self, expr: &Expr) -> Option<u32> {
 +        match &expr.data {
 +            ExprData::EDot(dot) => self.token_end(dot.name_loc),
 +            ExprData::EIndex(index) => {
@@ -549,7 +569,7 @@
 +
 +    /// What ESLint compares of the test of a `case`: the tokens of the node it has there, to the `:` of the clause. `None`: the text does not read.
 +    pub(crate) fn tokens_of(&self, value: &Expr) -> Option<Vec<u8>> {
-+        let from = u32::try_from(self.wrapped_start(value).start).ok()?;
++        let from = u32::try_from(self.node_start(value).start).ok()?;
          let spans = tokens::spans_under(self.text(), &[value], self.stack_check)?;
          let mut log = Log::init();
          let mut tokens = Tokens::new(&mut log, self.source, self.arena, &spans, from);
@@ -638,7 +658,7 @@
          let from = u32::try_from(index.loc.start).ok()?;
          let spans = tokens::spans_under(self.text(), &[index], self.stack_check)?;
          let mut log = Log::init();
-@@ -289,7 +631,7 @@
+@@ -289,7 +651,7 @@
      }
  
      /// After the token that starts at `at`. `None` when the text there does not read.
@@ -647,7 +667,7 @@
          let at = u32::try_from(at.start).ok()?;
          match self.token_len(at) {
              0 => None,
-@@ -308,26 +650,39 @@
+@@ -308,26 +670,45 @@
      }
  }
  
@@ -678,11 +698,17 @@
 +        self.open = Some(self.open.map_or(op, |open| open.min(op)));
 +    }
 +
++    /// What stands around the slot so far ends at `end`, after the operand.
++    fn closed(&mut self, end: u32) {
++        self.close = Some(self.close.map_or(end, |close| close.max(end)));
++    }
++
 +    /// A wrapper that is no pair of parentheses stands around what the slot had so far.
 +    fn wrapped(&mut self, wrapper: TsWrapper) {
 +        self.ts = Some(wrapper);
 +        self.parens = 0;
 +        self.node_open = self.open;
++        self.node_close = self.close;
      }
  }
 +

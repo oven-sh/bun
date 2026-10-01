@@ -1,0 +1,259 @@
+# walk: an assignment whose left side is no left-hand side expression
+ts  "a + b = c;"  lint: ok
+js  "a + b = c;"  lint: ok
+ts  "-a = b;"  lint: ok
+js  "-a = b;"  lint: ok
+ts  "a++ = b;"  lint: ok
+js  "a++ = b;"  lint: ok
+ts  "async function f() { await x = y; }"  lint: ok
+js  "async function f() { await x = y; }"  lint: ok
+js  "{ await using [a] = null; }"  lint: err @8+5 "\"await\" can only be used inside an \"async\" function"  => no entry
+ts  "a + b += c;"  lint: ok
+ts  "a + b >>>= c;"  lint: ok
+ts  "a || b = c;"  lint: ok
+ts  "a ?? b ??= c;"  lint: ok
+ts  "!a = b;"  lint: ok
+ts  "typeof a = b;"  lint: ok
+ts  "++a = b;"  lint: ok
+ts  "delete a.b = c;"  lint: ok
+ts  "void a = b;"  lint: ok
+ts  "a in b = c;"  lint: ok
+ts  "a instanceof b = c;"  lint: ok
+ts  "x = a + b = c;"  lint: ok
+ts  "a = -b = c;"  lint: ok
+ts  "a + b /* c */ = c;"  lint: ok
+ts  "a + b = /* c */ c;"  lint: ok
+ts  "a + b = (c);"  lint: ok
+ts  "a + b = <T>c;"  lint: ok
+ts  "a + b = @d class {};"  lint: ok
+ts  "class C { #x; m(y) { #x in y = 1; } }"  lint: ok
+# walk: the argument of TS1005 follows what holds the expression
+ts  "(a + b = c);"  lint: ok
+ts  "f(a + b = c);"  lint: ok
+ts  "new F(a + b = c);"  lint: ok
+ts  "[a + b = c];"  lint: ok
+ts  "x ? a + b = c : d;"  lint: ok
+ts  "x ? y : a + b = c;"  lint: ok
+ts  "`${a + b = c}`;"  lint: ok
+ts  "a[b + c = d];"  lint: ok
+ts  "let x = a + b = c;"  lint: ok
+ts  "if (a + b = c) {}"  lint: ok
+ts  "while (a + b = c) {}"  lint: ok
+ts  "for (a + b = c;;) {}"  lint: ok
+ts  "for (;a + b = c;) {}"  lint: ok
+ts  "for (;;a + b = c) {}"  lint: ok
+ts  "for (x of a + b = c) {}"  lint: ok
+ts  "switch (x) { case a + b = c: }"  lint: ok
+ts  "x = {k: a + b = c};"  lint: ok
+ts  "x = {[a + b = c]: 1};"  lint: ok
+ts  "x = f(...a + b = c);"  lint: ok
+ts  "f(() => a + b = c);"  lint: ok
+ts  "x = () => a + b = c;"  lint: ok
+ts  "class C { x = a + b = c; }"  lint: ok
+ts  "class C { [a + b = c] = 1; }"  lint: ok
+ts  "function f(x = a + b = c) {}"  lint: ok
+ts  "let [x = a + b = c] = y;"  lint: ok
+ts  "let {x = a + b = c} = y;"  lint: ok
+ts  "enum E { A = a + b = c }"  lint: ok
+ts  "f((a + b = c));"  lint: ok
+ts  "f((x, a + b = c));"  lint: ok
+ts  "x = (a, b + c = d, e);"  lint: ok
+ts  "function f() { return a + b = c; }"  lint: ok
+ts  "throw a + b = c;"  lint: ok
+ts  "export default a + b = c;"  lint: ok
+tsx "x = <a b={a + b = c} />;"  lint: ok
+tsx "x = <a>{a + b = c}</a>;"  lint: ok
+# walk: after a line break the statement has ended
+ts  "a + b\n= c;"  lint: ok
+ts  "a + b // c\n= c;"  lint: ok
+ts  "a + b /* \n */ = c;"  lint: ok
+ts  "let x = a + b\n= c;"  lint: ok
+ts  "function f() { return a + b\n= c; }"  lint: ok
+ts  "if (x) a + b\n= c;"  lint: ok
+ts  "switch (x) { case 1: a + b\n= c; }"  lint: ok
+ts  "switch (x) { case 1: if (y) a + b\n= c; }"  lint: ok
+ts  "switch (x) { case 1: { a + b\n= c; } }"  lint: ok
+ts  "do a + b\n= c; while (x);"  lint: ok
+ts  "class C { x = a + b\n= c; }"  lint: ok
+ts  "for (let x = a + b\n= c;;) {}"  lint: ok
+ts  "(a + b\n= c);"  lint: ok
+ts  "f(a + b\n= c);"  lint: ok
+# walk: "=" after a function expression
+ts  "x = function(){} = 2;"  lint: ok
+ts  "(function(){} = 2);"  lint: ok
+ts  "x = async function(){} = 2;"  lint: ok
+ts  "x = function(){}\n= 2;"  lint: ok
+# walk: what follows a postfix update
+ts  "a++ ++;"  lint: ok
+js  "a++ ++;"  lint: ok
+ts  "a-- --;"  lint: ok
+ts  "a++ --;"  lint: ok
+ts  "a++ /*c*/ ++;"  lint: ok
+ts  "(a)++ ++;"  lint: ok
+ts  "a.b++ ++;"  lint: ok
+ts  "a[i]++ ++;"  lint: ok
+ts  "a[i + 1]++ ++;"  lint: ok
+ts  "f(x)++ ++;"  lint: ok
+ts  "new A()++ ++;"  lint: ok
+ts  "new A++ ++;"  lint: ok
+ts  "this++ ++;"  lint: ok
+ts  "a!++ ++;"  lint: ok
+ts  "1++ ++;"  lint: ok
+ts  "'s'++ ++;"  lint: ok
+ts  "/r/g++ ++;"  lint: ok
+ts  "`t`++ ++;"  lint: ok
+ts  "[a]++ ++;"  lint: ok
+ts  "({a})++ ++;"  lint: ok
+ts  "x = class {}++ ++;"  lint: ok
+ts  "import.meta++ ++;"  lint: ok
+ts  "a?.b++ ++;"  lint: ok
+ts  "function f() { new.target++ ++; }"  lint: ok
+ts  "a++ ++ ++;"  lint: ok
+ts  "-a++ ++;"  lint: ok
+ts  "x = a++ ++ + 1;"  lint: ok
+ts  "++a++;"  lint: ok
+js  "++a++;"  lint: ok
+ts  "--a--;"  lint: ok
+ts  "++a.b++;"  lint: ok
+ts  "++a++ ++;"  lint: ok
+ts  "(++a++);"  lint: ok
+ts  "(a++ ++);"  lint: ok
+ts  "f(a++ ++);"  lint: ok
+ts  "[a++ ++];"  lint: ok
+ts  "let x = a++ ++;"  lint: ok
+ts  "x ? a++ ++ : y;"  lint: ok
+ts  "`${a++ ++}`;"  lint: ok
+ts  "a[b++ ++];"  lint: ok
+ts  "a--.b;"  lint: ok
+js  "a--.b;"  lint: ok
+js  "a--.toString();"  lint: ok
+ts  "a++?.b;"  lint: ok
+ts  "a++[0];"  lint: ok
+ts  "a++?.[0];"  lint: ok
+ts  "a++();"  lint: ok
+ts  "a++(b);"  lint: ok
+ts  "a++?.();"  lint: ok
+ts  "a++`x`;"  lint: ok
+ts  "a++`x${1}`;"  lint: ok
+ts  "class C { #b; m(a) { a++.#b } }"  lint: ok
+ts  "(a++.b);"  lint: ok
+ts  "f(a++.b);"  lint: ok
+ts  "[a++[0]];"  lint: ok
+ts  "let x = a++.b;"  lint: ok
+ts  "a++ .b.c();"  lint: ok
+ts  "a++\n.b;"  lint: ok
+ts  "a++\n?.b;"  lint: ok
+ts  "let x = a++\n.b;"  lint: ok
+ts  "(a++\n(b));"  lint: ok
+ts  "f(a++\n(b));"  lint: ok
+ts  "f(a++\n.b);"  lint: ok
+ts  "do a++\n(b); while (x);"  lint: ok
+ts  "x = y ? a++\n(b) : c;"  lint: ok
+ts  "for (a++\n(b);;) {}"  lint: ok
+ts  "class C { x = a++\n.b; }"  lint: ok
+ts  "enum E { A = a++ .b }"  lint: ok
+# walk: what follows a JSX element
+tsx "<a/>.b;"  lint: ok
+jsx "<a/>.b;"  lint: ok
+tsx "<a/>++;"  lint: ok
+tsx "<a/>();"  lint: ok
+tsx "<a/>[0];"  lint: ok
+tsx "<a/>`t`;"  lint: ok
+tsx "<a/>?.b;"  lint: ok
+tsx "<a></a>.b;"  lint: ok
+tsx "<></>.b;"  lint: ok
+tsx "x = <a/>.b;"  lint: ok
+tsx "<a/>\n.b;"  lint: ok
+tsx "++<a/>;"  lint: ok
+# walk: the operand of a prefix update
+ts  "++ delete a.b;"  lint: ok
+js  "++ delete a.b;"  lint: ok
+ts  "++-a;"  lint: ok
+ts  "++ +a;"  lint: ok
+ts  "++~a;"  lint: ok
+ts  "++!a;"  lint: ok
+ts  "++typeof a;"  lint: ok
+ts  "--void a;"  lint: ok
+ts  "++ ++a;"  lint: ok
+ts  "++--a;"  lint: ok
+ts  "async function f() { ++await a; }"  lint: ok
+ts  "++<T>a;"  lint: ok
+ts  "++<T>(a);"  lint: ok
+ts  "(++-a);"  lint: ok
+ts  "f(++-a);"  lint: ok
+ts  "++ /*c*/ -a;"  lint: ok
+ts  "++\n-a;"  lint: ok
+ts  "++-a++;"  lint: ok
+ts  "typeof ++-a;"  lint: ok
+# walk: yield* without an operand
+ts  "function* g() { yield*; }"  lint: ok
+js  "function* g() { yield*; }"  lint: ok
+ts  "function* g() { yield* }"  lint: ok
+ts  "function* g() { (yield*); }"  lint: ok
+ts  "function* g() { [yield*]; }"  lint: ok
+ts  "function* g() { f(yield*, 1); }"  lint: ok
+ts  "function* g() { x ? yield* : 1; }"  lint: ok
+ts  "function* g() { yield /*c*/ * /*d*/ ; }"  lint: ok
+ts  "function* g() { yield*\n; }"  lint: ok
+ts  "function* g() { x = yield*; }"  lint: ok
+ts  "function* g() { yield* yield*; }"  lint: ok
+# walk: a name on the line after its dot, before a word on its own line
+ts  "a.\nb in c;"  lint: ok
+js  "a.\nb in c;"  lint: ok
+ts  "a.\nb instanceof c;"  lint: ok
+ts  "a.\nb as c;"  lint: ok
+ts  "a.\nb satisfies c;"  lint: ok
+ts  "a?.\nb in c;"  lint: ok
+ts  "a.b.\nc in d;"  lint: ok
+ts  "a.\n\nb in c;"  lint: ok
+ts  "a. // x\nb in c;"  lint: ok
+ts  "a. /* x\n */ b in c;"  lint: ok
+ts  "f(a.\nb in c);"  lint: ok
+ts  "x = a.\nb in c ? 1 : 2;"  lint: ok
+ts  "a.\nin in c;"  lint: ok
+ts  "for (a.\nb of c) {}"  lint: ok
+ts  "a().\nb in c;"  lint: ok
+ts  "a[0].\nb in c;"  lint: ok
+ts  "this.\nb in c;"  lint: ok
+ts  "import.meta.\nb in c;"  lint: ok
+ts  "new a.\nb in c;"  lint: ok
+ts  "a!.\nb in c;"  lint: ok
+ts  "class C { #b; m(a) { a.\n#b in c } }"  lint: ok
+ts  "class C { x = a.\nb in c; }"  lint: ok
+tsx "<a.\nb c='1' />;"  lint: ok
+# at the site: non-null and type arguments after a postfix update or a JSX element
+ts  "a++!;"  lint: ok
+ts  "a++!.b;"  lint: ok
+ts  "a++<T>;"  lint: ok
+tsx "<a/>!;"  lint: ok
+# at the site: an assignment after a type assertion
+ts  "<T>a = c;"  lint: ok
+ts  "<T>a += b;"  lint: ok
+ts  "<T>(a) = b;"  lint: ok
+ts  "x = <T>a = b;"  lint: ok
+ts  "x = -<T>a = b;"  lint: ok
+ts  "(<T>a = b);"  lint: ok
+ts  "<T>a\n= b;"  lint: ok
+ts  "<T>a! = b;"  lint: ok
+ts  "<T><U>a = b;"  lint: ok
+ts  "/* @__PURE__ */ <T>a = b;"  lint: ok
+# differences: the reference has another first diagnostic, or none
+ts  "f(<T>a = b);"  lint: ok
+ts  "a++\n(b);"  lint: ok
+ts  "a++\n[b];"  lint: ok
+ts  "a++\n`t`;"  lint: ok
+ts  "x = a++\n(b);"  lint: ok
+ts  "let x = a++\n(b);"  lint: ok
+ts  "if (x) a++\n(b);"  lint: ok
+ts  "function f() { return a++\n(b); }"  lint: ok
+ts  "export default a++\n(b);"  lint: ok
+ts  "x = () => a++\n(b);"  lint: ok
+ts  "class C { x = a++\n(b); }"  lint: ok
+ts  "class C { x = a++\n[b]; }"  lint: ok
+tsx "<a/>\n(b);"  lint: ok
+ts  "x = function(){}++ ++;"  lint: ok
+ts  "x = function* () { yield = 1; };"  lint: err @25+1 "Unexpected ="  => TS1109 [25,26) "Expression expected."
+ts  "a++.#b;"  lint: err @4+2 "Expected identifier but found \"#b\""  => TS1003 [4,6) "Identifier expected."
+ts  "a.\nb c;"  lint: err @5+1 "Expected \";\" but found \"c\""  => TS1005 [5,6) "';' expected."
+ts  "a.\nb of c;"  lint: err @5+2 "Expected \";\" but found \"of\""  => TS1005 [5,7) "';' expected."
+ts  "x = () => {} = 2;"  lint: err @13+1 "Expected \";\" but found \"=\""  => TS1005 [13,14) "';' expected."

@@ -12,7 +12,7 @@ const linter = new Linter({ configType: "flat" });
 const RULES = ["no-debugger","no-dupe-keys","no-dupe-class-members","no-duplicate-case","no-empty-pattern","no-compare-neg-zero","use-isnan","valid-typeof","no-unsafe-negation","no-sparse-arrays","no-self-assign"];
 const isTs = ext => ext === "ts" || ext === "tsx" || ext === "mts" || ext === "cts";
 const args = process.argv.slice(2);
-let bin = "/tmp/tsw/out/tsentry", show = new Set(), only = null, jsonOut = null, lists = [], env = {};
+let bin = process.env.PROBE_BIN || "/tmp/tsw/out/tsentry", show = new Set(), only = null, jsonOut = null, lists = [], env = {};
 while (args.length) {
   const a = args.shift();
   if (a === "--bin") bin = args.shift();

@@ -19,7 +19,9 @@ declares it in `lib.rs`:
   `crate::tspath` and `crate::collections`, so it compiles only in a tree whose `lib.rs` declares those three as
   well: `80dcacd6db` is the first commit whose `lib.rs` declares all five leaf packages, as the scratch root does.
   No `cargo check` and no `cargo test` was run with that commit: the survey of round 2 is the first cargo compile of
-  the 18 files, and their tests have run from the scratch root only.
+  the 18 files, and their tests have run from the scratch root only. `0aa0a67449` adds a 19th file, `golang.rs`
+  (`GoIndex` and `List`: no upstream file, `std` only), and its two lines of `mod.rs`: the last `core` row of the
+  table, with its state under "Node table" below.
 - `jsnum`: declared by `80dcacd6db` (`pub mod jsnum;`, its four files are unchanged since `1e45ca9abb`). It names
   `crate::stringutil`, which the same commit declares. The line was written without a cargo run: the survey of
   round 2 is the first cargo compile of the four files, and the seven tests of `jsnum` have run from the scratch
@@ -60,6 +62,7 @@ declares it in `lib.rs`:
 | `core/semaphore.go`, `core/workgroup.go` | | not ported | one checker, one thread |
 | `core/bfs.go`, `buildoptions.go`, `context.go`, `projectreference.go`, `textchange.go`, `typeacquisition.go`, `version.go`, `watchoptions.go` | | not started | binder and checker do not call them |
 | `core/nodemodules.go` | `core/nodemodules.rs` | tested (own test) | came in with `404d95dbe9`: `checker.go` 15206 calls `core.NodeCoreModules()` (see "K3 steps 6 to 8" below) |
+| no upstream file: a Go slice as a value (`[]T` with the nil slice, a `Copy` header, `len` as Go's `int`, the zero value for an index out of range, `core.Same` as `List::same`, `s[lo:hi]` as `List::sub` with the bounds clamped) | `core/golang.rs` (`GoIndex`, `List`: lines 7 to 81 of `checker-data-model-contract/bottom-up/crate/src/tscore/golang.rs`, byte for byte) | translated (commit `0aa0a67449`; what was checked is under "Node table" below) | the other values of the contract's file: `Text`, `SliceBuf`, `LiveList`, `Map`, `Memo`, `compare_strings`, `compare_f64`. No file that cargo compiles names them; `binder` and `checker` import `Text`, `Map`, `LiveList` and `Memo` from `crate::core`. Its `OrderedMap`, `Set`, `OrderedSet` and `Tristate` are names that `collections/` and `core/tristate.rs` have in another form |
 | `collections/ordered_map.go` 15-213, 295-316 | `collections/ordered_map.rs` | tested (upstream's `TestOrderedMap`) | `noCopy` |
 | `collections/ordered_map.go` 215-293 (JSON) | | not ported | `internal/json` |
 | `collections/ordered_set.go` | `collections/ordered_set.rs` | tested (upstream's `TestOrderedSet`) | |

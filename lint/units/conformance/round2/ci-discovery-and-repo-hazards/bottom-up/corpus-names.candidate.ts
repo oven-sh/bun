@@ -1,7 +1,7 @@
 // A candidate for describe("reference") of test/cli/lint/conformance.test.ts, as a file of its own so that it can be run alone:
 // copy it to test/cli/lint/zz-corpus-names.test.ts of a clone that has the corpus, and run `bun test ./test/cli/lint/zz-corpus-names.test.ts`.
-// In conformance.test.ts the constants corpusRoot, small, sampled and the walk of cases() are there already: only the test is new,
-// with basename and sep added to the import of node:path, and the walk keeping every file name beside the map of the cases.
+// In conformance.test.ts the constants corpusRoot and small are there already, and cases() walks the same directories: the test is new,
+// with basename and sep added to the import of node:path. It reads corpus/cases and corpus/lib once more: 11 ms in a release build.
 import { expect, test } from "bun:test";
 import { isASAN, isDebug } from "harness";
 import { readFileSync, readdirSync } from "node:fs";
@@ -9,7 +9,6 @@ import { basename, join, sep } from "node:path";
 
 const corpusRoot = join(import.meta.dir, "conformance", "corpus");
 const small = isDebug || isASAN;
-const sampled = (name: string, n: number) => Bun.hash.crc32(name) % n === 0;
 
 // Every file below the cases and the test library, from the names of the directories alone: the only files of the corpus with a JavaScript-like extension.
 function sourceFiles(): string[] {
@@ -44,15 +43,17 @@ test("no file of the corpus is a test file for the runner of CI", () => {
     "isX64",
     `${code}\nreturn isTest;`,
   )(basename, sep, false, false, false);
-  const below = (path: string) => join("cli", "lint", "conformance", "corpus", ...path.split("/"));
+  // The path as the runner has it: below test/, with the separator of the platform.
+  const prefix = join("cli", "lint", "conformance", "corpus") + sep;
+  const below = (path: string) => prefix + (sep === "/" ? path : path.replaceAll("/", sep));
   expect(isTest(join("cli", "lint", "conformance.test.ts"))).toBe(true);
   expect(isTest(below("cases/compiler/a.test.ts"))).toBe(true);
   expect(isTest(below("cases/conformance/js/node/test/parallel/a.ts"))).toBe(true);
   const started = performance.now();
   const all = sourceFiles();
   const walked = performance.now();
-  // A debug or sanitizer build takes one name of forty: a release build of another lane takes them all.
-  const files = all.filter(path => !small || sampled(path, 40));
+  // A debug or sanitizer build takes every fortieth name, by its place and not by a hash, which costs it more than the rule: a release build takes them all.
+  const files = small ? all.filter((_, i) => i % 40 === 0) : all;
   expect(files.filter(path => isTest(below(path)))).toEqual([]);
   expect(all.length).toBeGreaterThan(12000);
   console.log(

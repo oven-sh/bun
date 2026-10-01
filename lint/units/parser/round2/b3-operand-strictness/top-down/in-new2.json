@@ -1,0 +1,10 @@
+[
+{"g":"new before import, super and the like"},
+"new import.meta;", "new import.meta.x;", "new import.meta();", "new import('x');", "new (import.meta);", "new (import('x'));", "function f() { new new.target; }", "function f() { new new.target(); }", "class C extends B { m() { new super.x; } }", "class C extends B { m() { new super.x(); } }", "class C extends B { constructor() { new super(); } }", "new this.x;", "new a!.b;", "new a.b!;", "new 'x'.y;", "new async function () {};", "new async;", "new a?.b;",
+"class C extends import.meta {}", "class C extends import('x') {}", "class C extends (import.meta) {}", "++import.meta;", "++import('x');", "import.meta = 1;", "import('x') = 1;", "import.meta++;", "import('x')++;", "import('x').y++;",
+["js","new import.meta;"], ["js","new import('x');"], ["js","new (import.meta);"],
+{"g":"a unary operand where Bun reads a level above a prefix operator"},
+"a ** -b;", "a ** ++b;", "a ** typeof b;", "a ** <T>b;", "-a ** b;", "(-a) ** b;", "a ** b ** -c;", "x = a ** -b;",
+"class C extends void 0 {}", "class C extends delete a.b {}", "class C extends ~a {}", "class C extends !a {}", "class C extends --a {}", "class C extends +a {}", "class C extends - a {}", "class C extends /* c */ -a {}",
+"new - -a;", "new -(a);", "new (-a).b;", "new -a.b();", "new typeof a();", "new void 0;"
+]

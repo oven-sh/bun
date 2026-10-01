@@ -137,8 +137,9 @@
     },
     Payloads {
         name: "accessor-bodies",
-        text: b"interface X { get a() { return 0 } set a(v: number) { type T = 1 } b: 1 }\ntype Y = { get c(): number { return 1 }; d: 2 };\n",
+        text: b"interface X { get a() { return 0 } set a(v: number) { v } b: 1 }\ntype Y = { get c(): number { return 1 } d: 2 };\n",
         lines: &[
-            "error TS1131 [113,114) Property or signature expected.",
+            "InterfaceDeclaration[0,64) name[10,11) members[13,62) GetAccessor[14,34) name[18,19) parameters[20,20) SetAccessor[35,57) name[39,40) parameters[41,50) Parameter[41,50) NumberKeyword[44,50) PropertySignature[58,62) name[58,59) LiteralType[61,62)",
+            "TypeAliasDeclaration[65,112) name[70,71) TypeLiteral[74,111) NumberKeyword[85,91) LiteralType[108,109)",
         ],
     },

@@ -36,6 +36,19 @@ add("update-of-an-update", "tsx", "a++ ++;", "<a/>++;", "<a></a>++;", "<></>++;"
 add("update-of-an-update", "jsx", "<a/>++;");
 add("prefix-update", "ts", "++ delete a.b;", "++-a;", "--+a;", "++~a;", "++!a;", "++typeof a;", "--void a;", "++ ++a;", "-- --a;", "++ --a;", "++/* c */-a;", "async function f() { ++await a; }", "x = ++-a;", "f(++-a);", "(++-a);", "++-a = b;",
   "++<T>a;", "++<T>(a);", "++ <T>a;", "--<T>a.b;", "++<T>a++;");
+// W7: new, extends and a decorator take a left-hand side, as the prefix update does.
+add("left-hand-side-operand", "ts", "new -a;", "new +a;", "new ~a;", "new !a;", "new ++a;", "new --a;", "new typeof a;", "new void a;", "new delete a.b;", "async function f() { new await a; }", "new <T>a;", "new <T>(a);", "new -a();", "new - a;", "new /* c */ -a;", "new\n-a;",
+  "new new -a;", "x = new -a;", "f(new -a);", "new -a = b;", "++new -a;", "new ++a++;", "new import.meta;", "new import.meta.x;", "new import.meta();",
+  "class C extends -a {}", "class C extends ++a {}", "class C extends typeof a {}", "class C extends void 0 {}", "class C extends <T>a {}", "var C = class extends -a {};", "class C extends -a implements I {}", "async function f() { class C extends await a {} }",
+  "@-a class C {}", "@++a class C {}", "@typeof a class C {}", "@<T>a class C {}", "class C { @-a m() {} }");
+add("left-hand-side-operand", "js", "new -a;", "new ++a;", "new typeof a;", "async function f() { new await a; }", "new import.meta;", "class C extends -a {}", "class C extends ++a {}");
+add("left-hand-side-operand", "tsx", "new <a/>;", "new <a/>();", "class C extends <a/> {}");
+add("left-hand-side-operand", "jsx", "new <a/>;");
+add("parses", "ts", "new (-a);", "new (-a)();", "new (++a);", "new a!;", "new a<T>;", "new new A;", "new class {};", "new function () {};", "new (a, b);", "new (import.meta);", "new (import('x'));", "function f() { new new.target; }", "class C extends B { m() { new super.x; } }",
+  "new this.x;", "new a!.b;", "new 'x'.y;", "new async function () {};", "class C extends (-a) {}", "class C extends (a + b) {}", "class C extends new A {}", "class C extends a! {}", "class C extends a<T> {}", "class C extends import.meta {}", "class C extends import('x') {}",
+  "@(-a) class C {}", "@a.b class C {}", "@a() class C {}", "@a! class C {}", "@new A class C {}", "class C { @(-a) m() {} }", "a ** -b;", "a ** ++b;", "a ** <T>b;");
+add("parses", "js", "new (-a);", "new (import.meta);", "class C extends (-a) {}");
+add("parses", "tsx", "new (<a/>);");
 add("type-assertion", "ts", "<T>a = c;", "<T>a += c;", "<T>(a) = c;", "<T>a\n= c;", "f(<T>a = c);", "(<T>a = c);", "-<T>a = b;", "<T>-a = b;", "<T><U>a = b;", "<T>a.b = c;", "<T>a! = c;", "<T>a++ = c;", "<T>a++.b;",
   "x as T = 1;", "a satisfies T = 1;", "a as T++;");
 add("prefix-update", "js", "++ delete a.b;", "++-a;", "async function f() { ++await a; }");

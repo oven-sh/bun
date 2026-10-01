@@ -3,6 +3,8 @@
 # The edits that this directory ends with (second version): one byte `every_comment` behind the other fields of the lexer, the
 # two JSX arms that hand over to a cold copy of the function, the comments before the first token, the five places that move
 # the lexer ahead, the table on the side table. Parser::init, P::init, scan_comment_text, snapshot and restore stay as they are.
+# `#[inline(always)]` on parse_jsx_string_literal keeps it inside next_inside_jsx_element as before its second copy existed
+# (without it the counts are those of cg-string-reader-out-of-line/).
 # Every replacement must match exactly once: the script stops where the tree differs.
 import sys, os
 
@@ -39,6 +41,10 @@ const _: () = assert!(core::mem::size_of::<LexerSnapshot<'static>>() == 240);
             all_comments: Vec::new(),
             every_comment: 0,
         }
+"""),
+ ("""    pub(crate) fn parse_jsx_string_literal<const QUOTE: u8>(&mut self) -> Result<(), Error> {
+""", """    #[inline(always)]
+    pub(crate) fn parse_jsx_string_literal<const QUOTE: u8>(&mut self) -> Result<(), Error> {
 """),
  ("""    pub(crate) fn next_inside_jsx_element(&mut self) -> Result<(), Error> {
         self.has_newline_before = false;

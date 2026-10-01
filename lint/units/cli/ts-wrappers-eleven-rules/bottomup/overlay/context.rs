@@ -80,6 +80,10 @@ struct Slot {
     open: Option<u32>,
     /// The first `(` or `<` of the node of the slot: the parentheses around that node are not part of it.
     node_open: Option<u32>,
+    /// After the last `)`, `!`, type or `>` of all that stands around the operand and ends after it.
+    close: Option<u32>,
+    /// After the last token of the node of the slot, where a wrapper ends it. `None`: the operand ends it.
+    node_close: Option<u32>,
 }
 
 pub(crate) struct Context<'p, 'a> {
@@ -392,25 +396,33 @@ impl<'p, 'a> Context<'p, 'a> {
         });
         let mut pending = type_arguments.is_some();
         for (record, index) in self.wrappers_of(expr).zip(0usize..) {
-            if pending && index == inside {
+            if let (true, Some(list)) = (pending && index == inside, type_arguments) {
                 pending = false;
+                slot.closed(list.end);
                 slot.wrapped(TsWrapper::Instantiation);
             }
-            match record.data {
+            let wrapper = match record.data {
                 WrapperData::Parenthesized => {
                     slot.parens += 1;
                     slot.opened(record.op);
+                    slot.closed(record.end);
+                    continue;
                 }
+                // The `end` of the record is its `>`: the node ends where its operand does.
                 WrapperData::TypeAssertion(_) => {
                     slot.opened(record.op);
                     slot.wrapped(TsWrapper::TypeAssertion);
+                    continue;
                 }
-                WrapperData::As(_) => slot.wrapped(TsWrapper::As),
-                WrapperData::Satisfies(_) => slot.wrapped(TsWrapper::Satisfies),
-                WrapperData::NonNull => slot.wrapped(TsWrapper::NonNull),
-            }
+                WrapperData::As(_) => TsWrapper::As,
+                WrapperData::Satisfies(_) => TsWrapper::Satisfies,
+                WrapperData::NonNull => TsWrapper::NonNull,
+            };
+            slot.closed(record.end);
+            slot.wrapped(wrapper);
         }
-        if pending {
+        if let (true, Some(list)) = (pending, type_arguments) {
+            slot.closed(list.end);
             slot.wrapped(TsWrapper::Instantiation);
         }
         slot
@@ -436,12 +448,20 @@ impl<'p, 'a> Context<'p, 'a> {
     fn operand_start(&self, first: &Expr) -> Loc {
         match self.slot(first).open {
             Some(open) => loc_at(open).unwrap_or(first.loc),
-            None => self.node_start(first),
+            None => self.own_start(first),
         }
     }
 
-    /// Where ESTree starts the node `expr`, what stands around it aside: at the first `(` or `<` of its first operand.
+    /// Where the node that ESLint has where the tree has `expr` starts: a `<T>` or a `(` inside the outermost TypeScript wrapper is part of it, the parentheses around the node are not.
     pub(crate) fn node_start(&self, expr: &Expr) -> Loc {
+        match self.slot(expr).node_open {
+            Some(open) => loc_at(open).unwrap_or(expr.loc),
+            None => self.own_start(expr),
+        }
+    }
+
+    /// Where `expr` itself starts, what stands around it aside: at the first `(` or `<` of its first operand.
+    fn own_start(&self, expr: &Expr) -> Loc {
         let mut node = expr;
         loop {
             let first = match &node.data {
@@ -482,7 +502,7 @@ impl<'p, 'a> Context<'p, 'a> {
                 break loc_at(open).unwrap_or(first.loc);
             }
             let ExprData::EBinary(inner) = &first.data else {
-                break self.node_start(first);
+                break self.own_start(first);
             };
             let address = core::ptr::from_ref::<E::Binary>(inner).addr();
             if let Some(start) = self.binary_starts.get(&address) {
@@ -509,16 +529,16 @@ impl<'p, 'a> Context<'p, 'a> {
             .unwrap_or(keyword)
     }
 
-    /// Where the node that ESLint has where the tree has `expr` starts: a `<T>` or a `(` inside the outermost TypeScript wrapper is part of it.
-    fn wrapped_start(&self, expr: &Expr) -> Loc {
-        match self.slot(expr).node_open {
-            Some(open) => loc_at(open).unwrap_or(expr.loc),
-            None => self.node_start(expr),
+    /// After the last token of the node that ESLint has where the tree has `expr`. `None`: the kind of node has no end here, or its text does not read.
+    pub(crate) fn node_end(&self, expr: &Expr) -> Option<u32> {
+        match self.slot(expr).node_close {
+            Some(close) => Some(close),
+            None => self.own_end(expr),
         }
     }
 
-    /// Where ESTree ends the node `expr`, what stands around it aside. `None`: the kind of node has no end here, or its text does not read.
-    pub(crate) fn node_end(&self, expr: &Expr) -> Option<u32> {
+    /// After the last token of `expr` itself, what stands around it aside.
+    fn own_end(&self, expr: &Expr) -> Option<u32> {
         match &expr.data {
             ExprData::EDot(dot) => self.token_end(dot.name_loc),
             ExprData::EIndex(index) => {
@@ -546,7 +566,7 @@ impl<'p, 'a> Context<'p, 'a> {
 
     /// What ESLint compares of the test of a `case`: the tokens of the node it has there, to the `:` of the clause. `None`: the text does not read.
     pub(crate) fn tokens_of(&self, value: &Expr) -> Option<Vec<u8>> {
-        let from = u32::try_from(self.wrapped_start(value).start).ok()?;
+        let from = u32::try_from(self.node_start(value).start).ok()?;
         let spans = tokens::spans_under(self.text(), &[value], self.stack_check)?;
         let mut log = Log::init();
         let mut tokens = Tokens::new(&mut log, self.source, self.arena, &spans, from);
@@ -656,11 +676,17 @@ impl Slot {
         self.open = Some(self.open.map_or(op, |open| open.min(op)));
     }
 
+    /// What stands around the slot so far ends at `end`, after the operand.
+    fn closed(&mut self, end: u32) {
+        self.close = Some(self.close.map_or(end, |close| close.max(end)));
+    }
+
     /// A wrapper that is no pair of parentheses stands around what the slot had so far.
     fn wrapped(&mut self, wrapper: TsWrapper) {
         self.ts = Some(wrapper);
         self.parens = 0;
         self.node_open = self.open;
+        self.node_close = self.close;
     }
 }
 

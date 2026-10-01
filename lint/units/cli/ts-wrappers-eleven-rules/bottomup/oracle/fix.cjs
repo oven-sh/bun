@@ -3,7 +3,7 @@
 const fs = require("fs"), os = require("os"), path = require("path");
 const { spawnSync } = require("child_process");
 const args = process.argv.slice(2);
-let bin = "/tmp/tsw/out/tsentry", show = false, rulesDir = "/workspace/wt/cli/test/cli/lint/rules";
+let bin = process.env.PROBE_BIN || "/tmp/tsw/out/tsentry", show = false, rulesDir = "/workspace/wt/cli/test/cli/lint/rules";
 while (args.length) { const a = args.shift(); if (a === "--bin") bin = args.shift(); else if (a === "--show") show = true; else if (a === "--rules") rulesDir = args.shift(); }
 const rules = fs.readdirSync(rulesDir).filter(f => f.endsWith(".json")).map(f => f.slice(0, -5)).sort();
 let total = 0, changed = 0, toEslint = 0;

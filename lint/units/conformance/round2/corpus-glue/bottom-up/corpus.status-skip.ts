@@ -21,7 +21,7 @@ export interface CorpusInstance extends Instance {
   // submoduleAccepted.txt names the diff of the error baseline against TypeScript's; submoduleTriaged.txt names it.
   accepted: boolean;
   triaged: boolean;
-  // The text with which the reference fails an instance of the status "invalid": it cannot set the instance up, or both lists name the diff of its error baseline.
+  // Set where the reference neither runs nor skips the instance but fails it: the text with which it does, when it cannot set the instance up or both lists name the diff of its error baseline. The status of such an instance is "skip", the one status of run.ts that is not run, and it has no skipReason.
   invalidReason?: string;
   // Class C without a file for an instance that does not run: nothing compares it.
   oracle: Oracle;
@@ -141,7 +141,7 @@ export function openCorpus(root: string): Corpus {
     }
     // The reference fails an instance whose diff is in both lists, as it fails one that it cannot set up.
     const stops = enumerated.status === "invalid" ? (enumerated.invalidReason ?? "") : diff.fatal;
-    if (stops !== undefined) return { ...common, status: "invalid", invalidReason: stops, oracle: none };
+    if (stops !== undefined) return { ...common, status: "skip", invalidReason: stops, oracle: none };
     return { ...common, status: "run", oracle: oracleOf(table, suite, name) };
   };
 
@@ -159,8 +159,8 @@ export function openCorpus(root: string): Corpus {
       const known = { name, directory: directoryOf(casePath), casePath, instance };
       // No list may hold an instance that does not run, whatever a platform makes of its files.
       const notRun = { ...known, kind: undefined, platformLimited: undefined };
-      if (instance.status === "invalid") return { ...notRun, status: "invalid", reason: instance.invalidReason ?? "" };
-      if (instance.status === "skip") return { ...notRun, status: "skipped", reason: instance.skipReason ?? "" };
+      if (instance.invalidReason !== undefined) return { ...notRun, status: "invalid", reason: instance.invalidReason };
+      if (instance.status !== "run") return { ...notRun, status: "skipped", reason: instance.skipReason ?? "" };
       let limited: { why: string | undefined } | undefined;
       return {
         ...known,

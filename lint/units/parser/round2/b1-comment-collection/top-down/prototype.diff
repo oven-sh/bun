@@ -1,6 +1,6 @@
 diff -ruN /workspace/wt/parser/src/js_parser/lexer.rs js_parser/lexer.rs
 --- /workspace/wt/parser/src/js_parser/lexer.rs	2026-10-01 04:32:05.490642165 +0000
-+++ js_parser/lexer.rs	2026-10-01 14:27:48.140928801 +0000
++++ js_parser/lexer.rs	2026-10-01 14:57:24.697377991 +0000
 @@ -243,8 +243,15 @@
      /// `@name`, an intrinsic in the source of one of JavaScriptCore's builtins, is a name like any other.
      pub(crate) jsc_builtin_syntax: bool,
@@ -118,9 +118,17 @@ diff -ruN /workspace/wt/parser/src/js_parser/lexer.rs js_parser/lexer.rs
                              continue;
                          }
                          _ => {
+@@ -2590,6 +2662,7 @@
+         Ok(())
+     }
+ 
++    #[inline(always)]
+     pub(crate) fn parse_jsx_string_literal<const QUOTE: u8>(&mut self) -> Result<(), Error> {
+         let mut backslash = Range::NONE;
+         let mut needs_decode = false;
 diff -ruN /workspace/wt/parser/src/js_parser/p.rs js_parser/p.rs
 --- /workspace/wt/parser/src/js_parser/p.rs	2026-10-01 04:32:05.502642250 +0000
-+++ js_parser/p.rs	2026-10-01 14:27:48.142941395 +0000
++++ js_parser/p.rs	2026-10-01 14:57:24.699078591 +0000
 @@ -231,6 +231,8 @@
      pub generics: crate::parse::generics::Generics,
      /// What the reference reports for the syntax errors of a lint parse, while the parse runs.
@@ -132,7 +140,7 @@ diff -ruN /workspace/wt/parser/src/js_parser/p.rs js_parser/p.rs
  }
 diff -ruN /workspace/wt/parser/src/js_parser/parse/comments.rs js_parser/parse/comments.rs
 --- /workspace/wt/parser/src/js_parser/parse/comments.rs	1970-01-01 00:00:00.000000000 +0000
-+++ js_parser/parse/comments.rs	2026-10-01 14:27:48.141658831 +0000
++++ js_parser/parse/comments.rs	2026-10-01 14:57:25.075322679 +0000
 @@ -0,0 +1,74 @@
 +//! The comments of a lint-parsed file: `Lexer::all_comments` with the kind of each, for the passes after the parse.
 +
@@ -210,7 +218,7 @@ diff -ruN /workspace/wt/parser/src/js_parser/parse/comments.rs js_parser/parse/c
 +}
 diff -ruN /workspace/wt/parser/src/js_parser/parse/generics.rs js_parser/parse/generics.rs
 --- /workspace/wt/parser/src/js_parser/parse/generics.rs	2026-10-01 04:32:05.504069077 +0000
-+++ js_parser/parse/generics.rs	2026-10-01 14:27:48.141270824 +0000
++++ js_parser/parse/generics.rs	2026-10-01 14:57:24.701999057 +0000
 @@ -500,13 +500,7 @@
              .skip(names_len)
              .copied()
@@ -242,7 +250,7 @@ diff -ruN /workspace/wt/parser/src/js_parser/parse/generics.rs js_parser/parse/g
              &self.lexer.all_comments,
 diff -ruN /workspace/wt/parser/src/js_parser/parse/mod.rs js_parser/parse/mod.rs
 --- /workspace/wt/parser/src/js_parser/parse/mod.rs	2026-10-01 04:32:05.505642271 +0000
-+++ js_parser/parse/mod.rs	2026-10-01 14:27:48.141837236 +0000
++++ js_parser/parse/mod.rs	2026-10-01 14:57:24.700942538 +0000
 @@ -2,6 +2,7 @@
  #[cfg(test)]
  mod annotation_tests;
@@ -284,7 +292,7 @@ diff -ruN /workspace/wt/parser/src/js_parser/parse/mod.rs js_parser/parse/mod.rs
  
 diff -ruN /workspace/wt/parser/src/js_parser/parse/parse_entry.rs js_parser/parse/parse_entry.rs
 --- /workspace/wt/parser/src/js_parser/parse/parse_entry.rs	2026-10-01 04:32:05.515914443 +0000
-+++ js_parser/parse/parse_entry.rs	2026-10-01 14:27:48.141185410 +0000
++++ js_parser/parse/parse_entry.rs	2026-10-01 14:57:24.700551882 +0000
 @@ -561,18 +561,22 @@
          let action_guard =
              bun_crash_handler::scoped_action(bun_crash_handler::Action::Parse(source.path.text));
@@ -322,7 +330,7 @@ diff -ruN /workspace/wt/parser/src/js_parser/parse/parse_entry.rs js_parser/pars
              scopes_in_order: p.scopes_in_order.as_slice(),
 diff -ruN /workspace/wt/parser/src/js_parser/parse/parse_skip_typescript.rs js_parser/parse/parse_skip_typescript.rs
 --- /workspace/wt/parser/src/js_parser/parse/parse_skip_typescript.rs	2026-10-01 04:32:05.521642385 +0000
-+++ js_parser/parse/parse_skip_typescript.rs	2026-10-01 14:27:48.141435777 +0000
++++ js_parser/parse/parse_skip_typescript.rs	2026-10-01 14:57:24.701690023 +0000
 @@ -110,6 +110,8 @@
  /// What a reading that failed left: the lexer after it and what it logged.
  struct FailedRead<'a> {
@@ -398,7 +406,7 @@ diff -ruN /workspace/wt/parser/src/js_parser/parse/parse_skip_typescript.rs js_p
  
 diff -ruN /workspace/wt/parser/src/js_parser/parse/type_sink.rs js_parser/parse/type_sink.rs
 --- /workspace/wt/parser/src/js_parser/parse/type_sink.rs	2026-10-01 04:32:05.527642427 +0000
-+++ js_parser/parse/type_sink.rs	2026-10-01 14:27:48.141323040 +0000
++++ js_parser/parse/type_sink.rs	2026-10-01 14:57:24.701900283 +0000
 @@ -1546,13 +1546,7 @@
              .skip(names_len)
              .copied()

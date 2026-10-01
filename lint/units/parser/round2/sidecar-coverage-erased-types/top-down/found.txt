@@ -75,3 +75,6 @@ TypeAliasDeclaration[0,15) name[5,7) typeParameters[7,10) TypeReference[13,14)
 InterfaceDeclaration[16,60) name[26,35) typeParameters[35,38) extends[39,51) TypeReference[47,51)<49,50> TypeReference[49,50) members[53,58) PropertySignature[54,58) name[54,55) TypeReference[57,58)
 TypeAliasDeclaration[61,80) name[66,75) LiteralType[78,79)
 InterfaceDeclaration[81,96) name[91,93) members[95,95)
+# accessor-bodies: "interface X { get a() { return 0 } set a(v: number) { v } b: 1 }\ntype Y = { get c(): number { return 1 } d: 2 };\n"
+InterfaceDeclaration[0,64) name[10,11) members[13,62) GetAccessor[14,34) name[18,19) parameters[20,20) SetAccessor[35,57) name[39,40) parameters[41,50) Parameter[41,50) NumberKeyword[44,50) PropertySignature[58,62) name[58,59) LiteralType[61,62)
+TypeAliasDeclaration[65,112) name[70,71) TypeLiteral[74,111) NumberKeyword[85,91) LiteralType[108,109)

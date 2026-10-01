@@ -1,0 +1,12 @@
+[
+{"g":"new, extends and a decorator before what is no left-hand side"},
+"new -a;", "new +a;", "new ~a;", "new !a;", "new ++a;", "new --a;", "new typeof a;", "new void a;", "new delete a.b;", "async function f() { new await a; }", "new <T>a;", "new <T>(a);", "new -a();", "new -a.b;", "new ++a();", "new - a;", "new /* c */ -a;", "new\n-a;",
+"new (-a);", "new (-a)();", "new (++a);", "new a++;", "new a!;", "new a<T>;", "new new A;", "new class {};", "new function () {};", "new (a, b);", "new a.b.c;", "new a[0];", "new this;", "new import.meta;", "new a`x`;", "new `x`;", "new 1;", "new 'x';", "new [a];", "new {};", "new /x/;",
+"new () => {};", "new x => x;", "new async () => {};", "function* g() { new yield; }", "new new -a;", "x = new -a;", "f(new -a);", "(new -a);", "new -a = b;", "new -a++;", "++new -a;", "new ++a++;",
+["js","new -a;"], ["js","new ++a;"], ["js","new typeof a;"], ["js","async function f() { new await a; }"], ["js","new (-a);"],
+["tsx","new <a/>;"], ["tsx","new <a/>();"], ["tsx","new (<a/>);"], ["jsx","new <a/>;"],
+"class C extends -a {}", "class C extends ++a {}", "class C extends typeof a {}", "async function f() { class C extends await a {} }", "class C extends <T>a {}", "class C extends a++ {}", "class C extends a + b {}", "class C extends (a + b) {}", "class C extends (-a) {}", "class C extends a.b {}", "class C extends a() {}", "class C extends new A {}", "class C extends a! {}", "class C extends a<T> {}", "class C extends a = b {}", "class C extends a ? b : c {}", "var C = class extends -a {};", "class C extends -a implements I {}",
+["js","class C extends -a {}"], ["js","class C extends ++a {}"], ["js","class C extends (-a) {}"], ["tsx","class C extends <a/> {}"],
+"@-a class C {}", "@++a class C {}", "@typeof a class C {}", "@<T>a class C {}", "@(-a) class C {}", "@a.b class C {}", "@a() class C {}", "@new A class C {}", "@a++ class C {}", "@a! class C {}", "class C { @-a m() {} }", "class C { @++a m() {} }", "class C { @(-a) m() {} }", "@a + b class C {}", "@a = b class C {}",
+["js","@-a class C {}"], ["js","@(-a) class C {}"]
+]

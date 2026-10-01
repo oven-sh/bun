@@ -65,14 +65,12 @@ impl Default for ByteStream {
     }
 }
 
-/// The producer's terminal error, delivered while nothing could take it (no sink, no buffer
-/// action, no pending pull). [`ByteStream::take_pending_error`] hands it to the next reader.
+/// A producer error that no reader has taken yet ([`ByteStream::take_pending_error`]).
 enum PendingError {
     None,
     System(Box<SysError>),
     AbortReason(jsc::CommonAbortReason),
-    /// A JS value, in the wrapper's visited `pendingError` slot. Never a `Strong`: the error can
-    /// reference the Response that owns this stream, and a cycle through a root is never collected.
+    /// In the wrapper's visited `pendingError` slot. A `Strong` would leak an error that references its own Response.
     InWrapperSlot,
 }
 
@@ -848,7 +846,7 @@ impl ByteStream {
             let global = self.parent_const().global_this();
             streams::StreamError::JSValue(StrongOptional::create(reason, global))
         } else {
-            // Kept for a reader that already holds this source and pulls later. A stored `reason` would be a GC root.
+            // Kept for a reader that already holds this source and pulls later.
             streams::StreamError::AbortReason(jsc::CommonAbortReason::UserAbort)
         }));
     }
@@ -956,8 +954,7 @@ impl ByteStream {
         drained
     }
 
-    /// Take a pre-attach `StreamResult::Err` stashed by [`Self::append`]. A JS error comes back in
-    /// a `Strong` of its own: the wrapper's slot lets go of it here.
+    /// Take a pre-attach `StreamResult::Err` stashed by [`Self::append`].
     pub fn take_pending_error(&self) -> Option<streams::StreamError> {
         match self.pending_error.replace(PendingError::None) {
             PendingError::None => None,

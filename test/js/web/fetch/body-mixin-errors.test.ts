@@ -388,4 +388,39 @@ describe("body-mixin-errors", () => {
       expect((err as any).code).toBe("ERR_BODY_ALREADY_USED");
     });
   });
+
+  // fetch(request) reads the request's body as well. It sent a failed body as an empty one.
+  it.concurrent("fetch: Request with a failed body rejects with its error before any network I/O", async () => {
+    await withUndecodableBodyServer(async url => {
+      const received: string[] = [];
+      await using upstream = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          received.push(`${req.method} ${(await req.text()).length}`);
+          return new Response("received");
+        },
+      });
+      const res = await fetch(url);
+      // The body has failed by the time a read of its clone rejects.
+      await expect(res.clone().arrayBuffer()).rejects.toThrow(TypeError);
+      // A copy of the failed body, in a request that sends a body.
+      const req = new Request(new Request(upstream.url, res), { method: "POST" });
+      expect(req.bodyUsed).toBe(false);
+
+      let firstErr: unknown;
+      await fetch(req).then(
+        () => expect.unreachable("fetch should reject for a failed body"),
+        e => (firstErr = e),
+      );
+      expect(firstErr).toBeInstanceOf(TypeError);
+      expect((firstErr as any).code).toBe("ZlibError");
+      expect(req.bodyUsed).toBe(true);
+      expect(received).toEqual([]);
+
+      let secondErr: unknown;
+      await fetch(req).catch(e => (secondErr = e));
+      expect(secondErr).toBeInstanceOf(TypeError);
+      expect((secondErr as any).code).toBe("ERR_BODY_ALREADY_USED");
+    });
+  });
 });

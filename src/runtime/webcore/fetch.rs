@@ -1088,6 +1088,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     )
                     .throw());
             }
+            // Read as a blob below, a failed body would be sent as an empty one.
+            if let Some(err) = body_value.take_error(global_this) {
+                return Ok(JSPromise::rejected_promise(global_this, err).to_js());
+            }
 
             body_value.to_blob_if_in_memory();
             if matches!(*body_value, BodyValue::Locked(_)) {

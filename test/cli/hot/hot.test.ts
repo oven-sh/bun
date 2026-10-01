@@ -1,4 +1,5 @@
 import { spawn } from "bun";
+import { dlopen } from "bun:ffi";
 import { beforeEach, expect, it } from "bun:test";
 import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isDebug, isWindows, tempDir, tmpdirSync, waitForFileToExist } from "harness";
@@ -828,3 +829,58 @@ it(
   },
   timeout,
 );
+
+it.if(isWindows)("a burst of file events with a deleted import in it does not end the process", async () => {
+  using dir = tempDir("hot-burst", {
+    "main.js": `import "./mods/a.js";\nimport "./mods/b.js";\nconsole.log("loaded");\n`,
+    "mods/a.js": "export {};",
+    "mods/b.js": "export {};",
+    "other/keep": "",
+  });
+  const root = String(dir);
+  const { OpenProcess, CloseHandle } = dlopen("kernel32.dll", {
+    OpenProcess: { args: ["u32", "i32", "u32"], returns: "ptr" },
+    CloseHandle: { args: ["ptr"], returns: "i32" },
+  }).symbols;
+  const { NtSuspendProcess, NtResumeProcess } = dlopen("ntdll.dll", {
+    NtSuspendProcess: { args: ["ptr"], returns: "i32" },
+    NtResumeProcess: { args: ["ptr"], returns: "i32" },
+  }).symbols;
+
+  await using runner = spawn({
+    cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
+    env: bunEnv,
+    cwd: root,
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  const reader = runner.stdout.getReader();
+  let stdout = "";
+  const printed = async (text: string) => {
+    while (!stdout.includes(text)) {
+      const { value, done } = await reader.read();
+      if (done) return false;
+      stdout += Buffer.from(value).toString();
+    }
+    return true;
+  };
+  expect(await printed("loaded")).toBe(true);
+
+  // Stopped, the process finds the whole burst waiting for it, as it does on a busy machine.
+  const PROCESS_SUSPEND_RESUME = 0x0800;
+  const handle = OpenProcess(PROCESS_SUSPEND_RESUME, 0, runner.pid);
+  expect(NtSuspendProcess(handle)).toBe(0);
+  try {
+    // The read that is already waiting completes with the first change alone.
+    writeFileSync(join(root, "other", "first"), "");
+    unlinkSync(join(root, "mods", "b.js"));
+    for (let i = 0; i < 200; i++) writeFileSync(join(root, "other", String(i)), "");
+  } finally {
+    NtResumeProcess(handle);
+    CloseHandle(handle);
+  }
+
+  writeFileSync(join(root, "main.js"), `import "./mods/a.js";\nconsole.log("reloaded");\n`);
+  expect(await printed("reloaded")).toBe(true);
+});

@@ -339,6 +339,129 @@ pub enum ExprKind {
     NewTarget,
 }
 
+/// Which kind of expression, without what is in it.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub enum ExprTag {
+    Missing,
+    Ident,
+    This,
+    Super,
+    Null,
+    True,
+    False,
+    Number,
+    String,
+    BigInt,
+    Regex,
+    Template,
+    TaggedTemplate,
+    Array,
+    Object,
+    Fn,
+    Class,
+    Dot,
+    Index,
+    Call,
+    New,
+    Unary,
+    Binary,
+    Assign,
+    Cond,
+    Spread,
+    Await,
+    Yield,
+    As,
+    Satisfies,
+    AsConst,
+    NonNull,
+    Instantiation,
+    Jsx,
+    ImportCall,
+    ImportMeta,
+    NewTarget,
+}
+
+impl ExprTag {
+    pub const COUNT: usize = 37;
+}
+
+impl ExprKind {
+    #[inline]
+    pub fn tag(&self) -> ExprTag {
+        match self {
+            ExprKind::Missing => ExprTag::Missing,
+            ExprKind::Ident(..) => ExprTag::Ident,
+            ExprKind::This => ExprTag::This,
+            ExprKind::Super => ExprTag::Super,
+            ExprKind::Null => ExprTag::Null,
+            ExprKind::True => ExprTag::True,
+            ExprKind::False => ExprTag::False,
+            ExprKind::Number(..) => ExprTag::Number,
+            ExprKind::String(..) => ExprTag::String,
+            ExprKind::BigInt(..) => ExprTag::BigInt,
+            ExprKind::Regex => ExprTag::Regex,
+            ExprKind::Template { .. } => ExprTag::Template,
+            ExprKind::TaggedTemplate(..) => ExprTag::TaggedTemplate,
+            ExprKind::Array(..) => ExprTag::Array,
+            ExprKind::Object(..) => ExprTag::Object,
+            ExprKind::Fn(..) => ExprTag::Fn,
+            ExprKind::Class(..) => ExprTag::Class,
+            ExprKind::Dot { .. } => ExprTag::Dot,
+            ExprKind::Index { .. } => ExprTag::Index,
+            ExprKind::Call(..) => ExprTag::Call,
+            ExprKind::New(..) => ExprTag::New,
+            ExprKind::Unary { .. } => ExprTag::Unary,
+            ExprKind::Binary { .. } => ExprTag::Binary,
+            ExprKind::Assign { .. } => ExprTag::Assign,
+            ExprKind::Cond { .. } => ExprTag::Cond,
+            ExprKind::Spread(..) => ExprTag::Spread,
+            ExprKind::Await(..) => ExprTag::Await,
+            ExprKind::Yield { .. } => ExprTag::Yield,
+            ExprKind::As { .. } => ExprTag::As,
+            ExprKind::Satisfies { .. } => ExprTag::Satisfies,
+            ExprKind::AsConst(..) => ExprTag::AsConst,
+            ExprKind::NonNull(..) => ExprTag::NonNull,
+            ExprKind::Instantiation { .. } => ExprTag::Instantiation,
+            ExprKind::Jsx(..) => ExprTag::Jsx,
+            ExprKind::ImportCall(..) => ExprTag::ImportCall,
+            ExprKind::ImportMeta => ExprTag::ImportMeta,
+            ExprKind::NewTarget => ExprTag::NewTarget,
+        }
+    }
+}
+
+/// The expressions of a file, kind by kind. Those of one kind are in the order they have in the file's list.
+pub struct ExprsByKind {
+    ids: Vec<ExprId>,
+    starts: [u32; ExprTag::COUNT + 1],
+}
+
+impl ExprsByKind {
+    pub fn new(file: &File) -> ExprsByKind {
+        let mut starts = [0u32; ExprTag::COUNT + 1];
+        for e in &file.exprs {
+            starts[e.kind.tag() as usize + 1] += 1;
+        }
+        for i in 0..ExprTag::COUNT {
+            starts[i + 1] += starts[i];
+        }
+        let mut next = starts;
+        let mut ids = vec![ExprId::NONE; file.exprs.len()];
+        for (i, e) in file.exprs.iter().enumerate() {
+            let at = &mut next[e.kind.tag() as usize];
+            ids[*at as usize] = ExprId(i as u32);
+            *at += 1;
+        }
+        ExprsByKind { ids, starts }
+    }
+
+    #[inline]
+    pub fn of(&self, tag: ExprTag) -> &[ExprId] {
+        &self.ids[self.starts[tag as usize] as usize..self.starts[tag as usize + 1] as usize]
+    }
+}
+
 #[derive(Copy, Clone, Debug)]
 pub struct Call {
     pub callee: ExprId,

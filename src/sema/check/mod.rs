@@ -318,6 +318,7 @@ impl Program {
             constraint_stack: Vec::new(),
             trap_on_timeout: std::env::var_os("BUN_SEMA_TIME_TRAP").is_some(),
             deepest_stack: std::cell::Cell::new(0),
+            exprs_by_kind: None,
             shapes_for_now: Vec::new(),
             serials: Vec::new(),
             held_for_now: FxHashMap::default(),
@@ -512,6 +513,8 @@ pub struct Checker<'p> {
     constraint_stack: Vec<relate::RecursionId>,
     trap_on_timeout: bool,
     deepest_stack: std::cell::Cell<usize>,
+    /// Of the file that was last asked about.
+    exprs_by_kind: Option<(FileId, std::rc::Rc<hir::ExprsByKind>)>,
     /// See `shape_for_now`.
     shapes_for_now: Vec<Box<shape::Resolved>>,
     /// For each question on `stack`, a number no other question has had.
@@ -1160,6 +1163,19 @@ impl<'p> Checker<'p> {
         let tainted = self.tainted.pop().unwrap();
         self.left_a_circle = self.circular.pop().unwrap();
         !tainted
+    }
+
+    /// The expressions of `file` kind by kind, for whoever is after a few kinds and would otherwise go through all of them. It is put
+    /// together once for a file. The handle borrows nothing: `let index = self.exprs_by_kind(file); for &e in index.of(ExprTag::Call)`.
+    pub(crate) fn exprs_by_kind(&mut self, file: FileId) -> std::rc::Rc<hir::ExprsByKind> {
+        match &self.exprs_by_kind {
+            Some((of, index)) if *of == file => index.clone(),
+            _ => {
+                let index = std::rc::Rc::new(hir::ExprsByKind::new(self.hir(file)));
+                self.exprs_by_kind = Some((file, index.clone()));
+                index
+            }
+        }
     }
 
     /// Changes whenever something happens that keeps what is being worked out from holding for whoever asks next: a question came back to

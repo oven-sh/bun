@@ -2296,8 +2296,7 @@ fn locate_next_to_declaring_tarball(
     if bun_paths::is_absolute(declared_path) {
         return None;
     }
-    // The declaring tarball is read from the same place as `enqueue_local_tarball` read it:
-    // under the workspace or folder whose package.json names that path, else the top-level dir.
+    // Where `enqueue_local_tarball` read the declaring tarball from.
     let declarer_tarball = lockfile.str(declarer_res.local_tarball());
     let mut declarer_buf = bun_paths::path_buffer_pool::get();
     let declarer_location = if bun_paths::is_absolute(declarer_tarball) {

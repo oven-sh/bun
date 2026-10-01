@@ -10618,9 +10618,13 @@ describe.concurrent("file: tarballs declared by a package installed from the cac
     await write(tarball, await archive.bytes());
   }
 
-  async function install(root: string, ...args: string[]) {
+  function install(root: string, ...args: string[]) {
+    return run(root, "install", ...args);
+  }
+
+  async function run(root: string, ...args: string[]) {
     await using proc = spawn({
-      cmd: [bunExe(), "install", ...args],
+      cmd: [bunExe(), ...args],
       cwd: join(root, "project"),
       env: { ...env, BUN_INSTALL_CACHE_DIR: join(root, "cache") },
       stdout: "pipe",
@@ -10797,6 +10801,12 @@ describe.concurrent("file: tarballs declared by a package installed from the cac
     expect(lockfile).toContain('"a": ["a@./vendor/a.tgz"');
     expect(lockfile).toContain('"b": ["baz@./packages/app/vendor/b.tgz"');
     expect(exitCode).toBe(0);
+
+    // An update re-resolves `a` before `b`, so `b` is located while `a` has no resolution.
+    const update = await run(root, "update", "a", "b");
+    expect(diagnostics(update.err)).toEqual([]);
+    expect(await file(join(root, "project", "bun.lock")).text()).toBe(lockfile);
+    expect(update.exitCode).toBe(0);
   });
 
   // The tarball a workspace gets through the root catalog is relative to the

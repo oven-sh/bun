@@ -934,7 +934,7 @@ impl Checker<'_> {
                 let prop = Prop {
                     name: Atom::NONE,
                     flags,
-                    source: PropSource::Members(Box::new([(f, m)])),
+                    source: PropSource::Members(MemberList::One((f, m))),
                     mapper: MapperId::IDENTITY,
                 };
                 let prop_type = self.type_of_prop_as_read(&prop, members.mapper);

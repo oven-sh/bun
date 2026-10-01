@@ -832,8 +832,17 @@ impl<'p> Checker<'p> {
         }
     }
 
+    /// `false`: there is none anywhere in `ty`. `true`: there may be one where `contains_object_literal` does not look.
+    #[inline]
+    fn may_hold_object_literal(&self, ty: TypeId) -> bool {
+        self.p
+            .types
+            .flags(ty)
+            .contains(TypeFlags::HAS_OBJECT_LITERAL)
+    }
+
     fn contains_object_literal(&self, ty: TypeId, depth: u32) -> bool {
-        if depth > 6 {
+        if depth > 6 || !self.may_hold_object_literal(ty) {
             return false;
         }
         match self.data(ty) {
@@ -868,8 +877,13 @@ impl<'p> Checker<'p> {
 
     /// The type a variable, a result or a type argument gets from an expression of type `ty`: object literals in it become
     /// ordinary object types, and those that are alternatives to one another get each other's properties as `p?: undefined`.
+    #[inline]
     pub fn regular_object(&mut self, ty: TypeId) -> TypeId {
-        let ty = self.widen_objects(ty, None);
+        let ty = if self.may_hold_object_literal(ty) {
+            self.widen_objects(ty, None)
+        } else {
+            ty
+        };
         if self.p.files.options.strict_null_checks {
             ty
         } else {
@@ -2953,6 +2967,61 @@ impl<'p> Checker<'p> {
         if self.is_any(ty) || self.is_primitive(ty) || self.awaited_argument(ty).is_some() {
             return Some(ty);
         }
+        // `awaitedTypeOfType`
+        if self.has_type_variables(ty) || !self.is_nothing_about_types_under_way() {
+            return self.awaited_no_alias_uncached(ty);
+        }
+        if let Some(kept) = self.p.awaited_types.get(&ty) {
+            return kept;
+        }
+        let before = self.what_only_holds_for_now();
+        let awaited = self.awaited_no_alias_uncached(ty);
+        if self.what_only_holds_for_now() == before
+            // What goes by one of these is not kept, and `what_only_holds_for_now` does not always say so.
+            && self.resolving.is_empty()
+            && self.jsx_resolving.is_empty()
+            && self.held_for_now.is_empty()
+            && self.provisional == 0
+            // These are raised for whoever asked, each time.
+            && !(self.uncertain
+                || self.relation_gave_up
+                || self.relation_too_complex
+                || self.relation_too_deep
+                || self.union_too_complex
+                || self.met_loop_under_way)
+            && self.reliability == 0
+            && awaited.is_none_or(|awaited| self.is_known(awaited))
+        {
+            self.p.awaited_types.insert(ty, awaited);
+        }
+        awaited
+    }
+
+    /// What is being worked out about a type is passed over in silence by whoever comes upon it meanwhile (`force` leaves a reference to
+    /// an alias that is on `stack` alone). Whether there is nothing of the kind: what is made of a type now is made of it at any time.
+    fn is_nothing_about_types_under_way(&self) -> bool {
+        self.awaiting.is_empty()
+            && self.instantiation_depth == 0
+            && self.never_in_progress.is_empty()
+            && self.variances_in_progress.is_empty()
+            && self.constraint_stack.is_empty()
+            && self.reverse_mapped_source_stack.is_empty()
+            && self.stack.iter().all(|q| {
+                matches!(
+                    q,
+                    Query::Expr(..)
+                        | Query::Call(..)
+                        | Query::LiteralProp(..)
+                        | Query::Pat(..)
+                        | Query::Symbol(_)
+                        | Query::Return(..)
+                        | Query::Member(..)
+                )
+            })
+    }
+
+    /// Of a `ty` that is not `any`, no primitive, and no `Awaited<T>` that waits.
+    fn awaited_no_alias_uncached(&mut self, ty: TypeId) -> Option<TypeId> {
         if self.is_union(ty) {
             // `type S = string | Promise<S>` never comes to an end.
             if self.awaiting.contains(&ty) {

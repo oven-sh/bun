@@ -229,12 +229,56 @@ bitflags::bitflags! {
     }
 }
 
+/// The members that declare a property. Mostly it is one.
+#[derive(Clone, Debug)]
+pub enum MemberList {
+    One((FileId, crate::hir::MemberId)),
+    /// Not one.
+    Many(Box<[(FileId, crate::hir::MemberId)]>),
+}
+
+impl std::ops::Deref for MemberList {
+    type Target = [(FileId, crate::hir::MemberId)];
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        match self {
+            MemberList::One(one) => std::slice::from_ref(one),
+            MemberList::Many(many) => many,
+        }
+    }
+}
+
+impl From<Vec<(FileId, crate::hir::MemberId)>> for MemberList {
+    fn from(list: Vec<(FileId, crate::hir::MemberId)>) -> MemberList {
+        if let [one] = list[..] {
+            return MemberList::One(one);
+        }
+        MemberList::Many(list.into_boxed_slice())
+    }
+}
+
+impl PartialEq for MemberList {
+    #[inline]
+    fn eq(&self, other: &MemberList) -> bool {
+        **self == **other
+    }
+}
+
+impl Eq for MemberList {}
+
+impl std::hash::Hash for MemberList {
+    #[inline]
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        (**self).hash(state);
+    }
+}
+
 /// Where the type of a property comes from.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum PropSource {
     Type(TypeId),
     /// Members of classes, interfaces and type literals that declare it: overloads, a getter and a setter, merged declarations.
-    Members(Box<[(FileId, crate::hir::MemberId)]>),
+    Members(MemberList),
     /// A constructor parameter with a modifier.
     Parameter(FileId, crate::hir::ParamId),
     /// A property of an object literal.
@@ -260,6 +304,8 @@ pub struct Prop {
     /// What to instantiate the type `source` gives with.
     pub mapper: MapperId,
 }
+
+const _: () = assert!(size_of::<Prop>() <= 40);
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct IndexInfo {
@@ -380,7 +426,11 @@ bitflags::bitflags! {
         const HAS_TYPE_VARIABLES = 1;
         /// Is or contains `Unresolved`.
         const HAS_UNRESOLVED = 2;
+        /// An intersection, or a union with one among its members.
+        const MAY_BE_REDUCED = 128;
         const HAS_MARKER = 4;
+        /// The type of an object literal expression, or what a binding pattern implies, is somewhere in it.
+        const HAS_OBJECT_LITERAL = 8;
     }
 }
 
@@ -889,7 +939,7 @@ impl TypeStore {
         }
         fn prop_bytes(prop: &Prop) -> usize {
             match &prop.source {
-                PropSource::Members(m) => m.len() * 8,
+                PropSource::Members(MemberList::Many(m)) => m.len() * 8,
                 PropSource::Assigned(_, e) => e.len() * 4,
                 PropSource::Intersected(_, props) => {
                     props.len() * size_of::<Prop>() + props.iter().map(prop_bytes).sum::<usize>()
@@ -1001,12 +1051,20 @@ impl TypeStore {
             TypeData::Union(t) | TypeData::Intersection(t) => all(t),
             TypeData::Ref { args, .. } | TypeData::LazyAlias { args, .. } => all(args),
             TypeData::Tuple { elems, .. } => all(elems),
+            TypeData::Anon {
+                origin: Origin::ObjectLiteral(..),
+                mapper,
+            } => self.mapper_record(*mapper).1 | TypeFlags::HAS_OBJECT_LITERAL,
             // Whoever makes one leaves the mapper out unless there are type parameters around the origin.
             TypeData::Anon { mapper, .. }
             | TypeData::Fns { mapper, .. }
             | TypeData::Cond { mapper, .. } => self.mapper_record(*mapper).1,
             TypeData::Synth(shape) => {
-                let mut flags = TypeFlags::empty();
+                let mut flags = if shape.literal == Literalness::No {
+                    TypeFlags::empty()
+                } else {
+                    TypeFlags::HAS_OBJECT_LITERAL
+                };
                 for p in &shape.props {
                     if let PropSource::Type(t) = p.source {
                         flags |= self.flags(t);
@@ -1094,8 +1152,18 @@ impl TypeStore {
     }
 
     fn new_record(&self, data: TypeData, id: u32) -> TypeRecord {
+        let may_be_reduced = match &data {
+            TypeData::Intersection(_) => true,
+            TypeData::Union(members) => members
+                .iter()
+                .any(|&member| matches!(self.get(member), TypeData::Intersection(_))),
+            _ => false,
+        };
+        let mut flags = self.flags_of(&data);
+        // Unlike the others, it is not handed on by what the type is made of.
+        flags.set(TypeFlags::MAY_BE_REDUCED, may_be_reduced);
         TypeRecord {
-            flags: self.flags_of(&data),
+            flags,
             data,
             id: TypeId(id),
             manifest: AtomicBool::new(false),

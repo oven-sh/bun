@@ -90,10 +90,17 @@ impl<'p> Checker<'p> {
 
     /// The same, for whoever only looks at them.
     pub(super) fn type_params_in_scope(&mut self, file: FileId, scope: ScopeId) -> &'p [TypeId] {
-        if scope.is_none() {
+        if scope.is_none() || self.declares_no_type_params(file) {
             return &[];
         }
         self.kept_outer_type_params(file, scope)
+    }
+
+    /// Whether no scope of `file` sees a type parameter, the `this` types of classes and interfaces included.
+    #[inline]
+    fn declares_no_type_params(&self, file: FileId) -> bool {
+        let hir = self.hir(file);
+        hir.type_params.is_empty() && hir.classes.is_empty() && hir.interfaces.is_empty()
     }
 
     fn kept_outer_type_params(&mut self, file: FileId, scope: ScopeId) -> &'p Arc<[TypeId]> {
@@ -146,13 +153,21 @@ impl<'p> Checker<'p> {
 
     /// Every type parameter in scope, standing for itself.
     pub fn identity_mapper(&mut self, file: FileId, scope: ScopeId) -> MapperId {
-        let params = self.type_params_in_scope(file, scope);
-        if params.is_empty() {
+        if scope.is_none() || self.declares_no_type_params(file) {
             return MapperId::IDENTITY;
         }
-        self.p
-            .types
-            .mapper(params.iter().map(|&p| (p, p)).collect())
+        if let Some(kept) = self.p.identity_mappers.get(&(file, scope)) {
+            return kept;
+        }
+        let params = self.type_params_in_scope(file, scope);
+        let mapper = if params.is_empty() {
+            MapperId::IDENTITY
+        } else {
+            self.p
+                .types
+                .mapper(params.iter().map(|&p| (p, p)).collect())
+        };
+        self.p.identity_mappers.insert((file, scope), mapper)
     }
 
     /// `isTypeParameterPossiblyReferenced`: the type parameters in scope that `mentioned` has, or that count as mentioned for where
@@ -699,6 +714,9 @@ impl<'p> Checker<'p> {
 
     /// `getConstraintOfTypeParameter`: what `param extends`. A constraint that comes back to the parameter is none.
     pub fn constraint_of_type_param(&mut self, param: TypeId) -> Option<TypeId> {
+        if let Some(kept) = self.p.type_param_constraints.get(&param) {
+            return kept;
+        }
         if param == TypeId::MARKER_SUB {
             return Some(TypeId::MARKER_SUPER);
         }
@@ -709,23 +727,71 @@ impl<'p> Checker<'p> {
         match *self.data(param) {
             TypeData::ThisParam(sym) => Some(self.declared_type(sym)),
             TypeData::TypeParam(file, tp, around) => {
-                let constraint = self.constraint_from_type_param(param)?;
-                if self.constraint_comes_back(param, constraint) {
-                    return None;
-                }
-                // `getTypeFromMappedTypeNode` resolves the constraint of its key as soon as the mapped type is made, so a cycle can
-                // go through the key of a mapped type written in the constraint.
-                if around == MapperId::IDENTITY
-                    && !self.hir(file).mapped.is_empty()
-                    && self.has_type_variables(constraint)
-                    && self.is_constraint_circular(file, tp)
+                let before = self.what_only_holds_for_now();
+                let constraint = self.resolve_constraint_of_type_param(param, file, tp, around);
+                if self.what_only_holds_for_now() == before
+                    && self.is_constraint_settled(param, file, tp, around, constraint)
                 {
-                    return None;
+                    self.p.type_param_constraints.insert(param, constraint);
                 }
-                Some(constraint)
+                constraint
             }
             _ => None,
         }
+    }
+
+    #[inline(never)]
+    fn resolve_constraint_of_type_param(
+        &mut self,
+        param: TypeId,
+        file: FileId,
+        tp: TypeParamId,
+        around: MapperId,
+    ) -> Option<TypeId> {
+        let constraint = self.constraint_from_type_param(param)?;
+        if self.constraint_comes_back(param, constraint) {
+            return None;
+        }
+        // `getTypeFromMappedTypeNode` resolves the constraint of its key as soon as the mapped type is made, so a cycle can
+        // go through the key of a mapped type written in the constraint.
+        if around == MapperId::IDENTITY
+            && !self.hir(file).mapped.is_empty()
+            && self.has_type_variables(constraint)
+            && self.is_constraint_circular(file, tp)
+        {
+            return None;
+        }
+        Some(constraint)
+    }
+
+    /// Whether `constraint`, which is what `param` was just found to extend, was read from what is kept itself. A frame can be left
+    /// without its answer being kept and without `what_only_holds_for_now` moving.
+    fn is_constraint_settled(
+        &self,
+        param: TypeId,
+        file: FileId,
+        tp: TypeParamId,
+        around: MapperId,
+        constraint: Option<TypeId>,
+    ) -> bool {
+        if constraint.is_some_and(|constraint| !self.is_known(constraint)) {
+            return false;
+        }
+        if around != MapperId::IDENTITY {
+            let declared = self.type_param(file, tp);
+            return self.p.type_param_constraints.get(&declared).is_some();
+        }
+        let (of, written, _) =
+            self.type_param_declaration_with(file, tp, |p: &TypeParam| p.constraint);
+        let node = self.hir(of)[written].constraint;
+        if node.is_some() {
+            return match self.p.type_node_types.get(of, node.idx()) {
+                // `may_be_error_type` looks into what the `any` comes from, unless it is written.
+                Some(TypeId::ANY) => matches!(self.hir(of)[node].kind, TypeNodeKind::Keyword(_)),
+                kept => kept.is_some(),
+            };
+        }
+        constraint.is_none() || self.p.inferred_constraints.get(&param).is_some()
     }
 
     /// `getConstraintFromTypeParameter`: the same, whether or not it goes round in a circle.
@@ -1111,29 +1177,58 @@ impl<'p> Checker<'p> {
 
     /// `getDefaultFromTypeParameter`
     pub fn default_of_type_param(&mut self, param: TypeId) -> Option<TypeId> {
+        if let Some(kept) = self.p.type_param_defaults.get(&param) {
+            return kept;
+        }
         let TypeData::TypeParam(file, tp, around) = *self.data(param) else {
             return None;
         };
+        let before = self.what_only_holds_for_now();
+        let (default, is_settled) = self.resolve_default_of_type_param(file, tp, around);
+        if is_settled
+            && self.what_only_holds_for_now() == before
+            && default.is_none_or(|default| self.is_known(default))
+        {
+            self.p.type_param_defaults.insert(param, default);
+        }
+        default
+    }
+
+    /// With it, whether it was read from what is kept itself. A frame can be left without its answer being kept and without
+    /// `what_only_holds_for_now` moving.
+    #[inline(never)]
+    fn resolve_default_of_type_param(
+        &mut self,
+        file: FileId,
+        tp: TypeParamId,
+        around: MapperId,
+    ) -> (Option<TypeId>, bool) {
         // That of a fresh one is that of the declared one, with what is around it filled in.
         if around != MapperId::IDENTITY {
             let declared = self.type_param(file, tp);
-            let default = self.default_of_type_param(declared)?;
+            let default = self.default_of_type_param(declared);
+            let is_settled = self.p.type_param_defaults.get(&declared).is_some();
+            let Some(default) = default else {
+                return (None, is_settled);
+            };
             let mapper = self.clone_mapper(file, tp, around);
-            return Some(self.instantiate(default, mapper));
+            return (Some(self.instantiate(default, mapper)), is_settled);
         }
         let (of, written, lists) =
             self.type_param_declaration_with(file, tp, |p: &TypeParam| p.default);
         let node = self.hir(of)[written].default;
         if node.is_none() {
-            return None;
+            return (None, true);
         }
         let default = self.type_from_node(of, node);
-        Some(match lists {
+        let is_settled = self.p.type_node_types.get(of, node.idx()).is_some();
+        let default = match lists {
             Some((theirs, own)) => {
                 self.in_terms_of_own_type_params(default, (of, theirs), (file, own))
             }
             None => default,
-        })
+        };
+        (Some(default), is_settled)
     }
 
     /// The same for the type parameters of `sig`, whose defaults may mention those of what it was found in.
@@ -3158,7 +3253,22 @@ impl<'p> Checker<'p> {
     }
 
     /// The type parameters that are still to be given.
+    #[inline]
     pub fn sig_type_params(&mut self, sig: SigId) -> List<'p, TypeId> {
+        let recent = self.recent_sig_type_params[sig.0 as usize % RECENT_SIGS];
+        if recent.0 == sig {
+            return List::Kept(recent.1);
+        }
+        let params = self.sig_type_params_not_recent(sig);
+        // What is kept somewhere holds for good.
+        if let List::Kept(kept) = params {
+            self.recent_sig_type_params[sig.0 as usize % RECENT_SIGS] = (sig, kept);
+        }
+        params
+    }
+
+    /// `sig_type_params`, of a signature that was not asked about lately.
+    fn sig_type_params_not_recent(&mut self, sig: SigId) -> List<'p, TypeId> {
         match self.p.types.sig(sig) {
             SigData::Synth { type_params, .. } => return List::Kept(type_params),
             SigData::WithReturn { sig: inner, .. } => return self.sig_type_params(*inner),
@@ -3267,10 +3377,26 @@ impl<'p> Checker<'p> {
         }
     }
 
+    #[inline]
     pub fn sig_params(&mut self, sig: SigId) -> List<'p, SigParam> {
+        let recent = self.recent_sig_params[sig.0 as usize % RECENT_SIGS];
+        if recent.0 == sig {
+            return List::Kept(recent.1);
+        }
+        self.sig_params_not_recent(sig)
+    }
+
+    /// `kept` is what `sig_params` says of `sig`, for good.
+    fn kept_sig_params(&mut self, sig: SigId, kept: &'p [SigParam]) -> List<'p, SigParam> {
+        self.recent_sig_params[sig.0 as usize % RECENT_SIGS] = (sig, kept);
+        List::Kept(kept)
+    }
+
+    /// `sig_params`, of a signature that was not asked about lately.
+    fn sig_params_not_recent(&mut self, sig: SigId) -> List<'p, SigParam> {
         let (file, func, mapper) = match self.p.types.sig(sig) {
             SigData::WithReturn { sig: inner, .. } => return self.sig_params(*inner),
-            SigData::Synth { params, .. } => return List::Kept(params),
+            SigData::Synth { params, .. } => return self.kept_sig_params(sig, params),
             // Nothing is kept for one of these.
             SigData::DefaultConstruct { .. } => {
                 return match self.default_construct_base_sig(sig) {
@@ -3284,12 +3410,13 @@ impl<'p> Checker<'p> {
             } => (*file, *func, *mapper),
         };
         if let Some(kept) = self.p.sig_params.get_ref(&sig) {
-            return List::Kept(kept);
+            return self.kept_sig_params(sig, kept);
         }
         let before = self.what_only_holds_for_now();
         let params = self.sig_params_of_declaration(file, func, mapper);
         if self.what_only_holds_for_now() == before && params.iter().all(|p| self.is_known(p.ty)) {
-            return List::Kept(self.p.sig_params.insert_ref(sig, params.into()).1);
+            let kept = self.p.sig_params.insert_ref(sig, params.into()).1;
+            return self.kept_sig_params(sig, kept);
         }
         List::Own(params)
     }

@@ -5,21 +5,82 @@ use crate::bind::{Decl, FnOwner, MemberOwner, Parent};
 use crate::table::Handle;
 use smallvec::{SmallVec, smallvec};
 
+/// Where the properties of a list are, by name. It is for more than `FEW` of them: fewer are gone through one by one.
+#[derive(Default)]
+struct Names {
+    /// 0, or the position of a property plus one. There are a power of two of them, at least twice as many as properties.
+    places: Box<[u32]>,
+}
+
+impl Names {
+    const FEW: usize = 8;
+
+    /// With nothing in it, and room for `count` properties.
+    fn with_room_for(count: usize) -> Names {
+        Names {
+            places: vec![0; (count * 2).next_power_of_two()].into_boxed_slice(),
+        }
+    }
+
+    fn of(props: &[Prop]) -> Names {
+        if props.len() <= Self::FEW {
+            return Names::default();
+        }
+        let mut names = Names::with_room_for(props.len());
+        names.add_all(props);
+        names
+    }
+
+    #[inline]
+    fn first_place(&self, name: Atom) -> usize {
+        (u64::from(name.0).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 32) as usize
+            & (self.places.len() - 1)
+    }
+
+    /// The position of the first of `props` called `name`. All of `props` have been added.
+    #[inline]
+    fn find(&self, props: &[Prop], name: Atom) -> Option<usize> {
+        let mut place = self.first_place(name);
+        loop {
+            let at = (self.places[place] as usize).checked_sub(1)?;
+            if props[at].name == name {
+                return Some(at);
+            }
+            place = (place + 1) & (self.places.len() - 1);
+        }
+    }
+
+    /// Adds `props[at]`, unless one of its name is there.
+    fn add(&mut self, props: &[Prop], at: usize) {
+        let name = props[at].name;
+        let mut place = self.first_place(name);
+        while let Some(other) = (self.places[place] as usize).checked_sub(1) {
+            if props[other].name == name {
+                return;
+            }
+            place = (place + 1) & (self.places.len() - 1);
+        }
+        self.places[place] = at as u32 + 1;
+    }
+
+    fn add_all(&mut self, props: &[Prop]) {
+        for at in 0..props.len() {
+            self.add(props, at);
+        }
+    }
+}
+
 pub struct Resolved {
     pub shape: Shape,
-    by_name: FxHashMap<Atom, u32>,
+    names: Names,
 }
 
 impl Resolved {
     fn new(shape: Shape) -> Resolved {
-        let mut by_name = FxHashMap::default();
-        if shape.props.len() > 8 {
-            by_name.reserve(shape.props.len());
-            for (i, p) in shape.props.iter().enumerate() {
-                by_name.entry(p.name).or_insert(i as u32);
-            }
+        Resolved {
+            names: Names::of(&shape.props),
+            shape,
         }
-        Resolved { shape, by_name }
     }
 
     #[inline]
@@ -28,13 +89,13 @@ impl Resolved {
             + self.shape.props.capacity() * size_of::<Prop>()
             + (self.shape.call.capacity() + self.shape.construct.capacity()) * 4
             + self.shape.index.capacity() * size_of::<IndexInfo>()
-            + self.by_name.capacity() * 9
+            + self.names.places.len() * 4
             + self
                 .shape
                 .props
                 .iter()
                 .map(|p| match &p.source {
-                    PropSource::Members(m) => 16 + m.len() * 8,
+                    PropSource::Members(MemberList::Many(m)) => 16 + m.len() * 8,
                     PropSource::Assigned(_, e) => 16 + e.len() * 4,
                     PropSource::Intersected(_, props) => 16 + props.len() * size_of::<Prop>(),
                     _ => 0,
@@ -42,14 +103,13 @@ impl Resolved {
                 .sum::<usize>()
     }
 
+    #[inline]
     pub fn prop(&self, name: Atom) -> Option<&Prop> {
-        if self.shape.props.len() > 8 {
-            return self
-                .by_name
-                .get(&name)
-                .map(|&i| &self.shape.props[i as usize]);
+        let props = &self.shape.props;
+        if props.len() > Names::FEW {
+            return self.names.find(props, name).map(|at| &props[at]);
         }
-        self.shape.props.iter().find(|p| p.name == name)
+        props.iter().find(|p| p.name == name)
     }
 }
 
@@ -65,6 +125,26 @@ impl<'p> Members<'p> {
     pub fn shape(&self) -> &'p Shape {
         &self.resolved.shape
     }
+}
+
+pub(super) const RECENT_MEMBERS: usize = 512;
+pub(super) const RECENT_SIGNATURES: usize = 256;
+pub(super) const RECENT_PROPS: usize = 256;
+
+/// A type, and what `Program::members` has for it.
+#[derive(Copy, Clone)]
+pub(super) struct RecentMembers<'p> {
+    resolved: Option<&'p Resolved>,
+    ty: TypeId,
+    mapper: MapperId,
+}
+
+impl<'p> RecentMembers<'p> {
+    pub(super) const NONE: RecentMembers<'p> = RecentMembers {
+        resolved: None,
+        ty: TypeId(u32::MAX),
+        mapper: MapperId::IDENTITY,
+    };
 }
 
 /// `Members` the way it is kept for a type: where the shape is, and the mapper.
@@ -163,22 +243,20 @@ fn follows_a_semicolon(text: &[u8], pos: u32) -> bool {
 #[derive(Default)]
 struct Builder {
     shape: Shape,
-    /// Where each property is, while there are more than `FEW`. Empty otherwise.
-    index: FxHashMap<Atom, usize>,
+    /// Where each property is, while there are more than `Names::FEW`. Nothing is in it otherwise.
+    names: Names,
     /// The keys of the index signatures that computed names implied.
     implied: Vec<TypeId>,
 }
 
 impl Builder {
-    const FEW: usize = 8;
-
     /// Where the property `name` is.
     #[inline]
     fn position(&self, name: Atom) -> Option<usize> {
-        if self.shape.props.len() <= Self::FEW {
+        if self.shape.props.len() <= Names::FEW {
             return self.shape.props.iter().position(|p| p.name == name);
         }
-        self.index.get(&name).copied()
+        self.names.find(&self.shape.props, name)
     }
     #[inline]
     fn has(&self, name: Atom) -> bool {
@@ -186,10 +264,17 @@ impl Builder {
     }
     /// Makes room for `more` properties.
     fn reserve(&mut self, more: usize) {
-        self.shape.props.reserve(more);
+        self.shape.props.reserve_exact(more);
         let all = self.shape.props.len() + more;
-        if all > Self::FEW {
-            self.index.reserve(all - self.index.len());
+        if all > Names::FEW && all * 2 > self.names.places.len() {
+            self.make_room_for_names(all);
+        }
+    }
+    /// `names` anew, with room for `count` properties.
+    fn make_room_for_names(&mut self, count: usize) {
+        self.names = Names::with_room_for(count);
+        if self.shape.props.len() > Names::FEW {
+            self.names.add_all(&self.shape.props);
         }
     }
     fn add(&mut self, prop: Prop) {
@@ -200,34 +285,29 @@ impl Builder {
     }
     /// Adds a property whose name is not there yet.
     fn add_new(&mut self, prop: Prop) {
-        let at = self.shape.props.len();
-        if at == Self::FEW {
-            self.index.extend(
-                self.shape
-                    .props
-                    .iter()
-                    .enumerate()
-                    .map(|(i, p)| (p.name, i)),
-            );
-        }
-        if at >= Self::FEW {
-            self.index.insert(prop.name, at);
-        }
         self.shape.props.push(prop);
+        let count = self.shape.props.len();
+        if count <= Names::FEW {
+            return;
+        }
+        if count * 2 > self.names.places.len() {
+            self.make_room_for_names(count * 2);
+        } else if count == Names::FEW + 1 {
+            self.names.add_all(&self.shape.props);
+        } else {
+            self.names.add(&self.shape.props, count - 1);
+        }
     }
     fn remove(&mut self, name: Atom) {
         let Some(i) = self.position(name) else {
             return;
         };
         self.shape.props.remove(i);
-        if self.shape.props.len() <= Self::FEW {
-            self.index.clear();
-            return;
-        }
-        self.index.remove(&name);
-        for v in self.index.values_mut() {
-            if *v > i {
-                *v -= 1;
+        // What came after it has moved.
+        if self.shape.props.len() >= Names::FEW {
+            self.names.places.fill(0);
+            if self.shape.props.len() > Names::FEW {
+                self.names.add_all(&self.shape.props);
             }
         }
     }
@@ -340,8 +420,14 @@ impl<'p> Checker<'p> {
             };
             return self.shape_for_now(shape);
         }
-        let shape = build(self);
+        let mut shape = build(self);
         if self.leave() {
+            if !key.is_local() {
+                shape.props.shrink_to_fit();
+                shape.call.shrink_to_fit();
+                shape.construct.shrink_to_fit();
+                shape.index.shrink_to_fit();
+            }
             let (kept, resolved) = self.p.shapes.insert_ref(key, Resolved::new(shape));
             return Built {
                 resolved,
@@ -354,9 +440,27 @@ impl<'p> Checker<'p> {
     /// The contents of an object type or an intersection of them. `None` for anything else.
     #[inline]
     pub fn members(&mut self, ty: TypeId) -> Option<Members<'p>> {
+        let recent = self.recent_members[ty.0 as usize % RECENT_MEMBERS];
+        if recent.ty == ty {
+            return recent.resolved.map(|resolved| Members {
+                resolved,
+                mapper: recent.mapper,
+            });
+        }
+        self.members_not_recent(ty)
+    }
+
+    /// `members`, of a type that was not asked about lately.
+    fn members_not_recent(&mut self, ty: TypeId) -> Option<Members<'p>> {
         if let Some(known) = self.p.members.get(&ty) {
+            let resolved = self.p.shapes.at(known.shape);
+            self.recent_members[ty.0 as usize % RECENT_MEMBERS] = RecentMembers {
+                resolved: Some(resolved),
+                ty,
+                mapper: known.mapper,
+            };
             return Some(Members {
-                resolved: self.p.shapes.at(known.shape),
+                resolved,
                 mapper: known.mapper,
             });
         }
@@ -368,6 +472,11 @@ impl<'p> Checker<'p> {
         let (built, mapper) = self.members_uncached(ty)?;
         if let Some(shape) = built.kept {
             self.p.members.insert(ty, KeptMembers { shape, mapper });
+            self.recent_members[ty.0 as usize % RECENT_MEMBERS] = RecentMembers {
+                resolved: Some(built.resolved),
+                ty,
+                mapper,
+            };
         }
         Some(Members {
             resolved: built.resolved,
@@ -2849,20 +2958,24 @@ impl<'p> Checker<'p> {
             PropSource::Symbol(sym) => self.type_of_symbol(*sym),
             PropSource::Intersected(whole, parts) => {
                 let key = (*whole, prop.name);
-                match self.p.intersected_props.get(&key) {
-                    Some(known) => known,
-                    None => {
-                        let cycles_before = self.cycles;
-                        let mut types: SmallVec<[TypeId; 4]> = SmallVec::new();
-                        for part in parts.iter() {
-                            types.push(self.type_of_prop(part, MapperId::IDENTITY));
-                        }
-                        let all = self.intersection(&types);
-                        if self.cycles == cycles_before {
-                            self.p.intersected_props.insert(key, all);
-                        }
-                        all
+                let at = whole.0.wrapping_add(prop.name.0.wrapping_mul(31)) as usize % RECENT_PROPS;
+                let recent = self.recent_intersected_props[at];
+                if recent.0 == key {
+                    recent.1
+                } else if let Some(known) = self.p.intersected_props.get(&key) {
+                    self.recent_intersected_props[at] = (key, known);
+                    known
+                } else {
+                    let cycles_before = self.cycles;
+                    let mut types: SmallVec<[TypeId; 4]> = SmallVec::new();
+                    for part in parts.iter() {
+                        types.push(self.type_of_prop(part, MapperId::IDENTITY));
                     }
+                    let all = self.intersection(&types);
+                    if self.cycles == cycles_before {
+                        self.p.intersected_props.insert(key, all);
+                    }
+                    all
                 }
             }
             PropSource::Assigned(file, assignments) => {
@@ -2875,7 +2988,11 @@ impl<'p> Checker<'p> {
             } else {
                 self.instantiate(base, own_mapper)
             };
-            self.instantiate(ty, outer)
+            if outer == MapperId::IDENTITY {
+                ty
+            } else {
+                self.instantiate(ty, outer)
+            }
         } else {
             base
         };
@@ -2890,10 +3007,31 @@ impl<'p> Checker<'p> {
             ty
         };
         if adds_undefined {
-            self.optional_property(ty)
+            self.optional_property_kept(ty)
         } else {
             ty
         }
+    }
+
+    /// `optional_property`, worked out once for a type.
+    pub(super) fn optional_property_kept(&mut self, ty: TypeId) -> TypeId {
+        if let Some(known) = self.p.optional_properties.get(&ty) {
+            return known;
+        }
+        let optional = self.optional_property(ty);
+        // About these `union` has questions to ask, each time.
+        let asks = self.parts(ty).iter().any(|&member| {
+            matches!(
+                self.data(member),
+                TypeData::Intersection(_)
+                    | TypeData::Template { .. }
+                    | TypeData::StringMapping { .. }
+            )
+        });
+        if !asks {
+            self.p.optional_properties.insert(ty, optional);
+        }
+        optional
     }
 
     /// `getTypeOfVariableOrParameterOrPropertyWorker`, `case KindBinaryExpression, KindCallExpression`: the type of the property
@@ -3332,11 +3470,17 @@ impl<'p> Checker<'p> {
     }
 
     /// The type the declarations `members` of one property give it.
+    #[inline]
     fn type_of_members(&mut self, members: &[(FileId, MemberId)]) -> TypeId {
-        let (file, first) = members[0];
-        if let Some(known) = self.p.member_types.get(&(file, first)) {
+        if let Some(known) = self.p.member_types.get(&members[0]) {
             return known;
         }
+        self.resolve_type_of_members(members)
+    }
+
+    /// `type_of_members`, where nothing is kept yet.
+    fn resolve_type_of_members(&mut self, members: &[(FileId, MemberId)]) -> TypeId {
+        let (file, first) = members[0];
         if !self.enter(Query::Member(file, first)) {
             return if self.came_full_circle {
                 TypeId::ANY
@@ -3692,7 +3836,16 @@ impl<'p> Checker<'p> {
             }
             _ => return ty,
         };
-        self.global_ref(wrapper, &[])
+        self.wrapper_type(wrapper)
+    }
+
+    /// `global_ref(name, &[])`, kept.
+    fn wrapper_type(&mut self, name: Atom) -> TypeId {
+        if let Some(known) = self.p.wrapper_types.get(&name) {
+            return known;
+        }
+        let ty = self.global_ref(name, &[]);
+        self.p.wrapper_types.insert(name, ty)
     }
 
     /// `getResolvedBaseConstraint`: the widest type `ty` can be, with no type parameter left at the top. `unknown`: there is none.
@@ -4029,23 +4182,18 @@ impl<'p> Checker<'p> {
     /// `ty` without the intersections nothing can be.
     #[inline]
     pub fn reduced(&mut self, ty: TypeId) -> TypeId {
-        match self.data(ty) {
-            TypeData::Intersection(_) | TypeData::Union(_) => self.reduced_members(ty),
-            _ => ty,
+        if self.p.types.flags(ty).contains(TypeFlags::MAY_BE_REDUCED) {
+            self.reduced_members(ty)
+        } else {
+            ty
         }
     }
 
-    /// `reduced`, of a union or an intersection.
+    /// `reduced`, of an intersection or a union with one among its members.
     fn reduced_members(&mut self, ty: TypeId) -> TypeId {
         match self.data(ty) {
             TypeData::Intersection(_) if self.is_empty_intersection(ty) => TypeId::NEVER,
-            TypeData::Union(parts)
-                if parts
-                    .iter()
-                    .any(|&p| matches!(self.data(p), TypeData::Intersection(_))) =>
-            {
-                self.filter(ty, |c, m| !c.is_never_intersection(m))
-            }
+            TypeData::Union(_) => self.filter(ty, |c, m| !c.is_never_intersection(m)),
             _ => ty,
         }
     }
@@ -4470,6 +4618,12 @@ impl<'p> Checker<'p> {
 
     /// The call or construct signatures of `ty`.
     pub fn signatures(&mut self, ty: TypeId, construct: bool) -> List<'p, SigId> {
+        // Call signatures at the even places, construct signatures at the odd ones.
+        let at = (ty.0 as usize * 2 + usize::from(construct)) % RECENT_SIGNATURES;
+        let recent = self.recent_signatures[at];
+        if recent.0 == ty {
+            return List::Kept(recent.1);
+        }
         let p = self.p;
         let kept = if construct {
             &p.construct_signatures
@@ -4477,12 +4631,16 @@ impl<'p> Checker<'p> {
             &p.call_signatures
         };
         if let Some(known) = kept.get_ref(&ty) {
+            let known: &'p [SigId] = known;
+            self.recent_signatures[at] = (ty, known);
             return List::Kept(known);
         }
         let before = self.what_only_holds_for_now();
         let signatures = self.signatures_uncached(ty, construct);
         if self.what_only_holds_for_now() == before {
-            return List::Kept(kept.insert_ref(ty, signatures.into()).1);
+            let known: &'p [SigId] = kept.insert_ref(ty, signatures.into()).1;
+            self.recent_signatures[at] = (ty, known);
+            return List::Kept(known);
         }
         List::Own(signatures)
     }

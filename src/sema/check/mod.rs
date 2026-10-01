@@ -73,6 +73,8 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 pub use call::ResolvedCall;
 pub use shape::Members;
 
+const RECENT_SIGS: usize = 256;
+
 /// What trying a candidate for a call came to, if none of the arguments waits for the others.
 struct Trial {
     candidate: SigId,
@@ -165,6 +167,8 @@ pub struct Program {
     declared_types: ByNode<Sym, TypeId>,
     /// The unions that a type alias, or an alias with type arguments, stands for.
     named_unions: IdSet<TypeId>,
+    /// The unions that have been seen to have no intersection among their members.
+    unions_without_intersections: IdSet<TypeId>,
     /// The generic references made from a deferred type reference node (`isDeferredTypeReferenceNode`), and their generic instantiations.
     deferred_references: IdSet<TypeId>,
     /// `UnionType.origin` of a union that `getIntersectionTypeEx` produced by distributing an intersection over its union
@@ -189,6 +193,10 @@ pub struct Program {
     members: ById<TypeId, shape::KeptMembers>,
     instantiations: ByKey<(TypeId, MapperId), TypeId>,
     outer_type_params: ByNodeKept<(FileId, crate::bind::ScopeId), Arc<[TypeId]>>,
+    /// `type_param`
+    declared_type_params: ByNode<(FileId, TypeParamId), TypeId>,
+    /// `identity_mapper`
+    identity_mappers: ByNode<(FileId, crate::bind::ScopeId), MapperId>,
     base_types: ByNodeKept<Sym, Arc<[TypeId]>>,
     calls: ByNode<(FileId, ExprId), ResolvedCall>,
     /// `getCandidateForOverloadFailure` for a failed call with a single signature. `calls` holds the signature that the errors
@@ -206,15 +214,29 @@ pub struct Program {
     member_types: ByNode<(FileId, MemberId), TypeId>,
     /// `resolvedType` of a property declared by assignment declarations, keyed by the first declaration.
     assigned_prop_types: ByNode<(FileId, ExprId), TypeId>,
+    /// `awaited_no_alias`, asked on its own account, once it holds for good.
+    awaited_types: ById<TypeId, Option<TypeId>>,
     /// `resolvedType` of a property of a mapped type, keyed by the mapped type and the property name. `getTypeOfMappedSymbol`
     mapped_prop_types: ByKey<(TypeId, Atom), TypeId>,
+    /// See `optional_property_kept`.
+    optional_properties: ById<TypeId, TypeId>,
     intersected_props: ByKey<(TypeId, Atom), TypeId>,
     never_intersections: ById<TypeId, bool>,
+    /// `getMappedTargetWithSymbol` of a mapped type.
+    mapped_targets: ById<TypeId, TypeId>,
     inferred_constraints: ById<TypeId, Option<TypeId>>,
     constraints: ById<TypeId, TypeId>,
+    /// `T | undefined` for `T`: see `optional_kept`.
+    optional_types: ById<TypeId, TypeId>,
+    /// `global_ref` of a name, without type arguments.
+    plain_global_refs: ById<Atom, TypeId>,
     /// The types whose base constraint depends on itself (`circularConstraintType`).
     circular_constraints: IdSet<TypeId>,
+    /// `constraint_of_type_param` of a type parameter, once it holds for good.
+    type_param_constraints: ById<TypeId, Option<TypeId>>,
     enum_values: ByNodeKept<(FileId, EnumMemberId), Option<EnumValue>>,
+    /// `default_of_type_param` of a type parameter, once it holds for good.
+    type_param_defaults: ById<TypeId, Option<TypeId>>,
     conditionals: ByKey<(FileId, TypeNodeId, MapperId), TypeId>,
     /// Memo entries whose evaluation hit an instantiation limit, and those 2589 has been reported for. See `note_depth`.
     excessive: ByKey<Deep, ()>,
@@ -223,8 +245,12 @@ pub struct Program {
     has_excessive: AtomicBool,
     /// What `global_type_of_arity` found, by name and number of type parameters.
     global_types: ByKey<(Atom, u8), Option<Sym>>,
+    /// `global_type_symbol`, of the names known from the start.
+    global_type_symbols: ById<Atom, Option<Sym>>,
     /// The parent type node of each type node, per file. See `type_parents`.
     type_parents: ByIdKept<FileId, Arc<Vec<TypeNodeId>>>,
+    /// `String`, `Number` and the like, as `apparent_type` has them for the primitives, by name.
+    wrapper_types: ById<Atom, TypeId>,
 }
 
 impl Program {
@@ -324,6 +350,7 @@ impl Program {
         let params = bases(|m| m.hir.params.len());
         let enum_members = bases(|m| m.hir.enum_members.len());
         let scopes = bases(|m| m.bound.scopes.len());
+        let type_params = bases(|m| m.hir.type_params.len());
         let symbols = bases(|m| m.bound.symbols.len());
         Program {
             types: TypeStore::new(),
@@ -348,6 +375,7 @@ impl Program {
             initializer_is_undefined: ByNode::new(&params),
             declared_types: ByNode::new(&symbols),
             named_unions: Default::default(),
+            unions_without_intersections: Default::default(),
             deferred_references: Default::default(),
             union_origins: Default::default(),
             alias_of: Default::default(),
@@ -363,6 +391,8 @@ impl Program {
             members: Default::default(),
             instantiations: Default::default(),
             outer_type_params: ByNodeKept::new(&scopes),
+            declared_type_params: ByNode::new(&type_params),
+            identity_mappers: ByNode::new(&scopes),
             base_types: ByNodeKept::new(&symbols),
             calls: ByNode::new(&exprs),
             failure_sigs: ByNode::new(&exprs),
@@ -373,19 +403,28 @@ impl Program {
             variances: ByNodeKept::new(&symbols),
             member_types: ByNode::new(&members),
             assigned_prop_types: ByNode::new(&exprs),
+            awaited_types: Default::default(),
             mapped_prop_types: Default::default(),
+            optional_properties: Default::default(),
             intersected_props: Default::default(),
             never_intersections: Default::default(),
+            mapped_targets: Default::default(),
             inferred_constraints: Default::default(),
             constraints: Default::default(),
+            optional_types: Default::default(),
+            plain_global_refs: Default::default(),
             circular_constraints: Default::default(),
+            type_param_constraints: Default::default(),
             enum_values: ByNodeKept::new(&enum_members),
+            type_param_defaults: Default::default(),
             conditionals: Default::default(),
             excessive: Default::default(),
             excessive_reported: Default::default(),
             has_excessive: AtomicBool::new(false),
             global_types: Default::default(),
+            global_type_symbols: Default::default(),
             type_parents: Default::default(),
+            wrapper_types: Default::default(),
             files,
         }
     }
@@ -430,6 +469,13 @@ impl Program {
             relation_too_deep: false,
             checking: None,
             never_in_progress: Vec::new(),
+            recent_members: Box::new([shape::RecentMembers::NONE; shape::RECENT_MEMBERS]),
+            recent_signatures: Box::new(
+                [(TypeId(u32::MAX), &[] as &[SigId]); shape::RECENT_SIGNATURES],
+            ),
+            recent_intersected_props: Box::new(
+                [((TypeId(u32::MAX), Atom::NONE), TypeId::NEVER); shape::RECENT_PROPS],
+            ),
             retracing: false,
             explaining: Vec::new(),
             keeps_arg_contexts: false,
@@ -453,6 +499,8 @@ impl Program {
             inline_level: 0,
             walk_declared: TypeId::NEVER,
             constant_depth: 0,
+            recent_sig_params: Box::new([(SigId(u32::MAX), &[] as &[SigParam]); RECENT_SIGS]),
+            recent_sig_type_params: Box::new([(SigId(u32::MAX), &[] as &[TypeId]); RECENT_SIGS]),
             awaiting: Vec::new(),
             reachability_crosses_functions: false,
             reachability_past_exhaustive_switches: false,
@@ -636,6 +684,10 @@ pub struct Checker<'p> {
     pub(super) checking: Option<FileId>,
     /// The intersections it is being found out of whether anything can be them.
     pub(super) never_in_progress: Vec<TypeId>,
+    /// What was last found in `Program::members`, in the tables of signatures and in `intersected_props`, by the low bits of the key.
+    recent_members: Box<[shape::RecentMembers<'p>; shape::RECENT_MEMBERS]>,
+    recent_signatures: Box<[(TypeId, &'p [SigId]); shape::RECENT_SIGNATURES]>,
+    recent_intersected_props: Box<[((TypeId, Atom), TypeId); shape::RECENT_PROPS]>,
     /// For debugging: a relation is gone through again, without what is remembered of relations, and printed.
     pub(super) retracing: bool,
     /// The pairs `explain_not_assignable` is on its way through.
@@ -678,6 +730,9 @@ pub struct Checker<'p> {
     /// The declared type of what the flow walk under way narrows.
     walk_declared: TypeId,
     constant_depth: u32,
+    /// What `sig_params` and `sig_type_params` last said that holds for good, by the low bits of the signature's number.
+    recent_sig_params: Box<[(SigId, &'p [SigParam]); RECENT_SIGS]>,
+    recent_sig_type_params: Box<[(SigId, &'p [TypeId]); RECENT_SIGS]>,
     /// The unions whose members are being awaited.
     awaiting: Vec<TypeId>,
     /// Whether a function that is written where control cannot get to counts as unreachable itself.
@@ -782,7 +837,16 @@ impl<'p> Checker<'p> {
     /// The type parameter `tp` of `file`, as declared.
     #[inline]
     pub fn type_param(&self, file: FileId, tp: TypeParamId) -> TypeId {
-        self.intern(TypeData::TypeParam(file, tp, MapperId::IDENTITY))
+        match self.p.declared_type_params.get(&(file, tp)) {
+            Some(kept) => kept,
+            None => self.intern_type_param(file, tp),
+        }
+    }
+
+    #[inline(never)]
+    fn intern_type_param(&self, file: FileId, tp: TypeParamId) -> TypeId {
+        let made = self.intern(TypeData::TypeParam(file, tp, MapperId::IDENTITY));
+        self.p.declared_type_params.insert((file, tp), made)
     }
 
     /// `cloneTypeParameter`: the type parameter `tp` of a signature found where the type parameters around the signature stand
@@ -1721,7 +1785,24 @@ impl<'p> Checker<'p> {
     // ───────────────────────────── well-known global types ─────────────────────────────
 
     pub fn global_type_symbol(&self, name: Atom) -> Option<Sym> {
-        self.files().global(name, SymFlags::TYPE)
+        // The table goes by the number of the name: it is for the names known from the start, which come first.
+        if name.0 >= known::sym_iterator.0 {
+            return self.files().global(name, SymFlags::TYPE);
+        }
+        if let Some(kept) = self.p.global_type_symbols.get(&name) {
+            return kept;
+        }
+        let files = self.files();
+        let found = files.global(name, SymFlags::TYPE);
+        // What an alias means is a matter of what it stands for, which may be under way.
+        if files
+            .globals
+            .get(&name)
+            .is_none_or(|&sym| !files.flags(sym).contains(SymFlags::ALIAS))
+        {
+            self.p.global_type_symbols.insert(name, found);
+        }
+        found
     }
 
     /// `getGlobalType`: the global class or interface `name` that has `arity` type parameters. Anything else of that name is as

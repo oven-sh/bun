@@ -40,6 +40,18 @@ pub(crate) fn next_dot(key: &[u8]) -> Option<usize> {
     bun_core::strings::index_of_char_usize(key, b'.')
 }
 
+/// Index of the first `;` or `#` that a backslash does not escape.
+pub(crate) fn inline_comment_start(val: &[u8]) -> Option<usize> {
+    let mut from = 0;
+    while let Some(at) = bun_core::strings::index_of_any_pos(val, b"\\;#", from) {
+        if val[at] != b'\\' {
+            return Some(at);
+        }
+        from = at + 2;
+    }
+    None
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // IniOption — tri-state used by iterators (None != end-of-iteration)
 // ──────────────────────────────────────────────────────────────────────────
@@ -139,8 +151,8 @@ mod draft {
     use bun_url::URL;
 
     use super::{
-        ConfigItem, ConfigOpt, IniOption, NODE_LINKER_MAP, NodeLinker, is_quoted, next_dot,
-        should_skip_line,
+        ConfigItem, ConfigOpt, IniOption, NODE_LINKER_MAP, NodeLinker, inline_comment_start,
+        is_quoted, next_dot, should_skip_line,
     };
 
     type OOM<T> = Result<T, AllocError>;
@@ -161,6 +173,8 @@ mod draft {
         pub(crate) src: &'a [u8],
         pub out: Expr,
         pub(crate) env: &'a DotEnvLoader,
+        /// `Loc::start` of each value in which a `${VAR}` reference was replaced.
+        env_expanded: Vec<i32>,
     }
 
     // The result type depends on the usage (`.section -> *Rope`, `.key ->
@@ -197,6 +211,7 @@ mod draft {
                 out: Expr::init(E::Object::default(), Loc::EMPTY),
                 source,
                 env,
+                env_expanded: Vec::new(),
             }
         }
 
@@ -261,6 +276,7 @@ mod draft {
                             ropealloc,
                             &line[1..close_bracket_idx],
                             offset,
+                            &mut false,
                         )?
                         .into_section();
                         let mut r = root;
@@ -332,6 +348,7 @@ mod draft {
                     ropealloc,
                     &line[..maybe_eq_sign_idx.unwrap_or(line.len())],
                     line_offset,
+                    &mut false,
                 )?
                 .into_key();
                 let is_array: bool =
@@ -350,7 +367,8 @@ mod draft {
                 let value_raw: Expr = 'brk: {
                     if let Some(eq_sign_idx) = maybe_eq_sign_idx {
                         if eq_sign_idx + 1 < line.len() {
-                            break 'brk Self::prepare_str(
+                            let mut env_expanded = false;
+                            let value = Self::prepare_str(
                                 env,
                                 source_path,
                                 Usage::Value,
@@ -358,8 +376,13 @@ mod draft {
                                 ropealloc,
                                 &line[eq_sign_idx + 1..],
                                 line_offset + i32::try_from(eq_sign_idx).expect("int cast") + 1,
+                                &mut env_expanded,
                             )?
                             .into_value();
+                            if env_expanded {
+                                self.env_expanded.push(value.loc.start);
+                            }
+                            break 'brk value;
                         }
                         break 'brk Expr::init(E::EString::init(b""), Loc::EMPTY);
                     }
@@ -421,6 +444,7 @@ mod draft {
             ropealloc: &'a Arena,
             val_: &'a [u8],
             offset_: i32,
+            env_expanded: &mut bool,
         ) -> OOM<PrepareResult<'a>> {
             let mut offset = offset_;
             let mut val = bun_core::trim(val_, b" \n\r\t");
@@ -457,7 +481,8 @@ mod draft {
                                 // JSON parse failed (e.g., single-quoted string like '${VAR}')
                                 // Still need to expand env vars in the content
                                 if usage == Usage::Value {
-                                    let expanded = Self::expand_env_vars(env, bump, val)?;
+                                    let expanded =
+                                        Self::expand_env_vars(env, bump, val, env_expanded)?;
                                     return Ok(PrepareResult::Value(Expr::init(
                                         E::EString::init(expanded),
                                         Loc { start: offset },
@@ -472,7 +497,7 @@ mod draft {
                         let str_ = s.string(bump)?;
                         // Expand env vars in the JSON-parsed string
                         let expanded = if usage == Usage::Value {
-                            Self::expand_env_vars(env, bump, str_)?
+                            Self::expand_env_vars(env, bump, str_, env_expanded)?
                         } else {
                             str_
                         };
@@ -541,6 +566,7 @@ mod draft {
                 // walk the val to find the first non-escaped comment character (; or #)
                 let mut did_any_escape = false;
                 let mut esc = false;
+                let mut comment_cut = false;
                 let mut unesc = ArenaVec::<u8>::with_capacity_in(STACK_BUF_SIZE, bump);
 
                 // RopeT is *Rope when usage==Section, else unit. In Rust we just
@@ -616,11 +642,20 @@ mod draft {
                                         break 'not_env_substitution;
                                     }
 
+                                    // npm cuts the comment before it expands `${VAR}`
+                                    if !comment_cut {
+                                        comment_cut = true;
+                                        if let Some(at) = inline_comment_start(&val[i..]) {
+                                            val = bun_core::trim_right(&val[..i + at], b" \n\r\t");
+                                        }
+                                    }
+
                                     if let Some(new_i) =
                                         Self::parse_env_substitution(env, val, i, i, 0, &mut unesc)?
                                     {
                                         // set to true so we heap alloc
                                         did_any_escape = true;
+                                        *env_expanded = true;
                                         i = new_i;
                                         i += 1;
                                         continue 'walk;
@@ -751,7 +786,12 @@ mod draft {
         /// - ${VAR} - if VAR is undefined, leave as "${VAR}" (no expansion)
         /// - ${VAR?} - if VAR is undefined, expand to empty string
         /// - Backslash escaping is already handled by JSON parsing
-        fn expand_env_vars(env: &DotEnvLoader, bump: &'a Arena, val: &'a [u8]) -> OOM<&'a [u8]> {
+        fn expand_env_vars(
+            env: &DotEnvLoader,
+            bump: &'a Arena,
+            val: &'a [u8],
+            env_expanded: &mut bool,
+        ) -> OOM<&'a [u8]> {
             // Quick check if there are any env vars to expand
             if bun_core::index_of(val, b"${").is_none() {
                 // Nothing to expand: return the borrow directly.
@@ -785,7 +825,9 @@ mod draft {
                             env_var_raw
                         };
 
-                        if let Some(expanded) = env.get(env_var) {
+                        let found = env.get(env_var);
+                        *env_expanded |= found.is_some() || optional;
+                        if let Some(expanded) = found {
                             result.extend_from_slice(expanded);
                         } else if !optional {
                             // Not found and not optional: leave as-is
@@ -1238,20 +1280,8 @@ mod draft {
     // loadNpmrcConfig / loadNpmrc
     // ──────────────────────────────────────────────────────────────────────────
 
-    /// Whether the text of the value at `loc` has a `${VAR}` reference before any comment.
-    fn has_env_reference(source: &Source, loc: Loc) -> bool {
-        let Ok(start) = usize::try_from(loc.start) else {
-            return false;
-        };
-        let Some(rest) = source.contents().get(start..) else {
-            return false;
-        };
-        let end = bun_core::strings::index_of_any(rest, b"\n;#").unwrap_or(rest.len());
-        bun_core::strings::contains(&rest[..end], b"${")
-    }
-
     /// npm's Boolean coercion: `@npmcli/config` parse-field, then nopt `validateBoolean`.
-    fn npmrc_bool(expr: &Expr, source: &Source) -> Option<bool> {
+    fn npmrc_bool(expr: &Expr, env_expanded: &[i32]) -> Option<bool> {
         match &expr.data {
             ExprData::EBoolean(b) => Some(b.value),
             ExprData::ENull(_) => Some(false),
@@ -1265,7 +1295,7 @@ mod draft {
                 );
                 // parse-field reads these two spellings before it expands `${VAR}`
                 if (value.is_empty() || value == b"undefined")
-                    && !has_env_reference(source, expr.loc)
+                    && !env_expanded.contains(&expr.loc.start)
                 {
                     return Some(value.is_empty());
                 }
@@ -1488,19 +1518,19 @@ mod draft {
         }
 
         if let Some(ignore_scripts) = out.get(b"ignore-scripts") {
-            if let Some(ignore) = npmrc_bool(&ignore_scripts, source) {
+            if let Some(ignore) = npmrc_bool(&ignore_scripts, &parser.env_expanded) {
                 install.ignore_scripts = Some(ignore);
             }
         }
 
         if let Some(link_workspace_packages) = out.get(b"link-workspace-packages") {
-            if let Some(link) = npmrc_bool(&link_workspace_packages, source) {
+            if let Some(link) = npmrc_bool(&link_workspace_packages, &parser.env_expanded) {
                 install.link_workspace_packages = Some(link);
             }
         }
 
         if let Some(save_exact) = out.get(b"save-exact") {
-            if let Some(exact) = npmrc_bool(&save_exact, source) {
+            if let Some(exact) = npmrc_bool(&save_exact, &parser.env_expanded) {
                 install.exact = Some(exact);
             }
         }
@@ -1551,7 +1581,7 @@ mod draft {
         }
 
         if let Some(hoist_expr) = out.get(b"hoist") {
-            if let Some(hoist) = npmrc_bool(&hoist_expr, source) {
+            if let Some(hoist) = npmrc_bool(&hoist_expr, &parser.env_expanded) {
                 install.hoist = Some(hoist);
             }
         }

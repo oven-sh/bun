@@ -632,6 +632,7 @@ registry=http://127.0.0.1:4873/ ; default registry
     ['ignore-scripts="${EMPTY}"', false],
     ["ignore-scripts=${EMPTY} ; comment", false],
     ["ignore-scripts=${UNSET?}", false],
+    ['ignore-scripts="${UNSET?}"', false],
     ["ignore-scripts=${BLANK}", false],
     ['ignore-scripts="${BLANK}"', false],
     ["ignore-scripts=${PADDED_FALSE}", false],
@@ -643,6 +644,12 @@ registry=http://127.0.0.1:4873/ ; default registry
     ["ignore-scripts=${HEX_ZERO}", false],
     ["ignore-scripts=${ONE}", true],
     ["ignore-scripts=${TRUE}", true],
+    // ini decodes the JSON escape, so this is a reference too
+    ['ignore-scripts="\\u0024{EMPTY}"', false],
+    ['ignore-scripts="\\u0024{UNDEFINED}"', true],
+    // a single-quoted value that is not JSON keeps its text and still expands
+    ["ignore-scripts='${EMPTY}'", false],
+    ["ignore-scripts='${UNDEFINED}'", true],
     // the reference is in the comment, so the value is a literal
     ["ignore-scripts= ; ${EMPTY}", true],
     ["ignore-scripts=undefined ; ${EMPTY}", false],
@@ -660,6 +667,16 @@ registry=http://127.0.0.1:4873/ ; default registry
       TRUE: "true",
     };
     expect(loadNpmrc(line + "\n", env).ignore_scripts).toBe(expected);
+  });
+
+  test("a value from a variable does not change how the other values in the file are read", () => {
+    const npmrc = 'ignore-scripts=${EMPTY}\nsave-exact=""\nhoist="${EMPTY}"\nlink-workspace-packages=\n';
+    expect(loadNpmrc(npmrc, { EMPTY: "" })).toMatchObject({
+      ignore_scripts: false,
+      save_exact: true,
+      hoist: false,
+      link_workspace_packages: true,
+    });
   });
 
   test("every boolean option uses the same coercion", () => {

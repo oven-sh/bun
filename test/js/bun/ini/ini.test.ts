@@ -313,6 +313,31 @@ hello = "\\\\$\{LOL}"
       expected: { hello: "\\hi" },
     });
 
+    // npm/ini cuts and trims the comment first, and npm expands the env var in
+    // what is left, so the trim never touches whitespace from the variable
+    envVarTest({
+      name: "inline comment is cut before the env var expands",
+      ini: /* ini */ `
+cache = \${CACHE}#comment
+padded = \${PADDED} ; comment
+plain = \${LOL} # comment
+inside = \${LOL;c?}
+escaped = \${LOL}\\;x ; comment
+hash = \${LOL} \\# x # comment
+trailing = \${LOL}\\
+      `,
+      env: { CACHE: "/tmp/cache ", PADDED: " padded  ", LOL: "hi" },
+      expected: {
+        cache: "/tmp/cache ",
+        padded: " padded  ",
+        plain: "hi",
+        inside: "${LOL",
+        escaped: "hi;x",
+        hash: "hi # x",
+        trailing: "hi\\",
+      },
+    });
+
     function envVarTest(args: { name: string; ini: string; env: Record<string, string>; expected: any }) {
       const { name, ini, env, expected } = args;
       test(name, async () => {

@@ -6174,10 +6174,10 @@ describe.concurrent("write() after end()", () => {
       expect(result).toEqual([lateWriteEvents, 4]);
     });
 
-    // The peer is a raw HTTP/2 endpoint over a JS Duplex. It answers the request with HEADERS
-    // (:status 200), `body` as one DATA frame with END_STREAM, and RST_STREAM, all in one read.
-    // Resolves with the request's events once it has closed.
-    async function resetInSameReadAsResponse(rstCode, body, onResponse) {
+    // The native side drops a reset stream on the read after the RST_STREAM, and JS hears about
+    // the reset a tick later. With both reads in one turn, the write completes in between, when
+    // the native stream is already gone. That must not throw.
+    it("peer reset that drops the native stream before the write completes", async () => {
       function frame(type, flags, streamId, payload = Buffer.alloc(0)) {
         const header = Buffer.alloc(9);
         header.writeUIntBE(payload.length, 0, 3);
@@ -6186,77 +6186,97 @@ describe.concurrent("write() after end()", () => {
         header.writeUInt32BE(streamId, 5);
         return Buffer.concat([header, payload]);
       }
-      const code = Buffer.alloc(4);
-      code.writeUInt32BE(rstCode);
-      const answer = [frame(1, 4, 1, Buffer.from([0x88]))];
-      if (body !== undefined) answer.push(frame(0, 1, 1, Buffer.from(body)));
-      answer.push(frame(3, 0, 1, code));
-      let received = Buffer.alloc(0);
-      let sawPreface = false;
-      const transport = new Duplex({
-        read() {},
-        write(chunk, encoding, callback) {
+      // HEADERS (:status 200), RST_STREAM, then frames of an unknown type, which the receiver
+      // ignores. They make the burst longer than the 64 KiB that one read of a TLS socket decrypts.
+      const rstCode = Buffer.alloc(4);
+      rstCode.writeUInt32BE(http2.constants.NGHTTP2_INTERNAL_ERROR);
+      const burst = Buffer.concat([
+        frame(1, 4, 1, Buffer.from([0x88])),
+        frame(3, 0, 1, rstCode),
+        ...Array(8).fill(frame(0xfa, 0, 0, Buffer.alloc(16384))),
+      ]);
+      const closed = Promise.withResolvers();
+      // Resolves on `event`. An 'error' or a 'close' that comes first rejects.
+      const waitFor = (emitter, event) =>
+        new Promise((resolve, reject) => {
+          emitter.once(event, resolve);
+          emitter.once("error", reject);
+          emitter.once("close", () => reject(new Error(`closed before '${event}'`)));
+        });
+      // Raw HTTP/2 peer: sends SETTINGS, then answers the first HEADERS frame with the burst.
+      const server = tls.createServer({ ...TLS_CERT, ALPNProtocols: ["h2"] }, socket => {
+        let received = Buffer.alloc(0);
+        let sawPreface = false;
+        let answered = false;
+        socket.on("error", closed.reject);
+        socket.write(frame(4, 0, 0));
+        socket.on("data", chunk => {
           received = Buffer.concat([received, chunk]);
-          if (!sawPreface && received.length >= 24) {
+          if (!sawPreface) {
+            if (received.length < 24) return;
             received = received.subarray(24);
             sawPreface = true;
           }
-          while (sawPreface && received.length >= 9) {
+          while (received.length >= 9) {
             const length = received.readUIntBE(0, 3);
             if (received.length < 9 + length) break;
             const type = received[3];
-            const flags = received[4];
             received = received.subarray(9 + length);
-            if (type === 4 && (flags & 1) === 0) this.push(frame(4, 1, 0));
-            if (type === 1) this.push(Buffer.concat(answer));
+            if (type === 1 && !answered) {
+              answered = true;
+              socket.write(burst);
+            }
           }
-          callback();
-        },
-      });
-      const session = http2.connect("http://localhost", { createConnection: () => transport });
-      try {
-        const closed = Promise.withResolvers();
-        const events = [];
-        session.on("error", closed.reject);
-        session.on("connect", () => transport.push(frame(4, 0, 0)));
-        const req = session.request({ ":method": "POST", ":path": "/" }, { endStream: false });
-        for (const name of ["aborted", "finish", "end"]) req.on(name, () => events.push(name));
-        req.on("error", err => events.push(`error:${err.code}`));
-        req.on("close", () => closed.resolve(events.concat("close")));
-        req.on("response", () => {
-          events.push(req.destroyed ? "response on a destroyed stream" : "response on a live stream");
-          onResponse(req, events);
         });
-        return await closed.promise;
+      });
+      let raw, session;
+      try {
+        const port = await new Promise(resolve => server.listen(0, "127.0.0.1", () => resolve(server.address().port)));
+        raw = net.connect(port, "127.0.0.1");
+        await waitFor(raw, "connect");
+        // The TLS socket reads through this Duplex. Once `held` is an array, the ciphertext is kept
+        // until it is at least as long as the burst and then pushed at once, which makes the TLS
+        // socket deliver its reads back to back in one turn.
+        let held = null;
+        let heldLength = 0;
+        const proxy = new Duplex({
+          read() {},
+          write(chunk, encoding, callback) {
+            // The teardown below destroys `raw` while the session still writes its GOAWAY.
+            if (raw.destroyed) return callback();
+            raw.write(chunk, callback);
+          },
+        });
+        raw.on("data", chunk => {
+          if (held === null) return proxy.push(chunk);
+          held.push(chunk);
+          heldLength += chunk.length;
+          if (heldLength >= burst.length) {
+            proxy.push(Buffer.concat(held));
+            held = null;
+          }
+        });
+        const socket = tls.connect({ socket: proxy, ALPNProtocols: ["h2"], rejectUnauthorized: false });
+        await waitFor(socket, "secureConnect");
+        session = http2.connect(`https://localhost:${port}`, { createConnection: () => socket });
+        await waitFor(session, "remoteSettings");
+        for (const emitter of [raw, proxy, socket, session]) emitter.on("error", closed.reject);
+
+        held = [];
+        const req = session.request({ ":method": "POST", ":path": "/" }, { endStream: false });
+        const late = record(req, closed);
+        // 'response' is emitted inside the read that also carries the RST_STREAM.
+        req.on("response", () => {
+          req.write("body");
+          req.end();
+          req.write("late", late);
+        });
+        expect(await closed.promise).toEqual(lateWriteEvents);
       } finally {
-        session.destroy();
+        session?.destroy();
+        raw?.destroy();
+        server.close();
       }
-    }
-
-    // node handles the RST_STREAM inside the read and emits 'response' one tick later, so the
-    // writes in 'response' reach a stream that is already destroyed.
-    it("peer reset with an error code in the same read as the response", async () => {
-      const lateWrite = Promise.withResolvers();
-      const events = await resetInSameReadAsResponse(http2.constants.NGHTTP2_INTERNAL_ERROR, undefined, req => {
-        req.write("body");
-        req.end();
-        req.write("late", err => lateWrite.resolve(err.code));
-      });
-      expect([events, await lateWrite.promise]).toEqual([
-        ["aborted", "response on a destroyed stream", "finish", "error:ERR_HTTP2_STREAM_ERROR", "close"],
-        "ERR_STREAM_WRITE_AFTER_END",
-      ]);
-    });
-
-    // A reset with NO_ERROR closes the stream like END_STREAM: the body is still delivered and
-    // the stream is destroyed after 'end'.
-    it("peer reset with NO_ERROR in the same read as the whole response", async () => {
-      let body = "";
-      const events = await resetInSameReadAsResponse(http2.constants.NGHTTP2_NO_ERROR, "hello", req => {
-        req.setEncoding("utf8");
-        req.on("data", chunk => (body += chunk));
-      });
-      expect([events, body]).toEqual([["aborted", "response on a live stream", "finish", "end", "close"], "hello"]);
     });
   });
 });

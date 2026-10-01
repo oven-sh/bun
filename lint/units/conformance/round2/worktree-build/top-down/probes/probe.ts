@@ -33,6 +33,8 @@ const envs: Record<string, Record<string, string>> = {
     BUN_JSC_validateExceptionChecks: "1",
     BUN_JSC_dumpSimulatedThrows: "1",
   },
+  // what the sweep is advised to pin for a debug (ASAN) child
+  sweep: { ...base, BUN_ENABLE_CRASH_REPORTING: "0", ASAN_OPTIONS: "allow_user_segv_handler=1:abort_on_error=1" },
   // the gate unset
   nogate: (() => {
     const e = { ...base };

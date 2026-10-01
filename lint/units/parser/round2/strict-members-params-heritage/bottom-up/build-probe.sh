@@ -16,7 +16,8 @@ BUILD="$ROOT/target/debug/build"
 EXTERNS=""
 for name in thiserror bitflags bun_collections strum smallvec bun_react_compiler enumset bun_options_types bun_wyhash bun_core bun_ast bun_base64 bstr bun_url bun_ptr bun_alloc bytemuck scopeguard bun_crash_handler bun_paths bun_highway; do
   lib=$(ls -tr "$BUILD/$name"/*/out/lib"$name"-*.rlib | head -1)
-  EXTERNS="$EXTERNS --extern $name=$lib"
+  # The libraries hold a stub of their metadata: the file beside each holds all of it.
+  EXTERNS="$EXTERNS --extern $name=$lib --extern $name=${lib%.rlib}.rmeta"
 done
 SEARCH=""
 for dir in "$BUILD"/*/*/out; do SEARCH="$SEARCH -L dependency=$dir"; done

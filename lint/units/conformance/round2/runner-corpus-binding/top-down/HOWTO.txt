@@ -42,7 +42,8 @@ Measured with the binding (installed release build 1.4.3, debug build of the wor
   debug, leak check      103 pass, 1 skip, 1 fail: "reference > the list has the instances of the reference's run" ran
                          6154 ms against the default limit of 5000 ms. It calls nothing of the binding.
   the same, --timeout 180000   104 pass, 1 skip, 0 fail, exit code 0, no leak report: 93.4 s. That test: 5931 ms.
-  Those five runs had the module before directoryOf left sweep.ts for it and before three of its comments changed.
+  Those runs had the module before directoryOf left sweep.ts for it and before three of its comments changed.
+  release, the files of this directory as they are, in a fresh clone: 105 pass, 0 fail: 9.51 s, 5.10 s
   sweep.ts before and after: the same text, exit code and report (but for its seconds) on the whole corpus with a check
   that replays the oracle, without files (12,797 of 12,797 pass) and with files (12,611 pass, 186 unsupported on this
   disk), on conformance/types/tuple/ (34 instances), with --tag, --kind, --listed, --since, selectors of every form,

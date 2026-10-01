@@ -1,12 +1,14 @@
-// usage: bun roots.ts <clone with the corpus> <observed/roots.tsv>
-// The root files of every run instance as the default check hands them to the command, without a file written and
+// usage: bun roots.ts <clone with the corpus> <observed/roots.tsv> [--all]
+// The root files of the run instances as the default check hands them to the command, without a file written and
 // without a process: name, class, case path, current directory, root files (separated by a blank).
-// It prints the counts by extension, the instances with a JavaScript root (the only ones that the rules read) and
-// those with a root that `bun --lint` has no loader for.
+// The file holds the instances with a root that is no TypeScript file: a JavaScript root (the only files that the
+// rules read) or a root that `bun --lint` has no loader for. --all: every run instance (1.8 MB).
+// It prints the counts by extension over every run instance.
 import { writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-const [scratch, outPath] = process.argv.slice(2);
+const all = process.argv.includes("--all");
+const [scratch, outPath] = process.argv.slice(2).filter(a => a !== "--all");
 if (scratch === undefined || outPath === undefined) {
   console.error("usage: bun roots.ts <clone with the corpus> <observed/roots.tsv>");
   process.exit(2);
@@ -58,7 +60,9 @@ for (const instance of enumerateInstances(paths.cases)) {
   }
   const currentDirectory = getNormalizedAbsolutePath(made.input.currentDirectory, "/");
   const roots: string[] = made.input.rootFiles.map((name: string) => getNormalizedAbsolutePath(name, currentDirectory));
-  lines.push([instance.name, kind, instance.file, currentDirectory, roots.join(" ")].join("\t"));
+  if (all || roots.some(root => javascript.test(root) || !loaded.test(root))) {
+    lines.push([instance.name, kind, instance.file, currentDirectory, roots.join(" ")].join("\t"));
+  }
   for (const root of roots) {
     const base = root.slice(root.lastIndexOf("/") + 1);
     const declaration = /\.d\.(ts|mts|cts)$/.exec(base);

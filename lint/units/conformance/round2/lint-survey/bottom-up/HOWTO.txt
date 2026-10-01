@@ -1,0 +1,53 @@
+Survey of `bun --lint` over every run instance of the corpus (E4, bottom-up pass, round 2). Nothing here is in the
+worktree, and no file of the repository was changed.
+
+What was swept
+  binary   /workspace/wt/conformance/build/debug/bun-debug, "Bun Debug v1.4.3 (3110ce85c) Linux x64": debug
+           assertions and AddressSanitizer (its own defaults: detect_stack_use_after_return=0:detect_leaks=0)
+  corpus   a scratch clone of 3110ce85cf made with ../../scratch.sh (no --prototype): sweep.ts and runner/ as they are
+           at that commit, UPSTREAM of the prototype, sync.sh: typescript-go 89d5d5b, TypeScript 5848bc5
+  lists    ../../prototype/expectations.json (level baseline, E and C empty), given with --expectations
+  script   the INSTALLED bun runs sweep.ts and the helpers (1.4.3-canary.1+367d939d9); --bin names the binary under test
+
+Files
+  sweep-chunks.sh        the driver: nine chunks by the first character of the instance name, one report each, then
+                         raw.ts twice (the environment of the sweep, and the leak check of CI). One hold of the heavy lock:
+                           setsid nohup /workspace/tools/lk bash sweep-chunks.sh <scratch clone> <work directory> > <log> 2>&1 &
+                         A chunk whose report exists is not run again, so the command can be given again after a restart.
+                         LINT_BIN=<binary> sweeps another binary.
+  merge.ts               the reports of the chunks -> observed/instances.tsv, observed/survey.txt, observed/oracle-codes.txt
+  raw.ts                 lays instances out again as sweep.ts does and starts the command as the default check does; keeps
+                         exit code, signal, stdout and stderr; where the command died, every root file alone; --keep keeps the files
+  roots.ts               the root files of every run instance, without a file written or a process -> observed/roots.tsv
+  tables.ts              observed/ + raw.jsonl -> codes.txt, class-c-diagnostics.txt, javascript.txt, died.txt, raw-diagnostic-lines.tsv
+  compare-release.py     the debug build against the raw runs of a release build of the same sources, instance by instance
+  class-c-causes.tsv     written by hand: case path, owner, cause, for each class C case where Bun prints a diagnostic
+  crashes-md.ts          observed/ + raw.jsonl + class-c-causes.tsv -> CRASHES.md (the text for the notes of the unit)
+  CRASHES.md             the result: copy it to /workspace/notes/lint/units/conformance/CRASHES.md
+  LOG.entry.txt          the survey table and the numbers: the entry for LOG.md of the unit
+
+The commands again, after the sweep (each starts no process of the binary, but raw.ts):
+  S=/tmp/ls1a-scratch; W=/tmp/ls1a; H=/workspace/notes/lint/units/conformance/round2/lint-survey/bottom-up
+  bun $H/merge.ts $W/reports $H/observed
+  bun $H/roots.ts $S $H/observed/roots.tsv
+  bun $H/tables.ts $H/observed $W/raw.jsonl $S
+  python3 $H/compare-release.py $H/observed/instances.tsv $W/raw.jsonl /tmp/dcc/raw-release.jsonl
+  bun $H/crashes-md.ts $H/observed $W/raw.jsonl $H/class-c-causes.tsv $H/CRASHES.md --leak $W/raw-leak.jsonl --say "<build, corpus, date>"
+One instance again, with what the command wrote (4 processes at most; through /workspace/tools/lk when it is more than a few):
+  bun $H/raw.ts --scratch $S --bin <binary> --from $H/observed/instances.tsv --out /tmp/one.jsonl --keep /tmp/kept '<instance name>'
+  (cd $S && bun test/cli/lint/conformance/sweep.ts --bin <binary> --jobs 1 --timeout 600000 \
+     --expectations /workspace/notes/lint/units/conformance/round2/prototype/expectations.json '<instance name>')
+
+What to know before a sweep is started again
+  - sweep.ts needs a file of lists: without expectations.json beside it, give --expectations.
+  - --jobs defaults to the number of processors (16 here): give --jobs 4.
+  - A selector with "*" makes sweep.ts read every case first: about 30 s on this machine under load, per chunk.
+  - The report keeps outcome and reason and not what the command wrote: the reason names the first code alone.
+    Everything else (all lines, the category, a panic text) is in raw.jsonl.
+  - materialise.ts ancestorProjectFile: a node_modules, package.json, tsconfig.json or jsconfig.json in /tmp or in /
+    makes every instance "unsupported". The driver says so before a chunk.
+  - A panic of the debug build writes its banner and message to stderr and its frames to STDOUT, then SIGABRT.
+    An error of AddressSanitizer ends the command with the exit code 1 (no abort_on_error in the environment of the
+    sweep): the default check then says "the command refused: =====...", which merge.ts counts under "else", not
+    under "diagnostic". raw.ts says "exit code 1" and keeps the text.
+  - The debug binary has to be the build of the commit whose src/ is swept: `<binary> --revision`.

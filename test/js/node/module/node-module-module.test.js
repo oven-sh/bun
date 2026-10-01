@@ -960,6 +960,39 @@ console.log("survived", require("./late.js"));`,
     expect(stdout.trim()).toBe("pass");
     expect(await proc.exited).toBe(0);
   });
+  describe.concurrent("Module.runMain set by a preload", () => {
+    async function run(value) {
+      using dir = tempDir("module-run-main", {
+        "preload.cjs": `require("module").runMain = ${value};`,
+        "main.cjs": `console.log("main ran");`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--require", "./preload.cjs", "./main.cjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, error: stderr.split("\n").find(line => line.includes("Error: ")), exitCode };
+    }
+
+    test.each(["{}", "[]", `"a string"`, `Symbol("s")`, "10n"])("to %s, which is not a function", async value => {
+      expect(await run(value)).toEqual({
+        stdout: "",
+        error: "TypeError: Module.runMain is not a function",
+        exitCode: 1,
+      });
+    });
+
+    test("to a function that throws", async () => {
+      expect(await run(`() => { throw new RangeError("from the override"); }`)).toEqual({
+        stdout: "",
+        error: "RangeError: from the override",
+        exitCode: 1,
+      });
+    });
+  });
   test.each(["no args", "--access-early"])("children, %s", async arg => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), path.join(import.meta.dir, "children-fixture/a.cjs"), arg],

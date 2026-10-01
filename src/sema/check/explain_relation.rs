@@ -1640,11 +1640,10 @@ impl<'p> Checker<'p> {
             && !self.is_generic_object_type(target)
             && (self.is_object_type(source) || self.is_intersection(source))
         {
-            result &= self.properties_related_to_reporting(
+            result &= self.properties_of_apparent_type_related_to_reporting(
                 x,
                 source,
                 target,
-                true,
                 false,
                 state & STATE_REGULAR,
             );
@@ -1659,12 +1658,58 @@ impl<'p> Checker<'p> {
             && !self.is_array_or_tuple(target)
             && self.is_source_intersection_needing_extra_check(source, target)
         {
-            result &= self.properties_related_to_reporting(x, source, target, true, true, state);
+            result &= self
+                .properties_of_apparent_type_related_to_reporting(x, source, target, true, state);
         }
         if result.holds() {
             x.restore_error_state(&saved);
         }
         result
+    }
+
+    /// `properties_of_apparent_type_related_to`, reporting the first member of the apparent type that does not fit.
+    fn properties_of_apparent_type_related_to_reporting(
+        &mut self,
+        x: &mut Reporter,
+        source: TypeId,
+        target: TypeId,
+        optionals_only: bool,
+        state: u8,
+    ) -> Ternary {
+        let apparent = if self.is_intersection(source) && x.r.relation != Relation::Restrictive {
+            self.apparent_type(source)
+        } else {
+            source
+        };
+        if apparent == source {
+            return self.properties_related_to_reporting(
+                x,
+                source,
+                target,
+                true,
+                optionals_only,
+                state,
+            );
+        }
+        let related = self.properties_of_apparent_type_related_to(
+            &mut x.r,
+            source,
+            target,
+            optionals_only,
+            state,
+        );
+        if !related.holds() {
+            for &member in self.parts(apparent) {
+                let member = self.apparent_type(member);
+                if !self
+                    .properties_related_to_reporting(x, member, target, true, optionals_only, state)
+                    .holds()
+                {
+                    break;
+                }
+            }
+        }
+        related
     }
 
     /// The `relateVariances` closure of `structuredTypeRelatedToWorker`. `Some`: that settles it. `saved`: `saveErrorState`.

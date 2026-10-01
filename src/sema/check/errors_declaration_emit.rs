@@ -3742,7 +3742,9 @@ impl<'p> DeclarationEmit<'_, 'p> {
                     mapper: right,
                 },
             ) if (a, at) == (b, other) => (*left, *right),
-            _ => return false,
+            // What instantiation resolves does not show its type arguments. The caller instantiates the alias with those that are
+            // read off elsewhere, and compares.
+            _ => return !self.c.is_object_type(pattern),
         };
         // What is written at one place mentions the same type parameters.
         let (left, right) = (self.c.p.types.mapping(left), self.c.p.types.mapping(right));

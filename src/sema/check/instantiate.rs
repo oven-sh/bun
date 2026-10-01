@@ -98,10 +98,34 @@ impl<'p> Checker<'p> {
             changed |= new != value;
             pairs.push((param, new));
         }
+        // `getConditionalFlowTypeOfType`: the check type `T[K]` of a conditional type is a substitution type everywhere in the true
+        // branch. `cond_true_under` has a pair for it, in terms of the declared `T` and `K`.
+        for &(key, value) in self.p.types.mapping(second) {
+            if matches!(self.data(key), TypeData::IndexedAccess { .. })
+                && self.p.types.map(first, key).is_none()
+                && self.is_identity_for(first, key)
+            {
+                pairs.push((key, value));
+                changed = true;
+            }
+        }
         if !changed {
             return first;
         }
         self.p.types.mapper_of(&pairs)
+    }
+
+    /// Whether `mapper` maps each type parameter in the indexed access type `ty` to itself.
+    fn is_identity_for(&self, mapper: MapperId, ty: TypeId) -> bool {
+        match *self.data(ty) {
+            TypeData::IndexedAccess { obj, index, .. } => {
+                self.is_identity_for(mapper, obj) && self.is_identity_for(mapper, index)
+            }
+            TypeData::TypeParam(..) | TypeData::ThisParam(_) => {
+                self.p.types.map(mapper, ty) == Some(ty)
+            }
+            _ => !self.has_type_variables(ty),
+        }
     }
 
     pub fn instantiate_all(&mut self, types: &[TypeId], mapper: MapperId) -> Vec<TypeId> {
@@ -370,12 +394,9 @@ impl<'p> Checker<'p> {
                 let new = self.map_mapper(*own, mapper);
                 // `getConditionalType` returns the error type for a check type that is the error type. The error type is `any`
                 // here, and a tuple type argument instantiates to `any` only as the error type.
-                let (before, after) = (self.p.types.mapping(*own), self.p.types.mapping(new));
-                if before
-                    .iter()
-                    .zip(after)
-                    .any(|(b, a)| a.1 == TypeId::ANY && self.is_tuple(b.1))
-                {
+                if self.p.types.mapping(*own).iter().any(|before| {
+                    self.is_tuple(before.1) && self.p.types.map(new, before.0) == Some(TypeId::ANY)
+                }) {
                     return TypeId::ANY;
                 }
                 self.conditional_type(*file, *node, new)

@@ -342,11 +342,12 @@ fn parse_config(
             .map(|p| join(base, p))
             .collect()
     });
-    let extends: Vec<String> = match json.get("extends") {
-        Some(Json::String(one)) => vec![one.clone()],
+    let extends: Vec<(usize, String)> = match json.get("extends") {
+        Some(Json::String(one)) => vec![(0, one.clone())],
         Some(Json::Array(many)) => many
             .iter()
-            .filter_map(|e| e.as_str().map(str::to_owned))
+            .enumerate()
+            .filter_map(|(i, e)| Some((i, e.as_str()?.to_owned())))
             .collect(),
         _ => Vec::new(),
     };
@@ -356,8 +357,18 @@ fn parse_config(
     }
     stack.push(path.to_owned());
     let mut inherited = Raw::default();
-    for name in &extends {
+    for (i, name) in &extends {
+        let reported = errors.len();
         let Some(extended_path) = extends_config_path(host, name, base, errors) else {
+            // `CreateDiagnosticForNodeInSourceFileOrCompilerDiagnostic`, at `valueExpression`.
+            let at = crate::json_places::parse(&text).and_then(|root| {
+                let value = &root.member("extends", "")?.value;
+                let value = value.element(*i).unwrap_or(value);
+                Some((path.to_owned(), value.from, value.to))
+            });
+            for error in &mut errors[reported..] {
+                error.at = at.clone();
+            }
             continue;
         };
         let Some(extended) = parse_config(host, &extended_path, stack, errors, as_typescript_does)
@@ -429,7 +440,13 @@ fn extends_config_path(
         errors.push(ConfigError::new(18051, &["extends"]));
         return None;
     }
-    let found = resolve_config_in_packages(host, &extended, base);
+    // `resolveNodeLikeWorker`: `.` and `..` are relative names. `normalizePathForCJSResolution` ends them in a `/`, so only the
+    // directory is looked into.
+    let found = if extended == "." || extended == ".." {
+        load_config_from_directory(host, &join(base, &extended))
+    } else {
+        resolve_config_in_packages(host, &extended, base)
+    };
     if found.is_none() {
         errors.push(ConfigError::new(6053, &[&extended]));
     }
@@ -439,6 +456,9 @@ fn extends_config_path(
 /// `ResolveConfig`: `name` is looked for like a module that `require` names, where only JSON files count, `tsconfig` stands for
 /// `index`, and the `tsconfig` field of a `package.json` for `main`.
 fn resolve_config_in_packages(host: &dyn Host, name: &str, from_dir: &str) -> Option<String> {
+    if let Some(found) = resolve_config_in_package_scope(host, name, from_dir) {
+        return Some(found);
+    }
     let (package, rest) = split_package_name(name);
     let mut dir = from_dir;
     loop {
@@ -475,6 +495,43 @@ fn resolve_config_in_packages(host: &dyn Host, name: &str, from_dir: &str) -> Op
     }
 }
 
+/// `loadModuleFromImports` and `loadModuleFromSelfNameReference` of a config lookup: `name` through the `imports`, or under the name
+/// of the package through the `exports`, of the nearest `package.json` at or above `from_dir` (`getPackageScopeForPath`).
+fn resolve_config_in_package_scope(host: &dyn Host, name: &str, from_dir: &str) -> Option<String> {
+    let mut scope = from_dir;
+    let manifest = loop {
+        if let Some(text) = host.read(&join(scope, "package.json")) {
+            break Json::parse(&text)?;
+        }
+        let parent = parent_dir(scope);
+        if parent == scope || parent.is_empty() {
+            return None;
+        }
+        scope = parent;
+    };
+    let target = if name.starts_with('#') {
+        let imports = manifest
+            .get("imports")
+            .filter(|imports| imports.as_object().is_some())?;
+        let target = resolve_exports(imports, name)?;
+        // `loadModuleFromTargetExportOrImport`: a target that is no path is a module name, looked for from the package.
+        if !target.starts_with(['.', '/', '#']) {
+            return resolve_config_in_packages(host, &target, scope);
+        }
+        target
+    } else {
+        let rest = name.strip_prefix(manifest.get("name")?.as_str()?)?;
+        let subpath = match rest.strip_prefix('/') {
+            Some(_) => format!(".{rest}"),
+            None if rest.is_empty() => ".".to_owned(),
+            None => return None,
+        };
+        resolve_exports(manifest.get("exports")?, &subpath)?
+    };
+    Some(join(scope, target.strip_prefix("./")?))
+        .filter(|path| path.ends_with(".json") && host.is_file(path))
+}
+
 fn config_file_or_directory(host: &dyn Host, candidate: &str) -> Option<String> {
     if candidate.ends_with(".json") && host.is_file(candidate) {
         return Some(candidate.to_owned());
@@ -483,6 +540,12 @@ fn config_file_or_directory(host: &dyn Host, candidate: &str) -> Option<String> 
     if host.is_file(&with_extension) {
         return Some(with_extension);
     }
+    load_config_from_directory(host, candidate)
+}
+
+/// `loadNodeModuleFromDirectory` of a config lookup: the `tsconfig` field of the `package.json` in `candidate`, or else its
+/// `tsconfig.json`.
+fn load_config_from_directory(host: &dyn Host, candidate: &str) -> Option<String> {
     if !host.is_dir(candidate) {
         return None;
     }
@@ -513,7 +576,7 @@ fn split_package_name(name: &str) -> (&str, &str) {
     }
 }
 
-/// What `exports` gives for `subpath` (`.` or `./x`) to `require`.
+/// What `exports` gives for `subpath` (`.` or `./x`), or `imports` for a `#name`, to `require`.
 fn resolve_exports(exports: &Json, subpath: &str) -> Option<String> {
     fn target(json: &Json, star: &str) -> Option<String> {
         match json {
@@ -528,7 +591,7 @@ fn resolve_exports(exports: &Json, subpath: &str) -> Option<String> {
     }
     let is_subpath_map = exports
         .as_object()
-        .is_some_and(|o| o.iter().any(|(k, _)| k.starts_with('.')));
+        .is_some_and(|o| o.iter().any(|(k, _)| k.starts_with(['.', '#'])));
     if !is_subpath_map {
         return if subpath == "." {
             target(exports, "")
@@ -714,7 +777,8 @@ fn project_from_raw(
         }
     }
     let can_report_no_inputs = raw.files.is_none() && raw.references.is_none();
-    if raw.files.is_none() && raw.include.is_none() {
+    options.is_default_include_spec = raw.files.is_none() && raw.include.is_none();
+    if options.is_default_include_spec {
         raw.include = Some(vec!["**/*".to_owned()]);
     }
     let substitute_all = |specs: Vec<String>| -> Vec<String> {
@@ -725,17 +789,20 @@ fn project_from_raw(
     };
     let include_as_written = raw.include.clone().unwrap_or_default();
     let exclude_as_written = raw.exclude.clone().unwrap_or_default();
-    let include = substitute_all(validate_specs(
-        raw.include.take().unwrap_or_default(),
-        true,
-        &mut errors,
-    ));
+    let validated_include =
+        validate_specs(raw.include.take().unwrap_or_default(), true, &mut errors);
+    let include = substitute_all(validated_include.clone());
+    options.include_specs = validated_include
+        .into_iter()
+        .zip(include.iter().cloned())
+        .collect();
     let exclude = substitute_all(validate_specs(
         raw.exclude.take().unwrap_or_default(),
         false,
         &mut errors,
     ));
     let literal = substitute_all(raw.files.take().unwrap_or_default());
+    options.file_specs = literal.iter().map(|name| join(base, name)).collect();
     let files = file_names_from_specs(host, base, &options, &literal, &include, &exclude);
     if files.is_empty() && can_report_no_inputs && !config_path.is_empty() {
         let list = |specs: &[String]| {
@@ -831,6 +898,22 @@ impl OrderedFiles {
     fn values(self) -> impl Iterator<Item = String> {
         self.files.into_iter().flatten()
     }
+}
+
+/// `getMatchedIncludeSpec`: the first of `specs` (as written, as substituted) that the file at `path` matches, as it is written.
+pub fn matched_include_spec<'s>(
+    specs: &'s [(String, String)],
+    base: &str,
+    path: &str,
+    case_sensitive: bool,
+) -> Option<&'s str> {
+    specs
+        .iter()
+        .find(|spec| {
+            GlobPattern::compile(&spec.1, base, Usage::Files, case_sensitive)
+                .is_some_and(|pattern| pattern.matches(path, ""))
+        })
+        .map(|spec| spec.0.as_str())
 }
 
 /// `getFileNamesFromConfigSpecs`

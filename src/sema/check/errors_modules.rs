@@ -428,6 +428,51 @@ impl Checker<'_> {
         }
     }
 
+    /// `IsGlobalSourceFile(GetDeclarationContainer(symbol.Declarations[0]))`
+    fn is_first_declared_in_global_source_file(&self, sym: Sym) -> bool {
+        let files = self.files();
+        let Some(part) = files
+            .parts(sym)
+            .iter()
+            .copied()
+            .find(|&part| !files.symbol(part).decls.is_empty())
+        else {
+            return false;
+        };
+        let (hir, bound) = (files.hir(part.file), files.bound(part.file));
+        let symbol = files.symbol(part);
+        // The locals of a script: what is declared at its top, not in a `global` block, a namespace or an ambient module.
+        if files.module(part.file).is_module()
+            || bound.lookup(bound.scopes[0].locals, symbol.name) != Some(part.id)
+        {
+            return false;
+        }
+        // A `var` is among them wherever it is written.
+        let Decl::Var(pat) = symbol.decls[0] else {
+            return true;
+        };
+        let PatParent::Var(declaration) = root_declaration(bound, pat) else {
+            return false;
+        };
+        let statement = bound.var_stmt[declaration.idx()];
+        if statement.is_none() {
+            return false;
+        }
+        // The declarations in the head of a loop are in what the loop is in.
+        let container = match bound.stmt_parent[statement.idx()] {
+            Parent::Stmt(around)
+                if matches!(
+                    hir[around].kind,
+                    StmtKind::For { .. } | StmtKind::ForIn { .. } | StmtKind::ForOf { .. }
+                ) =>
+            {
+                bound.stmt_parent[around.idx()]
+            }
+            container => container,
+        };
+        container == Parent::File
+    }
+
     fn check_exports(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         // What is exported by name, without saying from where, has to be the module's own.
@@ -443,17 +488,7 @@ impl Checker<'_> {
                         .files()
                         .resolve_name(file, bound.export_scope[x], name, all)
                     {
-                        // `IsGlobalSourceFile(GetDeclarationContainer(..))`, of the first declaration: what a module adds to the global scope, or
-                        // goes by there, is written in the module.
-                        Some(found) => {
-                            found.file != file && !self.files().module(found.file).is_module()
-                                || self.files().global(name, all) == Some(found)
-                                    && self
-                                        .files()
-                                        .decls(found)
-                                        .first()
-                                        .is_some_and(|&(f, _)| !self.files().module(f).is_module())
-                        }
+                        Some(found) => self.is_first_declared_in_global_source_file(found),
                         None => matches!(name, known::undefined | known::globalThis),
                     };
                 let text = self.files().atoms.bytes(name);

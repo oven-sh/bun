@@ -25,10 +25,11 @@ impl Checker<'_> {
         if hir.has_errors || hir.kind == FileKind::Json {
             return;
         }
-        // `checkEnumDeclaration` and `checkAndReportErrorForUsingTypeAsValue` apply to declaration files too. The other passes only
-        // support source files.
+        // `checkEnumDeclaration`, `initializeChecker` and `checkAndReportErrorForUsingTypeAsValue` apply to declaration files too. The
+        // other passes only support source files.
         if hir.kind == FileKind::Declaration {
             self.check_x_enum_member_values(file, out);
+            self.check_x_built_in_global_names(file, out);
             self.check_x_mapped_types_meant(file, out);
             return;
         }

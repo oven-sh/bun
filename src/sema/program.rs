@@ -294,6 +294,17 @@ impl Module {
     }
 }
 
+/// What `cloneSymbol` copied when `mergeSymbol` put the clone in the table of another symbol.
+struct ClonedSymbol {
+    flags: SymFlags,
+    /// `None`: nothing was merged into it, so it is not transient.
+    parts: Option<Vec<Sym>>,
+    every_part: Option<Vec<Sym>>,
+    exports: Option<FxHashMap<Atom, Sym>>,
+    /// The entries that have the clone: whose exports, and the name.
+    entries: Vec<(Sym, Atom)>,
+}
+
 pub struct Files {
     pub atoms: Interner,
     pub options: Options,
@@ -315,6 +326,9 @@ pub struct Files {
     every_part: FxHashMap<Sym, Vec<Sym>>,
     /// While symbols are put together: `name_means_instead`.
     stand_ins: Vec<(Sym, SymbolId)>,
+    /// While symbols are put together: the symbols `mergeSymbol` reached through an alias or an `export *` and cloned. The table that
+    /// declares such a symbol keeps what was cloned. The symbol stands for the clone (`getMergedSymbol`).
+    clones: FxHashMap<Sym, ClonedSymbol>,
     merged_exports: FxHashMap<Sym, FxHashMap<Atom, Sym>>,
     /// The tables of `merged_exports` sorted by name, once symbols are put together.
     sorted_exports: FxHashMap<Sym, Box<[(Atom, Sym)]>>,
@@ -342,6 +356,9 @@ pub struct Files {
     ranks: Vec<u32>,
     /// What is wrong with what the options name, no file being to blame.
     program_errors: Vec<Problem>,
+    /// `GetIncludeProcessorDiagnostics`: what is wrong with a file being in the program, reported where another file refers to it:
+    /// that file, from where to where.
+    include_errors: Vec<(FileId, u32, u32, Problem)>,
     /// The `package.json` of each package in a `node_modules` that a file of the program is in, by its directory. Only where declaration
     /// files are emitted, which have to call such files something.
     pub package_jsons: FxHashMap<String, Json>,
@@ -582,6 +599,15 @@ pub(crate) fn jsx_runtime_of(options: &Options, hir: &File, atoms: &Interner) ->
         .then(|| format!("{}/{runtime}", options.jsx_import_source))
 }
 
+/// `GetLibFileName`: the `N` of the `lib.N.d.ts` that has the library `lib`, which `lib_name` made. The library directory of a
+/// TypeScript that has not moved the library yet has it under the name itself.
+fn lib_file_stem<'a>(host: &dyn Host, options: &Options, lib: &'a str) -> &'a str {
+    match crate::resolve::lib_fallback_name(lib) {
+        Some(moved_to) if !host.is_file(&format!("{}/lib.{lib}.d.ts", options.lib_dir)) => moved_to,
+        _ => lib,
+    }
+}
+
 /// `pathForLibFile`: where `lib.<lib>.d.ts` is read from, and whether that is TypeScript's own file.
 fn lib_path(resolver: &Resolver, options: &Options, lib: &str) -> (String, bool) {
     if options.lib_replacement {
@@ -790,15 +816,356 @@ fn common_directory_of(files: &[&str], is_case_sensitive: bool) -> Option<String
     Some(join("/", &common.join("/")))
 }
 
-/// The parts of `verifyCompilerOptions` that go by where output is written. 6059 (`checkSourceFilesBelongToPath`) for a root file that
-/// is not under `rootDir`, 5009 and 5011 for what the sources have in common, and `verifyEmitFilePath`: 5055 for an output file that is
-/// an input file, 5056 for one that two input files are written to.
-fn output_path_errors(
+/// `FileIncludeReason`, of a file that `checkSourceFilesBelongToPath` objects to.
+#[derive(Copy, Clone)]
+enum IncludeReason {
+    /// `fileIncludeKindRootFile`
+    RootFile,
+    /// `fileIncludeKindImport` (1393) or `fileIncludeKindReferenceFile` (1400): the file that refers to it, from where to where.
+    Reference {
+        code: u32,
+        from: FileId,
+        start: u32,
+        end: u32,
+    },
+}
+
+/// Where the string literal that starts at `start` ends.
+fn end_of_string_literal(text: &[u8], start: u32) -> u32 {
+    let Some(&quote) = text.get(start as usize) else {
+        return start;
+    };
+    let mut at = start as usize + 1;
+    while let Some(&c) = text.get(at) {
+        at += 1;
+        match c {
+            b'\\' => at += 1,
+            b'\n' => return at as u32 - 1,
+            _ if c == quote => break,
+            _ => {}
+        }
+    }
+    at.min(text.len()) as u32
+}
+
+/// `referenceFileLocation` of each `/// <reference path>` and each import in `module` that leads to a file of the program: that file,
+/// the code of the message that says so, from where to where. In the order of `parseTask.subTasks`.
+fn reference_locations(
     host: &dyn Host,
     options: &Options,
+    atoms: &Interner,
+    by_path: &FxHashMap<String, FileId>,
+    module: &Module,
+) -> Vec<(FileId, u32, u32, u32)> {
+    let parsed;
+    let hir = if module.is_dropped || module.is_transient {
+        parsed = host.parse(&module.path, &module.hir.text, atoms, options);
+        &parsed
+    } else {
+        &module.hir
+    };
+    let text: &[u8] = &module.hir.text;
+    let mut locations = Vec::new();
+    for &(kind, value, pos, _) in hir.references.iter() {
+        if matches!(kind, ReferenceKind::Path)
+            && !options.no_resolve
+            && let Ok(found) = referenced_file(
+                host,
+                options,
+                &referenced_path(&atoms.text(value), &module.path),
+                &module.path,
+            )
+            && let Some(&target) = by_path.get(&found)
+        {
+            let end = pos + atoms.bytes(value).len() as u32;
+            locations.push((target, 1400, pos, end));
+        }
+    }
+    // `file.Imports()`: the specifiers of statements, then those of `import()`, the call and the type.
+    let mut uses = hir.specifier_uses.clone();
+    uses.sort_by_key(|u| u.pos);
+    let mut dynamic = Vec::new();
+    for u in &uses {
+        let mode = if u.mode != ResolutionMode::None {
+            u.mode
+        } else if u.kind == SpecifierKind::Require {
+            ResolutionMode::Require
+        } else {
+            module.default_mode
+        };
+        let Some(&target) = module.imports.get(&(u.spec, mode)) else {
+            continue;
+        };
+        let location = (target, 1393, u.pos, end_of_string_literal(text, u.pos));
+        let before = text
+            .get(..u.pos as usize)
+            .unwrap_or_default()
+            .trim_ascii_end();
+        if u.kind == SpecifierKind::Import && before.ends_with(b"(") {
+            dynamic.push(location);
+        } else {
+            locations.push(location);
+        }
+    }
+    let call_mode = options.import_call_mode(module.default_mode);
+    for e in hir.exprs.iter() {
+        if let ExprKind::ImportCall(argument) = e.kind
+            && let ExprKind::String(spec) = hir[argument].kind
+            && let Some(&target) = module.imports.get(&(spec, call_mode))
+        {
+            let pos = hir[argument].pos;
+            dynamic.push((target, 1393, pos, end_of_string_literal(text, pos)));
+        }
+    }
+    dynamic.sort_by_key(|location| location.2);
+    locations.extend(dynamic);
+    locations
+}
+
+/// `computeDiagnostic` of `fileIncludeKindRootFile`: the code and the arguments of what says why the root file at `path` is one.
+fn root_file_reason(options: &Options, path: &str, is_case_sensitive: bool) -> (u32, Vec<String>) {
+    if options.config_path.is_empty() {
+        return (1427, Vec::new());
+    }
+    if options
+        .file_specs
+        .iter()
+        .any(|spec| is_same_name(spec, path, is_case_sensitive))
+    {
+        return (1409, Vec::new());
+    }
+    if options.is_default_include_spec {
+        return (1457, Vec::new());
+    }
+    match crate::config::matched_include_spec(
+        &options.include_specs,
+        &options.base_dir,
+        path,
+        is_case_sensitive,
+    ) {
+        Some(spec) => (1407, vec![spec.to_owned(), options.config_path.clone()]),
+        None => (1427, Vec::new()),
+    }
+}
+
+/// `explainRedirectAndImpliedFormat`: the code and the arguments of what says why `module` is emitted as the kind of module it is.
+fn implied_format_reason(
+    resolver: &Resolver,
+    options: &Options,
+    module: &Module,
+) -> Option<(u32, Vec<String>)> {
+    if !module.is_module() {
+        return None;
+    }
+    // `loadSourceFileMetaData`
+    let mut dir = parent_dir(&module.path);
+    let scope = loop {
+        if let Some(json) = resolver.package_json(dir) {
+            break Some((join(dir, "package.json"), json));
+        }
+        if dir.is_empty() || dir == "/" {
+            break None;
+        }
+        dir = parent_dir(dir);
+    };
+    let is_type_recorded = options.resolves_like_node
+        && ![".mts", ".cts", ".mjs", ".cjs"]
+            .iter()
+            .any(|e| module.path.ends_with(e))
+        || module.path.contains("/node_modules/");
+    let package_type = scope
+        .as_ref()
+        .filter(|_| is_type_recorded)
+        .and_then(|scope| scope.1.get("type"))
+        .and_then(Json::as_str)
+        .unwrap_or("");
+    let package_json = scope.as_ref().map(|scope| scope.0.clone());
+    match (module.implied_format, package_json) {
+        (ResolutionMode::Import, Some(path)) if package_type == "module" => {
+            Some((1458, vec![path]))
+        }
+        (ResolutionMode::Require, Some(path)) if !package_type.is_empty() => {
+            Some((1459, vec![path]))
+        }
+        (ResolutionMode::Require, Some(path)) => Some((1460, vec![path])),
+        (ResolutionMode::Require, None) => Some((1461, Vec::new())),
+        _ => None,
+    }
+}
+
+/// `checkSourceFilesBelongToPath`, `createDiagnosticExplainingFile`: 6059 for each source file that would be emitted and is not under
+/// `root_dir`. With it the first import or `/// <reference path>` that brings the file into the program (`preferredLocation`: the
+/// file, from where to where), which is where it is reported.
+#[allow(clippy::too_many_arguments)]
+fn source_files_outside_root_dir(
+    host: &dyn Host,
+    options: &Options,
+    atoms: &Interner,
     modules: &[ModuleCell],
     by_path: &FxHashMap<String, FileId>,
     roots: &[String],
+    starts: &[FileId],
+    root_dir: &str,
+) -> Vec<(Option<(FileId, u32, u32)>, Problem)> {
+    let is_case_sensitive = host.is_case_sensitive();
+    // `sourceFileMayBeEmitted`. A JSON file outside of the common source directory would be written over itself: it is not emitted.
+    let mut is_outside: Vec<bool> = modules
+        .iter()
+        .map(|module| {
+            !module.is_lib
+                && matches!(module.hir.kind, FileKind::Ts | FileKind::Tsx)
+                && !module.path.contains("/node_modules/")
+                && !is_path_under(root_dir, &module.path, is_case_sensitive)
+        })
+        .collect();
+    if !is_outside.contains(&true) {
+        return Vec::new();
+    }
+    let mut is_root = vec![false; modules.len()];
+    for root in roots {
+        if let Some(&id) = by_path.get(root) {
+            is_root[id.idx()] = true;
+        }
+    }
+    // `IsSourceFileFromExternalLibrary`: `lowestDepth > 0`. `IsExternalLibraryImport` goes by the path before links are followed, which
+    // is not kept, so a specifier that is not relative and that `paths` does not match counts as one that leads into a package.
+    let is_library_import = |spec: Atom| {
+        let text = atoms.text(spec);
+        !is_relative(&text)
+            && crate::resolve::best_pattern(options.paths.as_slice(), &text).is_none()
+    };
+    let mut is_local = is_root.clone();
+    let mut pending: Vec<usize> = (0..modules.len()).filter(|&i| is_root[i]).collect();
+    while let Some(i) = pending.pop() {
+        let module = &modules[i];
+        for &target in &module.edges {
+            if is_local[target.idx()] {
+                continue;
+            }
+            let mut specifiers = module
+                .imports
+                .iter()
+                .filter(|import| *import.1 == target)
+                .map(|import| import.0.0)
+                .peekable();
+            // No specifier: a `/// <reference>`.
+            if specifiers.peek().is_none() || specifiers.any(|spec| !is_library_import(spec)) {
+                is_local[target.idx()] = true;
+                pending.push(target.idx());
+            }
+        }
+    }
+    for (i, outside) in is_outside.iter_mut().enumerate() {
+        // `GetProjectReferenceFromSource`: which files belong to a referenced project is not known here.
+        *outside &= is_local[i] && (is_root[i] || !options.has_project_references);
+    }
+    if !is_outside.contains(&true) {
+        return Vec::new();
+    }
+    // `collectFiles`: the reason of a sub task is added before the walk goes into it.
+    let mut reasons: Vec<Vec<IncludeReason>> = vec![Vec::new(); modules.len()];
+    let mut locations: FxHashMap<FileId, Vec<(FileId, u32, u32, u32)>> = FxHashMap::default();
+    let mut seen = vec![false; modules.len()];
+    for &first in starts {
+        if is_outside[first.idx()] && is_root[first.idx()] {
+            reasons[first.idx()].push(IncludeReason::RootFile);
+        }
+        // (file, how many of its edges have been followed)
+        let mut stack: Vec<(FileId, usize)> = Vec::new();
+        if !std::mem::replace(&mut seen[first.idx()], true) {
+            stack.push((first, 0));
+        }
+        while let Some(top) = stack.last_mut() {
+            let (file, next) = *top;
+            let edges = &modules[file.idx()].edges;
+            let Some(&edge) = edges.get(next) else {
+                stack.pop();
+                continue;
+            };
+            top.1 += 1;
+            if is_outside[edge.idx()] && !edges[..next].contains(&edge) {
+                let found = locations.entry(file).or_insert_with(|| {
+                    reference_locations(host, options, atoms, by_path, &modules[file.idx()])
+                });
+                reasons[edge.idx()].extend(found.iter().filter(|location| location.0 == edge).map(
+                    |&(_, code, start, end)| IncludeReason::Reference {
+                        code,
+                        from: file,
+                        start,
+                        end,
+                    },
+                ));
+            }
+            if !std::mem::replace(&mut seen[edge.idx()], true) {
+                stack.push((edge, 0));
+            }
+        }
+    }
+    let resolver = Resolver::new(host, options);
+    let mut problems = Vec::new();
+    for (i, module) in modules.iter().enumerate() {
+        let reasons = &reasons[i];
+        if !is_outside[i] || reasons.is_empty() {
+            continue;
+        }
+        let preferred_location = reasons.iter().find_map(|reason| match *reason {
+            IncludeReason::Reference {
+                from, start, end, ..
+            } => Some((from, start, end)),
+            IncludeReason::RootFile => None,
+        });
+        let mut problem = Problem::new(6059, &[module.path.as_str(), root_dir], Place::Nowhere);
+        if preferred_location.is_none() || reasons.len() != 1 {
+            problem = problem.with(1, 1430, &[]);
+            for reason in reasons {
+                problem = match *reason {
+                    IncludeReason::RootFile => {
+                        let (code, args) =
+                            root_file_reason(options, &module.path, is_case_sensitive);
+                        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+                        problem.with(2, code, &args)
+                    }
+                    IncludeReason::Reference {
+                        code,
+                        from,
+                        start,
+                        end,
+                    } => {
+                        let from = &modules[from.idx()];
+                        let written = from
+                            .hir
+                            .text
+                            .get(start as usize..end as usize)
+                            .unwrap_or_default();
+                        let written = String::from_utf8_lossy(written);
+                        problem.with(2, code, &[&*written, from.path.as_str()])
+                    }
+                };
+            }
+        }
+        if let Some((code, args)) = implied_format_reason(&resolver, options, module) {
+            let args: Vec<&str> = args.iter().map(String::as_str).collect();
+            problem = problem.with(1, code, &args);
+        }
+        problems.push((preferred_location, problem));
+    }
+    problems
+}
+
+/// The parts of `verifyCompilerOptions` that go by where output is written. 6059 (`checkSourceFilesBelongToPath`) for a source file
+/// that is not under `rootDir`, 5009 and 5011 for what the sources have in common, and `verifyEmitFilePath`: 5055 for an output file
+/// that is an input file, 5056 for one that two input files are written to. What is reported at a place in a file goes to
+/// `include_errors`.
+#[allow(clippy::too_many_arguments)]
+fn output_path_errors(
+    host: &dyn Host,
+    options: &Options,
+    atoms: &Interner,
+    modules: &[ModuleCell],
+    by_path: &FxHashMap<String, FileId>,
+    roots: &[String],
+    starts: &[FileId],
+    include_errors: &mut Vec<(FileId, u32, u32, Problem)>,
 ) -> Vec<Problem> {
     let mut errors = Vec::new();
     let is_case_sensitive = host.is_case_sensitive();
@@ -836,15 +1203,12 @@ fn output_path_errors(
         if said.is_empty() {
             common = common_directory_of(&paths, is_case_sensitive);
         } else {
-            // What an import brings in may belong to a project that is referred to, which is not kept track of.
-            let roots: FxHashSet<&str> = roots.iter().map(String::as_str).collect();
-            for &path in &paths {
-                if roots.contains(path) && !is_path_under(said, path, is_case_sensitive) {
-                    errors.push(
-                        Problem::new(6059, &[path, said], Place::Nowhere)
-                            .with(1, 1430, &[])
-                            .with(2, 1427, &[]),
-                    );
+            for (at, problem) in source_files_outside_root_dir(
+                host, options, atoms, modules, by_path, roots, starts, said,
+            ) {
+                match at {
+                    Some((file, start, end)) => include_errors.push((file, start, end, problem)),
+                    None => errors.push(problem),
                 }
             }
             common = Some(said.to_owned());
@@ -1120,6 +1484,7 @@ impl Files {
 
         let mut starts: Vec<FileId> = Vec::new();
         for lib in &options.libs {
+            let lib = lib_file_stem(host, &options, lib);
             let (path, is_lib) = lib_path(&resolver, &options, lib);
             starts.push(add(
                 path,
@@ -1373,8 +1738,16 @@ impl Files {
                 }
             }
         }
+        let mut include_errors = Vec::new();
         program_errors.extend(output_path_errors(
-            host, &options, &modules, &by_path, roots,
+            host,
+            &options,
+            &atoms,
+            &modules,
+            &by_path,
+            roots,
+            &starts,
+            &mut include_errors,
         ));
         let has_type_only_stars = modules
             .iter()
@@ -1394,6 +1767,7 @@ impl Files {
             merged_parts: FxHashMap::default(),
             every_part: FxHashMap::default(),
             stand_ins: Vec::new(),
+            clones: FxHashMap::default(),
             merged_exports: FxHashMap::default(),
             sorted_exports: FxHashMap::default(),
             refused_merges: Vec::new(),
@@ -1407,6 +1781,7 @@ impl Files {
             order: Vec::new(),
             ranks: Vec::new(),
             program_errors,
+            include_errors,
             package_jsons,
             linked_directories,
         };
@@ -1852,9 +2227,10 @@ impl Files {
                         continue;
                     }
                     let name = lib_name(&value);
+                    let name = lib_file_stem(host, options, &name);
                     // `GetLibFileName`: whether there is such a library does not depend on what stands in for it.
                     if host.is_file(&format!("{}/lib.{name}.d.ts", options.lib_dir)) {
-                        let (found, is_lib) = lib_path(resolver, options, &name);
+                        let (found, is_lib) = lib_path(resolver, options, name);
                         libs.push((found, is_lib, false));
                     } else {
                         missing_references.push((pos, 2726));
@@ -1943,6 +2319,17 @@ impl Files {
     /// What is wrong with what the options name, no file being to blame. What is wrong with the options themselves is in `options.problems`.
     pub fn program_problems(&self) -> &[Problem] {
         &self.program_errors
+    }
+
+    /// `GetIncludeProcessorDiagnostics`: what is wrong with a file being in the program, reported at a place in `file` that refers to
+    /// it. The second and the third are from where to where.
+    pub fn include_problems_in(
+        &self,
+        file: FileId,
+    ) -> impl Iterator<Item = &(FileId, u32, u32, Problem)> {
+        self.include_errors
+            .iter()
+            .filter(move |problem| problem.0 == file)
     }
 
     /// The module `file` imports for its JSX without saying so.
@@ -2164,7 +2551,8 @@ impl Files {
                                 self.refused_merges.push((found, addition));
                                 continue;
                             }
-                            let merged = self.merge_symbols(found, addition);
+                            let entry = (self.canonical(target), name);
+                            let merged = self.merge_symbols_at(found, addition, Some(entry), true);
                             passed_on.push((name, merged));
                         }
                     }
@@ -2225,6 +2613,18 @@ impl Files {
 
     /// `mergeSymbol`: `source` becomes a part of `target`. The answer is what the name the two go by means from then on.
     fn merge_symbols(&mut self, target: Sym, source: Sym) -> Sym {
+        self.merge_symbols_at(target, source, None, false)
+    }
+
+    /// `merge_symbols`. `entry`: the symbol whose exports the answer is put in, and the name. `is_resolved`: `target` is not what
+    /// `entry` has but what an `export *` leads to.
+    fn merge_symbols_at(
+        &mut self,
+        target: Sym,
+        source: Sym,
+        entry: Option<(Sym, Atom)>,
+        mut is_resolved: bool,
+    ) -> Sym {
         let mut target = self.canonical(target);
         let source = self.canonical(source);
         if target == source {
@@ -2256,6 +2656,7 @@ impl Files {
                         return source;
                     }
                     target = resolved;
+                    is_resolved = true;
                 }
                 // It may be a property of what a module `export =`s, which only the type of that tells. The alias goes on standing for it.
                 None if self.may_be_property_of_export_equals(target) => {}
@@ -2285,6 +2686,11 @@ impl Files {
                 .entry(target)
                 .or_insert_with(|| vec![target])
                 .extend(refused);
+            return target;
+        }
+        if let Some(entry) = entry
+            && !self.prepare_merge_target(target, source, entry, is_resolved)
+        {
             return target;
         }
         let source_parts = self
@@ -2360,7 +2766,7 @@ impl Files {
                 .and_then(|table| table.get(&name))
                 .copied()
             {
-                Some(existing) => self.merge_symbols(existing, sym),
+                Some(existing) => self.merge_symbols_at(existing, sym, Some((target, name)), false),
                 None => self.canonical(sym),
             };
             if let Some(table) = self.merged_exports.get_mut(&target) {
@@ -2368,6 +2774,110 @@ impl Files {
             }
         }
         target
+    }
+
+    /// `mergeSymbol` clones a target that is not transient and `mergeSymbolTable` puts the clone in `entry`. Where the target was
+    /// reached through an alias or an `export *` (`is_resolved`), the table that declares it keeps the symbol that was cloned, and
+    /// the next merge that starts from that symbol clones it again. Called when `source` is about to be merged into `target`.
+    /// Returns whether `source` becomes a part of what `target` stands for.
+    fn prepare_merge_target(
+        &mut self,
+        target: Sym,
+        source: Sym,
+        entry: (Sym, Atom),
+        is_resolved: bool,
+    ) -> bool {
+        let Some(cloned) = self.clones.get(&target) else {
+            if is_resolved {
+                let cloned = ClonedSymbol {
+                    flags: self.symbol(target).flags,
+                    parts: self.merged_parts.get(&target).cloned(),
+                    every_part: self.every_part.get(&target).cloned(),
+                    exports: self.merged_exports.get(&target).cloned(),
+                    entries: vec![entry],
+                };
+                self.clones.insert(target, cloned);
+            }
+            return true;
+        };
+        if !is_resolved {
+            // The entry has the clone, which is transient.
+            if cloned.entries.contains(&entry) {
+                return true;
+            }
+            // The entry has the symbol that was cloned. It is transient and gets `source`, but `getMergedSymbol` of it is the clone.
+            if cloned.parts.is_some() {
+                let flags = self.symbol(source).flags;
+                let parts = self.parts(source).into_vec();
+                let every_part = self.every_part(source).into_vec();
+                if let Some(cloned) = self.clones.get_mut(&target) {
+                    cloned.flags |= flags;
+                    if let Some(list) = &mut cloned.parts {
+                        list.extend(parts);
+                    }
+                    if let Some(list) = &mut cloned.every_part {
+                        list.extend(every_part);
+                    }
+                }
+                return false;
+            }
+        }
+        let Some(mut cloned) = self.detach_clone(target) else {
+            return true;
+        };
+        if is_resolved {
+            cloned.entries.push(entry);
+            self.clones.insert(target, cloned);
+        }
+        true
+    }
+
+    /// `recordMergedSymbol` is about to point `original` at a new clone. The clone it stands for so far keeps its parts and the entries
+    /// it is in, and goes by the first symbol that was merged into it. `original` is what was cloned again. Returns that, without entries.
+    fn detach_clone(&mut self, original: Sym) -> Option<ClonedSymbol> {
+        let mut cloned = self.clones.remove(&original)?;
+        let parts = self.merged_parts.remove(&original).unwrap_or_default();
+        let is_copied = |part: Sym| match &cloned.parts {
+            Some(copied) => copied.contains(&part),
+            None => part == original,
+        };
+        let Some(clone) = parts.iter().copied().find(|&part| !is_copied(part)) else {
+            if !parts.is_empty() {
+                self.merged_parts.insert(original, parts);
+            }
+            return Some(cloned);
+        };
+        for &part in &parts {
+            if !is_copied(part) {
+                self.merged_into.insert(part, clone);
+            }
+        }
+        self.merged_into.remove(&clone);
+        let flags = self.symbol(original).flags;
+        self.symbol_mut(clone).flags |= flags;
+        self.symbol_mut(original).flags = cloned.flags;
+        self.merged_parts.insert(clone, parts);
+        if let Some(every_part) = self.every_part.remove(&original) {
+            self.every_part.insert(clone, every_part);
+        }
+        if let Some(exports) = self.merged_exports.remove(&original) {
+            self.merged_exports.insert(clone, exports);
+        }
+        if let Some(parts) = cloned.parts.clone() {
+            self.merged_parts.insert(original, parts);
+        }
+        if let Some(every_part) = cloned.every_part.clone() {
+            self.every_part.insert(original, every_part);
+        }
+        if let Some(exports) = cloned.exports.clone() {
+            self.merged_exports.insert(original, exports);
+        }
+        for (owner, name) in cloned.entries.drain(..) {
+            if let Some(table) = self.merged_exports.get_mut(&owner) {
+                table.insert(name, clone);
+            }
+        }
+        Some(cloned)
     }
 
     /// Names are looked up in the table the two symbols were to share, which has `target`. The binder has found `refused` for those in

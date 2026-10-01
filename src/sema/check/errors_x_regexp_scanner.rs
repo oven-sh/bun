@@ -1503,7 +1503,7 @@ fn is_in_ranges(ch: u32, ranges: &[(u32, u32)]) -> bool {
 
 /// `GetSpellingSuggestionForStrings`: the closest of `candidates` to `name`, of those that are close. Of two that are as close, the one
 /// that sorts first.
-fn spelling_suggestion<'c>(
+pub(super) fn spelling_suggestion<'c>(
     name: &[u8],
     candidates: impl Iterator<Item = &'c [u8]>,
 ) -> Option<String> {

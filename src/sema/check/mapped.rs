@@ -1123,6 +1123,8 @@ impl<'p> Checker<'p> {
                 let mut results: SmallVec<[TypeId; 8]> = SmallVec::with_capacity(parts.len());
                 for &part in parts.iter() {
                     let mut pairs = self.p.types.mapping(mapper).to_vec();
+                    // What `map_mapper` took along for a checked `T[K]` goes by the whole union.
+                    pairs.retain(|p| !matches!(self.data(p.0), TypeData::IndexedAccess { .. }));
                     for p in &mut pairs {
                         if p.0 == check_declared {
                             p.1 = part;
@@ -1168,10 +1170,16 @@ impl<'p> Checker<'p> {
     ) -> TypeId {
         let (mut file, mut node, mut mapper) = (file, node, mapper);
         let mut extra_types: Vec<TypeId> = Vec::new();
-        // The roots of the tail calls that the loop has followed. Its length is `tailCount`.
-        let mut tail_roots: Vec<(FileId, TypeNodeId, MapperId)> = Vec::new();
+        // `tailCount`
+        let mut tail_count = 0;
+        // The roots that the loop has reached through a type reference.
+        let mut tail_roots: crate::util::FxHashSet<(FileId, TypeNodeId, MapperId)> =
+            Default::default();
+        // Whether each of their nodes is the body of a type alias.
+        let mut has_alias: SmallVec<[((FileId, TypeNodeId), bool); 4]> = SmallVec::new();
         let result = loop {
-            if tail_roots.len() == 1000 {
+            // `tailCount` leaves out a root that is not the body of a type alias. In tsgo `instantiationCount` ends a loop of those.
+            if tail_count == 1000 || tail_roots.len() == 10_000 {
                 return self.excessively_deep();
             }
             if !tail_roots.is_empty() && self.is_out_of_time() {
@@ -1309,11 +1317,28 @@ impl<'p> Checker<'p> {
             ) {
                 Ok((root, is_tail_call)) => {
                     if is_tail_call {
-                        // The loop is deterministic: a root that comes back under the same mapper comes back until `tailCount == 1000`.
-                        if tail_roots.contains(&root) {
+                        // The loop is deterministic: a root that comes back under the same mapper comes back until a limit is hit.
+                        if !tail_roots.insert(root) {
                             return self.excessively_deep();
                         }
-                        tail_roots.push(root);
+                        // `newRoot.alias != nil`
+                        let known = has_alias
+                            .iter()
+                            .find(|known| known.0 == (root.0, root.1))
+                            .map(|known| known.1);
+                        let root_has_alias = match known {
+                            Some(known) => known,
+                            None => {
+                                let scope = self.bound(root.0).type_scope[root.1.idx()];
+                                let found = scope.is_some()
+                                    && self.alias_with_body(root.0, scope, root.1).is_some();
+                                has_alias.push(((root.0, root.1), found));
+                                found
+                            }
+                        };
+                        if root_has_alias {
+                            tail_count += 1;
+                        }
                     }
                     (file, node, mapper) = root;
                 }
@@ -1328,7 +1353,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `Ok`: the conditional type that the loop of `getConditionalType` continues with instead of instantiating the branch at `branch`
-    /// under `mapper`, and whether that step counts as a tail call. `Err`: the declared type of the branch, which is to be
+    /// under `mapper`, and whether it is reached through a type reference. `Err`: the declared type of the branch, which is to be
     /// instantiated. `outer_check` is the declared check type of the conditional type that has the branch.
     fn tail_recursion_root(
         &mut self,
@@ -1367,12 +1392,9 @@ impl<'p> Checker<'p> {
             return Err(declared);
         }
         // `instantiate` recognizes the error type among the new type arguments and answers with it (`checkType == c.errorType`).
-        let (before, after) = (self.p.types.mapping(own), self.p.types.mapping(root_mapper));
-        if before
-            .iter()
-            .zip(after)
-            .any(|(b, a)| a.1 == TypeId::ANY && self.is_tuple(b.1))
-        {
+        if self.p.types.mapping(own).iter().any(|before| {
+            self.is_tuple(before.1) && self.p.types.map(root_mapper, before.0) == Some(TypeId::ANY)
+        }) {
             return Err(declared);
         }
         if is_distributive && let Some(value) = self.p.types.map(root_mapper, root_check) {
@@ -1381,8 +1403,7 @@ impl<'p> Checker<'p> {
                 return Err(declared);
             }
         }
-        // tsgo counts a root that is the body of a type alias (`newRoot.alias != nil`). Every root that is not written in the branch
-        // itself is reached through a type reference and counts here, which bounds the loop: the other steps descend in the syntax.
+        // A root that is not written in the branch itself is reached through a type reference. The other steps descend in the syntax.
         Ok((
             (root_file, root, root_mapper),
             (root_file, root) != (file, branch),
@@ -1620,10 +1641,16 @@ impl<'p> Checker<'p> {
         }
         let with = |c: &mut Self, t: TypeId| {
             let mut pairs = c.p.types.mapping(mapper).to_vec();
+            let mut is_changed = false;
             for p in &mut pairs {
                 if p.0 == source {
+                    is_changed |= p.1 != t;
                     p.1 = t;
                 }
+            }
+            // What `map_mapper` took along for a checked `T[K]` goes by what `source` stood for.
+            if is_changed {
+                pairs.retain(|p| !matches!(c.data(p.0), TypeData::IndexedAccess { .. }));
             }
             c.p.types.mapper(pairs)
         };

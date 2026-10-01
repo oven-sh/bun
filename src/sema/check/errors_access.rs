@@ -1168,7 +1168,7 @@ impl Checker<'_> {
 
     /// `getIndexInfosOfType`: the key of each index signature of `ty`, which is an apparent type, and whether it is readonly.
     /// Of a union (`getUnionIndexInfos`), those of its first member that all the others have, readonly if one of them is.
-    fn index_signatures_of(&mut self, ty: TypeId) -> SmallVec<[(TypeId, bool); 4]> {
+    pub(super) fn index_signatures_of(&mut self, ty: TypeId) -> SmallVec<[(TypeId, bool); 4]> {
         let mut infos: SmallVec<[(TypeId, bool); 4]> = SmallVec::new();
         for (at, &part) in self.parts(ty).iter().enumerate() {
             let part = self.apparent_type(part);

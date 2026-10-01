@@ -1105,9 +1105,28 @@ impl Checker<'_> {
                 }
                 Some(self.union(&constraints))
             }
-            // Of these it is not kept apart whether there is none or it is `unknown`.
             _ if self.is_deferred(ty) => {
-                Some(self.base_constraint(ty)).filter(|&c| c != TypeId::UNKNOWN)
+                let constraint = self.base_constraint(ty);
+                if constraint != TypeId::UNKNOWN {
+                    return Some(constraint);
+                }
+                // Only of `T[K]` is it told apart whether there is none or it is `unknown`. `computeBaseConstraint`: both parts have
+                // one, and the one has something under the other.
+                let TypeData::IndexedAccess {
+                    obj,
+                    index,
+                    undefined,
+                } = *self.data(ty)
+                else {
+                    return None;
+                };
+                if depth > 16 {
+                    return None;
+                }
+                let base_object = self.base_constraint_if_any(obj, depth + 1)?;
+                let base_index = self.base_constraint_if_any(index, depth + 1)?;
+                let access = self.indexed_access_flagged(base_object, base_index, undefined)?;
+                self.base_constraint_if_any(access, depth + 1)
             }
             _ => Some(ty),
         }

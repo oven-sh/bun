@@ -1222,6 +1222,7 @@ impl<'p> Checker<'p> {
                 && self.is_context_sensitive(file, e)
                 && let Some(param) = self.context_of_arg_at(params, i, Some(args.len()))
                 && (!self.has_room_for_literal(file, e, param)
+                    || !self.is_any_function_type_related_to(file, e, param, false)
                     || self.literal_lacks_target_signatures(file, e, param)
                     || !self.do_plain_members_fit(file, e, param, false))
             {
@@ -1736,7 +1737,16 @@ impl<'p> Checker<'p> {
         }
         let at = candidates.iter().position(|&c| c == chosen)?;
         // That attempt was made in the round that goes by subtypes if what does not wait passed there.
-        let by_subtype = self.are_arguments_related(file, args, &params, true, true)?;
+        let mut by_subtype = self.are_arguments_related(file, args, &params, true, true)?;
+        for (i, &arg) in args.iter().enumerate() {
+            if by_subtype
+                && let Arg::Expr(e) = arg
+                && self.is_context_sensitive(file, e)
+                && let Some(param) = self.param_type_at(&params, i)
+            {
+                by_subtype = self.is_any_function_type_related_to(file, e, param, true);
+            }
+        }
         if self.are_arguments_related(file, args, &params, by_subtype, false)? {
             return Some(first);
         }
@@ -2362,6 +2372,7 @@ impl<'p> Checker<'p> {
             self.try_candidates_before_const(file, call, candidates, type_args, args, this_arg);
         }
         self.candidate_holes.push(CandidateHoles {
+            call: (file, call),
             type_params,
             mapper: None,
             deferred_calls: SmallVec::new(),
@@ -2827,7 +2838,8 @@ impl<'p> Checker<'p> {
     }
 
     /// `chooseOverload` checks the arguments again for each candidate, so only a candidate with a `const` type parameter sees them in
-    /// a const context. Here an argument is checked once. If a candidate before the first such one applies, the call has no const context.
+    /// a const context. Here an argument is checked once. If a candidate applies that comes before the first such one that no literal
+    /// among the arguments rules out, the call has no const context.
     fn try_candidates_before_const(
         &mut self,
         file: FileId,
@@ -2837,13 +2849,15 @@ impl<'p> Checker<'p> {
         args: &[Arg],
         this_arg: Option<ExprId>,
     ) {
-        let Some(first_const) = candidates
-            .iter()
-            .position(|&c| self.has_const_type_parameter(c))
-        else {
-            return;
-        };
-        if first_const == 0
+        let mut before: SmallVec<[SigId; 8]> = SmallVec::new();
+        for &candidate in candidates {
+            if !self.has_const_type_parameter(candidate) {
+                before.push(candidate);
+            } else if !self.is_rejected_by_literal_argument(file, call, candidate, args) {
+                break;
+            }
+        }
+        if before.is_empty()
             || self.outside_const_context.contains(&(file, call))
             || self
                 .p
@@ -2859,14 +2873,7 @@ impl<'p> Checker<'p> {
         self.provisional += 1;
         self.outside_const_context.push((file, call));
         let forced = std::mem::replace(&mut self.forces_provisional_contexts, true);
-        let chosen = self.choose_overload(
-            file,
-            call,
-            &candidates[..first_const],
-            type_args,
-            args,
-            this_arg,
-        );
+        let chosen = self.choose_overload(file, call, &before, type_args, args, this_arg);
         self.forces_provisional_contexts = forced;
         self.outside_const_context.pop();
         self.provisional -= 1;
@@ -2881,6 +2888,48 @@ impl<'p> Checker<'p> {
         if chosen.is_some() && self.provisional == 0 {
             self.p.calls_outside_const_context.insert((file, call), ());
         }
+    }
+
+    /// Whether an object or array literal among `args` does not fit the parameter of `candidate` it is given for, with a type
+    /// parameter as wide as its constraint (`getInferredType`): `isSignatureApplicable` rejects `candidate` then, in a const context
+    /// or not. In doubt it fits.
+    fn is_rejected_by_literal_argument(
+        &mut self,
+        file: FileId,
+        call: ExprId,
+        candidate: SigId,
+        args: &[Arg],
+    ) -> bool {
+        if args.iter().any(|a| matches!(a, Arg::Spread(..))) {
+            return false;
+        }
+        let params = self.sig_params(candidate);
+        self.resolving
+            .push(Resolving::trial(file, call, candidate, params.clone()));
+        let mut is_rejected = false;
+        for (i, &arg) in args.iter().enumerate() {
+            let Arg::Expr(e) = arg else { continue };
+            if !matches!(
+                self.hir(file)[e].kind,
+                ExprKind::Object(_) | ExprKind::Array(_)
+            ) {
+                continue;
+            }
+            let Some(param) = self.context_of_arg_at(&params, i, Some(args.len())) else {
+                continue;
+            };
+            let bound = self.widest_parameter_type(candidate, param);
+            if !self.is_any(bound)
+                && bound != TypeId::UNKNOWN
+                && (!self.has_room_for_literal(file, e, bound)
+                    || !self.do_plain_members_fit(file, e, bound, false))
+            {
+                is_rejected = true;
+                break;
+            }
+        }
+        self.resolving.pop();
+        is_rejected
     }
 
     /// Whether `param`, which `candidate` expects of an array literal of `count` elements, none of them spread or left out, takes no
@@ -3357,6 +3406,7 @@ impl<'p> Checker<'p> {
                     // Where a type guard is asked for, only a type guard will do.
                     if let Some(param) = self.context_of_arg_at(&params, i, Some(args.len()))
                         && (!self.has_room_for_literal(file, e, param)
+                            || !self.is_any_function_type_related_to(file, e, param, by_subtype)
                             || self.literal_lacks_target_signatures(file, e, param)
                             || !self.is_guard_if_expected(file, e, param)
                             // `params` lack what the deferred calls contribute.
@@ -3783,7 +3833,10 @@ impl<'p> Checker<'p> {
                     || self.is_context_sensitive(file, prop.value))
             {
                 if let Some(wanted) = wanted {
-                    if !self.has_room_for_literal(file, prop.value, wanted) {
+                    if !self.has_room_for_literal(file, prop.value, wanted)
+                        || !self
+                            .is_any_function_type_related_to(file, prop.value, wanted, by_subtype)
+                    {
                         return None;
                     }
                     // The type of a nested literal becomes part of the type of `arg`: `wanted` leaves out an index signature of `param`
@@ -3858,7 +3911,9 @@ impl<'p> Checker<'p> {
                 || self.is_context_sensitive(file, item)
             {
                 if let Some(wanted) = wanted {
-                    ty = if self.has_room_for_literal(file, item, wanted) {
+                    ty = if self.has_room_for_literal(file, item, wanted)
+                        && self.is_any_function_type_related_to(file, item, wanted, by_subtype)
+                    {
                         self.check_literal_skipping_sensitive(file, item, wanted, by_subtype)
                             .unwrap_or(TypeId::UNKNOWN)
                     } else {
@@ -3909,6 +3964,33 @@ impl<'p> Checker<'p> {
             self.is_assignable(literal_type, param)
         };
         is_related.then_some(literal_type)
+    }
+
+    /// `isSignatureApplicable` under `CheckModeSkipContextSensitive`: the context sensitive function `arg` is `anyFunctionType`, which
+    /// is related to every signature and has the properties of `Function`. Whether that type is related to `param`. True if `arg`
+    /// is no function, and if `param` has type variables: `checkFunctionExpressionOrObjectLiteralMethod` may keep the return type then.
+    fn is_any_function_type_related_to(
+        &mut self,
+        file: FileId,
+        arg: ExprId,
+        param: TypeId,
+        by_subtype: bool,
+    ) -> bool {
+        if !matches!(self.hir(file)[arg].kind, ExprKind::Fn(_))
+            || self.has_type_variables(param)
+            || !self.is_known(param)
+        {
+            return true;
+        }
+        let any_function_type = self.synth(Shape {
+            literal: Literalness::Partial,
+            ..Shape::default()
+        });
+        if by_subtype {
+            self.is_subtype(any_function_type, param)
+        } else {
+            self.is_assignable(any_function_type, param)
+        }
     }
 
     /// Whether a function, object or array literal whose type is not known yet could be a `param` at all:
@@ -4347,6 +4429,17 @@ impl<'p> Checker<'p> {
         }
     }
 
+    /// Takes the entry of `call` off `candidate_holes` while the contextual type of `call` itself is inferred from.
+    /// `getInferenceContext(node)` is the context of a call around `node`: a type parameter of a candidate that the contextual type
+    /// mentions is the one in scope at the call (`new C()` inside the generic class `C`). The caller puts back what is returned.
+    fn take_own_candidate_holes(&mut self, file: FileId, call: ExprId) -> Option<CandidateHoles> {
+        if self.candidate_holes.last()?.call == (file, call) {
+            self.candidate_holes.pop()
+        } else {
+            None
+        }
+    }
+
     /// The type parameters of the candidates of the overloaded calls around say nothing.
     fn instantiate_with_candidate_holes(&mut self, mut ty: TypeId) -> TypeId {
         for i in (0..self.candidate_holes.len()).rev() {
@@ -4549,6 +4642,7 @@ impl<'p> Checker<'p> {
             .declared_type_of_checked_arg(file, call)
             .unwrap_or(contextual);
         let calls_itself = self.is_inside_declaration_of(file, call, &type_params);
+        let own_holes = self.take_own_candidate_holes(file, call);
         let return_mapper = self.return_mapper(
             file,
             call,
@@ -4560,6 +4654,7 @@ impl<'p> Checker<'p> {
             calls_itself,
             None,
         );
+        self.candidate_holes.extend(own_holes);
         self.return_mapper_for_contexts(return_mapper)
     }
 
@@ -4766,6 +4861,7 @@ impl<'p> Checker<'p> {
         } else {
             Some(self.return_type_in_chain(file, call, sig))
         };
+        let own_holes = self.take_own_candidate_holes(file, call);
         // The contextual type of the call contributes inferences, at a lower priority than the arguments.
         if let Some(ret) = ret
             && self.has_type_variables(ret)
@@ -4865,6 +4961,7 @@ impl<'p> Checker<'p> {
             );
             inference.any_default = any_default;
         }
+        self.candidate_holes.extend(own_holes);
         // `getNonArrayRestType`: what a rest parameter that is no plain array collects is inferred from all together.
         let rest_ty = self.non_array_rest_type(&params);
         let arg_count = if rest_ty.is_some() {
@@ -8959,6 +9056,7 @@ impl<'p> Checker<'p> {
 /// The type parameters of the candidates of an overloaded call. `mapper`: from each of them to a hole, once that has been asked for.
 /// `deferred_calls`: the arguments that the first round of `chooseOverload` defers (`CheckModeSkipGenericFunctions`).
 pub(super) struct CandidateHoles {
+    call: (FileId, ExprId),
     type_params: SmallVec<[TypeId; 8]>,
     mapper: Option<MapperId>,
     deferred_calls: SmallVec<[(FileId, ExprId); 4]>,

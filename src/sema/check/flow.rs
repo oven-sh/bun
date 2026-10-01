@@ -3227,7 +3227,31 @@ impl<'p> Checker<'p> {
         if predicate.asserts {
             return None;
         }
+        // `getNarrowedTypeWorker`: `any` is not the error type, so it is neither `t == candidate` nor a subset of it.
+        if !sense
+            && ty == TypeId::ANY
+            && predicate.ty == Some(TypeId::ANY)
+            && self.is_predicate_type_in_error(sig)
+        {
+            return Some(ty);
+        }
         Some(self.apply_predicate(reference, ty, predicate, data.args, receiver, sense))
+    }
+
+    /// `isErrorType` of the type of the type predicate that `sig` is declared with.
+    fn is_predicate_type_in_error(&mut self, sig: SigId) -> bool {
+        let SigData::Decl { file, func, .. } = *self.p.types.sig(sig) else {
+            return false;
+        };
+        let hir = self.hir(file);
+        let ret = hir[func].ret;
+        if ret.is_none() {
+            return false;
+        }
+        let TypeNodeKind::Predicate { ty, .. } = hir[ret].kind else {
+            return false;
+        };
+        ty.is_some() && self.is_error_type_as_written(file, ty, 0)
     }
 
     fn apply_predicate(
@@ -3713,6 +3737,7 @@ impl<'p> Checker<'p> {
                 Some(expected) if !self.is_generic(expected) => {
                     if self.is_in_literal_inferred_from(file, e)
                         && self.is_assignable(declared, expected)
+                        || self.is_candidate_despite_return_mapper(file, e, declared)
                     {
                         return declared;
                     }
@@ -3768,6 +3793,104 @@ impl<'p> Checker<'p> {
             }
             at = parent;
         }
+    }
+
+    /// Whether the type of `e` is a candidate for a type parameter of the call that `e` is in a literal argument of, though
+    /// `returnMapper` has replaced that type parameter in the contextual type recorded for the argument.
+    /// `getNarrowableTypeForReference` asks for no contextual type under `CheckModeInferential`, and `isSignatureApplicable` then
+    /// checks the argument against the parameter type with what was inferred from it, which outranks `returnMapper`.
+    fn is_candidate_despite_return_mapper(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        declared: TypeId,
+    ) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let (mut arg, mut is_in_literal) = (e, false);
+        let (call, args) = loop {
+            let parent = match bound.expr_parent[arg.idx()] {
+                Parent::Prop(p) if hir[p].value == arg => bound.prop_owner[p.idx()],
+                Parent::Expr(parent) => parent,
+                _ => return false,
+            };
+            if parent.is_none() {
+                return false;
+            }
+            match hir[parent].kind {
+                ExprKind::Array(_) | ExprKind::Object(_) => is_in_literal = true,
+                ExprKind::Cond { test, .. } if test != arg => {}
+                ExprKind::Binary {
+                    op: BinOp::Or | BinOp::Nullish,
+                    ..
+                } => {}
+                ExprKind::Binary {
+                    op: BinOp::And | BinOp::Comma,
+                    right,
+                    ..
+                } if right == arg => {}
+                ExprKind::Call(c) | ExprKind::New(c) if is_in_literal && hir[c].callee != arg => {
+                    break (parent, hir[c].args);
+                }
+                _ => return false,
+            }
+            arg = parent;
+        };
+        if hir
+            .ids(args)
+            .any(|a| matches!(hir[a].kind, ExprKind::Spread(_)))
+        {
+            return false;
+        }
+        let Some(index) = hir.ids(args).position(|a| a == arg) else {
+            return false;
+        };
+        let resolving = self
+            .resolving
+            .iter()
+            .rev()
+            .find(|r| r.file == file && r.call == call)
+            .map(|r| (r.sig, r.params.clone(), r.return_mapper));
+        // The type parameters that are inferred. The signature of a resolved call has what was inferred in their place.
+        let (params, type_params) = match resolving {
+            Some((Some(sig), params, return_mapper)) if return_mapper != MapperId::IDENTITY => {
+                (params, Some(self.sig_type_params(sig)))
+            }
+            Some(_) => return false,
+            None => {
+                let Some(resolved) = self.p.calls.get(&(file, call)) else {
+                    return false;
+                };
+                let Some(sig) = self.p.failure_sigs.get(&(file, call)).or(resolved.sig) else {
+                    return false;
+                };
+                (self.sig_params(sig), None)
+            }
+        };
+        let Some(param) = self.context_of_arg_at(&params, index, Some(args.len())) else {
+            return false;
+        };
+        self.contextual.push((file, arg, param));
+        let expected = self.contextual_type(file, e);
+        let is_candidate = match (expected, &type_params) {
+            (Some(expected), None) => self.is_generic(expected),
+            (None, None) => true,
+            (Some(expected), Some(type_params)) if self.is_generic(expected) => {
+                // `getInferredType`: a candidate that does not fit the constraint gives way to the constraint.
+                self.parts(expected)
+                    .iter()
+                    .any(|member| type_params.contains(member))
+                    && {
+                        let constraint = self.base_constraint(expected);
+                        self.is_assignable(declared, constraint)
+                    }
+            }
+            (Some(expected), Some(_)) => {
+                self.is_in_literal_inferred_from(file, e) && self.is_assignable(declared, expected)
+            }
+            (None, Some(_)) => self.is_in_literal_inferred_from(file, e),
+        };
+        self.contextual.pop();
+        is_candidate
     }
 
     pub(super) fn narrow_reference(&mut self, file: FileId, e: ExprId, declared: TypeId) -> TypeId {

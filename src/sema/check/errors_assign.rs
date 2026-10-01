@@ -1449,7 +1449,7 @@ impl Checker<'_> {
 
     /// `isErrorType(checkExpression(e))`. There is no error type: an expression in error has type `any`, and the syntax tells that
     /// `any` from a declared one. Forms that are not recognized answer `false`.
-    fn is_expression_in_error(&mut self, file: FileId, e: ExprId) -> bool {
+    pub(super) fn is_expression_in_error(&mut self, file: FileId, e: ExprId) -> bool {
         let hir = self.hir(file);
         if e.is_none() || self.type_of_expr(file, e) != TypeId::ANY {
             return false;
@@ -1945,10 +1945,14 @@ impl Checker<'_> {
             node = parent;
         }
         if constraints.len() == 1 {
-            ty
-        } else {
-            self.intersection(&constraints)
+            return ty;
         }
+        // `getSubstitutionType`
+        let constraint = self.intersection(&constraints[1..]);
+        if self.is_any(constraint) || constraint == TypeId::UNKNOWN || constraint == ty {
+            return ty;
+        }
+        self.intersection(&constraints)
     }
 
     /// The mapped type arm of `getConditionalFlowTypeOfType`. If `node` is the template `X` of the mapped type `parent`, written
@@ -1985,6 +1989,137 @@ impl Checker<'_> {
         Some((self.type_param(file, hir[m].param), index))
     }
 
+    /// `check_type_flow_mapper`, with `this` where it is a check type, and with the type parameters declared between `node` and the
+    /// types that imply those constraints. The constraint of such a type parameter mentions the substitution types too
+    /// (`getConstraintFromTypeParameter`): the parameter is mapped to the intersection of itself and that constraint.
+    pub(super) fn conditional_flow_mapper(
+        &mut self,
+        file: FileId,
+        node: TypeNodeId,
+        parents: &[TypeNodeId],
+    ) -> Option<MapperId> {
+        let hir = self.hir(file);
+        let mut pairs = match self.check_type_flow_mapper(file, node, parents) {
+            Some(flow) => self.p.types.mapping(flow).to_vec(),
+            None => Vec::new(),
+        };
+        // `this` is a type variable too (`TypeFlagsTypeVariable`): the intersection of the constraints implied for it.
+        let mut implied_for_this: Vec<(TypeId, TypeId)> = Vec::new();
+        let mut child = node;
+        loop {
+            let parent = parents[child.idx()];
+            if parent.is_none() {
+                break;
+            }
+            if let TypeNodeKind::Cond {
+                check,
+                extends,
+                yes,
+                ..
+            } = hir[parent].kind
+                && yes == child
+            {
+                let (check, extends) = unwrap_unary_tuples(hir, check, extends);
+                let checked = self.type_from_tuple_element(file, check);
+                if matches!(self.data(checked), TypeData::ThisParam(_)) {
+                    let constraint = self.type_from_tuple_element(file, extends);
+                    match implied_for_this.iter().position(|known| known.0 == checked) {
+                        Some(i) => {
+                            let all = self.intersection(&[implied_for_this[i].1, constraint]);
+                            implied_for_this[i].1 = all;
+                        }
+                        None => implied_for_this.push((checked, constraint)),
+                    }
+                }
+            }
+            let declared = self.type_params_declared_by_type_node(file, parent, child);
+            // The constraints are written where the substitutions in force at `parent` apply.
+            if declared.iter().any(|&p| hir[p].constraint.is_some())
+                && let Some(outer) = self.conditional_flow_mapper(file, parent, parents)
+            {
+                let mut in_force = self.p.types.mapping(outer).to_vec();
+                for p in declared {
+                    if hir[p].constraint.is_none() {
+                        continue;
+                    }
+                    let param = self.type_param(file, p);
+                    let Some(constraint) = self.constraint_of_type_param(param) else {
+                        continue;
+                    };
+                    let outer = self.p.types.mapper(in_force.clone());
+                    let substituted = self.instantiate(constraint, outer);
+                    if substituted == constraint {
+                        continue;
+                    }
+                    // A later type parameter of the list can extend this one.
+                    let both = self.intersection(&[param, substituted]);
+                    in_force.push((param, both));
+                    match pairs.iter().position(|pair| pair.0 == param) {
+                        Some(i) => {
+                            let both = self.intersection(&[pairs[i].1, substituted]);
+                            pairs[i].1 = both;
+                        }
+                        None => pairs.push((param, both)),
+                    }
+                }
+            }
+            child = parent;
+        }
+        // `getSubstitutionType`
+        for (this, constraint) in implied_for_this {
+            if constraint != TypeId::ANY
+                && constraint != TypeId::UNKNOWN
+                && constraint != this
+                && !pairs.iter().any(|pair| pair.0 == this)
+            {
+                let both = self.intersection(&[this, constraint]);
+                pairs.push((this, both));
+            }
+        }
+        if pairs.is_empty() {
+            None
+        } else {
+            Some(self.p.types.mapper(pairs))
+        }
+    }
+
+    /// The type parameters that the type node `parent` declares and that are in scope at its child `child`: the key of a mapped
+    /// type, the type parameters of a function type or of a signature in a type literal, and the `infer` positions of a
+    /// conditional type for its true branch.
+    fn type_params_declared_by_type_node(
+        &self,
+        file: FileId,
+        parent: TypeNodeId,
+        child: TypeNodeId,
+    ) -> Vec<TypeParamId> {
+        let hir = self.hir(file);
+        let contains_child = |f: FnId| {
+            let func = &hir[f];
+            func.ret == child
+                || func.this_ty == child
+                || func.params.iter().any(|p| hir[p].ty == child)
+                || func
+                    .type_params
+                    .iter()
+                    .any(|p| hir[p].constraint == child || hir[p].default == child)
+        };
+        match hir[parent].kind {
+            TypeNodeKind::Mapped(m) => vec![hir[m].param],
+            TypeNodeKind::Fn(f) => hir[f].type_params.iter().collect(),
+            TypeNodeKind::Object(members) => members
+                .iter()
+                .map(|m| hir[m].func)
+                .find(|&f| f.is_some() && contains_child(f))
+                .map_or_else(Vec::new, |f| hir[f].type_params.iter().collect()),
+            TypeNodeKind::Cond { extends, yes, .. } if yes == child => {
+                let mut params = Vec::new();
+                self.collect_infer_params(file, extends, &mut params);
+                params
+            }
+            _ => Vec::new(),
+        }
+    }
+
     /// `getImpliedConstraint`
     pub(super) fn implied_constraint(
         &mut self,
@@ -2017,14 +2152,16 @@ impl Checker<'_> {
     /// the parameter and its implied constraints (`getSubstitutionIntersection`). Instantiating with it narrows every mention of the
     /// parameter. The parameters are the check types of the conditional types that have `node` in their true branch, and the keys of
     /// mapped types over arrays and tuples that have `node` in their template.
-    /// Limit: tsgo also substitutes a check type that is not a type parameter (`T["a"]`, `this`). A mapper cannot express that.
-    pub(super) fn conditional_flow_mapper(
+    /// A check type `T[K]` is mapped as a whole. That reaches what is resolved at once, not the inside of a type literal, a function
+    /// type, a mapped type or a conditional type, which keep a mapper of their own. Limit: `this` is not substituted.
+    fn check_type_flow_mapper(
         &mut self,
         file: FileId,
         mut node: TypeNodeId,
         parents: &[TypeNodeId],
     ) -> Option<MapperId> {
         let hir = self.hir(file);
+        let root = node;
         let (mut from, mut to): (Vec<TypeId>, Vec<TypeId>) = (Vec::new(), Vec::new());
         loop {
             let parent = parents[node.idx()];
@@ -2041,8 +2178,14 @@ impl Checker<'_> {
                 } if yes == node => {
                     let (check, extends) = unwrap_unary_tuples(hir, check, extends);
                     let checked = self.type_from_tuple_element(file, check);
-                    matches!(self.data(checked), TypeData::TypeParam(..))
-                        .then(|| (checked, self.type_from_tuple_element(file, extends)))
+                    let is_substituted = match self.data(checked) {
+                        TypeData::TypeParam(..) => true,
+                        TypeData::IndexedAccess { .. } => {
+                            self.is_check_type_written_under(file, check.ty, checked, root, parents)
+                        }
+                        _ => false,
+                    };
+                    is_substituted.then(|| (checked, self.type_from_tuple_element(file, extends)))
                 }
                 TypeNodeKind::Mapped(_) => self.mapped_key_flow_constraint(file, parent, node),
                 _ => None,
@@ -2054,18 +2197,95 @@ impl Checker<'_> {
                         to[i] = both;
                     }
                     None => {
-                        let both = self.intersection(&[param, constraint]);
                         from.push(param);
-                        to.push(both);
+                        to.push(constraint);
                     }
                 }
             }
             node = parent;
         }
-        if from.is_empty() {
+        // `getSubstitutionType`, `getSubstitutionIntersection`
+        let (mut params, mut substituted) = (Vec::new(), Vec::new());
+        for (&param, &constraint) in from.iter().zip(&to) {
+            if !self.is_any(constraint) && constraint != TypeId::UNKNOWN && constraint != param {
+                params.push(param);
+                substituted.push(self.intersection(&[param, constraint]));
+            }
+        }
+        if params.is_empty() {
             None
         } else {
-            Some(self.mapper_from(&from, &to))
+            Some(self.mapper_from(&params, &substituted))
+        }
+    }
+
+    /// Whether a type node at or below `root`, of the same kind of syntax as the check type node `check`, denotes the check type
+    /// `checked`. `getIndexedAccessKey` includes the alias: `T["a"]` and an alias that comes to `T["a"]` are two types in tsgo, one here.
+    fn is_check_type_written_under(
+        &mut self,
+        file: FileId,
+        check: TypeNodeId,
+        checked: TypeId,
+        root: TypeNodeId,
+        parents: &[TypeNodeId],
+    ) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let kind = std::mem::discriminant(&hir[check].kind);
+        for i in 0..hir.types.len() {
+            if std::mem::discriminant(&hir.types[i].kind) != kind || bound.type_scope[i].is_none() {
+                continue;
+            }
+            let candidate = TypeNodeId(i as u32);
+            let mut at = candidate;
+            while at.is_some() && at != root {
+                at = parents[at.idx()];
+            }
+            if at == root && self.type_from_node(file, candidate) == checked {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// `getTypeFromTypeNode(node)`, with each substitution type in it taken for the intersection of its base type and its constraint
+    /// (`getSubstitutionIntersection`). `flow`: the `conditional_flow_mapper` of `node`. An indexed access type node is made again
+    /// from its object and index nodes: a check type of any kind at the start of `A["b"]["c"]` is narrowed where it is written,
+    /// which a mapper does for a type variable only.
+    pub(super) fn type_from_node_with_substitutions(
+        &mut self,
+        file: FileId,
+        node: TypeNodeId,
+        parents: &[TypeNodeId],
+        flow: Option<MapperId>,
+    ) -> TypeId {
+        let declared = self.type_from_node(file, node);
+        let substituted = match self.hir(file)[node].kind {
+            TypeNodeKind::IndexedAccess { obj, index } => {
+                let declared_operands = (
+                    self.type_from_node(file, obj),
+                    self.type_from_node(file, index),
+                );
+                let operands = (
+                    self.type_from_node_with_substitutions(file, obj, parents, flow),
+                    self.type_from_node_with_substitutions(file, index, parents, flow),
+                );
+                if operands == declared_operands {
+                    declared
+                } else {
+                    self.indexed_access_flagged(operands.0, operands.1, false)
+                        .unwrap_or(declared)
+                }
+            }
+            _ => match flow {
+                Some(flow) => self.instantiate(declared, flow),
+                None => declared,
+            },
+        };
+        let narrowed = self.conditional_flow_type(file, declared, node, parents);
+        if narrowed == declared {
+            substituted
+        } else {
+            self.intersection(&[substituted, narrowed])
         }
     }
 
@@ -2092,11 +2312,16 @@ impl Checker<'_> {
             return true;
         }
         // The same for what is only mentioned in it, and in what `target` is made of.
-        let Some(flow) = self.conditional_flow_mapper(file, node, parents) else {
-            return false;
-        };
-        let (substituted, wanted) = (self.instantiate(ty, flow), self.instantiate(target, flow));
-        (substituted != ty || wanted != target) && self.is_assignable(substituted, wanted)
+        let flow = self.conditional_flow_mapper(file, node, parents);
+        if let Some(flow) = flow {
+            let (substituted, wanted) =
+                (self.instantiate(ty, flow), self.instantiate(target, flow));
+            if (substituted != ty || wanted != target) && self.is_assignable(substituted, wanted) {
+                return true;
+            }
+        }
+        let substituted = self.type_from_node_with_substitutions(file, node, parents, flow);
+        substituted != ty && self.is_assignable(substituted, target)
     }
 
     /// `IsJSDocTypeAssertion`: where the parenthesis opens that a `@type` tag makes a type assertion of, if `e` is that assertion.
@@ -4554,10 +4779,18 @@ impl Checker<'_> {
     /// `getSingleBaseForNonAugmentingSubtype`, whether there is one: a class or an interface that extends one type and adds nothing
     /// to it. It is compared as that type.
     pub(super) fn has_single_base_for_non_augmenting_subtype(&mut self, ty: TypeId) -> bool {
-        use crate::bind::Decl;
         let TypeData::Ref { target, .. } = *self.data(ty) else {
             return false;
         };
+        self.is_non_augmenting_declaration(target)
+            && self.base_types(target).len() == 1
+            && self.is_declared_as_reference(target, 0)
+    }
+
+    /// What `getSingleBaseForNonAugmentingSubtype` tells from the declarations of the class or interface `target`: the symbol has no
+    /// members, and what a class extends is written as a plain name.
+    pub(super) fn is_non_augmenting_declaration(&self, target: Sym) -> bool {
+        use crate::bind::Decl;
         for (file, decl) in self.files().decls(target) {
             let hir = self.hir(file);
             match decl {
@@ -4593,7 +4826,7 @@ impl Checker<'_> {
                 _ => {}
             }
         }
-        self.base_types(target).len() == 1 && self.is_declared_as_reference(target, 0)
+        true
     }
 
     /// Whether `getTypeWithThisArgument` makes another type of `ty`: a reference with a `this` type to fill in, or an intersection

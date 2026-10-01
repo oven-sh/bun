@@ -760,10 +760,18 @@ impl Checker<'_> {
                         break;
                     }
                     let fits = self.answer_if_sure(|c| {
-                        c.can_be_spread_in_a_tuple(ty) || {
-                            let narrowed = c.conditional_flow_type(file, ty, elem.ty, parents);
-                            narrowed != ty && c.can_be_spread_in_a_tuple(narrowed)
-                        }
+                        c.can_be_spread_in_a_tuple(ty)
+                            || {
+                                let narrowed = c.conditional_flow_type(file, ty, elem.ty, parents);
+                                narrowed != ty && c.can_be_spread_in_a_tuple(narrowed)
+                            }
+                            // What `ty` only mentions is a substitution type as well.
+                            || {
+                                let flow = c.conditional_flow_mapper(file, elem.ty, parents);
+                                let substituted = c
+                                    .type_from_node_with_substitutions(file, elem.ty, parents, flow);
+                                substituted != ty && c.can_be_spread_in_a_tuple(substituted)
+                            }
                     });
                     if fits != Some(true) {
                         if fits == Some(false) {
@@ -2434,13 +2442,26 @@ impl Checker<'_> {
             }
             // `getTypeFromTypeNode` applies `getConditionalFlowTypeOfType` to every type node, so a type parameter that the object
             // type or the index type only mentions is narrowed as well.
-            if let Some(flow) = self.conditional_flow_mapper(file, TypeNodeId(t as u32), parents) {
+            let flow = self.conditional_flow_mapper(file, TypeNodeId(t as u32), parents);
+            if let Some(flow) = flow {
                 let mentioned = (self.instantiate(object, flow), self.instantiate(keys, flow));
                 if mentioned != (object, keys)
                     && self.why_not_a_key_of(mentioned.0, mentioned.1).is_none()
                 {
                     continue;
                 }
+            }
+            // So is a check type of any other kind that `object[keys]` starts from.
+            let substituted = (
+                self.type_from_node_with_substitutions(file, obj, parents, flow),
+                self.type_from_node_with_substitutions(file, index, parents, flow),
+            );
+            if substituted != (object, keys)
+                && self
+                    .why_not_a_key_of(substituted.0, substituted.1)
+                    .is_none()
+            {
+                continue;
             }
             out.push(Diagnostic {
                 start: hir.types[t].pos,

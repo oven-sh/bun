@@ -146,7 +146,9 @@ impl Checker<'_> {
             return;
         }
         // `resolveErrorCall`: of what is in error something has been said already. It is `any`.
-        if self.is_any(called) && self.is_in_error(file, data.callee) {
+        if self.is_any(called) && self.is_in_error(file, data.callee)
+            || self.is_any(apparent) && self.is_constrained_by_error_type(called)
+        {
             return;
         }
         let has_type_args = !data.type_args.is_empty();
@@ -727,6 +729,22 @@ impl Checker<'_> {
                 }
     }
 
+    /// `isErrorType` of the base constraint of the type parameter `ty`. `getConstraintFromTypeParameter` makes `unknown` of a declared
+    /// `any`, so the `any` that a type parameter extends is the error type.
+    fn is_constrained_by_error_type(&mut self, mut ty: TypeId) -> bool {
+        for _ in 0..8 {
+            if !matches!(self.data(ty), TypeData::TypeParam(..)) {
+                return false;
+            }
+            match self.constraint_of_type_param(ty) {
+                Some(TypeId::ANY) => return true,
+                Some(constraint) => ty = constraint,
+                None => return false,
+            }
+        }
+        false
+    }
+
     /// `isErrorType`, for the type of the expression `callee`. The error type is not modelled: an expression in error has type `any`,
     /// so the syntax tells it from a declared `any`. The error type passes unchanged through `.`, `[]`, `!`, `<T>`, `await`, calls,
     /// binding elements and the initializer of a variable without a type annotation.
@@ -749,7 +767,13 @@ impl Checker<'_> {
                         {
                             return true;
                         }
+                        if self.is_property_initialized_in_error(receiver, name) {
+                            return true;
+                        }
                         // A property missing from `globalThis` or from a JavaScript literal type is `anyType`.
+                        if self.is_constrained_by_error_type(receiver) {
+                            return true;
+                        }
                         return self.type_of_property(receiver, name).is_none()
                             && !matches!(
                                 self.data(receiver),
@@ -767,6 +791,7 @@ impl Checker<'_> {
                     if !self.is_any(receiver) {
                         let receiver = self.receiver_that_is_there(receiver);
                         return self.is_any(receiver)
+                            || self.is_constrained_by_error_type(receiver)
                             || self.is_element_access_in_error(file, callee, receiver, index);
                     }
                     obj
@@ -927,6 +952,32 @@ impl Checker<'_> {
             && self.is_error_type_as_written(of, annotation, 0)
     }
 
+    /// `getTypeOfVariableOrParameterOrProperty`, `checkObjectLiteral`: whether the property `name` of `receiver` has no type annotation
+    /// and an initializer of the error type, which widening leaves alone.
+    fn is_property_initialized_in_error(&mut self, receiver: TypeId, name: Atom) -> bool {
+        let apparent = self.apparent_type(receiver);
+        let Some((prop, _)) = self.prop_ref(apparent, name) else {
+            return false;
+        };
+        let (of, initializer) = match &prop.source {
+            PropSource::Members(members) => match members.first() {
+                Some(&(of, member)) if members.len() == 1 && self.hir(of)[member].ty.is_none() => {
+                    (of, self.hir(of)[member].init)
+                }
+                _ => return false,
+            },
+            PropSource::Literal(of, written) => {
+                let written = self.hir(*of)[*written];
+                if !matches!(written.kind, PropKind::Init | PropKind::Shorthand) {
+                    return false;
+                }
+                (*of, written.value)
+            }
+            _ => return false,
+        };
+        self.is_expression_in_error(of, initializer)
+    }
+
     /// Whether `checkElementAccessExpression` returns the error type for `e`, which is `receiver[index]`. `receiver` is not `any`.
     fn is_element_access_in_error(
         &mut self,
@@ -956,9 +1007,19 @@ impl Checker<'_> {
         } else {
             self.type_of_expr(file, index)
         };
+        // `getPropertyTypeForIndexType`: every index signature applies to a key of type `any`. Without one an expression gets nil, as
+        // for any other key; only a type gets the key back, which is what `indexed_access_for_read` answers for both.
+        let finds_nothing = if key == TypeId::ANY {
+            let apparent = self.apparent_type(receiver);
+            let apparent = self.reduced(apparent);
+            !self.is_any(apparent)
+                && apparent != TypeId::NEVER
+                && self.index_signatures_of(apparent).is_empty()
+        } else {
+            self.indexed_access_for_read(receiver, key) == TypeId::UNRESOLVED
+        };
         // `getIndexedAccessTypeOrUndefined` returns nil. A JavaScript literal type gives `anyType` instead.
-        self.indexed_access_for_read(receiver, key) == TypeId::UNRESOLVED
-            && !self.is_js_literal_type(receiver)
+        finds_nothing && !self.is_js_literal_type(receiver)
     }
 
     /// Whether the call, `new` or tagged template `e` resolves to `unknownSignature`, which returns the error type

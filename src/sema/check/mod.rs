@@ -626,6 +626,7 @@ impl Program {
             resolving: Vec::new(),
             pending_failure_sig: None,
             own_of_compared_sigs: Vec::new(),
+            restrictive_operands: Vec::new(),
             jsx_resolving: Vec::new(),
             prepared: Default::default(),
             last_prepared: (FileId(u32::MAX), FnId::NONE),
@@ -925,6 +926,8 @@ pub struct Checker<'p> {
     pending_failure_sig: Option<SigId>,
     /// The type parameters of the generic signatures that the permissive comparison under way is inside of.
     own_of_compared_sigs: Vec<TypeId>,
+    /// The two types of each restrictive comparison under way, innermost last: what `getRestrictiveInstantiation` was called with.
+    restrictive_operands: Vec<(TypeId, TypeId)>,
     /// The JSX elements whose components' type arguments are being worked out, and what each takes for properties.
     jsx_resolving: Vec<(FileId, ExprId, TypeId)>,
     /// Functions whose context `prepare_enclosing` has seen to.

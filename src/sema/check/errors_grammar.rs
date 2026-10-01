@@ -11,8 +11,26 @@ use crate::resolve::ModuleKind;
 impl Checker<'_> {
     pub(super) fn check_grammar(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         for &(start, code) in &self.files().module(file).missing_references {
+            let code = self.note_missing_reference(file, start, code);
             out.push(Diagnostic { start, code });
-            self.note_missing_reference(file, start, code);
+        }
+        for (_, start, end, problem) in self.files().include_problems_in(file) {
+            out.push(Diagnostic {
+                start: *start,
+                code: problem.code,
+            });
+            self.note(*start, *end, problem.code, problem.args.clone());
+            self.explain_chain(*start, problem.code, |_| {
+                problem
+                    .chain
+                    .iter()
+                    .map(|(level, code, args)| super::explain::Line {
+                        code: *code,
+                        args: args.clone(),
+                        level: *level,
+                    })
+                    .collect()
+            });
         }
         let hir = self.hir(file);
         // A JSON file has no statements of its own: its `export =` is the binder's.
@@ -41,11 +59,11 @@ impl Checker<'_> {
     }
 
     /// `getSourceFileFromReference`, `processingDiagnostic.toDiagnostic`: what is said of the `/// <reference>` whose value is written at
-    /// `start`.
-    fn note_missing_reference(&self, file: FileId, start: u32, code: u32) {
+    /// `start`. Returns the code of what is said: 2727 for 2726 where a library has nearly that name.
+    fn note_missing_reference(&self, file: FileId, start: u32, mut code: u32) -> u32 {
         let references = &self.hir(file).references;
         let Some(&(_, value, ..)) = references.iter().find(|r| r.2 == start) else {
-            return;
+            return code;
         };
         let name = self.atom_text(value);
         let end = start + self.files().atoms.bytes(value).len() as u32;
@@ -58,11 +76,27 @@ impl Checker<'_> {
         let args = match code {
             1006 => Vec::new(),
             2688 => vec![name],
-            2726 => vec![name.to_lowercase()],
+            2726 => {
+                let lib = name.to_lowercase();
+                let unqualified = lib.strip_prefix("lib.").unwrap_or(&lib);
+                let unqualified = unqualified.strip_suffix(".d.ts").unwrap_or(unqualified);
+                let suggestion = super::errors_x_regexp_scanner::spelling_suggestion(
+                    unqualified.as_bytes(),
+                    crate::resolve::LIB_NAMES.split(' ').map(str::as_bytes),
+                );
+                match suggestion {
+                    Some(suggestion) => {
+                        code = 2727;
+                        vec![lib, suggestion]
+                    }
+                    None => vec![lib],
+                }
+            }
             6054 | 6231 => vec![name.replace('\\', "/"), extensions.to_owned()],
             _ => vec![name.replace('\\', "/")],
         };
         self.note(start, end, code, args);
+        code
     }
 
     /// `GetImpliedNodeFormatForEmit`: `Some(true)` for an ECMAScript module, `Some(false)` for CommonJS.

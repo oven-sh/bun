@@ -1629,7 +1629,10 @@ impl<'p> Checker<'p> {
         let extends = self.hir(file)[c].extends;
         let constructor = self.type_of_expr(file, extends);
         if constructor == TypeId::ANY {
-            return !self.is_uncertain(file, extends) && !self.is_expr_in_error(file, extends);
+            // In JavaScript `is_callee_in_error` takes the `anyType` of an unresolved `require("m")` for the error type.
+            return !self.is_uncertain(file, extends)
+                && !self.is_expr_in_error(file, extends)
+                && (self.hir(file).is_js || !self.is_callee_in_error(file, extends));
         }
         // A class makes its instances, or is in error.
         if static_side
@@ -1737,7 +1740,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `getBaseTypes`: what a class or an interface extends, in terms of its own type parameters. Only what has members to
-    /// inherit is listed: not `any`, `object` or a type parameter.
+    /// inherit is listed: not `any` or `object`, and its constraint in place of a type parameter that a class extends.
     pub fn base_types(&mut self, sym: Sym) -> Arc<[TypeId]> {
         if let Some(known) = self.p.base_types.get(&sym) {
             return known;
@@ -1751,6 +1754,12 @@ impl<'p> Checker<'p> {
             let mapper = self.decl_params_mapper(sym, file, self.hir(file)[c].type_params);
             let base = self.base_instance_type(file, c);
             let base = self.instantiate(base, mapper);
+            // `addInheritedMembers` reads the apparent type of the base type.
+            let base = if matches!(self.data(base), TypeData::TypeParam(..)) {
+                self.base_constraint(base)
+            } else {
+                base
+            };
             if let Some(base) = self.as_base_type(base) {
                 if !self.has_base(base, sym, 0) {
                     bases.push(base);
@@ -3924,7 +3933,13 @@ impl<'p> Checker<'p> {
                     .collect();
                 let scope = self.bound(file).fns[member.func.idx()].scope;
                 let parent = self.bound(file).scopes[scope.idx()].parent;
-                let mapper = self.identity_mapper_for_fns(file, parent, &decls);
+                // `getObjectTypeInstantiation` asks `isTypeParameterPossiblyReferenced` of every declaration of the symbol, the
+                // implementation of overloads included.
+                let declarations: Vec<(FileId, FnId)> = members
+                    .iter()
+                    .map(|&(f, m)| (f, self.hir(f)[m].func))
+                    .collect();
+                let mapper = self.identity_mapper_for_fns(file, parent, &declarations);
                 self.intern(TypeData::Fns {
                     decls: decls.into(),
                     mapper,

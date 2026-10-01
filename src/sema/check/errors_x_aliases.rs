@@ -2758,7 +2758,7 @@ impl Checker<'_> {
                 if let Ok(i) = by_line.binary_search_by_key(&line, |directive| directive.0) {
                     // `GetIncludeProcessorDiagnostics`: what loading the program came upon is gone through apart from the rest. It
                     // is taken back, and is not the error that was expected.
-                    by_line[i].3 |= !matches!(d.code, 1006 | 2688 | 2726 | 6053);
+                    by_line[i].3 |= !matches!(d.code, 1006 | 2688 | 2726 | 2727 | 6053);
                     return false;
                 }
                 if !is_comment_or_blank_line(text, line_starts[line] as usize) {

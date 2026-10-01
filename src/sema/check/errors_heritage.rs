@@ -620,6 +620,15 @@ impl Checker<'_> {
                 } else if base_property && !base_accessor && derived_accessor {
                     out.push(Diagnostic { start, code: 2611 });
                     self.explain_override(file, start, 2611, inherited, base, class_type);
+                } else if self.p.files.options.use_define_for_class_fields
+                    && !is_abstract
+                    && self.is_redefined_without_initializer(file, c, derived, class_type)
+                {
+                    out.push(Diagnostic { start, code: 2612 });
+                    let end = self.end_of_name_at(file, start);
+                    self.explain_to(start, end, 2612, |c| {
+                        vec![c.prop_to_string(inherited), c.type_to_string(base)]
+                    });
                 }
             } else if base_method {
                 if !(derived_method || derived_property) {
@@ -678,6 +687,56 @@ impl Checker<'_> {
                 args
             });
         }
+    }
+
+    /// The end of `checkKindsOfPropertyMemberOverrides`, under `useDefineForClassFields`: whether a declaration of `derived` in the
+    /// class `c` has no initializer, so that it defines the property anew, and the constructor does not assign to it either.
+    fn is_redefined_without_initializer(
+        &mut self,
+        file: FileId,
+        c: ClassId,
+        derived: &Prop,
+        class_type: TypeId,
+    ) -> bool {
+        let hir = self.hir(file);
+        let PropSource::Members(decls) = &derived.source else {
+            return false;
+        };
+        if hir.kind == FileKind::Declaration
+            || hir[c].flags.contains(Flags::AMBIENT)
+            || decls.iter().any(|&(f, m)| {
+                self.hir(f)[m]
+                    .flags
+                    .intersects(Flags::AMBIENT | Flags::ABSTRACT)
+            })
+        {
+            return false;
+        }
+        // `IsPropertyDeclaration`: of a class, not of an interface that is merged with it.
+        let uninitialized = decls.iter().find(|&&(f, m)| {
+            let member = &self.hir(f)[m];
+            member.kind == MemberKind::Property
+                && member.init.is_none()
+                && matches!(self.bound(f).member_owner[m.idx()], MemberOwner::Class(_))
+        });
+        let Some(&(of, uninitialized)) = uninitialized else {
+            return false;
+        };
+        let member = &self.hir(of)[uninitialized];
+        let is_identifier = !member.flags.contains(Flags::LITERAL_NAME)
+            && self.hir(of).text.get(member.pos as usize) != Some(&b'[');
+        // `FindConstructorDeclaration`: the first that has a body.
+        let constructor = hir[c].members.iter().find(|&m| {
+            hir[m].kind == MemberKind::Constructor && !matches!(hir[hir[m].func].body, FnBody::None)
+        });
+        let (Some(constructor), PropKey::Name(name), true) =
+            (constructor, member.key, is_identifier)
+        else {
+            return true;
+        };
+        member.flags.contains(Flags::DEFINITE)
+            || !self.p.files.options.strict_null_checks
+            || !self.is_assigned_in_constructor(file, hir[constructor].func, name, class_type)
     }
 
     /// The arguments of what `checkKindsOfPropertyMemberOverrides` says at the name of a member that overrides `inherited`.

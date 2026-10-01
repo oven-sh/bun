@@ -262,7 +262,12 @@ impl<'p> Checker<'p> {
 
     /// `getAliasSymbolForTypeNode`: the type alias declaration whose body is `node`, which is written in `scope`. A `readonly`
     /// operator around `node` is skipped.
-    fn alias_with_body(&self, file: FileId, scope: ScopeId, node: TypeNodeId) -> Option<AliasId> {
+    pub(super) fn alias_with_body(
+        &self,
+        file: FileId,
+        scope: ScopeId,
+        node: TypeNodeId,
+    ) -> Option<AliasId> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         if !bound.type_by_alias[node.idx()]
             || bound.scopes[scope.idx()].kind != ScopeKind::TypeParams
@@ -285,6 +290,34 @@ impl<'p> Checker<'p> {
             .is_some_and(|alias| !self.hir(file)[alias].type_params.is_empty())
     }
 
+    /// The body of the type alias whose type parameters `scope` declares, if that is an intersection type node and `node` is the
+    /// first of its members that keeps a mapper.
+    fn intersection_alias_body_pinned_by(
+        &self,
+        file: FileId,
+        scope: ScopeId,
+        node: TypeNodeId,
+    ) -> Option<TypeNodeId> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        if bound.scopes[scope.idx()].kind != ScopeKind::TypeParams {
+            return None;
+        }
+        let alias = AliasId(bound.alias_scope.iter().position(|&s| s == scope)? as u32);
+        let body = hir[alias].ty;
+        if body.is_none() {
+            return None;
+        }
+        let TypeNodeKind::Intersection(types) = hir[body].kind else {
+            return None;
+        };
+        let first = hir.ids(types).find(|&t| match hir[t].kind {
+            TypeNodeKind::Fn(_) | TypeNodeKind::Mapped(_) | TypeNodeKind::Cond { .. } => true,
+            TypeNodeKind::Object(members) => !members.is_empty(),
+            _ => false,
+        })?;
+        (first == node).then_some(body)
+    }
+
     pub(super) fn identity_mapper_for_node(
         &mut self,
         file: FileId,
@@ -304,7 +337,19 @@ impl<'p> Checker<'p> {
             ..Mentioned::default()
         };
         self.collect_mentions(file, node, &mut mentioned);
-        self.identity_mapper_of_mentioned(file, scope, self.hir(file)[node].pos, &mentioned)
+        let mapper =
+            self.identity_mapper_of_mentioned(file, scope, self.hir(file)[node].pos, &mentioned);
+        // `getIntersectionType`: the alias and all its type arguments are part of the identity of the type (`getAliasKey`). Where the
+        // body leaves out a type parameter, one member stands in for that.
+        if let Some(body) = self.intersection_alias_body_pinned_by(file, scope, node) {
+            self.collect_mentions(file, body, &mut mentioned);
+            let all = self.identity_mapper(file, scope);
+            let pos = self.hir(file)[body].pos;
+            if self.identity_mapper_of_mentioned(file, scope, pos, &mentioned) != all {
+                return all;
+            }
+        }
+        mapper
     }
 
     /// The same for the declarations of a method. What a body returns can involve anything in scope.
@@ -1182,6 +1227,109 @@ impl<'p> Checker<'p> {
             self.type_from_node(file, t) == TypeId::ANY
                 && self.is_error_type_as_written(file, t, depth)
         })
+    }
+
+    /// Whether the `any` that comes of `node` is `errorType` itself, which `getConditionalType` compares with. The error type of a
+    /// type name that is not found is another object (`getUnresolvedSymbolForEntityName`, `errorTypes`). Told by what is written,
+    /// like `is_error_type_as_written`; in doubt it is not.
+    fn is_error_type_itself_as_written(
+        &mut self,
+        file: FileId,
+        node: TypeNodeId,
+        depth: u32,
+    ) -> bool {
+        if node.is_none() || depth > 8 {
+            return false;
+        }
+        let hir = self.hir(file);
+        match hir[node].kind {
+            // `TypeFlagsIncludesError`: a union or an intersection with any error type in it is `errorType`.
+            TypeNodeKind::Union(_)
+            | TypeNodeKind::Intersection(_)
+            | TypeNodeKind::Import { .. }
+            | TypeNodeKind::Typeof { .. } => self.is_error_type_as_written(file, node, depth),
+            // `getIndexedAccessTypeOrUndefined`: whatever is looked up in `any` is that `any`.
+            TypeNodeKind::IndexedAccess { obj, .. } => {
+                self.type_from_node(file, obj) == TypeId::ANY
+                    && self.is_error_type_itself_as_written(file, obj, depth + 1)
+            }
+            TypeNodeKind::Ref { name, args } => {
+                if self.intended_type_of_jsdoc_reference(file, node).is_some() {
+                    return false;
+                }
+                let names: SmallVec<[Atom; 4]> = hir.ids(name).collect();
+                let scope = self.bound(file).type_scope[node.idx()];
+                let Some(sym) = self
+                    .files()
+                    .resolve_entity(file, scope, &names, SymFlags::TYPE)
+                    .and_then(|found| self.files().resolve_alias_as(found, SymFlags::TYPE))
+                else {
+                    return false;
+                };
+                if !self
+                    .type_flags_of_symbol(sym)
+                    .contains(SymFlags::TYPE_ALIAS)
+                {
+                    return false;
+                }
+                let (least, most) = self.type_argument_arity(sym);
+                if args.len() < least || args.len() > most {
+                    return true;
+                }
+                // The nodes of its body are being resolved.
+                if self.stack.contains(&Query::Declared(sym)) {
+                    return false;
+                }
+                let Some((of, alias)) = self.alias_declaration(sym) else {
+                    return false;
+                };
+                let alias = &self.hir(of)[alias];
+                let params = self.local_type_params_of_symbol(sym);
+                // What is written for each type parameter: the type argument, or else the default.
+                let given: Vec<(FileId, TypeNodeId)> = hir
+                    .ids(args)
+                    .map(|arg| (file, arg))
+                    .chain(
+                        alias
+                            .type_params
+                            .iter()
+                            .skip(args.len())
+                            .map(|p| (of, self.hir(of)[p].default)),
+                    )
+                    .collect();
+                // The node `n` of the body, or what is written for the type parameter it names.
+                let written_for = |c: &mut Self, n: TypeNodeId| {
+                    let ty = c.type_from_node(of, n);
+                    params
+                        .iter()
+                        .position(|&param| param == ty)
+                        .and_then(|i| given.get(i).copied())
+                        .unwrap_or((of, n))
+                };
+                let is_itself = |c: &mut Self, n: TypeNodeId| {
+                    let (f, n) = written_for(c, n);
+                    c.type_from_node(f, n) == TypeId::ANY
+                        && c.is_error_type_itself_as_written(f, n, depth + 1)
+                };
+                match self.hir(of)[alias.ty].kind {
+                    TypeNodeKind::Union(types) | TypeNodeKind::Intersection(types) => {
+                        let types: Vec<TypeNodeId> = self.hir(of).ids(types).collect();
+                        types.into_iter().any(|t| {
+                            let (f, n) = written_for(self, t);
+                            self.type_from_node(f, n) == TypeId::ANY
+                                && self.is_error_type_as_written(f, n, depth + 1)
+                        })
+                    }
+                    // `getConditionalType`
+                    TypeNodeKind::Cond { check, extends, .. } => {
+                        is_itself(self, check) || is_itself(self, extends)
+                    }
+                    TypeNodeKind::IndexedAccess { obj, .. } => is_itself(self, obj),
+                    _ => is_itself(self, alias.ty),
+                }
+            }
+            _ => false,
+        }
     }
 
     /// `instantiateMappedType`: a mapped type over the keys of the error type is the error type. Whether the alias `sym` stands for a
@@ -2608,6 +2756,15 @@ impl<'p> Checker<'p> {
                     && flags.contains(SymFlags::TYPE_ALIAS)
                     && args.contains(&TypeId::ANY)
                     && self.is_mapped_over_error_type(file, node, sym, flags, &args)
+                {
+                    return TypeId::ANY;
+                }
+                // `getConditionalType`: `errorType` if the check type or the extends type is `errorType` itself.
+                if !is_class_or_interface
+                    && ty != TypeId::ANY
+                    && flags.contains(SymFlags::TYPE_ALIAS)
+                    && args.contains(&TypeId::ANY)
+                    && self.is_error_type_itself_as_written(file, node, 0)
                 {
                     return TypeId::ANY;
                 }

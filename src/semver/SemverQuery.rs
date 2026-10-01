@@ -910,8 +910,6 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                 while i < input.len() && input[i] == b' ' {
                     i += 1;
                 }
-                // "||" is the only token that starts a new OR alternative; whitespace
-                // between comparators is an intersection (node-semver's range grammar).
                 is_or = true;
                 token.tag = TokenTag::None;
                 skip_round = true;

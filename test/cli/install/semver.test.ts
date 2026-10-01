@@ -14,7 +14,8 @@
 // ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
 // IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "path";
 import { unsortedPrereleases } from "./semver-fixture.js";
 const { satisfies, order } = Bun.semver;
 
@@ -807,9 +808,7 @@ describe("Bun.semver.satisfies()", () => {
   });
 
   test("space-separated comparators are an intersection, not alternatives", () => {
-    // In npm's range grammar only "||" starts a new alternative; whitespace between
-    // comparators is an intersection. Comparators starting with a digit, "x", "*",
-    // "=", or "v" used to begin a new "||" group. Every expectation matches node-semver.
+    // Every expectation is node-semver 7's answer for the same input.
     const cases: [version: string, range: string, expected: boolean][] = [
       ["2.5.0", "1.x 2.x", false],
       ["1.0.1", "<1.0.0 1.x", false],
@@ -823,6 +822,11 @@ describe("Bun.semver.satisfies()", () => {
       ["1.0.0", ">=2.0.0 x.x.x", false],
       ["1.5.0", ">=1.0.0 1.x <1.4.0", false],
       ["4.5.6", "4.5.6 7.8.9 || 1.2.3", false],
+      // fstream@1.0.12 declares "mkdirp": ">=0.5 0"
+      ["0.4.2", ">=0.5 0", false],
+      ["1.0.0", ">=0.5 0", false],
+      ["3.0.1", ">=0.5 0", false],
+      ["0.5.6", ">=0.5 0", true],
       // the intersection holds, or an "||" alternative holds
       ["1.3.0", ">=1.0.0 1.x <1.4.0", true],
       ["2.5.0", "1.x || 2.x", true],
@@ -842,6 +846,42 @@ describe("Bun.semver.satisfies()", () => {
   test("pre-release snapshot", () => {
     expect(unsortedPrereleases.sort(Bun.semver.order)).toMatchSnapshot();
   });
+});
+
+test("bun install resolves a space-separated range as an intersection", async () => {
+  await using registry = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const { origin } = new URL(req.url);
+      return Response.json({
+        name: "dep",
+        "dist-tags": { latest: "3.0.1" },
+        versions: Object.fromEntries(
+          ["0.4.2", "0.5.6", "1.0.0", "3.0.1"].map(version => [
+            version,
+            { name: "dep", version, dist: { tarball: `${origin}/dep-${version}.tgz` } },
+          ]),
+        ),
+      });
+    },
+  });
+  using dir = tempDir("semver-space-range", {
+    // fstream@1.0.12 declares "mkdirp": ">=0.5 0", and npm installs mkdirp 0.5.6 for it.
+    "package.json": JSON.stringify({ name: "root", version: "1.0.0", dependencies: { dep: ">=0.5 0" } }),
+    "bunfig.toml": `[install]\ncache = false\nregistry = "${registry.url.href}"\n`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "install", "--lockfile-only"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (exitCode !== 0) expect(stderr).toBe("");
+  const lockfile = await Bun.file(join(String(dir), "bun.lock")).text();
+  expect(lockfile.match(/"dep@([^"]+)"/)?.[1]).toBe("0.5.6");
+  expect(exitCode).toBe(0);
 });
 
 test("a version range with >=256 || comparators does not abort", async () => {

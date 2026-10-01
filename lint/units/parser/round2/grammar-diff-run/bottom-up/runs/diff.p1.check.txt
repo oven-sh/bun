@@ -1,0 +1,372 @@
+base 1.4.3 e3566be889995ffff8b08823b9233617f979c889 (18390 sources)
+next 1.4.3-debug be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb (18390 sources)
+275850 records compared, 88146 differ, in 6245 sources
+??       30 records       2 sources  R>A          ruling: attributes of an export on the next line
+              tsc 6.0.2 and typescript-go (parser.go:2613) REJECT a line break before `with` of an export; ECMAScript allows it
+              t.ts.plain       "export { a } from \"x\"\nwith { type: \"json\" }"
+                base ["e",[["Expected \"(\" but found \"{\"",2,6],["Expected \")\" but found \":\"",2,12],["Unexpected }",2,21]]]
+                next ["o","export { a } from \"x\";\n"]
+              t.ts.exp         "export { a } from \"x\"\nwith { type: \"json\" }"
+                base ["e",[["Expected \"(\" but found \"{\"",2,6],["Expected \")\" but found \":\"",2,12],["Unexpected }",2,21]]]
+                next ["o","export { a } from \"x\";\n"]
+??       15 records       1 sources  R>A          ruling: attributes of a type-only import on the next line
+              tsc parses; its checker reports TS2857 for the attributes of a type-only import, which the base accepts on one line
+              t.ts.plain       "import type A from \"x\"\nwith { type: \"json\" }"
+                base ["e",[["Expected \"(\" but found \"{\"",2,6],["Expected \")\" but found \":\"",2,12],["Unexpected }",2,21]]]
+                next ["o",""]
+              t.ts.exp         "import type A from \"x\"\nwith { type: \"json\" }"
+                base ["e",[["Expected \"(\" but found \"{\"",2,6],["Expected \")\" but found \":\"",2,12],["Unexpected }",2,21]]]
+                next ["o",""]
+~~     1395 records      93 sources  R>A          explained: an entry of an extends or implements list is a type, and tsc reads an expression there
+              the entry is valid as a type for tsc as a whole; the base takes every type of its own grammar as an entry: `interface I extends (a: A) => void {}` and `class C implements (a: A) => void {}` are accepted by both builds and rejected by tsc (TS1005)
+              t.ts.plain       "class C implements [...in: A[]] {}"
+                base ["e",[["Unexpected in",1,24]]]
+                next ["o","class C {\n}\n"]
+              t.ts.exp         "class C implements [...in: A[]] {}"
+                base ["e",[["Unexpected in",1,24]]]
+                next ["o","class C {\n}\n"]
+~~       30 records       2 sources  R>A          explained: a return statement outside a function
+              `class` is the return type, `{}` the body, and the block after it returns at the top level: `{ return null as any }` is accepted by both builds and tsc reports TS1108 for it
+              t.ts.plain       "function f(x: any): class {} { return null as any }"
+                base ["e",[["Unexpected class",1,21]]]
+                next ["o","function f(x) {}\n{\n  return null;\n}\n"]
+              t.ts.exp         "function f(x: any): class {} { return null as any }"
+                base ["e",[["Unexpected class",1,21]]]
+                next ["o","function f(x) {}\n{\n  return null;\n}\n"]
+~~       30 records       2 sources  R>A          explained: type arguments before a property access in an implements or extends entry
+              the entry is read as an expression now; `class C implements A<B>.C {}` and `let v = A<>.C;` are accepted by both builds and tsc reports TS1477 for them
+              t.ts.plain       "class C implements A<>.C {}"
+                base ["e",[["Unexpected >",1,22]]]
+                next ["o","class C {\n}\n"]
+              t.ts.exp         "class C implements A<>.C {}"
+                base ["e",[["Unexpected >",1,22]]]
+                next ["o","class C {\n}\n"]
+~~       30 records       2 sources  R>A          explained: delete of a name in strict mode code
+              the entry is read as an expression now; `class C extends [delete A] {}` and `let v = [delete A];` are accepted by both builds and tsc reports TS1102 for them
+              t.ts.plain       "class C implements [delete A] {}"
+                base ["e",[["Unexpected delete",1,21],["Expected \":\" but found \"A\"",1,28]]]
+                next ["o","class C {\n}\n"]
+              t.ts.exp         "class C implements [delete A] {}"
+                base ["e",[["Unexpected delete",1,21],["Expected \":\" but found \"A\"",1,28]]]
+                next ["o","class C {\n}\n"]
+!!       30 records       2 sources  R>A          RESTORE: tsc does not parse TS1005
+              base rejected, next accepts, tsc reports a parse diagnostic: keep the rejection when !S::STRICT
+              t.ts.plain       "let f = (a): <out>() =>  => a;"
+                base ["e",[["The modifier \"out\" is not valid here",1,15]]]
+                next ["o","let f = (a) => a;\n"]
+              t.ts.exp         "let f = (a): <out>() =>  => a;"
+                base ["e",[["The modifier \"out\" is not valid here",1,15]]]
+                next ["o","let f = (a) => a;\n"]
+!!       15 records       1 sources  R>A          RESTORE: tsc does not parse TS1110
+              base rejected, next accepts, tsc reports a parse diagnostic: keep the rejection when !S::STRICT
+              t.ts.plain       "f<<out>() => >(x);"
+                base ["e",[["The modifier \"out\" is not valid here",1,4]]]
+                next ["o","f(x);\n"]
+              t.ts.exp         "f<<out>() => >(x);"
+                base ["e",[["The modifier \"out\" is not valid here",1,4]]]
+                next ["o","f(x);\n"]
+!!      480 records      32 sources  R>A          RESTORE: tsc does not parse TS1131
+              base rejected, next accepts, tsc reports a parse diagnostic: keep the rejection when !S::STRICT
+              t.ts.plain       "class C { @d m(): (a = 1) =>  { return x; } }"
+                base ["e",[["Expected \")\" but found \"=\"",1,22],["Expected \";\" but found \"1\"",1,24],["Expected identifier but found \")\"",1,25],["Expected \";\" but found \"{\"",1,31],["Expected \";\" but found \"
+                next ["o","class C {\n}\n"]
+              t.ts.exp         "class C { @d m(): (a = 1) =>  { return x; } }"
+                base ["e",[["Expected \")\" but found \"=\"",1,22],["Expected \";\" but found \"1\"",1,24],["Expected identifier but found \")\"",1,25],["Expected \";\" but found \"{\"",1,31],["Expected \";\" but found \"
+                next ["o","class C {\n}\n"]
+!!        9 records       1 sources  R>A          RESTORE: grammar error of the checker TS1071
+              base rejected, next accepts, tsc parses and its checker reports a grammar error: keep the rejection when !S::STRICT
+              t.ts.exp         "class C { accessor [k: string]: A }"
+                base ["e",[["Expected \";\" but found \"[\"",1,20],["Expected \";\" but found \"]\"",1,30],["Expected identifier but found \":\"",1,31]]]
+                next ["o","class C {\n}\n"]
+              t.ts.deco        "class C { accessor [k: string]: A }"
+                base ["e",[["Expected \";\" but found \"[\"",1,20],["Expected \";\" but found \"]\"",1,30],["Expected identifier but found \":\"",1,31]]]
+                next ["o","class C {\n}\n"]
+!!       15 records       1 sources  R>A          RESTORE: grammar error of the checker TS1183
+              base rejected, next accepts, tsc parses and its checker reports a grammar error: keep the rejection when !S::STRICT
+              t.ts.plain       "declare class C { m(...a,) {} }"
+                base ["e",[["Expected \")\" but found \",\"",1,25]]]
+                next ["o",""]
+              t.ts.exp         "declare class C { m(...a,) {} }"
+                base ["e",[["Expected \")\" but found \",\"",1,25]]]
+                next ["o",""]
+!!        9 records       1 sources  R>A          RESTORE: grammar error of the checker TS1253
+              base rejected, next accepts, tsc parses and its checker reports a grammar error: keep the rejection when !S::STRICT
+              t.ts.exp         "class C { abstract accessor a: A }"
+                base ["e",[["Expected \";\" but found \"a\"",1,29],["Expected identifier but found \":\"",1,30]]]
+                next ["o","class C {\n}\n"]
+              t.ts.deco        "class C { abstract accessor a: A }"
+                base ["e",[["Expected \";\" but found \"a\"",1,29],["Expected identifier but found \":\"",1,30]]]
+                next ["o","class C {\n}\n"]
+        204 records      51 sources  A>A          metadata: a type predicate is Boolean, an assertion predicate is undefined
+              x is T, this is T, asserts x, asserts x is T
+              t.ts.deco        "class C { @d m(): this is A {} }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n  m() {}\n}\n__legacyDecorateClassTS_3r
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n  m() {}\n}\n__legacyDecorateClassTS_3r
+              t.tsx.deco       "class C { @d m(): this is A {} }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n  m() {}\n}\n__legacyDecorateClassTS_3r
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n  m() {}\n}\n__legacyDecorateClassTS_3r
+          4 records       1 sources  A>A          metadata: | and & operands are the check type of a conditional type
+              A | B extends C ? D : E is Conditional(Union(A, B), ...)
+              t.ts.deco        "class C { @d a: A | B extends C ? string : string }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+              t.tsx.deco       "class C { @d a: A | B extends C ? string : string }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+         40 records      10 sources  A>A          metadata: keyof, readonly and unique end before extends
+              the operand of a type operator does not take `extends ? :`
+              t.ts.deco        "class C { @d a: keyof A extends B ? string : string }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+              t.tsx.deco       "class C { @d a: keyof A extends B ? string : string }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+          4 records       1 sources  A>A          metadata: the type after the colon of a conditional type takes | and &
+              TypeSink::CONDITIONAL_FALSE_LEVEL is gone
+              t.ts.deco        "class K { @d a: A extends B ? C : C | C }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass K {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass K {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+              t.tsx.deco       "class K { @d a: A extends B ? C : C | C }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass K {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass K {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+        532 records     133 sources  A>A          metadata: the branches of a conditional type merge as the operands of | do
+              a conditional type serializes as the union of its branches
+              t.ts.deco        "class C { @d x: A extends infer U ? U : never; }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+              t.tsx.deco       "class C { @d x: A extends infer U ? U : never; }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+         32 records       8 sources  A>A          metadata: unique takes the whole type after it
+              unique symbol[], unique [A]: TypeOperator over the postfix type
+              t.ts.deco        "class C { @d x: unique symbol[]; }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+              t.tsx.deco       "class C { @d x: unique symbol[]; }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+         56 records      14 sources  A>A          metadata: an import type and unique symbol are Object
+              a form without a tag is Object among the operands of | and &, and before []
+              t.ts.deco        "class C { @d a: unique symbol | null }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+              t.tsx.deco       "class C { @d a: unique symbol | null }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+??      388 records      97 sources  A>A          ruling: metadata of a source that tsc does not parse
+              only metadata differs; tsc reports a parse diagnostic, so it writes no value to compare with
+              t.ts.deco        "class C { @d a: b is A }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+              t.tsx.deco       "class C { @d a: b is A }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+!!        4 records       1 sources  A>A          FORBIDDEN metadata: differs from tsc
+              only metadata differs and a changed value is not the value of tsc
+              t.ts.deco        "class K { @d a: A extends B ? C : C } class C {}"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass K {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass K {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+              t.tsx.deco       "class K { @d a: A extends B ? C : C } class C {}"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass K {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass K {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+??       11 records       2 sources  A>A          ruling: A>A a declaration named as or satisfies, where the base read a cast
+              `interface as {}` and `namespace as {}` were the casts `interface as {}` and `namespace as {}` (output `interface;`); tsc reads a declaration. Not metadata
+              t.ts.plain       "namespace as {}"
+                base ["o","namespace;\n"]
+                next ["o",""]
+              t.ts.exp         "namespace as {}"
+                base ["o","namespace;\n"]
+                next ["o",""]
+      66426 records    4534 sources  R>R          both reject: another error list
+              the messages or the positions of the errors changed
+              t.ts.exp         "class C { accessor static a: A }"
+                base ["e",[["Expected \";\" but found \"static\"",1,20]]]
+                next ["e",[["Expected \";\" but found \"a\"",1,27],["Expected identifier but found \":\"",1,28]]]
+              t.ts.deco        "class C { accessor static a: A }"
+                base ["e",[["Expected \";\" but found \"static\"",1,20]]]
+                next ["e",[["Expected \";\" but found \"a\"",1,27],["Expected identifier but found \":\"",1,28]]]
+        135 records       9 sources  R>A          as or satisfies names a type alias, an interface or a namespace
+              H15: `type as = 1`, `interface as {}`, `namespace as { ... }`
+              t.ts.plain       "type as = 1;"
+                base ["e",[["Unexpected =",1,9]]]
+                next ["o",""]
+              t.ts.exp         "type as = 1;"
+                base ["e",[["Unexpected =",1,9]]]
+                next ["o",""]
+         15 records       1 sources  R>A          abstract stands before declare
+              `abstract declare class C {}`
+              t.ts.plain       "abstract declare class C {}"
+                base ["e",[["Expected \";\" but found \"declare\"",1,10]]]
+                next ["o",""]
+              t.ts.exp         "abstract declare class C {}"
+                base ["e",[["Expected \";\" but found \"declare\"",1,10]]]
+                next ["o",""]
+         60 records       4 sources  R>A          a string in brackets names an enum member
+              `enum E { ["x"] = 1 }`
+              t.ts.plain       "enum E { ['a'] = 1 }"
+                base ["e",[["Expected identifier but found \"[\"",1,10]]]
+                next ["o","var E;\n((E) => {\n  E[E[\"a\"] = 1] = \"a\";\n})(E ||= {});\n"]
+              t.ts.exp         "enum E { ['a'] = 1 }"
+                base ["e",[["Expected identifier but found \"[\"",1,10]]]
+                next ["o","var E;\n((E) => {\n  E[E[\"a\"] = 1] = \"a\";\n})(E ||= {});\n"]
+         30 records       2 sources  R>A          import starts an expression in a namespace
+              `namespace N { import("x"); }`, `namespace N { import.meta; }`
+              t.ts.plain       "namespace N { import(\"x\"); }"
+                base ["e",[["Expected identifier but found \"(\"",1,21]]]
+                next ["o","var N;\n((N) => {\n  import(\"x\");\n})(N ||= {});\n"]
+              t.ts.exp         "namespace N { import(\"x\"); }"
+                base ["e",[["Expected identifier but found \"(\"",1,21]]]
+                next ["o","var N;\n((N) => {\n  import(\"x\");\n})(N ||= {});\n"]
+         45 records       3 sources  R>A          the attributes of an import start on the next line
+              `import A from "x"\nwith { type: "json" }`
+              t.ts.plain       "import A from \"x\"\nwith { type: \"json\" }"
+                base ["e",[["Expected \"(\" but found \"{\"",2,6],["Expected \")\" but found \":\"",2,12],["Unexpected }",2,21]]]
+                next ["o","import A from \"x\";\n"]
+              t.ts.exp         "import A from \"x\"\nwith { type: \"json\" }"
+                base ["e",[["Expected \"(\" but found \"{\"",2,6],["Expected \")\" but found \":\"",2,12],["Unexpected }",2,21]]]
+                next ["o","import A from \"x\";\n"]
+         30 records       2 sources  R>A          a comma ends an index signature of a class
+              `class C { [k: string]: T, }`
+              t.ts.plain       "class C { [k: string]: T, }"
+                base ["e",[["Expected \";\" but found \",\"",1,25]]]
+                next ["o","class C {\n}\n"]
+              t.ts.exp         "class C { [k: string]: T, }"
+                base ["e",[["Expected \";\" but found \",\"",1,25]]]
+                next ["o","class C {\n}\n"]
+        177 records      22 sources  R>A          accessor is a modifier without standard decorators
+              `class C { accessor x: T; }` with experimentalDecorators, and in scanImports, which has no standard decorators either
+              t.ts.exp         "class C { accessor a: A }"
+                base ["e",[["Expected \";\" but found \"a\"",1,20],["Expected identifier but found \":\"",1,21]]]
+                next ["o","import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _a$1;\n\nclass C {\n  constructor() {\n    
+              t.ts.deco        "class C { accessor a: A }"
+                base ["e",[["Expected \";\" but found \"a\"",1,20],["Expected identifier but found \":\"",1,21]]]
+                next ["o","import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _a$1;\n\nclass C {\n  constructor() {\n    
+         60 records       4 sources  R>A          a comma follows the rest parameter of a signature of a declared class
+              `declare class C { m(...a,): void; }`
+              t.ts.plain       "declare class C { m(...a,): void; }"
+                base ["e",[["Expected \")\" but found \",\"",1,25]]]
+                next ["o",""]
+              t.ts.exp         "declare class C { m(...a,): void; }"
+                base ["e",[["Expected \")\" but found \",\"",1,25]]]
+                next ["o",""]
+        610 records      44 sources  R>A          out or in names a type or a type parameter
+              `function f<out>() {}`, `<out>x`, `<in>x`, `<out>(x) => x`
+              t.ts.plain       "const v = <out>x;"
+                base ["e",[["The modifier \"out\" is not valid here",1,12]]]
+                next ["o","const v = x;\n"]
+              t.ts.exp         "const v = <out>x;"
+                base ["e",[["The modifier \"out\" is not valid here",1,12]]]
+                next ["o","const v = x;\n"]
+       3195 records     213 sources  R>A          an interface extends, or a class implements, an expression
+              `interface I extends a() {}`, `class C implements a() {}`: parseExpressionWithTypeArguments (tsc: TS2499, TS2500 from the checker, no grammar error)
+              t.ts.plain       "interface I extends a() {}"
+                base ["e",[["Expected \"{\" but found \"(\"",1,22],["Unexpected )",1,23]]]
+                next ["o",""]
+              t.ts.exp         "interface I extends a() {}"
+                base ["e",[["Expected \"{\" but found \"(\"",1,22],["Unexpected )",1,23]]]
+                next ["o",""]
+       2945 records     201 sources  R>A          a reserved word is the label of a rest element of a tuple
+              `[...const: A[]]`, `[...in: A[]]`
+              t.ts.plain       "type X = [...in: A[]];"
+                base ["e",[["Unexpected in",1,14]]]
+                next ["o",""]
+              t.ts.exp         "type X = [...in: A[]];"
+                base ["e",[["Unexpected in",1,14]]]
+                next ["o",""]
+        580 records      39 sources  R>A          an import type takes type arguments and an expression in an attribute; .< stands before type arguments
+              `import("x")<T>`, `typeof import("x")<C>`, `import("x").A.<T>`, `typeof a.<C>`, `import("x", { with: { a: "b" + "c" } })`
+              t.ts.plain       "type X = import('x')<A>;"
+                base ["e",[["Expected \";\" but found \"<\"",1,21],["Unexpected ;",1,24]]]
+                next ["o",""]
+              t.ts.exp         "type X = import('x')<A>;"
+                base ["e",[["Expected \";\" but found \"<\"",1,21],["Unexpected ;",1,24]]]
+                next ["o",""]
+         75 records       5 sources  R>A          the type of an assertion predicate starts on the next line
+              `asserts a\nis B` in a return type
+              t.ts.plain       "class C { @d m(): asserts a\nis A { return x; } }"
+                base ["e",[["Expected \";\" but found \"A\"",2,4],["Expected identifier but found \"{\"",2,6],["Expected \";\" but found \"x\"",2,15],["Unexpected }",2,20]]]
+                next ["o","import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitialize
+              t.ts.exp         "class C { @d m(): asserts a\nis A { return x; } }"
+                base ["e",[["Expected \";\" but found \"A\"",2,4],["Expected identifier but found \"{\"",2,6],["Expected \";\" but found \"x\"",2,15],["Unexpected }",2,20]]]
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m } from \"bun:wrap\";\n\nclass C {\n  m() {\n    return x;\n  }\n}\n__legacyDecorateClassTS_3r173x8m([\n  d\n], C.prototype, \
+        845 records      57 sources  R>A          asserts is T is the assertion about a parameter named is
+              `(): asserts is A`: parseAssertsTypePredicate reads `is` as the name (tsc: TS1225 when no parameter has the name)
+              t.ts.plain       "class C { @d m(): asserts is A { return x; } }"
+                base ["e",[["Expected \";\" but found \"A\"",1,30],["Expected identifier but found \"{\"",1,32],["Expected \";\" but found \"x\"",1,41],["Unexpected }",1,46]]]
+                next ["o","import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitialize
+              t.ts.exp         "class C { @d m(): asserts is A { return x; } }"
+                base ["e",[["Expected \";\" but found \"A\"",1,30],["Expected identifier but found \"{\"",1,32],["Expected \";\" but found \"x\"",1,41],["Unexpected }",1,46]]]
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m } from \"bun:wrap\";\n\nclass C {\n  m() {\n    return x;\n  }\n}\n__legacyDecorateClassTS_3r173x8m([\n  d\n], C.prototype, \
+       2590 records     177 sources  R>A          a parameter of a signature has an initializer
+              H4: `(a = 1) => void`, `{ a(b = 1): A }`, `({ a = 1 }) => void`, also as a type argument (tsc: TS2371 from the checker, no grammar error)
+              t.ts.plain       "type X = (a = 1) => void;"
+                base ["e",[["Expected \")\" but found \"=\"",1,13],["Expected \";\" but found \"1\"",1,15],["Unexpected )",1,16]]]
+                next ["o",""]
+              t.ts.exp         "type X = (a = 1) => void;"
+                base ["e",[["Expected \")\" but found \"=\"",1,13],["Expected \";\" but found \"1\"",1,15],["Unexpected )",1,16]]]
+                next ["o",""]
+        760 records      52 sources  R>A          a binding pattern of a signature is read as a binding pattern
+              `([a, , b]) => void`, `{ ([a, , b]): void }`, `({ a: b = 1 }: A) => void`, `({ [a]: b }: A) => void`: a hole, a default, a computed key
+              t.ts.plain       "type X = ({ a: b = 1 }: A) => void;"
+                base ["e",[["Unexpected =",1,18]]]
+                next ["o",""]
+              t.ts.exp         "type X = ({ a: b = 1 }: A) => void;"
+                base ["e",[["Unexpected =",1,18]]]
+                next ["o",""]
+       1865 records     127 sources  R>A          a modifier stands before a parameter that is no parameter property
+              `(public a: A) => void`, `{ a(public b: B): A }`, `function f(public a: A) {}`, `class C { m(public a: A) {} }` (tsc: TS2369 from the checker, no grammar error)
+              t.ts.plain       "function f(public a: A) {}"
+                base ["e",[["Expected \")\" but found \"a\"",1,19],["Expected \";\" but found \")\"",1,23]]]
+                next ["o","function f(a) {}\n"]
+              t.ts.exp         "function f(public a: A) {}"
+                base ["e",[["Expected \")\" but found \"a\"",1,19],["Expected \";\" but found \")\"",1,23]]]
+                next ["o","function f(a) {}\n"]
+         30 records       2 sources  R>A          a comparison follows the type after as and satisfies
+              `x as T <= y`
+              t.ts.plain       "let v = x as T <= y;"
+                base ["e",[["Unexpected =",1,17]]]
+                next ["o","let v = x <= y;\n"]
+              t.ts.exp         "let v = x as T <= y;"
+                base ["e",[["Unexpected =",1,17]]]
+                next ["o","let v = x <= y;\n"]
+         15 records       1 sources  R>A          a colon follows an operand that ends with a parenthesis
+              `a ? 1 + async(b) : c`, `a ? -<T>(b) : c`, `case -async(b):` are no arrow functions with a return type
+              t.ts.plain       "x = a ? 1 + async(b) : c;"
+                base ["e",[["Unexpected :",1,22]]]
+                next ["o","x = a ? 1 + async(b) : c;\n"]
+              t.ts.exp         "x = a ? 1 + async(b) : c;"
+                base ["e",[["Unexpected :",1,22]]]
+                next ["o","x = a ? 1 + async(b) : c;\n"]
+         10 records       1 sources  R>A          a colon follows parentheses between ? and : of a conditional
+              `a ? <T>(b) : c => d`, `a ? y => (b) : c => d`, `a ? (y) => (b) : c => d`: the arrow body and the type assertion before the colon
+              t.ts.plain       "x = a ? <T>(b) : c => d;"
+                base ["e",[["Expected \":\" but found \";\"",1,24],["Unexpected end of file",1,24]]]
+                next ["o","x = a ? b : (c) => d;\n"]
+              t.ts.exp         "x = a ? <T>(b) : c => d;"
+                base ["e",[["Expected \":\" but found \";\"",1,24],["Unexpected end of file",1,24]]]
+                next ["o","x = a ? b : (c) => d;\n"]
+       3615 records     245 sources  R>A          a reserved word is the name of a type reference
+              `let x: if`, `<if>x`, `x as var`, `(): if => x`, `typeof class`, `[function]`: parseEntityName(allowReservedWords)
+              t.ts.plain       "type X = function;"
+                base ["e",[["Unexpected function",1,10]]]
+                next ["o",""]
+              t.ts.exp         "type X = function;"
+                base ["e",[["Unexpected function",1,10]]]
+                next ["o",""]
+         15 records       1 sources  R>A          valid TypeScript that no entry above names [tsc also: TS7032]
+              tsc as a whole reports no rule of syntax for the source; P1.1 asks for every valid construct. Give the construct an entry of its own
+              t.ts.plain       "type X = { set [a + b](v) };"
+                base ["e",[["Expected \"]\" but found \"+\"",1,19],["Unexpected b",1,21]]]
+                next ["o",""]
+              t.ts.exp         "type X = { set [a + b](v) };"
+                base ["e",[["Expected \"]\" but found \"+\"",1,19],["Unexpected b",1,21]]]
+                next ["o",""]
+        655 records      44 sources  R>A          valid TypeScript that no entry above names [tsc also: nothing]
+              tsc as a whole reports no rule of syntax for the source; P1.1 asks for every valid construct. Give the construct an entry of its own
+              t.ts.plain       "type X = [function];"
+                base ["e",[["Expected \":\" but found \"]\"",1,19],["Expected \"]\" but found \";\"",1,20]]]
+                next ["o",""]
+              t.ts.exp         "type X = [function];"
+                base ["e",[["Expected \":\" but found \"]\"",1,19],["Expected \"]\" but found \";\"",1,20]]]
+                next ["o",""]
+562 records with the mark !!, 444 with the mark ??, 1485 with the mark ~~

@@ -1,0 +1,22 @@
+lock acquired 2026-10-01T21:02:52Z
+p1 rc 0 seconds 34 load 248.52
+1.4.3-debug+be1ebe529
+harness rc=0
+/tmp/gdr1a/runs/p1.check.jsonl.gz: 18390 inputs x 15 apis, 0 crashes, 247.9 s, bun 1.4.3-debug be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb
+diff base>p1 rc=1
+base 1.4.3 e3566be889995ffff8b08823b9233617f979c889 (18390 sources)
+next 1.4.3-debug be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb (18390 sources)
+275850 records compared, 88146 differ, in 6245 sources
+562 records with the mark !!, 444 with the mark ??, 1485 with the mark ~~
+diff head>p1 rc=1
+base 1.4.3 be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb (18390 sources)
+next 1.4.3-debug be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb (18390 sources)
+275850 records compared, 40342 differ, in 2724 sources
+tests rc=0
+ 694 pass
+ 1 skip
+ 37 todo
+ 0 fail
+ 12 snapshots, 2955 expect() calls
+Ran 732 tests across 10 files. [115.90s]
+done 2026-10-01T21:09:55Z

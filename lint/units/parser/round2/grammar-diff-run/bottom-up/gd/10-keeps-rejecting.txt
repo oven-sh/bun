@@ -1,0 +1,170 @@
+# tsc rejects as a whole (its parser or a grammar check of its checker), the base rejects, be1ebe5295 accepted: rejected again
+type X = { m(a? = 1): R };
+type X = new (a?: A = 1) => R;
+type X = { m(...a: A[] = []): R };
+type X = ([...a = 1]) => R;
+type X = { m(readonly override a: A): R };
+function f(override override a: A) {}
+class C { m(readonly override a: A) {} }
+let o = { m(public private a: A) {} };
+declare function f(public public a: A): void;
+function f(...a,): void;⏎function f(...a) {}
+class C { m(...a,): void; m(...a) {} }
+abstract class C { abstract m(...a,): void }
+class C { constructor(...a,); constructor(...a) {} }
+type X = [a: ...A[]];
+type X = [...if?: A[]];
+type X = A.B.<C>[];
+function f<U extends class>() {}
+type X<U extends delete> = U;
+class C<U extends in> {}
+interface I<U extends instanceof> {}
+let f = <U extends class>(x) => x;
+f<extends>(x);
+type X = A<extends>;
+type X = A[extends];
+type X = A extends B ? if : 2;
+type X = A extends B ? class : 2;
+type X = { readonly #a: A };
+type X = { 1n?: A };
+type X = { a? = 1 };
+type X = { [a] = 1 };
+interface I { a?: A = 1 }
+interface I { set a(v) {} }
+type X = { [k: string = 1]: A };
+class C { [k?: string]: A }
+class C { [...k: string[]]: A }
+class C { []: A }
+class C { x: A⏎[]; }
+class C { [k: string = 1]: A }
+declare class C { [k: string] }
+type X = { [+a]: A };
+type X = { [a()]: A };
+interface I { [a + b](): void }
+interface I extends A implements B implements C {}
+interface I implements {}
+class C implements <B>a {}
+class C implements ++a {}
+class C implements @d class {} {}
+class C { static accessor a?: A }
+class C { readonly static accessor a: A }
+type X = { #a(): void };
+type X = { #a?: A };
+type X = { static #a: A };
+type X = { #a };
+type X = { readonly 1n: A };
+type X = { 1n };
+type X = { [-a]: A };
+type X = { [new A]: A };
+type X = { [1 + 2]: A };
+type X = { [a + b](): void };
+type X = { [a + b]?: A };
+type X = { [a + b] };
+type X = { readonly [a + b]: A };
+type X = { [+1n]: A };
+type X = { [+"a"]: A };
+type X = { [...k]: A };
+type X = { [] };
+type X = { "a": A = 1 };
+type X = { 1: A = 1 };
+type X = { a: A = 1, b: B };
+interface I { a: A = 1 }
+type X = { set a(v) {} };
+type X = { get a() {} };
+type X = { get a(): A { return 1 } };
+interface I { get a(): A {} }
+class C { [k: string]; }
+class C { [k: string], }
+class C { [k: string,]: A }
+class C { [k, l]: A }
+class C { [k?]: A }
+class C { [...k]: A }
+class C { [] }
+class C { [a, b]: A }
+type X = [a: A?, b: B];
+type X = [...class?: A[]];
+type X = A.B.<C>;
+type X = A.<B>[];
+type X = #a[];
+type X = keyof #a;
+type X = #a | B;
+class C { m(...a,): void }
+class C { m(...a,) }
+function f(...a,): void;
+function f(...a,);
+interface I { [a + b]: A }
+function f(readonly override a: A) {}
+class C { m(public private a: A) {} }
+declare function f(public private a: A): void;
+type X = (readonly override a: A) => R;
+type X = { m(a?: A = 1): R };
+type X = { m(public private a: A): R };
+type X = { m(...a = []): R };
+type X = { m({ ...a = 1 }): R };
+type X = { new (a?: A = 1): R };
+type X = { (a?: A = 1): R };
+interface I implements B extends A {}
+interface I extends A implements B extends C {}
+interface I extends A, B, {}
+interface I implements A, {}
+interface I extends A implements {}
+function f<U extends delete>() {}
+function f<U extends in>() {}
+function f<U extends instanceof>() {}
+type X<U extends class> = U;
+class C<U extends class> {}
+interface I<U extends class> {}
+type X = <U extends class>() => void;
+class C<U extends delete> {}
+interface I<U extends delete> {}
+let f = <U extends delete>(x) => x;
+type X = <U extends delete>() => void;
+type X<U extends in> = U;
+interface I<U extends in> {}
+let f = <U extends in>(x) => x;
+type X = <U extends in>() => void;
+type X<U extends instanceof> = U;
+class C<U extends instanceof> {}
+let f = <U extends instanceof>(x) => x;
+type X = <U extends instanceof>() => void;
+type X<U extends super> = U;
+class C<U extends super> {}
+interface I<U extends super> {}
+let f = <U extends super>(x) => x;
+type X = <U extends super>() => void;
+function f<U = #a>() {}
+type X<U extends #a> = U;
+class C<U extends #a> {}
+interface I<U extends #a> {}
+let f = <U extends #a>(x) => x;
+type X = <U extends #a>() => void;
+type X<U extends super.a> = U;
+class C<U extends super.a> {}
+interface I<U extends super.a> {}
+let f = <U extends super.a>(x) => x;
+type X = <U extends super.a>() => void;
+type X = [...in?: A[]];
+type X = [new: A?];
+type X = [typeof: A?];
+type X = [import: A?];
+type X = [function: A?];
+type X = [keyof: A?];
+type X = [readonly: A?];
+type X = [infer: A?];
+type X = [keyof?: A?];
+type X = [abstract: A?];
+type X = [unique: A?];
+type X = [asserts: A?];
+type X = [string: A?];
+type X = [new: ...A[]];
+type X = [keyof: ...A[]];
+type X = A<extends, B>;
+type X = A extends B ?⏎if : 2;
+let x: A extends B ? if : 2;
+type X = [a?: ...A[]];
+type X = [...a: ...A[]];
+type X = [a: A?, ...b: B[]];
+# a private name where a type or a member of a type is named: the oracle (noResolve) reports no grammar code, tsc reports TS2503 or TS2694; rejected again
+let x: #a.b;
+type X = import("x").#a;
+type X = #a.b;

@@ -3,6 +3,8 @@
 Nothing below is granted yet, and nothing of it was changed on the side of another owner.
 How to read an entry. To: the owner of the file. Ask: the exact change. Why: what was measured. Until then: what
 happens without it, and what the unit does on its own side.
+RP-1 to RP-7, CK-1 and CK-2 are the subjects of the same ids in the draft of round 1
+(`needs-and-lint-channel/top-down/NEEDS.draft.md`), measured again on today's tree; RP-8 to RP-11 are new.
 
 ## Files of the repository that no unit owns
 
@@ -72,28 +74,10 @@ version of oxlint and `--config oxlint.json` (measured: no file below `corpus/` 
 `.oxlintrc.json` there has no effect when `--config` is given). `sync.sh` leaves a file directly in `corpus/`
 whose name starts with a dot, and its `--verify` and the digest of the corpus leave it out. A rewritten file
 shows in `sync.sh --check`.
-Side effect of the edit: `packages-ci.yml:20-26` names `oxlint.json` and `.prettierignore` in its path filter.
+Side effect of the edit: `packages-ci.yml:20-26` names `oxlint.json` in its path filter, and `.prettierignore`
+(RP-7) too.
 
-### RP-3. `.prettierignore`
-
-To: integrator. Not urgent.
-
-Ask: one line after line 3:
-
-    test/cli/lint/conformance/corpus
-
-Why. The formatter of CI does not take the corpus today: `bun run prettier` (`package.json:80`, run by
-`format.yml:65`) names `scripts packages src docs 'test/**/*.{test,spec}.{...}'`, and no name below
-`test/cli/lint/conformance` matches (run with prettier 3.6.2 on `test/cli/lint/**`: four files, the four test
-files of `test/cli/lint`). `conformance.test.ts` keeps that true: it fails when a name of the corpus is one that
-CI takes for a test, and those names include the names of the glob. The line is for the editor:
-`.vscode/settings.json:5` formats a file when it is saved, with prettier for TypeScript (lines 64 to 69), and
-the extension reads the `.prettierignore` of the root (its documented default; not measured).
-
-Until then: a case that someone opens and saves in an editor is rewritten, and `sync.sh --check` shows it.
-The unit's own duty: `format.yml` rewrites `test/cli/lint/conformance.test.ts` when it is not formatted.
-
-### RP-4. `.github/CODEOWNERS`
+### RP-3. `.github/CODEOWNERS`
 
 To: integrator, with the consent of @Jarred-Sumner (line 2).
 
@@ -107,37 +91,7 @@ owner gives the file none.
 
 Until then: @alii is asked for a review of the pull request. Nothing fails.
 
-### RP-5. `.coderabbit.yaml`, `path_filters` (lines 30 and 31)
-
-To: integrator, for the maintainers.
-
-Ask: one entry after line 31, as the one that is there for the Node.js tests:
-
-    - "!test/cli/lint/conformance/corpus/"
-
-Why. `auto_review` is on (lines 33 to 35) and the only path that is left out is `test/js/node/test/`. The
-corpus is 22,182 files that nobody of this repository wrote.
-
-Until then: not verified what the review does with them.
-
-### RP-6. `.vscode/settings.json`, `"search.exclude"` (lines 12 to 20)
-
-To: integrator. Optional.
-
-Ask: `"test/cli/lint/conformance/corpus": true`, for the reason that line 17 gives for the fixtures of the
-Node.js tests: 31 MB of TypeScript in every search of the workspace.
-
-### RP-7. `test/parallel-allowlist.json`
-
-To: nobody. No change is asked.
-
-`cli/lint` is not among its 250 `dirs`, so `conformance.test.ts` and the other test files of `test/cli/lint`
-run in the serial part of a shard (`scripts/runner.node.ts:561-567`, `:1319-1337`). The file is generated
-(`_meta.generated_by`: `scripts/update-parallel-allowlist.mjs`), from the durations and the annotations of
-past builds. Its generator walks `test/` with its own copy of the name rule (lines 51 to 67): no file below
-`test/cli/lint/conformance` has such a name, so none can enter `excludeFiles`.
-
-### RP-8. `test/no-validate-leaksan.txt`
+### RP-4. `test/no-validate-leaksan.txt`
 
 To: nobody. No line is asked.
 
@@ -147,7 +101,16 @@ and `test/harness.ts:67` and `:95` pass them on to every process that a test sta
 `test/cli/lint`. With that environment and the debug build of 3110ce85cf the whole test file ends without a
 report of a sanitizer.
 
-### RP-9. The file list of the pull request
+### RP-5. `src/bun_core/env_var.rs` and `test/harness.ts`
+
+To: nobody. No line is asked.
+
+`bun --lint` reads `BUN_FEATURE_FLAG_EXPERIMENTAL_LINT` with `getenv_z` (`src/runtime/cli/Arguments.rs:1771-1773`),
+not through a line of `pub mod feature_flag` (`src/bun_core/env_var.rs:217`, beside line 277). The runner sets
+the variable for its own processes (`runner/check_bun_lint.ts:45`), and `bunEnv` (`test/harness.ts:66-90`)
+does not get it.
+
+### RP-6. What the corpus does to the file list of the pull request
 
 To: integrator. For information, no file to change.
 
@@ -171,7 +134,56 @@ To: integrator. For information, no file to change.
 - `comment-cop.yml:92-94` reads the same list from GitHub, and `src/` sorts before `test/`: it sees every
   file below `src/` as long as the pull request has fewer than 3,000 files before `test/`.
 
-### RP-10. `scripts/runner.node.ts`: the rule by which a file is a test
+### RP-7. `.prettierignore`
+
+To: integrator. Not urgent.
+
+Ask: one line after line 3:
+
+    test/cli/lint/conformance/corpus
+
+Why. The formatter of CI does not take the corpus today: `bun run prettier` (`package.json:80`, run by
+`format.yml:65`) names `scripts packages src docs 'test/**/*.{test,spec}.{...}'`, and no name below
+`test/cli/lint/conformance` matches (run with prettier 3.6.2 on `test/cli/lint/**`: four files, the four test
+files of `test/cli/lint`). `conformance.test.ts` keeps that true: it fails when a name of the corpus is one that
+CI takes for a test, and those names include the names of the glob. The line is for the editor:
+`.vscode/settings.json:5` formats a file when it is saved, with prettier for TypeScript (lines 64 to 69), and
+the extension reads the `.prettierignore` of the root (its documented default; not measured).
+
+Until then: a case that someone opens and saves in an editor is rewritten, and `sync.sh --check` shows it.
+The unit's own duty: `format.yml` rewrites `test/cli/lint/conformance.test.ts` when it is not formatted.
+
+### RP-8. `test/parallel-allowlist.json`
+
+To: nobody. No change is asked.
+
+`cli/lint` is not among its 250 `dirs`, so `conformance.test.ts` and the other test files of `test/cli/lint`
+run in the serial part of a shard (`scripts/runner.node.ts:561-567`, `:1319-1337`). The file is generated
+(`_meta.generated_by`: `scripts/update-parallel-allowlist.mjs`), from the durations and the annotations of
+past builds. Its generator walks `test/` with its own copy of the name rule (lines 51 to 67): no file below
+`test/cli/lint/conformance` has such a name, so none can enter `excludeFiles`.
+
+### RP-9. `.coderabbit.yaml`, `path_filters` (lines 30 and 31)
+
+To: integrator, for the maintainers.
+
+Ask: one entry after line 31, as the one that is there for the Node.js tests:
+
+    - "!test/cli/lint/conformance/corpus/"
+
+Why. `auto_review` is on (lines 33 to 35) and the only path that is left out is `test/js/node/test/`. The
+corpus is 22,182 files that nobody of this repository wrote.
+
+Until then: not verified what the review does with them.
+
+### RP-10. `.vscode/settings.json`, `"search.exclude"` (lines 12 to 20)
+
+To: integrator. Optional.
+
+Ask: `"test/cli/lint/conformance/corpus": true`, for the reason that line 17 gives for the fixtures of the
+Node.js tests: 31 MB of TypeScript in every search of the workspace.
+
+### RP-11. `scripts/runner.node.ts`: the rule by which a file is a test
 
 To: integrator. Optional.
 
@@ -241,8 +253,9 @@ No Windows machine and no macOS machine was available. A green run on Linux says
   180, and `sync.sh` refuses more than 200. The CI image sets `core.longpaths`
   (`scripts/build/ci-images/spec.ts:1376`); a clone without it needs a root of at most 67 characters.
 - Line endings. The image sets `core.autocrlf` false (`spec.ts:1374`), `format.yml:30` sets it true after the
-  checkout. `corpus/** -text` of the unit's `.gitattributes` keeps the corpus as it is (proved on Linux with
-  `git -c core.autocrlf=true add --renormalize`).
+  checkout. `corpus/** -text` of the unit's `.gitattributes` keeps the corpus as it is: on Linux
+  `git -c core.autocrlf=true add --renormalize` stages no file of it. It stages the four licence texts beside
+  the corpus, which have CR LF and no such line, until that file names them too.
 - Time. Against `main` the directory is 22,230 files in 397 directories: that much more in every checkout,
   and in every walk of `test/` by the runner, in each of about 150 jobs of a build. On Linux the walk and the
   rule on all of them take a tenth of a second in a release build. Not measured on Windows.

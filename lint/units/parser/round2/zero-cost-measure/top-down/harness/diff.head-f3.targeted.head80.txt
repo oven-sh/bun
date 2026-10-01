@@ -1,0 +1,42 @@
+base 1.4.3 be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb (3952 sources)
+next 1.4.3 be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb (3952 sources)
+59280 records compared, 71 differ, in 6 sources
+!!       11 records       2 sources  A>A          unexplained
+              t.ts.plain       "namespace as {}"
+                base ["o",""]
+                next ["o","namespace;\n"]
+              t.ts.exp         "namespace as {}"
+                base ["o",""]
+                next ["o","namespace;\n"]
+              t.ts.deco        "namespace as {}"
+                base ["o",""]
+                next ["o","namespace;\n"]
+              t.tsx.plain      "namespace as {}"
+                base ["o",""]
+                next ["o","namespace;\n"]
+              t.tsx.exp        "namespace as {}"
+                base ["o",""]
+                next ["o","namespace;\n"]
+              t.tsx.deco       "namespace as {}"
+                base ["o",""]
+                next ["o","namespace;\n"]
+!!       60 records       4 sources  A>R          unexplained
+              t.ts.plain       "type as = 1;"
+                base ["o",""]
+                next ["e",[["Unexpected =",1,9]]]
+              t.ts.exp         "type as = 1;"
+                base ["o",""]
+                next ["e",[["Unexpected =",1,9]]]
+              t.ts.deco        "type as = 1;"
+                base ["o",""]
+                next ["e",[["Unexpected =",1,9]]]
+              t.tsx.plain      "type as = 1;"
+                base ["o",""]
+                next ["e",[["Unexpected =",1,9]]]
+              t.tsx.exp        "type as = 1;"
+                base ["o",""]
+                next ["e",[["Unexpected =",1,9]]]
+              t.tsx.deco       "type as = 1;"
+                base ["o",""]
+                next ["e",[["Unexpected =",1,9]]]
+71 records with the mark !!, 0 with the mark ??

@@ -1,0 +1,18 @@
+{
+  "P1": ["ts", "type X = (a = 1, ...b) => R;"],
+  "P2": ["ts", "type X = (public override readonly a: A) => R;"],
+  "P3": ["ts", "declare class C { m(...a,): void; }"],
+  "T1": ["ts", "type X = [...if: A[]];"],
+  "N1": ["ts", "type X = import(\"x\").A.<B>;"],
+  "N2": ["ts", "let x: super;"],
+  "N3": ["ts", "function f<U extends if, V = class>() {}"],
+  "N4": ["ts", "type X = A extends B ? function : if;"],
+  "O1": ["ts", "type X = { 1n(): void; get #a(): A };"],
+  "O2": ["ts", "type X = { a(b = 1): A };"],
+  "O3": ["ts", "type X = { get [a + b](): A };"],
+  "O4": ["ts", "class C { [k: string]: T, }"],
+  "O5": ["ts", "type X = { [+1]: A; [a?.b]: B };"],
+  "H1": ["ts", "interface I extends a() {}"],
+  "H2": ["ts", "class C implements a.b() {}"],
+  "C2": ["decorators", "class C { static accessor a: A }"]
+}

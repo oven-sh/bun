@@ -1,0 +1,79 @@
+base 1.4.3 e3566be889995ffff8b08823b9233617f979c889 (3952 sources)
+next 1.4.3 be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb+restore.patch, projected from the debug prototype p1 (3952 sources)
+59280 records compared, 1107 differ, in 90 sources
+~~       15 records       1 sources  R>A          explained: a return statement outside a function
+              `class` is the return type, `{}` the body, and the block after it returns at the top level: `{ return null as any }` is accepted by both builds and tsc reports TS1108 for it
+              t.ts.plain       "function f(x: any): class {} { return null as any }"
+                base ["e",[["Unexpected class",1,21]]]
+                next ["o","function f(x) {}\n{\n  return null;\n}\n"]
+         16 records       4 sources  A>A          metadata: a type predicate is Boolean, an assertion predicate is undefined
+              x is T, this is T, asserts x, asserts x is T
+              t.ts.deco        "class C { @d m(): this is A {} }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n  m() {}\n}\n__legacyDecorateClassTS_3r
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n  m() {}\n}\n__legacyDecorateClassTS_3r
+          4 records       1 sources  A>A          metadata: | and & operands are the check type of a conditional type
+              A | B extends C ? D : E is Conditional(Union(A, B), ...)
+              t.ts.deco        "class C { @d a: A | B extends C ? string : string }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+          8 records       2 sources  A>A          metadata: keyof, readonly and unique end before extends
+              the operand of a type operator does not take `extends ? :`
+              t.ts.deco        "class C { @d a: keyof A extends B ? string : string }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+          8 records       2 sources  A>A          metadata: an import type and unique symbol are Object
+              a form without a tag is Object among the operands of | and &, and before []
+              t.ts.deco        "class C { @d a: unique symbol | null }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+??        4 records       1 sources  A>A          ruling: metadata of a source that tsc does not parse
+              only metadata differs; tsc reports a parse diagnostic, so it writes no value to compare with
+              t.ts.deco        "class C { @d a: b is A }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+??       11 records       2 sources  A>A          ruling: A>A a declaration named as or satisfies, where the base read a cast
+              `interface as {}` and `namespace as {}` were the casts `interface as {}` and `namespace as {}` (output `interface;`); tsc reads a declaration. Not metadata
+              t.ts.plain       "namespace as {}"
+                base ["o","namespace;\n"]
+                next ["o",""]
+        743 records      53 sources  R>R          both reject: another error list
+              the messages or the positions of the errors changed
+              t.ts.exp         "class C { accessor static a: A }"
+                base ["e",[["Expected \";\" but found \"static\"",1,20]]]
+                next ["e",[["Expected \";\" but found \"a\"",1,27],["Expected identifier but found \":\"",1,28]]]
+         60 records       4 sources  R>A          as or satisfies names a type alias, an interface or a namespace
+              H15: `type as = 1`, `interface as {}`, `namespace as { ... }`
+              t.ts.plain       "type as = 1;"
+                base ["e",[["Unexpected =",1,9]]]
+                next ["o",""]
+         15 records       1 sources  R>A          abstract stands before declare
+              `abstract declare class C {}`
+              t.ts.plain       "abstract declare class C {}"
+                base ["e",[["Expected \";\" but found \"declare\"",1,10]]]
+                next ["o",""]
+         15 records       1 sources  R>A          a string in brackets names an enum member
+              `enum E { ["x"] = 1 }`
+              t.ts.plain       "enum E { ['a'] = 1 }"
+                base ["e",[["Expected identifier but found \"[\"",1,10]]]
+                next ["o","var E;\n((E) => {\n  E[E[\"a\"] = 1] = \"a\";\n})(E ||= {});\n"]
+         83 records      10 sources  R>A          accessor is a modifier without standard decorators
+              `class C { accessor x: T; }` with experimentalDecorators, and in scanImports, which has no standard decorators either
+              t.ts.exp         "class C { accessor a: A }"
+                base ["e",[["Expected \";\" but found \"a\"",1,20],["Expected identifier but found \":\"",1,21]]]
+                next ["o","import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _a$1;\n\nclass C {\n  constructor() {\n    
+         20 records       2 sources  R>A          out or in names a type or a type parameter
+              `function f<out>() {}`, `<out>x`, `<in>x`, `<out>(x) => x`
+              t.ts.plain       "const v = <out>x;"
+                base ["e",[["The modifier \"out\" is not valid here",1,12]]]
+                next ["o","const v = x;\n"]
+         30 records       2 sources  R>A          an interface extends, or a class implements, an expression
+              `interface I extends a() {}`, `class C implements a() {}`: parseExpressionWithTypeArguments (tsc: TS2499, TS2500 from the checker, no grammar error)
+              t.ts.plain       "interface I extends a() {}"
+                base ["e",[["Expected \"{\" but found \"(\"",1,22],["Unexpected )",1,23]]]
+                next ["o",""]
+         75 records       5 sources  R>A          a modifier stands before a parameter that is no parameter property
+              `(public a: A) => void`, `{ a(public b: B): A }`, `function f(public a: A) {}`, `class C { m(public a: A) {} }` (tsc: TS2369 from the checker, no grammar error)
+              t.ts.plain       "function f(public a: A) {}"
+                base ["e",[["Expected \")\" but found \"a\"",1,19],["Expected \";\" but found \")\"",1,23]]]
+                next ["o","function f(a) {}\n"]
+0 records with the mark !!, 15 with the mark ??, 15 with the mark ~~

@@ -235,7 +235,13 @@ impl<'ast> Visitor<'ast> for Rx<'_, '_, '_> {
     }
 
     fn visit_s_directive(&mut self, _: &'ast S::Directive, loc: Loc) {
-        self.string_at(loc.start, "directive");
+        // A string in parentheses or behind `<T>` is a directive for the parse pass too: its statement starts at the `(` or the `<`.
+        let quote = matches!(usize::try_from(loc.start).ok().and_then(|at| self.text.get(at)), Some(b'"' | b'\''));
+        if quote {
+            self.string_at(loc.start, "directive");
+        } else if let Some(record) = self.ctx.parsed.sidecar.wrappers.records.iter().find(|record| i64::from(record.op) == i64::from(loc.start) && matches!(record.operand.data, ExprData::EString(_))) {
+            self.string_at(record.operand.loc.start, "directive in a wrapper");
+        }
     }
 
     fn visit_s_import(&mut self, node: &'ast S::Import, _: Loc) {

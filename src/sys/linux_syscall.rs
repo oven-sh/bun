@@ -149,13 +149,13 @@ pub(crate) fn pwrite(fd: Fd, buf: &[u8], off: i64) -> Result<usize, i32> {
 
 /// `close(2)` — single shot, never retried (Linux may have already released
 /// the fd on EINTR; retrying could close a racing thread's new fd). Returns
-/// `Err(EBADF)` etc. on failure; callers only surface `EBADF`.
+/// the errno on failure.
 #[inline]
 pub(crate) fn close(fd: i32) -> Result<(), i32> {
     // rustix's safe `io::close(OwnedFd)` is infallible by design (it swallows
     // the rc because POSIX says "the fd is released regardless"), and
     // constructing an `OwnedFd` from a possibly-invalid int is UB — but we
-    // *need* the rc to surface `EBADF` (debug double-close detection).
+    // *need* the rc: `EBADF` is a double close, and a file system can report a write error here.
     //
     // rustix has no public generic `syscall!`, so go through `libc::syscall`
     // with `SYS_close`. This is *not* the glibc `close(3)` wrapper: `syscall(2)`

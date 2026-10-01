@@ -4715,19 +4715,34 @@ impl NodeFS {
             PathOrFileDescriptor::Path(path_) => {
                 let path = path_.slice_z(&mut self.sync_error_buf);
                 let fd = Syscall::open(path, args.flag.as_int(), args.mode)?;
-                let _close = scopeguard::guard(fd, |fd| fd.close());
+                let close = scopeguard::guard(fd, |fd| fd.close());
                 while !data.is_empty() {
                     let written = Syscall::write(fd, data)?;
                     data = &data[written..];
                 }
-                Ok(())
+                Self::close_written(scopeguard::ScopeGuard::into_inner(close))
+            }
+        }
+    }
+
+    /// Closes a descriptor that this call opened and wrote. A file system can report a write error first at close, so that error is the result. As in node, it names only the syscall.
+    fn close_written(fd: FD) -> Maybe<()> {
+        match fd.close_allowing_bad_file_descriptor(None) {
+            None => Ok(()),
+            Some(err) => {
+                debug_assert!(err.get_errno() != E::EBADF); // use after close!
+                Err(sys::Error {
+                    errno: err.errno,
+                    syscall: sys::Tag::close,
+                    ..Default::default()
+                })
             }
         }
     }
 
     pub(crate) fn close(&mut self, args: &args::Close, _: Flavor) -> Maybe<ret::Close> {
         // Explicit `fs.close`/`fs.closeSync` must close the descriptor the user
-        // asked for, including stdio (0/1/2), and surface EBADF like Node does.
+        // asked for, including stdio (0/1/2), and report the error like Node does.
         // The stdio guard only applies to Bun's own internal closes.
         if let Some(err) = args.fd.close_allowing_standard_io(None) {
             Err(err)
@@ -4912,29 +4927,76 @@ impl NodeFS {
         Ok(())
     }
 
-    /// Trims dest (no O_TRUNC at open) to `wrote` and closes it. After a failed copy it also unlinks dest.
+    /// Trims dest (no O_TRUNC at open) to `wrote` and closes it. After a failed copy it also unlinks dest. Returns `result`, or the error of the close.
     #[cfg(not(windows))]
-    fn close_copy_dest(dest: &ZStr, dest_fd: FD, src_stat: &sys::Stat, wrote: u64, ok: bool) {
+    fn close_copy_dest(
+        src: &ZStr,
+        dest: &ZStr,
+        dest_fd: FD,
+        src_stat: &sys::Stat,
+        wrote: u64,
+        result: Maybe<ret::CopyFile>,
+    ) -> Maybe<ret::CopyFile> {
         let len = (wrote & ((1u64 << 63) - 1)) as i64;
-        if ok {
+        if result.is_ok() {
             let _ = Syscall::ftruncate(dest_fd, len);
             let _ = Syscall::fchmod(dest_fd, src_stat.st_mode as Mode);
-        } else if Self::may_remove_copy_dest(dest_fd, src_stat) {
+            return Self::close_copied_dest(src, dest, dest_fd, src_stat);
+        }
+        if Self::may_remove_copy_dest(Syscall::fstat(dest_fd), src_stat) {
             // The unlink removes one name. A hard link or a symlink's target must not keep the old tail.
             let _ = Syscall::ftruncate(dest_fd, len);
             let _ = Syscall::unlink(dest);
         }
         dest_fd.close();
+        result
+    }
+
+    /// Closes dest after a good copy. A close error fails the copy and unlinks dest: it is a write error, reported late.
+    #[cfg(not(windows))]
+    fn close_copied_dest(
+        src: &ZStr,
+        dest: &ZStr,
+        dest_fd: FD,
+        src_stat: &sys::Stat,
+    ) -> Maybe<ret::CopyFile> {
+        let close_err = dest_fd.close_allowing_bad_file_descriptor(None);
+        debug_assert!(close_err.as_ref().is_none_or(|e| e.get_errno() != E::EBADF)); // use after close!
+        match close_err {
+            None => Ok(()),
+            // https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/fs.c#L1410-L1424
+            Some(err) => Self::copy_dest_close_failed(src, dest, src_stat, &err),
+        }
+    }
+
+    #[cold]
+    #[cfg(not(windows))]
+    fn copy_dest_close_failed(
+        src: &ZStr,
+        dest: &ZStr,
+        src_stat: &sys::Stat,
+        err: &sys::Error,
+    ) -> Maybe<ret::CopyFile> {
+        // The descriptor is gone, so the path says what dest is.
+        if Self::may_remove_copy_dest(Syscall::stat(dest), src_stat) {
+            let _ = Syscall::unlink(dest);
+        }
+        Err(sys::Error {
+            errno: err.errno,
+            syscall: sys::Tag::copyfile,
+            path: src.as_bytes().into(),
+            dest: dest.as_bytes().into(),
+            ..Default::default()
+        })
     }
 
     /// True only for a regular file that is not the source: never a fifo or a device node.
     #[cfg(not(windows))]
-    fn may_remove_copy_dest(dest_fd: FD, src_stat: &sys::Stat) -> bool {
-        matches!(
-            Syscall::fstat(dest_fd),
-            Ok(d) if sys::S::ISREG(d.st_mode as u32)
+    fn may_remove_copy_dest(dest_stat: Maybe<sys::Stat>, src_stat: &sys::Stat) -> bool {
+        dest_stat.is_ok_and(|d| {
+            sys::S::ISREG(d.st_mode as u32)
                 && !(d.st_dev == src_stat.st_dev && d.st_ino == src_stat.st_ino)
-        )
+        })
     }
 
     pub(crate) fn copy_file(&mut self, args: &args::CopyFile, _: Flavor) -> Maybe<ret::CopyFile> {
@@ -5028,8 +5090,7 @@ impl NodeFS {
                         stat_.st_size.max(0) as usize,
                         &mut wrote,
                     );
-                    Self::close_copy_dest(dest, dest_fd, &stat_, wrote, result.is_ok());
-                    return result;
+                    return Self::close_copy_dest(src, dest, dest_fd, &stat_, wrote, result);
                 }
             }
 
@@ -5089,7 +5150,7 @@ impl NodeFS {
                 Ok(result) => result,
                 Err(err) => return Err(err),
             };
-            let _close_dest = scopeguard::guard(dest_fd, |fd| fd.close());
+            let close_dest = scopeguard::guard(dest_fd, |fd| fd.close());
 
             // Don't O_TRUNC at open: if src and dest resolve to the same
             // inode, that would zero the file before the first read. Match
@@ -5128,13 +5189,14 @@ impl NodeFS {
                     E::SUCCESS => {
                         if rc == 0 {
                             let _ = Syscall::fchmod(dest_fd, stat_.st_mode as Mode);
-                            return Ok(());
+                            let dest_fd = scopeguard::ScopeGuard::into_inner(close_dest);
+                            return Self::close_copied_dest(src, dest, dest_fd, &stat_);
                         }
                     }
                     E::EINTR => continue,
                     E::EXDEV | E::EINVAL | E::EOPNOTSUPP | E::EBADF => break 'cfr,
                     e => {
-                        if Self::may_remove_copy_dest(dest_fd, &stat_) {
+                        if Self::may_remove_copy_dest(Syscall::fstat(dest_fd), &stat_) {
                             let _ = sys::unlink(dest);
                         }
                         return Err(sys::Error {
@@ -5155,13 +5217,14 @@ impl NodeFS {
                 stat_.st_size.max(0) as usize,
                 &mut wrote,
             ) {
-                if Self::may_remove_copy_dest(dest_fd, &stat_) {
+                if Self::may_remove_copy_dest(Syscall::fstat(dest_fd), &stat_) {
                     let _ = sys::unlink(dest);
                 }
                 return Err(err);
             }
             let _ = Syscall::fchmod(dest_fd, stat_.st_mode as Mode);
-            return Ok(());
+            let dest_fd = scopeguard::ScopeGuard::into_inner(close_dest);
+            return Self::close_copied_dest(src, dest, dest_fd, &stat_);
         }
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -5200,12 +5263,10 @@ impl NodeFS {
                     sys::Tag::ioctl_ficlone,
                     dest,
                 ) {
-                    Self::close_copy_dest(dest, dest_fd, &stat_, 0, false);
-                    return err;
+                    return Self::close_copy_dest(src, dest, dest_fd, &stat_, 0, err);
                 }
                 let _ = Syscall::fchmod(dest_fd, stat_.st_mode as u32);
-                dest_fd.close();
-                return Ok(());
+                return Self::close_copied_dest(src, dest, dest_fd, &stat_);
             }
 
             // If we know it's a regular file and ioctl_ficlone is available, attempt to use it.
@@ -5213,8 +5274,7 @@ impl NodeFS {
                 let rc = sys::linux::ioctl_ficlone(dest_fd, src_fd);
                 if rc == 0 {
                     let _ = Syscall::fchmod(dest_fd, stat_.st_mode as u32);
-                    dest_fd.close();
-                    return Ok(());
+                    return Self::close_copied_dest(src, dest, dest_fd, &stat_);
                 }
                 // If this fails for any reason, we say it's disabled
                 // We don't want to add the system call overhead of running this function on a lot of files that don't support it
@@ -5308,8 +5368,7 @@ impl NodeFS {
 
                 Ok(())
             };
-            Self::close_copy_dest(dest, dest_fd, &stat_, wrote, result.is_ok());
-            return result;
+            return Self::close_copy_dest(src, dest, dest_fd, &stat_, wrote, result);
         }
 
         #[cfg(windows)]
@@ -7385,7 +7444,7 @@ impl NodeFS {
             }
             PathOrFileDescriptor::Fd(fd) => *fd,
         };
-        let _close = scopeguard::guard(
+        let close = scopeguard::guard(
             (fd, matches!(args.file, PathOrFileDescriptor::Path(_))),
             |(fd, is_path)| {
                 if is_path {
@@ -7496,6 +7555,10 @@ impl NodeFS {
             }
         }
 
+        let (fd, is_path) = scopeguard::ScopeGuard::into_inner(close);
+        if is_path {
+            return Self::close_written(fd);
+        }
         Ok(())
     }
 
@@ -8557,8 +8620,7 @@ impl NodeFS {
                     stat_.st_size.max(0) as usize,
                     &mut wrote,
                 );
-                Self::close_copy_dest(dest, dest_fd, &stat_, wrote, result.is_ok());
-                return result;
+                return Self::close_copy_dest(src, dest, dest_fd, &stat_, wrote, result);
             }
 
             // we fallback to copyfile() when the file is > 128 KB and clonefile fails
@@ -8640,8 +8702,7 @@ impl NodeFS {
                 let rc = sys::linux::ioctl_ficlone(dest_fd, src_fd);
                 if rc == 0 {
                     let _ = Syscall::fchmod(dest_fd, stat_.st_mode as u32);
-                    dest_fd.close();
-                    return Ok(());
+                    return Self::close_copied_dest(src, dest, dest_fd, &stat_);
                 }
                 sys::copy_file::disable_ioctl_ficlone();
             }
@@ -8738,8 +8799,7 @@ impl NodeFS {
 
                 Ok(())
             };
-            Self::close_copy_dest(dest, dest_fd, &stat_, wrote, result.is_ok());
-            return result;
+            return Self::close_copy_dest(src, dest, dest_fd, &stat_, wrote, result);
         }
 
         #[cfg(target_os = "freebsd")]
@@ -8853,8 +8913,7 @@ impl NodeFS {
 
                 Self::copy_file_using_read_write_loop(src, dest, src_fd, dest_fd, size, &mut wrote)
             };
-            Self::close_copy_dest(dest, dest_fd, &stat_, wrote, result.is_ok());
-            return result;
+            return Self::close_copy_dest(src, dest, dest_fd, &stat_, wrote, result);
         }
 
         #[cfg(windows)]

@@ -172,7 +172,7 @@ codegen-for-zig-team.tar.gz
 # scripts/build/cargo-config.ts — see scripts/build/CLAUDE.md.
 .cargo/config.toml
 
-.buildkite/ci.yml
+.buildkite/ci.json
 *.sock
 scratch*.{js,ts,tsx,cjs,mjs}
 /a.js

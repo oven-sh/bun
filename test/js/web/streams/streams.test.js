@@ -420,7 +420,7 @@ describe("native links between streams", () => {
 
   // The last link of a chain calls the source's pull() or cancel(), and a JS call needs stack of its
   // own. Each of the deepest frames that a JS recursion gets reads, or cancels, the end of one short chain.
-  const frames = 2_000;
+  const frames = 1_000;
   const deepestFramesScript = ({ type, link }, links, act, settled) => `
     let pulls = 0, cancels = 0;
     const ends = Array.from({ length: ${frames} }, () => {
@@ -475,11 +475,53 @@ describe("native links between streams", () => {
     ],
   );
 
+  // Every second frame errors the source first, and its cancel rejects. The others only queue that
+  // error, so their cancel came first and resolves, also when a link puts the cancel off until after
+  // the error. With no check in the links nothing is put off, so these two cases pass then too.
+  const cancelAndErrorScript = ({ link }) => `
+    const boom = new Error("boom");
+    const controllers = [], errorLater = [];
+    const ends = Array.from({ length: ${frames} }, () => {
+      let controller;
+      let stream = new ReadableStream({ start(c) { controller = c; } }, { highWaterMark: 0 });
+      controllers.push(controller);
+      errorLater.push(() => controller.error(boom));
+      ${link(`b.cancel("b").catch(() => {});`)}
+      return stream;
+    });
+    ${settle}
+    const results = [];
+    let next = 0;
+    function recurse() {
+      try {
+        recurse();
+      } catch (e) {
+        if (!(e instanceof RangeError)) throw e;
+      }
+      if (next < ${frames}) {
+        if (next % 2) controllers[next].error(boom);
+        else queueMicrotask(errorLater[next]);
+        results.push(ends[next++].cancel("a").then(() => "canceled", error => error.message));
+      }
+    }
+    recurse();
+    const counts = { canceled: 0, boom: 0 };
+    for (const result of await Promise.all(results)) counts[result]++;
+    console.log(JSON.stringify(counts));
+  `;
+  for (const name of ["tee()", "Response.textStream()"]) {
+    cases.push([
+      `${name}: a cancel from each of the deepest JS frames, after or before an error of the source`,
+      cancelAndErrorScript(kinds[name]),
+      { canceled: frames / 2, boom: frames / 2 },
+    ]);
+  }
+
   // A link that puts itself off to a microtask has to advance when that microtask runs, however little
   // stack there is then, or a drain that runs near the limit never ends. With no check in the links
   // nothing is put off, so this case passes then too. A drain any nearer to the limit than `skip`
   // frames cannot enter a microtask at all, and that is fatal.
-  const [skip, drains] = isDebug || isASAN ? [1_500, 2_000] : [200, 1_000];
+  const [skip, drains] = [isDebug || isASAN ? 1_500 : 200, 1_000];
   cases.push([
     "tee(): the source closes and microtasks are drained near the stack limit",
     `

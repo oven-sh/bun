@@ -39,14 +39,19 @@ pub(crate) mod errors_x_regexp_scanner;
 mod errors_x_signatures;
 mod errors_x_statements;
 mod errors_x_typenodes;
+pub mod explain;
+mod explain_relation;
+mod explain_table;
 mod expr;
 mod flow;
 mod infer;
 mod instantiate;
 mod jsx;
 mod mapped;
+mod print;
 mod relate;
 mod shape;
+mod spans;
 mod symbols;
 mod unions;
 
@@ -284,6 +289,8 @@ impl Program {
             deadline: None,
             constraint_stack: Vec::new(),
             trap_on_timeout: std::env::var_os("BUN_SEMA_TIME_TRAP").is_some(),
+            explains: false,
+            notes: Default::default(),
             timed_out: false,
             ticks: 0,
             flow_depth: 0,
@@ -471,6 +478,9 @@ pub struct Checker<'p> {
     /// The `stack` of `getResolvedBaseConstraint`: what the constraints being worked out, one for the sake of the other, are instances of.
     constraint_stack: Vec<relate::RecursionId>,
     trap_on_timeout: bool,
+    /// What is noted of errors is kept: somebody is going to read it.
+    explains: bool,
+    notes: std::cell::RefCell<Vec<explain::Note>>,
     timed_out: bool,
     ticks: u32,
     flow_depth: u32,

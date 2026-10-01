@@ -7,9 +7,11 @@
 pub mod atom;
 pub mod bind;
 pub mod check;
+pub mod config;
 pub mod describe;
 pub mod hir;
 pub mod json;
+pub mod messages;
 pub mod program;
 pub mod resolve;
 pub mod sites;

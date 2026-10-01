@@ -18,6 +18,20 @@ pub trait Host: Sync {
     /// With symbolic links followed.
     fn realpath(&self, path: &str) -> String;
     fn list_dir(&self, path: &str) -> Vec<String>;
+    /// `GetAccessibleEntries`: the names of the files and of the directories in `path`, each sorted.
+    fn entries(&self, path: &str) -> (Vec<String>, Vec<String>) {
+        let (mut directories, mut files): (Vec<String>, Vec<String>) = self
+            .list_dir(path)
+            .into_iter()
+            .partition(|name| self.is_dir(&join(path, name)));
+        files.sort();
+        directories.sort();
+        (files, directories)
+    }
+    /// `UseCaseSensitiveFileNames`
+    fn is_case_sensitive(&self) -> bool {
+        true
+    }
     fn parse(
         &self,
         path: &str,
@@ -104,6 +118,11 @@ pub struct Options {
     pub base_dir: String,
     /// `compilerOptions.paths`: a pattern with at most one `*`, and what to try for it.
     pub paths: Vec<(String, Vec<String>)>,
+    /// `PathsBasePath`: where the configuration file that says `paths` is, which is what they are relative to.
+    pub paths_base_dir: String,
+    /// `skipLibCheck`: declaration files are not checked. `skipDefaultLibCheck`: TypeScript's own are not.
+    pub skip_lib_check: bool,
+    pub skip_default_lib_check: bool,
     /// Where `lib.*.d.ts` are.
     pub lib_dir: String,
     /// The `N` of each `lib.N.d.ts` to start from: what `compilerOptions.lib` names, or what goes with the target.
@@ -269,13 +288,12 @@ impl Options {
 }
 
 impl Options {
+    /// The options of the one file at `path`, and the `files` it names. `config::load` also follows `extends` and `include`.
     pub fn from_tsconfig(host: &dyn Host, path: &str) -> Option<Options> {
         let json = Json::parse(&host.read(path)?)?;
-        let mut options = Options {
-            base_dir: parent_dir(path).to_owned(),
-            ..Default::default()
-        };
-        options.jsx_import_source = "react".to_owned();
+        let empty = Json::Object(Vec::new());
+        let compiler = json.get("compilerOptions").unwrap_or(&empty);
+        let mut options = Options::from_compiler_options(parent_dir(path), compiler);
         if let Some(files) = json.get("files").and_then(Json::as_array) {
             options.files = files
                 .iter()
@@ -283,9 +301,22 @@ impl Options {
                 .map(|f| normalize(&format!("{}/{f}", options.base_dir)))
                 .collect();
         }
+        Some(options)
+    }
+
+    /// What `compiler`, the `compilerOptions` of a configuration file in `base_dir`, comes to.
+    pub fn from_compiler_options(base_dir: &str, compiler: &Json) -> Options {
+        let mut options = Options {
+            base_dir: base_dir.to_owned(),
+            ..Default::default()
+        };
+        options.jsx_import_source = "react".to_owned();
         options.libs = vec!["es2025.full".to_owned()];
-        let empty = Json::Object(Vec::new());
-        let compiler = json.get("compilerOptions").unwrap_or(&empty);
+        options.paths_base_dir = compiler
+            .get("pathsBasePath")
+            .and_then(Json::as_str)
+            .unwrap_or(base_dir)
+            .to_owned();
         // The library that goes with the target, unless `lib` says which.
         if let Some(target) = compiler
             .get("target")
@@ -557,8 +588,10 @@ impl Options {
             }
             _ => {}
         }
+        options.skip_lib_check = flag("skipLibCheck");
+        options.skip_default_lib_check = flag("skipDefaultLibCheck");
         options.errors = crate::verify::verify_compiler_options(compiler, &options);
-        Some(options)
+        options
     }
 }
 
@@ -1098,7 +1131,12 @@ impl<'h> Resolver<'h> {
     fn through_paths(&self, spec: &str, look: Look) -> Option<String> {
         let (targets, matched) = best_pattern(self.options.paths.as_slice(), spec)?;
         targets.iter().find_map(|target| {
-            let path = join(&self.options.base_dir, &target.replacen('*', matched, 1));
+            let base = if self.options.paths_base_dir.is_empty() {
+                &self.options.base_dir
+            } else {
+                &self.options.paths_base_dir
+            };
+            let path = join(base, &target.replacen('*', matched, 1));
             let look = Look {
                 ending_from_config: look.ending_from_config || !known_extension(target).is_empty(),
                 ..look

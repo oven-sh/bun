@@ -53,6 +53,24 @@ const nodeFsFixture = /* js */ `
     () => new Promise((resolve, reject) => stream.on("error", reject).on("close", resolve).end(data)),
   );
 
+  // fs.promises.writeFile with an iterable closes the file itself. The writer closes a duplicate of the descriptor first.
+  async function* chunks(error) {
+    yield data;
+    if (error) throw error;
+  }
+  const controller = new AbortController();
+  const aborted = fs.promises
+    .writeFile("aborted.${fault}", chunks(), { signal: controller.signal })
+    .then(() => "returned", e => e.name);
+  controller.abort();
+  out.writeFileIterable = {
+    close: await settle(() => fs.promises.writeFile("iterable.${fault}", chunks())),
+    iterableAndClose: await fs.promises
+      .writeFile("iterable-error.${fault}", chunks(Object.assign(new Error("from the iterable"), { code: "EITER" })))
+      .then(() => "returned", e => ({ code: e.code, errors: e.errors?.map(inner => inner.code) })),
+    abortAndClose: await aborted,
+  };
+
   // These two close their own descriptor and drop the result of the close.
   await settle(() => fs.writeFileSync("writeFileSync.${fault}", data));
   await settle(() => Bun.write("bun-write.${fault}", data));
@@ -180,11 +198,17 @@ describe.skipIf(!cc)("a close(2) that reports an error", () => {
           close: "ENOSPC close",
           fileHandle: { close: "ENOSPC close", fd: -1 },
           createWriteStream: "ENOSPC close",
+          writeFileIterable: {
+            close: "ENOSPC close",
+            // Node's handleFdClose: the error that came first keeps its place, in an AggregateError.
+            iterableAndClose: { code: "EITER", errors: ["EITER", "ENOSPC"] },
+            abortAndClose: "AbortError",
+          },
           // A debug build asserts on a close whose result bun drops. The assert is for EBADF, a use after close.
           afterInternalCloses: "alive",
         },
-        // Each descriptor is closed once.
-        stderr: failed(ENOSPC, EDQUOT, EIO, EINTR, EINPROGRESS, ENOSPC, ENOSPC, ENOSPC, ENOSPC, ENOSPC),
+        // Each descriptor is closed once: 5 for closeSync, then 10 that report ENOSPC.
+        stderr: failed(ENOSPC, EDQUOT, EIO, EINTR, EINPROGRESS, ...Array(10).fill(ENOSPC)),
         exitCode: 0,
       });
     },

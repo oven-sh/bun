@@ -941,6 +941,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             Global::exit(exit_code as u32);
         }
 
+        if ctx.runtime_options.check && !crate::cli::check_command::check_before(&[&entry_path]) {
+            Global::exit(1);
+        }
+
         // `bun_jsc::initialize`
         // is real (calls `JSCInitialize` over `bun_sys::environ()`); the
         // dispatch hooks (`jsc_hooks::install_jsc_hooks`) are installed by

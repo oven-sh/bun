@@ -1,19 +1,14 @@
 [package]
-name = "bun_sema_standalone"
+name = "bun_sema_driver"
 version.workspace = true
 edition.workspace = true
 
 [lib]
 path = "lib.rs"
 
-[[bin]]
-name = "bun-sema"
-path = "main.rs"
-
 [dependencies]
 bun_sema.workspace = true
-bun_sema_driver.workspace = true
 bun_js_parser.workspace = true
-libc.workspace = true
+bun_core.workspace = true
 
 [lints]

@@ -336,6 +336,8 @@ pub(crate) mod upgrade_command;
 pub(crate) mod add_command;
 #[path = "audit_command.rs"]
 pub(crate) mod audit_command;
+#[path = "check_command.rs"]
+pub(crate) mod check_command;
 #[path = "dedupe_command.rs"]
 pub(crate) mod dedupe_command;
 #[path = "filter_arg.rs"]
@@ -644,6 +646,7 @@ pub(crate) mod help_command {
   <b><magenta>run<r>       <d>./my-script.ts<r>       Execute a file with Bun
             <d>lint<r>                 Run a package.json script
   <b><magenta>test<r>                           Run unit tests with Bun
+  <b><magenta>check<r>                          Type check a TypeScript project
   <b><magenta>x<r>         <d>{:<16}<r>     Execute a package binary (CLI), installing if needed <d>(bunx)<r>
   <b><magenta>repl<r>                           Start a REPL session with Bun
   <b><magenta>exec<r>                           Run a shell script directly with Bun
@@ -1043,6 +1046,9 @@ pub(crate) mod command {
         if x == RootCommandMatcher::case(b"audit") {
             return Tag::AuditCommand;
         }
+        if x == RootCommandMatcher::case(b"check") {
+            return Tag::CheckCommand;
+        }
         if x == RootCommandMatcher::case(b"info") {
             return Tag::InfoCommand;
         }
@@ -1303,6 +1309,7 @@ pub(crate) mod command {
             Tag::UpdateInteractiveCommand => exec_update_interactive(log),
             Tag::PublishCommand => exec_publish(log),
             Tag::AuditCommand => exec_audit(log),
+            Tag::CheckCommand => exec_check(),
             Tag::DedupeCommand => exec_dedupe(log),
             Tag::PruneCommand => exec_prune(log),
             Tag::WhyCommand => exec_why(log),
@@ -1545,6 +1552,14 @@ pub(crate) mod command {
         let ctx = init(Tag::BuildCommand, log)?;
         super::build_command::BuildCommand::exec(ctx, None)?;
         Ok(())
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn exec_check() -> CmdResult {
+        // CheckCommand parses its own argv (no Context).
+        let argv = argv_zslice();
+        super::check_command::CheckCommand::exec(&argv[2.min(argv.len())..])
     }
 
     #[cold]
@@ -2159,6 +2174,42 @@ Execute a shell script directly from Bun.
             }
             Tag::AuditCommand => {
                 pm_print_help(PmSubcommand::Audit);
+            }
+            Tag::CheckCommand => {
+                pretty!(
+                    "\
+<b>Usage<r>: <b><green>bun check<r> <cyan>[flags]<r> <blue>[...files or directories]<r>
+  Type check a TypeScript project.
+
+  Reads the nearest <b>tsconfig.json<r> and reports the errors <b>tsc<r> would, on every core.
+  Given files or directories, checks those and what they import, with the project's options.
+
+<b>Flags:<r>
+  <cyan>-p<r>, <cyan>--project<r> <d>\\<path\\><r>   A tsconfig.json, or a directory with one in it
+      <cyan>--pretty<r>           Show the source around each error <d>(default in a terminal)<r>
+      <cyan>--no-pretty<r>        One line an error, as <b>tsc --pretty false<r> prints them <d>(default elsewhere)<r>
+      <cyan>--threads<r> <d>\\<n\\><r>      How many threads to check on <d>(default: one for each core)<r>
+      <cyan>--timing<r>           Say how long loading and checking took
+      <cyan>--cwd<r> <d>\\<path\\><r>       Run from another directory
+  <cyan>-h<r>, <cyan>--help<r>             Print this
+
+<b>Examples:<r>
+  <d>Check the project around the working directory<r>
+  <b><green>bun check<r>
+
+  <d>Check one file and everything it imports<r>
+  <b><green>bun check<r> <blue>src/index.ts<r>
+
+  <d>Check another project<r>
+  <b><green>bun check<r> <cyan>-p<r> <blue>packages/server<r>
+
+  <d>Check a file, then run it<r>
+  <b><green>bun<r> <cyan>--check<r> <blue>src/index.ts<r>
+
+Full documentation is available at <magenta>https://bun.com/docs/cli/check<r>
+"
+                );
+                Output::flush();
             }
             Tag::DedupeCommand => {
                 pm_print_help(PmSubcommand::Dedupe);

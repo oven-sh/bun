@@ -258,6 +258,70 @@ fn main() {
                 program.types.len(),
             );
         }
+        Some("cli") => {
+            // cli [paths..] [-p <project>] [--threads=n] [--plain] [--no-color] [--github]: what `bun check` does.
+            use bun_sema_driver::format::{Layout, Style, write_diagnostics, write_summary};
+            let mut paths = Vec::new();
+            let mut project = None;
+            let mut rest = args[1..].iter();
+            while let Some(arg) = rest.next() {
+                if arg == "-p" || arg == "--project" {
+                    project = rest.next().cloned();
+                } else if !arg.starts_with("--") {
+                    paths.push(arg.clone());
+                }
+            }
+            let has = |flag: &str| args.iter().any(|a| a == flag);
+            let cwd = std::env::current_dir()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned();
+            let lib_dir = std::env::var("BUN_SEMA_TS_LIB").ok();
+            let report = bun_sema_driver::check(&bun_sema_driver::Request {
+                cwd: &cwd,
+                project: project.as_deref(),
+                paths: &paths,
+                threads: args
+                    .iter()
+                    .find_map(|a| a.strip_prefix("--threads="))
+                    .and_then(|t| t.parse().ok())
+                    .unwrap_or(0),
+                lib_dir: lib_dir.as_deref(),
+                global_node_modules: None,
+                thread_start: &bun_sema_standalone::native::set_stack_size,
+                file_time_limit: std::time::Duration::from_secs(10),
+            });
+            let cwd = bun_sema_driver::host::from_native(&cwd);
+            let style = Style {
+                layout: if has("--plain") {
+                    Layout::Plain
+                } else if has("--agent") {
+                    Layout::Agent
+                } else {
+                    Layout::Pretty
+                },
+                color: !has("--no-color") && !has("--plain") && !has("--agent"),
+                cwd: &cwd,
+                github_annotations: has("--github"),
+            };
+            let mut out = String::new();
+            write_diagnostics(&mut out, &report, &style);
+            print!("{out}");
+            let mut summary = String::new();
+            write_summary(&mut summary, &report, &style);
+            eprint!("{summary}");
+            if has("--timing") {
+                eprintln!(
+                    "loaded {} files in {:.3}s, checked {} in {:.3}s, peak {:.2} GB",
+                    report.files_loaded,
+                    report.load_time.as_secs_f64(),
+                    report.files_checked,
+                    report.check_time.as_secs_f64(),
+                    bun_sema_standalone::peak_rss() as f64 / (1u64 << 30) as f64
+                );
+            }
+            std::process::exit(i32::from(report.error_count() > 0));
+        }
         Some("check") => {
             // check <tsconfig.json with "files", or a directory of sources with a tsconfig.json> [--roots=a,b] [--threads=n]
             // Prints `path:line:column TS<code>` for every error outside node_modules and TypeScript's own lib.
@@ -468,6 +532,65 @@ fn main() {
                 )
                 .unwrap();
             }
+        }
+        Some("messages") => {
+            // messages <root> <oracle dump with tests> [--only=substring] [--threads=n]: every error of every test as it would be shown:
+            // path, start, end, code, and the message with its line feeds escaped, separated by tabs.
+            let flag = |name: &str| {
+                args.iter()
+                    .find_map(|a| a.strip_prefix(&format!("--{name}=")).map(str::to_owned))
+            };
+            let threads = flag("threads").and_then(|t| t.parse().ok()).unwrap_or(4);
+            let only = flag("only");
+            let root = std::fs::canonicalize(&args[1])
+                .unwrap()
+                .to_string_lossy()
+                .into_owned();
+            let oracle = bun_sema_standalone::compare::Oracle::parse(
+                &std::fs::read_to_string(&args[2]).unwrap(),
+            );
+            let lines = std::sync::Mutex::new(Vec::new());
+            bun_sema_standalone::for_each_parallel(threads, oracle.tests.len(), |i| {
+                let test = &oracle.tests[i];
+                if test.refused.is_some() || only.as_ref().is_some_and(|o| !test.dir.contains(o)) {
+                    return;
+                }
+                let files = bun_sema_standalone::load_project(&format!(
+                    "{root}/{}/tsconfig.json",
+                    test.dir
+                ));
+                if files.modules.iter().any(|m| m.hir.has_errors) {
+                    return;
+                }
+                let program = bun_sema::check::Program::new(files);
+                let mut found = Vec::new();
+                for expected in &oracle.files[test.files.clone()] {
+                    let Some(&file) = program
+                        .files
+                        .by_path
+                        .get(&format!("{root}/{}", expected.path))
+                    else {
+                        continue;
+                    };
+                    let mut checker = program.checker();
+                    checker.set_stack_limit(bun_sema_standalone::STACK - (64 << 20));
+                    checker.set_time_limit(std::time::Duration::from_secs(3));
+                    for e in checker.check_file_explained(file) {
+                        found.push(format!(
+                            "{}\t{}\t{}\t{}\t{}",
+                            expected.path,
+                            e.start,
+                            e.end,
+                            e.code,
+                            e.text.replace('\\', "\\\\").replace('\n', "\\n")
+                        ));
+                    }
+                }
+                lines.lock().unwrap().append(&mut found);
+            });
+            let mut lines = lines.into_inner().unwrap();
+            lines.sort();
+            println!("{}", lines.join("\n"));
         }
         Some("suite") => {
             // suite <root> <oracle dump with tests> [--only=substring] [--report=file] [--bad=file] [--threads=n]

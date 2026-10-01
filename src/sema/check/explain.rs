@@ -118,6 +118,59 @@ impl Checker<'_> {
         }
     }
 
+    /// `NewDiagnosticChain`: puts the message `head` on top of what was last noted for the error `code` at `start`. The error goes by
+    /// `head` from now on, and what it said is the first of its reasons.
+    pub(super) fn explain_under(&self, start: u32, code: u32, head: u32, args: Vec<String>) {
+        if !self.explains {
+            return;
+        }
+        let mut notes = self.notes.borrow_mut();
+        match notes
+            .iter_mut()
+            .rev()
+            .find(|n| n.start == start && n.code == code)
+        {
+            Some(note) => {
+                for line in &mut note.chain {
+                    line.level += 1;
+                }
+                let said = Line {
+                    code,
+                    args: std::mem::replace(&mut note.args, args),
+                    level: 1,
+                };
+                note.chain.insert(0, said);
+                note.code = head;
+            }
+            // Nothing was noted of a message that takes no arguments.
+            None => notes.push(Note {
+                start,
+                code: head,
+                end: 0,
+                args,
+                chain: vec![Line {
+                    code,
+                    args: Vec::new(),
+                    level: 1,
+                }],
+            }),
+        }
+    }
+
+    /// The error `code` last noted at `start` is reported at `to` instead, and ends at `end`.
+    pub(super) fn explain_moved(&self, start: u32, code: u32, to: u32, end: u32) {
+        if let Some(note) = self
+            .notes
+            .borrow_mut()
+            .iter_mut()
+            .rev()
+            .find(|n| n.start == start && n.code == code)
+        {
+            note.start = to;
+            note.end = end;
+        }
+    }
+
     /// `check_file`, with messages.
     pub fn check_file_explained(&mut self, file: FileId) -> Vec<Explained> {
         let explained_before = std::mem::replace(&mut self.explains, true);

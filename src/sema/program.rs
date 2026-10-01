@@ -70,6 +70,10 @@ pub struct Module {
     /// Nothing refers to it, and it adds nothing to what all files see. So `hir` and `bound` are only there while a thread has it at hand:
     /// see `Files::bring_in`.
     pub is_transient: bool,
+    /// It adds nothing to what all files see, so it `is_transient` if nothing turns out to refer to it.
+    adds_nothing: bool,
+    /// `hir` and `bound` were dropped as soon as what it refers to was known, on the guess that nothing refers to it.
+    is_dropped: bool,
 }
 
 /// A module in the list of all. One that `is_transient` is filled in and emptied again by the one thread that checks it, which is the
@@ -112,6 +116,41 @@ impl Drop for AtHand<'_> {
         crate::local::end();
         crate::types::TypeStore::end_local();
     }
+}
+
+/// A guess at whether nothing refers to the file, from where it is and what it is called. It is only a matter of speed and memory: a file
+/// that was wrongly let go of is parsed again, and one that was wrongly held on to is let go of later.
+fn looks_like_a_leaf(path: &str) -> bool {
+    const DIRECTORIES: [&str; 14] = [
+        "test",
+        "tests",
+        "__tests__",
+        "spec",
+        "specs",
+        "e2e",
+        "fixtures",
+        "__fixtures__",
+        "scripts",
+        "examples",
+        "bench",
+        "benchmarks",
+        "stories",
+        "__mocks__",
+    ];
+    let (directories, name) = path.rsplit_once('/').unwrap_or(("", path));
+    [
+        ".test.",
+        ".spec.",
+        "_test.",
+        ".stories.",
+        ".bench.",
+        ".e2e.",
+    ]
+    .iter()
+    .any(|mark| name.contains(mark))
+        || directories
+            .split('/')
+            .any(|directory| DIRECTORIES.contains(&directory))
 }
 
 /// What is known of a file whose syntax tree is not there.
@@ -818,6 +857,8 @@ impl Files {
 
         // What is looked for without being brought in: it is found if it is in the program for another reason.
         let mut only_found: Vec<(FileId, Atom, ResolutionMode, String)> = Vec::new();
+        // Only what nothing has been seen to refer to: the files the program starts from.
+        let mut may_drop = options.drops_what_nothing_refers_to;
         while !frontier.is_empty() {
             let batch = std::mem::take(&mut frontier);
             let results: Vec<Mutex<Option<Loaded>>> =
@@ -825,9 +866,10 @@ impl Files {
             host.parallel(batch.len(), &|i| {
                 let (id, path, is_lib) = &batch[i];
                 *results[i].lock().unwrap() = Some(Self::load_one(
-                    host, &resolver, &options, &atoms, *id, path, *is_lib,
+                    host, &resolver, &options, &atoms, *id, path, *is_lib, may_drop,
                 ));
             });
+            may_drop = false;
             for ((id, _, _), result) in batch.iter().zip(results) {
                 let mut loaded = result.into_inner().unwrap().unwrap();
                 // `filesParser.start`: the sub tasks of a file start once, at the lowest depth the file has been reached at by then.
@@ -872,10 +914,48 @@ impl Files {
         }
 
         drop(resolver);
-        let modules: Vec<ModuleCell> = modules
+        let mut modules: Vec<ModuleCell> = modules
             .into_iter()
             .map(|module| ModuleCell(module.unwrap().into()))
             .collect();
+        if options.drops_what_nothing_refers_to {
+            let mut is_referred_to = vec![false; modules.len()];
+            for module in &modules {
+                for &target in module.edges.iter().chain(module.imports.values()) {
+                    is_referred_to[target.idx()] = true;
+                }
+            }
+            // The guess was wrong: something refers to it.
+            let back: Vec<usize> = (0..modules.len())
+                .filter(|&i| modules[i].is_dropped && is_referred_to[i])
+                .collect();
+            let parsed: Vec<Mutex<Option<(hir::File, Bound)>>> =
+                back.iter().map(|_| Mutex::new(None)).collect();
+            host.parallel(back.len(), &|at| {
+                let module = &modules[back[at]];
+                *parsed[at].lock().unwrap() = Some(Self::parse_and_bind(
+                    host,
+                    &options,
+                    &atoms,
+                    FileId(back[at] as u32),
+                    &module.path,
+                    module.is_lib,
+                    module.says_esm,
+                ));
+            });
+            for (&i, parsed) in back.iter().zip(parsed) {
+                let (hir, bound) = parsed.into_inner().unwrap().unwrap();
+                let module = &mut *modules[i];
+                (module.hir, module.bound, module.is_dropped) = (hir, bound, false);
+            }
+            for (i, module) in modules.iter_mut().enumerate() {
+                module.is_transient = module.adds_nothing && !is_referred_to[i];
+                if module.is_transient && !module.is_dropped {
+                    module.hir = stub_of(&module.hir);
+                    module.bound = Bound::default();
+                }
+            }
+        }
         program_errors.extend(output_path_errors(&options, &modules, &by_path));
         let has_type_only_stars = modules
             .iter()
@@ -997,31 +1077,6 @@ impl Files {
         AtHand { module: Some(cell) }
     }
 
-    /// Which files need only be there while they are checked: those nothing refers to that add nothing to what all files see.
-    fn settle_what_is_transient(&mut self) {
-        let mut is_referred_to = vec![false; self.modules.len()];
-        for module in &self.modules {
-            for &target in module.edges.iter().chain(module.imports.values()) {
-                is_referred_to[target.idx()] = true;
-            }
-        }
-        for (i, module) in self.modules.iter_mut().enumerate() {
-            let (hir, bound) = (&module.hir, &module.bound);
-            module.is_transient = !is_referred_to[i]
-                && !module.is_lib
-                && matches!(hir.kind, FileKind::Ts | FileKind::Tsx)
-                && !hir.is_js
-                && hir.has_module_syntax
-                && bound.global_augmentations.is_empty()
-                && bound.ambient_modules.is_empty()
-                && bound.umd_globals.is_empty();
-            if module.is_transient {
-                module.hir = stub_of(&module.hir);
-                module.bound = Bound::default();
-            }
-        }
-    }
-
     fn load_one(
         host: &dyn Host,
         resolver: &Resolver,
@@ -1030,6 +1085,7 @@ impl Files {
         id: FileId,
         path: &str,
         is_lib: bool,
+        may_drop: bool,
     ) -> Loaded {
         // `GetImpliedNodeFormatForFile`: a JSON file is neither kind of module, whatever its package says.
         let says_esm = !path.ends_with(".json")
@@ -1250,7 +1306,23 @@ impl Files {
             default_mode,
             edges: Vec::new(),
             is_transient: false,
+            adds_nothing: false,
+            is_dropped: false,
         };
+        let mut module = module;
+        module.adds_nothing = !is_lib
+            && matches!(module.hir.kind, FileKind::Ts | FileKind::Tsx)
+            && !module.hir.is_js
+            && module.hir.has_module_syntax
+            && module.bound.global_augmentations.is_empty()
+            && module.bound.ambient_modules.is_empty()
+            && module.bound.umd_globals.is_empty();
+        // All the trees of a big program at once are several times what is ever needed afterwards.
+        if may_drop && module.adds_nothing && looks_like_a_leaf(path) {
+            module.hir = stub_of(&module.hir);
+            module.bound = Bound::default();
+            module.is_dropped = true;
+        }
         Loaded {
             module,
             imports,
@@ -1489,9 +1561,6 @@ impl Files {
                 // `mergeModuleAugmentation`: what adds to a module that is not there adds to nothing.
                 None => {}
             }
-        }
-        if self.options.drops_what_nothing_refers_to {
-            self.settle_what_is_transient();
         }
         // What an alias was found to stand for while symbols were being put together may be a part of something by now.
         let symbols = Bases::new(self.modules.iter().map(|m| m.bound.symbols.len()));

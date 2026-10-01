@@ -9,3 +9,7 @@ ts-model.cjs with BUN_VIEW=chain BUN_SIG=tokens (what a lint parse does not buil
   {"total":15185,"same":13534,"fatal":1297,"differ":354,"reportsOfTseslint":46074,"extra":0,"missing":681,"movedOrOtherText":0}
 ts-model.cjs with BUN_VIEW=names BUN_SIG= (what a lint parse does not build is not seen; the marks stand in):
   {"total":15185,"same":13304,"fatal":1297,"differ":584,"reportsOfTseslint":46074,"extra":0,"missing":2779,"movedOrOtherText":0}
+ts-model.cjs with BUN_VIEW=nearest BUN_SIG= (what a lint parse does not build is not seen; the marks stand in):
+  {"total":15185,"same":13624,"fatal":1297,"differ":264,"reportsOfTseslint":46074,"extra":1,"missing":534,"movedOrOtherText":0}
+    EXTRA /workspace/ref/typescript-go/_submodules/TypeScript/tests/cases/compiler/reboundBaseClassSymbol.ts
+       model only: ["2:11 'A' is defined but never used."]

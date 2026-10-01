@@ -1,0 +1,27 @@
+RESEARCH OF D4, "rule-no-unused-vars" (pass 1a, from the code): the tools. Nothing here is in the tree.
+Read at be1ebe5295 of /workspace/wt/cli. ESLint 4618052e (eslint-scope 9.1.2), typescript-eslint 8.58.2 (/workspace/ref/eslint, /workspace/ref/tseslint).
+
+model/core-model.cjs     ESLint's no-unused-vars at its default options as an ESLint rule that reads NO parent pointer: one walk fills
+                         four tables (targets, forHeads, setters, exported), one scan reads a right side (scanRhs). It is the text that
+                         src/lint/rules/no_unused_vars.rs is planned to follow for a JavaScript file, function by function.
+model/check-model.cjs    node check-model.cjs [--files] <cases.json | file.js>...   the model beside ESLint's own rule; prints each difference.
+model/ts-model.cjs       the same for @typescript-eslint/no-unused-vars (a TypeScript file): the tables above and marked, typeQueries,
+                         typePredicates, namedInParameters (every identifier inside the parameters of a signature or of a setter).
+                         BUN_VIEW=chain|names|nearest  leaves out what a lint parse does not build (the body and heritage of an interface, the
+                                       type of an alias, an index signature of a class, a specifier `type x` of an import) and marks instead:
+                                       chain = every variable of the name of each identifier token there, on the way up from the scope of
+                                       the declaration; names = every variable of that name in the file; nearest = the first one only (unsafe).
+                         BUN_SIG=tokens  the parameters of a signature by their identifier tokens and the whole way up, in place of the nodes.
+model/check-ts-model.cjs node check-ts-model.cjs [--files] <cases.json | file.ts>...   the model beside the rule of typescript-eslint.
+                         With BUN_VIEW it prints only a line that typescript-eslint has not (EXTRA) and counts the missing ones.
+                         SHOW_MISSING=1 prints those too.
+model/oracle-answers.cjs node oracle-answers.cjs <cases.json>...   what ESLint answers per case as a lint run is configured (eslint-side.cjs of
+                         ../ts-entry-codes-harness/topdown/tools): core rule for JavaScript, the rule of typescript-eslint for TypeScript.
+cases/make-lists.cjs     writes cases/js-no-unused-vars.json (135 .js, 13 .jsx, 11 .cjs) and cases/ts-no-unused-vars.json (248 .ts, 26 .d.ts,
+                         13 .tsx, 3 .cts): arrays of { code, ext? | jsx? }, the input of regen.cjs / diff.cjs of the oracle tools.
+                         Every case parses with ESLint (0 fatal) and with Parser::parse_for_lint (probe of ../name-resolution, --check).
+observed/js-no-unused-vars.eslint.txt, ts-no-unused-vars.tseslint.txt   the answers of oracle-answers.cjs for the two lists.
+observed/corpus-results.txt   the models over real files: 7,299 JavaScript and 15,185 TypeScript files, and the BUN_VIEW runs.
+
+ESLint's own test of the rule: node ../ts-entry-codes-harness/topdown/tools/extract.cjs no-unused-vars  gives 348 cases with the default
+options (119 with other options, 1 with globals are left out); carry() gives 331 a .js file, 12 a .jsx file, 5 a .cjs file.

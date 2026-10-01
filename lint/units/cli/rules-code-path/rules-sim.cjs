@@ -273,6 +273,9 @@ function main() {
 				const loose = list => list.map(x => x.replace(/ \S+:\S+ /u, " ")).sort();
 				if (actual.some(x => x.includes(" ?:? ")) && JSON.stringify(loose(expected)) === JSON.stringify(loose(actual))) { count.samePlaceUnknown++; if (args.includes("--show-unknown")) console.log(`PLACE UNKNOWN [${s.ext}] ${JSON.stringify((s.name || s.code).slice(0, 400))}\n   eslint ${expected.join(" | ")}\n   bun    ${actual.join(" | ")}`); return; }
 				count.different++;
+				// How many of the different ones have the same reports but for a place.
+				if (JSON.stringify(loose(expected)) === JSON.stringify(loose(actual))) count.differentOnlyInPlace = (count.differentOnlyInPlace || 0) + 1;
+				else if (args.includes("--show-other")) console.log(`OTHER [${s.ext}] ${JSON.stringify((s.name || s.code).slice(0, 400))}\n   eslint ${expected.join(" | ") || "(none)"}\n   bun    ${actual.join(" | ") || "(none)"}`);
 				if (shown++ < showMax) console.log(`DIFFERENT [${s.ext}] ${JSON.stringify((s.name || s.code).slice(0, 400))}\n   eslint ${expected.join(" | ") || "(none)"}\n   bun    ${actual.join(" | ") || "(none)"}`);
 			}
 		});

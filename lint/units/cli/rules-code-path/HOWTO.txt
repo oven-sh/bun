@@ -16,6 +16,9 @@ model.cjs              The four rules as they can be written on Bun's tree, on t
                        --update-enter-only: only the segments that start when the update of a `for` is entered get the flag.
 fuzz.cjs               node fuzz.cjs <count> <seed> <out.json> [ctor|getter|switch|all]   random constructors of classes with
                        `extends` (71 forms of superclass), getters and descriptors, `switch` with comments and blank lines.
+fuzz-ts.cjs            node fuzz-ts.cjs <in.json> <out.json> <seed> [max]   TypeScript syntax sprinkled over a fuzz list (`as any`,
+                       `!`, `<any>`, `satisfies` around `this`, `super()`, returned and thrown values and `case` tests, types
+                       of variables, `public constructor`, parameter properties, overload signatures, return types).
 tokens-check.cjs       The forward reads of tokens that give a place where the tree has none, on ESLint's tokens against its
                        nodes: where a property of an object literal starts, where a clause of a `switch` starts (one rule for
                        `case` and `default`), the `:` of a clause.  node tokens-check.cjs [--cases corpus.json] [--files list.txt]
@@ -27,6 +30,9 @@ probe-eslint.cjs       node probe-eslint.cjs [--ext ts] [--rules a,b] -e "src" .
 cases/make.cjs         -> cases/{edge,ts}-{no-fallthrough,constructor-super,no-this-before-super}.json and answers/*.jsonl
                        (ESLint's answers). cases/edge-getter-return.json: 65 more cases beside the lists of
                        ../walk-order-code-paths/cases. cases/upstream-<rule>.raw.json: extract.cjs of ESLint's own tests.
+                       cases/ts-getter-return.json (44, written by hand; answers/ts-getter-return.jsonl by probe-eslint.cjs
+                       --rules getter-return --list .. --out ..): commas of type arguments before a getter, TypeScript
+                       nodes around each part of a descriptor, the members of a class with modifiers and decorators.
                        The lists are in the form that ../round2-oracle/proto-1b/regen.cjs reads (cases/*-<rule>.json).
 probe/                 ../walk-order-code-paths/probe with more trace lines (`--nodes`): before a function that is a getter
                        `@getter <start> <global|-> <name>`, before a constructor `@ctor <key> <member start> <has extends>
@@ -77,3 +83,6 @@ Results (2026-10-01):
   NOT built yet (the second build waited for the lock when this was written: /tmp/rcp-1a/build2.done says whether it ran).
   member-start-check.cjs: ESLint's rule tests: constructors 580/580, getters 601/745 (every miss has a decorator before
   the member); 1,734 TypeScript files: getters 420/420, constructors 192/192.
+  rules-sim.cjs on cases/ts-getter-return.json: 39 of 44 the same, 5 the same but for the start of a class member.
+  rules-sim.cjs on fuzz-ts.cjs lists (three rules without no-fallthrough): 2,973 constructors 2,905 the same, 68 differ
+  only in the place of a `public constructor`; 2,738 getters 2,498 the same, 238 + 2 only in the start of a class member.

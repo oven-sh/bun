@@ -398,7 +398,7 @@ that run passes the real crate has the six files declared and not compiled. What
   reached, and no file of `lowering/` is outside (the 85 files of the seven directories of layers 6 and 7 are).
 - The six files have no `unsafe`, `unwrap()`, `panic!`, `todo!`, `unimplemented!`, `unreachable!` and no `allow(`.
   Every `expect(` in them is `Lowerer::expect(kind)`, a function of `lowering/mod.rs` that answers `Err` with
-  `OutOfStep`. None of the seven files has a run of two comment lines.
+  `OutOfStep` where the token is another one. None of the seven files has a run of two comment lines.
 - Not run on these bytes in the real crate: clippy (the scratch root had it clean at `9684ef6a7d`, API.md).
   `cargo check` does not compile `lowering/tests.rs` (567 lines, `#[cfg(test)]`). That file names `bun_js_parser` and
   `bun_alloc` (lines 49 to 59), which `src/typecheck/Cargo.toml` does not have: since the line of `lib.rs`,

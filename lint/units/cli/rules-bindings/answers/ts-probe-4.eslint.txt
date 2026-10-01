@@ -1,0 +1,100 @@
+#0 "import * as ns from 'm'; ns.a = 1;"
+    no-import-assign 1:26-1:34 The members of 'ns' are read-only.
+#1 "import * as ns from 'm'; (ns as any).a = 1;"
+#2 "import * as ns from 'm'; ns!.a = 1;"
+#3 "import * as ns from 'm'; (<any>ns).a = 1;"
+#4 "import * as ns from 'm'; (ns.a as any) = 1;"
+#5 "import * as ns from 'm'; ns.a! = 1;"
+#6 "import * as ns from 'm'; (ns.a satisfies any) = 1;"
+#7 "import * as ns from 'm'; (ns.a)++;"
+    no-import-assign 1:26-1:34 The members of 'ns' are read-only.
+#8 "import * as ns from 'm'; (ns.a as any)++;"
+#9 "import * as ns from 'm'; delete (ns.a as any);"
+#10 "import * as ns from 'm'; delete ns!.a;"
+#11 "import * as ns from 'm'; [ns.a as any] = [1];"
+#12 "import * as ns from 'm'; ({ x: ns.a! } = { x: 1 });"
+#13 "import * as ns from 'm'; for (ns.a as any of []) {}"
+#14 "import * as ns from 'm'; Object.assign(ns as any, {});"
+#15 "import * as ns from 'm'; (Object as any).assign(ns, {});"
+#16 "import * as ns from 'm'; Object.assign!(ns, {});"
+#17 "import * as ns from 'm'; Object.assign<any, any>(ns, {});"
+    no-import-assign 1:26-1:57 The members of 'ns' are read-only.
+#18 "import * as ns from 'm'; Object!.assign(ns, {});"
+#19 "import a from 'm'; a = 1;"
+    no-import-assign 1:20-1:25 'a' is read-only.
+#20 "import a from 'm'; (a as any) = 1;"
+    no-import-assign 1:20-1:34 'a' is read-only.
+#21 "import a from 'm'; a! = 1;"
+    no-import-assign 1:20-1:26 'a' is read-only.
+#22 "import a from 'm'; (a satisfies any) = 1;"
+#23 "import a from 'm'; (a as any)++;"
+    no-import-assign 1:20-1:32 'a' is read-only.
+#24 "import a from 'm'; [a as any] = [1];"
+    no-import-assign 1:20-1:36 'a' is read-only.
+#25 "import a from 'm'; for (a! of []) {}"
+    no-import-assign 1:20-1:37 'a' is read-only.
+#26 "import type T from 'm'; T = 1;"
+    no-import-assign 1:25-1:30 'T' is read-only.
+#27 "import { type T } from 'm'; T = 1;"
+    no-import-assign 1:29-1:34 'T' is read-only.
+#28 "import type * as ns from 'm'; ns.a = 1;"
+    no-import-assign 1:31-1:39 The members of 'ns' are read-only.
+#29 "import type * as ns from 'm'; ns = 1;"
+    no-import-assign 1:31-1:37 'ns' is read-only.
+#30 "import a = require('m'); a = 1; a.b = 2;"
+#31 "import * as ns from 'm'; import b = ns.x; b = 1;"
+#32 "import * as ns from 'm'; namespace N { ns.a = 1; ns = 2; }"
+    no-import-assign 1:40-1:48 The members of 'ns' are read-only.
+    no-import-assign 1:50-1:56 'ns' is read-only.
+#33 "import * as ns from 'm'; enum E { A = (ns.a = 1) }"
+    no-import-assign 1:40-1:48 The members of 'ns' are read-only.
+#34 "import a from 'm'; function f(a: any) { a = 1; }"
+#35 "import a from 'm'; type X = typeof a; let a2: typeof a = 1 as any; a2 = 2;"
+#36 "import * as ns from 'm'; class C { [ns.a = 1]() {} x = (ns.b = 2); static { ns.c = 3; } }"
+    no-import-assign 1:37-1:45 The members of 'ns' are read-only.
+    no-import-assign 1:57-1:65 The members of 'ns' are read-only.
+    no-import-assign 1:77-1:85 The members of 'ns' are read-only.
+#37 "import * as ns from 'm'; declare const Object: any; Object.assign(ns, {});"
+#38 "import * as ns from 'm'; declare global { var x: number } Reflect.set(ns, 'a', 1);"
+    no-import-assign 1:59-1:82 The members of 'ns' are read-only.
+#39 "import { a } from 'm'; export { a }; a = 1;"
+    no-import-assign 1:38-1:43 'a' is read-only.
+#40 "import def, * as ns from 'm'; def = 1; ns = 2; ns.x = 3;"
+    no-import-assign 1:31-1:38 'def' is read-only.
+    no-import-assign 1:40-1:46 'ns' is read-only.
+    no-import-assign 1:48-1:56 The members of 'ns' are read-only.
+#41 "import * as ns from 'm'; ns.a ||= 1; ns.b &&= 2; ns.c ??= 3; ns.d **= 4;"
+    no-import-assign 1:26-1:36 The members of 'ns' are read-only.
+    no-import-assign 1:38-1:48 The members of 'ns' are read-only.
+    no-import-assign 1:50-1:60 The members of 'ns' are read-only.
+    no-import-assign 1:62-1:72 The members of 'ns' are read-only.
+#42 "import * as ns from 'm'; ns?.a; delete ns?.b; ns?.c();"
+    no-import-assign 1:33-1:45 The members of 'ns' are read-only.
+#43 "import * as ns from 'm'; [ns.a = 1] = []; [...ns.b] = []; ({ ...ns.c } = {}); ({ k: ns.d = 1 } = {});"
+    no-import-assign 1:26-1:41 The members of 'ns' are read-only.
+    no-import-assign 1:43-1:57 The members of 'ns' are read-only.
+    no-import-assign 1:60-1:76 The members of 'ns' are read-only.
+    no-import-assign 1:80-1:100 The members of 'ns' are read-only.
+#44 "import * as ns from 'm'; ns[0] = 1; ns['k']++; --ns[k]; for (ns[i] in o) {}"
+    no-import-assign 1:26-1:35 The members of 'ns' are read-only.
+    no-import-assign 1:37-1:46 The members of 'ns' are read-only.
+    no-import-assign 1:48-1:55 The members of 'ns' are read-only.
+    no-import-assign 1:57-1:76 The members of 'ns' are read-only.
+#45 "import * as ns from 'm'; Reflect.deleteProperty(ns, 'a'); Reflect.defineProperty(ns, 'a', {}); Reflect.setPrototypeOf(ns, null); Reflect.set(ns, 'a', 1); Reflect.get(ns, 'a');"
+    no-import-assign 1:26-1:57 The members of 'ns' are read-only.
+    no-import-assign 1:59-1:94 The members of 'ns' are read-only.
+    no-import-assign 1:96-1:128 The members of 'ns' are read-only.
+    no-import-assign 1:130-1:153 The members of 'ns' are read-only.
+#46 "import * as ns from 'm'; Object.defineProperty(ns, 'a', {}); Object.defineProperties(ns, {}); Object.freeze(ns); Object.setPrototypeOf(ns, null); Object.keys(ns); Object.assign({}, ns);"
+    no-import-assign 1:26-1:60 The members of 'ns' are read-only.
+    no-import-assign 1:62-1:93 The members of 'ns' are read-only.
+    no-import-assign 1:95-1:112 The members of 'ns' are read-only.
+    no-import-assign 1:114-1:145 The members of 'ns' are read-only.
+#47 "import * as ns from 'm'; Object?.assign(ns); Object.assign?.(ns); Object['assign'](ns); Object[`freeze`](ns); (Object.assign)(ns); (0, Object.assign)(ns);"
+    no-import-assign 1:26-1:44 The members of 'ns' are read-only.
+    no-import-assign 1:46-1:65 The members of 'ns' are read-only.
+    no-import-assign 1:67-1:87 The members of 'ns' are read-only.
+    no-import-assign 1:89-1:109 The members of 'ns' are read-only.
+    no-import-assign 1:111-1:130 The members of 'ns' are read-only.
+#48 "import * as ns from 'm'; function f(Object) { Object.assign(ns); } { let Reflect; Reflect.set(ns); }"
+#49 "import * as ns from 'm'; function g(p = Object.assign(ns)) { var Object; }"

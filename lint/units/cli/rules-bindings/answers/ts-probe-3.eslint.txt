@@ -1,0 +1,78 @@
+#0 "enum NaN { A }"
+#1 "namespace NaN {}"
+#2 "type undefined = 1;"
+#3 "interface Infinity {}"
+#4 "var NaN; enum NaN { A }"
+    no-shadow-restricted-names 1:5-1:8 Shadowing of global property 'NaN'.
+    no-redeclare 1:15-1:18 'NaN' is already defined.
+    no-shadow-restricted-names 1:15-1:18 Shadowing of global property 'NaN'.
+#5 "function NaN() {} namespace NaN {}"
+    no-shadow-restricted-names 1:10-1:13 Shadowing of global property 'NaN'.
+    no-shadow-restricted-names 1:29-1:32 Shadowing of global property 'NaN'.
+#6 "declare function eval(): void;"
+#7 "declare const NaN: number;"
+    no-shadow-restricted-names 1:15-1:26 Shadowing of global property 'NaN'.
+#8 "declare var undefined: any;"
+#9 "declare let undefined: any;"
+#10 "var undefined!: number;"
+#11 "let undefined: number;"
+#12 "function f(undefined?: number) {}"
+    no-shadow-restricted-names 1:12-1:30 Shadowing of global property 'undefined'.
+#13 "function f<undefined>() {}"
+#14 "class C<NaN> {}"
+#15 "class NaN {}"
+    no-shadow-restricted-names 1:7-1:10 Shadowing of global property 'NaN'.
+#16 "declare class NaN {}"
+    no-shadow-restricted-names 1:15-1:18 Shadowing of global property 'NaN'.
+#17 "abstract class Infinity {}"
+    no-shadow-restricted-names 1:16-1:24 Shadowing of global property 'Infinity'.
+#18 "import type NaN from 'x';"
+    no-shadow-restricted-names 1:13-1:16 Shadowing of global property 'NaN'.
+#19 "import { type NaN } from 'x';"
+    no-shadow-restricted-names 1:15-1:18 Shadowing of global property 'NaN'.
+#20 "import NaN = require('x');"
+#21 "import type { Infinity as undefined } from 'x';"
+    no-shadow-restricted-names 1:27-1:36 Shadowing of global property 'undefined'.
+#22 "class C { constructor(public NaN: number) {} }"
+    no-shadow-restricted-names 1:30-1:41 Shadowing of global property 'NaN'.
+#23 "function f(this: any, eval: any) {}"
+    no-shadow-restricted-names 1:23-1:32 Shadowing of global property 'eval'.
+#24 "function f(...arguments: any[]) {}"
+    no-shadow-restricted-names 1:15-1:24 Shadowing of global property 'arguments'.
+#25 "const f = (globalThis: any) => 1;"
+    no-shadow-restricted-names 1:12-1:27 Shadowing of global property 'globalThis'.
+#26 "try {} catch (undefined: any) {}"
+    no-shadow-restricted-names 1:15-1:29 Shadowing of global property 'undefined'.
+#27 "declare function f(NaN: number): void;"
+#28 "function f(NaN: number): void; function f(x: any) {}"
+#29 "type F = (NaN: number) => void;"
+#30 "abstract class C { abstract m(NaN: number): void; }"
+#31 "namespace N { var NaN = 1; }"
+    no-shadow-restricted-names 1:19-1:22 Shadowing of global property 'NaN'.
+#32 "declare global { var NaN: number; }"
+    no-shadow-restricted-names 1:22-1:33 Shadowing of global property 'NaN'.
+#33 "declare module 'm' { const undefined: any; function Infinity(): void; }"
+#34 "enum E { NaN, Infinity }"
+#35 "let [NaN]: any = [];"
+    no-shadow-restricted-names 1:6-1:9 Shadowing of global property 'NaN'.
+#36 "var undefined; type undefined = 1;"
+    no-shadow-restricted-names 1:5-1:14 Shadowing of global property 'undefined'.
+    no-redeclare 1:21-1:30 'undefined' is already defined.
+    no-shadow-restricted-names 1:21-1:30 Shadowing of global property 'undefined'.
+#37 "var undefined; namespace undefined {}"
+    no-shadow-restricted-names 1:5-1:14 Shadowing of global property 'undefined'.
+    no-redeclare 1:26-1:35 'undefined' is already defined.
+    no-shadow-restricted-names 1:26-1:35 Shadowing of global property 'undefined'.
+#38 "for (const undefined of []) {}"
+    no-shadow-restricted-names 1:12-1:21 Shadowing of global property 'undefined'.
+#39 "export default function NaN() {}"
+    no-shadow-restricted-names 1:25-1:28 Shadowing of global property 'NaN'.
+#40 "export class Infinity {}"
+    no-shadow-restricted-names 1:14-1:22 Shadowing of global property 'Infinity'.
+#41 "export const undefined = 1;"
+    no-shadow-restricted-names 1:14-1:23 Shadowing of global property 'undefined'.
+#42 "let globalThis: any;"
+    no-shadow-restricted-names 1:5-1:20 Shadowing of global property 'globalThis'.
+#43 "var eval: any, arguments: any;"
+    no-shadow-restricted-names 1:5-1:14 Shadowing of global property 'eval'.
+    no-shadow-restricted-names 1:16-1:30 Shadowing of global property 'arguments'.

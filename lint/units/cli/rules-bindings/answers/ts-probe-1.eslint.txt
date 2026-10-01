@@ -1,0 +1,96 @@
+#0 "class A {} A = 1;"
+    no-class-assign 1:12-1:13 'A' is a class.
+#1 "class A {} (A as any) = 1;"
+    no-class-assign 1:13-1:14 'A' is a class.
+#2 "class A {} (<any>A) = 1;"
+    no-class-assign 1:18-1:19 'A' is a class.
+#3 "class A {} A! = 1;"
+    no-class-assign 1:12-1:13 'A' is a class.
+#4 "class A {} (A satisfies any) = 1;"
+#5 "class A {} (A as any as any) = 1;"
+#6 "class A {} (A as any)++;"
+    no-class-assign 1:13-1:14 'A' is a class.
+#7 "class A {} [A as any] = [1];"
+    no-class-assign 1:13-1:14 'A' is a class.
+#8 "class A {} ({ a: A as any } = { a: 1 });"
+    no-class-assign 1:18-1:19 'A' is a class.
+#9 "class A {} for (A as any of []) {}"
+    no-class-assign 1:17-1:18 'A' is a class.
+#10 "class A {} for ((A as any) of []) {}"
+    no-class-assign 1:18-1:19 'A' is a class.
+#11 "class A {} for ((A as any) in {}) {}"
+    no-class-assign 1:18-1:19 'A' is a class.
+#12 "declare class A {} A = 1;"
+    no-class-assign 1:20-1:21 'A' is a class.
+#13 "abstract class A {} A = 1;"
+    no-class-assign 1:21-1:22 'A' is a class.
+#14 "class A<T> { m() { A = 1; } }"
+    no-class-assign 1:20-1:21 'A' is a class.
+#15 "class A {} interface A {} A = 1;"
+    no-class-assign 1:27-1:28 'A' is a class.
+#16 "class A {} namespace A { export const x = 1; } A = 1;"
+    no-class-assign 1:48-1:49 'A' is a class.
+#17 "function f() {} f = 1;"
+    no-func-assign 1:17-1:18 'f' is a function.
+#18 "function f(): void; function f() {} f = 1;"
+    no-func-assign 1:37-1:38 'f' is a function.
+#19 "declare function f(): void; f = 1;"
+#20 "function f() {} (f as any) = 1;"
+    no-func-assign 1:18-1:19 'f' is a function.
+#21 "function f() {} f! = 1;"
+    no-func-assign 1:17-1:18 'f' is a function.
+#22 "function f() {} (f satisfies any) = 1;"
+#23 "function f() {} namespace f {} f = 1;"
+    no-func-assign 1:32-1:33 'f' is a function.
+#24 "export default function f() {} f = 1;"
+    no-func-assign 1:32-1:33 'f' is a function.
+#25 "class C { m(): void; m() { } }"
+#26 "try {} catch (e: any) { e = 1; }"
+    no-ex-assign 1:25-1:26 Do not assign to the exception parameter.
+#27 "try {} catch (e: unknown) { (e as any) = 1; }"
+    no-ex-assign 1:30-1:31 Do not assign to the exception parameter.
+#28 "try {} catch (e) { e! = 1; }"
+    no-ex-assign 1:20-1:21 Do not assign to the exception parameter.
+#29 "try {} catch ({ message }: any) { message = 1; }"
+    no-ex-assign 1:35-1:42 Do not assign to the exception parameter.
+#30 "function f(a: number, a: string) {}"
+    no-dupe-args 1:11-1:33 Duplicate param 'a'.
+    no-redeclare 1:23-1:32 'a' is already defined.
+#31 "function f(this: any, a, a) {}"
+    no-dupe-args 1:11-1:28 Duplicate param 'a'.
+    no-redeclare 1:26-1:27 'a' is already defined.
+#32 "declare function f(a, a): void;"
+#33 "function f(a, a): void; function f(a: any, b?: any) {}"
+#34 "class C { constructor(public a, public a) {} }"
+    no-dupe-args 1:22-1:42 Duplicate param 'a'.
+    no-redeclare 1:40-1:41 'a' is already defined.
+#35 "class C { constructor(public a: number, a: string) {} }"
+    no-dupe-args 1:22-1:51 Duplicate param 'a'.
+    no-redeclare 1:41-1:50 'a' is already defined.
+#36 "class C { m(a, a) {} }"
+    no-dupe-args 1:12-1:18 Duplicate param 'a'.
+    no-redeclare 1:16-1:17 'a' is already defined.
+#37 "abstract class C { abstract m(a, a): void; }"
+#38 "class C { m(a, a): void; m(a: any, b?: any) {} }"
+#39 "const f = function (a, a) {};"
+    no-dupe-args 1:20-1:26 Duplicate param 'a'.
+    no-redeclare 1:24-1:25 'a' is already defined.
+#40 "const f = (a, a) => 1;"
+    no-redeclare 1:15-1:16 'a' is already defined.
+#41 "function f<T = (x: 1) => 2>(a, a) {}"
+    no-dupe-args 1:16-1:34 Duplicate param 'a'.
+    no-redeclare 1:32-1:33 'a' is already defined.
+#42 "const o = { m<T extends (x: number) => void>(a, a) {} };"
+    no-dupe-args 1:25-1:51 Duplicate param 'a'.
+    no-redeclare 1:49-1:50 'a' is already defined.
+#43 "type F = (a, a) => void;"
+#44 "interface I { m(a, a): void }"
+#45 "function f([a, a]: any) {}"
+    no-dupe-args 1:11-1:24 Duplicate param 'a'.
+    no-redeclare 1:16-1:17 'a' is already defined.
+#46 "function f(a?: number, a?: string) {}"
+    no-dupe-args 1:11-1:35 Duplicate param 'a'.
+    no-redeclare 1:24-1:34 'a' is already defined.
+#47 "function f(a: number = 1, ...a: any[]) {}"
+    no-dupe-args 1:11-1:39 Duplicate param 'a'.
+    no-redeclare 1:30-1:31 'a' is already defined.

@@ -4,13 +4,16 @@
 //! processCodePathToExit, postprocess) onto `bun_ast::walk::Visitor`; replay.cjs runs the calls on ESLint's own
 //! CodePathState and prints the arrows of every code path.
 mod shims;
+mod tokens;
 
 use std::collections::HashSet;
 
 use bun_ast::walk::{self, Visitor};
 use bun_ast::{B, Binding, E, Expr, ExprData, G, Loc, OpCode, OptionalChain, S, Stmt, StmtData};
 use bun_js_parser::parse::parse_entry::ParsedForLint;
+use bun_ast::lexer_tables::T;
 use bun_js_parser::parse::wrappers::{ExprId, WrapperData};
+use tokens::{Token, Tokens};
 
 struct Walk<'p, 'a> {
     parsed: &'p ParsedForLint<'p, 'a>,
@@ -38,6 +41,19 @@ struct Walk<'p, 'a> {
     with_nodes: bool,
     /// The statement before the next one in the same list.
     list_prev: Option<usize>,
+    // ---- rules-code-path: what getter-return, no-fallthrough, constructor-super and no-this-before-super read ----
+    source: &'a bun_ast::Source,
+    arena: &'a bun_alloc::Arena,
+    /// Every regular expression and JSX element of the file.
+    spans: Vec<tokens::Span>,
+    /// Where a class member starts, by where its key is: from `Parser::parse_only` (JavaScript files).
+    member_starts: std::collections::HashMap<i32, i32>,
+    /// A function that the walk reaches later and that a rule knows something of: the address of its expression, the trace line.
+    pending: Vec<(usize, String)>,
+    /// Object literals that are property descriptors (`false`) or maps of them (`true`), by the address of their expression.
+    descriptors: Vec<(usize, bool, &'static str)>,
+    /// The `super` that is walked next is the callee of `super()`.
+    super_callee: bool,
 }
 
 fn target_of(expr: &Expr) -> Option<usize> {
@@ -223,6 +239,355 @@ fn json(name: &[u8]) -> String {
     out
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// rules-code-path: the reads of the tree and of the text that the four rules need.
+// ---------------------------------------------------------------------------------------------------------------
+fn level(token: &Token) -> i32 {
+    if token.opaque {
+        return match token.t {
+            T::TTemplateHead => 1,
+            T::TTemplateTail => -1,
+            _ => 0,
+        };
+    }
+    match token.t {
+        T::TOpenParen | T::TOpenBracket | T::TOpenBrace => 1,
+        T::TCloseParen | T::TCloseBracket | T::TCloseBrace => -1,
+        _ => 0,
+    }
+}
+
+/// The text of the last comment in `text[at..end]`, which holds blanks and comments only: where it starts and ends, without `//`, `/*` and `*/`.
+fn last_comment_in(text: &[u8], mut at: usize, end: usize) -> Option<(usize, usize)> {
+    let mut last = None;
+    while at < end {
+        match text.get(at..end) {
+            Some([b'/', b'/', ..]) => {
+                let mut stop = at + 2;
+                while stop < end && !matches!(text.get(stop..), Some([b'\n' | b'\r', ..] | [0xE2, 0x80, 0xA8 | 0xA9, ..])) {
+                    stop += 1;
+                }
+                last = Some((at + 2, stop));
+                at = stop;
+            }
+            Some([b'/', b'*', ..]) => {
+                let mut close = at + 2;
+                while close + 1 < end && !(text[close] == b'*' && text[close + 1] == b'/') {
+                    close += 1;
+                }
+                last = Some((at + 2, close));
+                at = close + 2;
+            }
+            _ => at += 1,
+        }
+    }
+    last
+}
+
+impl<'a> Walk<'_, 'a> {
+    fn is_function(&self, expr: &Expr) -> bool {
+        match &expr.data {
+            ExprData::EFunction(_) => !self.is_ts_wrapped(expr),
+            ExprData::EArrow(arrow) => !arrow.prefer_expr && !self.is_ts_wrapped(expr),
+            _ => false,
+        }
+    }
+
+    /// `getStaticStringValue` of a key or of an index.
+    fn static_string(&self, expr: &Expr) -> Option<Vec<u8>> {
+        if self.is_ts_wrapped(expr) {
+            return None;
+        }
+        match &expr.data {
+            ExprData::EString(string) => {
+                if string.next.is_some() {
+                    return None;
+                }
+                if string.is_utf8() {
+                    return Some(string.slice8().to_vec());
+                }
+                let mut out = Vec::new();
+                for unit in char::decode_utf16(string.slice16().iter().copied()) {
+                    let mut utf8 = [0u8; 4];
+                    out.extend_from_slice(unit.ok()?.encode_utf8(&mut utf8).as_bytes());
+                }
+                Some(out)
+            }
+            ExprData::ENumber(number) => {
+                let mut buffer = [0u8; 124];
+                Some(bun_core::fmt::FormatDouble::dtoa(&mut buffer, number.value()).to_vec())
+            }
+            ExprData::EBigInt(big) => Some(big.value.slice().to_vec()),
+            ExprData::EBoolean(boolean) => Some(if boolean.value { b"true".to_vec() } else { b"false".to_vec() }),
+            ExprData::ENull(_) => Some(b"null".to_vec()),
+            ExprData::ERegExp(reg_exp) => Some(reg_exp.value.slice().to_vec()),
+            _ => None,
+        }
+    }
+
+    /// `getFunctionNameWithKind` of a function that is the value (or the key) of `property`.
+    fn getter_name(&self, property: &G::Property, function: &Expr, in_class: bool) -> Vec<u8> {
+        let mut words: Vec<Vec<u8>> = Vec::new();
+        let computed = property.flags.contains(bun_ast::flags::Property::IsComputed);
+        let private = match property.key.as_ref().map(|key| &key.data) {
+            Some(ExprData::EPrivateIdentifier(private)) if !computed => Some(self.parsed.name_of(private.ref_)),
+            _ => None,
+        };
+        if in_class && property.flags.contains(bun_ast::flags::Property::IsStatic) {
+            words.push(b"static".to_vec());
+        }
+        if in_class && private.is_some() {
+            words.push(b"private".to_vec());
+        }
+        let (is_async, is_generator, own_name) = match &function.data {
+            ExprData::EFunction(node) => (
+                node.func.flags.contains(bun_ast::flags::Function::IsAsync),
+                node.func.flags.contains(bun_ast::flags::Function::IsGenerator),
+                node.func.name.as_ref().map(|name| self.parsed.name_of(name.ref_)),
+            ),
+            ExprData::EArrow(node) => (node.is_async, false, None),
+            _ => (false, false, None),
+        };
+        if is_async {
+            words.push(b"async".to_vec());
+        }
+        if is_generator {
+            words.push(b"generator".to_vec());
+        }
+        words.push(match property.kind {
+            G::PropertyKind::Get => b"getter".to_vec(),
+            G::PropertyKind::Set => b"setter".to_vec(),
+            _ => b"method".to_vec(),
+        });
+        if let Some(private) = private {
+            let mut word = Vec::new();
+            if !private.starts_with(b"#") {
+                word.push(b'#');
+            }
+            word.extend_from_slice(private);
+            words.push(word);
+        } else if let Some(name) = property.key.as_ref().and_then(|key| self.static_string(key)) {
+            words.push([b"'".as_slice(), &name, b"'"].concat());
+        } else if let Some(name) = own_name {
+            words.push([b"'".as_slice(), name, b"'"].concat());
+        }
+        words.join(&b' ')
+    }
+
+    /// A function that is a getter: said before its code path starts.
+    fn mark_getter(&mut self, function: &Expr, property: &G::Property, in_class: bool, at: i32, global: &str) {
+        if !self.with_nodes {
+            return;
+        }
+        let id = core::ptr::from_ref(function).addr();
+        if self.pending.iter().any(|(other, _)| *other == id) {
+            return;
+        }
+        let name = self.getter_name(property, function, in_class);
+        self.pending.push((id, format!("@getter {at} {global} {}", json(&name))));
+    }
+
+    /// Where each property of the object literal at `loc` starts: the first token after its `{` or after the last `,` of its level before the key.
+    fn property_starts(&self, node: &E::Object, loc: Loc) -> Vec<i32> {
+        let mut out = vec![-1; node.properties.len()];
+        let Ok(from) = u32::try_from(loc.start) else {
+            return out;
+        };
+        let keys: Vec<Option<u32>> = node
+            .properties
+            .iter()
+            .map(|property| property.key.as_ref().and_then(|key| u32::try_from(key.loc.start).ok()))
+            .collect();
+        let mut log = bun_ast::Log::init();
+        let mut tokens = Tokens::new(&mut log, self.source, self.arena, &self.spans, from);
+        if tokens.next().map(|token| token.t) != Some(T::TOpenBrace) {
+            return out;
+        }
+        let mut depth = 0i32;
+        let mut candidate = -1i32;
+        let mut after_comma = true;
+        let mut next = 0usize;
+        loop {
+            while next < keys.len() && keys[next].is_none() {
+                next += 1;
+            }
+            if next >= keys.len() {
+                break;
+            }
+            let Some(token) = tokens.next() else {
+                break;
+            };
+            if after_comma && depth == 0 {
+                candidate = token.start as i32;
+                after_comma = false;
+            }
+            while next < keys.len() {
+                match keys[next] {
+                    None => next += 1,
+                    Some(key) if token.start >= key => {
+                        out[next] = candidate;
+                        next += 1;
+                    }
+                    Some(_) => break,
+                }
+            }
+            if depth == 0 && !token.opaque && token.t == T::TComma {
+                after_comma = true;
+            }
+            depth += level(&token);
+            if depth < 0 {
+                break;
+            }
+        }
+        out
+    }
+
+    /// The first `case` or `default` at the level of a clause that no `.` precedes, read from `from`, a token of the clause before it.
+    fn next_clause(&self, from: u32, skip_first: bool) -> Option<Token> {
+        let mut log = bun_ast::Log::init();
+        let mut tokens = Tokens::new(&mut log, self.source, self.arena, &self.spans, from);
+        let mut depth = 0i32;
+        let mut lowest = 0i32;
+        let mut before: Option<T> = None;
+        let mut first = skip_first;
+        loop {
+            let token = tokens.next()?;
+            if !first
+                && !token.opaque
+                && matches!(token.t, T::TCase | T::TDefault)
+                && depth <= lowest
+                && !matches!(before, Some(T::TDot | T::TQuestionDot))
+            {
+                return Some(token);
+            }
+            first = false;
+            depth += level(&token);
+            lowest = lowest.min(depth);
+            before = Some(token.t);
+        }
+    }
+
+    /// After the `:` of the clause that starts at `start`, and the token after it.
+    fn clause_colon(&self, start: u32, has_test: bool) -> Option<(u32, Option<Token>)> {
+        let mut log = bun_ast::Log::init();
+        let mut tokens = Tokens::new(&mut log, self.source, self.arena, &self.spans, start);
+        let keyword = tokens.next()?;
+        if !matches!(keyword.t, T::TCase | T::TDefault) {
+            return None;
+        }
+        if !has_test {
+            let colon = tokens.next()?;
+            return (colon.t == T::TColon).then(|| (colon.end, tokens.next()));
+        }
+        // The first `:` of the level of the clause that no `?` of that level waits for.
+        let mut stack: Vec<u32> = Vec::new();
+        let mut waiting = 0u32;
+        loop {
+            let token = tokens.next()?;
+            match level(&token) {
+                1 => {
+                    stack.push(waiting);
+                    waiting = 0;
+                }
+                -1 => waiting = stack.pop()?,
+                _ => {
+                    if !token.opaque && token.t == T::TQuestion {
+                        waiting += 1;
+                    } else if !token.opaque && token.t == T::TColon {
+                        if waiting > 0 {
+                            waiting -= 1;
+                        } else if stack.is_empty() {
+                            return Some((token.end, tokens.next()));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// The text of the last comment between the token before `target` and `target`: read from `from`, a token before it.
+    fn comment_before(&self, from: u32, target: u32) -> Option<(usize, usize)> {
+        let mut log = bun_ast::Log::init();
+        let mut tokens = Tokens::new(&mut log, self.source, self.arena, &self.spans, from);
+        let last = tokens::last_before(&mut tokens, target)?;
+        last_comment_in(self.text, last.end as usize, target as usize)
+    }
+
+    /// `isPossibleConstructor` of constructor-super.
+    fn is_possible_constructor(&self, expr: &Expr) -> bool {
+        match &expr.data {
+            ExprData::EClass(_)
+            | ExprData::EFunction(_)
+            | ExprData::EThis(_)
+            | ExprData::EDot(_)
+            | ExprData::EIndex(_)
+            | ExprData::ECall(_)
+            | ExprData::ENew(_)
+            | ExprData::EYield(_)
+            | ExprData::ENewTarget(_)
+            | ExprData::EImportMeta(_) => true,
+            ExprData::ETemplate(template) => template.tag.is_some(),
+            ExprData::EIdentifier(identifier) => self.parsed.name_of(identifier.ref_) != b"undefined",
+            ExprData::EBinary(binary) => match binary.op {
+                OpCode::BinAssign | OpCode::BinLogicalAndAssign | OpCode::BinLogicalAnd | OpCode::BinComma => {
+                    self.is_possible_constructor(&binary.right)
+                }
+                OpCode::BinLogicalOrAssign
+                | OpCode::BinNullishCoalescingAssign
+                | OpCode::BinLogicalOr
+                | OpCode::BinNullishCoalescing => {
+                    self.is_possible_constructor(&binary.left) || self.is_possible_constructor(&binary.right)
+                }
+                _ => false,
+            },
+            ExprData::EIf(conditional) => {
+                self.is_possible_constructor(&conditional.no) || self.is_possible_constructor(&conditional.yes)
+            }
+            _ => false,
+        }
+    }
+
+    /// `astUtils.isNullOrUndefined`.
+    fn is_null_or_undefined(&self, expr: &Expr) -> bool {
+        match &expr.data {
+            ExprData::ENull(_) | ExprData::EUndefined(_) => true,
+            ExprData::EIdentifier(identifier) => self.parsed.name_of(identifier.ref_) == b"undefined",
+            ExprData::EUnary(unary) => unary.op == OpCode::UnVoid,
+            _ => false,
+        }
+    }
+
+    /// The global object, the place of the argument and whether that argument is a map of descriptors, for a call of `Object.defineProperty` and its like.
+    fn descriptor_call(&self, node: &E::Call) -> Option<(&'static str, usize, bool)> {
+        if self.is_ts_wrapped(&node.target) {
+            return None;
+        }
+        let (object, name) = match &node.target.data {
+            ExprData::EDot(dot) => (&dot.target, Some(dot.name.slice().to_vec())),
+            ExprData::EIndex(index) if !matches!(index.index.data, ExprData::EPrivateIdentifier(_)) => {
+                (&index.target, self.static_string(&index.index))
+            }
+            _ => return None,
+        };
+        if self.is_ts_wrapped(object) {
+            return None;
+        }
+        let ExprData::EIdentifier(identifier) = &object.data else {
+            return None;
+        };
+        let global = match self.parsed.name_of(identifier.ref_) {
+            b"Object" => "Object",
+            b"Reflect" => "Reflect",
+            _ => return None,
+        };
+        match (global, name?.as_slice()) {
+            (_, b"defineProperty") => Some((global, 2, false)),
+            ("Object", b"create" | b"defineProperties") => Some((global, 1, true)),
+            _ => None,
+        }
+    }
+}
+
 impl<'a> Walk<'_, 'a> {
     fn op(&mut self, text: &str) {
         self.out.push_str(text);
@@ -363,6 +728,10 @@ impl<'ast> Walk<'_, 'ast> {
             }
             if let Some(key) = &property.key {
                 if property.flags.contains(bun_ast::flags::Property::IsComputed) {
+                    if self.with_nodes && property.kind == G::PropertyKind::Get && self.is_function(key) {
+                        let member_at = self.member_starts.get(&key.loc.start).copied().unwrap_or(-1);
+                        self.mark_getter(key, property, true, member_at, "-");
+                    }
                     self.visit_expr(key);
                 }
             }
@@ -373,6 +742,38 @@ impl<'ast> Walk<'_, 'ast> {
                 && matches!(property.key.as_ref().map(|key| &key.data), Some(ExprData::EString(name)) if name.eql_comptime(b"constructor"));
             if is_constructor && self.with_nodes {
                 self.op("@ctor-enter");
+            }
+            if self.with_nodes {
+                let key_at = property.key.as_ref().map_or(-1, |key| key.loc.start);
+                let member_at = self.member_starts.get(&key_at).copied().unwrap_or(-1);
+                if property.kind == G::PropertyKind::Get {
+                    if let Some(value) = &property.value {
+                        if self.is_function(value) {
+                            self.mark_getter(value, property, true, member_at, "-");
+                        }
+                    }
+                    // `parent.kind === "get"` holds for a function that is the computed key too.
+                    if let Some(key) = &property.key {
+                        if property.flags.contains(bun_ast::flags::Property::IsComputed) && self.is_function(key) {
+                            self.mark_getter(key, property, true, member_at, "-");
+                        }
+                    }
+                }
+                if is_constructor {
+                    if let Some(value) = &property.value {
+                        let (possible, valid) = match &class.extends {
+                            Some(extends) => (self.is_possible_constructor(extends), !self.is_null_or_undefined(extends)),
+                            None => (false, false),
+                        };
+                        let line = format!(
+                            "@ctor {key_at} {member_at} {} {} {}",
+                            u8::from(class.extends.is_some()),
+                            u8::from(possible),
+                            u8::from(valid)
+                        );
+                        self.pending.push((core::ptr::from_ref(value).addr(), line));
+                    }
+                }
             }
             if let Some(value) = &property.value {
                 self.visit_expr(value);
@@ -588,7 +989,14 @@ impl<'ast> Visitor<'ast> for Walk<'_, 'ast> {
             self.f();
         }
         match &expr.data {
-            ExprData::EFunction(_) | ExprData::EArrow(_) => self.op("start function"),
+            ExprData::EFunction(_) | ExprData::EArrow(_) => {
+                let id = core::ptr::from_ref(expr).addr();
+                if let Some(at) = self.pending.iter().rposition(|(other, _)| *other == id) {
+                    let (_, line) = self.pending.remove(at);
+                    self.op(&line);
+                }
+                self.op("start function")
+            }
             ExprData::EDot(_) | ExprData::EIndex(_) | ExprData::ECall(_) => {
                 if optional_chain == Some(OptionalChain::Start) {
                     self.op("makeOptionalNode");
@@ -642,6 +1050,16 @@ impl<'ast> Visitor<'ast> for Walk<'_, 'ast> {
         }
         if !dont_forward {
             self.f();
+        }
+        if self.with_nodes {
+            match &expr.data {
+                ExprData::EFunction(_) | ExprData::EArrow(_) => self.op("@fn-exit"),
+                ExprData::ECall(node) if matches!(node.target.data, ExprData::ESuper(_)) => {
+                    let text = format!("@super-exit {}", node.target.loc.start);
+                    self.op(&text);
+                }
+                _ => {}
+            }
         }
         // postprocess
         match &expr.data {
@@ -778,6 +1196,9 @@ impl<'ast> Visitor<'ast> for Walk<'_, 'ast> {
         }
         if let Some(update) = &node.update {
             self.op("makeForUpdate");
+            if self.with_nodes {
+                self.op("@for-update");
+            }
             self.visit_expr(update);
         }
         self.op("makeForBody");
@@ -821,12 +1242,79 @@ impl<'ast> Visitor<'ast> for Walk<'_, 'ast> {
 
     fn visit_s_switch(&mut self, node: &'ast S::Switch, _: Loc) {
         self.visit_expr(&node.test);
+        // rules-code-path: where each clause starts and where its `:` ends, read from the text.
+        let cases = node.cases.slice();
+        let mut starts: Vec<i32> = vec![-1; cases.len()];
+        let mut colons: Vec<i32> = vec![-1; cases.len()];
+        if self.with_nodes {
+            let mut after_colon: Option<Token> = None;
+            for (index, case) in cases.iter().enumerate() {
+                let found = if index == 0 {
+                    u32::try_from(node.body_loc.start).ok().and_then(|from| {
+                        let mut log = bun_ast::Log::init();
+                        let mut tokens = Tokens::new(&mut log, self.source, self.arena, &self.spans, from);
+                        tokens.next()?;
+                        tokens.next()
+                    })
+                } else {
+                    let before = &cases[index - 1];
+                    match before.body.slice().last() {
+                        Some(last) => u32::try_from(last.loc.start).ok().and_then(|from| self.next_clause(from, false)),
+                        None => after_colon,
+                    }
+                };
+                after_colon = None;
+                if let Some(token) = found {
+                    if matches!(token.t, T::TCase | T::TDefault) && !token.opaque {
+                        starts[index] = token.start as i32;
+                        if let Some((colon, next)) = self.clause_colon(token.start, case.value.is_some()) {
+                            colons[index] = colon as i32;
+                            after_colon = next;
+                        }
+                    }
+                }
+            }
+            self.op("@switch");
+        }
         for (index, case) in node.cases.slice().iter().enumerate() {
             // A SwitchCase: processCodePathToEnter.
             if index > 0 {
                 self.op("forkPath");
             }
             self.f();
+            if self.with_nodes {
+                // The comments that permit a fall through from the clause before: before the `}` of its lone block, and before this clause.
+                let mut in_block = None;
+                let mut before_clause = None;
+                if index > 0 && starts[index] >= 0 {
+                    let before = &cases[index - 1];
+                    let body = before.body.slice();
+                    if let [only] = body {
+                        if let StmtData::SBlock(block) = &only.data {
+                            let from = block.stmts.slice().last().map_or(only.loc.start, |last| last.loc.start);
+                            if let (Ok(from), Ok(close)) = (u32::try_from(from), u32::try_from(block.close_brace_loc.start)) {
+                                in_block = self.comment_before(from, close);
+                            }
+                        }
+                    }
+                    let from = match body.last() {
+                        Some(last) => last.loc.start,
+                        None => starts[index - 1],
+                    };
+                    if let Ok(from) = u32::try_from(from) {
+                        before_clause = self.comment_before(from, starts[index] as u32);
+                    }
+                }
+                let range = |found: Option<(usize, usize)>| found.map_or("-1 -1".to_owned(), |(from, to)| format!("{from} {to}"));
+                let text = format!(
+                    "@case-enter {index} {} {} {} {}",
+                    starts[index],
+                    u8::from(case.value.is_none()),
+                    range(in_block),
+                    range(before_clause)
+                );
+                self.op(&text);
+            }
             if let Some(value) = &case.value {
                 self.visit_expr(value);
             }
@@ -848,6 +1336,18 @@ impl<'ast> Visitor<'ast> for Walk<'_, 'ast> {
                 self.op(&text);
             }
             self.op("F-unless-reachable");
+            if self.with_nodes {
+                let text = format!(
+                    "@case-exit {index} {} {} {}",
+                    body.len(),
+                    u8::from(index + 1 == cases.len()),
+                    colons[index]
+                );
+                self.op(&text);
+            }
+        }
+        if self.with_nodes {
+            self.op("@switch-end");
         }
     }
 
@@ -991,6 +1491,20 @@ impl<'ast> Visitor<'ast> for Walk<'_, 'ast> {
         if self.with_nodes && matches!(node.target.data, ExprData::ESuper(_)) {
             self.op("@super-call");
         }
+        if matches!(node.target.data, ExprData::ESuper(_)) {
+            self.super_callee = true;
+        }
+        if self.with_nodes {
+            if let Some((global, at, is_map)) = self.descriptor_call(node) {
+                if let Some(argument) = node.args.get(at) {
+                    if matches!(argument.data, ExprData::EObject(_)) && !self.is_ts_wrapped(argument) {
+                        if let ExprData::EObject(object) = &argument.data {
+                            self.descriptors.push((core::ptr::from_ref::<E::Object>(object).addr(), is_map, global));
+                        }
+                    }
+                }
+            }
+        }
         self.chain_target = node.optional_chain.is_some();
         self.visit_expr(&node.target);
         for (index, arg) in node.args.iter().enumerate() {
@@ -1015,10 +1529,91 @@ impl<'ast> Visitor<'ast> for Walk<'_, 'ast> {
         self.not_ref = false;
     }
 
-    fn visit_e_object(&mut self, node: &'ast E::Object, _: Loc) {
+    fn visit_e_object(&mut self, node: &'ast E::Object, loc: Loc) {
         let is_target = self.take(core::ptr::from_ref(node).addr());
+        if self.with_nodes {
+            let id = core::ptr::from_ref::<E::Object>(node).addr();
+            let descriptor = self
+                .descriptors
+                .iter()
+                .rposition(|(other, _, _)| *other == id)
+                .map(|at| self.descriptors.remove(at));
+            if !is_target {
+                let mut starts: Option<Vec<i32>> = None;
+                for (index, property) in node.properties.iter().enumerate() {
+                    if property.kind == G::PropertyKind::Spread {
+                        continue;
+                    }
+                    let computed = property.flags.contains(bun_ast::flags::Property::IsComputed);
+                    let global = if property.kind == G::PropertyKind::Get {
+                        Some("-")
+                    } else {
+                        match descriptor {
+                            Some((_, false, global))
+                                if property.key.as_ref().and_then(|key| self.static_string(key)).as_deref() == Some(b"get") =>
+                            {
+                                Some(global)
+                            }
+                            _ => None,
+                        }
+                    };
+                    if let Some(global) = global {
+                        let value = property.value.as_ref().filter(|value| self.is_function(value));
+                        let key = property
+                            .key
+                            .as_ref()
+                            .filter(|key| computed && property.kind == G::PropertyKind::Get && self.is_function(key));
+                        if value.is_some() || key.is_some() {
+                            let at = starts.get_or_insert_with(|| self.property_starts(node, loc))[index];
+                            if let Some(value) = value {
+                                self.mark_getter(value, property, false, at, global);
+                            }
+                            if let Some(key) = key {
+                                self.mark_getter(key, property, false, at, "-");
+                            }
+                        }
+                    }
+                    if let Some((_, true, global)) = descriptor {
+                        if let Some(value) = &property.value {
+                            if let ExprData::EObject(object) = &value.data {
+                                if !self.is_ts_wrapped(value) && !property.flags.contains(bun_ast::flags::Property::WasShorthand) {
+                                    self.descriptors.push((core::ptr::from_ref::<E::Object>(object).addr(), false, global));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
         for property in node.properties.iter() {
             self.property(property, is_target);
+        }
+    }
+
+    fn visit_e_this(&mut self, _: &'ast E::This, loc: Loc) {
+        if self.with_nodes {
+            let text = format!("@this {}", loc.start);
+            self.op(&text);
+        }
+    }
+
+    fn visit_e_super(&mut self, _: &'ast E::Super, loc: Loc) {
+        if core::mem::take(&mut self.super_callee) {
+            return;
+        }
+        if self.with_nodes {
+            let text = format!("@super {}", loc.start);
+            self.op(&text);
+        }
+    }
+
+    fn visit_s_return(&mut self, node: &'ast S::Return, loc: Loc) {
+        if self.with_nodes {
+            let text = format!("@return {} {}", loc.start, u8::from(node.value.is_some()));
+            self.op(&text);
+        }
+        if let Some(value) = &node.value {
+            self.visit_expr(value);
         }
     }
 
@@ -1110,6 +1705,49 @@ fn trace(path: &str, with_nodes: bool) -> Option<String> {
     options.features.top_level_await = true;
     options.features.standard_decorators = true;
     let define = bun_js_parser::Define::default();
+    // rules-code-path: where the class members start, from the side table of `Parser::parse_only` (a JavaScript parse).
+    let mut member_starts = std::collections::HashMap::new();
+    if with_nodes && !matches!(loader, bun_ast::Loader::Ts | bun_ast::Loader::Tsx) {
+        let mut options = bun_js_parser::ParserOptions::init(Default::default(), loader);
+        options.features.no_macros = true;
+        options.features.is_macro_runtime = true;
+        options.features.top_level_await = true;
+        options.features.standard_decorators = true;
+        let mut log = bun_ast::Log::init();
+        if let Ok(parser) = bun_js_parser::Parser::init(options, &mut log, &source, &define, &arena) {
+            let _ = parser.parse_only(|parsed| {
+                struct Members<'m, 'p, 'a> {
+                    parsed: &'m bun_js_parser::parse::parse_entry::ParsedOnly<'p, 'a>,
+                    out: &'m mut std::collections::HashMap<i32, i32>,
+                }
+                impl Members<'_, '_, '_> {
+                    fn class(&mut self, class: &G::Class) {
+                        for property in class.properties.slice() {
+                            if let Some(key) = &property.key {
+                                if let Some(start) = self.parsed.class_element(key.loc) {
+                                    self.out.insert(key.loc.start, start);
+                                }
+                            }
+                        }
+                    }
+                }
+                impl<'ast> Visitor<'ast> for Members<'_, '_, '_> {
+                    fn visit_s_class(&mut self, node: &'ast S::Class, _: Loc) {
+                        self.class(&node.class);
+                        walk::walk_s_class(self, node);
+                    }
+                    fn visit_e_class(&mut self, node: &'ast E::Class, _: Loc) {
+                        self.class(node);
+                        walk::walk_e_class(self, node);
+                    }
+                }
+                let mut members = Members { parsed, out: &mut member_starts };
+                for stmt in parsed.stmts {
+                    members.visit_stmt(stmt);
+                }
+            });
+        }
+    }
     let mut log = bun_ast::Log::init();
     let parser = bun_js_parser::Parser::init(options, &mut log, &source, &define, &arena).ok()?;
     let result = parser.parse_for_lint(|parsed| {
@@ -1147,6 +1785,13 @@ fn trace(path: &str, with_nodes: bool) -> Option<String> {
             parenthesized,
             with_nodes,
             list_prev: None,
+            source: &source,
+            arena: &arena,
+            spans: tokens::spans_under_stmts(&source.contents, parsed.stmts, bun_core::StackCheck::init()).unwrap_or_default(),
+            member_starts: core::mem::take(&mut member_starts),
+            pending: Vec::new(),
+            descriptors: Vec::new(),
+            super_callee: false,
         };
         walk.op("start program");
         walk.f();

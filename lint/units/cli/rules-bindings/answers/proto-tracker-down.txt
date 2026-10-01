@@ -4,3 +4,4 @@ cases 4000: same 3355, different 0, ESLint's parser rejects 645; 3175 reports of
 cases 4000: same 3427, different 0, ESLint's parser rejects 573; 3301 reports of ESLint
 cases 4000: same 3338, different 0, ESLint's parser rejects 662; 3025 reports of ESLint
 cases 4000: same 3418, different 0, ESLint's parser rejects 582; 3155 reports of ESLint
+cases 4000: same 3364, different 0, ESLint's parser rejects 636; 3211 reports of ESLint

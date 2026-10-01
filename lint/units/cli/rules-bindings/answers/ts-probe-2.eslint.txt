@@ -1,0 +1,85 @@
+#0 "interface A {} interface A {}"
+#1 "namespace N {} namespace N {}"
+#2 "class A {} interface A {}"
+#3 "interface A {} class A {}"
+#4 "class A {} namespace A {}"
+#5 "class A {} class A {}"
+    no-redeclare 1:18-1:19 'A' is already defined.
+#6 "class A {} interface A {} class A {}"
+    no-redeclare 1:33-1:34 'A' is already defined.
+#7 "function f() {} namespace f {}"
+#8 "namespace f {} function f() {}"
+#9 "function f() {} function f() {}"
+    no-redeclare 1:26-1:27 'f' is already defined.
+#10 "function f(): void; function f(a?: any): void; function f(a?: any) {}"
+#11 "declare function f(): void; declare function f(a: any): void;"
+#12 "enum E { A } namespace E { export const x = 1; }"
+#13 "enum E { A } enum E { B }"
+    no-redeclare 1:19-1:20 'E' is already defined.
+#14 "enum E { A } namespace E {} enum E { B }"
+    no-redeclare 1:34-1:35 'E' is already defined.
+#15 "type T = 1; type T = 2;"
+    no-redeclare 1:18-1:19 'T' is already defined.
+#16 "type T = 1; interface T {}"
+    no-redeclare 1:23-1:24 'T' is already defined.
+#17 "interface T {} type T = 1;"
+    no-redeclare 1:21-1:22 'T' is already defined.
+#18 "const a = 1; type a = number;"
+    no-redeclare 1:19-1:20 'a' is already defined.
+#19 "type a = number; const a = 1;"
+    no-redeclare 1:24-1:25 'a' is already defined.
+#20 "var a: number; var a: string;"
+    no-redeclare 1:20-1:29 'a' is already defined.
+#21 "let a = 1; interface a {}"
+    no-redeclare 1:22-1:23 'a' is already defined.
+#22 "function f(a) { namespace a {} }"
+#23 "const g = function (a) { namespace a {} };"
+    no-redeclare 1:36-1:37 'a' is already defined.
+#24 "function f<T, T>() {}"
+    no-redeclare 1:15-1:16 'T' is already defined.
+#25 "class C<T, T> {}"
+#26 "type X<T, T> = T;"
+#27 "function f(a: number) { var a: string; }"
+    no-redeclare 1:29-1:38 'a' is already defined.
+#28 "namespace N { var a; var a; }"
+#29 "namespace N { export const a = 1; } namespace N { export const a = 2; }"
+#30 "declare module 'm' { var a; var a; }"
+#31 "declare global { var a: number; var a: number; }"
+#32 "enum E { A, A }"
+#33 "import a from 'x'; type a = 1;"
+    no-redeclare 1:25-1:26 'a' is already defined.
+#34 "import type a from 'x'; const a = 1;"
+    no-redeclare 1:31-1:32 'a' is already defined.
+    no-import-assign 1:31-1:32 'a' is read-only.
+#35 "import { a } from 'x'; var a;"
+    no-redeclare 1:28-1:29 'a' is already defined.
+#36 "import { type a } from 'x'; interface a {}"
+    no-redeclare 1:39-1:40 'a' is already defined.
+#37 "import a = require('x'); var a;"
+    no-redeclare 1:30-1:31 'a' is already defined.
+#38 "class A { static { var a; var a; } }"
+#39 "function f(a) { function a(): void; function a() {} }"
+    no-redeclare 1:46-1:47 'a' is already defined.
+#40 "var a; function a(): void; function a() {}"
+    no-redeclare 1:37-1:38 'a' is already defined.
+#41 "function a(): void; var a; function a() {}"
+    no-redeclare 1:37-1:38 'a' is already defined.
+#42 "abstract class A {} abstract class A {}"
+    no-redeclare 1:36-1:37 'A' is already defined.
+#43 "declare class A {} declare class A {}"
+    no-redeclare 1:34-1:35 'A' is already defined.
+#44 "declare class A {} interface A {}"
+#45 "declare const a: number; declare const a: number;"
+    no-redeclare 1:40-1:49 'a' is already defined.
+#46 "declare var a: number; declare var a: number;"
+    no-redeclare 1:36-1:45 'a' is already defined.
+#47 "declare let a: number; var a;"
+    no-redeclare 1:28-1:29 'a' is already defined.
+#48 "export default class A {} interface A {}"
+#49 "export class A {} export namespace A {}"
+#50 "switch (1) { case 1: var a; var a; }"
+    no-redeclare 1:33-1:34 'a' is already defined.
+#51 "for (var a: number = 0;;) { var a: number; }"
+    no-redeclare 1:33-1:42 'a' is already defined.
+#52 "var Object; var Array: any; interface Promise<T> {} type Partial<T> = T; class Map {}"
+#53 "function f(a: any, a: any): void; function f(a: any) {}"

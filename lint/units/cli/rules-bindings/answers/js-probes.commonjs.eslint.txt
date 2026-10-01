@@ -1,0 +1,621 @@
+#0 "import b from 'm'; [b, b] = o;"
+    FATAL 1:1 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'
+#1 "import b from 'm'; [b = 1] = o;"
+    FATAL 1:1 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'
+#2 "import b from 'm'; ({ b = 1, x: b } = o);"
+    FATAL 1:1 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'
+#3 "import b from 'm'; b = b = 1;"
+    FATAL 1:1 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'
+#4 "import b from 'm'; for (b in o) b++;"
+    FATAL 1:1 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'
+#5 "import b from 'm'; typeof (b = 1); void b++; -(--b);"
+    FATAL 1:1 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'
+#6 "import * as ns from 'm'; ns.a.b = 1; ns.a.b++; delete ns.a.b; (ns).a = 1; ns.a = ns.b = 1;"
+    FATAL 1:1 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'
+#7 "import * as ns from 'm'; [ns.a, ns.b] = o;"
+    FATAL 1:1 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'
+#8 "import * as ns from 'm'; f(ns.a = 1); new ns.a(); ns.a(); ns.a``;"
+    FATAL 1:1 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'
+#9 "import * as ns from 'm'; Object.assign(ns, ns); Object.assign(...ns); Object.assign(ns.a, {});"
+    FATAL 1:1 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'
+#10 "import * as ns from 'm'; var x = { ns }; x.ns.a = 1; ({ ns }).ns.a = 1;"
+    FATAL 1:1 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'
+#11 "import * as ns from 'm'; ns = 1; ns.a = 1;"
+    FATAL 1:1 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'
+#12 "import { a as b } from 'm'; b.x = 1; b = 2; a = 3;"
+    FATAL 1:1 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'
+#13 "import 'm'; import {} from 'm'; x = 1;"
+    FATAL 1:1 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'
+#14 "import a from 'm'; { let a; a = 1; } function f() { var a; a = 2; } try {} catch (a) { a = 3; } class C { m(a) { a = 4; } }"
+    FATAL 1:1 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'
+#15 "import a from 'm'; function f() { a = 1; } class C { static { a = 2; } x = (a = 3); [a = 4] = 5; }"
+    FATAL 1:1 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'
+#16 "import a from 'm'; (() => { a++; })(); label: a--;"
+    FATAL 1:1 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'
+#17 "import * as ns from 'm'; with (ns) { a = 1; }"
+    FATAL 1:1 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'
+#18 "import a from 'm'; a += 1; a ||= 2; a ??= 3; a **= 4; a >>>= 5;"
+    FATAL 1:1 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'
+#19 "import a from 'm'; [[a]] = o; [{ x: [a] }] = o; [...[a]] = o; ({ x: { y: a } } = o); ({ ...a } = o);"
+    FATAL 1:1 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'
+#20 "import a from 'm'; [a.b] = o; ({ x: a.c } = o); a.d = 1;"
+    FATAL 1:1 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'
+#21 "import * as ns from 'm'; for (const k in ns) {} for (ns.a of ns) {} for (ns.a = 0; ns.a < 1; ns.a++) {}"
+    FATAL 1:1 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'
+#22 "import * as ns from 'm'; ns.a = 1; import * as ns2 from 'n'; ns2.b = 2;"
+    FATAL 1:1 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'
+#23 "import * as ns from 'm'; export default (ns.a = 1);"
+    FATAL 1:1 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'
+#24 "import * as ns from 'm'; `${ns.a = 1}`; tag`${ns.b++}`;"
+    FATAL 1:1 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'
+#25 "import * as ns from 'm'; (ns.a, ns.b) = 1;"
+    FATAL 1:1 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'
+#26 "Math(); new Math(); JSON(); new JSON; Reflect(); Atomics(); Intl(); Temporal(); new Intl();"
+    no-obj-calls 1:1-1:7 'Math' is not a function.
+    no-obj-calls 1:9-1:19 'Math' is not a function.
+    no-obj-calls 1:21-1:27 'JSON' is not a function.
+    no-obj-calls 1:29-1:37 'JSON' is not a function.
+    no-obj-calls 1:39-1:48 'Reflect' is not a function.
+    no-obj-calls 1:50-1:59 'Atomics' is not a function.
+    no-obj-calls 1:61-1:67 'Intl' is not a function.
+    no-obj-calls 1:69-1:79 'Temporal' is not a function.
+    no-obj-calls 1:81-1:91 'Intl' is not a function.
+#27 "Math?.(); (Math)(); (0, Math)(); (a || Math)(); (a && Math)(); (a ?? Math)(); (c ? Math : JSON)(); (c ? a : b)();"
+    no-obj-calls 1:1-1:9 'Math' is not a function.
+    no-obj-calls 1:11-1:19 'Math' is not a function.
+    no-obj-calls 1:21-1:32 'undefined' is reference to 'Math', which is not a function.
+    no-obj-calls 1:34-1:47 'undefined' is reference to 'Math', which is not a function.
+    no-obj-calls 1:49-1:62 'undefined' is reference to 'Math', which is not a function.
+    no-obj-calls 1:64-1:77 'undefined' is reference to 'Math', which is not a function.
+    no-obj-calls 1:79-1:98 'undefined' is reference to 'JSON', which is not a function.
+    no-obj-calls 1:79-1:98 'undefined' is reference to 'Math', which is not a function.
+#28 "globalThis.Math(); globalThis['Math'](); globalThis[`Math`](); globalThis['Ma' + 'th'](); globalThis?.Math(); globalThis.Math?.(); new globalThis.JSON();"
+    no-obj-calls 1:1-1:18 'Math' is not a function.
+    no-obj-calls 1:20-1:40 'Math' is not a function.
+    no-obj-calls 1:42-1:62 'Math' is not a function.
+    no-obj-calls 1:64-1:89 'null' is reference to 'Math', which is not a function.
+    no-obj-calls 1:91-1:109 'Math' is not a function.
+    no-obj-calls 1:111-1:130 'Math' is not a function.
+    no-obj-calls 1:132-1:153 'JSON' is not a function.
+#29 "global.Math(); self.JSON(); window.Reflect(); globalThis.globalThis.Math(); globalThis.window.Math();"
+    no-obj-calls 1:1-1:14 'Math' is not a function.
+    no-obj-calls 1:16-1:27 'JSON' is not a function.
+#30 "var m = Math; m(); new m();"
+    no-obj-calls 1:15-1:18 'm' is reference to 'Math', which is not a function.
+    no-obj-calls 1:20-1:27 'm' is reference to 'Math', which is not a function.
+#31 "let m; m = Math; m();"
+    no-obj-calls 1:18-1:21 'm' is reference to 'Math', which is not a function.
+#32 "const { Math: m } = globalThis; m(); const { JSON } = globalThis; JSON();"
+    no-obj-calls 1:33-1:36 'm' is reference to 'Math', which is not a function.
+    no-obj-calls 1:67-1:73 'JSON' is not a function.
+#33 "var g = globalThis; g.Math(); var h = g; h.JSON();"
+    no-obj-calls 1:21-1:29 'Math' is not a function.
+    no-obj-calls 1:42-1:50 'JSON' is not a function.
+#34 "function f(a = Math) { a(); }"
+    no-obj-calls 1:24-1:27 'a' is reference to 'Math', which is not a function.
+#35 "var [a = Math] = []; a();"
+    no-obj-calls 1:22-1:25 'a' is reference to 'Math', which is not a function.
+#36 "var { x = Math } = {}; x();"
+    no-obj-calls 1:24-1:27 'x' is reference to 'Math', which is not a function.
+#37 "var { Math: y = 1 } = globalThis; y();"
+    no-obj-calls 1:35-1:38 'y' is reference to 'Math', which is not a function.
+#38 "var a = Math; a = a; a();"
+    no-obj-calls 1:22-1:25 'a' is reference to 'Math', which is not a function.
+#39 "var g = globalThis; g = g.Math; g();"
+#40 "var a = Math, b = a, c = b; c();"
+    no-obj-calls 1:29-1:32 'c' is reference to 'Math', which is not a function.
+#41 "var a = Math; var a = JSON; a();"
+    no-redeclare 1:19-1:20 'a' is already defined.
+    no-obj-calls 1:29-1:32 'a' is reference to 'JSON', which is not a function.
+    no-obj-calls 1:29-1:32 'a' is reference to 'Math', which is not a function.
+#42 "var a = Math; a = Math; a();"
+    no-obj-calls 1:25-1:28 'a' is reference to 'Math', which is not a function.
+    no-obj-calls 1:25-1:28 'a' is reference to 'Math', which is not a function.
+#43 "(x = Math)(); (x += Math)(); var y; (y ||= JSON)(); y();"
+    no-obj-calls 1:1-1:13 'undefined' is reference to 'Math', which is not a function.
+    no-obj-calls 1:15-1:28 'undefined' is reference to 'Math', which is not a function.
+    no-obj-calls 1:37-1:51 'undefined' is reference to 'JSON', which is not a function.
+    no-obj-calls 1:53-1:56 'y' is reference to 'JSON', which is not a function.
+#44 "Math = 1; Math();"
+    no-global-assign 1:1-1:5 Read-only global 'Math' should not be modified.
+#45 "function f() { var Math; Math(); } function g(Math) { Math(); } { let JSON; JSON(); }"
+#46 "var Math2 = Math; Math2.abs(1); Math.abs(1); JSON.parse(''); Reflect.get(o, k); new Intl.DateTimeFormat();"
+#47 "function f() { m(); } var m = Math;"
+    no-obj-calls 1:16-1:19 'm' is reference to 'Math', which is not a function.
+#48 "foo = Math; foo();"
+#49 "var o = { m: Math }; o.m();"
+#50 "var a = [Math]; a[0]();"
+#51 "(function () { return Math; })()();"
+#52 "typeof Math(); void JSON(); !Reflect(); await Intl();"
+    FATAL 1:47 Parsing error: Unexpected token Intl
+#53 "Math()(); Math().x(); Math`x`; new (Math())();"
+    no-obj-calls 1:1-1:7 'Math' is not a function.
+    no-obj-calls 1:11-1:17 'Math' is not a function.
+    no-obj-calls 1:37-1:43 'Math' is not a function.
+#54 "var { globalThis: { Math: deep } } = globalThis; deep();"
+#55 "var a = cond ? Math : JSON; a();"
+    no-obj-calls 1:29-1:32 'a' is reference to 'JSON', which is not a function.
+    no-obj-calls 1:29-1:32 'a' is reference to 'Math', which is not a function.
+#56 "var a = (b, Math); a();"
+    no-obj-calls 1:20-1:23 'a' is reference to 'Math', which is not a function.
+#57 "var a = (Math, b); a();"
+#58 "class C { static m = Math; } C.m();"
+#59 "var g = globalThis; var { Math: m } = g; m(); var { JSON: j = 1 } = g; j();"
+    no-obj-calls 1:42-1:45 'm' is reference to 'Math', which is not a function.
+    no-obj-calls 1:72-1:75 'j' is reference to 'JSON', which is not a function.
+#60 "var x = Math; function f(x) { x(); } (function () { x(); })();"
+    no-obj-calls 1:53-1:56 'x' is reference to 'Math', which is not a function.
+#61 "var x = Math; { let x = 1; x(); }"
+#62 "let t = globalThis, u = t.Atomics; u(); t.Temporal();"
+    no-obj-calls 1:36-1:39 'u' is reference to 'Atomics', which is not a function.
+    no-obj-calls 1:41-1:53 'Temporal' is not a function.
+#63 "globalThis.Math.abs(); globalThis.JSON.parse(); (globalThis.Math)(); (globalThis).Math();"
+    no-obj-calls 1:49-1:68 'Math' is not a function.
+    no-obj-calls 1:70-1:89 'Math' is not a function.
+#64 "var Mat = globalThis[Math](); globalThis[k](); globalThis[0](); globalThis.Math['call']();"
+#65 "var w = window; w.Math(); var s = self; s.JSON(); var gl = global; gl.Reflect();"
+    no-obj-calls 1:41-1:49 'JSON' is not a function.
+    no-obj-calls 1:68-1:80 'Reflect' is not a function.
+#66 "globalThis = 1; globalThis.Math();"
+    no-global-assign 1:1-1:11 Read-only global 'globalThis' should not be modified.
+#67 "var self = this; self.Math();"
+#68 "var x; x = y = Math; x(); y();"
+    no-obj-calls 1:22-1:25 'x' is reference to 'Math', which is not a function.
+#69 "var x; [x] = [Math]; x(); ({ a: x } = { a: Math }); x();"
+#70 "var x = Math, y = x.abs; y();"
+#71 "for (var m = Math; ; ) { m(); break; }"
+    no-obj-calls 1:26-1:29 'm' is reference to 'Math', which is not a function.
+#72 "for (const m of [Math]) m();"
+#73 "var f = () => Math; f()();"
+#74 "Math  ( ); new  Math;"
+    no-obj-calls 1:1-1:10 'Math' is not a function.
+    no-obj-calls 1:12-1:21 'Math' is not a function.
+#75 "new Math.foo(); new (Math.foo)(); new (Math().foo)();"
+    no-obj-calls 1:40-1:46 'Math' is not a function.
+#76 "var a = Math; a?.(); (a)(); new a;"
+    no-obj-calls 1:15-1:20 'a' is reference to 'Math', which is not a function.
+    no-obj-calls 1:22-1:27 'a' is reference to 'Math', which is not a function.
+    no-obj-calls 1:29-1:34 'a' is reference to 'Math', which is not a function.
+#77 "var { Math: { abs } } = globalThis; abs();"
+#78 "var { ['Math']: m } = globalThis; m(); var { [`JSON`]: j } = globalThis; j(); var { ['Re' + 'flect']: r } = globalThis; r();"
+    no-obj-calls 1:35-1:38 'm' is reference to 'Math', which is not a function.
+    no-obj-calls 1:74-1:77 'j' is reference to 'JSON', which is not a function.
+    no-obj-calls 1:121-1:124 'r' is reference to 'Reflect', which is not a function.
+#79 "function f(){} function f(){} f = 1;"
+    no-redeclare 1:25-1:26 'f' is already defined.
+    no-func-assign 1:31-1:32 'f' is a function.
+    no-func-assign 1:31-1:32 'f' is a function.
+#80 "var f = 1; function f(){} f = 2;"
+    no-redeclare 1:21-1:22 'f' is already defined.
+#81 "function f(){} var f = 1; f = 2;"
+    no-redeclare 1:20-1:21 'f' is already defined.
+    no-func-assign 1:27-1:28 'f' is a function.
+#82 "function f(){} var f; f = 2; f++; [f] = []; for (f in o) {} for (f of o) {}"
+    no-redeclare 1:20-1:21 'f' is already defined.
+    no-func-assign 1:23-1:24 'f' is a function.
+    no-func-assign 1:30-1:31 'f' is a function.
+    no-func-assign 1:36-1:37 'f' is a function.
+    no-func-assign 1:50-1:51 'f' is a function.
+    no-func-assign 1:66-1:67 'f' is a function.
+#83 "function f() { f = 1; } var g = function h() { h = 1; }; var k = function () { k = 1; };"
+    no-func-assign 1:16-1:17 'f' is a function.
+    no-func-assign 1:48-1:49 'h' is a function.
+#84 "function f(g) { function g() {} g = 1; }"
+    no-redeclare 1:26-1:27 'g' is already defined.
+#85 "function f(f) { f = 1; }"
+#86 "function f() { var f; f = 1; } f = 2;"
+    no-func-assign 1:32-1:33 'f' is a function.
+#87 "var x = { m() { m = 1; }, n: function n() { n = 1; } }; class C { m() { m = 1; } }"
+    no-func-assign 1:45-1:46 'n' is a function.
+#88 "export default function f() {} f = 1;"
+    FATAL 1:1 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'
+#89 "export function f() {} f = 1;"
+    FATAL 1:1 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'
+#90 "async function f() {} f = 1; function* g() {} g = 1;"
+    no-func-assign 1:23-1:24 'f' is a function.
+    no-func-assign 1:47-1:48 'g' is a function.
+#91 "{ function f() {} f = 1; } f = 2;"
+    no-func-assign 1:19-1:20 'f' is a function.
+#92 "if (a) { function f() {} } f = 1;"
+#93 "function f() {} ({ f } = o); ({ x: f = 1 } = o); [f = 1] = o; [...f] = o;"
+    no-func-assign 1:20-1:21 'f' is a function.
+    no-func-assign 1:36-1:37 'f' is a function.
+    no-func-assign 1:51-1:52 'f' is a function.
+    no-func-assign 1:67-1:68 'f' is a function.
+#94 "f = 1; function f() {}"
+    no-func-assign 1:1-1:2 'f' is a function.
+#95 "class A {} A = 1; A++; [A] = o; ({ A } = o); for (A in o); for (A of o);"
+    no-class-assign 1:12-1:13 'A' is a class.
+    no-class-assign 1:19-1:20 'A' is a class.
+    no-class-assign 1:25-1:26 'A' is a class.
+    no-class-assign 1:36-1:37 'A' is a class.
+    no-class-assign 1:51-1:52 'A' is a class.
+    no-class-assign 1:65-1:66 'A' is a class.
+#96 "class A { m() { A = 1; } static { A = 2; } x = (A = 3); [A = 4]() {} }"
+    no-class-assign 1:17-1:18 'A' is a class.
+    no-class-assign 1:35-1:36 'A' is a class.
+    no-class-assign 1:49-1:50 'A' is a class.
+    no-class-assign 1:58-1:59 'A' is a class.
+#97 "var B = class A { m() { A = 1; } }; A = 2; B = 3;"
+    no-class-assign 1:25-1:26 'A' is a class.
+#98 "class A extends (A = 1) {}"
+    no-class-assign 1:18-1:19 'A' is a class.
+#99 "@(A = 1) class A {}"
+    FATAL 1:1 Parsing error: Unexpected character '@'
+#100 "class A {} { let A; A = 1; } function f(A) { A = 1; }"
+#101 "export default class A {} A = 1;"
+    FATAL 1:1 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'
+#102 "export class A {} A = 1;"
+    FATAL 1:1 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'
+#103 "var A = 1; class B { static A = (A = 2); }"
+#104 "class A {} typeof A; A.x = 1; new A; A(); delete A.y; A = A;"
+    no-class-assign 1:55-1:56 'A' is a class.
+#105 "try {} catch (e) { e = 1; e++; [e] = o; ({ e } = o); for (e in o); for (e of o); }"
+    no-ex-assign 1:20-1:21 Do not assign to the exception parameter.
+    no-ex-assign 1:27-1:28 Do not assign to the exception parameter.
+    no-ex-assign 1:33-1:34 Do not assign to the exception parameter.
+    no-ex-assign 1:44-1:45 Do not assign to the exception parameter.
+    no-ex-assign 1:59-1:60 Do not assign to the exception parameter.
+    no-ex-assign 1:73-1:74 Do not assign to the exception parameter.
+#106 "try {} catch ({ a, b: [c], ...d }) { a = 1; c = 2; d = 3; }"
+    no-ex-assign 1:38-1:39 Do not assign to the exception parameter.
+    no-ex-assign 1:45-1:46 Do not assign to the exception parameter.
+    no-ex-assign 1:52-1:53 Do not assign to the exception parameter.
+#107 "try {} catch ([a = 1]) { a = 2; }"
+    no-ex-assign 1:26-1:27 Do not assign to the exception parameter.
+#108 "try {} catch (e) { var e = 1; }"
+#109 "try {} catch (e) { function f() { e = 1; } (() => { e = 2; })(); { let e; e = 3; } }"
+    no-ex-assign 1:35-1:36 Do not assign to the exception parameter.
+    no-ex-assign 1:53-1:54 Do not assign to the exception parameter.
+#110 "try {} catch { e = 1; }"
+#111 "try {} catch (e) {} e = 1;"
+#112 "try {} catch (e) { try {} catch (e) { e = 1; } e = 2; }"
+    no-ex-assign 1:39-1:40 Do not assign to the exception parameter.
+    no-ex-assign 1:48-1:49 Do not assign to the exception parameter.
+#113 "try {} catch (e) { e.x = 1; e[0]++; delete e.y; f(e); }"
+#114 "Object = 1; Array++; [Math] = o; ({ JSON } = o); for (Promise in o); for (Symbol of o); undefined = 1; NaN++; Infinity--;"
+    no-global-assign 1:1-1:7 Read-only global 'Object' should not be modified.
+    no-global-assign 1:13-1:18 Read-only global 'Array' should not be modified.
+    no-global-assign 1:23-1:27 Read-only global 'Math' should not be modified.
+    no-global-assign 1:37-1:41 Read-only global 'JSON' should not be modified.
+    no-global-assign 1:55-1:62 Read-only global 'Promise' should not be modified.
+    no-global-assign 1:75-1:81 Read-only global 'Symbol' should not be modified.
+    no-global-assign 1:89-1:98 Read-only global 'undefined' should not be modified.
+    no-global-assign 1:104-1:107 Read-only global 'NaN' should not be modified.
+    no-global-assign 1:111-1:119 Read-only global 'Infinity' should not be modified.
+#115 "Object += 1; Object ||= 2; [Object = 1] = o; ({ a: Object = 1 } = o);"
+    no-global-assign 1:1-1:7 Read-only global 'Object' should not be modified.
+    no-global-assign 1:14-1:20 Read-only global 'Object' should not be modified.
+    no-global-assign 1:29-1:35 Read-only global 'Object' should not be modified.
+    no-global-assign 1:52-1:58 Read-only global 'Object' should not be modified.
+#116 "var Object; Object = 1; function f() { let Array; Array = 2; } function g(Math) { Math = 3; }"
+#117 "function f() { Object = 1; } class C { static { Array = 2; } x = (Math = 3); }"
+    no-global-assign 1:16-1:22 Read-only global 'Object' should not be modified.
+    no-global-assign 1:49-1:54 Read-only global 'Array' should not be modified.
+    no-global-assign 1:67-1:71 Read-only global 'Math' should not be modified.
+#118 "exports = 1; module = 2; require = 3; onmessage = 4; onerror = 5; console = 6; globalThis = 7; global = 8; self = 9; Bun = 1; fetch = 2; window = 3; document = 4; foo = 5;"
+    no-global-assign 1:14-1:20 Read-only global 'module' should not be modified.
+    no-global-assign 1:26-1:33 Read-only global 'require' should not be modified.
+    no-global-assign 1:67-1:74 Read-only global 'console' should not be modified.
+    no-global-assign 1:80-1:90 Read-only global 'globalThis' should not be modified.
+    no-global-assign 1:96-1:102 Read-only global 'global' should not be modified.
+    no-global-assign 1:108-1:112 Read-only global 'self' should not be modified.
+    no-global-assign 1:118-1:121 Read-only global 'Bun' should not be modified.
+    no-global-assign 1:127-1:132 Read-only global 'fetch' should not be modified.
+#119 "Object.x = 1; delete Object.y; Object.z++; typeof Object; Object; Object();"
+#120 "arguments = 1; eval = 2; this.x = 3;"
+    no-global-assign 1:16-1:20 Read-only global 'eval' should not be modified.
+#121 "new Symbol(); new BigInt(1); Symbol(); BigInt(1); new Symbol; new (Symbol)(); new Symbol.for('x'); new (Symbol())(); new foo(Symbol); new Symbol?.();"
+    FATAL 1:145 Parsing error: Optional chaining cannot appear in the callee of new expressions
+#122 "var Symbol; new Symbol(); function f(BigInt) { new BigInt(1); } { let Symbol = 1; new Symbol(); }"
+#123 "function f() { new Symbol(); } class C { static { new BigInt(1); } x = new Symbol(); }"
+    no-new-native-nonconstructor 1:20-1:26 `Symbol` cannot be called as a constructor.
+    no-new-native-nonconstructor 1:55-1:61 `BigInt` cannot be called as a constructor.
+    no-new-native-nonconstructor 1:76-1:82 `Symbol` cannot be called as a constructor.
+#124 "Symbol = 1; new Symbol(); BigInt++; new BigInt(1);"
+    no-global-assign 1:1-1:7 Read-only global 'Symbol' should not be modified.
+    no-new-native-nonconstructor 1:17-1:23 `Symbol` cannot be called as a constructor.
+    no-global-assign 1:27-1:33 Read-only global 'BigInt' should not be modified.
+    no-new-native-nonconstructor 1:41-1:47 `BigInt` cannot be called as a constructor.
+#125 "new globalThis.Symbol(); var S = Symbol; new S(); new (0, Symbol)(); new (a || Symbol)();"
+#126 "new Symbol`x`; new Symbol``(); new (Symbol`x`)(); new new Symbol()();"
+    no-new-native-nonconstructor 1:59-1:65 `Symbol` cannot be called as a constructor.
+#127 "var undefined;"
+#128 "let undefined;"
+#129 "var undefined = 1;"
+    no-shadow-restricted-names 1:5-1:14 Shadowing of global property 'undefined'.
+#130 "var undefined; undefined = 5;"
+    no-shadow-restricted-names 1:5-1:14 Shadowing of global property 'undefined'.
+#131 "var undefined; undefined++;"
+    no-shadow-restricted-names 1:5-1:14 Shadowing of global property 'undefined'.
+#132 "var undefined; [undefined] = o;"
+    no-shadow-restricted-names 1:5-1:14 Shadowing of global property 'undefined'.
+#133 "var undefined; typeof undefined; f(undefined); undefined.x = 1;"
+#134 "var undefined, undefined;"
+    no-redeclare 1:16-1:25 'undefined' is already defined.
+#135 "var undefined; var undefined = 1;"
+    no-shadow-restricted-names 1:5-1:14 Shadowing of global property 'undefined'.
+    no-redeclare 1:20-1:29 'undefined' is already defined.
+    no-shadow-restricted-names 1:20-1:29 Shadowing of global property 'undefined'.
+#136 "var [undefined] = [];"
+    no-shadow-restricted-names 1:6-1:15 Shadowing of global property 'undefined'.
+#137 "var { undefined } = {};"
+    no-shadow-restricted-names 1:7-1:16 Shadowing of global property 'undefined'.
+#138 "var { a: undefined = 1 } = {};"
+    no-shadow-restricted-names 1:10-1:19 Shadowing of global property 'undefined'.
+#139 "for (var undefined in o) {}"
+    no-shadow-restricted-names 1:10-1:19 Shadowing of global property 'undefined'.
+#140 "for (var undefined of o) {}"
+    no-shadow-restricted-names 1:10-1:19 Shadowing of global property 'undefined'.
+#141 "for (var undefined;;) {}"
+#142 "for (let undefined = 0;;) {}"
+    no-shadow-restricted-names 1:10-1:19 Shadowing of global property 'undefined'.
+#143 "function undefined() {}"
+    no-shadow-restricted-names 1:10-1:19 Shadowing of global property 'undefined'.
+#144 "var f = function undefined() {};"
+    no-shadow-restricted-names 1:18-1:27 Shadowing of global property 'undefined'.
+#145 "function f(undefined) {}"
+    no-shadow-restricted-names 1:12-1:21 Shadowing of global property 'undefined'.
+#146 "var f = (undefined) => 1;"
+    no-shadow-restricted-names 1:10-1:19 Shadowing of global property 'undefined'.
+#147 "var f = undefined => 1;"
+    no-shadow-restricted-names 1:9-1:18 Shadowing of global property 'undefined'.
+#148 "function f(a, ...undefined) {}"
+    no-shadow-restricted-names 1:18-1:27 Shadowing of global property 'undefined'.
+#149 "function f({ undefined }) {}"
+    no-shadow-restricted-names 1:14-1:23 Shadowing of global property 'undefined'.
+#150 "function f(a = 1, [undefined] = []) {}"
+    no-shadow-restricted-names 1:20-1:29 Shadowing of global property 'undefined'.
+#151 "class undefined {}"
+    no-shadow-restricted-names 1:7-1:16 Shadowing of global property 'undefined'.
+#152 "var C = class undefined {};"
+    no-shadow-restricted-names 1:15-1:24 Shadowing of global property 'undefined'.
+#153 "try {} catch (undefined) {}"
+    no-shadow-restricted-names 1:15-1:24 Shadowing of global property 'undefined'.
+#154 "try {} catch ({ undefined }) {}"
+    no-shadow-restricted-names 1:17-1:26 Shadowing of global property 'undefined'.
+#155 "import undefined from 'm';"
+    FATAL 1:1 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'
+#156 "import * as undefined from 'm';"
+    FATAL 1:1 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'
+#157 "import { undefined } from 'm';"
+    FATAL 1:1 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'
+#158 "import { a as undefined } from 'm';"
+    FATAL 1:1 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'
+#159 "import { undefined as a } from 'm';"
+    FATAL 1:1 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'
+#160 "var NaN; let Infinity; const eval = 1; var globalThis;"
+    no-shadow-restricted-names 1:5-1:8 Shadowing of global property 'NaN'.
+    no-shadow-restricted-names 1:14-1:22 Shadowing of global property 'Infinity'.
+    no-shadow-restricted-names 1:30-1:34 Shadowing of global property 'eval'.
+    no-shadow-restricted-names 1:44-1:54 Shadowing of global property 'globalThis'.
+#161 "function NaN() {} class Infinity {} function f(eval) {}"
+    no-shadow-restricted-names 1:10-1:13 Shadowing of global property 'NaN'.
+    no-shadow-restricted-names 1:25-1:33 Shadowing of global property 'Infinity'.
+    no-shadow-restricted-names 1:48-1:52 Shadowing of global property 'eval'.
+#162 "var NaN, NaN;"
+    no-shadow-restricted-names 1:5-1:8 Shadowing of global property 'NaN'.
+    no-redeclare 1:10-1:13 'NaN' is already defined.
+    no-shadow-restricted-names 1:10-1:13 Shadowing of global property 'NaN'.
+#163 "function NaN(NaN) { var NaN; }"
+    no-shadow-restricted-names 1:10-1:13 Shadowing of global property 'NaN'.
+    no-shadow-restricted-names 1:14-1:17 Shadowing of global property 'NaN'.
+    no-redeclare 1:25-1:28 'NaN' is already defined.
+    no-shadow-restricted-names 1:25-1:28 Shadowing of global property 'NaN'.
+#164 "class NaN { m() { NaN; } }"
+    no-shadow-restricted-names 1:7-1:10 Shadowing of global property 'NaN'.
+#165 "var x = { NaN: 1, undefined() {}, get Infinity() { return 1; } }; x.NaN = 1; class C { NaN() {} static undefined = 1; #eval; }"
+#166 "label: NaN; undefined: for (;;) break undefined;"
+#167 "export { a as undefined }; export var NaN;"
+    FATAL 1:1 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'
+#168 "function f() { var arguments; }"
+    no-shadow-restricted-names 1:20-1:29 Shadowing of global property 'arguments'.
+#169 "function f(arguments) {}"
+    no-shadow-restricted-names 1:12-1:21 Shadowing of global property 'arguments'.
+#170 "var arguments;"
+    no-shadow-restricted-names 1:5-1:14 Shadowing of global property 'arguments'.
+#171 "function f() { let arguments; const eval = 1; }"
+    no-shadow-restricted-names 1:20-1:29 Shadowing of global property 'arguments'.
+    no-shadow-restricted-names 1:37-1:41 Shadowing of global property 'eval'.
+#172 "var f = function arguments() {};"
+    no-shadow-restricted-names 1:18-1:27 Shadowing of global property 'arguments'.
+#173 "class arguments {}"
+    FATAL 1:7 Parsing error: Binding arguments in strict mode
+#174 "try {} catch (arguments) {}"
+    no-shadow-restricted-names 1:15-1:24 Shadowing of global property 'arguments'.
+#175 "var eval;"
+    no-shadow-restricted-names 1:5-1:9 Shadowing of global property 'eval'.
+#176 "function eval() {}"
+    no-shadow-restricted-names 1:10-1:14 Shadowing of global property 'eval'.
+#177 "(function () { var undefined; })(); (() => { let undefined; undefined = 1; })();"
+    no-shadow-restricted-names 1:50-1:59 Shadowing of global property 'undefined'.
+#178 "var undefined; function f() { undefined = 1; }"
+    no-shadow-restricted-names 1:5-1:14 Shadowing of global property 'undefined'.
+#179 "{ var undefined; } undefined = 1;"
+    no-shadow-restricted-names 1:7-1:16 Shadowing of global property 'undefined'.
+#180 "let undefined; { undefined = 1; }"
+    no-shadow-restricted-names 1:5-1:14 Shadowing of global property 'undefined'.
+#181 "var undefined; var undefined;"
+    no-redeclare 1:20-1:29 'undefined' is already defined.
+#182 "var a = 1, undefined;"
+#183 "export var undefined; export let undefined2;"
+    FATAL 1:1 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'
+#184 "const undefined = void 0;"
+    no-shadow-restricted-names 1:7-1:16 Shadowing of global property 'undefined'.
+#185 "using undefined = x;"
+    no-shadow-restricted-names 1:7-1:16 Shadowing of global property 'undefined'.
+#186 "var globalThis = 1; let Infinity = 2; const NaN = 3;"
+    no-shadow-restricted-names 1:5-1:15 Shadowing of global property 'globalThis'.
+    no-shadow-restricted-names 1:25-1:33 Shadowing of global property 'Infinity'.
+    no-shadow-restricted-names 1:45-1:48 Shadowing of global property 'NaN'.
+#187 "var a; var a;"
+    no-redeclare 1:12-1:13 'a' is already defined.
+#188 "var a; function a(){}"
+    no-redeclare 1:17-1:18 'a' is already defined.
+#189 "function a(){} var a;"
+    no-redeclare 1:20-1:21 'a' is already defined.
+#190 "function a(){} function a(){}"
+    no-redeclare 1:25-1:26 'a' is already defined.
+#191 "let a; let a;"
+    FATAL 1:12 Parsing error: Identifier 'a' has already been declared
+#192 "let a; var a;"
+    FATAL 1:12 Parsing error: Identifier 'a' has already been declared
+#193 "var a; let a;"
+    FATAL 1:12 Parsing error: Identifier 'a' has already been declared
+#194 "const a = 1; var a;"
+    FATAL 1:18 Parsing error: Identifier 'a' has already been declared
+#195 "class A {} class A {}"
+    FATAL 1:18 Parsing error: Identifier 'A' has already been declared
+#196 "class A {} var A;"
+    FATAL 1:16 Parsing error: Identifier 'A' has already been declared
+#197 "var A; class A {}"
+    FATAL 1:14 Parsing error: Identifier 'A' has already been declared
+#198 "function A(){} class A {}"
+    FATAL 1:22 Parsing error: Identifier 'A' has already been declared
+#199 "let a; function a(){}"
+    FATAL 1:17 Parsing error: Identifier 'a' has already been declared
+#200 "let a; { var a; }"
+    FATAL 1:14 Parsing error: Identifier 'a' has already been declared
+#201 "{ var a; var a; }"
+    no-redeclare 1:14-1:15 'a' is already defined.
+#202 "{ function f(){} function f(){} }"
+    no-redeclare 1:27-1:28 'f' is already defined.
+#203 "{ var a; function a(){} }"
+    FATAL 1:19 Parsing error: Identifier 'a' has already been declared
+#204 "{ function a(){} var a; }"
+    FATAL 1:22 Parsing error: Identifier 'a' has already been declared
+#205 "{ let a; let a; }"
+    FATAL 1:14 Parsing error: Identifier 'a' has already been declared
+#206 "{ let a; var a; }"
+    FATAL 1:14 Parsing error: Identifier 'a' has already been declared
+#207 "function f(a) { var a; }"
+    no-redeclare 1:21-1:22 'a' is already defined.
+#208 "function f(a) { let a; }"
+    FATAL 1:21 Parsing error: Identifier 'a' has already been declared
+#209 "function f(a) { function a(){} }"
+    no-redeclare 1:26-1:27 'a' is already defined.
+#210 "function f(a, a) {}"
+    no-dupe-args 1:11-1:17 Duplicate param 'a'.
+    no-redeclare 1:15-1:16 'a' is already defined.
+#211 "function f(a, a) { 'use strict'; }"
+    FATAL 1:15 Parsing error: Argument name clash
+#212 "function f(a, [a]) {}"
+    FATAL 1:16 Parsing error: Argument name clash
+#213 "function f(a, a = 1) {}"
+    FATAL 1:15 Parsing error: Argument name clash
+#214 "function f(a, ...a) {}"
+    FATAL 1:18 Parsing error: Argument name clash
+#215 "var f = (a, a) => 1;"
+    FATAL 1:13 Parsing error: Argument name clash
+#216 "var f = function(a, a) {};"
+    no-dupe-args 1:17-1:23 Duplicate param 'a'.
+    no-redeclare 1:21-1:22 'a' is already defined.
+#217 "({ m(a, a) {} });"
+    FATAL 1:9 Parsing error: Argument name clash
+#218 "class C { m(a, a) {} }"
+    FATAL 1:16 Parsing error: Argument name clash
+#219 "try {} catch (e) { var e; }"
+#220 "try {} catch (e) { let e; }"
+    FATAL 1:24 Parsing error: Identifier 'e' has already been declared
+#221 "try {} catch ([e]) { var e; }"
+    FATAL 1:26 Parsing error: Identifier 'e' has already been declared
+#222 "try {} catch (e) { function e(){} }"
+    FATAL 1:29 Parsing error: Identifier 'e' has already been declared
+#223 "try {} catch ([a, a]) {}"
+    FATAL 1:19 Parsing error: Identifier 'a' has already been declared
+#224 "switch (0) { case 0: var a; case 1: var a; }"
+    no-redeclare 1:41-1:42 'a' is already defined.
+#225 "switch (0) { case 0: let a; case 1: let a; }"
+    FATAL 1:41 Parsing error: Identifier 'a' has already been declared
+#226 "switch (0) { case 0: function f(){} case 1: function f(){} }"
+    no-redeclare 1:54-1:55 'f' is already defined.
+#227 "for (var a;;) { var a; }"
+    no-redeclare 1:21-1:22 'a' is already defined.
+#228 "for (let a;;) { var a; }"
+    FATAL 1:21 Parsing error: Identifier 'a' has already been declared
+#229 "for (let a;;) { let a; }"
+#230 "for (let a, a;;) {}"
+    FATAL 1:13 Parsing error: Identifier 'a' has already been declared
+#231 "for (var a, a;;) {}"
+    no-redeclare 1:13-1:14 'a' is already defined.
+#232 "import a from 'x'; var a;"
+    FATAL 1:1 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'
+#233 "import a from 'x'; let a;"
+    FATAL 1:1 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'
+#234 "import a from 'x'; function a(){}"
+    FATAL 1:1 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'
+#235 "import a from 'x'; import a from 'y';"
+    FATAL 1:1 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'
+#236 "import {a, a} from 'x';"
+    FATAL 1:1 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'
+#237 "import a, * as a from 'x';"
+    FATAL 1:1 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'
+#238 "class C { static { var a; var a; } }"
+    no-redeclare 1:31-1:32 'a' is already defined.
+#239 "class C { static { let a; let a; } }"
+    FATAL 1:31 Parsing error: Identifier 'a' has already been declared
+#240 "class C { static { var a; let a; } }"
+    FATAL 1:31 Parsing error: Identifier 'a' has already been declared
+#241 "function f() { var a; var a; }"
+    no-redeclare 1:27-1:28 'a' is already defined.
+#242 "function f() { var a; { var a; } }"
+    no-redeclare 1:29-1:30 'a' is already defined.
+#243 "function f() { var arguments; var arguments; }"
+    no-shadow-restricted-names 1:20-1:29 Shadowing of global property 'arguments'.
+    no-redeclare 1:35-1:44 'arguments' is already defined.
+    no-shadow-restricted-names 1:35-1:44 Shadowing of global property 'arguments'.
+#244 "function f(a) { var a; var a; }"
+    no-redeclare 1:21-1:22 'a' is already defined.
+    no-redeclare 1:28-1:29 'a' is already defined.
+#245 "var f = function g() { var g; };"
+#246 "var f = function g(g) {};"
+#247 "function* g(){} function* g(){}"
+    no-redeclare 1:27-1:28 'g' is already defined.
+#248 "async function g(){} async function g(){}"
+    no-redeclare 1:37-1:38 'g' is already defined.
+#249 "{ function* g(){} function* g(){} }"
+    FATAL 1:29 Parsing error: Identifier 'g' has already been declared
+#250 "{ async function g(){} function g(){} }"
+    FATAL 1:33 Parsing error: Identifier 'g' has already been declared
+#251 "if (1) function f(){} "
+#252 "label: function f(){} "
+#253 "var a, a;"
+    no-redeclare 1:8-1:9 'a' is already defined.
+#254 "var [a, a] = [];"
+    no-redeclare 1:9-1:10 'a' is already defined.
+#255 "var {a, b: a} = {};"
+    no-redeclare 1:12-1:13 'a' is already defined.
+#256 "let [a, a] = [];"
+    FATAL 1:9 Parsing error: Identifier 'a' has already been declared
+#257 "for (var a in o) { var a; }"
+    no-redeclare 1:24-1:25 'a' is already defined.
+#258 "for (var a of o) var a;"
+    no-redeclare 1:22-1:23 'a' is already defined.
+#259 "function f(a = 1) { var a; }"
+    no-redeclare 1:25-1:26 'a' is already defined.
+#260 "function f({a}) { var a; }"
+    no-redeclare 1:23-1:24 'a' is already defined.
+#261 "function f() { let a; { var a; } }"
+    FATAL 1:29 Parsing error: Identifier 'a' has already been declared
+#262 "var Object; var a = 1; var a = 2;"
+    no-redeclare 1:28-1:29 'a' is already defined.
+#263 "var undefined; var NaN = 1;"
+    no-shadow-restricted-names 1:20-1:23 Shadowing of global property 'NaN'.
+#264 "function f() { var a; function a(){} }"
+    no-redeclare 1:32-1:33 'a' is already defined.
+#265 "function f() { function a(){} function a(){} }"
+    no-redeclare 1:40-1:41 'a' is already defined.
+#266 "var x = function(){ var a; var a; };"
+    no-redeclare 1:32-1:33 'a' is already defined.
+#267 "var x = () => { var a; var a; };"
+    no-redeclare 1:28-1:29 'a' is already defined.
+#268 "with (o) { var a; var a; }"
+    no-redeclare 1:23-1:24 'a' is already defined.
+#269 "export var a; export var a;"
+    FATAL 1:1 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'
+#270 "export function a(){} export function a(){}"
+    FATAL 1:1 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'
+#271 "export default function a(){} var a;"
+    FATAL 1:1 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'
+#272 "var a; export default class a {}"
+    FATAL 1:8 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'

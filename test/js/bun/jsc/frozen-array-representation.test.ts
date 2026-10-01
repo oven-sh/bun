@@ -49,7 +49,9 @@ describe("frozen arrays keep their elements in the vector", () => {
       expect(a).toEqual(expected);
       expect(Object.keys(a)).toEqual(Object.keys(expected));
       expect(Object.isExtensible(a)).toBe(name === "non-writable length");
-      expect(Object.getOwnPropertyDescriptor(a, "length")!.writable).toBe(name === "Object.seal" || name === "Object.preventExtensions");
+      expect(Object.getOwnPropertyDescriptor(a, "length")!.writable).toBe(
+        name === "Object.seal" || name === "Object.preventExtensions",
+      );
     });
 
     test("an array that already owns a sparse map entry", () => {

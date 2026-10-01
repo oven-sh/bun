@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, tempDir, tempDirWithFiles } from "harness";
 import { spawnSync } from "node:child_process";
-import { existsSync, symlinkSync } from "node:fs";
+import { existsSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 
 // Seccomp helper: installs a filter that makes one syscall (`BLOCK_SYSCALL`,
 // a `-D` define) fail with the errno given in argv[1], then execs argv[2..].
+// With `-DBLOCK_ARG1=value` only calls whose second argument is `value` fail.
 // Shared by the describe blocks below.
 const helperSrc = `
 #define _GNU_SOURCE
@@ -17,6 +18,7 @@ const helperSrc = `
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/prctl.h>
+#include <sys/resource.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
@@ -26,6 +28,18 @@ const helperSrc = `
   #define MY_AUDIT_ARCH AUDIT_ARCH_AARCH64
 #else
   #define MY_AUDIT_ARCH 0
+#endif
+
+/* Linux 5.8; the same number on every architecture. */
+#ifndef __NR_faccessat2
+  #define __NR_faccessat2 439
+#endif
+
+/* instructions between the syscall-nr test and the errno return */
+#ifdef BLOCK_ARG1
+  #define ARG1_TEST_LEN 2
+#else
+  #define ARG1_TEST_LEN 0
 #endif
 
 /* usage: block <errno> <cmd> [args...] */
@@ -42,7 +56,12 @@ int main(int argc, char **argv) {
     /* load syscall nr */
     BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, nr)),
     /* if nr == BLOCK_SYSCALL → return the requested errno */
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, BLOCK_SYSCALL, 0, 1),
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, BLOCK_SYSCALL, 0, 1 + ARG1_TEST_LEN),
+#ifdef BLOCK_ARG1
+    /* ... but only if the low word of args[1] == BLOCK_ARG1 (little-endian) */
+    BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, args[1])),
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, BLOCK_ARG1, 0, 1),
+#endif
     BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | (err & SECCOMP_RET_DATA)),
     /* else → allow */
     BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
@@ -70,21 +89,25 @@ int main(int argc, char **argv) {
 // Linux errno values (identical on x86_64 and aarch64).
 const EPERM = 1;
 const EACCES = 13;
+const EINVAL = 22;
+const ENOSYS = 38;
 // Driver-internal code that leaks to userspace; above EHWPOISON (133), the
 // last errno bun's SystemErrno table declares.
 const ENOTSUPP = 524;
 
-// Compile the seccomp helper for one syscall. Returns the binary path, or
-// null if the host genuinely can't build it (no cc, missing kernel headers).
-// Any other compile failure throws so a source regression isn't silently
-// hidden as a skip.
-function tryBuildHelper(syscall: string): string | null {
+// Compile the seccomp helper for one syscall (and, with `arg1`, one value of
+// its second argument). Returns the binary path, or null if the host
+// genuinely can't build it (no cc, missing kernel headers). Any other compile
+// failure throws so a source regression isn't silently hidden as a skip.
+function tryBuildHelper(syscall: string, arg1?: string): string | null {
   const dir = tempDirWithFiles("seccomp-helper", {
     "block.c": helperSrc,
   });
   const src = join(dir, "block.c");
   const bin = join(dir, "block");
-  const compile = spawnSync("cc", ["-O0", `-DBLOCK_SYSCALL=${syscall}`, "-o", bin, src], { stdio: "pipe" });
+  const defines = [`-DBLOCK_SYSCALL=${syscall}`];
+  if (arg1 !== undefined) defines.push(`-DBLOCK_ARG1=${arg1}`);
+  const compile = spawnSync("cc", ["-O0", ...defines, "-o", bin, src], { stdio: "pipe" });
 
   // compiler not on PATH — expected skip
   if ((compile.error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") return null;
@@ -101,20 +124,30 @@ function tryBuildHelper(syscall: string): string | null {
   return bin;
 }
 
-// Run `bun -e snippet args...` under the seccomp helper, with the blocked
-// syscall failing with `errno`. Returns { stdout, stderr, exitCode } on
-// success, or null if the environment refused to install the seccomp filter
-// (skip).
-async function runUnderSeccomp(bin: string, errno: number, snippet: string, args: string[] = []) {
+// Run `bun argv...` under the seccomp helper, with the blocked syscall failing
+// with `errno`. Returns { stdout, stderr, exitCode } on success, or null if
+// the environment refused to install the seccomp filter (skip).
+async function runBunUnderSeccomp(
+  bin: string,
+  errno: number,
+  argv: string[],
+  options: { cwd?: string; env?: Record<string, string | undefined> } = {},
+) {
   await using proc = Bun.spawn({
-    cmd: [bin, String(errno), bunExe(), "-e", snippet, ...args],
-    env: bunEnv,
+    cmd: [bin, String(errno), bunExe(), ...argv],
+    env: options.env ?? bunEnv,
+    cwd: options.cwd,
     stdout: "pipe",
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   if (exitCode === 77) return null;
   return { stdout, stderr, exitCode };
+}
+
+// Run `bun -e snippet args...` under the seccomp helper.
+function runUnderSeccomp(bin: string, errno: number, snippet: string, args: string[] = []) {
+  return runBunUnderSeccomp(bin, errno, ["-e", snippet, ...args]);
 }
 
 // Reproduces the seccomp class of failures documented in libuv's
@@ -201,6 +234,218 @@ describe.skipIf(!isLinux)("fs.stat seccomp statx fallback", () => {
       // there. exitCode is the crash/failure signal.
       expect(out.stdout.trim()).toBe(c.expected);
       expect(out.exitCode).toBe(0);
+    });
+  }
+
+  // `struct stat` has no birthtime. libuv (so node) reports ctime for it when
+  // statx is unavailable (a kernel older than 4.11, or a seccomp profile
+  // written before the call existed). The first call goes through the statx
+  // fallback, the later ones skip statx altogether.
+  const birthtimeSnippet = `
+    const fs = require("node:fs");
+    const path = process.argv[1];
+    const fd = fs.openSync(path, "r");
+    const stats = {
+      statSync: fs.statSync(path),
+      lstatSync: fs.lstatSync(path),
+      fstatSync: fs.fstatSync(fd),
+      bigint: fs.statSync(path, { bigint: true }),
+      promises: await fs.promises.stat(path),
+    };
+    fs.closeSync(fd);
+    const result = {};
+    for (const [name, s] of Object.entries(stats)) {
+      result[name] = s.birthtimeMs === s.ctimeMs ? "ctime" : Number(s.birthtimeMs) === 0 ? "epoch" : "other";
+    }
+    console.log(JSON.stringify(result));
+  `;
+
+  for (const [name, errno] of [
+    ["ENOSYS", ENOSYS],
+    ["EPERM", EPERM],
+    ["EINVAL", EINVAL],
+  ] as const) {
+    test.concurrent(`birthtime is ctime when statx fails with ${name}`, async () => {
+      if (helperBin == null) {
+        console.warn("SKIP birthtime seccomp: cc or seccomp headers not available");
+        return;
+      }
+      using targetDir = tempDir("stat-seccomp-birthtime", { "file.txt": "hello" });
+      const out = await runUnderSeccomp(helperBin, errno, birthtimeSnippet, [join(String(targetDir), "file.txt")]);
+      if (out == null) {
+        console.warn("SKIP birthtime seccomp: seccomp not permitted in this environment");
+        return;
+      }
+      expect({ stdout: out.stdout.trim(), exitCode: out.exitCode }).toEqual({
+        stdout: JSON.stringify({
+          statSync: "ctime",
+          lstatSync: "ctime",
+          fstatSync: "ctime",
+          bigint: "ctime",
+          promises: "ctime",
+        }),
+        exitCode: 0,
+      });
+    });
+  }
+});
+
+// glibc 2.33+ faccessat() issues faccessat2 first, even with no flags, and
+// falls back to faccessat on ENOSYS only. When a seccomp filter answers
+// faccessat2 with EPERM or EINVAL, every "does this exist" check made through
+// the libc wrapper says no: a hoisted install could not see a package that
+// was in the cache. bun 1.3 made the flag-less syscall itself and passed.
+describe.skipIf(!isLinux)("bun install when faccessat2 is blocked by seccomp", () => {
+  const helperBin = tryBuildHelper("__NR_faccessat2");
+
+  for (const [name, errno] of [
+    ["EPERM", EPERM],
+    ["EINVAL", EINVAL],
+  ] as const) {
+    test.concurrent(`hoisted install finds a package in a warm cache (${name})`, async () => {
+      if (helperBin == null) {
+        console.warn("SKIP faccessat2 seccomp: cc or seccomp headers not available");
+        return;
+      }
+
+      const tarball = await new Bun.Archive(
+        {
+          "package/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+          "package/index.js": "module.exports = 1;",
+        },
+        { compress: "gzip" },
+      ).bytes();
+      await using registry = Bun.serve({
+        port: 0,
+        fetch(request) {
+          const { origin, pathname } = new URL(request.url);
+          if (pathname === "/dep-1.0.0.tgz") return new Response(tarball);
+          if (pathname !== "/dep") return new Response("not found", { status: 404 });
+          return Response.json({
+            name: "dep",
+            "dist-tags": { latest: "1.0.0" },
+            versions: { "1.0.0": { name: "dep", version: "1.0.0", dist: { tarball: `${origin}/dep-1.0.0.tgz` } } },
+          });
+        },
+      });
+
+      using dir = tempDir("faccessat2-seccomp", {
+        "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { dep: "1.0.0" } }),
+        "bunfig.toml": `[install]\nregistry = "${registry.url.href}"\nlinker = "hoisted"\n`,
+      });
+      const cwd = String(dir);
+      const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") };
+      const installed = join(cwd, "node_modules", "dep", "package.json");
+
+      // Cold: downloads and extracts into the cache.
+      const cold = await runBunUnderSeccomp(helperBin, errno, ["install"], { cwd, env });
+      if (cold == null) {
+        console.warn("SKIP faccessat2 seccomp: seccomp not permitted in this environment");
+        return;
+      }
+      expect({ stderr: cold.stderr, installed: existsSync(installed), exitCode: cold.exitCode }).toEqual({
+        stderr: expect.not.stringContaining("error:"),
+        installed: true,
+        exitCode: 0,
+      });
+
+      // Warm: node_modules is gone, the package is in the cache.
+      rmSync(join(cwd, "node_modules"), { recursive: true, force: true });
+      const warm = await runBunUnderSeccomp(helperBin, errno, ["install"], { cwd, env });
+      expect({ stderr: warm!.stderr, installed: existsSync(installed), exitCode: warm!.exitCode }).toEqual({
+        stderr: expect.not.stringContaining("error:"),
+        installed: true,
+        exitCode: 0,
+      });
+    });
+  }
+});
+
+// glibc implements getrlimit() with prlimit64. bun raises RLIMIT_NOFILE at
+// startup and used to panic ("unreachable: Sys(EPERM)") when it could not read
+// the limit. Node ignores that failure. This filter matches RLIMIT_NOFILE
+// only, so that JavaScriptCore and the ASAN runtime can still read
+// RLIMIT_STACK. The next block denies the whole syscall.
+describe.skipIf(!isLinux)("startup when getrlimit(RLIMIT_NOFILE) fails", () => {
+  const helperBin = tryBuildHelper("__NR_prlimit64", "RLIMIT_NOFILE");
+
+  for (const [name, errno] of [
+    ["ENOSYS", ENOSYS],
+    ["EPERM", EPERM],
+  ] as const) {
+    test.concurrent(`bun runs a script (${name})`, async () => {
+      if (helperBin == null) {
+        console.warn("SKIP prlimit64 seccomp: cc or seccomp headers not available");
+        return;
+      }
+      // The relative import makes the resolver read the directory, which is
+      // where the fd budget from RLIMIT_NOFILE is used.
+      using dir = tempDir("prlimit64-seccomp", {
+        "index.js": `import { message } from "./message.js";\nconsole.log(message);`,
+        "message.js": `export const message = "bun ok";`,
+      });
+      const out = await runBunUnderSeccomp(helperBin, errno, ["index.js"], { cwd: String(dir) });
+      if (out == null) {
+        console.warn("SKIP prlimit64 seccomp: seccomp not permitted in this environment");
+        return;
+      }
+      expect({ stdout: out.stdout.trim(), exitCode: out.exitCode }).toEqual({ stdout: "bun ok", exitCode: 0 });
+    });
+  }
+
+  // It used to print whatever was in the uninitialized struct rlimit.
+  test.concurrent("process.report leaves out the limit it cannot read, like node", async () => {
+    if (helperBin == null) {
+      console.warn("SKIP prlimit64 seccomp: cc or seccomp headers not available");
+      return;
+    }
+    const out = await runUnderSeccomp(
+      helperBin,
+      EPERM,
+      `const { userLimits } = process.report.getReport();
+       console.log(JSON.stringify({ open_files: "open_files" in userLimits, stack_size_bytes: "stack_size_bytes" in userLimits }));`,
+    );
+    if (out == null) {
+      console.warn("SKIP prlimit64 seccomp: seccomp not permitted in this environment");
+      return;
+    }
+    expect({ stdout: out.stdout.trim(), exitCode: out.exitCode }).toEqual({
+      stdout: JSON.stringify({ open_files: false, stack_size_bytes: true }),
+      exitCode: 0,
+    });
+  });
+});
+
+// With the whole syscall denied, JavaScriptCore still cannot start: glibc's
+// pthread_getattr_np needs getrlimit(RLIMIT_STACK) to tell it the main
+// thread's stack bounds. Commands that do not run JavaScript work. Not under
+// ASAN: its runtime aborts on its own when getrlimit fails.
+describe.skipIf(!isLinux || isASAN)("bun build when prlimit64 is blocked by seccomp", () => {
+  const helperBin = tryBuildHelper("__NR_prlimit64");
+
+  for (const [name, errno] of [
+    ["ENOSYS", ENOSYS],
+    ["EPERM", EPERM],
+  ] as const) {
+    test.concurrent(`bundles a file (${name})`, async () => {
+      if (helperBin == null) {
+        console.warn("SKIP prlimit64 seccomp: cc or seccomp headers not available");
+        return;
+      }
+      using dir = tempDir("prlimit64-seccomp-build", {
+        "index.js": `import { message } from "./message.js";\nconsole.log(message);`,
+        "message.js": `export const message = "bun ok";`,
+      });
+      const cwd = String(dir);
+      const out = await runBunUnderSeccomp(helperBin, errno, ["build", "index.js", "--outfile=out.js"], { cwd });
+      if (out == null) {
+        console.warn("SKIP prlimit64 seccomp: seccomp not permitted in this environment");
+        return;
+      }
+      expect({ built: existsSync(join(cwd, "out.js")), exitCode: out.exitCode }).toEqual({
+        built: true,
+        exitCode: 0,
+      });
     });
   }
 });

@@ -1,8 +1,8 @@
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
-// bun_sys is a T0 foundation crate that bun_collections depends on; importing
-// it to satisfy disallowed-types would create a dependency cycle. `File` here
-// IS the bun_sys::File the lint routes everyone else through.
-#![allow(clippy::disallowed_types, clippy::disallowed_methods)]
+// `File` here IS the bun_sys::File the lint routes everyone else through.
+#![allow(clippy::disallowed_methods)]
+// Tests lock std's Mutex: bun_threading depends on this crate.
+#![cfg_attr(test, allow(clippy::disallowed_types))]
 #![warn(unused_must_use)]
 //! `bun_sys` — syscall wrappers.
 
@@ -918,7 +918,7 @@ use core::ffi::{c_char, c_void};
 // ──────────────────────────────────────────────────────────────────────────
 // Re-exports from lower-tier crates (PORTING.md crate map).
 // ──────────────────────────────────────────────────────────────────────────
-pub use bun_core::{Fd, FdKind, FdNative, FdOptional, FileKind, Mode, Stdio, kind_from_mode};
+pub use bun_core::{Fd, FdKind, FdNative, FileKind, Mode, Stdio, kind_from_mode};
 
 /// Anything that can hand out an [`Fd`] without giving up ownership: a raw
 /// `Fd`, or a reference to an owning [`File`] / [`Dir`]. Mirrors
@@ -1069,10 +1069,9 @@ impl error::IntoErrnoInt for bun_windows_sys::NTSTATUS {
     }
 }
 
-/// `Exchange` and `NoReplace` are mutually exclusive at the kernel level.
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
+/// What [`renameat2`] does when the destination exists.
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum RenameMode {
-    #[default]
     Normal,
     /// Linux `RENAME_EXCHANGE` / macOS `RENAME_SWAP`.
     Exchange,
@@ -1080,51 +1079,20 @@ pub enum RenameMode {
     NoReplace,
 }
 
-/// Flags for [`renameat2`].
-/// On Linux maps to `RENAME_EXCHANGE`/`RENAME_NOREPLACE`; on macOS maps to
-/// `RENAME_SWAP`/`RENAME_EXCL`/`RENAME_NOFOLLOW_ANY`.
-#[derive(Clone, Copy, Default)]
-pub struct Renameat2Flags {
-    pub mode: RenameMode,
-    pub nofollow: bool,
-}
-
-impl Renameat2Flags {
+impl RenameMode {
+    /// The `renameat2(2)` / `renameatx_np` flag.
     #[inline]
-    #[cfg(not(windows))]
-    pub(crate) fn int(self) -> u32 {
-        let mut flags: u32 = 0;
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+    fn int(self) -> u32 {
         #[cfg(target_os = "macos")]
-        {
-            // <sys/stdio.h>: RENAME_SWAP=2, RENAME_EXCL=4, RENAME_NOFOLLOW_ANY=0x10
-            match self.mode {
-                RenameMode::Normal => {}
-                RenameMode::Exchange => flags |= 2,
-                RenameMode::NoReplace => flags |= 4,
-            }
-            if self.nofollow {
-                flags |= 0x10;
-            }
+        let (exchange, no_replace) = (2, 4); // <sys/stdio.h>: RENAME_SWAP, RENAME_EXCL
+        #[cfg(not(target_os = "macos"))]
+        let (exchange, no_replace) = (libc::RENAME_EXCHANGE as u32, libc::RENAME_NOREPLACE as u32);
+        match self {
+            RenameMode::Normal => 0,
+            RenameMode::Exchange => exchange,
+            RenameMode::NoReplace => no_replace,
         }
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            match self.mode {
-                RenameMode::Normal => {}
-                RenameMode::Exchange => flags |= libc::RENAME_EXCHANGE as u32,
-                RenameMode::NoReplace => flags |= libc::RENAME_NOREPLACE as u32,
-            }
-            let _ = self.nofollow;
-        }
-        #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
-        {
-            match self.mode {
-                RenameMode::Normal => {}
-                RenameMode::Exchange => flags |= 1,
-                RenameMode::NoReplace => flags |= 2,
-            }
-            let _ = self.nofollow;
-        }
-        flags
     }
 }
 
@@ -1295,8 +1263,6 @@ impl Tag {
     pub const chmod: Tag = Tag(4);
     pub(crate) const chown: Tag = Tag(5);
     pub const clonefile: Tag = Tag(6);
-    #[cfg(not(target_os = "macos"))]
-    pub(crate) const clonefileat: Tag = Tag(7);
     pub const close: Tag = Tag(8);
     pub const copy_file_range: Tag = Tag(9);
     pub const copyfile: Tag = Tag(10);
@@ -1367,6 +1333,7 @@ impl Tag {
     #[cfg(not(windows))]
     pub(crate) const pwritev: Tag = Tag(75);
     pub const readv: Tag = Tag(76);
+    #[cfg(not(windows))]
     pub(crate) const preadv: Tag = Tag(77);
     pub const ioctl_ficlone: Tag = Tag(78);
     pub const accept: Tag = Tag(79);
@@ -1527,15 +1494,6 @@ impl Tag {
             "uv_os_setpriority",
         ];
         NAMES.get(self.0 as usize).copied().unwrap_or("unknown")
-    }
-
-    /// Tags strictly above `WriteFile`
-    /// belong to the Windows-only block. Bounded by `SetEndOfFile` so the
-    /// later-added POSIX tags (`dup2`/`fchdir`/`fchownat`/`ioctl`) parked
-    /// above that range don't read as Windows.
-    #[inline]
-    pub const fn is_windows(self) -> bool {
-        self.0 > Self::WriteFile.0 && self.0 <= Self::SetEndOfFile.0
     }
 }
 impl From<Tag> for &'static str {
@@ -1897,8 +1855,10 @@ mod posix_impl {
         // Linux/FreeBSD, `openat$NOCANCEL(AT_FDCWD, ..)` on Darwin.
         openat(Fd::cwd(), path, flags, mode)
     }
+    /// Always `O_CLOEXEC`. A child gets a descriptor only through the spawn path.
     pub fn openat(dir: impl AsFd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
         let dir = dir.as_fd();
+        let flags = flags | O::CLOEXEC;
         // macOS: `openat$NOCANCEL`, retried on EINTR.
         #[cfg(target_os = "macos")]
         {
@@ -1929,6 +1889,7 @@ mod posix_impl {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn openat2_beneath(dir: impl AsFd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
         let dir = dir.as_fd();
+        let flags = flags | O::CLOEXEC;
         super::linux_syscall::openat2_beneath(dir, path, flags, mode)
             .map_err(|e| Error::from_code_int(e, Tag::open).with_path(path.as_bytes()))
     }
@@ -1941,6 +1902,7 @@ mod posix_impl {
         static UNAVAILABLE: AtomicBool = AtomicBool::new(false);
 
         let dir = dir.as_fd();
+        let flags = flags | O::CLOEXEC;
         if !UNAVAILABLE.load(Ordering::Relaxed) {
             match super::linux_syscall::openat2_in_root(dir, path, flags, mode) {
                 Ok(fd) => return Ok(fd),
@@ -2168,7 +2130,6 @@ mod posix_impl {
         // Linux ABI.
         #[cfg(any(target_env = "musl", target_os = "android"))]
         mod raw {
-            #![allow(non_camel_case_types)]
             use core::ffi::{c_char, c_int, c_uint};
 
             // Kernel UAPI `<linux/stat.h>` — same on every arch/libc.
@@ -2494,13 +2455,13 @@ mod posix_impl {
         Ok(())
     }
     /// `renameat2(2)` (Linux) / `renameatx_np` (macOS). FreeBSD and any other
-    /// unix without an atomic-exchange rename get `ENOSYS` when flags are set.
+    /// unix without an atomic-exchange rename get `ENOSYS` for any other mode than `Normal`.
     pub fn renameat2(
         from_dir: Fd,
         from: &ZStr,
         to_dir: Fd,
         to: &ZStr,
-        flags: Renameat2Flags,
+        mode: RenameMode,
     ) -> Maybe<()> {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
@@ -2514,7 +2475,7 @@ mod posix_impl {
                         from.as_ptr(),
                         to_dir.native() as libc::c_long,
                         to.as_ptr(),
-                        flags.int() as libc::c_long,
+                        mode.int() as libc::c_long,
                     )
                 },
                 Tag::rename,
@@ -2541,7 +2502,7 @@ mod posix_impl {
                         from.as_ptr(),
                         to_dir.native(),
                         to.as_ptr(),
-                        flags.int(),
+                        mode.int(),
                     )
                 },
                 Tag::rename,
@@ -2551,7 +2512,7 @@ mod posix_impl {
         }
         #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
         {
-            if flags.int() != 0 {
+            if mode != RenameMode::Normal {
                 return Err(
                     Error::from_code_int(libc::ENOSYS, Tag::rename).with_path(from.as_bytes())
                 );
@@ -2613,6 +2574,28 @@ mod posix_impl {
     /// `fcntl(F_DUPFD_CLOEXEC, min)`: the new descriptor is the lowest free one >= `min`.
     pub fn dup_at_least(fd: Fd, min: i32) -> Maybe<Fd> {
         fcntl(fd, libc::F_DUPFD_CLOEXEC, min as isize).map(|rc| Fd::from_native(rc as i32))
+    }
+    /// A descriptor created while fd 0, 1 or 2 is closed gets that number, where [`FdExt::close`] skips it and a spawned child inherits it as stdio. Returns its duplicate at 3 or higher (same `FD_CLOEXEC` state) with `fd` closed, or `fd` itself when it is above stdio already or no higher number is free.
+    pub(crate) fn move_above_stdio(fd: Fd) -> Fd {
+        if fd.stdio_tag().is_none() {
+            return fd;
+        }
+        let moved = fcntl(fd, libc::F_GETFD, 0).and_then(|flags| {
+            let dup = if flags & libc::FD_CLOEXEC as isize != 0 {
+                libc::F_DUPFD_CLOEXEC
+            } else {
+                libc::F_DUPFD
+            };
+            fcntl(fd, dup, 3)
+        });
+        match moved {
+            Ok(rc) => {
+                let _ = fd.close_allowing_standard_io(None);
+                Fd::from_native(rc as i32)
+            }
+            // At the descriptor limit the creator still succeeds, as it did before the move existed.
+            Err(_) => fd,
+        }
     }
     pub fn fchmod(fd: Fd, mode: Mode) -> Maybe<()> {
         check!(
@@ -2880,11 +2863,7 @@ mod posix_impl {
     }
     /// Never errors; any non-zero rc → `Ok(false)`.
     pub fn faccessat(dir: impl AsFd, sub: &ZStr) -> Maybe<bool> {
-        let dir = dir.as_fd();
-        // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is a
-        // valid NUL-terminated C string.
-        let rc = unsafe { libc::faccessat(dir.native(), sub.as_ptr(), libc::F_OK, 0) };
-        Ok(rc == 0)
+        Ok(exists_at(dir, sub))
     }
     pub fn futimens(fd: Fd, atime: TimeLike, mtime: TimeLike) -> Maybe<()> {
         let ts = [atime.to_timespec(), mtime.to_timespec()];
@@ -2932,9 +2911,16 @@ mod posix_impl {
     }
     pub fn exists_at(dir: impl AsFd, sub: &ZStr) -> bool {
         let dir = dir.as_fd();
-        // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is a
-        // valid NUL-terminated C string.
-        unsafe { libc::faccessat(dir.native(), sub.as_ptr(), libc::F_OK, 0) == 0 }
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            super::linux_syscall::faccessat(dir, sub, libc::F_OK).is_ok()
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        {
+            // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is a
+            // valid NUL-terminated C string.
+            unsafe { libc::faccessat(dir.native(), sub.as_ptr(), libc::F_OK, 0) == 0 }
+        }
     }
     /// Calls extern C `is_executable_file` (c-bindings.cpp:72-89) via FFI.
     pub fn is_executable_file_path(path: &ZStr) -> bool {
@@ -3077,12 +3063,13 @@ mod posix_impl {
     pub fn send_non_block(fd: Fd, buf: &[u8]) -> Maybe<usize> {
         send(fd, buf, SEND_FLAGS_NONBLOCK)
     }
-    #[cfg(unix)]
     pub(crate) const MSG_DONTWAIT: i32 = libc::MSG_DONTWAIT;
-    // `MSG_DONTWAIT | MSG_NOSIGNAL` on all Unix including macOS
-    // (Darwin defines MSG_NOSIGNAL=0x80000).
-    #[cfg(unix)]
-    pub(crate) const SEND_FLAGS_NONBLOCK: i32 = libc::MSG_DONTWAIT | libc::MSG_NOSIGNAL;
+    /// XNU's `sosend` only honours `MSG_NBIO` (private, 0x20000) for "don't wait for buffer space"; `MSG_DONTWAIT` alone still blocks there.
+    #[cfg(target_os = "macos")]
+    const MSG_NBIO: i32 = 0x20000;
+    #[cfg(not(target_os = "macos"))]
+    const MSG_NBIO: i32 = 0;
+    pub(crate) const SEND_FLAGS_NONBLOCK: i32 = libc::MSG_DONTWAIT | MSG_NBIO | libc::MSG_NOSIGNAL;
     /// `fcntl(F_GETFD)` then OR in `FD_CLOEXEC`.
     pub fn set_close_on_exec(fd: Fd) -> Maybe<()> {
         let fl = fcntl(fd, libc::F_GETFD, 0)?;
@@ -3203,7 +3190,7 @@ mod posix_impl {
                 }
             }
         }
-        Ok([Fd::from_native(fds[0]), Fd::from_native(fds[1])])
+        Ok([Fd::from_native(fds[0]), Fd::from_native(fds[1])].map(move_above_stdio))
     }
 
     /// `pidfd_open(2)` — Linux ≥ 5.3. Returns a pollable fd referring to `pid`.
@@ -3212,6 +3199,7 @@ mod posix_impl {
     pub fn pidfd_open(pid: libc::pid_t, flags: u32) -> Maybe<Fd> {
         super::linux_syscall::pidfd_open(pid, flags)
             .map_err(|e| Error::from_code_int(e, Tag::pidfd_open))
+            .map(move_above_stdio)
     }
 
     // ── macOS clonefile / copyfile ──
@@ -3404,9 +3392,8 @@ mod posix_impl {
     static MEMFD_ENOSYS: core::sync::atomic::AtomicBool =
         core::sync::atomic::AtomicBool::new(false);
 
-    /// `bun.sys.canUseMemfd()` — false on non-Linux; on Linux, false when
-    /// `BUN_FEATURE_FLAG_DISABLE_MEMFD` is set or once `memfd_create` has
-    /// returned ENOSYS/EPERM/EACCES.
+    /// `bun.sys.canUseMemfd()` — false when `BUN_FEATURE_FLAG_DISABLE_MEMFD` is
+    /// set or once `memfd_create` has returned ENOSYS/EPERM/EACCES.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     #[inline]
     pub fn can_use_memfd() -> bool {
@@ -3417,11 +3404,6 @@ mod posix_impl {
             return false;
         }
         !MEMFD_ENOSYS.load(core::sync::atomic::Ordering::Relaxed)
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
-    #[inline]
-    pub fn can_use_memfd() -> bool {
-        false
     }
 
     /// `bun.sys.memfd_create(name, flags)` — Linux only.
@@ -3457,7 +3439,7 @@ mod posix_impl {
                 }
                 return Err(Error::from_code_int(e, Tag::memfd_create));
             }
-            return Ok(Fd::from_native(rc));
+            return Ok(move_above_stdio(Fd::from_native(rc)));
         }
     }
 
@@ -3904,12 +3886,6 @@ mod windows_impl {
         }
         Ok(Fd::from_native(target as _))
     }
-    pub fn dup2(old: Fd, new: Fd) -> Maybe<Fd> {
-        // No POSIX dup2 on Windows.
-        // Return ENOTSUP so callers that branch on platform fall back.
-        let _ = (old, new);
-        Err(Error::new(E::ENOTSUP, Tag::dup2))
-    }
     pub fn getcwd(buf: &mut [u8]) -> Maybe<usize> {
         // GetCurrentDirectoryW + WTF16→UTF8.
         let mut wbuf = bun_paths::w_path_buffer_pool::get();
@@ -3961,11 +3937,11 @@ mod windows_impl {
         from: &ZStr,
         to_dir: Fd,
         to: &ZStr,
-        flags: Renameat2Flags,
+        mode: RenameMode,
     ) -> Maybe<()> {
         // `renameat2` collapses to `renameat` on windows; the
-        // `noreplace`/`exchange` flags are not honored by NTFS rename.
-        let _ = flags;
+        // `noreplace`/`exchange` modes are not honored by NTFS rename.
+        let _ = mode;
         renameat(from_dir, from, to_dir, to)
     }
     pub fn unlinkat_with_flags(dir: Fd, path: &ZStr, flags: i32) -> Maybe<()> {
@@ -4589,168 +4565,143 @@ pub fn platform_iovec_const_create(buf: &[u8]) -> PlatformIoVecConst {
 
 /// `bun.sys.writev` — gather-write. Retries on EINTR
 /// (macOS uses `writev$NOCANCEL`).
+#[cfg(unix)]
 pub fn writev(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
-    #[cfg(unix)]
-    {
-        #[cfg(target_os = "macos")]
-        loop {
-            // SAFETY: `PlatformIoVec` is `libc::iovec`; writev(2) only reads
-            // the descriptor table. `writev$NOCANCEL`, retried on EINTR.
-            let rc = unsafe {
-                nocancel::writev(fd.native(), vecs.as_ptr(), vecs.len() as core::ffi::c_int)
-            };
-            if rc < 0 {
-                let e = last_errno();
-                if e == libc::EINTR {
-                    continue;
-                }
-                return Err(Error::from_code_int(e, Tag::writev).with_fd(fd));
+    #[cfg(target_os = "macos")]
+    loop {
+        // SAFETY: `PlatformIoVec` is `libc::iovec`; writev(2) only reads
+        // the descriptor table. `writev$NOCANCEL`, retried on EINTR.
+        let rc =
+            unsafe { nocancel::writev(fd.native(), vecs.as_ptr(), vecs.len() as core::ffi::c_int) };
+        if rc < 0 {
+            let e = last_errno();
+            if e == libc::EINTR {
+                continue;
             }
-            return Ok(rc as usize);
+            return Err(Error::from_code_int(e, Tag::writev).with_fd(fd));
         }
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            // SAFETY: `PlatformIoVec` is `libc::iovec`.
-            return unsafe { linux_syscall::writev(fd, vecs.as_ptr(), vecs.len()) }
-                .map_err(|e| Error::from_code_int(e, Tag::writev).with_fd(fd));
-        }
-        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
-        loop {
-            // SAFETY: see above.
-            let rc =
-                unsafe { libc::writev(fd.native(), vecs.as_ptr(), vecs.len() as core::ffi::c_int) };
-            if rc < 0 {
-                let e = last_errno();
-                if e == libc::EINTR {
-                    continue;
-                }
-                return Err(Error::from_code_int(e, Tag::writev).with_fd(fd));
-            }
-            return Ok(rc as usize);
-        }
+        return Ok(rc as usize);
     }
-    #[cfg(not(unix))]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
-        // TODO(windows): route through `uv_fs_write` with `uv_buf_t[]`.
-        let _ = (fd, vecs);
-        Err(Error::from_code_int(libc::ENOSYS, Tag::writev))
+        // SAFETY: `PlatformIoVec` is `libc::iovec`.
+        return unsafe { linux_syscall::writev(fd, vecs.as_ptr(), vecs.len()) }
+            .map_err(|e| Error::from_code_int(e, Tag::writev).with_fd(fd));
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
+    loop {
+        // SAFETY: see above.
+        let rc =
+            unsafe { libc::writev(fd.native(), vecs.as_ptr(), vecs.len() as core::ffi::c_int) };
+        if rc < 0 {
+            let e = last_errno();
+            if e == libc::EINTR {
+                continue;
+            }
+            return Err(Error::from_code_int(e, Tag::writev).with_fd(fd));
+        }
+        return Ok(rc as usize);
     }
 }
 
 /// `bun.sys.readv` — scatter-read. Retries on EINTR
 /// (macOS uses `readv$NOCANCEL`).
+#[cfg(unix)]
 pub fn readv(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
     #[cfg(debug_assertions)]
     if vecs.is_empty() {
         bun_core::debug_warn!("readv() called with 0 length buffer");
     }
-    #[cfg(unix)]
-    {
-        #[cfg(target_os = "macos")]
-        loop {
-            // SAFETY: vecs.ptr is `*const iovec`; the kernel writes through
-            // each `iov_base`, never the array itself. `readv$NOCANCEL`,
-            // retried on EINTR.
-            let rc = unsafe {
-                nocancel::readv(fd.native(), vecs.as_ptr(), vecs.len() as core::ffi::c_int)
-            };
-            if rc < 0 {
-                let e = last_errno();
-                if e == libc::EINTR {
-                    continue;
-                }
-                return Err(Error::from_code_int(e, Tag::readv).with_fd(fd));
+    #[cfg(target_os = "macos")]
+    loop {
+        // SAFETY: vecs.ptr is `*const iovec`; the kernel writes through
+        // each `iov_base`, never the array itself. `readv$NOCANCEL`,
+        // retried on EINTR.
+        let rc =
+            unsafe { nocancel::readv(fd.native(), vecs.as_ptr(), vecs.len() as core::ffi::c_int) };
+        if rc < 0 {
+            let e = last_errno();
+            if e == libc::EINTR {
+                continue;
             }
-            return Ok(rc as usize);
+            return Err(Error::from_code_int(e, Tag::readv).with_fd(fd));
         }
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            // SAFETY: `PlatformIoVec` is `libc::iovec`.
-            return unsafe { linux_syscall::readv(fd, vecs.as_ptr(), vecs.len()) }
-                .map_err(|e| Error::from_code_int(e, Tag::readv).with_fd(fd));
-        }
-        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
-        loop {
-            // SAFETY: see above.
-            let rc =
-                unsafe { libc::readv(fd.native(), vecs.as_ptr(), vecs.len() as core::ffi::c_int) };
-            if rc < 0 {
-                let e = last_errno();
-                if e == libc::EINTR {
-                    continue;
-                }
-                return Err(Error::from_code_int(e, Tag::readv).with_fd(fd));
-            }
-            return Ok(rc as usize);
-        }
+        return Ok(rc as usize);
     }
-    #[cfg(not(unix))]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
-        let _ = (fd, vecs);
-        Err(Error::from_code_int(libc::ENOSYS, Tag::readv))
+        // SAFETY: `PlatformIoVec` is `libc::iovec`.
+        return unsafe { linux_syscall::readv(fd, vecs.as_ptr(), vecs.len()) }
+            .map_err(|e| Error::from_code_int(e, Tag::readv).with_fd(fd));
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
+    loop {
+        // SAFETY: see above.
+        let rc = unsafe { libc::readv(fd.native(), vecs.as_ptr(), vecs.len() as core::ffi::c_int) };
+        if rc < 0 {
+            let e = last_errno();
+            if e == libc::EINTR {
+                continue;
+            }
+            return Err(Error::from_code_int(e, Tag::readv).with_fd(fd));
+        }
+        return Ok(rc as usize);
     }
 }
 
 /// `bun.sys.preadv` — scatter-read at `position`. Retries on EINTR
 /// (macOS uses `preadv$NOCANCEL`).
+#[cfg(unix)]
 pub fn preadv(fd: Fd, vecs: &[PlatformIoVec], position: i64) -> Maybe<usize> {
     #[cfg(debug_assertions)]
     if vecs.is_empty() {
         bun_core::debug_warn!("preadv() called with 0 length buffer");
     }
-    #[cfg(unix)]
-    {
-        #[cfg(target_os = "macos")]
-        loop {
-            // SAFETY: see `readv`. `preadv$NOCANCEL`, retried on EINTR.
-            let rc = unsafe {
-                nocancel::preadv(
-                    fd.native(),
-                    vecs.as_ptr(),
-                    vecs.len() as core::ffi::c_int,
-                    position,
-                )
-            };
-            if rc < 0 {
-                let e = last_errno();
-                if e == libc::EINTR {
-                    continue;
-                }
-                return Err(Error::from_code_int(e, Tag::preadv).with_fd(fd));
+    #[cfg(target_os = "macos")]
+    loop {
+        // SAFETY: see `readv`. `preadv$NOCANCEL`, retried on EINTR.
+        let rc = unsafe {
+            nocancel::preadv(
+                fd.native(),
+                vecs.as_ptr(),
+                vecs.len() as core::ffi::c_int,
+                position,
+            )
+        };
+        if rc < 0 {
+            let e = last_errno();
+            if e == libc::EINTR {
+                continue;
             }
-            return Ok(rc as usize);
+            return Err(Error::from_code_int(e, Tag::preadv).with_fd(fd));
         }
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            // SAFETY: `PlatformIoVec` is `libc::iovec`.
-            return unsafe { linux_syscall::preadv(fd, vecs.as_ptr(), vecs.len(), position) }
-                .map_err(|e| Error::from_code_int(e, Tag::preadv).with_fd(fd));
-        }
-        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
-        loop {
-            // SAFETY: see `readv`.
-            let rc = unsafe {
-                libc::preadv(
-                    fd.native(),
-                    vecs.as_ptr(),
-                    vecs.len() as core::ffi::c_int,
-                    position,
-                )
-            };
-            if rc < 0 {
-                let e = last_errno();
-                if e == libc::EINTR {
-                    continue;
-                }
-                return Err(Error::from_code_int(e, Tag::preadv).with_fd(fd));
-            }
-            return Ok(rc as usize);
-        }
+        return Ok(rc as usize);
     }
-    #[cfg(not(unix))]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
-        let _ = (fd, vecs, position);
-        Err(Error::from_code_int(libc::ENOSYS, Tag::preadv))
+        // SAFETY: `PlatformIoVec` is `libc::iovec`.
+        return unsafe { linux_syscall::preadv(fd, vecs.as_ptr(), vecs.len(), position) }
+            .map_err(|e| Error::from_code_int(e, Tag::preadv).with_fd(fd));
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
+    loop {
+        // SAFETY: see `readv`.
+        let rc = unsafe {
+            libc::preadv(
+                fd.native(),
+                vecs.as_ptr(),
+                vecs.len() as core::ffi::c_int,
+                position,
+            )
+        };
+        if rc < 0 {
+            let e = last_errno();
+            if e == libc::EINTR {
+                continue;
+            }
+            return Err(Error::from_code_int(e, Tag::preadv).with_fd(fd));
+        }
+        return Ok(rc as usize);
     }
 }
 
@@ -4775,15 +4726,15 @@ pub type StatFS = self::windows::libuv::uv_statfs_t;
 /// the `__DARWIN_STRUCT_STATFS64` layout matching `libc::statfs`. Deprecated
 /// on Apple but still exported on x86_64 (unavailable on arm64 macOS, where
 /// unsuffixed `statfs` already writes the 64-bit-inode layout).
+#[cfg(unix)]
 pub fn statfs(path: &ZStr) -> Maybe<StatFS> {
     #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
     unsafe extern "C" {
         #[link_name = "statfs64"]
         fn _statfs(path: *const core::ffi::c_char, buf: *mut libc::statfs) -> core::ffi::c_int;
     }
-    #[cfg(all(unix, not(all(target_os = "macos", target_arch = "x86_64"))))]
+    #[cfg(not(all(target_os = "macos", target_arch = "x86_64")))]
     use libc::statfs as _statfs;
-    #[cfg(unix)]
     loop {
         // SAFETY: all-zero is a valid `struct statfs` (kernel writes every
         // field on success); `path` is NUL-terminated by `ZStr`.
@@ -4800,11 +4751,6 @@ pub fn statfs(path: &ZStr) -> Maybe<StatFS> {
         }
         return Ok(st);
     }
-    #[cfg(not(unix))]
-    {
-        let _ = path;
-        Err(Error::from_code(E::NOSYS, Tag::statfs))
-    }
 }
 
 /// `bun.timespec` — re-exported from `bun_core` so `PosixStat.rs` can spell
@@ -4814,20 +4760,28 @@ pub use bun_core::Timespec;
 /// `bun_sys::time::timestamp()` resolve without an extra dep.
 pub use bun_core::time;
 
-/// `bun.sys.selfProcessMemoryUsage()` — returns the resident set size of the
-/// current process in bytes, or `None` on failure. Thin wrapper around the
-/// C++ `getRSS` shim (lives in `src/jsc/bindings/memory.cpp`).
+unsafe extern "C" {
+    // safe: the out-param is a valid `&mut usize`; C++ only writes it and returns a status code.
+    safe fn getRSS(rss: &mut usize) -> ::core::ffi::c_int;
+    safe fn getPeakRSS(peak: &mut usize) -> ::core::ffi::c_int;
+}
+
+/// What `process.memoryUsage().rss` reports, in bytes (C++ `getRSS` in `BunProcess.cpp`), or `None` on failure.
 pub fn self_process_memory_usage() -> Option<usize> {
-    unsafe extern "C" {
-        // safe: out-param is `&mut usize` (non-null, valid for write); C++ side
-        // only writes the slot and returns a status code — no other preconditions.
-        safe fn getRSS(rss: &mut usize) -> ::core::ffi::c_int;
-    }
     let mut rss: usize = 0;
     if getRSS(&mut rss) != 0 {
         return None;
     }
     Some(rss)
+}
+
+/// High-water mark of [`self_process_memory_usage`], in bytes.
+pub fn self_process_peak_memory_usage() -> Option<usize> {
+    let mut peak: usize = 0;
+    if getPeakRSS(&mut peak) != 0 {
+        return None;
+    }
+    Some(peak)
 }
 
 /// `bun.sys.PosixStat` — uv-shaped stat struct.
@@ -5212,8 +5166,8 @@ pub mod linux {
     type time_t = libc::time_t;
 
     /// kernel-shaped timespec (`sec`/`nsec`, no `tv_` prefix).
-    /// Layout-identical to `libc::timespec` so a `*const timespec` can be
-    /// passed straight to `syscall(SYS_futex, ..)`.
+    /// Layout-identical to `libc::timespec`; cast the pointer to that type where
+    /// it is passed to a variadic `syscall(SYS_futex, ..)`.
     #[repr(C)]
     #[derive(Clone, Copy)]
     pub struct timespec {
@@ -5336,6 +5290,9 @@ pub mod linux {
         val: u32,
         timeout: *const timespec,
     ) -> isize {
+        // `syscall` is variadic, and Miri checks the pointee type of each argument
+        // against the one the kernel interface declares: `libc::timespec` here.
+        let timeout = timeout.cast::<libc::timespec>();
         // SAFETY: caller contract — `uaddr` points to a live `u32`; `timeout`
         // is null or points to a valid `timespec` for the syscall's duration.
         let rc = unsafe { libc::syscall(libc::SYS_futex, uaddr, op.raw(), val, timeout) };
@@ -7288,68 +7245,60 @@ unsafe extern "C" {
 #[cfg(any(target_os = "linux", target_os = "android"))]
 const RWF_NOWAIT: u32 = 0x00000008;
 
-/// Linux: `preadv2(.., RWF_NOWAIT)`; else plain `read`.
-pub fn read_nonblocking(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    while linux::RWFFlagSupport::is_maybe_supported() {
+/// `preadv2(RWF_NOWAIT)` with no fallback: `Ok(None)` means this fd's file type (or the kernel) lacks it and the caller should remember that.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub fn read_nowait(fd: Fd, buf: &mut [u8]) -> Maybe<Option<usize>> {
+    if !linux::RWFFlagSupport::is_maybe_supported() {
+        return Ok(None);
+    }
+    loop {
         let iov = [libc::iovec {
             iov_base: buf.as_mut_ptr().cast(),
             iov_len: buf.len(),
         }];
         // SAFETY: fd valid; iov points at a live stack array.
         let rc = unsafe { sys_preadv2(fd.native(), iov.as_ptr(), 1, -1, RWF_NOWAIT) };
-        if rc < 0 {
-            let e = last_errno();
-            match e {
-                libc::EOPNOTSUPP | libc::ENOSYS | libc::EPERM | libc::EACCES => {
-                    linux::RWFFlagSupport::disable();
-                    // Only fall through to BLOCKING read if the fd is
-                    // actually readable now; otherwise return retry (EAGAIN).
-                    return match bun_core::is_readable(fd) {
-                        bun_core::Pollable::Ready | bun_core::Pollable::Hup => read(fd, buf),
-                        _ => Err(Error::retry().with_fd(fd)),
-                    };
-                }
-                libc::EINTR => continue,
-                _ => return Err(Error::from_code_int(e, Tag::read).with_fd(fd)),
-            }
+        if rc >= 0 {
+            return Ok(Some(rc as usize));
         }
-        return Ok(rc as usize);
+        match last_errno() {
+            libc::EINTR => continue,
+            libc::ENOSYS => {
+                linux::RWFFlagSupport::disable();
+                return Ok(None);
+            }
+            libc::EOPNOTSUPP | libc::EPERM | libc::EACCES => return Ok(None),
+            e => return Err(Error::from_code_int(e, Tag::read).with_fd(fd)),
+        }
     }
-    read(fd, buf)
 }
-/// Linux: `pwritev2(.., RWF_NOWAIT)`; else plain `write`.
-pub fn write_nonblocking(fd: Fd, buf: &[u8]) -> Maybe<usize> {
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    while linux::RWFFlagSupport::is_maybe_supported() {
+
+/// `pwritev2(RWF_NOWAIT)` with no fallback: `Ok(None)` means this fd's file type (or the kernel) lacks it and the caller should remember that.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub fn write_nowait(fd: Fd, buf: &[u8]) -> Maybe<Option<usize>> {
+    if !linux::RWFFlagSupport::is_maybe_supported() {
+        return Ok(None);
+    }
+    loop {
         let iov = [libc::iovec {
             iov_base: buf.as_ptr().cast_mut().cast::<_>(),
             iov_len: buf.len(),
         }];
         // SAFETY: fd valid; iov points at a live stack array.
         let rc = unsafe { sys_pwritev2(fd.native(), iov.as_ptr(), 1, -1, RWF_NOWAIT) };
-        if rc < 0 {
-            let e = last_errno();
-            match e {
-                libc::EOPNOTSUPP | libc::ENOSYS | libc::EPERM | libc::EACCES => {
-                    linux::RWFFlagSupport::disable();
-                    // Poll before issuing a blocking write.
-                    return match bun_core::is_writable(fd) {
-                        bun_core::Pollable::Ready | bun_core::Pollable::Hup => write(fd, buf),
-                        _ => {
-                            let mut e = Error::retry();
-                            e.syscall = Tag::write;
-                            Err(e.with_fd(fd))
-                        }
-                    };
-                }
-                libc::EINTR => continue,
-                _ => return Err(Error::from_code_int(e, Tag::write).with_fd(fd)),
-            }
+        if rc >= 0 {
+            return Ok(Some(rc as usize));
         }
-        return Ok(rc as usize);
+        match last_errno() {
+            libc::EINTR => continue,
+            libc::ENOSYS => {
+                linux::RWFFlagSupport::disable();
+                return Ok(None);
+            }
+            libc::EOPNOTSUPP | libc::EPERM | libc::EACCES => return Ok(None),
+            e => return Err(Error::from_code_int(e, Tag::write).with_fd(fd)),
+        }
     }
-    write(fd, buf)
 }
 
 /// `fallocate(fd, 0, offset, len)` on Linux, result discarded; no-op elsewhere.
@@ -7406,16 +7355,6 @@ pub fn kevent(
             e => return Err(Error::from_code(e, Tag::kevent).with_fd(fd)),
         }
     }
-}
-
-/// `clonefileat` — macOS-only CoW copy relative to directory fds. On
-/// non-Darwin returns ENOTSUP so callers can fall back to a manual copy.
-#[cfg(not(target_os = "macos"))]
-pub fn clonefileat(_from_dir: impl AsFd, from: &ZStr, _to_dir: impl AsFd, to: &ZStr) -> Maybe<()> {
-    let _from_dir = _from_dir.as_fd();
-    let _to_dir = _to_dir.as_fd();
-    Err(Error::from_code_int(libc::ENOTSUP, Tag::clonefileat)
-        .with_path_dest(from.as_bytes(), to.as_bytes()))
 }
 
 // ── getFdPath ──
@@ -9019,16 +8958,7 @@ pub(crate) fn renameat_concurrently_without_fallback(
         {
             // Happy path: the folder doesn't exist in the cache dir, so we can
             // just rename it. We don't need to delete anything.
-            let err = match renameat2(
-                from_dir_fd,
-                from,
-                to_dir_fd,
-                to,
-                Renameat2Flags {
-                    mode: RenameMode::NoReplace,
-                    ..Default::default()
-                },
-            ) {
+            let err = match renameat2(from_dir_fd, from, to_dir_fd, to, RenameMode::NoReplace) {
                 // if ENOENT don't retry
                 Err(err) => {
                     if err.get_errno() == E::ENOENT {
@@ -9045,16 +8975,7 @@ pub(crate) fn renameat_concurrently_without_fallback(
                 // Fallback path: the folder exists in the cache dir, it might be in a strange state
                 // let's attempt to atomically replace it with the temporary folder's version
                 if matches!(err.get_errno(), E::EEXIST | E::ENOTEMPTY | E::EOPNOTSUPP) {
-                    match renameat2(
-                        from_dir_fd,
-                        from,
-                        to_dir_fd,
-                        to,
-                        Renameat2Flags {
-                            mode: RenameMode::Exchange,
-                            ..Default::default()
-                        },
-                    ) {
+                    match renameat2(from_dir_fd, from, to_dir_fd, to, RenameMode::Exchange) {
                         Err(_) => {}
                         Ok(()) => break 'attempt,
                     }
@@ -9090,7 +9011,7 @@ pub fn eventfd(initval: u32, flags: i32) -> Maybe<Fd> {
     if rc < 0 {
         return Err(err_with(Tag::open));
     }
-    Ok(Fd::from_native(rc))
+    Ok(move_above_stdio(Fd::from_native(rc)))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -9223,6 +9144,18 @@ fn fd_write_all_quiet(fd: Fd, mut bytes: &[u8]) -> bool {
         match write(fd, bytes) {
             Ok(0) => return false, // short write → give up
             Ok(n) => bytes = &bytes[n..],
+            #[cfg(unix)]
+            Err(e) if e.get_errno() == E::EAGAIN => {
+                // fd 1/2 are O_NONBLOCK once process.stdout/stderr exist (as in Node); wait instead of dropping output.
+                let mut pfd = [posix::PollFd {
+                    fd: fd.native(),
+                    events: posix::POLL_OUT,
+                    revents: 0,
+                }];
+                if posix::poll(&mut pfd, -1).is_err() {
+                    return false;
+                }
+            }
             Err(_) => return false,
         }
     }

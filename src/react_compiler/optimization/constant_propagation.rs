@@ -383,6 +383,13 @@ fn evaluate_instruction(
             }
             None
         }
+        // Not in upstream: `PostfixUpdate`, `PrefixUpdate` and `StoreLocal` return
+        // `None` instead of the constant for their own result temporary. Upstream
+        // returns it, so a consumer can fold the temporary away (`-(x = 10)` to
+        // `-10`). The instruction then has no lvalue and codegen prints it as a
+        // statement ahead of an earlier store that is still inlined at its use:
+        // `[(x = 5), -(x = 10), x++]` became `x = 10; [x = 5, -10, x++]`. The
+        // assigned variable still gets its constant (#42628).
         InstructionValue::PostfixUpdate {
             lvalue,
             operation,
@@ -392,7 +399,7 @@ fn evaluate_instruction(
             let previous = read(constants, value);
             if let Some(Constant::Primitive {
                 value: PrimitiveValue::Number(n),
-                loc: prev_loc,
+                ..
             }) = previous
             {
                 let next_val = apply_update(*operation, n.value());
@@ -405,11 +412,6 @@ fn evaluate_instruction(
                         loc: *loc,
                     },
                 );
-                // But return the value prior to the update (preserving its original loc)
-                return Some(Constant::Primitive {
-                    value: PrimitiveValue::Number(n),
-                    loc: prev_loc,
-                });
             }
             None
         }
@@ -430,10 +432,9 @@ fn evaluate_instruction(
                     value: PrimitiveValue::Number(FloatValue::new(next_val)),
                     loc: *loc,
                 };
-                // Store and return the updated value
+                // Store the updated value for the lvalue
                 let lvalue_id = lvalue.identifier;
-                constants.insert(lvalue_id, result.clone());
-                return Some(result);
+                constants.insert(lvalue_id, result);
             }
             None
         }
@@ -633,7 +634,8 @@ fn evaluate_instruction(
                 let lvalue_id = lvalue.place.identifier;
                 constants.insert(lvalue_id, constant.clone());
             }
-            place_value
+            // Not in upstream: see `PostfixUpdate`.
+            None
         }
         InstructionValue::FunctionExpression { lowered_func, .. } => {
             let func_id = lowered_func.func;

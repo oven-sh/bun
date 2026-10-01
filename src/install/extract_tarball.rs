@@ -15,7 +15,7 @@ use bun_install::npm::{self as Npm};
 use bun_install::package_manager_real::PackageManager;
 use bun_install::package_manager_real::directories;
 use bun_install::resolution::{Resolution, Tag as ResolutionTag};
-use bun_libarchive::{ArchiveAppender, ExtractOptions};
+use bun_libarchive::{ArchiveAppender, DamagedBlock, ExtractOptions};
 use bun_resolver::fs::FileSystem;
 #[cfg(windows)]
 use bun_sys::FdDirExt;
@@ -292,7 +292,7 @@ impl ExtractTarball {
                 0
             };
 
-            // libarchive gunzips on the fly (`BufferReadStream::open_read`),
+            // libarchive gunzips on the fly (`MemoryReader::open`),
             // so hand it the compressed bytes and never buffer the full tar.
             // Small tarballs still try libdeflate first for speed; the gzip
             // ISIZE trailer (size mod 2^32) is only trusted when small.
@@ -377,7 +377,7 @@ impl ExtractTarball {
                             // for GitHub tarballs, the root dir is always <user>-<repo>-<commit_id>
                             depth_to_skip: 1,
                             log: PackageManager::verbose_install(),
-                            ..Default::default()
+                            ..ExtractOptions::new(DamagedBlock::Skip)
                         },
                     )?;
 
@@ -425,7 +425,7 @@ impl ExtractTarball {
                             depth_to_skip: 1,
                             npm: true,
                             log: PackageManager::verbose_install(),
-                            ..Default::default()
+                            ..ExtractOptions::new(DamagedBlock::Skip)
                         },
                     )?;
                 }

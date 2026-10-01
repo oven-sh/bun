@@ -5,7 +5,6 @@
 // below; higher-level extraction logic (`Archiver`, `BufferReadStream`) sits
 // on top and uses `bun_sys` for I/O.
 // ──────────────────────────────────────────────────────────────────────────
-use core::ptr;
 
 use bun_collections::StringArrayHashMap;
 use bun_core::{MutableString, slice_to_nul, strings};
@@ -192,29 +191,15 @@ pub mod lib {
             // SAFETY: self valid; opts is NUL-terminated.
             unsafe { archive_read_set_options(self.as_mut_ptr(), opts.as_ptr()) }
         }
-        pub fn read_open_memory(&self, buf: &[u8]) -> Result {
-            // SAFETY: self valid; buf outlives the archive (caller contract,
-            // see `BufferReadStream::buf` field comment).
+        /// Private: [`MemoryReader`] is the only opener, and its lifetime keeps `buf` alive.
+        fn read_open_memory(&self, buf: &[u8]) -> Result {
+            // SAFETY: self valid; `MemoryReader<'a>` borrows `buf` until the archive is freed.
             unsafe { archive_read_open_memory(self.as_mut_ptr(), buf.as_ptr().cast(), buf.len()) }
         }
         pub fn read_next_header(&self, entry: &mut *mut Entry) -> Result {
             // SAFETY: self valid; entry is a valid out-ptr.
             unsafe {
                 archive_read_next_header(self.as_mut_ptr(), std::ptr::from_mut::<*mut Entry>(entry))
-            }
-        }
-        /// Next entry of a `read_open_memory` archive; `None` at its end.
-        pub fn read_next_memory_entry(&self) -> crate::Result<Option<&Entry>> {
-            let mut entry: *mut Entry = core::ptr::null_mut();
-            loop {
-                return match self.read_next_header(&mut entry) {
-                    // `Warn` still yields a fully populated entry.
-                    Result::Ok | Result::Warn => Ok(Some(Entry::opaque_ref(entry))),
-                    Result::Eof => Ok(None),
-                    // A dropped bad-checksum block. A non-blocking source also means "no bytes yet": never loop there.
-                    Result::Retry => continue,
-                    Result::Failed | Result::Fatal => Err(crate::Error::Fail),
-                };
             }
         }
         pub fn read_data(&self, buf: &mut [u8]) -> isize {
@@ -559,6 +544,87 @@ pub mod lib {
         }
     }
 
+    /// What [`MemoryReader::next_entry`] does at a header block with a bad checksum.
+    #[derive(Clone, Copy)]
+    pub enum DamagedBlock {
+        /// Read the block after it. The damaged entry is lost.
+        Skip,
+        Fail,
+    }
+
+    /// A tar or tar.gz read from memory. Not `Deref<Target = Archive>`: a non-blocking reader must not reach `next_entry`.
+    pub struct MemoryReader<'a> {
+        archive: ReadArchive,
+        damaged_block: DamagedBlock,
+        bytes: core::marker::PhantomData<&'a [u8]>,
+    }
+
+    impl<'a> MemoryReader<'a> {
+        /// Returns libarchive's open status too: each caller has its own outcome for a failed open.
+        pub fn open(bytes: &'a [u8], damaged_block: DamagedBlock) -> (Self, Result) {
+            let archive = ReadArchive::new();
+            let _ = archive.read_support_format_tar();
+            let _ = archive.read_support_format_gnutar();
+            let _ = archive.read_support_filter_gzip();
+            // Zero blocks between concatenated archives do not end the read.
+            let _ = archive.read_set_options(c"read_concatenated_archives");
+            Self::open_configured(archive, bytes, damaged_block)
+        }
+
+        /// [`Self::open`] for a caller that reports each set-up step itself.
+        pub fn open_configured(
+            archive: ReadArchive,
+            bytes: &'a [u8],
+            damaged_block: DamagedBlock,
+        ) -> (Self, Result) {
+            let status = archive.read_open_memory(bytes);
+            let reader = Self {
+                archive,
+                damaged_block,
+                bytes: core::marker::PhantomData,
+            };
+            (reader, status)
+        }
+
+        /// `None` at the end of the archive. On `Err`, [`Self::error_string`] has libarchive's message.
+        #[inline]
+        pub fn next_entry(&self) -> crate::Result<Option<&Entry>> {
+            let mut entry: *mut Entry = core::ptr::null_mut();
+            loop {
+                return match self.archive.read_next_header(&mut entry) {
+                    // `Warn` still yields a fully populated entry.
+                    Result::Ok | Result::Warn => Ok(Some(Entry::opaque_ref(entry))),
+                    Result::Eof => Ok(None),
+                    Result::Retry if matches!(self.damaged_block, DamagedBlock::Skip) => continue,
+                    Result::Retry | Result::Failed | Result::Fatal => Err(crate::Error::Fail),
+                };
+            }
+        }
+
+        pub fn read_data(&self, buf: &mut [u8]) -> isize {
+            self.archive.read_data(buf)
+        }
+
+        pub(crate) fn read_data_into_fd(
+            &self,
+            fd: Fd,
+            can_use_pwrite: &mut bool,
+            can_use_lseek: &mut bool,
+        ) -> Result {
+            self.archive
+                .read_data_into_fd(fd, can_use_pwrite, can_use_lseek)
+        }
+
+        /// The next call on the reader replaces the message.
+        pub fn error_string(&self) -> &[u8] {
+            self.archive.error_string()
+        }
+
+        pub fn close(&self) -> Result {
+            self.archive.read_close()
+        }
+    }
+
     /// Owns a `*mut Archive` opened with [`Archive::write_new`]; calls
     /// `archive_write_free` on drop. Derefs to `&Archive`.
     pub struct WriteArchive(core::ptr::NonNull<Archive>);
@@ -616,25 +682,25 @@ pub mod lib {
     //
     // Thin streaming reader over a tar.gz blob: `init` opens the archive in
     // memory, `next` yields one header at a time, `read_entry_data` slurps the
-    // current entry's payload, `close` tears down. Errors are surfaced as the
-    // libarchive `*mut Archive` plus a static message so callers can append
-    // `Archive::error_string`.
+    // current entry's payload, `close` tears down. Errors carry a static
+    // message plus a copy of libarchive's own message.
 
     /// Generic result type used by [`ArchiveIterator`].
     pub enum IteratorResult<T> {
         Err {
-            archive: *mut Archive,
             message: &'static [u8],
+            /// `archive_error_string` at the time of the failure.
+            archive_error: Box<[u8]>,
         },
         Result(T),
     }
 
     impl<T> IteratorResult<T> {
         #[inline]
-        pub(crate) fn init_err(arch: *mut Archive, msg: &'static [u8]) -> Self {
+        fn init_err(archive_error: &[u8], message: &'static [u8]) -> Self {
             Self::Err {
-                message: msg,
-                archive: arch,
+                message,
+                archive_error: Box::from(archive_error),
             }
         }
         #[inline]
@@ -645,8 +711,8 @@ pub mod lib {
 
     /// Iterates over the entries of an open archive, skipping entries whose
     /// file kind has its bit set in `filter`.
-    pub struct ArchiveIterator {
-        pub archive: *mut Archive,
+    pub struct ArchiveIterator<'a> {
+        reader: MemoryReader<'a>,
         // A u16 bitmask over
         // `bun_sys::FileKind` variants.
         pub(crate) filter: u16,
@@ -666,81 +732,72 @@ pub mod lib {
         }
     }
 
-    impl ArchiveIterator {
-        /// Borrow the underlying libarchive handle.
-        ///
-        /// SAFETY (invariant): `self.archive` is set to a fresh non-null
-        /// handle by `Archive::read_new()` in [`init`] and remains valid
-        /// until `read_free()` in [`close`]. All `Archive` methods take
-        /// `&self` (FFI interior mutability), so a shared borrow suffices.
-        #[inline]
-        pub fn archive(&self) -> &Archive {
-            // SAFETY: see doc comment — non-null for the lifetime of `self`.
-            unsafe { &*self.archive }
-        }
-
+    impl<'a> ArchiveIterator<'a> {
         /// Reads the body of the entry `next()` just returned.
         pub fn read_entry_data(
             &mut self,
             next: &NextEntry,
         ) -> core::result::Result<IteratorResult<Box<[u8]>>, bun_core::OOM> {
-            next.read_entry_data(self.archive())
+            next.read_entry_data(&self.reader)
         }
 
-        pub fn init(tarball_bytes: &[u8]) -> IteratorResult<Self> {
-            let archive = Archive::read_new();
-            // SAFETY: archive_read_new() returns a non-null handle owned by libarchive.
-            let a = unsafe { &*archive };
+        pub fn init(tarball_bytes: &'a [u8], damaged_block: DamagedBlock) -> IteratorResult<Self> {
+            let archive = ReadArchive::new();
 
-            match a.read_support_format_tar() {
+            match archive.read_support_format_tar() {
                 Result::Failed | Result::Fatal | Result::Warn => {
                     return IteratorResult::init_err(
-                        archive,
+                        archive.error_string(),
                         b"failed to enable tar format support",
                     );
                 }
                 _ => {}
             }
-            match a.read_support_format_gnutar() {
+            match archive.read_support_format_gnutar() {
                 Result::Failed | Result::Fatal | Result::Warn => {
                     return IteratorResult::init_err(
-                        archive,
+                        archive.error_string(),
                         b"failed to enable gnutar format support",
                     );
                 }
                 _ => {}
             }
-            match a.read_support_filter_gzip() {
+            match archive.read_support_filter_gzip() {
                 Result::Failed | Result::Fatal | Result::Warn => {
                     return IteratorResult::init_err(
-                        archive,
+                        archive.error_string(),
                         b"failed to enable support for gzip compression",
                     );
                 }
                 _ => {}
             }
-            match a.read_set_options(c"read_concatenated_archives") {
+            match archive.read_set_options(c"read_concatenated_archives") {
                 Result::Failed | Result::Fatal | Result::Warn => {
                     return IteratorResult::init_err(
-                        archive,
+                        archive.error_string(),
                         b"failed to set option `read_concatenated_archives`",
                     );
                 }
                 _ => {}
             }
-            match a.read_open_memory(tarball_bytes) {
+            let (reader, status) =
+                MemoryReader::open_configured(archive, tarball_bytes, damaged_block);
+            match status {
                 Result::Failed | Result::Fatal | Result::Warn => {
-                    return IteratorResult::init_err(archive, b"failed to read tarball");
+                    return IteratorResult::init_err(
+                        reader.error_string(),
+                        b"failed to read tarball",
+                    );
                 }
                 _ => {}
             }
 
-            IteratorResult::init_res(Self { archive, filter: 0 })
+            IteratorResult::init_res(Self { reader, filter: 0 })
         }
 
         pub fn next(&mut self) -> IteratorResult<Option<NextEntry>> {
             loop {
-                return match self.archive().read_next_memory_entry() {
+                return match self.reader.next_entry() {
                     Ok(None) => IteratorResult::init_res(None),
                     Ok(Some(entry)) => {
                         let kind = bun_sys::kind_from_mode(entry.filetype() as bun_sys::Mode);
@@ -752,9 +809,10 @@ pub mod lib {
                             kind,
                         }))
                     }
-                    Err(_) => {
-                        IteratorResult::init_err(self.archive, b"failed to read archive header")
-                    }
+                    Err(_) => IteratorResult::init_err(
+                        self.reader.error_string(),
+                        b"failed to read archive header",
+                    ),
                 };
             }
         }
@@ -762,35 +820,26 @@ pub mod lib {
         /// Returns a `Result` the caller inspects, so this
         /// cannot be `Drop`. Explicit-close per PORTING.md §Idiom map.
         pub fn close(self) -> IteratorResult<()> {
-            let a = self.archive();
-            match a.read_close() {
-                Result::Failed | Result::Fatal | Result::Warn => {
-                    return IteratorResult::init_err(self.archive, b"failed to close archive read");
-                }
-                _ => {}
+            match self.reader.close() {
+                Result::Failed | Result::Fatal | Result::Warn => IteratorResult::init_err(
+                    self.reader.error_string(),
+                    b"failed to close archive read",
+                ),
+                _ => IteratorResult::init_res(()),
             }
-            match a.read_free() {
-                Result::Failed | Result::Fatal | Result::Warn => {
-                    return IteratorResult::init_err(self.archive, b"failed to free archive read");
-                }
-                _ => {}
-            }
-            IteratorResult::init_res(())
         }
     }
 
     impl NextEntry {
-        /// Reads this entry's full data into a heap buffer. `archive` is the
-        /// live handle this `NextEntry` was yielded from.
-        pub fn read_entry_data(
+        /// Reads this entry's full data into a heap buffer. `reader` is the
+        /// one this `NextEntry` was yielded from.
+        fn read_entry_data(
             &self,
-            archive: &Archive,
+            reader: &MemoryReader<'_>,
         ) -> core::result::Result<IteratorResult<Box<[u8]>>, bun_core::OOM> {
-            // SAFETY: self.entry is the libarchive-owned entry from read_next_header.
-            let size = unsafe { (*self.entry).size() };
-            let Ok(size) = usize::try_from(size) else {
+            let Ok(size) = usize::try_from(self.entry().size()) else {
                 return Ok(IteratorResult::init_err(
-                    archive.as_mut_ptr(),
+                    reader.error_string(),
                     b"invalid archive entry size",
                 ));
             };
@@ -801,10 +850,10 @@ pub mod lib {
                 buf.try_reserve(to_read).map_err(|_| bun_core::AllocError)?;
                 // SAFETY: `archive_read_data` only writes into the slice; the written prefix is committed below.
                 let dest = unsafe { &mut bun_core::vec::spare_bytes_mut(&mut buf)[..to_read] };
-                let read = archive.read_data(dest);
+                let read = reader.read_data(dest);
                 if read < 0 {
                     return Ok(IteratorResult::init_err(
-                        archive.as_mut_ptr(),
+                        reader.error_string(),
                         b"failed to read archive data",
                     ));
                 }
@@ -911,79 +960,6 @@ pub mod lib {
     // Thin
     // wrapper that opens a tarball from memory and yields one
     // `IteratorEntry` per `next()`, used by `bun publish <tarball>`.
-}
-
-use lib::Archive;
-
-pub struct BufferReadStream {
-    buf: *const [u8],
-
-    archive: *mut Archive,
-}
-
-impl BufferReadStream {
-    /// Construct a stream over `buf`.
-    ///
-    /// # Safety
-    /// `buf` is type-erased to a raw `*const [u8]` (no lifetime parameter on
-    /// `BufferReadStream` — see field comment). The caller
-    /// **must** guarantee that the slice `buf` points to remains valid and
-    /// unmoved for the entire lifetime of the returned `BufferReadStream`
-    /// (including its `Drop`). Violating this makes [`buf()`], [`buf_left()`],
-    /// and [`open_read()`] dereference a dangling pointer (UB).
-    pub(crate) unsafe fn init(buf: &[u8]) -> Self {
-        // was an out-param constructor (`this.* = ...`)
-        Self {
-            buf: std::ptr::from_ref::<[u8]>(buf),
-            archive: Archive::read_new(),
-        }
-    }
-
-    /// Borrow the underlying libarchive handle.
-    ///
-    /// SAFETY (invariant): `self.archive` is set to a fresh non-null handle by
-    /// `Archive::read_new()` in `init()` (asserted there) and remains valid
-    /// until `read_free()` in `Drop`. All `Archive` methods take `&self`
-    /// (FFI interior mutability), so a shared borrow is sufficient.
-    #[inline]
-    fn archive(&self) -> &Archive {
-        // SAFETY: see doc comment — non-null for the lifetime of `self`.
-        unsafe { &*self.archive }
-    }
-
-    /// Borrow the input buffer.
-    ///
-    /// SAFETY (invariant): `self.buf` is a fat pointer captured from the
-    /// `&[u8]` passed to `init()`; the caller guarantees it outlives `self`
-    /// (see field comment). Never null, never mutated.
-    #[inline]
-    fn buf(&self) -> &[u8] {
-        // SAFETY: see doc comment — borrowed for `self`'s lifetime.
-        unsafe { &*self.buf }
-    }
-
-    pub(crate) fn open_read(&mut self) -> lib::Result {
-        let archive = self.archive();
-
-        let _ = archive.read_support_format_tar();
-        let _ = archive.read_support_format_gnutar();
-        let _ = archive.read_support_filter_gzip();
-
-        // Ignore zeroed blocks in the archive, which occurs when multiple tar archives
-        // have been concatenated together.
-        // Without this option, only the contents of
-        // the first concatenated archive would be read.
-        let _ = archive.read_set_options(c"read_concatenated_archives");
-
-        archive.read_open_memory(self.buf())
-    }
-}
-
-impl Drop for BufferReadStream {
-    fn drop(&mut self) {
-        let _ = self.archive().read_close();
-        let _ = self.archive().read_free();
-    }
 }
 
 /// `mkdirat` mode for a directory entry. `perm` is whatever the header
@@ -1227,21 +1203,25 @@ pub mod archiver {
         pub close_handles: bool,
         pub log: bool,
         pub npm: bool,
+        pub damaged_block: DamagedBlock,
     }
 
-    impl Default for ExtractOptions {
-        fn default() -> Self {
+    impl ExtractOptions {
+        /// The other fields at their defaults. The policy has no default.
+        pub fn new(damaged_block: DamagedBlock) -> Self {
             Self {
                 depth_to_skip: 0,
                 close_handles: true,
                 log: false,
                 npm: false,
+                damaged_block,
             }
         }
     }
 }
 
 pub use archiver::{Context, ExtractOptions, Plucker};
+pub use lib::DamagedBlock;
 
 pub trait ArchiveAppender {
     /// Mirrors `@hasDecl(Child, "onFirstDirectoryName")`.
@@ -1266,13 +1246,10 @@ impl Archiver {
         root: &[u8],
         ctx: &mut Context,
         appender: &mut A,
+        damaged_block: DamagedBlock,
     ) -> crate::Result<()> {
-        let mut entry: *mut lib::Entry = ptr::null_mut();
-
-        // SAFETY: `file_buffer` outlives `stream` (stack-local, dropped at fn exit).
-        let mut stream = unsafe { BufferReadStream::init(file_buffer) };
-        let _ = stream.open_read();
-        let archive = stream.archive;
+        // A failed open fails the first header read.
+        let (stream, _) = lib::MemoryReader::open(file_buffer, damaged_block);
 
         // Uses the bun_sys directory-fd helpers (open_dir_absolute / open_dir_at).
         let dir: Fd = 'brk: {
@@ -1298,21 +1275,13 @@ impl Archiver {
         let mut normalized_buf = bun_paths::path_buffer_pool::get();
 
         'loop_: loop {
-            // SAFETY: archive valid for stream lifetime
-            let r = unsafe { (*archive).read_next_header(&mut entry) };
-
-            match r {
-                lib::Result::Eof => break 'loop_,
-                lib::Result::Retry => continue 'loop_,
-                lib::Result::Failed | lib::Result::Fatal => {
-                    return Err(crate::Error::Fail);
-                }
-                _ => {
+            match stream.next_entry()? {
+                None => break 'loop_,
+                Some(entry) => {
                     // do not use the utf8 name there
                     // it will require us to pull in libiconv
                     // though we should probably validate the utf8 here nonetheless
-                    // SAFETY: entry was just populated by read_next_header
-                    let pathname_full = lib::Entry::opaque_ref(entry).pathname();
+                    let pathname_full = entry.pathname();
                     let pathname_bytes = pathname_full.as_bytes();
 
                     // Tokenizer semantics: `next()` skips leading
@@ -1368,9 +1337,7 @@ impl Archiver {
                     let dirname =
                         strings::trim(bun_paths::dirname_simple(pathname), SEP_STR.as_bytes());
 
-                    // SAFETY: entry valid
-                    let size: usize =
-                        usize::try_from(lib::Entry::opaque_ref(entry).size().max(0)).unwrap();
+                    let size: usize = usize::try_from(entry.size().max(0)).unwrap();
                     if size > 0 {
                         let Ok(opened) = bun_sys::openat_a(dir, pathname, bun_sys::O::WRONLY, 0)
                         else {
@@ -1420,12 +1387,8 @@ impl Archiver {
         appender: &mut A,
         options: ExtractOptions,
     ) -> crate::Result<u32> {
-        let mut entry: *mut lib::Entry = ptr::null_mut();
-
-        // SAFETY: `file_buffer` outlives `stream` (stack-local, dropped at fn exit).
-        let mut stream = unsafe { BufferReadStream::init(file_buffer) };
-        let _ = stream.open_read();
-        let archive = stream.archive;
+        // A failed open fails the first header read.
+        let (stream, _) = lib::MemoryReader::open(file_buffer, options.damaged_block);
         let mut count: u32 = 0;
         let dir_fd = dir;
 
@@ -1443,16 +1406,9 @@ impl Archiver {
         let mut use_lseek = true;
 
         'loop_: loop {
-            // SAFETY: archive valid for stream lifetime
-            let r = unsafe { (*archive).read_next_header(&mut entry) };
-
-            match r {
-                lib::Result::Eof => break 'loop_,
-                lib::Result::Retry => continue 'loop_,
-                lib::Result::Failed | lib::Result::Fatal => {
-                    return Err(crate::Error::Fail);
-                }
-                _ => {
+            match stream.next_entry()? {
+                None => break 'loop_,
+                Some(entry) => {
                     // TODO:
                     // Due to path separator replacement and other copies that happen internally, libarchive changes the
                     // storage type of paths on windows to wide character strings. Using `archive_entry_pathname` or `archive_entry_pathname_utf8`
@@ -1461,12 +1417,10 @@ impl Archiver {
                     //
                     // Ideally, we find a way to tell libarchive to not convert the strings to wide characters and also to not
                     // replace path separators. We can do both of these with our own normalization and utf8/utf16 string conversion code.
-                    // SAFETY: entry was just populated by read_next_header
                     #[cfg(windows)]
-                    let pathname_z = lib::Entry::opaque_ref(entry).pathname_w();
-                    // SAFETY: entry was just populated by read_next_header
+                    let pathname_z = entry.pathname_w();
                     #[cfg(not(windows))]
-                    let pathname_z = lib::Entry::opaque_ref(entry).pathname();
+                    let pathname_z = entry.pathname();
 
                     if A::HAS_ON_FIRST_DIRECTORY_NAME {
                         if appender.needs_first_dirname() {
@@ -1490,8 +1444,7 @@ impl Archiver {
                         }
                     }
 
-                    // SAFETY: entry valid
-                    let kind = bun_sys::kind_from_mode(lib::Entry::opaque_ref(entry).filetype());
+                    let kind = bun_sys::kind_from_mode(entry.filetype());
 
                     if options.npm {
                         // - ignore entries other than files (`true` can only be returned if type is file)
@@ -1624,8 +1577,7 @@ impl Archiver {
                             }
                             #[cfg(not(windows))]
                             {
-                                // SAFETY: entry valid
-                                let mode = directory_mode(lib::Entry::opaque_ref(entry).perm());
+                                let mode = directory_mode(entry.perm());
                                 // SAFETY: normalized_buf[path_slice.len()] == 0 (written above),
                                 // so path_slice is a NUL-terminated [:0]u8.
                                 let path_z: &ZStr = unsafe {
@@ -1652,8 +1604,7 @@ impl Archiver {
                             }
                         }
                         bun_sys::FileKind::SymLink => {
-                            // SAFETY: entry valid
-                            let link_target = lib::Entry::opaque_ref(entry).symlink();
+                            let link_target = entry.symlink();
                             #[cfg(unix)]
                             {
                                 // Validate that the symlink target doesn't escape the extraction directory.
@@ -1693,11 +1644,8 @@ impl Archiver {
                             //
                             // we simplify and turn it into `entry.mode || 0o666` because we aren't accepting a umask or fmask option.
                             #[cfg(not(windows))]
-                            let mode: bun_sys::Mode = bun_sys::Mode::try_from(
-                                // SAFETY: entry valid
-                                (lib::Entry::opaque_ref(entry).perm() & 0o777) | 0o666,
-                            )
-                            .unwrap();
+                            let mode: bun_sys::Mode =
+                                bun_sys::Mode::try_from((entry.perm() & 0o777) | 0o666).unwrap();
 
                             let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
 
@@ -1779,10 +1727,7 @@ impl Archiver {
                                 });
                             let (file_handle, plucked_file) = &mut *close_guard;
 
-                            // SAFETY: entry valid
-                            let size: usize =
-                                usize::try_from(lib::Entry::opaque_ref(entry).size().max(0))
-                                    .unwrap();
+                            let size: usize = usize::try_from(entry.size().max(0)).unwrap();
 
                             if size > 0 {
                                 if let Some(ctx_) = ctx.as_deref_mut() {
@@ -1797,20 +1742,12 @@ impl Archiver {
                                             plucker_.contents.inflate(size)?;
                                             let cap = plucker_.contents.list.capacity();
                                             plucker_.contents.list.resize(cap, 0);
-                                            // SAFETY: archive valid
-                                            let read = unsafe {
-                                                (*archive).read_data(
-                                                    plucker_.contents.list.as_mut_slice(),
-                                                )
-                                            };
+                                            let read = stream
+                                                .read_data(plucker_.contents.list.as_mut_slice());
                                             if read < 0 {
                                                 if options.log {
-                                                    // SAFETY: `archive` is the live
-                                                    // `read_new()` handle this
-                                                    // extraction loop is iterating.
-                                                    let archive_error = slice_to_nul(
-                                                        unsafe { &*archive }.error_string(),
-                                                    );
+                                                    let archive_error =
+                                                        slice_to_nul(stream.error_string());
                                                     Output::err(
                                                         "libarchive error",
                                                         "extracting {}: {}",
@@ -1851,14 +1788,11 @@ impl Archiver {
                                 let mut retries_remaining: u8 = 5;
 
                                 'possibly_retry: while retries_remaining != 0 {
-                                    // SAFETY: archive valid
-                                    match unsafe {
-                                        (*archive).read_data_into_fd(
-                                            *file_handle,
-                                            &mut use_pwrite,
-                                            &mut use_lseek,
-                                        )
-                                    } {
+                                    match stream.read_data_into_fd(
+                                        *file_handle,
+                                        &mut use_pwrite,
+                                        &mut use_lseek,
+                                    ) {
                                         lib::Result::Eof => break 'loop_,
                                         lib::Result::Ok => break 'possibly_retry,
                                         lib::Result::Retry => {
@@ -1879,12 +1813,8 @@ impl Archiver {
                                         }
                                         _ => {
                                             if options.log {
-                                                // SAFETY: `archive` is the live
-                                                // `read_new()` handle this
-                                                // extraction loop is iterating.
-                                                let archive_error = slice_to_nul(
-                                                    unsafe { &*archive }.error_string(),
-                                                );
+                                                let archive_error =
+                                                    slice_to_nul(stream.error_string());
                                                 Output::err(
                                                     "libarchive error",
                                                     "extracting {}: {}",

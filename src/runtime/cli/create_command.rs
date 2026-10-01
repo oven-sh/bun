@@ -510,6 +510,7 @@ impl CreateCommand {
                         destination,
                         &mut archive_context,
                         &mut OverwriteListAppender { buf: Vec::new() },
+                        bun_libarchive::DamagedBlock::Skip,
                     )?;
 
                     for never_conflict_path in NEVER_CONFLICT {
@@ -554,7 +555,7 @@ impl CreateCommand {
                     &mut (),
                     archiver::ExtractOptions {
                         depth_to_skip: 1,
-                        ..Default::default()
+                        ..archiver::ExtractOptions::new(bun_libarchive::DamagedBlock::Skip)
                     },
                 )?;
 

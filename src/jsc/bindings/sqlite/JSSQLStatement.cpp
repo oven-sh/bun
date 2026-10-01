@@ -1827,12 +1827,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementOpenStatementFunction, (JSC::JSGlobalObje
     int statusCode = sqlite3_open_v2(path.utf8().legacyCStringPointer(), &db, openFlags, nullptr);
 
     if (statusCode != SQLITE_OK) {
-        // sqlite3_open_v2 usually writes a handle to *ppDb even on failure; the
-        // caller must sqlite3_close() it. Build the error first so errmsg/errno
-        // are read from the handle, then release it.
-        JSValue error = createSQLiteError(lexicalGlobalObject, db);
+        throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, db));
         sqlite3_close(db);
-        throwException(lexicalGlobalObject, scope, error);
         return {};
     }
 

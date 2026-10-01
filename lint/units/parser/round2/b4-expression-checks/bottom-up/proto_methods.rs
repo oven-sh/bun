@@ -30,6 +30,14 @@
         ts::range(start, end)
     }
 
+    /// Whether the log has no message of this lint parse yet: after an error that it only logged, the parse pass does not read what the reference reads.
+    fn has_no_message_of_this_parse(&self) -> bool {
+        match &self.starts_for_parse_only {
+            Some(starts) => self.log().msgs.len() <= starts.syntax_errors.first,
+            None => false,
+        }
+    }
+
     /// `Lexer::unexpected` at a token that starts no expression, read at `level`.
     #[cold]
     #[inline(never)]
@@ -38,6 +46,7 @@
         if level == Level::Lowest
             && self.lexer.token == T::TCloseBracket
             && self.is_lint_parse()
+            && self.has_no_message_of_this_parse()
             && self.byte_before_token() == Some(b'[')
         {
             let msgs_len = self.log().msgs.len();

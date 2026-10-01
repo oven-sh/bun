@@ -1,0 +1,17 @@
+# tree=/workspace/wt/parser rev=be1ebe5295 profile=release: layouts rustc computed while checking bun_js_parser
+print-type-size type: `lexer::Lexer<'_>`: 336 bytes, alignment: 8 bytes
+print-type-size type: `lexer::LexerSnapshot<'_>`: 240 bytes, alignment: 8 bytes
+print-type-size type: `p::P<'_, true, false>`: 3808 bytes, alignment: 8 bytes
+print-type-size type: `p::StartsForParseOnly`: 600 bytes, alignment: 8 bytes
+print-type-size type: `parse::attached::AttachedMark`: 32 bytes, alignment: 4 bytes
+print-type-size type: `parse::parse_entry::Options<'_>`: 384 bytes, alignment: 8 bytes
+print-type-size type: `parser::FnOrArrowDataParse`: 36 bytes, alignment: 4 bytes
+print-type-size type: `std::boxed::Box<p::StartsForParseOnly>`: 8 bytes, alignment: 8 bytes
+print-type-size type: `std::marker::PhantomData<p::StartsForParseOnly>`: 0 bytes, alignment: 1 bytes
+print-type-size type: `std::ops::ControlFlow<std::option::Option<!>, &p::StartsForParseOnly>`: 8 bytes, alignment: 8 bytes
+print-type-size type: `std::option::Option<&p::StartsForParseOnly>`: 8 bytes, alignment: 8 bytes
+print-type-size type: `std::option::Option<&std::boxed::Box<p::StartsForParseOnly>>`: 8 bytes, alignment: 8 bytes
+print-type-size type: `std::option::Option<std::boxed::Box<p::StartsForParseOnly>>`: 8 bytes, alignment: 8 bytes
+print-type-size type: `std::ptr::NonNull<p::StartsForParseOnly>`: 8 bytes, alignment: 8 bytes
+print-type-size type: `std::ptr::Unique<p::StartsForParseOnly>`: 8 bytes, alignment: 8 bytes
+# lines in all: 1256

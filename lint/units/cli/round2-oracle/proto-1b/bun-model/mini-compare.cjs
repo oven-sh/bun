@@ -1,7 +1,7 @@
 // Compares the scratch mini-linter (records-based helpers, three rules) with ESLint over the fixtures of the tree and the TS case lists.
 const fs=require("fs"),path=require("path"),{execFileSync}=require("child_process");
 const {verify}=require("/workspace/notes/lint/units/cli/round2-oracle/proto-1b/eslint-side.cjs");
-const RULES=["no-compare-neg-zero","valid-typeof","no-unsafe-negation","no-dupe-class-members","no-debugger","no-empty-pattern","no-sparse-arrays"];
+const RULES=["no-compare-neg-zero","valid-typeof","no-unsafe-negation","no-dupe-class-members","no-debugger","no-empty-pattern","no-sparse-arrays","use-isnan"];
 const cases=[]; const seen=new Set();
 const add=(code,ext,from)=>{const k=ext+":"+code; if(seen.has(k))return; seen.add(k); cases.push({code,ext,from});};
 const fx="/workspace/wt/cli/test/cli/lint/rules";

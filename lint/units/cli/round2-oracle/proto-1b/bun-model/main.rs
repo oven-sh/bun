@@ -2,13 +2,16 @@
 // (rustc against its rlibs: `python3 build.py`, 3 s, no crate is rebuilt) and prints, per file:
 //   default: the wrapper records, type arguments, return types, erased statements and members, symbols, and whether the
 //            operand of every record is a node of the tree (`IN-TREE`);
-//   MINI=1:  the reports of seven rules written against the side table (`R <rule> <byte offset> <text>`):
+//   MINI=1:  the reports of eight rules written against the side table (`R <rule> <byte offset> <text>`):
 //            no-compare-neg-zero, valid-typeof (literals), no-unsafe-negation, no-dupe-class-members (names that are plain
-//            strings), no-debugger, no-empty-pattern, no-sparse-arrays. `node mini-compare.cjs` compares them with ESLint.
-// Result at be1ebe5295 over 4008 cases (the 3341 of the fixtures and the TypeScript lists): 1152 (case, rule) pairs with a
-// report, 1095 equal to ESLint. The 57 others: 45 names that this model does not compute (BigInt, null, regular expression,
-// UTF-16, a number that is no integer), 11 nodes inside a type, 1 `undefined` spelled with an escape that the comparison
-// does not filter. 661 records over 896 TypeScript files: every operand is a node of the tree.
+//            strings), no-debugger, no-empty-pattern, no-sparse-arrays, use-isnan. `node mini-compare.cjs` compares them
+//            with ESLint over the fixtures of the tree and the lists of ../cases.
+// Result at be1ebe5295 over 4008 cases (the 3341 of the fixtures and the TypeScript lists): 1437 (case, rule) pairs with a
+// report, 1336 equal to ESLint. The 101 others: 45 names that this model does not compute (BigInt, null, regular expression,
+// UTF-16, a number that is no integer); 11 nodes inside a type; 1 `undefined` spelled with an escape that the comparison
+// does not filter; use-isnan 44: 39 where a name is declared in another scope (19 of them JavaScript cases that the fixture
+// has as `missing`), 3 `case` behind a comment or a line break, 2 extra for a default or namespace import from "bun:bundle".
+// 661 records over 896 TypeScript files: every operand is a node of the tree.
 #![allow(warnings, clippy::all, unreachable_pub)]
 #[path = "/workspace/wt/cli/src/js_parser/native_test_shims.rs"]
 mod native_test_shims;
@@ -183,6 +186,8 @@ struct Mini<'p, 'a> {
     instantiated: HashSet<ExprId>,
     out: Vec<String>,
     targets: Vec<usize>,
+    declared: u8,
+    held: Vec<(String, u8)>,
 }
 
 fn leftmost_child(expr: &Expr) -> Option<&Expr> {
@@ -212,7 +217,7 @@ impl<'p, 'a> Mini<'p, 'a> {
             while matches!(text.get(at), Some(b' ' | b'\t' | b'\n' | b'\r')) { at += 1; }
             if !matches!(text.get(at), Some(b'(' | b'`')) { instantiated.insert(ExprId::of(&r.operand)); }
         }
-        Mini { parsed, text, by_id, instantiated, out: Vec::new(), targets: Vec::new() }
+        Mini { parsed, text, by_id, instantiated, out: Vec::new(), targets: Vec::new(), declared: 0, held: Vec::new() }
     }
     fn wrappers_of(&self, expr: &Expr) -> Vec<&'p Wrapper> {
         self.by_id.get(&ExprId::of(expr)).map(|v| v.iter().map(|&i| &self.parsed.sidecar.wrappers.records[i]).collect()).unwrap_or_default()
@@ -306,6 +311,72 @@ impl<'p, 'a> Mini<'p, 'a> {
 }
 
 
+
+const NAN: u8 = 1;
+const NUMBER: u8 = 2;
+fn global(name: &[u8]) -> u8 {
+    match name { b"NaN" => NAN, b"Number" => NUMBER, _ => 0 }
+}
+/// whether `name` stands in `text` as a word of its own
+fn has_word(text: &[u8], name: &[u8]) -> bool {
+    let is_part = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'$' || b >= 0x80;
+    text.windows(name.len()).enumerate().any(|(i, w)| w == name && (i == 0 || !is_part(text[i - 1])) && text.get(i + name.len()).is_none_or(|b| !is_part(*b)))
+}
+
+impl<'p, 'a> Mini<'p, 'a> {
+    fn declare(&mut self, name: &[u8]) { self.declared |= global(name); }
+    fn declare_words(&mut self, text: &[u8]) {
+        for name in [&b"NaN"[..], b"Number"] { if has_word(text, name) { self.declare(name); } }
+    }
+    fn nan(&self, expr: &Expr) -> u8 {
+        if self.is_ts_wrapped(expr) { return 0; }
+        let expr = match &expr.data { ExprData::EBinary(b) if b.op == OpCode::BinComma => &b.right, _ => expr };
+        if self.is_ts_wrapped(expr) { return 0; }
+        let (target, name): (&Expr, Option<&[u8]>) = match &expr.data {
+            ExprData::EIdentifier(id) => return if self.parsed.name_of(id.ref_) == b"NaN" { NAN } else { 0 },
+            ExprData::EDot(dot) => (&dot.target, Some(dot.name.slice())),
+            ExprData::EIndex(index) => (&index.target, match &index.index.data {
+                ExprData::EString(s) if !self.is_ts_wrapped(&index.index) && s.next.is_none() && s.is_utf8() => Some(s.slice8()),
+                _ => None,
+            }),
+            _ => return 0,
+        };
+        if self.is_ts_wrapped(target) { return 0; }
+        let ExprData::EIdentifier(object) = &target.data else { return 0; };
+        if self.parsed.name_of(object.ref_) == b"Number" && name == Some(b"NaN") { NUMBER } else { 0 }
+    }
+    /// the `case` before the test, with blanks and `(` between them only; else the first token of the test
+    fn case_start(&self, value: &Expr) -> i32 {
+        let mut at = self.full_start(value) as usize;
+        loop {
+            while at > 0 && matches!(self.text.get(at - 1), Some(b' ' | b'\t')) { at -= 1; }
+            if at > 0 && self.text.get(at - 1) == Some(&b'(') { at -= 1; } else { break; }
+        }
+        if at >= 4 && self.text.get(at - 4..at) == Some(b"case") { (at - 4) as i32 } else { value.loc.start }
+    }
+    fn finish(&mut self) {
+        // the names that the parse pass declared, a macro import among them
+        for symbol in self.parsed.symbols { let name = symbol.original_name.slice().to_vec(); self.declare(&name); }
+        for record in &self.parsed.sidecar.erased.statements {
+            match &record.data {
+                ErasedData::Module(decl) => if let ModuleName::Identifier(name) = &decl.name {
+                    let mut after = name.end as usize;
+                    while matches!(self.text.get(after), Some(b' ' | b'\t' | b'\n' | b'\r')) { after += 1; }
+                    let dotted = self.text.get(after) == Some(&b'.') || record.flags.contains(bun_js_parser::parse::erased::ErasedFlags::NESTED);
+                    if !dotted { let n = name.text.slice().to_vec(); self.declare(&n); }
+                },
+                ErasedData::ImportEquals(decl) => { let n = decl.name.text.slice().to_vec(); self.declare(&n); }
+                ErasedData::Import(_) => { let t = self.text.get(record.start as usize..record.end as usize).unwrap_or(b"").to_vec(); self.declare_words(&t); }
+                _ => {}
+            }
+        }
+        let declared = self.declared;
+        for (line, names) in core::mem::take(&mut self.held) {
+            if names & !declared != 0 { self.out.push(line); }
+        }
+    }
+}
+
 fn target_of(expr: &Expr) -> Option<usize> {
     match &expr.data {
         ExprData::EArray(array) => Some(core::ptr::from_ref::<E::Array>(array).addr()),
@@ -333,6 +404,50 @@ impl<'p, 'a> Mini<'p, 'a> {
 }
 
 impl<'ast, 'p, 'a> Visitor<'ast> for Mini<'p, 'a> {
+
+    fn visit_b_identifier(&mut self, node: &'ast B::Identifier, _: Loc) {
+        let name = self.parsed.name_of(node.r#ref).to_vec();
+        self.declare(&name);
+    }
+    fn visit_s_function(&mut self, node: &'ast S::Function, _: Loc) {
+        if let Some(name) = &node.func.name { let n = self.parsed.name_of(name.ref_).to_vec(); self.declare(&n); }
+        walk::walk_s_function(self, node);
+    }
+    fn visit_e_function(&mut self, node: &'ast E::Function, _: Loc) {
+        if let Some(name) = &node.func.name { let n = self.parsed.name_of(name.ref_).to_vec(); self.declare(&n); }
+        walk::walk_e_function(self, node);
+    }
+    fn visit_s_enum(&mut self, node: &'ast S::Enum, _: Loc) {
+        let n = self.parsed.name_of(node.name.ref_).to_vec(); self.declare(&n);
+        for value in node.values.slice() { let n = value.name.slice().to_vec(); self.declare(&n); }
+        walk::walk_s_enum(self, node);
+    }
+    fn visit_s_namespace(&mut self, node: &'ast S::Namespace, _: Loc) {
+        let n = self.parsed.name_of(node.name.ref_).to_vec(); self.declare(&n);
+        walk::walk_s_namespace(self, node);
+    }
+    fn visit_s_import(&mut self, _node: &'ast S::Import, loc: Loc) {
+        // the names with `type` leave no item: the words of the clause, up to the string of the module
+        let from = loc.start as usize;
+        let mut at = from;
+        let mut depth = 0;
+        while let Some(&b) = self.text.get(at) {
+            match b { b'{' => depth += 1, b'}' => depth -= 1, b'"' | b'\'' if depth == 0 => break, b';' => break, _ => {} }
+            at += 1;
+        }
+        let t = self.text.get(from..at).unwrap_or(b"").to_vec();
+        self.declare_words(&t);
+    }
+    fn visit_s_switch(&mut self, node: &'ast S::Switch, loc: Loc) {
+        let names = self.nan(&node.test);
+        if names != 0 { self.held.push((format!("R use-isnan {} 'switch(NaN)' can never match a case clause. Use Number.isNaN instead of the switch.", loc.start), names)); }
+        for case in node.cases.slice() {
+            let Some(value) = &case.value else { continue };
+            let names = self.nan(value);
+            if names != 0 { let start = self.case_start(value); self.held.push((format!("R use-isnan {start} 'case NaN' can never match. Use Number.isNaN before the switch."), names)); }
+        }
+        walk::walk_s_switch(self, node);
+    }
     fn visit_s_debugger(&mut self, _: &'ast S::Debugger, loc: Loc) {
         self.out.push(format!("R no-debugger {} Unexpected 'debugger' statement.", loc.start));
     }
@@ -373,10 +488,12 @@ impl<'ast, 'p, 'a> Visitor<'ast> for Mini<'p, 'a> {
         walk::walk_e_object(self, node);
     }
     fn visit_s_class(&mut self, node: &'ast S::Class, _loc: Loc) {
+        if let Some(name) = &node.class.class_name { let n = self.parsed.name_of(name.ref_).to_vec(); self.declare(&n); }
         self.class_members(&node.class);
         walk::walk_s_class(self, node);
     }
     fn visit_e_class(&mut self, node: &'ast E::Class, _loc: Loc) {
+        if let Some(name) = &node.class_name { let n = self.parsed.name_of(name.ref_).to_vec(); self.declare(&n); }
         self.class_members(node);
         walk::walk_e_class(self, node);
     }
@@ -389,6 +506,10 @@ impl<'ast, 'p, 'a> Visitor<'ast> for Mini<'p, 'a> {
         if is_comparison && (self.is_neg_zero(&node.left) || self.is_neg_zero(&node.right)) {
             let start = self.full_start(&node.left);
             self.out.push(format!("R no-compare-neg-zero {start} Do not use the '{}' operator to compare against -0.", String::from_utf8_lossy(op)));
+        }
+        if is_comparison {
+            let names = self.nan(&node.left) | self.nan(&node.right);
+            if names != 0 { let start = self.full_start(&node.left); self.held.push((format!("R use-isnan {start} Use the isNaN function to compare with NaN."), names)); }
         }
         if is_equality {
             if self.is_typeof(&node.left) { self.sibling(&node.right); }
@@ -423,6 +544,7 @@ fn mini(text: &'static [u8], parsed: &ParsedForLint<'_, '_>) -> String {
             if let Some(e) = &p.initializer { m.visit_expr(e); }
         }
     }
+    m.finish();
     m.out.join("\n") + "\n"
 }
 

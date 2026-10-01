@@ -1,0 +1,13 @@
+    Checking bun_js_parser v0.0.0 (/workspace/wt/parser/src/js_parser)
+    Checking sizeprobe_ts v0.0.0 (/tmp/sizeprobe-a-head/ts)
+warning: unused dependency `bun_js_parser`
+  --> Cargo.toml:13:1
+   |
+13 | bun_js_parser = { path = "/workspace/wt/parser/src/js_parser" }
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `cargo::unused_dependencies` is set to `warn` by default
+help: consider removing the dependency on `bun_js_parser`
+warning: `sizeprobe_ts` (manifest) generated 1 warning
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.38s
+cargo check dev exit=0

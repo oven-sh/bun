@@ -1,0 +1,32 @@
+# tree=/workspace/wt/parser rev=be1ebe5295 profile=release codegen=/workspace/wt/parser/build/debug/codegen
+# rustc 1.100.0-nightly (574ff7d98 2026-09-14)
+3808	size_of j::P<'static, true, false>
+3808	size_of j::P<'static, false, false>
+3808	size_of j::P<'static, true, true>
+3808	size_of j::P<'static, false, true>
+8	align_of j::P<'static, true, false>
+336	size_of j::lexer::Lexer<'static>
+240	size_of j::lexer::LexerSnapshot<'static>
+152	size_of a::Msg
+16	size_of a::Expr
+16	size_of a::Stmt
+16	size_of a::Binding
+32	size_of a::E::Arrow
+32	size_of a::G::Decl
+80	size_of a::G::Arg
+76	size_of a::G::Fn
+104	size_of a::G::Property
+88	size_of a::G::Class
+16	size_of a::G::FnBody
+16	size_of a::ts::Metadata
+120	size_of a::Data
+96	size_of a::Location
+72	size_of a::Log
+48	size_of a::Symbol
+128	size_of a::Scope
+76	size_of a::E::Function
+36	size_of a::E::Binary
+600	size_of j::p::StartsForParseOnly
+8	size_of Option<Box<j::p::StartsForParseOnly>>
+384	size_of j::ParserOptions<'static>
+760	size_of j::Parser<'static>

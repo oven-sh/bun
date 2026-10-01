@@ -2262,12 +2262,7 @@ impl VirtualMachine {
                 bun_core::Output::err(e, "Failed to write heap profile", ());
             }
         }
-        {
-            unsafe extern "C" {
-                safe fn Bun__writeSamplingProfilerReport(global: &JSGlobalObject);
-            }
-            Bun__writeSamplingProfilerReport(self.global());
-        }
+        crate::bun_sampling_profiler::write_report(self.global());
 
         ExitHandler::dispatch_on_exit(self);
 

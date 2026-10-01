@@ -691,10 +691,19 @@ describe.concurrent("startSamplingProfiler(directory)", () => {
     expect(reportsIn(join(String(dir), "report"))).toEqual(["Sampling rate"]);
   });
 
-  it("exits as usual when the directory is gone by then", async () => {
+  it("takes a directory that is not ASCII", async () => {
+    using dir = tempDir("sampling-profiler", {});
+    const name = "r\u00e9p\u00f6rt-\u5831\u544a";
+    expect(await run(`require("bun:jsc").startSamplingProfiler(${JSON.stringify(name)});`, String(dir))).toEqual(ok);
+    expect(reportsIn(join(String(dir), name))).toEqual(["Sampling rate"]);
+  });
+
+  it("says so and exits as usual when the directory is gone by then", async () => {
     using dir = tempDir("sampling-profiler", {});
     const script = `require("bun:jsc").startSamplingProfiler("report"); require("fs").rmdirSync("report");`;
-    expect(await run(script, String(dir))).toEqual(ok);
+    const { stderr, ...rest } = await run(script, String(dir));
+    expect(stderr).toContain("Failed to write sampling profiler report to");
+    expect(rest).toEqual({ stdout: "", exitCode: 0 });
   });
 
   it("a worker writes its own report when it ends", async () => {

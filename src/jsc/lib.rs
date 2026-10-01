@@ -466,6 +466,8 @@ pub mod bindgen_test;
 pub mod bun_cpu_profiler;
 #[path = "BunHeapProfiler.rs"]
 pub mod bun_heap_profiler;
+#[path = "BunSamplingProfiler.rs"]
+mod bun_sampling_profiler;
 #[path = "bun_string_jsc.rs"]
 pub mod bun_string_jsc;
 pub use bun_string_jsc::{ErrorKind, StringJsc, Utf8WithStringJsc};

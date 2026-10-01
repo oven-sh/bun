@@ -36,7 +36,6 @@
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include <algorithm>
 #include <cstddef>
-#include <wtf/FilePrintStream.h>
 #include <wtf/FileSystem.h>
 #include <wtf/MemoryFootprint.h>
 #include <wtf/text/WTFString.h>
@@ -461,23 +460,25 @@ JSC_DEFINE_HOST_FUNCTION(functionNeverInlineFunction,
 
 extern "C" bool Bun__mkdirp(JSC::JSGlobalObject*, const char*);
 
-// Called by VirtualMachine::on_exit, on the thread of the VM.
-extern "C" void Bun__writeSamplingProfilerReport(JSC::JSGlobalObject* globalObject)
+// For BunSamplingProfiler.rs, which VirtualMachine::on_exit calls on the thread of the VM.
+extern "C" BunString Bun__takeSamplingProfilerReportPath(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     String directory = std::exchange(WebCore::clientData(vm)->samplingProfilerReportDirectory, String());
     auto* samplingProfiler = vm.samplingProfiler();
     if (directory.isNull() || !samplingProfiler)
-        return;
+        return BunStringEmpty;
+    return Bun::toStringRef(makeString(directory, "/JSCSampilingProfile-"_s, reinterpret_cast<uintptr_t>(samplingProfiler), ".txt"_s));
+}
 
-    auto path = makeString(directory, "/JSCSampilingProfile-"_s, reinterpret_cast<uintptr_t>(samplingProfiler), ".txt"_s);
-    auto out = FilePrintStream::open(toUTF8CString(path).legacyCStringPointer(), "w");
-    if (!out)
-        return;
-
+extern "C" BunString Bun__generateSamplingProfilerReport(JSC::JSGlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
     JSC::JSLockHolder locker(vm);
-    samplingProfiler->reportTopFunctions(*out);
-    samplingProfiler->reportTopBytecodes(*out);
+    StringPrintStream out;
+    vm.samplingProfiler()->reportTopFunctions(out);
+    vm.samplingProfiler()->reportTopBytecodes(out);
+    return Bun::toStringRef(out.toString());
 }
 
 JSC_DECLARE_HOST_FUNCTION(functionStartSamplingProfiler);

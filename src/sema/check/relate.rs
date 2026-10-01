@@ -361,8 +361,15 @@ impl<'p> Checker<'p> {
         self.related(source, target, Relation::Assignable)
     }
 
+    /// `isTypeAssignableTo` of the `getPermissiveInstantiation` of both. `getObjectTypeInstantiation` maps the type parameters around a
+    /// type, not those of a generic signature in it: a type that mentions none from around it is its own instantiation.
     pub fn is_assignable_permissive(&mut self, source: TypeId, target: TypeId) -> bool {
-        self.related(source, target, Relation::Permissive)
+        let relation = if self.has_type_variables(source) || self.has_type_variables(target) {
+            Relation::Permissive
+        } else {
+            Relation::Assignable
+        };
+        self.related(source, target, relation)
     }
 
     pub fn is_strict_subtype(&mut self, source: TypeId, target: TypeId) -> bool {
@@ -830,6 +837,13 @@ impl<'p> Checker<'p> {
         if source == target {
             return true;
         }
+        // `getPermissiveInstantiation` of the two replaces the type parameters of the signatures around as well.
+        if relation == Relation::Permissive && !self.own_of_compared_sigs.is_empty() {
+            let around = std::mem::take(&mut self.own_of_compared_sigs);
+            let result = self.related(source, target, relation);
+            self.own_of_compared_sigs = around;
+            return result;
+        }
         let is_stack_low = self.is_stack_low();
         if is_stack_low {
             self.guard("related");
@@ -1167,7 +1181,9 @@ impl<'p> Checker<'p> {
             return true;
         }
         match *self.data(ty) {
-            TypeData::TypeParam(..) | TypeData::ThisParam(_) | TypeData::Marker(_) => true,
+            // `getObjectTypeInstantiation` maps the type parameters around a type. Those of a generic signature in it stay.
+            TypeData::TypeParam(..) => !self.own_of_compared_sigs.contains(&ty),
+            TypeData::ThisParam(_) | TypeData::Marker(_) => true,
             // `getTemplateLiteralType`. `getPermissiveInstantiation` returns a primitive unchanged, and a template literal type is one.
             TypeData::Template { ref types, .. } => {
                 depth > 0
@@ -1198,6 +1214,64 @@ impl<'p> Checker<'p> {
                 .constituents(ty)
                 .iter()
                 .any(|&p| self.is_permissive_wildcard(p, depth + 1)),
+            _ => false,
+        }
+    }
+
+    /// `isTypeIdenticalTo`, of two parts of permissive instantiations. The wildcard has the flags of `any`, which is what the identity
+    /// relation goes by.
+    fn is_identical_with_wildcards(&mut self, a: TypeId, b: TypeId) -> bool {
+        let (mut open, mut seen) = (Vec::new(), FxHashSet::default());
+        if !self.collect_open_type_params(a, &mut open, &mut seen)
+            || !self.collect_open_type_params(b, &mut open, &mut seen)
+        {
+            return true;
+        }
+        let wildcards = self
+            .p
+            .types
+            .mapper(open.into_iter().map(|param| (param, TypeId::ANY)).collect());
+        let (a, b) = (
+            self.instantiate(a, wildcards),
+            self.instantiate(b, wildcards),
+        );
+        self.is_identical(a, b)
+    }
+
+    /// Adds the type parameters in `ty` that `is_permissive_wildcard` takes for wildcards to `open`. `false`: something in `ty` is
+    /// worked out from one, or it cannot be told. The wildcard makes a wildcard of that, `any` something else.
+    fn collect_open_type_params(
+        &self,
+        ty: TypeId,
+        open: &mut Vec<TypeId>,
+        seen: &mut FxHashSet<TypeId>,
+    ) -> bool {
+        if !self.has_type_variables(ty) || !seen.insert(ty) {
+            return true;
+        }
+        match self.data(ty) {
+            TypeData::TypeParam(..) | TypeData::ThisParam(_) => {
+                if !self.own_of_compared_sigs.contains(&ty) {
+                    open.push(ty);
+                }
+                true
+            }
+            TypeData::Union(types)
+            | TypeData::Intersection(types)
+            | TypeData::Ref { args: types, .. }
+            | TypeData::Tuple { elems: types, .. } => types
+                .iter()
+                .all(|&t| self.collect_open_type_params(t, open, seen)),
+            TypeData::Anon {
+                origin: Origin::Mapped(..),
+                ..
+            } => false,
+            TypeData::Anon { mapper, .. } | TypeData::Fns { mapper, .. } => self
+                .p
+                .types
+                .mapping(*mapper)
+                .iter()
+                .all(|pair| self.collect_open_type_params(pair.1, open, seen)),
             _ => false,
         }
     }
@@ -3450,7 +3524,7 @@ impl<'p> Checker<'p> {
         state: u8,
         ignore_constraints: bool,
     ) -> (Key, bool) {
-        let flags = relation as u8 | state << 4;
+        let flags = self.relation_key_flags(relation, state);
         let (source, target) = if relation == Relation::Identity && source > target {
             (target, source)
         } else {
@@ -3465,6 +3539,13 @@ impl<'p> Checker<'p> {
             return ((source, target, flags), false);
         }
         self.generic_relation_key(source, target, flags, ignore_constraints)
+    }
+
+    /// The flags of a `Key`. Inside a generic signature the permissive relation goes by which type parameters are the signature's.
+    #[inline]
+    fn relation_key_flags(&self, relation: Relation, state: u8) -> u8 {
+        let is_inside = relation == Relation::Permissive && !self.own_of_compared_sigs.is_empty();
+        relation as u8 | u8::from(is_inside) << 3 | state << 4
     }
 
     /// `relation_key` that heeds constraints. `sd`, `td`: what `source` and `target` are.
@@ -3484,7 +3565,7 @@ impl<'p> Checker<'p> {
         if is_reference(sd) && is_reference(td) {
             return self.relation_key(source, target, relation, state, false);
         }
-        let flags = relation as u8 | state << 4;
+        let flags = self.relation_key_flags(relation, state);
         if relation == Relation::Identity && source > target {
             ((target, source, flags), false)
         } else {
@@ -4646,7 +4727,12 @@ impl<'p> Checker<'p> {
                         mapper = self.mapper_from(&source_params, &inferred);
                         source_extends = self.instantiate(source_extends, mapper);
                     }
-                    if self.is_identical(source_extends, target_extends) {
+                    let is_same = if relation == Relation::Permissive {
+                        self.is_identical_with_wildcards(source_extends, target_extends)
+                    } else {
+                        self.is_identical(source_extends, target_extends)
+                    };
+                    if is_same {
                         let (sc, tc) = (self.cond_check(source), self.cond_check(target));
                         if self.is_related_to(r, sc, tc, REC_BOTH).holds()
                             || self.is_related_to(r, tc, sc, REC_BOTH).holds()
@@ -4966,6 +5052,8 @@ impl<'p> Checker<'p> {
         no_index_signatures: bool,
     ) -> Option<TypeId> {
         let (object, index) = (self.force(object), self.force(index));
+        let object = self.reduced(object);
+        let index = self.key_into_string_index_only(object, index);
         // `getReducedApparentType`: a type parameter answers with what it extends.
         let object = self.apparent_type(object);
         let object = self.reduced(object);
@@ -6194,6 +6282,26 @@ impl<'p> Checker<'p> {
 
     /// `compareSignaturesRelated`. `as_given`: the two before their type parameters were erased.
     pub(super) fn compare_signatures_related(
+        &mut self,
+        r: &mut Relater,
+        source: SigId,
+        target: SigId,
+        as_given: (SigId, SigId),
+        check_mode: u8,
+        state: u8,
+    ) -> Ternary {
+        if r.relation != Relation::Permissive {
+            return self.compare_signatures_inside(r, source, target, as_given, check_mode, state);
+        }
+        let around = self.own_of_compared_sigs.len();
+        let own = self.sig_type_params(target);
+        self.own_of_compared_sigs.extend_from_slice(&own);
+        let result = self.compare_signatures_inside(r, source, target, as_given, check_mode, state);
+        self.own_of_compared_sigs.truncate(around);
+        result
+    }
+
+    fn compare_signatures_inside(
         &mut self,
         r: &mut Relater,
         source: SigId,

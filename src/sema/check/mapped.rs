@@ -444,17 +444,7 @@ impl<'p> Checker<'p> {
         }
         // `getReducedType`: an intersection nothing can be is not there.
         let obj = self.reduced(obj);
-        // Where there is a string index signature and nothing else, it is the signature that answers, whatever the key.
-        let index = if index != TypeId::STRING
-            && !self.is_nullish(index)
-            && self.is_string_index_signature_only(obj)
-            && (self.is_assignable(index, TypeId::NUMBER)
-                || self.is_assignable(index, TypeId::STRING))
-        {
-            TypeId::STRING
-        } else {
-            index
-        };
+        let index = self.key_into_string_index_only(obj, index);
         if self.is_generic(index) || self.defers_access(obj, index, is_expression) {
             if obj == TypeId::ANY || obj == TypeId::UNKNOWN {
                 return Some(obj);
@@ -481,6 +471,21 @@ impl<'p> Checker<'p> {
             return Some(self.union(&types));
         }
         self.property_type_for_index(obj, index, include_undefined, has_access_node)
+    }
+
+    /// The start of `getIndexedAccessTypeOrUndefined`: where `obj`, reduced, has a string index signature and nothing else, it is
+    /// the signature that answers, whatever the key, which is `string` from there on.
+    pub(super) fn key_into_string_index_only(&mut self, obj: TypeId, index: TypeId) -> TypeId {
+        if index != TypeId::STRING
+            && !self.is_nullish(index)
+            && self.is_string_index_signature_only(obj)
+            && (self.is_assignable(index, TypeId::NUMBER)
+                || self.is_assignable(index, TypeId::STRING))
+        {
+            TypeId::STRING
+        } else {
+            index
+        }
     }
 
     /// `isStringIndexSignatureOnlyType`
@@ -1396,7 +1401,11 @@ impl<'p> Checker<'p> {
     }
 
     /// `getHomomorphicTypeVariable`: the `T` of a mapped type whose declared constraint type is `keyof T`, however that is written.
-    fn homomorphic_type_variable(&mut self, file: FileId, node: TypeNodeId) -> Option<TypeId> {
+    pub(super) fn homomorphic_type_variable(
+        &mut self,
+        file: FileId,
+        node: TypeNodeId,
+    ) -> Option<TypeId> {
         let constraint = self.constraint_of_mapped_param(file, node)?;
         match *self.data(constraint) {
             TypeData::Keyof(target) if matches!(self.data(target), TypeData::TypeParam(..)) => {

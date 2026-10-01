@@ -319,7 +319,48 @@ impl<'p> Checker<'p> {
     pub fn force(&mut self, ty: TypeId) -> TypeId {
         match self.data(ty) {
             TypeData::LazyAlias { .. } | TypeData::NoInfer(_) => self.force_reference(ty),
+            TypeData::Union(_) | TypeData::Intersection(_)
+                if self.p.types.flags(ty).contains(TypeFlags::HAS_LAZY_MEMBER) =>
+            {
+                self.force_members(ty)
+            }
             _ => ty,
+        }
+    }
+
+    /// `force`, of a union or an intersection with such references among its members. tsgo resolves the type arguments of a
+    /// deferred type reference before it makes anything of them (`getTypeArguments`), so the members of a union that an alias
+    /// stands for are members of the union it is put in. A reference to an array, a tuple, an instance or an indexed access
+    /// stays: these do not say which alias they are the body of, and the reference is what they are named by.
+    #[inline(never)]
+    fn force_members(&mut self, ty: TypeId) -> TypeId {
+        let (parts, is_union) = match self.data(ty) {
+            TypeData::Union(parts) => (parts, true),
+            TypeData::Intersection(parts) => (parts, false),
+            _ => return ty,
+        };
+        let mut forced: SmallVec<[TypeId; 8]> = SmallVec::from_slice(&parts[..]);
+        for part in &mut forced {
+            if self.is_no_infer(*part) {
+                continue;
+            }
+            let resolved = self.force(*part);
+            if self.is_known(resolved)
+                && !matches!(
+                    self.data(resolved),
+                    TypeData::Ref { .. } | TypeData::Tuple { .. } | TypeData::IndexedAccess { .. }
+                )
+            {
+                *part = resolved;
+            }
+        }
+        if forced[..] == parts[..] {
+            return ty;
+        }
+        if is_union {
+            self.union(&forced)
+        } else {
+            self.intersection(&forced)
         }
     }
 

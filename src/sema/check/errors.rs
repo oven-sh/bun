@@ -5981,6 +5981,15 @@ impl Checker<'_> {
             return;
         }
         let ty = self.non_nullable(ty);
+        // `getIndexedAccessTypeOrUndefined`: in `a[k]` no property is looked for where `a` has only a string index signature.
+        if matches!(self.hir(file)[e].kind, ExprKind::Index { .. })
+            && !self.files().atoms.is_symbol_name(name)
+        {
+            let reduced = self.reduced(ty);
+            if self.is_string_index_signature_only(reduced) {
+                return;
+            }
+        }
         // `getReducedApparentType`
         let apparent = self.apparent_type(ty);
         let apparent = self.reduced(apparent);

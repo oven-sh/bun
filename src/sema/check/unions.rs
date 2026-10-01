@@ -378,7 +378,73 @@ impl<'p> Checker<'p> {
                 }
             }
         };
+        self.note_origin_of_union(given, union);
         (union, is_plain)
+    }
+
+    /// `getUnionTypeWorker`: the denormalized `origin` of `union`, which was made of `given`. There is one where some of `given` are
+    /// unions that have a name, or were made of such, and no member is in two of them. Unions are hash-consed: the first stays.
+    fn note_origin_of_union(&self, given: &[TypeId], union: TypeId) {
+        let mut named: smallvec::SmallVec<[TypeId; 4]> = smallvec::SmallVec::new();
+        self.add_named_unions(&mut named, given);
+        if named.is_empty() || self.p.denormalized_unions.get_ref(&union).is_some() {
+            return;
+        }
+        let TypeData::Union(members) = self.data(union) else {
+            return;
+        };
+        let mut origin: Vec<TypeId> = members
+            .iter()
+            .copied()
+            .filter(|m| {
+                !named
+                    .iter()
+                    .any(|&u| self.parts(u).binary_search(m).is_ok())
+            })
+            .collect();
+        let in_named: usize = named.iter().map(|&u| self.parts(u).len()).sum();
+        // One named union that is all of it is `union` itself.
+        if in_named + origin.len() != members.len() || origin.is_empty() && named.len() == 1 {
+            return;
+        }
+        origin.extend_from_slice(&named);
+        self.p.denormalized_unions.insert(union, Arc::from(origin));
+    }
+
+    /// `addNamedUnions`. `boolean` has no alias, whatever alias stands for it.
+    fn add_named_unions(&self, named: &mut smallvec::SmallVec<[TypeId; 4]>, types: &[TypeId]) {
+        for &t in types {
+            if t == TypeId::BOOLEAN || !self.is_union(t) {
+                continue;
+            }
+            if self.p.named_unions.get(&t).is_some() || self.p.union_origins.get_ref(&t).is_some() {
+                if !named.contains(&t) {
+                    named.push(t);
+                }
+            } else if let Some(origin) = self.p.denormalized_unions.get_ref(&t) {
+                self.add_named_unions(named, origin);
+            }
+        }
+    }
+
+    /// `filterType`: `filtered`, which is what is left of the union `ty`, keeps what is left of the origin of `ty`, unless something
+    /// inside one of the named unions went.
+    fn note_origin_of_filtered_union(&self, ty: TypeId, filtered: TypeId) {
+        let Some(origin) = self.p.denormalized_unions.get_ref(&ty) else {
+            return;
+        };
+        let left = self.parts(filtered);
+        let kept: Vec<TypeId> = origin
+            .iter()
+            .copied()
+            .filter(|u| self.is_union(*u) || left.binary_search(u).is_ok())
+            .collect();
+        if kept.len() > 1
+            && origin.len() - kept.len() == self.parts(ty).len() - left.len()
+            && self.p.denormalized_unions.get_ref(&filtered).is_none()
+        {
+            self.p.denormalized_unions.insert(filtered, Arc::from(kept));
+        }
     }
 
     /// `removeStringLiteralsMatchedByTemplateLiterals`
@@ -662,7 +728,9 @@ impl<'p> Checker<'p> {
         {
             return only;
         }
-        self.union(&kept)
+        let union = self.union(&kept);
+        self.note_origin_of_union(types, union);
+        union
     }
 
     /// `removeSubtypes`, keyProperty: the first property of `ty` whose type is a unit type, and that type. The types of the
@@ -704,7 +772,11 @@ impl<'p> Checker<'p> {
                 match kept[..] {
                     [] => TypeId::NEVER,
                     [only] => only,
-                    _ => self.intern(TypeData::Union(Box::from(&kept[..]))),
+                    _ => {
+                        let filtered = self.intern(TypeData::Union(Box::from(&kept[..])));
+                        self.note_origin_of_filtered_union(ty, filtered);
+                        filtered
+                    }
                 }
             }
             TypeData::Intrinsic(Intrinsic::Never) => ty,
@@ -1280,13 +1352,54 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getTypeNameSymbol`, its name. A type does not remember the alias it was written with here.
+    /// `Type.alias`, its symbol, of `ty`, which was made from the type node `node`: the type alias whose body that node is.
+    fn alias_to_sort_by(&self, ty: TypeId, file: FileId, node: TypeNodeId) -> Option<Sym> {
+        if let Some(known) = self.p.aliases_to_sort_by.get(&ty) {
+            return known;
+        }
+        let alias = self
+            .hir(file)
+            .aliases
+            .iter()
+            .position(|alias| alias.ty == node)
+            .map(|index| self.bound(file).alias_symbol[index])
+            .filter(|symbol| symbol.is_some())
+            .map(|symbol| self.files().sym(file, symbol))
+            // A class or an interface of the same name is what the name means.
+            .filter(|&alias| {
+                !self
+                    .files()
+                    .flags(alias)
+                    .intersects(SymFlags::CLASS | SymFlags::INTERFACE)
+            });
+        self.p.aliases_to_sort_by.insert(ty, alias)
+    }
+
+    /// `getTypeNameSymbol`, its name. A type does not remember the alias it was written with here: that of an object or a conditional
+    /// type is found by where the type is written, that of any other type is not known.
     fn sort_name(&self, ty: TypeId) -> Option<&'p [u8]> {
         let files = self.files();
         let name = match *self.data(ty) {
             // The `this` type has the symbol of its class.
             TypeData::Ref { target: sym, .. } | TypeData::ThisParam(sym) => files.symbol(sym).name,
             TypeData::TypeParam(file, tp, _) => self.hir(file)[tp].name,
+            TypeData::Anon {
+                origin: Origin::TypeLiteral(file, node) | Origin::Mapped(file, node),
+                ..
+            }
+            | TypeData::Cond { file, node, .. } => {
+                files.symbol(self.alias_to_sort_by(ty, file, node)?).name
+            }
+            TypeData::Fns { ref decls, .. } => {
+                let [(file, func)] = decls[..] else {
+                    return None;
+                };
+                let crate::bind::FnOwner::Type(node) = self.bound(file).fns[func.idx()].owner
+                else {
+                    return None;
+                };
+                files.symbol(self.alias_to_sort_by(ty, file, node)?).name
+            }
             TypeData::StringMapping { kind, .. } => {
                 return Some(match kind {
                     StringMappingKind::Uppercase => &b"Uppercase"[..],
@@ -1393,6 +1506,8 @@ impl<'p> Checker<'p> {
             .cmp(&self.sort_order_flags(b))
             .then_with(|| if are_of_one_symbol { Equal } else { some_first(self.sort_name(a), self.sort_name(b)) })
             .then_with(|| if are_of_one_symbol { Equal } else { some_first(self.sort_place(a), self.sort_place(b)) })
+            // `compareTypeNames`: a union that a type alias stands for comes before one without a name.
+            .then_with(|| (self.is_union(a) && self.p.named_unions.get(&a).is_none()).cmp(&(self.is_union(b) && self.p.named_unions.get(&b).is_none())))
             .then_with(|| is_no_reference(a).cmp(&is_no_reference(b)))
             .then_with(|| match (self.data(a), self.data(b)) {
                 (TypeData::Ref { target: s, args: x }, TypeData::Ref { target: t, args: y }) => s.cmp(t).then_with(|| self.compare_type_lists(x, y)),
@@ -1408,7 +1523,20 @@ impl<'p> Checker<'p> {
                     })
                     .then_with(|| self.compare_type_lists(x, y)),
                 // The lists TypeScript compares are in this order. Those of intersections are as written.
-                (TypeData::Union(_), TypeData::Union(_)) => self.compare_type_lists(&self.parts_in_order(a), &self.parts_in_order(b)),
+                // What has an `origin` comes first. Only the origins that are unions are looked at.
+                (TypeData::Union(_), TypeData::Union(_)) => match (self.p.denormalized_unions.get_ref(&a), self.p.denormalized_unions.get_ref(&b)) {
+                    (None, None) => self.compare_type_lists(&self.parts_in_order(a), &self.parts_in_order(b)),
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (Some(x), Some(y)) => {
+                        let in_order = |types: &[TypeId]| {
+                            let mut types = types.to_vec();
+                            types.sort_by(|&s, &t| self.compare_types(s, t));
+                            types
+                        };
+                        self.compare_type_lists(&in_order(&x[..]), &in_order(&y[..]))
+                    }
+                },
                 (TypeData::Intersection(x), TypeData::Intersection(y)) => self.compare_type_lists(x, y),
                 (TypeData::StringLit { value: x, .. }, TypeData::StringLit { value: y, .. }) => atoms.bytes(*x).cmp(atoms.bytes(*y)),
                 (TypeData::NumberLit { bits: x, .. }, TypeData::NumberLit { bits: y, .. }) => {

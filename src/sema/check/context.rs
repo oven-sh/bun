@@ -1117,6 +1117,16 @@ impl<'p> Checker<'p> {
         literal: ExprId,
     ) -> Option<TypeId> {
         let context = self.contextual_type(file, literal)?;
+        Some(self.apparent_context_of_object_literal(file, literal, context))
+    }
+
+    /// The same, of a literal that is expected to be `context`.
+    pub(super) fn apparent_context_of_object_literal(
+        &mut self,
+        file: FileId,
+        literal: ExprId,
+        context: TypeId,
+    ) -> TypeId {
         let context = self.map_type_unreduced(context, |c, m| {
             if c.is_deferred(m) {
                 c.base_constraint(m)
@@ -1124,7 +1134,7 @@ impl<'p> Checker<'p> {
                 m
             }
         });
-        Some(self.discriminate_by_object_members(file, literal, context))
+        self.discriminate_by_object_members(file, literal, context)
     }
 
     /// `discriminateContextualTypeByObjectMembers`: narrows the union `context` to the members the object literal `literal` can
@@ -1498,13 +1508,15 @@ impl<'p> Checker<'p> {
         let hir = self.hir(file);
         // `instantiateContextualType` with `ContextFlagsSignature` applies to a function wherever it is nested in an argument, so a
         // context that call resolution recorded for the function takes precedence. `contextual_type_of_arg` does this lookup for a
-        // direct argument, after its checks for an immediately invoked function.
-        if matches!(hir[e].kind, ExprKind::Fn(_))
-            && !matches!(
-                hir[parent].kind,
-                ExprKind::Call(_) | ExprKind::New(_) | ExprKind::TaggedTemplate(_)
-            )
-            && let Some(recorded) = self.explicit_context(file, e)
+        // direct argument, after its checks for an immediately invoked function. A call nested in an argument of an overloaded call
+        // stays resolved as it was for the first candidate (`resolvedSignature`): what that expected of it is recorded too.
+        if matches!(
+            hir[e].kind,
+            ExprKind::Fn(_) | ExprKind::Call(_) | ExprKind::New(_)
+        ) && !matches!(
+            hir[parent].kind,
+            ExprKind::Call(_) | ExprKind::New(_) | ExprKind::TaggedTemplate(_)
+        ) && let Some(recorded) = self.explicit_context(file, e)
         {
             return Some(recorded);
         }
@@ -2199,6 +2211,30 @@ impl<'p> Checker<'p> {
         })
     }
 
+    /// `assignContextualParameterTypes`: whether a function around `e` has taken `param` over from the generic signature expected of
+    /// it. What is written in that function may mean `param`, which is declared elsewhere.
+    pub(super) fn is_type_param_adopted_around(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        param: TypeId,
+    ) -> bool {
+        let mut around = self.enclosing_fn_of_expr(file, e);
+        while let Some(func) = around {
+            if self.hir(file)[func].type_params.is_empty()
+                && let Some(owner) = self.takes_context(file, func)
+                && self.is_context_sensitive(file, owner)
+                && let Some(expected) = self.contextual_signature(file, func)
+                && self.sig_type_params(expected).contains(&param)
+            {
+                return true;
+            }
+            let enclosing = self.bound(file).fns[func.idx()].enclosing;
+            around = enclosing.is_some().then_some(enclosing);
+        }
+        false
+    }
+
     /// `getIntersectedSignatures`: one signature for a function that is to be all of `sigs`.
     fn intersected_signature(&mut self, sigs: &[SigId]) -> Option<SigId> {
         if !self.p.files.options.no_implicit_any {
@@ -2628,7 +2664,7 @@ impl<'p> Checker<'p> {
 
     /// `A | PromiseLike<A>`, where `A` is `getAwaitedTypeNoAlias(ty)`: a type variable that may be a promise stays itself instead of
     /// becoming `Awaited<T>`. `None` if `ty` has no awaited type, or the awaited type is unknown.
-    fn awaited_or_promise_like(&mut self, ty: TypeId) -> Option<TypeId> {
+    pub(super) fn awaited_or_promise_like(&mut self, ty: TypeId) -> Option<TypeId> {
         let awaited = self.awaited_no_alias(ty)?;
         if awaited == TypeId::UNRESOLVED {
             return None;

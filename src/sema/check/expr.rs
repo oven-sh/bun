@@ -209,10 +209,7 @@ impl<'p> Checker<'p> {
                 }
                 let around = std::mem::replace(&mut self.uncertain, false);
                 let ty = self.type_of_expr_uncached(file, e);
-                let ty = match self.data(ty) {
-                    TypeData::LazyAlias { .. } | TypeData::NoInfer(_) => self.force(ty),
-                    _ => ty,
-                };
+                let ty = self.force(ty);
                 let uncertain = self.uncertain;
                 self.uncertain |= around;
                 (ty, uncertain, self.leave())

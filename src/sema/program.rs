@@ -3519,6 +3519,15 @@ impl Files {
         })
     }
 
+    /// `isShorthandAmbientModuleSymbol`: `module`, if it is `declare module "m";`. What is imported from it by name is the module
+    /// itself (`getExternalModuleMember`), and so is its default (`getTargetOfModuleDefault`, `canHaveSyntheticDefault`).
+    fn shorthand_ambient_module_itself(&self, module: Sym) -> Option<Sym> {
+        self.decls_of(module)
+            .iter()
+            .any(|&(f, d)| matches!(d, Decl::Module(id) if !self.hir(f)[id].has_body))
+            .then_some(module)
+    }
+
     /// One step: what the alias is declared to stand for, which may be an alias again.
     pub fn alias_target(&self, sym: Sym) -> Option<Sym> {
         // `aliasTarget` is `unknownSymbol`.
@@ -3537,6 +3546,7 @@ impl Files {
                     self.mode_of_import(file, hir[import].mode),
                 )?;
                 self.default_of_module(file, module)
+                    .or_else(|| self.shorthand_ambient_module_itself(module))
             }
             Decl::ImportNamespace(import) => {
                 let module = self.module_of_specifier_as(
@@ -3564,10 +3574,12 @@ impl Files {
                     self.mode_of_import(file, import.mode),
                 )?;
                 // `getTargetOfImportSpecifier`: `{ default as d }` is the default import by another spelling.
-                if hir[spec].imported == known::default {
-                    return self.default_of_module(file, module);
-                }
-                self.module_export(module, hir[spec].imported)
+                let found = if hir[spec].imported == known::default {
+                    self.default_of_module(file, module)
+                } else {
+                    self.module_export(module, hir[spec].imported)
+                };
+                found.or_else(|| self.shorthand_ambient_module_itself(module))
             }
             Decl::ImportEquals(import) => match hir[import].target {
                 ImportEqualsTarget::Require(spec) => Some(self.required_module_value(
@@ -3602,10 +3614,12 @@ impl Files {
                         self.mode_of_import(file, export.mode),
                     )?;
                     // `getTargetOfExportSpecifier`: so is `export { default } from`.
-                    if hir[spec].local == known::default {
-                        return self.default_of_module(file, module);
-                    }
-                    return self.module_export(module, hir[spec].local);
+                    let found = if hir[spec].local == known::default {
+                        self.default_of_module(file, module)
+                    } else {
+                        self.module_export(module, hir[spec].local)
+                    };
+                    return found.or_else(|| self.shorthand_ambient_module_itself(module));
                 }
                 self.resolve_name(file, bound.export_scope[index], hir[spec].local, all)
             }
@@ -3626,7 +3640,9 @@ impl Files {
                 let module = self.module_of_specifier_as(file, spec, ResolutionMode::Require)?;
                 match part {
                     None => Some(self.required_module_value(module)),
-                    Some(name) => self.module_export(module, name),
+                    Some(name) => self
+                        .module_export(module, name)
+                        .or_else(|| self.shorthand_ambient_module_itself(module)),
                 }
             }
             Decl::ExportExpr(_) | Decl::ModuleExports(_) | Decl::ExportsProperty(_) => {

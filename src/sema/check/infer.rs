@@ -78,6 +78,8 @@ pub struct Inference {
     original_target: TypeId,
     /// The call is written in the body of what it calls: the type parameters in scope there are the ones being inferred.
     pub(super) calls_itself: bool,
+    /// Where the call is written, until it has been asked whether a function around it took the type parameters over.
+    pub(super) call_site: Option<(FileId, ExprId)>,
     /// What is inferred from has holes (`UNRESOLVED`) where something waits for its context or is not known yet: whatever
     /// holds one is no candidate (`ObjectFlagsNonInferrableType`).
     pub(super) leaves_out_unknown: bool,
@@ -128,6 +130,7 @@ impl Inference {
             calls: 0,
             original_target: TypeId::NEVER,
             calls_itself: false,
+            call_site: None,
             leaves_out_unknown: false,
             went_by_flags: false,
             from_pattern: false,
@@ -340,6 +343,11 @@ impl<'p> Checker<'p> {
             if let Some(index) = n.index_of(target) {
                 // A parameter says nothing about itself, unless it is the caller's as well. It still counts as an inference made.
                 if source == target {
+                    if !n.calls_itself
+                        && let Some((file, call)) = n.call_site.take()
+                    {
+                        n.calls_itself = self.is_type_param_adopted_around(file, call, target);
+                    }
                     if !n.calls_itself {
                         n.inference_priority = n.inference_priority.min(n.priority as i32);
                         return;

@@ -1440,11 +1440,11 @@ impl Checker<'_> {
                 };
                 (sym, args)
             }
-            _ => return false,
+            _ => return self.is_error_type_as_written(file, node, 0),
         };
         // The wrong number of type arguments.
         let (least, most) = self.type_argument_arity(sym);
-        args.len() < least || args.len() > most
+        args.len() < least || args.len() > most || self.is_error_type_as_written(file, node, 0)
     }
 
     /// `isErrorType(checkExpression(e))`. There is no error type: an expression in error has type `any`, and the syntax tells that

@@ -1062,6 +1062,138 @@ impl<'p> Checker<'p> {
         })
     }
 
+    /// `isErrorType`, of the `any` that comes of `node`, told by what is written like `may_be_error_type`; in doubt it is not.
+    pub(super) fn is_error_type_as_written(
+        &mut self,
+        file: FileId,
+        node: TypeNodeId,
+        depth: u32,
+    ) -> bool {
+        if node.is_none() || depth > 8 {
+            return false;
+        }
+        let hir = self.hir(file);
+        match hir[node].kind {
+            // `addTypeToUnion`, `addTypeToIntersection`: `TypeFlagsIncludesError`
+            TypeNodeKind::Union(types) | TypeNodeKind::Intersection(types) => {
+                let types: Vec<TypeNodeId> = hir.ids(types).collect();
+                self.any_is_error_type_as_written(file, &types, depth + 1)
+            }
+            // `getPropertyTypeForIndexType`: whatever is looked up in `any` is that `any`.
+            TypeNodeKind::IndexedAccess { obj, .. } => {
+                self.any_is_error_type_as_written(file, &[obj], depth + 1)
+            }
+            TypeNodeKind::Typeof { expr, .. } => {
+                expr.is_some()
+                    && matches!(hir[expr].kind, ExprKind::Ident(name)
+                        if self.symbol_of_identifier(file, expr, name).is_some_and(|sym| self.is_alias_in_error(sym)))
+            }
+            TypeNodeKind::Import { spec, mode, .. } => {
+                let mode = self.files().mode_of_import(file, mode);
+                self.files()
+                    .module_of_specifier_as(file, spec, mode)
+                    .is_none()
+            }
+            TypeNodeKind::Ref { name, args } => {
+                if self.intended_type_of_jsdoc_reference(file, node).is_some() {
+                    return false;
+                }
+                let names: SmallVec<[Atom; 4]> = hir.ids(name).collect();
+                let scope = self.bound(file).type_scope[node.idx()];
+                let Some(sym) = self
+                    .files()
+                    .resolve_entity(file, scope, &names, SymFlags::TYPE)
+                    .and_then(|found| self.files().resolve_alias_as(found, SymFlags::TYPE))
+                else {
+                    return true;
+                };
+                // Nothing but an alias can stand for `any`: of anything else `any` is the sign of an error.
+                if !self
+                    .type_flags_of_symbol(sym)
+                    .contains(SymFlags::TYPE_ALIAS)
+                {
+                    return self.type_from_node(file, node) == TypeId::ANY;
+                }
+                let (least, most) = self.type_argument_arity(sym);
+                if args.len() < least || args.len() > most {
+                    return true;
+                }
+                // The nodes of its body are being resolved.
+                if self.stack.contains(&Query::Declared(sym)) {
+                    return false;
+                }
+                let Some((of, alias)) = self.alias_declaration(sym) else {
+                    return false;
+                };
+                let alias = &self.hir(of)[alias];
+                let given: Vec<TypeNodeId> = hir.ids(args).collect();
+                // What is not given is what the alias says it is then.
+                let defaults: Vec<TypeNodeId> = alias
+                    .type_params
+                    .iter()
+                    .skip(given.len())
+                    .map(|p| self.hir(of)[p].default)
+                    .collect();
+                self.any_is_error_type_as_written(file, &given, depth + 1)
+                    || self.any_is_error_type_as_written(of, &defaults, depth + 1)
+                    || self.is_error_type_as_written(of, alias.ty, depth + 1)
+            }
+            _ => false,
+        }
+    }
+
+    /// The same of what is made of `nodes`: those that come to `any` themselves are where it has it from.
+    fn any_is_error_type_as_written(
+        &mut self,
+        file: FileId,
+        nodes: &[TypeNodeId],
+        depth: u32,
+    ) -> bool {
+        nodes.iter().any(|&t| {
+            self.type_from_node(file, t) == TypeId::ANY
+                && self.is_error_type_as_written(file, t, depth)
+        })
+    }
+
+    /// `instantiateMappedType`: a mapped type over the keys of the error type is the error type. Whether the alias `sym` stands for a
+    /// mapped type over the keys of one of its type parameters, and what the reference at `node` gives for that one, of `given`, is
+    /// in error.
+    fn is_mapped_over_error_type(
+        &mut self,
+        file: FileId,
+        node: TypeNodeId,
+        sym: Sym,
+        flags: SymFlags,
+        given: &[TypeId],
+    ) -> bool {
+        if self.stack.contains(&Query::Declared(sym)) {
+            return false;
+        }
+        let declared = self.declared_type_by_name(sym, flags);
+        let TypeData::Anon {
+            origin: Origin::Mapped(of, mapped),
+            mapper,
+        } = *self.data(declared)
+        else {
+            return false;
+        };
+        let Some(source) = self.homomorphic_type_variable(of, mapped) else {
+            return false;
+        };
+        let variable = self.p.types.map(mapper, source).unwrap_or(source);
+        let params = self.local_type_params_of_symbol(sym);
+        let hir = self.hir(file);
+        let TypeNodeKind::Ref { args, .. } = hir[node].kind else {
+            return false;
+        };
+        let Some(i) = params.iter().position(|&param| param == variable) else {
+            return false;
+        };
+        i < args.len()
+            && given.get(i) == Some(&TypeId::ANY)
+            && self.is_error_type_as_written(file, hir.id_at(args, i), 0)
+    }
+
     /// `getInferredTypeParameterConstraint`: what follows for `infer T` from where it is written.
     #[inline(never)]
     fn inferred_type_param_constraint(
@@ -2443,6 +2575,13 @@ impl<'p> Checker<'p> {
                 }
                 let ty = self.written_type_reference(sym, &args);
                 self.aliased_reference = false;
+                if !is_class_or_interface
+                    && flags.contains(SymFlags::TYPE_ALIAS)
+                    && args.contains(&TypeId::ANY)
+                    && self.is_mapped_over_error_type(file, node, sym, flags, &args)
+                {
+                    return TypeId::ANY;
+                }
                 if is_deferred && self.has_type_variables(ty) {
                     self.p.deferred_references.insert(ty, ());
                 }

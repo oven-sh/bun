@@ -455,6 +455,8 @@ bitflags::bitflags! {
         const HAS_MARKER = 4;
         /// The type of an object literal expression, or what a binding pattern implies, is somewhere in it.
         const HAS_OBJECT_LITERAL = 8;
+        /// A union or an intersection with a `LazyAlias` among its members, or with another such type among them.
+        const HAS_LAZY_MEMBER = 16;
     }
 }
 
@@ -1192,6 +1194,17 @@ impl TypeStore {
         let mut flags = self.flags_of(&data);
         // Unlike the others, it is not handed on by what the type is made of.
         flags.set(TypeFlags::MAY_BE_REDUCED, may_be_reduced);
+        let has_lazy_member = match &data {
+            TypeData::Union(members) | TypeData::Intersection(members) => {
+                members.iter().any(|&member| {
+                    let (of_member, member_flags) = self.get_with_flags(member);
+                    matches!(of_member, TypeData::LazyAlias { .. })
+                        || member_flags.contains(TypeFlags::HAS_LAZY_MEMBER)
+                })
+            }
+            _ => false,
+        };
+        flags.set(TypeFlags::HAS_LAZY_MEMBER, has_lazy_member);
         TypeRecord {
             flags,
             data,

@@ -550,6 +550,9 @@ impl Checker<'_> {
             if !self.is_known(keys) || self.is_uncertain(file, index) {
                 continue;
             }
+            // `getIndexedAccessTypeOrUndefined`: before it is asked whether the key puts the answer off.
+            let reduced = self.reduced(object);
+            keys = self.key_into_string_index_only(reduced, keys);
             // What is in error is not looked into, which what is nothing but `null` or `undefined` is whatever the options
             // (`checkNonNullType`). A key that waits for its type parameters puts the answer off.
             if self.is_any(object)

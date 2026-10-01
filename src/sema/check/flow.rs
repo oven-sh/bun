@@ -3671,12 +3671,19 @@ impl<'p> Checker<'p> {
         {
             return declared;
         }
-        if !self.is_constraint_position(file, e, declared)
-            && !self
-                .contextual_type(file, e)
-                .is_some_and(|c| !self.is_generic(c))
-        {
-            return declared;
+        if !self.is_constraint_position(file, e, declared) {
+            match self.contextual_type(file, e) {
+                // `CheckModeInferential` goes down into a literal, and the literal is then held against what was inferred from it, which
+                // has the type variables. Unless that does not fit what the type parameter extends: then it is held against that.
+                Some(expected) if !self.is_generic(expected) => {
+                    if self.is_in_literal_inferred_from(file, e)
+                        && self.is_assignable(declared, expected)
+                    {
+                        return declared;
+                    }
+                }
+                _ => return declared,
+            }
         }
         self.map_type(declared, |c, m| {
             let constraint = c.base_constraint(m);
@@ -3686,6 +3693,46 @@ impl<'p> Checker<'p> {
                 constraint
             }
         })
+    }
+
+    /// Whether `e` stands in an array or object literal that is expected to be a type parameter of the function it is passed to: what
+    /// is expected of `e` was read off what that type parameter extends. Such a type parameter is not in scope where `e` is.
+    fn is_in_literal_inferred_from(&mut self, file: FileId, e: ExprId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let scope = self.scope_of_expr(file, e);
+        let in_scope = self.type_params_in_scope(file, scope);
+        let mut at = e;
+        loop {
+            let parent = match bound.expr_parent[at.idx()] {
+                Parent::Prop(p) if hir[p].value == at => bound.prop_owner[p.idx()],
+                Parent::Expr(parent) => parent,
+                _ => return false,
+            };
+            match hir[parent].kind {
+                ExprKind::Array(_) | ExprKind::Object(_) => {
+                    let Some(expected) = self.contextual_type(file, parent) else {
+                        return false;
+                    };
+                    if self.parts(expected).iter().any(|m| {
+                        matches!(self.data(*m), TypeData::TypeParam(..)) && !in_scope.contains(m)
+                    }) {
+                        return true;
+                    }
+                }
+                ExprKind::Cond { test, .. } if test != at => {}
+                ExprKind::Binary {
+                    op: BinOp::Or | BinOp::Nullish,
+                    ..
+                } => {}
+                ExprKind::Binary {
+                    op: BinOp::And | BinOp::Comma,
+                    right,
+                    ..
+                } if right == at => {}
+                _ => return false,
+            }
+            at = parent;
+        }
     }
 
     pub(super) fn narrow_reference(&mut self, file: FileId, e: ExprId, declared: TypeId) -> TypeId {

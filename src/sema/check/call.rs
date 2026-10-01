@@ -2334,6 +2334,33 @@ impl<'p> Checker<'p> {
         (fits, known, lesser)
     }
 
+    /// Whether those of the arguments `before` that go by what is expected of them, and wait for nothing, fit `params`. Each has been
+    /// told what it is expected to be. One that was told so in terms of a type parameter is first looked at while that is inferred:
+    /// it counts as fitting, and so does any that is given for a parameter that mentions one.
+    fn do_told_arguments_fit(&mut self, file: FileId, params: &[SigParam], before: &[Arg]) -> bool {
+        for (j, &arg) in before.iter().enumerate() {
+            let Arg::Expr(x) = arg else { continue };
+            if self.is_context_sensitive(file, x) || !self.depends_on_context(file, x) {
+                continue;
+            }
+            let Some(param) = self.param_type_at(params, j) else {
+                continue;
+            };
+            if self.has_type_variables(param)
+                || self
+                    .explicit_context(file, x)
+                    .is_none_or(|told| self.has_type_variables(told))
+            {
+                continue;
+            }
+            let ty = self.arg_type(file, arg);
+            if self.is_known(ty) && self.is_known(param) && !self.is_assignable(ty, param) {
+                return false;
+            }
+        }
+        true
+    }
+
     /// What `plain_arguments_say` to an object or array literal that is given for `param`. What they say at a lesser priority is thrown
     /// away as soon as the literal has its own say (`inferFromTypes`), and the literal is inferred from as it is without it.
     fn plain_arguments_say_to_literal(
@@ -2457,23 +2484,75 @@ impl<'p> Checker<'p> {
     }
 
     /// The calls, and the functions that do not wait for the types of their parameters, inside the object literal `e`: like such an
-    /// argument they are worked out once, for the first candidate, which expects `e` to be `context`.
+    /// argument they are worked out once, for the first candidate, which expects `e` to be `context`. So are those inside an array
+    /// literal and under the operators that hand down what is expected of them. The way down is `getContextualType` read backwards.
     fn settle_nested_once(&mut self, file: FileId, e: ExprId, context: TypeId) {
         let hir = self.hir(file);
         match hir[e].kind {
             ExprKind::Object(props) => {
+                let context = self.force(context);
+                let mut apparent = None;
                 for p in props.iter() {
                     let prop = &hir[p];
-                    if prop.value.is_none()
-                        || !matches!(prop.kind, PropKind::Init | PropKind::Method)
-                    {
+                    if prop.value.is_none() || !self.has_nested_settled_once(file, prop.value) {
                         continue;
                     }
-                    if let Some(name) = self.member_name(file, prop.key)
-                        && let Some(wanted) = self.contextual_property(context, name)
+                    if prop.kind == PropKind::Spread {
+                        self.settle_nested_once(file, prop.value, context);
+                    } else if matches!(prop.kind, PropKind::Init | PropKind::Method)
+                        && let Some(name) = self.member_name(file, prop.key)
                     {
+                        let apparent = *apparent.get_or_insert_with(|| {
+                            self.apparent_context_of_object_literal(file, e, context)
+                        });
+                        let wanted = self
+                            .contextual_property(apparent, name)
+                            .unwrap_or(TypeId::UNRESOLVED);
                         self.settle_nested_once(file, prop.value, wanted);
                     }
+                }
+            }
+            ExprKind::Array(items) => {
+                // `getSpreadIndices`
+                let is_spread = |i: ExprId| matches!(hir[i].kind, ExprKind::Spread(_));
+                let first = hir.ids(items).position(is_spread);
+                let last = first.and_then(|_| hir.ids(items).rposition(is_spread));
+                for (index, item) in hir.ids(items).enumerate() {
+                    if self.has_nested_settled_once(file, item) {
+                        let wanted = self
+                            .contextual_element_at(context, index, Some(items.len()), first, last)
+                            .unwrap_or(TypeId::UNRESOLVED);
+                        self.settle_nested_once(file, item, wanted);
+                    }
+                }
+            }
+            ExprKind::Cond { yes, no, .. } => {
+                self.settle_nested_once(file, yes, context);
+                self.settle_nested_once(file, no, context);
+            }
+            ExprKind::Binary {
+                op: BinOp::Or | BinOp::Nullish,
+                left,
+                right,
+            } => {
+                self.settle_nested_once(file, left, context);
+                self.settle_nested_once(file, right, context);
+            }
+            ExprKind::Binary {
+                op: BinOp::And | BinOp::Comma,
+                right,
+                ..
+            } => self.settle_nested_once(file, right, context),
+            ExprKind::NonNull(x) | ExprKind::AsConst(x) => {
+                self.settle_nested_once(file, x, context)
+            }
+            // `getContextualTypeForAwaitOperand`
+            ExprKind::Await(x) => {
+                if self.has_nested_settled_once(file, x) {
+                    let wanted = self
+                        .awaited_or_promise_like(context)
+                        .unwrap_or(TypeId::UNRESOLVED);
+                    self.settle_nested_once(file, x, wanted);
                 }
             }
             ExprKind::Fn(_) if !self.is_context_sensitive(file, e) => {
@@ -2481,6 +2560,49 @@ impl<'p> Checker<'p> {
             }
             ExprKind::Call(_) | ExprKind::New(_) => self.set_context_if_unset(file, e, context),
             _ => {}
+        }
+    }
+
+    /// Whether `settle_nested_once` finds something to settle in `e`, or `e` is such a thing itself.
+    fn has_nested_settled_once(&self, file: FileId, e: ExprId) -> bool {
+        let hir = self.hir(file);
+        match hir[e].kind {
+            ExprKind::Object(props) => props.iter().any(|p| {
+                let prop = &hir[p];
+                prop.value.is_some()
+                    && matches!(
+                        prop.kind,
+                        PropKind::Init | PropKind::Method | PropKind::Spread
+                    )
+                    && self.has_nested_settled_once(file, prop.value)
+            }),
+            ExprKind::Array(items) => hir
+                .ids(items)
+                .any(|item| self.has_nested_settled_once(file, item)),
+            ExprKind::Cond {
+                yes: left,
+                no: right,
+                ..
+            }
+            | ExprKind::Binary {
+                op: BinOp::Or | BinOp::Nullish,
+                left,
+                right,
+            } => {
+                self.has_nested_settled_once(file, left)
+                    || self.has_nested_settled_once(file, right)
+            }
+            ExprKind::Binary {
+                op: BinOp::And | BinOp::Comma,
+                right: x,
+                ..
+            }
+            | ExprKind::NonNull(x)
+            | ExprKind::AsConst(x)
+            | ExprKind::Await(x) => self.has_nested_settled_once(file, x),
+            ExprKind::Fn(_) => !self.is_context_sensitive(file, e),
+            ExprKind::Call(_) | ExprKind::New(_) => true,
+            _ => false,
         }
     }
 
@@ -2541,6 +2663,35 @@ impl<'p> Checker<'p> {
         }
     }
 
+    /// Whether `param`, which `candidate` expects of an array literal of `count` elements, none of them spread or left out, takes no
+    /// such literal whatever the elements are. `checkArrayLiteral` makes an array or a tuple of them, and a tuple of as many `never`
+    /// is assignable to whichever it makes, so if `param` does not take that tuple `isSignatureApplicable` rejects `candidate`. A type
+    /// parameter comes to no more than what it extends (`getInferredType`). In doubt `param` takes one.
+    fn takes_no_array_literal(&mut self, candidate: SigId, param: TypeId, count: usize) -> bool {
+        let bound = if matches!(self.data(param), TypeData::TypeParam(..)) {
+            // The type parameters that what it extends mentions are at their widest.
+            let own = self.sig_type_params(candidate);
+            let mut widest: Vec<(TypeId, TypeId)> = Vec::with_capacity(own.len());
+            for &p in own.iter() {
+                widest.push((p, self.base_constraint(p)));
+            }
+            let widest = self.p.types.mapper(widest);
+            let bound = self.instantiate(param, widest);
+            self.instantiate(bound, widest)
+        } else {
+            param
+        };
+        if self.has_type_variables(bound) || !self.is_known(bound) {
+            return false;
+        }
+        let least = self.tuple(
+            &vec![TypeId::NEVER; count],
+            &vec![ElemFlags::REQUIRED; count],
+            false,
+        );
+        !self.is_assignable(least, bound)
+    }
+
     pub(super) fn has_const_type_parameter(&mut self, sig: SigId) -> bool {
         self.sig_type_params(sig)
             .iter()
@@ -2589,24 +2740,58 @@ impl<'p> Checker<'p> {
                     }
                 }
             }
+            // Nor is it one that takes no array literal at all.
+            if let ExprKind::Array(items) = self.hir(file)[e].kind
+                && self.hir(file).ids(items).all(|item| {
+                    !matches!(
+                        self.hir(file)[item].kind,
+                        ExprKind::Spread(_) | ExprKind::Missing
+                    )
+                })
+            {
+                for (k, list) in lists.iter().enumerate() {
+                    if let Some(said) = &mut plain[k]
+                        && said.0
+                        && let Some(t) = self.context_of_arg_at(list, i, Some(args.len()))
+                        && self.takes_no_array_literal(candidates[k], t, items.len())
+                    {
+                        said.0 = false;
+                    }
+                }
+            }
             let any_fits = plain.iter().any(|p| p.is_some_and(|p| p.0));
             // A call, and a function that does not wait for the types of its parameters, are worked out once and stay what they came
             // to (`resolvedSignature`, `NodeCheckFlagsContextChecked`): for the first candidate that gets as far as them.
             // `isSignatureApplicable` goes from left to right, so that is none that an argument before them rules out.
             let is_settled_once = self.is_settled_by_first_candidate(file, e);
+            // So are those inside `e`.
+            let settles_nested = !is_settled_once && self.has_nested_settled_once(file, e);
             let mut reaches: SmallVec<[bool; 8]> = smallvec![true; lists.len()];
-            if is_settled_once && type_args.is_empty() && i > 0 {
+            if (is_settled_once || settles_nested) && type_args.is_empty() && i > 0 {
                 for (k, list) in lists.iter().enumerate() {
                     reaches[k] = self
                         .plain_arguments_say(file, candidates[k], list, &args[..i], 0)
-                        .0;
+                        .0
+                        && self.do_told_arguments_fit(file, list, &args[..i]);
                 }
                 if !reaches.contains(&true) {
                     reaches.fill(true);
                 }
             }
+            // What the first candidate to get as far as `e` expects of it, if an argument after `e` rules that candidate out: what
+            // is inside `e` is settled for it all the same.
+            let mut settles_as: Option<TypeId> = None;
             for (k, list) in lists.iter().enumerate() {
-                if !reaches[k] || !is_settled_once && any_fits && plain[k].is_some_and(|p| !p.0) {
+                let is_ruled_out = !is_settled_once && any_fits && plain[k].is_some_and(|p| !p.0);
+                if !reaches[k]
+                    || is_ruled_out
+                        && (!settles_nested
+                            || settles_as.is_some()
+                            || !wanted.is_empty()
+                            || !self
+                                .plain_arguments_say(file, candidates[k], list, &args[..i], i)
+                                .0)
+                {
                     continue;
                 }
                 if let Some(t) = self.context_of_arg_at(list, i, Some(args.len())) {
@@ -2667,12 +2852,20 @@ impl<'p> Checker<'p> {
                         wanted.push(t);
                     }
                 }
+                if is_ruled_out {
+                    settles_as = wanted.pop();
+                }
             }
             // A candidate that takes anything says nothing of the argument, and must not drown out those that do.
             let telling: SmallVec<[TypeId; 8]> = wanted
                 .iter()
                 .copied()
                 .filter(|&t| {
+                    let t = if self.is_no_infer(t) {
+                        self.force(t)
+                    } else {
+                        t
+                    };
                     let base = if self.is_deferred(t) {
                         self.base_constraint(t)
                     } else {
@@ -2690,8 +2883,11 @@ impl<'p> Checker<'p> {
                     &telling
                 })
             };
-            if !is_settled_once && wanted.len() > 1 {
-                self.settle_nested_once(file, e, wanted[0]);
+            if settles_nested
+                && (settles_as.is_some() || wanted.len() > 1)
+                && let Some(first) = settles_as.or_else(|| wanted.first().copied())
+            {
+                self.settle_nested_once(file, e, first);
             }
             self.set_context(file, e, context);
         }
@@ -3367,6 +3563,89 @@ impl<'p> Checker<'p> {
         ty
     }
 
+    /// `ty` with the holes in `so_far` that come to nothing worked out. For a type parameter of a call around that has no candidates
+    /// tsgo has `silentNeverType` (`InferenceFlagsNoDefault`). Nothing is inferred from that, nor from a reference that holds it
+    /// (`ObjectFlagsNonInferrableType`), but it is a `never`: `getUnionType` drops it, `getPropertyTypeForIndexType` gives `never` for
+    /// it, and `keyof` of it is every key. What `instantiateType` makes there has no hole in it and is inferred from.
+    fn without_holes_that_vanish(&mut self, ty: TypeId, so_far: MapperId, depth: u32) -> TypeId {
+        if depth > 4 || !self.has_type_variables(ty) {
+            return ty;
+        }
+        let ty = self.force(ty);
+        let vanishing = |c: &mut Self, t: TypeId| {
+            let t = c.without_holes_that_vanish(t, so_far, depth + 1);
+            if c.p.types.map(so_far, t) == Some(TypeId::UNRESOLVED) {
+                TypeId::NEVER
+            } else {
+                t
+            }
+        };
+        match self.data(ty) {
+            TypeData::Union(members) => {
+                let mut left: SmallVec<[TypeId; 8]> = SmallVec::with_capacity(members.len());
+                for &member in members.iter() {
+                    left.push(vanishing(self, member));
+                }
+                if left[..] == members[..] {
+                    ty
+                } else {
+                    self.union(&left)
+                }
+            }
+            TypeData::IndexedAccess {
+                obj,
+                index,
+                undefined,
+            } => {
+                let key = vanishing(self, *index);
+                if key == *index {
+                    ty
+                } else {
+                    self.indexed_access_flagged(*obj, key, *undefined)
+                        .unwrap_or(TypeId::UNKNOWN)
+                }
+            }
+            TypeData::Keyof(of) => {
+                let keyed = vanishing(self, *of);
+                if keyed == *of {
+                    ty
+                } else {
+                    self.keyof_with_origin(keyed)
+                }
+            }
+            TypeData::Ref { target, args } if self.p.deferred_references.get(&ty).is_none() => {
+                let mut new: Vec<TypeId> = Vec::with_capacity(args.len());
+                for &arg in args.iter() {
+                    new.push(self.without_holes_that_vanish(arg, so_far, depth + 1));
+                }
+                if new[..] == args[..] {
+                    ty
+                } else {
+                    self.intern(TypeData::Ref {
+                        target: *target,
+                        args: new.into(),
+                    })
+                }
+            }
+            TypeData::Tuple {
+                elems,
+                flags,
+                readonly,
+            } => {
+                let mut new: Vec<TypeId> = Vec::with_capacity(elems.len());
+                for &elem in elems.iter() {
+                    new.push(self.without_holes_that_vanish(elem, so_far, depth + 1));
+                }
+                if new[..] == elems[..] {
+                    ty
+                } else {
+                    self.normalized_tuple(&new, flags, *readonly)
+                }
+            }
+            _ => ty,
+        }
+    }
+
     /// The type parameters of the candidates of the overloaded calls around say nothing.
     fn instantiate_with_candidate_holes(&mut self, mut ty: TypeId) -> TypeId {
         for i in (0..self.candidate_holes.len()).rev() {
@@ -3739,6 +4018,7 @@ impl<'p> Checker<'p> {
         // the call, not on the file that declares `sig`.
         inference.any_default = self.hir(file).is_js;
         inference.calls_itself = self.is_inside_declaration_of(file, call, &type_params);
+        inference.call_site = Some((file, call));
         // `returnMapper`: the inferences from the contextual type of the call alone.
         let mut from_result = MapperId::IDENTITY;
         // `inferTypeArguments`: nothing is expected of what a decorator gives back when it is applied. It is applied to what is made
@@ -3770,6 +4050,22 @@ impl<'p> Checker<'p> {
             if !is_from_pattern {
                 // Type parameters of the calls around, which are still being worked out, are what is known of them by now.
                 let mut expected = contextual;
+                // Where nothing is left of one that nothing is known of, that comes first: `UNRESOLVED` would take what is around it along.
+                for i in (0..self.resolving.len()).rev() {
+                    if !self.has_type_variables(expected) {
+                        break;
+                    }
+                    let so_far = self.resolving[i].so_far;
+                    if self
+                        .p
+                        .types
+                        .mapping(so_far)
+                        .iter()
+                        .any(|pair| pair.1 == TypeId::UNRESOLVED)
+                    {
+                        expected = self.without_holes_that_vanish(expected, so_far, 0);
+                    }
+                }
                 for i in (0..self.resolving.len()).rev() {
                     if !self.has_type_variables(expected) {
                         break;

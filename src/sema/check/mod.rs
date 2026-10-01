@@ -189,6 +189,9 @@ pub struct Program {
     /// `UnionType.origin` of a union that `getIntersectionTypeEx` produced by distributing an intersection over its union
     /// members: the members of that intersection.
     union_origins: ByIdKept<TypeId, Arc<[TypeId]>>,
+    /// `UnionType.origin` of a union that `getUnionTypeWorker` made of unions that have a name: those unions, and the members that are
+    /// in none of them.
+    denormalized_unions: ByIdKept<TypeId, Arc<[TypeId]>>,
     /// The generic alias and the arguments a type was made from (`Type.alias`), for a type that could not have come of other
     /// arguments or without the alias. Types are hash-consed: `T | undefined` is the same type whoever wrote it, and has none.
     alias_of: ByIdKept<TypeId, (Sym, Arc<[TypeId]>)>,
@@ -200,6 +203,8 @@ pub struct Program {
     /// library, that is written as a union or an intersection and stands for the type. Filled in at once, when it is first asked for:
     /// what a message says does not go by what happens to have been looked at before.
     plain_alias_of: ById<TypeId, Option<Sym>>,
+    /// See `alias_to_sort_by`.
+    aliases_to_sort_by: ById<TypeId, Option<Sym>>,
     are_plain_aliases_known: std::sync::OnceLock<()>,
     /// How many files somebody has taken on to find out what their aliases stand for.
     plain_aliases_resolved: std::sync::atomic::AtomicUsize,
@@ -410,10 +415,12 @@ impl Program {
             unions_without_intersections: Default::default(),
             deferred_references: Default::default(),
             union_origins: Default::default(),
+            denormalized_unions: Default::default(),
             alias_of: Default::default(),
             shapes: Default::default(),
             distributed_intersections: Default::default(),
             plain_alias_of: Default::default(),
+            aliases_to_sort_by: Default::default(),
             are_plain_aliases_known: Default::default(),
             plain_aliases_resolved: Default::default(),
             generic_union_aliases: NodeSet::new(&symbols),
@@ -611,6 +618,7 @@ impl Program {
             trace_slow_relations: std::env::var_os("BUN_SEMA_TRACE_SLOW_RELATIONS").is_some(),
             resolving: Vec::new(),
             pending_failure_sig: None,
+            own_of_compared_sigs: Vec::new(),
             jsx_resolving: Vec::new(),
             prepared: Default::default(),
             last_prepared: (FileId(u32::MAX), FnId::NONE),
@@ -901,6 +909,8 @@ pub struct Checker<'p> {
     /// The `failure_sigs` entry of the call that `resolve_among` just resolved. `resolve_call` takes it, and stores it only together
     /// with the entry of `calls`.
     pending_failure_sig: Option<SigId>,
+    /// The type parameters of the generic signatures that the permissive comparison under way is inside of.
+    own_of_compared_sigs: Vec<TypeId>,
     /// The JSX elements whose components' type arguments are being worked out, and what each takes for properties.
     jsx_resolving: Vec<(FileId, ExprId, TypeId)>,
     /// Functions whose context `prepare_enclosing` has seen to.

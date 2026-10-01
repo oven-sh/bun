@@ -146,7 +146,10 @@ impl Checker<'_> {
             match hir[e].kind {
                 ExprKind::Spread(inner) => {
                     let given = self.type_of_expr(file, inner);
-                    if !self.is_uncertain(file, inner) && !self.is_nothing_but_nullish(given) {
+                    if !self.is_uncertain(file, inner)
+                        && !self.is_nothing_but_nullish(given)
+                        && !self.is_spread_taken_whole(file, e, given, &out[..])
+                    {
                         let at = self.start_of_error_about(file, inner);
                         self.check_iterated(given, false, at, |c| c.error_end_of(file, inner), out);
                     }
@@ -545,6 +548,63 @@ impl Checker<'_> {
         let returned = types.map_or(yielded, |t| t.returned);
         let next = types.map_or(TypeId::UNKNOWN, |t| t.next);
         self.generator_of(yielded, returned, next, is_async)
+    }
+
+    /// Whether `isArrayLikeType` keeps `spread`, which spreads a `given`, from `checkIteratedTypeOrElementType`: what is like an array
+    /// is taken as it is. `never` is like one, and cannot be gone through.
+    /// `said`: the errors of the file so far.
+    fn is_spread_taken_whole(
+        &mut self,
+        file: FileId,
+        spread: ExprId,
+        given: TypeId,
+        said: &[Diagnostic],
+    ) -> bool {
+        let Parent::Expr(parent) = self.bound(file).expr_parent[spread.idx()] else {
+            return false;
+        };
+        // `checkArrayLiteral`, `getSpreadArgumentType`
+        let asks = matches!(self.hir(file)[parent].kind, ExprKind::Array(_))
+            || !self.is_array_or_tuple(given)
+                && self.is_spread_left_to_rest_parameter(file, parent, spread, said);
+        asks && self.is_known(given) && self.is_array_like(given)
+    }
+
+    /// `getSignatureApplicabilityError`, `inferTypeArguments`: whether the argument `spread` of `call` is one of those that are not
+    /// looked at by themselves, since a rest parameter that is no plain array collects them.
+    fn is_spread_left_to_rest_parameter(
+        &mut self,
+        file: FileId,
+        call: ExprId,
+        spread: ExprId,
+        said: &[Diagnostic],
+    ) -> bool {
+        let hir = self.hir(file);
+        let (ExprKind::Call(id) | ExprKind::New(id)) = hir[call].kind else {
+            return false;
+        };
+        let Some(sig) = self.resolve_call(file, call).sig else {
+            return false;
+        };
+        let params = self.sig_params(sig);
+        if self.non_array_rest_type(&params).is_none() {
+            return false;
+        }
+        // `getEffectiveCallArguments`: a tuple that is spread counts for what is in it.
+        let mut before = Vec::new();
+        for a in hir.ids(hir[id].args) {
+            if a == spread {
+                break;
+            }
+            self.push_effective_arg(file, a, &mut before);
+        }
+        if before.len() + 1 < self.parameter_count(&params) {
+            return false;
+        }
+        // `getCandidateForOverloadFailure`, `resolveUntypedCall`: in a call that does not go through every argument is looked at by
+        // itself after all. What is wrong with the call has been said.
+        let (start, end) = (self.start_of(file, call), self.end_of_expr(file, call));
+        !said.iter().any(|d| (start..end).contains(&d.start))
     }
 
     /// `checkIteratedTypeOrElementType`. `None`: it cannot be gone through, or it cannot be told. `at`, `end`: the range of `errorNode`.

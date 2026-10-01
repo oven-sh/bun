@@ -8,10 +8,10 @@ impl<'p> Checker<'p> {
     /// The pairs of `mapper`, and after them `ty` for `param`.
     fn mapper_with_pair(&self, mapper: MapperId, param: TypeId, ty: TypeId) -> MapperId {
         let mapping = self.p.types.mapping(mapper);
-        let mut pairs = Vec::with_capacity(mapping.len() + 1);
+        let mut pairs: SmallVec<[(TypeId, TypeId); 8]> = SmallVec::with_capacity(mapping.len() + 1);
         pairs.extend_from_slice(mapping);
         pairs.push((param, ty));
-        self.p.types.mapper(pairs)
+        self.p.types.mapper_of(&pairs)
     }
 
     /// Whether what `ty` is depends on type parameters in a way that puts off `keyof`, `T[K]` and `extends`.

@@ -21,11 +21,13 @@ impl Checker<'_> {
     #[inline]
     /// Whether anything may have been worked out.
     pub(super) fn prepare_question_about_expr(&mut self, file: FileId, e: ExprId) -> bool {
-        let is_from_outside = self.is_asked_from_outside() && e.is_some();
-        if is_from_outside {
-            self.prepare_enclosing(file, e);
+        if !self.is_asked_from_outside() || e.is_none() {
+            return false;
         }
-        is_from_outside
+        // Nothing is worked out without a question being asked.
+        let asked = self.work;
+        self.prepare_enclosing(file, e);
+        self.work != asked
     }
 
     #[inline]

@@ -246,10 +246,12 @@ impl<C> Drop for Flat<C> {
 }
 
 const FIRST_SEGMENT_BITS: u32 = 12;
-const SEGMENTS: usize = 21;
+/// One for each number of leading zeros a `u64` can have.
+const SEGMENTS: usize = 65;
 
 /// Cells for numbers that keep coming, all zero to begin with. Each segment is as long as all the ones before it together, so there are
-/// few of them, they never move, and which one a number is in takes counting its leading zeros.
+/// few of them, they never move, and which one a number is in takes counting its leading zeros. What is kept of a segment is where it
+/// would begin if it held the cells before it as well: see `locate`.
 struct Segmented<C> {
     segments: [AtomicPtr<C>; SEGMENTS],
 }
@@ -259,19 +261,17 @@ unsafe impl<C: Cell> Sync for Segmented<C> {}
 // SAFETY: as above.
 unsafe impl<C: Cell> Send for Segmented<C> {}
 
+/// Which segment `index` is in, and how far its cell is from what is kept of the segment.
 #[inline]
 fn locate(index: u32) -> (usize, usize) {
     let n = u64::from(index) + (1 << FIRST_SEGMENT_BITS);
-    let segment = 63 - n.leading_zeros() - FIRST_SEGMENT_BITS;
-    (
-        segment as usize,
-        (n - (1 << (segment + FIRST_SEGMENT_BITS))) as usize,
-    )
+    (n.leading_zeros() as usize, n as usize)
 }
 
+/// Also how far the segment is from what is kept of it.
 #[inline]
 fn segment_len(segment: usize) -> usize {
-    1usize << (segment as u32 + FIRST_SEGMENT_BITS)
+    1usize << (63 - segment)
 }
 
 impl<C: Cell> Segmented<C> {
@@ -285,23 +285,25 @@ impl<C: Cell> Segmented<C> {
     #[inline]
     fn existing_cell(&self, index: u32) -> Option<&C> {
         let (segment, offset) = locate(index);
-        let base = self.segments[segment].load(Ordering::Acquire);
+        // SAFETY: there is a place for every number of leading zeros.
+        let base = unsafe { self.segments.get_unchecked(segment) }.load(Ordering::Acquire);
         if base.is_null() {
             return None;
         }
         // SAFETY: inside the segment, and all zero is a valid `C`.
-        Some(unsafe { &*base.add(offset) })
+        Some(unsafe { &*base.wrapping_add(offset) })
     }
 
     #[inline]
     fn cell(&self, index: u32) -> &C {
         let (segment, offset) = locate(index);
-        let mut base = self.segments[segment].load(Ordering::Acquire);
+        // SAFETY: there is a place for every number of leading zeros.
+        let mut base = unsafe { self.segments.get_unchecked(segment) }.load(Ordering::Acquire);
         if base.is_null() {
             base = self.install(segment);
         }
         // SAFETY: inside the segment, and all zero is a valid `C`.
-        unsafe { &*base.add(offset) }
+        unsafe { &*base.wrapping_add(offset) }
     }
 
     /// Several threads may get here at once. The first to put its segment in place wins.
@@ -313,13 +315,16 @@ impl<C: Cell> Segmented<C> {
         if fresh.is_null() {
             std::alloc::handle_alloc_error(layout);
         }
+        let base = fresh.wrapping_sub(segment_len(segment));
+        // Null is for a segment that is not there.
+        assert!(!base.is_null());
         match self.segments[segment].compare_exchange(
             std::ptr::null_mut(),
-            fresh,
+            base,
             Ordering::AcqRel,
             Ordering::Acquire,
         ) {
-            Ok(_) => fresh,
+            Ok(_) => base,
             Err(installed) => {
                 // SAFETY: allocated above with this layout, and shown to nobody.
                 unsafe { std::alloc::dealloc(fresh.cast::<u8>(), layout) };
@@ -337,7 +342,7 @@ impl<C> Drop for Segmented<C> {
                 // SAFETY: allocated in `install` with this layout. Cells have nothing to drop.
                 unsafe {
                     std::alloc::dealloc(
-                        base.cast::<u8>(),
+                        base.wrapping_add(segment_len(segment)).cast::<u8>(),
                         Layout::array::<C>(segment_len(segment)).unwrap(),
                     );
                 }
@@ -371,7 +376,8 @@ impl Bases {
     /// `None`: there is no such node. `NONE` is asked about now and then.
     #[inline]
     fn at(&self, file: FileId, index: u32) -> Option<usize> {
-        let (start, end) = (self.0[file.idx()], self.0[file.idx() + 1]);
+        // The later one first: where that is in bounds the other is, and is not checked.
+        let (end, start) = (self.0[file.idx() + 1], self.0[file.idx()]);
         (index < end - start).then(|| (start + index) as usize)
     }
 }
@@ -446,8 +452,7 @@ impl<K: NodeKey, V: Packed> ByNode<K, V> {
     pub fn get(&self, key: &K) -> Option<V> {
         let raw = match self.cell(*key) {
             Some(cell) => cell.load(),
-            None if key.file().is_local() => V::Cell::narrow(local::cell(self.slot, key.index())),
-            None => return None,
+            None => V::Cell::narrow(local::cell_of(self.slot, key.file().0, key.index())),
         };
         (raw != Default::default()).then(|| V::unpack(raw))
     }
@@ -459,10 +464,13 @@ impl<K: NodeKey, V: Packed> ByNode<K, V> {
             // What is local is gone before what is shared is.
             Some(_) if value.is_local() => value,
             Some(cell) => V::unpack(cell.put_if_empty(value.pack())),
-            None if key.file().is_local() && key.index() != u32::MAX => V::unpack(V::Cell::narrow(
-                local::put_if_empty(self.slot, key.index(), V::Cell::widen(value.pack())),
-            )),
-            None => value,
+            None => {
+                let raw = V::Cell::widen(value.pack());
+                match local::put_if_empty_of(self.slot, key.file().0, key.index(), raw) {
+                    0 => value,
+                    kept => V::unpack(V::Cell::narrow(kept)),
+                }
+            }
         }
     }
 }
@@ -472,8 +480,7 @@ impl<K: NodeKey> ByNode<K, RawWord> {
     pub fn raw(&self, key: K) -> u32 {
         match self.cell(key) {
             Some(cell) => Cell::load(cell),
-            None if key.file().is_local() => local::cell(self.slot, key.index()) as u32,
-            None => 0,
+            None => local::cell_of(self.slot, key.file().0, key.index()) as u32,
         }
     }
     /// Whatever was there is gone. `is_local`: what `raw` stands for is.
@@ -482,10 +489,7 @@ impl<K: NodeKey> ByNode<K, RawWord> {
         match self.cell(key) {
             Some(_) if is_local => {}
             Some(cell) => Cell::store(cell, raw),
-            None if key.file().is_local() && key.index() != u32::MAX => {
-                local::store(self.slot, key.index(), u64::from(raw));
-            }
-            None => {}
+            None => local::store_of(self.slot, key.file().0, key.index(), u64::from(raw)),
         }
     }
 }
@@ -538,8 +542,7 @@ impl<K: NodeKey> NodeSet<K> {
         match self.bases.at(key.file(), key.index()) {
             Some(at) => (self.bits.cell(at / 32).load(Ordering::Acquire) & 1 << (at % 32) != 0)
                 .then_some(()),
-            None if key.file().is_local() => local::bit(self.slot, key.index()).then_some(()),
-            None => None,
+            None => local::bit_of(self.slot, key.file().0, key.index()).then_some(()),
         }
     }
 
@@ -552,13 +555,12 @@ impl<K: NodeKey> NodeSet<K> {
                     self.len.fetch_add(1, Ordering::Relaxed);
                 }
             }
-            None if key.file().is_local() && key.index() != u32::MAX => {
+            None => {
                 // Counted with the rest, and never taken off again: all the count is asked is whether it is zero.
-                if local::set_bit(self.slot, key.index()) {
+                if local::set_bit_of(self.slot, key.file().0, key.index()) {
                     self.len.fetch_add(1, Ordering::Relaxed);
                 }
             }
-            None => {}
         }
     }
 
@@ -814,7 +816,8 @@ impl<K: std::hash::Hash + Eq + MaybeLocal + 'static, V: Clone + MaybeLocal + 'st
     #[inline]
     pub fn get(&self, key: &K) -> Option<V> {
         if key.is_local() {
-            local::map_get(self.slot, key)
+            // SAFETY: the slot is this table's own.
+            unsafe { local::map_get(self.slot, key) }
         } else {
             self.shared.get(key)
         }
@@ -824,7 +827,8 @@ impl<K: std::hash::Hash + Eq + MaybeLocal + 'static, V: Clone + MaybeLocal + 'st
     #[inline]
     pub fn insert(&self, key: K, value: V) -> V {
         if key.is_local() {
-            local::map_insert(self.slot, key, value)
+            // SAFETY: the slot is this table's own.
+            unsafe { local::map_insert(self.slot, key, value) }
         } else if value.is_local() {
             // What is local is gone before what is shared is.
             value
@@ -844,12 +848,13 @@ mod tests {
 
     #[test]
     fn segments_cover_every_number_once() {
-        let mut expected = (0usize, 0usize);
+        let mut expected = (locate(0).0, 0usize);
         for index in 0..300_000u32 {
-            assert_eq!(locate(index), expected);
+            let (segment, offset) = locate(index);
+            assert_eq!((segment, offset - segment_len(segment)), expected);
             expected.1 += 1;
             if expected.1 == segment_len(expected.0) {
-                expected = (expected.0 + 1, 0);
+                expected = (expected.0 - 1, 0);
             }
         }
         assert!(locate(u32::MAX).0 < SEGMENTS);

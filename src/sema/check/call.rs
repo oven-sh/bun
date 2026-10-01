@@ -258,7 +258,10 @@ impl<'p> Checker<'p> {
             return known;
         }
         // `resolvingSignature`
-        let is_under_way = self.stack.contains(&Query::Call(file, call));
+        let is_under_way = self
+            .stack
+            .iter()
+            .any(|q| matches!(*q, Query::Call(f, c) if f == file && c == call));
         if is_under_way && self.asking_for_context {
             self.enter(Query::Call(file, call));
             return ResolvedCall {
@@ -301,8 +304,16 @@ impl<'p> Checker<'p> {
     }
 
     fn effective_args(&mut self, file: FileId, args: IdList<ExprId>) -> Args {
-        let mut out = Args::with_capacity(args.len());
-        for a in self.hir(file).ids(args) {
+        let hir = self.hir(file);
+        let mut out = Args::new();
+        if !hir
+            .ids(args)
+            .any(|a| matches!(hir[a].kind, ExprKind::Spread(_)))
+        {
+            out.extend(hir.ids(args).map(Arg::Expr));
+            return out;
+        }
+        for a in hir.ids(args) {
             self.each_effective_arg(file, a, |arg| out.push(arg));
         }
         out
@@ -476,21 +487,43 @@ impl<'p> Checker<'p> {
         args: &[Arg],
         is_incomplete: bool,
     ) -> bool {
+        let spread = args.iter().position(|a| matches!(a, Arg::Spread(..)));
+        self.has_correct_arity_for_count(params, args.len(), spread, is_incomplete)
+    }
+
+    /// `hasCorrectArity`, of a call with `given` arguments. `spread`: the first of them that is spread.
+    pub(super) fn has_correct_arity_for_count(
+        &mut self,
+        params: &[SigParam],
+        given: usize,
+        spread: Option<usize>,
+        is_incomplete: bool,
+    ) -> bool {
+        // Which parameters take `void` only matters where one that is required is left out.
+        let rest = params.last().filter(|p| p.rest);
+        if spread.is_none() && !rest.is_some_and(|p| self.is_tuple(p.ty)) {
+            if given > params.len() {
+                return rest.is_some();
+            }
+            if is_incomplete || params[given..].iter().all(|p| p.optional || p.rest) {
+                return true;
+            }
+        }
         let count = self.parameter_count(params);
         let least = self.min_argument_count(params);
         let has_rest = self.has_effective_rest_parameter(params);
         // What is spread comes after all that is required, and goes to a rest parameter or at least starts among the parameters.
-        if let Some(spread) = args.iter().position(|a| matches!(a, Arg::Spread(..))) {
+        if let Some(spread) = spread {
             return spread >= least && (has_rest || spread < count);
         }
-        if args.len() > count && !has_rest {
+        if given > count && !has_rest {
             return false;
         }
         if is_incomplete {
             return true;
         }
         // `acceptsVoid`: only a parameter that takes `void` may be left out. Of one that is not known it cannot be told.
-        for i in args.len()..least {
+        for i in given..least {
             let Some(ty) = self.param_type_at(params, i) else {
                 return false;
             };
@@ -784,15 +817,23 @@ impl<'p> Checker<'p> {
         }
         let is_incomplete = self.is_call_incomplete(file, call, id);
         let mut candidates: Sigs = Sigs::new();
+        // What the last of `candidates` takes.
+        let mut taken: List<'p, SigParam> = List::default();
+        let mut is_const_left_out = false;
         for &sig in &sigs {
-            let type_params = self.sig_type_params(sig);
-            if !self.has_correct_type_argument_arity(&type_params, type_args.len()) {
-                continue;
+            let takes_type_args = type_args.is_empty() || {
+                let type_params = self.sig_type_params(sig);
+                self.has_correct_type_argument_arity(&type_params, type_args.len())
+            };
+            if takes_type_args {
+                let params = self.sig_params(sig);
+                if self.has_correct_arity_of_call(&params, args, is_incomplete) {
+                    candidates.push(sig);
+                    taken = params;
+                    continue;
+                }
             }
-            let params = self.sig_params(sig);
-            if self.has_correct_arity_of_call(&params, args, is_incomplete) {
-                candidates.push(sig);
-            }
+            is_const_left_out = is_const_left_out || self.has_const_type_parameter(sig);
         }
         if candidates.is_empty() {
             let sig = self.candidate_for_overload_failure(
@@ -805,10 +846,9 @@ impl<'p> Checker<'p> {
             };
         }
         // No overload with a `const` type parameter takes this many arguments.
-        if sigs.len() > candidates.len()
+        if is_const_left_out
             && self.provisional == 0
             && !candidates.iter().any(|&c| self.has_const_type_parameter(c))
-            && sigs.iter().any(|&c| self.has_const_type_parameter(c))
         {
             self.p.calls_outside_const_context.insert((file, call), ());
         }
@@ -843,7 +883,11 @@ impl<'p> Checker<'p> {
                 };
             }
         }
+        let first = chosen.unwrap_or(candidates[0]);
+        let is_generic = !self.sig_type_params(first).is_empty();
+        // There is something to do from the second argument on. With a rest parameter questions are asked before that is found out.
         if let [only] = candidates[..]
+            && (args.len() > 1 || taken.last().is_some_and(|p| p.rest))
             && is_sure
             && !self.is_provisional_here()
         {
@@ -851,6 +895,8 @@ impl<'p> Checker<'p> {
                 file,
                 call,
                 only,
+                &taken,
+                is_generic,
                 sigs.len() == 1,
                 type_args,
                 args,
@@ -858,7 +904,6 @@ impl<'p> Checker<'p> {
             );
         }
         let is_tested = candidates.len() > 1 && chosen.is_some();
-        let first = chosen.unwrap_or(candidates[0]);
         let sig = self.instantiate_for_call(file, call, first, type_args, args, this_arg, false);
         let ret = return_of(self, sig);
         let resolved = ResolvedCall {
@@ -867,7 +912,7 @@ impl<'p> Checker<'p> {
         };
         // For a single signature, `getCandidateForOverloadFailure` returns a different signature only if the type arguments are
         // inferred. The return type and the contextual types of the arguments can both depend on them.
-        let is_inferred = type_args.is_empty() && !self.sig_type_params(first).is_empty();
+        let is_inferred = type_args.is_empty() && is_generic;
         let can_differ = sigs.len() > 1 || is_inferred;
         if !can_differ || !is_sure || self.is_provisional_here() {
             return resolved;
@@ -1072,18 +1117,19 @@ impl<'p> Checker<'p> {
     /// `is_only_signature`: the callee has no other signature. Does nothing unless the order of the checks can be determined before
     /// any contextual type is assigned: no argument is spread, and every argument is either context sensitive or independent of
     /// its contextual type.
+    /// `declared`: what `candidate` takes. `is_generic`: it has type parameters.
     fn check_sole_candidate_in_order(
         &mut self,
         file: FileId,
         call: ExprId,
         candidate: SigId,
+        declared: &[SigParam],
+        is_generic: bool,
         is_only_signature: bool,
         type_args: &[TypeId],
         args: &[Arg],
         this_arg: Option<ExprId>,
     ) {
-        let declared = self.sig_params(candidate);
-        let is_generic = !self.sig_type_params(candidate).is_empty();
         let is_inferred = is_generic && type_args.is_empty();
         let mut last_sensitive = None;
         // `inferTypeArguments` checks an argument only if `couldContainTypeVariables(paramType)`.
@@ -1100,7 +1146,7 @@ impl<'p> Checker<'p> {
                 }
                 continue;
             }
-            let Some(param) = self.context_of_arg_at(&declared, i, Some(args.len())) else {
+            let Some(param) = self.context_of_arg_at(declared, i, Some(args.len())) else {
                 return;
             };
             is_checked_by_inference |=
@@ -1109,7 +1155,7 @@ impl<'p> Checker<'p> {
         }
         // The first argument is always checked against `candidate`.
         if last_sensitive.is_none_or(|i| i == 0)
-            || self.non_array_rest_type(&declared).is_some()
+            || self.non_array_rest_type(declared).is_some()
             || self.implementation_signature(candidate).is_none()
             || !type_args.is_empty() && !self.do_type_arguments_fit(candidate, type_args)
             || is_inferred && self.has_generic_function_argument(file, args)
@@ -1380,11 +1426,21 @@ impl<'p> Checker<'p> {
                     return false;
                 }
                 let ty = self.type_of_expr(file, e);
-                let found = match self.single_signature(ty, false, true) {
-                    Some(sig) => Some(sig),
-                    None => self.single_signature(ty, true, true),
+                // `getSingleSignature`, of either kind.
+                let ty = self.force(ty);
+                if !self.is_object_type(ty) {
+                    return false;
+                }
+                let Some(members) = self.members(ty) else {
+                    return false;
                 };
-                found.is_some_and(|sig| !self.sig_type_params(sig).is_empty())
+                let shape = members.shape();
+                let only = match (shape.call.as_slice(), shape.construct.as_slice()) {
+                    ([only], []) | ([], [only]) => *only,
+                    _ => return false,
+                };
+                let sig = self.instantiate_sig(only, members.mapper);
+                !self.sig_type_params(sig).is_empty()
             }
         }
     }
@@ -1829,10 +1885,43 @@ impl<'p> Checker<'p> {
 
     /// `reorderCandidates`: the order overloads are tried in. Of one thing declared in several places, what a later place declares
     /// goes first; signatures that ask for a literal go before all others.
-    pub(super) fn candidates_in_order(&mut self, sigs: &[SigId]) -> Sigs {
-        if sigs.len() < 2 {
-            return Sigs::from_slice(sigs);
+    pub(super) fn candidates_in_order(&mut self, sigs: &[SigId]) -> List<'p, SigId> {
+        let first = match *sigs {
+            [] => return List::default(),
+            [only] => return List::One(only),
+            [first, ..] => first,
+        };
+        let p = self.p;
+        let kept = p.candidate_orders.get_ref(&first);
+        if let Some(kept) = kept
+            && let Some(ordered) = Self::order_kept_for(kept, sigs)
+        {
+            return List::Kept(ordered);
         }
+        let before = self.what_only_holds_for_now();
+        let ordered = self.candidates_in_order_uncached(sigs);
+        // One list is kept for a signature. What is shared outlives what is local.
+        if kept.is_none()
+            && self.what_only_holds_for_now() == before
+            && (first.is_local() || !sigs.iter().any(|sig| sig.is_local()))
+        {
+            let both: Box<[SigId]> = sigs.iter().chain(&ordered).copied().collect();
+            let kept = p.candidate_orders.insert_ref(first, both).1;
+            // Another thread may have put in another list that starts the same.
+            if let Some(ordered) = Self::order_kept_for(kept, sigs) {
+                return List::Kept(ordered);
+            }
+        }
+        List::Own(ordered.into_vec())
+    }
+
+    /// The second half of an entry of `candidate_orders`, if the first half is `sigs`.
+    fn order_kept_for<'a>(kept: &'a [SigId], sigs: &[SigId]) -> Option<&'a [SigId]> {
+        let (of, ordered) = kept.split_at(kept.len() / 2);
+        (of == sigs).then_some(ordered)
+    }
+
+    fn candidates_in_order_uncached(&mut self, sigs: &[SigId]) -> Sigs {
         let mut result = Sigs::with_capacity(sigs.len());
         let mut last: Option<(Option<SigSymbol>, Option<SigParent>)> = None;
         let (mut cutoff, mut index, mut specialized) = (0usize, 0usize, 0usize);

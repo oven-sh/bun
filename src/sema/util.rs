@@ -194,9 +194,13 @@ impl<'a, T> IntoIterator for &'a List<'_, T> {
 }
 
 const FIRST_CHUNK_BITS: u32 = 10;
-const CHUNKS: usize = 23;
+/// One for each number of leading zeros a `u32` can have.
+const CHUNKS: usize = 33;
 
 /// A vector that only grows, whose elements never move, and that is read and added to without a lock.
+///
+/// Each chunk is twice as long as the one before it. What is kept of a chunk is where it would begin if it held what is before it as
+/// well, so that an element is found without working out where in its chunk it is: see `locate`.
 pub struct AppendVec<T> {
     chunks: [AtomicPtr<T>; CHUNKS],
     len: AtomicU32,
@@ -207,19 +211,17 @@ unsafe impl<T: Send + Sync> Sync for AppendVec<T> {}
 // SAFETY: owns its elements.
 unsafe impl<T: Send> Send for AppendVec<T> {}
 
+/// Which chunk `index` is in, and how far it is from what is kept of the chunk.
 #[inline]
 fn locate(index: u32) -> (usize, usize) {
-    let n = index + (1 << FIRST_CHUNK_BITS);
-    let chunk = 31 - n.leading_zeros() - FIRST_CHUNK_BITS;
-    (
-        chunk as usize,
-        (n - (1 << (chunk + FIRST_CHUNK_BITS))) as usize,
-    )
+    let n = index.wrapping_add(1 << FIRST_CHUNK_BITS);
+    (n.leading_zeros() as usize, n as usize)
 }
 
+/// Also how far the chunk is from what is kept of it.
 #[inline]
 fn chunk_len(chunk: usize) -> usize {
-    1usize << (chunk as u32 + FIRST_CHUNK_BITS)
+    1usize << (31 - chunk)
 }
 
 impl<T> Default for AppendVec<T> {
@@ -255,7 +257,7 @@ impl<T> AppendVec<T> {
             base = self.install_chunk(chunk);
         }
         // SAFETY: `offset` is inside the chunk, the slot is this call's alone, and nobody reads it before the index is handed out.
-        unsafe { base.add(offset).write(make(index)) };
+        unsafe { base.wrapping_add(offset).write(make(index)) };
         index
     }
 
@@ -266,13 +268,16 @@ impl<T> AppendVec<T> {
         // SAFETY: the layout has a non-zero size for every `T` this crate stores.
         let fresh = unsafe { std::alloc::alloc(layout) }.cast::<T>();
         assert!(!fresh.is_null());
+        let base = fresh.wrapping_sub(chunk_len(chunk));
+        // Null is for a chunk that is not there.
+        assert!(!base.is_null());
         match self.chunks[chunk].compare_exchange(
             std::ptr::null_mut(),
-            fresh,
+            base,
             Ordering::AcqRel,
             Ordering::Acquire,
         ) {
-            Ok(_) => fresh,
+            Ok(_) => base,
             Err(installed) => {
                 // SAFETY: allocated above with the same layout, and shown to nobody.
                 unsafe { std::alloc::dealloc(fresh.cast::<u8>(), layout) };
@@ -284,9 +289,12 @@ impl<T> AppendVec<T> {
     #[inline]
     pub fn get(&self, index: u32) -> &T {
         let (chunk, offset) = locate(index);
-        let base = self.chunks[chunk].load(Ordering::Acquire);
+        // SAFETY: there is a place for every number of leading zeros.
+        let chunk = unsafe { self.chunks.get_unchecked(chunk) };
+        // Whoever pushed had seen the chunk, and the index came from there with `Release` and `Acquire`: there is nothing left to wait for.
+        let base = chunk.load(Ordering::Relaxed);
         // SAFETY: an index comes from `push`, which initialized the slot before handing it out.
-        unsafe { &*base.add(offset) }
+        unsafe { &*base.wrapping_add(offset) }
     }
 }
 
@@ -298,6 +306,7 @@ impl<T> Drop for AppendVec<T> {
             if base.is_null() {
                 continue;
             }
+            let base = base.wrapping_add(chunk_len(chunk));
             let start = (chunk_len(chunk) - (1 << FIRST_CHUNK_BITS)) as u32;
             let used = (len.saturating_sub(start) as usize).min(chunk_len(chunk));
             for i in 0..used {
@@ -379,7 +388,8 @@ impl Places {
         let tag = spread as u32;
         let mut at = tag as usize & self.mask;
         loop {
-            let place = self.places[at].load(Ordering::Acquire);
+            // SAFETY: `mask` is one less than there are places.
+            let place = unsafe { self.places.get_unchecked(at) }.load(Ordering::Acquire);
             if place == 0 {
                 return None;
             }
@@ -501,18 +511,19 @@ struct MapShard<K, V> {
 /// A memo table many threads fill. Two threads may compute the same entry; they compute the same value. Looking something up takes no
 /// lock and writes to nothing that is shared. Only adding something takes the lock of one of the parts.
 pub struct ShardedMap<K, V> {
-    shards: Box<[MapShard<K, V>]>,
+    shards: Box<[MapShard<K, V>; MAP_SHARDS]>,
 }
 
 impl<K: std::hash::Hash + Eq, V> Default for ShardedMap<K, V> {
     fn default() -> Self {
+        let shards: Box<[MapShard<K, V>]> = (0..MAP_SHARDS)
+            .map(|_| MapShard {
+                places: GrowingPlaces::default(),
+                entries: AppendVec::new(),
+            })
+            .collect();
         ShardedMap {
-            shards: (0..MAP_SHARDS)
-                .map(|_| MapShard {
-                    places: GrowingPlaces::default(),
-                    entries: AppendVec::new(),
-                })
-                .collect(),
+            shards: shards.try_into().unwrap_or_else(|_| unreachable!()),
         }
     }
 }
@@ -557,10 +568,15 @@ impl<K: std::hash::Hash + Eq, V: Clone> ShardedMap<K, V> {
     pub fn get(&self, key: &K) -> Option<V> {
         let spread = spread_hash(key);
         let shard = &self.shards[shard_of(spread)];
-        shard
-            .places
-            .find(spread, |i| shard.entries.get(i).0 == *key)
-            .map(|i| shard.entries.get(i).1.clone())
+        let mut found = None;
+        shard.places.find(spread, |i| {
+            let entry = shard.entries.get(i);
+            if entry.0 == *key {
+                found = Some(&entry.1);
+            }
+            found.is_some()
+        });
+        found.cloned()
     }
 
     /// Keeps what is there already, and returns what is kept.

@@ -145,15 +145,20 @@ impl Checker<'_> {
         if !self.is_known(apparent) {
             return;
         }
-        // `resolveErrorCall`: of what is in error something has been said already.
-        if self.is_in_error(file, data.callee) {
+        // `resolveErrorCall`: of what is in error something has been said already. It is `any`.
+        if self.is_any(called) && self.is_in_error(file, data.callee) {
             return;
         }
         let has_type_args = !data.type_args.is_empty();
         // `getSignaturesOfType` goes by `getReducedApparentType`: an intersection nothing can be has no signatures.
         let reduced = self.reduced(apparent);
         let call_sigs = self.signatures(reduced, false);
-        let construct_sigs = self.signatures(reduced, true);
+        // Nothing is made of these where what is called can be called.
+        let construct_sigs = if is_new || call_sigs.is_empty() {
+            self.signatures(reduced, true)
+        } else {
+            List::default()
+        };
         if !is_new {
             if self.is_untyped_function_call(
                 called,
@@ -945,28 +950,8 @@ impl Checker<'_> {
         args: &[(Arg, ExprId)],
         is_incomplete: bool,
     ) -> bool {
-        let count = self.parameter_count(params);
-        let least = self.min_argument_count(params);
-        let has_rest = self.has_effective_rest_parameter(params);
-        if let Some(spread) = args.iter().position(|a| matches!(a.0, Arg::Spread(..))) {
-            return spread >= least && (has_rest || spread < count);
-        }
-        if !has_rest && args.len() > count {
-            return false;
-        }
-        if is_incomplete {
-            return true;
-        }
-        // `acceptsVoid`. A parameter of unknown type may accept `void`.
-        for i in args.len()..least {
-            let Some(ty) = self.param_type_at(params, i) else {
-                return false;
-            };
-            if !self.some_type(ty, |_, m| m == TypeId::VOID || m == TypeId::UNRESOLVED) {
-                return false;
-            }
-        }
-        true
+        let spread = args.iter().position(|a| matches!(a.0, Arg::Spread(..)));
+        self.has_correct_arity_for_count(params, args.len(), spread, is_incomplete)
     }
 
     /// `getThisArgumentOfCall`: the object of the access that is called, whatever assertions are around the access, and how that
@@ -992,12 +977,21 @@ impl Checker<'_> {
         }
     }
 
-    /// Whether the types of the arguments were all found out.
-    fn are_arguments_known(&mut self, file: FileId, args: &[(Arg, ExprId)]) -> bool {
-        args.iter().all(|&(arg, _)| {
+    /// The types of the arguments, if they were all found out.
+    fn known_argument_types(
+        &mut self,
+        file: FileId,
+        args: &[(Arg, ExprId)],
+    ) -> Option<SmallVec<[TypeId; 8]>> {
+        let mut types = SmallVec::new();
+        for &(arg, _) in args {
             let ty = self.arg_type(file, arg);
-            self.is_known(ty) && !matches!(arg, Arg::Expr(x) if self.is_uncertain(file, x))
-        })
+            if !self.is_known(ty) || matches!(arg, Arg::Expr(x) if self.is_uncertain(file, x)) {
+                return None;
+            }
+            types.push(ty);
+        }
+        Some(types)
     }
 
     /// Whether it is certain that none of `sigs` takes the arguments of the call, `new` or tagged template `e`, which may still be
@@ -1064,11 +1058,13 @@ impl Checker<'_> {
             self.each_effective_arg(file, a, |arg| args.push((arg, a)));
         }
         // A call that is being resolved cannot say what it expects of an argument. The candidate at hand does, in
-        // `is_signature_applicable`.
+        // `is_signature_applicable`. The arguments of any other call are what they are, whatever they are held against.
         let is_under_way = self.stack.contains(&Query::Call(file, e));
-        if !is_under_way && !self.are_arguments_known(file, &args) {
-            return None;
-        }
+        let types = if is_under_way {
+            None
+        } else {
+            Some(self.known_argument_types(file, &args)?)
+        };
         // `resolveCall`: the type arguments of `super<T>()` are not looked at.
         let is_super_call = !is_new && matches!(hir[data.callee].kind, ExprKind::Super);
         let type_args = if is_super_call {
@@ -1085,7 +1081,17 @@ impl Checker<'_> {
             self.this_argument_of_call(file, data.callee)
                 .map(|(obj, _)| obj)
         };
-        let plain: SmallVec<[Arg; 4]> = args.iter().map(|a| a.0).collect();
+        // What type arguments are inferred from, which they are not for the only candidate of a call that is resolved.
+        let plain: SmallVec<[Arg; 4]> = if candidates.len() > 1 || resolved.sig.is_none() {
+            args.iter().map(|a| a.0).collect()
+        } else {
+            SmallVec::new()
+        };
+        let applicability = |checker: &mut Self, sig: SigId| match &types {
+            Some(types) => checker
+                .signature_applicability(file, e, c, &args, types, sig, this_arg, is_new, None),
+            None => checker.is_signature_applicable(file, e, c, &args, sig, this_arg, is_new, None),
+        };
         // `callIsIncomplete`. For a call `close_pos` is where the parser expected the `)`. The default library has no text.
         let is_incomplete = if matches!(hir[e].kind, ExprKind::TaggedTemplate(_)) {
             data.close_pos == INCOMPLETE_TEMPLATE
@@ -1108,8 +1114,7 @@ impl Checker<'_> {
                 let params = self.sig_params(sig);
                 self.has_correct_arity_for(&params, &args, is_incomplete)
             }
-            && self.is_signature_applicable(file, e, c, &args, sig, this_arg, is_new, None)
-                == Applicable::Yes
+            && applicability(self, sig) == Applicable::Yes
         {
             return None;
         }
@@ -1156,7 +1161,7 @@ impl Checker<'_> {
                     }
                 }
             }
-            match self.is_signature_applicable(file, e, c, &args, check, this_arg, is_new, None) {
+            match applicability(self, check) {
                 Applicable::Yes | Applicable::Unknown => return None,
                 Applicable::No => for_argument_error.push(check),
             }
@@ -1197,9 +1202,7 @@ impl Checker<'_> {
                 if attempt != accepted {
                     continue;
                 }
-                if self.is_signature_applicable(file, e, c, &args, accepted, this_arg, is_new, None)
-                    != Applicable::No
-                {
+                if applicability(self, accepted) != Applicable::No {
                     return None;
                 }
                 break;
@@ -1459,22 +1462,23 @@ impl Checker<'_> {
             }
         }
         // Nothing is decided on the strength of an argument that could not be found out.
-        let applicable = if self.are_arguments_known(file, args) {
-            self.signature_applicability(file, e, c, args, sig, this_arg, is_new, report)
-        } else {
-            Applicable::Unknown
+        let applicable = match self.known_argument_types(file, args) {
+            Some(types) => self
+                .signature_applicability(file, e, c, args, &types, sig, this_arg, is_new, report),
+            None => Applicable::Unknown,
         };
         self.contextual.truncate(settled);
         applicable
     }
 
-    /// `isSignatureApplicable`, once the arguments are known and know what is expected of them.
+    /// `isSignatureApplicable`, once the arguments are known and know what is expected of them. `types`: what each of them is.
     fn signature_applicability(
         &mut self,
         file: FileId,
         e: ExprId,
         c: CallId,
         args: &[(Arg, ExprId)],
+        types: &[TypeId],
         sig: SigId,
         this_arg: Option<ExprId>,
         is_new: bool,
@@ -1534,7 +1538,7 @@ impl Checker<'_> {
             if !self.is_known(wanted) {
                 return Applicable::Unknown;
             }
-            let given = self.arg_type(file, arg);
+            let given = types[i];
             if self.trace_relations {
                 let (a, b) = (
                     crate::describe::Describer::new(self).describe(given),

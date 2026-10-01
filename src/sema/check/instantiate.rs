@@ -35,7 +35,8 @@ impl<'p> Checker<'p> {
             return first;
         }
         let mapping = self.p.types.mapping(first);
-        let mut pairs: Vec<(TypeId, TypeId)> = Vec::with_capacity(mapping.len());
+        let mut pairs: smallvec::SmallVec<[(TypeId, TypeId); 8]> =
+            smallvec::SmallVec::with_capacity(mapping.len());
         let mut changed = false;
         for &(param, value) in mapping {
             let new = self.instantiate(value, second);
@@ -45,7 +46,7 @@ impl<'p> Checker<'p> {
         if !changed {
             return first;
         }
-        self.p.types.mapper(pairs)
+        self.p.types.mapper_of(&pairs)
     }
 
     pub fn instantiate_all(&mut self, types: &[TypeId], mapper: MapperId) -> Vec<TypeId> {
@@ -481,7 +482,7 @@ impl<'p> Checker<'p> {
     /// Where `instantiations` keeps what goes with the single signature type `ty` and `arguments`: under a mapper from `ty`
     /// itself, which nothing is instantiated with.
     fn single_signature_key(&self, ty: TypeId, arguments: TypeId) -> (TypeId, MapperId) {
-        (ty, self.p.types.mapper(vec![(ty, arguments)]))
+        (ty, self.p.types.mapper_of(&[(ty, arguments)]))
     }
 
     /// `getSignatureInstantiation` with `inferredTypeParameters`: `made` is the type of the clone of the signature of `returned`
@@ -694,15 +695,15 @@ impl<'p> Checker<'p> {
     ) -> MapperId {
         let type_params = self.hir(file)[func].type_params;
         let mapping = self.p.types.mapping(own);
-        let mut pairs: Vec<(TypeId, TypeId)> =
-            Vec::with_capacity(mapping.len() + type_params.len());
+        let mut pairs: smallvec::SmallVec<[(TypeId, TypeId); 8]> =
+            smallvec::SmallVec::with_capacity(mapping.len() + type_params.len());
         for &(param, value) in mapping {
             if !self.is_declared_among(param, file, type_params) {
                 pairs.push((param, self.instantiate(value, second)));
             }
         }
         if type_params.is_empty() {
-            return self.p.types.mapper(pairs);
+            return self.p.types.mapper_of(&pairs);
         }
         let outer = pairs.len();
         let mut around = None;
@@ -714,8 +715,8 @@ impl<'p> Checker<'p> {
                     Some(given) => pairs.push((declared, given)),
                     None => {
                         // Where nothing is filled in it is the declared one, which needs no saying.
-                        let around = *around
-                            .get_or_insert_with(|| self.p.types.mapper(pairs[..outer].to_vec()));
+                        let around =
+                            *around.get_or_insert_with(|| self.p.types.mapper_of(&pairs[..outer]));
                         let fresh = self.cloned_type_param(file, tp, around);
                         if fresh != declared {
                             pairs.push((declared, fresh));
@@ -729,12 +730,12 @@ impl<'p> Checker<'p> {
                 }
             }
         }
-        self.p.types.mapper(pairs)
+        self.p.types.mapper_of(&pairs)
     }
 
     /// The same of a construct signature of `class`, whose type parameters are those of the class. They are not made anew.
     fn class_sig_mapper(&mut self, class: Sym, own: MapperId, second: MapperId) -> MapperId {
-        let mut pairs: Vec<(TypeId, TypeId)> = Vec::new();
+        let mut pairs: smallvec::SmallVec<[(TypeId, TypeId); 8]> = smallvec::SmallVec::new();
         for &(param, value) in self.p.types.mapping(own) {
             pairs.push((param, self.instantiate(value, second)));
         }
@@ -747,6 +748,6 @@ impl<'p> Checker<'p> {
                 pairs.push((param, value));
             }
         }
-        self.p.types.mapper(pairs)
+        self.p.types.mapper_of(&pairs)
     }
 }

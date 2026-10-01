@@ -34,8 +34,29 @@ impl<'p> Checker<'p> {
     /// Resolves the calls that decide what the parameters of the functions around `e` are, outermost first, so that
     /// a question about something inside does not come back to itself through them.
     pub fn prepare_enclosing(&mut self, file: FileId, e: ExprId) {
-        self.prepare_parent(file, self.bound(file).expr_parent[e.idx()]);
+        self.prepare_around(file, e);
         self.prepare_context(file, e);
+    }
+
+    /// `prepare_parent`, of what `e` is part of. In the file that is being checked, `e` and the expressions it is part of are
+    /// marked on the way up. What is part of one that is marked is in the same function, and that has been through
+    /// `prepare_from_the_outside`.
+    fn prepare_around(&mut self, file: FileId, e: ExprId) {
+        let bound = self.bound(file);
+        if self.prepared_exprs.0 != file {
+            if self.checking != Some(file) {
+                return self.prepare_parent(file, bound.expr_parent[e.idx()]);
+            }
+            self.prepared_exprs = (file, vec![false; bound.expr_parent.len()]);
+        }
+        let mut at = e;
+        while !std::mem::replace(&mut self.prepared_exprs.1[at.idx()], true) {
+            at = match bound.expr_parent[at.idx()] {
+                Parent::Expr(parent) => parent,
+                Parent::Prop(p) => bound.prop_owner[p.idx()],
+                parent => return self.prepare_parent(file, parent),
+            };
+        }
     }
 
     /// The same for a question about the parameters or the result of `func`.
@@ -608,7 +629,7 @@ impl<'p> Checker<'p> {
                     }
                     let props = self.discriminate_by_jsx_attributes(file, owner, props);
                     let name = self.member_name(file, prop.key)?;
-                    return self.contextual_property(props, name);
+                    return self.contextual_property_of_value(file, e, props, name);
                 }
                 // What is spread is expected to be what the literal is, as that is put: a type parameter stays one.
                 if prop.kind == PropKind::Spread {
@@ -616,7 +637,7 @@ impl<'p> Checker<'p> {
                 }
                 let context = self.contextual_type_for_object_literal(file, owner)?;
                 match self.member_name(file, prop.key) {
-                    Some(name) => self.contextual_property(context, name),
+                    Some(name) => self.contextual_property_of_value(file, e, context, name),
                     None => {
                         // `getLiteralTypeFromPropertyName`: the type of what is between the brackets.
                         let key = match prop.key {
@@ -779,6 +800,33 @@ impl<'p> Checker<'p> {
         } else {
             self.force(ty)
         }
+    }
+
+    /// `contextual_property`, for the value `e` of the property. A literal or a function is asked about again for all that is
+    /// written in it, so what is found for one is kept where it holds for good.
+    fn contextual_property_of_value(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        context: TypeId,
+        name: Atom,
+    ) -> Option<TypeId> {
+        if !matches!(
+            self.hir(file)[e].kind,
+            ExprKind::Object(_) | ExprKind::Array(_) | ExprKind::Fn(_)
+        ) || !self.contextual_binding_patterns.is_empty()
+        {
+            return self.contextual_property(context, name);
+        }
+        if let Some(&found) = self.contextual_properties.get(&(context, name)) {
+            return found;
+        }
+        let before = self.what_only_holds_for_now();
+        let found = self.contextual_property(context, name);
+        if self.holds_whenever_asked(before) {
+            self.contextual_properties.insert((context, name), found);
+        }
+        found
     }
 
     /// `getTypeOfPropertyOfContextualType`: what each member of `context` says of the property `name`.
@@ -1082,19 +1130,45 @@ impl<'p> Checker<'p> {
         literal: ExprId,
         context: TypeId,
     ) -> TypeId {
-        let hir = self.hir(file);
-        let ExprKind::Object(props) = hir[literal].kind else {
+        let ExprKind::Object(props) = self.hir(file)[literal].kind else {
             return context;
         };
         if !self.is_union(context) {
             return context;
         }
+        // While it is worked out what a pattern implies, its names are not what they are to anybody else.
+        if !self.contextual_binding_patterns.is_empty() {
+            return self.discriminate_by_members(file, props, context).0;
+        }
+        // It is asked for every member of the literal, and again for whatever is written in them.
+        if let Some(&narrowed) = self.discriminated.get(&(file, literal, context)) {
+            return narrowed;
+        }
+        let before = self.what_only_holds_for_now();
+        let (narrowed, is_given_for_good) = self.discriminate_by_members(file, props, context);
+        if is_given_for_good && self.holds_whenever_asked(before) {
+            self.discriminated
+                .insert((file, literal, context), narrowed);
+        }
+        narrowed
+    }
+
+    /// The same, of the members `props` of a literal and a `context` that is a union. Also whether all that the members are given
+    /// as is kept, and primitive: what may have a generic signature is looked at again for the sake of a call that is being resolved.
+    fn discriminate_by_members(
+        &mut self,
+        file: FileId,
+        props: Span<PropId>,
+        context: TypeId,
+    ) -> (TypeId, bool) {
+        let hir = self.hir(file);
         let context = self.with_apparent_primitives(context);
         if !self.is_union(context) {
-            return context;
+            return (context, true);
         }
         // Only names the binder knows count. A computed name is skipped.
         let (mut items, mut written) = (Discriminants::new(), SmallVec::<[Atom; 16]>::new());
+        let mut is_given_for_good = true;
         for p in props.iter() {
             let prop = &hir[p];
             if prop.kind == PropKind::Spread {
@@ -1112,11 +1186,54 @@ impl<'p> Checker<'p> {
                 };
             if counts && self.is_discriminant_property(context, name) {
                 let given = self.context_free_discriminant_type(file, prop.value);
+                is_given_for_good &= self.every_type(given, |c, t| c.is_primitive(t))
+                    && self.p.expr_types.get(file, prop.value.idx()) == Some(given);
                 items.push((name, given));
             }
         }
         self.push_left_out_discriminants(context, &written, &mut items);
-        self.discriminate_by_items(context, &items)
+        (
+            self.discriminate_by_items(context, &items),
+            is_given_for_good,
+        )
+    }
+
+    /// Whether what has been made of types since `before`, which is what `what_only_holds_for_now` gave then, is what anybody is told
+    /// who asks at any other time, with nothing raised or marked on the way.
+    fn holds_whenever_asked(&self, before: (u64, u64)) -> bool {
+        self.what_only_holds_for_now() == before
+            // What goes by a call that is being resolved marks the questions asked since the call. If the call is the last of
+            // them there is nothing to mark.
+            && self.tainted.last() != Some(&true)
+            && !matches!(self.stack.last(), Some(Query::Call(..)))
+            // These are raised for whoever asked, each time.
+            && !(self.uncertain
+                || self.relation_gave_up
+                || self.relation_too_complex
+                || self.union_too_complex
+                || self.met_loop_under_way)
+            && self.reliability == 0
+            // What is under way is passed over in silence, or taken for what it is so far, by whoever comes upon it meanwhile.
+            && self.instantiation_depth == 0
+            && self.never_in_progress.is_empty()
+            && self.variances_in_progress.is_empty()
+            && self.awaiting.is_empty()
+            && self.constraint_stack.is_empty()
+            && self.reverse_mapped_source_stack.is_empty()
+            && self.flow_loops.is_empty()
+            && self.reporting_nonexistent.is_empty()
+            && self.stack.iter().all(|q| {
+                matches!(
+                    q,
+                    Query::Expr(..)
+                        | Query::Call(..)
+                        | Query::LiteralProp(..)
+                        | Query::Pat(..)
+                        | Query::Symbol(_)
+                        | Query::Return(..)
+                        | Query::Member(..)
+                )
+            })
     }
 
     /// `mapTypeEx` with `noReductions`: the union of `f` applied to each member, built with `UnionReductionNone`, so `any`,
@@ -1930,10 +2047,17 @@ impl<'p> Checker<'p> {
         });
         let required = self.required_own_params(file, func);
         let mut found: SmallVec<[SigId; 4]> = SmallVec::new();
-        for part in self.sorted_parts(context) {
-            if self.is_primitive(part) {
-                continue;
-            }
+        // The members that can have a signature, in the order of `sorted_parts`.
+        let mut parts: Parts = self
+            .parts(context)
+            .iter()
+            .copied()
+            .filter(|&part| !self.is_primitive(part))
+            .collect();
+        if parts.len() > 1 {
+            parts.sort_by(|&a, &b| self.compare_types(a, b));
+        }
+        for part in parts {
             // `getContextualCallSignature`
             let mut fitting: SmallVec<[SigId; 4]> = SmallVec::new();
             for s in self.signatures(part, false) {

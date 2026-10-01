@@ -177,19 +177,64 @@ struct Recent {
 
 #[derive(Copy, Clone)]
 struct RecentEntry {
-    text: [u8; Recent::LONGEST],
-    len: u8,
+    /// See `short`.
+    start: (u64, u64, u64),
+    end: u32,
     atom: u32,
 }
 
 impl Recent {
     const LONGEST: usize = 27;
     const BITS: u32 = 11;
+    /// Nothing is this long.
     const NOTHING: RecentEntry = RecentEntry {
-        text: [0; Recent::LONGEST],
-        len: u8::MAX,
+        start: (0, 0, 0),
+        end: u32::MAX,
         atom: 0,
     };
+}
+
+/// Up to eight bytes of `text`, from `from` on, as a number. What is not there is zero.
+#[inline]
+fn word(text: &[u8], from: usize) -> u64 {
+    let Some(rest) = text.get(from..) else {
+        return 0;
+    };
+    let len = rest.len();
+    if len >= 8 {
+        u64::from_le_bytes(rest[..8].try_into().unwrap())
+    } else if len >= 4 {
+        // The two overlap, and agree where they do.
+        let first = u32::from_le_bytes(rest[..4].try_into().unwrap());
+        let last = u32::from_le_bytes(rest[len - 4..].try_into().unwrap());
+        u64::from(first) | u64::from(last) << ((len - 4) * 8)
+    } else if len >= 2 {
+        let first = u16::from_le_bytes(rest[..2].try_into().unwrap());
+        u64::from(first) | u64::from(rest[len - 1]) << ((len - 1) * 8)
+    } else if len == 1 {
+        u64::from(rest[0])
+    } else {
+        0
+    }
+}
+
+/// A text of at most `Recent::LONGEST` bytes as numbers: the bytes with zeros after them, and in the last byte of all how many there are.
+#[inline]
+fn short(text: &[u8]) -> ((u64, u64, u64), u32) {
+    (
+        (word(text, 0), word(text, 8), word(text, 16)),
+        word(text, 24) as u32 | (text.len() as u32) << 24,
+    )
+}
+
+/// What a text is found by.
+#[inline]
+fn hash_of(text: &[u8]) -> u64 {
+    if text.len() > Recent::LONGEST {
+        spread_hash(text)
+    } else {
+        spread_hash(&short(text))
+    }
 }
 
 thread_local! {
@@ -243,10 +288,11 @@ impl Interner {
     }
 
     pub fn intern(&self, text: &[u8]) -> Atom {
-        let spread = spread_hash(text);
         if text.len() > Recent::LONGEST {
-            return self.intern_shared(spread, text);
+            return self.intern_shared(hash_of(text), text);
         }
+        let (start, end) = short(text);
+        let spread = spread_hash(&(start, end));
         RECENT.with(|recent| {
             // SAFETY: it is the thread's own, and nothing in here gets back here.
             let recent = unsafe { &mut *recent.get() };
@@ -255,13 +301,15 @@ impl Interner {
                 recent.entries.fill(Recent::NOTHING);
             }
             let entry = &mut recent.entries[(spread >> (64 - Recent::BITS)) as usize];
-            if usize::from(entry.len) == text.len() && entry.text[..text.len()] == *text {
+            if entry.start == start && entry.end == end {
                 return Atom(entry.atom);
             }
             let atom = self.intern_shared(spread, text);
-            entry.len = text.len() as u8;
-            entry.text[..text.len()].copy_from_slice(text);
-            entry.atom = atom.0;
+            *entry = RecentEntry {
+                start,
+                end,
+                atom: atom.0,
+            };
             atom
         })
     }
@@ -285,7 +333,7 @@ impl Interner {
 
     /// The atom of `text`, if anything interned it.
     pub fn lookup(&self, text: &[u8]) -> Option<Atom> {
-        let spread = spread_hash(text);
+        let spread = hash_of(text);
         self.shards[shard_of(spread)]
             .find(spread, |i| &**self.texts.get(i) == text)
             .map(Atom)
@@ -339,6 +387,31 @@ mod tests {
         let a = i.intern(b"somethingElse");
         assert_eq!(i.intern(b"somethingElse"), a);
         assert_eq!(i.bytes(a), b"somethingElse");
+    }
+
+    #[test]
+    fn a_short_text_is_its_bytes_and_its_length() {
+        let text: Vec<u8> = (1..=Recent::LONGEST as u8).collect();
+        for len in 0..=text.len() {
+            let ((a, b, c), end) = short(&text[..len]);
+            let mut bytes = Vec::new();
+            for number in [a, b, c] {
+                bytes.extend_from_slice(&number.to_le_bytes());
+            }
+            bytes.extend_from_slice(&end.to_le_bytes());
+            let mut expected = text[..len].to_vec();
+            expected.resize(Recent::LONGEST, 0);
+            expected.push(len as u8);
+            assert_eq!(bytes, expected);
+        }
+        let i = Interner::new();
+        for len in 0..40 {
+            let text = vec![b'x'; len];
+            let atom = i.intern(&text);
+            assert_eq!(i.intern(&text), atom);
+            assert_eq!(i.lookup(&text), Some(atom));
+            assert_eq!(i.bytes(atom), &text[..]);
+        }
     }
 
     #[test]

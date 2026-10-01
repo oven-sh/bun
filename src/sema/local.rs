@@ -108,8 +108,13 @@ impl<T> Chunked<T> {
     #[inline]
     pub fn get(&self, index: usize) -> &T {
         assert!(index < self.len);
-        // SAFETY: the first `len` are written.
-        unsafe { self.chunks[index / CHUNK][index % CHUNK].assume_init_ref() }
+        // SAFETY: the first `len` are written, so the chunks they are in are there.
+        unsafe {
+            self.chunks
+                .get_unchecked(index / CHUNK)
+                .get_unchecked(index % CHUNK)
+                .assume_init_ref()
+        }
     }
 
     pub fn clear(&mut self) {
@@ -150,7 +155,8 @@ impl Found {
         let tag = spread as u32;
         let mut at = Self::start(u64::from(tag)) & mask;
         loop {
-            let place = self.places[at];
+            // SAFETY: `mask` is one less than there are places.
+            let place = unsafe { *self.places.get_unchecked(at) };
             if place == 0 {
                 return None;
             }
@@ -215,9 +221,8 @@ pub struct LocalTable {
     is_touched: bool,
 }
 
-pub trait LocalMap: Any {
+pub trait LocalMap {
     fn clear(&mut self);
-    fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
 impl<K: 'static, V: 'static> LocalMap for crate::util::FxHashMap<K, V> {
@@ -227,9 +232,6 @@ impl<K: 'static, V: 'static> LocalMap for crate::util::FxHashMap<K, V> {
         } else {
             crate::util::FxHashMap::clear(self);
         }
-    }
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
     }
 }
 
@@ -332,55 +334,145 @@ pub fn new_slot() -> u32 {
     NEXT_SLOT.fetch_add(1, Ordering::Relaxed)
 }
 
+/// What `slot` keeps in this thread, to be emptied when the file at hand is done.
+///
+/// # Safety
+/// No other reference to the tables may be in use.
+#[inline]
+#[allow(clippy::mut_from_ref)]
+unsafe fn table_of(s: &State, slot: u32) -> &mut LocalTable {
+    // SAFETY: the state is the thread's own, and the caller sees to the rest.
+    let tables = unsafe { &mut *s.tables.get() };
+    let slot_index = slot as usize;
+    if slot_index >= tables.by_slot.len() {
+        tables.by_slot.resize_with(slot_index + 1, Default::default);
+    }
+    let table = &mut tables.by_slot[slot_index];
+    if !table.is_touched {
+        table.is_touched = true;
+        tables.touched.push(slot);
+    }
+    table
+}
+
 /// `work` must not get back here.
 #[inline]
 fn with_table<R>(slot: u32, work: impl FnOnce(&mut LocalTable) -> R) -> R {
+    // SAFETY: `work` is one of the few functions below, none of which calls out.
+    STATE.with(|s| work(unsafe { table_of(s, slot) }))
+}
+
+/// The same if `file` is the one at hand. If it is not, nothing is done and `otherwise` is the answer.
+#[inline]
+fn with_table_of<R>(
+    slot: u32,
+    file: u32,
+    otherwise: R,
+    work: impl FnOnce(&mut LocalTable) -> R,
+) -> R {
     STATE.with(|s| {
-        // SAFETY: the state is the thread's own, and `work` is one of the few functions below, none of which calls out.
-        let tables = unsafe { &mut *s.tables.get() };
-        let slot_index = slot as usize;
-        if slot_index >= tables.by_slot.len() {
-            tables.by_slot.resize_with(slot_index + 1, Default::default);
+        if s.file.get() != file {
+            return otherwise;
         }
-        let table = &mut tables.by_slot[slot_index];
-        if !table.is_touched {
-            table.is_touched = true;
-            tables.touched.push(slot);
-        }
-        work(table)
+        // SAFETY: as in `with_table`.
+        work(unsafe { table_of(s, slot) })
     })
+}
+
+#[inline]
+fn read_cell(s: &State, slot: u32, index: u32) -> u64 {
+    // SAFETY: the state is the thread's own, and nothing is changing the tables: see `with_table`.
+    let tables = unsafe { &*s.tables.get() };
+    tables
+        .by_slot
+        .get(slot as usize)
+        .and_then(|t| t.cells.get(index as usize))
+        .copied()
+        .unwrap_or(0)
+}
+
+#[inline]
+fn cell_mut(t: &mut LocalTable, index: u32) -> &mut u64 {
+    let index = index as usize;
+    if index >= t.cells.len() {
+        t.cells.resize(index + 1, 0);
+    }
+    &mut t.cells[index]
+}
+
+#[inline]
+fn put_in_if_empty(t: &mut LocalTable, index: u32, raw: u64) -> u64 {
+    let cell = cell_mut(t, index);
+    if *cell == 0 {
+        *cell = raw;
+    }
+    *cell
+}
+
+#[inline]
+fn set_bit_in(t: &mut LocalTable, index: u32) -> bool {
+    let word = cell_mut(t, index / 64);
+    let was = *word & 1 << (index % 64) != 0;
+    *word |= 1 << (index % 64);
+    !was
 }
 
 /// 0: nothing.
 #[inline(never)]
 pub fn cell(slot: u32, index: u32) -> u64 {
-    with_table(slot, |t| t.cells.get(index as usize).copied().unwrap_or(0))
+    STATE.with(|s| read_cell(s, slot, index))
+}
+
+/// The cell for a node of `file`. 0: nothing, or `file` is not the one at hand.
+#[inline]
+pub fn cell_of(slot: u32, file: u32, index: u32) -> u64 {
+    #[inline(never)]
+    fn of_thread(slot: u32, file: u32, index: u32) -> u64 {
+        STATE.with(|s| {
+            if s.file.get() == file {
+                read_cell(s, slot, index)
+            } else {
+                0
+            }
+        })
+    }
+    if is_any_on() {
+        of_thread(slot, file, index)
+    } else {
+        0
+    }
 }
 
 /// What the cell holds afterwards: `raw`, or what was there first.
 #[inline(never)]
 pub fn put_if_empty(slot: u32, index: u32, raw: u64) -> u64 {
-    with_table(slot, |t| {
-        let index = index as usize;
-        if index >= t.cells.len() {
-            t.cells.resize(index + 1, 0);
-        }
-        if t.cells[index] == 0 {
-            t.cells[index] = raw;
-        }
-        t.cells[index]
-    })
+    with_table(slot, |t| put_in_if_empty(t, index, raw))
 }
 
-#[inline(never)]
-pub fn store(slot: u32, index: u32, raw: u64) {
-    with_table(slot, |t| {
-        let index = index as usize;
-        if index >= t.cells.len() {
-            t.cells.resize(index + 1, 0);
-        }
-        t.cells[index] = raw;
-    });
+/// The same for a node of `file`. 0, and nothing is kept: `file` is not the one at hand, or there is no such node.
+#[inline]
+pub fn put_if_empty_of(slot: u32, file: u32, index: u32, raw: u64) -> u64 {
+    #[inline(never)]
+    fn of_thread(slot: u32, file: u32, index: u32, raw: u64) -> u64 {
+        with_table_of(slot, file, 0, |t| put_in_if_empty(t, index, raw))
+    }
+    if is_any_on() && index != u32::MAX {
+        of_thread(slot, file, index, raw)
+    } else {
+        0
+    }
+}
+
+/// Whatever the cell for a node of `file` held is gone. Nothing is done if `file` is not the one at hand, or there is no such node.
+#[inline]
+pub fn store_of(slot: u32, file: u32, index: u32, raw: u64) {
+    #[inline(never)]
+    fn of_thread(slot: u32, file: u32, index: u32, raw: u64) {
+        with_table_of(slot, file, (), |t| *cell_mut(t, index) = raw);
+    }
+    if is_any_on() && index != u32::MAX {
+        of_thread(slot, file, index, raw);
+    }
 }
 
 #[inline]
@@ -388,18 +480,26 @@ pub fn bit(slot: u32, index: u32) -> bool {
     cell(slot, index / 64) & 1 << (index % 64) != 0
 }
 
+/// The bit for a node of `file`, which is clear if `file` is not the one at hand.
+#[inline]
+pub fn bit_of(slot: u32, file: u32, index: u32) -> bool {
+    cell_of(slot, file, index / 64) & 1 << (index % 64) != 0
+}
+
 /// Whether it was clear.
 #[inline(never)]
 pub fn set_bit(slot: u32, index: u32) -> bool {
-    with_table(slot, |t| {
-        let word = (index / 64) as usize;
-        if word >= t.cells.len() {
-            t.cells.resize(word + 1, 0);
-        }
-        let was = t.cells[word] & 1 << (index % 64) != 0;
-        t.cells[word] |= 1 << (index % 64);
-        !was
-    })
+    with_table(slot, |t| set_bit_in(t, index))
+}
+
+/// Whether the bit for a node of `file` was clear and is set. It is left alone if `file` is not the one at hand, or there is no such node.
+#[inline]
+pub fn set_bit_of(slot: u32, file: u32, index: u32) -> bool {
+    #[inline(never)]
+    fn of_thread(slot: u32, file: u32, index: u32) -> bool {
+        with_table_of(slot, file, false, |t| set_bit_in(t, index))
+    }
+    is_any_on() && index != u32::MAX && of_thread(slot, file, index)
 }
 
 /// Keeps `value` until the file at hand is done, and says where.
@@ -413,49 +513,53 @@ pub fn keep<T: 'static>(slot: u32, value: T) -> u32 {
 /// What `keep` was given.
 ///
 /// # Safety
-/// The reference is good until `end`. Whoever extends it beyond the call must not hold on to it for longer.
+/// `T` is the type of what `keep` was given. The reference is good until `end`: whoever extends it beyond the call must not hold on to
+/// it for longer.
 #[inline]
 pub unsafe fn kept<'a, T: 'static>(slot: u32, index: u32) -> &'a T {
-    with_table(slot, |t| {
-        let value: &T = t.kept[index as usize]
-            .downcast_ref()
-            .expect("a table keeps one type of thing");
-        // SAFETY: a box does not move what it holds, and it is dropped in `end`.
-        unsafe { &*std::ptr::from_ref(value) }
+    STATE.with(|s| {
+        // SAFETY: the state is the thread's own, and nothing is changing the tables: see `with_table`.
+        let tables = unsafe { &*s.tables.get() };
+        let value = &*tables.by_slot[slot as usize].kept[index as usize];
+        debug_assert!(value.is::<T>());
+        // SAFETY: it is a `T`. A box does not move what it holds, and it is dropped in `end`.
+        unsafe { &*std::ptr::from_ref(value).cast::<T>() }
     })
 }
 
+/// # Safety
+/// `slot` is that of a table whose keys are `K` and whose values are `V`.
 #[inline]
-pub fn map_get<K: std::hash::Hash + Eq + 'static, V: Clone + 'static>(
+pub unsafe fn map_get<K: std::hash::Hash + Eq + 'static, V: Clone + 'static>(
     slot: u32,
     key: &K,
 ) -> Option<V> {
-    with_table(slot, |t| {
-        t.map
-            .as_mut()?
-            .as_any_mut()
-            .downcast_mut::<crate::util::FxHashMap<K, V>>()
-            .expect("a table keeps one type of thing")
-            .get(key)
-            .cloned()
+    STATE.with(|s| {
+        // SAFETY: the state is the thread's own, and nothing is changing the tables: see `with_table`.
+        let tables = unsafe { &*s.tables.get() };
+        let map = tables.by_slot.get(slot as usize)?.map.as_deref()?;
+        // SAFETY: a slot is one table's, which puts in one type of map.
+        let map = unsafe { &*std::ptr::from_ref(map).cast::<crate::util::FxHashMap<K, V>>() };
+        map.get(key).cloned()
     })
 }
 
 /// Keeps what is there already, and returns what is kept.
+///
+/// # Safety
+/// As for `map_get`.
 #[inline]
-pub fn map_insert<K: std::hash::Hash + Eq + 'static, V: Clone + 'static>(
+pub unsafe fn map_insert<K: std::hash::Hash + Eq + 'static, V: Clone + 'static>(
     slot: u32,
     key: K,
     value: V,
 ) -> V {
     with_table(slot, |t| {
-        t.map
-            .get_or_insert_with(|| Box::new(crate::util::FxHashMap::<K, V>::default()))
-            .as_any_mut()
-            .downcast_mut::<crate::util::FxHashMap<K, V>>()
-            .expect("a table keeps one type of thing")
-            .entry(key)
-            .or_insert(value)
-            .clone()
+        let map = &mut **t
+            .map
+            .get_or_insert_with(|| Box::new(crate::util::FxHashMap::<K, V>::default()));
+        // SAFETY: a slot is one table's, which puts in one type of map.
+        let map = unsafe { &mut *std::ptr::from_mut(map).cast::<crate::util::FxHashMap<K, V>>() };
+        map.entry(key).or_insert(value).clone()
     })
 }

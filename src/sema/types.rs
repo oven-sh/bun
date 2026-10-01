@@ -407,12 +407,6 @@ impl<V> Interned<V> {
         }
     }
 
-    /// The number of `key`, whose hash is `spread`, if it is there.
-    #[inline]
-    fn find<K: Eq>(&self, spread: u64, key: &K, key_of: impl Fn(&V) -> &K) -> Option<u32> {
-        self.shards[shard_of(spread)].find(spread, |i| key_of(self.items.get(i)) == key)
-    }
-
     /// `key_of`: what an item was interned by. `make`: the item for `key`, which it takes over, and the number it gets.
     fn intern<K: std::hash::Hash + Eq>(
         &self,
@@ -420,7 +414,17 @@ impl<V> Interned<V> {
         key_of: impl Fn(&V) -> &K,
         make: impl FnOnce(K, u32) -> V,
     ) -> u32 {
-        let spread = spread_hash(&key);
+        self.intern_hashed(spread_hash(&key), key, key_of, make)
+    }
+
+    /// `spread`: the hash of `key`.
+    fn intern_hashed<K: Eq>(
+        &self,
+        spread: u64,
+        key: K,
+        key_of: impl Fn(&V) -> &K,
+        make: impl FnOnce(K, u32) -> V,
+    ) -> u32 {
         let shard = &self.shards[shard_of(spread)];
         if let Some(id) = shard.find(spread, |i| *key_of(self.items.get(i)) == key) {
             return id;
@@ -608,6 +612,161 @@ fn is_sig_local(data: &SigData, file: FileId) -> bool {
 
 pub type Mapping = Box<[(TypeId, TypeId)]>;
 
+/// What a mapper is found by.
+struct Pairs<'a>(&'a [(TypeId, TypeId)]);
+
+impl std::hash::Hash for Pairs<'_> {
+    #[inline]
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write_usize(self.0.len());
+        for pair in self.0 {
+            state.write_u64(u64::from(pair.0.0) << 32 | u64::from(pair.1.0));
+        }
+    }
+}
+
+/// Whether the parameters come in order, each of them once.
+#[inline]
+fn is_in_order(pairs: &[(TypeId, TypeId)]) -> bool {
+    pairs.is_sorted_by(|a, b| a.0 < b.0)
+}
+
+/// What a type of some kinds is made of, for whoever has it in lists of their own. See `TypeStore::intern_parts`.
+#[derive(Copy, Clone)]
+pub enum TypeParts<'a> {
+    Union(&'a [TypeId]),
+    Intersection(&'a [TypeId]),
+    Ref {
+        target: Sym,
+        args: &'a [TypeId],
+    },
+    Tuple {
+        elems: &'a [TypeId],
+        flags: &'a [ElemFlags],
+        readonly: bool,
+    },
+    Fns {
+        decls: &'a [(FileId, FnId)],
+        mapper: MapperId,
+    },
+}
+
+impl TypeParts<'_> {
+    fn is(self, data: &TypeData) -> bool {
+        match (self, data) {
+            (TypeParts::Union(parts), TypeData::Union(known))
+            | (TypeParts::Intersection(parts), TypeData::Intersection(known)) => *parts == **known,
+            (
+                TypeParts::Ref { target, args },
+                TypeData::Ref {
+                    target: known_target,
+                    args: known,
+                },
+            ) => target == *known_target && *args == **known,
+            (
+                TypeParts::Tuple {
+                    elems,
+                    flags,
+                    readonly,
+                },
+                TypeData::Tuple {
+                    elems: known,
+                    flags: known_flags,
+                    readonly: known_readonly,
+                },
+            ) => readonly == *known_readonly && *elems == **known && *flags == **known_flags,
+            (
+                TypeParts::Fns { decls, mapper },
+                TypeData::Fns {
+                    decls: known,
+                    mapper: known_mapper,
+                },
+            ) => mapper == *known_mapper && *decls == **known,
+            _ => false,
+        }
+    }
+
+    fn to_data(self) -> TypeData {
+        match self {
+            TypeParts::Union(parts) => TypeData::Union(parts.into()),
+            TypeParts::Intersection(parts) => TypeData::Intersection(parts.into()),
+            TypeParts::Ref { target, args } => TypeData::Ref {
+                target,
+                args: args.into(),
+            },
+            TypeParts::Tuple {
+                elems,
+                flags,
+                readonly,
+            } => TypeData::Tuple {
+                elems: elems.into(),
+                flags: flags.into(),
+                readonly,
+            },
+            TypeParts::Fns { decls, mapper } => TypeData::Fns {
+                decls: decls.into(),
+                mapper,
+            },
+        }
+    }
+}
+
+/// What `to_data` gives is hashed the same: which kind it is, then the fields in the order they are declared in.
+impl std::hash::Hash for TypeParts<'_> {
+    #[inline]
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        use std::hash::Hash;
+        /// `empty`: a type of the kind. A box of nothing is not allocated.
+        #[inline]
+        fn kind<H: std::hash::Hasher>(empty: TypeData, state: &mut H) {
+            std::mem::discriminant(&empty).hash(state);
+        }
+        match *self {
+            TypeParts::Union(parts) => {
+                kind(TypeData::Union(Box::default()), state);
+                parts.hash(state);
+            }
+            TypeParts::Intersection(parts) => {
+                kind(TypeData::Intersection(Box::default()), state);
+                parts.hash(state);
+            }
+            TypeParts::Ref { target, args } => {
+                let empty = TypeData::Ref {
+                    target,
+                    args: Box::default(),
+                };
+                kind(empty, state);
+                target.hash(state);
+                args.hash(state);
+            }
+            TypeParts::Tuple {
+                elems,
+                flags,
+                readonly,
+            } => {
+                let empty = TypeData::Tuple {
+                    elems: Box::default(),
+                    flags: Box::default(),
+                    readonly,
+                };
+                kind(empty, state);
+                elems.hash(state);
+                flags.hash(state);
+                readonly.hash(state);
+            }
+            TypeParts::Fns { decls, mapper } => {
+                let empty = TypeData::Fns {
+                    decls: Box::default(),
+                    mapper,
+                };
+                kind(empty, state);
+                decls.hash(state);
+                mapper.hash(state);
+            }
+        }
+    }
+}
+
 pub struct TypeStore {
     types: Interned<TypeRecord>,
     sigs: Interned<SigData>,
@@ -716,7 +875,7 @@ impl TypeStore {
             store.intern(TypeData::Synth(Box::default())),
             TypeId::EMPTY_OBJECT
         );
-        assert_eq!(store.mapper(Vec::new()), MapperId::IDENTITY);
+        assert_eq!(store.mapper_in_order(&[]), MapperId::IDENTITY);
         store
     }
 
@@ -965,41 +1124,67 @@ impl TypeStore {
 
     #[inline(never)]
     fn intern_with_local(&self, data: TypeData) -> TypeId {
-        let file = local::file();
-        if file == u32::MAX {
-            return TypeId(self.types.intern(
-                data,
-                |record| &record.data,
-                |data, id| self.new_record(data, id),
-            ));
-        }
-        // Where it was last found or put by this thread, then among what all threads share.
         let spread = spread_hash(&data);
-        if let Some(id) = local_store()
-            .found_types
-            .find(spread, |id| *self.get(TypeId(id)) == data)
-        {
+        // Where it was last found or put by this thread, which is nowhere unless the thread has a file at hand.
+        let store = local_store();
+        if let Some(id) = store.found_types.find(spread, |id| {
+            let record = if id & LOCAL == 0 {
+                self.types.items.get(id)
+            } else {
+                store.types.get((id & !LOCAL) as usize)
+            };
+            record.data == data
+        }) {
             return TypeId(id);
         }
-        let id = if is_type_local(&data, FileId(file)) {
-            let id = local_store().types.len() as u32 | LOCAL;
+        let file = local::file();
+        let id = if file != u32::MAX && is_type_local(&data, FileId(file)) {
+            let id = store.types.len() as u32 | LOCAL;
             let record = self.new_record(data, id);
             // SAFETY: no reference to the store is in use.
             unsafe { local_store_mut() }.types.push(record);
             id
         } else {
-            match self.types.find(spread, &data, |record| &record.data) {
-                Some(id) => id,
-                None => self.types.intern(
-                    data,
-                    |record| &record.data,
-                    |data, id| self.new_record(data, id),
-                ),
-            }
+            self.types.intern_hashed(
+                spread,
+                data,
+                |record| &record.data,
+                |data, id| self.new_record(data, id),
+            )
         };
-        // SAFETY: no reference to the store is in use.
-        unsafe { local_store_mut() }.found_types.add(spread, id);
+        if file != u32::MAX {
+            // SAFETY: no reference to the store is in use.
+            unsafe { local_store_mut() }.found_types.add(spread, id);
+        }
         TypeId(id)
+    }
+
+    /// `intern` of the type made of `parts`. Nothing is allocated if this thread has met the type since it took the file at hand or, with no
+    /// file at hand, if the type is there.
+    pub fn intern_parts(&self, parts: TypeParts<'_>) -> TypeId {
+        let spread = spread_hash(&parts);
+        if local::is_any_on() {
+            let store = local_store();
+            if let Some(id) = store.found_types.find(spread, |id| {
+                let record = if id & LOCAL == 0 {
+                    self.types.items.get(id)
+                } else {
+                    store.types.get((id & !LOCAL) as usize)
+                };
+                parts.is(&record.data)
+            }) {
+                return TypeId(id);
+            }
+            if local::is_on() {
+                return self.intern(parts.to_data());
+            }
+        }
+        let known = self.types.shards[shard_of(spread)]
+            .find(spread, |id| parts.is(&self.types.items.get(id).data));
+        match known {
+            Some(id) => TypeId(id),
+            None => self.intern(parts.to_data()),
+        }
     }
 
     /// `ObjectFlagsFromTypeNode`, `ObjectFlagsArrayLiteral`: `id` was made by a type node or an array literal, not by
@@ -1043,77 +1228,110 @@ impl TypeStore {
         {
             *sig = *inner;
         }
-        let file = if local::is_any_on() {
-            local::file()
-        } else {
-            u32::MAX
-        };
-        if file == u32::MAX {
+        if !local::is_any_on() {
             return SigId(self.sigs.intern(data, |data| data, |data, _| data));
         }
         let spread = spread_hash(&data);
-        if let Some(id) = local_store()
-            .found_sigs
-            .find(spread, |id| *self.sig(SigId(id)) == data)
-        {
+        // As in `intern_with_local`.
+        let store = local_store();
+        if let Some(id) = store.found_sigs.find(spread, |id| {
+            let known = if id & LOCAL == 0 {
+                self.sigs.items.get(id)
+            } else {
+                store.sigs.get((id & !LOCAL) as usize)
+            };
+            *known == data
+        }) {
             return SigId(id);
         }
-        let id = if is_sig_local(&data, FileId(file)) {
+        let file = local::file();
+        let id = if file != u32::MAX && is_sig_local(&data, FileId(file)) {
             // SAFETY: no reference to the store is in use.
             unsafe { local_store_mut() }.sigs.push(data) as u32 | LOCAL
         } else {
-            self.sigs.intern(data, |data| data, |data, _| data)
+            self.sigs
+                .intern_hashed(spread, data, |data| data, |data, _| data)
         };
-        // SAFETY: no reference to the store is in use.
-        unsafe { local_store_mut() }.found_sigs.add(spread, id);
+        if file != u32::MAX {
+            // SAFETY: no reference to the store is in use.
+            unsafe { local_store_mut() }.found_sigs.add(spread, id);
+        }
         SigId(id)
     }
 
     /// `pairs` need not be sorted. A parameter mapped to itself stays: it says that the origin depends on it.
     pub fn mapper(&self, mut pairs: Vec<(TypeId, TypeId)>) -> MapperId {
-        pairs.sort_unstable_by_key(|p| p.0);
-        pairs.dedup_by_key(|p| p.0);
-        let flags_of = |key: &Mapping| {
-            key.iter()
-                .fold(TypeFlags::empty(), |f, p| f | self.flags(p.1))
-        };
-        if !local::is_on() {
-            let key: Mapping = pairs.into_boxed_slice();
-            return MapperId(self.mappers.intern(
-                key,
-                |mapper| &mapper.0,
-                |key, _| {
-                    let flags = flags_of(&key);
-                    (key, flags)
-                },
-            ));
+        if pairs.is_empty() {
+            return MapperId::IDENTITY;
         }
-        let spread = spread_hash(&pairs[..]);
-        if let Some(id) = local_store()
-            .found_mappers
-            .find(spread, |id| *self.mapping(MapperId(id)) == pairs[..])
-        {
+        if !is_in_order(&pairs) {
+            pairs.sort_unstable_by_key(|p| p.0);
+            pairs.dedup_by_key(|p| p.0);
+        }
+        self.mapper_in_order(&pairs)
+    }
+
+    /// The same of pairs that are somebody else's. Nothing is allocated for pairs in order whose mapper is there already.
+    pub fn mapper_of(&self, pairs: &[(TypeId, TypeId)]) -> MapperId {
+        if pairs.is_empty() {
+            MapperId::IDENTITY
+        } else if is_in_order(pairs) {
+            self.mapper_in_order(pairs)
+        } else {
+            self.mapper(pairs.to_vec())
+        }
+    }
+
+    fn mapper_in_order(&self, pairs: &[(TypeId, TypeId)]) -> MapperId {
+        let spread = spread_hash(&Pairs(pairs));
+        if !local::is_any_on() {
+            return MapperId(self.shared_mapper(spread, pairs));
+        }
+        // Where it was last found or put by this thread, which is nowhere unless the thread has a file at hand.
+        let store = local_store();
+        if let Some(id) = store.found_mappers.find(spread, |id| {
+            let record = if id & LOCAL == 0 {
+                self.mappers.items.get(id)
+            } else {
+                store.mappers.get((id & !LOCAL) as usize)
+            };
+            *record.0 == *pairs
+        }) {
             return MapperId(id);
         }
-        let is_local = pairs.iter().any(|p| p.0.is_local() || p.1.is_local());
-        let key: Mapping = pairs.into_boxed_slice();
-        let id = if is_local {
-            let flags = flags_of(&key);
+        if !local::is_on() {
+            return MapperId(self.shared_mapper(spread, pairs));
+        }
+        let id = if pairs.iter().any(|p| p.0.is_local() || p.1.is_local()) {
+            let record = (Mapping::from(pairs), self.flags_of_pairs(pairs));
             // SAFETY: no reference to the store is in use.
-            unsafe { local_store_mut() }.mappers.push((key, flags)) as u32 | LOCAL
+            unsafe { local_store_mut() }.mappers.push(record) as u32 | LOCAL
         } else {
-            self.mappers.intern(
-                key,
-                |mapper| &mapper.0,
-                |key, _| {
-                    let flags = flags_of(&key);
-                    (key, flags)
-                },
-            )
+            self.shared_mapper(spread, pairs)
         };
         // SAFETY: no reference to the store is in use.
         unsafe { local_store_mut() }.found_mappers.add(spread, id);
         MapperId(id)
+    }
+
+    /// The number of the mapper among those all threads share. `spread`: the hash of `pairs`.
+    fn shared_mapper(&self, spread: u64, pairs: &[(TypeId, TypeId)]) -> u32 {
+        let is_it = |id: u32| *self.mappers.items.get(id).0 == *pairs;
+        let shard = &self.mappers.shards[shard_of(spread)];
+        if let Some(id) = shard.find(spread, is_it) {
+            return id;
+        }
+        shard.find_or_add(spread, is_it, || {
+            self.mappers
+                .items
+                .push((Mapping::from(pairs), self.flags_of_pairs(pairs)))
+        })
+    }
+
+    fn flags_of_pairs(&self, pairs: &[(TypeId, TypeId)]) -> TypeFlags {
+        pairs
+            .iter()
+            .fold(TypeFlags::empty(), |f, p| f | self.flags(p.1))
     }
 
     #[inline]
@@ -1131,5 +1349,46 @@ impl TypeStore {
             .binary_search_by_key(&param, |p| p.0)
             .ok()
             .map(|i| mapping[i].1)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parts_are_found_like_the_type_they_make() {
+        let store = TypeStore::new();
+        let target = Sym {
+            file: FileId(3),
+            id: crate::bind::SymbolId(4),
+        };
+        let types = [TypeId::STRING, TypeId::NUMBER];
+        let flags = [ElemFlags::REQUIRED, ElemFlags::OPTIONAL];
+        let decls = [(FileId(3), FnId(5))];
+        let all = [
+            TypeParts::Union(&types),
+            TypeParts::Intersection(&types),
+            TypeParts::Ref {
+                target,
+                args: &types,
+            },
+            TypeParts::Ref { target, args: &[] },
+            TypeParts::Tuple {
+                elems: &types,
+                flags: &flags,
+                readonly: true,
+            },
+            TypeParts::Fns {
+                decls: &decls,
+                mapper: MapperId::IDENTITY,
+            },
+        ];
+        for parts in all {
+            assert_eq!(spread_hash(&parts), spread_hash(&parts.to_data()));
+            let made = store.intern_parts(parts);
+            assert_eq!(store.intern(parts.to_data()), made);
+            assert_eq!(store.intern_parts(parts), made);
+        }
     }
 }

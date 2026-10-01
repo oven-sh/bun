@@ -183,6 +183,8 @@ pub struct Program {
     sig_type_params: ByIdKept<SigId, Box<[TypeId]>>,
     call_signatures: ByIdKept<TypeId, Box<[SigId]>>,
     construct_signatures: ByIdKept<TypeId, Box<[SigId]>>,
+    /// By the first of several signatures: the list they are in, then the same list in the order `candidates_in_order` puts it in.
+    candidate_orders: ByIdKept<SigId, Box<[SigId]>>,
     /// What `members` says of a type, once that holds for good.
     members: ById<TypeId, shape::KeptMembers>,
     instantiations: ByKey<(TypeId, MapperId), TypeId>,
@@ -357,6 +359,7 @@ impl Program {
             sig_type_params: Default::default(),
             call_signatures: Default::default(),
             construct_signatures: Default::default(),
+            candidate_orders: Default::default(),
             members: Default::default(),
             instantiations: Default::default(),
             outer_type_params: ByNodeKept::new(&scopes),
@@ -464,7 +467,9 @@ impl Program {
             discriminants: FxHashMap::default(),
             flow_memo: Default::default(),
             skip_binding_patterns: 0,
+            discriminated: FxHashMap::default(),
             optional_member: false,
+            contextual_properties: FxHashMap::default(),
             candidate_holes: Vec::new(),
             trace_cycles: std::env::var_os("BUN_SEMA_TRACE_CYCLES").is_some(),
             trace_relations: std::env::var_os("BUN_SEMA_TRACE_RELATIONS").is_some(),
@@ -474,6 +479,7 @@ impl Program {
             jsx_resolving: Vec::new(),
             prepared: Default::default(),
             last_prepared: (FileId(u32::MAX), FnId::NONE),
+            prepared_exprs: (FileId(u32::MAX), Vec::new()),
             provisional: 0,
             provisional_floor: 0,
             provisional_arg_contexts: FxHashMap::default(),
@@ -711,8 +717,13 @@ pub struct Checker<'p> {
     trace_slow_relations: bool,
     /// Asking what is expected regardless of what patterns imply.
     skip_binding_patterns: u32,
+    /// `discriminatedContextualTypes`: what `discriminate_by_object_members` makes of an object literal and a union, where
+    /// that holds for good.
+    discriminated: FxHashMap<(FileId, ExprId, TypeId), TypeId>,
     /// The member `infer_from_member` is about to look at may be left out.
     optional_member: bool,
+    /// See `contextual_property_of_value`.
+    contextual_properties: FxHashMap<(TypeId, Atom), Option<TypeId>>,
     /// For each overloaded call being resolved: the type parameters of its candidates, as holes.
     candidate_holes: Vec<MapperId>,
     /// The next target to be related to is a member of an intersection.
@@ -725,6 +736,8 @@ pub struct Checker<'p> {
     /// Functions whose context `prepare_enclosing` has seen to.
     prepared: crate::util::FxHashSet<(FileId, FnId)>,
     last_prepared: (FileId, FnId),
+    /// A file, and which of its expressions have been through `prepare_around`.
+    prepared_exprs: (FileId, Vec<bool>),
     /// Non-zero while types are computed under assumptions that may not hold: nothing is kept.
     provisional: u32,
     /// How many questions were open when the outermost trial began.

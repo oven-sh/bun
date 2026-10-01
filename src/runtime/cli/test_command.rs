@@ -1731,7 +1731,6 @@ extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: &bun_core::Stri
 }
 
 /// What `TestCommand::report_run` reads that the reporter does not hold.
-#[derive(Copy, Clone)]
 struct ReportInputs<'a> {
     ctx: &'a Command::ContextData,
     /// The files of the run, after `--changed` and `--shard`.
@@ -2396,7 +2395,7 @@ impl TestCommand {
             &mut reporter,
             vm,
             &mut coverage_options,
-            &ReportInputs {
+            ReportInputs {
                 ctx: &*ctx,
                 test_files,
                 pass_with_no_tests_from_filter,
@@ -2414,7 +2413,7 @@ impl TestCommand {
         reporter: &mut CommandLineReporter,
         vm: &mut VirtualMachine,
         coverage_options: &mut CodeCoverageOptions,
-        inputs: &ReportInputs<'_>,
+        inputs: ReportInputs<'_>,
     ) -> crate::Result<bool> {
         let ReportInputs {
             ctx,
@@ -2422,7 +2421,7 @@ impl TestCommand {
             pass_with_no_tests_from_filter,
             search_count,
             ran_parallel,
-        } = *inputs;
+        } = inputs;
 
         let write_snapshots_success = jest::Jest::runner()
             .unwrap()
@@ -3277,7 +3276,7 @@ pub(crate) fn on_requested_exit(vm: &mut VirtualMachine, code: u8) {
         search_count: 0,
         ran_parallel: false,
     };
-    let failed = TestCommand::report_run(reporter, vm, &mut coverage_options, &inputs)
+    let failed = TestCommand::report_run(reporter, vm, &mut coverage_options, inputs)
         .unwrap_or_else(|err| {
             Output::err(err, "Failed to write snapshots", ());
             true

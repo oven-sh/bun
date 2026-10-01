@@ -120,7 +120,7 @@ function planned(c) {
 	const mk = (type, range, extra) => ({ type, range, loc: { start: locOf(range[0]), end: locOf(range[1]) }, ...extra });
 	const sites = c.sites;
 	const found = sites.find(s => s.k === "seam");
-	// D3: a name is the global when the file declares it nowhere and assigns to it nowhere.
+	// D3, for what ReferenceTracker follows: a name is the global when the file declares it nowhere and assigns to it nowhere.
 	const seam = { RegExp: found.RegExp && !(found.written & 1), globalThis: found.globalThis && !(found.written & 2) };
 	const X = { type: "X" };
 	const lits = new Map();
@@ -187,7 +187,8 @@ function planned(c) {
 		const h = rule.create(context);
 		if (h.Program) h.Program(mk("Program", [0, text.length], {}));
 		const literal = node => { for (const k of ["Literal", "Literal[regex]"]) if (h[k]) h[k](node); };
-		const plainCalls = calls.filter(({ s }) => s.ident && s.plain && seam.RegExp);
+		// D3, for `isGlobalReference` and `getVariableByName`: the file declares the name nowhere; an assignment changes nothing.
+		const plainCalls = calls.filter(({ s }) => s.ident && s.plain && found.RegExp);
 		for (const s of sites) {
 			if (s.k === "lit") literal(lits.get(s.at));
 			else if (s.k === "str" && name === "no-useless-escape") {

@@ -313,14 +313,7 @@ fn of_lexer_message(index: usize, msg: &Msg, source: &[u8]) -> Option<SyntaxErro
     }
 
     /// Gives the last message of `log` the diagnostic `to` where a site gave it `from` at `start`.
-    fn refine(
-        &mut self,
-        log: &mut Log,
-        start: usize,
-        from: Message,
-        to: Message,
-        argument: &[u8],
-    ) {
+    fn refine(&mut self, log: &mut Log, start: usize, from: Message, to: Message, argument: &[u8]) {
         let Some(msg) = log.msgs.last_mut() else {
             return;
         };

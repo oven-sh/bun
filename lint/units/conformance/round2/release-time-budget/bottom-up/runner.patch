@@ -1,6 +1,6 @@
---- a/test/cli/lint/conformance/runner/harnessutil_options.ts	2026-10-01 12:01:23.304555454 +0000
-+++ b/test/cli/lint/conformance/runner/harnessutil_options.ts	2026-10-01 12:06:07.600652360 +0000
-@@ -99,15 +99,20 @@
+--- a/test/cli/lint/conformance/runner/harnessutil_options.ts
++++ b/test/cli/lint/conformance/runner/harnessutil_options.ts
+@@ -99,15 +99,22 @@
    { name: "captureSuggestions", kind: "boolean" },
  ];
  
@@ -11,8 +11,10 @@
 +function findByName(table: readonly CommandLineOption[]): (name: string) => CommandLineOption | undefined {
 +  const found = new Map<string, CommandLineOption | undefined>();
 +  return name => {
-+    if (!found.has(name)) found.set(name, table.find(option => equalFold(option.name, name)));
-+    return found.get(name);
++    if (found.has(name)) return found.get(name);
++    const declaration = table.find(option => equalFold(option.name, name));
++    found.set(name, declaration);
++    return declaration;
 +  };
  }
  
@@ -27,7 +29,7 @@
  
  // harnessutil.go:405; returns the text of t.Fatalf, undefined when the option is set.
  export function parseHarnessOption(key: string, value: unknown, harnessOptions: HarnessOptions): string | undefined {
-@@ -343,13 +348,16 @@
+@@ -343,13 +350,16 @@
    notes: string[];
  }
  
@@ -46,7 +48,7 @@
      });
    }
    for (const [link, target] of entriesOf(test.symlinks)) {
-@@ -382,9 +390,9 @@
+@@ -382,9 +392,9 @@
    // The text of the panic with which the reference leaves makeUnitsFromTest.
    let panic: string | undefined;
    try {
@@ -58,8 +60,8 @@
      if (configUnit !== undefined) {
        let existingOptions: CompilerOptions | undefined;
        if (new Map(entriesOf(test.globalOptions)).get("runexternalcode") === "true") {
---- a/test/cli/lint/conformance/runner/harnessutil_variations.ts	2026-10-01 12:01:23.306532635 +0000
-+++ b/test/cli/lint/conformance/runner/harnessutil_variations.ts	2026-10-01 12:01:23.402023045 +0000
+--- a/test/cli/lint/conformance/runner/harnessutil_variations.ts
++++ b/test/cli/lint/conformance/runner/harnessutil_variations.ts
 @@ -139,9 +139,15 @@
    return value;
  }
@@ -77,8 +79,8 @@
  }
  
  // harnessutil.go:1188; the values of an enum come in the order of the keys of its map.
---- a/test/cli/lint/conformance/runner/tsconfig.ts	2026-10-01 12:01:23.306446109 +0000
-+++ b/test/cli/lint/conformance/runner/tsconfig.ts	2026-10-01 12:03:40.242544181 +0000
+--- a/test/cli/lint/conformance/runner/tsconfig.ts
++++ b/test/cli/lint/conformance/runner/tsconfig.ts
 @@ -171,8 +171,148 @@
    return kind === "tristate" || kind === "enum" ? 0 : kind === "string" ? "" : undefined;
  }

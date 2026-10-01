@@ -1,0 +1,19 @@
+RESEARCH OF D4, "name-resolution" (pass 1a, from the code): the tools. Nothing here is in the tree.
+
+probe/           A binary against the rlibs of the debug build of /workspace/wt/cli (the harness of ../rules-expressions/probe).
+                 build:  /workspace/tools/lk python3 probe/build.py /tmp/nr/nrprobe
+                 run:    ASAN_OPTIONS=detect_leaks=0 /tmp/nr/nrprobe [--no-tree] <file>...
+                         `scopes_in_order` of Parser::parse_for_lint (loc, kind, parent, members, children that are in no order),
+                         the symbol table, the erased statements with their places, and every node of the walk that holds a Ref
+                         with the tag of that Ref. The two pub(crate) fields of ScopeOrder are read through a transmute: a probe
+                         may, the crate may not.
+                 run:    ASAN_OPTIONS=detect_leaks=0 /tmp/nr/nrprobe --check <file>...
+                         one CHECK line (E::Identifier and B::Identifier places that repeat, bindings at -1, erased records whose
+                         Place::Scope names no statement list of the walk) and one SYMBOLS line (symbols that no node of the walk
+                         holds, after the placeholder of each function statement is found at `lowest index inside - 1`).
+oracle/scope-oracle.cjs   node scope-oracle.cjs [--type module|commonjs|script] [--ts|--tsx] [--globals a,b] [--bun-globals]
+                          [--rules r1,r2] <code | file.json>...
+                 ESLint at the pin (/workspace/ref/eslint, eslint-scope 9.1.2; with --ts the parser and the scope manager of
+                 typescript-eslint 8.58.2): every scope with its variables, definitions and references, the references that
+                 reach the global scope unresolved, and what the named rules report.
+oracle/bun-globals.txt    The names a file of Bun has beside ESLint's es2026 list, with the source of the list.

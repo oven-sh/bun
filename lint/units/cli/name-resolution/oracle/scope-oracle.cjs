@@ -1,5 +1,5 @@
 // Research scratch of "name-resolution": what ESLint's scope analysis says of a snippet.
-// usage: node scope-oracle.cjs [--type module|commonjs|script] [--ts|--tsx] [--globals a,b] [--rules r1,r2] <code | file.json>...
+// usage: node scope-oracle.cjs [--type module|commonjs|script] [--ts|--tsx] [--globals a,b] [--bun-globals] [--rules r1,r2] <code | file.json>...
 // For each code: every scope (type, block, variables with defs, identifiers and references), the references that reach the
 // global scope unresolved, and what the named rules report. A .json argument is an array of codes.
 // --ts / --tsx: @typescript-eslint/parser (and its scope manager) in place of espree and eslint-scope.
@@ -15,6 +15,7 @@ for (let i = 0; i < args.length; i++) {
 	else if (a === "--ts") ts = true;
 	else if (a === "--tsx") ts = tsx = true;
 	else if (a === "--globals") for (const g of args[++i].split(",")) globals[g] = "readonly";
+	else if (a === "--bun-globals") for (const g of fs.readFileSync(require("path").join(__dirname, "bun-globals.txt"), "utf8").split("\n").filter(l => !l.startsWith("#")).join(" ").split(/\s+/).filter(Boolean)) globals[g.replace(/:w$/, "")] = g.endsWith(":w") ? "writable" : "readonly";
 	else if (a === "--rules") rules = args[++i].split(",");
 	else if (a.endsWith(".json")) codes.push(...JSON.parse(fs.readFileSync(a, "utf8")).map(c => (typeof c === "string" ? c : c.code)));
 	else codes.push(a);

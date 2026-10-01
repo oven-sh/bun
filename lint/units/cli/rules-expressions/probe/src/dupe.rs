@@ -30,8 +30,8 @@ pub struct Ctx<'p, 'a> {
     pub folded: std::collections::BTreeMap<(usize, bool), (bool, bool)>,
     pub reports: Vec<(&'static str, u32, Vec<u8>)>,
     /// The last answer of `start_of_node` for a binary expression: the `loc` it was asked for, the `loc` of the right operand
-    /// of the link whose left operand has the opening record, and that opening.
-    last_start: core::cell::Cell<Option<(i32, i32, u32)>>,
+    /// of the link whose left operand has the opening record, that of the link it was asked for, and the opening.
+    last_start: core::cell::Cell<Option<(i32, i32, i32, u32)>>,
 }
 
 impl<'p, 'a> Ctx<'p, 'a> {
@@ -90,8 +90,8 @@ impl<'p, 'a> Ctx<'p, 'a> {
             ExprData::EBinary(node) => Some(node.right.loc.start),
             _ => None,
         };
-        if let (Some(asked), Some((loc, boundary, start))) = (asked, self.last_start.get()) {
-            if loc == own && asked >= boundary {
+        if let (Some(asked), Some((loc, boundary, top, start))) = (asked, self.last_start.get()) {
+            if loc == own && boundary <= asked && asked <= top {
                 return start;
             }
         }
@@ -120,8 +120,8 @@ impl<'p, 'a> Ctx<'p, 'a> {
             }
             let open = self.wrappers(child).filter(|w| matches!(w.data, WrapperData::Parenthesized | WrapperData::TypeAssertion(_))).map(|w| w.op).min();
             if let Some(open) = open {
-                if let (Some(_), Some(boundary)) = (asked, boundary) {
-                    self.last_start.set(Some((own, boundary, open)));
+                if let (Some(asked), Some(boundary)) = (asked, boundary) {
+                    self.last_start.set(Some((own, boundary, asked, open)));
                 }
                 return open;
             }

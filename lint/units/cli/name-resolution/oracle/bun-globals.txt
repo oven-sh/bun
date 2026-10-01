@@ -1,0 +1,16 @@
+# Names that a file of Bun has beside ESLint's es2026 list (/workspace/ref/eslint/conf/globals.js).
+# Object.getOwnPropertyNames(globalThis) of bun 1.4.3 in a module file (not `bun -e`, which adds the node modules), without the
+# es2026 names, then the five names of the module wrapper. `:w` = writable, as the package `globals` 16.5.0 has it
+# (onerror and onmessage in `browser` and `worker`, exports in `commonjs` and `node`); every other name is read-only.
+AbortController AbortSignal Blob BroadcastChannel Buffer BuildError BuildMessage Bun ByteLengthQueuingStrategy CloseEvent
+CompressionStream CountQueuingStrategy Crypto CryptoKey CustomEvent DOMException DecompressionStream ErrorEvent Event
+EventTarget File FormData HTMLRewriter Headers MessageChannel MessageEvent MessagePort Performance PerformanceEntry
+PerformanceMark PerformanceMeasure PerformanceObserver PerformanceObserverEntryList PerformanceResourceTiming
+PerformanceServerTiming PerformanceTiming ReadableByteStreamController ReadableStream ReadableStreamBYOBReader
+ReadableStreamBYOBRequest ReadableStreamDefaultController ReadableStreamDefaultReader Request ResolveError ResolveMessage
+Response ShadowRealm SubtleCrypto TextDecoder TextDecoderStream TextEncoder TextEncoderStream TransformStream
+TransformStreamDefaultController URL URLPattern URLSearchParams WebAssembly WebSocket Worker WritableStream
+WritableStreamDefaultController WritableStreamDefaultWriter addEventListener alert atob btoa clearImmediate clearInterval
+clearTimeout confirm console crypto dispatchEvent fetch global navigator onerror:w onmessage:w performance postMessage
+process prompt queueMicrotask removeEventListener reportError self setImmediate setInterval setTimeout structuredClone
+require module exports:w __dirname __filename

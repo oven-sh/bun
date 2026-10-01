@@ -1,5 +1,5 @@
---- a/test/cli/lint/conformance.test.ts	2026-10-01 11:25:42.708500104 +0000
-+++ b/test/cli/lint/conformance.test.ts	2026-10-01 12:21:03.363941701 +0000
+--- a/test/cli/lint/conformance.test.ts
++++ b/test/cli/lint/conformance.test.ts
 @@ -28,6 +28,7 @@
    utf8ToByteString,
  } from "./conformance/runner/gostrings";

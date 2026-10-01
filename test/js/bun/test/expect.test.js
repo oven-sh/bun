@@ -3867,11 +3867,6 @@ describe("expect()", () => {
 
   // jest-extended compares against `{}`, and Jest's equality first compares `Object.prototype.toString.call()` of both sides.
   describe("toBeEmpty() with an object of another class than Object", () => {
-    class Tagged {
-      get [Symbol.toStringTag]() {
-        return "Tagged";
-      }
-    }
     /** @type {{ label: string, value: any }[]} */
     const values = [
       { label: `new Date(0)`, value: new Date(0) },
@@ -3884,7 +3879,6 @@ describe("expect()", () => {
       { label: `new WeakSet()`, value: new WeakSet() },
       { label: `new DataView(new ArrayBuffer(8))`, value: new DataView(new ArrayBuffer(8)) },
       { label: `Math`, value: Math },
-      { label: `an instance of a class with Symbol.toStringTag`, value: new Tagged() },
     ];
     for (const { label, value } of values) {
       test(label, () => {
@@ -3893,16 +3887,63 @@ describe("expect()", () => {
       });
     }
 
-    test("a Symbol.toStringTag getter that throws", () => {
-      const value = {};
-      Object.defineProperty(value, Symbol.toStringTag, {
+    test("a Proxy whose get trap throws for Symbol.toStringTag", () => {
+      const value = new Proxy(
+        {},
+        {
+          get(target, key, receiver) {
+            if (key === Symbol.toStringTag) throw new Error("from the trap");
+            return Reflect.get(target, key, receiver);
+          },
+        },
+      );
+      expect(() => expect(value).toBeEmpty()).toThrow("from the trap");
+    });
+  });
+
+  // jest-extended fails these: Jest's equality compares the `Object.prototype.toString` string of a plain object too.
+  if (isBun) {
+    describe("toBeEmpty() with a plain object or module namespace that has a Symbol.toStringTag", () => {
+      class Tagged {
+        get [Symbol.toStringTag]() {
+          return "Tagged";
+        }
+      }
+      const throwingTag = {
         get() {
           throw new Error("from the getter");
         },
+      };
+      /** @type {{ label: string, value: any }[]} */
+      const values = [
+        { label: `new URLSearchParams("").toJSON()`, value: ANY(new URLSearchParams("")).toJSON() },
+        { label: `an instance of a class with a Symbol.toStringTag getter`, value: new Tagged() },
+        { label: `an own Symbol.toStringTag`, value: Object.defineProperty({}, Symbol.toStringTag, { value: "Own" }) },
+        {
+          label: `a Symbol.toStringTag getter that throws`,
+          value: Object.defineProperty({}, Symbol.toStringTag, throwingTag),
+        },
+      ];
+      for (const { label, value } of values) {
+        test(label, () => {
+          expect(value).toBeEmpty();
+        });
+      }
+
+      test("a module namespace with no exports", async () => {
+        const emptyModule = "data:text/javascript,";
+        const namespace = await import(emptyModule);
+        expect(Object.prototype.toString.call(namespace)).toBe("[object Module]");
+        expect(namespace).toBeEmpty();
       });
-      expect(() => expect(value).toBeEmpty()).toThrow("from the getter");
+
+      test(`new URLSearchParams("a=b").toJSON()`, () => {
+        const value = ANY(new URLSearchParams("a=b")).toJSON();
+        expect(value).not.toBeEmpty();
+        expect(() => expect(value).toBeEmpty()).toThrow("Expected value to be empty");
+      });
     });
-  });
+  }
 
   describe("toBeEmpty() with an object that has no enumerable properties", () => {
     class Foo {}

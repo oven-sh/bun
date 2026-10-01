@@ -1,6 +1,6 @@
 use core::ffi::c_void;
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsResult, VM};
+use bun_jsc::{CallFrame, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSType, JSValue, JsResult, VM};
 
 use super::{throw, Expect};
 
@@ -45,8 +45,10 @@ pub(crate) fn to_be_empty(
                     anything_in_iterator,
                 )?;
                 pass = !any_properties_in_iterator;
-            } else if !value.to_string_tag_is_object(global)? {
-                // jest-extended: `equals({}, value)` is false for an object of another class, like a Date.
+            } else if !matches!(value.js_type(), JSType::FinalObject | JSType::ModuleNamespaceObject)
+                && !value.to_string_tag_is_object(global)?
+            {
+                // Another class, like a Date. A plain object or module namespace is exempt: `URLSearchParams.prototype.toJSON()` tags its result.
                 pass = false;
             } else {
                 let Some(_cell) = value.to_cell() else {

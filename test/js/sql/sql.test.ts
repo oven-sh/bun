@@ -1845,6 +1845,26 @@ if (isDockerEnabled()) {
       return expect(await error).toBe("ERR_POSTGRES_CONNECTION_CLOSED");
     });
 
+    test("Connection end again waits for the pending end", async () => {
+      const sql = postgres(options);
+      const order: string[] = [];
+      const promise = sql`select pg_sleep(0.2) as x`.execute().finally(() => order.push("query"));
+      const first = sql.end().then(() => order.push("first end"));
+      const later = sql.end().then(() => order.push("later end"));
+      expect(await promise).toEqual([{ x: "" }]);
+      await Promise.all([first, later]);
+      expect(order).toEqual(["query", "first end", "later end"]);
+    });
+
+    test("Connection destroyed after end", async () => {
+      const sql = postgres(options);
+      const error = sql`select pg_sleep(2)`.execute().catch(err => err.code);
+      const ended = sql.end();
+      await sql.end({ timeout: 0 });
+      expect(await error).toBe("ERR_POSTGRES_CONNECTION_CLOSED");
+      await ended;
+    });
+
     // t('transform column', async() => {
     //   const sql = postgres({
     //     ...options,

@@ -273,7 +273,9 @@ static UnlinkedFunctionExecutable* generateInternalModuleCode(JSC::VM& vm, const
     Zig::ensureBuiltinNamesForBytecodeCache(vm);
     UnlinkedFunctionExecutable* executable = createInternalModuleExecutable(vm, source, moduleName);
     ParserError error;
-    JSC::recursivelyGenerateUnlinkedCodeBlocksForFunction(vm, executable, source, error, depth);
+    // (Compiled ahead of time, a captured variable is only a load if the optimizer has recorded where each name is declared.)
+    auto optimize = vm.bytecodeGenerationOptions.resolveAllScopeSlotsStatically ? JSC::OptimizeBytecode::Yes : JSC::OptimizeBytecode::No;
+    JSC::recursivelyGenerateUnlinkedCodeBlocksForFunction(vm, executable, source, error, depth, optimize);
     return error.isValid() ? nullptr : executable;
 }
 

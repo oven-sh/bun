@@ -1,0 +1,1844 @@
+diff -ruN a/src/js_parser/parse/erased.rs b/src/js_parser/parse/erased.rs
+--- a/src/js_parser/parse/erased.rs	2026-10-01 15:11:03.191876538 +0000
++++ b/src/js_parser/parse/erased.rs	2026-10-01 15:11:03.981418354 +0000
+@@ -1,13 +1,17 @@
+ //! Statements and class members that the parse pass leaves out of the tree, kept for a lint parse.
+ 
+ use bun_alloc::Arena;
++use bun_ast::op::Level;
++use bun_ast::ts;
+ use bun_ast::{
+     ClauseItem, Expr, ExprData, G, Loc, Range, Scope, Source, Stmt, StmtData, StoreRef, StoreSlice,
+     StoreStr,
+ };
+ 
+-use crate::lexer::{self as js_lexer, Lexer};
+-use crate::parser::{ParsedPath, ScopeOrder};
++use crate::Error;
++use crate::lexer::{self as js_lexer, Lexer, T};
++use crate::p::P;
++use crate::parser::{ParseStatementOptions, ParsedPath, ScopeOrder};
+ 
+ /// Where an erased statement stood.
+ #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+@@ -77,8 +81,8 @@
+ 
+ #[derive(Clone, Copy)]
+ pub enum ErasedData {
+-    Interface(Name),
+-    TypeAlias(Name),
++    Interface(StoreRef<InterfaceDeclaration>),
++    TypeAlias(StoreRef<TypeAliasDeclaration>),
+     /// A function without a body, or what follows `declare`: a function, class, variable statement, enum or `;`.
+     Declaration(Stmt),
+     Module(StoreRef<ModuleDeclaration>),
+@@ -98,6 +102,24 @@
+     pub text: StoreStr,
+ }
+ 
++/// `interface name<T> extends A { .. }`: its type parameters are `Generics::type_parameters_of(&name)`.
++#[derive(Clone, Copy)]
++pub struct InterfaceDeclaration {
++    pub name: Name,
++    /// The clauses in the order of the source: an entry of `extends` is a `TypeReference` where a name stands alone, else an `ExpressionWithTypeArguments`.
++    pub heritage_clauses: StoreSlice<ts::HeritageClause>,
++    /// From the offset after the `{` to the end of the last member.
++    pub members: ts::List<ts::Member>,
++}
++
++/// `type name<T> = type_node`: its type parameters are `Generics::type_parameters_of(&name)`.
++#[derive(Clone, Copy)]
++pub struct TypeAliasDeclaration {
++    pub name: Name,
++    /// `KeywordKind::Intrinsic` for `intrinsic` alone.
++    pub type_node: ts::Type,
++}
++
+ /// A string literal: the range holds the quotes, `value` is what it says.
+ #[derive(Clone, Copy)]
+ pub struct StringLiteral {
+@@ -197,8 +219,8 @@
+ pub enum ErasedMemberData {
+     /// An overload, or an abstract or declared member, as the parse pass built it.
+     Property(StoreRef<G::Property>),
+-    /// An index signature: the parse pass builds nothing of it.
+-    IndexSignature,
++    /// An index signature: its decorators and modifier keywords, its parameters from the offset after the `[`, and its type.
++    IndexSignature(StoreRef<ts::IndexSignature>),
+ }
+ 
+ /// The `class_body` of a member that `parse_class` has not placed yet.
+@@ -409,7 +431,7 @@
+         self.push(cursor, offset(loc), None, flags, exported, data);
+     }
+ 
+-    /// Records what `skip_type_script_type_stmt` read: what it held, or else the type alias `name`.
++    /// Records what was read after `type`: what `skip_type_script_type_stmt` held of an export clause, or else the type alias.
+     #[cold]
+     #[inline(never)]
+     pub(crate) fn statement_after_type(
+@@ -418,10 +440,10 @@
+         loc: Loc,
+         flags: ErasedFlags,
+         exported: Exported,
+-        name: Name,
++        alias: Option<StoreRef<TypeAliasDeclaration>>,
+     ) {
+-        match self.held.take() {
+-            Some(data) => {
++        match (self.held.take(), alias) {
++            (Some(data), _) => {
+                 self.statement(
+                     cursor,
+                     loc,
+@@ -430,7 +452,10 @@
+                     data,
+                 );
+             }
+-            None => self.statement(cursor, loc, flags, exported, ErasedData::TypeAlias(name)),
++            (None, Some(alias)) => {
++                self.statement(cursor, loc, flags, exported, ErasedData::TypeAlias(alias));
++            }
++            (None, None) => {}
+         }
+     }
+ 
+@@ -726,44 +751,62 @@
+         self.member(flags, ErasedMemberData::Property(property));
+     }
+ 
++    /// Records the index signature of a class that the parser read: `member_read` places it and finds its modifiers.
++    #[cold]
++    #[inline(never)]
++    pub(crate) fn member_index_signature(&mut self, arena: &Arena, signature: ts::IndexSignature) {
++        let signature = StoreRef::from_bump(arena.alloc(signature));
++        self.member(
++            ErasedFlags::empty(),
++            ErasedMemberData::IndexSignature(signature),
++        );
++    }
++
+     /// Adds `flags` to the member that `parse_property` left out and `parse_class` has not placed yet.
+     #[cold]
+     pub(crate) fn member_modifier(&mut self, flags: ErasedFlags) {
+-        match self.members.last_mut() {
+-            Some(member) if member.class_body == UNPLACED => member.flags |= flags,
+-            // Nothing was built of the member: it is an index signature.
+-            _ => self.member(flags, ErasedMemberData::IndexSignature),
++        if let Some(member) = self.unplaced() {
++            member.flags |= flags;
+         }
+     }
+ 
+-    /// Places the member that `parse_property` left out: it starts at `first`, after `index` members of the body at `body`.
++    /// Places the member that `parse_property` left out: it starts at `first`, where `decorators` start, after `index` members of the body at `body`.
+     #[cold]
+     #[inline(never)]
+     pub(crate) fn member_read(
+         &mut self,
+         cursor: Cursor<'_>,
++        arena: &Arena,
+         first: Loc,
+         body: Loc,
+         index: usize,
+         is_static: bool,
++        decorators: &[Expr],
+     ) {
+-        let is_recorded = self
+-            .members
+-            .last()
+-            .is_some_and(|member| member.class_body == UNPLACED);
+-        if !is_recorded {
+-            // Nothing was built of the member: it is an index signature.
+-            self.member(ErasedFlags::empty(), ErasedMemberData::IndexSignature);
+-        }
+-        if let Some(member) = self.members.last_mut() {
+-            member.start = offset(first);
+-            member.end = cursor.end();
+-            member.class_body = offset(body);
+-            member.index = offset_of(index);
+-            member.flags |= ErasedFlags::member(is_static);
++        let Some(member) = self.unplaced() else {
++            return;
++        };
++        member.start = offset(first);
++        member.end = cursor.end();
++        member.class_body = offset(body);
++        member.index = offset_of(index);
++        member.flags |= ErasedFlags::member(is_static);
++        if let ErasedMemberData::IndexSignature(mut signature) = member.data {
++            // The words between the decorators and the `[` are the modifiers that `parse_property` read past.
++            let open_bracket = signature.parameters.start.saturating_sub(1);
++            let modifiers =
++                modifiers_of_index_signature(cursor, member.start, open_bracket, decorators);
++            signature.modifiers = StoreSlice::new_mut(arena.alloc_slice_copy(&modifiers));
+         }
+     }
+ 
++    /// The member that `parse_property` recorded and `parse_class` has not placed yet.
++    fn unplaced(&mut self) -> Option<&mut ErasedMember> {
++        self.members
++            .last_mut()
++            .filter(|member| member.class_body == UNPLACED)
++    }
++
+     fn member(&mut self, flags: ErasedFlags, data: ErasedMemberData) {
+         self.members.push(ErasedMember {
+             start: 0,
+@@ -864,6 +907,126 @@
+     }
+ }
+ 
++/// What a site of a lint parse calls where a parse without lint skips a statement or a class member that leaves no node: it is built and recorded.
++impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
++    /// The lexer is after `type`: reads what `skip_type_script_type_stmt` reads, with the type of an alias built, and records the statement at `loc`.
++    #[cold]
++    #[inline(never)]
++    pub(crate) fn lint_type_stmt(
++        &mut self,
++        opts: &mut ParseStatementOptions,
++        loc: Loc,
++        flags: ErasedFlags,
++        exported: Exported,
++    ) -> Result<(), Error> {
++        // `export type { a }` and `export type * from "m"` have no type: their clause and path are held.
++        let is_export_clause =
++            opts.is_export && matches!(self.lexer.token, T::TOpenBrace | T::TAsterisk);
++        let alias = if is_export_clause {
++            self.skip_type_script_type_stmt(opts)?;
++            None
++        } else {
++            Some(self.lint_type_alias_declaration(opts)?)
++        };
++        if let Some(starts) = &mut self.starts_for_parse_only {
++            let cursor = Cursor::at(&self.lexer);
++            starts
++                .erased
++                .statement_after_type(cursor, loc, flags, exported, alias);
++        }
++        Ok(())
++    }
++
++    /// parseTypeAliasDeclaration, after `type`.
++    fn lint_type_alias_declaration(
++        &mut self,
++        opts: &ParseStatementOptions,
++    ) -> Result<StoreRef<TypeAliasDeclaration>, Error> {
++        let name = Name::at(&self.lexer);
++        let text = self.lexer.identifier;
++        self.lexer.expect(T::TIdentifier)?;
++        if opts.scope.is_module() {
++            self.local_type_names.put(text, true)?;
++        }
++        self.lint_declaration_type_parameters(name.end)?;
++        self.lexer.expect(T::TEquals)?;
++        // `intrinsic` alone is the keyword: before a `.` it is a name.
++        let is_intrinsic =
++            self.lexer.is_contextual_keyword(b"intrinsic") && !self.build_next_token_is(T::TDot);
++        let type_node = if is_intrinsic {
++            let (start, end) = (offset_of(self.lexer.start), offset_of(self.lexer.end));
++            self.lexer.next()?;
++            ts::Type::keyword(ts::KeywordKind::Intrinsic, start, end)
++        } else {
++            self.build_type_script_type(Level::Lowest)?
++        };
++        self.lexer.expect_or_insert_semicolon()?;
++        let alias = self.arena.alloc(TypeAliasDeclaration { name, type_node });
++        Ok(StoreRef::from_bump(alias))
++    }
++
++    /// parseInterfaceDeclaration, after `interface`: builds the clauses and the members and records the statement at `loc`.
++    #[cold]
++    #[inline(never)]
++    pub(crate) fn lint_interface_stmt(
++        &mut self,
++        opts: &mut ParseStatementOptions,
++        loc: Loc,
++        flags: ErasedFlags,
++        exported: Exported,
++    ) -> Result<(), Error> {
++        let name = Name::at(&self.lexer);
++        let text = self.lexer.identifier;
++        self.lexer.expect(T::TIdentifier)?;
++        if opts.scope.is_module() {
++            self.local_type_names.put(text, true)?;
++        }
++        self.lint_declaration_type_parameters(name.end)?;
++        let heritage_clauses = self.lint_interface_heritage_clauses()?;
++        // parseObjectTypeMembers
++        let members_start = offset_of(self.lexer.end);
++        self.lexer.expect(T::TOpenBrace)?;
++        let members = self.build_type_member_list(members_start)?;
++        self.lexer.expect(T::TCloseBrace)?;
++        let interface = self.arena.alloc(InterfaceDeclaration {
++            name,
++            heritage_clauses,
++            members,
++        });
++        let data = ErasedData::Interface(StoreRef::from_bump(interface));
++        if let Some(starts) = &mut self.starts_for_parse_only {
++            let cursor = Cursor::at(&self.lexer);
++            starts.erased.statement(cursor, loc, flags, exported, data);
++        }
++        Ok(())
++    }
++
++    /// parseIndexSignatureDeclaration of a class element: the lexer is after the `[` at `open_bracket`. Builds it and records it for `member_read`.
++    #[cold]
++    #[inline(never)]
++    pub(crate) fn lint_class_index_signature(&mut self, open_bracket: Loc) -> Result<(), Error> {
++        let list_start = offset(open_bracket).saturating_add(1);
++        let (parameters, mut end) = self.build_parameter_list_rest(list_start, T::TCloseBracket)?;
++        let mut type_node = None;
++        if self.lexer.token == T::TColon {
++            self.lexer.next()?;
++            let annotation = self.build_type_script_type(Level::Lowest)?;
++            end = annotation.end;
++            type_node = Some(annotation);
++        }
++        self.build_type_member_semicolon(end)?;
++        let signature = ts::IndexSignature {
++            modifiers: StoreSlice::EMPTY,
++            parameters,
++            type_node,
++        };
++        if let Some(starts) = &mut self.starts_for_parse_only {
++            starts.erased.member_index_signature(self.arena, signature);
++        }
++        Ok(())
++    }
++}
++
+ fn offset(loc: Loc) -> u32 {
+     u32::try_from(loc.start).unwrap_or(0)
+ }
+@@ -872,6 +1035,78 @@
+     u32::try_from(at).unwrap_or(u32::MAX)
+ }
+ 
++/// The decorators and the modifier keywords of the index signature that starts at `first` and whose `[` is at `open_bracket`, in the order of the source.
++fn modifiers_of_index_signature(
++    cursor: Cursor<'_>,
++    first: u32,
++    open_bracket: u32,
++    decorators: &[Expr],
++) -> Vec<ts::Modifier> {
++    let (source, comments) = (cursor.source, cursor.comments);
++    let keywords = modifiers_before(source, comments, first, open_bracket);
++    let after_decorators = keywords
++        .first()
++        .map_or(open_bracket, |keyword| keyword.start);
++    let starts: Vec<u32> = decorators
++        .iter()
++        .map(|decorator| at_sign_before(source, comments, offset(decorator.loc)))
++        .collect();
++    let mut modifiers = Vec::with_capacity(decorators.len() + keywords.len());
++    for (at, (decorator, &start)) in decorators.iter().zip(&starts).enumerate() {
++        // A decorator ends where the token before the next decorator, the first keyword or the `[` ends.
++        let next = starts.get(at + 1).copied().unwrap_or(after_decorators);
++        let end = token_end_before(source, comments, next);
++        modifiers.push(ts::Modifier::decorator(*decorator, start, end));
++    }
++    modifiers.extend(keywords);
++    modifiers
++}
++
++/// The modifier keywords that stand directly before `at` and not before `floor`, in the order of the source.
++fn modifiers_before(source: &[u8], comments: &[Range], floor: u32, at: u32) -> Vec<ts::Modifier> {
++    let mut modifiers = Vec::new();
++    let mut end = token_end_before(source, comments, at) as usize;
++    loop {
++        let start = word_start(source, end);
++        if start == end || offset_of(start) < floor {
++            break;
++        }
++        let Some(kind) = source.get(start..end).and_then(modifier_kind) else {
++            break;
++        };
++        // After `.`, `#` or `@` the word is a name inside a decorator.
++        let before = token_end_before(source, comments, offset_of(start)) as usize;
++        if before > 0 && matches!(source.get(before - 1), Some(&(b'.' | b'#' | b'@'))) {
++            break;
++        }
++        modifiers.push(ts::Modifier::keyword(
++            kind,
++            offset_of(start),
++            offset_of(end),
++        ));
++        end = before;
++    }
++    modifiers.reverse();
++    modifiers
++}
++
++/// The modifier that `word` spells where `parse_property` reads past it before a class element.
++fn modifier_kind(word: &[u8]) -> Option<ts::ModifierKind> {
++    Some(match word {
++        b"abstract" => ts::ModifierKind::Abstract,
++        b"accessor" => ts::ModifierKind::Accessor,
++        b"async" => ts::ModifierKind::Async,
++        b"declare" => ts::ModifierKind::Declare,
++        b"override" => ts::ModifierKind::Override,
++        b"private" => ts::ModifierKind::Private,
++        b"protected" => ts::ModifierKind::Protected,
++        b"public" => ts::ModifierKind::Public,
++        b"readonly" => ts::ModifierKind::Readonly,
++        b"static" => ts::ModifierKind::Static,
++        _ => return None,
++    })
++}
++
+ /// The address of the scope that `in_order` has at `order`.
+ fn scope_in_order(in_order: &[Option<ScopeOrder<'_>>], order: usize) -> Option<usize> {
+     let entry = in_order.get(order)?.as_ref()?;
+@@ -1093,6 +1328,31 @@
+         }
+     }
+ 
++    fn interface(text: &'static [u8], start: u32) -> ErasedData {
++        let declaration = Box::leak(Box::new(InterfaceDeclaration {
++            name: name(text, start),
++            heritage_clauses: StoreSlice::EMPTY,
++            members: ts::List::empty(start, start),
++        }));
++        ErasedData::Interface(StoreRef::from_bump(declaration))
++    }
++
++    fn alias(text: &'static [u8], start: u32) -> ErasedData {
++        let declaration = Box::leak(Box::new(TypeAliasDeclaration {
++            name: name(text, start),
++            type_node: ts::Type::keyword(ts::KeywordKind::Any, start, start),
++        }));
++        ErasedData::TypeAlias(StoreRef::from_bump(declaration))
++    }
++
++    fn index_signature(open_bracket: u32) -> ts::IndexSignature {
++        ts::IndexSignature {
++            modifiers: StoreSlice::EMPTY,
++            parameters: ts::List::empty(open_bracket + 1, open_bracket + 1),
++            type_node: None,
++        }
++    }
++
+     fn placeholder(start: i32) -> Stmt {
+         Stmt {
+             loc: Loc { start },
+@@ -1173,23 +1433,21 @@
+             in_order: &[],
+         };
+         let mut tables = ErasedTables::default();
+-        let interface = ErasedData::Interface(name(b"A", 17));
+         let empty = ErasedFlags::empty();
+         tables.statement(
+             cursor(source, &[], 22),
+             Loc { start: 7 },
+             empty,
+             Exported::Before,
+-            interface,
++            interface(b"A", 17),
+         );
+         tables.dropped(Loc { start: 7 }, 0, scopes);
+-        let interface = ErasedData::Interface(name(b"E", 43));
+         tables.statement(
+             cursor(source, &[], 47),
+             Loc { start: 33 },
+             empty,
+             Exported::Before,
+-            interface,
++            interface(b"E", 43),
+         );
+         tables.dropped(Loc { start: 99 }, 1, scopes);
+         let [first, second] = tables.statements.as_slice() else {
+@@ -1251,7 +1509,7 @@
+     fn declare_takes_the_record_and_its_statements() {
+         let source = b"declare namespace N { type A = 1 }";
+         let mut tables = ErasedTables::default();
+-        let alias = ErasedData::TypeAlias(name(b"A", 27));
++        let alias = alias(b"A", 27);
+         let ambient = ErasedFlags::AMBIENT;
+         tables.statement(
+             cursor(source, &[], 33),
+@@ -1337,7 +1595,7 @@
+         let source = b"type A = 1; type B = 2;";
+         let mut tables = ErasedTables::default();
+         let empty = ErasedFlags::empty();
+-        let alias = ErasedData::TypeAlias(name(b"A", 5));
++        let alias = alias(b"A", 5);
+         tables.statement(
+             cursor(source, &[], 12),
+             Loc { start: 0 },
+@@ -1353,6 +1611,8 @@
+             Exported::No,
+             alias,
+         );
++        let arena = Arena::new();
++        tables.member_index_signature(&arena, index_signature(0));
+         tables.member_modifier(ErasedFlags::DECLARE);
+         tables.hold(alias);
+         tables.rewind(mark);
+@@ -1360,36 +1620,100 @@
+         assert!(tables.held.is_none());
+     }
+ 
++    /// The modifiers that `member_read` found for the index signature of `member`, as kind, start and end.
++    fn modifiers_of(member: &ErasedMember) -> Vec<(ts::ModifierKind, u32, u32)> {
++        let ErasedMemberData::IndexSignature(signature) = member.data else {
++            return Vec::new();
++        };
++        let mut found = Vec::new();
++        for modifier in signature.modifiers.slice() {
++            if let ts::ModifierData::Keyword(kind) = modifier.data {
++                found.push((kind, modifier.start, modifier.end));
++            }
++        }
++        found
++    }
++
+     #[test]
+-    fn member_without_a_record_is_an_index_signature() {
++    fn an_index_signature_is_placed_with_the_modifiers_before_it() {
+         let source = b"class C { declare static [k: string]: any; [n: number]: 1; x = 1 }";
++        let arena = Arena::new();
+         let mut tables = ErasedTables::default();
++        tables.member_index_signature(&arena, index_signature(25));
+         tables.member_modifier(ErasedFlags::DECLARE);
+         tables.member_read(
+             cursor(source, &[], 43),
++            &arena,
+             Loc { start: 10 },
+             Loc { start: 8 },
+             0,
+             true,
++            &[],
+         );
++        tables.member_index_signature(&arena, index_signature(43));
+         tables.member_read(
+             cursor(source, &[], 59),
++            &arena,
+             Loc { start: 43 },
+             Loc { start: 8 },
+             0,
+             false,
++            &[],
++        );
++        // No member waits for its place: nothing is recorded.
++        tables.member_read(
++            cursor(source, &[], 65),
++            &arena,
++            Loc { start: 59 },
++            Loc { start: 8 },
++            0,
++            false,
++            &[],
+         );
++        tables.member_modifier(ErasedFlags::ABSTRACT);
+         let [first, second] = tables.members.as_slice() else {
+             panic!("two records");
+         };
+-        assert!(matches!(first.data, ErasedMemberData::IndexSignature));
+         assert_eq!((first.start, first.end), (10, 42));
+         assert_eq!((first.class_body, first.index), (8, 0));
+         assert_eq!(first.flags, ErasedFlags::STATIC | ErasedFlags::DECLARE);
+-        assert!(matches!(second.data, ErasedMemberData::IndexSignature));
++        assert_eq!(
++            modifiers_of(first),
++            [
++                (ts::ModifierKind::Declare, 10, 17),
++                (ts::ModifierKind::Static, 18, 24)
++            ]
++        );
+         assert_eq!(
+             (second.start, second.end, second.flags),
+             (43, 58, ErasedFlags::empty())
+         );
++        assert_eq!(modifiers_of(second), []);
++    }
++
++    #[test]
++    fn modifiers_are_the_words_between_the_decorators_and_the_bracket() {
++        let found = |source: &[u8], floor: u32, at: u32| -> Vec<(ts::ModifierKind, u32, u32)> {
++            modifiers_before(source, &[], floor, at)
++                .iter()
++                .filter_map(|modifier| match modifier.data {
++                    ts::ModifierData::Keyword(kind) => Some((kind, modifier.start, modifier.end)),
++                    ts::ModifierData::Decorator(_) => None,
++                })
++                .collect()
++        };
++        let (readonly, r#static) = (ts::ModifierKind::Readonly, ts::ModifierKind::Static);
++        assert_eq!(
++            found(b"@d.static readonly\n static [k: string]: any", 0, 27),
++            [(readonly, 10, 18), (r#static, 20, 26)]
++        );
++        assert_eq!(found(b"@readonly [k: string]: any", 0, 10), []);
++        assert_eq!(
++            found(b"@(d) static [k: string]: any", 0, 12),
++            [(r#static, 5, 11)]
++        );
++        // The word before the member is the name of the member before it.
++        assert_eq!(found(b"declare\n[k: string]: any", 8, 8), []);
++        assert_eq!(found(b"get [k: string]: any", 0, 4), []);
+     }
+ }
+diff -ruN a/src/js_parser/parse/erased_tests.rs b/src/js_parser/parse/erased_tests.rs
+--- a/src/js_parser/parse/erased_tests.rs	2026-10-01 15:11:03.191923839 +0000
++++ b/src/js_parser/parse/erased_tests.rs	2026-10-01 15:11:04.007178824 +0000
+@@ -4,9 +4,13 @@
+     ErasedData, ErasedFlags, ErasedMemberData, ModuleName, Name, Place, StringLiteral,
+ };
+ use super::parse_entry::{Options, ParsedForLint, Parser};
++use super::syntax_errors::SyntaxErrors;
+ use crate::defines::Define;
+ use bun_alloc::Arena;
+-use bun_ast::{ExprData, G, LocRef, StmtData};
++use bun_ast::ts::{self, MemberData};
++use bun_ast::{ExprData, G, LocRef, StmtData, StoreSlice};
++
++use crate::type_sink_tests::outline;
+ 
+ struct Case {
+     name: &'static str,
+@@ -64,8 +68,8 @@
+ 
+ fn statement(parsed: &ParsedForLint<'_, '_>, data: ErasedData) -> (&'static str, String) {
+     match data {
+-        ErasedData::Interface(name) => ("interface", named(name)),
+-        ErasedData::TypeAlias(name) => ("type-alias", named(name)),
++        ErasedData::Interface(interface) => ("interface", named(interface.name)),
++        ErasedData::TypeAlias(alias) => ("type-alias", named(alias.name)),
+         ErasedData::NamespaceExport(name) => ("export-as-namespace", named(name)),
+         ErasedData::Declaration(declared) => match declared.data {
+             StmtData::SFunction(function) => ("function", located(parsed, function.func.name)),
+@@ -164,6 +168,636 @@
+     }
+ }
+ 
++/// A line for each interface, type alias and index signature of a class that a lint parse recorded, by where they start: the kind and the range of every node.
++fn payloads(parsed: &ParsedForLint<'_, '_>) -> Vec<String> {
++    let sidecar = parsed.sidecar;
++    let mut lines: Vec<(u32, String)> = Vec::new();
++    for record in &sidecar.erased.statements {
++        let (start, end) = (record.start, record.end);
++        let mut words = Vec::new();
++        match record.data {
++            ErasedData::TypeAlias(alias) => {
++                words.push(format!("TypeAliasDeclaration[{start},{end})"));
++                declaration_head(parsed, &alias.name, &mut words);
++                outline(alias.type_node, &mut words);
++            }
++            ErasedData::Interface(interface) => {
++                words.push(format!("InterfaceDeclaration[{start},{end})"));
++                declaration_head(parsed, &interface.name, &mut words);
++                for clause in interface.heritage_clauses.slice() {
++                    let token = match clause.token {
++                        ts::HeritageToken::Extends => "extends",
++                        ts::HeritageToken::Implements => "implements",
++                    };
++                    words.push(format!("{token}[{},{})", clause.start, clause.end));
++                    for &entry in clause.types.iter() {
++                        outline(entry, &mut words);
++                    }
++                }
++                let members = interface.members;
++                words.push(format!("members[{},{})", members.start, members.end));
++                for member in members.iter() {
++                    member_outline(member, &mut words);
++                }
++            }
++            _ => continue,
++        }
++        lines.push((start, words.join(" ")));
++    }
++    for member in &sidecar.erased.members {
++        let ErasedMemberData::IndexSignature(signature) = member.data else {
++            continue;
++        };
++        let mut words = vec![format!("IndexSignature[{},{})", member.start, member.end)];
++        let parameters = Some(signature.parameters);
++        signature_outline(
++            signature.modifiers,
++            None,
++            None,
++            parameters,
++            signature.type_node,
++            &mut words,
++        );
++        lines.push((member.start, words.join(" ")));
++    }
++    lines.sort_by_key(|line| line.0);
++    lines.into_iter().map(|line| line.1).collect()
++}
++
++/// The name of an interface or of a type alias, and its type parameters from `<` to after `>`.
++fn declaration_head(parsed: &ParsedForLint<'_, '_>, name: &Name, words: &mut Vec<String>) {
++    words.push(format!("name[{},{})", name.start, name.end));
++    if let Some(list) = parsed.sidecar.generics.type_parameters_of(name) {
++        words.push(format!("typeParameters[{},{})", list.lt, list.end));
++    }
++}
++
++fn member_outline(member: &ts::Member, words: &mut Vec<String>) {
++    let kind = member.data.kind_name();
++    words.push(format!("{kind}[{},{})", member.start, member.end));
++    let none = StoreSlice::EMPTY;
++    match member.data {
++        MemberData::PropertySignature(property) => {
++            let (name, question) = (Some(property.name), property.postfix_token);
++            signature_part(property.modifiers, name, question, words);
++            signature_outline(none, None, None, None, property.type_node, words);
++        }
++        MemberData::MethodSignature(method) => {
++            let (name, question) = (Some(method.name), method.postfix_token);
++            signature_part(method.modifiers, name, question, words);
++            let parameters = Some(method.parameters);
++            let type_parameters = method.type_parameters;
++            signature_outline(
++                none,
++                type_parameters,
++                None,
++                parameters,
++                method.type_node,
++                words,
++            );
++        }
++        MemberData::CallSignature(call) => {
++            let parameters = Some(call.parameters);
++            signature_outline(
++                none,
++                call.type_parameters,
++                None,
++                parameters,
++                call.type_node,
++                words,
++            );
++        }
++        MemberData::ConstructSignature(construct) => {
++            let parameters = Some(construct.parameters);
++            let type_parameters = construct.type_parameters;
++            signature_outline(
++                none,
++                type_parameters,
++                None,
++                parameters,
++                construct.type_node,
++                words,
++            );
++        }
++        MemberData::IndexSignature(index) => {
++            let parameters = Some(index.parameters);
++            signature_outline(
++                index.modifiers,
++                None,
++                None,
++                parameters,
++                index.type_node,
++                words,
++            );
++        }
++        MemberData::GetAccessor(accessor) => {
++            signature_part(accessor.modifiers, Some(accessor.name), None, words);
++            let parameters = Some(accessor.parameters);
++            let type_parameters = accessor.type_parameters;
++            signature_outline(
++                none,
++                type_parameters,
++                None,
++                parameters,
++                accessor.type_node,
++                words,
++            );
++        }
++        MemberData::SetAccessor(accessor) => {
++            signature_part(accessor.modifiers, Some(accessor.name), None, words);
++            let parameters = Some(accessor.parameters);
++            let type_parameters = accessor.type_parameters;
++            signature_outline(
++                none,
++                type_parameters,
++                None,
++                parameters,
++                accessor.type_node,
++                words,
++            );
++        }
++    }
++}
++
++/// The modifiers, the name and the `?` of a member.
++fn signature_part(
++    modifiers: StoreSlice<ts::Modifier>,
++    name: Option<ts::PropertyName>,
++    question: Option<ts::Token>,
++    words: &mut Vec<String>,
++) {
++    for modifier in modifiers.slice() {
++        let word = match modifier.data {
++            ts::ModifierData::Keyword(kind) => format!("{kind:?}"),
++            ts::ModifierData::Decorator(_) => "Decorator".to_owned(),
++        };
++        words.push(format!("{word}[{},{})", modifier.start, modifier.end));
++    }
++    if let Some(name) = name {
++        words.push(format!("name[{},{})", name.start(), name.end()));
++    }
++    if let Some(token) = question {
++        words.push(format!("?[{},{})", token.start, token.end));
++    }
++}
++
++/// The modifiers, the type parameters, the parameters and the type of a signature.
++fn signature_outline(
++    modifiers: StoreSlice<ts::Modifier>,
++    type_parameters: Option<ts::List<ts::TypeParameter>>,
++    question: Option<ts::Token>,
++    parameters: Option<ts::List<ts::Parameter>>,
++    type_node: Option<ts::Type>,
++    words: &mut Vec<String>,
++) {
++    signature_part(modifiers, None, question, words);
++    if let Some(list) = type_parameters {
++        words.push(format!("typeParameters[{},{})", list.start, list.end));
++        for parameter in list.iter() {
++            words.push(format!(
++                "TypeParameter[{},{})",
++                parameter.start, parameter.end
++            ));
++            for node in [parameter.constraint, parameter.default_type]
++                .into_iter()
++                .flatten()
++            {
++                outline(node, words);
++            }
++        }
++    }
++    if let Some(list) = parameters {
++        words.push(format!("parameters[{},{})", list.start, list.end));
++        for parameter in list.iter() {
++            words.push(format!("Parameter[{},{})", parameter.start, parameter.end));
++            if let Some(node) = parameter.type_node {
++                outline(node, words);
++            }
++        }
++    }
++    if let Some(node) = type_node {
++        outline(node, words);
++    }
++}
++
++struct Payloads {
++    name: &'static str,
++    text: &'static [u8],
++    /// One line for each interface, type alias and index signature of a class, by where they start.
++    lines: &'static [&'static str],
++}
++
++/// The lines of `payloads` for the lint parse of `text`. `None`: it does not parse.
++fn lint_payloads(text: &'static [u8]) -> Option<Vec<String>> {
++    let arena = Arena::new();
++    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
++    let _ast_scope = ast_memory_allocator.enter();
++    let source = bun_ast::Source::init_path_string(&b"/a.ts"[..], text);
++    let mut options = Options::init(Default::default(), bun_ast::Loader::Ts);
++    options.features.no_macros = true;
++    options.features.dont_bundle_twice = true;
++    let define = Define::default();
++    let mut log = bun_ast::Log::init();
++    let parser = Parser::init(options, &mut log, &source, &define, &arena).ok()?;
++    parser.parse_for_lint(payloads).ok()
++}
++
++#[test]
++fn payloads_are_the_nodes_that_tsc_builds() {
++    let mut failed = Vec::new();
++    for case in PAYLOADS {
++        let lines = case.lines.iter().map(|line| (*line).to_owned()).collect();
++        let expected: Option<Vec<String>> = Some(lines);
++        let found = lint_payloads(case.text);
++        if found != expected {
++            failed.push(format!("{}: {found:#?}", case.name));
++        }
++    }
++    assert!(failed.is_empty(), "{}", failed.join("\n"));
++}
++
++/// Every line is what tsc 6.0.2 builds for the text, with the kinds of typescript-go for the entries of a heritage clause.
++const PAYLOADS: &[Payloads] = &[
++    Payloads {
++        name: "type-aliases",
++        text: b"type A = string;\ntype B<T> = T extends (infer U)[] ? U : never\nexport type C = { a: A; b?: B<A> } | undefined;\ndeclare type D = import(\"m\").X<string>;\ntype E = intrinsic;\ntype F = intrinsic.G;\ntype as = 1;\ntype G<in out T, const U = A> = | A | B<T>;\n",
++        lines: &[
++            "TypeAliasDeclaration[0,16) name[5,6) StringKeyword[9,15)",
++            "TypeAliasDeclaration[17,62) name[22,23) typeParameters[23,26) ConditionalType[29,62) TypeReference[29,30) ArrayType[39,50) ParenthesizedType[39,48) InferType[40,47) TypeReference[53,54) NeverKeyword[57,62)",
++            "TypeAliasDeclaration[63,110) name[75,76) UnionType[79,109) TypeLiteral[79,97) TypeReference[84,85) TypeReference[91,95)<93,94> TypeReference[93,94) UndefinedKeyword[100,109)",
++            "TypeAliasDeclaration[111,150) name[124,125) ImportType[128,149)<142,148> LiteralType[135,138) StringKeyword[142,148)",
++            "TypeAliasDeclaration[151,170) name[156,157) IntrinsicKeyword[160,169)",
++            "TypeAliasDeclaration[171,192) name[176,177) TypeReference[180,191)",
++            "TypeAliasDeclaration[193,205) name[198,200) LiteralType[203,204)",
++            "TypeAliasDeclaration[206,249) name[211,212) typeParameters[212,235) UnionType[238,248) TypeReference[240,241) TypeReference[244,248)<246,247> TypeReference[246,247)",
++        ],
++    },
++    Payloads {
++        name: "type-aliases-nested",
++        text: b"namespace N { export type T = 1 }\nfunction f() { type L = { [k: string]: L } }\n{ type M = typeof f }\ndeclare namespace O { type P = keyof O }\n",
++        lines: &[
++            "TypeAliasDeclaration[14,31) name[26,27) LiteralType[30,31)",
++            "TypeAliasDeclaration[49,76) name[54,55) TypeLiteral[58,76) StringKeyword[64,70) TypeReference[73,74)",
++            "TypeAliasDeclaration[81,98) name[86,87) TypeQuery[90,98)",
++            "TypeAliasDeclaration[123,139) name[128,129) TypeOperator[132,139) TypeReference[138,139)",
++        ],
++    },
++    Payloads {
++        name: "interfaces",
++        text: b"interface A {}\ninterface B<T> extends C<T>, D.E { a: T; b?(x: T): void; (x: T): T; new (x: T): B<T>; readonly [k: string]: T; get c(): T; set c(v: T) }\nexport default interface F extends G {}\ndeclare interface H { m(): void }\nexport interface I<T = {}> { <U>(u: U, ...rest: T[]): U }\n",
++        lines: &[
++            "InterfaceDeclaration[0,14) name[10,11) members[13,13)",
++            "InterfaceDeclaration[15,151) name[25,26) typeParameters[26,29) extends[30,47) TypeReference[38,42)<40,41> TypeReference[40,41) TypeReference[44,47) members[49,149) PropertySignature[50,55) name[50,51) TypeReference[53,54) MethodSignature[56,71) name[56,57) ?[57,58) parameters[59,63) Parameter[59,63) TypeReference[62,63) VoidKeyword[66,70) CallSignature[72,82) parameters[73,77) Parameter[73,77) TypeReference[76,77) TypeReference[80,81) ConstructSignature[83,100) parameters[88,92) Parameter[88,92) TypeReference[91,92) TypeReference[95,99)<97,98> TypeReference[97,98) IndexSignature[101,125) Readonly[101,109) parameters[111,120) Parameter[111,120) StringKeyword[114,120) TypeReference[123,124) GetAccessor[126,137) name[130,131) parameters[132,132) TypeReference[135,136) SetAccessor[138,149) name[142,143) parameters[144,148) Parameter[144,148) TypeReference[147,148)",
++            "InterfaceDeclaration[152,191) name[177,178) extends[179,188) TypeReference[187,188) members[190,190)",
++            "InterfaceDeclaration[192,225) name[210,211) members[213,223) MethodSignature[214,223) name[214,215) parameters[216,216) VoidKeyword[219,223)",
++            "InterfaceDeclaration[226,283) name[243,244) typeParameters[244,252) members[254,281) CallSignature[255,281) typeParameters[256,257) TypeParameter[256,257) parameters[259,277) Parameter[259,263) TypeReference[262,263) Parameter[265,277) ArrayType[274,277) TypeReference[274,275) TypeReference[280,281)",
++        ],
++    },
++    Payloads {
++        name: "interface-heritage",
++        text: b"interface A extends B, {}\ninterface C extends (D) {}\ninterface E extends F<G>() {}\ninterface H extends I implements J, K<L> {}\ninterface M extends string, N.O<P> {}\ninterface Q extends {} {}\ninterface R extends S\n{}\ninterface as {}\ninterface T extends U extends V {}\n",
++        lines: &[
++            "InterfaceDeclaration[0,25) name[10,11) extends[12,22) TypeReference[20,21) members[24,24)",
++            "InterfaceDeclaration[26,52) name[36,37) extends[38,49) ExpressionWithTypeArguments[46,49) members[51,51)",
++            "InterfaceDeclaration[53,82) name[63,64) extends[65,79) ExpressionWithTypeArguments[73,79) members[81,81)",
++            "InterfaceDeclaration[83,126) name[93,94) extends[95,104) TypeReference[103,104) implements[105,123) ExpressionWithTypeArguments[116,117) ExpressionWithTypeArguments[119,123)<121,122> TypeReference[121,122) members[125,125)",
++            "InterfaceDeclaration[127,164) name[137,138) extends[139,161) TypeReference[147,153) TypeReference[155,161)<159,160> TypeReference[159,160) members[163,163)",
++            "InterfaceDeclaration[165,190) name[175,176) extends[177,187) ExpressionWithTypeArguments[185,187) members[189,189)",
++            "InterfaceDeclaration[191,215) name[201,202) extends[203,212) TypeReference[211,212) members[214,214)",
++            "InterfaceDeclaration[216,231) name[226,228) members[230,230)",
++            "InterfaceDeclaration[232,266) name[242,243) extends[244,253) TypeReference[252,253) extends[254,263) TypeReference[262,263) members[265,265)",
++        ],
++    },
++    Payloads {
++        name: "interface-members",
++        text: b"interface S { a: 1, b: 2; c: 3\n d: 4 }\ninterface T { 'x': 1; 2: 2; [y]: 3; #z: 4; new: 5; get: 6; set?: 7; readonly: 8; static a: 9 }\ninterface U { m<T extends A = B>(this: U, a?: T, ...b: T[]): asserts a is T; get(): void; set(v: 1): void; new?(): U }\ninterface V { a: number = 1; readonly b?: string; c? = 2 }\n",
++        lines: &[
++            "InterfaceDeclaration[0,38) name[10,11) members[13,36) PropertySignature[14,19) name[14,15) LiteralType[17,18) PropertySignature[20,25) name[20,21) LiteralType[23,24) PropertySignature[26,30) name[26,27) LiteralType[29,30) PropertySignature[32,36) name[32,33) LiteralType[35,36)",
++            "InterfaceDeclaration[39,133) name[49,50) members[52,131) PropertySignature[53,60) name[53,56) LiteralType[58,59) PropertySignature[61,66) name[61,62) LiteralType[64,65) PropertySignature[67,74) name[67,70) LiteralType[72,73) PropertySignature[75,81) name[75,77) LiteralType[79,80) PropertySignature[82,89) name[82,85) LiteralType[87,88) PropertySignature[90,97) name[90,93) LiteralType[95,96) PropertySignature[98,106) name[98,101) ?[101,102) LiteralType[104,105) PropertySignature[107,119) name[107,115) LiteralType[117,118) PropertySignature[120,131) Static[120,126) name[127,128) LiteralType[130,131)",
++            "InterfaceDeclaration[134,252) name[144,145) members[147,250) MethodSignature[148,210) name[148,149) typeParameters[150,165) TypeParameter[150,165) TypeReference[160,161) TypeReference[164,165) parameters[167,192) Parameter[167,174) TypeReference[173,174) Parameter[176,181) TypeReference[180,181) Parameter[183,192) ArrayType[189,192) TypeReference[189,190) TypePredicate[195,209) TypeReference[208,209) MethodSignature[211,223) name[211,214) parameters[215,215) VoidKeyword[218,222) MethodSignature[224,240) name[224,227) parameters[228,232) Parameter[228,232) LiteralType[231,232) VoidKeyword[235,239) MethodSignature[241,250) name[241,244) ?[244,245) parameters[246,246) TypeReference[249,250)",
++            "InterfaceDeclaration[253,311) name[263,264) members[266,309) PropertySignature[267,281) name[267,268) NumberKeyword[270,276) PropertySignature[282,302) Readonly[282,290) name[291,292) ?[292,293) StringKeyword[295,301) PropertySignature[303,309) name[303,304) ?[304,305)",
++        ],
++    },
++    Payloads {
++        name: "class-index-signatures",
++        text: b"class C { [k: string]: any }\nclass D { static [k: string]: number; readonly [k: number]: string; static readonly [s: symbol]: unknown }\nclass E { declare [k: string]: any }\nabstract class F { abstract [k: string]: any; a = 1; private [j: number]: 1, public static override [i: string]: 2 }\nclass G { [k: string] }\nclass H { [k: string, j: number]: any; [...r: string[]]: any; [o?: string]: any; []: any }\ndeclare class I { [k: string]: I }\nconst J = class { accessor [k: string]: 1; async [j: string]: 2 }\n",
++        lines: &[
++            "IndexSignature[10,26) parameters[11,20) Parameter[11,20) StringKeyword[14,20) AnyKeyword[23,26)",
++            "IndexSignature[39,66) Static[39,45) parameters[47,56) Parameter[47,56) StringKeyword[50,56) NumberKeyword[59,65)",
++            "IndexSignature[67,96) Readonly[67,75) parameters[77,86) Parameter[77,86) NumberKeyword[80,86) StringKeyword[89,95)",
++            "IndexSignature[97,133) Static[97,103) Readonly[104,112) parameters[114,123) Parameter[114,123) SymbolKeyword[117,123) UnknownKeyword[126,133)",
++            "IndexSignature[146,170) Declare[146,153) parameters[155,164) Parameter[155,164) StringKeyword[158,164) AnyKeyword[167,170)",
++            "IndexSignature[192,218) Abstract[192,200) parameters[202,211) Parameter[202,211) StringKeyword[205,211) AnyKeyword[214,217)",
++            "IndexSignature[226,249) Private[226,233) parameters[235,244) Parameter[235,244) NumberKeyword[238,244) LiteralType[247,248)",
++            "IndexSignature[250,287) Public[250,256) Static[257,263) Override[264,272) parameters[274,283) Parameter[274,283) StringKeyword[277,283) LiteralType[286,287)",
++            "IndexSignature[300,311) parameters[301,310) Parameter[301,310) StringKeyword[304,310)",
++            "IndexSignature[324,352) parameters[325,345) Parameter[325,334) StringKeyword[328,334) Parameter[336,345) NumberKeyword[339,345) AnyKeyword[348,351)",
++            "IndexSignature[353,375) parameters[354,368) Parameter[354,368) ArrayType[360,368) StringKeyword[360,366) AnyKeyword[371,374)",
++            "IndexSignature[376,394) parameters[377,387) Parameter[377,387) StringKeyword[381,387) AnyKeyword[390,393)",
++            "IndexSignature[395,402) parameters[396,396) AnyKeyword[399,402)",
++            "IndexSignature[423,437) parameters[424,433) Parameter[424,433) StringKeyword[427,433) TypeReference[436,437)",
++            "IndexSignature[458,482) Accessor[458,466) parameters[468,477) Parameter[468,477) StringKeyword[471,477) LiteralType[480,481)",
++            "IndexSignature[483,503) Async[483,488) parameters[490,499) Parameter[490,499) StringKeyword[493,499) LiteralType[502,503)",
++        ],
++    },
++    Payloads {
++        name: "class-index-signature-decorators",
++        text: b"class C { @d [k: string]: any; @e.static readonly [j: number]: 1; @(f) static [i: string]: 2; @readonly\n static [h: string]: 3 }\n",
++        lines: &[
++            "IndexSignature[10,30) Decorator[10,12) parameters[14,23) Parameter[14,23) StringKeyword[17,23) AnyKeyword[26,29)",
++            "IndexSignature[31,65) Decorator[31,40) Readonly[41,49) parameters[51,60) Parameter[51,60) NumberKeyword[54,60) LiteralType[63,64)",
++            "IndexSignature[66,93) Decorator[66,70) Static[71,77) parameters[79,88) Parameter[79,88) StringKeyword[82,88) LiteralType[91,92)",
++            "IndexSignature[94,126) Decorator[94,103) Static[105,111) parameters[113,122) Parameter[113,122) StringKeyword[116,122) LiteralType[125,126)",
++        ],
++    },
++    Payloads {
++        name: "speculation",
++        text: b"const r = a ? (b): c => { type T = A | B; interface I extends J { a: 1 } class K { static [k: string]: T } return K } : e;\nconst s = a ? (b) : c => { type U = 1; interface V<W> { w: W } return c };\n",
++        lines: &[
++            "TypeAliasDeclaration[26,41) name[31,32) UnionType[35,40) TypeReference[35,36) TypeReference[39,40)",
++            "InterfaceDeclaration[42,72) name[52,53) extends[54,63) TypeReference[62,63) members[65,70) PropertySignature[66,70) name[66,67) LiteralType[69,70)",
++            "IndexSignature[83,104) Static[83,89) parameters[91,100) Parameter[91,100) StringKeyword[94,100) TypeReference[103,104)",
++            "TypeAliasDeclaration[150,161) name[155,156) LiteralType[159,160)",
++            "InterfaceDeclaration[162,185) name[172,173) typeParameters[173,176) members[178,183) PropertySignature[179,183) name[179,180) TypeReference[182,183)",
++        ],
++    },
++    Payloads {
++        name: "comment-before-type-parameters",
++        text: b"type A /* c */ <T> = T;\ninterface B // d\n<U> { u: U }\n",
++        lines: &[
++            "TypeAliasDeclaration[0,23) name[5,6) typeParameters[15,18) TypeReference[21,22)",
++            "InterfaceDeclaration[24,53) name[34,35) typeParameters[41,44) members[46,51) PropertySignature[47,51) name[47,48) TypeReference[50,51)",
++        ],
++    },
++    Payloads {
++        name: "export-type-forms",
++        text: b"export type { A };\nexport type * from 'm';\nexport type * as N from 'n';\nexport type T = A;\nexport interface U { a: T }\nexport declare type V = 1;\n",
++        lines: &[
++            "TypeAliasDeclaration[72,90) name[84,85) TypeReference[88,89)",
++            "InterfaceDeclaration[91,118) name[108,109) members[111,116) PropertySignature[112,116) name[112,113) TypeReference[115,116)",
++            "TypeAliasDeclaration[119,145) name[139,140) LiteralType[143,144)",
++        ],
++    },
++    Payloads {
++        name: "computed-names-and-initializers",
++        text: b"interface I { [Symbol.iterator](): I; [a + b]: 1; c: number = d as number; e?(f = 1, { g }: H, [i]: J = []): void }\n",
++        lines: &[
++            "InterfaceDeclaration[0,115) name[10,11) members[13,113) MethodSignature[14,37) name[14,31) parameters[32,32) TypeReference[35,36) PropertySignature[38,49) name[38,45) LiteralType[47,48) PropertySignature[50,74) name[50,51) NumberKeyword[53,59) MethodSignature[75,113) name[75,76) ?[76,77) parameters[78,106) Parameter[78,83) Parameter[85,93) TypeReference[92,93) Parameter[95,106) TypeReference[100,101) VoidKeyword[109,113)",
++        ],
++    },
++    Payloads {
++        name: "named-like-a-cast",
++        text: b"type as<T> = T;\ninterface satisfies<U> extends B<U> { a: U }\ntype satisfies = 1;\ninterface as {}\n",
++        lines: &[
++            "TypeAliasDeclaration[0,15) name[5,7) typeParameters[7,10) TypeReference[13,14)",
++            "InterfaceDeclaration[16,60) name[26,35) typeParameters[35,38) extends[39,51) TypeReference[47,51)<49,50> TypeReference[49,50) members[53,58) PropertySignature[54,58) name[54,55) TypeReference[57,58)",
++            "TypeAliasDeclaration[61,80) name[66,75) LiteralType[78,79)",
++            "InterfaceDeclaration[81,96) name[91,93) members[95,95)",
++        ],
++    },
++    Payloads {
++        name: "accessor-bodies",
++        text: b"interface X { get a() { return 0 } set a(v: number) { v } b: 1 }\ntype Y = { get c(): number { return 1 } d: 2 };\n",
++        lines: &[
++            "InterfaceDeclaration[0,64) name[10,11) members[13,62) GetAccessor[14,34) name[18,19) parameters[20,20) SetAccessor[35,57) name[39,40) parameters[41,50) Parameter[41,50) NumberKeyword[44,50) PropertySignature[58,62) name[58,59) LiteralType[61,62)",
++            "TypeAliasDeclaration[65,112) name[70,71) TypeLiteral[74,111) NumberKeyword[85,91) LiteralType[108,109)",
++        ],
++    },
++];
++
++/// The entry of the first error that the lint parse of `text` logs, as code, start, end and text. `None`: it parses.
++fn first_error(text: &'static [u8]) -> Option<(u32, u32, u32, Vec<u8>)> {
++    let arena = Arena::new();
++    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
++    let _ast_scope = ast_memory_allocator.enter();
++    let source = bun_ast::Source::init_path_string(&b"/a.ts"[..], text);
++    let mut options = Options::init(Default::default(), bun_ast::Loader::Ts);
++    options.features.no_macros = true;
++    options.features.dont_bundle_twice = true;
++    let define = Define::default();
++    let mut log = bun_ast::Log::init();
++    let mut errors = SyntaxErrors::default();
++    let parser = Parser::init(options, &mut log, &source, &define, &arena).ok()?;
++    if parser
++        .parse_for_lint_with_codes(&mut errors, |_| ())
++        .is_ok()
++    {
++        return None;
++    }
++    let first = log
++        .msgs
++        .iter()
++        .position(|msg| msg.kind == bun_ast::Kind::Err)?;
++    let Some(entry) = errors.get(first) else {
++        return Some((0, 0, 0, Vec::new()));
++    };
++    Some((entry.code, entry.start, entry.end, entry.text.to_vec()))
++}
++
++#[test]
++fn an_erased_statement_is_read_as_the_reference_reads_it() {
++    // The code, the range and the text are the first diagnostic of tsc 6.0.2 and of typescript-go for each text.
++    let cases: [(&'static [u8], u32, u32, u32, &str); 29] = [
++        (b"type A = | | B", 1110, 11, 12, "Type expected."),
++        (
++            b"interface I { a A }",
++            1131,
++            14,
++            15,
++            "Property or signature expected.",
++        ),
++        (
++            b"interface I extends A | B {}",
++            1005,
++            22,
++            23,
++            "',' expected.",
++        ),
++        (
++            b"class C { [k: string]: | | B }",
++            1110,
++            25,
++            26,
++            "Type expected.",
++        ),
++        (
++            b"type A = { a A }",
++            1131,
++            11,
++            12,
++            "Property or signature expected.",
++        ),
++        (
++            b"type A = B | () => void",
++            1385,
++            12,
++            23,
++            "Function type notation must be parenthesized when used in a union type.",
++        ),
++        (
++            b"interface I { m(): | | B }",
++            1110,
++            21,
++            22,
++            "Type expected.",
++        ),
++        (
++            b"class C { [a!: string]: number }",
++            1005,
++            13,
++            14,
++            "']' expected.",
++        ),
++        (
++            b"interface I { +a: string }",
++            1131,
++            14,
++            15,
++            "Property or signature expected.",
++        ),
++        (
++            b"interface I extends typeof A {}",
++            1109,
++            20,
++            26,
++            "Expression expected.",
++        ),
++        (b"interface I extends A B {}", 1005, 22, 23, "',' expected."),
++        (b"type A = intrinsic | B", 1005, 19, 20, "';' expected."),
++        (b"interface I {", 1005, 13, 13, "'}' expected."),
++        (
++            b"interface I { a: 1,, }",
++            1131,
++            19,
++            20,
++            "Property or signature expected.",
++        ),
++        (
++            b"interface I extends A,, B {}",
++            1109,
++            22,
++            23,
++            "Expression expected.",
++        ),
++        (
++            b"interface I extends ;",
++            1109,
++            20,
++            21,
++            "Expression expected.",
++        ),
++        (
++            b"interface I { a!: string }",
++            1131,
++            14,
++            15,
++            "Property or signature expected.",
++        ),
++        (b"type A = B<C | >", 1110, 15, 16, "Type expected."),
++        (
++            b"interface I<T> extends A<T | > {}",
++            1110,
++            29,
++            30,
++            "Type expected.",
++        ),
++        (
++            b"class C { [k: string]: any x }",
++            1005,
++            27,
++            28,
++            "';' expected.",
++        ),
++        (
++            b"class C { static [k: string] = 1 }",
++            1005,
++            29,
++            30,
++            "';' expected.",
++        ),
++        (
++            b"interface I extends void {}",
++            1109,
++            20,
++            24,
++            "Expression expected.",
++        ),
++        (b"type A = B type C = D", 1005, 11, 15, "';' expected."),
++        (b"export type A = | | B", 1110, 18, 19, "Type expected."),
++        (
++            b"declare interface I { a A }",
++            1131,
++            22,
++            23,
++            "Property or signature expected.",
++        ),
++        (
++            b"namespace N { export interface I extends A | B {} }",
++            1005,
++            43,
++            44,
++            "',' expected.",
++        ),
++        (
++            b"const r = a ? (b): c => { type T = | | B; return 1 } : e;",
++            1110,
++            37,
++            38,
++            "Type expected.",
++        ),
++        (
++            b"class C { get [k: string]: any }",
++            1005,
++            16,
++            17,
++            "']' expected.",
++        ),
++        (
++            b"class C { *[k: string]: any }",
++            1005,
++            13,
++            14,
++            "']' expected.",
++        ),
++    ];
++    let mut failed = Vec::new();
++    for (text, code, start, end, message) in cases {
++        let found = first_error(text);
++        if found != Some((code, start, end, message.as_bytes().to_vec())) {
++            failed.push(format!("{}: {found:?}", bstr::BStr::new(text)));
++        }
++    }
++    assert!(failed.is_empty(), "{}", failed.join("\n"));
++}
++
++#[test]
++fn a_declaration_named_like_a_cast_is_recorded_once() {
++    let text: &'static [u8] = b"type as<T> = T;\ninterface satisfies<U> extends B<U> { a: U }\n";
++    let arena = Arena::new();
++    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
++    let _ast_scope = ast_memory_allocator.enter();
++    let source = bun_ast::Source::init_path_string(&b"/a.ts"[..], text);
++    let mut options = Options::init(Default::default(), bun_ast::Loader::Ts);
++    options.features.no_macros = true;
++    options.features.dont_bundle_twice = true;
++    let define = Define::default();
++    let mut log = bun_ast::Log::init();
++    let counts = Parser::init(options, &mut log, &source, &define, &arena)
++        .ok()
++        .and_then(|parser| {
++            parser
++                .parse_for_lint(|parsed| {
++                    let sidecar = parsed.sidecar;
++                    (
++                        sidecar.erased.statements.len(),
++                        sidecar.generics.type_parameters.len(),
++                    )
++                })
++                .ok()
++        });
++    assert_eq!(counts, Some((2, 2)));
++}
++
+ #[test]
+ fn records_are_those_of_the_known_sources() {
+     let mut failed = Vec::new();
+diff -ruN a/src/js_parser/parse/generics.rs b/src/js_parser/parse/generics.rs
+--- a/src/js_parser/parse/generics.rs	2026-10-01 15:11:03.191976261 +0000
++++ b/src/js_parser/parse/generics.rs	2026-10-01 15:11:03.477000298 +0000
+@@ -2,13 +2,14 @@
+ 
+ use bun_ast::op::Level;
+ use bun_ast::ts;
+-use bun_ast::{Expr, ExprData, Loc};
++use bun_ast::{Expr, ExprData, Loc, StoreSlice};
+ 
+ use crate::Error;
+ use crate::lexer::{LexerSnapshot, T};
+ use crate::p::P;
+ use crate::parse::attached::Owner;
+ use crate::parse::erased;
++use crate::parse::syntax_errors::EXPRESSION_EXPECTED;
+ use crate::parse::wrappers::ExprId;
+ use crate::parser::SkipTypeParameterResult;
+ 
+@@ -407,7 +408,7 @@
+         let mut entries: Vec<ts::Type> = Vec::new();
+         let end;
+         loop {
+-            let entry = self.lint_class_implements_entry()?;
++            let entry = self.lint_heritage_entry(true)?;
+             entries.push(entry);
+             if self.lexer.token != T::TComma {
+                 end = entry.end;
+@@ -427,24 +428,106 @@
+         Ok(())
+     }
+ 
+-    /// An entry of `implements`: a type reference where one stands there, else an expression with its type arguments.
+-    fn lint_class_implements_entry(&mut self) -> Result<ts::Type, Error> {
++    /// parseHeritageClauses of an interface, at `extends` or `implements` or where no clause stands: builds the clauses.
++    #[cold]
++    #[inline(never)]
++    pub(crate) fn lint_interface_heritage_clauses(
++        &mut self,
++    ) -> Result<StoreSlice<ts::HeritageClause>, Error> {
++        let mut clauses: Vec<ts::HeritageClause> = Vec::new();
++        while self.lexer.token == T::TExtends || self.lexer.is_contextual_keyword(b"implements") {
++            let is_extends = self.lexer.token == T::TExtends;
++            let keyword = offset_of(self.lexer.start);
++            // A clause without an entry ends with its keyword.
++            let mut end = offset_of(self.lexer.end);
++            self.lexer.next()?;
++            let start = offset_of(self.lexer.start);
++            let mut entries: Vec<ts::Type> = Vec::new();
++            loop {
++                // isListElement of PCHeritageClauseElement: braces that are no object literal hold the members.
++                let is_entry = if self.lexer.token == T::TOpenBrace {
++                    self.is_valid_heritage_clause_object_literal()
++                } else {
++                    self.is_start_of_left_hand_side_expression()
++                        && !self.is_heritage_clause_keyword()
++                };
++                if !is_entry {
++                    if self.is_end_of_heritage_clause() {
++                        break;
++                    }
++                    self.unexpected_as(EXPRESSION_EXPECTED)?;
++                    return Err(Error::SyntaxError);
++                }
++                // isTypeHeritageClause: only an entry of `extends` is read as a type reference.
++                let entry = self.lint_heritage_entry(is_extends)?;
++                entries.push(entry);
++                end = entry.end;
++                if self.lexer.token == T::TComma {
++                    end = offset_of(self.lexer.end);
++                    self.lexer.next()?;
++                    continue;
++                }
++                if self.is_end_of_heritage_clause() {
++                    break;
++                }
++                self.lexer.expected(T::TComma)?;
++                return Err(Error::SyntaxError);
++            }
++            clauses.push(ts::HeritageClause {
++                start: keyword,
++                end,
++                token: if is_extends {
++                    ts::HeritageToken::Extends
++                } else {
++                    ts::HeritageToken::Implements
++                },
++                types: ts::List::from_slice(self.arena, &entries, start, end.max(start)),
++            });
++        }
++        Ok(StoreSlice::new_mut(self.arena.alloc_slice_copy(&clauses)))
++    }
++
++    /// isListTerminator of PCHeritageClauseElement: the members, another clause, or the end of the file.
++    fn is_end_of_heritage_clause(&self) -> bool {
++        matches!(
++            self.lexer.token,
++            T::TOpenBrace | T::TExtends | T::TEndOfFile
++        ) || self.lexer.is_contextual_keyword(b"implements")
++    }
++
++    /// isHeritageClauseExtendsOrImplementsKeyword: `extends` or `implements` before what starts an expression.
++    fn is_heritage_clause_keyword(&mut self) -> bool {
++        if self.lexer.token != T::TExtends && !self.lexer.is_contextual_keyword(b"implements") {
++            return false;
++        }
++        let old_lexer = self.lexer.snapshot();
++        self.lexer.is_log_disabled = true;
++        let is_keyword = self.lexer.next().is_ok() && self.is_start_of_expression();
++        self.lexer.restore(&old_lexer);
++        is_keyword
++    }
++
++    /// An entry of a heritage clause. `reads_type`: a type reference where one stands there, else an expression with its type arguments.
++    fn lint_heritage_entry(&mut self, reads_type: bool) -> Result<ts::Type, Error> {
+         let start = self.lexer.snapshot();
+         let logged = self.lint_logged();
+         let recorded = self.sidecar_mark();
+-        self.lexer.is_log_disabled = true;
+-        let as_type = self.build_type_script_type(Level::Lowest);
+-        self.lexer.is_log_disabled = start.is_log_disabled;
+-        match as_type {
+-            Ok(type_node)
+-                if matches!(type_node.data, ts::TypeData::TypeReference(_))
+-                    && self.log().errors == logged.1
+-                    && matches!(self.lexer.token, T::TComma | T::TOpenBrace) =>
+-            {
+-                return Ok(type_node);
++        if reads_type {
++            self.lexer.is_log_disabled = true;
++            let as_type = self.build_heritage_type();
++            self.lexer.is_log_disabled = start.is_log_disabled;
++            match as_type {
++                Ok(type_node)
++                    if self.log().errors == logged.1
++                        && self.is_end_of_heritage_clause_element() =>
++                {
++                    if let Some(reference) = self.build_heritage_type_reference(type_node) {
++                        return Ok(reference);
++                    }
++                }
++                Err(err @ (Error::StackOverflow | Error::Alloc(_))) => return Err(err),
++                _ => {}
+             }
+-            Err(err @ (Error::StackOverflow | Error::Alloc(_))) => return Err(err),
+-            _ => {}
+         }
+ 
+         // No type reference stands there: what the reading logged and recorded goes, and the entry is read as the reference reads it.
+@@ -552,16 +635,9 @@
+         result.map(|expression| (expression, end))
+     }
+ 
+-    /// The lexer is on the `<` after the name of an interface or of a type alias: reads the type parameters and records them.
+-    #[cold]
+-    #[inline(never)]
+-    pub(crate) fn lint_declaration_type_parameters(&mut self) -> Result<(), Error> {
++    /// Reads the type parameters of the interface or of the type alias whose name ends at `name_end`, if `<` starts them here, and records them.
++    pub(crate) fn lint_declaration_type_parameters(&mut self, name_end: u32) -> Result<(), Error> {
+         let less_than = self.lexer.loc();
+-        let name_end = ts::full_start(
+-            self.lexer.contents,
+-            &self.lexer.all_comments,
+-            offset_of(self.lexer.start),
+-        );
+         if let Some((list, end)) = self.build_type_script_type_parameters()?
+             && let Some(starts) = &mut self.starts_for_parse_only
+         {
+diff -ruN a/src/js_parser/parse/mod.rs b/src/js_parser/parse/mod.rs
+--- a/src/js_parser/parse/mod.rs	2026-10-01 15:11:03.192017896 +0000
++++ b/src/js_parser/parse/mod.rs	2026-10-01 15:11:03.501776864 +0000
+@@ -310,10 +310,12 @@
+                     if let Some(starts) = &mut p.starts_for_parse_only {
+                         starts.erased.member_read(
+                             erased::Cursor::at(&p.lexer),
++                            p.arena,
+                             first_decorator_loc,
+                             body_loc,
+                             properties.len(),
+                             opts.is_static,
++                            &opts.ts_decorators,
+                         );
+                     }
+                 }
+diff -ruN a/src/js_parser/parse/parse_property.rs b/src/js_parser/parse/parse_property.rs
+--- a/src/js_parser/parse/parse_property.rs	2026-10-01 15:11:03.192450223 +0000
++++ b/src/js_parser/parse/parse_property.rs	2026-10-01 15:11:04.053179174 +0000
+@@ -421,18 +421,31 @@
+ 
+                     if Self::IS_TYPESCRIPT_ENABLED && opts.is_class && p.is_class_index_signature()
+                     {
+-                        p.skip_class_index_signature()?;
++                        if p.starts_for_parse_only.is_none() {
++                            p.skip_class_index_signature()?;
+ 
+-                        // Skip this property entirely
+-                        return Ok(None);
++                            // Skip this property entirely
++                            return Ok(None);
++                        }
++                        // After `get`, `set` or `*` the reference reads a name in brackets: a lint parse reads no index signature there.
++                        if !matches!(kind, PropertyKind::Get | PropertyKind::Set)
++                            && !opts.is_generator
++                        {
++                            p.lint_class_index_signature(key_range.loc)?;
++                            return Ok(None);
++                        }
+                     }
+ 
+                     let was_identifier = p.lexer.token == T::TIdentifier;
+                     let expr = p.parse_expr(Level::Comma)?;
+ 
+                     if Self::IS_TYPESCRIPT_ENABLED {
+-                        // Handle index signatures
+-                        if p.lexer.token == T::TColon && was_identifier && opts.is_class {
++                        // Handle index signatures: `[a!: T]: U` is none for the reference, so a lint parse asks for the "]"
++                        if p.lexer.token == T::TColon
++                            && was_identifier
++                            && opts.is_class
++                            && !p.is_lint_parse()
++                        {
+                             match expr.data {
+                                 js_ast::ExprData::EIdentifier(_) => {
+                                     p.lexer.next()?;
+diff -ruN a/src/js_parser/parse/parse_skip_typescript.rs b/src/js_parser/parse/parse_skip_typescript.rs
+--- a/src/js_parser/parse/parse_skip_typescript.rs	2026-10-01 15:11:03.192500243 +0000
++++ b/src/js_parser/parse/parse_skip_typescript.rs	2026-10-01 15:11:03.622175897 +0000
+@@ -2785,7 +2785,7 @@
+             Dropped::ComputedPropertyName => self.parse_expr(Level::Lowest).map(|_| ()),
+             Dropped::Initializer => self.parse_expr(Level::Comma).map(|_| ()),
+             Dropped::LeftHandSide => self.parse_expr(Level::New).map(|_| ()),
+-            Dropped::FunctionBlock => self.parse_function_block_of_accessor(),
++            Dropped::FunctionBlock => self.parse_function_block_of_accessor().map(|_| ()),
+         };
+         let has_failed = result.is_err() || self.log().errors != errors;
+         let mut end = self.lexer.snapshot();
+@@ -2815,8 +2815,10 @@
+         Ok(())
+     }
+ 
+-    /// parseFunctionBlock of an accessor of a type, at "{".
+-    fn parse_function_block_of_accessor(&mut self) -> Result<(), Error> {
++    /// parseFunctionBlock of an accessor of a type, at "{": the statements of the block.
++    pub(crate) fn parse_function_block_of_accessor(
++        &mut self,
++    ) -> Result<bun_ast::StoreSlice<bun_ast::Stmt>, Error> {
+         // The scope of the parameters must start before the scope of the body.
+         let parameters_loc = bun_ast::Loc {
+             start: self.lexer.loc().start - 1,
+@@ -2828,7 +2830,7 @@
+             allow_super_property: true,
+             ..Default::default()
+         };
+-        self.parse_fn_body(&mut data).map(|_| ())
++        Ok(self.parse_fn_body(&mut data)?.stmts)
+     }
+ 
+     // This is the type parameter declarations that go with other symbol
+@@ -3067,14 +3069,10 @@
+         }
+ 
+         if self.lexer.token == T::TLessThan {
+-            if self.starts_for_parse_only.is_some() {
+-                self.lint_declaration_type_parameters()?;
+-            } else {
+-                let _ = self.skip_type_script_type_parameters(
+-                    TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS
+-                        | TypeParameterFlag::ALLOW_EMPTY_TYPE_PARAMETERS,
+-                )?;
+-            }
++            let _ = self.skip_type_script_type_parameters(
++                TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS
++                    | TypeParameterFlag::ALLOW_EMPTY_TYPE_PARAMETERS,
++            )?;
+         }
+ 
+         self.lexer.expect(T::TEquals)?;
+@@ -3096,14 +3094,10 @@
+         }
+ 
+         if self.lexer.token == T::TLessThan {
+-            if self.starts_for_parse_only.is_some() {
+-                self.lint_declaration_type_parameters()?;
+-            } else {
+-                let _ = self.skip_type_script_type_parameters(
+-                    TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS
+-                        | TypeParameterFlag::ALLOW_EMPTY_TYPE_PARAMETERS,
+-                )?;
+-            }
++            let _ = self.skip_type_script_type_parameters(
++                TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS
++                    | TypeParameterFlag::ALLOW_EMPTY_TYPE_PARAMETERS,
++            )?;
+         }
+ 
+         self.parse_heritage_clauses()?;
+@@ -3137,7 +3131,7 @@
+     }
+ 
+     /// isValidHeritageClauseObjectLiteral
+-    fn is_valid_heritage_clause_object_literal(&mut self) -> bool {
++    pub(crate) fn is_valid_heritage_clause_object_literal(&mut self) -> bool {
+         let old_lexer = self.lexer.snapshot();
+         self.lexer.is_log_disabled = true;
+         let is_valid = self
+@@ -3158,7 +3152,7 @@
+     }
+ 
+     /// Whether the lexer is on a token that may follow an entry of an "extends" or "implements" list.
+-    fn is_end_of_heritage_clause_element(&self) -> bool {
++    pub(crate) fn is_end_of_heritage_clause_element(&self) -> bool {
+         matches!(self.lexer.token, T::TComma | T::TOpenBrace | T::TExtends)
+             || self.lexer.is_contextual_keyword(b"implements")
+     }
+@@ -3701,7 +3695,9 @@
+     use crate::defines::Define;
+     use crate::p::StartsForParseOnly;
+     use crate::parse::attached::{ModuleExportName, Owner, Specifier};
+-    use crate::parse::erased::{Cursor, ErasedData, ErasedFlags, Exported, Name};
++    use crate::parse::erased::{
++        Cursor, ErasedData, ErasedFlags, Exported, InterfaceDeclaration, Name,
++    };
+     use crate::parse::generics::TypeArgumentsOf;
+     use crate::parse::parse_entry::{Options, Parser};
+     use crate::parse::type_sink::Build;
+@@ -3766,7 +3762,18 @@
+         let range = p.lexer.range();
+         let start = u32::try_from(p.lexer.start).unwrap_or(u32::MAX);
+         let end = u32::try_from(p.lexer.end).unwrap_or(u32::MAX);
+-        let interface = ErasedData::Interface(Name::at(&p.lexer));
++        let interface = ErasedData::Interface(bun_ast::StoreRef::from_bump(p.arena.alloc(
++            InterfaceDeclaration {
++                name: Name::at(&p.lexer),
++                heritage_clauses: bun_ast::StoreSlice::EMPTY,
++                members: ts::List::empty(start, end),
++            },
++        )));
++        let index_signature = ts::IndexSignature {
++            modifiers: bun_ast::StoreSlice::EMPTY,
++            parameters: ts::List::empty(start, end),
++            type_node: None,
++        };
+         let operand = Expr {
+             loc: at,
+             data: ExprData::EIdentifier(E::Identifier::default()),
+@@ -3792,7 +3799,12 @@
+             starts
+                 .erased
+                 .statement(cursor, at, no_flags, Exported::No, interface);
+-            starts.erased.member_read(cursor, at, at, 0, false);
++            starts
++                .erased
++                .member_index_signature(p.arena, index_signature);
++            starts
++                .erased
++                .member_read(cursor, p.arena, at, at, 0, false, &[]);
+             starts.wrappers.non_null(operand, at);
+             let attached = &mut starts.attached;
+             attached.annotation(at, any);
+diff -ruN a/src/js_parser/parse/parse_stmt.rs b/src/js_parser/parse/parse_stmt.rs
+--- a/src/js_parser/parse/parse_stmt.rs	2026-10-01 15:11:03.192632643 +0000
++++ b/src/js_parser/parse/parse_stmt.rs	2026-10-01 15:11:03.500154737 +0000
+@@ -960,21 +960,15 @@
+                                     is_export: true,
+                                     ..Default::default()
+                                 };
+-                                let name = p
+-                                    .starts_for_parse_only
+-                                    .is_some()
+-                                    .then(|| erased::Name::at(&p.lexer));
+-                                p.skip_type_script_type_stmt(&mut skipper)?;
+-                                if let Some(name) = name
+-                                    && let Some(starts) = &mut p.starts_for_parse_only
+-                                {
+-                                    starts.erased.statement_after_type(
+-                                        erased::Cursor::at(&p.lexer),
++                                if p.starts_for_parse_only.is_some() {
++                                    p.lint_type_stmt(
++                                        &mut skipper,
+                                         loc,
+                                         erased::ErasedFlags::ambient(opts.is_typescript_declare),
+                                         erased::Exported::Here,
+-                                        name,
+-                                    );
++                                    )?;
++                                } else {
++                                    p.skip_type_script_type_stmt(&mut skipper)?;
+                                 }
+                                 return Ok(p.s(S::TypeScript {}, loc));
+                             }
+@@ -2133,21 +2127,15 @@
+                         scope: opts.scope,
+                         ..Default::default()
+                     };
+-                    let name = p
+-                        .starts_for_parse_only
+-                        .is_some()
+-                        .then(|| erased::Name::at(&p.lexer));
+-                    p.skip_type_script_type_stmt(&mut stmt_opts)?;
+-                    if let Some(name) = name
+-                        && let Some(starts) = &mut p.starts_for_parse_only
+-                    {
+-                        starts.erased.statement_after_type(
+-                            erased::Cursor::at(&p.lexer),
++                    if p.starts_for_parse_only.is_some() {
++                        p.lint_type_stmt(
++                            &mut stmt_opts,
+                             loc,
+                             erased::ErasedFlags::ambient(opts.is_typescript_declare),
+                             erased::Exported::before(opts.is_export),
+-                            name,
+-                        );
++                        )?;
++                    } else {
++                        p.skip_type_script_type_stmt(&mut stmt_opts)?;
+                     }
+                     return Ok(Some(p.s(S::TypeScript {}, loc)));
+                 }
+@@ -2176,21 +2164,15 @@
+                         ..Default::default()
+                     };
+ 
+-                    let name = p
+-                        .starts_for_parse_only
+-                        .is_some()
+-                        .then(|| erased::Name::at(&p.lexer));
+-                    p.skip_type_script_interface_stmt(&mut stmt_opts)?;
+-                    if let Some(name) = name
+-                        && let Some(starts) = &mut p.starts_for_parse_only
+-                    {
+-                        starts.erased.statement(
+-                            erased::Cursor::at(&p.lexer),
++                    if p.starts_for_parse_only.is_some() {
++                        p.lint_interface_stmt(
++                            &mut stmt_opts,
+                             loc,
+                             erased::ErasedFlags::ambient(opts.is_typescript_declare),
+                             erased::Exported::before(opts.is_export),
+-                            erased::ErasedData::Interface(name),
+-                        );
++                        )?;
++                    } else {
++                        p.skip_type_script_interface_stmt(&mut stmt_opts)?;
+                     }
+                     return Ok(Some(p.s(S::TypeScript {}, loc)));
+                 }
+diff -ruN a/src/js_parser/parse/type_sink.rs b/src/js_parser/parse/type_sink.rs
+--- a/src/js_parser/parse/type_sink.rs	2026-10-01 15:11:03.192865873 +0000
++++ b/src/js_parser/parse/type_sink.rs	2026-10-01 15:11:03.493556712 +0000
+@@ -1484,6 +1484,32 @@
+         Ok(Some((list, close_end)))
+     }
+ 
++    /// Reads the type that an entry of a heritage clause starts with: the `extends` after it starts another clause and no conditional type.
++    pub(crate) fn build_heritage_type(&mut self) -> Result<ts::Type, Error> {
++        self.build_type_with_opts(
++            Level::Lowest,
++            SkipTypeOptionsBitset::only(SkipTypeOptions::DisallowConditionalTypes),
++        )
++    }
++
++    /// The entry of a heritage clause that `node` is where the reference reads a name: a type reference, also for the name of a keyword type.
++    pub(crate) fn build_heritage_type_reference(&self, node: ts::Type) -> Option<ts::Type> {
++        match node.data {
++            ts::TypeData::TypeReference(_) => Some(node),
++            ts::TypeData::Keyword(kind)
++                if !matches!(kind, ts::KeywordKind::Void | ts::KeywordKind::Intrinsic) =>
++            {
++                let name = ts::Name::new(keyword_text(kind), node.start, node.end);
++                let payload = ts::TypeReference {
++                    type_name: ts::EntityName::Identifier(name),
++                    type_arguments: None,
++                };
++                Some(ts::Type::alloc(self.arena, payload, node.start, node.end))
++            }
++            _ => None,
++        }
++    }
++
+     /// Whether `test` holds from the token the lexer is on. Nothing moves.
+     fn build_look_ahead(&mut self, test: impl FnOnce(&mut Self) -> Result<bool, Error>) -> bool {
+         let old_lexer = self.lexer.snapshot();
+@@ -1726,9 +1752,18 @@
+         close: T,
+     ) -> Result<(ts::List<ts::Parameter>, u32), Error> {
+         let start = self.lexer.end as u32;
++        self.lexer.expect(open)?;
++        self.build_parameter_list_rest(start, close)
++    }
++
++    /// The parameters up to `close`, in a list that starts at `start`, and the offset after `close`.
++    pub(crate) fn build_parameter_list_rest(
++        &mut self,
++        start: u32,
++        close: T,
++    ) -> Result<(ts::List<ts::Parameter>, u32), Error> {
+         let mut items = Vec::new();
+         let mut end = start;
+-        self.lexer.expect(open)?;
+         while self.lexer.token != close {
+             let parameter = self.build_parameter()?;
+             end = parameter.end;
+@@ -2010,7 +2045,10 @@
+     }
+ 
+     /// The members up to "}", in a list that starts at `start`.
+-    fn build_type_member_list(&mut self, start: u32) -> Result<ts::List<ts::Member>, Error> {
++    pub(crate) fn build_type_member_list(
++        &mut self,
++        start: u32,
++    ) -> Result<ts::List<ts::Member>, Error> {
+         let mut items = Vec::new();
+         let mut end = start;
+         while self.lexer.token != T::TCloseBrace && self.lexer.token != T::TEndOfFile {
+@@ -2087,7 +2125,7 @@
+     }
+ 
+     /// parseTypeMemberSemicolon: the offset after the separator, or `end` where a line break or "}" stands for it.
+-    fn build_type_member_semicolon(&mut self, end: u32) -> Result<u32, Error> {
++    pub(crate) fn build_type_member_semicolon(&mut self, end: u32) -> Result<u32, Error> {
+         match self.lexer.token {
+             T::TComma | T::TSemicolon => {
+                 let end = self.lexer.end as u32;
+@@ -2223,7 +2261,20 @@
+     ) -> Result<ts::Member, Error> {
+         let name = self.build_property_name()?;
+         let (type_parameters, parameters, type_node, end) = self.build_signature()?;
+-        let end = self.build_type_member_semicolon(end)?;
++        // parseFunctionBlockOrSemicolon: the reference reads a block here, and its checker rejects it.
++        let mut body = None;
++        let end = if self.lexer.token == T::TOpenBrace {
++            let block_start = self.lexer.start as u32;
++            let (stmts, block_end) = self.build_in_type(Self::parse_function_block_of_accessor)?;
++            body = Some(ts::Body {
++                start: block_start,
++                end: block_end,
++                stmts,
++            });
++            block_end
++        } else {
++            self.build_type_member_semicolon(end)?
++        };
+         Ok(if is_get {
+             let payload = ts::GetAccessor {
+                 modifiers,
+@@ -2231,7 +2282,7 @@
+                 type_parameters,
+                 parameters,
+                 type_node,
+-                body: None,
++                body,
+             };
+             ts::Member::alloc(self.arena, payload, start, end)
+         } else {
+@@ -2241,7 +2292,7 @@
+                 type_parameters,
+                 parameters,
+                 type_node,
+-                body: None,
++                body,
+             };
+             ts::Member::alloc(self.arena, payload, start, end)
+         })
+diff -ruN a/src/js_parser/type_sink_tests.rs b/src/js_parser/type_sink_tests.rs
+--- a/src/js_parser/type_sink_tests.rs	2026-10-01 15:11:03.193348418 +0000
++++ b/src/js_parser/type_sink_tests.rs	2026-10-01 15:11:03.582712391 +0000
+@@ -66,7 +66,7 @@
+ }
+ 
+ /// A line for `node` and for each type inside it, in the order of the source: the kind, the range, and the range of a list of type arguments or of type parameters.
+-fn outline(node: ts::Type, lines: &mut Vec<String>) {
++pub(crate) fn outline(node: ts::Type, lines: &mut Vec<String>) {
+     let kind = node.data.kind_name();
+     let mut line = format!("{kind}[{},{})", node.start, node.end);
+     if let Some(list) = type_arguments(&node.data) {
+diff -ruN a/src/js_parser/typescript.rs b/src/js_parser/typescript.rs
+--- a/src/js_parser/typescript.rs	2026-10-01 15:11:03.193398988 +0000
++++ b/src/js_parser/typescript.rs	2026-10-01 15:11:03.494148951 +0000
+@@ -111,7 +111,7 @@
+ 
+     // This function is taken from the official TypeScript compiler source code:
+     // https://github.com/microsoft/TypeScript/blob/master/src/compiler/parser.ts
+-    fn is_start_of_left_hand_side_expression(&mut self) -> bool {
++    pub(crate) fn is_start_of_left_hand_side_expression(&mut self) -> bool {
+         let p = self;
+         match p.lexer.token {
+             T::TThis
+@@ -181,7 +181,7 @@
+         false
+     }
+ 
+-    fn is_start_of_expression(&mut self) -> bool {
++    pub(crate) fn is_start_of_expression(&mut self) -> bool {
+         let p = self;
+         if p.is_start_of_left_hand_side_expression() {
+             return true;

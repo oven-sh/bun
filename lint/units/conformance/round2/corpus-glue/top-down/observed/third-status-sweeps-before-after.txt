@@ -1,0 +1,5 @@
+start 15:13:28
+--no-run: same text and exit code
+tuple, debug binary: same text and exit code
+tuple, debug binary: same report
+end 15:13:50

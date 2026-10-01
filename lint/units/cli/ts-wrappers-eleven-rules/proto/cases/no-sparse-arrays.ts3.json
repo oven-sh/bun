@@ -1,0 +1,3 @@
+[
+	{"code":"switch (x) { case [a as T, , b!]: break; case [a as T, , b!]: break; }","ext":"ts"}
+]

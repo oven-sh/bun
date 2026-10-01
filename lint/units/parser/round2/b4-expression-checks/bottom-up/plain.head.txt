@@ -1,0 +1,1358 @@
+
+== TS1477 instantiation expression before a property access
+"a<b>.c;"
+  a.ts  ok
+  a.js  err @4+1 Unexpected .
+"a<b>?.c;"
+  a.ts  ok
+  a.js  err @4+2 Unexpected ?.
+"a<b>?.[c];"
+  a.ts  ok
+  a.js  err @4+2 Unexpected ?.
+"a<b>?.();"
+  a.ts  ok
+  a.js  err @4+2 Unexpected ?.
+"a<b>?.`x`;"
+  a.ts  err @6+3 Expected identifier but found "`x`"
+  a.js  err @4+2 Unexpected ?.
+"a<b>.c<d>.e;"
+  a.ts  ok
+  a.js  err @4+1 Unexpected .
+"a<b>.c<d>(e);"
+  a.ts  ok
+  a.js  err @4+1 Unexpected .
+"new A<T>.b();"
+  a.ts  ok
+  a.js  err @8+1 Unexpected .
+"new A<T>.b;"
+  a.ts  ok
+  a.js  err @8+1 Unexpected .
+"a<b, c>.d;"
+  a.ts  ok
+  a.js  err @7+1 Unexpected .
+"a<b> .c;"
+  a.ts  ok
+  a.js  err @5+1 Unexpected .
+"a<b>\n.c;"
+  a.ts  ok
+  a.js  err @5+1 Unexpected .
+"a< b /*x*/ > /*y*/ .c;"
+  a.ts  ok
+  a.js  err @19+1 Unexpected .
+"a<b>.;"
+  a.ts  err @5+1 Expected identifier but found ";"
+  a.js  err @4+1 Unexpected .
+"a<b>.#c;"
+  a.ts  err @5+2 Expected identifier but found "#c"
+  a.js  err @4+1 Unexpected .
+"class C { #b = 1; m(a) { a<b>.#b; } }"
+  a.ts  ok
+  a.js  err @29+1 Unexpected .
+"class C { #b = 1; m(a) { a<b>?.#b; } }"
+  a.ts  ok
+  a.js  err @29+2 Unexpected ?.
+"a<b>['c'];"
+  a.ts  ok
+  a.js  ok
+"a.b<c>.d;"
+  a.ts  ok
+  a.js  err @6+1 Unexpected .
+"f()<b>.c;"
+  a.ts  ok
+  a.js  err @6+1 Unexpected .
+"a<b>!.c;"
+  a.ts  err @5+1 Unexpected .
+  a.js  err @5+1 Unexpected .
+"(a<b>).c;"
+  a.ts  ok
+  a.js  err @5+1 Unexpected )
+"a?.b<c>.d;"
+  a.ts  ok
+  a.js  err @7+1 Unexpected .
+"a<b>.c = 1;"
+  a.ts  ok
+  a.js  err @4+1 Unexpected .
+"a<<T>(x: T) => void>.c;"
+  a.ts  ok
+  a.js  err @7+1 Expected ")" but found ":" | @9+1 Expected ";" but found "T" | @10+1 Unexpected )
+"a<b>>.c;"
+  a.ts  err @5+1 Unexpected .
+  a.js  err @5+1 Unexpected .
+"a<b<c>>.d;"
+  a.ts  ok
+  a.js  err @7+1 Unexpected .
+"a<b<c<d>>>.e;"
+  a.ts  ok
+  a.js  err @10+1 Unexpected .
+"x = a<b>.c;"
+  a.ts  ok
+  a.js  err @8+1 Unexpected .
+"f(a<b>.c);"
+  a.ts  ok
+  a.js  err @6+1 Unexpected .
+"a<b>.c.d;"
+  a.ts  ok
+  a.js  err @4+1 Unexpected .
+"a<>.c;"
+  a.ts  ok
+  a.js  err @2+1 Unexpected >
+"a<b,>.c;"
+  a.ts  ok
+  a.js  err @4+1 Unexpected >
+"this<T>.x;"
+  a.ts  ok
+  a.js  err @7+1 Unexpected .
+"a<b>.c<d>;"
+  a.ts  ok
+  a.js  err @4+1 Unexpected .
+"a!<b>.c;"
+  a.ts  ok
+  a.js  err @1+1 Unexpected !
+"a<b>\n.c\n.d;"
+  a.ts  ok
+  a.js  err @5+1 Unexpected .
+"a<b>?.c<d>.e;"
+  a.ts  ok
+  a.js  err @4+2 Unexpected ?.
+"import.meta<T>.x;"
+  a.ts  ok
+  a.js  err @14+1 Unexpected .
+"a<b>.c`x`;"
+  a.ts  ok
+  a.js  err @4+1 Unexpected .
+"a`x`<b>.c;"
+  a.ts  ok
+  a.js  err @7+1 Unexpected .
+"a<b>`x`.c;"
+  a.ts  ok
+  a.js  ok
+"a<b>(c).d;"
+  a.ts  ok
+  a.js  ok
+"a<b>.then<c>(d);"
+  a.ts  ok
+  a.js  err @4+1 Unexpected .
+
+== TS17007 and TS17006 operand of **
+"<A>x ** 2;"
+  a.ts  ok
+  a.js  err @0+1 Unexpected <
+"<A>(x) ** 2;"
+  a.ts  ok
+  a.js  err @0+1 Unexpected <
+"<A>x.y ** 2;"
+  a.ts  ok
+  a.js  err @0+1 Unexpected <
+"<A>x++ ** 2;"
+  a.ts  ok
+  a.js  err @0+1 Unexpected <
+"<A> x ** 2;"
+  a.ts  ok
+  a.js  err @0+1 Unexpected <
+" <A>x ** 2;"
+  a.ts  ok
+  a.js  err @1+1 Unexpected <
+"/*c*/ <A>x ** 2;"
+  a.ts  ok
+  a.js  err @6+1 Unexpected <
+"<A>x /*c*/ ** 2;"
+  a.ts  ok
+  a.js  err @0+1 Unexpected <
+"<A>(x) => x ** 2;"
+  a.ts  ok
+  a.js  err @0+1 Unexpected <
+"<A><B>x ** 2;"
+  a.ts  ok
+  a.js  err @0+1 Unexpected <
+"<A>-x ** 2;"
+  a.ts  err @6+2 Unexpected **
+  a.js  err @0+1 Unexpected <
+"-<A>x ** 2;"
+  a.ts  err @6+2 Unexpected **
+  a.js  err @1+1 Unexpected <
+"- <A>x ** 2;"
+  a.ts  err @7+2 Unexpected **
+  a.js  err @2+1 Unexpected <
+"y = <A>x ** 2;"
+  a.ts  ok
+  a.js  err @4+1 Unexpected <
+"f(<A>x ** 2);"
+  a.ts  ok
+  a.js  err @2+1 Unexpected <
+"2 ** <A>x ** 2;"
+  a.ts  ok
+  a.js  err @5+1 Unexpected <
+"(<A>x) ** 2;"
+  a.ts  ok
+  a.js  err @1+1 Unexpected <
+"<A>(x ** 2);"
+  a.ts  ok
+  a.js  err @0+1 Unexpected <
+"<A>x **= 2;"
+  a.ts  ok
+  a.js  err @0+1 Unexpected <
+"<A>x\n** 2;"
+  a.ts  ok
+  a.js  err @0+1 Unexpected <
+"<A>new X ** 2;"
+  a.ts  ok
+  a.js  err @0+1 Unexpected <
+"<A>x! ** 2;"
+  a.ts  ok
+  a.js  err @0+1 Unexpected <
+"<A>x as B ** 2;"
+  a.ts  ok
+  a.js  err @0+1 Unexpected <
+"<A>await x ** 2;"
+  a.ts  err @9+1 "await" can only be used inside an "async" function | @11+2 Unexpected **
+  a.js  err @0+1 Unexpected <
+"-x ** 2;"
+  a.ts  err @3+2 Unexpected **
+  a.js  err @3+2 Unexpected **
+"+x ** 2;"
+  a.ts  err @3+2 Unexpected **
+  a.js  err @3+2 Unexpected **
+"~x ** 2;"
+  a.ts  err @3+2 Unexpected **
+  a.js  err @3+2 Unexpected **
+"!x ** 2;"
+  a.ts  err @3+2 Unexpected **
+  a.js  err @3+2 Unexpected **
+"typeof x ** 2;"
+  a.ts  err @9+2 Unexpected **
+  a.js  err @9+2 Unexpected **
+"void x ** 2;"
+  a.ts  err @7+2 Unexpected **
+  a.js  err @7+2 Unexpected **
+"delete x ** 2;"
+  a.ts  err @9+2 Unexpected **
+  a.js  err @9+2 Unexpected **
+"delete x.y ** 2;"
+  a.ts  err @11+2 Unexpected **
+  a.js  err @11+2 Unexpected **
+"async function f() { await x ** 2; }"
+  a.ts  err @29+2 Unexpected **
+  a.js  err @29+2 Unexpected **
+"async function f() { y = await x ** 2; }"
+  a.ts  err @33+2 Unexpected **
+  a.js  err @33+2 Unexpected **
+"async function f() { await -x ** 2; }"
+  a.ts  err @30+2 Unexpected **
+  a.js  err @30+2 Unexpected **
+"async function f() { -await x ** 2; }"
+  a.ts  err @30+2 Unexpected **
+  a.js  err @30+2 Unexpected **
+"async function f() { (await x) ** 2; }"
+  a.ts  ok
+  a.js  ok
+"await x ** 2;"
+  a.ts  err @6+1 "await" can only be used inside an "async" function | @8+2 Unexpected **
+  a.js  err @6+1 "await" can only be used inside an "async" function | @8+2 Unexpected **
+"y = await x ** 2;"
+  a.ts  err @10+1 "await" can only be used inside an "async" function | @12+2 Unexpected **
+  a.js  err @10+1 "await" can only be used inside an "async" function | @12+2 Unexpected **
+"await x ** 2; export {};"
+  a.ts  err @6+1 "await" can only be used inside an "async" function | @8+2 Unexpected **
+  a.js  err @6+1 "await" can only be used inside an "async" function | @8+2 Unexpected **
+"await ** 2;"
+  a.ts  ok
+  a.js  ok
+"y = await ** 2;"
+  a.ts  ok
+  a.js  ok
+"function f() { await ** 2; }"
+  a.ts  ok
+  a.js  ok
+"function f() { return await ** 2; }"
+  a.ts  ok
+  a.js  ok
+"- -x ** 2;"
+  a.ts  err @5+2 Unexpected **
+  a.js  err @5+2 Unexpected **
+"-+x ** 2;"
+  a.ts  err @4+2 Unexpected **
+  a.js  err @4+2 Unexpected **
+"!-x ** 2;"
+  a.ts  err @4+2 Unexpected **
+  a.js  err @4+2 Unexpected **
+"typeof -x ** 2;"
+  a.ts  err @10+2 Unexpected **
+  a.js  err @10+2 Unexpected **
+"void typeof x ** 2;"
+  a.ts  err @14+2 Unexpected **
+  a.js  err @14+2 Unexpected **
+"- - -x ** 2;"
+  a.ts  err @7+2 Unexpected **
+  a.js  err @7+2 Unexpected **
+"a - -x ** 2;"
+  a.ts  err @7+2 Unexpected **
+  a.js  err @7+2 Unexpected **
+"a-x ** 2;"
+  a.ts  ok
+  a.js  ok
+"a > -x ** 2;"
+  a.ts  err @7+2 Unexpected **
+  a.js  err @7+2 Unexpected **
+"(-x) ** 2;"
+  a.ts  ok
+  a.js  ok
+"-(x ** 2);"
+  a.ts  ok
+  a.js  ok
+"-x.y ** 2;"
+  a.ts  err @5+2 Unexpected **
+  a.js  err @5+2 Unexpected **
+"-x() ** 2;"
+  a.ts  err @5+2 Unexpected **
+  a.js  err @5+2 Unexpected **
+"-x++ ** 2;"
+  a.ts  err @5+2 Unexpected **
+  a.js  err @5+2 Unexpected **
+"-++x ** 2;"
+  a.ts  err @5+2 Unexpected **
+  a.js  err @5+2 Unexpected **
+"++x ** 2;"
+  a.ts  ok
+  a.js  ok
+"x++ ** 2;"
+  a.ts  ok
+  a.js  ok
+"-x /*c*/ ** 2;"
+  a.ts  err @9+2 Unexpected **
+  a.js  err @9+2 Unexpected **
+"/*c*/ -x ** 2;"
+  a.ts  err @9+2 Unexpected **
+  a.js  err @9+2 Unexpected **
+"- /*c*/ x ** 2;"
+  a.ts  err @10+2 Unexpected **
+  a.js  err @10+2 Unexpected **
+"-x\n** 2;"
+  a.ts  err @3+2 Unexpected **
+  a.js  err @3+2 Unexpected **
+"2 ** -x ** 2;"
+  a.ts  err @8+2 Unexpected **
+  a.js  err @8+2 Unexpected **
+"2 ** -x;"
+  a.ts  ok
+  a.js  ok
+"x = -y ** 2;"
+  a.ts  err @7+2 Unexpected **
+  a.js  err @7+2 Unexpected **
+"f(-x ** 2);"
+  a.ts  err @5+2 Unexpected **
+  a.js  err @5+2 Unexpected **
+"[-x ** 2];"
+  a.ts  err @4+2 Unexpected **
+  a.js  err @4+2 Unexpected **
+"-x **= 2;"
+  a.ts  ok
+  a.js  ok
+"-1 ** 2;"
+  a.ts  err @3+2 Unexpected **
+  a.js  err @3+2 Unexpected **
+"- new A ** 2;"
+  a.ts  err @8+2 Unexpected **
+  a.js  err @8+2 Unexpected **
+"- new A() ** 2;"
+  a.ts  err @10+2 Unexpected **
+  a.js  err @10+2 Unexpected **
+"-x ** 2 ** 3;"
+  a.ts  err @3+2 Unexpected **
+  a.js  err @3+2 Unexpected **
+"-x ** -y ** 2;"
+  a.ts  err @3+2 Unexpected **
+  a.js  err @3+2 Unexpected **
+"-x!.y ** 2;"
+  a.ts  err @6+2 Unexpected **
+  a.js  err @2+1 Unexpected !
+"-x as any ** 2;"
+  a.ts  ok
+  a.js  err @3+2 Expected ";" but found "as"
+"-(x as any) ** 2;"
+  a.ts  err @12+2 Unexpected **
+  a.js  err @4+2 Expected ")" but found "as" | @7+3 Expected ";" but found "any" | @10+1 Unexpected )
+"-x[0] ** 2;"
+  a.ts  err @6+2 Unexpected **
+  a.js  err @6+2 Unexpected **
+"-`a` ** 2;"
+  a.ts  err @5+2 Unexpected **
+  a.js  err @5+2 Unexpected **
+"-x`a` ** 2;"
+  a.ts  err @6+2 Unexpected **
+  a.js  err @6+2 Unexpected **
+"-x?.y ** 2;"
+  a.ts  err @6+2 Unexpected **
+  a.js  err @6+2 Unexpected **
+"-(x) ** 2;"
+  a.ts  err @5+2 Unexpected **
+  a.js  err @5+2 Unexpected **
+"- (x) /*c*/ ** 2;"
+  a.ts  err @12+2 Unexpected **
+  a.js  err @12+2 Unexpected **
+"function* g() { -(yield) ** 2; }"
+  a.ts  err @25+2 Unexpected **
+  a.js  err @25+2 Unexpected **
+"for (const k in -x ** 2) {}"
+  a.ts  err @19+2 Unexpected **
+  a.js  err @19+2 Unexpected **
+"x ? -y ** 2 : z;"
+  a.ts  err @7+2 Unexpected **
+  a.js  err @7+2 Unexpected **
+"-x ** 2 ? y : z;"
+  a.ts  err @3+2 Unexpected **
+  a.js  err @3+2 Unexpected **
+"class A { m() { -super.x ** 2; } }"
+  a.ts  err @25+2 Unexpected **
+  a.js  err @25+2 Unexpected **
+"typeof import('a') ** 2;"
+  a.ts  err @19+2 Unexpected **
+  a.js  err @19+2 Unexpected **
+"-function(){} ** 2;"
+  a.ts  err @14+2 Unexpected **
+  a.js  err @14+2 Unexpected **
+"-class{} ** 2;"
+  a.ts  err @9+2 Unexpected **
+  a.js  err @9+2 Unexpected **
+"-{} ** 2;"
+  a.ts  err @4+2 Unexpected **
+  a.js  err @4+2 Unexpected **
+"-[] ** 2;"
+  a.ts  err @4+2 Unexpected **
+  a.js  err @4+2 Unexpected **
+"-/a/ ** 2;"
+  a.ts  err @5+2 Unexpected **
+  a.js  err @5+2 Unexpected **
+"-a.b.c(d)[e] ** 2;"
+  a.ts  err @13+2 Unexpected **
+  a.js  err @13+2 Unexpected **
+
+== TS1209 optional chain from new
+"new A?.b();"
+  a.ts  ok
+  a.js  ok
+"new A?.b;"
+  a.ts  ok
+  a.js  ok
+"new A.B?.c();"
+  a.ts  ok
+  a.js  ok
+"new A<T>?.b();"
+  a.ts  ok
+  a.js  err @8+2 Unexpected ?.
+"new (A)?.b();"
+  a.ts  ok
+  a.js  ok
+"new A()?.b;"
+  a.ts  ok
+  a.js  ok
+"new A()?.b();"
+  a.ts  ok
+  a.js  ok
+"new A?.();"
+  a.ts  ok
+  a.js  ok
+"new A?.<T>();"
+  a.ts  ok
+  a.js  err @7+1 Expected identifier but found "<"
+"new A?.[0];"
+  a.ts  ok
+  a.js  ok
+"new A?.[0]();"
+  a.ts  ok
+  a.js  ok
+"new A?.b.c();"
+  a.ts  ok
+  a.js  ok
+"new A?.b?.c();"
+  a.ts  ok
+  a.js  ok
+"new new A?.b()();"
+  a.ts  ok
+  a.js  ok
+"new A!?.b();"
+  a.ts  ok
+  a.js  err @5+1 Unexpected !
+"new A ?.b();"
+  a.ts  ok
+  a.js  ok
+"new A /*c*/ ?.b();"
+  a.ts  ok
+  a.js  ok
+"new A\n?.b();"
+  a.ts  ok
+  a.js  ok
+"new a.b.c?.d();"
+  a.ts  ok
+  a.js  ok
+"new A`x`?.b();"
+  a.ts  ok
+  a.js  ok
+"new (A?.b)();"
+  a.ts  ok
+  a.js  ok
+"new (A?.b);"
+  a.ts  ok
+  a.js  ok
+"new this?.b();"
+  a.ts  ok
+  a.js  ok
+"new import.meta?.x();"
+  a.ts  ok
+  a.js  ok
+"new class {}?.b();"
+  a.ts  ok
+  a.js  ok
+"new function () {}?.b();"
+  a.ts  ok
+  a.js  ok
+"new A['x']?.b();"
+  a.ts  ok
+  a.js  ok
+"new A?.b<T>();"
+  a.ts  ok
+  a.js  err @12+1 Unexpected )
+"new A?.`x`;"
+  a.ts  err @7+3 Expected identifier but found "`x`"
+  a.js  err @7+3 Expected identifier but found "`x`"
+"new A?.b`x`;"
+  a.ts  err @8+3 Template literals cannot have an optional chain as a tag
+  a.js  err @8+3 Template literals cannot have an optional chain as a tag
+"class C { #b = 1; m(a) { new a?.#b(); } }"
+  a.ts  ok
+  a.js  ok
+"class C { #b = 1; m(a) { new a.#b?.c(); } }"
+  a.ts  ok
+  a.js  ok
+"x = new A?.b();"
+  a.ts  ok
+  a.js  ok
+"f(new A?.b());"
+  a.ts  ok
+  a.js  ok
+"new  A . B ?.c();"
+  a.ts  ok
+  a.js  ok
+"new A?.b = 1;"
+  a.ts  ok
+  a.js  ok
+"new A?.b++;"
+  a.ts  ok
+  a.js  ok
+"new (new A)?.b();"
+  a.ts  ok
+  a.js  ok
+"new new A?.b();"
+  a.ts  ok
+  a.js  ok
+"new A<T>?.();"
+  a.ts  ok
+  a.js  err @8+2 Unexpected ?.
+"new A?.3:1;"
+  a.ts  ok
+  a.js  ok
+"new A ?.5 : 1;"
+  a.ts  ok
+  a.js  ok
+"new a.b<c>.d?.e();"
+  a.ts  ok
+  a.js  err @10+1 Unexpected .
+"new A().b?.c();"
+  a.ts  ok
+  a.js  ok
+"(new A)?.b();"
+  a.ts  ok
+  a.js  ok
+"new.target?.b();"
+  a.ts  ok
+  a.js  ok
+"function f() { new.target?.b(); }"
+  a.ts  ok
+  a.js  ok
+"new (A)!?.b();"
+  a.ts  ok
+  a.js  err @7+1 Unexpected !
+"new <T>A?.b();"
+  a.ts  ok
+  a.js  err @4+1 Unexpected <
+"new (a, b)?.c();"
+  a.ts  ok
+  a.js  ok
+"new A.b?.[c]?.d();"
+  a.ts  ok
+  a.js  ok
+"new 'a'?.b();"
+  a.ts  ok
+  a.js  ok
+"new 1?.b();"
+  a.ts  ok
+  a.js  ok
+"new []?.b();"
+  a.ts  ok
+  a.js  ok
+"new {}?.b();"
+  a.ts  ok
+  a.js  ok
+"new /a/?.b();"
+  a.ts  ok
+  a.js  ok
+"new `a`?.b();"
+  a.ts  ok
+  a.js  ok
+"new async?.b();"
+  a.ts  ok
+  a.js  ok
+"new super.x?.y();"
+  a.ts  err @4+5 Unexpected "super"
+  a.js  err @4+5 Unexpected "super"
+"class X extends Y { m() { new super.x?.y(); } }"
+  a.ts  ok
+  a.js  ok
+
+== TS18030 private identifier in an optional chain
+"a?.#b;"
+  a.ts  err @3+2 Expected identifier but found "#b"
+  a.js  err @3+2 Expected identifier but found "#b"
+"this?.#a;"
+  a.ts  err @6+2 Expected identifier but found "#a"
+  a.js  err @6+2 Expected identifier but found "#a"
+"class C { #b = 1; m(a) { a?.#b; } }"
+  a.ts  ok
+  a.js  ok
+"class C { #b = 1; m(a) { a?.x.#b; } }"
+  a.ts  ok
+  a.js  ok
+"class C { #b = 1; m(a) { a?.x!.#b; } }"
+  a.ts  ok
+  a.js  err @29+1 Unexpected !
+"class C { #b = 1; m(a) { a?.[0].#b; } }"
+  a.ts  ok
+  a.js  ok
+"class C { #b = 1; m(a) { a?.().#b; } }"
+  a.ts  ok
+  a.js  ok
+"class C { #b = 1; m(a) { a.#b; } }"
+  a.ts  ok
+  a.js  ok
+"class C { #b = 1; m(a) { a.#b?.c; } }"
+  a.ts  ok
+  a.js  ok
+"class C { #b = 1; m(a) { (a?.x).#b; } }"
+  a.ts  ok
+  a.js  ok
+"class C { #b = 1; m(a) { a?.#b = 1; } }"
+  a.ts  ok
+  a.js  ok
+"class C { #b = 1; m(a) { a ?. #b; } }"
+  a.ts  ok
+  a.js  ok
+"class C { #b = 1; m(a) { a ?. /*c*/ #b; } }"
+  a.ts  ok
+  a.js  ok
+"class C { #b = 1; m(a) { a?.\n#b; } }"
+  a.ts  ok
+  a.js  ok
+"class C { #b = 1; m(a) { return #b in a?.x; } }"
+  a.ts  ok
+  a.js  ok
+"class C { #b = 1; m(a) { a?.#b(); } }"
+  a.ts  ok
+  a.js  ok
+"class C { #b = 1; m(a) { a?.x.y.#b; } }"
+  a.ts  ok
+  a.js  ok
+"class C { #b = 1; m(a) { a?.x.y.#b.z; } }"
+  a.ts  ok
+  a.js  ok
+"class C { #b = 1; m(a) { a?.#b.#b; } }"
+  a.ts  ok
+  a.js  ok
+"class C { #b = 1; m(a) { a?.#b?.#b; } }"
+  a.ts  ok
+  a.js  ok
+"class C { #b = 1; m(a) { a.x?.#b; } }"
+  a.ts  ok
+  a.js  ok
+"class C { #b = 1; m(a) { a?.x!!.#b; } }"
+  a.ts  ok
+  a.js  err @29+1 Unexpected !
+"class C { #b = 1; m(a) { a?.x.y().z[0].#b; } }"
+  a.ts  ok
+  a.js  ok
+"class C { #b = 1; m(a) { (a?.x)!.#b; } }"
+  a.ts  ok
+  a.js  err @31+1 Unexpected !
+"class C { #b = 1; m(a) { a!?.#b; } }"
+  a.ts  ok
+  a.js  err @26+1 Unexpected !
+"class C { #b = 1; m(a) { this?.#b; } }"
+  a.ts  ok
+  a.js  ok
+"class C { #b = 1; m(a) { delete a?.#b; } }"
+  a.ts  err @32+2 Deleting the private name "#b" is forbidden
+  a.js  err @32+2 Deleting the private name "#b" is forbidden
+"class C { #b = 1; m(a) { a?.#b`x`; } }"
+  a.ts  err @30+3 Template literals cannot have an optional chain as a tag
+  a.js  err @30+3 Template literals cannot have an optional chain as a tag
+"class C { #b = 1; m(a) { a?.#b++; } }"
+  a.ts  ok
+  a.js  ok
+"class C { #b = 1; m(a) { x = a?.#b ?? 1; } }"
+  a.ts  ok
+  a.js  ok
+"class C { #b = 1; m(a) { new a.#b(); } }"
+  a.ts  ok
+  a.js  ok
+"class C { #b = 1; m(a) { a?.#c; } }"
+  a.ts  ok
+  a.js  ok
+"a?.x.#b;"
+  a.ts  err @5+2 Expected identifier but found "#b"
+  a.js  err @5+2 Expected identifier but found "#b"
+"a.#b;"
+  a.ts  err @2+2 Expected identifier but found "#b"
+  a.js  err @2+2 Expected identifier but found "#b"
+"class C { #b = 1; m(a) { a?.<T>().#b; } }"
+  a.ts  ok
+  a.js  err @28+1 Expected identifier but found "<"
+"class C { #b = 1; m(a) { a<T>?.#b; } }"
+  a.ts  ok
+  a.js  err @29+2 Unexpected ?.
+"class C { #b = 1; m(a) { (a?.x as any).#b; } }"
+  a.ts  ok
+  a.js  err @31+2 Expected ")" but found "as" | @34+3 Expected ";" but found "any" | @37+1 Unexpected )
+"class C { #b = 1; m(a) { a?.x as any; } }"
+  a.ts  ok
+  a.js  err @30+2 Expected ";" but found "as"
+
+== TS2754 and TS1034 super
+"class A extends B { constructor() { super<T>(); } }"
+  a.ts  err @36+5 Unexpected "super"
+  a.js  err @36+5 Unexpected "super" | @45+1 Unexpected )
+"class A extends B { constructor() { super <T>(); } }"
+  a.ts  err @36+5 Unexpected "super"
+  a.js  err @36+5 Unexpected "super" | @46+1 Unexpected )
+"class A extends B { constructor() { super /*c*/ <T> /*d*/ (); } }"
+  a.ts  err @36+5 Unexpected "super"
+  a.js  err @36+5 Unexpected "super" | @59+1 Unexpected )
+"class A extends B { constructor() { super<T, U>(); } }"
+  a.ts  err @36+5 Unexpected "super"
+  a.js  err @36+5 Unexpected "super" | @48+1 Unexpected )
+"class A extends B { constructor() { super<>(); } }"
+  a.ts  err @36+5 Unexpected "super"
+  a.js  err @36+5 Unexpected "super" | @42+1 Unexpected >
+"class A extends B { constructor() { super<T,>(); } }"
+  a.ts  err @36+5 Unexpected "super"
+  a.js  err @36+5 Unexpected "super" | @44+1 Unexpected >
+"class A extends B { constructor() { super<T>(1).x; } }"
+  a.ts  err @36+5 Unexpected "super"
+  a.js  err @36+5 Unexpected "super"
+"class A extends B { constructor() { super(); } }"
+  a.ts  ok
+  a.js  ok
+"class A extends B { m() { super<T>.x; } }"
+  a.ts  err @26+5 Unexpected "super"
+  a.js  err @26+5 Unexpected "super" | @34+1 Unexpected .
+"class A extends B { m() { super<T>.x(); } }"
+  a.ts  err @26+5 Unexpected "super"
+  a.js  err @26+5 Unexpected "super" | @34+1 Unexpected .
+"class A extends B { m() { super<T>[0]; } }"
+  a.ts  err @26+5 Unexpected "super"
+  a.js  err @26+5 Unexpected "super"
+"class A extends B { m() { super; } }"
+  a.ts  err @26+5 Unexpected "super"
+  a.js  err @26+5 Unexpected "super"
+"class A extends B { m() { super<T>; } }"
+  a.ts  err @26+5 Unexpected "super"
+  a.js  err @26+5 Unexpected "super" | @34+1 Unexpected ;
+"class A extends B { m() { super\n<T>(); } }"
+  a.ts  err @26+5 Unexpected "super"
+  a.js  err @26+5 Unexpected "super" | @36+1 Unexpected )
+"class A extends B { m() { super + 1; } }"
+  a.ts  err @26+5 Unexpected "super"
+  a.js  err @26+5 Unexpected "super"
+"class A extends B { m() { super`x`; } }"
+  a.ts  err @26+5 Unexpected "super"
+  a.js  err @26+5 Unexpected "super"
+"class A extends B { m() { super<T>`x`; } }"
+  a.ts  err @26+5 Unexpected "super"
+  a.js  err @26+5 Unexpected "super"
+"class A extends B { m() { return super } }"
+  a.ts  err @33+5 Unexpected "super"
+  a.js  err @33+5 Unexpected "super"
+"class A extends B { m() { return super; } }"
+  a.ts  err @33+5 Unexpected "super"
+  a.js  err @33+5 Unexpected "super"
+"class A extends B { m() { super?.x; } }"
+  a.ts  err @26+5 Unexpected "super"
+  a.js  err @26+5 Unexpected "super"
+"class A extends B { m() { super?.(); } }"
+  a.ts  err @26+5 Unexpected "super"
+  a.js  err @26+5 Unexpected "super"
+"class A extends B { m() { super<T } }"
+  a.ts  err @26+5 Unexpected "super"
+  a.js  err @26+5 Unexpected "super"
+"class A extends B { m() { super<T; } }"
+  a.ts  err @26+5 Unexpected "super"
+  a.js  err @26+5 Unexpected "super"
+"class A extends B { m() { super<T>x; } }"
+  a.ts  err @26+5 Unexpected "super"
+  a.js  err @26+5 Unexpected "super"
+"class A extends B { m() { super<T>1; } }"
+  a.ts  err @26+5 Unexpected "super"
+  a.js  err @26+5 Unexpected "super"
+"class A extends B { m() { super!.x; } }"
+  a.ts  err @26+5 Unexpected "super"
+  a.js  err @26+5 Unexpected "super" | @31+1 Unexpected !
+"class A extends B { m() { super.x; } }"
+  a.ts  ok
+  a.js  ok
+"class A extends B { m() { super[0]; } }"
+  a.ts  ok
+  a.js  ok
+"class A extends B { m() { super.x<T>(); } }"
+  a.ts  ok
+  a.js  err @37+1 Unexpected )
+"class A extends B { m() { x = super; } }"
+  a.ts  err @30+5 Unexpected "super"
+  a.js  err @30+5 Unexpected "super"
+"class A extends B { m() { f(super); } }"
+  a.ts  err @28+5 Unexpected "super"
+  a.js  err @28+5 Unexpected "super"
+"class A extends B { m() { super = 1; } }"
+  a.ts  err @26+5 Unexpected "super"
+  a.js  err @26+5 Unexpected "super"
+"class A extends B { m() { super++; } }"
+  a.ts  err @26+5 Unexpected "super"
+  a.js  err @26+5 Unexpected "super"
+"class A extends B { m() { new super; } }"
+  a.ts  err @30+5 Unexpected "super"
+  a.js  err @30+5 Unexpected "super"
+"class A extends B { m() { new super(); } }"
+  a.ts  err @30+5 Unexpected "super"
+  a.js  err @30+5 Unexpected "super"
+"class A extends B { m() { new super.x(); } }"
+  a.ts  ok
+  a.js  ok
+"class A extends B { m() { new super<T>(); } }"
+  a.ts  err @30+5 Unexpected "super"
+  a.js  err @30+5 Unexpected "super" | @39+1 Unexpected )
+"class A extends B { m() { super.#x; } }"
+  a.ts  err @32+2 Expected identifier but found "#x"
+  a.js  err @32+2 Expected identifier but found "#x"
+"class A extends B { m() { (super); } }"
+  a.ts  err @27+5 Unexpected "super"
+  a.js  err @27+5 Unexpected "super"
+"class A extends B { m() { super as any; } }"
+  a.ts  err @26+5 Unexpected "super"
+  a.js  err @26+5 Unexpected "super" | @32+2 Expected ";" but found "as"
+"class A extends B { m() { super\n.x; } }"
+  a.ts  ok
+  a.js  ok
+"class A extends B { m() { super < T > (x); } }"
+  a.ts  err @26+5 Unexpected "super"
+  a.js  err @26+5 Unexpected "super"
+"class A extends B { m() { super<T>>(); } }"
+  a.ts  err @26+5 Unexpected "super" | @36+1 Unexpected )
+  a.js  err @26+5 Unexpected "super" | @36+1 Unexpected )
+"class A extends B { m() { super<A<B>>(); } }"
+  a.ts  err @26+5 Unexpected "super"
+  a.js  err @26+5 Unexpected "super" | @38+1 Unexpected )
+"class A extends B { m() { super<<T>() => void>(); } }"
+  a.ts  err @26+5 Unexpected "super"
+  a.js  err @26+5 Unexpected "super" | @36+1 Unexpected )
+"class A extends B { m() { typeof super; } }"
+  a.ts  err @33+5 Unexpected "super"
+  a.js  err @33+5 Unexpected "super"
+"class A extends B { m() { super in x; } }"
+  a.ts  err @26+5 Unexpected "super"
+  a.js  err @26+5 Unexpected "super"
+"class A extends B { m() { super instanceof A; } }"
+  a.ts  err @26+5 Unexpected "super"
+  a.js  err @26+5 Unexpected "super"
+"class A extends B { m() { [super]; } }"
+  a.ts  err @27+5 Unexpected "super"
+  a.js  err @27+5 Unexpected "super"
+"class A extends B { m() { `${super}`; } }"
+  a.ts  err @29+5 Unexpected "super"
+  a.js  err @29+5 Unexpected "super"
+"class A extends B { m() { super => 1; } }"
+  a.ts  err @26+5 Unexpected "super" | @32+2 Expected ";" but found "=>"
+  a.js  err @26+5 Unexpected "super" | @32+2 Expected ";" but found "=>"
+"class A extends B { m() { super ? 1 : 2; } }"
+  a.ts  err @26+5 Unexpected "super"
+  a.js  err @26+5 Unexpected "super"
+"class A extends B { m() { super, 1; } }"
+  a.ts  err @26+5 Unexpected "super"
+  a.js  err @26+5 Unexpected "super"
+"class A extends B { m() { delete super.x; } }"
+  a.ts  ok
+  a.js  ok
+"class A extends B { m() { super /*c*/ ; } }"
+  a.ts  err @26+5 Unexpected "super"
+  a.js  err @26+5 Unexpected "super"
+"super;"
+  a.ts  err @0+5 Unexpected "super"
+  a.js  err @0+5 Unexpected "super"
+"super();"
+  a.ts  err @0+5 Unexpected "super"
+  a.js  err @0+5 Unexpected "super"
+"super.x;"
+  a.ts  err @0+5 Unexpected "super"
+  a.js  err @0+5 Unexpected "super"
+"super<T>();"
+  a.ts  err @0+5 Unexpected "super"
+  a.js  err @0+5 Unexpected "super" | @9+1 Unexpected )
+"super<T>.x;"
+  a.ts  err @0+5 Unexpected "super"
+  a.js  err @0+5 Unexpected "super" | @8+1 Unexpected .
+"x = super;"
+  a.ts  err @4+5 Unexpected "super"
+  a.js  err @4+5 Unexpected "super"
+"class A { m() { super(); } }"
+  a.ts  err @16+5 Unexpected "super"
+  a.js  err @16+5 Unexpected "super"
+"class A { constructor() { super(); } }"
+  a.ts  err @26+5 Unexpected "super"
+  a.js  err @26+5 Unexpected "super"
+"class A extends B { m() { super(); } }"
+  a.ts  err @26+5 Unexpected "super"
+  a.js  err @26+5 Unexpected "super"
+"class A extends B { static { super(); } }"
+  a.ts  err @29+5 Unexpected "super"
+  a.js  err @29+5 Unexpected "super"
+"class A extends B { x = super(); }"
+  a.ts  err @24+5 Unexpected "super"
+  a.js  err @24+5 Unexpected "super"
+"class A extends B { x = super.y; }"
+  a.ts  ok
+  a.js  ok
+"class A extends B { [super.x]() {} }"
+  a.ts  err @21+5 Unexpected "super"
+  a.js  err @21+5 Unexpected "super"
+"function f() { super.x; }"
+  a.ts  err @15+5 Unexpected "super"
+  a.js  err @15+5 Unexpected "super"
+"function f() { super(); }"
+  a.ts  err @15+5 Unexpected "super"
+  a.js  err @15+5 Unexpected "super"
+"({ m() { super.x; } });"
+  a.ts  ok
+  a.js  ok
+"({ m() { super(); } });"
+  a.ts  err @9+5 Unexpected "super"
+  a.js  err @9+5 Unexpected "super"
+"({ m: function () { super.x; } });"
+  a.ts  err @20+5 Unexpected "super"
+  a.js  err @20+5 Unexpected "super"
+"class A extends B { constructor() { (() => super())(); } }"
+  a.ts  ok
+  a.js  ok
+"class A extends B { constructor() { function g() { super(); } } }"
+  a.ts  err @51+5 Unexpected "super"
+  a.js  err @51+5 Unexpected "super"
+"class A extends B { constructor() { new super(); } }"
+  a.ts  err @40+5 Unexpected "super"
+  a.js  err @40+5 Unexpected "super"
+"class A extends B { constructor() { super()(); } }"
+  a.ts  ok
+  a.js  ok
+"class A extends B { constructor() { super() ** 2; } }"
+  a.ts  ok
+  a.js  ok
+"class A extends B { constructor() { -super(); } }"
+  a.ts  ok
+  a.js  ok
+"class A extends B { constructor() { x = super(); } }"
+  a.ts  ok
+  a.js  ok
+"class A extends B { constructor() { super().x; } }"
+  a.ts  ok
+  a.js  ok
+"class A extends B { constructor() { super<T>().x; } }"
+  a.ts  err @36+5 Unexpected "super"
+  a.js  err @36+5 Unexpected "super" | @45+1 Unexpected )
+"class A extends B { constructor() { f(super()); } }"
+  a.ts  ok
+  a.js  ok
+
+== TS1011 element access without an argument
+"a[];"
+  a.ts  err @2+1 Unexpected ]
+  a.js  err @2+1 Unexpected ]
+"a[ ];"
+  a.ts  err @3+1 Unexpected ]
+  a.js  err @3+1 Unexpected ]
+"a[\n];"
+  a.ts  err @3+1 Unexpected ]
+  a.js  err @3+1 Unexpected ]
+"a[/*c*/];"
+  a.ts  err @7+1 Unexpected ]
+  a.js  err @7+1 Unexpected ]
+"a[ /*c*/ ];"
+  a.ts  err @9+1 Unexpected ]
+  a.js  err @9+1 Unexpected ]
+"a[ // c\n];"
+  a.ts  err @8+1 Unexpected ]
+  a.js  err @8+1 Unexpected ]
+"a?.[];"
+  a.ts  err @4+1 Unexpected ]
+  a.js  err @4+1 Unexpected ]
+"a?.[ ];"
+  a.ts  err @5+1 Unexpected ]
+  a.js  err @5+1 Unexpected ]
+"a[][0];"
+  a.ts  err @2+1 Unexpected ]
+  a.js  err @2+1 Unexpected ]
+"a[b[]];"
+  a.ts  err @4+1 Unexpected ]
+  a.js  err @4+1 Unexpected ]
+"a[{ []: 1 }];"
+  a.ts  err @5+1 Unexpected ]
+  a.js  err @5+1 Unexpected ]
+"({ []: 1 });"
+  a.ts  err @4+1 Unexpected ]
+  a.js  err @4+1 Unexpected ]
+"({ [ ]: 1 });"
+  a.ts  err @5+1 Unexpected ]
+  a.js  err @5+1 Unexpected ]
+"class C { []() {} }"
+  a.ts  err @12+1 Expected ";" but found "(" | @13+1 Expected identifier but found ")" | @18+1 Unexpected }
+  a.js  err @11+1 Unexpected ]
+"class C { static [] = 1 }"
+  a.ts  err @20+1 Expected ";" but found "="
+  a.js  err @18+1 Unexpected ]
+"class C { a = b\n[] }"
+  a.ts  err @17+1 Unexpected ]
+  a.js  err @17+1 Unexpected ]
+"a[] = 1;"
+  a.ts  err @2+1 Unexpected ]
+  a.js  err @2+1 Unexpected ]
+"new A[];"
+  a.ts  err @6+1 Unexpected ]
+  a.js  err @6+1 Unexpected ]
+"new A[]();"
+  a.ts  err @6+1 Unexpected ]
+  a.js  err @6+1 Unexpected ]
+"x = a[];"
+  a.ts  err @6+1 Unexpected ]
+  a.js  err @6+1 Unexpected ]
+"a.b[];"
+  a.ts  err @4+1 Unexpected ]
+  a.js  err @4+1 Unexpected ]
+"a()[];"
+  a.ts  err @4+1 Unexpected ]
+  a.js  err @4+1 Unexpected ]
+"a![];"
+  a.ts  err @3+1 Unexpected ]
+  a.js  err @1+1 Unexpected !
+"let x: A[] = a[];"
+  a.ts  err @15+1 Unexpected ]
+  a.js  err @5+1 Expected ";" but found ":" | @9+1 Unexpected ]
+"a[,];"
+  a.ts  err @2+1 Unexpected ,
+  a.js  err @2+1 Unexpected ,
+"a["
+  a.ts  err @2+0 Unexpected end of file
+  a.js  err @2+0 Unexpected end of file
+"a[;"
+  a.ts  err @2+1 Unexpected ;
+  a.js  err @2+1 Unexpected ;
+"a[)"
+  a.ts  err @2+1 Unexpected )
+  a.js  err @2+1 Unexpected )
+"a[}"
+  a.ts  err @2+1 Unexpected }
+  a.js  err @2+1 Unexpected }
+"for (const x of y[]) {}"
+  a.ts  err @18+1 Unexpected ]
+  a.js  err @18+1 Unexpected ]
+"a[].b;"
+  a.ts  err @2+1 Unexpected ]
+  a.js  err @2+1 Unexpected ]
+"a[]();"
+  a.ts  err @2+1 Unexpected ]
+  a.js  err @2+1 Unexpected ]
+"a[]++;"
+  a.ts  err @2+1 Unexpected ]
+  a.js  err @2+1 Unexpected ]
+"a[]\n[];"
+  a.ts  err @2+1 Unexpected ]
+  a.js  err @2+1 Unexpected ]
+"a[][];"
+  a.ts  err @2+1 Unexpected ]
+  a.js  err @2+1 Unexpected ]
+"f(a[]);"
+  a.ts  err @4+1 Unexpected ]
+  a.js  err @4+1 Unexpected ]
+"[a[]];"
+  a.ts  err @3+1 Unexpected ]
+  a.js  err @3+1 Unexpected ]
+"`${a[]}`;"
+  a.ts  err @5+1 Unexpected ]
+  a.js  err @5+1 Unexpected ]
+"a[]`x`;"
+  a.ts  err @2+1 Unexpected ]
+  a.js  err @2+1 Unexpected ]
+"a[] as any;"
+  a.ts  err @2+1 Unexpected ]
+  a.js  err @2+1 Unexpected ]
+"(a[]);"
+  a.ts  err @3+1 Unexpected ]
+  a.js  err @3+1 Unexpected ]
+"a[(]"
+  a.ts  err @3+1 Unexpected ]
+  a.js  err @3+1 Unexpected ]
+"a[[]];"
+  a.ts  ok
+  a.js  ok
+"a[[]][];"
+  a.ts  err @6+1 Unexpected ]
+  a.js  err @6+1 Unexpected ]
+"let [] = a[];"
+  a.ts  err @11+1 Unexpected ]
+  a.js  err @11+1 Unexpected ]
+"type T = { []: number };"
+  a.ts  ok
+  a.js  err @5+1 Expected ";" but found "T" | @7+1 Unexpected =
+"type T = A[ ];"
+  a.ts  ok
+  a.js  err @5+1 Expected ";" but found "T" | @7+1 Unexpected =
+"let x: { [ ]: 1 };"
+  a.ts  ok
+  a.js  err @5+1 Expected ";" but found ":" | @12+1 Expected ";" but found ":"
+"enum E { [] }"
+  a.ts  err @9+1 Expected identifier but found "["
+  a.js  err @0+4 Unexpected enum
+"@a[] class C {}"
+  a.ts  err @2+1 Expected "class" but found "[" | @5+5 Expected ";" but found "class" | @13+1 Expected ";" but found "{" | @14+1 Unexpected }
+  a.js  err @0+1 Unexpected @
+"class C { @a[] m() {} }"
+  a.ts  err @15+1 Expected ";" but found "m" | @16+1 Expected identifier but found "(" | @19+1 Expected ";" but found "{" | @22+1 Unexpected }
+  a.js  err @10+1 Expected identifier but found "@" | @12+1 Expected ";" but found "[" | @13+1 Expected identifier but found "]"
+"a?.b[];"
+  a.ts  err @5+1 Unexpected ]
+  a.js  err @5+1 Unexpected ]
+"super[];"
+  a.ts  err @0+5 Unexpected "super" | @6+1 Unexpected ]
+  a.js  err @0+5 Unexpected "super" | @6+1 Unexpected ]
+"class A extends B { m() { super[]; } }"
+  a.ts  err @32+1 Unexpected ]
+  a.js  err @32+1 Unexpected ]
+"this[];"
+  a.ts  err @5+1 Unexpected ]
+  a.js  err @5+1 Unexpected ]
+"import.meta[];"
+  a.ts  err @12+1 Unexpected ]
+  a.js  err @12+1 Unexpected ]
+"a<b>[];"
+  a.ts  ok
+  a.js  ok
+"a[]<b>;"
+  a.ts  err @2+1 Unexpected ]
+  a.js  err @2+1 Unexpected ]
+"async[];"
+  a.ts  err @6+1 Unexpected ]
+  a.js  err @6+1 Unexpected ]
+"await[];"
+  a.ts  err @6+1 Unexpected ]
+  a.js  err @6+1 Unexpected ]
+"yield[];"
+  a.ts  err @6+1 Unexpected ]
+  a.js  err @6+1 Unexpected ]
+"function* g() { yield[]; }"
+  a.ts  ok
+  a.js  ok
+"function* g() { (yield)[]; }"
+  a.ts  err @24+1 Unexpected ]
+  a.js  err @24+1 Unexpected ]
+"of[];"
+  a.ts  err @3+1 Unexpected ]
+  a.js  err @3+1 Unexpected ]
+
+== for head with using and of
+"for (using of of []) {}"
+  a.ts  ok
+  a.js  ok
+"for (using of of [1]) {}"
+  a.ts  ok
+  a.js  ok
+"for (using of of) {}"
+  a.ts  err @16+1 Unexpected )
+  a.js  err @16+1 Unexpected )
+"for (using of of x) {}"
+  a.ts  ok
+  a.js  ok
+"for (using of [1]) {}"
+  a.ts  err @14+1 Expected ";" but found "[" | @16+1 Expected ";" but found "]"
+  a.js  err @14+1 Expected ";" but found "[" | @16+1 Expected ";" but found "]"
+"for (using of []) {}"
+  a.ts  err @14+1 Expected ";" but found "[" | @15+1 Unexpected ]
+  a.js  err @14+1 Expected ";" but found "[" | @15+1 Unexpected ]
+"for (using of x) {}"
+  a.ts  err @14+1 Expected ";" but found "x" | @15+1 Unexpected )
+  a.js  err @14+1 Expected ";" but found "x" | @15+1 Unexpected )
+"for (using x of y) {}"
+  a.ts  ok
+  a.js  ok
+"for (using of = null;;) {}"
+  a.ts  ok
+  a.js  ok
+"for (using of = null; false;) {}"
+  a.ts  ok
+  a.js  ok
+"for (using of;;) {}"
+  a.ts  ok
+  a.js  ok
+"for (using of: T = null;;) {}"
+  a.ts  ok
+  a.js  err @13+1 Expected ";" but found ":" | @24+1 Unexpected ;
+"for (using of in x) {}"
+  a.ts  ok
+  a.js  ok
+"for (using of of of) {}"
+  a.ts  ok
+  a.js  ok
+"for (using of\nof []) {}"
+  a.ts  ok
+  a.js  ok
+"for (using\nof of []) {}"
+  a.ts  err @18+1 Unexpected ]
+  a.js  err @18+1 Unexpected ]
+"for (using of /*c*/ of []) {}"
+  a.ts  ok
+  a.js  ok
+"for (using of of\n[]) {}"
+  a.ts  ok
+  a.js  ok
+"for (using of of [ ]) {}"
+  a.ts  ok
+  a.js  ok
+"for (using in x) {}"
+  a.ts  ok
+  a.js  ok
+"for (using;;) {}"
+  a.ts  ok
+  a.js  ok
+"for (using = 1;;) {}"
+  a.ts  ok
+  a.js  ok
+"for (using.x of y) {}"
+  a.ts  ok
+  a.js  ok
+"for (using[0] of y) {}"
+  a.ts  ok
+  a.js  ok
+"for (using x = y;;) {}"
+  a.ts  ok
+  a.js  ok
+"for (using x = y, z = w;;) {}"
+  a.ts  ok
+  a.js  ok
+"for (using {} of y) {}"
+  a.ts  err @11+1 Expected ";" but found "{" | @12+1 Unexpected }
+  a.js  err @11+1 Expected ";" but found "{" | @12+1 Unexpected }
+"for (using [a] of y) {}"
+  a.ts  ok
+  a.js  ok
+"for (using of of.x) {}"
+  a.ts  err @16+1 Unexpected .
+  a.js  err @16+1 Unexpected .
+"for (using of of()) {}"
+  a.ts  err @18+1 Expected "=>" but found ")"
+  a.js  err @18+1 Expected "=>" but found ")"
+"for (using of of?.[0]) {}"
+  a.ts  err @16+2 Unexpected ?.
+  a.js  err @16+2 Unexpected ?.
+"for (using of of => of) {}"
+  a.ts  err @17+2 Unexpected =>
+  a.js  err @17+2 Unexpected =>
+"for (using of, x;;) {}"
+  a.ts  ok
+  a.js  ok
+"for (using of = 1 of []) {}"
+  a.ts  err @16+0 for-of loop variables cannot have an initializer
+  a.js  err @16+0 for-of loop variables cannot have an initializer
+"for (using of) {}"
+  a.ts  err @13+1 Expected ";" but found ")" | @17+0 Expected ";" but found end of file
+  a.js  err @13+1 Expected ";" but found ")" | @17+0 Expected ";" but found end of file
+"for (using x) {}"
+  a.ts  err @12+1 Expected ";" but found ")" | @16+0 Expected ";" but found end of file
+  a.js  err @12+1 Expected ";" but found ")" | @16+0 Expected ";" but found end of file
+"for (using x in y) {}"
+  a.ts  ok
+  a.js  ok
+"for (using of as any of []) {}"
+  a.ts  err @14+2 Expected ";" but found "as" | @21+2 Expected ";" but found "of"
+  a.js  err @14+2 Expected ";" but found "as" | @21+2 Expected ";" but found "of"
+"for (using of! of []) {}"
+  a.ts  err @15+2 Expected ":" but found "of" | @20+1 Expected ";" but found ")" | @24+0 Expected ";" but found end of file
+  a.js  err @13+1 Expected ";" but found "!" | @19+1 Unexpected ]
+"async function f() { for (await using of of []) {} }"
+  a.ts  ok
+  a.js  ok
+"async function f() { for (await using of of x) {} }"
+  a.ts  ok
+  a.js  ok
+"async function f() { for (await using x of y) {} }"
+  a.ts  ok
+  a.js  ok
+"async function f() { for await (using of of []) {} }"
+  a.ts  ok
+  a.js  ok
+"async function f() { for await (using of of x) {} }"
+  a.ts  ok
+  a.js  ok
+"async function f() { for await (using x of y) {} }"
+  a.ts  ok
+  a.js  ok
+"async function f() { for (await using of = null;;) {} }"
+  a.ts  ok
+  a.js  ok
+"for (await using of of []) {}"
+  a.ts  err @11+5 "await" can only be used inside an "async" function | @20+2 Expected ";" but found "of"
+  a.js  err @11+5 "await" can only be used inside an "async" function | @20+2 Expected ";" but found "of"
+"for await (using of of []) {}"
+  a.ts  err @4+5 Cannot use "await" outside an async function
+  a.js  err @4+5 Cannot use "await" outside an async function
+"using of = null;"
+  a.ts  ok
+  a.js  ok
+"using of of [];"
+  a.ts  err @6+2 The declaration "of" must be initialized | @9+2 Expected ";" but found "of"
+  a.js  err @6+2 The declaration "of" must be initialized | @9+2 Expected ";" but found "of"
+"using x = null;"
+  a.ts  ok
+  a.js  ok
+"{ using of = null; }"
+  a.ts  ok
+  a.js  ok
+"{ using of of []; }"
+  a.ts  err @8+2 The declaration "of" must be initialized | @11+2 Expected ";" but found "of"
+  a.js  err @8+2 The declaration "of" must be initialized | @11+2 Expected ";" but found "of"
+"for (let of of []) {}"
+  a.ts  ok
+  a.js  ok
+"for (let of of x) {}"
+  a.ts  ok
+  a.js  ok
+"for (const of of []) {}"
+  a.ts  ok
+  a.js  ok
+"for (var of of []) {}"
+  a.ts  ok
+  a.js  ok
+"for (of of []) {}"
+  a.ts  ok
+  a.js  ok
+"for (of of of) {}"
+  a.ts  ok
+  a.js  ok
+"for (async of []) {}"
+  a.ts  err @5+8 For loop initializers cannot start with "async of"
+  a.js  err @14+1 Expected "=>" but found "[" | @15+1 Unexpected ]
+"for (let of []) {}"
+  a.ts  err @12+1 Expected ";" but found "[" | @13+1 Unexpected ]
+  a.js  err @12+1 Expected ";" but found "[" | @13+1 Unexpected ]
+"for (let.x of []) {}"
+  a.ts  err @5+3 "let" must be wrapped in parentheses to be used as an expression here
+  a.js  err @5+3 "let" must be wrapped in parentheses to be used as an expression here

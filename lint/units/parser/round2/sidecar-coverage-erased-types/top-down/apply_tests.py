@@ -41,7 +41,7 @@ edit(T, """        ErasedData::Interface(name) => ("interface", named(name)),
 """)
 edit(T, """#[test]
 fn records_are_those_of_the_known_sources() {""", """/// A line for each interface, type alias and index signature of a class that a lint parse recorded, by where they start: the kind and the range of every node.
-pub(crate) fn payloads(parsed: &ParsedForLint<'_, '_>) -> Vec<String> {
+fn payloads(parsed: &ParsedForLint<'_, '_>) -> Vec<String> {
     let sidecar = parsed.sidecar;
     let mut lines: Vec<(u32, String)> = Vec::new();
     for record in &sidecar.erased.statements {

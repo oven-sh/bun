@@ -203,5 +203,6 @@
 	{"code":"enum E { A = [,].length, B = ([,] as any).length }","ext":"ts","expect":[{"line":1,"column":15,"message":"Unexpected comma in middle of array."},{"line":1,"column":32,"message":"Unexpected comma in middle of array."}]},
 	{"code":"type T = typeof x[0]; const a: T = [,];","ext":"ts","expect":[{"line":1,"column":37,"message":"Unexpected comma in middle of array."}]},
 	{"code":"const e = <div a={[,] as any}>{[,]}</div>;","ext":"tsx","expect":[{"line":1,"column":20,"message":"Unexpected comma in middle of array."},{"line":1,"column":33,"message":"Unexpected comma in middle of array."}]},
-	{"code":"const f = <T,>(a: T = [,] as any) => [,];","ext":"tsx","expect":[{"line":1,"column":24,"message":"Unexpected comma in middle of array."},{"line":1,"column":39,"message":"Unexpected comma in middle of array."}]}
+	{"code":"const f = <T,>(a: T = [,] as any) => [,];","ext":"tsx","expect":[{"line":1,"column":24,"message":"Unexpected comma in middle of array."},{"line":1,"column":39,"message":"Unexpected comma in middle of array."}]},
+	{"code":"switch (x) { case [a as T, , b!]: break; case [a as T, , b!]: break; }","ext":"ts","expect":[{"line":1,"column":28,"message":"Unexpected comma in middle of array."},{"line":1,"column":56,"message":"Unexpected comma in middle of array."}]}
 ]

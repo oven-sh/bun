@@ -204,7 +204,7 @@
   a.ts  ok
   a.js  @0+1 Unexpected <
 "<A>await x ** 2;"
-  a.ts  @9+1 "await" can only be used inside an "async" function | @11+2 Unexpected ** -> TS1109 11+2 "Expression expected."
+  a.ts  @11+2 Unexpected ** -> TS17007 0+10 "A type assertion expression is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."
   a.js  @0+1 Unexpected <
 "-x ** 2;"
   a.ts  @3+2 Unexpected ** -> TS17006 0+2 "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."
@@ -246,20 +246,20 @@
   a.ts  ok
   a.js  ok
 "await x ** 2;"
-  a.ts  @6+1 "await" can only be used inside an "async" function | @8+2 Unexpected ** -> TS1109 8+2 "Expression expected."
-  a.js  @6+1 "await" can only be used inside an "async" function | @8+2 Unexpected ** -> TS1109 8+2 "Expression expected."
+  a.ts  @8+2 Unexpected ** -> TS17006 0+7 "An unary expression with the 'await' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."
+  a.js  @8+2 Unexpected ** -> TS17006 0+7 "An unary expression with the 'await' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."
 "y = await x ** 2;"
-  a.ts  @10+1 "await" can only be used inside an "async" function | @12+2 Unexpected ** -> TS1109 12+2 "Expression expected."
-  a.js  @10+1 "await" can only be used inside an "async" function | @12+2 Unexpected ** -> TS1109 12+2 "Expression expected."
+  a.ts  @12+2 Unexpected ** -> TS17006 4+7 "An unary expression with the 'await' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."
+  a.js  @12+2 Unexpected ** -> TS17006 4+7 "An unary expression with the 'await' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."
 "await x ** 2; export {};"
-  a.ts  @6+1 "await" can only be used inside an "async" function | @8+2 Unexpected ** -> TS1109 8+2 "Expression expected."
-  a.js  @6+1 "await" can only be used inside an "async" function | @8+2 Unexpected ** -> TS1109 8+2 "Expression expected."
+  a.ts  @8+2 Unexpected ** -> TS17006 0+7 "An unary expression with the 'await' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."
+  a.js  @8+2 Unexpected ** -> TS17006 0+7 "An unary expression with the 'await' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."
 "await ** 2;"
-  a.ts  @6+2 Unexpected ** -> TS17006 0+5 "An unary expression with the 'await' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."
-  a.js  @6+2 Unexpected ** -> TS17006 0+5 "An unary expression with the 'await' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."
+  a.ts  @6+2 Unexpected ** -> TS1109 6+2 "Expression expected."
+  a.js  @6+2 Unexpected ** -> TS1109 6+2 "Expression expected."
 "y = await ** 2;"
-  a.ts  @10+2 Unexpected ** -> TS17006 4+5 "An unary expression with the 'await' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."
-  a.js  @10+2 Unexpected ** -> TS17006 4+5 "An unary expression with the 'await' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."
+  a.ts  @10+2 Unexpected ** -> TS1109 10+2 "Expression expected."
+  a.js  @10+2 Unexpected ** -> TS1109 10+2 "Expression expected."
 "function f() { await ** 2; }"
   a.ts  @21+2 Unexpected ** -> TS17006 15+5 "An unary expression with the 'await' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."
   a.js  @21+2 Unexpected ** -> TS17006 15+5 "An unary expression with the 'await' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."
@@ -1154,8 +1154,8 @@
   a.ts  @6+1 Unexpected ] -> TS1011 6+0 "An element access expression should take an argument."
   a.js  @6+1 Unexpected ] -> TS1011 6+0 "An element access expression should take an argument."
 "await[];"
-  a.ts  @6+1 Unexpected ] -> TS1011 6+0 "An element access expression should take an argument."
-  a.js  @6+1 Unexpected ] -> TS1011 6+0 "An element access expression should take an argument."
+  a.ts  ok
+  a.js  ok
 "yield[];"
   a.ts  @6+1 Unexpected ] -> TS1011 6+0 "An element access expression should take an argument."
   a.js  @6+1 Unexpected ] -> TS1011 6+0 "An element access expression should take an argument."
@@ -1309,11 +1309,11 @@
   a.ts  ok
   a.js  ok
 "for (await using of of []) {}"
-  a.ts  @11+5 "await" can only be used inside an "async" function | @20+2 Expected ";" but found "of" -> TS1005 20+2 "';' expected."
-  a.js  @11+5 "await" can only be used inside an "async" function | @20+2 Expected ";" but found "of" -> TS1005 20+2 "';' expected."
+  a.ts  ok
+  a.js  ok
 "for await (using of of []) {}"
-  a.ts  @4+5 Cannot use "await" outside an async function | @24+1 Unexpected ] -> TS1011 24+0 "An element access expression should take an argument."
-  a.js  @4+5 Cannot use "await" outside an async function | @24+1 Unexpected ] -> TS1011 24+0 "An element access expression should take an argument."
+  a.ts  @24+1 Unexpected ] -> TS1011 24+0 "An element access expression should take an argument."
+  a.js  @24+1 Unexpected ] -> TS1011 24+0 "An element access expression should take an argument."
 "using of = null;"
   a.ts  ok
   a.js  ok

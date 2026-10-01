@@ -14,4 +14,5 @@ cp "$HERE/zz_probe.rs" "$SCRATCH/src/js_parser/zz_probe.rs"
 printf '\n#[cfg(test)]\nmod zz_probe;\n' >> "$SCRATCH/src/js_parser/lib.rs"
 # The probe prints the lines of the test: only the scratch copy makes the module visible to it.
 sed -i 's/^mod erased_tests;$/pub(crate) mod erased_tests;/' "$SCRATCH/src/js_parser/parse/mod.rs"
+sed -i 's/^fn payloads(/pub(crate) fn payloads(/' "$SCRATCH/src/js_parser/parse/erased_tests.rs"
 grep -n 'erased_tests' "$SCRATCH/src/js_parser/parse/mod.rs"

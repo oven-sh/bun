@@ -42,7 +42,7 @@ pub(crate) fn run(context: Context<'_, '_>, parsed: &ParsedForLint<'_, '_>) -> V
                     }
                     ImportClause::Named(items) => {
                         for item in items.slice() {
-                            linter.context.declare_name(item.alias.slice());
+                            linter.context.declare(item.name.ref_);
                         }
                     }
                 }

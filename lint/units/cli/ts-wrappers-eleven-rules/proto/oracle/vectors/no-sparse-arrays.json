@@ -3898,5 +3898,38 @@
 				"message": "Unexpected comma in middle of array."
 			}
 		]
+	},
+	{
+		"code": "switch (x) { case [a as T, , b!]: break; case [a as T, , b!]: break; }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 28,
+				"endLine": 1,
+				"endColumn": 29,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 56,
+				"endLine": 1,
+				"endColumn": 57,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 28,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 56,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
 	}
 ]

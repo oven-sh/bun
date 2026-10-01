@@ -1,0 +1,285 @@
+{
+	"valid": [
+		{
+			"code": "const x = 0; { let x; x = 1; }"
+		},
+		{
+			"code": "const x = 0; function a(x) { x = 1; }"
+		},
+		{
+			"code": "const x = 0; foo(x);"
+		},
+		{
+			"code": "for (const x in [1,2,3]) { foo(x); }"
+		},
+		{
+			"code": "for (const x of [1,2,3]) { foo(x); }"
+		},
+		{
+			"code": "const x = {key: 0}; x.key = 1;"
+		},
+		{
+			"code": "using x = foo();"
+		},
+		{
+			"code": "await using x = foo();"
+		},
+		{
+			"code": "using x = foo(); bar(x);"
+		},
+		{
+			"code": "await using x = foo(); bar(x);"
+		},
+		{
+			"code": "var x = 0; x = 1;"
+		},
+		{
+			"code": "let x = 0; x = 1;"
+		},
+		{
+			"code": "function x() {} x = 1;"
+		},
+		{
+			"code": "function foo(x) { x = 1; }"
+		},
+		{
+			"code": "class X {} X = 1;"
+		},
+		{
+			"code": "try {} catch (x) { x = 1; }"
+		}
+	],
+	"invalid": [
+		{
+			"code": "const x = 0; x = 1;",
+			"errors": [
+				{
+					"messageId": "const",
+					"line": 1,
+					"column": 14,
+					"data": {
+						"name": "x"
+					}
+				}
+			]
+		},
+		{
+			"code": "const {a: x} = {a: 0}; x = 1;",
+			"errors": [
+				{
+					"messageId": "const",
+					"line": 1,
+					"column": 24,
+					"data": {
+						"name": "x"
+					}
+				}
+			]
+		},
+		{
+			"code": "const x = 0; ({x} = {x: 1});",
+			"errors": [
+				{
+					"messageId": "const",
+					"line": 1,
+					"column": 16,
+					"data": {
+						"name": "x"
+					}
+				}
+			]
+		},
+		{
+			"code": "const x = 0; ({a: x = 1} = {});",
+			"errors": [
+				{
+					"messageId": "const",
+					"line": 1,
+					"column": 19,
+					"data": {
+						"name": "x"
+					}
+				}
+			]
+		},
+		{
+			"code": "const x = 0; x += 1;",
+			"errors": [
+				{
+					"messageId": "const",
+					"line": 1,
+					"column": 14,
+					"data": {
+						"name": "x"
+					}
+				}
+			]
+		},
+		{
+			"code": "const x = 0; ++x;",
+			"errors": [
+				{
+					"messageId": "const",
+					"line": 1,
+					"column": 16,
+					"data": {
+						"name": "x"
+					}
+				}
+			]
+		},
+		{
+			"code": "for (const i = 0; i < 10; ++i) { foo(i); }",
+			"errors": [
+				{
+					"messageId": "const",
+					"line": 1,
+					"column": 29,
+					"data": {
+						"name": "i"
+					}
+				}
+			]
+		},
+		{
+			"code": "const x = 0; x = 1; x = 2;",
+			"errors": [
+				{
+					"messageId": "const",
+					"line": 1,
+					"column": 14,
+					"data": {
+						"name": "x"
+					}
+				},
+				{
+					"messageId": "const",
+					"line": 1,
+					"column": 21,
+					"data": {
+						"name": "x"
+					}
+				}
+			]
+		},
+		{
+			"code": "const x = 0; function foo() { x = x + 1; }",
+			"errors": [
+				{
+					"messageId": "const",
+					"line": 1,
+					"column": 31,
+					"data": {
+						"name": "x"
+					}
+				}
+			]
+		},
+		{
+			"code": "const x = 0; function foo(a) { x = a; }",
+			"errors": [
+				{
+					"messageId": "const",
+					"line": 1,
+					"column": 32,
+					"data": {
+						"name": "x"
+					}
+				}
+			]
+		},
+		{
+			"code": "const x = 0; while (true) { x = x + 1; }",
+			"errors": [
+				{
+					"messageId": "const",
+					"line": 1,
+					"column": 29,
+					"data": {
+						"name": "x"
+					}
+				}
+			]
+		},
+		{
+			"code": "using x = foo(); x = 1;",
+			"errors": [
+				{
+					"messageId": "const",
+					"line": 1,
+					"column": 18,
+					"data": {
+						"name": "x"
+					}
+				}
+			]
+		},
+		{
+			"code": "await using x = foo(); x = 1;",
+			"errors": [
+				{
+					"messageId": "const",
+					"line": 1,
+					"column": 24,
+					"data": {
+						"name": "x"
+					}
+				}
+			]
+		},
+		{
+			"code": "using x = foo(); x ??= bar();",
+			"errors": [
+				{
+					"messageId": "const",
+					"line": 1,
+					"column": 18,
+					"data": {
+						"name": "x"
+					}
+				}
+			]
+		},
+		{
+			"code": "await using x = foo(); x ||= bar();",
+			"errors": [
+				{
+					"messageId": "const",
+					"line": 1,
+					"column": 24,
+					"data": {
+						"name": "x"
+					}
+				}
+			]
+		},
+		{
+			"code": "using x = foo(); [x, y] = bar();",
+			"errors": [
+				{
+					"messageId": "const",
+					"line": 1,
+					"column": 19,
+					"data": {
+						"name": "x"
+					}
+				}
+			]
+		},
+		{
+			"code": "await using x = foo(); [x = baz, y] = bar();",
+			"errors": [
+				{
+					"messageId": "const",
+					"line": 1,
+					"column": 25,
+					"data": {
+						"name": "x"
+					}
+				}
+			]
+		}
+	],
+	"skipped": 0,
+	"runs": 1
+}

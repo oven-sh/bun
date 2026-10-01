@@ -14,7 +14,7 @@ const { Linter } = require(path.join(ESLINT, "lib/linter"));
 const tsParser = require("module").createRequire("/workspace/ref/tseslint/")("@typescript-eslint/parser");
 const linter = new Linter({ configType: "flat" });
 
-const count = { sources: 0, rejected: 0, properties: 0, propertiesScanned: 0, propertyDiffers: 0, defaults: 0, defaultDiffers: 0, cases: 0, caseDiffers: 0, colons: 0, colonDiffers: 0 };
+const count = { sources: 0, rejected: 0, properties: 0, propertiesScanned: 0, propertyDiffers: 0, defaults: 0, defaultDiffers: 0, cases: 0, caseDiffers: 0, colons: 0, colonDiffers: 0, uniform: 0, uniformDiffers: 0 };
 let shown = 0;
 const show = (what, source, at) => { if (shown++ < 25) console.log(`${what} at ${at}: ${JSON.stringify(source.slice(Math.max(0, at - 40), at + 40))}`); };
 
@@ -100,6 +100,27 @@ function check(source, ts, jsx) {
 					let k = indexAt(c.test.range[0]) - 1;
 					while (k >= 0 && tokens[k].value === "(" && tokens[k].type === "Punctuator") k--;
 					if (!(k >= 0 && tokens[k].type === "Keyword" && tokens[k].value === "case" && tokens[k].range[0] === c.range[0])) { count.caseDiffers++; show("CASE", source, c.range[0]); }
+				}
+				// One rule for both words, as the probe has it: after a clause with statements, the first `case` or `default` at the
+				// level of the clause, read from its last statement, that no `.` or `?.` precedes; after an empty one, the token after its `:`.
+				if (index > 0) {
+					count.uniform++;
+					const before = node.cases[index - 1];
+					let found = null;
+					if (before.consequent.length) {
+						let depth = 0;
+						for (let j = indexAt(before.consequent.at(-1).range[0]); j < tokens.length; j++) {
+							const t = tokens[j];
+							if (depth === 0 && t.type === "Keyword" && (t.value === "default" || t.value === "case") && !(j > 0 && (tokens[j - 1].value === "." || tokens[j - 1].value === "?."))) { found = t.range[0]; break; }
+							depth += level(t);
+							if (depth < 0) break;
+						}
+					} else {
+						// The clause before is empty: its `:` is its last token.
+						const j = indexAt(before.range[1]);
+						found = tokens[j] ? tokens[j].range[0] : null;
+					}
+					if (found !== c.range[0]) { count.uniformDiffers++; show("UNIFORM", source, c.range[0]); }
 				}
 				// The `:` of the clause: after the test and every `)` around it; after `default`.
 				count.colons++;

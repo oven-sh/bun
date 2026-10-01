@@ -118,7 +118,7 @@ unsafe extern "C" {
     fn WebPMuxAssemble(mux: *mut WebPMux, assembled_data: *mut WebPData) -> c_int;
 }
 
-pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::Error> {
+pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::Error> {
     let mut cw: c_int = 0;
     let mut ch: c_int = 0;
     // Header-only probe first so the pixel guard fires before libwebp

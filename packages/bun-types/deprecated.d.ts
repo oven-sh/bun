@@ -1,5 +1,5 @@
 declare module "bun" {
-  /** @deprecated This type is unused in Bun's types and might be removed in the near future */
+  /** @deprecated Unused in Bun's types and may be removed */
   type Platform =
     | "aix"
     | "android"
@@ -13,33 +13,33 @@ declare module "bun" {
     | "cygwin"
     | "netbsd";
 
-  /** @deprecated This type is unused in Bun's types and might be removed in the near future */
+  /** @deprecated Unused in Bun's types and may be removed */
   type Architecture = "arm" | "arm64" | "ia32" | "mips" | "mipsel" | "ppc" | "ppc64" | "s390" | "s390x" | "x64";
 
-  /** @deprecated This type is unused in Bun's types and might be removed in the near future */
+  /** @deprecated Unused in Bun's types and may be removed */
   type UncaughtExceptionListener = (error: Error, origin: UncaughtExceptionOrigin) => void;
 
   /**
-   * Most of the time the unhandledRejection will be an Error, but this should not be relied upon
-   * as *anything* can be thrown/rejected, it is therefore unsafe to assume that the value is an Error.
+   * The reason is usually an Error, but *anything* can be thrown or rejected, so
+   * don't assume the value is an Error.
    *
-   * @deprecated This type is unused in Bun's types and might be removed in the near future
+   * @deprecated Unused in Bun's types and may be removed
    */
   type UnhandledRejectionListener = (reason: unknown, promise: Promise<unknown>) => void;
 
-  /** @deprecated This type is unused in Bun's types and might be removed in the near future */
+  /** @deprecated Unused in Bun's types and may be removed */
   type MultipleResolveListener = (type: MultipleResolveType, promise: Promise<unknown>, value: unknown) => void;
 
   /**
-   * Consume all data from a {@link ReadableStream} until it closes or errors.
+   * Consumes all data from a {@link ReadableStream} until it closes or errors.
    *
-   * Concatenate the chunks into a single {@link ArrayBuffer}.
+   * Concatenates the chunks into a single {@link Uint8Array}.
    *
    * Each chunk must be a TypedArray or an ArrayBuffer. If you need to support
-   * chunks of different types, consider {@link readableStreamToBlob}
+   * chunks of different types, consider {@link readableStreamToBlob}.
    *
    * @param stream The stream to consume.
-   * @returns A promise that resolves with the concatenated chunks or the concatenated chunks as a {@link Uint8Array}.
+   * @returns The concatenated chunks as a {@link Uint8Array}, or a promise that resolves with them.
    *
    * @deprecated Use {@link ReadableStream.bytes}
    */
@@ -48,9 +48,9 @@ declare module "bun" {
   ): Promise<Uint8Array<ArrayBuffer>> | Uint8Array<ArrayBuffer>;
 
   /**
-   * Consume all data from a {@link ReadableStream} until it closes or errors.
+   * Consumes all data from a {@link ReadableStream} until it closes or errors.
    *
-   * Concatenate the chunks into a single {@link Blob}.
+   * Concatenates the chunks into a single {@link Blob}.
    *
    * @param stream The stream to consume.
    * @returns A promise that resolves with the concatenated chunks as a {@link Blob}.
@@ -60,9 +60,9 @@ declare module "bun" {
   function readableStreamToBlob(stream: ReadableStream): Promise<Blob>;
 
   /**
-   * Consume all data from a {@link ReadableStream} until it closes or errors.
+   * Consumes all data from a {@link ReadableStream} until it closes or errors.
    *
-   * Concatenate the chunks into a single string. Chunks must be a TypedArray or an ArrayBuffer. If you need to support chunks of different types, consider {@link readableStreamToBlob}.
+   * Concatenates the chunks into a single string. Each chunk must be a TypedArray or an ArrayBuffer. If you need to support chunks of different types, consider {@link readableStreamToBlob}.
    *
    * @param stream The stream to consume.
    * @returns A promise that resolves with the concatenated chunks as a {@link String}.
@@ -72,12 +72,12 @@ declare module "bun" {
   function readableStreamToText(stream: ReadableStream): Promise<string>;
 
   /**
-   * Consume all data from a {@link ReadableStream} until it closes or errors.
+   * Consumes all data from a {@link ReadableStream} until it closes or errors.
    *
-   * Concatenate the chunks into a single string and parse as JSON. Chunks must be a TypedArray or an ArrayBuffer. If you need to support chunks of different types, consider {@link readableStreamToBlob}.
+   * Concatenates the chunks into a single string and parses it as JSON. Each chunk must be a TypedArray or an ArrayBuffer. If you need to support chunks of different types, consider {@link readableStreamToBlob}.
    *
    * @param stream The stream to consume.
-   * @returns A promise that resolves with the concatenated chunks as a {@link String}.
+   * @returns A promise that resolves with the concatenated chunks parsed as JSON.
    *
    * @deprecated Use {@link ReadableStream.json}
    */
@@ -120,7 +120,7 @@ declare module "bun" {
    */
   type Errorlike = ErrorLike;
 
-  /** @deprecated This is unused in Bun's types and may be removed in the future */
+  /** @deprecated Unused in Bun's types and may be removed */
   type ShellFunction = (input: Uint8Array<ArrayBuffer>) => Uint8Array<ArrayBuffer>;
 
   interface TLSOptions {
@@ -143,21 +143,21 @@ declare module "bun" {
     certFile?: string;
 
     /**
-     *  File path to a .pem file for a custom root CA
+     * File path to a .pem file for a custom root CA
      *
      * @deprecated since v0.6.3 - Use `ca: Bun.file(path)` instead.
      */
     caFile?: string;
   }
 
-  /** @deprecated This type is unused in Bun's declarations and may be removed in the future */
+  /** @deprecated Unused in Bun's types and may be removed */
   type ReadableIO = ReadableStream<Uint8Array<ArrayBuffer>> | number | undefined;
 }
 
 declare namespace NodeJS {
   interface Process {
     /**
-     * @deprecated This is deprecated; use the "node:assert" module instead.
+     * @deprecated Use the `node:assert` module instead.
      */
     assert(value: unknown, message?: string | Error): asserts value;
   }

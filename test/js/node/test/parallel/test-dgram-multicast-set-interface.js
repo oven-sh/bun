@@ -22,7 +22,7 @@ const dgram = require('dgram');
   socket.on('listening', common.mustCall(() => {
     socket.close(common.mustCall(() => {
       assert.throws(() => { socket.setMulticastInterface('0.0.0.0'); },
-                    /Not running/i);
+                    /Not running/);
     }));
   }));
 }

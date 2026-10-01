@@ -1,5 +1,5 @@
 import assert from "node:assert";
-import { CodeStyle, Type, toASCIILiteral } from "./base";
+import { type CodeStyle, Type, toASCIILiteral } from "./base.ts";
 
 export const String = new (class extends Type {
   /** Converts to a string, as if by calling `String`. */

@@ -10,10 +10,6 @@
 #include "GeneratedJS2Native.h"
 #include "wtf/Assertions.h"
 
-extern "C" JSC::EncodedJSValue ByteBlob__JSReadableStreamSource__load(JSC::JSGlobalObject* global);
-extern "C" JSC::EncodedJSValue FileReader__JSReadableStreamSource__load(JSC::JSGlobalObject* global);
-extern "C" JSC::EncodedJSValue ByteStream__JSReadableStreamSource__load(JSC::JSGlobalObject* global);
-
 namespace Bun {
 namespace JS2Native {
 
@@ -23,7 +19,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDollarLazy, (JSC::JSGlobalObject * lexicalGlobalObjec
     JSC::JSValue target = callFrame->uncheckedArgument(0);
 
 #if ASSERT_ENABLED
-    ASSERT_WITH_MESSAGE(target.isInt32(), "In call to $lazy: expected Int32, got %s", target.toWTFString(lexicalGlobalObject).utf8().data());
+    ASSERT_WITH_MESSAGE(target.isInt32(), "In call to $lazy: expected Int32, got %s", target.toWTFString(lexicalGlobalObject).utf8().legacyCStringPointer());
 #endif
 
     int id = target.asInt32();

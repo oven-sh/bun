@@ -7,7 +7,7 @@
 //! `Zeroable` impls live here. All declarations are zero-cost FFI
 //! (`extern "system"` = `__stdcall`, which on x64 is the same as `extern "C"`).
 #![cfg(windows)]
-#![allow(non_camel_case_types, non_snake_case, non_upper_case_globals)]
+#![allow(non_snake_case)]
 
 pub use bun_windows_sys::{
     BOOL, CONSOLE_SCREEN_BUFFER_INFO, COORD, DWORD, FALSE, HANDLE, HRESULT, INVALID_HANDLE_VALUE,
@@ -41,22 +41,18 @@ pub fn GetStdHandle(std_handle: DWORD) -> Option<HANDLE> {
 // `bun_windows_sys` leaf and are re-exported here for the
 // `crate::windows_sys::*` path used by callers.
 // ──────────────────────────────────────────────────────────────────────────
-pub use bun_windows_sys::UNICODE_STRING as UnicodeString;
 pub use bun_windows_sys::{
-    CURDIR, Curdir, PEB, PebView, ProcessParameters, RTL_USER_PROCESS_PARAMETERS, TEB, peb, teb,
+    CURDIR, PEB, ProcessParameters, RTL_USER_PROCESS_PARAMETERS, TEB, peb, teb,
 };
 
 // SAFETY: nested `i16`/`u16` POD; all-zero is the documented pre-call state
 // for `GetConsoleScreenBufferInfo` out-params. Impl lives here (not in
 // `bun_windows_sys`) because the `Zeroable` trait is owned by `bun_core`.
-#[cfg(windows)]
 unsafe impl crate::ffi::Zeroable for CONSOLE_SCREEN_BUFFER_INFO {}
 
 // kernel32 externs are owned by the tier-0 leaf `bun_windows_sys`; re-export
-// so existing `crate::windows_sys::kernel32::*` / `c::*` callers resolve.
+// so existing `crate::windows_sys::kernel32::*` callers resolve.
 pub use bun_windows_sys::kernel32;
-// `c::` alias used by `output.rs`.
-pub use kernel32 as c;
 
 /// `bun.windows.libuv` — only `uv_disable_stdio_inheritance` is called from
 /// `bun_core`; declared directly to avoid a `bun_libuv_sys` dep at tier-0.

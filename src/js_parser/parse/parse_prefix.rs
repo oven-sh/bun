@@ -1,4 +1,3 @@
-#![allow(clippy::single_match)]
 #![warn(unused_must_use)]
 use bun_collections::VecExt;
 
@@ -14,7 +13,7 @@ use bun_ast::g::{Arg, PropertyKind};
 use bun_ast::op::Level;
 use bun_ast::{self as js_ast, B, E, Expr, ExprData, ExprNodeList, G, OpCode, scope, symbol};
 
-type PResult<T> = core::result::Result<T, bun_core::Error>;
+type PResult<T> = crate::CrateResult<T>;
 
 // The 30+ per-token `t_*` helpers are private; only `parse_prefix` is surfaced. Helper
 // names pfx_-prefixed to avoid colliding with parseStmt.rs / parseSuffix.rs mixins on the same `P`.
@@ -44,7 +43,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(p.new_expr(E::Super {}, loc))
     }
 
-    fn pfx_t_open_paren(p: &mut Self, level: Level) -> PResult<Expr> {
+    fn pfx_t_open_paren(p: &mut Self, level: Level, flags: EFlags) -> PResult<Expr> {
         let loc = p.lexer.loc();
         p.lexer.next()?;
 
@@ -62,7 +61,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Ok(value);
         }
 
-        p.parse_paren_expr(loc, level, ParenExprOpts::default())
+        p.parse_paren_expr(
+            loc,
+            level,
+            ParenExprOpts {
+                is_after_question_and_before_colon: flags == EFlags::AfterQuestionAndBeforeColon,
+                ..Default::default()
+            },
+        )
     }
 
     #[inline]
@@ -104,7 +110,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let loc = p.lexer.loc();
         if !p.allow_private_identifiers || !p.allow_in || level.gte(Level::Compare) {
             p.lexer.unexpected()?;
-            return Err(bun_core::err!("SyntaxError"));
+            return Err(crate::Error::SyntaxError);
         }
 
         let name = p.lexer.identifier;
@@ -115,11 +121,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.expected(T::TIn)?;
         }
 
-        let ref_ = p.store_name_in_ref(name)?;
+        let ref_ = p.store_name_in_ref(name);
         Ok(p.new_expr(E::PrivateIdentifier { ref_ }, loc))
     }
 
-    fn pfx_t_identifier(p: &mut Self, level: Level) -> PResult<Expr> {
+    fn pfx_t_identifier(p: &mut Self, level: Level, flags: EFlags) -> PResult<Expr> {
         let loc = p.lexer.loc();
         let name = p.lexer.identifier;
 
@@ -143,7 +149,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if (raw.as_ptr() == name.as_ptr() && raw.len() == name.len())
                     || AsyncPrefixExpression::find(raw) == AsyncPrefixExpression::IsAsync
                 {
-                    return p.parse_async_prefix_expr(name_range, level);
+                    return p.parse_async_prefix_expr(name_range, level, flags);
                 }
             }
 
@@ -175,7 +181,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let value = p.parse_expr(Level::Prefix)?;
                         if p.lexer.token == T::TAsteriskAsterisk {
                             p.lexer.unexpected()?;
-                            return Err(bun_core::err!("SyntaxError"));
+                            return Err(crate::Error::SyntaxError);
                         }
 
                         return Ok(p.new_expr(E::Await { value }, loc));
@@ -183,7 +189,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 AwaitOrYield::AllowIdent => {
                     p.lexer.prev_token_was_await_keyword = true;
-                    p.lexer.await_keyword_loc = name_range.loc;
                     p.lexer.fn_or_arrow_start_loc = p.fn_or_arrow_data_parse.needs_async_loc;
                 }
             },
@@ -252,7 +257,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Handle the start of an arrow expression
         if p.lexer.token == T::TEqualsGreaterThan && level.lte(Level::Assign) {
-            let ref_ = p.store_name_in_ref(name).expect("unreachable");
+            let ref_ = p.store_name_in_ref(name);
             // reshaped for borrowck — build binding before borrowing arena.
             // `Arg` is non-Copy (owns Vec) → use fill_iter instead of alloc_slice_copy.
             let binding = p.b(B::Identifier { r#ref: ref_ }, loc);
@@ -274,7 +279,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Ok(p.new_expr(arrow_result?, loc));
         }
 
-        let ref_ = p.store_name_in_ref(name).expect("unreachable");
+        let ref_ = p.store_name_in_ref(name);
 
         Ok(Expr::init_identifier(ref_, loc))
     }
@@ -344,7 +349,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let value = p.parse_expr(Level::Prefix)?;
         if p.lexer.token == T::TAsteriskAsterisk {
             p.lexer.unexpected()?;
-            return Err(bun_core::err!("SyntaxError"));
+            return Err(crate::Error::SyntaxError);
         }
 
         Ok(p.new_expr(
@@ -363,7 +368,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let value = p.parse_expr(Level::Prefix)?;
         if p.lexer.token == T::TAsteriskAsterisk {
             p.lexer.unexpected()?;
-            return Err(bun_core::err!("SyntaxError"));
+            return Err(crate::Error::SyntaxError);
         }
 
         let mut flags = UnaryFlags::default();
@@ -386,7 +391,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let value = p.parse_expr(Level::Prefix)?;
         if p.lexer.token == T::TAsteriskAsterisk {
             p.lexer.unexpected()?;
-            return Err(bun_core::err!("SyntaxError"));
+            return Err(crate::Error::SyntaxError);
         }
         if let ExprData::EIndex(e_index) = &value.data {
             if let ExprData::EPrivateIdentifier(private) = &e_index.index.data {
@@ -429,7 +434,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let value = p.parse_expr(Level::Prefix)?;
         if p.lexer.token == T::TAsteriskAsterisk {
             p.lexer.unexpected()?;
-            return Err(bun_core::err!("SyntaxError"));
+            return Err(crate::Error::SyntaxError);
         }
 
         Ok(p.new_expr(
@@ -448,7 +453,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let value = p.parse_expr(Level::Prefix)?;
         if p.lexer.token == T::TAsteriskAsterisk {
             p.lexer.unexpected()?;
-            return Err(bun_core::err!("SyntaxError"));
+            return Err(crate::Error::SyntaxError);
         }
 
         Ok(p.new_expr(
@@ -467,7 +472,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let value = p.parse_expr(Level::Prefix)?;
         if p.lexer.token == T::TAsteriskAsterisk {
             p.lexer.unexpected()?;
-            return Err(bun_core::err!("SyntaxError"));
+            return Err(crate::Error::SyntaxError);
         }
 
         Ok(p.new_expr(
@@ -486,7 +491,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let value = p.parse_expr(Level::Prefix)?;
         if p.lexer.token == T::TAsteriskAsterisk {
             p.lexer.unexpected()?;
-            return Err(bun_core::err!("SyntaxError"));
+            return Err(crate::Error::SyntaxError);
         }
 
         Ok(p.new_expr(
@@ -530,7 +535,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline]
     fn pfx_t_function(p: &mut Self) -> PResult<Expr> {
         let loc = p.lexer.loc();
-        p.parse_fn_expr(loc, false, bun_ast::Range::NONE)
+        p.parse_fn_expr(loc, false)
     }
 
     fn pfx_t_class(p: &mut Self) -> PResult<Expr> {
@@ -560,9 +565,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 name = Some(js_ast::LocRef {
                     loc: p.lexer.loc(),
-                    ref_: p
-                        .new_symbol(symbol::Kind::Other, name_text)
-                        .expect("unreachable"),
+                    ref_: p.new_symbol(symbol::Kind::Other, name_text),
                 });
                 p.lexer.next()?;
             }
@@ -597,7 +600,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Expect class keyword after decorators
         if p.lexer.token != T::TClass {
             p.lexer.expected(T::TClass)?;
-            return Err(bun_core::err!("SyntaxError"));
+            return Err(crate::Error::SyntaxError);
         }
 
         let loc = p.lexer.loc();
@@ -625,9 +628,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 name = Some(js_ast::LocRef {
                     loc: p.lexer.loc(),
-                    ref_: p
-                        .new_symbol(symbol::Kind::Other, name_text)
-                        .expect("unreachable"),
+                    ref_: p.new_symbol(symbol::Kind::Other, name_text),
                 });
                 p.lexer.next()?;
             }
@@ -673,7 +674,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             if p.lexer.token != T::TIdentifier || p.lexer.raw() != b"target" {
                 p.lexer.unexpected()?;
-                return Err(bun_core::err!("SyntaxError"));
+                return Err(crate::Error::SyntaxError);
             }
             let range = bun_ast::Range {
                 loc,
@@ -714,7 +715,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    fn pfx_t_open_bracket(p: &mut Self, mut errors: Option<&mut DeferredErrors>) -> PResult<Expr> {
+    fn pfx_t_open_bracket(p: &mut Self, errors: Option<&mut DeferredErrors>) -> PResult<Expr> {
         let loc = p.lexer.loc();
         p.lexer.next()?;
         let mut is_single_line = !p.lexer.has_newline_before;
@@ -735,10 +736,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     });
                 }
                 T::TDotDotDot => {
-                    if let Some(e) = errors.as_deref_mut() {
-                        e.array_spread_feature = Some(p.lexer.range());
-                    }
-
                     let dots_loc = p.lexer.loc();
                     p.lexer.next()?;
                     // Parse into a local then push.
@@ -840,9 +837,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     &mut property_opts,
                     Some(&mut self_errors),
                 )? {
-                    if cfg!(debug_assertions) {
-                        debug_assert!(prop.key.is_some() || prop.value.is_some());
-                    }
+                    debug_assert!(prop.key.is_some() || prop.value.is_some());
                     properties.push(prop);
                 }
             }
@@ -991,7 +986,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         p.lexer.unexpected()?;
-        Err(bun_core::err!("SyntaxError"))
+        Err(crate::Error::SyntaxError)
     }
 
     #[inline]
@@ -1002,7 +997,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     // Before splitting this up, this used 3 KB of stack space per call.
-    pub fn parse_prefix(
+    pub(crate) fn parse_prefix(
         &mut self,
         level: Level,
         errors: Option<&mut DeferredErrors>,
@@ -1014,9 +1009,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             T::TOpenBrace => Self::pfx_t_open_brace(p, errors),
             T::TLessThan => Self::pfx_t_less_than(p, level, errors, flags),
             T::TImport => Self::pfx_t_import(p, level),
-            T::TOpenParen => Self::pfx_t_open_paren(p, level),
+            T::TOpenParen => Self::pfx_t_open_paren(p, level, flags),
             T::TPrivateIdentifier => Self::pfx_t_private_identifier(p, level),
-            T::TIdentifier => Self::pfx_t_identifier(p, level),
+            T::TIdentifier => Self::pfx_t_identifier(p, level, flags),
             T::TFalse => Self::pfx_t_false(p),
             T::TTrue => Self::pfx_t_true(p),
             T::TNull => Self::pfx_t_null(p),
@@ -1042,7 +1037,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             T::TSuper => Self::pfx_t_super(p, level),
             _ => {
                 p.lexer.unexpected()?;
-                Err(bun_core::err!("SyntaxError"))
+                Err(crate::Error::SyntaxError)
             }
         }
     }

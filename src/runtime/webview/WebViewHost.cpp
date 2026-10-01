@@ -234,6 +234,10 @@ void WebViewHost::navigateIPC(const WTF::String& urlString)
     }
     auto nsurl = objc::NSURL::fromString(objc::NSString::fromWTF(urlString));
     if (!nsurl) {
+        // NavFailEvent first, like onNavigationFailed: the promise rejection
+        // alone can be silent (a constructor url is marked handled), so the
+        // callback is the signal.
+        hostWriter()->sendReplyStr(m_viewId, Reply::NavFailEvent, "invalid URL"_s);
         hostWriter()->sendReplyStr(m_viewId, Reply::NavFailed, "invalid URL"_s);
         return;
     }
@@ -451,6 +455,7 @@ void WebViewHost::onSelectorComplete(id result, id error)
         return;
     }
     // click(selector): result is the NSString "cx,cy". Parse two doubles.
+    if (!objc::Ref(result).isKindOf(objc::NSString::cls)) result = nullptr;
     WTF::String s = objc::NSString(result).toWTF();
     auto comma = s.find(',');
     if (comma == WTF::notFound) {
@@ -703,6 +708,9 @@ void WebViewHost::onNavigationFinished()
 
 void WebViewHost::onNavigationFailed(const WTF::String& err)
 {
+    // The event fires the callback; NavFailed settles the navigate slot and
+    // is gated on m_navPending because the delegate also fails for
+    // navigations no IPC navigate owns (reload, back/forward, the page).
     hostWriter()->sendReplyStr(m_viewId, Reply::NavFailEvent, err);
     if (!std::exchange(m_navPending, false)) return;
     hostWriter()->sendReplyStr(m_viewId, Reply::NavFailed, err);
@@ -726,7 +734,9 @@ void WebViewHost::onConsoleMessage(id type, id args)
     memcpy(p + 4 + typeLen, &argCount, 4);
 
     for (uint32_t i = 0; i < argCount; ++i) {
-        WTF::CString argC = objc::NSString(arr.objectAtIndex(i)).toWTF().utf8();
+        id arg = arr.objectAtIndex(i);
+        if (!objc::Ref(arg).isKindOf(objc::NSString::cls)) arg = nullptr;
+        WTF::CString argC = objc::NSString(arg).toWTF().utf8();
         uint32_t argLen = static_cast<uint32_t>(argC.length());
         size_t was = out.size();
         out.grow(was + 4 + argLen);
@@ -755,7 +765,7 @@ void WebViewHost::onEvalComplete(id result, id error)
     // Body returns JSON.stringify(...) — result is NSString or nil.
     // Empty reply → parent resolves jsUndefined(); non-empty → JSONParse.
     hostWriter()->sendReplyStr(m_viewId, Reply::EvalDone,
-        result ? objc::NSString(result).toWTF() : WTF::String());
+        objc::Ref(result).isKindOf(objc::NSString::cls) ? objc::NSString(result).toWTF() : WTF::String());
 }
 
 void WebViewHost::onScreenshotComplete(id nsimage, id error)

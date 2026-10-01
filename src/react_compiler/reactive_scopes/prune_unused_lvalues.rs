@@ -29,7 +29,7 @@ use crate::reactive_scopes::visitors::{self, ReactiveFunctionVisitor};
 /// takes immutable references, so we cannot modify lvalues during the visit.
 /// The TS version stores mutable instruction references and modifies them
 /// after the visitor completes.
-pub fn prune_unused_lvalues(func: &mut ReactiveFunction, env: &Environment) {
+pub(crate) fn prune_unused_lvalues(func: &mut ReactiveFunction, env: &Environment) {
     // Phase 1: Use ReactiveFunctionVisitor to identify unused unnamed lvalues.
     // When we see an unnamed lvalue on an instruction, we add its DeclarationId.
     // When we see a place reference (operand), we remove its DeclarationId.

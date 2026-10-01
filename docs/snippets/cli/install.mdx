@@ -51,7 +51,7 @@ bun install <name>@<version>
 </ParamField>
 
 <ParamField path="--exact" type="boolean">
-  Add the exact version instead of the ^range
+  Add the exact version instead of the ^ range
 </ParamField>
 
 ### Lockfile Control
@@ -89,7 +89,8 @@ bun install <name>@<version>
 ### Installation Process Control
 
 <ParamField path="--dry-run" type="boolean">
-  Don't install anything
+  Resolve dependencies but don't install packages, update package.json, or save a lockfile (the project's own lifecycle
+  scripts still run)
 </ParamField>
 
 <ParamField path="--force" type="boolean">
@@ -100,7 +101,7 @@ bun install <name>@<version>
   Install globally
 </ParamField>
 
-<ParamField path="--backend" type="string" default="clonefile">
+<ParamField path="--backend" type="string">
   Platform-specific optimizations: "clonefile", "hardlink", "symlink", "copyfile"
 </ParamField>
 
@@ -109,7 +110,7 @@ bun install <name>@<version>
 </ParamField>
 
 <ParamField path="--analyze" type="boolean">
-  Analyze & install all dependencies of files passed as arguments recursively
+  Recursively analyze & install all dependencies of files passed as arguments
 </ParamField>
 
 ### Caching Options
@@ -152,8 +153,8 @@ bun install <name>@<version>
 
 ### Concurrency & Performance
 
-<ParamField path="--concurrent-scripts" type="number" default="5">
-  Maximum number of concurrent jobs for lifecycle scripts
+<ParamField path="--concurrent-scripts" type="number">
+  Maximum number of concurrent jobs for lifecycle scripts (default: 2x CPU cores)
 </ParamField>
 
 <ParamField path="--network-concurrency" type="number" default="48">
@@ -163,7 +164,7 @@ bun install <name>@<version>
 ### Lifecycle Script Management
 
 <ParamField path="--ignore-scripts" type="boolean">
-  Skip lifecycle scripts in the project's package.json (dependency scripts are never run)
+  Skip lifecycle scripts for all packages, including the project's package.json and trusted dependencies
 </ParamField>
 
 ### Help Information

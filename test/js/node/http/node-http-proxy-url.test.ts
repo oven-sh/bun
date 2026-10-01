@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, nodeExe } from "harness";
+import { bunEnv, bunExe, nodeExe, normalizeBunSnapshot } from "harness";
+import { once } from "node:events";
+import net from "node:net";
 import { join } from "node:path";
 
 describe("HTTP server with proxy-style absolute URLs", () => {
@@ -22,5 +24,99 @@ describe("HTTP server with proxy-style absolute URLs", () => {
       env: bunEnv,
     });
     expect(await process.exited).toBe(0);
+  });
+});
+
+describe("https request through a proxy agent", () => {
+  test("rejects a request host containing CR or LF with ERR_INVALID_CHAR", async () => {
+    const script = `
+      const net = require("node:net");
+      const https = require("node:https");
+      const server = net.createServer(socket => socket.destroy());
+      server.listen(0, "127.0.0.1", () => {
+        const proxyUrl = "http://127.0.0.1:" + server.address().port;
+        const agent = new https.Agent({ proxyEnv: { https_proxy: proxyUrl } });
+        let req;
+        try {
+          req = https.request({
+            host: "127.0.0.1\\r\\nx-extra: 1",
+            port: 443,
+            agent,
+            headers: { host: "127.0.0.1" },
+          });
+          console.log("no-error");
+        } catch (err) {
+          console.log(err.code);
+        }
+        if (req) {
+          req.on("error", () => {});
+          req.destroy();
+        }
+        agent.destroy();
+        server.close();
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: normalizeBunSnapshot(stdout), exitCode }).toEqual({
+      stdout: "ERR_INVALID_CHAR",
+      exitCode: 0,
+    });
+  });
+
+  test("NODE_USE_ENV_PROXY=1: the request reports a tunnel that the proxy ends before the TLS handshake is done", async () => {
+    // end(), not destroy(): a close with unread bytes is a reset, which the client reports on another path.
+    const proxy = net.createServer(socket => {
+      socket.on("error", () => {});
+      socket.once("data", () => {
+        socket.write("HTTP/1.1 200 Connection established\r\n\r\n");
+        socket.once("data", () => socket.end());
+      });
+    });
+    proxy.listen(0, "127.0.0.1");
+    await once(proxy, "listening");
+    try {
+      const script = `
+        const events = [];
+        const req = require("node:https").get("https://example.invalid/");
+        req.on("error", err => events.push({ code: err.code, message: err.message }));
+        req.on("close", () => {
+          events.push("close");
+          console.log(JSON.stringify(events));
+        });
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: {
+          ...bunEnv,
+          NODE_USE_ENV_PROXY: "1",
+          HTTPS_PROXY: `http://127.0.0.1:${(proxy.address() as net.AddressInfo).port}`,
+          https_proxy: undefined,
+          NO_PROXY: undefined,
+          no_proxy: undefined,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: JSON.stringify([
+          {
+            code: "ECONNRESET",
+            message: "Client network socket disconnected before secure TLS connection was established",
+          },
+          "close",
+        ]),
+        stderr: "",
+        exitCode: 0,
+      });
+    } finally {
+      proxy.close();
+    }
   });
 });

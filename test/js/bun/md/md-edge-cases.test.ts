@@ -1,8 +1,27 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { renderToString } from "react-dom/server";
 
 const Markdown = Bun.markdown;
+
+// Runs `script` in a child that is killed after 30s, so a super-linear
+// regression fails fast instead of hanging the test runner.
+async function expectRendersQuickly(script: string) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 30_000,
+    killSignal: "SIGKILL",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toContain("DONE");
+  expect(exitCode).toBe(0);
+}
 
 // ============================================================================
 // Fuzzer-like tests: edge cases, pathological inputs, invariant checks
@@ -566,21 +585,6 @@ code
 // ============================================================================
 
 describe("pathological bracket inputs", () => {
-  async function expectRendersQuickly(script: string) {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-      timeout: 30_000,
-      killSignal: "SIGKILL",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toContain("DONE");
-    expect(exitCode).toBe(0);
-  }
-
   test("bracket floods render in linear time (html)", async () => {
     await expectRendersQuickly(`
         const fill = (n, unit) => Buffer.alloc(n * unit.length, unit).toString();
@@ -651,11 +655,98 @@ describe("pathological bracket inputs", () => {
     const overflowIntoTitle = Markdown.html("[a](" + "(".repeat(33) + "))\n");
     expect(overflowIntoTitle).not.toContain("<a href=");
     expect(overflowIntoTitle).toContain("[a](");
+    // Reference definitions use the same scanner, so the same cap (cmark too).
+    const refNest = (n: number) =>
+      "[a]: " + Buffer.alloc(n, "(").toString() + "b" + Buffer.alloc(n, ")").toString() + "\n\n[a]\n";
+    expect(Markdown.html(refNest(32))).toContain("<a href=");
+    expect(Markdown.html(refNest(33))).not.toContain("<a href=");
   });
 
   test("angle-bracket destination may not contain an unescaped '<'", () => {
     expect(Markdown.html("[a](<b<c>)\n")).not.toContain("<a href=");
     expect(Markdown.html("[a](<b\\<c>)\n")).toContain('<a href="b%3Cc"');
+  });
+
+  // CommonMark §6.3 link destinations. Each table is keyed by its input. The
+  // expected strings are the output of commonmark.js 0.31.2, except in the
+  // control-character test, which says why.
+  const renderAll = (cases: Record<string, string>) =>
+    Object.fromEntries(Object.keys(cases).map(md => [md, Markdown.html(md)]));
+
+  test("a backslash in a link destination escapes ASCII punctuation only", () => {
+    const cases = {
+      // cmark-gfm test/regression.txt, issues #192 and #530: a space, tab or
+      // line ending after a backslash still ends a bare destination.
+      "[a](te\\ st)\n": "<p>[a](te\\ st)</p>\n",
+      "[a](\\ b)\n": "<p>[a](\\ b)</p>\n",
+      "[a](b\\\nc)\n": "<p>[a](b<br />\nc)</p>\n",
+      "![a](te\\ st)\n": "<p>![a](te\\ st)</p>\n",
+      "[a]: te\\ st\n\n[a]\n": "<p>[a]: te\\ st</p>\n<p>[a]</p>\n",
+      // The backslash ends the destination, so the title still parses.
+      '[a](b\\ "t")\n': '<p><a href="b%5C" title="t">a</a></p>\n',
+      // A line ending after a backslash still invalidates a <...> destination.
+      "[a](<te\\\nst>)\n": "<p>[a](&lt;te<br />\nst&gt;)</p>\n",
+      "[a]: <te\\\nst>\n\n[a]\n": "<p>[a]: &lt;te<br />\nst&gt;</p>\n<p>[a]</p>\n",
+      // The emphasis lookahead rejects the same destination as the link parser.
+      "*foo [a](te\\ st*) bar*\n": "<p><em>foo [a](te\\ st</em>) bar*</p>\n",
+      // Controls: punctuation is escaped, other bytes keep a literal backslash.
+      "[a](foo\\)bar)\n": '<p><a href="foo)bar">a</a></p>\n',
+      "[a](foo\\bar)\n": '<p><a href="foo%5Cbar">a</a></p>\n',
+      "[a](<te\\ st>)\n": '<p><a href="te%5C%20st">a</a></p>\n',
+    };
+    expect(renderAll(cases)).toEqual(cases);
+  });
+
+  test("reference definition <...> destination may not contain an unescaped '<'", () => {
+    const cases = {
+      // cmark-gfm test/regression.txt, issue #193.
+      "[a]\n\n[a]: <te<st>\n": "<p>[a]</p>\n<p>[a]: &lt;te<st></p>\n",
+      "[a]: <te\\<st>\n\n[a]\n": '<p><a href="te%3Cst">a</a></p>\n',
+    };
+    expect(renderAll(cases)).toEqual(cases);
+  });
+
+  test("bare link destination needs balanced parentheses", () => {
+    const cases = {
+      "[a](foo(bar )\n": "<p>[a](foo(bar )</p>\n",
+      '[a](foo(bar "t")\n': "<p>[a](foo(bar &quot;t&quot;)</p>\n",
+      "[a]: foo(bar\n\n[a]\n": "<p>[a]: foo(bar</p>\n<p>[a]</p>\n",
+      // Controls: balanced or escaped parentheses.
+      "[a](foo(bar))\n": '<p><a href="foo(bar)">a</a></p>\n',
+      "[a](foo\\(bar )\n": '<p><a href="foo(bar">a</a></p>\n',
+      "[a]: foo(bar)\n\n[a]\n": '<p><a href="foo(bar)">a</a></p>\n',
+    };
+    expect(renderAll(cases)).toEqual(cases);
+  });
+
+  // The spec says a bare destination "does not include ASCII control
+  // characters", and md4c stops at one. cmark, cmark-gfm and commonmark.js do
+  // not check this, so the expected strings here come from the spec text.
+  test("bare link destination may not contain an ASCII control character", () => {
+    const cases = {
+      "[a](b\x01c)\n": "<p>[a](b\x01c)</p>\n",
+      "[a](b\x7fc)\n": "<p>[a](b\x7fc)</p>\n",
+      "[a]: b\x1bc\n\n[a]\n": "<p>[a]: b\x1bc</p>\n<p>[a]</p>\n",
+      "[a]: /url\n\n[a](b\x01c)\n": '<p><a href="/url">a</a>(b\x01c)</p>\n',
+      // Control: the <...> form has no such rule.
+      "[a](<b\x01c>)\n": '<p><a href="b%01c">a</a></p>\n',
+    };
+    expect(renderAll(cases)).toEqual(cases);
+  });
+
+  test("a rejected inline destination falls back to the shortcut reference", () => {
+    const cases = {
+      "[a]: /url\n\n[a](<b<c>)\n": '<p><a href="/url">a</a>(&lt;b<c>)</p>\n',
+      "[a]: /url\n\n[a](te\\ st)\n": '<p><a href="/url">a</a>(te\\ st)</p>\n',
+      // The emphasis lookahead and label_contains_link take the same fallback.
+      "[a]: /url\n\n*[a](<b*<c>)\n": '<p><em><a href="/url">a</a>(&lt;b</em><c>)</p>\n',
+      "[a]: /url\n\n[x [a](<b<c>) y](/u)\n": '<p>[x <a href="/url">a</a>(&lt;b<c>) y](/u)</p>\n',
+      // An unclosed <...> at the end of the text. The lookahead used to give up
+      // where the parser fell back, so the '*' in the label opened an <em>
+      // that nothing closed.
+      "[a*]: /url\n\n*[a*](<b\n": '<p>*<a href="/url">a*</a>(&lt;b</p>\n',
+    };
+    expect(renderAll(cases)).toEqual(cases);
   });
 
   test("()-delimited title may not contain an unescaped '('", () => {
@@ -669,6 +760,26 @@ describe("pathological bracket inputs", () => {
     const label1000 = Buffer.alloc(1000, "y").toString();
     expect(Markdown.html(`[${label999}]: /url\n\n[${label999}]\n`)).toContain('<a href="/url">');
     expect(Markdown.html(`[${label1000}]: /url\n\n[${label1000}]\n`)).not.toContain("<a href=");
+  });
+
+  // Emphasis delimiters inside a wiki link target used to pair with
+  // delimiters outside the construct; the emit walk renders the wiki link as
+  // a unit, so one half of each pair was never emitted, producing unbalanced
+  // HTML (issue #39492). Bracket constructs resolve before emphasis, so the
+  // delimiters stay literal.
+  test("delimiters inside a wiki link target do not pair with delimiters outside", () => {
+    const o = { wikiLinks: true };
+    expect(Markdown.html("*a [[b*|c]] d\n", o)).toBe('<p>*a <x-wikilink data-target="b*">c</x-wikilink> d</p>\n');
+    expect(Markdown.html("[[a *b|c]] d* e\n", o)).toBe('<p><x-wikilink data-target="a *b">c</x-wikilink> d* e</p>\n');
+    expect(Markdown.html("**a [[b**|c]]\n", o)).toBe('<p>**a <x-wikilink data-target="b**">c</x-wikilink></p>\n');
+    expect(Markdown.html("_a [[b_|c]] d\n", o)).toBe('<p>_a <x-wikilink data-target="b_">c</x-wikilink> d</p>\n');
+    expect(Markdown.html("~a [[b~|c]] d\n", { wikiLinks: true, strikethrough: true })).toBe(
+      '<p>~a <x-wikilink data-target="b~">c</x-wikilink> d</p>\n',
+    );
+    // Emphasis fully inside the label, or fully outside the construct,
+    // still resolves.
+    expect(Markdown.html("[[a|*b* c]]\n", o)).toBe('<p><x-wikilink data-target="a"><em>b</em> c</x-wikilink></p>\n');
+    expect(Markdown.html("*x [[a]] y*\n", o)).toBe('<p><em>x <x-wikilink data-target="a">a</x-wikilink> y</em></p>\n');
   });
 
   test("wiki link bracket nesting is capped", () => {
@@ -758,21 +869,6 @@ describe("pathological bracket inputs", () => {
 // ============================================================================
 
 describe("pathological inline HTML inputs", () => {
-  async function expectRendersQuickly(script: string) {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-      timeout: 30_000,
-      killSignal: "SIGKILL",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toContain("DONE");
-    expect(exitCode).toBe(0);
-  }
-
   test("unterminated inline HTML openers render in linear time", async () => {
     await expectRendersQuickly(`
         const fill = (n, unit) => Buffer.alloc(n * unit.length, unit).toString();
@@ -854,6 +950,329 @@ describe("pathological inline HTML inputs", () => {
       '<p>[&lt;!-- [&lt;!-- <a href="u">&lt;!-- x</a>](u)](u)</p>\n',
     );
   });
+});
+
+// ============================================================================
+// Pathological inputs: deep nesting through `Bun.markdown.render()`. Two
+// separate O(depth²) costs, both found by fuzzing, while html() and react()
+// on the same inputs take milliseconds:
+// - The `depth` field of the list / listItem meta was computed by walking the
+//   whole open-block stack on every list and list-item leave (300 KB of `>- `
+//   markers took ~100s). It is now a counter.
+// - Every element collected its children in its own buffer and copied them
+//   into the parent's buffer on leave, even with no callback registered, so
+//   text nested D levels deep was copied D times (1.2 MB of nested `*a … b*`
+//   took 5s with an empty callback set). Elements without a callback now
+//   render straight into the nearest enclosing element that has one.
+// The child process is killed after 30s so a regression fails fast.
+// ============================================================================
+
+describe("pathological nesting through render()", () => {
+  test("deeply nested lists render in linear time with correct depth meta", async () => {
+    await expectRendersQuickly(`
+        const fill = (n, unit) => Buffer.alloc(n * unit.length, unit).toString();
+        {
+          // listItem meta at every one of 100k levels.
+          const depth = 100000;
+          let items = 0, maxDepth = -1, ordered = 0;
+          const out = Bun.markdown.render(fill(depth, "1. ") + "hi", {
+            listItem: (children, meta) => { items++; if (meta.depth > maxDepth) maxDepth = meta.depth; if (meta.ordered) ordered++; return children; },
+          });
+          const got = JSON.stringify({ out, items, maxDepth, ordered });
+          const want = JSON.stringify({ out: "hi", items: depth, maxDepth: depth - 1, ordered: depth });
+          if (got !== want) throw new Error("unexpected listItem result: " + got.slice(0, 300));
+          console.log("OK listItem depth");
+        }
+        // No callbacks registered: every block passes its children through.
+        for (const [unit, depth] of [[">- ", 100000], ["+ ", 50000], ["1) ", 50000]]) {
+          const out = Bun.markdown.render(fill(depth, unit) + "hi", {});
+          if (out !== "hi") throw new Error("unexpected output for " + JSON.stringify(unit) + ": " + JSON.stringify(out.slice(0, 200)));
+          console.log("OK " + JSON.stringify(unit));
+        }
+        // The counter reports the same list / listItem depths the stack walk did.
+        for (const unit of ["1. ", ">- ", "- > "]) {
+          const depth = 4000;
+          let items = 0, lists = 0, maxItemDepth = -1, maxListDepth = -1;
+          const out = Bun.markdown.render(fill(depth, unit) + "hi", {
+            listItem: (children, meta) => { items++; if (meta.depth > maxItemDepth) maxItemDepth = meta.depth; return children; },
+            list: (children, meta) => { lists++; if (meta.depth > maxListDepth) maxListDepth = meta.depth; return children; },
+          });
+          const got = JSON.stringify({ out, items, lists, maxItemDepth, maxListDepth });
+          const want = JSON.stringify({ out: "hi", items: depth, lists: depth, maxItemDepth: depth - 1, maxListDepth: depth - 1 });
+          if (got !== want) throw new Error("unexpected depth meta for " + JSON.stringify(unit) + ": " + got.slice(0, 300));
+          console.log("OK depth meta " + JSON.stringify(unit));
+        }
+        console.log("DONE");
+      `);
+  }, 90_000);
+
+  test("deeply nested inline spans render in linear time", async () => {
+    await expectRendersQuickly(`
+        const fill = (n, unit) => Buffer.alloc(n * unit.length, unit).toString();
+        const n = 600000;
+        const input = fill(n, "*a ") + fill(n, " b*");
+        const text = fill(n, "a ") + fill(n, " b");
+        {
+          const out = Bun.markdown.render(input, {});
+          if (out !== text) throw new Error("unexpected output (no callbacks): " + out.length + " " + JSON.stringify(out.slice(0, 100)));
+          console.log("OK no callbacks");
+        }
+        {
+          // Only the outermost element captures; the nested spans inside it do not.
+          const out = Bun.markdown.render(input, { paragraph: children => "<p>" + children + "</p>\\n" });
+          if (out !== "<p>" + text + "</p>\\n") throw new Error("unexpected output (paragraph callback): " + out.length + " " + JSON.stringify(out.slice(0, 100)));
+          console.log("OK paragraph callback");
+        }
+        console.log("DONE");
+      `);
+  }, 90_000);
+
+  test("capturing and pass-through elements interleave correctly", () => {
+    // An element with a callback collects exactly its own children, whether or
+    // not the elements between it and the text have callbacks of their own.
+    const nested = (n: number) => Buffer.alloc(n * 3, "*a ").toString() + Buffer.alloc(n * 3, " b*").toString() + "\n";
+    const callbacks = {
+      emphasis: (c: string) => "<em>" + c + "</em>",
+      paragraph: (c: string) => "<p>" + c + "</p>\n",
+    };
+    for (const n of [1, 2, 3, 50, 2000]) {
+      expect(Markdown.render(nested(n), callbacks)).toBe(Markdown.html(nested(n)));
+    }
+    const mixed = "**x *y **z *w* z** y* x**\n";
+    expect(Markdown.render(mixed, {})).toBe("x y z w z y x");
+    expect(Markdown.render(mixed, { strong: c => `[${c}]` })).toBe("[x y [z w z] y x]");
+    expect(Markdown.render(mixed, { emphasis: c => `(${c})` })).toBe("x (y z (w) z y) x");
+    expect(Markdown.render(mixed, { strong: c => `[${c}]`, emphasis: c => `(${c})` })).toBe("[x (y [z (w) z] y) x]");
+    // A callback that returns null drops the element together with everything
+    // that rendered into it, including pass-through descendants.
+    expect(Markdown.render(mixed, { emphasis: () => null })).toBe("x  x");
+    expect(Markdown.render(mixed, { strong: c => `[${c}]`, emphasis: () => null })).toBe("[x  x]");
+    expect(
+      Markdown.render("> - one\n>   - two [l](u)\n\npara `code`\n", {
+        blockquote: c => `<bq>${c}</bq>`,
+        link: (c, m) => `<${m.href}|${c}>`,
+        paragraph: c => `<p>${c}</p>`,
+      }),
+    ).toBe("<bq>onetwo <u|l></bq><p>para code</p>");
+    // Text that does not come from a plain text event (entity, soft break, hard
+    // break, NUL) lands in the same place as the text around it.
+    const pieces = "**a *b &amp; c\nd  \ne\0f* g**\n";
+    expect(Markdown.render(pieces, {})).toBe("a b & c\nd\ne\uFFFDf g");
+    expect(Markdown.render(pieces, { strong: c => `[${c}]` })).toBe("[a b & c\nd\ne\uFFFDf g]");
+    expect(Markdown.render(pieces, { emphasis: c => `(${c})` })).toBe("a (b & c\nd\ne\uFFFDf) g");
+    expect(Markdown.render(pieces, { emphasis: c => `(${c})`, text: t => t.toUpperCase() })).toBe(
+      "A (B & C\nD\nE\uFFFDF) G",
+    );
+  });
+
+  test("list and listItem meta do not depend on which of the two has a callback", () => {
+    const input = "3. a\n4. b\n   - [x] c\n   - [ ] d\n\n- e\n- f\n\n> 1) g\n> 2) h\n";
+    const itemMeta = [
+      { children: "a", index: 0, depth: 0, ordered: true, start: 3, checked: undefined },
+      { children: "c", index: 0, depth: 1, ordered: false, start: undefined, checked: true },
+      { children: "d", index: 1, depth: 1, ordered: false, start: undefined, checked: false },
+      { children: "bcd", index: 1, depth: 0, ordered: true, start: 3, checked: undefined },
+      { children: "e", index: 0, depth: 0, ordered: false, start: undefined, checked: undefined },
+      { children: "f", index: 1, depth: 0, ordered: false, start: undefined, checked: undefined },
+      { children: "g", index: 0, depth: 0, ordered: true, start: 1, checked: undefined },
+      { children: "h", index: 1, depth: 0, ordered: true, start: 1, checked: undefined },
+    ];
+    const listMeta = [
+      { children: "cd", ordered: false, start: undefined, depth: 1 },
+      { children: "abcd", ordered: true, start: 3, depth: 0 },
+      { children: "ef", ordered: false, start: undefined, depth: 0 },
+      { children: "gh", ordered: true, start: 1, depth: 0 },
+    ];
+    const record = (log: object[]) => (children: string, meta: object) => (log.push({ children, ...meta }), children);
+
+    // listItem only: every ul/ol passes through, but each li still finds its parent list.
+    let items: object[] = [];
+    expect(Markdown.render(input, { listItem: record(items) })).toBe("abcdefgh");
+    expect(items).toEqual(itemMeta);
+
+    // list only: every li passes through.
+    let lists: object[] = [];
+    expect(Markdown.render(input, { list: record(lists) })).toBe("abcdefgh");
+    expect(lists).toEqual(listMeta);
+
+    // Both.
+    items = [];
+    lists = [];
+    expect(Markdown.render(input, { listItem: record(items), list: record(lists) })).toBe("abcdefgh");
+    expect(items).toEqual(itemMeta);
+    expect(lists).toEqual(listMeta);
+  });
+});
+
+// ============================================================================
+// render() oracle. `Bun.markdown.react()` builds its element tree with a
+// separate renderer, so folding that tree with the same callbacks states
+// independently what render() must return: every callback gets exactly the
+// output of its children, an element without a callback splices its children
+// into the nearest ancestor that has one, and the list / listItem meta
+// (`depth`, `index`, `ordered`, `start`) follows from the tree shape alone.
+// Checked over the spec corpus with every callback, with none, and with two
+// complementary halves, so each element type is seen both collecting its
+// children and passing them through.
+// ============================================================================
+
+describe("render() agrees with a fold over the react() tree", () => {
+  const names = [
+    "heading",
+    "paragraph",
+    "blockquote",
+    "code",
+    "list",
+    "listItem",
+    "hr",
+    "table",
+    "thead",
+    "tbody",
+    "tr",
+    "th",
+    "td",
+    "html",
+    "strong",
+    "emphasis",
+    "link",
+    "image",
+    "codespan",
+    "strikethrough",
+    "text",
+  ];
+  const callbackForTag: Record<string, string> = {
+    p: "paragraph",
+    blockquote: "blockquote",
+    pre: "code",
+    ul: "list",
+    ol: "list",
+    li: "listItem",
+    hr: "hr",
+    table: "table",
+    thead: "thead",
+    tbody: "tbody",
+    tr: "tr",
+    th: "th",
+    td: "td",
+    html: "html",
+    strong: "strong",
+    em: "emphasis",
+    a: "link",
+    img: "image",
+    code: "codespan",
+    del: "strikethrough",
+  };
+  type Callbacks = Record<string, (children: string, meta?: unknown) => string>;
+  type ParentList = { ordered: boolean; start?: number; index: number };
+
+  // Every callback wraps its children in unambiguous markers together with its
+  // meta. `text` must commute with concatenation and keep "\n" (soft and hard
+  // breaks bypass it), which upper-casing does.
+  const callbacks = (subset: string[]): Callbacks =>
+    Object.fromEntries(
+      subset.map(name => [
+        name,
+        name === "text"
+          ? (children: string) => children.toUpperCase()
+          : (children: string, meta?: unknown) =>
+              "\x01" + name + (meta === undefined ? "" : JSON.stringify(meta)) + "\x02" + children + "\x03",
+      ]),
+    );
+
+  function fold(node: any, cbs: Callbacks, enclosingLists: number, parent?: ParentList): string {
+    if (node == null || typeof node === "boolean") return "";
+    if (typeof node === "string") return cbs.text ? cbs.text(node) : node;
+    if (Array.isArray(node)) {
+      let out = "";
+      let items = 0;
+      for (const child of node) {
+        out += fold(child, cbs, enclosingLists, parent && { ...parent, index: child?.type === "li" ? items++ : 0 });
+      }
+      return out;
+    }
+    const tag: string = typeof node.type === "symbol" ? "fragment" : node.type;
+    const props = node.props ?? {};
+    if (tag === "br") return "\n";
+    const isList = tag === "ul" || tag === "ol";
+    const children =
+      tag === "img"
+        ? fold(props.alt, cbs, enclosingLists)
+        : fold(
+            props.children,
+            cbs,
+            enclosingLists + (isList ? 1 : 0),
+            isList ? { ordered: tag === "ol", start: props.start, index: 0 } : undefined,
+          );
+    const level = /^h([1-6])$/.exec(tag);
+    const cb = cbs[level ? "heading" : callbackForTag[tag]];
+    if (!cb) return children;
+    let meta: unknown;
+    if (level) meta = { level: +level[1], id: props.id };
+    else if (isList) meta = { ordered: tag === "ol", start: props.start, depth: enclosingLists };
+    else if (tag === "li")
+      meta = {
+        index: parent?.index ?? 0,
+        depth: Math.max(enclosingLists - 1, 0),
+        ordered: parent?.ordered ?? false,
+        start: parent?.ordered ? parent.start : undefined,
+        checked: props.checked,
+      };
+    else if (tag === "pre") meta = props.language === undefined ? undefined : { language: props.language };
+    else if (tag === "th" || tag === "td") meta = { align: props.align };
+    else if (tag === "a") meta = { href: props.href, title: props.title };
+    else if (tag === "img") meta = { src: props.src, title: props.title };
+    return meta === undefined ? cb(children) : cb(children, meta);
+  }
+
+  function specExamples(file: string): string[] {
+    const content = readFileSync(join(import.meta.dir, file), "utf8").replace(/\r\n?/g, "\n");
+    const examples: string[] = [];
+    for (const match of content.matchAll(/^`{32} example\n([\s\S]*?)^\.$/gm)) {
+      examples.push(match[1].replaceAll("\u2192", "\t") + "\n");
+    }
+    return examples;
+  }
+
+  const callbackSets = [
+    names,
+    [],
+    names.filter((_, i) => i % 2 === 0), // list without listItem, heading, link, text, ...
+    names.filter((_, i) => i % 2 === 1), // listItem without list, paragraph, emphasis, image, ...
+  ].map(callbacks);
+
+  // One test per 100 examples keeps each test near a second on a debug build.
+  const chunkSize = 100;
+  for (const [file, options] of [
+    ["spec.txt", { headings: { ids: true } }],
+    ["spec-gfm.txt", {}],
+    ["spec-tables.txt", {}],
+    ["spec-strikethrough.txt", {}],
+    ["spec-tasklists.txt", {}],
+    ["spec-permissive-autolinks.txt", { autolinks: true }],
+    ["regressions.txt", {}],
+  ] as const) {
+    const examples = specExamples(file);
+    test(`${file} has examples`, () => {
+      expect(examples.length).toBeGreaterThan(0);
+    });
+    for (let start = 0; start < examples.length; start += chunkSize) {
+      const chunk = examples.slice(start, start + chunkSize);
+      test(`${file} examples ${start + 1}-${start + chunk.length}`, () => {
+        const mismatches: unknown[] = [];
+        for (const markdown of chunk) {
+          const tree = Markdown.react(markdown, undefined, { ...options, reactVersion: 18 });
+          for (const cbs of callbackSets) {
+            const rendered = Markdown.render(markdown, cbs, options);
+            const folded = fold(tree, cbs, 0);
+            if (rendered !== folded && mismatches.length < 5) {
+              mismatches.push({ markdown, callbacks: Object.keys(cbs), rendered, folded });
+            }
+          }
+        }
+        expect(mismatches).toEqual([]);
+      });
+    }
+  }
 });
 
 // ============================================================================
@@ -1093,7 +1512,10 @@ describe("pathological reference definition inputs", () => {
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
-      timeout: 30_000,
+      // 220k lines through a debug+ASAN child run close to 30s on a loaded
+      // runner, which made this the flakiest test in the file; the hard stop
+      // only has to stay under the test's own 90s timeout.
+      timeout: 75_000,
       killSignal: "SIGKILL",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -1107,6 +1529,32 @@ describe("pathological reference definition inputs", () => {
     expect(resolved).toContain('<a href="/url">text</a>');
     expect(resolved).toContain("[missing]");
   }, 90_000);
+
+  test("caps the total destination and title bytes emitted by expanding reference links", () => {
+    const dest = "/" + Buffer.alloc(2000, "x").toString();
+    const title = Buffer.alloc(500, "t").toString();
+    const lines = [`[a]: ${dest} "${title}"`, ""];
+    for (let i = 0; i < 1000; i++) {
+      lines.push("[a]", "", "[a][]", "", "[text][a]", "");
+    }
+    // The budget is md4c's: min(16 * input size, 1 MiB). On exhaustion the parse
+    // still succeeds; remaining references degrade to literal bracket text.
+    const html = Markdown.html(lines.join("\n"));
+    const resolved = html.match(/<a href=/g)!.length;
+    expect(resolved).toBeGreaterThan(0);
+    expect(resolved).toBeLessThan(3000);
+    expect(html).toStartWith(`<p><a href="${dest}" title="${title}">a</a></p>`);
+    expect(html).toContain("<p>[a]</p>");
+    expect(html).toContain("<p>[a][]</p>");
+    expect(html).toContain("<p>[text][a]</p>");
+
+    const small = Markdown.html('[a]: /url "title"\n\n[a]\n\n[a][]\n\n[text][a]\n');
+    expect(small).toBe(
+      '<p><a href="/url" title="title">a</a></p>\n' +
+        '<p><a href="/url" title="title">a</a></p>\n' +
+        '<p><a href="/url" title="title">text</a></p>\n',
+    );
+  });
 });
 
 // ============================================================================
@@ -1190,21 +1638,24 @@ describe("pathological autolink opener inputs", () => {
   }, 90_000);
 });
 
-describe("inputs of 2^32 bytes or more", () => {
-  // The parser addresses its input with u32 offsets, so a 2^32-byte input
-  // cannot be represented and must be rejected with a catchable RangeError by
-  // every entry point. One subprocess covers all four: a crash must not take
-  // down the test runner, and one 4 GiB reservation (virtual only, never
-  // written) keeps this cheap. The SKIP branch covers runners that cannot
-  // reserve 4 GiB; under ASAN the allocator must be allowed to return null
-  // for that to surface as a catchable error rather than an abort. The
-  // explicit timeout is for the debug+ASAN lanes, where a spawned child is
-  // slow under load (same as the linear-time test above).
-  test("html, ansi, render and react reject a 2^32-byte input", async () => {
+describe("inputs the parser cannot address", () => {
+  // The parser addresses its input with u32 offsets and probes up to 9 bytes
+  // past an offset (the `<![CDATA[` check), so everything longer than
+  // 4294967286 bytes (u32::MAX - 9) must be rejected with a catchable
+  // RangeError by every entry point: at u32::MAX exactly, the probe's
+  // `off + 9` would wrap. One subprocess covers the four entry points at
+  // 2^32 bytes and the first rejected length; both buffers are virtual only
+  // (never written), so this is cheap. The SKIP branch covers runners that
+  // cannot reserve the address space; under ASAN the allocator must be
+  // allowed to return null for that to surface as a catchable error rather
+  // than an abort. The explicit timeout is for the debug+ASAN lanes, where a
+  // spawned child is slow under load (same as the linear-time test above).
+  test("html, ansi, render and react reject inputs past the addressable limit", async () => {
     const script = `
-      let big;
+      let big, boundary;
       try {
         big = new Uint8Array(2 ** 32);
+        boundary = new Uint8Array(2 ** 32 - 1);
       } catch {
         console.log(JSON.stringify("SKIP"));
         process.exit(0);
@@ -1214,6 +1665,9 @@ describe("inputs of 2^32 bytes or more", () => {
         () => Bun.markdown.ansi(big),
         () => Bun.markdown.render(big, {}),
         () => Bun.markdown.react(big, undefined, { reactVersion: 18 }),
+        // One past the accepted maximum of 4294967286 from the other side:
+        // the largest allocatable length that must still be rejected.
+        () => Bun.markdown.html(boundary),
       ];
       const results = [];
       for (const run of runs) {
@@ -1236,11 +1690,114 @@ describe("inputs of 2^32 bytes or more", () => {
       stderr: "inherit",
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    const rangeError =
-      'RangeError | ERR_OUT_OF_RANGE | The value of "input.byteLength" is out of range. It must be <= 4294967295. Received 4294967296';
-    expect(["SKIP", [rangeError, rangeError, rangeError, rangeError]]).toContainEqual(
-      JSON.parse(stdout.trim() || '"NO_OUTPUT"'),
-    );
+    const message = (received: number) =>
+      `RangeError | ERR_OUT_OF_RANGE | The value of "input.byteLength" is out of range. It must be <= 4294967286. Received ${received}`;
+    expect([
+      "SKIP",
+      [message(2 ** 32), message(2 ** 32), message(2 ** 32), message(2 ** 32), message(2 ** 32 - 1)],
+    ]).toContainEqual(JSON.parse(stdout.trim() || '"NO_OUTPUT"'));
     expect(exitCode).toBe(0);
   }, 30_000);
+});
+
+describe("documents whose block metadata the parser cannot address", () => {
+  // Block offsets are u32s too, so `block_bytes` (the flat buffer of block
+  // headers and verbatim-line records) is capped independently of the input
+  // length. Filling the real ~4 GiB cap needs ~256M blocks, so the child
+  // shrinks it through `setMaxMarkdownBlockBytesForTesting`
+  // (bun:internal-for-testing) and proves the exact boundary: a document
+  // whose metadata lands exactly on the cap renders, and one more block (or
+  // the container openers of a nested blockquote) raises the catchable
+  // RangeError that replaced the release-build integer-cast panic.
+  test("a document needing more block metadata than the cap throws a RangeError", async () => {
+    const script = `
+      import { setMaxMarkdownBlockBytesForTesting } from "bun:internal-for-testing";
+      // One single-line paragraph costs exactly one 16-byte BlockHeader plus
+      // one 12-byte VerbatimLine in block_bytes, with no alignment padding.
+      const PARAGRAPH_BYTES = 16 + 12;
+      const AT_LIMIT = 40;
+      const paragraphs = n => Array.from({ length: n }, (_, i) => "p" + i).join("\\n\\n");
+      const nestedQuotes = Buffer.alloc(128, "> ").toString() + "deep";
+      const render = input => {
+        try {
+          return typeof Bun.markdown.html(input);
+        } catch (e) {
+          return [e.constructor.name, e.code, e.message].join(" | ");
+        }
+      };
+      const results = [];
+      const previous = setMaxMarkdownBlockBytesForTesting(AT_LIMIT * PARAGRAPH_BYTES);
+      try {
+        results.push(render(paragraphs(AT_LIMIT)));
+        results.push(render(paragraphs(AT_LIMIT + 1)));
+        results.push(render(nestedQuotes));
+      } finally {
+        setMaxMarkdownBlockBytesForTesting(previous);
+      }
+      // The restore took: the same over-limit documents render again.
+      results.push(render(paragraphs(AT_LIMIT + 1)), render(nestedQuotes));
+      console.log(JSON.stringify(results));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const tooManyBlocks =
+      "RangeError | ERR_OUT_OF_RANGE | markdown input requires more block metadata than the parser can address (4 GiB)";
+    expect(JSON.parse(stdout.trim() || '"NO_OUTPUT"')).toEqual([
+      "string",
+      tooManyBlocks,
+      tooManyBlocks,
+      "string",
+      "string",
+    ]);
+    expect(exitCode).toBe(0);
+  }, 30_000);
+});
+
+// The runtime module loader for .md files (imports, not the Bun.markdown API).
+describe.concurrent("importing .md modules", () => {
+  test("default export is the rendered HTML", async () => {
+    using dir = tempDir("md-import", {
+      "doc.md": "# Hello\n\nSome *text*.\n",
+      "entry.ts": `
+        import html from "./doc.md";
+        const required = require("./doc.md");
+        console.log(JSON.stringify([html, required.default]));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const rendered = "<h1>Hello</h1>\n<p>Some <em>text</em>.</p>\n";
+    expect(JSON.parse(stdout)).toEqual([rendered, rendered]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("empty .md file produces a module with no default export", async () => {
+    using dir = tempDir("md-import-empty", {
+      "empty.md": "",
+      "entry.ts": `
+        import html from "./empty.md";
+        console.log(html);
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("Missing 'default' export");
+    expect(exitCode).not.toBe(0);
+  });
 });

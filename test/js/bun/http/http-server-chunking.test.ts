@@ -229,6 +229,97 @@ describe.if(isPosix)("HTTP server handles split chunk-size CRLF", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.concurrentIf(!isASAN)("rejects chunk extensions that exceed the 16 KiB per-chunk cap", async () => {
+    // A hostile client can hold a connection and unmetered inbound bandwidth by
+    // streaming arbitrarily large chunk-extension bytes, which maxRequestBodySize
+    // never sees. llhttp (Node) caps this at 16 KiB per chunk; Bun.serve must too.
+    const script = `
+      const server = Bun.serve({
+        port: 0,
+        maxRequestBodySize: 1024 * 1024,
+        async fetch(req) {
+          const n = (await req.arrayBuffer()).byteLength;
+          return new Response("n=" + n);
+        },
+      });
+      const { promise, resolve } = Promise.withResolvers();
+      let received = "";
+      const socket = await Bun.connect({
+        hostname: "localhost",
+        port: server.port,
+        socket: {
+          data(s, d) { received += d.toString(); },
+          open(s) {
+            // 20 KiB of extension bytes on one chunk-size line (cap is 16 KiB).
+            // Body is 2 bytes, well under maxRequestBodySize.
+            const ext = Buffer.alloc(20 * 1024, "e").toString();
+            s.write("POST / HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n2;" + ext + "\\r\\nhi\\r\\n0\\r\\n\\r\\n");
+            s.flush();
+          },
+          error() {},
+          close() { console.log(JSON.stringify({ received })); resolve(); },
+        },
+      });
+      await promise;
+      server.stop();
+    `;
+
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    const { received } = JSON.parse(stdout);
+    // Server must reject (413) and close the connection; it must not hand the
+    // request to fetch() (which would answer 200 "n=2").
+    expect(received).not.toContain("200");
+    expect(received).not.toContain("n=2");
+    expect(received).toContain("413");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrentIf(!isASAN)(
+    "accepts small chunk extensions on every chunk (cap is per chunk, not per message)",
+    async () => {
+      // 10 chunks x 8 KiB extension each = 80 KiB total extension bytes, but each
+      // chunk-size line is under the 16 KiB cap so the request must succeed.
+      const script = `
+      const server = Bun.serve({
+        port: 0,
+        async fetch(req) { return new Response("Got: " + (await req.text())); },
+      });
+      const { promise, resolve } = Promise.withResolvers();
+      let received = "";
+      const socket = await Bun.connect({
+        hostname: "localhost",
+        port: server.port,
+        socket: {
+          data(s, d) { received += d.toString(); },
+          open(s) {
+            const ext = Buffer.alloc(8 * 1024, "e").toString();
+            let wire = "POST / HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n";
+            for (let i = 0; i < 10; i++) wire += "1;" + ext + "\\r\\nA\\r\\n";
+            wire += "0\\r\\n\\r\\n";
+            s.write(wire);
+            s.flush();
+          },
+          error() {},
+          close() { console.log(received); resolve(); },
+        },
+      });
+      await promise;
+      server.stop();
+    `;
+
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(stdout).toContain("200 OK");
+      expect(stdout).toContain("Got: AAAAAAAAAA");
+      expect(exitCode).toBe(0);
+    },
+  );
+
   test.concurrentIf(!isASAN)("rejects bare LF in chunk-size position (invalid byte not stranded)", async () => {
     // A byte <=32 that isn't \r in chunk-size position must error immediately.
     // Previously this could strand the byte in HttpParser's fallback buffer,
@@ -442,7 +533,7 @@ describe.if(isPosix)("HTTP server handles split chunk-size CRLF", () => {
 describe.if(isPosix)("HTTP server handles fragmented requests", () => {
   test.concurrentIf(!isASAN)("handles requests with tiny send buffer (regression test)", async () => {
     using server = Bun.serve({
-      hostname: "localhost",
+      hostname: "127.0.0.1",
 
       port: 0,
       async fetch(req) {
@@ -466,7 +557,9 @@ describe.if(isPosix)("HTTP server handles fragmented requests", () => {
     });
 
     const { port } = server;
-    let remaining = 100;
+    // 10 == batchSize is deliberate: one full-width batch preserves the concurrent-accept
+    // pressure. The old value of 100 repeated the same per-connection path 10x over.
+    let remaining = 10;
     const batchSize = 10;
 
     for (let i = 0; i < remaining; i += batchSize) {
@@ -477,10 +570,11 @@ describe.if(isPosix)("HTTP server handles fragmented requests", () => {
             const { resolve: resolveClose, reject: rejectClose, promise: closePromise } = Promise.withResolvers();
 
             let buffer: Buffer;
+            let offset = 0;
 
             function actuallyWrite(socket) {
-              while (buffer.length > 0) {
-                const written = socket.write(buffer.slice(0, 1));
+              while (offset < buffer.length) {
+                const written = socket.write(buffer, offset, 1);
 
                 if (written == 0) break;
 
@@ -488,7 +582,7 @@ describe.if(isPosix)("HTTP server handles fragmented requests", () => {
                   throw new Error(`Written ${written} bytes, expected 1`);
                 }
                 socket.flush();
-                buffer = buffer.slice(written);
+                offset += written;
               }
             }
 

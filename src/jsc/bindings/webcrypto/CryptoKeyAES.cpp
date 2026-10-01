@@ -43,13 +43,6 @@ static inline bool lengthIsValid(size_t length)
     return (length == CryptoKeyAES::s_length128) || (length == CryptoKeyAES::s_length192) || (length == CryptoKeyAES::s_length256);
 }
 
-CryptoKeyAES::CryptoKeyAES(CryptoAlgorithmIdentifier algorithm, const Vector<uint8_t>& key, bool extractable, CryptoKeyUsageBitmap usage)
-    : CryptoKey(algorithm, CryptoKeyType::Secret, extractable, usage)
-    , m_key(key)
-{
-    ASSERT(isValidAESAlgorithm(algorithm));
-}
-
 CryptoKeyAES::CryptoKeyAES(CryptoAlgorithmIdentifier algorithm, Vector<uint8_t>&& key, bool extractable, CryptoKeyUsageBitmap usage)
     : CryptoKey(algorithm, CryptoKeyType::Secret, extractable, usage)
     , m_key(WTF::move(key))
@@ -113,7 +106,7 @@ JsonWebKey CryptoKeyAES::exportJwk() const
     return result;
 }
 
-ExceptionOr<size_t> CryptoKeyAES::getKeyLength(const CryptoAlgorithmParameters& parameters)
+ExceptionOr<std::optional<size_t>> CryptoKeyAES::getKeyLength(const CryptoAlgorithmParameters& parameters)
 {
     auto& aesParameters = downcast<CryptoAlgorithmAesKeyParams>(parameters);
     if (!lengthIsValid(aesParameters.length))

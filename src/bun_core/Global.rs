@@ -787,14 +787,9 @@ pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
     }
 }
 
-/// Die from `sig` with its default action. Every place that re-raises a signal
-/// at bun itself ends here, signal handlers included: only async-signal-safe
-/// calls (sigaction, pthread_sigmask, raise, _exit), nothing flushed or freed.
-///
-/// `raise()` returns only for the init of a pid namespace (bun as a container's
-/// PID 1): the kernel discards a default-action signal aimed at init. Then exit
-/// 128 + signo, the status a shell reports for a child killed by `sig`, and
-/// like a signal death run no exit handlers.
+/// Die from `sig` with its default action. Async-signal-safe. `raise()` returns
+/// only as PID 1 of a pid namespace (the kernel discards the signal); then exit
+/// 128 + signo, the status a shell reports for that death.
 #[cfg(not(windows))]
 pub fn raise_default_action(sig: c_int) -> ! {
     // SAFETY: zeroed sigset + SIG_DFL handler is a valid Sigaction.

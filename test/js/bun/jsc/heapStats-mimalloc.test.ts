@@ -336,17 +336,24 @@ describe.skipIf(!isLinux || isASAN || isDebug)("under an address-space limit (ul
   }
 
   test("without a limit the JIT is available", async () => {
-    const { stdout, exitCode, signalCode } = await run(undefined, jitScript);
-    expect({ stdout, exitCode, signalCode }).toEqual({ stdout: `{"jit":true}`, exitCode: 0, signalCode: null });
+    expect(await run(undefined, jitScript)).toEqual({
+      stdout: `{"jit":true}`,
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
   });
 
   test.concurrent.each([768, 1024, 1200, 1536, 2048, 2250])(
     "ulimit -v %dM: bun starts and keeps the JIT",
     async limitMB => {
-      const { stdout, stderr, exitCode, signalCode } = await run(limitMB, jitScript);
-      // stderr first: on failure it carries the crash banner or the allocation error.
-      expect({ stderr, stdout }).toEqual({ stderr: expect.any(String), stdout: `{"jit":true}` });
-      expect({ exitCode, signalCode }).toEqual({ exitCode: 0, signalCode: null });
+      // One object: a failure shows the crash banner or the allocation error on stderr beside the exit code.
+      expect(await run(limitMB, jitScript)).toEqual({
+        stdout: `{"jit":true}`,
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
     },
   );
 
@@ -362,8 +369,11 @@ describe.skipIf(!isLinux || isASAN || isDebug)("under an address-space limit (ul
   });
 
   test.concurrent("ulimit -v 512M: the structure heap still holds 200k shapes", async () => {
-    const { stdout, stderr, exitCode, signalCode } = await run(512, structureScript);
-    expect({ stderr, stdout }).toEqual({ stderr: expect.any(String), stdout: `{"structures":200000}` });
-    expect({ exitCode, signalCode }).toEqual({ exitCode: 0, signalCode: null });
+    expect(await run(512, structureScript)).toEqual({
+      stdout: `{"structures":200000}`,
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
   });
 });

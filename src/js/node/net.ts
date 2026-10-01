@@ -497,15 +497,13 @@ function onClientHandshake(self, socket, success, verifyError) {
     self.secureConnecting = false;
     return;
   }
-  // The second argument says whether the handshake completed. node:tls
-  // decides what to do with verification results in JS via the
-  // rejectUnauthorized / checkServerIdentity handling below, so a
-  // verification-class result (an X509 code such as
-  // UNABLE_TO_VERIFY_LEAF_SIGNATURE) still
-  // means the TLS session itself was established. Only a fatal TLS protocol
-  // failure tears the socket down here: those arrive as EPROTO carrying the
-  // OpenSSL "error:...:SSL routines:..." reason (or an already decomposed
-  // ERR_SSL_* / ERR_OSSL_* code).
+  // `success` says whether the handshake completed. node:tls applies the
+  // chain's X509 verdict and the name check in JS (the rejectUnauthorized /
+  // checkServerIdentity handling below), so a pair with an X509 code goes on
+  // to that handling whether or not the handshake completed. Only a failure
+  // with a TLS reason tears the socket down here: EPROTO carrying the OpenSSL
+  // "error:...:SSL routines:..." reason (or an already decomposed ERR_SSL_* /
+  // ERR_OSSL_* code). The engine over a Duplex reports no such reason (#32929).
   const isProtocolFailure =
     !success &&
     verifyError?.code != null &&

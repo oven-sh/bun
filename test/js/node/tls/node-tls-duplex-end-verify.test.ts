@@ -317,12 +317,59 @@ for (const maxVersion of ["TLSv1.2", "TLSv1.3"]) {
   }
 }
 
+// The same shape on a net.Socket that is already connected: tls.connect({ socket }) starts the handshake on it, and
+// the client calls end() in the same turn. TLS 1.3 needs no proxy here: the server's one flight completes the
+// handshake after the client's FIN. Returns the ordered events of the client.
+async function endMidHandshakeOnConnectedSocket(
+  rejectUnauthorized,
+  { trusted = false, servername = "agent1", checkServerIdentity } = {},
+) {
+  const events = [];
+  const { promise, resolve } = Promise.withResolvers();
+  const server = tls.createServer({ key, cert, minVersion: "TLSv1.3" }, socket => {
+    socket.on("error", () => {});
+    socket.write("secret-banner");
+  });
+  server.on("tlsClientError", () => {});
+  await new Promise(listening => server.listen(0, "127.0.0.1", listening));
+  const raw = net.connect(server.address().port, "127.0.0.1");
+  raw.on("error", () => {});
+  await new Promise(connected => raw.once("connect", connected));
+  const client = tls.connect({
+    socket: raw,
+    servername,
+    rejectUnauthorized,
+    ...(trusted && { ca: serverCA }),
+    ...(checkServerIdentity && { checkServerIdentity }),
+  });
+  client.on("secureConnect", () => {
+    events.push(`secureConnect authorized=${client.authorized} authError=${client.authorizationError}`);
+    setImmediate(() => client.destroy());
+  });
+  client.on("data", data => {
+    events.push(`data ${data}`);
+    // Data with no report of the handshake: this client must not keep the test waiting either.
+    if (!events.some(event => event.startsWith("secureConnect"))) client.destroy();
+  });
+  client.on("error", err => events.push(`error ${err.code}`));
+  client.on("close", () => {
+    events.push("close");
+    resolve();
+  });
+  client.end();
+  await promise;
+  raw.destroy();
+  server.close();
+  return events;
+}
+
 // The server's chain is trusted, but its certificate is for "agent1" and the client asked for another name. The name
 // check is the client's own, in JS. It also runs for a handshake that completes after end().
 for (const [transport, endWithWrongName] of [
   ["over a Duplex", options => endMidHandshake(options.rejectUnauthorized, options)],
   ["TLSv1.2 on a TCP socket", options => endMidHandshakeOverTcp("TLSv1.2", options.rejectUnauthorized, options)],
   ["TLSv1.3 on a TCP socket", options => endMidHandshakeOverTcp("TLSv1.3", options.rejectUnauthorized, options)],
+  ["on a connected socket", options => endMidHandshakeOnConnectedSocket(options.rejectUnauthorized, options)],
 ]) {
   const wrongName = { trusted: true, servername: "another.name" };
 

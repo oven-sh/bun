@@ -1628,9 +1628,7 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     it(
       "writes every byte once to Bun.stdout after process.stdout was used",
       async () => {
-        expect(await run("stdout")).toEqual(
-          printed({ stderr: "pending, under way\n", write: "exact", exitCode: 0 }),
-        );
+        expect(await run("stdout")).toEqual(printed({ stderr: "pending, under way\n", write: "exact", exitCode: 0 }));
       },
       timeout,
     );

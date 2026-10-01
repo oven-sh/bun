@@ -1,0 +1,32 @@
+per ONE pass                                              bun-types typescript-lib         src-js            tsx     js-control
+accessor_decl                                                     2             65            527              0              0
+class.member.parsed                                              98              2           2343              7              0
+cond.true_is_paren                                                0              0             16              0            488
+ctor_decl                                                        35              2            142              1              0
+declare.stmt.ClassDeclaration                                     3              3              5              0              0
+declare.stmt.EnumDeclaration                                      0              0              0              1              0
+declare.stmt.FirstStatement                                      98           1201             27              0              0
+declare.stmt.FunctionDeclaration                                 18             84            260              0              0
+declare.stmt.InterfaceDeclaration                                 0              0             10              0              0
+declare.stmt.ModuleDeclaration                                   38             18             13              0              0
+declare.stmt.TypeAliasDeclaration                                 0              6              1              0              0
+export_type_alias(no precheck)                                   90              0              4              0              0
+fn_stmt.no_body                                                 221            186            288              0              0
+mapped_type                                                      34             11              5              1              0
+method.class                                                    492              1           1083              7              0
+method.object_literal                                             0              0            477              0              4
+parse_fn.param.identifier.ts                                   1405            301           6322             14              0
+precheck.lookahead.interface                                    386           2708            202              3              0
+precheck.lookahead.module                                        32              0              6              0              0
+precheck.lookahead.namespace                                     39             18             11              0              0
+precheck.lookahead.type                                         212            660            139              6              0
+stmt.const                                                      124              8           7155             13              0
+stmt.expression                                                   0              0          15235              6           4124
+stmt.global                                                       2              1              1              0              0
+stmt.let                                                          0              0           1403              0              1
+stmt.var                                                         98           1235            385              0           3800
+tuple.element.lookahead                                         193            136            144              0              0
+tuple.element.no_lookahead                                       84             22              9              0              0
+type.member.optional                                            797           2168            580             10              0
+type.member.readonly                                            230           6306             37              1              0
+type_literal.first_member_triggers_mapped_scan                   26             15              5              1              0

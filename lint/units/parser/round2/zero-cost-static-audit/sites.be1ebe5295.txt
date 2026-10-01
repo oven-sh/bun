@@ -1,0 +1,98 @@
+parse_prefix.rs:50         pfx_t_open_paren                                 if !SCAN_ONLY && p.is_lint_parse() {
+parse_prefix.rs:97    COLD pfx_t_open_paren_for_lint                        if let Some(starts) = &mut p.starts_for_parse_only {
+parse_prefix.rs:115   COLD pfx_t_open_paren_for_lint                        && let Some(starts) = &mut p.starts_for_parse_only
+parse_prefix.rs:626        pfx_t_class                                      if p.starts_for_parse_only.is_some() {
+parse_prefix.rs:694        pfx_t_at                                         if p.starts_for_parse_only.is_some() {
+parse_prefix.rs:756        pfx_t_new                                        if p.starts_for_parse_only.is_some() {
+parse_prefix.rs:997        pfx_t_less_than                                  if p.starts_for_parse_only.is_some() {
+parse_prefix.rs:1010       pfx_t_less_than                                  if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+parse_prefix.rs:1031       pfx_t_less_than                                  if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+parse_prefix.rs:1137  COLD pfx_t_less_than_for_lint                         if let Some(starts) = &mut p.starts_for_parse_only {
+parse_prefix.rs:1159  COLD pfx_t_less_than_for_lint                         if let Some(starts) = &mut p.starts_for_parse_only {
+parse_suffix.rs:29         sfx_handle_typescript_as                         if p.starts_for_parse_only.is_some() {
+parse_suffix.rs:74    COLD sfx_typescript_as_for_lint                       if let Some(starts) = &mut p.starts_for_parse_only {
+parse_suffix.rs:214        sfx_t_question_dot                               if p.starts_for_parse_only.is_some() {
+parse_suffix.rs:526        sfx_t_exclamation                                if let Some(starts) = &mut p.starts_for_parse_only {
+parse_suffix.rs:903        sfx_type_arguments                               if p.starts_for_parse_only.is_some() {
+mod.rs:179        parse_class                                      && p.starts_for_parse_only.is_some()
+mod.rs:200        parse_class                                      if p.starts_for_parse_only.is_some() {
+mod.rs:270        parse_class                                      if let Some(starts) = &mut p.starts_for_parse_only {
+mod.rs:310        parse_class                                      if let Some(starts) = &mut p.starts_for_parse_only {
+mod.rs:343        parse_class                                      && p.starts_for_parse_only.is_none()
+mod.rs:1163  COLD lint_arrow_return_type                           if let Some(starts) = &mut self.starts_for_parse_only {
+mod.rs:1178       lint_try_arrow_return_type                       .starts_for_parse_only
+mod.rs:1189       lint_try_arrow_return_type                       if let (Some(starts), Some(mark)) = (&mut self.starts_for_parse_only, recorded) {
+mod.rs:1318       parse_class_stmt                                 } else if Self::IS_TYPESCRIPT_ENABLED && p.starts_for_parse_only.is_some() {
+mod.rs:1330       parse_class_stmt                                 if p.starts_for_parse_only.is_some() {
+mod.rs:1361       parse_class_stmt                                 if let Some(starts) = &mut p.starts_for_parse_only {
+mod.rs:1945       parse_and_declare_decls                          if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+mod.rs:1993       parse_path                                       && (p.is_lint_parse() || p.next_token_matches(|p| p.lexer.token == T::TOpenBrace));
+mod.rs:2136       parse_stmts_up_to                                if let Some(starts) = &mut p.starts_for_parse_only {
+mod.rs:2245       parse_async_prefix_expr                          if let Some(starts) = &mut p.starts_for_parse_only {
+mod.rs:2347       parse_async_prefix_expr                          && p.starts_for_parse_only.is_some()
+mod.rs:2361       parse_async_prefix_expr                          let skipped = if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+mod.rs:2380       parse_async_prefix_expr                          if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+parse_stmt.rs:435        t_try                                            if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+parse_stmt.rs:901        t_export                                         .starts_for_parse_only
+parse_stmt.rs:908        t_export                                         && let Some(starts) = &mut p.starts_for_parse_only
+parse_stmt.rs:964        t_export                                         .starts_for_parse_only
+parse_stmt.rs:969        t_export                                         && let Some(starts) = &mut p.starts_for_parse_only
+parse_stmt.rs:1038       t_export                                         if let Some(starts) = &mut p.starts_for_parse_only {
+parse_stmt.rs:1099       t_export                                         if let Some(starts) = &mut p.starts_for_parse_only {
+parse_stmt.rs:1179       t_export                                         if let Some(starts) = &mut p.starts_for_parse_only {
+parse_stmt.rs:1342       t_export                                         if let Some(starts) = &mut p.starts_for_parse_only {
+parse_stmt.rs:1412       t_export                                         if let Some(starts) = &mut p.starts_for_parse_only {
+parse_stmt.rs:1533       t_import                                         if let Some(starts) = &mut p.starts_for_parse_only {
+parse_stmt.rs:1655       t_import                                         if let Some(starts) = &mut p.starts_for_parse_only {
+parse_stmt.rs:1666       t_import                                         if let Some(starts) = &mut p.starts_for_parse_only {
+parse_stmt.rs:1689       t_import                                         .starts_for_parse_only
+parse_stmt.rs:1697       t_import                                         && let Some(starts) = &mut p.starts_for_parse_only
+parse_stmt.rs:1718       t_import                                         if let Some(starts) = &mut p.starts_for_parse_only {
+parse_stmt.rs:1747       t_import                                         && p.starts_for_parse_only.is_some() =>
+parse_stmt.rs:1951  COLD parse_stmt_named_like_cast                       if !p.is_lint_parse()
+parse_stmt.rs:2137  COLD parse_stmt_fallthrough_ts_keyword                .starts_for_parse_only
+parse_stmt.rs:2142  COLD parse_stmt_fallthrough_ts_keyword                && let Some(starts) = &mut p.starts_for_parse_only
+parse_stmt.rs:2180  COLD parse_stmt_fallthrough_ts_keyword                .starts_for_parse_only
+parse_stmt.rs:2185  COLD parse_stmt_fallthrough_ts_keyword                && let Some(starts) = &mut p.starts_for_parse_only
+parse_stmt.rs:2224  COLD parse_stmt_fallthrough_ts_keyword                if let Some(starts) = &mut p.starts_for_parse_only {
+parse_stmt.rs:2259  COLD parse_stmt_fallthrough_ts_keyword                if let Some(starts) = &mut p.starts_for_parse_only {
+parse_stmt.rs:2303  COLD parse_stmt_fallthrough_ts_keyword                .starts_for_parse_only
+parse_stmt.rs:2315  COLD parse_stmt_fallthrough_ts_keyword                && let Some(starts) = &mut p.starts_for_parse_only
+parse_stmt.rs:2367  COLD parse_stmt_fallthrough_ts_keyword                if let Some(starts) = &mut p.starts_for_parse_only {
+parse_stmt.rs:2417  COLD parse_stmt_fallthrough_ts_keyword                if let Some(starts) = &mut p.starts_for_parse_only {
+parse_fn.rs:71         parse_fn_stmt                                    if p.starts_for_parse_only.is_some() {
+parse_fn.rs:132        parse_fn_stmt                                    if let Some(starts) = &mut p.starts_for_parse_only {
+parse_fn.rs:245        parse_fn                                         if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+parse_fn.rs:336        parse_fn                                         if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+parse_fn.rs:343        parse_fn                                         } else if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+parse_fn.rs:348        parse_fn                                         } else if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+parse_fn.rs:434        parse_fn                                         if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+parse_fn.rs:440        parse_fn                                         } else if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+parse_fn.rs:570        parse_fn_expr                                    if p.starts_for_parse_only.is_some() {
+parse_fn.rs:696        parse_arrow_body_with_flags                      if let Some(starts) = &mut p.starts_for_parse_only {
+parse_property.rs:128        parse_method_expression                          if let Some(starts) = &mut p.starts_for_parse_only {
+parse_property.rs:567        parse_property                                   if let Some(starts) = &mut p.starts_for_parse_only {
+parse_property.rs:576        parse_property                                   if let Some(starts) = &mut p.starts_for_parse_only {
+parse_property.rs:605        parse_property                                   if let Some(starts) = &mut p.starts_for_parse_only {
+parse_property.rs:613        parse_property                                   if let Some(starts) = &mut p.starts_for_parse_only {
+parse_property.rs:783        parse_property                                   has_type_parameters = if p.starts_for_parse_only.is_some() {
+parse_property.rs:831        parse_property                                   if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+parse_property.rs:838        parse_property                                   } else if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+parse_typescript.rs:86         parse_standard_decorator                         if let Some(starts) = &mut p.starts_for_parse_only
+parse_typescript.rs:124        parse_standard_decorator                         if let Some(starts) = &mut p.starts_for_parse_only {
+parse_typescript.rs:205        parse_standard_decorator                         let has_type_arguments = if p.starts_for_parse_only.is_some() {
+parse_typescript.rs:232        parse_type_script_namespace_stmt                 let erased_name = if Self::IS_TYPESCRIPT_ENABLED && p.starts_for_parse_only.is_some() {
+parse_typescript.rs:434        parse_type_script_namespace_stmt                 && let Some(starts) = &mut p.starts_for_parse_only
+parse_typescript.rs:567        parse_type_script_import_equals_stmt             } else if p.starts_for_parse_only.is_some() {
+parse_typescript.rs:598        parse_type_script_import_equals_stmt             if let Some(starts) = &mut p.starts_for_parse_only {
+parse_typescript.rs:820        parse_typescript_enum_stmt                       if p.starts_for_parse_only.is_some() {
+parse_typescript.rs:832        parse_typescript_enum_stmt                       if let Some(starts) = &mut p.starts_for_parse_only {
+parse_jsx.rs:27         parse_jsx_element                                if p.starts_for_parse_only.is_some() {
+parse_skip_typescript.rs:3016       skip_type_script_type_stmt                       if let Some(starts) = &mut self.starts_for_parse_only {
+parse_skip_typescript.rs:3038       skip_type_script_type_stmt                       if self.starts_for_parse_only.is_some() {
+parse_skip_typescript.rs:3048       skip_type_script_type_stmt                       if let Some(starts) = &mut self.starts_for_parse_only {
+parse_skip_typescript.rs:3070       skip_type_script_type_stmt                       if self.starts_for_parse_only.is_some() {
+parse_skip_typescript.rs:3099       skip_type_script_interface_stmt                  if self.starts_for_parse_only.is_some() {
+parse_skip_typescript.rs:3331       lexer_backtracker_bool                           let recorded = self.sidecar_mark();
+parse_skip_typescript.rs:3367       lexer_backtracker_result                         let recorded = self.sidecar_mark();
+parse_skip_typescript.rs:3403       lexer_backtracker_kept                           let recorded = self.sidecar_mark().map(|mark| {

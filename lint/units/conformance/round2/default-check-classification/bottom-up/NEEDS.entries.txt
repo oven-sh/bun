@@ -1,0 +1,149 @@
+Entries for /workspace/notes/lint/units/conformance/NEEDS.md, reduced from needs-and-lint-channel/top-down/NEEDS.draft.md
+(CH-1 to CH-6) to what is still true at 3110ce85cf. Only what a pass of class E through `bun --lint` needs is here; the
+entries of the draft about the repository (RP, LB, LC, VN, CK, CI, MQ) are not this research's.
+
+# What the conformance unit needs in files it does not own
+
+State, measured 2026-10-01 with a release build of be1ebe5295 (the `src/` of 3110ce85cf), one process for each of the
+12,797 run instances, `bun --lint <the root files>`: exit code 0 in 11,282, 2 in 1,329, no file written for 186 (the
+runner cannot lay them out); no signal, no other exit code, nothing on stdout, no line on stderr that is no diagnostic.
+Class C (5,770): 5,650 print nothing that is compared (one of them prints one report of a rule), 27 print a syntax
+error, 93 are not laid out. Class E (7,027): 5,628 print nothing that is compared, 1,299 print `syntax` diagnostics
+(7 of them warnings only), 7 print `unsupported-extension`, 93 are not laid out. No instance of class E passes, and
+none can before N1 and N2. What follows is in the order in which it unlocks instances.
+
+## N1. cli: the syntax errors of a lint parse under the number of TypeScript (`src/runtime/cli/lint_command.rs`)
+
+For: cli (the call), parser (what its table covers).
+
+Today `parse()` of `lint_command.rs` calls `Parser::parse` (TypeScript) and `Parser::parse_only` (JavaScript), and
+`Diagnostic::from_msg` gives every message of the log the code `syntax`: `Log::add_range_error_with_code` has no caller
+outside tests, and nothing calls `Parser::parse_for_lint_with_codes` but the tests of the parser. A line with the code
+`syntax` is in no baseline, so the instance fails (cause `syntax`: 1,299 of class E, 27 of class C).
+
+Ask, with the interface that the parser has (`src/js_parser/parse/parse_entry.rs`, `syntax_errors.rs`; parser's
+API.md, "Syntax errors of a lint parse"):
+
+    let mut errors = bun_js_parser::parse::syntax_errors::SyntaxErrors::default();
+    let parsed = parser.parse_for_lint_with_codes(&mut errors, |parsed| ...);
+    // for the message at index i of log.msgs:
+    match errors.get(i) {
+        Some(e) => Diagnostic { file: Some(file), start: e.start, length: e.end - e.start, category: Category::Error,
+                                code: Code::Ts(e.code), text: e.text.clone(), chain: Vec::new(), related: Vec::new() },
+        None => Diagnostic::from_msg(file, msg),   // stays `syntax`
+    }
+
+and, for a pass: every line that the command prints for the file is a line of the reference. The parser stops at its
+first error and the reference recovers, so only an oracle with one diagnostic can be met, and a message that only
+follows from the first one (it has no entry) must not be printed beside it.
+
+What it unlocks, measured against the first section of the oracles (probes/near.ts): 497 oracles of class E hold a
+code of the parser's table (TS1002, 1003, 1005, 1010, 1109, 1110, 1128, 1131, 1160, 1359, 1385 to 1388), 161 hold
+only such codes, 121 hold exactly one diagnostic and it is of the table. For 105 of the 121 Bun's parser reports an
+error today, and for 54 it reports exactly one, at the line and the column of the oracle's. With N2 those 54 are the
+first names of list E.
+
+Also for the parser, from the same run: a lint parse reports what the reference does not report.
+- 27 instances of class C get an error: `"x" has already been declared` (8, e.g. `duplicateVarAndImport.ts`,
+  `asyncWithVarShadowing_es6.ts`), `Unexpected )` (3, `asyncArrowFunction2_*`), `Cannot use "yield" or "await" here.`
+  (3, `asyncArrowFunction4_*`), `Expected "x" but found "y"` (3, `dynamicImportDefer(*)`, `inferTypesWithExtends1.ts`),
+  `Cannot "continue" to label target1` (2), `Unexpected` with the character U+0085 (2, `fileWithNextLine2.ts`,
+  `sourceMap-LineBreaks(target=es2015).ts`), `"static" is a reserved word and cannot be used in strict mode` (2),
+  `The constant "x" must be initialized` (2: `component.d.html.ts` is a declaration file for TypeScript and
+  `lint_command.rs` takes only `.d.ts`, `.d.mts` and `.d.cts` as one), and two single ones.
+- 7 instances of class E get only warnings (`Reading from setter-only property "#x" will throw` and its kin): a
+  warning of Bun's parser has no counterpart in the reference.
+The sweep's report lists each instance with its first line.
+
+Until then: such an instance fails with the reason `the code syntax is a name of the command and no code of
+TypeScript: <file>(<line>,<column>): <category> syntax: <text>`, and the sweep counts them under the cause `syntax`.
+
+## N2. cli: a report that holds what the plain format drops
+
+For: cli (`lint_command.rs`, one more writer over `&[SourceFile]` and `&[Diagnostic]`, as its API.md says).
+
+A baseline shows the length of every span in a unit and the related information. The plain format has neither, so the
+runner compares the first section alone and never calls that a pass (`isComplete` of `runner/run.ts`). Measured with
+the oracle's own diagnostics cut down to what stderr holds of them (probes/plainbest.ts): of 7,027 instances of class
+E, 7,012 end as "the first section is the oracle's", the 14 in the pretty form reach nothing, and 1 passes
+(`objectTypeWithStringIndexerHidingObjectIndexer.ts`: all its diagnostics are in a default library file).
+
+Ask: the environment variable `BUN_INTERNAL_LINT_REPORT`, read where a lint run starts, behind the gate that
+`BUN_BYTECODE_ORDER_OUT` has (a debug build, or `BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING`). Its value is an absolute
+path. A run that ends with the exit code 0 or 2 writes one JSON object there before it exits; stdout, stderr and the
+exit code are as without the variable:
+
+    { "diagnostics": [ D, ... ] }      in the order of stderr, one D for each head line of stderr
+    D = { "category": "error" | "warning" | "suggestion" | "message",
+          "code": 2322 | "no-debugger",            a number for TS<n>, else the name that stderr shows
+          "messageText": "...",
+          "next": [ { "messageText": "...", "next": [ ... ] } ],            absent or empty without a chain
+          "location": { "file": "<absolute path>", "start": 6, "length": 1, "line": 1, "character": 7 },
+          "relatedInformation": [ { "category": "...", "code": 2728, "messageText": "...", "next": [ ... ],
+                                    "location": { ... } } ] }               always there, empty without any
+
+`start` and `length` count UTF-8 bytes of the file as it was read, `line` and `character` are those of stderr.
+`location` is absent for what belongs to no file.
+
+Until then: no name enters list E through the default check. The sweep counts "first section alone" apart.
+
+## N3. typecheck, then cli: the options of the instance
+
+For: typecheck (an entry that sets an option by its declared name), cli (hands the value over).
+
+The default check hands the command its operands and its current directory and nothing else: the options of the
+instance (directives, variation, and what the harness sets for every instance: `noErrorTruncation`, `newLine`,
+`skipDefaultLibCheck`) do not reach it, and no code reads `BUN_INTERNAL_LINT_OPTIONS`. For the first names of N1 this
+does not matter where the parse does not depend on an option. It matters from the first diagnostic of a checker on.
+
+Ask, unchanged from CH-3 of the draft: `BUN_INTERNAL_LINT_OPTIONS`, a JSON object
+`{ "compilerOptions": { <declared name>: <boolean | number | string | list of strings> } }`; with it the run searches
+no configuration file and collects its diagnostics as the harness does; an unknown name or a value that is not
+implemented is a refusal (exit code 1, one line `error: <text>`), never dropped in silence. The runner reads a
+refusal as "unsupported" with that line as the reason (implemented: cause `refusal`).
+
+Until then: an instance passes when its bytes are the oracle's, whatever option it has; the report of the sweep says
+that no option was handed over.
+
+## N4. cli: the operands are the roots of one program
+
+For: whoever wires the program layer (cli's API.md lists it under "Not delivered", point 6).
+
+Each operand is read and parsed by itself. 1,525 run instances have more than one operand, and the diagnostics of
+every checker depend on the other files and on the default libraries. Nothing to ask before a checker is wired; it is
+here because no unit owns it.
+
+## N5. cli: the names of the command stay the five, and a rule reports in a file
+
+For: cli.
+
+The runner leaves a report of a rule out of the comparison and counts it. It tells one by two tests
+(`commandCodes` and `isRuleReport` of `runner/check_bun_lint.ts`): the code is a name that is none of `syntax`,
+`cannot-read-file`, `unsupported-extension`, `internal-error` and `internal-stand-in`, and the diagnostic is in a
+file. A name that is none of the five and has no file fails the instance (cause `unknown code`).
+
+Ask: a sixth name of the command that can be printed with a file goes into the table "The codes" of cli's API.md and
+into `commandCodes` in the same merge: until it is there the runner reads it as a rule and leaves it out. When the
+report of N2 exists, the category of a code can be part of it and this list can go.
+
+## N6. cli: TS6054 for an operand with another extension
+
+For: cli. Seven instances of class E, low priority.
+
+`unsupported-extension` has the text of TS6054, and the oracle of the seven instances that have such an operand
+(`jsFileCompilationWithMapFileAsJs*.ts`: `b.js.map`; `bundlerImportTsExtensions(*).ts`: `/project/e`, `/project/e.txt`)
+holds `error TS6054: File 'b.js.map' has an unsupported extension. The only supported extensions are ...` with the
+chain `The file is in the program because:` / `Root file specified for compilation`. For a pass the command prints
+the number, the name of the file as the reference prints it, and the chain. Until then the instance fails with the
+cause `unsupported-extension`. (`.json` roots are no operands: the harness keeps them out of the file names of the
+program, `harnessutil.go:125-131`.)
+
+## N7. No line in `test/no-validate-leaksan.txt`
+
+For: integrator, for information (RP-4 of the draft, still true).
+
+`conformance.test.ts` runs `bun --lint` twice in every lane (the probe of the binary under test) and once more for
+every listed instance, with the environment of the lane. With the settings of CI's leak check
+(`BUN_DESTRUCT_VM_ON_EXIT=1`, `ASAN_OPTIONS=...detect_leaks=1:abort_on_error=1`, `LSAN_OPTIONS=...suppressions=...`)
+the debug build at 3110ce85c ends both runs of the probe with nothing on stderr. A leak on the lint path aborts the
+child and fails that test: it is to be fixed on the lint path.

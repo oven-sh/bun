@@ -1,0 +1,35 @@
+Research of the default check (bottom-up pass, round 2). Nothing here is in the worktree.
+
+default-check.patch
+  The six files of the unit with the new rules of the default check, against 3110ce85cf:
+  runner/check_bun_lint.ts, runner/run.ts, runner/index.ts, fixtures/lints-fixture.ts, sweep.ts and
+  describe("default check") of conformance.test.ts (plus one test in describe("run")).
+  It does not hold the glue that the test file needs besides (runner/corpus.ts, the exports of ../../prototype/index.ts.patch,
+  expectations.json): apply that glue first or after, the hunks of runner/index.ts do not overlap.
+    cd /workspace/wt/conformance && git apply --check /workspace/notes/lint/units/conformance/round2/default-check-classification/bottom-up/default-check.patch
+
+What ran (2026-10-01, Linux x64), in a scratch clone made with ../../scratch.sh <dir> --prototype and this patch laid over it:
+  installed bun 1.4.3-canary.1+367d939d9 (no --lint), whole file: 117 pass, 1 fail. The one failure is the test that probes
+    the binary under test: "the command ran the file that it was to check".
+  build/debug/bun-debug of the worktree (3110ce85c), -t "default check": 32 pass, 0 fail.
+  the same with BUN_DESTRUCT_VM_ON_EXIT=1 ASAN_OPTIONS=allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1
+    LSAN_OPTIONS=malloc_context_size=30:print_suppressions=0:suppressions=<tree>/test/leaksan.supp: 32 pass, 0 fail.
+  ../../typecheck.sh <scratch>: no type error below test/cli/lint (before the last three lines of sweep.ts were added).
+  prettier --check with the .prettierrc of the repository: clean for the six files.
+  Not run: the whole test file with the debug build, any run on Windows or macOS.
+
+probes/ (each names its inputs at the top; they read a scratch clone at /tmp/dcc-scratch and files in /tmp/dccbu)
+  raw.ts           every n-th run instance through `<bin> --lint <operands>` as the default check starts it; what came back, as JSON lines
+  classify.ts      the new rules over such a file: counts by class, outcome and cause
+  head_vs_new.ts   the rules of 3110ce85cf against the new ones over the same file
+  near.ts          the syntax errors of Bun's parser against the first section of the oracle: how many are at its place
+  plainbest.ts     the oracle replayed with what stderr holds of it: what the plain format reaches at best
+  probe_real.ts    probe() of check_bun_lint.ts against the debug build, a release build and the installed bun, with and without the leak check of CI
+  drive.ts         the rows of describe("default check") through runInstance, printed
+  tests.sh         the three test runs above
+
+Overlap with round2/runner-corpus-binding: its patches change the import block and checkOf's surroundings of sweep.ts and
+the export lists of runner/index.ts, and they move layOut out of sweep.ts. This patch calls layOut in operandsOf (the
+operands of a crash or a timeout for the report): with that change, take the root files from the input of the corpus
+binding for a root that is undefined. Apply one by hand over the other; the hunks of check_bun_lint.ts, run.ts, the
+fixture and the test file do not meet theirs.

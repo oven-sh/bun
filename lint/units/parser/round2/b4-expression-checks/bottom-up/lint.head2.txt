@@ -1,0 +1,131 @@
+
+== heritage and cascades
+"function f(...a: T[] = []) {}"
+  a.ts  @21+1 Expected ")" but found "=" -> TS1005 21+1 "')' expected." | @23+1 Expected ";" but found "[" -> TS1005 23+1 "';' expected." | @24+1 Unexpected ] -> TS1128 24+1 "Declaration or statement expected."
+  a.js  @15+1 Expected ")" but found ":" -> TS1005 15+1 "')' expected." | @17+1 Expected "{" but found "T" -> TS1005 17+1 "'{' expected." | @25+1 Expected ";" but found ")" -> TS1005 25+1 "';' expected." | @29+0 Unexpected end of file -> TS1128 29+0 "Declaration or statement expected."
+"class C extends B<T>.D {}"
+  a.ts  ok
+  a.js  @17+1 Expected "{" but found "<" -> TS1005 17+1 "'{' expected." | @19+1 Expected ";" but found ">" -> TS1005 19+1 "';' expected." | @20+1 Expected identifier but found "." -> TS1003 20+1 "Identifier expected." | @23+1 Expected ";" but found "{" -> TS1005 23+1 "';' expected."
+"class C extends super {}"
+  a.ts  @16+5 Unexpected "super"
+  a.js  @16+5 Unexpected "super"
+"class C implements I[] {}"
+  a.ts  @21+1 Unexpected ] -> TS1109 21+1 "Expression expected."
+  a.js  @8+10 Expected "{" but found "implements" -> TS1005 8+10 "'{' expected." | @20+1 Expected ";" but found "[" -> TS1005 20+1 "';' expected." | @21+1 Expected identifier but found "]" -> TS1003 21+1 "Identifier expected."
+"class C implements a.b<T>.c {}"
+  a.ts  ok
+  a.js  @8+10 Expected "{" but found "implements" -> TS1005 8+10 "'{' expected." | @20+1 Expected ";" but found "." -> TS1005 20+1 "';' expected." | @22+1 Expected ";" but found "<" -> TS1005 22+1 "';' expected." | @24+1 Expected ";" but found ">" -> TS1005 24+1 "';' expected." | @25+1 Expected identifier but found "." -> TS1003 25+1 "Identifier expected." | @28+1 Expected ";" but found "{" -> TS1005 28+1 "';' expected."
+"class C extends B<T> {}"
+  a.ts  ok
+  a.js  @17+1 Expected "{" but found "<" -> TS1005 17+1 "'{' expected." | @19+1 Expected ";" but found ">" -> TS1005 19+1 "';' expected." | @21+1 Expected identifier but found "{" -> TS1003 21+1 "Identifier expected." | @23+0 Expected "}" but found end of file -> TS1005 23+0 "'}' expected."
+"class C extends a.b<T> {}"
+  a.ts  ok
+  a.js  @19+1 Expected "{" but found "<" -> TS1005 19+1 "'{' expected." | @21+1 Expected ";" but found ">" -> TS1005 21+1 "';' expected." | @23+1 Expected identifier but found "{" -> TS1003 23+1 "Identifier expected." | @25+0 Expected "}" but found end of file -> TS1005 25+0 "'}' expected."
+"class C extends B<T>.D<U> {}"
+  a.ts  ok
+  a.js  @17+1 Expected "{" but found "<" -> TS1005 17+1 "'{' expected." | @19+1 Expected ";" but found ">" -> TS1005 19+1 "';' expected." | @20+1 Expected identifier but found "." -> TS1003 20+1 "Identifier expected." | @22+1 Expected ";" but found "<" -> TS1005 22+1 "';' expected." | @24+1 Expected ";" but found ">" -> TS1005 24+1 "';' expected." | @26+1 Expected identifier but found "{" -> TS1003 26+1 "Identifier expected." | @28+0 Expected "}" but found end of file -> TS1005 28+0 "'}' expected."
+"interface I extends a.b<T>.c {}"
+  a.ts  ok
+  a.js  @10+1 Expected ";" but found "I" -> TS1005 10+1 "';' expected." | @12+7 Unexpected extends -> TS1128 12+7 "Declaration or statement expected."
+"class C extends (B<T>).D {}"
+  a.ts  ok
+  a.js  @21+1 Unexpected ) -> TS1109 21+1 "Expression expected."
+"class C extends B[] {}"
+  a.ts  @18+1 Unexpected ] -> TS1109 18+1 "Expression expected."
+  a.js  @18+1 Unexpected ] -> TS1109 18+1 "Expression expected."
+"class C extends -B ** 2 {}"
+  a.ts  @19+2 Unexpected **
+  a.js  @19+2 Unexpected **
+"class C extends new A?.b() {}"
+  a.ts  ok
+  a.js  ok
+"class C extends a?.#b {}"
+  a.ts  @19+2 Expected identifier but found "#b" -> TS1003 19+2 "Identifier expected." | @23+1 Expected "{" but found "}" -> TS1005 23+1 "'{' expected." | @24+0 Expected "}" but found end of file -> TS1005 24+0 "'}' expected."
+  a.js  @19+2 Expected identifier but found "#b" -> TS1003 19+2 "Identifier expected." | @23+1 Expected "{" but found "}" -> TS1005 23+1 "'{' expected." | @24+0 Expected "}" but found end of file -> TS1005 24+0 "'}' expected."
+"class C { @a<b>.c m() {} }"
+  a.ts  ok
+  a.js  @10+1 Expected identifier but found "@" -> TS1003 10+1 "Identifier expected." | @12+1 Expected ";" but found "<" -> TS1005 12+1 "';' expected." | @14+1 Expected ";" but found ">" -> TS1005 14+1 "';' expected." | @15+1 Expected identifier but found "." -> TS1003 15+1 "Identifier expected." | @18+1 Expected ";" but found "m" -> TS1005 18+1 "';' expected." | @19+1 Expected identifier but found "(" -> TS1003 19+1 "Identifier expected." | @22+1 Expected ";" but found "{" -> TS1005 22+1 "';' expected." | @25+1 Unexpected } -> TS1128 25+1 "Declaration or statement expected."
+"@a<b>.c class C {}"
+  a.ts  ok
+  a.js  @0+1 Unexpected @
+"@(a<b>.c) class C {}"
+  a.ts  ok
+  a.js  @0+1 Unexpected @
+"class C { [a<b>.c]() {} }"
+  a.ts  ok
+  a.js  @15+1 Unexpected . -> TS1109 15+1 "Expression expected."
+"x = { [a[]]: 1 };"
+  a.ts  @9+1 Unexpected ] -> TS1109 9+1 "Expression expected."
+  a.js  @9+1 Unexpected ] -> TS1109 9+1 "Expression expected."
+"type T = typeof a<b>.c;"
+  a.ts  ok
+  a.js  @5+1 Expected ";" but found "T" -> TS1005 5+1 "';' expected." | @7+1 Unexpected = -> TS1128 7+1 "Declaration or statement expected."
+"let x: typeof a[];"
+  a.ts  ok
+  a.js  @5+1 Expected ";" but found ":" -> TS1005 5+1 "';' expected." | @16+1 Unexpected ] -> TS1109 16+1 "Expression expected."
+"let x = y as typeof a<b>.c;"
+  a.ts  @25+1 Unexpected c
+  a.js  @10+2 Expected ";" but found "as" -> TS1005 10+2 "';' expected." | @24+1 Unexpected . -> TS1109 24+1 "Expression expected."
+"enum E { A = a<b>.c }"
+  a.ts  ok
+  a.js  @0+4 Unexpected enum
+"enum E { A = -x ** 2 }"
+  a.ts  @16+2 Unexpected **
+  a.js  @0+4 Unexpected enum
+"enum E { A = new B?.c() }"
+  a.ts  ok
+  a.js  @0+4 Unexpected enum
+"declare const x = new A?.b();"
+  a.ts  ok
+  a.js  @8+5 Expected ";" but found "const" -> TS1005 8+5 "';' expected."
+"namespace N { new A?.b(); }"
+  a.ts  ok
+  a.js  @10+1 Expected ";" but found "N" -> TS1005 10+1 "';' expected."
+"function f(a = new A?.b()) {}"
+  a.ts  ok
+  a.js  ok
+"class C { x = new A?.b(); }"
+  a.ts  ok
+  a.js  ok
+"class C { static { new A?.b(); } }"
+  a.ts  ok
+  a.js  ok
+"x = () => new A?.b();"
+  a.ts  ok
+  a.js  ok
+"x = <div a={new A?.b()} />;"
+  a.ts  @9+1 Expected ">" but found "a" -> TS1005 9+1 "'>' expected." | @16+1 Expected ":" but found "A" -> TS1005 16+1 "':' expected." | @17+2 Unexpected ?. -> TS1109 17+2 "Expression expected."
+  a.js  @4+1 Unexpected <
+"label: new A?.b();"
+  a.ts  ok
+  a.js  ok
+"if (new A?.b()) {}"
+  a.ts  ok
+  a.js  ok
+"switch (x) { case new A?.b(): }"
+  a.ts  ok
+  a.js  ok
+"export default new A?.b();"
+  a.ts  ok
+  a.js  ok
+"export const x = new A?.b();"
+  a.ts  ok
+  a.js  ok
+"x = `${new A?.b()}`;"
+  a.ts  ok
+  a.js  ok
+"x = { a: new A?.b(), [new B?.c()]: 1 };"
+  a.ts  ok
+  a.js  ok
+"class C { #b; static m(a) { return { x: a?.#b }; } }"
+  a.ts  ok
+  a.js  ok
+"class C { #b; m = (a) => a?.#b; }"
+  a.ts  ok
+  a.js  ok
+"class C { #b; get x() { return this?.#b; } }"
+  a.ts  ok
+  a.js  ok
+"class C { #b; [a?.#b] = 1; }"
+  a.ts  ok
+  a.js  ok

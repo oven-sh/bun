@@ -22,4 +22,7 @@ for g in bun-types typescript-lib src-js tsx js-control; do
   python3 /workspace/notes/lint/units/parser/measure/tools/cgdiff.py "$S/cg/head.$g.cg" "$S/cg/proto.$g.cg" --top 60 > "$S/cg/cgdiff.$g.txt" 2>&1 || true
 done
 cat "$S/cg/head.summary.txt" "$S/cg/proto.summary.txt"
+# The summaries and the differences by symbol are kept beside this script: the binaries and the cachegrind files stay in the scratch directory.
+mkdir -p "$HERE/cg"
+cp "$S/cg/head.summary.txt" "$S/cg/proto.summary.txt" "$S"/cg/cgdiff.*.txt "$HERE/cg/"
 touch "$S/cg/DONE"

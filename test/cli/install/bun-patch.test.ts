@@ -1342,11 +1342,11 @@ describe.concurrent("bun patch --commit on an already patched package", () => {
     expect(patch).toContain("diff --git a/added.js b/added.js\nnew file mode 100644\n");
     expect(patch).toContain("diff --git a/empty.js b/empty.js\nnew file mode 100644\n");
     expect(patch).toContain("diff --git a/index.js b/index.js\ndeleted file mode 100644\n");
-    expect(readdirSync(pkgDir).filter(name => !name.startsWith(".bun-tag-")).sort()).toEqual([
-      "added.js",
-      "empty.js",
-      "package.json",
-    ]);
+    expect(
+      readdirSync(pkgDir)
+        .filter(name => !name.startsWith(".bun-tag-"))
+        .sort(),
+    ).toEqual(["added.js", "empty.js", "package.json"]);
   });
 
   // https://github.com/oven-sh/bun/issues/19327

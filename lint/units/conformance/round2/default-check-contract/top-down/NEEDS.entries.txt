@@ -1,0 +1,56 @@
+Entries for /workspace/notes/lint/units/conformance/NEEDS.md from the research of the default check contract (top-down).
+They replace N1, N2, N5 and N6 of ../../default-check-classification/bottom-up/NEEDS.entries.txt and add N8 and N9; N3, N4 and N7
+stay as they are there. No entry asks for a flag or a variable of the binary in this round.
+
+State (release build of be1ebe5295, the src/ of 3110ce85cf, one process for each of the 12,797 run instances; 186 cannot be laid
+out on disk): no signal, no exit code but 0 and 2, nothing on stdout, no line on stderr that is no diagnostic.
+Class C 5,770: 5,649 print nothing and end with 0 (the guard), 1 prints a report of a rule alone (it passes, near the guard),
+27 print `error syntax`, 93 are not laid out. Class E 7,027: none passes; 5,626 print nothing, 2 print reports of rules alone,
+1,292 print `error syntax`, 7 print `warning syntax` alone, 7 print `error unsupported-extension`, 93 are not laid out.
+
+N1. cli (cli2.md D2), parser: the syntax errors of a lint parse under the number of TypeScript.
+    Today every message of the parser has the code `syntax` (`Diagnostic::from_msg`, src/lint/diagnostic.rs:148-151;
+    `parse` of src/runtime/cli/lint_command.rs:221-267 calls `Parser::parse` and `Parser::parse_only`). A line with a name for a
+    code is in no baseline: the instance fails with the cause `syntax` (1,292 of E, 27 of C).
+    What a pass needs: every line that the command prints for the instance is a line of the first section of its oracle, in its
+    order: `path(line,column): error TS<n>: <text of the reference>`. The lists record the level "first-section", so such an
+    instance enters list E with `sweep.ts --update` as soon as the command prints it; nothing else has to change in the runner.
+    Measured (../../default-check-classification/bottom-up/probes/near.ts): 121 oracles hold one diagnostic, of the parser's
+    table; for 54 of them Bun's parser reports one error at the line and the column of the oracle's.
+
+N2. cli, for a later round: a report that holds what the plain format drops (the length of a span, the related information).
+    The plain format reaches the level "first-section" and no more: with the oracle's own diagnostics cut down to what stderr
+    holds, 7,012 of 7,027 instances of E pass at that level, 1 passes with every byte, and the 14 in the pretty form never pass
+    (probes/plainbest.ts). The level of the lists goes to "baseline" when a report exists: the shape of CH-2 in
+    needs-and-lint-channel/top-down/NEEDS.draft.md stands. Until then `expectations.json` says "first-section", every line of
+    the sweep that counts passes names the level, and a check that is handed over with --check and gives lengths and related
+    information is compared with every byte first.
+
+N5. cli: the names that are no rules stay the five, and a report of a rule is in a file.
+    The runner leaves a report of a rule out of the comparison and counts it by the name of the rule. It tells one by two tests
+    (`commandCodes` and `isRuleReport` of runner/check_bun_lint.ts): the code is a name that is none of `syntax`,
+    `cannot-read-file`, `unsupported-extension`, `internal-error`, `internal-stand-in`, and the line has a file.
+    Ask: a sixth name of the command that can be printed with a file goes into the table "The codes" of cli's API.md and into
+    `commandCodes` in the same merge; until it is there the runner reads it as a rule and leaves it out. A name without a file
+    that is none of the five fails the instance (cause `unknown code`).
+    The runner asks for no switch that turns the rules off: a new rule changes no outcome of an instance.
+
+N6. cli: TS6054 for an operand with another extension. Seven instances of E (`jsFileCompilationWithMapFileAsJs*.ts`: `b.js.map`;
+    `bundlerImportTsExtensions(*).ts`: `/project/e`, `/project/e.txt`). Their oracles hold `error TS6054: File '<name>' has an
+    unsupported extension. The only supported extensions are ...` with the chain `The file is in the program because:` /
+    `Root file specified for compilation`. Until the command prints that, they fail with the cause `unsupported-extension`.
+
+N8. cli or parser: a warning of Bun's parser has no counterpart in the reference.
+    `lint_command.rs:236` sets the level of the log to `Warn`, and a warning is printed as `warning syntax`. Seven instances of
+    E print such warnings and no error (`privateNameAccessors.ts`, `privateNameMethodAssignment.ts`, `privateNameReadonly.ts`,
+    `privateNameSetterNoGetter.ts`, `privateNameStaticAccessors.ts`, `privateNameStaticMethodAssignment.ts`,
+    `privateWriteOnlyAccessorRead.ts`: "Writing to getter-only property ... will throw" and its kin, of the visit pass); the
+    reference reports errors of its checker there. No instance of C prints one today.
+    Ask: a lint run prints no message of `Kind::Warn` that carries no number of TypeScript, or prints it under the name of a
+    rule, which the runner leaves out. Until then such a run fails with the cause `syntax warning`, counted apart from `syntax`:
+    the exit code 0 alone is no clean run.
+
+N9. cli (cli2.md D2): a declaration file is read and not parsed (`lint_command.rs:146-149`, `:205-207`).
+    62 run instances have only declaration files as roots (21 of C, 41 of E) and 473 more have some: the command prints nothing
+    for such a file, whatever it holds, so 21 instances of the guard were not looked at. The runner cannot tell. It ends when
+    declaration files go through `Parser::parse_for_lint`. Until then the report of E4 says so beside the guard.

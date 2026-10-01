@@ -1,0 +1,45 @@
+For /workspace/notes/lint/units/conformance/API.md: what the default check makes of `bun --lint` (runner/check_bun_lint.ts).
+
+createSpawnCheck({ command, env, probeTimeoutMs?, probeDirectory?, probed? }) starts `<command> --lint <root files>` in the
+current directory of the instance, with BUN_FEATURE_FLAG_EXPERIMENTAL_LINT=1, and reads stderr in the plain format. The probe
+runs once (or is handed over as `probed`): a command that runs its operand, refuses the flag or says nothing of a syntax error
+is no linter, and every instance is "unavailable". resultOfRun(ended, root, cwd) is the same reading without a process.
+
+outcome      when                                                              cause (the key of a count)
+crash        the command died: a signal, an exit code that is none of 0, 1     signal <NAME>, exit code <n>, exit code 1,
+             and 2, the exit code 1 with anything but one line `error: ...`,   stdout, stderr, exit code and errors
+             text on stdout, a line of stderr of no form, the exit code 0
+             with an error or 2 without one. `death` holds the exit code,
+             the signal and what it wrote; `program` the files it was given
+crash        without `death`: the check function or the runner threw           check threw, check result, runner threw,
+                                                                               input, oracle
+timeout      the time limit of the instance; `program` as above                timeout
+unsupported  the command refused (exit code 1, one line `error: ...`); the     refusal, layout, no oracle
+             instance cannot be laid out on disk
+unavailable  the probe, no file written, no root file, the command did not     unavailable
+             start
+provisional  a line `internal-stand-in`                                        stand-ins
+fail         a line whose code is a name of the command: the check was not     internal-error, unknown code,
+             complete (`internal-error`), or no baseline can hold the line.    cannot-read-file, unsupported-extension,
+             The first kind of this order is the cause; `named` counts the     syntax, syntax warning,
+             lines by name. `syntax warning`: the parser warns and reports     file outside the instance
+             no error
+fail         the comparison with the oracle                                    code -1, diagnostics, nothing, lengths,
+                                                                               first section, writer, baseline
+pass         class C: no diagnostic with a number of TypeScript and no line above. Class E: the level.
+
+Rules. A line whose code is a name that is none of the five of the command and that has a file is a report of a lint rule. It
+is no diagnostic of TypeScript: it is left out of the comparison and counted in `rules` by the name of the rule. No option turns
+this off.
+
+The guard. An instance of class C counts for the guard when it passes and `rules` is absent: the command wrote nothing and
+ended with 0. Near it, and counted apart by the sweep: a pass with `rules` (reports of rules alone), and the cause
+`syntax warning` (warnings of the parser and no error; the exit code is 0).
+
+The level. The plain format has no length of a span and no related information: it holds the first section of a baseline
+(code, line, column, text and chain of every diagnostic, in order). RunOptions.level says what passes an instance of class E:
+"baseline" (absent: every byte) or "first-section". RunResult.level says what was compared: a pass with every byte is
+"baseline" whatever was asked, a pass of the first section alone is "first-section" and has headerOnly true, every other
+outcome has the level that was asked. expectations.json records "first-section": sweep.ts and conformance.test.ts run at the
+level of the lists. The 14 baselines in the pretty form never pass from the plain format. The level goes to "baseline" when
+the command hands over lengths and related information (NEEDS N2); lowering it with names in list E is a loss (`--since`).

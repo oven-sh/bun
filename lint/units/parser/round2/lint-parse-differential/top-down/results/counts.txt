@@ -1,0 +1,36 @@
+/tmp/lpd1b/targeted.ts.plain.tsv as ts: 2405 sources, 0 neither ok nor err
+    typescript-go: both parse 2002; both reject 266; reference parses, lint rejects 112; lint parses, reference rejects 25
+    tsc 6.0.2    : both parse 2003; both reject 266; reference parses, lint rejects 112; lint parses, reference rejects 24
+/tmp/lpd1b/targeted.ts.tla.tsv as ts: 2405 sources, 0 neither ok nor err
+    typescript-go: both parse 2007; both reject 266; reference parses, lint rejects 107; lint parses, reference rejects 25
+    tsc 6.0.2    : both parse 2008; both reject 266; reference parses, lint rejects 107; lint parses, reference rejects 24
+/tmp/lpd1b/targeted.ts.lint.tsv as ts: 2405 sources, 0 neither ok nor err
+    typescript-go: both parse 2005; both reject 266; reference parses, lint rejects 109; lint parses, reference rejects 25
+    tsc 6.0.2    : both parse 2006; both reject 266; reference parses, lint rejects 109; lint parses, reference rejects 24
+/tmp/lpd1b/targeted.tsx.plain.tsv as tsx: 2405 sources, 0 neither ok nor err
+    typescript-go: both parse 2011; both reject 259; reference parses, lint rejects 110; lint parses, reference rejects 25
+    tsc 6.0.2    : both parse 2012; both reject 259; reference parses, lint rejects 110; lint parses, reference rejects 24
+/tmp/lpd1b/targeted.tsx.tla.tsv as tsx: 2405 sources, 0 neither ok nor err
+    typescript-go: both parse 2015; both reject 259; reference parses, lint rejects 106; lint parses, reference rejects 25
+    tsc 6.0.2    : both parse 2016; both reject 259; reference parses, lint rejects 106; lint parses, reference rejects 24
+/tmp/lpd1b/targeted.tsx.lint.tsv as tsx: 2405 sources, 0 neither ok nor err
+    typescript-go: both parse 2013; both reject 259; reference parses, lint rejects 108; lint parses, reference rejects 25
+    tsc 6.0.2    : both parse 2014; both reject 259; reference parses, lint rejects 108; lint parses, reference rejects 24
+/tmp/lpd1b/small.ts.plain.tsv as ts: 209628 sources, 0 neither ok nor err
+    typescript-go: both parse 45830; both reject 159356; reference parses, lint rejects 1137; lint parses, reference rejects 3305
+    tsc 6.0.2    : both parse 45830; both reject 159266; reference parses, lint rejects 1227; lint parses, reference rejects 3305
+/tmp/lpd1b/small.ts.tla.tsv as ts: 209628 sources, 0 neither ok nor err
+    typescript-go: both parse 45759; both reject 159354; reference parses, lint rejects 1208; lint parses, reference rejects 3307
+    tsc 6.0.2    : both parse 45759; both reject 159264; reference parses, lint rejects 1298; lint parses, reference rejects 3307
+/tmp/lpd1b/small.ts.lint.tsv as ts: 209628 sources, 0 neither ok nor err
+    typescript-go: both parse 45759; both reject 159354; reference parses, lint rejects 1208; lint parses, reference rejects 3307
+    tsc 6.0.2    : both parse 45759; both reject 159264; reference parses, lint rejects 1298; lint parses, reference rejects 3307
+/tmp/lpd1b/small.tsx.plain.tsv as tsx: 209628 sources, 0 neither ok nor err
+    typescript-go: both parse 43179; both reject 162125; reference parses, lint rejects 1095; lint parses, reference rejects 3229
+    tsc 6.0.2    : both parse 43179; both reject 162041; reference parses, lint rejects 1179; lint parses, reference rejects 3229
+/tmp/lpd1b/small.tsx.tla.tsv as tsx: 209628 sources, 0 neither ok nor err
+    typescript-go: both parse 43113; both reject 162123; reference parses, lint rejects 1161; lint parses, reference rejects 3231
+    tsc 6.0.2    : both parse 43113; both reject 162039; reference parses, lint rejects 1245; lint parses, reference rejects 3231
+/tmp/lpd1b/small.tsx.lint.tsv as tsx: 209628 sources, 0 neither ok nor err
+    typescript-go: both parse 43113; both reject 162123; reference parses, lint rejects 1161; lint parses, reference rejects 3231
+    tsc 6.0.2    : both parse 43113; both reject 162039; reference parses, lint rejects 1245; lint parses, reference rejects 3231

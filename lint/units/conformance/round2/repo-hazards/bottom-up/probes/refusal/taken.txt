@@ -1,0 +1,16 @@
+corpus/cases/compiler/a.test.ts
+corpus/cases/compiler/a.spec.tsx
+corpus/cases/compiler/a_test.ts
+corpus/cases/compiler/a_spec.ts
+corpus/cases/compiler/a.Test.ts
+corpus/cases/compiler/a_TEST.ts
+corpus/cases/compiler/a.SPEC.tsx
+corpus/cases/compiler/a_Spec.mts
+corpus/cases/compiler/A.TEST.TS
+corpus/cases/conformance/js/node/test/parallel/a.ts
+corpus/cases/conformance/js/node/test/sequential/a.js
+corpus/cases/conformance/js/bun/test/parallel/a.tsx
+corpus/cases/conformance/js/node/cluster/test-a.ts
+corpus/cases/compiler/a.test.d.ts
+corpus/cases/compiler/inspec.ts
+corpus/cases/compiler/my.testing.cjs

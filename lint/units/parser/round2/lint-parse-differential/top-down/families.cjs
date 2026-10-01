@@ -12,7 +12,9 @@ const has = (s, re) => re.test(s);
 // [id, title, test(record)]; record = {src, ctx, t, prod, lint: {bun, at}, ...}; t is null for the targeted corpus.
 const FAMILIES = [
   ["AWAIT-NAME", "`await` as a name while top_level_await is on", r => has(r.src, /\bawait\b/) && has(r.lint.bun, /"yield" or "await"|Cannot use "await" here|^Unexpected [\]):?.]|Unexpected \.\.\.|Expected ";" but found ":"|Expected "\}" but found "await"|Invalid binding/) && r.cfgTla && !has(r.src, /await using|for await|await x/)],
-  ["AWAIT-EXPR", "`await` expression outside an async function while top_level_await is off", r => has(r.lint.bun, /"await" can only be used inside an "async" function|Cannot use "await" outside an async function/)],
+  ["AWAIT-NAME", "", r => r.cfgTla && r.src === "f<await<A>(x);"],
+  ["AWAIT-EXPR", "`await` expression outside an async function while top_level_await is off", r => has(r.lint.bun, /"await" can only be used inside an "async" function|Cannot use "await" outside an async function/) || (!r.cfgTla && r.src === "interface I extends [await A] {}")],
+  ["RESERVED-NAME-DISCARD", "a reserved word that names a type, in a type that the Discard sink reads (alias)", r => r.t === "A extends  extends ? 1 : 2" && r.ctx === "alias"],
   ["OBJ-MEMBER", "member of an object literal expression: modifier, `?`, `!`, no body, `= value`", r => (r.t !== null && ((r.ctx === "heritage" && has(r.t, /^\s*\{/)) || ((r.ctx === "targ" || r.ctx === "iextends") && has(r.t, /^\{ (\*a|a = 1|a!|readonly get)/)))) || (r.t === null && has(r.src, /^\(\{ .*\}\);$/))],
   ["EMPTY-TPARAMS", "empty type parameter list `<>`", r => r.t !== null && has(r.t, /<>/) && !has(r.t, /^import/)],
   ["IMPORT-TARGS", "import type with type arguments and no qualifier: `import('x')<A>`", r => r.t !== null && has(r.t, /^import\('x'\)<|^\('x'\)<|import\(\)<A>/) && r.ctx !== "heritage" && r.ctx !== "iextends"],
@@ -84,10 +86,10 @@ for (const path of joins) {
     e.msgs[key] = (e.msgs[key] ?? 0) + 1;
   }
 }
-const title = id => FAMILIES.find(f => f[0] === id)?.[1] ?? "";
+const title = id => FAMILIES.find(f => f[0] === id && f[1] !== "")?.[1] ?? "";
 const list = flag("list");
 console.log(["family", ...files].join("\t"));
-const order = [...FAMILIES.map(f => f[0]), "UNCLASSIFIED"].filter(id => table.has(id));
+const order = [...new Set(FAMILIES.map(f => f[0])), "UNCLASSIFIED"].filter(id => table.has(id));
 for (const id of order) {
   const e = table.get(id);
   console.log([id, ...files.map(f => e.counts[f] ?? 0)].join("\t"));

@@ -1,0 +1,11 @@
+GitHub, files of pull request 44200 (93 files), 50 a page: the order is the byte order of the paths (cmp with LC_ALL=C sort: equal)
+
+the files of the pull request with today's unit branches and the synced corpus, in that order: 22592
+last file below src/: place 339; test/cli/lint/conformance.test.ts: place 345; test/cli/lint/conformance/: places 346 to 22575
+test files after place 500:
+  test/cli/lint/diagnostics.test.ts
+  test/cli/lint/lint.test.ts
+  test/cli/lint/rules.test.ts
+  test/cli/run/as-node.test.ts
+  test/internal/typecheck-ast-generated.test.ts
+the first 500 as JSON: 31484 bytes

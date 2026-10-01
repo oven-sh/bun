@@ -3,7 +3,9 @@
 // at the pin. The marks that typescript-eslint sets with a second AST visitor and with selectors are restated here as
 // facts of a definition, of a scope and of a reference (M1 to M11 of the findings); a reference gives its number in
 // creation order, read/write, its scope, its variable, and the site facts of one top-down walk.
-// usage: node nuv-sim-ts.cjs [--show N] <file.ts | cases.json | --code "..." | --list files.txt>...   (a .json: ["code"] or [{code, ext}])
+// usage: node nuv-sim-ts.cjs [--show N] [--unbuilt] <file.ts | cases.json | --code "..." | --list files.txt>...   (a .json: ["code"] or [{code, ext}])
+//   --unbuilt: the experiment of the fallback for what the parser does not build (the members and heritage of an interface, the type of
+//   an alias, a class index signature): no reference and no variable inside, every identifier token there a read by name. `extra` has to stay 0.
 "use strict";
 const fs = require("fs");
 const path = require("path");
@@ -50,6 +52,7 @@ function collectFacts(ast) {
 	const forMarks = []; // {decl: VariableDeclaration} | {id: Identifier}
 	const globals = []; // TSModuleDeclaration of kind global
 	const paramLists = []; // the parameters of a setter and of a signature without a body: every identifier in them marks a name
+	const unbuilt = []; // {node, from, to}: what the parser reads and does not build (X4.3, X4.4)
 	const get = id => { let s = site.get(id); if (!s) site.set(id, (s = {})); return s; };
 	function walk(node, cx, parent, key) {
 		if (!node || typeof node.type !== "string") return;
@@ -62,6 +65,11 @@ function collectFacts(ast) {
 		if (node.type === "TSTypeQuery") { let e = node.exprName; while (e.type === "TSQualifiedName") e = e.left; if (e.type === "Identifier") get(e).typeQuery = true; }
 		if (node.type === "TSTypePredicate" && node.parameterName.type === "Identifier") get(node.parameterName).typePredicate = true;
 		if (node.type === "TSModuleDeclaration" && node.kind === "global") globals.push(node);
+		if (UNBUILT) {
+			if (node.type === "TSInterfaceDeclaration") unbuilt.push({ node, from: (node.typeParameters || node.id).range[1], to: node.range[1] });
+			if (node.type === "TSTypeAliasDeclaration") unbuilt.push({ node, from: node.typeAnnotation.range[0], to: node.range[1] });
+			if (node.type === "TSIndexSignature" && parent && parent.type === "ClassBody") unbuilt.push({ node, from: node.range[0], to: node.range[1] });
+		}
 		if (SIGNATURES.has(node.type)) paramLists.push(node.params);
 		if ((node.type === "MethodDefinition" || node.type === "Property") && node.kind === "set" && node.value && node.value.params) paramLists.push(node.value.params);
 		if (node.type === "ForInStatement" || node.type === "ForOfStatement") {
@@ -92,14 +100,18 @@ function collectFacts(ast) {
 		}
 	}
 	walk(ast, { unused: false, loop: 0, fn: { verdict: false } }, null, null);
-	return { site, fnFacts, forMarks, globals, paramLists };
+	return { site, fnFacts, forMarks, globals, paramLists, unbuilt };
 }
 
 const overriding = body => body.some(s => (s.type === "ExportNamedDeclaration" && s.declaration == null) || s.type === "ExportAllDeclaration" || s.type === "TSExportAssignment" || (s.type === "ExportDefaultDeclaration" && s.declaration.type === "Identifier"));
 const isDts = f => /\.d\.(ts|cts|mts|.*\.ts)$/.test(f.toLowerCase());
 
-function unusedVars(scopeManager, ast, facts, filename) {
-	const { site, fnFacts, forMarks, globals, paramLists } = facts;
+function unusedVars(scopeManager, ast, facts, filename, tokens) {
+	const { site, fnFacts, forMarks, globals, paramLists, unbuilt } = facts;
+	// The experiment of the fallback: inside what is not built, no reference and no variable exists, and every identifier token is a read by name.
+	unbuilt.sort((a, b) => a.from - b.from);
+	const inUnbuilt = pos => unbuilt.some(u => pos >= u.from && pos < u.to);
+	const textUsed = new Set();
 	const S = ref => site.get(ref.identifier) || {};
 	const marked = new Set();
 	const lookup = (scope, name) => { for (let s = scope; s; s = s.upper) { const v = s.variables.find(x => x.name === name); if (v) return v; } return null; };
@@ -161,7 +173,7 @@ function unusedVars(scopeManager, ast, facts, filename) {
 		}
 		const importedAsType = variable.defs.every(typeImport);
 		let rhs = null;
-		for (const ref of variable.references) {
+		for (const ref of refsOf(variable)) {
 			const forItself = readForItself(ref, rhs);
 			rhs = rhsNode(ref, rhs, variable);
 			if (ref.isRead() && !forItself && !(!importedAsType && asType(ref)) && !(fns.size && selfRef(ref, fns)) && !(types.length && types.some(t => ref.identifier.range[0] >= t.range[0] && ref.identifier.range[1] <= t.range[1])) && !(mods.size && selfRef(ref, mods)) && !(enums.size && selfRef(ref, enums))) return true;
@@ -169,21 +181,33 @@ function unusedVars(scopeManager, ast, facts, filename) {
 		return false;
 	};
 	const isExported = variable => variable.defs.some(def => { let node = def.node; if (node.type === "VariableDeclarator") node = node.parent; else if (def.type === "Parameter") return false; return node.parent.type.startsWith("Export"); });
-	const afterLastUsed = variable => { const vars = variable.scope.variables; for (let i = vars.indexOf(variable) + 1; i < vars.length; i++) if (vars[i].defs.some(d => d.type === "Parameter") && (vars[i].references.length > 0 || marked.has(vars[i]))) return false; return true; };
+	const afterLastUsed = variable => { const vars = variable.scope.variables; for (let i = vars.indexOf(variable) + 1; i < vars.length; i++) if (vars[i].defs.some(d => d.type === "Parameter") && (refsOf(vars[i]).length > 0 || marked.has(vars[i]))) return false; return true; };
+	if (unbuilt.length) {
+		for (const u of unbuilt) {
+			// The scope that the declaration stands in, or its own scope of type parameters: where a reference from it would start.
+			let from = null;
+			for (let n = u.node; n && !from; n = n.parent) { from = scopeManager.acquire(n, true); if (from && from.type === "functionExpressionName") from = from.childScopes[0]; }
+			from = from || scopeManager.scopes[0];
+			for (const token of tokens) if (token.range[0] >= u.from && token.range[1] <= u.to && token.type === "Identifier") { const v = lookup(from, token.value); if (v) textUsed.add(v); }
+		}
+	}
+	// The references of a variable that the view has: not those inside what is not built. The scopes are shared with the real rule: nothing is changed in them.
+	const refsOf = v => (unbuilt.length ? v.references.filter(r => !inUnbuilt(r.identifier.range[0])) : v.references);
 	const out = [];
 	for (const scope of scopeManager.scopes) {
 		if (scope.functionExpressionScope) continue;
 		for (const variable of scope.variables) {
 			const def = variable.defs[0];
 			if (!def) continue;
+			if (unbuilt.length && (textUsed.has(variable) || inUnbuilt(def.name.range[0]))) continue;
 			if (def.type === "Parameter" && isFn(def.name.parent) && !afterLastUsed(variable)) continue;
 			if (marked.has(variable)) continue;
 			if (isExported(variable) || isUsed(variable)) continue;
-			const onlyAsType = variable.references.some(asType);
+			const onlyAsType = refsOf(variable).some(asType);
 			if (onlyAsType && variable.defs.some(d => d.type === "ImportBinding")) continue;
-			const writes = variable.references.filter(r => r.isWrite() && r.from.variableScope === variable.scope.variableScope);
+			const writes = refsOf(variable).filter(r => r.isWrite() && r.from.variableScope === variable.scope.variableScope);
 			const at = writes.length ? writes.at(-1).identifier : variable.identifiers[0];
-			const action = variable.references.some(r => r.isWrite()) ? "assigned a value" : "defined";
+			const action = refsOf(variable).some(r => r.isWrite()) ? "assigned a value" : "defined";
 			out.push(`${at.loc.start.line}:${at.loc.start.column + 1} '${variable.name}' is ${action} but ${onlyAsType ? "only used as a type" : "never used"}.`);
 		}
 	}
@@ -192,7 +216,7 @@ function unusedVars(scopeManager, ast, facts, filename) {
 
 const linter = new Linter({ configType: "flat" });
 let current = null;
-const simRule = { create(context) { analysing = false; return { "Program:exit"(ast) { current = unusedVars(context.sourceCode.scopeManager, ast, collectFacts(ast), context.filename); } }; } };
+const simRule = { create(context) { analysing = false; return { "Program:exit"(ast) { current = unusedVars(context.sourceCode.scopeManager, ast, collectFacts(ast), context.filename, context.sourceCode.ast.tokens); } }; } };
 function run(code, ext) {
 	seqCounter = 0; entered = new WeakMap(); exited = new WeakMap(); current = null; analysing = true;
 	const sourceType = ext === "cts" ? "commonjs" : "module";
@@ -206,17 +230,19 @@ function run(code, ext) {
 }
 const args = process.argv.slice(2);
 let show = 20, forceExt = null;
+var UNBUILT = false;
 const inputs = [];
 while (args.length) {
 	const a = args.shift();
 	if (a === "--show") show = Number(args.shift());
 	else if (a === "--ext") forceExt = args.shift();
+	else if (a === "--unbuilt") UNBUILT = true;
 	else if (a === "--code") inputs.push({ code: args.shift() });
 	else if (a === "--list") for (const f of fs.readFileSync(args.shift(), "utf8").split("\n").filter(Boolean)) inputs.push({ file: f });
 	else if (a.endsWith(".json")) for (const c of JSON.parse(fs.readFileSync(a, "utf8"))) inputs.push(typeof c === "string" ? { code: c } : { code: c.code, ext: c.ext });
 	else inputs.push({ file: a });
 }
-const tally = { inputs: 0, same: 0, different: 0, rejected: 0, crashed: 0, reports: 0 };
+const tally = { inputs: 0, same: 0, different: 0, rejected: 0, crashed: 0, reports: 0, extra: 0, missing: 0 };
 let shown = 0;
 for (const input of inputs) {
 	let code = input.code, ext = forceExt || input.ext || "ts";
@@ -234,6 +260,8 @@ for (const input of inputs) {
 	if (JSON.stringify(r.theirs) === JSON.stringify(r.ours)) tally.same += 1;
 	else {
 		tally.different += 1;
+		tally.extra += r.ours.filter(x => !r.theirs.includes(x)).length;
+		tally.missing += r.theirs.filter(x => !r.ours.includes(x)).length;
 		if (shown++ < show) console.log(`DIFFERENT ${input.file || JSON.stringify(code).slice(0, 300)} [${ext}]\n  only ts-eslint: ${r.theirs.filter(x => !r.ours.includes(x)).slice(0, 8).join(" | ") || "-"}\n  only sim:       ${r.ours.filter(x => !r.theirs.includes(x)).slice(0, 8).join(" | ") || "-"}`);
 	}
 }

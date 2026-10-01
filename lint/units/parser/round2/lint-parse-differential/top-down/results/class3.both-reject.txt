@@ -1,0 +1,741 @@
+small.ts.lint.join.jsonl: 159354 sources that both reject (reference: go)
+class	count	build	attempt	alias	iextends	implements	statement
+KD1 TS1005: the reference asks for `,`	32347	19764	7516	553	1438	3076	0
+KD2 TS1434/1435/1440/1228 -> TS1005	81	62	12	5	0	2	0
+KD3 TS1442/1441/1436/1144 -> TS1005	4942	4940	0	0	0	2	0
+KD4 a list diagnostic -> TS1109/TS1110	549	13	243	119	67	107	0
+KD4 TS1005 for the closing token -> TS1109/TS1110	6241	3044	1849	701	528	119	0
+KD8 a code of the scanner: no entry	34	22	6	2	2	2	0
+NEW another code	14301	4626	5257	440	2679	1299	0
+NEW no entry for the message of Bun	4499	669	387	1608	1664	171	0
+NEW same code and start, other end	96	63	29	2	1	1	0
+NEW same code at another place	11972	3131	5840	761	1226	1014	0
+NEW TS1005 at the same place with another token	886	49	787	7	36	7	0
+SAME code, range and text	83406	60630	13185	4350	892	4349	0
+== KD1 TS1005: the reference asks for `,`: 32347
+    32347  TS1005   (build 19764, attempt 7516, implements 3076, iextends 1438, alias 553)
+             "let f = (a): +1 => a;"  ref TS1005 11..12 "',' expected." | lint TS1005 11..12 "';' expected." [bun at 11: "Expected \";\" but found \":\""]
+             "class C implements A.B.C<D>[] {}"  ref TS1005 27..28 "',' expected." | lint TS1005 27..28 "'{' expected." [bun at 27: "Expected \"{\" but found \"[\""]
+== KD2 TS1434/1435/1440/1228 -> TS1005: 81
+       52  TS1434 -> TS1005   (build 44, attempt 5, implements 2, alias 1)
+             "class C { @d m(): (a: A) => asserts\na { return x; } }"  ref TS1434 36..37 "Unexpected keyword or identifier." | lint TS1005 38..39 "';' expected." [bun at 38: "Expected \";\" but found \"{\""]
+             "type X = A\nB];"  ref TS1434 11..12 "Unexpected keyword or identifier." | lint TS1005 12..13 "';' expected." [bun at 12: "Expected \";\" but found \"]\""]
+       29  TS1228 -> TS1005   (build 18, attempt 7, alias 4)
+             "type X = (a: A) => a\nis B;"  ref TS1228 21..24 "A type predicate is only allowed in return type position for functions and methods." | lint TS1005 24..25 "';' expected." [bun at 24: "Expected \";\" but found \"B\""]
+             "let x: (a: A) => a\nis B;"  ref TS1228 19..22 "A type predicate is only allowed in return type position for functions and methods." | lint TS1005 22..23 "';' expected." [bun at 22: "Expected \";\" but found \"B\""]
+== KD3 TS1442/1441/1436/1144 -> TS1005: 4942
+     3408  TS1144 -> TS1005   (build 3408)
+             "class C { @d m(): A[]] { return x; } }"  ref TS1144 21..22 "'{' or ';' expected." | lint TS1005 21..22 "';' expected." [bun at 21: "Expected \";\" but found \"]\""]
+             "class C { @d m(a: keyof new ) => A) {} }"  ref TS1144 30..32 "'{' or ';' expected." | lint TS1005 28..29 "'(' expected." [bun at 28: "Expected \"(\" but found \")\""]
+     1408  TS1442 -> TS1005   (build 1406, implements 2)
+             "class C { @d x: A[]]; }"  ref TS1442 19..20 "Expected '=' for property initializer." | lint TS1005 19..20 "';' expected." [bun at 19: "Expected \";\" but found \"]\""]
+             "class C implements keyof { a: A  {}"  ref TS1442 33..34 "Expected '=' for property initializer." | lint TS1005 33..34 "';' expected." [bun at 33: "Expected \";\" but found \"{\""]
+      126  TS1441 -> TS1005   (build 126)
+             "class C { @d x: typeof a.b(); }"  ref TS1441 26..27 "Cannot start a function call in a type annotation." | lint TS1005 26..27 "';' expected." [bun at 26: "Expected \";\" but found \"(\""]
+             "class C { @d x: keyof new ()  A; }"  ref TS1441 26..27 "Cannot start a function call in a type annotation." | lint TS1005 30..31 "'=>' expected." [bun at 30: "Expected \"=>\" but found \"A\""]
+== KD4 a list diagnostic -> TS1109/TS1110: 549
+      157  TS1137 -> TS1109   (attempt 75, implements 74, build 6, alias 2)
+             "class C implements [var: A] {}"  ref TS1137 20..23 "Expression or comma expected." | lint TS1109 20..23 "Expression expected." [bun at 20: "Unexpected var"]
+             "class C implements [const: A] {}"  ref TS1137 20..25 "Expression or comma expected." | lint TS1109 20..25 "Expression expected." [bun at 20: "Unexpected const"]
+      141  TS1138 -> TS1109   (attempt 138, build 3)
+             "let f = (a: AB,>) => a;"  ref TS1138 15..16 "Parameter declaration expected." | lint TS1109 15..16 "Expression expected." [bun at 15: "Unexpected >"]
+             "let f = (a: A,,B]) => a;"  ref TS1138 14..15 "Parameter declaration expected." | lint TS1109 14..15 "Expression expected." [bun at 14: "Unexpected ,"]
+       75  TS1138 -> TS1110   (alias 74, attempt 1)
+             "type X = [new ( => A];"  ref TS1138 16..18 "Parameter declaration expected." | lint TS1110 16..18 "Type expected." [bun at 16: "Unexpected =>"]
+             "type X = (...a: A[], : B) => C;"  ref TS1138 21..22 "Parameter declaration expected." | lint TS1110 10..13 "Type expected." [bun at 10: "Unexpected ..."]
+       54  TS1135 -> TS1109   (implements 33, attempt 21)
+             "let v = a ? (b): keyof ( => void => c : d;"  ref TS1135 25..27 "Argument expression expected." | lint TS1109 25..27 "Expression expected." [bun at 25: "Unexpected =>"]
+             "class C implements keyof ( => void {}"  ref TS1135 27..29 "Argument expression expected." | lint TS1109 27..29 "Expression expected." [bun at 27: "Unexpected =>"]
+       47  TS1131 -> TS1110   (alias 43, build 4)
+             "class C { @d m(): ? { return x; } }"  ref TS1131 22..28 "Property or signature expected." | lint TS1110 18..19 "Type expected." [bun at 18: "Unexpected ?"]
+             "type X = { + [ in T]: V };"  ref TS1131 11..12 "Property or signature expected." | lint TS1110 15..17 "Type expected." [bun at 15: "Unexpected in"]
+       33  TS1136 -> TS1110   (iextends 33)
+             "interface I extends { +readonly [ in T]: V } {}"  ref TS1136 22..23 "Property assignment expected." | lint TS1110 34..36 "Type expected." [bun at 34: "Unexpected in"]
+             "interface I extends { +readonly [K in ]: V } {}"  ref TS1136 22..23 "Property assignment expected." | lint TS1110 38..39 "Type expected." [bun at 38: "Unexpected ]"]
+       32  TS1137 -> TS1110   (iextends 32)
+             "interface I extends [: A] {}"  ref TS1137 21..22 "Expression or comma expected." | lint TS1110 21..22 "Type expected." [bun at 21: "Unexpected :"]
+             "interface I extends [?: A] {}"  ref TS1137 21..22 "Expression or comma expected." | lint TS1110 21..22 "Type expected." [bun at 21: "Unexpected ?"]
+        4  TS1139 -> TS1110   (attempt 4)
+             "let v = a ? (b): < = A>(a: T) => T => c : d;"  ref TS1139 19..20 "Type parameter declaration expected." | lint TS1110 19..20 "Type expected." [bun at 19: "Unexpected ="]
+             "let v = a ? (b): <, U>(a: T, b: U) => [T, U] => c : d;"  ref TS1139 18..19 "Type parameter declaration expected." | lint TS1110 18..19 "Type expected." [bun at 18: "Unexpected ,"]
+        3  TS1139 -> TS1109   (attempt 3)
+             "f<<, U>(a: T, b: U) => [T, U]>(x);"  ref TS1139 3..4 "Type parameter declaration expected." | lint TS1109 3..4 "Expression expected." [bun at 3: "Unexpected ,"]
+        2  TS1135 -> TS1110   (iextends 2)
+             "interface I extends keyof ( => void {}"  ref TS1135 28..30 "Argument expression expected." | lint TS1110 28..30 "Type expected." [bun at 28: "Unexpected =>"]
+        1  TS1181 -> TS1109   (attempt 1)
+             "let v = a ? (b): ([: A) => void => c : d;"  ref TS1181 19..20 "Array element destructuring pattern expected." | lint TS1109 19..20 "Expression expected." [bun at 19: "Unexpected :"]
+== KD4 TS1005 for the closing token -> TS1109/TS1110: 6241
+     4699  TS1005 -> TS1110   (build 2729, attempt 736, alias 701, iextends 528, implements 5)
+             "type X = A[;"  ref TS1005 11..12 "']' expected." | lint TS1110 11..12 "Type expected." [bun at 11: "Unexpected ;"]
+             "let x: A[;"  ref TS1005 9..10 "']' expected." | lint TS1110 9..10 "Type expected." [bun at 9: "Unexpected ;"]
+     1542  TS1005 -> TS1109   (attempt 1113, build 315, implements 114)
+             "let v = a ? (b): A[ => c : d;"  ref TS1005 20..22 "']' expected." | lint TS1109 20..22 "Expression expected." [bun at 20: "Unexpected =>"]
+             "f<A[>(x);"  ref TS1005 4..5 "']' expected." | lint TS1109 4..5 "Expression expected." [bun at 4: "Unexpected >"]
+== KD8 a code of the scanner: no entry: 34
+       17  TS1125 -> none   (build 11, attempt 3, alias 1, implements 1, iextends 1)
+             "type X = 0xg;"  ref TS1125 11..11 "Hexadecimal digit expected." | lint TS0 0..0 "" [bun at 9: "Syntax Error"]
+             "let x: 0xg;"  ref TS1125 9..9 "Hexadecimal digit expected." | lint TS0 0..0 "" [bun at 7: "Syntax Error"]
+       17  TS1351 -> none   (build 11, attempt 3, alias 1, implements 1, iextends 1)
+             "type X = 1a;"  ref TS1351 10..11 "An identifier or keyword cannot immediately follow a numeric literal." | lint TS0 0..0 "" [bun at 9: "Syntax Error"]
+             "let x: 1a;"  ref TS1351 8..9 "An identifier or keyword cannot immediately follow a numeric literal." | lint TS0 0..0 "" [bun at 7: "Syntax Error"]
+== NEW another code: 14301
+     3560  TS1138 -> TS1003   (build 2890, attempt 523, implements 146, alias 1)
+             "class C { @d m(a: AB,>) {} }"  ref TS1138 21..22 "Parameter declaration expected." | lint TS1003 21..22 "Identifier expected." [bun at 21: "Expected identifier but found \">\""]
+             "let v = <[new ( => A]>x;"  ref TS1138 16..18 "Parameter declaration expected." | lint TS1003 16..18 "Identifier expected." [bun at 16: "Expected identifier but found \"=>\""]
+     2990  TS1110 -> TS1005   (attempt 2109, build 793, alias 74, implements 10, iextends 4)
+             "let f = (a): keyof => a;"  ref TS1110 19..21 "Type expected." | lint TS1005 11..12 "';' expected." [bun at 11: "Expected \";\" but found \":\""]
+             "type X = keyof<A>;"  ref TS1110 14..15 "Type expected." | lint TS1005 17..18 "'(' expected." [bun at 17: "Expected \"(\" but found \";\""]
+     1805  TS1109 -> TS1005   (iextends 929, implements 603, attempt 153, build 105, alias 15)
+             "class C implements void {}"  ref TS1109 19..23 "Expression expected." | lint TS1005 26..26 "'{' expected." [bun at 26: "Expected \"{\" but found end of file"]
+             "interface I extends [new] {}"  ref TS1109 24..25 "Expression expected." | lint TS1005 24..25 "'(' expected." [bun at 24: "Expected \"(\" but found \"]\""]
+     1578  TS1109 -> TS1110   (iextends 1372, build 89, implements 66, alias 46, attempt 5)
+             "interface I extends A extends infer extends ? 1 : 2 {}"  ref TS1109 44..45 "Expression expected." | lint TS1110 44..45 "Type expected." [bun at 44: "Unexpected ?"]
+             "interface I extends { [K in]: V } {}"  ref TS1109 27..28 "Expression expected." | lint TS1110 27..28 "Type expected." [bun at 27: "Unexpected ]"]
+      813  TS1110 -> TS1109   (attempt 804, build 9)
+             "let v = a ? (b): A | | B => c : d;"  ref TS1110 21..22 "Type expected." | lint TS1109 21..22 "Expression expected." [bun at 21: "Unexpected |"]
+             "let v = a ? (b): A & & B => c : d;"  ref TS1110 21..22 "Type expected." | lint TS1109 21..22 "Expression expected." [bun at 21: "Unexpected &"]
+      553  TS1136 -> TS1003   (implements 291, attempt 199, iextends 63)
+             "class C implements { +readonly [K in T]: V } {}"  ref TS1136 21..22 "Property assignment expected." | lint TS1003 21..22 "Identifier expected." [bun at 21: "Expected identifier but found \"+\""]
+             "let v = a ? (b): { + [K in T]: V } => c : d;"  ref TS1136 19..20 "Property assignment expected." | lint TS1003 19..20 "Identifier expected." [bun at 19: "Expected identifier but found \"+\""]
+      371  TS1005 -> TS1003   (attempt 181, build 106, iextends 54, alias 28, implements 2)
+             "let v = a ? (b): { -readonly a: A } => c : d;"  ref TS1005 29..30 "'[' expected." | lint TS1003 19..20 "Identifier expected." [bun at 19: "Expected identifier but found \"-\""]
+             "let v = a ? (b): A<B, => c : d;"  ref TS1005 22..24 "'>' expected." | lint TS1003 22..24 "Identifier expected." [bun at 22: "Expected identifier but found \"=>\""]
+      328  TS1138 -> TS1005   (attempt 306, alias 14, implements 7, iextends 1)
+             "let f = (a): [new ( => A] => a;"  ref TS1138 20..22 "Parameter declaration expected." | lint TS1005 11..12 "';' expected." [bun at 11: "Expected \";\" but found \":\""]
+             "let v = a ? (b): [a: new ( => A] => c : d;"  ref TS1138 27..29 "Parameter declaration expected." | lint TS1005 19..20 "']' expected." [bun at 19: "Expected \"]\" but found \":\""]
+      257  TS1003 -> TS1005   (attempt 233, implements 17, alias 5, iextends 2)
+             "let f = (a): infer => a;"  ref TS1003 19..21 "Identifier expected." | lint TS1005 11..12 "';' expected." [bun at 11: "Expected \";\" but found \":\""]
+             "let v = a ? (b): [a: infer ] => c : d;"  ref TS1003 27..28 "Identifier expected." | lint TS1005 19..20 "']' expected." [bun at 19: "Expected \"]\" but found \":\""]
+      228  TS1110 -> TS1003   (build 132, attempt 78, alias 18)
+             "let v = a ? (b): keyof. => c : d;"  ref TS1110 22..23 "Type expected." | lint TS1003 24..26 "Identifier expected." [bun at 24: "Expected identifier but found \"=>\""]
+             "type X = unique.;"  ref TS1110 15..16 "Type expected." | lint TS1003 16..17 "Identifier expected." [bun at 16: "Expected identifier but found \";\""]
+      162  TS1359 -> TS1005   (attempt 160, iextends 1, implements 1)
+             "let f = (a): A extends infer extends ? 1 : 2 => a;"  ref TS1359 29..36 "Identifier expected. 'extends' is a reserved word that cannot be used here." | lint TS1005 11..12 "';' expected." [bun at 11: "Expected \";\" but found \":\""]
+             "let f = (a): (...in: A[]) => void => a;"  ref TS1359 17..19 "Identifier expected. 'in' is a reserved word that cannot be used here." | lint TS1005 11..12 "';' expected." [bun at 11: "Expected \";\" but found \":\""]
+      149  TS1131 -> TS1005   (attempt 133, alias 12, build 4)
+             "let f = (a): { a: A,, } => a;"  ref TS1131 20..21 "Property or signature expected." | lint TS1005 11..12 "';' expected." [bun at 11: "Expected \";\" but found \":\""]
+             "let v = a ? (b): { extends a: A } => c : d;"  ref TS1131 19..26 "Property or signature expected." | lint TS1005 27..28 "':' expected." [bun at 27: "Expected \":\" but found \"a\""]
+      148  TS1109 -> TS1003   (iextends 127, implements 18, attempt 3)
+             "interface I extends [typeof] {}"  ref TS1109 27..28 "Expression expected." | lint TS1003 27..28 "Identifier expected." [bun at 27: "Expected identifier but found \"]\""]
+             "let v = a ? (b): @ => c : d;"  ref TS1109 19..21 "Expression expected." | lint TS1003 19..21 "Identifier expected." [bun at 19: "Expected identifier but found \"=>\""]
+      146  TS1011 -> TS1109   (implements 109, attempt 35, build 2)
+             "class C implements A[] {}"  ref TS1011 21..21 "An element access expression should take an argument." | lint TS1109 21..22 "Expression expected." [bun at 21: "Unexpected ]"]
+             "let v = a ? (b): A\n[] => c : d;"  ref TS1011 20..20 "An element access expression should take an argument." | lint TS1109 20..21 "Expression expected." [bun at 20: "Unexpected ]"]
+      130  TS1359 -> TS1110   (alias 126, attempt 4)
+             "type X = (...in: A[]) => void;"  ref TS1359 13..15 "Identifier expected. 'in' is a reserved word that cannot be used here." | lint TS1110 10..13 "Type expected." [bun at 10: "Unexpected ..."]
+             "type X = (...new: A[]) => void;"  ref TS1359 13..16 "Identifier expected. 'new' is a reserved word that cannot be used here." | lint TS1110 10..13 "Type expected." [bun at 10: "Unexpected ..."]
+      124  TS1478 -> TS1003   (build 99, attempt 16, alias 9)
+             "type X = import('x', { with: { : 'import' } });"  ref TS1478 31..32 "Identifier or string literal expected." | lint TS1003 31..32 "Identifier expected." [bun at 31: "Expected identifier but found \":\""]
+             "let x: import('x', { with: { : 'import' } });"  ref TS1478 29..30 "Identifier or string literal expected." | lint TS1003 29..30 "Identifier expected." [bun at 29: "Expected identifier but found \":\""]
+      110  TS1131 -> TS1003   (alias 55, attempt 53, iextends 2)
+             "let v = a ? (b): { a: A,, } => c : d;"  ref TS1131 24..25 "Property or signature expected." | lint TS1003 24..25 "Identifier expected." [bun at 24: "Expected identifier but found \",\""]
+             "type X = { : A };"  ref TS1131 11..12 "Property or signature expected." | lint TS1003 11..12 "Identifier expected." [bun at 11: "Expected identifier but found \":\""]
+      109  TS1005 -> TS1359   (build 88, iextends 12, alias 8, attempt 1)
+             "interface I extends A extends infer in ? 1 : 2 {}"  ref TS1005 36..38 "',' expected." | lint TS1359 36..38 "Identifier expected. 'in' is a reserved word that cannot be used here." [bun at 36: "Expected identifier but found \"in\""]
+             "interface I extends [infer  extends A] {}"  ref TS1005 28..35 "',' expected." | lint TS1359 28..35 "Identifier expected. 'extends' is a reserved word that cannot be used here." [bun at 28: "Expected identifier but found \"extends\""]
+      103  TS1359 -> TS1109   (attempt 103)
+             "let v = a ? (b): (...in: A[]) => void => c : d;"  ref TS1359 21..23 "Identifier expected. 'in' is a reserved word that cannot be used here." | lint TS1109 21..23 "Expression expected." [bun at 21: "Unexpected in"]
+             "f<(...in: A[]) => void>(x);"  ref TS1359 6..8 "Identifier expected. 'in' is a reserved word that cannot be used here." | lint TS1109 3..6 "Expression expected." [bun at 3: "Unexpected ..."]
+       92  TS1003 -> TS1109   (attempt 91, implements 1)
+             "let v = a ? (b): [typeof] => c : d;"  ref TS1003 24..25 "Identifier expected." | lint TS1109 24..25 "Expression expected." [bun at 24: "Unexpected ]"]
+             "let v = a ? (b): typeof => c : d;"  ref TS1003 24..26 "Identifier expected." | lint TS1109 24..26 "Expression expected." [bun at 24: "Unexpected =>"]
+       90  TS2880 -> TS1005   (build 66, attempt 23, alias 1)
+             "let x: import('x', { assert { 'resolution-mode': 'import' } });"  ref TS2880 21..27 "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'." | lint TS1005 28..29 "':' expected." [bun at 28: "Expected \":\" but found \"{\""]
+             "let f = (a): import('x', { assert { 'resolution-mode': 'import' } }) => a;"  ref TS2880 27..33 "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'." | lint TS1005 11..12 "';' expected." [bun at 11: "Expected \";\" but found \":\""]
+       65  TS1139 -> TS1003   (build 60, alias 5)
+             "function f<U extends A,]>() {}"  ref TS1139 23..24 "Type parameter declaration expected." | lint TS1003 23..24 "Identifier expected." [bun at 23: "Expected identifier but found \"]\""]
+             "type X = < = A>(a: T) => T;"  ref TS1139 11..12 "Type parameter declaration expected." | lint TS1003 11..12 "Identifier expected." [bun at 11: "Expected identifier but found \"=\""]
+       51  TS1011 -> TS1005   (iextends 42, implements 9)
+             "interface I extends A\n[] {}"  ref TS1011 23..23 "An element access expression should take an argument." | lint TS1005 22..23 "'{' expected." [bun at 22: "Expected \"{\" but found \"[\""]
+             "class C implements A extends B[] ? C : D {}"  ref TS1011 31..31 "An element access expression should take an argument." | lint TS1005 21..28 "'{' expected." [bun at 21: "Expected \"{\" but found \"extends\""]
+       30  TS1068 -> TS1003   (build 28, implements 2)
+             "class C { @d x: A\n<B>; }"  ref TS1068 18..19 "Unexpected token. A constructor, method, accessor, or property was expected." | lint TS1003 18..19 "Identifier expected." [bun at 18: "Expected identifier but found \"<\""]
+             "class C implements keyof { : A } {}"  ref TS1068 27..28 "Unexpected token. A constructor, method, accessor, or property was expected." | lint TS1003 27..28 "Identifier expected." [bun at 27: "Expected identifier but found \":\""]
+       28  TS1134 -> TS1003   (build 21, attempt 7)
+             "let x: AB,>;"  ref TS1134 10..11 "Variable declaration expected." | lint TS1003 10..11 "Identifier expected." [bun at 10: "Expected identifier but found \">\""]
+             "let v = a ? (b): AB,> => c : d;"  ref TS1134 20..21 "Variable declaration expected." | lint TS1003 20..21 "Identifier expected." [bun at 20: "Expected identifier but found \">\""]
+       28  TS1136 -> TS1005   (iextends 26, implements 2)
+             "class C implements A extends { : infer U } ? U : never {}"  ref TS1136 31..32 "Property assignment expected." | lint TS1005 21..28 "'{' expected." [bun at 21: "Expected \"{\" but found \"extends\""]
+             "interface I extends { +readonly [K  T]: V } {}"  ref TS1136 22..23 "Property assignment expected." | lint TS1005 36..37 "']' expected." [bun at 36: "Expected \"]\" but found \"T\""]
+       22  TS1068 -> TS1005   (build 22)
+             "class C { @d x: A\nextends B ? C : D; }"  ref TS1068 18..25 "Unexpected token. A constructor, method, accessor, or property was expected." | lint TS1005 26..27 "';' expected." [bun at 26: "Expected \";\" but found \"B\""]
+       21  TS1137 -> TS1005   (implements 11, iextends 10)
+             "class C implements [import: A] {}"  ref TS1137 20..26 "Expression or comma expected." | lint TS1005 26..27 "'(' expected." [bun at 26: "Expected \"(\" but found \":\""]
+             "interface I extends [import] {}"  ref TS1137 21..27 "Expression or comma expected." | lint TS1005 27..28 "'(' expected." [bun at 27: "Expected \"(\" but found \"]\""]
+       17  TS1003 -> TS1110   (alias 14, iextends 2, attempt 1)
+             "interface I extends keyof. {}"  ref TS1003 27..28 "Identifier expected." | lint TS1110 25..26 "Type expected." [bun at 25: "Unexpected ."]
+             "type X = A extends (...: infer P) => infer R ? [P, R] : never;"  ref TS1003 23..24 "Identifier expected." | lint TS1110 20..23 "Type expected." [bun at 20: "Unexpected ..."]
+       15  TS1442 -> TS1110   (build 15)
+             "class C { @d x: a is; }"  ref TS1442 18..20 "Expected '=' for property initializer." | lint TS1110 20..21 "Type expected." [bun at 20: "Unexpected ;"]
+             "class C { @d x:  ? B : C; }"  ref TS1442 21..22 "Expected '=' for property initializer." | lint TS1110 17..18 "Type expected." [bun at 17: "Unexpected ?"]
+       15  TS1128 -> TS1005   (build 10, alias 3, implements 2)
+             "class C implements A extends B  { a: C } : { a: D } {}"  ref TS1128 41..42 "Declaration or statement expected." | lint TS1005 21..28 "'{' expected." [bun at 21: "Expected \"{\" but found \"extends\""]
+             "type X =  a?; };"  ref TS1128 14..15 "Declaration or statement expected." | lint TS1005 11..12 "';' expected." [bun at 11: "Expected \";\" but found \"?\""]
+       14  TS1144 -> TS1003   (build 14)
+             "class C { @d m(): A<B>. { return x; } }"  ref TS1144 22..23 "'{' or ';' expected." | lint TS1003 24..25 "Identifier expected." [bun at 24: "Expected identifier but found \"{\""]
+       14  TS1135 -> TS1005   (iextends 13, attempt 1)
+             "interface I extends import('x',  with: { 'resolution-mode': 'import' } }) {}"  ref TS1135 33..37 "Argument expression expected." | lint TS1005 33..37 "'{' expected." [bun at 33: "Expected \"{\" but found \"with\""]
+             "let v = a ? (b): import('x', { with: { 'resolution-mode': 'import' } }, => c : d;"  ref TS1135 72..74 "Argument expression expected." | lint TS1005 72..74 "')' expected." [bun at 72: "Expected \")\" but found \"=>\""]
+       14  TS2880 -> TS1003   (build 11, attempt 2, alias 1)
+             "type X = import('x', { assert: { : 'import' } });"  ref TS2880 23..29 "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'." | lint TS1003 33..34 "Identifier expected." [bun at 33: "Expected identifier but found \":\""]
+             "let x: import('x', { assert: { : 'import' } });"  ref TS2880 21..27 "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'." | lint TS1003 31..32 "Identifier expected." [bun at 31: "Expected identifier but found \":\""]
+       14  TS2880 -> TS1109   (build 11, attempt 3)
+             "let x: import('x', { assert: { 'resolution-mode':  } });"  ref TS2880 21..27 "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'." | lint TS1109 51..52 "Expression expected." [bun at 51: "Unexpected }"]
+             "let v = a ? (b): import('x', { assert: { 'resolution-mode':  } }) => c : d;"  ref TS2880 31..37 "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'." | lint TS1109 61..62 "Expression expected." [bun at 61: "Unexpected }"]
+       12  TS1139 -> TS1359   (build 11, alias 1)
+             "type X = <typeof b>;"  ref TS1139 10..16 "Type parameter declaration expected." | lint TS1359 10..16 "Identifier expected. 'typeof' is a reserved word that cannot be used here." [bun at 10: "Expected identifier but found \"typeof\""]
+             "let x: <typeof b>;"  ref TS1139 8..14 "Type parameter declaration expected." | lint TS1359 8..14 "Identifier expected. 'typeof' is a reserved word that cannot be used here." [bun at 8: "Expected identifier but found \"typeof\""]
+       11  TS1109 -> TS1359   (iextends 11)
+             "interface I extends <typeof b> {}"  ref TS1109 20..21 "Expression expected." | lint TS1359 21..27 "Identifier expected. 'typeof' is a reserved word that cannot be used here." [bun at 21: "Expected identifier but found \"typeof\""]
+             "interface I extends A extends (...a: infer P) => infer  extends B ? P : R {}"  ref TS1109 31..34 "Expression expected." | lint TS1359 56..63 "Identifier expected. 'extends' is a reserved word that cannot be used here." [bun at 56: "Expected identifier but found \"extends\""]
+       10  TS1144 -> TS1110   (build 10)
+             "class C { @d m():  ? B : C { return x; } }"  ref TS1144 23..24 "'{' or ';' expected." | lint TS1110 19..20 "Type expected." [bun at 19: "Unexpected ?"]
+             "class C { @d m():  *a(): A } { return x; } }"  ref TS1144 20..21 "'{' or ';' expected." | lint TS1110 19..20 "Type expected." [bun at 19: "Unexpected *"]
+        9  TS1180 -> TS1003   (attempt 9)
+             "let v = a ? (b): ({ , b }: A) => void => c : d;"  ref TS1180 20..21 "Property destructuring pattern expected." | lint TS1003 20..21 "Identifier expected." [bun at 20: "Expected identifier but found \",\""]
+        8  TS1128 -> TS1109   (build 6, attempt 2)
+             "let v = x as  a?; };"  ref TS1128 18..19 "Declaration or statement expected." | lint TS1109 16..17 "Expression expected." [bun at 16: "Unexpected ;"]
+             "let v = x as  a? };"  ref TS1128 17..18 "Declaration or statement expected." | lint TS1109 17..18 "Expression expected." [bun at 17: "Unexpected }"]
+== NEW no entry for the message of Bun: 4499
+     2973  TS1005 -> none   (iextends 1207, alias 1012, build 410, attempt 321, implements 23)
+             "let x: A<B>.C;"  ref TS1005 11..12 "',' expected." | lint TS0 0..0 "" [bun at 12: "Unexpected C"]
+             "let v = <A<B>.C>x;"  ref TS1005 13..14 "'>' expected." | lint TS0 0..0 "" [bun at 14: "Unexpected C"]
+      334  TS1110 -> none   (build 174, alias 127, attempt 30, iextends 2, implements 1)
+             "type X = -a;"  ref TS1110 9..10 "Type expected." | lint TS0 0..0 "" [bun at 10: "Expected number but found \"a\""]
+             "let x: -a;"  ref TS1110 7..8 "Type expected." | lint TS0 0..0 "" [bun at 8: "Expected number but found \"a\""]
+      329  TS1138 -> none   (alias 174, iextends 152, attempt 3)
+             "type X = <in T>( => T;"  ref TS1138 17..19 "Parameter declaration expected." | lint TS0 0..0 "" [bun at 10: "The modifier \"in\" is not valid here"]
+             "let v = a ? (b): <in T>( => T => c : d;"  ref TS1138 25..27 "Parameter declaration expected." | lint TS0 0..0 "" [bun at 18: "The modifier \"in\" is not valid here"]
+      293  TS1131 -> none   (alias 284, build 8, attempt 1)
+             "type X = { readonly +[K in T]: V };"  ref TS1131 11..19 "Property or signature expected." | lint TS0 0..0 "" [bun at 20: "Unexpected +"]
+             "type X = { a: A;; };"  ref TS1131 16..17 "Property or signature expected." | lint TS0 0..0 "" [bun at 16: "Unexpected ;"]
+      291  TS1109 -> none   (implements 147, iextends 123, attempt 15, build 4, alias 2)
+             "interface I extends [in: A] {}"  ref TS1109 21..23 "Expression expected." | lint TS0 0..0 "" [bun at 21: "Unexpected in"]
+             "interface I extends [delete: A] {}"  ref TS1109 27..28 "Expression expected." | lint TS0 0..0 "" [bun at 21: "Unexpected delete"]
+      104  TS1136 -> none   (iextends 104)
+             "interface I extends { a: A,, } {}"  ref TS1136 27..28 "Property assignment expected." | lint TS0 0..0 "" [bun at 27: "Unexpected ,"]
+             "interface I extends { ; } {}"  ref TS1136 22..23 "Property assignment expected." | lint TS0 0..0 "" [bun at 22: "Unexpected ;"]
+       38  TS1144 -> none   (build 38)
+             "class C { @d m(): A<B>.C { return x; } }"  ref TS1144 22..23 "'{' or ';' expected." | lint TS0 0..0 "" [bun at 23: "Unexpected C"]
+             "class C { @d m(): typeof a<B>.c { return x; } }"  ref TS1144 29..30 "'{' or ';' expected." | lint TS0 0..0 "" [bun at 30: "Unexpected c"]
+       38  TS1137 -> none   (iextends 38)
+             "interface I extends [var: A] {}"  ref TS1137 21..24 "Expression or comma expected." | lint TS0 0..0 "" [bun at 21: "Unexpected var"]
+             "interface I extends [const: A] {}"  ref TS1137 21..26 "Expression or comma expected." | lint TS0 0..0 "" [bun at 21: "Unexpected \"const\""]
+       19  TS1003 -> none   (iextends 16, alias 3)
+             "type X = import(A.);"  ref TS1003 18..19 "Identifier expected." | lint TS0 0..0 "" [bun at 16: "Expected string but found \"A\""]
+             "interface I extends import(A.) {}"  ref TS1003 29..30 "Identifier expected." | lint TS0 0..0 "" [bun at 27: "Expected string but found \"A\""]
+       18  TS1442 -> none   (build 18)
+             "class C { @d x: A<B>.C; }"  ref TS1442 20..21 "Expected '=' for property initializer." | lint TS0 0..0 "" [bun at 21: "Unexpected C"]
+             "class C { @d x: typeof a<B>.c; }"  ref TS1442 27..28 "Expected '=' for property initializer." | lint TS0 0..0 "" [bun at 28: "Unexpected c"]
+       18  TS1135 -> none   (iextends 18)
+             "interface I extends import(, { with: { 'resolution-mode': 'import' } }) {}"  ref TS1135 27..28 "Argument expression expected." | lint TS0 0..0 "" [bun at 27: "Expected string but found \",\""]
+             "interface I extends { a: A\n(: void } {}"  ref TS1135 28..29 "Argument expression expected." | lint TS0 0..0 "" [bun at 28: "Unexpected :"]
+       17  TS1359 -> none   (attempt 16, alias 1)
+             "let v = a ? (b): (...this: A[]) => void => c : d;"  ref TS1359 21..25 "Identifier expected. 'this' is a reserved word that cannot be used here." | lint TS0 0..0 "" [bun at 21: "Invalid binding pattern"]
+             "let v = a ? (b): (...null: A[]) => void => c : d;"  ref TS1359 21..25 "Identifier expected. 'null' is a reserved word that cannot be used here." | lint TS0 0..0 "" [bun at 21: "Invalid binding pattern"]
+       12  TS1139 -> none   (build 11, alias 1)
+             "type X = <!--A;"  ref TS1139 10..11 "Type parameter declaration expected." | lint TS0 0..0 "" [bun at 10: "Unsupported syntax: Legacy HTML comments not implemented yet!"]
+             "let x: <!--A;"  ref TS1139 8..9 "Type parameter declaration expected." | lint TS0 0..0 "" [bun at 8: "Unsupported syntax: Legacy HTML comments not implemented yet!"]
+        4  TS2880 -> none   (alias 4)
+             "type X = import('x', { assert { 'resolution-mode': 'import' } });"  ref TS2880 23..29 "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'." | lint TS0 0..0 "" [bun at 30: "Unexpected {"]
+             "type X = import('x', { assert:  'resolution-mode': 'import' } });"  ref TS2880 23..29 "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'." | lint TS0 0..0 "" [bun at 49: "Unexpected :"]
+        4  TS1128 -> none   (build 4)
+             "let x: ('x')\n.A;"  ref TS1128 13..14 "Declaration or statement expected." | lint TS0 0..0 "" [bun at 14: "Unexpected A"]
+        3  TS1011 -> none   (iextends 3)
+             "interface I extends { [K in T]: V [] {}"  ref TS1011 35..35 "An element access expression should take an argument." | lint TS0 0..0 "" [bun at 37: "Unexpected {"]
+             "interface I extends import()[] {}"  ref TS1011 29..29 "An element access expression should take an argument." | lint TS0 0..0 "" [bun at 27: "Expected string but found \")\""]
+        2  TS1034 -> none   (attempt 1, iextends 1)
+             "f<super>(x);"  ref TS1034 7..8 "'super' must be followed by an argument list or member access." | lint TS0 0..0 "" [bun at 2: "Unexpected \"super\""]
+             "interface I extends super {}"  ref TS1034 26..27 "'super' must be followed by an argument list or member access." | lint TS0 0..0 "" [bun at 20: "Unexpected super"]
+        2  TS1068 -> none   (build 2)
+             "class C { @d x: ('x')\n.A; }"  ref TS1068 22..23 "Unexpected token. A constructor, method, accessor, or property was expected." | lint TS0 0..0 "" [bun at 23: "Unexpected A"]
+== NEW same code and start, other end: 96
+       77  TS1005   (build 59, attempt 14, alias 2, implements 1, iextends 1)
+             "let x: (a: A) >= B;"  ref TS1005 14..15 "'=>' expected." | lint TS1005 14..16 "'=>' expected." [bun at 14: "Expected \"=>\" but found \">=\""]
+             "let v = <(a: A) >= B>x;"  ref TS1005 16..17 "'=>' expected." | lint TS1005 16..18 "'=>' expected." [bun at 16: "Expected \"=>\" but found \">=\""]
+        9  TS1110   (attempt 6, build 3)
+             "let v = <>>x;"  ref TS1110 9..10 "Type expected." | lint TS1110 9..11 "Type expected." [bun at 9: "Unexpected >>"]
+             "function f<U extends A<() => >>() {}"  ref TS1110 29..30 "Type expected." | lint TS1110 29..31 "Type expected." [bun at 29: "Unexpected >>"]
+        8  TS1109   (attempt 8)
+             "f<>>(x);"  ref TS1109 2..3 "Expression expected." | lint TS1109 2..4 "Expression expected." [bun at 2: "Unexpected >>"]
+        2  TS1003   (attempt 1, build 1)
+             "let v = <A<typeof >>x;"  ref TS1003 18..19 "Identifier expected." | lint TS1003 18..20 "Identifier expected." [bun at 18: "Expected identifier but found \">>\""]
+             "function f<U extends A<typeof >>() {}"  ref TS1003 30..31 "Identifier expected." | lint TS1003 30..32 "Identifier expected." [bun at 30: "Expected identifier but found \">>\""]
+== NEW same code at another place: 11972
+    11169  TS1005   (attempt 5773, build 2611, iextends 1225, implements 840, alias 720)
+             "let f = (a): A[ => a;"  ref TS1005 16..18 "']' expected." | lint TS1005 11..12 "';' expected." [bun at 11: "Expected \";\" but found \":\""]
+             "let f = (a): [a.b: A] => a;"  ref TS1005 17..18 "',' expected." | lint TS1005 11..12 "';' expected." [bun at 11: "Expected \";\" but found \":\""]
+      600  TS1110   (build 509, attempt 52, alias 39)
+             "type X = ?;"  ref TS1110 10..11 "Type expected." | lint TS1110 9..10 "Type expected." [bun at 9: "Unexpected ?"]
+             "let x: ?;"  ref TS1110 8..9 "Type expected." | lint TS1110 7..8 "Type expected." [bun at 7: "Unexpected ?"]
+      186  TS1109   (implements 174, attempt 12)
+             "class C implements [await?: A] {}"  ref TS1109 26..27 "Expression expected." | lint TS1109 25..26 "Expression expected." [bun at 25: "Unexpected ?"]
+             "class C implements void extends A ? B : C {}"  ref TS1109 19..23 "Expression expected." | lint TS1109 24..31 "Expression expected." [bun at 24: "Unexpected extends"]
+       17  TS1003   (build 11, attempt 3, alias 2, iextends 1)
+             "interface I extends infer. {}"  ref TS1003 27..28 "Identifier expected." | lint TS1003 25..26 "Identifier expected." [bun at 25: "Expected identifier but found \".\""]
+             "type X =  a.#b;"  ref TS1003 14..14 "Identifier expected." | lint TS1003 12..14 "Identifier expected." [bun at 12: "Expected identifier but found \"#b\""]
+== NEW TS1005 at the same place with another token: 886
+      886  TS1005   (attempt 787, build 49, iextends 36, alias 7, implements 7)
+             "interface I extends (function: A) => void {}"  ref TS1005 29..30 "'(' expected." | lint TS1005 29..30 "')' expected." [bun at 29: "Expected \")\" but found \":\""]
+             "function f<U extends (class: A) => void>() {}"  ref TS1005 27..28 "'{' expected." | lint TS1005 27..28 "')' expected." [bun at 27: "Expected \")\" but found \":\""]
+small.tsx.lint.join.jsonl: 162123 sources that both reject (reference: go)
+class	count	build	attempt	alias	iextends	implements	statement
+KD1 TS1005: the reference asks for `,`	31805	19764	6974	553	1438	3076	0
+KD2 TS1434/1435/1440/1228 -> TS1005	81	62	12	5	0	2	0
+KD3 TS1442/1441/1436/1144 -> TS1005	4942	4940	0	0	0	2	0
+KD4 a list diagnostic -> TS1109/TS1110	508	13	202	119	67	107	0
+KD4 TS1005 for the closing token -> TS1109/TS1110	5982	3044	1590	701	528	119	0
+KD8 a code of the scanner: no entry	32	22	4	2	2	2	0
+NEW another code	15790	4628	6859	442	2682	1179	0
+NEW no entry for the message of Bun	13450	676	9125	1613	1664	372	0
+NEW same code and start, other end	89	63	22	2	1	1	0
+NEW same code at another place	11598	3131	5538	761	1226	942	0
+NEW TS1005 at the same place with another token	877	49	778	7	36	7	0
+SAME code, range and text	76969	60621	6770	4343	892	4343	0
+== KD1 TS1005: the reference asks for `,`: 31805
+    31805  TS1005   (build 19764, attempt 6974, implements 3076, iextends 1438, alias 553)
+             "let f = (a): +1 => a;"  ref TS1005 11..12 "',' expected." | lint TS1005 11..12 "';' expected." [bun at 11: "Expected \";\" but found \":\""]
+             "class C implements A.B.C<D>[] {}"  ref TS1005 27..28 "',' expected." | lint TS1005 27..28 "'{' expected." [bun at 27: "Expected \"{\" but found \"[\""]
+== KD2 TS1434/1435/1440/1228 -> TS1005: 81
+       52  TS1434 -> TS1005   (build 44, attempt 5, implements 2, alias 1)
+             "class C { @d m(): (a: A) => asserts\na { return x; } }"  ref TS1434 36..37 "Unexpected keyword or identifier." | lint TS1005 38..39 "';' expected." [bun at 38: "Expected \";\" but found \"{\""]
+             "type X = A\nB];"  ref TS1434 11..12 "Unexpected keyword or identifier." | lint TS1005 12..13 "';' expected." [bun at 12: "Expected \";\" but found \"]\""]
+       29  TS1228 -> TS1005   (build 18, attempt 7, alias 4)
+             "type X = (a: A) => a\nis B;"  ref TS1228 21..24 "A type predicate is only allowed in return type position for functions and methods." | lint TS1005 24..25 "';' expected." [bun at 24: "Expected \";\" but found \"B\""]
+             "let x: (a: A) => a\nis B;"  ref TS1228 19..22 "A type predicate is only allowed in return type position for functions and methods." | lint TS1005 22..23 "';' expected." [bun at 22: "Expected \";\" but found \"B\""]
+== KD3 TS1442/1441/1436/1144 -> TS1005: 4942
+     3408  TS1144 -> TS1005   (build 3408)
+             "class C { @d m(): A[]] { return x; } }"  ref TS1144 21..22 "'{' or ';' expected." | lint TS1005 21..22 "';' expected." [bun at 21: "Expected \";\" but found \"]\""]
+             "class C { @d m(a: keyof new ) => A) {} }"  ref TS1144 30..32 "'{' or ';' expected." | lint TS1005 28..29 "'(' expected." [bun at 28: "Expected \"(\" but found \")\""]
+     1408  TS1442 -> TS1005   (build 1406, implements 2)
+             "class C { @d x: A[]]; }"  ref TS1442 19..20 "Expected '=' for property initializer." | lint TS1005 19..20 "';' expected." [bun at 19: "Expected \";\" but found \"]\""]
+             "class C implements keyof { a: A  {}"  ref TS1442 33..34 "Expected '=' for property initializer." | lint TS1005 33..34 "';' expected." [bun at 33: "Expected \";\" but found \"{\""]
+      126  TS1441 -> TS1005   (build 126)
+             "class C { @d x: typeof a.b(); }"  ref TS1441 26..27 "Cannot start a function call in a type annotation." | lint TS1005 26..27 "';' expected." [bun at 26: "Expected \";\" but found \"(\""]
+             "class C { @d x: keyof new ()  A; }"  ref TS1441 26..27 "Cannot start a function call in a type annotation." | lint TS1005 30..31 "'=>' expected." [bun at 30: "Expected \"=>\" but found \"A\""]
+== KD4 a list diagnostic -> TS1109/TS1110: 508
+      157  TS1137 -> TS1109   (attempt 75, implements 74, build 6, alias 2)
+             "class C implements [var: A] {}"  ref TS1137 20..23 "Expression or comma expected." | lint TS1109 20..23 "Expression expected." [bun at 20: "Unexpected var"]
+             "class C implements [const: A] {}"  ref TS1137 20..25 "Expression or comma expected." | lint TS1109 20..25 "Expression expected." [bun at 20: "Unexpected const"]
+      105  TS1138 -> TS1109   (attempt 102, build 3)
+             "let f = (a: AB,>) => a;"  ref TS1138 15..16 "Parameter declaration expected." | lint TS1109 15..16 "Expression expected." [bun at 15: "Unexpected >"]
+             "let f = (a: A,,B]) => a;"  ref TS1138 14..15 "Parameter declaration expected." | lint TS1109 14..15 "Expression expected." [bun at 14: "Unexpected ,"]
+       74  TS1138 -> TS1110   (alias 74)
+             "type X = [new ( => A];"  ref TS1138 16..18 "Parameter declaration expected." | lint TS1110 16..18 "Type expected." [bun at 16: "Unexpected =>"]
+             "type X = (...a: A[], : B) => C;"  ref TS1138 21..22 "Parameter declaration expected." | lint TS1110 10..13 "Type expected." [bun at 10: "Unexpected ..."]
+       54  TS1135 -> TS1109   (implements 33, attempt 21)
+             "let v = a ? (b): keyof ( => void => c : d;"  ref TS1135 25..27 "Argument expression expected." | lint TS1109 25..27 "Expression expected." [bun at 25: "Unexpected =>"]
+             "class C implements keyof ( => void {}"  ref TS1135 27..29 "Argument expression expected." | lint TS1109 27..29 "Expression expected." [bun at 27: "Unexpected =>"]
+       47  TS1131 -> TS1110   (alias 43, build 4)
+             "class C { @d m(): ? { return x; } }"  ref TS1131 22..28 "Property or signature expected." | lint TS1110 18..19 "Type expected." [bun at 18: "Unexpected ?"]
+             "type X = { + [ in T]: V };"  ref TS1131 11..12 "Property or signature expected." | lint TS1110 15..17 "Type expected." [bun at 15: "Unexpected in"]
+       33  TS1136 -> TS1110   (iextends 33)
+             "interface I extends { +readonly [ in T]: V } {}"  ref TS1136 22..23 "Property assignment expected." | lint TS1110 34..36 "Type expected." [bun at 34: "Unexpected in"]
+             "interface I extends { +readonly [K in ]: V } {}"  ref TS1136 22..23 "Property assignment expected." | lint TS1110 38..39 "Type expected." [bun at 38: "Unexpected ]"]
+       32  TS1137 -> TS1110   (iextends 32)
+             "interface I extends [: A] {}"  ref TS1137 21..22 "Expression or comma expected." | lint TS1110 21..22 "Type expected." [bun at 21: "Unexpected :"]
+             "interface I extends [?: A] {}"  ref TS1137 21..22 "Expression or comma expected." | lint TS1110 21..22 "Type expected." [bun at 21: "Unexpected ?"]
+        3  TS1139 -> TS1109   (attempt 3)
+             "f<<, U>(a: T, b: U) => [T, U]>(x);"  ref TS1139 3..4 "Type parameter declaration expected." | lint TS1109 3..4 "Expression expected." [bun at 3: "Unexpected ,"]
+        2  TS1135 -> TS1110   (iextends 2)
+             "interface I extends keyof ( => void {}"  ref TS1135 28..30 "Argument expression expected." | lint TS1110 28..30 "Type expected." [bun at 28: "Unexpected =>"]
+        1  TS1181 -> TS1109   (attempt 1)
+             "let v = a ? (b): ([: A) => void => c : d;"  ref TS1181 19..20 "Array element destructuring pattern expected." | lint TS1109 19..20 "Expression expected." [bun at 19: "Unexpected :"]
+== KD4 TS1005 for the closing token -> TS1109/TS1110: 5982
+     4486  TS1005 -> TS1110   (build 2729, alias 701, iextends 528, attempt 523, implements 5)
+             "type X = A[;"  ref TS1005 11..12 "']' expected." | lint TS1110 11..12 "Type expected." [bun at 11: "Unexpected ;"]
+             "let x: A[;"  ref TS1005 9..10 "']' expected." | lint TS1110 9..10 "Type expected." [bun at 9: "Unexpected ;"]
+     1496  TS1005 -> TS1109   (attempt 1067, build 315, implements 114)
+             "let v = a ? (b): A[ => c : d;"  ref TS1005 20..22 "']' expected." | lint TS1109 20..22 "Expression expected." [bun at 20: "Unexpected =>"]
+             "f<A[>(x);"  ref TS1005 4..5 "']' expected." | lint TS1109 4..5 "Expression expected." [bun at 4: "Unexpected >"]
+== KD8 a code of the scanner: no entry: 32
+       16  TS1125 -> none   (build 11, attempt 2, alias 1, implements 1, iextends 1)
+             "type X = 0xg;"  ref TS1125 11..11 "Hexadecimal digit expected." | lint TS0 0..0 "" [bun at 9: "Syntax Error"]
+             "let x: 0xg;"  ref TS1125 9..9 "Hexadecimal digit expected." | lint TS0 0..0 "" [bun at 7: "Syntax Error"]
+       16  TS1351 -> none   (build 11, attempt 2, alias 1, implements 1, iextends 1)
+             "type X = 1a;"  ref TS1351 10..11 "An identifier or keyword cannot immediately follow a numeric literal." | lint TS0 0..0 "" [bun at 9: "Syntax Error"]
+             "let x: 1a;"  ref TS1351 8..9 "An identifier or keyword cannot immediately follow a numeric literal." | lint TS0 0..0 "" [bun at 7: "Syntax Error"]
+== NEW another code: 15790
+     3349  TS1138 -> TS1003   (build 2890, attempt 312, implements 146, alias 1)
+             "class C { @d m(a: AB,>) {} }"  ref TS1138 21..22 "Parameter declaration expected." | lint TS1003 21..22 "Identifier expected." [bun at 21: "Expected identifier but found \">\""]
+             "let v = <A extends new ( => B ? C : D>x;"  ref TS1138 25..27 "Parameter declaration expected." | lint TS1003 25..27 "Identifier expected." [bun at 25: "Expected identifier but found \"=>\""]
+     2918  TS1110 -> TS1005   (attempt 2037, build 793, alias 74, implements 10, iextends 4)
+             "let f = (a): keyof => a;"  ref TS1110 19..21 "Type expected." | lint TS1005 11..12 "';' expected." [bun at 11: "Expected \";\" but found \":\""]
+             "type X = keyof<A>;"  ref TS1110 14..15 "Type expected." | lint TS1005 17..18 "'(' expected." [bun at 17: "Expected \"(\" but found \";\""]
+     2169  TS1003 -> TS1005   (attempt 2141, implements 17, alias 7, build 2, iextends 2)
+             "let v = <A.B.C<D>[]>x;"  ref TS1003 17..18 "Identifier expected." | lint TS1005 17..18 "'>' expected." [bun at 17: "Expected \">\" but found \"[\""]
+             "let f = (a): infer => a;"  ref TS1003 19..21 "Identifier expected." | lint TS1005 11..12 "';' expected." [bun at 11: "Expected \";\" but found \":\""]
+     1732  TS1109 -> TS1005   (iextends 926, implements 537, attempt 149, build 105, alias 15)
+             "class C implements void {}"  ref TS1109 19..23 "Expression expected." | lint TS1005 26..26 "'{' expected." [bun at 26: "Expected \"{\" but found end of file"]
+             "interface I extends [new] {}"  ref TS1109 24..25 "Expression expected." | lint TS1005 24..25 "'(' expected." [bun at 24: "Expected \"(\" but found \"]\""]
+     1522  TS1109 -> TS1110   (iextends 1371, build 89, alias 46, implements 12, attempt 4)
+             "interface I extends A extends infer extends ? 1 : 2 {}"  ref TS1109 44..45 "Expression expected." | lint TS1110 44..45 "Type expected." [bun at 44: "Unexpected ?"]
+             "interface I extends { [K in]: V } {}"  ref TS1109 27..28 "Expression expected." | lint TS1110 27..28 "Type expected." [bun at 27: "Unexpected ]"]
+      812  TS1110 -> TS1109   (attempt 803, build 9)
+             "let v = a ? (b): A | | B => c : d;"  ref TS1110 21..22 "Type expected." | lint TS1109 21..22 "Expression expected." [bun at 21: "Unexpected |"]
+             "let v = a ? (b): A & & B => c : d;"  ref TS1110 21..22 "Type expected." | lint TS1109 21..22 "Expression expected." [bun at 21: "Unexpected &"]
+      553  TS1136 -> TS1003   (implements 291, attempt 199, iextends 63)
+             "class C implements { +readonly [K in T]: V } {}"  ref TS1136 21..22 "Property assignment expected." | lint TS1003 21..22 "Identifier expected." [bun at 21: "Expected identifier but found \"+\""]
+             "let v = a ? (b): { + [K in T]: V } => c : d;"  ref TS1136 19..20 "Property assignment expected." | lint TS1003 19..20 "Identifier expected." [bun at 19: "Expected identifier but found \"+\""]
+      364  TS1005 -> TS1003   (attempt 174, build 106, iextends 54, alias 28, implements 2)
+             "let v = a ? (b): { -readonly a: A } => c : d;"  ref TS1005 29..30 "'[' expected." | lint TS1003 19..20 "Identifier expected." [bun at 19: "Expected identifier but found \"-\""]
+             "let v = a ? (b): A<B, => c : d;"  ref TS1005 22..24 "'>' expected." | lint TS1003 22..24 "Identifier expected." [bun at 22: "Expected identifier but found \"=>\""]
+      328  TS1138 -> TS1005   (attempt 306, alias 14, implements 7, iextends 1)
+             "let f = (a): [new ( => A] => a;"  ref TS1138 20..22 "Parameter declaration expected." | lint TS1005 11..12 "';' expected." [bun at 11: "Expected \";\" but found \":\""]
+             "let v = a ? (b): [a: new ( => A] => c : d;"  ref TS1138 27..29 "Parameter declaration expected." | lint TS1005 19..20 "']' expected." [bun at 19: "Expected \"]\" but found \":\""]
+      216  TS1110 -> TS1003   (build 132, attempt 66, alias 18)
+             "let v = a ? (b): keyof. => c : d;"  ref TS1110 22..23 "Type expected." | lint TS1003 24..26 "Identifier expected." [bun at 24: "Expected identifier but found \"=>\""]
+             "type X = unique.;"  ref TS1110 15..16 "Type expected." | lint TS1003 16..17 "Identifier expected." [bun at 16: "Expected identifier but found \";\""]
+      160  TS1359 -> TS1005   (attempt 158, iextends 1, implements 1)
+             "let f = (a): A extends infer extends ? 1 : 2 => a;"  ref TS1359 29..36 "Identifier expected. 'extends' is a reserved word that cannot be used here." | lint TS1005 11..12 "';' expected." [bun at 11: "Expected \";\" but found \":\""]
+             "let f = (a): (...in: A[]) => void => a;"  ref TS1359 17..19 "Identifier expected. 'in' is a reserved word that cannot be used here." | lint TS1005 11..12 "';' expected." [bun at 11: "Expected \";\" but found \":\""]
+      149  TS1131 -> TS1005   (attempt 133, alias 12, build 4)
+             "let f = (a): { a: A,, } => a;"  ref TS1131 20..21 "Property or signature expected." | lint TS1005 11..12 "';' expected." [bun at 11: "Expected \";\" but found \":\""]
+             "let v = a ? (b): { extends a: A } => c : d;"  ref TS1131 19..26 "Property or signature expected." | lint TS1005 27..28 "':' expected." [bun at 27: "Expected \":\" but found \"a\""]
+      147  TS1109 -> TS1003   (iextends 127, implements 17, attempt 3)
+             "interface I extends [typeof] {}"  ref TS1109 27..28 "Expression expected." | lint TS1003 27..28 "Identifier expected." [bun at 27: "Expected identifier but found \"]\""]
+             "let v = a ? (b): @ => c : d;"  ref TS1109 19..21 "Expression expected." | lint TS1003 19..21 "Identifier expected." [bun at 19: "Expected identifier but found \"=>\""]
+      144  TS1011 -> TS1109   (implements 109, attempt 33, build 2)
+             "class C implements A[] {}"  ref TS1011 21..21 "An element access expression should take an argument." | lint TS1109 21..22 "Expression expected." [bun at 21: "Unexpected ]"]
+             "let v = a ? (b): A\n[] => c : d;"  ref TS1011 20..20 "An element access expression should take an argument." | lint TS1109 20..21 "Expression expected." [bun at 20: "Unexpected ]"]
+      130  TS1359 -> TS1110   (alias 126, attempt 4)
+             "type X = (...in: A[]) => void;"  ref TS1359 13..15 "Identifier expected. 'in' is a reserved word that cannot be used here." | lint TS1110 10..13 "Type expected." [bun at 10: "Unexpected ..."]
+             "type X = (...new: A[]) => void;"  ref TS1359 13..16 "Identifier expected. 'new' is a reserved word that cannot be used here." | lint TS1110 10..13 "Type expected." [bun at 10: "Unexpected ..."]
+      115  TS1478 -> TS1003   (build 99, alias 9, attempt 7)
+             "type X = import('x', { with: { : 'import' } });"  ref TS1478 31..32 "Identifier or string literal expected." | lint TS1003 31..32 "Identifier expected." [bun at 31: "Expected identifier but found \":\""]
+             "let x: import('x', { with: { : 'import' } });"  ref TS1478 29..30 "Identifier or string literal expected." | lint TS1003 29..30 "Identifier expected." [bun at 29: "Expected identifier but found \":\""]
+      110  TS1131 -> TS1003   (alias 55, attempt 53, iextends 2)
+             "let v = a ? (b): { a: A,, } => c : d;"  ref TS1131 24..25 "Property or signature expected." | lint TS1003 24..25 "Identifier expected." [bun at 24: "Expected identifier but found \",\""]
+             "type X = { : A };"  ref TS1131 11..12 "Property or signature expected." | lint TS1003 11..12 "Identifier expected." [bun at 11: "Expected identifier but found \":\""]
+      109  TS1005 -> TS1359   (build 88, iextends 12, alias 8, attempt 1)
+             "interface I extends A extends infer in ? 1 : 2 {}"  ref TS1005 36..38 "',' expected." | lint TS1359 36..38 "Identifier expected. 'in' is a reserved word that cannot be used here." [bun at 36: "Expected identifier but found \"in\""]
+             "interface I extends [infer  extends A] {}"  ref TS1005 28..35 "',' expected." | lint TS1359 28..35 "Identifier expected. 'extends' is a reserved word that cannot be used here." [bun at 28: "Expected identifier but found \"extends\""]
+      103  TS1359 -> TS1109   (attempt 103)
+             "let v = a ? (b): (...in: A[]) => void => c : d;"  ref TS1359 21..23 "Identifier expected. 'in' is a reserved word that cannot be used here." | lint TS1109 21..23 "Expression expected." [bun at 21: "Unexpected in"]
+             "f<(...in: A[]) => void>(x);"  ref TS1359 6..8 "Identifier expected. 'in' is a reserved word that cannot be used here." | lint TS1109 3..6 "Expression expected." [bun at 3: "Unexpected ..."]
+       88  TS1003 -> TS1109   (attempt 87, implements 1)
+             "let v = a ? (b): [typeof] => c : d;"  ref TS1003 24..25 "Identifier expected." | lint TS1109 24..25 "Expression expected." [bun at 24: "Unexpected ]"]
+             "let v = a ? (b): typeof => c : d;"  ref TS1003 24..26 "Identifier expected." | lint TS1109 24..26 "Expression expected." [bun at 24: "Unexpected =>"]
+       84  TS2880 -> TS1005   (build 66, attempt 17, alias 1)
+             "let x: import('x', { assert { 'resolution-mode': 'import' } });"  ref TS2880 21..27 "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'." | lint TS1005 28..29 "':' expected." [bun at 28: "Expected \":\" but found \"{\""]
+             "let f = (a): import('x', { assert { 'resolution-mode': 'import' } }) => a;"  ref TS2880 27..33 "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'." | lint TS1005 11..12 "';' expected." [bun at 11: "Expected \";\" but found \":\""]
+       72  TS1139 -> TS1003   (build 60, attempt 7, alias 5)
+             "let v = <A,]>x;"  ref TS1139 11..12 "Type parameter declaration expected." | lint TS1003 11..12 "Identifier expected." [bun at 11: "Expected identifier but found \"]\""]
+             "function f<U extends A,]>() {}"  ref TS1139 23..24 "Type parameter declaration expected." | lint TS1003 23..24 "Identifier expected." [bun at 23: "Expected identifier but found \"]\""]
+       51  TS1011 -> TS1005   (iextends 42, implements 9)
+             "interface I extends A\n[] {}"  ref TS1011 23..23 "An element access expression should take an argument." | lint TS1005 22..23 "'{' expected." [bun at 22: "Expected \"{\" but found \"[\""]
+             "class C implements A extends B[] ? C : D {}"  ref TS1011 31..31 "An element access expression should take an argument." | lint TS1005 21..28 "'{' expected." [bun at 21: "Expected \"{\" but found \"extends\""]
+       30  TS1068 -> TS1003   (build 28, implements 2)
+             "class C { @d x: A\n<B>; }"  ref TS1068 18..19 "Unexpected token. A constructor, method, accessor, or property was expected." | lint TS1003 18..19 "Identifier expected." [bun at 18: "Expected identifier but found \"<\""]
+             "class C implements keyof { : A } {}"  ref TS1068 27..28 "Unexpected token. A constructor, method, accessor, or property was expected." | lint TS1003 27..28 "Identifier expected." [bun at 27: "Expected identifier but found \":\""]
+       28  TS1134 -> TS1003   (build 21, attempt 7)
+             "let x: AB,>;"  ref TS1134 10..11 "Variable declaration expected." | lint TS1003 10..11 "Identifier expected." [bun at 10: "Expected identifier but found \">\""]
+             "let v = a ? (b): AB,> => c : d;"  ref TS1134 20..21 "Variable declaration expected." | lint TS1003 20..21 "Identifier expected." [bun at 20: "Expected identifier but found \">\""]
+       28  TS1136 -> TS1005   (iextends 26, implements 2)
+             "class C implements A extends { : infer U } ? U : never {}"  ref TS1136 31..32 "Property assignment expected." | lint TS1005 21..28 "'{' expected." [bun at 21: "Expected \"{\" but found \"extends\""]
+             "interface I extends { +readonly [K  T]: V } {}"  ref TS1136 22..23 "Property assignment expected." | lint TS1005 36..37 "']' expected." [bun at 36: "Expected \"]\" but found \"T\""]
+       22  TS1068 -> TS1005   (build 22)
+             "class C { @d x: A\nextends B ? C : D; }"  ref TS1068 18..25 "Unexpected token. A constructor, method, accessor, or property was expected." | lint TS1005 26..27 "';' expected." [bun at 26: "Expected \";\" but found \"B\""]
+       21  TS1137 -> TS1005   (implements 11, iextends 10)
+             "class C implements [import: A] {}"  ref TS1137 20..26 "Expression or comma expected." | lint TS1005 26..27 "'(' expected." [bun at 26: "Expected \"(\" but found \":\""]
+             "interface I extends [import] {}"  ref TS1137 21..27 "Expression or comma expected." | lint TS1005 27..28 "'(' expected." [bun at 27: "Expected \"(\" but found \"]\""]
+       16  TS1003 -> TS1110   (alias 14, iextends 2)
+             "interface I extends keyof. {}"  ref TS1003 27..28 "Identifier expected." | lint TS1110 25..26 "Type expected." [bun at 25: "Unexpected ."]
+             "type X = A extends (...: infer P) => infer R ? [P, R] : never;"  ref TS1003 23..24 "Identifier expected." | lint TS1110 20..23 "Type expected." [bun at 20: "Unexpected ..."]
+       15  TS1442 -> TS1110   (build 15)
+             "class C { @d x: a is; }"  ref TS1442 18..20 "Expected '=' for property initializer." | lint TS1110 20..21 "Type expected." [bun at 20: "Unexpected ;"]
+             "class C { @d x:  ? B : C; }"  ref TS1442 21..22 "Expected '=' for property initializer." | lint TS1110 17..18 "Type expected." [bun at 17: "Unexpected ?"]
+       15  TS17008 -> TS1005   (attempt 11, iextends 4)
+             "interface I extends [<B>] {}"  ref TS17008 22..23 "JSX element 'B' has no corresponding closing tag." | lint TS1005 24..25 "'(' expected." [bun at 24: "Expected \"(\" but found \"]\""]
+             "interface I extends [<B<C>>] {}"  ref TS17008 22..23 "JSX element 'B' has no corresponding closing tag." | lint TS1005 23..24 "'>' expected." [bun at 23: "Expected \">\" but found \"<\""]
+       15  TS1128 -> TS1005   (build 10, alias 3, implements 2)
+             "class C implements A extends B  { a: C } : { a: D } {}"  ref TS1128 41..42 "Declaration or statement expected." | lint TS1005 21..28 "'{' expected." [bun at 21: "Expected \"{\" but found \"extends\""]
+             "type X =  a?; };"  ref TS1128 14..15 "Declaration or statement expected." | lint TS1005 11..12 "';' expected." [bun at 11: "Expected \";\" but found \"?\""]
+       14  TS1144 -> TS1003   (build 14)
+             "class C { @d m(): A<B>. { return x; } }"  ref TS1144 22..23 "'{' or ';' expected." | lint TS1003 24..25 "Identifier expected." [bun at 24: "Expected identifier but found \"{\""]
+       14  TS1135 -> TS1005   (iextends 13, attempt 1)
+             "interface I extends import('x',  with: { 'resolution-mode': 'import' } }) {}"  ref TS1135 33..37 "Argument expression expected." | lint TS1005 33..37 "'{' expected." [bun at 33: "Expected \"{\" but found \"with\""]
+             "let v = a ? (b): import('x', { with: { 'resolution-mode': 'import' } }, => c : d;"  ref TS1135 72..74 "Argument expression expected." | lint TS1005 72..74 "')' expected." [bun at 72: "Expected \")\" but found \"=>\""]
+       13  TS2880 -> TS1003   (build 11, alias 1, attempt 1)
+             "type X = import('x', { assert: { : 'import' } });"  ref TS2880 23..29 "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'." | lint TS1003 33..34 "Identifier expected." [bun at 33: "Expected identifier but found \":\""]
+             "let x: import('x', { assert: { : 'import' } });"  ref TS2880 21..27 "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'." | lint TS1003 31..32 "Identifier expected." [bun at 31: "Expected identifier but found \":\""]
+       13  TS2880 -> TS1109   (build 11, attempt 2)
+             "let x: import('x', { assert: { 'resolution-mode':  } });"  ref TS2880 21..27 "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'." | lint TS1109 51..52 "Expression expected." [bun at 51: "Unexpected }"]
+             "let v = a ? (b): import('x', { assert: { 'resolution-mode':  } }) => c : d;"  ref TS2880 31..37 "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'." | lint TS1109 61..62 "Expression expected." [bun at 61: "Unexpected }"]
+       12  TS1139 -> TS1359   (build 11, alias 1)
+             "type X = <typeof b>;"  ref TS1139 10..16 "Type parameter declaration expected." | lint TS1359 10..16 "Identifier expected. 'typeof' is a reserved word that cannot be used here." [bun at 10: "Expected identifier but found \"typeof\""]
+             "let x: <typeof b>;"  ref TS1139 8..14 "Type parameter declaration expected." | lint TS1359 8..14 "Identifier expected. 'typeof' is a reserved word that cannot be used here." [bun at 8: "Expected identifier but found \"typeof\""]
+       12  TS1109 -> TS1359   (iextends 11, implements 1)
+             "interface I extends <typeof b> {}"  ref TS1109 20..21 "Expression expected." | lint TS1359 21..27 "Identifier expected. 'typeof' is a reserved word that cannot be used here." [bun at 21: "Expected identifier but found \"typeof\""]
+             "interface I extends A extends (...a: infer P) => infer  extends B ? P : R {}"  ref TS1109 31..34 "Expression expected." | lint TS1359 56..63 "Identifier expected. 'extends' is a reserved word that cannot be used here." [bun at 56: "Expected identifier but found \"extends\""]
+       10  TS1144 -> TS1110   (build 10)
+             "class C { @d m():  ? B : C { return x; } }"  ref TS1144 23..24 "'{' or ';' expected." | lint TS1110 19..20 "Type expected." [bun at 19: "Unexpected ?"]
+             "class C { @d m():  *a(): A } { return x; } }"  ref TS1144 20..21 "'{' or ';' expected." | lint TS1110 19..20 "Type expected." [bun at 19: "Unexpected *"]
+        9  TS1180 -> TS1003   (attempt 9)
+             "let v = a ? (b): ({ , b }: A) => void => c : d;"  ref TS1180 20..21 "Property destructuring pattern expected." | lint TS1003 20..21 "Identifier expected." [bun at 20: "Expected identifier but found \",\""]
+== NEW no entry for the message of Bun: 13450
+     7949  TS1109 -> none   (attempt 7480, implements 340, iextends 123, build 4, alias 2)
+             "let v = <'a'>x;"  ref TS1109 8..9 "Expression expected." | lint TS0 0..0 "" [bun at 9: "Expected JSX element name but found \"'a'\""]
+             "let v = <\"a\">x;"  ref TS1109 8..9 "Expression expected." | lint TS0 0..0 "" [bun at 9: "Expected JSX element name but found \"\"a\"\""]
+     2989  TS1005 -> none   (iextends 1207, alias 1012, build 410, attempt 336, implements 24)
+             "let x: A<B>.C;"  ref TS1005 11..12 "',' expected." | lint TS0 0..0 "" [bun at 12: "Unexpected C"]
+             "interface I extends [class: A] {}"  ref TS1005 26..27 "'{' expected." | lint TS0 0..0 "" [bun at 21: "Unexpected class"]
+      667  TS17008 -> none   (attempt 657, implements 4, alias 3, build 3)
+             "let v = <any>x;"  ref TS17008 9..12 "JSX element 'any' has no corresponding closing tag." | lint TS0 0..0 "" [bun at 13: "Syntax Error"]
+             "let v = <unknown>x;"  ref TS17008 9..16 "JSX element 'unknown' has no corresponding closing tag." | lint TS0 0..0 "" [bun at 17: "Syntax Error"]
+      377  TS1003 -> none   (attempt 358, iextends 16, alias 3)
+             "let v = a ? (b): <infer>() => infer => c : d;"  ref TS1003 36..38 "Identifier expected." | lint TS0 0..0 "" [bun at 24: "Syntax Error"]
+             "let v = <a: A }>x;"  ref TS1003 14..15 "Identifier expected." | lint TS0 0..0 "" [bun at 11: "Expected identifier after \"a:\" in namespaced JSX name"]
+      366  TS1138 -> none   (alias 174, iextends 152, attempt 40)
+             "let v = a ? (b): <T>(: T) => T => c : d;"  ref TS1138 21..22 "Parameter declaration expected." | lint TS0 0..0 "" [bun at 20: "Syntax Error"]
+             "type X = <in T>( => T;"  ref TS1138 17..19 "Parameter declaration expected." | lint TS0 0..0 "" [bun at 10: "The modifier \"in\" is not valid here"]
+      323  TS1110 -> none   (build 174, alias 127, attempt 19, iextends 2, implements 1)
+             "type X = -a;"  ref TS1110 9..10 "Type expected." | lint TS0 0..0 "" [bun at 10: "Expected number but found \"a\""]
+             "let x: -a;"  ref TS1110 7..8 "Type expected." | lint TS0 0..0 "" [bun at 8: "Expected number but found \"a\""]
+      293  TS1131 -> none   (alias 284, build 8, attempt 1)
+             "type X = { readonly +[K in T]: V };"  ref TS1131 11..19 "Property or signature expected." | lint TS0 0..0 "" [bun at 20: "Unexpected +"]
+             "type X = { a: A;; };"  ref TS1131 16..17 "Property or signature expected." | lint TS0 0..0 "" [bun at 16: "Unexpected ;"]
+      205  TS1382 -> none   (attempt 204, implements 1)
+             "let v = <>>x;"  ref TS1382 10..11 "Unexpected token. Did you mean `{'>'}` or `&gt;`?" | lint TS0 0..0 "" [bun at 10: "Syntax Error"]
+             "class C implements (<B>) => void {}"  ref TS1382 26..27 "Unexpected token. Did you mean `{'>'}` or `&gt;`?" | lint TS0 0..0 "" [bun at 35: "Unexpected end of file"]
+      104  TS1136 -> none   (iextends 104)
+             "interface I extends { a: A,, } {}"  ref TS1136 27..28 "Property assignment expected." | lint TS0 0..0 "" [bun at 27: "Unexpected ,"]
+             "interface I extends { ; } {}"  ref TS1136 22..23 "Property assignment expected." | lint TS0 0..0 "" [bun at 22: "Unexpected ;"]
+       38  TS1144 -> none   (build 38)
+             "class C { @d m(): A<B>.C { return x; } }"  ref TS1144 22..23 "'{' or ';' expected." | lint TS0 0..0 "" [bun at 23: "Unexpected C"]
+             "class C { @d m(): typeof a<B>.c { return x; } }"  ref TS1144 29..30 "'{' or ';' expected." | lint TS0 0..0 "" [bun at 30: "Unexpected c"]
+       38  TS1137 -> none   (iextends 38)
+             "interface I extends [var: A] {}"  ref TS1137 21..24 "Expression or comma expected." | lint TS0 0..0 "" [bun at 21: "Unexpected var"]
+             "interface I extends [const: A] {}"  ref TS1137 21..26 "Expression or comma expected." | lint TS0 0..0 "" [bun at 21: "Unexpected \"const\""]
+       19  TS1359 -> none   (attempt 18, alias 1)
+             "let v = a ? (b): (...this: A[]) => void => c : d;"  ref TS1359 21..25 "Identifier expected. 'this' is a reserved word that cannot be used here." | lint TS0 0..0 "" [bun at 21: "Invalid binding pattern"]
+             "let v = a ? (b): (...null: A[]) => void => c : d;"  ref TS1359 21..25 "Identifier expected. 'null' is a reserved word that cannot be used here." | lint TS0 0..0 "" [bun at 21: "Invalid binding pattern"]
+       18  TS1442 -> none   (build 18)
+             "class C { @d x: A<B>.C; }"  ref TS1442 20..21 "Expected '=' for property initializer." | lint TS0 0..0 "" [bun at 21: "Unexpected C"]
+             "class C { @d x: typeof a<B>.c; }"  ref TS1442 27..28 "Expected '=' for property initializer." | lint TS0 0..0 "" [bun at 28: "Unexpected c"]
+       18  TS1135 -> none   (iextends 18)
+             "interface I extends import(, { with: { 'resolution-mode': 'import' } }) {}"  ref TS1135 27..28 "Argument expression expected." | lint TS0 0..0 "" [bun at 27: "Expected string but found \",\""]
+             "interface I extends { a: A\n(: void } {}"  ref TS1135 28..29 "Argument expression expected." | lint TS0 0..0 "" [bun at 28: "Unexpected :"]
+       16  TS1139 -> none   (build 11, attempt 4, alias 1)
+             "type X = <!--A;"  ref TS1139 10..11 "Type parameter declaration expected." | lint TS0 0..0 "" [bun at 10: "Unsupported syntax: Legacy HTML comments not implemented yet!"]
+             "let x: <!--A;"  ref TS1139 8..9 "Type parameter declaration expected." | lint TS0 0..0 "" [bun at 8: "Unsupported syntax: Legacy HTML comments not implemented yet!"]
+        9  TS1381 -> none   (attempt 5, build 2, implements 2)
+             "let v = a ? (b):  a?<T>(x: T): T } => c : d;"  ref TS1381 33..34 "Unexpected token. Did you mean `{'}'}` or `&rbrace;`?" | lint TS0 0..0 "" [bun at 23: "Syntax Error"]
+             "let v = x as  a?<T>(x: T): T };"  ref TS1381 29..30 "Unexpected token. Did you mean `{'}'}` or `&rbrace;`?" | lint TS0 0..0 "" [bun at 19: "Syntax Error"]
+        5  TS17014 -> none   (alias 2, build 2, attempt 1)
+             "let v = <>x;"  ref TS17014 7..10 "JSX fragment has no corresponding closing tag." | lint TS0 0..0 "" [bun at 10: "Syntax Error"]
+             "type X = A\n<>;"  ref TS17014 10..13 "JSX fragment has no corresponding closing tag." | lint TS0 0..0 "" [bun at 13: "Syntax Error"]
+        4  TS2880 -> none   (alias 4)
+             "type X = import('x', { assert { 'resolution-mode': 'import' } });"  ref TS2880 23..29 "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'." | lint TS0 0..0 "" [bun at 30: "Unexpected {"]
+             "type X = import('x', { assert:  'resolution-mode': 'import' } });"  ref TS2880 23..29 "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'." | lint TS0 0..0 "" [bun at 49: "Unexpected :"]
+        4  TS1128 -> none   (build 4)
+             "let x: ('x')\n.A;"  ref TS1128 13..14 "Declaration or statement expected." | lint TS0 0..0 "" [bun at 14: "Unexpected A"]
+        3  TS1011 -> none   (iextends 3)
+             "interface I extends { [K in T]: V [] {}"  ref TS1011 35..35 "An element access expression should take an argument." | lint TS0 0..0 "" [bun at 37: "Unexpected {"]
+             "interface I extends import()[] {}"  ref TS1011 29..29 "An element access expression should take an argument." | lint TS0 0..0 "" [bun at 27: "Expected string but found \")\""]
+        2  TS1034 -> none   (attempt 1, iextends 1)
+             "f<super>(x);"  ref TS1034 7..8 "'super' must be followed by an argument list or member access." | lint TS0 0..0 "" [bun at 2: "Unexpected \"super\""]
+             "interface I extends super {}"  ref TS1034 26..27 "'super' must be followed by an argument list or member access." | lint TS0 0..0 "" [bun at 20: "Unexpected super"]
+        2  TS1068 -> none   (build 2)
+             "class C { @d x: ('x')\n.A; }"  ref TS1068 22..23 "Unexpected token. A constructor, method, accessor, or property was expected." | lint TS0 0..0 "" [bun at 23: "Unexpected A"]
+        1  TS17021 -> none   (attempt 1)
+             "let v = <\\u0041>x;"  ref TS17021 9..15 "Unicode escape sequence cannot appear here." | lint TS0 0..0 "" [bun at 9: "Expected JSX element name but found \"\\\""]
+== NEW same code and start, other end: 89
+       71  TS1005   (build 59, attempt 8, alias 2, implements 1, iextends 1)
+             "let x: (a: A) >= B;"  ref TS1005 14..15 "'=>' expected." | lint TS1005 14..16 "'=>' expected." [bun at 14: "Expected \"=>\" but found \">=\""]
+             "function f<U extends A<<C>>>() {}"  ref TS1005 26..27 "'(' expected." | lint TS1005 26..28 "'(' expected." [bun at 26: "Expected \"(\" but found \">>\""]
+        8  TS1109   (attempt 8)
+             "f<>>(x);"  ref TS1109 2..3 "Expression expected." | lint TS1109 2..4 "Expression expected." [bun at 2: "Unexpected >>"]
+        8  TS1110   (attempt 5, build 3)
+             "let v = <A<() => >>x;"  ref TS1110 17..18 "Type expected." | lint TS1110 17..19 "Type expected." [bun at 17: "Unexpected >>"]
+             "function f<U extends A<() => >>() {}"  ref TS1110 29..30 "Type expected." | lint TS1110 29..31 "Type expected." [bun at 29: "Unexpected >>"]
+        2  TS1003   (attempt 1, build 1)
+             "let v = <A<typeof >>x;"  ref TS1003 18..19 "Identifier expected." | lint TS1003 18..20 "Identifier expected." [bun at 18: "Expected identifier but found \">>\""]
+             "function f<U extends A<typeof >>() {}"  ref TS1003 30..31 "Identifier expected." | lint TS1003 30..32 "Identifier expected." [bun at 30: "Expected identifier but found \">>\""]
+== NEW same code at another place: 11598
+    10910  TS1005   (attempt 5514, build 2611, iextends 1225, implements 840, alias 720)
+             "let f = (a): A[ => a;"  ref TS1005 16..18 "']' expected." | lint TS1005 11..12 "';' expected." [bun at 11: "Expected \";\" but found \":\""]
+             "let f = (a): [a.b: A] => a;"  ref TS1005 17..18 "',' expected." | lint TS1005 11..12 "';' expected." [bun at 11: "Expected \";\" but found \":\""]
+      556  TS1110   (build 509, alias 39, attempt 8)
+             "type X = ?;"  ref TS1110 10..11 "Type expected." | lint TS1110 9..10 "Type expected." [bun at 9: "Unexpected ?"]
+             "let x: ?;"  ref TS1110 8..9 "Type expected." | lint TS1110 7..8 "Type expected." [bun at 7: "Unexpected ?"]
+      113  TS1109   (implements 102, attempt 11)
+             "class C implements [await?: A] {}"  ref TS1109 26..27 "Expression expected." | lint TS1109 25..26 "Expression expected." [bun at 25: "Unexpected ?"]
+             "class C implements void extends A ? B : C {}"  ref TS1109 19..23 "Expression expected." | lint TS1109 24..31 "Expression expected." [bun at 24: "Unexpected extends"]
+       19  TS1003   (build 11, attempt 5, alias 2, iextends 1)
+             "interface I extends infer. {}"  ref TS1003 27..28 "Identifier expected." | lint TS1003 25..26 "Identifier expected." [bun at 25: "Expected identifier but found \".\""]
+             "let v = <A...B]>x;"  ref TS1003 10..13 "Identifier expected." | lint TS1003 11..12 "Identifier expected." [bun at 11: "Expected identifier but found \".\""]
+== NEW TS1005 at the same place with another token: 877
+      877  TS1005   (attempt 778, build 49, iextends 36, alias 7, implements 7)
+             "interface I extends (function: A) => void {}"  ref TS1005 29..30 "'(' expected." | lint TS1005 29..30 "')' expected." [bun at 29: "Expected \")\" but found \":\""]
+             "function f<U extends (class: A) => void>() {}"  ref TS1005 27..28 "'{' expected." | lint TS1005 27..28 "')' expected." [bun at 27: "Expected \")\" but found \":\""]
+targeted.ts.lint.join.jsonl: 266 sources that both reject (reference: go)
+class	count	build	attempt	alias	iextends	implements	statement
+KD1 TS1005: the reference asks for `,`	25	0	0	0	0	0	25
+KD2 TS1434/1435/1440/1228 -> TS1005	9	0	0	0	0	0	9
+KD3 TS1442/1441/1436/1144 -> TS1005	2	0	0	0	0	0	2
+KD8 a code of the scanner: no entry	10	0	0	0	0	0	10
+NEW another code	40	0	0	0	0	0	40
+NEW no entry for the message of Bun	17	0	0	0	0	0	17
+NEW same code and start, other end	16	0	0	0	0	0	16
+SAME code, range and text	147	0	0	0	0	0	147
+== KD1 TS1005: the reference asks for `,`: 25
+       25  TS1005   (statement 25)
+             "type A<T => = T;"  ref TS1005 9..11 "',' expected." | lint TS1005 9..11 "'>' expected." [bun at 9: "Expected \">\" but found \"=>\""]
+             "[x as A = 1] = y;"  ref TS1005 8..9 "',' expected." | lint TS1005 8..9 "']' expected." [bun at 8: "Expected \"]\" but found \"=\""]
+== KD2 TS1434/1435/1440/1228 -> TS1005: 9
+        8  TS1434 -> TS1005   (statement 8)
+             "interface\nA {}"  ref TS1434 10..11 "Unexpected keyword or identifier." | lint TS1005 12..13 "';' expected." [bun at 12: "Expected \";\" but found \"{\""]
+        1  TS1228 -> TS1005   (statement 1)
+             "type A = B\nis C;"  ref TS1228 11..14 "A type predicate is only allowed in return type position for functions and methods." | lint TS1005 14..15 "';' expected." [bun at 14: "Expected \";\" but found \"C\""]
+== KD3 TS1442/1441/1436/1144 -> TS1005: 2
+        1  TS1442 -> TS1005   (statement 1)
+             "class C { a: A, b: B }"  ref TS1442 14..15 "Expected '=' for property initializer." | lint TS1005 14..15 "';' expected." [bun at 14: "Expected \";\" but found \",\""]
+        1  TS1436 -> TS1005   (statement 1)
+             "class C { @d a: A @e b: B }"  ref TS1436 18..19 "Decorators must precede the name and all keywords of property declarations." | lint TS1005 18..19 "';' expected." [bun at 18: "Expected \";\" but found \"@\""]
+== KD8 a code of the scanner: no entry: 10
+       10  TS1161 -> none   (statement 10)
+             "const v = <C<A>>x</C>;"  ref TS1161 18..21 "Unterminated regular expression literal." | lint TS0 0..0 "" [bun at 18: "Syntax Error"]
+== NEW another code: 40
+        6  TS1003 -> TS1005   (statement 6)
+             "namespace N. {}"  ref TS1003 13..14 "Identifier expected." | lint TS1005 14..15 "'{' expected." [bun at 14: "Expected \"{\" but found \"}\""]
+             "namespace 'a' {}"  ref TS1003 10..13 "Identifier expected." | lint TS1005 10..13 "';' expected." [bun at 10: "Expected \";\" but found \"'a'\""]
+        5  TS1132 -> TS1003   (statement 5)
+             "enum E { , }"  ref TS1132 9..10 "Enum member expected." | lint TS1003 9..10 "Identifier expected." [bun at 9: "Expected identifier but found \",\""]
+        3  TS2457 -> TS1005   (statement 3)
+             "type void = 1;"  ref TS2457 5..9 "Type alias name cannot be 'void'." | lint TS1005 5..9 "';' expected." [bun at 5: "Expected \";\" but found \"void\""]
+             "type 'a' = 1;"  ref TS2457 5..8 "Type alias name cannot be 'a'." | lint TS1005 5..8 "';' expected." [bun at 5: "Expected \";\" but found \"'a'\""]
+        3  TS1068 -> TS1003   (statement 3)
+             "class C { <T>(x: T): T }"  ref TS1068 10..11 "Unexpected token. A constructor, method, accessor, or property was expected." | lint TS1003 10..11 "Identifier expected." [bun at 10: "Expected identifier but found \"<\""]
+        3  TS1441 -> TS1003   (statement 3)
+             "class C { a: A\n(): void }"  ref TS1441 15..16 "Cannot start a function call in a type annotation." | lint TS1003 15..16 "Identifier expected." [bun at 15: "Expected identifier but found \"(\""]
+        3  TS1357 -> TS1005   (statement 3)
+             "enum E { A\nB }"  ref TS1357 11..12 "An enum member name must be followed by a ',', '=', or '}'." | lint TS1005 11..12 "'}' expected." [bun at 11: "Expected \"}\" but found \"B\""]
+        3  TS1146 -> TS1003   (statement 3)
+             "class C { @d }"  ref TS1146 12..12 "Declaration expected." | lint TS1003 13..14 "Identifier expected." [bun at 13: "Expected identifier but found \"}\""]
+        2  TS1128 -> TS1003   (statement 2)
+             "export type;"  ref TS1128 0..6 "Declaration or statement expected." | lint TS1003 11..12 "Identifier expected." [bun at 11: "Expected identifier but found \";\""]
+        1  TS1109 -> TS1110   (statement 1)
+             "type A<T extends> = T;"  ref TS1109 16..17 "Expression expected." | lint TS1110 16..17 "Type expected." [bun at 16: "Unexpected >"]
+        1  TS1138 -> TS1003   (statement 1)
+             "function f(: A) {}"  ref TS1138 11..12 "Parameter declaration expected." | lint TS1003 11..12 "Identifier expected." [bun at 11: "Expected identifier but found \":\""]
+        1  TS1433 -> TS1005   (statement 1)
+             "class C { constructor(public this: A) {} }"  ref TS1433 22..28 "Neither decorators nor modifiers may be applied to 'this' parameters." | lint TS1005 29..33 "')' expected." [bun at 29: "Expected \")\" but found \"this\""]
+        1  TS1011 -> TS1109   (statement 1)
+             "class C implements A[] {}"  ref TS1011 21..21 "An element access expression should take an argument." | lint TS1109 21..22 "Expression expected." [bun at 21: "Unexpected ]"]
+        1  TS1437 -> TS1005   (statement 1)
+             "namespace {}"  ref TS1437 10..11 "Namespace must be given a name." | lint TS1005 10..11 "';' expected." [bun at 10: "Expected \";\" but found \"{\""]
+        1  TS1443 -> TS1005   (statement 1)
+             "declare module `m` {}"  ref TS1443 15..18 "Module declaration names may only use ' or \" quoted strings." | lint TS1005 19..20 "';' expected." [bun at 19: "Expected \";\" but found \"{\""]
+        1  TS1438 -> TS1003   (statement 1)
+             "interface {}"  ref TS1438 10..11 "Interface must be given a name." | lint TS1003 10..11 "Identifier expected." [bun at 10: "Expected identifier but found \"{\""]
+        1  TS2427 -> TS1003   (statement 1)
+             "interface 'a' {}"  ref TS2427 10..13 "Interface name cannot be 'a'." | lint TS1003 10..13 "Identifier expected." [bun at 10: "Expected identifier but found \"'a'\""]
+        1  TS1003 -> TS1359   (statement 1)
+             "import { type A as if } from 'a';"  ref TS1003 19..21 "Identifier expected." | lint TS1359 19..21 "Identifier expected. 'if' is a reserved word that cannot be used here." [bun at 19: "Expected identifier but found \"if\""]
+        1  TS1146 -> TS1005   (statement 1)
+             "@d[e] class C {}"  ref TS1146 2..2 "Declaration expected." | lint TS1005 2..3 "'class' expected." [bun at 2: "Expected \"class\" but found \"[\""]
+        1  TS1161 -> TS1005   (statement 1)
+             "const v = <div>{x!}</div>;"  ref TS1161 20..25 "Unterminated regular expression literal." | lint TS1005 17..18 "'}' expected." [bun at 17: "Expected \"}\" but found \"!\""]
+        1  TS1136 -> TS1003   (statement 1)
+             "const v = <div>{(a: A): B => a}</div>;"  ref TS1136 16..17 "Property assignment expected." | lint TS1003 16..17 "Identifier expected." [bun at 16: "Expected identifier but found \"(\""]
+== NEW no entry for the message of Bun: 17
+       11  TS1005 -> none   (statement 11)
+             "const v = <in T>(a: T) => a;"  ref TS1005 14..15 "'>' expected." | lint TS0 0..0 "" [bun at 11: "The modifier \"in\" is not valid here"]
+             "(a: A);"  ref TS1005 6..7 "'=>' expected." | lint TS0 0..0 "" [bun at 2: "Unexpected \":\""]
+        3  TS1109 -> none   (statement 3)
+             "import type A from;"  ref TS1109 18..19 "Expression expected." | lint TS0 0..0 "" [bun at 18: "Expected string but found \";\""]
+        2  TS1128 -> none   (statement 2)
+             "export type\nA = 1;"  ref TS1128 0..6 "Declaration or statement expected." | lint TS0 0..0 "" [bun at 11: "Unexpected newline after \"type\""]
+             "export declare a;"  ref TS1128 0..6 "Declaration or statement expected." | lint TS0 0..0 "" [bun at 15: "Unexpected \"a\""]
+        1  TS1110 -> none   (statement 1)
+             "(a: A): => a;"  ref TS1110 8..10 "Type expected." | lint TS0 0..0 "" [bun at 2: "Unexpected \":\""]
+== NEW same code and start, other end: 16
+       16  TS1005   (statement 16)
+             "export as N;"  ref TS1005 10..11 "'namespace' expected." | lint TS1005 10..10 "'namespace' expected." [bun at 10: "Expected \"namespace\" but found \"N\" (token: TIdentifier)"]
+             "export as;"  ref TS1005 9..10 "'namespace' expected." | lint TS1005 9..9 "'namespace' expected." [bun at 9: "Expected \"namespace\" but found \";\" (token: TSemicolon)"]
+targeted.tsx.lint.join.jsonl: 259 sources that both reject (reference: go)
+class	count	build	attempt	alias	iextends	implements	statement
+KD1 TS1005: the reference asks for `,`	23	0	0	0	0	0	23
+KD2 TS1434/1435/1440/1228 -> TS1005	9	0	0	0	0	0	9
+KD3 TS1442/1441/1436/1144 -> TS1005	2	0	0	0	0	0	2
+NEW another code	41	0	0	0	0	0	41
+NEW no entry for the message of Bun	69	0	0	0	0	0	69
+NEW same code and start, other end	16	0	0	0	0	0	16
+SAME code, range and text	99	0	0	0	0	0	99
+== KD1 TS1005: the reference asks for `,`: 23
+       23  TS1005   (statement 23)
+             "type A<T => = T;"  ref TS1005 9..11 "',' expected." | lint TS1005 9..11 "'>' expected." [bun at 9: "Expected \">\" but found \"=>\""]
+             "const v = async <T>(a: T) => a;"  ref TS1005 21..22 "',' expected." | lint TS1005 21..22 "')' expected." [bun at 21: "Expected \")\" but found \":\""]
+== KD2 TS1434/1435/1440/1228 -> TS1005: 9
+        8  TS1434 -> TS1005   (statement 8)
+             "interface\nA {}"  ref TS1434 10..11 "Unexpected keyword or identifier." | lint TS1005 12..13 "';' expected." [bun at 12: "Expected \";\" but found \"{\""]
+        1  TS1228 -> TS1005   (statement 1)
+             "type A = B\nis C;"  ref TS1228 11..14 "A type predicate is only allowed in return type position for functions and methods." | lint TS1005 14..15 "';' expected." [bun at 14: "Expected \";\" but found \"C\""]
+== KD3 TS1442/1441/1436/1144 -> TS1005: 2
+        1  TS1442 -> TS1005   (statement 1)
+             "class C { a: A, b: B }"  ref TS1442 14..15 "Expected '=' for property initializer." | lint TS1005 14..15 "';' expected." [bun at 14: "Expected \";\" but found \",\""]
+        1  TS1436 -> TS1005   (statement 1)
+             "class C { @d a: A @e b: B }"  ref TS1436 18..19 "Decorators must precede the name and all keywords of property declarations." | lint TS1005 18..19 "';' expected." [bun at 18: "Expected \";\" but found \"@\""]
+== NEW another code: 41
+        9  TS1003 -> TS1005   (statement 9)
+             "const v = <readonly A[]>x;"  ref TS1003 21..22 "Identifier expected." | lint TS1005 21..22 "'>' expected." [bun at 21: "Expected \">\" but found \"[\""]
+             "namespace N. {}"  ref TS1003 13..14 "Identifier expected." | lint TS1005 14..15 "'{' expected." [bun at 14: "Expected \"{\" but found \"}\""]
+        5  TS1132 -> TS1003   (statement 5)
+             "enum E { , }"  ref TS1132 9..10 "Enum member expected." | lint TS1003 9..10 "Identifier expected." [bun at 9: "Expected identifier but found \",\""]
+        3  TS2457 -> TS1005   (statement 3)
+             "type void = 1;"  ref TS2457 5..9 "Type alias name cannot be 'void'." | lint TS1005 5..9 "';' expected." [bun at 5: "Expected \";\" but found \"void\""]
+             "type 'a' = 1;"  ref TS2457 5..8 "Type alias name cannot be 'a'." | lint TS1005 5..8 "';' expected." [bun at 5: "Expected \";\" but found \"'a'\""]
+        3  TS1068 -> TS1003   (statement 3)
+             "class C { <T>(x: T): T }"  ref TS1068 10..11 "Unexpected token. A constructor, method, accessor, or property was expected." | lint TS1003 10..11 "Identifier expected." [bun at 10: "Expected identifier but found \"<\""]
+        3  TS1441 -> TS1003   (statement 3)
+             "class C { a: A\n(): void }"  ref TS1441 15..16 "Cannot start a function call in a type annotation." | lint TS1003 15..16 "Identifier expected." [bun at 15: "Expected identifier but found \"(\""]
+        3  TS1357 -> TS1005   (statement 3)
+             "enum E { A\nB }"  ref TS1357 11..12 "An enum member name must be followed by a ',', '=', or '}'." | lint TS1005 11..12 "'}' expected." [bun at 11: "Expected \"}\" but found \"B\""]
+        3  TS1146 -> TS1003   (statement 3)
+             "class C { @d }"  ref TS1146 12..12 "Declaration expected." | lint TS1003 13..14 "Identifier expected." [bun at 13: "Expected identifier but found \"}\""]
+        2  TS1128 -> TS1003   (statement 2)
+             "export type;"  ref TS1128 0..6 "Declaration or statement expected." | lint TS1003 11..12 "Identifier expected." [bun at 11: "Expected identifier but found \";\""]
+        1  TS1109 -> TS1110   (statement 1)
+             "type A<T extends> = T;"  ref TS1109 16..17 "Expression expected." | lint TS1110 16..17 "Type expected." [bun at 16: "Unexpected >"]
+        1  TS1138 -> TS1003   (statement 1)
+             "function f(: A) {}"  ref TS1138 11..12 "Parameter declaration expected." | lint TS1003 11..12 "Identifier expected." [bun at 11: "Expected identifier but found \":\""]
+        1  TS1433 -> TS1005   (statement 1)
+             "class C { constructor(public this: A) {} }"  ref TS1433 22..28 "Neither decorators nor modifiers may be applied to 'this' parameters." | lint TS1005 29..33 "')' expected." [bun at 29: "Expected \")\" but found \"this\""]
+        1  TS1011 -> TS1109   (statement 1)
+             "class C implements A[] {}"  ref TS1011 21..21 "An element access expression should take an argument." | lint TS1109 21..22 "Expression expected." [bun at 21: "Unexpected ]"]
+        1  TS1437 -> TS1005   (statement 1)
+             "namespace {}"  ref TS1437 10..11 "Namespace must be given a name." | lint TS1005 10..11 "';' expected." [bun at 10: "Expected \";\" but found \"{\""]
+        1  TS1443 -> TS1005   (statement 1)
+             "declare module `m` {}"  ref TS1443 15..18 "Module declaration names may only use ' or \" quoted strings." | lint TS1005 19..20 "';' expected." [bun at 19: "Expected \";\" but found \"{\""]
+        1  TS1438 -> TS1003   (statement 1)
+             "interface {}"  ref TS1438 10..11 "Interface must be given a name." | lint TS1003 10..11 "Identifier expected." [bun at 10: "Expected identifier but found \"{\""]
+        1  TS2427 -> TS1003   (statement 1)
+             "interface 'a' {}"  ref TS2427 10..13 "Interface name cannot be 'a'." | lint TS1003 10..13 "Identifier expected." [bun at 10: "Expected identifier but found \"'a'\""]
+        1  TS1003 -> TS1359   (statement 1)
+             "import { type A as if } from 'a';"  ref TS1003 19..21 "Identifier expected." | lint TS1359 19..21 "Identifier expected. 'if' is a reserved word that cannot be used here." [bun at 19: "Expected identifier but found \"if\""]
+        1  TS1146 -> TS1005   (statement 1)
+             "@d[e] class C {}"  ref TS1146 2..2 "Declaration expected." | lint TS1005 2..3 "'class' expected." [bun at 2: "Expected \"class\" but found \"[\""]
+== NEW no entry for the message of Bun: 69
+       36  TS17008 -> none   (statement 36)
+             "const v = <out>x;"  ref TS17008 11..14 "JSX element 'out' has no corresponding closing tag." | lint TS0 0..0 "" [bun at 15: "Syntax Error"]
+             "const v = <in>x;"  ref TS17008 11..13 "JSX element 'in' has no corresponding closing tag." | lint TS0 0..0 "" [bun at 14: "Syntax Error"]
+       12  TS1382 -> none   (statement 12)
+             "const v = <A>>x;"  ref TS1382 13..14 "Unexpected token. Did you mean `{'>'}` or `&gt;`?" | lint TS0 0..0 "" [bun at 13: "Syntax Error"]
+        9  TS1005 -> none   (statement 9)
+             "(a: A);"  ref TS1005 6..7 "'=>' expected." | lint TS0 0..0 "" [bun at 2: "Unexpected \":\""]
+             "(a?);"  ref TS1005 4..5 "'=>' expected." | lint TS0 0..0 "" [bun at 3: "Unexpected )"]
+        8  TS1109 -> none   (statement 8)
+             "const v = <() => void>x;"  ref TS1109 10..11 "Expression expected." | lint TS0 0..0 "" [bun at 11: "Expected JSX element name but found \"(\""]
+             "import type A from;"  ref TS1109 18..19 "Expression expected." | lint TS0 0..0 "" [bun at 18: "Expected string but found \";\""]
+        2  TS1128 -> none   (statement 2)
+             "export type\nA = 1;"  ref TS1128 0..6 "Declaration or statement expected." | lint TS0 0..0 "" [bun at 11: "Unexpected newline after \"type\""]
+             "export declare a;"  ref TS1128 0..6 "Declaration or statement expected." | lint TS0 0..0 "" [bun at 15: "Unexpected \"a\""]
+        1  TS17014 -> none   (statement 1)
+             "const v = <>x;"  ref TS17014 9..12 "JSX fragment has no corresponding closing tag." | lint TS0 0..0 "" [bun at 12: "Syntax Error"]
+        1  TS1110 -> none   (statement 1)
+             "(a: A): => a;"  ref TS1110 8..10 "Type expected." | lint TS0 0..0 "" [bun at 2: "Unexpected \":\""]
+== NEW same code and start, other end: 16
+       16  TS1005   (statement 16)
+             "export as N;"  ref TS1005 10..11 "'namespace' expected." | lint TS1005 10..10 "'namespace' expected." [bun at 10: "Expected \"namespace\" but found \"N\" (token: TIdentifier)"]
+             "export as;"  ref TS1005 9..10 "'namespace' expected." | lint TS1005 9..9 "'namespace' expected." [bun at 9: "Expected \"namespace\" but found \";\" (token: TSemicolon)"]

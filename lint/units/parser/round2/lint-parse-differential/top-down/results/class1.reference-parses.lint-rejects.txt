@@ -1,0 +1,292 @@
+family	small.ts.lint	small.tsx.lint	small.ts.plain	small.tsx.plain	targeted.ts.lint	targeted.tsx.lint	targeted.ts.plain	targeted.tsx.plain
+AWAIT-NAME	76	71	0	0	0	0	0	0
+AWAIT-EXPR	0	0	3	3	0	0	6	5
+RESERVED-NAME-DISCARD	1	1	1	1	0	0	0	0
+OBJ-MEMBER	406	406	408	408	10	10	10	10
+EMPTY-TPARAMS	52	52	52	52	0	0	0	0
+IMPORT-TARGS	25	23	25	23	0	0	0	0
+IMPORT-PRIVATE	16	15	16	15	0	0	0	0
+DOT-LESS-THAN	31	29	31	29	0	0	0	0
+IMPORT-ARG	6	6	6	6	0	0	0	0
+IMPORT-CALL	26	26	26	26	0	0	0	0
+ARROW-NEWLINE	6	6	6	6	2	2	2	2
+JSDOC-TYPE	141	132	141	132	0	0	0	0
+ASSERTS	285	263	285	263	1	1	1	1
+UNIQUE	64	60	64	60	0	0	0	0
+PARAM-MODIFIER-DISCARD	28	28	28	28	0	0	0	0
+VARIANCE-MESSAGE	7	6	7	6	1	0	1	0
+TPARAM-CONSTRAINT-EXPR	8	8	8	8	0	0	0	0
+HERITAGE-CLAUSES	10	10	10	10	9	9	9	9
+TYPE-MEMBER-EXPORT	15	14	15	14	0	0	0	0
+READONLY-PAREN-ARROW	2	2	2	2	0	0	0	0
+PRIVATE-NAME-EXPR	1	1	1	1	0	0	0	0
+SUPER	1	1	1	1	1	1	1	1
+HTML-COMMENT	1	1	1	1	0	0	0	0
+PARAM-MODIFIER	0	0	0	0	9	9	9	9
+THIS-ARROW	0	0	0	0	1	1	1	1
+MODULE-STMT	0	0	0	0	14	14	14	14
+DECLARE-NO-DECL	0	0	0	0	11	11	10	10
+MEMBER-MODIFIER	0	0	0	0	10	10	10	10
+ENUM-MEMBER-NAME	0	0	0	0	4	4	4	4
+NAMESPACE-BODY	0	0	0	0	8	8	8	8
+EXPORT-IMPORT	0	0	0	0	2	2	2	2
+VAR-DECL	0	0	0	0	7	7	7	7
+USING-DECLARE	0	0	0	0	1	1	1	1
+IMPORT-FORMS	0	0	0	0	6	6	6	6
+DECORATOR-TARGET	0	0	0	0	6	6	6	6
+DECORATOR-EXPR	0	0	0	0	3	3	0	0
+DECORATOR-PRIVATE	0	0	0	0	0	0	1	1
+REDECLARED	0	0	0	0	3	3	3	3
+TOTAL	1208	1161	1137	1095	109	108	112	110
+
+== AWAIT-NAME: `await` as a name while top_level_await is on
+   checker of tsc 6.0.2: nothing x85, other: TS1262 x54, other: TS2500 x6, other: TS1262+TS2500 x2
+   messages of the lint parse: TS0 Cannot use "_" or "_" here. x102; TS1005 Expected "_" but found "_" x14; TS1109 Unexpected : x12; TS1109 Unexpected ) x4; TS1109 Unexpected ? x4; TS1109 Unexpected ... x4
+     "class C implements [await] {}"  [small.ts.lint] lint: TS1109 at 25 "Unexpected ]"
+     "let x: (await: A) => void;"  [small.ts.lint] lint: TS0 at 8 "Cannot use \"yield\" or \"await\" here."
+     "class C { @d x: (await: A) => void; }"  [small.ts.lint] lint: TS0 at 17 "Cannot use \"yield\" or \"await\" here."
+   distinct sources: 77
+== AWAIT-EXPR: `await` expression outside an async function while top_level_await is off
+   checker of tsc 6.0.2: nothing x9, other: TS2500 x2, other: TS2499 x2, TS1495 x2, TS2483 x2
+   messages of the lint parse: TS0 "_" can only be used inside an "_" function x13; TS1005 Expected "_" but found "_" x2; TS0 Cannot use "_" outside an async function x2
+     "f<await A>(x);"  [small.ts.plain] lint: TS0 at 8 "\"await\" can only be used inside an \"async\" function"
+     "class C implements [await A] {}"  [small.ts.plain] lint: TS0 at 26 "\"await\" can only be used inside an \"async\" function"
+     "interface I extends [await A] {}"  [small.ts.plain] lint: TS1005 at 27 "Expected \"]\" but found \"A\""
+   distinct sources: 9
+== RESERVED-NAME-DISCARD: a reserved word that names a type, in a type that the Discard sink reads (alias)
+   checker of tsc 6.0.2: nothing x4
+   messages of the lint parse: TS1110 Unexpected extends x4
+     "type X = A extends  extends ? 1 : 2;"  [small.ts.lint] lint: TS1110 at 20 "Unexpected extends"
+   distinct sources: 1
+== OBJ-MEMBER: member of an object literal expression: modifier, `?`, `!`, no body, `= value`
+   checker of tsc 6.0.2: other: TS2500 x1604, TS1255 x12, TS1005 x12, TS1042 x12, other: TS2499 x8, TS1162 x8, TS1024+TS1042 x4, TS1312 x4, TS1042+TS1184 x4
+   messages of the lint parse: TS1005 Expected "_" but found "_" x1648; TS0 Unexpected "_" x8; TS1003 Expected identifier but found "_" x4; TS0 Unexpected * x4; TS0 Unexpected = x4
+     "class C implements { [K in T]?: V } {}"  [small.ts.lint] lint: TS1005 at 29 "Expected \":\" but found \"?\""
+     "class C implements { readonly [K in T]: V } {}"  [small.ts.lint] lint: TS1005 at 30 "Expected \"}\" but found \"[\""
+     "class C implements { readonly [K in T as U]?: V } {}"  [small.ts.lint] lint: TS1005 at 30 "Expected \"}\" but found \"[\""
+   distinct sources: 418
+== EMPTY-TPARAMS: empty type parameter list `<>`
+   checker of tsc 6.0.2: TS1098 x176, other: TS2499 x32
+   messages of the lint parse: TS1003 Expected identifier but found "_" x208
+     "type X = <>() => void;"  [small.ts.lint] lint: TS1003 at 10 "Expected identifier but found \">\""
+     "type X = <>(a: T) => T;"  [small.ts.lint] lint: TS1003 at 10 "Expected identifier but found \">\""
+     "type X = <>\n(a: T) => T;"  [small.ts.lint] lint: TS1003 at 10 "Expected identifier but found \">\""
+   distinct sources: 52
+== IMPORT-TARGS: import type with type arguments and no qualifier: `import('x')<A>`
+   checker of tsc 6.0.2: nothing x96
+   messages of the lint parse: TS1005 Expected "_" but found "_" x92; TS1109 Unexpected >> x4
+     "let x: import('x')<A>;"  [small.ts.lint] lint: TS1005 at 18 "Expected \";\" but found \"<\""
+     "class C { @d x: import('x')<A>; }"  [small.ts.lint] lint: TS1005 at 27 "Expected \";\" but found \"<\""
+     "class C { @d m(a: import('x')<A>) {} }"  [small.ts.lint] lint: TS1005 at 29 "Expected \")\" but found \"<\""
+   distinct sources: 25
+== IMPORT-PRIVATE: import type whose qualifier is a private name: `import('x').#a`
+   checker of tsc 6.0.2: nothing x62
+   messages of the lint parse: TS1003 Expected identifier but found "_" x58; TS1005 Expected "_" but found "_" x4
+     "let x: import('x').#a;"  [small.ts.lint] lint: TS1003 at 19 "Expected identifier but found \"#a\""
+     "class C { @d x: import('x').#a; }"  [small.ts.lint] lint: TS1003 at 28 "Expected identifier but found \"#a\""
+     "class C { @d m(a: import('x').#a) {} }"  [small.ts.lint] lint: TS1003 at 30 "Expected identifier but found \"#a\""
+   distinct sources: 16
+== DOT-LESS-THAN: `.<` before type arguments: `typeof a.<C>`, `import('x').A.<C, D>`
+   checker of tsc 6.0.2: nothing x120
+   messages of the lint parse: TS1003 Expected identifier but found "_" x112; TS1005 Expected "_" but found "_" x8
+     "type X = typeof a.<C>;"  [small.ts.lint] lint: TS1003 at 18 "Expected identifier but found \"<\""
+     "let x: typeof a.<C>;"  [small.ts.lint] lint: TS1003 at 16 "Expected identifier but found \"<\""
+     "class C { @d x: typeof a.<C>; }"  [small.ts.lint] lint: TS1003 at 25 "Expected identifier but found \"<\""
+   distinct sources: 31
+== IMPORT-ARG: import type whose argument is no string literal
+   checker of tsc 6.0.2: other: TS1141 x24
+   messages of the lint parse: TS0 Expected string but found "_" x20; TS1005 Expected "_" but found "_" x4
+     "type X = import(`x`);"  [small.ts.lint] lint: TS0 at 16 "Expected string but found \"`x`\""
+     "type X = import(x);"  [small.ts.lint] lint: TS0 at 16 "Expected string but found \"x\""
+     "type X = import(A.B);"  [small.ts.lint] lint: TS0 at 16 "Expected string but found \"A\""
+   distinct sources: 6
+== IMPORT-CALL: `import()` with no argument in an expression
+   checker of tsc 6.0.2: other: TS2500 x52, other: TS2499 x52
+   messages of the lint parse: TS1109 Unexpected ) x52; TS0 Expected string but found "_" x52
+     "class C implements import() {}"  [small.ts.lint] lint: TS1109 at 26 "Unexpected )"
+     "interface I extends import() {}"  [small.ts.lint] lint: TS0 at 27 "Expected string but found \")\""
+     "class C implements import().A {}"  [small.ts.lint] lint: TS1109 at 26 "Unexpected )"
+   distinct sources: 26
+== ARROW-NEWLINE: line break before `=>`
+   checker of tsc 6.0.2: TS1200 x32
+   messages of the lint parse: TS0 Unexpected newline before "_" x32
+     "let f = (a): A//c\n => a;"  [small.ts.lint] lint: TS0 at 19 "Unexpected newline before \"=>\""
+     "let v = a ? (b): A//c\n => c : d;"  [small.ts.lint] lint: TS0 at 23 "Unexpected newline before \"=>\""
+     "let f = (a): (a: A) => asserts\n => a;"  [small.ts.lint] lint: TS0 at 32 "Unexpected newline before \"=>\""
+   distinct sources: 8
+== JSDOC-TYPE: JSDoc type: `?A`, `A?`, `!A`, `*`
+   checker of tsc 6.0.2: TS17020 x306, TS8020 x62, TS1354+TS17020 x62, TS1005+TS17020 x62, TS17019 x54
+   messages of the lint parse: TS1110 Unexpected ? x242; TS1005 Expected "_" but found "_" x156; TS1110 Unexpected ! x50; TS1110 Unexpected * x50; TS1109 Unexpected ? x24; TS1109 Unexpected ; x8
+     "type X = !A;"  [small.ts.lint] lint: TS1110 at 9 "Unexpected !"
+     "let x: !A;"  [small.ts.lint] lint: TS1110 at 7 "Unexpected !"
+     "class C { @d x: !A; }"  [small.ts.lint] lint: TS1110 at 16 "Unexpected !"
+   distinct sources: 141
+== ASSERTS: `asserts x` outside a return type
+   checker of tsc 6.0.2: other: TS1228 x1100
+   messages of the lint parse: TS1005 Expected "_" but found "_" x962; TS1110 Unexpected ; x60; TS1110 Unexpected ) x48; TS1110 Unexpected > x30
+     "type X = [asserts a];"  [small.ts.lint] lint: TS1005 at 18 "Expected \"]\" but found \"a\""
+     "let x: [asserts a];"  [small.ts.lint] lint: TS1005 at 16 "Expected \"]\" but found \"a\""
+     "class C { @d x: [asserts a]; }"  [small.ts.lint] lint: TS1005 at 25 "Expected \"]\" but found \"a\""
+   distinct sources: 286
+== UNIQUE: `unique` before a type that is not `symbol`
+   checker of tsc 6.0.2: TS1005 x186, TS1005+TS1335 x62
+   messages of the lint parse: TS1005 Expected "_" but found "_" x248
+     "type X = unique A;"  [small.ts.lint] lint: TS1005 at 16 "Expected \";\" but found \"A\""
+     "let x: unique A;"  [small.ts.lint] lint: TS1005 at 14 "Expected \";\" but found \"A\""
+     "class C { @d x: unique A; }"  [small.ts.lint] lint: TS1005 at 23 "Expected \";\" but found \"A\""
+   distinct sources: 64
+== PARAM-MODIFIER-DISCARD: modifier of a parameter in a type that the Discard sink reads (alias)
+   checker of tsc 6.0.2: TS1274+TS1018 x68, TS1090 x16, TS1274 x8, TS1018 x4, TS7061+TS1274+TS1018 x4, TS7061 x4, TS1242 x4, TS1275 x4
+   messages of the lint parse: TS1110 Unexpected in x76; TS1005 Expected "_" but found "_" x36
+     "type X = (static a: A) => void;"  [small.ts.lint] lint: TS1005 at 17 "Expected \")\" but found \"a\""
+     "type X = { [public k: string]: A };"  [small.ts.lint] lint: TS1005 at 19 "Expected \"]\" but found \"k\""
+     "type X = { [ in T]: V };"  [small.ts.lint] lint: TS1110 at 13 "Unexpected in"
+   distinct sources: 28
+== VARIANCE-MESSAGE: `in` / `out` on a type parameter of a function type or an arrow
+   checker of tsc 6.0.2: TS1274 x28
+   messages of the lint parse: TS0 The modifier "_" is not valid here x28
+     "type X = <in T>() => T;"  [small.ts.lint] lint: TS0 at 10 "The modifier \"in\" is not valid here"
+     "type X = <out T>() => T;"  [small.ts.lint] lint: TS0 at 10 "The modifier \"out\" is not valid here"
+     "type X = <in out T>() => T;"  [small.ts.lint] lint: TS0 at 10 "The modifier \"in\" is not valid here"
+   distinct sources: 8
+== TPARAM-CONSTRAINT-EXPR: constraint of a type parameter that starts an expression and no type
+   checker of tsc 6.0.2: TS1110 x32
+   messages of the lint parse: TS0 Expected number but found "_" x8; TS1110 Unexpected / x8; TS1005 Expected "_" but found "_" x8; TS1110 Unexpected + x4; TS1110 Unexpected ~ x4
+     "function f<U extends +1>() {}"  [small.ts.lint] lint: TS1110 at 21 "Unexpected +"
+     "function f<U extends -a>() {}"  [small.ts.lint] lint: TS0 at 22 "Expected number but found \"a\""
+     "function f<U extends -true>() {}"  [small.ts.lint] lint: TS0 at 22 "Expected number but found \"true\""
+   distinct sources: 8
+== HERITAGE-CLAUSES: heritage clauses: empty list, trailing comma, a clause twice or out of order, two base classes, no class name
+   checker of tsc 6.0.2: TS1173 x28, TS1097 x8, TS1097+TS1172 x8, TS1211 x8, TS1097+TS1173 x4, TS1009 x4, TS1175 x4, TS1172 x4, TS1174 x4, other: TS1213 x4
+   messages of the lint parse: TS1005 Expected "_" but found "_" x44; TS1005 Expected "_" but found end of file x12; TS1110 Unexpected extends x8; TS1109 Unexpected extends x4; TS1359 Expected identifier but found "_" x4; TS1003 Expected identifier but found "_" x4
+     "class C implements A extends B {}"  [small.ts.lint] lint: TS1005 at 21 "Expected \"{\" but found \"extends\""
+     "class C implements A extends {}"  [small.ts.lint] lint: TS1005 at 21 "Expected \"{\" but found \"extends\""
+     "class C implements  {}"  [small.ts.lint] lint: TS1005 at 22 "Expected \"{\" but found end of file"
+   distinct sources: 18
+== TYPE-MEMBER-EXPORT: `export` before a member of an object type that the Build sink reads
+   checker of tsc 6.0.2: TS1070 x58
+   messages of the lint parse: TS1005 Expected "_" but found "_" x58
+     "let x: { export a: A };"  [small.ts.lint] lint: TS1005 at 16 "Expected \";\" but found \"a\""
+     "class C { @d x: { export a: A }; }"  [small.ts.lint] lint: TS1005 at 25 "Expected \";\" but found \"a\""
+     "class C { @d m(a: { export a: A }) {} }"  [small.ts.lint] lint: TS1005 at 27 "Expected \";\" but found \"a\""
+   distinct sources: 15
+== READONLY-PAREN-ARROW: `readonly (T)` before `=>` of an arrow function
+   checker of tsc 6.0.2: TS1354 x8
+   messages of the lint parse: TS1005 Expected "_" but found "_" x8
+     "let f = (a): readonly ([]) => a;"  [small.ts.lint] lint: TS1005 at 11 "Expected \";\" but found \":\""
+     "let v = a ? (b): readonly ([]) => c : d;"  [small.ts.lint] lint: TS1005 at 31 "Expected \";\" but found \"=>\""
+   distinct sources: 2
+== PRIVATE-NAME-EXPR: a private name that is an operand
+   checker of tsc 6.0.2: TS18016 x4
+   messages of the lint parse: TS0 Unexpected #a x4
+     "f<#a>(x);"  [small.ts.lint] lint: TS0 at 2 "Unexpected #a"
+   distinct sources: 1
+== SUPER: `super` outside a class
+   checker of tsc 6.0.2: other: TS2660 x8
+   messages of the lint parse: TS0 Unexpected "_" x8
+     "f<super.a>(x);"  [small.ts.lint] lint: TS0 at 2 "Unexpected \"super\""
+     "super.a!;"  [targeted.ts.lint] lint: TS0 at 0 "Unexpected \"super\""
+   distinct sources: 2
+== HTML-COMMENT: `<!--` read as a comment
+   checker of tsc 6.0.2: nothing x4
+   messages of the lint parse: TS0 Unsupported syntax: Legacy HTML comments not implemented yet! x4
+     "f<A<!--B>(x);"  [small.ts.lint] lint: TS0 at 4 "Unsupported syntax: Legacy HTML comments not implemented yet!"
+   distinct sources: 1
+== PARAM-MODIFIER: modifier of a parameter that is no parameter property: static, declare, abstract, accessor; a modifier before a pattern or a rest; a modifier in an arrow
+   checker of tsc 6.0.2: other: TS2369 x8, TS1090 x8, TS1187 x8, TS1242 x4, TS1275 x4, TS1317 x4
+   messages of the lint parse: TS1005 Expected "_" but found "_" x28; TS1003 Expected identifier but found "_" x8
+     "(public a: A) => a;"  [targeted.ts.lint] lint: TS1005 at 8 "Expected \")\" but found \"a\""
+     "(readonly a: A) => a;"  [targeted.ts.lint] lint: TS1005 at 10 "Expected \")\" but found \"a\""
+     "class C { constructor(static a: A) {} }"  [targeted.ts.lint] lint: TS1005 at 29 "Expected \")\" but found \"a\""
+   distinct sources: 9
+== THIS-ARROW: `this` parameter of an arrow function
+   checker of tsc 6.0.2: other: TS2730 x4
+   messages of the lint parse: TS0 Invalid binding pattern x4
+     "(this: A) => a;"  [targeted.ts.lint] lint: TS0 at 1 "Invalid binding pattern"
+   distinct sources: 1
+== MODULE-STMT: `module 'm'`, `namespace` and `global` where Bun reads no declaration
+   checker of tsc 6.0.2: TS1035 x16, TS1235 x16, other: TS2670 x8, TS1035+TS1155 x4, nothing x4, TS1206 x4, TS1234 x4
+   messages of the lint parse: TS1005 Expected "_" but found "_" x52; TS1005 Expected "_" but found "_"m"_" x4
+     "module 'm' {}"  [targeted.ts.lint] lint: TS1005 at 7 "Expected \";\" but found \"'m'\""
+     "module \"m\" { export const a: A }"  [targeted.ts.lint] lint: TS1005 at 7 "Expected \";\" but found \"\"m\"\""
+     "module 'm'"  [targeted.ts.lint] lint: TS1005 at 7 "Expected \";\" but found \"'m'\""
+   distinct sources: 14
+== DECLARE-NO-DECL: `declare` before what is no declaration
+   checker of tsc 6.0.2: nothing x24, TS1079 x4, TS1120 x4, TS1193 x4, TS1108 x4, TS1495 x2
+   messages of the lint parse: TS0 Unexpected "_" x40; TS0 Cannot use "_" with an "_" declaration x2
+     "declare await using a: A;"  [targeted.ts.lint] lint: TS0 at 8 "Cannot use \"declare\" with an \"await using\" declaration"
+     "declare import a from 'a';"  [targeted.ts.lint] lint: TS0 at 8 "Unexpected \"import\""
+     "declare export default a;"  [targeted.ts.lint] lint: TS0 at 8 "Unexpected \"export\""
+   distinct sources: 11
+== MEMBER-MODIFIER: modifiers of a class member or of a statement: order, twice, `accessor` with a method or an accessor, `abstract` before a statement
+   checker of tsc 6.0.2: TS1242 x16, TS1275 x8, TS1030 x8, TS1029 x4, TS1243 x4
+   messages of the lint parse: TS1005 Expected "_" but found "_" x36; TS0 auto-accessor properties cannot have a method body x4
+     "class C { accessor static a: A }"  [targeted.ts.lint] lint: TS1005 at 26 "Expected \";\" but found \"a\""
+     "class C { accessor readonly a: A }"  [targeted.ts.lint] lint: TS1005 at 28 "Expected \";\" but found \"a\""
+     "class C { accessor m() {} }"  [targeted.ts.lint] lint: TS0 at 19 "auto-accessor properties cannot have a method body"
+   distinct sources: 10
+== ENUM-MEMBER-NAME: name of an enum member: computed, number, bigint, private
+   checker of tsc 6.0.2: other: TS2452 x8, other: TS1164 x4, other: TS18024 x4
+   messages of the lint parse: TS1003 Expected identifier but found "_" x16
+     "enum E { [a] = 1 }"  [targeted.ts.lint] lint: TS1003 at 9 "Expected identifier but found \"[\""
+     "enum E { 1 = 1 }"  [targeted.ts.lint] lint: TS1003 at 9 "Expected identifier but found \"1\""
+     "enum E { 1n = 1 }"  [targeted.ts.lint] lint: TS1003 at 9 "Expected identifier but found \"1n\""
+   distinct sources: 4
+== NAMESPACE-BODY: import and export forms inside a namespace or a block
+   checker of tsc 6.0.2: other: TS1194 x8, TS1184 x8, TS1319 x4, other: TS1194+TS2303 x4, other: TS1147 x4, TS1232 x4
+   messages of the lint parse: TS0 Unexpected { x8; TS0 Unexpected export x8; TS0 Unexpected default x4; TS0 Unexpected * x4; TS1005 Expected "_" but found "_" x4; TS0 Unexpected type x4
+     "namespace N { export default 1 }"  [targeted.ts.lint] lint: TS0 at 21 "Unexpected default"
+     "namespace N { export {} }"  [targeted.ts.lint] lint: TS0 at 21 "Unexpected {"
+     "namespace N { export { a } }"  [targeted.ts.lint] lint: TS0 at 21 "Unexpected {"
+   distinct sources: 8
+== EXPORT-IMPORT: `export import` that is no `import =`
+   checker of tsc 6.0.2: TS1191 x8
+   messages of the lint parse: TS1005 Expected "_" but found "_" x4; TS1003 Expected identifier but found "_" x4
+     "export import A from 'a';"  [targeted.ts.lint] lint: TS1005 at 16 "Expected \"=\" but found \"from\""
+     "export import { A } from 'a';"  [targeted.ts.lint] lint: TS1003 at 14 "Expected identifier but found \"{\""
+   distinct sources: 2
+== VAR-DECL: variable declarations: `const` without a value, `!` without a type or with a value, `using` before a pattern, a value of a catch binding
+   checker of tsc 6.0.2: TS1155 x12, TS1264 x4, TS1263 x4, nothing x4, TS1492 x4
+   messages of the lint parse: TS1005 Expected "_" but found "_" x16; TS0 The constant "_" must be initialized x12
+     "declare\nconst x: 1;"  [targeted.ts.lint] lint: TS0 at 14 "The constant \"x\" must be initialized"
+     "let a!;"  [targeted.ts.lint] lint: TS1005 at 6 "Expected \":\" but found \";\""
+     "let a! = 1;"  [targeted.ts.lint] lint: TS1005 at 7 "Expected \":\" but found \"=\""
+   distinct sources: 7
+== USING-DECLARE: `declare using`
+   checker of tsc 6.0.2: TS1491 x4
+   messages of the lint parse: TS0 Cannot use "_" with a "_" declaration x4
+     "declare using a: A;"  [targeted.ts.lint] lint: TS0 at 8 "Cannot use \"declare\" with a \"using\" declaration"
+   distinct sources: 1
+== IMPORT-FORMS: `import type A, { B }`, `import defer a`, `import A = require(a)`, `export { type if }`
+   checker of tsc 6.0.2: TS1363 x8, TS18058 x4, TS18059 x4, other: TS1141 x4, nothing x4
+   messages of the lint parse: TS1005 Expected "_" but found "_" (token: TComma) x8; TS1005 Expected "_" but found "_" (token: TIdentifier) x4; TS1005 Expected "_" but found "_" (token: TOpenBrace) x4; TS0 Expected string but found "_" x4; TS1359 Expected identifier but found "_" x4
+     "import type A, { B } from 'a';"  [targeted.ts.lint] lint: TS1005 at 13 "Expected \"from\" but found \",\" (token: TComma)"
+     "import type A, * as B from 'a';"  [targeted.ts.lint] lint: TS1005 at 13 "Expected \"from\" but found \",\" (token: TComma)"
+     "import defer a from 'a';"  [targeted.ts.lint] lint: TS1005 at 13 "Expected \"from\" but found \"a\" (token: TIdentifier)"
+   distinct sources: 6
+== DECORATOR-TARGET: decorator before what is no class: a statement, a constructor
+   checker of tsc 6.0.2: TS1206 x24
+   messages of the lint parse: TS1005 Expected "_" but found "_" x20; TS0 TypeScript does not allow decorators on class constructors x4
+     "@d interface I {}"  [targeted.ts.lint] lint: TS1005 at 3 "Expected \"class\" but found \"interface\""
+     "@d type T = 1;"  [targeted.ts.lint] lint: TS1005 at 3 "Expected \"class\" but found \"type\""
+     "@d enum E {}"  [targeted.ts.lint] lint: TS1005 at 3 "Expected \"class\" but found \"enum\""
+   distinct sources: 6
+== DECORATOR-EXPR: decorator expression that the standard grammar refuses (standard_decorators on)
+   checker of tsc 6.0.2: TS1497 x6
+   messages of the lint parse: TS0 Optional chaining is not allowed in decorator expressions; wrap the expression in parentheses to use it as a decorator x2; TS1005 Expected "_" but found "_" x2; TS1359 Expected identifier but found "_" x2
+     "@d?.e class C {}"  [targeted.ts.lint] lint: TS0 at 2 "Optional chaining is not allowed in decorator expressions; wrap the expression in parentheses to use it as a decorator"
+     "@d`e` class C {}"  [targeted.ts.lint] lint: TS1005 at 2 "Expected \"class\" but found \"`e`\""
+     "@new d class C {}"  [targeted.ts.lint] lint: TS1359 at 1 "Expected identifier but found \"new\""
+   distinct sources: 3
+== DECORATOR-PRIVATE: decorator before a private member (standard_decorators off)
+   checker of tsc 6.0.2: nothing x2
+   messages of the lint parse: TS1003 Expected identifier but found "_" x2
+     "class C { @d #a: string }"  [targeted.ts.plain] lint: TS1003 at 13 "Expected identifier but found \"#a\""
+   distinct sources: 1
+== REDECLARED: a name declared twice: the parse pass reports it
+   checker of tsc 6.0.2: other: TS2567 x8, other: TS2300 x4
+   messages of the lint parse: TS0 "_" has already been declared x12
+     "enum E {} class E {}"  [targeted.ts.lint] lint: TS0 at 16 "\"E\" has already been declared"
+     "enum E {} let E;"  [targeted.ts.lint] lint: TS0 at 14 "\"E\" has already been declared"
+     "namespace N { export const a = 1 } let N;"  [targeted.ts.lint] lint: TS0 at 39 "\"N\" has already been declared"
+   distinct sources: 3

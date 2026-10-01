@@ -1,0 +1,7 @@
+corpus (lists): files 2, with a source ending 0, of those with a run of 2+ comment lines 0 (0 runs), other files with such a run 0, files with a marker 0 {}, files with # and 3+ digits 0
+corpus/baselines/typescript: files 9056, with a source ending 0, of those with a run of 2+ comment lines 0 (0 runs), other files with such a run 683, files with a marker 19 {'TODO': 26, 'FIXME': 5}, files with # and 3+ digits 254
+corpus/baselines/typescript-go: files 675, with a source ending 0, of those with a run of 2+ comment lines 0 (0 runs), other files with such a run 139, files with a marker 9 {'TODO': 20}, files with # and 3+ digits 34
+corpus/cases/compiler: files 6537, with a source ending 6537, of those with a run of 2+ comment lines 4367 (5322 runs), other files with such a run 0, files with a marker 12 {'TODO': 11, 'XXX': 4, 'FIXME': 1}, files with # and 3+ digits 368
+corpus/cases/conformance: files 5908, with a source ending 5908, of those with a run of 2+ comment lines 3832 (5231 runs), other files with such a run 0, files with a marker 17 {'FIXME': 4, 'TODO': 28}, files with # and 3+ digits 179
+corpus/lib: files 4, with a source ending 4, of those with a run of 2+ comment lines 3 (578 runs), other files with such a run 0, files with a marker 2 {'TODO': 9}, files with # and 3+ digits 0
+outside corpus/ (runner, fixtures, scripts): files 50, with a source ending 34, of those with a run of 2+ comment lines 4 (17 runs), other files with such a run 2, files with a marker 0 {}, files with # and 3+ digits 0

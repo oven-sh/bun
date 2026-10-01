@@ -1,0 +1,172 @@
+family	small.ts.lint	small.tsx.lint	small.ts.plain	small.tsx.plain	targeted.ts.lint	targeted.tsx.lint	targeted.ts.plain	targeted.tsx.plain
+TS1477	22	22	22	22	6	6	6	6
+TS2880	17	16	17	16	1	1	1	1
+TS1034	2	2	2	2	0	0	0	0
+INTERFACE-EXTENDS	1738	1735	1737	1734	3	3	3	3
+CLASS-IMPLEMENTS	121	118	121	118	1	1	1	1
+ALIAS-DISCARD	335	335	335	335	0	0	0	0
+IS-PREDICATE	232	212	232	212	1	1	1	1
+TPARAM-CONSTRAINT-RESERVED	3	3	3	3	0	0	0	0
+ASSIGN-TARGET	0	0	0	0	2	2	2	2
+DEFINITE-BANG	0	0	0	0	7	7	7	7
+TS1357	0	0	0	0	1	1	1	1
+EXPORT-TYPE-AS	0	0	0	0	3	3	3	3
+TUPLE-RESERVED-WORD	420	392	420	392	0	0	0	0
+INFER-POSTFIX	30	28	30	28	0	0	0	0
+OPERATOR-FN	60	56	60	56	0	0	0	0
+OPERATOR-NAME	269	254	269	254	0	0	0	0
+TARGS-AFTER-TYPE	22	22	22	22	0	0	0	0
+IMPORT-ATTRIBUTES	3	3	3	3	0	0	0	0
+TUPLE-EMPTY-ELEMENT	6	6	6	6	0	0	0	0
+ATTEMPT-OTHER	27	27	26	26	0	0	0	0
+TOTAL	3307	3231	3305	3229	25	25	25	25
+
+== TS1477: instantiation expression before a property access: `a<b>.c`
+   first diagnostic of typescript-go: TS1477 An instantiation expression cannot be followed by a property access. x76; TS1005 ';' expected. x20; TS1109 Expression expected. x16
+   contexts: targ x28, alias x20, heritage x20, iextends x20, 02-expressions x20, 04-classes x4
+     "type X = A<B>.C;"  [small.ts.lint] go: TS1005 at 13..14 "';' expected."
+     "f<A<B>.C>(x);"  [small.ts.lint] go: TS1477 at 3..6 "An instantiation expression cannot be followed by a property access."
+     "class C implements typeof a<B>.c {}"  [small.ts.lint] go: TS1109 at 19..25 "Expression expected."
+   distinct sources: 28
+== TS2880: `assert` where import attributes take `with`
+   first diagnostic of typescript-go: TS2880 Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'. x70
+   contexts: alias x8, var x4, field x4, param x4, ctor x4, ret x4, fnparam x4, fnret x4, arrowparam x4, arrowret x4, ternary x4, as x4, satisfies x4, targ x4, tparam x4, 06-imports-exports x4, angle x2
+     "type X = import('x', { assert: { 'resolution-mode': 'import' } });"  [small.ts.lint] go: TS2880 at 23..29 "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'." (tsc parses)
+     "let x: import('x', { assert: { 'resolution-mode': 'import' } });"  [small.ts.lint] go: TS2880 at 21..27 "Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'." (tsc parses)
+   distinct sources: 18
+== TS1034: `super` without `.`, `[` or `(`
+   first diagnostic of typescript-go: TS1034 'super' must be followed by an argument list or member access. x8
+   contexts: tparam x4, heritage x4
+     "function f<U extends super>() {}"  [small.ts.lint] go: TS1034 at 26..27 "'super' must be followed by an argument list or member access."
+     "class C implements super {}"  [small.ts.lint] go: TS1034 at 25..26 "'super' must be followed by an argument list or member access."
+   distinct sources: 2
+== INTERFACE-EXTENDS: entry of an interface `extends` list that is no expression with type arguments (read as a type by the Discard sink)
+   first diagnostic of typescript-go: TS1005 ',' expected. x2826; TS1109 Expression expected. x2142; TS1005 ')' expected. x760; TS1005 ':' expected. x376; TS1011 An element access expression should take an argument. x268; TS1136 Property assignment expected. x268; TS1005 ']' expected. x152; TS1005 '(' expected. x64
+   contexts: iextends x6944, 05-declarations x12
+     "interface I extends void {}"  [small.ts.lint] go: TS1109 at 20..24 "Expression expected."
+     "interface I extends -1 {}"  [small.ts.lint] go: TS1109 at 20..21 "Expression expected."
+     "interface I extends `${infer U}` {}"  [small.ts.lint] go: TS1005 at 29..30 "'}' expected."
+     "interface I extends A[] {}"  [small.ts.lint] go: TS1011 at 22..22 "An element access expression should take an argument."
+     "interface I extends [import: A] {}"  [small.ts.lint] go: TS1137 at 21..27 "Expression or comma expected."
+     "interface I extends { +readonly [K in T]: V } {}"  [small.ts.lint] go: TS1136 at 22..23 "Property assignment expected."
+   distinct sources: 1738
+== CLASS-IMPLEMENTS: entry of a class `implements` list that is no expression with type arguments (read as a type)
+   first diagnostic of typescript-go: TS1109 Expression expected. x456; TS1003 Identifier expected. x12; TS1005 '(' expected. x8; TS1005 '{' expected. x4; TS1005 ',' expected. x2
+   contexts: heritage x478, 04-classes x4
+     "class C implements -1 {}"  [small.ts.lint] go: TS1109 at 19..20 "Expression expected."
+     "class C implements - 1 {}"  [small.ts.lint] go: TS1109 at 19..20 "Expression expected."
+     "class C implements function {}"  [small.ts.lint] go: TS1005 at 28..29 "'(' expected."
+     "class C implements A.<B> {}"  [small.ts.lint] go: TS1003 at 21..22 "Identifier expected."
+   distinct sources: 122
+== ALIAS-DISCARD: type of a type alias, read by the Discard sink
+   first diagnostic of typescript-go: TS1131 Property or signature expected. x840; TS1005 ';' expected. x160; TS1110 Type expected. x144; TS1005 ':' expected. x36; TS1005 '(' expected. x32; TS1005 ',' expected. x24; TS1005 '?' expected. x24; TS1005 '[' expected. x24
+   contexts: alias x1340
+     "type X = unique;"  [small.ts.lint] go: TS1110 at 15..16 "Type expected."
+     "type X = unique.A;"  [small.ts.lint] go: TS1110 at 15..16 "Type expected."
+     "type X = intrinsic<A>;"  [small.ts.lint] go: TS1005 at 18..19 "';' expected."
+     "type X = A | () => void;"  [small.ts.lint] go: TS1385 at 12..23 "Function type notation must be parenthesized when used in a union type."
+     "type X = A | new () => B;"  [small.ts.lint] go: TS1386 at 12..24 "Constructor type notation must be parenthesized when used in a union type."
+     "type X = { + [K in T]: V };"  [small.ts.lint] go: TS1131 at 11..12 "Property or signature expected."
+   distinct sources: 335
+== IS-PREDICATE: `x is T` outside a return type
+   first diagnostic of typescript-go: TS1005 ',' expected. x614; TS1442 Expected '=' for property initializer. x72; TS1005 ';' expected. x68; TS1005 ')' expected. x54; TS1110 Type expected. x42; TS1005 '>' expected. x34; TS1144 '{' or ';' expected. x8
+   contexts: var x80, field x80, param x80, ctor x80, fnparam x80, arrowparam x80, as x80, satisfies x80, targ x80, tparam x80, angle x40, ret x12, fnret x12, arrowret x12, ternary x12, 07-decorator-metadata x4
+     "let x: [a is A];"  [small.ts.lint] go: TS1005 at 10..12 "',' expected."
+     "class C { @d x: [a is A]; }"  [small.ts.lint] go: TS1005 at 19..21 "',' expected."
+     "class C { @d x: a is A; }"  [small.ts.lint] go: TS1442 at 18..20 "Expected '=' for property initializer."
+     "class C { @d m(): a is a is A { return x; } }"  [small.ts.lint] go: TS1144 at 25..27 "'{' or ';' expected."
+     "let x: asserts is is ;"  [small.ts.lint] go: TS1110 at 21..22 "Type expected."
+   distinct sources: 233
+== TPARAM-CONSTRAINT-RESERVED: constraint of a type parameter that is a reserved word which starts an expression
+   first diagnostic of typescript-go: TS1109 Expression expected. x8; TS1005 '{' expected. x4
+   contexts: tparam x12
+     "function f<U extends  in>() {}"  [small.ts.lint] go: TS1109 at 22..24 "Expression expected."
+     "function f<U extends  class>() {}"  [small.ts.lint] go: TS1005 at 27..28 "'{' expected."
+   distinct sources: 3
+== ASSIGN-TARGET: assignment whose target is no left-hand side: `a<b>>=c`
+   first diagnostic of typescript-go: TS1005 ';' expected. x8
+   contexts: 02-expressions x8
+     "a<b>>=c;"  [targeted.ts.lint] go: TS1005 at 3..6 "';' expected."
+     "a<b>>>=c;"  [targeted.ts.lint] go: TS1005 at 3..7 "';' expected."
+   distinct sources: 2
+== DEFINITE-BANG: `!` after a parameter of an arrow, a pattern, a `for` binding, a method name; `?` after an accessor name
+   first diagnostic of typescript-go: TS1005 ',' expected. x12; TS1005 ')' expected. x4; TS1005 ';' expected. x4; TS1441 Cannot start a function call in a type annotation. x4; TS1005 '(' expected. x4
+   contexts: 05-declarations x12, 03-arrows-functions x8, 04-classes x8
+     "(a!: A) => a;"  [targeted.ts.lint] go: TS1005 at 3..4 "')' expected."
+     "(a!) => a;"  [targeted.ts.lint] go: TS1005 at 5..7 "';' expected."
+     "class C { m!(): void {} }"  [targeted.ts.lint] go: TS1441 at 12..13 "Cannot start a function call in a type annotation."
+   distinct sources: 7
+== TS1357: enum member followed by neither `,`, `=` nor `}`
+   first diagnostic of typescript-go: TS1357 An enum member name must be followed by a ',', '=', or '}'. x4
+   contexts: 05-declarations x4
+     "enum E { A;B }"  [targeted.ts.lint] go: TS1357 at 10..11 "An enum member name must be followed by a ',', '=', or '}'."
+   distinct sources: 1
+== EXPORT-TYPE-AS: `export type as = 1`, `declare namespace N;`, `export declare;`
+   first diagnostic of typescript-go: TS1005 '{' expected. x8; TS1128 Declaration or statement expected. x4
+   contexts: 05-declarations x8, 01-contextual-keywords x4
+     "export type as = 1;"  [targeted.ts.lint] go: TS1005 at 12..14 "'{' expected."
+     "declare namespace N;"  [targeted.ts.lint] go: TS1005 at 19..20 "'{' expected."
+     "export declare;"  [targeted.ts.lint] go: TS1128 at 0..6 "Declaration or statement expected."
+   distinct sources: 3
+== TUPLE-RESERVED-WORD: tuple element that starts with a reserved word that starts no type
+   first diagnostic of typescript-go: TS1110 Type expected. x1320; TS1137 Expression or comma expected. x112; TS1005 ',' expected. x96; TS1109 Expression expected. x64; TS1005 '{' expected. x32
+   contexts: var x112, field x112, param x112, ctor x112, ret x112, fnparam x112, fnret x112, arrowparam x112, arrowret x112, ternary x112, as x112, satisfies x112, targ x112, tparam x112, angle x56
+     "let x: [in: A];"  [small.ts.lint] go: TS1110 at 8..10 "Type expected."
+     "class C { @d x: [in: A]; }"  [small.ts.lint] go: TS1110 at 17..19 "Type expected."
+     "let f = (a): [in: A] => a;"  [small.ts.lint] go: TS1005 at 11..12 "',' expected."
+     "let v = a ? (b): [in: A] => c : d;"  [small.ts.lint] go: TS1109 at 18..20 "Expression expected."
+     "let v = a ? (b): [var: A] => c : d;"  [small.ts.lint] go: TS1137 at 18..21 "Expression or comma expected."
+   distinct sources: 420
+== INFER-POSTFIX: `infer U[]`: a postfix after the type parameter of `infer`
+   first diagnostic of typescript-go: TS1005 ',' expected. x66; TS1005 '?' expected. x46; TS1005 ';' expected. x4
+   contexts: var x8, field x8, param x8, ctor x8, ret x8, fnparam x8, fnret x8, arrowparam x8, arrowret x8, ternary x8, as x8, satisfies x8, targ x8, tparam x8, angle x4
+     "let x: A extends infer U[] ? U : never;"  [small.ts.lint] go: TS1005 at 24..25 "'?' expected."
+     "class C { @d x: A extends infer U[] ? U : never; }"  [small.ts.lint] go: TS1005 at 33..34 "'?' expected."
+   distinct sources: 30
+== OPERATOR-FN: function or constructor type as the operand of `keyof` or `readonly`
+   first diagnostic of typescript-go: TS1110 Type expected. x148; TS1005 ',' expected. x36; TS1005 ';' expected. x24; TS1005 '>' expected. x12; TS1144 '{' or ';' expected. x8; TS1441 Cannot start a function call in a type annotation. x4
+   contexts: var x16, field x16, param x16, ctor x16, ret x16, fnparam x16, fnret x16, arrowparam x16, arrowret x16, ternary x16, as x16, satisfies x16, targ x16, tparam x16, angle x8
+     "let x: keyof () => void;"  [small.ts.lint] go: TS1110 at 14..15 "Type expected."
+     "class C { @d x: keyof () => void; }"  [small.ts.lint] go: TS1110 at 23..24 "Type expected."
+     "let v = a ? (b): keyof () => void => c : d;"  [small.ts.lint] go: TS1005 at 26..28 "';' expected."
+     "class C { @d x: keyof new () => A; }"  [small.ts.lint] go: TS1441 at 26..27 "Cannot start a function call in a type annotation."
+     "class C { @d m(): keyof new () => A { return x; } }"  [small.ts.lint] go: TS1144 at 28..29 "'{' or ';' expected."
+   distinct sources: 60
+== OPERATOR-NAME: `unique`, `keyof`, `readonly` or `infer` read as a name
+   first diagnostic of typescript-go: TS1110 Type expected. x892; TS1131 Property or signature expected. x64; TS1005 ',' expected. x40; TS1003 Identifier expected. x32; TS1144 '{' or ';' expected. x8; TS1442 Expected '=' for property initializer. x4; TS1005 ';' expected. x4; TS1005 '>' expected. x2
+   contexts: targ x148, var x68, field x68, param x68, ctor x68, ret x68, fnparam x68, fnret x68, arrowparam x68, as x68, satisfies x68, tparam x68, arrowret x60, ternary x60, angle x30
+     "f<infer>(x);"  [small.ts.lint] go: TS1003 at 7..8 "Identifier expected."
+     "let x: unique;"  [small.ts.lint] go: TS1110 at 13..14 "Type expected."
+     "class C { @d m(): unique { return x; } }"  [small.ts.lint] go: TS1131 at 27..33 "Property or signature expected."
+     "let x: unique  extends B ? C : D;"  [small.ts.lint] go: TS1005 at 23..24 "',' expected."
+     "class C { @d x: unique  extends B ? C : D; }"  [small.ts.lint] go: TS1442 at 32..33 "Expected '=' for property initializer."
+     "class C { @d m(): unique  extends B ? C : D { return x; } }"  [small.ts.lint] go: TS1144 at 34..35 "'{' or ';' expected."
+   distinct sources: 269
+== TARGS-AFTER-TYPE: type arguments after a cast whose type takes none, or on the next line
+   first diagnostic of typescript-go: TS1109 Expression expected. x80; TS1005 '>' expected. x8
+   contexts: as x44, satisfies x44
+     "let v = x as A\n<B>;"  [small.ts.lint] go: TS1109 at 18..19 "Expression expected."
+     "let v = x satisfies A\n<B>;"  [small.ts.lint] go: TS1109 at 25..26 "Expression expected."
+     "let v = x as import('x')<A;"  [small.ts.lint] go: TS1005 at 26..27 "'>' expected."
+   distinct sources: 22
+== IMPORT-ATTRIBUTES: import type: what follows the `,`
+   first diagnostic of typescript-go: TS1005 '{' expected. x8; TS1005 'with' expected. x4
+   contexts: targ x12
+     "f<import('x', {})>(x);"  [small.ts.lint] go: TS1005 at 15..16 "'with' expected."
+     "f<import('x',)>(x);"  [small.ts.lint] go: TS1005 at 13..14 "'{' expected."
+   distinct sources: 3
+== TUPLE-EMPTY-ELEMENT: tuple with an empty element in an attempt at type arguments
+   first diagnostic of typescript-go: TS1110 Type expected. x24
+   contexts: targ x24
+     "f<[,]>(x);"  [small.ts.lint] go: TS1110 at 3..4 "Type expected."
+     "f<[A,,B]>(x);"  [small.ts.lint] go: TS1110 at 5..6 "Type expected."
+   distinct sources: 6
+== ATTEMPT-OTHER: an attempt at type arguments or at an arrow return type that the reference refuses
+   first diagnostic of typescript-go: TS1005 '(' expected. x40; TS1003 Identifier expected. x18; TS1005 ',' expected. x14; TS1005 '>' expected. x12; TS1109 Expression expected. x8; TS1434 Unexpected keyword or identifier. x6; TS1005 '=>' expected. x4; TS1005 ';' expected. x4
+   contexts: targ x102, angle x4
+     "let v = <A extends B ? () => C : D>x;"  [small.ts.lint] go: TS1005 at 21..22 "',' expected."
+     "let v = <A extends B ? C : () => D>x;"  [small.ts.lint] go: TS1005 at 21..22 "',' expected."
+     "f< extends>(x);"  [small.ts.lint] go: TS1109 at 3..10 "Expression expected."
+     "f<typeof [B]>(x);"  [small.ts.lint] go: TS1003 at 9..10 "Identifier expected."
+     "f</a/>(x);"  [small.tsx.lint] go: TS1434 at 0..1 "Unexpected keyword or identifier."
+   distinct sources: 30

@@ -1,0 +1,174 @@
+targeted ts: 2405 sources; same verdict and first diagnostic 2403; parse verdict differs 1; first diagnostic differs 1; (count of diagnostics differs 0)
+     1 tsc ok / go TS2880
+          "import type A from 'a' assert { type: 'json' };"
+     1 first: tsc TS1005 / go TS1128
+          "export type = 1;   [tsc@12+1 go@0+6]"
+targeted tsx: 2405 sources; same verdict and first diagnostic 2403; parse verdict differs 1; first diagnostic differs 1; (count of diagnostics differs 0)
+     1 tsc ok / go TS2880
+          "import type A from 'a' assert { type: 'json' };"
+     1 first: tsc TS1005 / go TS1128
+          "export type = 1;   [tsc@12+1 go@0+6]"
+small ts: 209628 sources; same verdict and first diagnostic 209176; parse verdict differs 122; first diagnostic differs 330; (count of diagnostics differs 354)
+   112 first: tsc TS1005 / go TS1005 other start
+          "type X = function (a: A): B;   [tsc@20+1 go@18+1]"
+          "let x: function (a: A): B;   [tsc@18+1 go@16+1]"
+          "class C { @d m(a: function (a: A): B) {} }   [tsc@29+1 go@27+1]"
+    93 first: tsc TS1005 / go TS2880
+          "type X = import('x', { assert { 'resolution-mode': 'import' } });   [tsc@30+1 go@23+6]"
+          "let x: import('x', { assert { 'resolution-mode': 'import' } });   [tsc@28+1 go@21+6]"
+          "class C { @d x: import('x', { assert { 'resolution-mode': 'import' } }); }   [tsc@37+1 go@30+6]"
+    57 tsc ok / go TS1110
+          "class C { @d m(a: ?) {} }"
+          "@d class C { constructor(a: ?) {} }"
+          "function f(a: ?) {}"
+    47 first: tsc TS1005 / go TS1110
+          "type X = A extends  ? () => C : D;   [tsc@30+1 go@23+1]"
+          "let x: A extends  ? () => C : D;   [tsc@28+1 go@21+1]"
+          "class C { @d x: A extends  ? () => C : D; }   [tsc@37+1 go@30+1]"
+    24 tsc ok / go TS1005
+          "type X = function(): void;"
+          "let x: function(): void;"
+          "class C { @d m(a: function(): void) {} }"
+    16 tsc TS1003 / go ok
+          "type X = typeof a.#b;"
+          "let x: typeof a.#b;"
+          "class C { @d x: typeof a.#b; }"
+    16 tsc ok / go TS2880
+          "type X = import('x', { assert: { 'resolution-mode': 'import' } });"
+          "let x: import('x', { assert: { 'resolution-mode': 'import' } });"
+          "class C { @d x: import('x', { assert: { 'resolution-mode': 'import' } }); }"
+    16 first: tsc TS1109 / go TS2880
+          "type X = import('x', { assert: { 'resolution-mode':  } });   [tsc@53+1 go@23+6]"
+          "let x: import('x', { assert: { 'resolution-mode':  } });   [tsc@51+1 go@21+6]"
+          "class C { @d x: import('x', { assert: { 'resolution-mode':  } }); }   [tsc@60+1 go@30+6]"
+    15 first: tsc TS1478 / go TS2880
+          "type X = import('x', { assert: { : 'import' } });   [tsc@33+1 go@23+6]"
+          "let x: import('x', { assert: { : 'import' } });   [tsc@31+1 go@21+6]"
+          "class C { @d x: import('x', { assert: { : 'import' } }); }   [tsc@40+1 go@30+6]"
+    14 first: tsc TS1005 / go TS1144
+          "class C { @d m(): function (a: A): B { return x; } }   [tsc@29+1 go@27+1]"
+          "function f(): function (a: A): B { return x; }   [tsc@25+1 go@23+1]"
+          "class C { @d m(): function(a: A): B { return x; } }   [tsc@28+1 go@26+1]"
+    11 first: tsc TS1138 / go TS1005
+          "type X = function (: A): B;   [tsc@19+1 go@18+1]"
+          "let x: function (: A): B;   [tsc@17+1 go@16+1]"
+          "class C { @d m(a: function (: A): B) {} }   [tsc@28+1 go@27+1]"
+     7 first: tsc TS1005 / go TS1441
+          "class C { @d x: function (a: A): B; }   [tsc@27+1 go@25+1]"
+          "class C { @d x: function(a: A): B; }   [tsc@26+1 go@24+1]"
+          "class C { @d x: function (a A): B; }   [tsc@28+1 go@25+1]"
+     5 tsc ok / go TS1144
+          "class C { @d m(): function(): void { return x; } }"
+          "function f(): function(): void { return x; }"
+          "class C { @d m(): function(new: A) { return x; } }"
+     4 first: tsc TS1128 / go TS1005
+          "type X =  function(): A };   [tsc@24+1 go@18+1]"
+          "let x:  function(): A };   [tsc@22+1 go@16+1]"
+          "let v = x as  function(): A };   [tsc@28+1 go@22+1]"
+     2 tsc ok / go TS1441
+          "class C { @d x: function(): void; }"
+          "class C { @d x: function(new: A); }"
+     2 tsc ok / go TS1359
+          "let v = a ? (b): function(new: A) => c : d;"
+          "f<function(new: A)>(x);"
+     2 first: tsc TS1144 / go TS1110
+          "class C { @d m(): (?) => B { return x; } }   [tsc@22+2 go@20+1]"
+          "function f(): (?) => B { return x; }   [tsc@18+2 go@16+1]"
+     2 first: tsc TS1138 / go TS1144
+          "class C { @d m(): function (: A): B { return x; } }   [tsc@28+1 go@27+1]"
+          "function f(): function (: A): B { return x; }   [tsc@24+1 go@23+1]"
+     2 first: tsc TS1128 / go TS1144
+          "class C { @d m():  function(): A } { return x; } }   [tsc@49+1 go@27+1]"
+          "function f():  function(): A } { return x; }   [tsc@29+1 go@23+1]"
+     1 first: tsc TS1442 / go TS1441
+          "class C { @d x: function () {}; }   [tsc@28+1 go@25+1]"
+     1 first: tsc TS1068 / go TS1144
+          "class C { @d m(): function () {} { return x; } }   [tsc@33+1 go@27+1]"
+     1 first: tsc TS1442 / go TS1110
+          "class C { @d x: (?) => B; }   [tsc@20+2 go@18+1]"
+     1 first: tsc TS1138 / go TS1441
+          "class C { @d x: function (: A): B; }   [tsc@26+1 go@25+1]"
+     1 first: tsc TS1128 / go TS1441
+          "class C { @d x:  function(): A }; }   [tsc@34+1 go@25+1]"
+small tsx: 209628 sources; same verdict and first diagnostic 209205; parse verdict differs 114; first diagnostic differs 309; (count of diagnostics differs 332)
+   102 first: tsc TS1005 / go TS1005 other start
+          "type X = function (a: A): B;   [tsc@20+1 go@18+1]"
+          "let x: function (a: A): B;   [tsc@18+1 go@16+1]"
+          "class C { @d m(a: function (a: A): B) {} }   [tsc@29+1 go@27+1]"
+    87 first: tsc TS1005 / go TS2880
+          "type X = import('x', { assert { 'resolution-mode': 'import' } });   [tsc@30+1 go@23+6]"
+          "let x: import('x', { assert { 'resolution-mode': 'import' } });   [tsc@28+1 go@21+6]"
+          "class C { @d x: import('x', { assert { 'resolution-mode': 'import' } }); }   [tsc@37+1 go@30+6]"
+    53 tsc ok / go TS1110
+          "class C { @d m(a: ?) {} }"
+          "@d class C { constructor(a: ?) {} }"
+          "function f(a: ?) {}"
+    45 first: tsc TS1005 / go TS1110
+          "type X = A extends  ? () => C : D;   [tsc@30+1 go@23+1]"
+          "let x: A extends  ? () => C : D;   [tsc@28+1 go@21+1]"
+          "class C { @d x: A extends  ? () => C : D; }   [tsc@37+1 go@30+1]"
+    22 tsc ok / go TS1005
+          "type X = function(): void;"
+          "let x: function(): void;"
+          "class C { @d m(a: function(): void) {} }"
+    15 tsc TS1003 / go ok
+          "type X = typeof a.#b;"
+          "let x: typeof a.#b;"
+          "class C { @d x: typeof a.#b; }"
+    15 tsc ok / go TS2880
+          "type X = import('x', { assert: { 'resolution-mode': 'import' } });"
+          "let x: import('x', { assert: { 'resolution-mode': 'import' } });"
+          "class C { @d x: import('x', { assert: { 'resolution-mode': 'import' } }); }"
+    15 first: tsc TS1109 / go TS2880
+          "type X = import('x', { assert: { 'resolution-mode':  } });   [tsc@53+1 go@23+6]"
+          "let x: import('x', { assert: { 'resolution-mode':  } });   [tsc@51+1 go@21+6]"
+          "class C { @d x: import('x', { assert: { 'resolution-mode':  } }); }   [tsc@60+1 go@30+6]"
+    14 first: tsc TS1005 / go TS1144
+          "class C { @d m(): function (a: A): B { return x; } }   [tsc@29+1 go@27+1]"
+          "function f(): function (a: A): B { return x; }   [tsc@25+1 go@23+1]"
+          "class C { @d m(): function(a: A): B { return x; } }   [tsc@28+1 go@26+1]"
+    14 first: tsc TS1478 / go TS2880
+          "type X = import('x', { assert: { : 'import' } });   [tsc@33+1 go@23+6]"
+          "let x: import('x', { assert: { : 'import' } });   [tsc@31+1 go@21+6]"
+          "class C { @d x: import('x', { assert: { : 'import' } }); }   [tsc@40+1 go@30+6]"
+    10 first: tsc TS1138 / go TS1005
+          "type X = function (: A): B;   [tsc@19+1 go@18+1]"
+          "let x: function (: A): B;   [tsc@17+1 go@16+1]"
+          "class C { @d m(a: function (: A): B) {} }   [tsc@28+1 go@27+1]"
+     7 first: tsc TS1005 / go TS1441
+          "class C { @d x: function (a: A): B; }   [tsc@27+1 go@25+1]"
+          "class C { @d x: function(a: A): B; }   [tsc@26+1 go@24+1]"
+          "class C { @d x: function (a A): B; }   [tsc@28+1 go@25+1]"
+     5 tsc ok / go TS1144
+          "class C { @d m(): function(): void { return x; } }"
+          "function f(): function(): void { return x; }"
+          "class C { @d m(): function(new: A) { return x; } }"
+     4 first: tsc TS1128 / go TS1005
+          "type X =  function(): A };   [tsc@24+1 go@18+1]"
+          "let x:  function(): A };   [tsc@22+1 go@16+1]"
+          "let v = x as  function(): A };   [tsc@28+1 go@22+1]"
+     2 tsc ok / go TS1441
+          "class C { @d x: function(): void; }"
+          "class C { @d x: function(new: A); }"
+     2 tsc ok / go TS1359
+          "let v = a ? (b): function(new: A) => c : d;"
+          "f<function(new: A)>(x);"
+     2 first: tsc TS1144 / go TS1110
+          "class C { @d m(): (?) => B { return x; } }   [tsc@22+2 go@20+1]"
+          "function f(): (?) => B { return x; }   [tsc@18+2 go@16+1]"
+     2 first: tsc TS1138 / go TS1144
+          "class C { @d m(): function (: A): B { return x; } }   [tsc@28+1 go@27+1]"
+          "function f(): function (: A): B { return x; }   [tsc@24+1 go@23+1]"
+     2 first: tsc TS1128 / go TS1144
+          "class C { @d m():  function(): A } { return x; } }   [tsc@49+1 go@27+1]"
+          "function f():  function(): A } { return x; }   [tsc@29+1 go@23+1]"
+     1 first: tsc TS1442 / go TS1441
+          "class C { @d x: function () {}; }   [tsc@28+1 go@25+1]"
+     1 first: tsc TS1068 / go TS1144
+          "class C { @d m(): function () {} { return x; } }   [tsc@33+1 go@27+1]"
+     1 first: tsc TS1442 / go TS1110
+          "class C { @d x: (?) => B; }   [tsc@20+2 go@18+1]"
+     1 first: tsc TS1138 / go TS1441
+          "class C { @d x: function (: A): B; }   [tsc@26+1 go@25+1]"
+     1 first: tsc TS1128 / go TS1441
+          "class C { @d x:  function(): A }; }   [tsc@34+1 go@25+1]"

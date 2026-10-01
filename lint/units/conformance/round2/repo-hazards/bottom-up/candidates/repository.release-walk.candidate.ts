@@ -1,0 +1,187 @@
+// The describe("repository") of conformance.test.ts as a file of its own, so that it runs alone in a clone that holds the synced corpus.
+// What stands above the describe is in conformance.test.ts already: there the import of node:path gains basename, extname, relative and sep.
+import { describe, expect, test } from "bun:test";
+import { isASAN, isDebug } from "harness";
+import { readFileSync, readdirSync } from "node:fs";
+import { basename, dirname, extname, join, relative, sep } from "node:path";
+
+const home = join(import.meta.dir, "conformance");
+const small = isDebug || isASAN;
+function lazy<T>(make: () => T): () => T {
+  let made: { value: T } | undefined;
+  return () => (made ??= { value: make() }).value;
+}
+const reference = lazy(() => JSON.parse(readFileSync(join(home, "reference_counts.json"), "utf8")));
+
+describe("repository", () => {
+  // CI finds its tests with getTests of scripts/runner.node.ts, which walks test/ and names every path from there.
+  const testRoot = join(import.meta.dir, "..", "..");
+  const runnerSource = lazy(() => readFileSync(join(testRoot, "..", "scripts", "runner.node.ts"), "utf8"));
+  // The functions that decide, from a name alone, whether the walk enters a path and whether a file is a test.
+  const predicates = ["isHidden", "isTest", "isNodeTest", "isClusterTest", "isTestStrict", "isJavaScript"];
+  const cut = (name: string) => {
+    const found = runnerSource().match(new RegExp(`^function ${name}\\(.*?^}$`, "gms")) ?? [];
+    if (found.length !== 1) throw new Error(`scripts/runner.node.ts has ${found.length} functions named ${name}`);
+    return found[0];
+  };
+  // The predicates themselves, evaluated: this file holds no second copy of the rule. The three constants are false, because CI on macOS x64 takes fewer files.
+  const ci = lazy(() => {
+    const code = new Bun.Transpiler({ loader: "ts" }).transformSync(predicates.map(cut).join("\n"));
+    const free = ["basename", "dirname", "sep", "isCI", "isMacOS", "isX64"];
+    const bind = new Function(...free, `${code}\nreturn { isTest, isHidden };`);
+    return bind(basename, dirname, sep, false, false, false) as Record<
+      "isTest" | "isHidden",
+      (path: string) => boolean
+    >;
+  });
+  // The scanner of `bun test` lowers the base name, and takes a JavaScript or TypeScript file whose name without the ending ends in one of its suffixes.
+  const suffixLine = lazy(() => {
+    const scanner = readFileSync(join(testRoot, "..", "src", "runtime", "cli", "test", "Scanner.rs"), "utf8");
+    return /^pub\(crate\) const TEST_NAME_SUFFIXES: .*$/m.exec(scanner)?.[0] ?? "";
+  });
+  const bunTest = lazy(() => {
+    const suffixes = Array.from(suffixLine().matchAll(/b"([^"]*)"/g), found => found[1]);
+    const endings = new Set([".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts"]);
+    return (path: string) => {
+      const name = basename(path).toLowerCase();
+      const ending = extname(name);
+      return endings.has(ending) && suffixes.some(suffix => name.slice(0, -ending.length).endsWith(suffix));
+    };
+  });
+  const below = (...names: string[]) => ["cli", "lint", "conformance", ...names].join(sep);
+
+  // A change here changes what CI runs: sync.sh refuses upstream names by these rules, and the last test of this group says whether a name of the corpus is taken now.
+  test("CI and `bun test` find their tests by these rules", () => {
+    expect(suffixLine()).toBe(
+      'pub(crate) const TEST_NAME_SUFFIXES: [&[u8]; 4] = [b".test", b"_test", b".spec", b"_spec"];',
+    );
+    expect(["getTests", ...predicates].map(cut).join("\n\n")).toMatchInlineSnapshot(`
+      "function getTests(cwd: string): string[] {
+        function* getFiles(cwd: string, path: string): Generator<string> {
+          const dirname = join(cwd, path);
+          for (const entry of readdirSync(dirname, { encoding: "utf-8", withFileTypes: true })) {
+            const { name } = entry;
+            const filename = join(path, name);
+            if (isHidden(filename)) {
+              continue;
+            }
+            if (entry.isFile()) {
+              if (isTest(filename)) {
+                yield filename;
+              }
+            } else if (entry.isDirectory()) {
+              yield* getFiles(cwd, filename);
+            }
+          }
+        }
+        return [...getFiles(cwd, "")].sort();
+      }
+
+      function isHidden(path: string): boolean {
+        return /node_modules|node.js/.test(dirname(path)) || /^\\./.test(basename(path));
+      }
+
+      function isTest(path: string): boolean {
+        return isNodeTest(path) || isClusterTest(path) ? true : isTestStrict(path);
+      }
+
+      function isNodeTest(path: string): boolean {
+        // Do not run node tests on macOS x64 in CI, those machines are slow and expensive.
+        if (isCI && isMacOS && isX64) {
+          return false;
+        }
+        if (!isJavaScript(path)) {
+          return false;
+        }
+        const unixPath = path.replaceAll(sep, "/");
+        return (
+          unixPath.includes("js/node/test/parallel/") ||
+          unixPath.includes("js/node/test/sequential/") ||
+          unixPath.includes("js/bun/test/parallel/")
+        );
+      }
+
+      function isClusterTest(path: string): boolean {
+        const unixPath = path.replaceAll(sep, "/");
+        return unixPath.includes("js/node/cluster/test-") && unixPath.endsWith(".ts");
+      }
+
+      function isTestStrict(path: string): boolean {
+        return isJavaScript(path) && /\\.test|spec\\./.test(basename(path));
+      }
+
+      function isJavaScript(path: string): boolean {
+        return /\\.(c|m)?(j|t)sx?$/.test(basename(path));
+      }"
+    `);
+  });
+
+  test("the rules take a file for a test by its name, and CI by its directory too", () => {
+    const { isTest, isHidden } = ci();
+    expect({
+      thisFile: isTest(relative(testRoot, import.meta.path)),
+      dotTest: isTest(below("corpus", "cases", "compiler", "a.test.ts")),
+      dotTestInside: isTest(below("corpus", "cases", "compiler", "a.testing.d.mts")),
+      spec: isTest(below("corpus", "cases", "compiler", "a_spec.tsx")),
+      nodeParallel: isTest(below("corpus", "cases", "conformance", "js", "node", "test", "parallel", "a.js")),
+      nodeSequential: isTest(below("corpus", "cases", "conformance", "js", "node", "test", "sequential", "a.ts")),
+      bunParallel: isTest(below("corpus", "cases", "conformance", "js", "bun", "test", "parallel", "a.cjs")),
+      cluster: isTest(below("corpus", "cases", "conformance", "js", "node", "cluster", "test-a.ts")),
+      noDot: isTest(below("corpus", "cases", "compiler", "castTest.ts")),
+      upperCase: isTest(below("corpus", "cases", "compiler", "typeSpec.ts")),
+      noJavaScript: isTest(below("corpus", "baselines", "typescript", "a.test.errors.txt")),
+      hiddenName: isHidden(below("corpus", ".gitignore")),
+      hiddenDirectory: isHidden(below("corpus", "cases", "conformance", "node_modules", "a.ts")),
+      plainDirectory: isHidden(below("corpus", "cases", "conformance", "node", "allowJs")),
+      bunTest: ["a.test.ts", "A_Test.TSX", "a.spec.mjs", "a_spec.cts", "a_test.d.ts", "castTest.ts", "a.test.txt"].map(
+        bunTest(),
+      ),
+    }).toEqual({
+      thisFile: true,
+      dotTest: true,
+      dotTestInside: true,
+      spec: true,
+      nodeParallel: true,
+      nodeSequential: true,
+      bunParallel: true,
+      cluster: true,
+      noDot: false,
+      upperCase: false,
+      noJavaScript: false,
+      hiddenName: true,
+      hiddenDirectory: true,
+      plainDirectory: false,
+      bunTest: [true, true, true, true, false, false, false],
+    });
+  });
+
+  // A debug build with the sanitizer takes half a minute for this, a release build a tenth of a second: the release builds of CI run it on every platform.
+  test.skipIf(small)("no file below conformance/ is a test, and CI enters every directory", () => {
+    const { isTest, isHidden } = ci();
+    // Every path as getTests names it: from test/, with the separator of the platform.
+    const files: string[] = [];
+    const directories: string[] = [];
+    const walk = (directory: string) => {
+      directories.push(directory);
+      for (const entry of readdirSync(testRoot + sep + directory, { withFileTypes: true })) {
+        if (entry.isDirectory()) walk(directory + sep + entry.name);
+        else files.push(directory + sep + entry.name);
+      }
+    };
+    walk(below());
+    const corpusPrefix = below("corpus") + sep;
+    expect({
+      // sync.sh leaves what is directly in corpus/ under a name that starts with a dot, and the count of the reference leaves it out.
+      corpusFiles: files.filter(path => path.startsWith(corpusPrefix) && path[corpusPrefix.length] !== ".").length,
+      testsOfCI: files.filter(isTest),
+      testsOfBunTest: files.filter(bunTest()),
+      // A directory that the walk does not enter, or whose files it leaves out whatever their name.
+      directoriesLeftOut: directories.filter(directory => isHidden(directory) || isHidden(directory + sep + "a")),
+    }).toEqual({
+      corpusFiles: reference().corpus.files,
+      testsOfCI: [],
+      testsOfBunTest: [],
+      directoriesLeftOut: [],
+    });
+  });
+});

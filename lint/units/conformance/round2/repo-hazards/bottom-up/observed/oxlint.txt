@@ -1,0 +1,22 @@
+oxlint 1.70.0, oxlint.json and its plugin of 3110ce85cf, scratch clone with the synced corpus
+
+$ oxlint --config oxlint.json --fix --threads=4 test/cli/lint/conformance/corpus
+Found 0 warnings and 15541 errors.
+Finished in 5.6s on 12448 files with 88 rules using 4 threads.
+files rewritten (git status --porcelain): 330:     106 cases/compiler     224 cases/conformance 
+
+$ oxlint --config <oxlint.json with the entry "test/cli/lint/conformance/corpus" in ignorePatterns> --fix --threads=4 test/cli/lint/conformance
+Found 0 warnings and 4 errors.
+Finished in 11.3s on 33 files with 88 rules using 4 threads.
+files rewritten below corpus/: 0
+
+$ printf '*\n' > test/cli/lint/conformance/corpus/.eslintignore; oxlint --config oxlint.json --fix --threads=4 test/cli/lint
+Found 0 warnings and 4 errors.
+Finished on 39 files with 88 rules using 4 threads.
+files rewritten below corpus/: 0
+
+$ printf '{ "ignorePatterns": ["**"] }\n' > test/cli/lint/conformance/corpus/.oxlintrc.json; oxlint --config oxlint.json --threads=4 test/cli/lint/conformance/corpus/lib
+Found 0 warnings and 3 errors.
+Finished on 4 files with 88 rules using 4 threads.
+
+the 4 errors outside the corpus: eslint(no-unused-expressions) at test/cli/lint/conformance/runner/gostrings.ts:58:25, :60:25, :62:25, :64:25

@@ -1,0 +1,23 @@
+[
+	"(\"a\\d\");",
+	"((\"a\\d\"));",
+	"( /* c */ \"a\\d\" );",
+	"function f() { (\"a\\d\"); }",
+	"(\"a\\d\"); (\"b\\e\"); x; (\"c\\f\");",
+	"(\"a\\d\", 1);",
+	"(\"a\\d\").length;",
+	"\"a\\d\".length;",
+	"\"a\\d\" + 1;",
+	"`a\\d`;",
+	"(`a\\d`);",
+	{ "code": "<string>\"a\\d\";", "ext": "ts" },
+	{ "code": "<any><string>\"a\\d\";", "ext": "ts" },
+	{ "code": "(\"a\\d\") as string;", "ext": "ts" },
+	{ "code": "\"a\\d\" as string;", "ext": "ts" },
+	{ "code": "\"a\\d\"!;", "ext": "ts" },
+	{ "code": "(<string>\"a\\d\");", "ext": "ts" },
+	{ "code": "<string>(\"a\\d\");", "ext": "ts" },
+	{ "code": "function f() { <string>\"a\\d\"; }", "ext": "ts" },
+	{ "code": "namespace N { (\"a\\d\"); }", "ext": "ts" },
+	{ "code": "declare module \"m\" { }\n(\"a\\d\");", "ext": "ts" }
+]

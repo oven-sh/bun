@@ -1,0 +1,10 @@
+[both reject] js "var 👍 = 1; /a  b/;"  1:5 Parsing error: Unexpected character '👍'
+[only ESLint rejects] js "/[👍-👎]/;"  1:2 Parsing error: Invalid regular expression: /[👍-👎]/: Range out of order in character class
+80 cases
+  1	both reject
+  78	no-control-regex same
+  78	no-misleading-character-class same
+  78	no-regex-spaces same
+  78	no-useless-backreference same
+  78	no-useless-escape same
+  1	only ESLint rejects

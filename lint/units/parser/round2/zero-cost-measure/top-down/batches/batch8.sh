@@ -5,7 +5,7 @@ T=/workspace/notes/lint/units/parser/paren-expr-seam; M=/workspace/notes/lint/un
 export OUT=$S/link CACHE=$S/thinlto-cache
 mkdir -p $R $M/harness
 date -u +"lock acquired %FT%TZ load $(cut -d' ' -f1-3 /proc/loadavg)"
-python3 $T/relink.py f3b $S/out/f3b/libbun_js_parser-185fe25973f3ba1f8.rlib full
+python3 $T/relink.py f3b $S/out/f3b/libbun_js_parser-185fe25973f3a1f8.rlib full
 if [ -f $S/link/f3b/bun-profile ]; then
   $S/link/f3b/bun-profile /tmp/zcm-td/smoke5.mjs > /tmp/zcm-td/s5.f3b.hash 2>&1; echo "smoke5 f3b $(cat /tmp/zcm-td/s5.f3b.hash) (head 1b78vj3rk7jbw 44, base 275pxx25kh4ef 44)"
   cd $G

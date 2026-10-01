@@ -132,6 +132,11 @@ bool JSHash::initZig(JSGlobalObject* globalObject, ThrowScope& scope, ExternZigH
 
 bool JSHash::update(std::span<const uint8_t> input)
 {
+    // Empty input succeeds even once digest() freed the state, as in OpenSSL and so Node: https://github.com/openssl/openssl/blob/openssl-3.5.0/crypto/evp/digest.c#L387-L393
+    if (input.empty()) {
+        return true;
+    }
+
     if (m_ctx) {
         ncrypto::Buffer<const void> buffer {
             .data = input.data(),
@@ -229,8 +234,14 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
         return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "Hash"_s);
     }
 
-    // Check if already finalized
-    if (hash->m_finalized) {
+    // Hash.prototype._flush passes `false`: no finalized check and no finalizing, like Node's _flush: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/crypto/hash.js#L129-L160
+    bool finalize = true;
+    JSValue finalizeValue = callFrame->argument(1);
+    if (finalizeValue.isBoolean()) {
+        finalize = finalizeValue.asBoolean();
+    }
+
+    if (finalize && hash->m_finalized) {
         return Bun::ERR::CRYPTO_HASH_FINALIZED(scope, globalObject);
     }
 
@@ -244,59 +255,47 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
         WTF::String encodingString = encodingValue.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         encoding = parseEnumerationFromString<BufferEncodingType>(encodingString).value_or(BufferEncodingType::buffer);
-        RETURN_IF_EXCEPTION(scope, {});
-    }
-
-    bool finalized = true;
-    JSValue setFinalizedValue = callFrame->argument(1);
-    if (setFinalizedValue.isBoolean()) {
-        finalized = setFinalizedValue.asBoolean();
     }
 
     uint32_t len = hash->m_mdLen;
 
-    if (hash->m_zigHasher) {
-        if (hash->m_digest || len == 0) {
-            RELEASE_AND_RETURN(scope, StringBytes::encode(lexicalGlobalObject, scope, std::span<const uint8_t> { reinterpret_cast<const uint8_t*>(hash->m_digest.data()), hash->m_mdLen }, encoding));
-        }
-
-        size_t maxDigestLen = std::max((uint32_t)EVP_MAX_MD_SIZE, len);
-        auto data = ncrypto::DataPointer::Alloc(maxDigestLen);
-        if (!data) {
-            throwOutOfMemoryError(lexicalGlobalObject, scope);
-            return {};
-        }
-
-        auto totalDigestLen = ExternZigHash::digest(hash->m_zigHasher, globalObject, std::span { data.get<uint8_t>(), data.size() });
-        if (!totalDigestLen) {
-            throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "Failed to finalize digest"_s);
-            return {};
-        }
-
-        hash->m_finalized = finalized;
-        hash->m_mdLen = std::min(len, totalDigestLen);
-        hash->m_digest = ByteSource::allocated(data.release());
-
-        RELEASE_AND_RETURN(scope, StringBytes::encode(lexicalGlobalObject, scope, std::span<const uint8_t> { reinterpret_cast<const uint8_t*>(hash->m_digest.data()), hash->m_mdLen }, encoding));
-    }
-
-    // Only compute the digest if it hasn't been cached yet
+    // EVP_DigestFinal_ex cleanses the context (SHA-3 then spins in EVP_DigestUpdate), so free it here and serve later calls from m_digest.
     if (!hash->m_digest && len > 0) {
-        auto data = hash->m_ctx.digestFinal(len);
-        if (!data) {
-            throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "Failed to finalize digest"_s);
-            return {};
-        }
+        if (hash->m_zigHasher) {
+            size_t maxDigestLen = std::max((uint32_t)EVP_MAX_MD_SIZE, len);
+            auto data = ncrypto::DataPointer::Alloc(maxDigestLen);
+            if (!data) {
+                throwOutOfMemoryError(lexicalGlobalObject, scope);
+                return {};
+            }
 
-        // Some hash algorithms don't support calling EVP_DigestFinal_ex more than once
-        // We need to cache the result for future calls
-        hash->m_digest = ByteSource::allocated(data.release());
+            auto totalDigestLen = ExternZigHash::digest(hash->m_zigHasher, globalObject, std::span { data.get<uint8_t>(), data.size() });
+            if (!totalDigestLen) {
+                throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "Failed to finalize digest"_s);
+                return {};
+            }
+
+            len = hash->m_mdLen = std::min(len, totalDigestLen);
+            hash->m_digest = ByteSource::allocated(data.release());
+            ExternZigHash::destroy(hash->m_zigHasher);
+            hash->m_zigHasher = nullptr;
+        } else {
+            auto data = hash->m_ctx.digestFinal(len);
+            if (!data) {
+                throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "Failed to finalize digest"_s);
+                return {};
+            }
+
+            hash->m_digest = ByteSource::allocated(data.release());
+            hash->m_ctx.reset();
+        }
+        hash->m_sizeForGC = hash->m_digest.size();
     }
 
-    // Mark as finalized
-    hash->m_finalized = finalized;
+    if (finalize) {
+        hash->m_finalized = true;
+    }
 
-    // Return the digest with the requested encoding
     RELEASE_AND_RETURN(scope, StringBytes::encode(lexicalGlobalObject, scope, std::span<const uint8_t> { reinterpret_cast<const uint8_t*>(hash->m_digest.data()), len }, encoding));
 }
 
@@ -331,7 +330,8 @@ JSC_DEFINE_HOST_FUNCTION(constructHash, (JSC::JSGlobalObject * globalObject, JSC
     const EVP_MD* md = nullptr;
     std::unique_ptr<ExternZigHash::Hasher, decltype(&ExternZigHash::destroy)> zigHasher(nullptr, ExternZigHash::destroy);
     if ((original = dynamicDowncast<JSHash>(algorithmOrHashInstanceValue))) {
-        if (original->m_finalized) {
+        // m_digest alone: _flush took the digest. No live state to copy (Node returns an unusable copy).
+        if (original->m_finalized || original->m_digest) {
             return Bun::ERR::CRYPTO_HASH_FINALIZED(scope, globalObject);
         }
 

@@ -325,8 +325,15 @@ fn sort_by_name_then_version(lockfile: &Lockfile, ids: &mut [PackageID]) {
     index_sort::sort_indices(ids, &mut |a, b| order_by_name_then_version(lockfile, a, b));
 }
 
-// (name, removed version, surviving version(s) its dependents now resolve to)
-type Row = (Box<[u8]>, Box<[u8]>, Box<[u8]>);
+struct Row {
+    name: Box<[u8]>,
+    /// The removed version.
+    from: Box<[u8]>,
+    /// Surviving version(s); empty when `from` is dropped outright.
+    to: Box<[u8]>,
+    /// Every survivor is a lower major than `from`.
+    downgrade: bool,
+}
 
 #[derive(Default)]
 pub(crate) struct Report {
@@ -540,8 +547,9 @@ fn dedupe_lockfile(lockfile: &mut Lockfile) -> Report {
         .iter()
         .zip(&targets)
         .map(|(&id, moved_to)| {
+            let from_version = pkg_res[id as usize].npm().version;
             let mut from: Vec<u8> = Vec::new();
-            let _ = write!(from, "{}", pkg_res[id as usize].npm().version.fmt(buf));
+            let _ = write!(from, "{}", from_version.fmt(buf));
             let mut survivors: Vec<PackageID> = moved_to.clone();
             index_sort::sort_vec_by(&mut survivors, |&a, &b| {
                 pkg_res[a as usize]
@@ -556,11 +564,15 @@ fn dedupe_lockfile(lockfile: &mut Lockfile) -> Report {
                 }
                 let _ = write!(to, "{}", pkg_res[c as usize].npm().version.fmt(buf));
             }
-            (
-                Box::from(names[id as usize].slice(buf)),
-                from.into_boxed_slice(),
-                to.into_boxed_slice(),
-            )
+            let downgrade = survivors
+                .last()
+                .is_some_and(|&c| pkg_res[c as usize].npm().version.major < from_version.major);
+            Row {
+                name: Box::from(names[id as usize].slice(buf)),
+                from: from.into_boxed_slice(),
+                to: to.into_boxed_slice(),
+                downgrade,
+            }
         })
         .collect();
 
@@ -729,7 +741,7 @@ fn report_already_deduplicated(manager: &PackageManager, report: &Report) -> ! {
                 bun_core::pretty!("\n");
             }
             bun_core::pretty!(
-                "🎉 <green>No duplicates<r> <d>— checked {} package{}, every one already resolves to a single version<r> ",
+                "🎉 <green>No duplicates<r> <d>— checked {} package{} in bun.lock, every one already resolves to a single version<r> ",
                 report.checked,
                 plural(report.checked)
             );
@@ -757,7 +769,7 @@ fn print_would_remove(manager: &PackageManager, report: &Report) {
     }
     let n = report.rows.len();
     bun_core::pretty!(
-        "\n<b>{}<r> duplicate version{} can be removed <d>(checked {} package{})<r> ",
+        "\n<b>{}<r> duplicate version{} can be removed <d>(checked {} package{} in bun.lock)<r> ",
         n,
         plural(n),
         report.checked,
@@ -773,22 +785,32 @@ fn print_rows(report: &Report) {
     } else {
         ("~", "->")
     };
-    for (name, from, to) in &report.rows {
-        if to.is_empty() {
+    for row in &report.rows {
+        if row.to.is_empty() {
             bun_core::prettyln!(
-                "<cyan>{}<r> <b>{}<r> <d>{}<r>",
+                "<cyan>{}<r> <b>{}<r> <d>{} {} (removed)<r>",
                 glyph,
-                BStr::new(name),
-                BStr::new(from)
+                BStr::new(&row.name),
+                BStr::new(&row.from),
+                arrow
+            );
+        } else if row.downgrade {
+            bun_core::prettyln!(
+                "<cyan>{}<r> <b>{}<r> <d>{} {}<r> <b>{}<r> <yellow>(downgrade)<r>",
+                glyph,
+                BStr::new(&row.name),
+                BStr::new(&row.from),
+                arrow,
+                BStr::new(&row.to)
             );
         } else {
             bun_core::prettyln!(
                 "<cyan>{}<r> <b>{}<r> <d>{} {}<r> <b>{}<r>",
                 glyph,
-                BStr::new(name),
-                BStr::new(from),
+                BStr::new(&row.name),
+                BStr::new(&row.from),
                 arrow,
-                BStr::new(to)
+                BStr::new(&row.to)
             );
         }
     }
@@ -817,7 +839,7 @@ pub(crate) fn print_dedupe_summary(manager: &PackageManager, installed: u32, sta
         );
     }
     bun_core::pretty!(
-        " <d>(checked {} package{})<r> ",
+        " <d>(checked {} package{} in bun.lock)<r> ",
         report.checked,
         plural(report.checked)
     );

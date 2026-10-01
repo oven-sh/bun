@@ -16,6 +16,7 @@
 #include "JSReadableStream.h"
 #include "JSReadableStreamDefaultController.h"
 #include "JSStreamsRuntime.h"
+#include "ObjectBindings.h"
 #include "WebCoreJSClientData.h"
 #include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInspectCustom.h"
@@ -120,29 +121,28 @@ void readableStreamDefaultReaderRead(JSGlobalObject* globalObject, JSReadableStr
         RELEASE_AND_RETURN(scope, byteControllerOf(stream)->pullSteps(globalObject, readRequest));
     case ControllerKind::None:
         // No controller yet (an unmaterialized Bun stream): the read stays pending.
-        readableStreamAddReadRequest(vm, stream, readRequest);
-        return;
+        RELEASE_AND_RETURN(scope, readableStreamAddReadRequest(globalObject, stream, readRequest));
     case ControllerKind::Direct: {
         auto* controller = uncheckedDowncast<WebCore::JSDirectStreamController>(stream->m_controller.get());
-        // The direct pump allocates and settles its own head-of-line promise; a
-        // promise-backed read adopts it instead of waiting in [[readRequests]].
+        // The direct pump settles a promise-backed read's promise itself: the read does not wait in [[readRequests]].
         if (readRequest->kind() == ReadRequestKind::Promise) {
-            auto* readPromise = uncheckedDowncast<JSPromise>(readRequest->m_context.get());
-            JSValue pulled = controller->onPull(globalObject, /* readRequestQueued */ false);
+            auto* readPromise = uncheckedDowncast<JSPromise>(readRequest->context());
+            bool pulled = controller->onPull(globalObject, readPromise);
             RETURN_IF_EXCEPTION(scope, void());
-            if (!pulled.isObject()) {
+            if (!pulled) {
                 // The pump refused (already closed / re-entrant pull): report done.
                 JSObject* doneResult = createIteratorResultObject(globalObject, jsUndefined(), true);
                 RETURN_IF_EXCEPTION(scope, void());
                 RELEASE_AND_RETURN(scope, resolvePromise(globalObject, readPromise, doneResult));
             }
-            RELEASE_AND_RETURN(scope, resolvePromise(globalObject, readPromise, pulled));
+            return;
         }
         // Other read-request kinds wait in [[readRequests]] and are delivered through their
         // own chunk/close/error steps.
-        readableStreamAddReadRequest(vm, stream, readRequest);
+        readableStreamAddReadRequest(globalObject, stream, readRequest);
+        RETURN_IF_EXCEPTION(scope, void());
         scope.release();
-        controller->onPull(globalObject, /* readRequestQueued */ true);
+        controller->onPull(globalObject, nullptr);
         return;
     }
     case ControllerKind::NativeSink: {
@@ -172,9 +172,9 @@ static JSObject* createReadManyResult(JSC::VM& vm, JSGlobalObject* globalObject,
 {
     auto* structure = JSStreamsRuntime::from(globalObject)->readManyResultStructure(defaultGlobalObject(globalObject));
     auto* result = constructEmptyObject(vm, structure);
-    result->putDirectOffset(vm, 0, value);
-    result->putDirectOffset(vm, 1, jsNumber(size));
-    result->putDirectOffset(vm, 2, jsBoolean(done));
+    result->putDirectOffset(vm, JSStreamsRuntime::readManyResultValueOffset, value);
+    result->putDirectOffset(vm, JSStreamsRuntime::readManyResultSizeOffset, jsNumber(size));
+    result->putDirectOffset(vm, JSStreamsRuntime::readManyResultDoneOffset, jsBoolean(done));
     return result;
 }
 
@@ -318,9 +318,7 @@ static JSValue readManyAfterPull(JSC::VM& vm, JSGlobalObject* globalObject, JSRe
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!result.isObject()) [[unlikely]]
         RELEASE_AND_RETURN(scope, emptyDoneReadManyResult(vm, globalObject));
-    JSValue chunk = asObject(result)->get(globalObject, vm.propertyNames->value);
-    RETURN_IF_EXCEPTION(scope, {});
-    JSValue done = asObject(result)->get(globalObject, vm.propertyNames->done);
+    auto [done, chunk] = Bun::getIteratorResult(globalObject, asObject(result));
     RETURN_IF_EXCEPTION(scope, {});
     if (done.toBoolean(globalObject)) {
         auto* values = constructEmptyArray(globalObject, nullptr, chunk.toBoolean(globalObject) ? 1 : 0);
@@ -350,9 +348,7 @@ static JSValue readManyAfterDirectPull(JSC::VM& vm, JSGlobalObject* globalObject
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!result.isObject()) [[unlikely]]
         RELEASE_AND_RETURN(scope, emptyDoneReadManyResult(vm, globalObject));
-    JSValue chunk = asObject(result)->get(globalObject, vm.propertyNames->value);
-    RETURN_IF_EXCEPTION(scope, {});
-    JSValue done = asObject(result)->get(globalObject, vm.propertyNames->done);
+    auto [done, chunk] = Bun::getIteratorResult(globalObject, asObject(result));
     RETURN_IF_EXCEPTION(scope, {});
     bool isDone = done.toBoolean(globalObject);
     bool hasChunk = isDone ? chunk.toBoolean(globalObject) : true;
@@ -390,10 +386,10 @@ JSValue readableStreamDefaultReaderReadMany(JSGlobalObject* globalObject, JSRead
         if (state == ReadableStreamState::Closed)
             break;
         auto* controller = uncheckedDowncast<WebCore::JSDirectStreamController>(stream->m_controller.get());
-        JSValue pulled = controller->onPull(globalObject, /* readRequestQueued */ false);
+        auto* pulledPromise = JSPromise::create(vm, globalObject->promiseStructure());
+        bool pulled = controller->onPull(globalObject, pulledPromise);
         RETURN_IF_EXCEPTION(scope, {});
-        auto* pulledPromise = dynamicDowncast<JSPromise>(pulled);
-        if (!pulledPromise)
+        if (!pulled)
             break;
         auto* result = JSPromise::create(vm, globalObject->promiseStructure());
         pulledPromise->performPromiseThenWithContext(vm, globalObject, runtime->onReadManyDirectPullFulfilled(), jsUndefined(), result, reader);
@@ -736,9 +732,14 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamDefaultReaderPrototypeFunction_read, (J
     auto* runtime = JSStreamsRuntime::from(lexicalGlobalObject);
     auto* promise = JSPromise::create(vm, lexicalGlobalObject->promiseStructure());
     auto* readRequest = JSReadRequest::create(vm, runtime->readRequestStructure(domGlobalObject), ReadRequestKind::Promise, promise);
-    readableStreamDefaultReaderRead(lexicalGlobalObject, reader, readRequest);
-    RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(promise);
+    // WebIDL: read() returns a promise, so a throw from the pull it triggers (a direct source's
+    // hooks) is a rejection, never a synchronous throw.
+    RELEASE_AND_RETURN(scope, JSValue::encode(promiseFromSteps(lexicalGlobalObject, [&] -> JSPromise* {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        readableStreamDefaultReaderRead(lexicalGlobalObject, reader, readRequest);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        return promise;
+    })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsReadableStreamDefaultReaderPrototypeFunction_readMany, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

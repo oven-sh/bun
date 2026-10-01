@@ -24,7 +24,7 @@ import { quote } from "../shell.ts";
 import type { Dependency, DirectBuild } from "../source.ts";
 import { LIBC_ALLOCATION_SYMBOLS, depSourceDir } from "../source.ts";
 
-const BORINGSSL_COMMIT = "2288897e2e716330490893d226b4f079f9da9e0c";
+const BORINGSSL_COMMIT = "41bf9b59c2ebf277a7aa427e1ecad5cc80dd4d4f";
 
 export const boringssl: Dependency = {
   name: "boringssl",
@@ -55,6 +55,10 @@ export const boringssl: Dependency = {
         // defines all of them. Off under ASAN so BoringSSL stays on the
         // intercepted libc heap instead of mimalloc.
         ...(!cfg.asan && { BORINGSSL_REQUIRE_MEMORY_HOOKS: true }),
+        // Certificates/CRLs/public keys in PEM decode through simdutf
+        // (src/simdutf_sys/bun-simdutf.cpp) instead of the constant-time path
+        // that private keys keep.
+        BORINGSSL_PEM_FAST_PUBLIC_BASE64: true,
         ...(cfg.windows && {
           _HAS_EXCEPTIONS: 0,
           WIN32_LEAN_AND_MEAN: true,
@@ -144,7 +148,7 @@ const CRYPTO_SRCS = [
   "crypto/evp/p_hkdf.cc", "crypto/evp/p_mldsa.cc", "crypto/evp/p_mlkem.cc", "crypto/evp/p_rsa.cc",
   "crypto/evp/p_x25519.cc", "crypto/evp/p_xwing.cc", "crypto/evp/pbkdf.cc", "crypto/evp/print.cc", "crypto/evp/scrypt.cc",
   "crypto/evp/sign.cc", "crypto/ex_data.cc", "crypto/fipsmodule/fips_shared_support.cc",
-  "crypto/fuzzer_mode.cc", "crypto/hpke/hpke.cc", "crypto/hrss/hrss.cc", "crypto/kyber/kyber.cc",
+  "crypto/fuzzer_mode.cc", "crypto/hpke/hpke.cc", "crypto/hrss/hrss.cc",
   "crypto/lhash/lhash.cc", "crypto/md4/md4.cc", "crypto/md5/md5.cc", "crypto/mem.cc",
   "crypto/mldsa/mldsa.cc", "crypto/mlkem/mlkem.cc", "crypto/obj/obj.cc", "crypto/obj/obj_xref.cc",
   "crypto/pem/pem_all.cc", "crypto/pem/pem_info.cc", "crypto/pem/pem_lib.cc",
@@ -177,7 +181,7 @@ const CRYPTO_SRCS = [
   "crypto/x509/v3_purp.cc", "crypto/x509/v3_skey.cc", "crypto/x509/v3_utl.cc",
   "crypto/x509/x509.cc", "crypto/x509/x509_att.cc", "crypto/x509/x509_cmp.cc",
   "crypto/x509/x509_d2.cc", "crypto/x509/x509_def.cc", "crypto/x509/x509_ext.cc",
-  "crypto/x509/x509_lu.cc", "crypto/x509/x509_obj.cc", "crypto/x509/x509_req.cc",
+  "crypto/x509/x509_lu.cc", "crypto/x509/x509_mtc.cc", "crypto/x509/x509_obj.cc", "crypto/x509/x509_req.cc",
   "crypto/x509/x509_set.cc", "crypto/x509/x509_trs.cc", "crypto/x509/x509_txt.cc",
   "crypto/x509/x509_v3.cc", "crypto/x509/x509_vfy.cc", "crypto/x509/x509_vpm.cc",
   "crypto/x509/x509cset.cc", "crypto/x509/x509name.cc", "crypto/x509/x509rset.cc",

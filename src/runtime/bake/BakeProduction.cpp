@@ -10,7 +10,7 @@ namespace Bake {
 
 extern "C" JSC::JSPromise* BakeRenderRoutesForProdStatic(
     JSC::JSGlobalObject* global,
-    BunString outBase,
+    const BunString* outBase,
     JSC::JSValue allServerFiles,
     JSC::JSValue renderStatic,
     JSC::JSValue getParams,
@@ -27,7 +27,7 @@ extern "C" JSC::JSPromise* BakeRenderRoutesForProdStatic(
     JSC::CallData callData = JSC::getCallData(cb);
 
     JSC::MarkedArgumentBuffer args;
-    args.append(JSC::jsString(vm, outBase.toWTFString()));
+    args.append(JSC::jsString(vm, outBase->toWTFString()));
     args.append(allServerFiles);
     args.append(renderStatic);
     args.append(getParams);

@@ -57,7 +57,9 @@ pub fn install_with_manager(
 
     // Start resolving DNS for the default registry immediately.
     // Unless you're behind a proxy.
-    if !manager.env().has_http_proxy() {
+    if !manager.env().has_http_proxy()
+        && manager.options.offline != crate::package_manager_real::options::OfflineMode::Offline
+    {
         // And don't try to resolve DNS if it's an IP address.
         let scope_url = manager.options.scope.url.url();
         if !scope_url.hostname.is_empty() && !scope_url.is_ip_address() {
@@ -233,6 +235,14 @@ pub fn install_with_manager(
                 };
 
                 had_any_diffs = manager.summary.has_diffs();
+                // The lockfile does not store the set. Every install takes it from the manifests.
+                manager
+                    .lockfile
+                    .self_contained_workspaces
+                    .clear_retaining_capacity();
+                for key in lockfile.self_contained_workspaces.keys() {
+                    manager.lockfile.self_contained_workspaces.put(*key, ())?;
+                }
                 if manager.subcommand == Subcommand::Dedupe {
                     crate::dedupe::dedupe_after_differ(manager);
                 }
@@ -417,7 +427,6 @@ pub fn install_with_manager(
                             lf.workspace_versions.insert(*key, version);
                         }
                     }
-
                     // Update patched dependencies
                     {
                         for (key, value) in lockfile.patched_dependencies.iter() {
@@ -1025,28 +1034,35 @@ impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
         // duration of the callback (no `&mut event_loop` straddles it). The original
         // `this: &mut` in `run_and_wait` is dead past the `let mgr = ...` line.
         let this = unsafe { &mut *closure.manager };
-        if CHECK_PEERS {
-            if let Err(err) = this.process_peer_dependency_list() {
+        loop {
+            if CHECK_PEERS {
+                if let Err(err) = this.process_peer_dependency_list() {
+                    closure.err = Some(err);
+                    return true;
+                }
+            }
+
+            this.drain_dependency_list();
+
+            // void RunTasksCallbacks — the trait dispatch needs a
+            // concrete `RunTasksCallbacks` impl; `extract_ctx` collapses to `()` so we
+            // do NOT pass `this` as both receiver and ctx (would alias `&mut`).
+            let log_level = this.options.log_level;
+            if let Err(err) =
+                run_tasks::<InstallWaitCallbacks>(this, &mut (), CHECK_PEERS, log_level)
+            {
                 closure.err = Some(err);
                 return true;
             }
-        }
 
-        this.drain_dependency_list();
-
-        // void RunTasksCallbacks — the trait dispatch needs a
-        // concrete `RunTasksCallbacks` impl; `extract_ctx` collapses to `()` so we
-        // do NOT pass `this` as both receiver and ctx (would alias `&mut`).
-        let log_level = this.options.log_level;
-        if let Err(err) = run_tasks::<InstallWaitCallbacks>(this, &mut (), CHECK_PEERS, log_level) {
-            closure.err = Some(err);
-            return true;
-        }
-
-        if CHECK_PEERS {
-            if this.peer_dependencies.readable_length() > 0 {
-                return false;
+            // `run_tasks` can resolve a package whose deferred peers create no
+            // new async task (e.g. its tarball is already extracted). With zero
+            // pending tasks nothing wakes this loop again, so drain the peer
+            // queue now instead of sleeping on a wakeup that never comes.
+            if CHECK_PEERS && this.peer_dependencies.readable_length() > 0 {
+                continue;
             }
+            break;
         }
 
         if ONLY_PRE_PATCH {
@@ -1834,12 +1850,11 @@ fn record_updating_package_versions(manager: &mut PackageManager) {
             let tag_total = original.tag.pre.len() + original.tag.build.len();
             if tag_total > 0 {
                 let mut tag_buf = vec![0u8; tag_total].into_boxed_slice();
-                let mut ptr = &mut tag_buf[..];
-                original.tag = original_resolution
-                    .npm()
-                    .version
-                    .tag
-                    .clone_into(&lockfile.buffers.string_bytes, &mut ptr);
+                original.tag = original_resolution.npm().version.tag.clone_into(
+                    &lockfile.buffers.string_bytes,
+                    &mut tag_buf,
+                    &mut 0,
+                );
 
                 entry_ptr.original_version_string_buf = tag_buf;
             }

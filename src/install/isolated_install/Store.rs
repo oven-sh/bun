@@ -517,7 +517,6 @@ pub mod entry {
         let entry_parents = store.entries.items_parents();
 
         let mut parents: ArrayHashMap<Id, ()> = ArrayHashMap::default();
-        // defer parents.deinit(bun.default_allocator);
 
         for &parent_id in entry_parents[entry_id.get() as usize].as_slice() {
             if parent_id == Id::INVALID {
@@ -602,7 +601,7 @@ pub mod entry {
 }
 
 pub(crate) use entry::EntryColumns;
-pub use entry::{Entry, StoreKeyFormatter, fmt_store_key};
+pub use entry::{Entry, fmt_store_key};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Node

@@ -4,7 +4,7 @@ use core::ptr::NonNull;
 
 use bun_sys::{self as sys, Fd};
 
-use crate::{EventLoopHandle, FilePollFlag, FilePollKind, FilePollRef, Owner, PollTag};
+use crate::{EventLoopHandle, FilePollKind, FilePollRef, Owner, PollTag};
 // `bun.Async.Loop` — on POSIX the uws `us_loop_t`, on Windows the embedded
 // `uv_loop_t` (`bun_io::Loop` is the cfg-aliased nominal that picks the
 // right one). `BufferedReaderParent::loop_` returns this so callers in T3+
@@ -118,9 +118,7 @@ impl BufferedReaderVTable {
         self.link().has_on_read_chunk()
     }
 
-    /// When the reader has read a chunk of data
-    /// and hasMore is true, it means that there might be more data to read.
-    /// Returning false prevents the reader from reading more data.
+    /// Returning false ends only the current read loop. To stop the reader, call `pause()`.
     fn on_read_chunk(&self, chunk: Chunk<'_>, has_more: ReadState) -> bool {
         self.link().on_read_chunk(chunk, has_more)
     }
@@ -188,6 +186,8 @@ impl ReadLimit {
 
 pub struct PosixBufferedReader {
     pub handle: PollOrFd,
+    /// Set once `preadv2(RWF_NOWAIT)` said this fd's file type does not support it (tty), so we stop asking.
+    rwf_unsupported: core::cell::Cell<bool>,
     pub _buffer: Vec<u8>,
     pub(crate) _offset: usize,
     limit: ReadLimit,
@@ -212,6 +212,8 @@ bitflags::bitflags! {
         const USE_PREAD                = 1 << 8;
         const IS_PAUSED                = 1 << 9;
         const KEEP_ALIVE               = 1 << 10; // default true
+        /// A read failed with a non-retry errno. Set before the bytes read ahead of the failure are delivered, so a pull from inside that delivery cannot read the fd past the error. Never cleared: `start()`, `unpause()` and `from()` keep it, and only a reader from `init()` reads again.
+        const READ_FAILED              = 1 << 11;
     }
 }
 
@@ -225,6 +227,7 @@ impl PosixBufferedReader {
     pub fn init<T: BufferedReaderParent>() -> PosixBufferedReader {
         PosixBufferedReader {
             handle: PollOrFd::Closed,
+            rwf_unsupported: core::cell::Cell::new(false),
             _buffer: Vec::new(),
             _offset: 0,
             limit: ReadLimit::NONE,
@@ -241,6 +244,10 @@ impl PosixBufferedReader {
         let Some(poll) = self.handle.get_poll() else {
             return;
         };
+        // An unarmed poll delivers nothing; `try_register_poll` applies KEEP_ALIVE when it arms.
+        if value && !poll.is_watching() {
+            return;
+        }
         poll.set_keeping_process_alive(self.vtable.event_loop(), value);
     }
 
@@ -259,6 +266,7 @@ impl PosixBufferedReader {
         let kind = self.vtable.kind;
         *self = PosixBufferedReader {
             handle: mem::replace(&mut other.handle, PollOrFd::Closed),
+            rwf_unsupported: other.rwf_unsupported.clone(),
             _buffer: mem::take(other.buffer()),
             _offset: other._offset,
             limit: other.limit,
@@ -531,9 +539,8 @@ impl PosixBufferedReader {
         };
         poll.set_owner(Owner::new(PollTag::BufferedReader, owner_ptr.cast()));
 
-        if !poll.has_flag(FilePollFlag::WasEverRegistered)
-            && self.flags.contains(PosixFlags::KEEP_ALIVE)
-        {
+        // Re-applied on every arm: `pause()` unregisters, which drops it.
+        if self.flags.contains(PosixFlags::KEEP_ALIVE) {
             poll.enable_keeping_process_alive(ev);
         }
 
@@ -651,7 +658,10 @@ impl PosixBufferedReader {
     }
 
     fn begin_read(&self) -> Option<(Fd, FileType, BufferedReaderVTable)> {
-        if self.flags.contains(PosixFlags::IS_PAUSED) {
+        if self
+            .flags
+            .intersects(PosixFlags::IS_PAUSED | PosixFlags::READ_FAILED)
+        {
             return None;
         }
         Some((self.get_fd(), self.get_file_type(), self.vtable))
@@ -673,7 +683,26 @@ impl PosixBufferedReader {
             }
             FileType::File => sys::read(fd, buf),
             FileType::Socket => sys::recv_non_block(fd, buf),
-            FileType::NonblockingPipe | FileType::Pipe => sys::read_nonblocking(fd, buf),
+            FileType::NonblockingPipe | FileType::Pipe => {
+                #[cfg(any(target_os = "linux", target_os = "android"))]
+                {
+                    if !self.rwf_unsupported.get() {
+                        match sys::read_nowait(fd, buf) {
+                            Ok(None) => self.rwf_unsupported.set(true),
+                            Ok(Some(n)) => return Ok(n),
+                            Err(e) => return Err(e),
+                        }
+                    }
+                    // Poll first even when labelled nonblocking: some callers (FileResponseStream) label by fd kind, not by O_NONBLOCK.
+                    match bun_core::is_readable(fd) {
+                        bun_core::Pollable::Ready | bun_core::Pollable::Hup => sys::read(fd, buf),
+                        bun_core::Pollable::NotReady => Err(sys::Error::retry().with_fd(fd)),
+                    }
+                }
+                // macOS poll(2) is unreliable on FIFOs; the kqueue registration drives readiness there.
+                #[cfg(not(any(target_os = "linux", target_os = "android")))]
+                sys::read(fd, buf)
+            }
         }
     }
 
@@ -697,7 +726,10 @@ impl PosixBufferedReader {
                 }
             }
             sys::Result::Err(err) if err.is_retry() => ReadOnce::Stop(Stop::WouldBlock),
-            sys::Result::Err(err) => ReadOnce::Stop(Stop::Error(err)),
+            sys::Result::Err(err) => {
+                self.flags.insert(PosixFlags::READ_FAILED);
+                ReadOnce::Stop(Stop::Error(err))
+            }
         }
     }
 
@@ -1233,7 +1265,18 @@ impl WindowsBufferedReader {
         let limit = self.limit;
         // Never empty: reads are only issued while the limit has not been reached (`start_reading`, `on_read`), and libuv treats an empty buffer as an error.
         debug_assert!(!limit.reached());
-        self._buffer.reserve(limit.clamp_len(suggested_size));
+        let size = limit.clamp_len(suggested_size);
+        // Tty reads must not target `_buffer`: libuv can retain the pointer
+        // past reader teardown (see `uv::Tty::read_scratch` for the contract).
+        if matches!(self.source, Some(Source::Tty(_))) {
+            let scratch = self
+                .source
+                .as_mut()
+                .and_then(|s| s.tty_read_scratch(size))
+                .expect("tty source matched above");
+            return MaxBuf::clamp_read_buf(maxbuf, limit.clamp(scratch));
+        }
+        self._buffer.reserve(size);
         // SAFETY: returning spare capacity for libuv to write into; len updated in on_read.
         let buf = unsafe { bun_core::vec::spare_bytes_mut(&mut self._buffer) };
         MaxBuf::clamp_read_buf(maxbuf, limit.clamp(buf))
@@ -1261,7 +1304,6 @@ impl WindowsBufferedReader {
 
     /// SAFETY: `pipe` must be a `Box<uv::Pipe>`-allocated pointer; ownership
     /// transfers to `self.source` (later freed via `close_and_destroy`).
-    #[cfg(windows)]
     pub unsafe fn start_with_pipe(&mut self, pipe: *mut uv::Pipe) -> sys::Result<()> {
         // SAFETY: caller contract — Box-allocated, ownership transfers.
         self.set_source(Source::Pipe(unsafe { bun_core::heap::take(pipe) }));
@@ -1330,7 +1372,6 @@ impl WindowsBufferedReader {
         source.set_raw_mode(value)
     }
 
-    #[cfg(windows)]
     extern "C" fn on_stream_alloc(
         handle: *mut uv::Handle,
         suggested_size: usize,
@@ -1348,7 +1389,6 @@ impl WindowsBufferedReader {
         }
     }
 
-    #[cfg(windows)]
     extern "C" fn on_stream_read(
         stream: *mut uv::uv_stream_t,
         nread: uv::ReturnCodeI64,
@@ -1396,14 +1436,28 @@ impl WindowsBufferedReader {
                 // (libuv's `read_cb` hands us `*const`).
                 let mut b = unsafe { *buf };
                 let slice = unsafe { b.slice_mut() };
-                this.on_read(sys::Result::Ok(len), &mut slice[..len], ReadState::Progress);
+                let data = &mut slice[..len];
+                if matches!(this.source, Some(Source::Tty(_))) {
+                    // Tty chunks arrive in the tty-owned scratch; stage them
+                    // into `_buffer` so `on_read` commits them like a pipe chunk.
+                    this._buffer.reserve(len);
+                    // SAFETY: `_buffer` has `len` spare bytes, disjoint from
+                    // `this` and the scratch.
+                    let staged = unsafe {
+                        let dst = bun_core::vec::spare_bytes_mut(&mut this._buffer).as_mut_ptr();
+                        core::ptr::copy_nonoverlapping(data.as_ptr(), dst, len);
+                        core::slice::from_raw_parts_mut(dst, len)
+                    };
+                    this.on_read(sys::Result::Ok(len), staged, ReadState::Progress);
+                } else {
+                    this.on_read(sys::Result::Ok(len), data, ReadState::Progress);
+                }
             }
         }
     }
 
     /// Callback fired when a file read operation completes or is canceled.
     /// Handles cleanup, cancellation, and normal read processing.
-    #[cfg(windows)]
     extern "C" fn on_file_read(fs: *mut uv::fs_t) {
         // SAFETY: libuv fs_cb — `fs` is the `uv_fs_t` field of a heap-boxed
         // `source::File` (separate allocation from `Self`). Invoked from the
@@ -1570,7 +1624,6 @@ impl WindowsBufferedReader {
         }
     }
 
-    #[cfg(windows)]
     fn start_reading(&mut self) -> sys::Result<()> {
         // A used-up limit stays paused: `start` has nothing to read and `unpause` reports it as EOF instead.
         if self.flags.contains(WindowsFlags::IS_DONE)
@@ -1719,7 +1772,6 @@ impl WindowsBufferedReader {
                         }
                     }
                 }
-                #[cfg(windows)]
                 Source::Pipe(pipe) => {
                     // Hand the Box off to libuv; the close cb reclaims it.
                     let raw = bun_core::heap::into_raw(pipe);
@@ -1730,23 +1782,22 @@ impl WindowsBufferedReader {
                         (*raw).close(Self::on_pipe_close);
                     }
                 }
-                #[cfg(windows)]
                 Source::Tty(tty) => {
                     let p = tty.as_ptr();
                     if crate::source::stdin_tty::is_stdin_tty(p) {
                         // Node only ever closes stdin on process exit.
                     } else {
-                        // SAFETY: tty is a live heap-allocated uv_tty_t*.
+                        // SAFETY: tty is a live heap-allocated Tty*;
+                        // `Tty::close` keeps whole-struct provenance so
+                        // on_tty_close may reclaim the Box.
                         unsafe {
-                            (*p).data = p.cast::<c_void>();
-                            (*p).close(Self::on_tty_close);
+                            (*p).uv.data = p.cast::<c_void>();
+                            crate::source::Tty::close(p, Self::on_tty_close);
                         }
                     }
 
                     self.flags.insert(WindowsFlags::IS_PAUSED);
                 }
-                #[cfg(not(windows))]
-                _ => {}
             }
             // self.source already None via take().
             if CALL_DONE {
@@ -1783,27 +1834,27 @@ impl WindowsBufferedReader {
     /// before Drop; both paths are idempotent over an already-taken source.
     pub fn deinit(&mut self) {
         MaxBuf::remove_from_pipereader(&mut self.maxbuf);
-        self._buffer = Vec::new();
-        let Some(source) = self.source.take() else {
-            return;
-        };
-        if !source.is_closed() {
-            // closeImpl will take care of freeing the source.
-            // Dropping the `Box<Pipe>` here would free a uv_pipe_t still
-            // linked into the loop's handle queue → UAF. Restore the source so
-            // close_impl can do the proper take + hand-off to libuv
-            // (into_raw + uv_close).
-            self.source = Some(source);
-            self.close_impl::<false>();
-        } else {
-            // Already closing/closed: a uv close callback may still be pending
-            // on this allocation; dropping the Box would free memory libuv
-            // still owns, so leak it instead.
-            core::mem::forget(source);
+        if let Some(source) = self.source.take() {
+            if !source.is_closed() {
+                // closeImpl will take care of freeing the source.
+                // Dropping the `Box<Pipe>` here would free a uv_pipe_t still
+                // linked into the loop's handle queue → UAF. Restore the source
+                // so close_impl can do the proper take + hand-off to libuv
+                // (into_raw + uv_close). close_impl also parks `_buffer` on
+                // the File for an in-flight uv_fs_read (orphaned_read_buf),
+                // which is why `_buffer` is freed after this, not before.
+                self.source = Some(source);
+                self.close_impl::<false>();
+            } else {
+                // Already closing/closed: a uv close callback may still be
+                // pending on this allocation; dropping the Box would free
+                // memory libuv still owns, so leak it instead.
+                core::mem::forget(source);
+            }
         }
+        self._buffer = Vec::new();
     }
 
-    #[cfg(windows)]
     extern "C" fn on_pipe_close(handle: *mut uv::Pipe) {
         // `close_impl` set `handle.data = handle` and called `uv_close(handle)`;
         // libuv passes the same pointer back, so `handle` *is* the boxed Pipe
@@ -1812,15 +1863,15 @@ impl WindowsBufferedReader {
         drop(unsafe { bun_core::heap::take(handle) });
     }
 
-    #[cfg(windows)]
     extern "C" fn on_tty_close(handle: *mut uv::uv_tty_t) {
         // `close_impl` set `handle.data = handle` and called `uv_close(handle)`;
-        // libuv passes the same pointer back, so `handle` *is* the tty ptr.
-        // Caller already gates on `!is_stdin_tty` before scheduling close, so
-        // `handle` is heap-allocated (open_tty heap::alloc). Reclaim and drop.
-        debug_assert!(!crate::source::stdin_tty::is_stdin_tty(handle));
+        // libuv passes the same pointer back; `Tty::from_uv` recovers the
+        // owning `Tty`. Caller gates on `!is_stdin_tty`, so it is heap-owned,
+        // and no request is pending once this runs (`uv::Tty::read_scratch`).
+        let tty = crate::source::Tty::from_uv(handle);
+        debug_assert!(!crate::source::stdin_tty::is_stdin_tty(tty));
         // SAFETY: non-stdin tty is heap-allocated; sole owner after uv_close.
-        drop(unsafe { bun_core::heap::take(handle) });
+        drop(unsafe { bun_core::heap::take(tty) });
     }
 
     fn on_read(&mut self, amount: sys::Result<usize>, slice: &mut [u8], has_more: ReadState) {

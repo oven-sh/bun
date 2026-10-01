@@ -56,14 +56,14 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeout,
      * from a debugger */
     SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
     auto fileNameUTF8 = sourceOrigin.string().utf8();
-    const char* fileName = fileNameUTF8.data();
+    const char* fileName = fileNameUTF8.legacyCStringPointer();
     static const char* lastFileName = nullptr;
     if (lastFileName != fileName) {
         lastFileName = fileName;
     }
 #endif
 
-    return Bun__Timer__setTimeout(globalObject, JSC::JSValue::encode(job), JSC::JSValue::encode(arguments), JSValue::encode(num));
+    RELEASE_AND_RETURN(scope, Bun__Timer__setTimeout(globalObject, JSC::JSValue::encode(job), JSC::JSValue::encode(arguments), JSValue::encode(num)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionSetInterval,
@@ -113,14 +113,14 @@ JSC_DEFINE_HOST_FUNCTION(functionSetInterval,
      * from a debugger */
     SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
     auto fileNameUTF8 = sourceOrigin.string().utf8();
-    const char* fileName = fileNameUTF8.data();
+    const char* fileName = fileNameUTF8.legacyCStringPointer();
     static const char* lastFileName = nullptr;
     if (lastFileName != fileName) {
         lastFileName = fileName;
     }
 #endif
 
-    return Bun__Timer__setInterval(globalObject, JSC::JSValue::encode(job), JSC::JSValue::encode(arguments), JSValue::encode(num));
+    RELEASE_AND_RETURN(scope, Bun__Timer__setInterval(globalObject, JSC::JSValue::encode(job), JSC::JSValue::encode(arguments), JSValue::encode(num)));
 }
 
 // https://developer.mozilla.org/en-US/docs/Web/API/Window/setImmediate
@@ -166,7 +166,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetImmediate,
     }
     }
 
-    return Bun__Timer__setImmediate(globalObject, JSC::JSValue::encode(job), JSValue::encode(arguments));
+    RELEASE_AND_RETURN(scope, Bun__Timer__setImmediate(globalObject, JSC::JSValue::encode(job), JSValue::encode(arguments)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionClearImmediate,
@@ -181,7 +181,7 @@ JSC_DEFINE_HOST_FUNCTION(functionClearImmediate,
      * from a debugger */
     SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
     auto fileNameUTF8 = sourceOrigin.string().utf8();
-    const char* fileName = fileNameUTF8.data();
+    const char* fileName = fileNameUTF8.legacyCStringPointer();
     static const char* lastFileName = nullptr;
     if (lastFileName != fileName) {
         lastFileName = fileName;
@@ -203,7 +203,7 @@ JSC_DEFINE_HOST_FUNCTION(functionClearInterval,
      * from a debugger */
     SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
     auto fileNameUTF8 = sourceOrigin.string().utf8();
-    const char* fileName = fileNameUTF8.data();
+    const char* fileName = fileNameUTF8.legacyCStringPointer();
     static const char* lastFileName = nullptr;
     if (lastFileName != fileName) {
         lastFileName = fileName;
@@ -225,7 +225,7 @@ JSC_DEFINE_HOST_FUNCTION(functionClearTimeout,
      * from a debugger */
     SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
     auto fileNameUTF8 = sourceOrigin.string().utf8();
-    const char* fileName = fileNameUTF8.data();
+    const char* fileName = fileNameUTF8.legacyCStringPointer();
     static const char* lastFileName = nullptr;
     if (lastFileName != fileName) {
         lastFileName = fileName;

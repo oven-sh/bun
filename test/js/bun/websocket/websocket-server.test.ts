@@ -1,5 +1,6 @@
 import type { Server, ServerWebSocket, Subprocess, WebSocketHandler } from "bun";
 import { serve, spawn } from "bun";
+import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { afterEach, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, forceGuardMalloc, isWindows, tempDir } from "harness";
 import net, { isIP } from "node:net";
@@ -56,6 +57,10 @@ const binaryTypes = [
   {
     label: "uint8array",
     type: Uint8Array,
+  },
+  {
+    label: "blob",
+    type: Blob,
   },
 ] as const;
 
@@ -352,6 +357,86 @@ describe("Server", () => {
     });
   });
 
+  it.concurrent("unsubscribe() and close() only change the calling socket's share of subscriberCount", async () => {
+    const opened = {
+      a: Promise.withResolvers<ServerWebSocket<{ id: string }>>(),
+      b: Promise.withResolvers<ServerWebSocket<{ id: string }>>(),
+    };
+    const closed = {
+      a: Promise.withResolvers<void>(),
+      b: Promise.withResolvers<void>(),
+    };
+
+    using server = serve({
+      port: 0,
+      fetch(req, server) {
+        const id = new URL(req.url).searchParams.get("id") as "a" | "b";
+        if (server.upgrade(req, { data: { id } })) return;
+        return new Response("Not a websocket", { status: 400 });
+      },
+      websocket: {
+        data: {} as { id: "a" | "b" },
+        open(ws) {
+          opened[ws.data.id].resolve(ws);
+        },
+        close(ws) {
+          closed[ws.data.id].resolve();
+        },
+        message() {},
+      },
+    });
+
+    const clientA = new WebSocket(`ws://localhost:${server.port}/?id=a`);
+    const clientB = new WebSocket(`ws://localhost:${server.port}/?id=b`);
+    const [a, b] = await Promise.all([opened.a.promise, opened.b.promise]);
+
+    expect({
+      b_shared: b.subscribe("shared"),
+      b_only: b.subscribe("only-b"),
+      a_shared: a.subscribe("shared"),
+      shared: server.subscriberCount("shared"),
+      onlyB: server.subscriberCount("only-b"),
+    }).toEqual({ b_shared: true, b_only: true, a_shared: true, shared: 2, onlyB: 1 });
+
+    // A topic that exists but that this socket never joined, and a topic that
+    // does not exist at all: both are a no-op that reports false.
+    expect({
+      notJoined: a.unsubscribe("only-b"),
+      unknown: a.unsubscribe("never-subscribed"),
+      bStillSubscribed: b.isSubscribed("only-b"),
+      onlyB: server.subscriberCount("only-b"),
+      shared: server.subscriberCount("shared"),
+    }).toEqual({ notJoined: false, unknown: false, bStillSubscribed: true, onlyB: 1, shared: 2 });
+
+    // Leaving the last topic releases the socket's subscriber state. Joining
+    // again afterwards works and is counted again.
+    expect({
+      left: a.unsubscribe("shared"),
+      aSubscribed: a.isSubscribed("shared"),
+      bSubscribed: b.isSubscribed("shared"),
+      shared: server.subscriberCount("shared"),
+      rejoined: a.subscribe("shared"),
+      sharedAfterRejoin: server.subscriberCount("shared"),
+    }).toEqual({ left: true, aSubscribed: false, bSubscribed: true, shared: 1, rejoined: true, sharedAfterRejoin: 2 });
+
+    // Closing a socket with live subscriptions removes it from every topic and
+    // leaves the other socket's subscriptions alone.
+    b.close();
+    await closed.b.promise;
+    expect({
+      shared: server.subscriberCount("shared"),
+      onlyB: server.subscriberCount("only-b"),
+      aSubscribed: a.isSubscribed("shared"),
+      bSubscriptions: b.subscriptions,
+    }).toEqual({ shared: 1, onlyB: 0, aSubscribed: true, bSubscriptions: [] });
+
+    a.close();
+    await closed.a.promise;
+    expect(server.subscriberCount("shared")).toBe(0);
+    clientA.close();
+    clientB.close();
+  });
+
   it.concurrent("subscriptions - duplicate subscriptions", async () => {
     const { promise, resolve } = Promise.withResolvers();
     const { promise: onClosePromise, resolve: onClose } = Promise.withResolvers();
@@ -586,6 +671,41 @@ describe("Server", () => {
         done();
       },
     }));
+    test("returning an Error from message() is not treated as a throw", (done, connect) => ({
+      open(ws) {
+        ws.send("trigger");
+      },
+      message(ws) {
+        queueMicrotask(() => done());
+        return new Error("returned, not thrown");
+      },
+      error(error) {
+        done(error);
+      },
+    }));
+    for (const hook of ["ping", "pong", "close"] as const) {
+      test(`${hook} handler that throws passes its error to error()`, done => {
+        const thrown = new Error(`${hook} threw`);
+        return {
+          open(ws) {
+            if (hook === "ping") ws.ping();
+            else if (hook === "pong") ws.pong();
+            else ws.close();
+          },
+          [hook]() {
+            throw thrown;
+          },
+          error(error) {
+            try {
+              expect(error).toBe(thrown);
+              done();
+            } catch (e) {
+              done(e);
+            }
+          },
+        };
+      });
+    }
     test("maxPayloadLength", done => ({
       maxPayloadLength: 4,
       open(ws) {
@@ -736,6 +856,105 @@ describe("ServerWebSocket", () => {
         },
       }));
     }
+    test("keeps accepting the capitalized and 'buffer' spellings", done => ({
+      open(ws) {
+        try {
+          const seen: string[] = [];
+          for (const spelling of ["Buffer", "buffer", "ArrayBuffer", "Uint8Array", "nodebuffer"]) {
+            ws.binaryType = spelling as typeof ws.binaryType;
+            seen.push(ws.binaryType!);
+          }
+          expect(seen).toEqual(["nodebuffer", "nodebuffer", "arraybuffer", "uint8array", "nodebuffer"]);
+          done();
+        } catch (err) {
+          done(err);
+        }
+      },
+    }));
+    test("blob payloads carry the frame bytes", done => {
+      const received: { event: string; size: number; type: string; bytes: number[] }[] = [];
+      async function record(event: string, data: unknown) {
+        const blob = data as Blob;
+        received.push({ event, size: blob.size, type: blob.type, bytes: Array.from(await blob.bytes()) });
+      }
+      // The echo client answers a message with the same message, a pong with the same pong
+      // and a ping with the same ping. The client's WebSocket also answers a ping with an
+      // automatic pong, so the server pong is sent first and only the first pong is recorded.
+      return {
+        open(ws) {
+          try {
+            ws.binaryType = "blob";
+            ws.send(new Uint8Array([1, 2, 3]));
+          } catch (err) {
+            done(err);
+          }
+        },
+        async message(ws, data) {
+          try {
+            await record("message", data);
+            ws.pong(new Uint8Array([5]));
+          } catch (err) {
+            done(err);
+          }
+        },
+        async pong(ws, data) {
+          if (received.some(({ event }) => event === "pong")) return;
+          try {
+            await record("pong", data);
+            ws.ping(new Uint8Array([4]));
+          } catch (err) {
+            done(err);
+          }
+        },
+        async ping(_, data) {
+          try {
+            await record("ping", data);
+            expect(received).toEqual([
+              { event: "message", size: 3, type: "", bytes: [1, 2, 3] },
+              { event: "pong", size: 1, type: "", bytes: [5] },
+              { event: "ping", size: 1, type: "", bytes: [4] },
+            ]);
+            done();
+          } catch (err) {
+            done(err);
+          }
+        },
+      };
+    });
+    it("blob frames report their bytes to the garbage collector", async () => {
+      const { promise, resolve, reject } = Promise.withResolvers<Blob>();
+      using server = serve({
+        port: 0,
+        fetch(req, server) {
+          if (server.upgrade(req)) return;
+          return new Response(null, { status: 400 });
+        },
+        websocket: {
+          open(ws) {
+            try {
+              ws.binaryType = "blob";
+            } catch (err) {
+              reject(err);
+            }
+          },
+          message(_, data) {
+            resolve(data as unknown as Blob);
+          },
+        },
+      });
+      const payload = new Uint8Array(2 * 1024 * 1024);
+      const client = new WebSocket(`ws://${server.hostname}:${server.port}`);
+      client.onerror = () => reject(new Error("client error"));
+      client.onopen = () => client.send(payload);
+      try {
+        const blob = await promise;
+        expect(blob.size).toBe(payload.byteLength);
+        // The size the Blob's visitChildren reports; close to 0 when the bytes are not reported.
+        expect(estimateShallowMemoryUsageOf(blob)).toBeGreaterThanOrEqual(payload.byteLength);
+      } finally {
+        client.close();
+      }
+    });
   });
   describe("send()", () => {
     for (const { label, message, bytes } of messages) {
@@ -1491,6 +1710,83 @@ it.concurrent("server.upgrade() from the error() handler after fetch() threw com
   expect(exitCode).toBe(0);
 });
 
+// A handler that calls server.upgrade() before it returns leaves the server no
+// response to send, so the server does not subscribe to the handler's promise.
+// A rejection of that promise must stay unhandled and reach
+// process.on("unhandledRejection"), whether it has settled when the handler
+// returns or not. The server subscribes to the promise of a handler that
+// upgrades after an await, so that case is not covered here.
+describe.concurrent("a handler that calls server.upgrade() before it returns", () => {
+  async function runChild(handlers: string) {
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.on("unhandledRejection", e => console.log("unhandledRejection:", e.message));
+         const server = Bun.serve({
+           port: 0,
+           ${handlers}
+           websocket: {
+             open(ws) { ws.send("hi"); },
+             message() {},
+           },
+         });
+         const ws = new WebSocket(server.url.href.replace(/^http/, "ws"));
+         ws.onerror = () => { console.log("ws error"); process.exit(1); };
+         ws.onmessage = e => { console.log("ws got:", e.data); ws.close(); };
+         ws.onclose = () => server.stop(true);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // A then() or catch() promise is rejected by a reaction job. It is a
+  // separate case: JSC does not set its first-resolving-function flag.
+  it.each([
+    [
+      "fetch() is async and throws after an await",
+      `async fetch(req, srv) { srv.upgrade(req); await 0; throw new Error("E"); },
+       error(e) { console.log("error() saw:", e.message); },`,
+    ],
+    [
+      "fetch() returns Promise.reject()",
+      `fetch(req, srv) { srv.upgrade(req); return Promise.reject(new Error("E")); },
+       error(e) { console.log("error() saw:", e.message); },`,
+    ],
+    [
+      "fetch() returns a then() promise that throws",
+      `fetch(req, srv) { srv.upgrade(req); return Promise.resolve().then(() => { throw new Error("E"); }); },
+       error(e) { console.log("error() saw:", e.message); },`,
+    ],
+    [
+      "fetch() returns a catch() promise that rethrows",
+      `fetch(req, srv) { srv.upgrade(req); return Promise.reject(new Error("E")).catch(e => { throw e; }); },
+       error(e) { console.log("error() saw:", e.message); },`,
+    ],
+    [
+      "fetch() returns a then() promise that passes a rejection through",
+      `fetch(req, srv) { srv.upgrade(req); return Promise.reject(new Error("E")).then(x => x); },
+       error(e) { console.log("error() saw:", e.message); },`,
+    ],
+    [
+      "error() upgrades and returns Promise.reject()",
+      `fetch(req) { throw Object.assign(new Error("boom"), { req }); },
+       error(err) { server.upgrade(err.req); return Promise.reject(new Error("E")); },`,
+    ],
+  ])("reports a rejection to unhandledRejection when %s", async (_, handlers) => {
+    const { stdout, stderr, exitCode } = await runChild(handlers);
+    expect({ stdoutLines: stdout.trim().split("\n").sort(), stderr, exitCode }).toEqual({
+      stdoutLines: ["unhandledRejection: E", "ws got: hi"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 it("server.upgrade() does not blank the Request's url/headers read afterwards", async () => {
   // req.url and req.headers are lifted lazily from the uws request. upgrade()
   // detaches that context, so fields not touched before the call must be
@@ -1999,6 +2295,160 @@ describe("server.upgrade() validates the opening handshake", () => {
     expect(v8.status).toBe(426);
     expect(v8.headers.toLowerCase()).toContain("sec-websocket-version: 13");
     expect(upgradeResult).toBe(false);
+  });
+});
+
+// The 101 switches protocols: the connection stops being HTTP, so the HTTP
+// layer's "close after this response" (the request said Connection: close or
+// was HTTP/1.0, or a graceful server.stop() marked the connection to close
+// once idle) does not apply to the WebSocket that takes over the socket. A
+// synchronous server.upgrade() always behaved that way. One made after an
+// await used to send the 101 and shut the socket down right under the new
+// WebSocket: open() ran on a dead socket, close() never ran, and the
+// ServerWebSocket leaked.
+describe.concurrent("server.upgrade() after an await on a connection the HTTP layer marked to close", () => {
+  const K = "dGhlIHNhbXBsZSBub25jZQ==";
+
+  function maskedFrame(opcode: number, payload: Buffer): Buffer {
+    const mask = Buffer.from([0x12, 0x34, 0x56, 0x78]);
+    const masked = Buffer.from(payload.map((byte, i) => byte ^ mask[i % 4]));
+    return Buffer.concat([Buffer.from([0x80 | opcode, 0x80 | payload.length]), mask, masked]);
+  }
+
+  // Server frames are unmasked; every frame in this test has a short payload.
+  function parseServerFrames(buf: Buffer): { frames: { opcode: number; payload: Buffer }[]; rest: Buffer } {
+    const frames: { opcode: number; payload: Buffer }[] = [];
+    let offset = 0;
+    while (buf.length - offset >= 2) {
+      const opcode = buf[offset] & 0x0f;
+      const length = buf[offset + 1] & 0x7f;
+      if (length >= 126 || buf[offset + 1] & 0x80) throw new Error(`unexpected server frame header ${buf[offset + 1]}`);
+      if (buf.length - offset - 2 < length) break;
+      frames.push({ opcode, payload: buf.subarray(offset + 2, offset + 2 + length) });
+      offset += 2 + length;
+    }
+    return { frames, rest: buf.subarray(offset) };
+  }
+
+  async function upgradeAfterAwait(opts: {
+    requestLine: string;
+    headers: string[];
+    beforeUpgrade?: (server: Server) => void;
+    sync?: boolean;
+  }) {
+    const events: string[] = [];
+    const serverClosed = Promise.withResolvers<void>();
+    let upgradeResult: boolean | undefined;
+    using server = serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req, srv) {
+        // Leave the parser's stack, where the socket is corked.
+        if (!opts.sync) await new Promise(resolve => setImmediate(resolve));
+        opts.beforeUpgrade?.(srv);
+        upgradeResult = srv.upgrade(req);
+        if (upgradeResult) return;
+        return new Response("no", { status: 400 });
+      },
+      websocket: {
+        open(ws) {
+          events.push("open");
+          ws.send("from open()");
+        },
+        message(ws, message) {
+          events.push(`message:${message}`);
+          ws.send(`echo:${message}`);
+        },
+        close(ws, code) {
+          events.push(`close:${code}`);
+          serverClosed.resolve();
+        },
+      },
+    });
+
+    const socket = net.connect({ port: server.port, host: "127.0.0.1" });
+    const socketClosed = Promise.withResolvers<never>();
+    // Only observed through the races in `until` below.
+    socketClosed.promise.catch(() => {});
+    socket.on("error", error => socketClosed.reject(error));
+    socket.on("close", () => socketClosed.reject(new Error("the server closed the socket")));
+
+    let buffered = Buffer.alloc(0);
+    let onData = () => {};
+    socket.on("data", (chunk: Buffer) => {
+      buffered = Buffer.concat([buffered, chunk]);
+      onData();
+    });
+    // Rejects if the server closes the socket before the condition holds.
+    const until = <T>(condition: () => T | undefined) =>
+      Promise.race([
+        socketClosed.promise,
+        new Promise<T>(resolve => {
+          onData = () => {
+            const value = condition();
+            if (value !== undefined) resolve(value);
+          };
+          onData();
+        }),
+      ]);
+    const nextFrame = () =>
+      until(() => {
+        const { frames, rest } = parseServerFrames(buffered);
+        if (frames.length === 0) return undefined;
+        buffered = rest;
+        return frames[0];
+      });
+
+    await new Promise<void>(resolve => socket.once("connect", resolve));
+    socket.write(`${opts.requestLine}\r\nHost: 127.0.0.1\r\n${opts.headers.join("\r\n")}\r\n\r\n`);
+
+    const head = await until(() => {
+      const end = buffered.indexOf("\r\n\r\n");
+      if (end === -1) return undefined;
+      const head = buffered.subarray(0, end).toString();
+      buffered = buffered.subarray(end + 4);
+      return head;
+    });
+    expect(head.split("\r\n")[0]).toBe("HTTP/1.1 101 Switching Protocols");
+    expect(upgradeResult).toBe(true);
+
+    // The socket is a live WebSocket in both directions.
+    expect(await nextFrame()).toEqual({ opcode: 1, payload: Buffer.from("from open()") });
+    socket.write(maskedFrame(1, Buffer.from("hi")));
+    expect(await nextFrame()).toEqual({ opcode: 1, payload: Buffer.from("echo:hi") });
+
+    // A clean close reaches close() with the client's code.
+    socket.write(maskedFrame(8, Buffer.from([0x03, 0xe8])));
+    expect(await nextFrame()).toEqual({ opcode: 8, payload: Buffer.from([0x03, 0xe8]) });
+    socket.end();
+    await serverClosed.promise;
+    expect(events).toEqual(["open", "message:hi", "close:1000"]);
+  }
+
+  const handshake = [`Upgrade: websocket`, `Sec-WebSocket-Key: ${K}`, `Sec-WebSocket-Version: 13`];
+
+  it("Connection: close", async () => {
+    await upgradeAfterAwait({ requestLine: "GET / HTTP/1.1", headers: [...handshake, "Connection: close"] });
+  });
+
+  it("HTTP/1.0", async () => {
+    await upgradeAfterAwait({ requestLine: "GET / HTTP/1.0", headers: [...handshake, "Connection: Upgrade"] });
+  });
+
+  it("a graceful server.stop() during the await", async () => {
+    await upgradeAfterAwait({
+      requestLine: "GET / HTTP/1.1",
+      headers: [...handshake, "Connection: Upgrade"],
+      beforeUpgrade: srv => srv.stop(),
+    });
+  });
+
+  it("the synchronous path (Connection: close) is unchanged", async () => {
+    await upgradeAfterAwait({
+      requestLine: "GET / HTTP/1.1",
+      headers: [...handshake, "Connection: close"],
+      sync: true,
+    });
   });
 });
 

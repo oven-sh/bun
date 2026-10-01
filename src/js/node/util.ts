@@ -174,9 +174,13 @@ var _extend = function (origin, add) {
   return origin;
 };
 
+interface FalsyValueRejectionError extends Error {
+  reason?: unknown;
+}
+
 function callbackifyOnRejected(reason, cb) {
   if (!reason) {
-    var newReason = new Error("Promise was rejected with a falsy value");
+    var newReason: FalsyValueRejectionError = new Error("Promise was rejected with a falsy value");
     newReason.reason = reason;
     newReason.code = "ERR_FALSY_VALUE_REJECTION";
     reason = newReason;
@@ -535,8 +539,17 @@ function _errnoException(err: any, syscall: string, original?: string) {
   return new ErrnoException(err, syscall, original);
 }
 
+interface CallSiteObject {
+  functionName: string;
+  scriptId: string;
+  scriptName: string;
+  lineNumber: number;
+  columnNumber: number;
+  column: number;
+}
+
 function prepareCallSites(_err, callSites) {
-  const result = [];
+  const result: CallSiteObject[] = [];
   for (let i = 0; i < callSites.length; i++) {
     const callSite = callSites[i];
     // CallSite#getColumnNumber() is 0-based here but 1-based in V8, and node
@@ -584,7 +597,7 @@ function getCallSites(frameCount = 10, options) {
   // Capture with our own prepareStackTrace so a user-installed
   // Error.prepareStackTrace is never invoked, and so Error.stackTraceLimit
   // does not influence the number of frames returned.
-  const target = {};
+  const target: { stack?: CallSiteObject[] } = {};
   const savedPrepareStackTrace = Error.prepareStackTrace;
   const savedStackTraceLimit = Error.stackTraceLimit;
   try {
@@ -620,12 +633,18 @@ function convertProcessSignalToExitCode(signalCode) {
 
 let lazyAbortedRegistry: FinalizationRegistry<{
   ref: WeakRef<AbortSignal>;
-  unregisterToken: (...args: any[]) => void;
+  listener: (...args: any[]) => void;
 }>;
-function onAbortedCallback(resolveFn: Function) {
-  lazyAbortedRegistry.unregister(resolveFn);
+function onAbortedCallback(promise: Promise<void>) {
+  lazyAbortedRegistry.unregister(promise);
 
-  resolveFn();
+  $resolvePromiseWithFirstResolvingFunctionCallCheck(promise, undefined);
+}
+
+// Its own function so the listener's scope holds `promise` and not aborted()'s `resource`. Not
+// onAbortedCallback.bind(): that looks up `bind` on Function.prototype, which user code can replace.
+function createAbortedListener(promise: Promise<void>) {
+  return () => onAbortedCallback(promise);
 }
 
 function aborted(signal: AbortSignal, resource: object) {
@@ -641,20 +660,14 @@ function aborted(signal: AbortSignal, resource: object) {
     return Promise.$resolve();
   }
 
-  const { promise, resolve } = $newPromiseCapability(Promise);
-  const unregisterToken = onAbortedCallback.bind(undefined, resolve);
-  signal.addEventListener(
-    "abort",
-    // Do not leak the current scope into the listener.
-    // Instead, create a new function.
-    unregisterToken,
-    resistStopPropagation({ __proto__: null, once: true }),
-  );
+  const promise = $newPromise<void>();
+  const listener = createAbortedListener(promise);
+  signal.addEventListener("abort", listener, resistStopPropagation({ __proto__: null, once: true }));
 
   if (!lazyAbortedRegistry) {
-    lazyAbortedRegistry = new FinalizationRegistry(({ ref, unregisterToken }) => {
+    lazyAbortedRegistry = new FinalizationRegistry(({ ref, listener }) => {
       const signal = ref.deref();
-      if (signal) signal.removeEventListener("abort", unregisterToken);
+      if (signal) signal.removeEventListener("abort", listener);
     });
   }
 
@@ -665,9 +678,9 @@ function aborted(signal: AbortSignal, resource: object) {
     resource,
     {
       ref: new WeakRef(signal),
-      unregisterToken,
+      listener,
     },
-    unregisterToken,
+    promise,
   );
 
   return promise;

@@ -193,45 +193,15 @@ bool JSCommonJSExtensions::put(JSC::JSCell* cell, JSC::JSGlobalObject* globalObj
 
 bool JSCommonJSExtensions::deleteProperty(JSC::JSCell* cell, JSC::JSGlobalObject* globalObject, JSC::PropertyName propertyName, JSC::DeletePropertySlot& slot)
 {
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (!isAllowedToMutateExtensions(globalObject)) return true;
     bool deleted = Base::deleteProperty(cell, globalObject, propertyName, slot);
+    RETURN_IF_EXCEPTION(scope, false);
     if (deleted) {
         onAssign(defaultGlobalObject(globalObject), propertyName, JSC::jsUndefined());
     }
     return deleted;
-}
-
-extern "C" uint32_t JSCommonJSExtensions__appendFunction(Zig::GlobalObject* globalObject, JSC::JSValue value)
-{
-    JSCommonJSExtensions* extensions = globalObject->lazyRequireExtensionsObject();
-    extensions->m_registeredFunctions.append(JSC::WriteBarrier<Unknown>());
-    extensions->m_registeredFunctions.last().set(globalObject->vm(), extensions, value);
-    return extensions->m_registeredFunctions.size() - 1;
-}
-
-extern "C" void JSCommonJSExtensions__setFunction(Zig::GlobalObject* globalObject, uint32_t index, JSC::JSValue value)
-{
-    JSCommonJSExtensions* extensions = globalObject->lazyRequireExtensionsObject();
-    extensions->m_registeredFunctions[index].set(globalObject->vm(), globalObject, value);
-}
-
-extern "C" uint32_t JSCommonJSExtensions__swapRemove(Zig::GlobalObject* globalObject, uint32_t index)
-{
-    JSCommonJSExtensions* extensions = globalObject->lazyRequireExtensionsObject();
-    ASSERT(extensions->m_registeredFunctions.size() > 0);
-    if (extensions->m_registeredFunctions.size() == 1) {
-        extensions->m_registeredFunctions.clear();
-        return index;
-    }
-    ASSERT(index < extensions->m_registeredFunctions.size());
-    if (index < (extensions->m_registeredFunctions.size() - 1)) {
-        JSValue last = extensions->m_registeredFunctions.takeLast().get();
-        extensions->m_registeredFunctions[index].set(globalObject->vm(), globalObject, last);
-        return extensions->m_registeredFunctions.size();
-    } else {
-        extensions->m_registeredFunctions.removeLast();
-        return index;
-    }
 }
 
 // This implements `Module._extensions['.js']`, which
@@ -261,8 +231,6 @@ JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFr
     BunString empty = BunStringEmpty;
     JSC::VM& vm = globalObject->vm();
     ErrorableResolvedSource res;
-    res.success = false;
-    memset(&res.result, 0, sizeof res.result);
 
     JSValue result = fetchCommonJSModuleNonBuiltin<true>(
         global->bunVM(),
@@ -295,19 +263,5 @@ JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFr
 
     return JSC::JSValue::encode(jsUndefined());
 }
-
-template<typename Visitor>
-void JSCommonJSExtensions::visitChildrenImpl(JSCell* cell, Visitor& visitor)
-{
-    JSCommonJSExtensions* thisObject = uncheckedDowncast<JSCommonJSExtensions>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
-
-    for (auto& func : thisObject->m_registeredFunctions) {
-        visitor.append(func);
-    }
-}
-
-DEFINE_VISIT_CHILDREN(JSCommonJSExtensions);
 
 } // namespace Bun

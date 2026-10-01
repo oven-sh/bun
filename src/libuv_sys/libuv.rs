@@ -1350,18 +1350,71 @@ pub struct uv_tty_t {
     pub handle: HANDLE,
     tty: tty_u,
 }
-impl uv_tty_t {
+/// A console handle plus the read buffer whose lifetime libuv ties to the
+/// handle rather than to any reader. `uv` must remain the first field
+/// (`#[repr(C)]`): callbacks and `open_handles` traffic in the inner
+/// `uv_tty_t*`, and [`Tty::from_uv`] relies on both being the same address.
+#[repr(C)]
+pub struct Tty {
+    pub uv: uv_tty_t,
+
+    /// Destination buffer for this handle's console reads. A cooked-mode
+    /// line read parks a worker thread in `ReadConsoleW` writing into the
+    /// `alloc_cb` buffer, and a read cancelled by `uv_read_stop` is never
+    /// handed back through `read_cb` — so the buffer must be owned by
+    /// something libuv guarantees outlives the read. The handle is that
+    /// thing: its close callback only runs once no requests are pending,
+    /// and the process-static stdin tty is never closed at all.
+    pub read_scratch: Vec<u8>,
+}
+
+impl Tty {
+    /// Recover the owning `Tty` from the `uv_tty_t*` libuv hands back
+    /// (same address: `uv` is the first `#[repr(C)]` field).
+    #[inline]
+    pub fn from_uv(handle: *mut uv_tty_t) -> *mut Tty {
+        handle.cast()
+    }
+
     #[inline]
     pub fn init(&mut self, loop_: *mut Loop, file: uv_file) -> ReturnCode {
-        // SAFETY: self is a valid `uv_tty_t`-sized allocation.
-        let rc = unsafe { uv_tty_init(loop_, self, file, 0) };
+        // Init and register through a whole-struct pointer: the close paths
+        // reclaim the full `Tty` from this address, and `&mut self.uv` would
+        // narrow provenance to the field (same rule as `File::start_close`).
+        let uv_ptr = core::ptr::from_mut(self).cast::<uv_tty_t>();
+        // SAFETY: `uv` is the first `#[repr(C)]` field, sized for uv_tty_t.
+        let rc = unsafe { uv_tty_init(loop_, uv_ptr, file, 0) };
         // fd 0 is the process-static stdin tty (never freed, shared across
         // threads by design); everything else is a heap tty owned by this thread.
         if rc.0 == 0 && file != 0 {
-            open_handles::add_tty(self);
+            open_handles::add_tty(uv_ptr);
         }
         rc
     }
+
+    /// `uv_close` through a whole-struct pointer so the close callback may
+    /// `Box::from_raw` the wrapper (`(*this).uv.close(..)` would autoref
+    /// `&mut uv_tty_t` and narrow provenance to the field).
+    ///
+    /// # Safety
+    /// `this` is a live, initialised tty that is not already closing.
+    pub unsafe fn close(this: *mut Self, cb: unsafe extern "C" fn(*mut uv_tty_t)) {
+        let handle = this.cast::<uv_handle_t>();
+        open_handles::remove(handle);
+        // SAFETY: `Tty` embeds `uv_handle_t` at offset 0; cb is ABI-identical.
+        unsafe {
+            uv_close(
+                handle,
+                Some(mem::transmute::<
+                    unsafe extern "C" fn(*mut uv_tty_t),
+                    unsafe extern "C" fn(*mut uv_handle_t),
+                >(cb)),
+            );
+        }
+    }
+}
+
+impl uv_tty_t {
     #[inline]
     pub fn set_mode(&mut self, mode: TtyMode) -> ReturnCode {
         // SAFETY: tty was `init`ed.
@@ -2238,8 +2291,8 @@ impl ReturnCode {
         self.0
     }
     /// `Some(|UV_E*|)` when negative — the **raw** libuv error magnitude
-    /// (e.g. 4082 for `UV_EBUSY`). Use [`errno`] for the translated POSIX
-    /// `bun.sys.E` value (e.g. 16 for `BUSY`).
+    /// (e.g. 4082 for `UV_EBUSY`), for logging. `bun_sys::ReturnCodeExt`
+    /// has the errno translation.
     #[inline]
     pub(crate) const fn raw_errno(self) -> Option<u16> {
         if self.0 < 0 {
@@ -2247,28 +2300,6 @@ impl ReturnCode {
         } else {
             None
         }
-    }
-    /// When negative, map the
-    /// `UV_E*` code to the small POSIX `bun.sys.E` discriminant (e.g.
-    /// `UV_ENOENT (-4058)` → `2`). Returns `None` for non-negative *or*
-    /// unmapped negative codes. Downstream callers
-    /// (`node_fs`, `sys::Fd`, `write_file`, …) store this directly into
-    /// `bun_sys::Error.errno`, so it MUST be the translated value, not the raw
-    /// `|UV_E*|` magnitude — see [`raw_errno`] for the latter.
-    #[inline]
-    pub const fn errno(self) -> Option<u16> {
-        if self.0 < 0 {
-            uv_err_to_e_discriminant(self.0)
-        } else {
-            None
-        }
-    }
-    /// Same translated value as
-    /// [`errno`]; for the typed `bun_sys::E` use
-    /// `bun_sys::ReturnCodeExt::err_enum_e` (layering: `E` lives upstream).
-    #[inline]
-    pub const fn err_enum(self) -> Option<u16> {
-        self.errno()
     }
     /// Layer-free `< 0` check.
     /// For the tagged `bun_sys::Error` use [`ReturnCodeExt::to_error`].
@@ -2295,26 +2326,6 @@ impl ReturnCodeI64 {
     #[inline]
     pub const fn int(self) -> i64 {
         self.0
-    }
-    #[inline]
-    pub const fn errno(self) -> Option<u16> {
-        if self.0 < 0 {
-            Some(self.0.unsigned_abs() as u16)
-        } else {
-            None
-        }
-    }
-    /// Translated `bun_sys::E`
-    /// discriminant via [`uv_err_to_e_discriminant`] (matching
-    /// [`ReturnCode::err_enum`]). For the typed `bun_sys::E` use
-    /// `bun_sys::ReturnCodeExt::err_enum_e` (layering: `E` lives upstream).
-    #[inline]
-    pub const fn err_enum(self) -> Option<u16> {
-        if self.0 < 0 {
-            uv_err_to_e_discriminant(self.0 as c_int)
-        } else {
-            None
-        }
     }
     /// `req.result` after a successful `uv_fs_open` is the
     /// CRT fd. Returns the raw `uv_file`; caller wraps with `Fd::from_uv`

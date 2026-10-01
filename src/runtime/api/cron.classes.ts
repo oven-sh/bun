@@ -1,11 +1,11 @@
-import { define } from "../../codegen/class-definitions";
+import { define } from "../../codegen/class-definitions.ts";
 
 export default [
   define({
     name: "CronJob",
     construct: false,
     noConstructor: true,
-    finalize: true,
+    refCounted: true,
     configurable: false,
     klass: {},
     JSType: "0b11101110",

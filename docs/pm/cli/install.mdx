@@ -454,7 +454,17 @@ These flags install packages for the specified platform instead of the current s
 
 ## Peer dependencies?
 
-Bun handles peer dependencies like Yarn: `bun install` installs them automatically. If the dependency is marked optional in `peerDependenciesMeta`, Bun uses an existing dependency if possible.
+`bun install` installs required peer dependencies. If nothing in the install depends on the peer's package, Bun installs the newest version in the peer's range.
+
+If your project or another dependency already depends on a version of the peer's package from the registry, Bun reuses that copy for the peer and installs no second copy. The reused copy can be outside the peer's range. In that case, Bun prints a warning that names the package and the range it requires:
+
+```txt
+warn: incorrect peer dependency "react@17.0.2" (react-dom@18.3.1 requires "^18.3.1")
+```
+
+To choose the version, add the peer's package to the `dependencies` in your `package.json`.
+
+If `peerDependenciesMeta` marks the peer as optional, Bun does not install it. Bun uses an existing dependency if possible.
 
 ## Lockfile
 

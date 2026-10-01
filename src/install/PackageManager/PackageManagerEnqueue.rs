@@ -1170,19 +1170,22 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     } {
                                         loaded_manifest = Some(manifest.clone());
 
+                                        // The age check below needs publish times, which only the
+                                        // extended manifest carries, unless the package is excluded from it.
+                                        let age_check_can_use_cache = {
+                                            let manifest = loaded_manifest.as_ref().unwrap();
+                                            !needs_extended_manifest
+                                                || manifest.pkg.has_extended_manifest
+                                                || manifest.should_exclude_from_age_filter(
+                                                    this.options.minimum_release_age_excludes,
+                                                )
+                                        };
+
                                         // If it's an exact package version already living in the cache
-                                        // We can skip the network request, even if it's beyond the caching period.
-                                        // Except when minimum-release-age needs publish times and the cached
-                                        // manifest is abbreviated: its timestamps are all 0, so the age check
-                                        // below would pass any version. Fall through and fetch the extended one.
+                                        // We can skip the network request, even if it's beyond the caching period
                                         if version.tag == dependency::version::Tag::Npm
                                             && version.npm().version.is_exact()
-                                            && (!needs_extended_manifest
-                                                || loaded_manifest
-                                                    .as_ref()
-                                                    .unwrap()
-                                                    .pkg
-                                                    .has_extended_manifest)
+                                            && age_check_can_use_cache
                                         {
                                             if let Some(find_result) =
                                                 loaded_manifest.as_ref().unwrap().find_by_version(

@@ -1,6 +1,7 @@
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { readdirSync } from "node:fs";
 
 // These tests drive real `bun install` runs against a mock registry, which is
 // slow under the debug/ASAN build — give them the same generous timeout the
@@ -950,13 +951,19 @@ describe("minimum-release-age", () => {
     // publish times, so an age-gated install must not resolve from it. Each test
     // uses its own cache directory and reads which manifest flavor was requested
     // off the Accept header.
-    const minAgeArgs = ["--minimum-release-age", `${5 * SECONDS_PER_DAY}`];
-    const blockedMessage = /blocked by minimum-release-age|minimum release age/;
+    const minAge = 5 * SECONDS_PER_DAY;
+    const minAgeArgs = ["--minimum-release-age", `${minAge}`];
+    // The regular resolution path and the exact-version shortcut report a
+    // blocked version with different messages.
+    const blockedByResolution = `(blocked by minimum-release-age: ${minAge} seconds)`;
+    const blockedByShortcut = `Version "regular-package@3.0.0" was published within minimum release age of ${minAge} seconds`;
 
-    const project = (dependencies: Record<string, string>) => ({
+    const project = (dependencies: Record<string, string>, bunfig: Record<string, unknown> = {}) => ({
       "package.json": JSON.stringify({ name: "app", dependencies }),
-      ".npmrc": `registry=${mockRegistryUrl}`,
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry: mockRegistryUrl, ...bunfig } }),
     });
+
+    const cachedManifests = (cacheDir: string) => readdirSync(cacheDir).filter(name => name.endsWith(".npm"));
 
     async function runWithCache(cwd: string, cacheDir: string, args: string[], { stale = false } = {}) {
       const firstRequest = registryRequests.length;
@@ -990,9 +997,10 @@ describe("minimum-release-age", () => {
       const first = await runWithCache(String(ungated), String(cache), ["install"]);
       expect(first.manifestRequests).toEqual(["abbreviated"]);
       expect(first.exitCode).toBe(0);
+      expect(cachedManifests(String(cache))).toHaveLength(1);
 
       const second = await runWithCache(String(gated), String(cache), ["install", ...minAgeArgs]);
-      expect(second.stderr).toMatch(blockedMessage);
+      expect(second.stderr).toContain(blockedByResolution);
       expect(second.manifestRequests).toEqual(["full"]);
       expect(await Bun.file(`${gated}/node_modules/regular-package/package.json`).exists()).toBe(false);
       expect(second.exitCode).toBe(1);
@@ -1006,6 +1014,7 @@ describe("minimum-release-age", () => {
       const first = await runWithCache(String(ungated), String(cache), ["install"]);
       expect(first.manifestRequests).toEqual(["abbreviated"]);
       expect(first.exitCode).toBe(0);
+      expect(cachedManifests(String(cache))).toHaveLength(1);
 
       const second = await runWithCache(String(gated), String(cache), ["install", ...minAgeArgs]);
       expect(second.manifestRequests).toEqual(["full"]);
@@ -1021,9 +1030,10 @@ describe("minimum-release-age", () => {
       const first = await runWithCache(String(ungated), String(cache), ["install"]);
       expect(first.manifestRequests).toEqual(["abbreviated"]);
       expect(first.exitCode).toBe(0);
+      expect(cachedManifests(String(cache))).toHaveLength(1);
 
       const second = await runWithCache(String(gated), String(cache), ["add", "regular-package@3.0.0", ...minAgeArgs]);
-      expect(second.stderr).toMatch(blockedMessage);
+      expect(second.stderr).toContain(blockedByResolution);
       expect(second.manifestRequests).toEqual(["full"]);
       expect(await Bun.file(`${gated}/package.json`).json()).toEqual({ name: "app", dependencies: {} });
       expect(second.exitCode).toBe(1);
@@ -1054,10 +1064,29 @@ describe("minimum-release-age", () => {
       expect(populate.exitCode).toBe(0);
 
       const fromCache = await runWithCache(String(second), String(cache), ["install", ...minAgeArgs], { stale: true });
-      expect(fromCache.stderr).toMatch(blockedMessage);
+      expect(fromCache.stderr).toContain(blockedByShortcut);
       expect(fromCache.manifestRequests).toEqual([]);
       expect(await Bun.file(`${second}/node_modules/regular-package/package.json`).exists()).toBe(false);
       expect(fromCache.exitCode).toBe(1);
+    });
+
+    test("excluded exact version still resolves from the abbreviated manifest without a request", async () => {
+      using cache = tempDir("abbreviated-cache-excluded", {});
+      using ungated = tempDir("abbreviated-ungated-excluded", project({ "regular-package": "3.0.0" }));
+      using gated = tempDir(
+        "abbreviated-gated-excluded",
+        project({ "regular-package": "3.0.0" }, { minimumReleaseAgeExcludes: ["regular-package"] }),
+      );
+
+      const first = await runWithCache(String(ungated), String(cache), ["install"]);
+      expect(first.manifestRequests).toEqual(["abbreviated"]);
+      expect(first.exitCode).toBe(0);
+      expect(cachedManifests(String(cache))).toHaveLength(1);
+
+      const second = await runWithCache(String(gated), String(cache), ["install", ...minAgeArgs], { stale: true });
+      expect(second.manifestRequests).toEqual([]);
+      expect(await Bun.file(`${gated}/bun.lock`).text()).toContain("regular-package@3.0.0");
+      expect(second.exitCode).toBe(0);
     });
   });
 

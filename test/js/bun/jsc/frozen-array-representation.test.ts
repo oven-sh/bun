@@ -1,5 +1,5 @@
+import { describeArray, describe as describeObject } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { describe as describeObject, describeArray } from "bun:jsc";
 import { bunEnv, bunExe } from "harness";
 
 // Object.freeze / seal / preventExtensions and a read-only "length" keep the elements of an
@@ -59,7 +59,12 @@ describe("frozen arrays keep their elements in the vector", () => {
     expect(() => {
       delete a[0];
     }).toThrow(TypeError);
-    expect(Object.getOwnPropertyDescriptor(a, 0)).toEqual({ value: 0, writable: false, enumerable: true, configurable: false });
+    expect(Object.getOwnPropertyDescriptor(a, 0)).toEqual({
+      value: 0,
+      writable: false,
+      enumerable: true,
+      configurable: false,
+    });
     expect(Object.isFrozen(a)).toBe(true);
     expect([...a]).toEqual([0, 1, 2, 3]);
     expect(vectorLength(a)).toBeGreaterThanOrEqual(4);
@@ -79,7 +84,12 @@ describe("frozen arrays keep their elements in the vector", () => {
     }).toThrow(TypeError);
     expect(a.length).toBe(4);
     expect(() => a.push(9)).toThrow(TypeError);
-    expect(Object.getOwnPropertyDescriptor(a, 0)).toEqual({ value: 9, writable: true, enumerable: true, configurable: false });
+    expect(Object.getOwnPropertyDescriptor(a, 0)).toEqual({
+      value: 9,
+      writable: true,
+      enumerable: true,
+      configurable: false,
+    });
     expect(Object.isSealed(a)).toBe(true);
     expect(Object.isFrozen(a)).toBe(false);
     expect(vectorLength(a)).toBeGreaterThanOrEqual(4);
@@ -115,8 +125,18 @@ describe("frozen arrays keep their elements in the vector", () => {
   test("defineProperty on one element moves the array to the sparse map with exact descriptors", () => {
     const a = Object.seal(ints(3));
     Object.defineProperty(a, 0, { writable: false });
-    expect(Object.getOwnPropertyDescriptor(a, 0)).toEqual({ value: 0, writable: false, enumerable: true, configurable: false });
-    expect(Object.getOwnPropertyDescriptor(a, 1)).toEqual({ value: 1, writable: true, enumerable: true, configurable: false });
+    expect(Object.getOwnPropertyDescriptor(a, 0)).toEqual({
+      value: 0,
+      writable: false,
+      enumerable: true,
+      configurable: false,
+    });
+    expect(Object.getOwnPropertyDescriptor(a, 1)).toEqual({
+      value: 1,
+      writable: true,
+      enumerable: true,
+      configurable: false,
+    });
     expect(vectorLength(a)).toBe(0);
     expect(() => Object.defineProperty(a, 1, { configurable: true })).toThrow(TypeError);
   });

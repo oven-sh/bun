@@ -15,13 +15,13 @@ use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
 #[derive(Default)]
-pub struct Ls {
+pub(crate) struct Ls {
     pub(crate) opts: Opts,
     pub(crate) state: State,
 }
 
 #[derive(Default)]
-pub enum State {
+pub(crate) enum State {
     #[default]
     Idle,
     Exec(ExecState),
@@ -29,7 +29,7 @@ pub enum State {
     Done,
 }
 
-pub struct ExecState {
+pub(crate) struct ExecState {
     pub(crate) err: Option<bun_sys::Error>,
     pub(crate) task_count: AtomicUsize,
     pub(crate) tasks_done: usize,
@@ -812,7 +812,7 @@ pub(crate) enum DotfileMode {
 /// Only the fields actually consulted are kept; the rest are recognised by
 /// `parse_flag` but not stored.
 #[derive(Clone, Copy, Default)]
-pub struct Opts {
+pub(crate) struct Opts {
     pub(crate) dotfiles: DotfileMode,
     /// `-d`, `--directory` — list directories themselves, not their contents
     pub(crate) list_directories: bool,

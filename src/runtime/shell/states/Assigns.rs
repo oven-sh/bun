@@ -9,12 +9,12 @@ use crate::shell::yield_::Yield;
 use crate::shell::{EnvStr, ExitCode};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum AssignCtx {
+pub(crate) enum AssignCtx {
     Cmd,
     Shell,
 }
 
-pub struct Assigns {
+pub(crate) struct Assigns {
     pub(crate) base: Base,
     /// Points into the AST arena, which outlives every state node — `RawSlice`
     /// invariant.
@@ -24,7 +24,7 @@ pub struct Assigns {
 }
 
 #[derive(Default)]
-pub enum AssignsState {
+pub(crate) enum AssignsState {
     #[default]
     Idle,
     Expanding {

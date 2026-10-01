@@ -145,7 +145,6 @@ fn strip_base64_marker(mime_type: &[u8]) -> Option<&[u8]> {
 // `mime_type`/`data` are slices into the caller-provided `url` string.
 // Classified as BORROW_PARAM — struct gets a lifetime parameter.
 pub struct DataURL<'a> {
-    pub url: bun_core::String,
     pub mime_type: &'a [u8],
     pub(crate) data: &'a [u8],
     pub(crate) is_base64: bool,
@@ -166,7 +165,6 @@ impl<'a> DataURL<'a> {
             strings::index_of_char(url, b',').ok_or(ParseDataURLError::InvalidDataURL)? as usize;
 
         let mut parsed = DataURL {
-            url: bun_core::String::EMPTY,
             mime_type: strings::trim(&url[b"data:".len()..comma], ASCII_WHITESPACE),
             data: &url[comma + 1..url.len()],
             is_base64: false,

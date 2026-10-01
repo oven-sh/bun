@@ -85,26 +85,6 @@ export function getStdioWriteStream(
         });
       }
     };
-
-    const kFastPath = require("internal/fs/streams").kWriteStreamFastPath;
-    stream._final = function (cb) {
-      try {
-        const sink = this[kFastPath];
-        if (sink && sink !== true) {
-          const result = sink.flush();
-          if ($isPromise(result)) {
-            result.then(
-              () => cb(null),
-              err => cb(err),
-            );
-            return;
-          }
-        }
-        cb(null);
-      } catch (err) {
-        cb(err);
-      }
-    };
   }
 
   stream._isStdio = true;
@@ -139,7 +119,7 @@ export function getStdinStream(
   const native = Bun.stdin.stream();
   const source = native.$bunNativePtr;
 
-  var reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  var reader: import("node:stream/web").ReadableStreamDefaultReader<Uint8Array<ArrayBuffer>> | undefined;
 
   let needsInternalReadRefresh = false;
   // if true, while the stream is own()ed it will not
@@ -343,7 +323,7 @@ export function getStdinStream(
 export function initializeNextTickQueue(process: typeof globalThis.process, nextTickQueue, drainMicrotasksFn) {
   var queue;
   var tickInitHooks;
-  var process;
+  var process: typeof globalThis.process;
   var nextTickQueue = nextTickQueue;
   var drainMicrotasks = drainMicrotasksFn;
 
@@ -394,6 +374,8 @@ export function initializeNextTickQueue(process: typeof globalThis.process, next
 
         drainMicrotasks();
       } while (!queue.isEmpty());
+      // Without this, every checkpoint after the first tick calls this function to find an empty queue.
+      $putInternalField(nextTickQueue, 0, 0);
     }
 
     $putInternalField(nextTickQueue, 0, 0);
@@ -434,7 +416,9 @@ export function initializeNextTickQueue(process: typeof globalThis.process, next
           // never surfaced to the process.nextTick() caller. console is a
           // user-mutable global, so shield the print; exit regardless.
           try {
-            console.error(typeof err?.stack === "string" ? err.stack : err);
+            console.error(
+              typeof (err as Partial<Error> | null | undefined)?.stack === "string" ? (err as Error).stack : err,
+            );
           } catch {}
           process.exit(1);
         }
@@ -655,7 +639,7 @@ export function createOnWarning(process, redirectPath, disabledArr) {
   let traceWarningHelperShown = false;
 
   function writeOut(message) {
-    if (redirectPath) {
+    if (appendFileSync) {
       try {
         appendFileSync(redirectPath, message + "\n");
         return;
@@ -671,7 +655,10 @@ export function createOnWarning(process, redirectPath, disabledArr) {
     process.stderr.write(message + "\n");
   }
 
-  return function onWarning(warning) {
+  interface ProcessWarning extends Error {
+    detail?: unknown;
+  }
+  return function onWarning(warning: ProcessWarning) {
     if (!(warning instanceof Error)) return;
     const name = warning.name || "Warning";
     const isDeprecation = name === "DeprecationWarning";
@@ -863,16 +850,16 @@ export function buildAllowedNodeEnvironmentFlags() {
     get size() {
       return canonicalSet.size;
     }
-    *[Symbol.iterator]() {
+    *[Symbol.iterator](): SetIterator<string> {
       yield* canonical;
     }
-    *values() {
+    *values(): SetIterator<string> {
       yield* canonical;
     }
-    *keys() {
+    *keys(): SetIterator<string> {
       yield* canonical;
     }
-    *entries() {
+    *entries(): SetIterator<[string, string]> {
       for (const flag of canonical) yield [flag, flag];
     }
   }

@@ -360,31 +360,6 @@ impl<'a, T> Extend<T> for BabyVec<'a, T> {
     }
 }
 
-impl<'a, 'b, T: Copy> Extend<&'b T> for BabyVec<'a, T> {
-    #[inline]
-    fn extend<I: IntoIterator<Item = &'b T>>(&mut self, iter: I) {
-        for v in iter {
-            self.push(*v);
-        }
-    }
-}
-
-impl<'a, 'b, T> IntoIterator for &'b BabyVec<'a, T> {
-    type Item = &'b T;
-    type IntoIter = slice::Iter<'b, T>;
-    #[inline]
-    fn into_iter(self) -> Self::IntoIter {
-        self.as_slice().iter()
-    }
-}
-impl<'a, 'b, T> IntoIterator for &'b mut BabyVec<'a, T> {
-    type Item = &'b mut T;
-    type IntoIter = slice::IterMut<'b, T>;
-    #[inline]
-    fn into_iter(self) -> Self::IntoIter {
-        self.as_mut_slice().iter_mut()
-    }
-}
 impl<'a, T> IntoIterator for BabyVec<'a, T> {
     type Item = T;
     type IntoIter = IntoIter<'a, T>;
@@ -450,18 +425,5 @@ impl<'a, T> Drop for IntoIter<'a, T> {
 impl<'a, T: fmt::Debug> fmt::Debug for BabyVec<'a, T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.as_slice().fmt(f)
-    }
-}
-
-impl<'a, T> core::borrow::Borrow<[T]> for BabyVec<'a, T> {
-    #[inline]
-    fn borrow(&self) -> &[T] {
-        self.as_slice()
-    }
-}
-impl<'a, T> AsRef<[T]> for BabyVec<'a, T> {
-    #[inline]
-    fn as_ref(&self) -> &[T] {
-        self.as_slice()
     }
 }

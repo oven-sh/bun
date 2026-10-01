@@ -11,13 +11,13 @@ use crate::webcore::BlobExt as _;
 
 declare_scope!(FormData, visible);
 
-pub struct FormData {}
+pub(crate) struct FormData {}
 
-pub use bun_core::form_data::{AsyncFormData, Encoding};
+pub(crate) use bun_core::form_data::{AsyncFormData, Encoding};
 
 /// JSC-touching extension on `AsyncFormData` (lives in this crate because it
 /// needs `JSGlobalObject` + `AnyPromise`).
-pub trait AsyncFormDataExt {
+pub(crate) trait AsyncFormDataExt {
     fn to_js(&self, global: &JSGlobalObject, data: &[u8], promise: AnyPromise) -> JsResult<()>;
 }
 
@@ -57,7 +57,7 @@ impl AsyncFormDataExt for AsyncFormData {
 /// Raw slice into the input buffer. Not using `bun.Semver.String` because
 /// file bodies are binary data that can contain null bytes, which
 /// Semver.String's inline storage treats as terminators.
-pub struct Field<'a> {
+pub(crate) struct Field<'a> {
     /// Borrows into the caller-owned input buffer (binary body slice).
     pub value: &'a [u8],
     pub(crate) filename: bun_semver::String,
@@ -79,7 +79,7 @@ impl Default for Field<'_> {
 }
 
 impl FormData {
-    pub fn to_js(
+    pub(crate) fn to_js(
         global: &JSGlobalObject,
         input: &[u8],
         encoding: &Encoding,

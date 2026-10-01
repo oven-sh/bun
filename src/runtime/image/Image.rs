@@ -54,13 +54,13 @@ fn format_name(f: codecs::Format) -> &'static str {
 // `sourceJS` cached-value accessors are emitted by `generate-classes.ts` into
 // `generated_classes.rs::js_Image`; re-export that module here so callers use
 // `js::source_js_set_cached` / `js::source_js_get_cached`.
-pub use crate::generated_classes::js_Image as js;
+pub(crate) use crate::generated_classes::js_Image as js;
 
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). `max_pixels`
 // / `auto_orient` are read-only after construction so stay bare.
 #[bun_jsc::JsClass]
-pub struct Image {
+pub(crate) struct Image {
     source: JsCell<Source>,
     pipeline: Cell<Pipeline>,
     /// Decompression-bomb guard. Checked against the *header* dimensions before
@@ -96,7 +96,7 @@ impl Default for Image {
     }
 }
 
-pub enum Source {
+pub(crate) enum Source {
     /// Input is a JS ArrayBuffer/TypedArray held in the wrapper's `sourceJS`
     /// cached slot. We never cache the raw pointer here — it could be detached
     /// or (for resizable, which we reject) reallocated. Each use re-fetches:
@@ -171,7 +171,7 @@ impl jsc::FromJsEnum for codecs::Filter {
 }
 
 #[derive(Clone, Copy)]
-pub struct Resize {
+pub(crate) struct Resize {
     pub(crate) w: u32,
     pub(crate) h: u32,
     pub(crate) filter: codecs::Filter,
@@ -200,7 +200,7 @@ impl Default for Resize {
 /// → modulate. Rotate precedes resize so the target box is interpreted in
 /// upright space; modulate runs last so it operates on the fewest pixels.
 #[derive(Clone, Copy, Default)]
-pub struct Pipeline {
+pub(crate) struct Pipeline {
     pub(crate) rotate: u16, // 0/90/180/270
     pub(crate) flip: bool,  // vertical
     pub(crate) flop: bool,  // horizontal
@@ -212,7 +212,7 @@ pub struct Pipeline {
 }
 
 #[derive(Clone, Copy)]
-pub struct Modulate {
+pub(crate) struct Modulate {
     /// Multiplier; 1.0 = identity.
     pub(crate) brightness: f32,
     /// 0 = greyscale, 1 = identity, >1 = boost.
@@ -1374,7 +1374,7 @@ impl<'a> ReadBytesHandler for BlobReadChain<'a> {
 
 /// The pool-side work of one `Image` operation: decode → pipeline → encode
 /// (or probe). Also run synchronously by `encode_for_body`.
-pub struct PipelineTask {
+pub(crate) struct PipelineTask {
     pipeline: Pipeline,
     input: Input,
     kind: Kind,
@@ -1388,7 +1388,7 @@ unsafe impl Send for PipelineTask {}
 
 /// The JS-thread half of a scheduled `PipelineTask`.
 #[derive(bun_jsc::JsAffine)]
-pub struct PipelineJs {
+pub(crate) struct PipelineJs {
     promise: jsc::JSPromiseStrong,
     deliver: Deliver,
     _pin: Pin,
@@ -1397,7 +1397,7 @@ pub struct PipelineJs {
 
 /// An ArrayBuffer pinned by `JSC__JSValue__borrowBytesForOffThread` (mode 2)
 /// so user code cannot transfer/detach it while the pool reads; unpinned on drop.
-pub struct Pin(JSValue);
+pub(crate) struct Pin(JSValue);
 // SAFETY: a pin on a heap cell; gone with the heap.
 unsafe impl bun_jsc::job::JsAffine for Pin {}
 impl Pin {
@@ -1414,7 +1414,7 @@ impl Drop for Pin {
 
 /// One pending operation's hold on its `Image`: keeps the wrapper Strong while
 /// any are pending, and lets the completion reach the `Image` (JS thread).
-pub struct PendingTask(jsc::JsPtr<Image>);
+pub(crate) struct PendingTask(jsc::JsPtr<Image>);
 // SAFETY: the Image is its wrapper's m_ctx; the Strong we hold keeps that alive.
 unsafe impl bun_jsc::job::JsAffine for PendingTask {}
 impl PendingTask {
@@ -1459,7 +1459,7 @@ impl jsc::JobContext for PipelineTask {
 }
 
 /// Bytes for the worker: a pinned/owned slice, a copy, or a path to read there.
-pub struct Input {
+pub(crate) struct Input {
     // Borrows pinned ArrayBuffer or `image.source.owned`; the owning `Image`
     // is held via BACKREF for the task's lifetime — `RawSlice` invariant.
     bytes: bun_ptr::RawSlice<u8>,
@@ -1490,7 +1490,7 @@ impl Input {
 }
 
 #[derive(bun_jsc::JsAffine)]
-pub enum Deliver {
+pub(crate) enum Deliver {
     Uint8Array,
     Buffer,
     Blob,
@@ -1506,7 +1506,7 @@ pub enum Deliver {
 // `Deliver::deinit` is just `Strong::Drop` on the `WriteDest` arm — handled
 // automatically.
 
-pub enum Kind {
+pub(crate) enum Kind {
     /// `None` ⇒ re-encode in the source format (resolved after decode).
     Encode(Option<codecs::EncodeOptions>),
     Metadata,
@@ -1517,7 +1517,7 @@ pub enum Kind {
     Placeholder,
 }
 
-pub enum TaskResult {
+pub(crate) enum TaskResult {
     Encoded {
         out: codecs::Encoded,
         format: codecs::Format,

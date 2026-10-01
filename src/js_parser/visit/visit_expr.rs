@@ -2537,6 +2537,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn e_new(p: &mut Self, e: &mut Expr, _: ExprIn) {
         let expr = *e;
         let mut e_ = expr.data.e_new().expect("infallible: variant checked");
+        // (Before import.meta.url is replaced by what it says.)
+        if p.options.inline_import_meta_paths && !p.is_control_flow_dead {
+            Self::add_entry_point_of_worker(p, &e_);
+        }
         p.visit_expr(&mut e_.target);
 
         for arg in e_.args.slice_mut() {
@@ -2555,6 +2559,70 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return;
             }
         }
+    }
+
+    /// `new Worker("./worker.ts")` and `new Worker(new URL("./worker.ts", import.meta.url))`, with or without `.href`: the
+    /// file is part of the program too. The expression stays as it is. Whether `Worker` is the global or
+    /// node:worker_threads' makes no difference, and if it is something else, there is an entry point that nothing starts.
+    fn add_entry_point_of_worker(p: &mut Self, e_: &E::New) {
+        let is_named = |p: &Self, target: &Expr, name: &[u8]| match target.data {
+            Data::EIdentifier(identifier) => p.load_name_from_ref(identifier.ref_) == name,
+            _ => false,
+        };
+        if !is_named(p, &e_.target, b"Worker") {
+            return;
+        }
+        let Some(mut url) = e_.args.slice().first().copied() else {
+            return;
+        };
+        let is_path = |text: &[u8]| {
+            text.starts_with(b"./") || text.starts_with(b"../") || text.starts_with(b"/")
+        };
+        let add = |p: &mut Self, kind: bun_ast::ImportKind, loc: bun_ast::Loc, text: &'a [u8]| {
+            let index = p.add_import_record(kind, loc, text);
+            p.import_records.items_mut()[index as usize].flags.insert(
+                bun_ast::ImportRecordFlags::IS_WORKER_ENTRY_POINT
+                    | bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS,
+            );
+        };
+        // A path is relative to the working directory, as it is on the command line.
+        if let Data::EString(path) = url.data {
+            if let Ok(text) = path.string(p.arena)
+                && is_path(text)
+            {
+                add(p, bun_ast::ImportKind::EntryPointRun, url.loc, text);
+            }
+            return;
+        }
+        if let Data::EDot(dot) = url.data
+            && dot.name.slice() == b"href"
+        {
+            url = dot.target;
+        }
+        let Data::ENew(url) = url.data else { return };
+        let [path, base] = url.args.slice() else {
+            return;
+        };
+        let (Data::EString(path_string), Data::EDot(base)) = (path.data, base.data) else {
+            return;
+        };
+        if !is_named(p, &url.target, b"URL")
+            || base.name.slice() != b"url"
+            || !matches!(base.target.data, Data::EImportMeta(..))
+        {
+            return;
+        }
+        let Ok(mut text) = path_string.string(p.arena) else {
+            return;
+        };
+        // In a URL "worker.ts" is relative too. Not another URL, though.
+        if !is_path(text) {
+            if text.contains(&b':') {
+                return;
+            }
+            text = p.arena.alloc_slice_copy(&[b"./", text].concat());
+        }
+        add(p, bun_ast::ImportKind::EntryPointBuild, path.loc, text);
     }
 
     /// Note: Caller must check `p.bundler_feature_flag_ref.is_valid()` before calling.

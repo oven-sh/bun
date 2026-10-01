@@ -6822,7 +6822,12 @@ pub mod bv2_impl {
                 let mut had_busted_dir_cache = false;
                 let resolve_result: _resolver::Result = 'inner: loop {
                     match transpiler.resolver.resolve_with_framework(
-                        source_dir,
+                        // (`new Worker("./worker.ts")`)
+                        if import_record.kind == ImportKind::EntryPointRun {
+                            Fs::FileSystem::instance().top_level_dir
+                        } else {
+                            source_dir
+                        },
                         import_record.path.text,
                         import_record.kind,
                     ) {
@@ -7042,6 +7047,19 @@ pub mod bv2_impl {
                         resolve_result.primary_side_effects_data
                             != bun_ast::SideEffects::HasSideEffects,
                     );
+                    continue;
+                }
+
+                // The file that a Worker starts with is another entry point, not something that this file depends on.
+                if import_record
+                    .flags
+                    .contains(bun_ast::ImportRecordFlags::IS_WORKER_ENTRY_POINT)
+                {
+                    import_record
+                        .flags
+                        .insert(bun_ast::ImportRecordFlags::IS_UNUSED);
+                    import_record.source_index = Index::INVALID;
+                    let _ = self.enqueue_entry_item(&mut resolve_result, true, target, None);
                     continue;
                 }
 

@@ -1350,10 +1350,16 @@ unsafe fn resolve_entry_point_specifier<'s>(
     // `Path::text` borrows the resolver's process-lifetime `dirname_store` /
     // `filename_store` (`Path<'static>`), NOT `resolved_entry_point` itself —
     // copy the slice out and let `resolved_entry_point` drop on the stack.
-    Some(
-        resolved_entry_point
-            .path_const()
-            .expect("resolve_entry_point rejects disabled results")
-            .text,
-    )
+    let path = resolved_entry_point
+        .path_const()
+        .expect("resolve_entry_point rejects disabled results")
+        .text;
+    // `bun run --aot`: modules go by the paths of their sources, and the build may have this one.
+    // SAFETY: per fn contract; `standalone_module_graph` is a read-only field.
+    if let Some(graph) = unsafe { (*parent).standalone_module_graph }
+        && let Some(name) = graph.find_by_source_path(path)
+    {
+        return Some(name);
+    }
+    Some(path)
 }

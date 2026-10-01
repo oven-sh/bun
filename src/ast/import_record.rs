@@ -113,6 +113,10 @@ bitflags::bitflags! {
         /// `IS_UNUSED` for its own reasons (an unused TypeScript import, a macro
         /// import), and those records must never be resolved.
         const IS_BARREL_DEFERRED = 1 << 19;
+
+        /// `new Worker(new URL("./worker.ts", import.meta.url))`: the file is to be an entry point of the build. Nothing
+        /// is imported.
+        const IS_WORKER_ENTRY_POINT = 1 << 20;
     }
 }
 

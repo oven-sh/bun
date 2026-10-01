@@ -216,12 +216,77 @@ describe.skipIf(!supported)("bun run --aot", () => {
     expect(stdout).toContain(`"fib":6765`);
   });
 
-  // The worker's file is not part of the build, so it is interpreted. The built-in functions it calls are compiled.
+  // A file that a Worker starts with is part of the build if the build can tell which it is. A build that leaves out the
+  // text of what it compiled shows which functions those are.
+  test.concurrent("the file of a Worker is compiled too", async () => {
+    using dir = tempDir("run-aot", {
+      "app/entry.ts": `
+        import { viaNode } from "./via-node.ts";
+        const said: Record<string, unknown> = {};
+        const listen = (name: string, worker: Worker) =>
+          new Promise<void>(done => { worker.onmessage = e => { said[name] = e.data; worker.terminate(); done(); }; });
+        const name = "./computed";
+        await Promise.all([
+          listen("href", new Worker(new URL("./href.ts", import.meta.url).href)),
+          listen("url", new Worker(new URL("./sub/url.ts", import.meta.url))),
+          listen("bare", new Worker(new URL("bare.ts", import.meta.url))),
+          listen("path", new Worker("./app/path.ts")),
+          listen("computed", new Worker(new URL(name + ".ts", import.meta.url))),
+          viaNode().then(data => { said.node = data; }),
+        ]);
+        function neverCalled() { return new Worker(new URL("./missing.ts", import.meta.url)); }
+        console.log(JSON.stringify({ ...said, entry: String(neverCalled).endsWith("{ [native code] }") }));
+      `,
+      "app/shared.ts": `
+        export function answer(path: string) { return [String(answer).endsWith("{ [native code] }"), path.split("/").slice(-2).join("/")]; }
+      `,
+      ...Object.fromEntries(
+        ["href", "bare", "path", "computed"].map(name => [
+          `app/${name}.ts`,
+          `import { answer } from "./shared.ts"; postMessage(answer(import.meta.path));`,
+        ]),
+      ),
+      "app/sub/url.ts": `import { answer } from "../shared.ts"; postMessage(answer(import.meta.path));`,
+      "app/via-node.ts": `
+        import { Worker } from "node:worker_threads";
+        export const viaNode = () => new Promise(done => {
+          const worker = new Worker(new URL("./node.ts", import.meta.url));
+          worker.on("message", data => { worker.terminate(); done(data); });
+        });
+      `,
+      "app/node.ts": `
+        import { parentPort } from "node:worker_threads";
+        import { answer } from "./shared.ts";
+        parentPort!.postMessage(answer(import.meta.path));
+      `,
+    });
+    // (Started from the parent directory: a path is relative to that, a URL to the file.)
+    const { stdout, stderr, exitCode } = await run(String(dir), true, "app/entry.ts", {
+      env: { BUN_COMPILE_OMIT_SOURCE_TEXT: "1" },
+    });
+    expect({ said: JSON.parse(stdout), stderr, exitCode }).toEqual({
+      said: {
+        href: [true, "app/href.ts"],
+        url: [true, "sub/url.ts"],
+        bare: [true, "app/bare.ts"],
+        path: [true, "app/path.ts"],
+        node: [true, "app/node.ts"],
+        computed: [false, "app/computed.ts"],
+        entry: true,
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The build cannot tell which file this worker starts with, so it is interpreted. The built-in functions it calls are
+  // compiled.
   test.concurrent("a Worker that loads nothing that was compiled calls built-in functions that were", async () => {
     const { stdout } = await expectSameAsBunRun(
       {
         "entry.ts": `
-          const worker = new Worker(new URL("./worker.ts", import.meta.url).href);
+          const name = "./worker";
+          const worker = new Worker(new URL(name + ".ts", import.meta.url).href);
           worker.onmessage = e => { console.log(e.data); worker.terminate(); };
           worker.postMessage(3);
         `,

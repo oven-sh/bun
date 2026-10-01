@@ -11260,12 +11260,15 @@ describe.concurrent("link: paths with .. or an absolute path declared by a depen
 
       // An unresolved peer is not reported a second time as "failed to resolve"
       // and does not stop bar itself from being installed; the error still fails
-      // the install before the lockfile is saved.
-      const { err, exitCode } = await install(root);
-      expect(errorLines(err)).toEqual([refusal("outside", "link:../outside", "bar@0.0.2")]);
-      expect(await exists(join(root, "project", "bun.lock"))).toBe(false);
-      expect(await exists(join(root, "project", "node_modules", "outside"))).toBe(false);
-      expect(exitCode).toBe(1);
+      // the install before the lockfile is saved, with and without --lockfile-only.
+      for (const args of [[], ["--lockfile-only"]]) {
+        const { err, exitCode } = await install(root, ...args);
+        expect(errorLines(err)).toEqual([refusal("outside", "link:../outside", "bar@0.0.2")]);
+        expect(err).not.toContain("Saved");
+        expect(await exists(join(root, "project", "bun.lock"))).toBe(false);
+        expect(await exists(join(root, "project", "node_modules", "outside"))).toBe(false);
+        expect(exitCode).toBe(1);
+      }
     });
   });
 
@@ -11311,8 +11314,45 @@ describe.concurrent("link: paths with .. or an absolute path declared by a depen
       expect(errorLines(err)).toEqual([
         'error: refusing to link dependency outside-dir to "../outside": only the root package.json, a workspace, or a top-level override may link to a path outside the project',
       ]);
+      // The hoisted linker places the link at the top level, the isolated linker
+      // under the store entry of tb.
       expect(await exists(join(root, "project", "node_modules", "outside"))).toBe(false);
+      const store = join(root, "project", "node_modules", ".bun");
+      const tbEntries = (await exists(store))
+        ? (await readdirSorted(store)).filter(name => name.startsWith("tb@"))
+        : [];
+      for (const entry of tbEntries) {
+        expect(await exists(join(store, entry, "node_modules", "outside"))).toBe(false);
+      }
       expect(exitCode).toBe(1);
+    });
+  }
+
+  // Both linkers check the rows they place. A row under a devDependency that
+  // --production drops is not placed, so it is not refused either.
+  for (const linker of ["hoisted", "isolated"]) {
+    it(`are ignored by the ${linker} linker when --production drops the tarball dependency of a bun.lock that holds one`, async () => {
+      using dir = tempDir(`escaping-link-in-lockfile-production-${linker}`, {
+        "global/outside/package.json": JSON.stringify({ name: "outside-dir", version: "1.0.0" }),
+        "project/package.json": rootPackageJson({}, { devDependencies: { tb: "file:./tb-1.0.0.tgz" } }),
+        "project/bun.lock": JSON.stringify({
+          lockfileVersion: 2,
+          configVersion: 1,
+          workspaces: { "": { name: "my-app", devDependencies: { tb: "file:./tb-1.0.0.tgz" } } },
+          packages: {
+            outside: ["outside-dir@link:../outside", {}],
+            tb: ["tb@./tb-1.0.0.tgz", { dependencies: { outside: "link:../outside" } }],
+          },
+        }),
+      });
+      const root = String(dir);
+      await packDeclarer(root, { dependencies: { outside: "link:../outside" } });
+
+      const { err, exitCode } = await install(root, "--linker", linker, "--production");
+      expect(err).not.toContain("error:");
+      expect(await exists(join(root, "project", "node_modules", "outside"))).toBe(false);
+      expect(await exists(join(root, "project", "node_modules", "tb"))).toBe(false);
+      expect(exitCode).toBe(0);
     });
   }
 

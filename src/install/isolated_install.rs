@@ -2096,6 +2096,30 @@ pub(crate) fn install_isolated_packages(
             .iter()
             .any(|r| r.tag == ResolutionTag::Symlink)
         {
+            // Rows loaded from bun.lock skip the resolver's check. Checked before
+            // the first task starts, since a dependent links to the target without
+            // waiting for this entry.
+            for &node_id in entry_node_ids {
+                let pkg_id = node_pkg_ids[node_id.get() as usize];
+                let pkg_res = &pkg_resolutions[pkg_id as usize];
+                if pkg_res.tag != ResolutionTag::Symlink {
+                    continue;
+                }
+                let target = pkg_res.symlink().slice(string_buf);
+                if crate::dependency::link_path_escapes_root(target)
+                    && !lockfile_ro.is_trusted_folder_package(pkg_id)
+                {
+                    Output::err_generic(
+                        "refusing to link dependency <b>{}<r> to \"{}\": only the root package.json, a workspace, or a top-level override may link to a path outside the project",
+                        (
+                            BStr::new(pkg_names[pkg_id as usize].slice(string_buf)),
+                            BStr::new(target),
+                        ),
+                    );
+                    Output::flush();
+                    Global::exit(1);
+                }
+            }
             let _ = crate::package_manager_real::directories::global_link_dir_path(
                 installer.manager_mut(),
             );
@@ -2180,18 +2204,6 @@ pub(crate) fn install_isolated_packages(
                     continue;
                 }
                 ResolutionTag::Symlink => {
-                    // Rows loaded from bun.lock skip the resolver's check.
-                    let target = pkg_res.symlink().slice(string_buf);
-                    if crate::dependency::link_path_escapes_root(target)
-                        && !lockfile_ro.is_trusted_folder_package(pkg_id)
-                    {
-                        Output::err_generic(
-                            "refusing to link dependency <b>{}<r> to \"{}\": only the root package.json, a workspace, or a top-level override may link to a path outside the project",
-                            (BStr::new(pkg_name.slice(string_buf)), BStr::new(target)),
-                        );
-                        Output::flush();
-                        Global::exit(1);
-                    }
                     // no installation required, will only need to be linked to packages that depend on it.
                     debug_assert!(entry_dependencies[entry_id.get() as usize].list.is_empty());
                     // .monotonic is okay because the task isn't running on another thread.

@@ -175,12 +175,11 @@ test("onEndTag callbacks are released after the rewrite", () => {
 //
 // Skipped in debug: at this N a debug pass is ~40s and the extra debug-build
 // allocation tracking adds enough RSS noise to drown the signal. CI has no
-// debug test lane.
+// debug test lane; release + ASAN cover the regression.
 //
-// Skipped on sanitizer builds: the 1.8 million registrations below cost about
-// 7 µs each on the ASAN lane, most of the 15 s limit. The LeakSanitizer test
-// after this one counts the same allocations exactly with a few thousand.
-test.skipIf(isDebug || isASAN)(
+// ASAN builds run a quarter of the registrations. One costs about 7 µs on the
+// ASAN lane, so the full count took 11.8 to 14.5 s of the 15 s limit there.
+test.skipIf(isDebug)(
   "HTMLRewriter does not leak element/document handler allocations",
   async () => {
     const code = /* js */ `
@@ -194,7 +193,7 @@ test.skipIf(isDebug || isASAN)(
         for (let i = 0; i < 32; i++) rw.onDocument(docNoop);
       }
 
-      const N = 4000;
+      const N = ${isASAN ? 1000 : 4000};
       function pass() {
         for (let i = 0; i < N; i++) once();
         Bun.gc(true);
@@ -217,6 +216,11 @@ test.skipIf(isDebug || isASAN)(
         ...bunEnv,
         // Don't inherit the runner's GC_LEVEL=1 — it changes the per-pass live set.
         BUN_GARBAGE_COLLECTOR_LEVEL: "0",
+        // ASAN's freed-block quarantine is exactly the thing that pins RSS at
+        // peak; disable it so freed lol-html builders get reused across passes.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
+          .filter(Boolean)
+          .join(":"),
       },
       stdout: "pipe",
       stderr: "pipe",
@@ -224,22 +228,31 @@ test.skipIf(isDebug || isASAN)(
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr.trim()).toBe("");
+    const filteredStderr = stderr
+      .split("\n")
+      .filter(line => !line.startsWith("WARNING: ASAN interferes"))
+      .join("\n")
+      .trim();
+    expect(filteredStderr).toBe("");
 
     const { deltaMB } = JSON.parse(stdout.trim());
 
     // Unfixed: ~50 MB over 3 measured passes. Fixed: a plateau, but RSS is a
     // high-water mark and allocator jitter has been observed to reach ~30 MB
     // on release lanes, so the bound sits between that and the unfixed signal.
-    expect(deltaMB).toBeLessThan(35);
+    //
+    // ASAN, at a quarter of the count and with the quarantine off: 11 to 14 MB
+    // unfixed, -1.5 to 2 MB fixed.
+    expect(deltaMB).toBeLessThan(isASAN ? 6 : 35);
     expect(exitCode).toBe(0);
   },
   15_000,
 );
 
-// The same regression on sanitizer builds. LeakSanitizer fails the run for
-// every handler struct that is still allocated at exit with nothing pointing
-// to it, so one leaked struct is enough: no RSS threshold, no warmup.
+// The same regression, counted exactly on sanitizer builds. That includes
+// debug builds, which skip the RSS test. LeakSanitizer fails the run for every
+// handler struct that is still allocated at exit with nothing pointing to it,
+// so one leaked struct is enough.
 test.skipIf(!isASAN || isWindows)(
   "HTMLRewriter does not leak element/document handler allocations (LeakSanitizer)",
   async () => {
@@ -249,13 +262,11 @@ test.skipIf(!isASAN || isWindows)(
       const { heapStats } = require("bun:jsc");
       const noop = { element() {}, comments() {}, text() {} };
       const docNoop = { doctype() {}, comments() {}, text() {}, end() {} };
-      let handlers = 0;
 
       function once() {
         const rw = new HTMLRewriter();
         for (let i = 0; i < 32; i++) rw.on("div", noop);
         for (let i = 0; i < 32; i++) rw.onDocument(docNoop);
-        handlers += 64;
       }
 
       // From a macrotask on purpose: leaksan.supp has entries for module
@@ -266,8 +277,7 @@ test.skipIf(!isASAN || isWindows)(
           for (let i = 0; i < ${REWRITERS_PER_ROUND}; i++) once();
           Bun.gc(true);
         }
-        const rewriters = heapStats().objectTypeCounts.HTMLRewriter ?? 0;
-        process.stdout.write(JSON.stringify({ handlers, rewriters }));
+        process.stdout.write(String(heapStats().objectTypeCounts.HTMLRewriter ?? 0));
       });
     `;
 
@@ -290,15 +300,14 @@ test.skipIf(!isASAN || isWindows)(
     // Unfixed: "SUMMARY: AddressSanitizer: 180224 byte(s) leaked in 4096
     // allocation(s)" on stderr and a non-zero exit code.
     expect({ stdout, stderr: withoutAsanWarning(stderr), exitCode }).toEqual({
-      stdout: expect.stringMatching(/^\{"handlers":/),
+      stdout: expect.stringMatching(/^\d+$/),
       stderr: "",
       exitCode: 0,
     });
 
-    const { handlers, rewriters } = JSON.parse(stdout);
-    expect(handlers).toBe(ROUNDS * REWRITERS_PER_ROUND * 64);
-    // The collector freed them: they did not wait for the VM to be torn down.
-    expect(rewriters).toBeLessThan((ROUNDS * REWRITERS_PER_ROUND) / 4);
+    // stdout is the count of rewriters that are still alive. The collector
+    // freed the others: they did not wait for the VM to be torn down.
+    expect(Number(stdout)).toBeLessThan((ROUNDS * REWRITERS_PER_ROUND) / 4);
   },
   // A pass takes about 0.3 s on a release ASAN build and 2 s on a debug build.
   // A failure takes over 6 s, more than the default limit: LeakSanitizer

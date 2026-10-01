@@ -4715,12 +4715,27 @@ impl NodeFS {
             PathOrFileDescriptor::Path(path_) => {
                 let path = path_.slice_z(&mut self.sync_error_buf);
                 let fd = Syscall::open(path, args.flag.as_int(), args.mode)?;
-                let _close = scopeguard::guard(fd, |fd| fd.close());
+                let close = scopeguard::guard(fd, |fd| fd.close());
                 while !data.is_empty() {
                     let written = Syscall::write(fd, data)?;
                     data = &data[written..];
                 }
-                Ok(())
+                Self::close_written(scopeguard::ScopeGuard::into_inner(close))
+            }
+        }
+    }
+
+    /// Closes a descriptor that this call opened and wrote. A file system can report a write error first at close, so that error is the result. As in node, it names only the syscall.
+    fn close_written(fd: FD) -> Maybe<()> {
+        match fd.close_allowing_bad_file_descriptor(None) {
+            None => Ok(()),
+            Some(err) => {
+                debug_assert!(err.get_errno() != E::EBADF); // use after close!
+                Err(sys::Error {
+                    errno: err.errno,
+                    syscall: sys::Tag::close,
+                    ..Default::default()
+                })
             }
         }
     }
@@ -7387,7 +7402,7 @@ impl NodeFS {
             }
             PathOrFileDescriptor::Fd(fd) => *fd,
         };
-        let _close = scopeguard::guard(
+        let close = scopeguard::guard(
             (fd, matches!(args.file, PathOrFileDescriptor::Path(_))),
             |(fd, is_path)| {
                 if is_path {
@@ -7498,6 +7513,10 @@ impl NodeFS {
             }
         }
 
+        let (fd, is_path) = scopeguard::ScopeGuard::into_inner(close);
+        if is_path {
+            return Self::close_written(fd);
+        }
         Ok(())
     }
 

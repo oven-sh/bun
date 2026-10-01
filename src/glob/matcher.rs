@@ -621,10 +621,7 @@ fn rune_len_at(bytes: &[u8], idx: usize) -> u8 {
     decode_rune_at(bytes, idx).1
 }
 
-/// Decodes the codepoint at `bytes[idx]`, returning `(codepoint, byte_len)`.
-/// A directory entry need not be valid UTF-8, so this decodes the way the
-/// entry's name is decoded for JS: an ill-formed sequence is one U+FFFD over
-/// its maximal subpart, and `byte_len` never passes the end of `bytes`.
+/// `(codepoint, byte_len)` at `bytes[idx]`, which need not be valid UTF-8 (a directory entry).
 #[inline(always)]
 fn decode_rune_at(bytes: &[u8], idx: usize) -> (u32, u8) {
     // Runs per path character: ASCII must not pay for the out-of-line decoder.

@@ -409,10 +409,7 @@ pub(super) fn convert_utf8_bytes_into_utf16(bytes: &[u8]) -> UTF16Replacement {
     convert_utf8_bytes_into_utf16_with_length(sequence, sequence_length, bytes.len())
 }
 
-/// Decodes the codepoint at the front of `bytes` (non-empty). `len` is always
-/// in `1..=bytes.len()`. An ill-formed sequence yields U+FFFD with `fail` set
-/// over its maximal subpart, the same units `to_utf16_alloc` produces when the
-/// bytes become a JS string.
+/// Codepoint at the front of non-empty `bytes`; ill-formed input is U+FFFD per maximal subpart.
 pub fn utf8_codepoint_with_fffd(bytes: &[u8]) -> UTF16Replacement {
     let lead = bytes[0];
     if lead < 0x80 {

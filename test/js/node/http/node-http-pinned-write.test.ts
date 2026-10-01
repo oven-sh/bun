@@ -5,6 +5,7 @@ import { once } from "node:events";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import net from "node:net";
+import path from "node:path";
 
 // Large enough to overflow both the 16KB cork buffer and the kernel send
 // buffer on every platform (Windows loopback auto-tuning can absorb several
@@ -396,12 +397,10 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
     expect(exitCode).toBe(0);
   });
 
-  // `WebAssembly.Memory` hands out an ArrayBuffer over its own block. Once the
-  // process holds more fast memories than the platform reserves slots for, the
-  // next one is bounds-checked, and `grow()` on a bounds-checked memory
-  // allocates a new block, copies into it, and frees the old one. JSC detaches
-  // the old buffer whatever its pin count, so a pinned tail over one of those
-  // points at freed pages.
+  // `WebAssembly.Memory` hands out an ArrayBuffer over its own block, and
+  // `grow()` detaches that buffer whatever its pin count, so a pinned tail over
+  // one points at pages nothing keeps mapped. A bounds-checked memory frees the
+  // old block at once; the cell below covers a memory collected instead.
   //
   // 32 MB: the loopback send + receive buffers absorb several MB, so a smaller
   // body can leave no tail to spill.
@@ -488,6 +487,32 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
     },
     // The body has to outrun the loopback send and receive buffers to leave a
     // tail, and 32 MB of it through a debug build does not fit the default 5 s.
+    30_000,
+  );
+
+  // The same door with the memory made per request: see
+  // `node-http-wasm-memory-collected-fixture.mjs`.
+
+  test.skipIf(isWindows)(
+    "a WebAssembly.Memory collected after write() is copied, not held by reference",
+    async () => {
+      // Run in a child so a fault on the spill is observed as exit != 0.
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), path.join(import.meta.dir, "node-http-wasm-memory-collected-fixture.mjs")],
+        // No `useWasmFastMemory=0` here: the one memory has to be a fast one, to
+        // show that a block which never moves still needs the copy.
+        env: { ...bunEnv, Malloc: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr }).toEqual({
+        stdout: JSON.stringify({ bodyLength: WASM_PAGES * 64 * 1024, bodyMatches: true }),
+        stderr: expect.any(String),
+      });
+      expect(exitCode).toBe(0);
+    },
     30_000,
   );
 

@@ -78,12 +78,10 @@ test("scrypt async does not leak callback/buffers when output allocation fails",
   expect(exitCode).toBe(0);
 });
 
-// `WebAssembly.Memory` hands out an ArrayBuffer over its own block. Once the
-// process holds more fast memories than the platform reserves slots for, the
-// next one is bounds-checked, and `grow()` on a bounds-checked memory allocates
-// a new block, copies into it, and frees the old one. JSC detaches the old
-// buffer whatever its pin count, so the pin `scrypt` takes on the password does
-// not keep those pages mapped for the pool thread.
+// `WebAssembly.Memory` hands out an ArrayBuffer over its own block, and `grow()`
+// detaches that buffer whatever its pin count. So the pin `scrypt` takes on the
+// password does not keep the pages mapped for the pool thread: a bounds-checked
+// memory allocates a new block and frees the old one at once.
 //
 // Run in a child: on an unfixed build the pool thread reads another object's
 // memory (wrong key) or faults.
@@ -127,6 +125,53 @@ test("scrypt copies a password over a WebAssembly.Memory that grows after the ca
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout.trim()).toBe(JSON.stringify({ detachedAfterGrow: true, keyMatches: true }));
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
+// A fast memory grows in place, so its block does not move. It still needs the
+// copy: `grow()` detaches the view the job roots, so nothing the job holds keeps
+// the memory alive, and a collection releases its pages under the job. One
+// memory in the whole process is enough.
+test("scrypt copies a password over a WebAssembly.Memory that is collected after it grows", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      /* js */ `
+      import { scrypt } from "node:crypto";
+      import { promisify } from "node:util";
+      const derive = promisify(scrypt);
+      // Costly enough that the job is still running when the memory is collected.
+      const options = { N: 4096, r: 8, p: 1 };
+
+      let fromMemory, fromCopy;
+      function task() {
+        const mem = new WebAssembly.Memory({ initial: 16, maximum: 32 });
+        const password = new Uint8Array(mem.buffer).fill(7);
+        fromCopy = derive(Buffer.from(password), "salt", 32, options);
+        fromMemory = derive(password, "salt", 32, options);
+        mem.grow(1);
+      }
+      task();
+      // A fresh stack, so that no slot of task() still names the memory.
+      await new Promise(resolve => setImmediate(resolve));
+      Bun.gc(true);
+
+      const [a, b] = await Promise.all([fromMemory, fromCopy]);
+      console.log(JSON.stringify({ keyMatches: a.equals(b) }));
+    `,
+    ],
+    // No `useWasmFastMemory=0` here: the one memory has to be a fast one.
+    // `Malloc=1` makes WebKit use system malloc, so the collected memory's
+    // pages are unmapped instead of kept in bmalloc's cache.
+    env: { ...bunEnv, Malloc: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe(JSON.stringify({ keyMatches: true }));
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });

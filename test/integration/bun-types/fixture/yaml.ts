@@ -8,3 +8,14 @@ expectType(Bun.YAML.stringify({ abc: "def"})).is<string>();
 expectType(Bun.YAML.stringify("hi", {})).is<string>();
 // @ts-expect-error
 expectType(Bun.YAML.stringify("hi", null, 123n)).is<string>();
+
+expectType(Bun.YAML.parse("", {})).is<unknown>();
+expectType(Bun.YAML.parse("", { maxAliasCount: 0, maxDepth: 64 })).is<unknown>();
+const limits: Bun.YAML.ParseOptions = { maxDepth: 64 };
+expectType(Bun.YAML.parse("", limits)).is<unknown>();
+// @ts-expect-error
+Bun.YAML.parse("", { maxAliasCount: "0" });
+// @ts-expect-error
+Bun.YAML.parse("", { maxDepth: null });
+// @ts-expect-error
+Bun.YAML.parse("", 64);

@@ -121,6 +121,34 @@ try {
 }
 ```
 
+#### Parsing untrusted YAML
+
+Aliases become shared references, so a small document can describe a very large value: anything that walks or serializes the result visits an aliased node once for each alias that leads to it, and a merge key (`<<`) copies the properties of the mapping it refers to. Deep nesting can overflow the stack of code that recurses over the result. Two options bound both while the document is being parsed:
+
+```ts
+const data = Bun.YAML.parse(text, {
+  maxAliasCount: 0, // no aliases at all
+  maxDepth: 64,
+});
+```
+
+| Option          | Limits                                                                                                                                                                                                                                                                                            | Default                                             |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| `maxAliasCount` | The nodes aliases may reach in one call, over every document of the stream. Each alias counts the node it refers to and everything inside it, again for each alias that leads there. `0` rejects every alias; an anchor that nothing refers to is still allowed.                                  | A built-in limit that stops exponential expansion   |
+| `maxDepth`      | How deep sequences and mappings may nest in a document: a scalar is `0`, `[]` is `1`, `a: [1]` is `2`. What an alias refers to counts as if it were written in the alias's place, and an alias to a collection that contains it is rejected. The array of a multi-document stream is not counted. | The stack alone; exceeding it throws a `RangeError` |
+
+Both take a non-negative integer, and a document that exceeds one throws a `SyntaxError` whose message names the option:
+
+```ts
+Bun.YAML.parse("a: &x [1, 2]\nb: *x", { maxAliasCount: 0 });
+// SyntaxError: YAML Parse error: Excessive aliasing (maxAliasCount: 0)
+
+Bun.YAML.parse("a: [[1]]", { maxDepth: 2 });
+// SyntaxError: YAML Parse error: YAML document is too deeply nested (maxDepth: 2)
+```
+
+Merge keys (`<<`) need no option of their own: with aliases rejected, a merge can only copy a mapping written in place. The value of a merge key counts towards `maxDepth` as written, before it is merged. The `yaml` package on npm also has a `maxAliasCount` option, where `0` rejects every alias too, but it counts other values differently.
+
 ---
 
 ## Module Import

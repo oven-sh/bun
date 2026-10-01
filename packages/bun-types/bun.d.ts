@@ -1490,6 +1490,48 @@ declare module "bun" {
    * YAML related APIs
    */
   namespace YAML {
+    interface ParseOptions {
+      /**
+       * The most nodes that aliases (`*name`) may reach in one call, over every document of the stream. Each
+       * alias counts the node it refers to and everything inside it, again for each alias that leads there,
+       * which is what code that walks or serializes the result will visit. `0` rejects every alias.
+       *
+       * Exceeding it throws a `SyntaxError`. Without this option a built-in limit, high enough for
+       * hand-written documents, stops exponential expansion.
+       *
+       * The `yaml` package on npm has an option of this name, where `0` also rejects every alias, but it
+       * counts other values differently.
+       *
+       * @example
+       * ```ts
+       * import { YAML } from "bun";
+       *
+       * YAML.parse("a: &x [1, 2]\nb: *x", { maxAliasCount: 3 }); // { a: [1, 2], b: [1, 2] }
+       * YAML.parse("a: &x [1, 2]\nb: *x", { maxAliasCount: 2 }); // SyntaxError
+       * ```
+       */
+      maxAliasCount?: number;
+
+      /**
+       * How deep the sequences and mappings of a document may nest. A scalar has depth `0`, `[]` depth `1`
+       * and `a: [1]` depth `2`. What an alias refers to counts as if it were written in the alias's place,
+       * and an alias to a collection that contains it, which nests without end, is rejected. The array that
+       * holds the documents of a multi-document stream is not counted.
+       *
+       * Exceeding it throws a `SyntaxError`. Without this option the depth is limited by the stack alone,
+       * and exceeding that throws a `RangeError`.
+       *
+       * @example
+       * ```ts
+       * import { YAML } from "bun";
+       *
+       * YAML.parse("a: [1]", { maxDepth: 2 }); // { a: [1] }
+       * YAML.parse("a: [1]", { maxDepth: 1 }); // SyntaxError
+       * ```
+       */
+      maxDepth?: number;
+    }
+
     /**
      * Parse a YAML string into a JavaScript value. Every alias (`*name`) of an anchored collection yields the
      * same object, and an alias may refer to a collection that contains it, so the result can be cyclic.
@@ -1497,6 +1539,7 @@ declare module "bun" {
      * @category Utilities
      *
      * @param input The YAML string to parse
+     * @param options Limits for input from an untrusted source, see {@link ParseOptions}
      * @returns A JavaScript value, or an array of them for a multi-document stream
      *
      * @example
@@ -1511,7 +1554,7 @@ declare module "bun" {
      * console.log(YAML.parse("abc: def")) // { "abc": "def" }
      * ```
      */
-    export function parse(input: string): unknown;
+    export function parse(input: string, options?: ParseOptions): unknown;
 
     /**
      * Convert a JavaScript value into a YAML string. Strings are double quoted if they contain keywords, non-printable or

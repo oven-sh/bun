@@ -35,6 +35,15 @@ pub enum CyclicAliases {
     Reject,
 }
 
+/// Bounds on one parse of untrusted input. `None` leaves only the parser's own guards.
+#[derive(Clone, Copy, Default)]
+pub struct ParseLimits {
+    /// Replaces `Parser::MAX_ALIAS_EXPANSION`, so `Some(0)` rejects every alias.
+    pub max_alias_count: Option<usize>,
+    /// Nesting of collections, aliased ones counted where the alias stands; rejects cycles.
+    pub max_depth: Option<usize>,
+}
+
 impl YAML {
     pub fn parse(
         source: &bun_ast::Source,
@@ -42,10 +51,21 @@ impl YAML {
         bump: &bun_alloc::Arena,
         cyclic_aliases: CyclicAliases,
     ) -> Result<Expr, YamlParseError> {
+        Self::parse_with_limits(source, log, bump, cyclic_aliases, ParseLimits::default())
+    }
+
+    pub fn parse_with_limits(
+        source: &bun_ast::Source,
+        log: &mut bun_ast::Log,
+        bump: &bun_alloc::Arena,
+        cyclic_aliases: CyclicAliases,
+        limits: ParseLimits,
+    ) -> Result<Expr, YamlParseError> {
         bun_core::analytics::Features::yaml_parse_inc();
         source.check_parseable_len(log, "YAML document")?;
 
-        let mut parser: Parser<Utf8> = Parser::init(bump, source.contents(), cyclic_aliases);
+        let mut parser: Parser<Utf8> =
+            Parser::init(bump, source.contents(), cyclic_aliases, limits);
 
         let stream = match parser.parse() {
             Ok(s) => s,
@@ -715,6 +735,8 @@ pub enum ParseError {
     StackOverflow,
     #[error("ExcessiveAliasing")]
     ExcessiveAliasing,
+    #[error("TooDeeplyNested")]
+    TooDeeplyNested,
     #[error("CyclicAlias")]
     CyclicAlias,
     #[error("CyclicMerge")]
@@ -1939,7 +1961,8 @@ pub enum ParseResultError {
     UnexpectedDocumentStart { pos: Pos },
     UnexpectedDocumentEnd { pos: Pos },
     MultipleYamlDirectives { pos: Pos },
-    ExcessiveAliasing { pos: Pos },
+    ExcessiveAliasing { pos: Pos, limit: Option<usize> },
+    TooDeeplyNested { pos: Pos, limit: usize },
     CyclicAlias { pos: Pos },
     CyclicMerge { pos: Pos },
 }
@@ -1996,8 +2019,25 @@ impl ParseResultError {
             ParseResultError::MultipleYamlDirectives { pos } => {
                 log.add_error(Some(source), pos.loc(), b"Multiple YAML directives");
             }
-            ParseResultError::ExcessiveAliasing { pos } => {
+            ParseResultError::ExcessiveAliasing { pos, limit: None } => {
                 log.add_error(Some(source), pos.loc(), b"Excessive aliasing");
+            }
+            ParseResultError::ExcessiveAliasing {
+                pos,
+                limit: Some(limit),
+            } => {
+                log.add_error_fmt(
+                    Some(source),
+                    pos.loc(),
+                    format_args!("Excessive aliasing (maxAliasCount: {limit})"),
+                );
+            }
+            ParseResultError::TooDeeplyNested { pos, limit } => {
+                log.add_error_fmt(
+                    Some(source),
+                    pos.loc(),
+                    format_args!("YAML document is too deeply nested (maxDepth: {limit})"),
+                );
             }
             ParseResultError::CyclicAlias { pos } => {
                 log.add_error(
@@ -2071,6 +2111,11 @@ impl ParseResultError {
             },
             ParseError::ExcessiveAliasing => ParseResultError::ExcessiveAliasing {
                 pos: parser.token.start,
+                limit: parser.limits.max_alias_count,
+            },
+            ParseError::TooDeeplyNested => ParseResultError::TooDeeplyNested {
+                pos: parser.token.start,
+                limit: parser.limits.max_depth.unwrap_or(usize::MAX),
             },
             ParseError::CyclicAlias => ParseResultError::CyclicAlias {
                 pos: parser.token.start,
@@ -2140,11 +2185,19 @@ pub struct Parser<'i, Enc: Encoding> {
 
     pub(crate) merge_props_budget: usize,
     pub(crate) alias_expansion_budget: usize,
+
+    pub(crate) limits: ParseLimits,
+    /// Collections enclosing the current position.
+    pub(crate) depth: usize,
+    /// The deepest `depth` reached inside the innermost of them so far.
+    pub(crate) deepest: usize,
+    /// `deepest` of the collection or alias that was completed last.
+    pub(crate) closed_deepest: usize,
 }
 
 impl<'i, Enc: Encoding> Parser<'i, Enc> {
     /// Total number of nodes that may be reached through alias expansion in a
-    /// single document. Repeated merges of the same anchor (`<<: [*a, *a, ...]`)
+    /// single parse. Repeated merges of the same anchor (`<<: [*a, *a, ...]`)
     /// charge the anchor's full subtree per occurrence even though merge keys
     /// deduplicate, so this needs enough headroom for legitimate documents that
     /// reuse a large anchor many times while still rejecting exponential
@@ -2155,6 +2208,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         bump: &'i bun_alloc::Arena,
         input: &'i [Enc::Unit],
         cyclic_aliases: CyclicAliases,
+        limits: ParseLimits,
     ) -> Self {
         // [206] l-document-prefix ::= c-byte-order-mark? l-comment*
         let start = Pos::from(Enc::bom_len(input));
@@ -2182,7 +2236,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             whitespace_buf: Vec::new(),
             stack_check: StackCheck::init(),
             merge_props_budget: MappingProps::MAX_MERGED_PROPERTIES,
-            alias_expansion_budget: Self::MAX_ALIAS_EXPANSION,
+            alias_expansion_budget: limits.max_alias_count.unwrap_or(Self::MAX_ALIAS_EXPANSION),
+            limits,
+            depth: 0,
+            deepest: 0,
+            closed_deepest: 0,
         }
     }
 
@@ -2542,6 +2600,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 let item = if matches!(self.token.data, TokenData::MappingKey) {
                     // [150] ns-flow-pair ::= '?' s-separate ns-flow-map-explicit-entry
                     let pair_start = self.token.start;
+                    let outer_deepest = self.enter_collection()?;
                     let key = self.parse_flow_explicit_key()?;
                     let value = if matches!(self.token.data, TokenData::MappingValue) {
                         self.scan(ScanOptions::default())?;
@@ -2566,6 +2625,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     };
                     let mut props = MappingProps::init();
                     self.append_entry(&mut props, key, value)?;
+                    self.leave_collection(outer_deepest);
                     Expr::init(
                         E::Object {
                             properties: props.move_list(),
@@ -2842,6 +2902,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         flow_pair_allowed: bool,
     ) -> Result<Expr, ParseError> {
         self.parse_collection::<E::Object>(anchor, mapping_start.loc(), |p| {
+            // Parsed before this mapping was entered, so counted a level short.
+            if collection_id(&first_key).is_some() {
+                p.reach_depth(p.closed_deepest + 1)?;
+            }
             p.parse_block_mapping_entries(
                 first_key,
                 mapping_indent,
@@ -3330,6 +3394,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         loc: Loc,
         body: impl FnOnce(&mut Self) -> Result<T, ParseError>,
     ) -> Result<Expr, ParseError> {
+        let body = |p: &mut Self| {
+            let outer_deepest = p.enter_collection()?;
+            let result = body(p);
+            p.leave_collection(outer_deepest);
+            result
+        };
+
         let (node, mut slot) = T::alloc_empty(loc);
 
         let Some(anchor) = anchor else {
@@ -3348,6 +3419,33 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         *slot = result?;
         self.bind_anchor(anchor, node)?;
         Ok(node)
+    }
+
+    /// Counts a collection nested `depth` deep, a document's root being 1.
+    fn reach_depth(&mut self, depth: usize) -> Result<(), ParseError> {
+        if self.limits.max_depth.is_some_and(|max| depth > max) {
+            return Err(ParseError::TooDeeplyNested);
+        }
+        self.deepest = self.deepest.max(depth);
+        Ok(())
+    }
+
+    /// Ends the `deepest` of one collection or alias and resumes the enclosing one's.
+    fn close_deepest(&mut self, outer_deepest: usize) {
+        self.closed_deepest = self.deepest;
+        self.deepest = self.deepest.max(outer_deepest);
+    }
+
+    /// Returns the enclosing collection's `deepest`, for `leave_collection`.
+    fn enter_collection(&mut self) -> Result<usize, ParseError> {
+        self.reach_depth(self.depth + 1)?;
+        self.depth += 1;
+        Ok(core::mem::replace(&mut self.deepest, self.depth))
+    }
+
+    fn leave_collection(&mut self, outer_deepest: usize) {
+        self.depth -= 1;
+        self.close_deepest(outer_deepest);
     }
 
     /// Anchors bind when their node completes, so a name found in `anchors`
@@ -3781,6 +3879,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     /// (a node shared by two aliases under `root` counts twice, as a consumer
     /// expanding the tree would visit it twice). An edge back to a collection
     /// on the current path — a cyclic alias — counts as a single reference.
+    /// Its collections nest as if written where the alias stands.
     fn charge_alias_expansion(&mut self, root: Expr) -> Result<(), ParseError> {
         enum Visit {
             Enter(Expr),
@@ -3789,11 +3888,18 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         if collection_id(&root).is_none() {
             return self.charge_alias_node();
         }
+        let count_depth = self.limits.max_depth.is_some();
+        if count_depth && self.has_cyclic_alias {
+            // A cycle nests without end.
+            self.charge_alias_node()?;
+            return Err(ParseError::TooDeeplyNested);
+        }
         // Only a document with a cyclic alias can lead the walk back to a
         // collection it is still inside of.
         let mut on_path = self
             .has_cyclic_alias
             .then(bun_collections::HashMap::<usize, ()>::default);
+        let outer_deepest = core::mem::replace(&mut self.deepest, self.depth);
         let mut stack: Vec<Visit> = vec![Visit::Enter(root)];
         while let Some(visit) = stack.pop() {
             let node = match visit {
@@ -3801,6 +3907,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 Visit::Exit(id) => {
                     if let Some(on_path) = &mut on_path {
                         on_path.remove(&id);
+                    }
+                    if count_depth {
+                        self.depth -= 1;
                     }
                     continue;
                 }
@@ -3811,6 +3920,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     continue;
                 }
                 on_path.put(id, ())?;
+                stack.push(Visit::Exit(id));
+            }
+            if count_depth && let Some(id) = collection_id(&node) {
+                self.depth += 1;
+                self.reach_depth(self.depth)?;
                 stack.push(Visit::Exit(id));
             }
             match &node.data {
@@ -3830,6 +3944,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 _ => {}
             }
         }
+        self.close_deepest(outer_deepest);
         Ok(())
     }
 

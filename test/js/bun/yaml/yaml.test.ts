@@ -681,6 +681,263 @@ root: &root
       });
     });
 
+    describe("limits for untrusted input", () => {
+      function outcome(input: unknown, options?: unknown) {
+        try {
+          return { value: (YAML.parse as Function)(input, options) };
+        } catch (e: any) {
+          return { error: `${e.name}: ${e.message}` };
+        }
+      }
+      const tooManyAliases = (limit: number) => ({
+        error: `SyntaxError: YAML Parse error: Excessive aliasing (maxAliasCount: ${limit})`,
+      });
+      const tooDeep = (limit: number) => ({
+        error: `SyntaxError: YAML Parse error: YAML document is too deeply nested (maxDepth: ${limit})`,
+      });
+      const brackets = (depth: number) => Buffer.alloc(depth, "[").toString() + Buffer.alloc(depth, "]").toString();
+
+      test("takes two arguments", () => {
+        expect(YAML.parse.length).toBe(2);
+      });
+
+      test.each([undefined, null, {}, { maxAliasCount: undefined, maxDepth: undefined }])(
+        "options %p change nothing",
+        options => {
+          const doc = (YAML.parse as Function)("a: &x [1, [2]]\nb: *x\nc: &c [*c]\nd: { <<: &m { e: 1 } }", options);
+          expect(doc).toEqual({ a: [1, [2]], b: [1, [2]], c: [doc.c], d: { e: 1 } });
+          expect(doc.b).toBe(doc.a);
+          expect(outcome(brackets(200), options)).toEqual(outcome(brackets(200)));
+        },
+      );
+
+      describe("maxAliasCount", () => {
+        test.each([
+          ["a block mapping value", "a: &x 1\nb: *x"],
+          ["a block mapping key", "a: &x k\n*x : v"],
+          ["the first key of a block mapping", "- &x k\n- *x : v"],
+          ["an explicit key", "- &x 1\n- ? *x\n  : v"],
+          ["a block sequence entry", "- &x 1\n- *x"],
+          ["a flow sequence entry", "[&x 1, *x]"],
+          ["a flow mapping value", "{a: &x 1, b: *x}"],
+          ["a flow mapping key", "{&x a: 1, *x : 2}"],
+          ["a flow pair key", "[&x a, *x : 2]"],
+          ["a merge source", "a: &x {k: v}\nb:\n  <<: *x"],
+          ["a merge source in a list", "a: &x {k: v}\nc: &y {j: w}\nb:\n  <<: [*x, *y]"],
+          ["a cyclic sequence entry", "&a [*a]"],
+          ["a cyclic mapping value", "&a\nk: *a"],
+          ["an alias in a later document", "--- &x 1\n---\na: &x 1\nb: *x"],
+        ])("0 rejects %s", (_, input) => {
+          expect(outcome(input)).toHaveProperty("value");
+          expect(outcome(input, { maxAliasCount: 0 })).toEqual(tooManyAliases(0));
+        });
+
+        test.each([
+          ["a: &x 1\nb: 2", { a: 1, b: 2 }],
+          ["&r [&a 1, &b {c: &d 2}]", [1, { c: 2 }]],
+          ["--- &x 1\n--- &x 2", [1, 2]],
+          ["a: '*x'\nb: \"*x\"\nc: a*x\nd: |\n  *x", { a: "*x", b: "*x", c: "a*x", d: "*x\n" }],
+          ["b: {<<: {k: v}}", { b: { k: "v" } }],
+          ["b: {<<: [{k: v}, {j: w}]}", { b: { k: "v", j: "w" } }],
+        ])("0 accepts %j, which has no alias", (input, value) => {
+          expect(outcome(input, { maxAliasCount: 0 })).toEqual({ value });
+        });
+
+        // Each alias counts the node it refers to and all that is inside it.
+        test.each([
+          ["a scalar", "a: &x 1\nb: *x", 1],
+          ["a scalar, twice", "a: &x 1\nb: *x\nc: *x", 2],
+          ["a sequence of two", "a: &x [1, 2]\nb: *x", 3],
+          ["a sequence of two, twice", "a: &x [1, 2]\nb: *x\nc: *x", 6],
+          ["a mapping of one key and value", "a: &x {k: v}\nb: *x", 3],
+          ["an alias reached through another alias", "a: &x [1]\nb: &y [*x, *x]\nc: *y", 9],
+          ["a merge source", "a: &x {k: v}\nb: {<<: *x}", 3],
+          ["two merge sources", "a: &x {k: v}\nc: &y {j: w}\nb: {<<: [*x, *y]}", 6],
+          ["a collection that contains the alias", "&a [*a]", 1],
+          ["two documents, which share the count", "---\na: &x 1\nb: *x\n---\na: &x 1\nb: *x", 2],
+        ])("counts %s", (_, input, count) => {
+          expect(outcome(input, { maxAliasCount: count })).toEqual(outcome(input));
+          expect(outcome(input, { maxAliasCount: count - 1 })).toEqual(tooManyAliases(count - 1));
+        });
+
+        test("stops an exponential document early", () => {
+          const lines = [`a: &a [${Array(10).fill("lol").join(",")}]`];
+          for (const [prev, name] of ["ab", "bc", "cd", "de", "ef", "fg", "gh", "hi"]) {
+            lines.push(`${name}: &${name} [${Array(10).fill(`*${prev}`).join(",")}]`);
+          }
+          expect(outcome(lines.join("\n"), { maxAliasCount: 1000 })).toEqual(tooManyAliases(1000));
+        });
+
+        // What is an anchor, an alias or a merge key is the parser's call.
+        test.each([
+          ["an anchor glued to a verbatim tag", "a: !<t>&x 1\nb: *x"],
+          ["a name with a non-breaking space", "a: &\u00a0 1\nb: *\u00a0"],
+          ["a name with a non-breaking space inside", "a: &x\u00a0y 1\nb: *x\u00a0y"],
+          ["a name with a tag indicator", "a: &x!t 1\nb: *x!t"],
+          ["a double-quoted merge key", 'a: &x {k: v}\nb: {"<<": *x}'],
+          ["a single-quoted merge key", "a: &x {k: v}\nb: {'<<': *x}"],
+          ["an escaped merge key", 'a: &x {k: v}\nb: {"\\x3c<": *x}'],
+          ["a tagged merge key", "a: &x {k: v}\nb: {!!str <<: *x}"],
+        ])("0 rejects the alias of %s", (_, input) => {
+          expect(outcome(input)).toHaveProperty("value");
+          expect(outcome(input, { maxAliasCount: 0 })).toEqual(tooManyAliases(0));
+        });
+
+        test("0 accepts an ampersand that is part of a tag", () => {
+          expect(outcome("a: !t&x 1", { maxAliasCount: 0 })).toEqual({ value: { a: "1" } });
+          expect(outcome("a: !t&x 1\nb: *x", { maxAliasCount: 0 })).toEqual({
+            error: "SyntaxError: YAML Parse error: Unresolved alias",
+          });
+        });
+      });
+
+      describe("maxDepth", () => {
+        test.each([
+          ["a plain scalar", "a", 0],
+          ["an empty document", "", 0],
+          ["a block scalar", "|\n  - a\n  - - b", 0],
+          ["a quoted scalar", '"[[[]]]"', 0],
+          ["an empty flow sequence", "[]", 1],
+          ["an empty flow mapping", "{}", 1],
+          ["a block sequence", "- a", 1],
+          ["a block mapping", "a: b", 1],
+          ["an explicit key", "? a", 1],
+          ["a set", "!!set {a, b}", 1],
+          ["flow sequences", "[[]]", 2],
+          ["flow mappings", "{a: {b: {c: {}}}}", 4],
+          ["compact block sequences", "- - - a", 3],
+          ["compact explicit keys", "? ? ? a", 3],
+          ["block mappings", "a:\n  b:\n    c: d", 3],
+          ["a mapping in a sequence", "- a: b", 2],
+          ["a sequence at its key's indent", "a:\n- b", 2],
+          ["sequences and mappings in turn", "a:\n  - b:\n      - c", 4],
+          ["flow in block", "a: {b: [c]}", 3],
+          ["flow in flow in block", "- {a: [b, {c: d}]}", 4],
+          ["an implicit flow pair", "[a: b]", 2],
+          ["an implicit flow pair's value", "[a: [b]]", 3],
+          ["an explicit flow pair", "[? a : b]", 2],
+          ["an explicit flow pair's key", "[? [a] : b]", 3],
+          ["an explicit flow pair's value", "[? a : [b]]", 3],
+          ["a block sequence as explicit key and value", "? - a\n: - b", 2],
+          ["nested block sequences as explicit key", "? - - a\n: b", 3],
+          ["a flow sequence as explicit key", "? [a]\n: b", 2],
+          ["a flow sequence as implicit key", "[a]: b", 2],
+          ["an anchored flow sequence as implicit key", "&x [[1]]: c", 3],
+          ["a flow mapping as implicit key", "{a: b}: c", 2],
+          ["a flow sequence as flow pair key", "[[a]: b]", 3],
+          ["flow pair keys in flow pair keys", "[[[a]: b]: c]", 5],
+          ["an implicit key after a deeper sibling", "[ [[[x]]], [a]: b ]", 4],
+          ["sibling sequences", "- [a]\n- [b]\n- [c]", 2],
+          ["sibling values", "a: [1]\nb: [2]\nc: {d: 3}", 2],
+          ["siblings after a nested one", "- - a\n  - b\n- c", 2],
+          ["the deepest of several documents", "--- [a]\n--- [[b]]\n--- c", 2],
+          ["an inline merge source as written", "b: {<<: {y: [1]}}", 4],
+          ["an aliased scalar", "a: &x 1\nb: [*x]", 2],
+          ["an aliased collection where it is anchored", "a: &x [[1]]\nb: *x", 3],
+          ["an aliased collection where the alias stands", "a: &x [[1]]\nb: [*x]", 4],
+          ["siblings inside an aliased collection", "a: &x [[[1]], [2], {k: [3]}, [4]]\nb: *x", 4],
+          ["an alias as a later key", "a: &x [1]\n*x : c", 2],
+          ["an alias as the first key", "- &x [[1]]\n- *x : c", 4],
+          ["an alias as an explicit key", "- &x [[1]]\n- ? *x\n  : c", 4],
+          ["an alias as a flow mapping key", "- &x [[1]]\n- {*x : c}", 4],
+          ["an alias as a flow pair key", "- &x [[1]]\n- [*x : c]", 5],
+          ["an aliased merge source as written", "a: &x {y: [1]}\nb: {<<: *x}", 4],
+        ])("counts %s", (_, input, depth) => {
+          expect(outcome(input, { maxDepth: depth })).toEqual(outcome(input));
+          expect(outcome(input, { maxDepth: depth })).toHaveProperty("value");
+          if (depth > 0) expect(outcome(input, { maxDepth: depth - 1 })).toEqual(tooDeep(depth - 1));
+        });
+
+        test("0 accepts only scalars", () => {
+          expect(outcome("--- a\n--- 1\n--- ~", { maxDepth: 0 })).toEqual({ value: ["a", 1, null] });
+          expect(outcome("--- a\n--- []", { maxDepth: 0 })).toEqual(tooDeep(0));
+        });
+
+        test("counts a chain of aliases, each of which is written flat", () => {
+          const lines = ["- &n0 [x]"];
+          for (let i = 1; i < 100; i++) lines.push(`- &n${i} [*n${i - 1}]`);
+          const input = lines.join("\n");
+          expect(outcome(input, { maxDepth: 101 })).toEqual(outcome(input));
+          expect(outcome(input, { maxDepth: 100 })).toEqual(tooDeep(100));
+        });
+
+        test.each(["&a [*a]", "&a\nk: *a", "a: &a { b: [*a] }", "&a\n? *a\n: v"])(
+          "rejects the cyclic alias of %j, which nests without end",
+          input => {
+            expect(outcome(input)).toHaveProperty("value");
+            expect(outcome(input, { maxDepth: Number.MAX_SAFE_INTEGER })).toEqual(tooDeep(Number.MAX_SAFE_INTEGER));
+            // the more specific limit is the one reported
+            expect(outcome(input, { maxDepth: 64, maxAliasCount: 0 })).toEqual(tooManyAliases(0));
+          },
+        );
+
+        test("is a SyntaxError where the stack limit is a RangeError", () => {
+          const input = Buffer.alloc(100_000, "[").toString();
+          expect(outcome(input)).toEqual({ error: "RangeError: Maximum call stack size exceeded." });
+          expect(outcome(input, { maxDepth: 64 })).toEqual(tooDeep(64));
+          expect(outcome(input, { maxDepth: Number.MAX_SAFE_INTEGER })).toEqual(outcome(input));
+          expect(outcome(brackets(64), { maxDepth: 64 })).toEqual(outcome(brackets(64)));
+          expect(outcome(brackets(65), { maxDepth: 64 })).toEqual(tooDeep(64));
+        });
+      });
+
+      describe("invalid options", () => {
+        test.each([
+          [1, "type number (1)"],
+          ["maxDepth", "type string ('maxDepth')"],
+          [true, "type boolean (true)"],
+          [function reviver() {}, "function reviver"],
+        ])("rejects %p as options", (options, received) => {
+          expect(outcome("[]", options)).toEqual({
+            error: `TypeError: The "options" argument must be of type object. Received ${received}`,
+          });
+        });
+
+        describe.each(["maxAliasCount", "maxDepth"])("%s", name => {
+          test.each([-1, NaN, Infinity, -Infinity, 2 ** 53])("rejects %p as out of range", value => {
+            expect(outcome("[]", { [name]: value })).toEqual({
+              error: `RangeError: The value of "${name}" is out of range. It must be >= 0 and <= 9007199254740991. Received ${value}`,
+            });
+          });
+
+          test.each([
+            [1.5, "integer", "number"],
+            ["1", "number", "string"],
+            [null, "number", "object"],
+            [true, "number", "boolean"],
+            [1n, "number", "bigint"],
+            [{}, "number", "object"],
+          ])("rejects %p as the wrong type", (value, expected, received) => {
+            expect(outcome("[]", { [name]: value })).toEqual({
+              error: `TypeError: The "${name}" property must be of type ${expected}. Received ${received}`,
+            });
+          });
+
+          test("propagates what its getter throws, before the input is read", () => {
+            const seen: string[] = [];
+            const input = {
+              toString() {
+                seen.push("input");
+                return "[]";
+              },
+            };
+            const options = Object.defineProperty({}, name, {
+              get() {
+                seen.push(name);
+                throw new EvalError("from the getter");
+              },
+            });
+            expect(outcome(input, options)).toEqual({ error: "EvalError: from the getter" });
+            expect(seen).toEqual([name]);
+          });
+        });
+
+        test("reads inherited options", () => {
+          expect(outcome("[]", Object.create({ maxDepth: 0 }))).toEqual(tooDeep(0));
+        });
+      });
+    });
+
     test("handles multiple documents", () => {
       const yaml = `
 ---

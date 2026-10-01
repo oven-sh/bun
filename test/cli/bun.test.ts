@@ -566,21 +566,21 @@ describe.concurrent("global flag before subcommand", () => {
   });
 
   // Shebang + chmod bin stub is Unix-only; see test/regression/issue/26207.test.ts.
-  test.skipIf(isWindows)("bun --bun x <bin> still passes --bun through", async () => {
-    // `--bun` is handled by bunx's own parser; stepping past leading flags
-    // to find the `x` keyword must not strip it.
-    using dir = tempDir("which-bunx-bun", {
-      "node_modules/.bin/probe": `#!/usr/bin/env node\nconsole.log(process.isBun ? "under-bun" : "under-node");`,
-      "package.json": JSON.stringify({ name: "p" }),
+  // bunx reads the flags in front of `x` itself (`--bun`), but not the value
+  // that a global flag consumed, even when the value looks like a bunx flag.
+  for (const pre of [["--bun"], ["--cwd", ".", "--bun"], ["--env-file", "--package", "--bun"]]) {
+    test.skipIf(isWindows)(`bun ${pre.join(" ")} x <bin> runs the bin under bun`, async () => {
+      using dir = tempDir("which-bunx-bun", {
+        "node_modules/.bin/probe": `#!/usr/bin/env node\nconsole.log(process.isBun ? "under-bun" : "under-node");`,
+        "package.json": JSON.stringify({ name: "p" }),
+      });
+      fs.chmodSync(`${dir}/node_modules/.bin/probe`, 0o755);
+      const { stdout, stderr, exitCode } = await run(String(dir), [...pre, "x", "probe"]);
+      expect(stderr).not.toContain("Script not found");
+      expect(stdout.trim()).toBe("under-bun");
+      expect(exitCode).toBe(0);
     });
-    fs.chmodSync(`${dir}/node_modules/.bin/probe`, 0o755);
-    const baseline = await run(String(dir), ["x", "--bun", "probe"]);
-    expect(baseline.stdout.trim()).toBe("under-bun");
-    const { stdout, stderr, exitCode } = await run(String(dir), ["--bun", "x", "probe"]);
-    expect(stderr).not.toContain("Script not found");
-    expect(stdout.trim()).toBe("under-bun");
-    expect(exitCode).toBe(0);
-  });
+  }
 
   test("bun --help create prints the create help and exits 0", async () => {
     using dir = tempDir("which-help-create", files);

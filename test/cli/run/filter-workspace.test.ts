@@ -510,76 +510,58 @@ describe("bun", () => {
       }),
     });
 
+    async function run(...args: string[]) {
+      await using proc = Bun.spawn({
+        cwd: test_root,
+        cmd: [bunExe(), ...args],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, exitCode };
+    }
+
     for (const args of [
       ["--filter=pkga", "test"],
       ["-F=pkga", "test"],
       ["-Fpkga", "test"],
       ["--filter", "pkga", "test"],
     ]) {
-      test(`bun ${args.join(" ")}`, () => {
-        const { exitCode, stdout } = spawnSync({
-          cwd: test_root,
-          cmd: [bunExe(), ...args],
-          env: bunEnv,
-          stdout: "pipe",
-          stderr: "pipe",
-        });
+      test(`bun ${args.join(" ")}`, async () => {
+        const { exitCode, stdout } = await run(...args);
         // The package's own .env is loaded because the script runs with the
         // package directory as cwd.
-        expect(stdout.toString()).toMatch(/testa from-pkga-env/);
-        expect(stdout.toString()).not.toMatch(/testb/);
+        expect(stdout).toMatch(/testa from-pkga-env/);
+        expect(stdout).not.toMatch(/testb/);
         expect(exitCode).toBe(0);
       });
     }
 
-    test("bun --workspaces test", () => {
-      const { exitCode, stdout } = spawnSync({
-        cwd: test_root,
-        cmd: [bunExe(), "--workspaces", "test"],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      expect(stdout.toString()).toMatch(/testa from-pkga-env/);
-      expect(stdout.toString()).toMatch(/testb/);
+    test("bun --workspaces test", async () => {
+      const { exitCode, stdout } = await run("--workspaces", "test");
+      expect(stdout).toMatch(/testa from-pkga-env/);
+      expect(stdout).toMatch(/testb/);
       expect(exitCode).toBe(0);
     });
 
-    test("bun --filter=pkga build runs the package build script", () => {
-      const { exitCode, stdout } = spawnSync({
-        cwd: test_root,
-        cmd: [bunExe(), "--filter=pkga", "build"],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      expect(stdout.toString()).toMatch(/builda/);
-      expect(stdout.toString()).not.toMatch(/buildb/);
+    test("bun --filter=pkga build runs the package build script", async () => {
+      const { exitCode, stdout } = await run("--filter=pkga", "build");
+      expect(stdout).toMatch(/builda/);
+      expect(stdout).not.toMatch(/buildb/);
       expect(exitCode).toBe(0);
     });
 
-    test("bun --workspaces build runs every package build script", () => {
-      const { exitCode, stdout } = spawnSync({
-        cwd: test_root,
-        cmd: [bunExe(), "--workspaces", "build"],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      expect(stdout.toString()).toMatch(/builda/);
-      expect(stdout.toString()).toMatch(/buildb/);
+    test("bun --workspaces build runs every package build script", async () => {
+      const { exitCode, stdout } = await run("--workspaces", "build");
+      expect(stdout).toMatch(/builda/);
+      expect(stdout).toMatch(/buildb/);
       expect(exitCode).toBe(0);
     });
 
-    test("bun --filter=pkgb test forwards extra args to the script", () => {
-      const { exitCode, stdout } = spawnSync({
-        cwd: test_root,
-        cmd: [bunExe(), "--filter=pkgb", "test", "extra-arg"],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      expect(stdout.toString()).toMatch(/testb extra-arg/);
+    test("bun --filter=pkgb test forwards extra args to the script", async () => {
+      const { exitCode, stdout } = await run("--filter=pkgb", "test", "extra-arg");
+      expect(stdout).toMatch(/testb extra-arg/);
       expect(exitCode).toBe(0);
     });
   });

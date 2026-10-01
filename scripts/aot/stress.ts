@@ -13,7 +13,13 @@
 //   same-*                            the same exit code and output
 //   BUILD-CRASH-*                     the compiler crashed
 //   DIFFERS-*                         and then one of:
-//     only-without-text               the same once the executable keeps its source text and bytecode. Look at it: the test
+//     CRASH                           alone in its bundle, it ends with a signal that a program gets for a fault. A bug, whatever
+//                                     it does once the executable keeps its text
+//     only-in-a-batch                 the same once the test is alone in its bundle, in the reference too. What a test
+//                                     sees of its bundle depends on the other tests in it: the bundler renames what
+//                                     collides, and an error that is printed has line numbers. The reference of a batch
+//                                     may have been built from more tests, or from fewer
+//     only-without-text               alone, the same once the executable keeps its source text and bytecode. Look at it: the test
 //                                     may compare the text of a function or of an error message, or it may have found a
 //                                     bug that only shows there because more is inferred about a program that is closed
 //     REAL                            a bug
@@ -94,11 +100,14 @@ function run(command: string[], env: Record<string, string>, seconds: number): P
     );
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
-    child.stdout.on("data", chunk => stdout.push(chunk));
-    child.stderr.on("data", chunk => stderr.push(chunk));
+    // One test prints a string of 2 GB. What is past the limit is dropped, and the run counts as failed.
+    let room = 16 * 2 ** 20;
+    const keepIn = (chunks: Buffer[]) => (chunk: Buffer) => void ((room -= chunk.length) >= 0 && chunks.push(chunk));
+    child.stdout.on("data", keepIn(stdout));
+    child.stderr.on("data", keepIn(stderr));
     child.on("close", code =>
       done({
-        code: code ?? -1,
+        code: room < 0 ? -2 : (code ?? -1),
         stdout: Buffer.concat(stdout).toString(),
         stderr: Buffer.concat(stderr)
           .toString()
@@ -195,13 +204,29 @@ async function runBatch(number: number, batch: string[]) {
         rmSync(executable);
       }
     }
-    for (const { executable, batch: built } of await buildable([...differing].sort(), "with-text", join(directory, "with-text"))) {
-      for (const test of built) {
-        const outcome = await run([executable, test], kinds["with-text"].run, 120);
-        const same = outcome.code === 0 && outcome.stdout === reference.get(test)!.stdout;
-        record(test, same ? "only-without-text" : "REAL", `exit=${outcome.code} | ${outcome.stderr.slice(-600)}`);
+    // From here on each test is alone in its bundle, in the reference too.
+    for (const test of [...differing].sort()) {
+      const alone = async (kind: Kind) => {
+        const [built] = await buildable([test], kind, join(directory, `${kind}-alone`));
+        if (!built) return undefined;
+        const outcome = await run([built.executable, test], kinds[kind].run, 120);
+        rmSync(built.executable);
+        return outcome;
+      };
+      const expected = await alone("reference");
+      const isSame = (outcome?: Outcome) => !!outcome && !!expected && outcome.code === 0 && outcome.stdout === expected.stdout;
+      const compiled = await alone("aot");
+      if (isSame(compiled)) {
+        record(test, "only-in-a-batch");
+        continue;
       }
-      rmSync(executable);
+      // SIGILL, SIGTRAP, SIGABRT, SIGBUS, SIGSEGV. (137 is the memory cap or the time limit.)
+      if (compiled && [132, 133, 134, 138, 139].includes(compiled.code)) {
+        record(test, "CRASH", `exit=${compiled.code} | ${compiled.stderr.slice(-600)}`);
+        continue;
+      }
+      const outcome = await alone("with-text");
+      record(test, isSame(outcome) ? "only-without-text" : "REAL", `exit=${outcome?.code} | ${outcome?.stderr.slice(-600)}`);
     }
   } finally {
     rmSync(directory, { recursive: true, force: true });
@@ -250,6 +275,7 @@ const counts: Record<string, number> = {};
 for (const verdict of verdicts.values()) counts[verdict] = (counts[verdict] ?? 0) + 1;
 console.log(counts);
 for (const [test, verdict] of verdicts) {
-  if (verdict === "REAL" || verdict === "only-without-text" || verdict.startsWith("BUILD-CRASH")) console.log(`${verdict}\t${test}`);
+  if (verdict === "REAL" || verdict === "CRASH" || verdict === "only-without-text" || verdict.startsWith("BUILD-CRASH"))
+    console.log(`${verdict}\t${test}`);
 }
-process.exitCode = Object.keys(counts).some(verdict => verdict === "REAL" || verdict.startsWith("BUILD-CRASH")) ? 1 : 0;
+process.exitCode = Object.keys(counts).some(verdict => verdict === "REAL" || verdict === "CRASH" || verdict.startsWith("BUILD-CRASH")) ? 1 : 0;

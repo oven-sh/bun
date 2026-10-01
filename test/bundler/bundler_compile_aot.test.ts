@@ -465,6 +465,36 @@ test.skipIf(!supported)("a Bun.ModuleGraph that loads a module first does not ta
   });
 });
 
+// Compiled code calls some builtins without their function objects ever having been made, and the source provider of a
+// builtin used to be made with its function object. Printing the error looked at the source of every frame.
+test.skipIf(!supported).each(["forEach", "map"])(
+  "an uncaught error from the callback of %s is reported in an executable without bytecode",
+  async method => {
+    using dir = tempDir("compile-aot-uncaught", {
+      "entry.ts": `[1].${method}(function callback() { throw new Error("thrown in the callback"); });`,
+    });
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "--compile-aot", "entry.ts", "--outfile", "out"],
+      env: { ...bunEnv, BUN_COMPILE_OMIT_SOURCE_TEXT: "1", BUN_COMPILE_OMIT_BYTECODE: "1" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect([await build.stderr.text(), await build.exited]).toEqual([expect.not.stringContaining("error"), 0]);
+    await using proc = Bun.spawn({ cmd: [join(String(dir), "out")], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, firstLines: stderr.split("\n").slice(0, 3), exitCode }).toEqual({
+      stdout: "",
+      firstLines: [
+        "error: thrown in the callback",
+        expect.stringMatching(/^ +at callback \(.*out:\d+:\d+\)$/),
+        expect.stringMatching(new RegExp(`^ +at ${method} `)),
+      ],
+      exitCode: 1,
+    });
+  },
+);
+
 // The compiler must not depend on the JIT of the process that runs the build. It used to link regular expressions in
 // JIT memory. Without a JIT the executable silently had no code for them, and matched them with the interpreter, ten
 // times slower.

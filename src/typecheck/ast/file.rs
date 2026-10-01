@@ -90,7 +90,7 @@ pub struct SourceFileData {
     pub path: Path,
     // SourceFile.diagnostics: the parse diagnostics, ids of `diagnostic_store`.
     pub diagnostics: Vec<DiagnosticId>,
-    // The store of the parser of the file: its parse diagnostics and their related information.
+    // The store of the parser of the file: its parse diagnostics and their related information. `finish` maps no id in it.
     pub diagnostic_store: DiagnosticStore,
     pub language_variant: LanguageVariant,
     pub script_kind: ScriptKind,

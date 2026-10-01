@@ -115,7 +115,7 @@ impl Drop for AtHand<'_> {
         };
         // SAFETY: this thread is the only one to look at the module, and is done with it.
         let module = unsafe { &mut *module.0.get() };
-        module.hir = stub_of(&module.hir);
+        module.hir = stub_of(&mut module.hir, false);
         module.bound = Bound::default();
         crate::local::end();
         crate::types::TypeStore::end_local();
@@ -219,9 +219,15 @@ fn looks_like_a_leaf(path: &str, bound: &Bound) -> bool {
     .any(|mark| name.contains(mark))
 }
 
-/// What is known of a file whose syntax tree is not there.
-fn stub_of(hir: &hir::File) -> hir::File {
+/// What is known of a file whose syntax tree is not there. With `keeps_text`, what it reads stays, for whoever parses it next: opening
+/// and reading a file costs about what parsing it does.
+fn stub_of(hir: &mut hir::File, keeps_text: bool) -> hir::File {
     hir::File {
+        text: if keeps_text {
+            std::mem::take(&mut hir.text)
+        } else {
+            Default::default()
+        },
         kind: hir.kind,
         is_js: hir.is_js,
         source_len: hir.source_len,
@@ -1021,8 +1027,12 @@ impl Files {
                 .collect();
             let parsed: Vec<Mutex<Option<(hir::File, Bound)>>> =
                 back.iter().map(|_| Mutex::new(None)).collect();
-            let paths: Vec<&str> = back.iter().map(|&i| &modules[i].path[..]).collect();
-            read_and_work(host, &paths, &|at, text| {
+            let texts: Vec<Mutex<Cow<'static, [u8]>>> = back
+                .iter()
+                .map(|&i| Mutex::new(std::mem::take(&mut modules[i].hir.text)))
+                .collect();
+            host.parallel(back.len(), &|at| {
+                let text = std::mem::take(&mut *texts[at].lock().unwrap());
                 let module = &modules[back[at]];
                 let (mut hir, mut bound) = Self::parse_and_bind(
                     host,
@@ -1045,7 +1055,7 @@ impl Files {
             for (i, module) in modules.iter_mut().enumerate() {
                 module.is_transient = module.adds_nothing && !is_referred_to[i];
                 if module.is_transient && !module.is_dropped {
-                    module.hir = stub_of(&module.hir);
+                    module.hir = stub_of(&mut module.hir, true);
                     module.bound = Bound::default();
                 }
             }
@@ -1254,17 +1264,22 @@ impl Files {
         if !cell.is_transient {
             return AtHand { module: None };
         }
+        // SAFETY: nothing refers to the file, so no other thread looks at the module.
+        let module = unsafe { &mut *cell.0.get() };
+        let mut text = std::mem::take(&mut module.hir.text);
+        // It has been at hand before.
+        if text.is_empty() && module.hir.source_len > 0 {
+            text = host.read(&module.path).unwrap_or_default();
+        }
         let (hir, bound) = Self::parse_and_bind(
             host,
             &self.options,
             &self.atoms,
-            &cell.path,
-            cell.is_lib,
-            cell.says_esm,
-            host.read(&cell.path).unwrap_or_default(),
+            &module.path,
+            module.is_lib,
+            module.says_esm,
+            text,
         );
-        // SAFETY: nothing refers to the file, so no other thread looks at the module.
-        let module = unsafe { &mut *cell.0.get() };
         module.hir = hir;
         module.bound = bound;
         crate::local::begin(file.0, std::ptr::null());
@@ -1524,7 +1539,7 @@ impl Files {
             && module.bound.umd_globals.is_empty();
         // All the trees of a big program at once are several times what is ever needed afterwards.
         if may_drop && module.adds_nothing && looks_like_a_leaf(path, &module.bound) {
-            module.hir = stub_of(&module.hir);
+            module.hir = stub_of(&mut module.hir, true);
             module.bound = Bound::default();
             module.is_dropped = true;
         } else {

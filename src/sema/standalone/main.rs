@@ -52,6 +52,11 @@ fn collect_sources(dir: &Path, out: &mut Vec<PathBuf>) {
 
 /// Where the memory of what was loaded is: for every vector of every file, what it has room for and what it uses.
 fn print_loaded_sizes(program: &bun_sema::check::Program) {
+    // `BUN_SEMA_LIST=<file>`: the paths of all that is loaded, a line each.
+    if let Ok(to) = std::env::var("BUN_SEMA_LIST") {
+        let paths: Vec<&str> = program.files.modules.iter().map(|m| &m.path[..]).collect();
+        let _ = std::fs::write(to, paths.join("\n"));
+    }
     fn add<T>(rows: &mut Vec<(&'static str, usize, usize, usize)>, name: &'static str, v: &Vec<T>) {
         let size = std::mem::size_of::<T>();
         match rows.iter_mut().find(|r| r.0 == name) {

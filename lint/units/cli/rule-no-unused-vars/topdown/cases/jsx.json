@@ -10,7 +10,7 @@
 {"code":"const x = 1; export const b = <div {...x}/>;","ext":"jsx"},
 {"code":"import _ from \"x\"; export const b = <_/>;","ext":"jsx"},
 {"code":"import $ from \"x\"; export const b = <$/>;","ext":"jsx"},
-{"code":"import \u00e9 from \"x\"; export const b = <\u00e9/>;","ext":"jsx"},
+{"code":"import é from \"x\"; export const b = <é/>;","ext":"jsx"},
 {"code":"import Foo from \"x\"; let a; a = <Foo onClick={() => a}/>;","ext":"jsx"},
 {"code":"import Foo from \"x\"; let a; a = <Foo>{() => a}</Foo>;","ext":"jsx"},
 {"code":"import Foo from \"x\"; let a; a = foo(<Foo>{() => a}</Foo>);","ext":"jsx"},
@@ -34,5 +34,8 @@
 {"code":"export const a = <div/>; import React from \"react\"; export const b = <p/>;","ext":"tsx"},
 {"code":"function React() {} export const a = <div/>;","ext":"tsx"},
 {"code":"let React; React = 1; export const a = <div/>;","ext":"tsx"},
-{"code":"import React from \"react\"; export const a = 1;","ext":"tsx"}
+{"code":"import React from \"react\"; export const a = 1;","ext":"tsx"},
+{"code":"let React; React = <div/>;","ext":"tsx"},
+{"code":"let React; React = [<div/>];","ext":"tsx"},
+{"code":"let React; React = <div/>;","ext":"jsx"}
 ]

@@ -35,7 +35,7 @@ expected-differences.json   cases where bun is to be silent and ESLint reports, 
 extract-default-cases.cjs   the cases of ESLint's own test that run with options equal to the defaults ("all" and an object that
                   restates defaults included): 376, 368 of them distinct. All parse with bun's parser.
 make-seed.cjs     node make-seed.cjs > seed/no-unused-vars.json : those cases and cases/*.json with ESLint's answer as `expect`
-                  (941 cases: 623 js, 32 jsx, 251 ts, 16 tsx, 19 declaration files; 609 reports; bun's parser takes all). It is the seed of test/cli/lint/rules/no-unused-vars.json:
+                  (944 cases: 623 js, 33 jsx, 251 ts, 18 tsx, 19 declaration files; 610 reports; bun's parser takes all). It is the seed of test/cli/lint/rules/no-unused-vars.json:
                   `expect` becomes what bun prints, and a case where that is not ESLint's answer gets `differs` and `eslint`.
 real.cjs          BUN_LINT_EXE=<bun-debug> node real.cjs [--list files.txt] <file>... : no-unused-vars of `bun --lint` over real files
                   against ESLint. `extra` (a report of bun on a name ESLint calls used) has to be 0. For the build that has the rule.

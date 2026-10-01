@@ -1,0 +1,12 @@
+module a.b {}
+declare module a.b {}
+module as.b {}
+declare module as.b {}
+module as {}
+namespace as.b {}
+class C implements infer {}
+class C implements keyof<A> {}
+interface I extends readonly.A {}
+class C implements a.b⏎<C> {}
+class C implements a?.b {}
+class C implements a.b.c {}

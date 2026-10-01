@@ -164,7 +164,9 @@ function unusedVars(scopeManager, ast, facts, filename, tokens) {
 		else { const v = lookup(scopeOf(m.id), m.id.name); if (v) marked.add(v); }
 	}
 	const nearestFunction = scope => { for (let s = scope; s; s = s.upper) if (s.type === "function" && isFn(s.block)) return s.block; return null; };
-	const isInside = (ref, rhs) => ref.seq > rhs.of && ref.seq < rhs.end;
+	// The reference that the scope manager makes for the JSX pragma has the declaration of the name as its identifier: it is inside no right side.
+	const pseudo = ref => ref.isRead() && !ref.isWrite() && !!ref.resolved && ref.resolved.identifiers.includes(ref.identifier);
+	const isInside = (ref, rhs) => ref.seq > rhs.of && ref.seq < rhs.end && !pseudo(ref);
 	const insideStorable = (ref, rhs) => { const f = nearestFunction(ref.from); if (!f) return false; const at = fnFacts.get(f).storableAt; return at !== null && at > rhs.of; };
 	const readForItself = (ref, rhs) => { const s = S(ref); return ref.isRead() && ((s.assign && s.unused && !s.logical) || (s.update && s.unused) || (!!rhs && isInside(ref, rhs) && !insideStorable(ref, rhs))); };
 	const rhsNode = (ref, prev, variable) => { const s = S(ref); const later = ref.from.variableScope !== variable.scope.variableScope || s.inLoop; if (prev && isInside(ref, prev)) return prev; if (s.assign && s.unused && !later) return { of: ref.seq, end: s.rhsEnd }; return null; };

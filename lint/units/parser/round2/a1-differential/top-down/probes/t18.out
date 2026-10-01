@@ -1,0 +1,36 @@
+"module a.b {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[1540]
+    t.ts.plain: A ==
+"declare module a.b {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[1540]
+    t.ts.plain: A ==
+"module as.b {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[1540]
+    t.ts.plain: R "Unexpected ." +2 -> A
+"declare module as.b {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[1540]
+    t.ts.plain: R "Unexpected ." +2 -> A
+"module as {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[1540]
+    t.ts.plain: A ==
+"namespace as.b {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected ." +2 -> A
+"class C implements infer {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: R "Expected identifier but found \"{\"" +2 -> A
+"class C implements keyof<A> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: R "Expected \"(\" but found \"{\"" +2 -> A
+"interface I extends readonly.A {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2503]
+    t.ts.plain: R "Unexpected ." -> A
+"class C implements a.b\n<C> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2503]
+    t.ts.plain: R "Expected \"{\" but found \"<\"" +3 -> A
+"class C implements a?.b {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2500,2503]
+    t.ts.plain: R "Expected \"{\" but found \"?.\"" +1 -> A
+"class C implements a.b.c {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2503]
+    t.ts.plain: A ==

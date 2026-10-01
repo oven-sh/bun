@@ -376,9 +376,37 @@ decisions are Bun's, so these rows are not a port of the parser.
 
 ## Parser pieces for JavaScript trees (importer)
 
-Commit `3febf04ee5`. Not compiled by cargo yet (`lib.rs` does not declare `importer`); `ported` and `tested` mean
-compiled and run with `rustc` alone from the scratch root of `jsdoc-reparser-js-trees/port/` (API.md, "Importer: the
-JavaScript step").
+Commit `3febf04ee5`: the seven files of `importer/` (`mod.rs`, and `mod.rs`, `jsdoc.rs`, `jssyntax.rs`, `reparser.rs`,
+`tree.rs` and `tests.rs` of `javascript/`), unchanged since. `ported` and `tested` in the rows below mean compiled and
+run with `rustc` alone from the scratch root of `jsdoc-reparser-js-trees/port/` (API.md, "Importer: the JavaScript
+step"): no test of the directory has run through cargo.
+
+Layer 5 of round 2 declares the directory: the line `pub mod importer;` of `lib.rs` is `ebb836b39f` (written by the job
+that commits the worktree, under its message "typecheck: compile the port, work in progress"; the commit holds that
+line and nothing else). `importer/mod.rs` reaches `javascript/mod.rs`, which reaches the other five files. The six
+files that `cargo check` compiles (3,193 lines) name `crate::{ast, core, diagnostics, internal, scanner, stringutil}`,
+`bun_core::StackCheck` (as `binder/binder.rs` does) and `std::mem`: `lib.rs` and `src/typecheck/Cargo.toml` had all of
+them before the line, so no file of layers 1 to 4 and no line of `Cargo.toml` changed for this directory. No
+`cargo check`, no `cargo clippy` and no `cargo test` was run with that commit: the survey that follows it is the first
+cargo compile of the six files in the real crate, and until that run passes the real crate has them declared and not
+compiled. What was checked before:
+
+- The look-ahead of the round-6 survey (`rustc` alone from a scratch root in `/tmp`: the ten `pub mod` lines of
+  `lib.rs` at `6f844a8b93` and `pub mod importer;`, every file read in place, against the real `bun_core` and
+  `bun_collections`, the rust lints of the workspace denied): exit 0, no warning. The same with `pub mod lowering;`
+  as well, which is the set of modules that `lib.rs` has at `5d5a6e614a`, against the `bun_ast` that the worktree of
+  the cli unit had built (this worktree had none; `/tmp/rdr-sweep-r6.log` says why it stands for the one that cargo
+  builds here): exit 0, no warning.
+- `rustfmt --check --edition 2024 src/typecheck/importer/mod.rs`, which follows every `mod` line of the directory, the
+  `#[cfg(test)]` one too: exit 0. The same on `lib.rs` alone (`--config skip_children=true`): exit 0.
+- `python3 /workspace/notes/lint/tools/undeclared.py src/typecheck` on the tree of `ebb836b39f`: 87 of 179 files are
+  reached, and no file of `importer/` is outside.
+- The six files have no `unsafe`, `unwrap()`, `expect(`, `panic!`, `todo!`, `unimplemented!`, `unreachable!` and no
+  `allow(`, and none of the seven has a run of two comment lines.
+- Not run on these bytes in the real crate: clippy (the scratch root had it clean at `3febf04ee5`, API.md). `cargo check`
+  does not compile `javascript/tests.rs` (805 lines) and `mod tests` of `javascript/tree.rs` (lines 875 to 922), which
+  are `#[cfg(test)]`: no compiler has seen the two beside the `ast` of today, so whether they still compile is not
+  known.
 
 | upstream file, lines | Rust module under `src/typecheck/` | state | not ported |
 | --- | --- | --- | --- |

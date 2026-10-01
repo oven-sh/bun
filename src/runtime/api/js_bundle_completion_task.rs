@@ -110,7 +110,8 @@ pub(crate) struct CallerOfTheBuild {
 
 jsc::impl_abort_handle_owner!(CallerOfTheBuild, handle, |this, _cause| {
     // SAFETY: trait contract — `this` is the `caller` field of a live task (armed ⇒ its
-    // completion has not run); the plugin cell is protected by the task.
+    // completion has not run); the plugin cell is live while `plugins` is `Some` (see
+    // `BuildPlugins`).
     unsafe {
         let task = bun_core::from_field_ptr!(JSBundleCompletionTask, caller, this);
         if let Some(plugins) = &(*task).plugins {
@@ -124,7 +125,10 @@ jsc::impl_abort_handle_owner!(JSBundleCompletionTask, abort_handle, |this, _caus
     unsafe { JSBundleCompletionTask::give_up_on_result(this) }
 });
 
-/// The plugin cell a build runs against; only `Owned` releases it (on drop).
+/// The plugin cell a build runs against; only `Owned` releases it (on drop). Either way the
+/// cell is live while the task holds it: `Owned` protects it itself, and a `Borrowed` cell is
+/// the server's, which the route keeps alive as a pending request until the build lands
+/// (`Route::schedule_bundle` / `finish_building`).
 pub(crate) enum BuildPlugins {
     /// `Bun.build({ plugins })`: created for this one build.
     Owned(OwnedPlugin),

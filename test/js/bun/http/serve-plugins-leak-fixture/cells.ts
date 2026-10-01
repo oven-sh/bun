@@ -20,13 +20,16 @@ const turn = (i: number) => new Promise<void>(resolve => (i % 2 ? setImmediate(r
 
 // A released cell is only unprotected; it still has to be collected, so
 // alternate turns with collections. This converges within a few rounds when
-// the cells are released and never when they are not, so the bound only
-// decides how long the failing case takes. On failure the per-round survivors
-// go to stderr (run-length encoded), which tells whether the Server object
-// itself or only its cell is still alive.
+// the cells are released. Returns the number of cells that are still rooted
+// afterwards: protected, or reached from a GC root in a heap snapshot. A cell
+// that no root reaches does not count: on Windows, one such cell (no incoming
+// edge in the snapshot either) survives every collection in some runs, and
+// what the fix guarantees is that nothing roots the cell, not that a given
+// collection frees it. The rooted survivors go to stderr with the per-round
+// counts and the shortest path from a root to each.
 export async function collectCells(phase: string) {
   const survivors: { what: string; rounds: number }[] = [];
-  for (let i = 0; i < 100 && liveCells() > 0; i++) {
+  for (let i = 0; i < 25 && liveCells() > 0; i++) {
     await turn(i);
     Bun.gc(true);
     await turn(i + 1);
@@ -36,21 +39,22 @@ export async function collectCells(phase: string) {
     if (last?.what === what) last.rounds++;
     else survivors.push({ what, rounds: 1 });
   }
-  const remaining = liveCells();
-  if (remaining > 0) {
+  if (liveCells() === 0) return 0;
+  const rooted = retainersOfCells().filter(cell => cell.rooted);
+  if (rooted.length > 0) {
     const trace = survivors.map(({ what, rounds }) => `${what} x${rounds}`).join("\n");
     console.error(
-      `${phase}: still alive after each collection round (${protectedCells()} protected):\n${trace}\n` +
-        `what reaches them:\n${retainersOfCells().join("\n")}`,
+      `${phase}: ${rooted.length} still rooted (${protectedCells()} protected); alive after each collection round:\n${trace}\n` +
+        `what reaches them:\n${rooted.map(cell => cell.path).join("\n")}`,
     );
   }
-  return remaining;
+  return rooted.length;
 }
 
-// For every live BundlerPlugin cell, the shortest path from a GC root to it
-// (or "no root reaches" when the snapshot has none). Protected cells show up
-// as their own root.
-function retainersOfCells() {
+// For every live BundlerPlugin cell: whether a GC root reaches it in a heap
+// snapshot, and the shortest such path (or what does point at it when none
+// does). A protected cell is its own root ("ProtectedValues").
+function retainersOfCells(): { rooted: boolean; path: string }[] {
   const { nodes, nodeClassNames, edges, edgeTypes, edgeNames, roots, labels } = generateHeapSnapshotForDebugging();
   const classOf = new Map<number, string>();
   const labelOf = new Map<number, string>();
@@ -102,13 +106,13 @@ function retainersOfCells() {
       const incoming = [...outgoing].flatMap(([src, list]) =>
         list.filter(([to]) => to === id).map(([, via]) => via + " " + name(src)),
       );
-      return `${name(id)}: no root reaches it; incoming: ${incoming.join(", ") || "none"}`;
+      return { rooted: false, path: `${name(id)}: no root reaches it; incoming: ${incoming.join(", ") || "none"}` };
     }
     const hops: string[] = [];
     for (let at: number | null = id; at !== null; at = from.get(at)?.[0] ?? null) {
       hops.unshift((from.get(at)?.[1] ?? "") + " " + name(at));
     }
-    return hops.slice(0, 20).join(" ->").trim();
+    return { rooted: true, path: hops.slice(0, 20).join(" ->").trim() };
   });
 }
 

@@ -1,6 +1,8 @@
 // node-dns.test.js resolves public hostnames. These tests need no network.
 import { describe, expect, test } from "bun:test";
+import dgram from "node:dgram";
 import dns from "node:dns";
+import { once } from "node:events";
 
 describe.each([
   ["dns.Resolver", dns.Resolver],
@@ -30,5 +32,103 @@ describe.each([
 
   test("throws a TypeError when called without new", () => {
     expect(() => Resolver()).toThrow(TypeError);
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/32164
+//
+// A query sent to a UDP port with no listener comes back as an ICMP port
+// unreachable. The kernel keeps that error on the connected query socket until
+// the next recv() or send(), and epoll reports it as EPOLLERR with no readable
+// or writable bit. c-ares finds the error only when it is handed the socket.
+describe("a nameserver that nothing listens on", () => {
+  async function closedUdpPort(): Promise<string> {
+    const socket = dgram.createSocket("udp4");
+    socket.bind(0, "127.0.0.1");
+    await once(socket, "listening");
+    const { port } = socket.address();
+    await new Promise<void>(resolve => socket.close(() => resolve()));
+    return `127.0.0.1:${port}`;
+  }
+
+  // Answers every query with one A record, 10.20.0.1.
+  async function liveNameserver() {
+    const socket = dgram.createSocket("udp4");
+    socket.on("message", (query, rinfo) => {
+      let end = 12;
+      while (end < query.length && query[end] !== 0) end += query[end] + 1;
+      end += 1 + 2 + 2;
+      const question = query.subarray(12, end);
+      const header = Buffer.from([query[0], query[1], 0x81, 0x80, 0, 1, 0, 1, 0, 0, 0, 0]);
+      const answer = Buffer.from([0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4, 10, 20, 0, 1]);
+      socket.send(Buffer.concat([header, question, answer]), rinfo.port, rinfo.address);
+    });
+    socket.bind(0, "127.0.0.1");
+    await once(socket, "listening");
+    return {
+      address: `127.0.0.1:${socket.address().port}`,
+      [Symbol.dispose]: () => socket.close(),
+    };
+  }
+
+  // With `tries: 1`, an error that c-ares never sees ends as ETIMEOUT.
+  const options = { timeout: 1000, tries: 1 };
+
+  test("dns.promises.Resolver rejects with ECONNREFUSED", async () => {
+    const resolver = new dns.promises.Resolver(options);
+    resolver.setServers([await closedUdpPort()]);
+    const error = await resolver.resolve4("refused.example.test").then(
+      addresses => ({ addresses }),
+      e => e,
+    );
+    expect({ code: error.code, syscall: error.syscall, hostname: error.hostname, message: error.message }).toEqual({
+      code: "ECONNREFUSED",
+      syscall: "queryA",
+      hostname: "refused.example.test",
+      message: "queryA ECONNREFUSED refused.example.test",
+    });
+  });
+
+  test("dns.Resolver calls back with ECONNREFUSED", async () => {
+    const resolver = new dns.Resolver(options);
+    resolver.setServers([await closedUdpPort()]);
+    const { promise, resolve } = Promise.withResolvers<{ code?: string; addresses?: string[] }>();
+    resolver.resolve4("refused.example.test", (err, addresses) => resolve({ code: err?.code, addresses }));
+    expect(await promise).toEqual({ code: "ECONNREFUSED", addresses: undefined });
+  });
+
+  test("every record type reports ECONNREFUSED", async () => {
+    const resolver = new dns.promises.Resolver(options);
+    resolver.setServers([await closedUdpPort()]);
+    const outcome = (query: Promise<unknown>) =>
+      query.then(
+        () => "answered",
+        e => e.code,
+      );
+    const name = "refused.example.test";
+    expect(
+      await Promise.all([
+        outcome(resolver.resolve6(name)),
+        outcome(resolver.resolveAny(name)),
+        outcome(resolver.resolveCaa(name)),
+        outcome(resolver.resolveCname(name)),
+        outcome(resolver.resolveMx(name)),
+        outcome(resolver.resolveNaptr(name)),
+        outcome(resolver.resolveNs(name)),
+        outcome(resolver.resolvePtr(name)),
+        outcome(resolver.resolveSoa(name)),
+        outcome(resolver.resolveSrv(name)),
+        outcome(resolver.resolveTxt(name)),
+      ]),
+    ).toEqual(Array(11).fill("ECONNREFUSED"));
+  });
+
+  // Each dead server is given up at once. If the query waited for their
+  // timeouts (2 x 30 s), this test would run into its own time limit.
+  test("the query moves on to the next nameserver", async () => {
+    using live = await liveNameserver();
+    const resolver = new dns.promises.Resolver({ timeout: 30_000, tries: 1 });
+    resolver.setServers([await closedUdpPort(), await closedUdpPort(), live.address]);
+    expect(await resolver.resolve4("failover.example.test")).toEqual(["10.20.0.1"]);
   });
 });

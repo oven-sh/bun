@@ -1096,7 +1096,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             // The parent process is unable to re-launch itself
             #[cfg(not(windows))]
             {
-                bun_core::set_auto_reload_on_crash(true);
+                bun_core::arm_auto_reload();
             }
 
             if args.flag(b"--no-clear-screen") {
@@ -2266,7 +2266,7 @@ fn parse_build_command_options(
 
     if args.flag(b"--watch") {
         ctx.debug.hot_reload = HotReload::Watch;
-        bun_core::set_auto_reload_on_crash(true);
+        bun_core::arm_auto_reload();
 
         if args.flag(b"--no-clear-screen") {
             let _ = bun_dotenv::HAS_NO_CLEAR_SCREEN_CLI_FLAG.set(true);

@@ -4211,8 +4211,16 @@ pub fn auto_reload_on_crash() -> bool {
     AUTO_RELOAD_ON_CRASH.load(AOrdering::Relaxed)
 }
 #[inline]
-pub fn set_auto_reload_on_crash(v: bool) {
-    AUTO_RELOAD_ON_CRASH.store(v, AOrdering::Relaxed)
+pub fn disable_auto_reload_on_crash() {
+    AUTO_RELOAD_ON_CRASH.store(false, AOrdering::Relaxed)
+}
+/// Call where watch mode is turned on: `reload_process` re-execs the path resolved here.
+pub fn arm_auto_reload() {
+    // /proc/self/exe names the running inode, so read it before the binary can be replaced.
+    // On Apple the path is fixed at exec, and resolving it at reload follows a re-pointed symlink.
+    #[cfg(all(unix, not(target_vendor = "apple")))]
+    let _ = self_exe_path();
+    AUTO_RELOAD_ON_CRASH.store(true, AOrdering::Relaxed)
 }
 
 #[inline]
@@ -4281,11 +4289,7 @@ pub fn maybe_handle_panic_during_process_reload() {
     }
 }
 
-/// Port of `bun.reloadProcess`. On failure the executable path and errno are printed, then
-/// `may_return == true` (the crash handler's auto-restart) returns and `false` exits with 1: the
-/// old image cannot safely carry on once `on_before_reload_process_posix` has reset the signal
-/// dispositions, and an executable that was removed or made unrunnable under a running `--watch`
-/// is not a bug, so it is not a panic either.
+/// Port of `bun.reloadProcess`. A failed reload is reported, then `may_return` returns and `false` exits 1.
 /// `on_before_reload_process_posix` clears CLOEXEC on stdio/IPC and resets caught signal
 /// dispositions on all POSIX; the close_range sweep is Linux/BSD only.
 pub fn reload_process(clear_terminal: bool, may_return: bool) {
@@ -4376,25 +4380,21 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
         let mut envp: Vec<*const core::ffi::c_char> = dupe_env.iter().map(|z| z.as_ptr()).collect();
         envp.push(core::ptr::null());
 
-        let exec = |path: &ZStr| -> i32 {
-            libc::execve(path.as_ptr(), newargv.as_ptr().cast(), envp.as_ptr().cast());
-            // execve only returns on error.
-            std::io::Error::last_os_error().raw_os_error().unwrap_or(-1)
-        };
-
         // we must clone selfExePath in case argv[0] was not an absolute path
-        let exec_path = self_exe_path().expect("unreachable");
-        let (failed_path, errno) = (exec_path.as_bytes(), exec(exec_path));
-
-        // Once the running binary is unlinked, /proc/self/exe reads "<path> (deleted)". After an
-        // in-place replacement (`bun upgrade`, a reinstall) the new binary is at <path>: exec it.
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        let (failed_path, errno) = match failed_path.strip_suffix(b" (deleted)") {
-            Some(path) if errno == libc::ENOENT => (path, exec(ZBox::from_bytes(path).as_zstr())),
-            _ => (failed_path, errno),
+        let failed_exec = match self_exe_path() {
+            Ok(exec_path) => {
+                libc::execve(
+                    exec_path.as_ptr(),
+                    newargv.as_ptr().cast(),
+                    envp.as_ptr().cast(),
+                );
+                // execve only returns on error.
+                let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(-1);
+                Some((exec_path.as_bytes(), errno))
+            }
+            Err(_) => None,
         };
-
-        report_reload_failure(failed_path, errno);
+        report_reload_failure(failed_exec);
         if may_return {
             return;
         }
@@ -4410,26 +4410,32 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
     }
 }
 
+/// `failed_exec` is the path and errno of the failed `execve`, or `None` when the path lookup failed.
 #[cfg(unix)]
 #[cold]
-fn report_reload_failure(exec_path: &[u8], errno: i32) {
-    let exec_path = bstr::BStr::new(exec_path);
-    match (
-        crate::ErrnoNames::SYS.name(errno),
-        crate::coreutils_error_map::get(errno),
-    ) {
-        (Some(code), Some(message)) => crate::err_generic!(
-            "Failed to reload \"<b>{}<r>\": {}: {} <d>(execve)<r>",
-            exec_path,
-            code,
-            message
-        ),
-        _ => crate::err_generic!(
-            "Failed to reload \"<b>{}<r>\": errno {} <d>(execve)<r>",
-            exec_path,
-            errno
-        ),
+fn report_reload_failure(failed_exec: Option<(&[u8], i32)>) {
+    match failed_exec {
+        Some((exec_path, errno)) => match (
+            crate::ErrnoNames::SYS.name(errno),
+            crate::coreutils_error_map::get(errno),
+        ) {
+            (Some(code), Some(message)) => crate::err_generic!(
+                "Failed to reload {}: {}: {} <d>(execve)<r>",
+                crate::fmt::quote(exec_path),
+                code,
+                message
+            ),
+            _ => crate::err_generic!(
+                "Failed to reload {}: errno {} <d>(execve)<r>",
+                crate::fmt::quote(exec_path),
+                errno
+            ),
+        },
+        None => crate::err_generic!("Failed to reload: the path of this executable is unknown"),
     }
+    crate::note!("Run the command again to restart.");
+    // The crash handler re-raises its signal right after this returns.
+    crate::output::flush();
 }
 
 // ── spawn_sync_inherit ────────────────────────────────────────────────────

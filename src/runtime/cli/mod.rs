@@ -1138,7 +1138,7 @@ pub(crate) mod command {
                     if !bun_sys::windows::is_watcher_child() {
                         bun_sys::windows::become_watcher_manager();
                     } else {
-                        bun_core::set_auto_reload_on_crash(true);
+                        bun_core::arm_auto_reload();
                     }
                 }
             }

@@ -1196,7 +1196,7 @@ mod draft {
                 && !bun_core::is_process_reload_in_progress_on_another_thread()
                 {
                     // attempt to prevent a double panic
-                    bun_core::set_auto_reload_on_crash(false);
+                    bun_core::disable_auto_reload_on_crash();
 
                     bun_core::pretty_errorln!(
                         "<d>--- Bun is auto-restarting due to crash <d>[time: <b>{d}<r><d>] ---<r>",

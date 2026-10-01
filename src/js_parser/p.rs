@@ -213,6 +213,15 @@ pub struct RecentlyVisitedTSNamespace {
     pub(crate) map: Option<js_ast::StoreRef<js_ast::TSNamespaceMemberMap>>,
 }
 
+/// Keyed by where the node is: an async arrow's `async` -> its parameters; an arrow's `=>` -> its expression body; a
+/// class element's name or static block -> the element (its `static`, its `[`).
+#[derive(Default)]
+pub struct StartsForParseOnly {
+    pub(crate) async_arrow_parameters: bun_collections::HashMap<i32, i32>,
+    pub(crate) arrow_expression_bodies: bun_collections::HashMap<i32, i32>,
+    pub(crate) class_elements: bun_collections::HashMap<i32, i32>,
+}
+
 #[derive(Clone, Copy)]
 pub struct ReactRefreshImportClause<'a> {
     pub(crate) name: &'a [u8],
@@ -372,6 +381,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) has_commonjs_export_names: bool,
 
     pub(crate) stack_check: bun_core::StackCheck,
+    /// `Parser::parse_only`: where what does not say so itself starts.
+    pub(crate) starts_for_parse_only: Option<StartsForParseOnly>,
 
     pub(crate) reported_stack_overflow: core::cell::Cell<bool>,
 
@@ -472,6 +483,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// Compiled args/flags written by the `visit_stmts` hook for `visit_func` /
     /// arrow-visit to apply to the original `G::Fn` / `E::Arrow`.
     pub(crate) react_compiler_result: Option<bun_react_compiler::CompileResult>,
+    /// Visiting a function that is handed to the React Compiler, which re-declares its locals as new symbols.
+    pub(crate) react_compiler_may_replace_body: bool,
 
     /// only applicable when `.options.features.server_components` is
     /// configured to wrap exports. populated before visit pass starts.
@@ -1191,6 +1204,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // name leaves the pattern, and `...rest` would then collect it.
         if !self.options.bundle
             || self.options.output_format == options::Format::InternalBakeDev
+            || self.react_compiler_may_replace_body
             || properties
                 .iter()
                 .any(|p| p.flags.contains(bun_ast::flags::Property::IsSpread))
@@ -1255,6 +1269,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .insert(local, ImportItemForNamespaceMap::default());
         self.dynamic_import_namespace_locals
             .insert(local, records.to_vec());
+        if self.react_compiler_may_replace_body {
+            self.dynamic_import_copied_locals.insert(local, ());
+        }
         for &import_record_id in records {
             self.imports_to_convert_from_dynamic_import
                 .push(DeferredImportNamespace {
@@ -1462,10 +1479,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             let import_record_index =
                 self.add_import_record(ImportKind::Dynamic, arg.loc, str_.slice(self.arena));
-
-            if let Some(tag) = state.import_record_tag {
-                self.import_records.items_mut()[import_record_index as usize].tag = tag;
-            }
 
             if let Some(loader) = state.import_loader {
                 self.import_records.items_mut()[import_record_index as usize].loader = Some(loader);
@@ -2132,6 +2145,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// See `Symbol::import_used_as_value`.
+    fn note_import_use(&mut self, ref_: Ref, opts: IdentifierOpts) {
+        if !opts.is_property_access_target() && !self.is_control_flow_dead {
+            self.symbols[ref_.inner_index() as usize].set_import_used_as_value(true);
+        }
+    }
+
+    /// The renamer follows links before it reads the flag, so pin the whole chain.
+    pub(crate) fn set_must_not_be_renamed_through_links(&mut self, ref_: Ref) {
+        let mut ref_ = ref_;
+        loop {
+            let symbol = &mut self.symbols[ref_.inner_index() as usize];
+            symbol.set_must_not_be_renamed(true);
+            if !symbol.has_link() {
+                return;
+            }
+            ref_ = symbol.link.get();
+        }
+    }
+
     pub(crate) fn log_arrow_arg_errors(&mut self, errors: &mut DeferredArrowArgErrors) {
         if errors.invalid_expr_await.len > 0 {
             let r = errors.invalid_expr_await;
@@ -2257,12 +2290,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
+                self.note_import_use(ref_, opts);
                 return self.new_expr(E::ImportIdentifier::new(ident.ref_, true), loc);
             }
         }
 
         // Substitute an EImportIdentifier now if this is an import item
         if self.is_import_item.contains_key(&ref_) {
+            self.note_import_use(ref_, opts);
             return self.new_expr(
                 E::ImportIdentifier::new(ref_, opts.was_originally_identifier()),
                 loc,
@@ -3536,6 +3571,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Check for collisions that would prevent to hoisting "var" symbols up to the enclosing function scope
             if let Some(scope_parent) = scope_ref.parent {
                 let scope_strict_mode = scope_ref.strict_mode;
+                let scope_is_with = scope_ref.kind == js_ast::scope::Kind::With;
                 // The loop below never inserts into `scope.members` itself (only ancestors), so
                 // snapshotting `(name_ptr, Member)` pairs up front preserves iteration semantics
                 // and lets us re-borrow `*scope` mutably inside the body.
@@ -3550,8 +3586,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // `scope_ref` (shared borrow of the `StoreRef` local) must end
                 // before the `DerefMut` write to `scope.generated` inside the
                 // loop; NLL drops it at last use (the snapshot block above).
-                let _ = scope_ref;
-
                 'next_member: for (_key_ptr, mut value) in member_snapshot.into_iter() {
                     let mut symbol_idx = value.ref_.inner_index() as usize;
 
@@ -3627,6 +3661,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     }
 
+                    // `with (obj) var t = 2` declares `t` in the "with" scope, which the walk below starts above.
+                    if scope_is_with {
+                        self.set_must_not_be_renamed_through_links(value.ref_);
+                    }
+
                     if hash.is_none() {
                         hash = Some(Scope::get_member_hash(name));
                     }
@@ -3648,7 +3687,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         //   assert(obj.foo === 2)
                         //
                         if scope_kind == js_ast::scope::Kind::With {
-                            self.symbols[symbol_idx].set_must_not_be_renamed(true);
+                            self.set_must_not_be_renamed_through_links(value.ref_);
                         }
 
                         if let Some(member_in_scope) =
@@ -3673,6 +3712,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             {
                                 // Silently merge this symbol into the existing symbol
                                 self.symbols[symbol_idx].link.set(member_in_scope.ref_);
+                                if self.symbols[symbol_idx].must_not_be_renamed() {
+                                    self.set_must_not_be_renamed_through_links(
+                                        member_in_scope.ref_,
+                                    );
+                                }
                                 // `StringHashMap` get_or_put already stores the key on insert and
                                 // cannot hand out `&mut K` (see StringHashMapGetOrPut docs), so
                                 // no key write is needed here.
@@ -3870,6 +3914,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // "with" statements are not allowed in strict mode.
             if self.options.features.commonjs_at_runtime {
                 self.has_with_scope = true;
+            }
+
+            // Marked up the chain like contains_direct_eval, for compute_reserved_names_for_scope.
+            let mut scope_iter: Option<js_ast::StoreRef<Scope>> = Some(scope);
+            while let Some(mut s) = scope_iter {
+                if s.contains_with {
+                    break;
+                }
+                s.contains_with = true;
+                scope_iter = s.parent;
             }
         }
 
@@ -5486,13 +5540,35 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .with_must_keep_due_to_with_stmt(result.is_inside_with_scope)
                 .with_can_be_removed_if_unused(true),
             Some(parts[0]),
-            IdentifierOpts::new().with_was_originally_identifier(true),
+            IdentifierOpts::new()
+                .with_was_originally_identifier(true)
+                .with_is_property_access_target(parts.len() > 1),
         );
         if parts.len() > 1 {
             return Ok(self.member_expression(loc, value, &parts[1..]));
         }
 
         Ok(value)
+    }
+
+    /// The classic runtime's `options.jsx.factory` / `options.jsx.fragment` as
+    /// a member expression (`React.createElement`), resolved from the current
+    /// scope. `options.jsx` is dropped when `Parser::parse` returns, but the
+    /// parts live on in symbols and `E::Dot.name` until the printer runs, so
+    /// they are duped into the AST arena.
+    pub(crate) fn jsx_classic_member_expression(
+        &mut self,
+        loc: bun_ast::Loc,
+        members: fn(&options::JSX::Pragma) -> &options::JSX::MemberList,
+    ) -> Expr {
+        let arena = self.arena;
+        let parts: &[&'a [u8]] = arena.alloc_slice_fill_iter(
+            members(&self.options.jsx)
+                .iter()
+                .map(|b| -> &'a [u8] { arena.alloc_slice_copy(b) }),
+        );
+        self.jsx_strings_to_member_expression(loc, parts)
+            .expect("unreachable")
     }
 
     fn member_expression(
@@ -5503,14 +5579,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Expr {
         let mut value = initial_value;
 
-        for part in parts {
+        for (i, part) in parts.iter().enumerate() {
             if let Some(rewrote) = self.maybe_rewrite_property_access(
                 loc,
                 value,
                 part,
                 loc,
-                // All defaults on the packed-u8 IdentifierOpts.
-                IdentifierOpts::default(),
+                IdentifierOpts::default().with_is_property_access_target(i + 1 < parts.len()),
             ) {
                 value = rewrote;
             } else {
@@ -6921,7 +6996,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             symbol = &self.symbols[name_ref.inner_index() as usize];
         }
         let symbol_kind = symbol.kind;
-        let _ = symbol;
         let arena = self.arena;
 
         // Make sure to only emit a variable once for a given namespace, since there
@@ -6938,7 +7012,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 binding: self.b(B::Identifier { r#ref: name_ref }, name_loc),
                 value: None,
             }]);
-            let _ = arena;
 
             if self.current_scope == self.module_scope {
                 // Top-level namespace: "var"
@@ -7890,6 +7963,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             M::MIdentifier(ref_) => {
                 self.record_usage(ref_);
                 let e = if self.is_import_item.contains_key(&ref_) {
+                    self.note_import_use(ref_, IdentifierOpts::new());
                     self.new_expr(
                         E::ImportIdentifier {
                             ref_,
@@ -8369,14 +8443,40 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
         let r#ref = self.new_symbol(js_ast::symbol::Kind::Other, name);
 
-        self.temp_refs_to_declare.push(TempRef {
-            r#ref,
-            ..Default::default()
-        });
-
         VecExt::append(&mut scope.generated, r#ref);
 
         r#ref
+    }
+
+    /// A lowering's own `var`. `bun run` prints names as they are, so there it gets a per-file counter.
+    pub(crate) fn generate_temp_var(&mut self, name: &'a [u8]) -> Ref {
+        let name: &'a [u8] = if self.will_use_renamer() {
+            name
+        } else {
+            self.temp_ref_count += 1;
+            bun_alloc::arena_format!(in self.arena, "{}${}", bstr::BStr::new(name), self.temp_ref_count)
+                .into_bump_str()
+                .as_bytes()
+        };
+        let ref_ = self.new_symbol(js_ast::symbol::Kind::Other, name);
+        self.declare_temp_var(ref_);
+        ref_
+    }
+
+    /// Nested scopes are renamed from `Scope::generated`, a file's top level from `Part::declared_symbols`.
+    pub(crate) fn declare_temp_var(&mut self, ref_: Ref) {
+        let mut scope = self.current_scope_ref();
+        // A parameter default has no statement list; its `var` goes outside the function.
+        while !scope.kind_stops_hoisting() || scope.kind == js_ast::scope::Kind::FunctionArgs {
+            scope = scope.parent.unwrap();
+        }
+        VecExt::append(&mut scope.generated, ref_);
+        self.declared_symbols
+            .append(DeclaredSymbol {
+                ref_,
+                is_top_level: scope == self.module_scope,
+            })
+            .expect("oom");
     }
 
     pub(crate) fn should_lower_using_declarations(&self, stmts: &[Stmt]) -> bool {
@@ -9031,7 +9131,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             );
                         }
                         // `part` is `ManuallyDrop`; falls out of scope without dropping.
-                        let _ = part;
                     }
                 }
 
@@ -9193,7 +9292,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     remaining_stmts[..src.len()].copy_from_slice(src);
                     remaining_stmts = &mut remaining_stmts[src.len()..];
                 }
-                let _ = remaining_stmts;
             }
 
             let wrapper = self.new_expr(
@@ -9459,6 +9557,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut map = bun_ast::ast_result::TsEnumsMap::default();
         map.ensure_total_capacity(self.top_level_enums.len())?;
         for r#ref in self.top_level_enums.iter() {
+            // Only the newest symbol of a merged `enum E {} enum E {}` is looked up. It has no link.
+            if self.symbols[r#ref.inner_index() as usize].has_link() {
+                continue;
+            }
             let Some(js_ast::ts::Data::Namespace(namespace)) =
                 self.ref_to_ts_namespace_member.get(r#ref)
             else {
@@ -9523,6 +9625,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     }
                     js_ast::StmtData::SLocal(local) => {
+                        // The linker keeps a `using` declaration inside the wrapper.
+                        if local.kind.is_using() {
+                            return true;
+                        }
                         if local.origin.is_commonjs_export()
                             || self.commonjs_named_exports.count() == 0
                         {
@@ -9700,6 +9806,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             named_exports: Default::default(),
             log,
             stack_check: bun_core::StackCheck::init(),
+            starts_for_parse_only: None,
             reported_stack_overflow: core::cell::Cell::new(false),
             ts_infer_constraint_backtracks: Vec::new(),
             ts_conditional_arrow_attempts: Vec::new(),
@@ -9793,6 +9900,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             react_compiler_in_react_hoc: false,
             react_compiler_pending: None,
             react_compiler_result: None,
+            react_compiler_may_replace_body: false,
             server_components_wrap_ref: Ref::NONE,
             jest: Jest::default(),
             import_records_for_current_part: BumpVec::new_in(arena),
@@ -9961,10 +10069,43 @@ impl LowerUsingDeclarationsContext {
                     result.push(stmt);
                     continue;
                 }
-                js_ast::StmtData::SClass(c) => {
-                    if c.is_export {
-                        // can't go in try/catch; hoist out
+                js_ast::StmtData::SClass(mut c) => {
+                    // An exported class leaves the try block unless it has static blocks or computed keys.
+                    let runs_code = c.is_export
+                        && c.class.properties.slice().iter().any(|property| {
+                            property.kind == js_ast::g::PropertyKind::ClassStaticBlock
+                                || property.flags.contains(js_ast::flags::Property::IsComputed)
+                        });
+                    if c.is_export && !runs_code {
                         result.push(stmt);
+                        continue;
+                    }
+                    if c.is_export {
+                        let name = c.class.class_name.expect("an exported class has a name");
+                        exports.push(js_ast::ClauseItem {
+                            name: LocRef {
+                                loc: name.loc,
+                                ref_: name.ref_,
+                            },
+                            alias: p.symbols[name.ref_.inner_index() as usize].original_name,
+                            alias_loc: name.loc,
+                            ..Default::default()
+                        });
+                        let class = core::mem::take(&mut c.class);
+                        let value = p.new_expr(class, stmt.loc);
+                        let binding = p.b(B::Identifier { r#ref: name.ref_ }, name.loc);
+                        stmts[end as usize] = p.s(
+                            S::Local {
+                                kind: js_ast::s::Kind::KVar,
+                                decls: G::DeclList::init_one(G::Decl {
+                                    binding,
+                                    value: Some(value),
+                                }),
+                                ..Default::default()
+                            },
+                            stmt.loc,
+                        );
+                        end += 1;
                         continue;
                     }
                 }
@@ -10034,40 +10175,9 @@ impl LowerUsingDeclarationsContext {
         let err_ref = p.generate_temp_ref(Some(b"_err"));
         let has_err_ref = p.generate_temp_ref(Some(b"_hasErr"));
 
-        // `StoreRef<Scope>` (Copy + safe `Deref`/`DerefMut`) lets the
-        // parent-chain walk and the `.generated` writes below run without
-        // raw-pointer `unsafe`, and does not borrow `p`.
-        let mut scope: js_ast::StoreRef<Scope> = p.current_scope_ref();
-        while !scope.kind_stops_hoisting() {
-            scope = scope.parent.unwrap();
+        for ref_ in [self.stack_ref, caught_ref, err_ref, has_err_ref] {
+            p.declare_temp_var(ref_);
         }
-
-        let is_top_level = scope == p.module_scope;
-        scope
-            .generated
-            .append_slice(&[self.stack_ref, caught_ref, err_ref, has_err_ref]);
-        p.declared_symbols
-            .ensure_unused_capacity(
-                // 5 to include the _promise decl later on:
-                if self.has_await_using { 5 } else { 4 },
-            )
-            .expect("oom");
-        p.declared_symbols.append_assume_capacity(DeclaredSymbol {
-            is_top_level,
-            ref_: self.stack_ref,
-        });
-        p.declared_symbols.append_assume_capacity(DeclaredSymbol {
-            is_top_level,
-            ref_: caught_ref,
-        });
-        p.declared_symbols.append_assume_capacity(DeclaredSymbol {
-            is_top_level,
-            ref_: err_ref,
-        });
-        p.declared_symbols.append_assume_capacity(DeclaredSymbol {
-            is_top_level,
-            ref_: has_err_ref,
-        });
 
         let loc = self.first_using_loc;
         let call_dispose = {
@@ -10102,11 +10212,7 @@ impl LowerUsingDeclarationsContext {
 
         let finally_stmts: &'a mut [Stmt] = if self.has_await_using {
             let promise_ref = p.generate_temp_ref(Some(b"_promise"));
-            VecExt::append(&mut scope.generated, promise_ref);
-            p.declared_symbols.append_assume_capacity(DeclaredSymbol {
-                is_top_level,
-                ref_: promise_ref,
-            });
+            p.declare_temp_var(promise_ref);
 
             let promise_ref_expr = p.new_expr(
                 E::Identifier {

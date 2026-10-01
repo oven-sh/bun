@@ -513,7 +513,7 @@ describe.skipIf(isWindows)("pipe backpressure", () => {
 
   test.concurrent("Bun.stdin.stream(): a single read does not ingest the whole pipe", async () => {
     const { first, deltaMB } = await run(`
-      const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+      const rss = process.memoryUsage.rss;
       const rd = Bun.stdin.stream().getReader();
       const c = await rd.read();
       const base = rss();
@@ -530,7 +530,7 @@ describe.skipIf(isWindows)("pipe backpressure", () => {
 
   test.concurrent("process.stdin.pause() stops the fd from being read", async () => {
     const { bytesAfter, deltaMB } = await run(`
-      const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+      const rss = process.memoryUsage.rss;
       let bytes = 0, pausedAt = 0;
       process.stdin.on("data", chunk => {
         bytes += chunk.length;

@@ -1294,3 +1294,31 @@ it("object property enumeration scales linearly with property count", () => {
     expect(l.ms / 30000 / (s.ms / 3000)).toBeLessThan(3);
   });
 });
+
+it("a custom inspect function that is called while node:util loads gets no empty values", async () => {
+  // The first custom inspect function to be called loads node:util, which calls Object.defineProperty.
+  const script = `
+    const seen = [];
+    const value = {
+      [Symbol.for("nodejs.util.inspect.custom")](depth, options, inspect) {
+        seen.push(typeof options + " " + typeof inspect);
+        return "x";
+      },
+    };
+    const defineProperty = Object.defineProperty;
+    Object.defineProperty = function (...args) {
+      Object.defineProperty = defineProperty;
+      Bun.inspect(value, { colors: true });
+      return defineProperty.apply(this, args);
+    };
+    Bun.inspect(value, { colors: true });
+    console.log(seen.join(", "));
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "undefined undefined, object function\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});

@@ -1,0 +1,15 @@
+[
+	{"code":"function a(a, b, c){}","module":[],"commonjs":[],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"var a = function(a, b, c){}","module":[],"commonjs":[],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"function a({a, b}, {c, d}){}","module":[],"commonjs":[],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"function a([ , a]) {}","module":[],"commonjs":[],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"function foo([[a, b], [c, d]]) {}","module":[],"commonjs":[],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"function a(a, b, b) {}","module":null,"commonjs":[{"line":1,"column":11,"message":"Duplicate param 'b'."}],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"function a(a, a, a) {}","module":null,"commonjs":[{"line":1,"column":11,"message":"Duplicate param 'a'."}],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"function a(a, b, a) {}","module":null,"commonjs":[{"line":1,"column":11,"message":"Duplicate param 'a'."}],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"function a(a, b, a, b) {}","module":null,"commonjs":[{"line":1,"column":11,"message":"Duplicate param 'a'."},{"line":1,"column":11,"message":"Duplicate param 'b'."}],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"var a = function(a, b, b) {}","module":null,"commonjs":[{"line":1,"column":17,"message":"Duplicate param 'b'."}],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"var a = function(a, a, a) {}","module":null,"commonjs":[{"line":1,"column":17,"message":"Duplicate param 'a'."}],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"var a = function(a, b, a) {}","module":null,"commonjs":[{"line":1,"column":17,"message":"Duplicate param 'a'."}],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"var a = function(a, b, a, b) {}","module":null,"commonjs":[{"line":1,"column":17,"message":"Duplicate param 'a'."},{"line":1,"column":17,"message":"Duplicate param 'b'."}],"bunJs":"ok","bunCjs":"ok"}
+]

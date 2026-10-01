@@ -1,0 +1,195 @@
+{
+	"valid": [
+		{
+			"code": "function a(a, b, c){}",
+			"languageOptions": {
+				"ecmaVersion": 5,
+				"sourceType": "script"
+			}
+		},
+		{
+			"code": "var a = function(a, b, c){}",
+			"languageOptions": {
+				"ecmaVersion": 5,
+				"sourceType": "script"
+			}
+		},
+		{
+			"code": "function a({a, b}, {c, d}){}",
+			"languageOptions": {
+				"ecmaVersion": 6,
+				"sourceType": "script"
+			}
+		},
+		{
+			"code": "function a([ , a]) {}",
+			"languageOptions": {
+				"ecmaVersion": 6,
+				"sourceType": "script"
+			}
+		},
+		{
+			"code": "function foo([[a, b], [c, d]]) {}",
+			"languageOptions": {
+				"ecmaVersion": 6,
+				"sourceType": "script"
+			}
+		}
+	],
+	"invalid": [
+		{
+			"code": "function a(a, b, b) {}",
+			"languageOptions": {
+				"ecmaVersion": 5,
+				"sourceType": "script"
+			},
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"line": 1,
+					"column": 11,
+					"data": {
+						"name": "b"
+					}
+				}
+			]
+		},
+		{
+			"code": "function a(a, a, a) {}",
+			"languageOptions": {
+				"ecmaVersion": 5,
+				"sourceType": "script"
+			},
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"line": 1,
+					"column": 11,
+					"data": {
+						"name": "a"
+					}
+				}
+			]
+		},
+		{
+			"code": "function a(a, b, a) {}",
+			"languageOptions": {
+				"ecmaVersion": 5,
+				"sourceType": "script"
+			},
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"line": 1,
+					"column": 11,
+					"data": {
+						"name": "a"
+					}
+				}
+			]
+		},
+		{
+			"code": "function a(a, b, a, b) {}",
+			"languageOptions": {
+				"ecmaVersion": 5,
+				"sourceType": "script"
+			},
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"line": 1,
+					"column": 11,
+					"data": {
+						"name": "a"
+					}
+				},
+				{
+					"messageId": "unexpected",
+					"line": 1,
+					"column": 11,
+					"data": {
+						"name": "b"
+					}
+				}
+			]
+		},
+		{
+			"code": "var a = function(a, b, b) {}",
+			"languageOptions": {
+				"ecmaVersion": 5,
+				"sourceType": "script"
+			},
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"line": 1,
+					"column": 17,
+					"data": {
+						"name": "b"
+					}
+				}
+			]
+		},
+		{
+			"code": "var a = function(a, a, a) {}",
+			"languageOptions": {
+				"ecmaVersion": 5,
+				"sourceType": "script"
+			},
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"line": 1,
+					"column": 17,
+					"data": {
+						"name": "a"
+					}
+				}
+			]
+		},
+		{
+			"code": "var a = function(a, b, a) {}",
+			"languageOptions": {
+				"ecmaVersion": 5,
+				"sourceType": "script"
+			},
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"line": 1,
+					"column": 17,
+					"data": {
+						"name": "a"
+					}
+				}
+			]
+		},
+		{
+			"code": "var a = function(a, b, a, b) {}",
+			"languageOptions": {
+				"ecmaVersion": 5,
+				"sourceType": "script"
+			},
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"line": 1,
+					"column": 17,
+					"data": {
+						"name": "a"
+					}
+				},
+				{
+					"messageId": "unexpected",
+					"line": 1,
+					"column": 17,
+					"data": {
+						"name": "b"
+					}
+				}
+			]
+		}
+	],
+	"skipped": 0,
+	"runs": 1
+}

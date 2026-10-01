@@ -1,0 +1,82 @@
+{"code":"\"use\\ strict\"; var a;","type":"script","reports":["1:5-1:6 Unnecessary escape character: \\ ."]}
+{"code":"'use\\ asm'; var a;","type":"script","reports":["1:5-1:6 Unnecessary escape character: \\ ."]}
+{"code":"\"other\\ directive\"; var a;","type":"script","reports":["1:7-1:8 Unnecessary escape character: \\ ."]}
+{"code":"function f() { \"use\\ strict\"; }","type":"script","reports":["1:20-1:21 Unnecessary escape character: \\ ."]}
+{"code":"function f() { 'foo\\-bar'; 'use strict'; }","type":"script","reports":["1:20-1:21 Unnecessary escape character: \\-."]}
+{"code":"(\"use\\ strict\");","type":"script","reports":["1:6-1:7 Unnecessary escape character: \\ ."]}
+{"code":"import a from \"./a\\-b\";","type":"module","reports":["1:19-1:20 Unnecessary escape character: \\-."]}
+{"code":"import {\"x\\-y\" as c} from \"m\";","type":"module","reports":["1:11-1:12 Unnecessary escape character: \\-."]}
+{"code":"var c; export {c as \"d\\-e\"};","type":"module","reports":["1:23-1:24 Unnecessary escape character: \\-."]}
+{"code":"export * from \"n\\-o\";","type":"module","reports":["1:17-1:18 Unnecessary escape character: \\-."]}
+{"code":"export * as \"p\\-q\" from \"r\";","type":"module","reports":["1:15-1:16 Unnecessary escape character: \\-."]}
+{"code":"export {\"a\\-b\" as \"c\\-d\"} from \"e\\-f\";","type":"module","reports":["1:11-1:12 Unnecessary escape character: \\-.","1:21-1:22 Unnecessary escape character: \\-.","1:34-1:35 Unnecessary escape character: \\-."]}
+{"code":"import j from \"./j.json\" with { type: \"js\\-on\" };","type":"module","reports":["1:42-1:43 Unnecessary escape character: \\-."]}
+{"code":"import j from \"./j.json\" with { \"ty\\-pe\": \"json\" };","type":"module","reports":["1:36-1:37 Unnecessary escape character: \\-."]}
+{"code":"export * from \"./j.json\" with { type: \"js\\-on\" };","type":"module","reports":["1:42-1:43 Unnecessary escape character: \\-."]}
+{"code":"import(\"k\\-l\");","type":"script","reports":["1:10-1:11 Unnecessary escape character: \\-."]}
+{"code":"import(\"k\", { with: { type: \"js\\-on\" } });","type":"script","reports":["1:32-1:33 Unnecessary escape character: \\-."]}
+{"code":"require(\"k\\-l\");","type":"script","reports":["1:11-1:12 Unnecessary escape character: \\-."]}
+{"code":"var o = {\"a\\-b\": 1, c: \"d\\-e\", [\"e\\-f\"]: 2};","type":"script","reports":["1:12-1:13 Unnecessary escape character: \\-.","1:26-1:27 Unnecessary escape character: \\-.","1:35-1:36 Unnecessary escape character: \\-."]}
+{"code":"var o = {a\\u0062: 1};","type":"script","reports":[]}
+{"code":"class C { \"g\\-h\"() {} static \"i\\-j\" = 1; get \"k\\-l\"() { return 1 } ['m\\-n']; }","type":"script","reports":["1:13-1:14 Unnecessary escape character: \\-.","1:32-1:33 Unnecessary escape character: \\-.","1:48-1:49 Unnecessary escape character: \\-.","1:71-1:72 Unnecessary escape character: \\-."]}
+{"code":"var {\"a\\-b\": b} = c;","type":"script","reports":["1:8-1:9 Unnecessary escape character: \\-."]}
+{"code":"({\"a\\-b\": b} = c);","type":"script","reports":["1:5-1:6 Unnecessary escape character: \\-."]}
+{"code":"a[\"b\\-c\"];","type":"script","reports":["1:5-1:6 Unnecessary escape character: \\-."]}
+{"code":"a?.[\"b\\-c\"];","type":"script","reports":["1:7-1:8 Unnecessary escape character: \\-."]}
+{"code":"switch (a) { case \"b\\-c\": }","type":"script","reports":["1:21-1:22 Unnecessary escape character: \\-."]}
+{"code":"typeof a === \"strin\\g\";","type":"script","reports":["1:20-1:21 Unnecessary escape character: \\g."]}
+{"code":"'\\8'; '\\9';","type":"script","reports":[]}
+{"code":"'\\0'; '\\07'; '\\1';","type":"script","reports":[]}
+{"code":"'\\u{1F600}'; '\\x41'; '\\u0041';","type":"script","reports":[]}
+{"code":"'\\😀'; \"a\\😀b\";","type":"script","reports":["1:2-1:3 Unnecessary escape character: \\😀.","1:10-1:11 Unnecessary escape character: \\😀."]}
+{"code":"'\\é'; '\\ '; '\\ ';","type":"script","reports":["1:2-1:3 Unnecessary escape character: \\é."]}
+{"code":"'\\\\a'; '\\\\\\a';","type":"script","reports":["1:11-1:12 Unnecessary escape character: \\a."]}
+{"code":"`\\😀`; `a${b}\\😀`;","type":"script","reports":["1:2-1:3 Unnecessary escape character: \\😀.","1:14-1:15 Unnecessary escape character: \\😀."]}
+{"code":"`\\${a}`; `\\$`; `$\\{`; `\\{`; `\\$\\{`; `a\\$`; `\\$${a}`;","type":"script","reports":["1:11-1:12 Unnecessary escape character: \\$.","1:24-1:25 Unnecessary escape character: \\{.","1:30-1:31 Unnecessary escape character: \\$.","1:39-1:40 Unnecessary escape character: \\$.","1:45-1:46 Unnecessary escape character: \\$."]}
+{"code":"`${`\\a`}`; `${'\\b\\c'}`;","type":"script","reports":["1:5-1:6 Unnecessary escape character: \\a.","1:18-1:19 Unnecessary escape character: \\c."]}
+{"code":"tag`\\a${`\\b`}\\c`;","type":"script","reports":[]}
+{"code":"tag`\\a${'\\q'}`;","type":"script","reports":["1:10-1:11 Unnecessary escape character: \\q."]}
+{"code":"a.b`\\a`; a()`\\b`; new a`\\c`; (a)`\\d`; a`x``\\e`;","type":"script","reports":[]}
+{"code":"`\\a` `\\b`;","type":"script","reports":["1:2-1:3 Unnecessary escape character: \\a."]}
+{"code":"`a\\\n\\b`;","type":"script","reports":[]}
+{"code":"`\\\r\n\\b`; '\\\r\n\\c';","type":"script","reports":["3:1-3:2 Unnecessary escape character: \\c."]}
+{"code":"'a' + '\\b\\q';","type":"script","reports":["1:10-1:11 Unnecessary escape character: \\q."]}
+{"code":"x = '\\-' + `\\-` + /\\-/;","type":"script","reports":["1:6-1:7 Unnecessary escape character: \\-.","1:13-1:14 Unnecessary escape character: \\-.","1:20-1:21 Unnecessary escape character: \\-."]}
+{"code":"\"\\'\"; '\\\"'; '\\''; \"\\\"\";","type":"script","reports":["1:2-1:3 Unnecessary escape character: \\'.","1:8-1:9 Unnecessary escape character: \\\"."]}
+{"code":"'\\`'; \"\\`\"; `\\'`; `\\\"`;","type":"script","reports":["1:2-1:3 Unnecessary escape character: \\`.","1:8-1:9 Unnecessary escape character: \\`.","1:14-1:15 Unnecessary escape character: \\'.","1:20-1:21 Unnecessary escape character: \\\"."]}
+{"code":"'\\\t'; '\\ '; '\\ ';","type":"script","reports":["1:2-1:3 Unnecessary escape character: \\\t.","1:8-1:9 Unnecessary escape character: \\ .","1:14-1:15 Unnecessary escape character: \\ ."]}
+{"code":"'\\a\\b\\c\\d\\e\\f\\g\\h\\i\\j\\k\\l\\m\\n\\o\\p\\q\\r\\s\\t\\v\\w\\y\\z';","type":"script","reports":["1:2-1:3 Unnecessary escape character: \\a.","1:6-1:7 Unnecessary escape character: \\c.","1:8-1:9 Unnecessary escape character: \\d.","1:10-1:11 Unnecessary escape character: \\e.","1:14-1:15 Unnecessary escape character: \\g.","1:16-1:17 Unnecessary escape character: \\h.","1:18-1:19 Unnecessary escape character: \\i.","1:20-1:21 Unnecessary escape character: \\j.","1:22-1:23 Unnecessary escape character: \\k.","1:24-1:25 Unnecessary escape character: \\l.","1:26-1:27 Unnecessary escape character: \\m.","1:30-1:31 Unnecessary escape character: \\o.","1:32-1:33 Unnecessary escape character: \\p.","1:34-1:35 Unnecessary escape character: \\q.","1:38-1:39 Unnecessary escape character: \\s.","1:44-1:45 Unnecessary escape character: \\w.","1:46-1:47 Unnecessary escape character: \\y.","1:48-1:49 Unnecessary escape character: \\z."]}
+{"code":"'\\A\\B\\C\\D\\E\\F\\N\\R\\T\\U\\V\\X';","type":"script","reports":["1:2-1:3 Unnecessary escape character: \\A.","1:4-1:5 Unnecessary escape character: \\B.","1:6-1:7 Unnecessary escape character: \\C.","1:8-1:9 Unnecessary escape character: \\D.","1:10-1:11 Unnecessary escape character: \\E.","1:12-1:13 Unnecessary escape character: \\F.","1:14-1:15 Unnecessary escape character: \\N.","1:16-1:17 Unnecessary escape character: \\R.","1:18-1:19 Unnecessary escape character: \\T.","1:20-1:21 Unnecessary escape character: \\U.","1:22-1:23 Unnecessary escape character: \\V.","1:24-1:25 Unnecessary escape character: \\X."]}
+{"code":"'\\x4'; ","type":"script","fatal":"1:4 Parsing error: Bad character escape sequence","reports":[]}
+{"code":"var s = \"\\d\" as string;","type":"ts","reports":["1:10-1:11 Unnecessary escape character: \\d."]}
+{"code":"var s = <string>\"\\d\";","type":"ts","reports":["1:18-1:19 Unnecessary escape character: \\d."]}
+{"code":"var s = \"\\d\"!;","type":"ts","reports":["1:10-1:11 Unnecessary escape character: \\d."]}
+{"code":"var s = (\"\\d\" satisfies string);","type":"ts","reports":["1:11-1:12 Unnecessary escape character: \\d."]}
+{"code":"type T = \"a\\-b\";","type":"ts","reports":["1:12-1:13 Unnecessary escape character: \\-."]}
+{"code":"let x: \"a\\-b\" | 'c\\-d';","type":"ts","reports":["1:10-1:11 Unnecessary escape character: \\-.","1:19-1:20 Unnecessary escape character: \\-."]}
+{"code":"type T = `a\\-b`;","type":"ts","reports":["1:12-1:13 Unnecessary escape character: \\-."]}
+{"code":"type T<U extends string> = `a\\-b${U}c\\-d`;","type":"ts","reports":["1:30-1:31 Unnecessary escape character: \\-.","1:38-1:39 Unnecessary escape character: \\-."]}
+{"code":"enum E { \"a\\-b\" = 1, C = \"d\\-e\" }","type":"ts","reports":["1:12-1:13 Unnecessary escape character: \\-.","1:28-1:29 Unnecessary escape character: \\-."]}
+{"code":"declare module \"a\\-b\" {}","type":"ts","reports":["1:18-1:19 Unnecessary escape character: \\-."]}
+{"code":"import x = require(\"a\\-b\");","type":"ts","reports":["1:22-1:23 Unnecessary escape character: \\-."]}
+{"code":"type T = import(\"a\\-b\");","type":"ts","reports":["1:19-1:20 Unnecessary escape character: \\-."]}
+{"code":"type T = { \"a\\-b\": 1 };","type":"ts","reports":["1:14-1:15 Unnecessary escape character: \\-."]}
+{"code":"interface I { \"a\\-b\"(): void; \"c\\-d\": string }","type":"ts","reports":["1:17-1:18 Unnecessary escape character: \\-.","1:33-1:34 Unnecessary escape character: \\-."]}
+{"code":"class A { \"a\\-b\"?: string; declare \"c\\-d\": string; \"e\\-f\"(): void; \"e\\-f\"() {} }","type":"ts","reports":["1:13-1:14 Unnecessary escape character: \\-.","1:38-1:39 Unnecessary escape character: \\-.","1:54-1:55 Unnecessary escape character: \\-.","1:70-1:71 Unnecessary escape character: \\-."]}
+{"code":"abstract class A { abstract \"a\\-b\"(): void; abstract \"c\\-d\": string }","type":"ts","reports":["1:31-1:32 Unnecessary escape character: \\-.","1:56-1:57 Unnecessary escape character: \\-."]}
+{"code":"declare const a: \"a\\-b\";","type":"ts","reports":["1:20-1:21 Unnecessary escape character: \\-."]}
+{"code":"declare function f(a: \"a\\-b\"): void;","type":"ts","reports":["1:25-1:26 Unnecessary escape character: \\-."]}
+{"code":"function f(a: \"a\\-b\" = \"c\\-d\") {}","type":"ts","reports":["1:17-1:18 Unnecessary escape character: \\-.","1:26-1:27 Unnecessary escape character: \\-."]}
+{"code":"namespace N { export const a = \"a\\-b\" }","type":"ts","reports":["1:34-1:35 Unnecessary escape character: \\-."]}
+{"code":"declare namespace N { const a = \"a\\-b\" }","type":"ts","reports":["1:35-1:36 Unnecessary escape character: \\-."]}
+{"code":"export = \"a\\-b\";","type":"ts","reports":["1:12-1:13 Unnecessary escape character: \\-."]}
+{"code":"import type { \"a\\-b\" as c } from \"d\\-e\";","type":"ts","reports":["1:17-1:18 Unnecessary escape character: \\-.","1:36-1:37 Unnecessary escape character: \\-."]}
+{"code":"import type T from \"d\\-e\";","type":"ts","reports":["1:22-1:23 Unnecessary escape character: \\-."]}
+{"code":"export type { T } from \"d\\-e\";","type":"ts","reports":["1:26-1:27 Unnecessary escape character: \\-."]}
+{"code":"@dec(\"a\\-b\") class A {}","type":"ts","reports":["1:8-1:9 Unnecessary escape character: \\-."]}
+{"code":"var a = <div b=\"\\d\" c={\"\\e\" as string}>\\f{\"\\g\"}</div>;","type":"tsx","jsx":true,"reports":["1:25-1:26 Unnecessary escape character: \\e.","1:44-1:45 Unnecessary escape character: \\g."]}
+{"code":"f<\"a\\-b\">(\"c\\-d\");","type":"ts","reports":["1:5-1:6 Unnecessary escape character: \\-.","1:13-1:14 Unnecessary escape character: \\-."]}
+{"code":"var a = <foo attr=\"\\d\" b={\"\\e\"} c = \"x\" d={(\"\\f\")} e=/* c */\"\\g\">\"t\\h\" {\"\\i\"} <b/></foo>;","type":"script","jsx":true,"reports":["1:28-1:29 Unnecessary escape character: \\e.","1:74-1:75 Unnecessary escape character: \\i."]}
+{"code":"var a = <a:b c:d=\"\\e\" f-g='\\h'/>;","type":"script","jsx":true,"reports":[]}
+{"code":"var a = <a b={`\\c`} d={<e f=\"\\g\"/>} h={{\"i\\-j\": \"\\k\"}}/>;","type":"script","jsx":true,"reports":["1:16-1:17 Unnecessary escape character: \\c.","1:43-1:44 Unnecessary escape character: \\-.","1:50-1:51 Unnecessary escape character: \\k."]}
+{"code":"var a = <>{\"\\a\"}\"\\b\"</>;","type":"script","jsx":true,"reports":["1:13-1:14 Unnecessary escape character: \\a."]}

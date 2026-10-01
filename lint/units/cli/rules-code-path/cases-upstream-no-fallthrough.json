@@ -1,0 +1,327 @@
+{
+	"cases": [
+		{
+			"code": "switch(foo) { case 0: a(); /* falls through */ case 1: b(); }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "switch(foo) { case 0: a()\n /* falls through */ case 1: b(); }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "switch(foo) { case 0: a(); /* fall through */ case 1: b(); }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "switch(foo) { case 0: a(); /* fallthrough */ case 1: b(); }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "switch(foo) { case 0: a(); /* FALLS THROUGH */ case 1: b(); }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "switch(foo) { case 0: { a(); /* falls through */ } case 1: b(); }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "switch(foo) { case 0: { a()\n /* falls through */ } case 1: b(); }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "switch(foo) { case 0: { a(); /* fall through */ } case 1: b(); }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "switch(foo) { case 0: { a(); /* fallthrough */ } case 1: b(); }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "switch(foo) { case 0: { a(); /* FALLS THROUGH */ } case 1: b(); }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "switch(foo) { case 0: { a(); } /* falls through */ case 1: b(); }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "switch(foo) { case 0: { a(); /* falls through */ } /* comment */ case 1: b(); }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "switch(foo) { case 0: { /* falls through */ } case 1: b(); }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "function foo() { switch(foo) { case 0: a(); return; case 1: b(); }; }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "switch(foo) { case 0: a(); throw 'foo'; case 1: b(); }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "while (a) { switch(foo) { case 0: a(); continue; case 1: b(); } }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "switch(foo) { case 0: a(); break; case 1: b(); }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "switch(foo) { case 0: case 1: a(); break; case 2: b(); }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "switch(foo) { case 0: case 1: break; case 2: b(); }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "switch(foo) { case 0: case 1: break; default: b(); }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "switch(foo) { case 0: case 1: a(); }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "switch(foo) { case 0: case 1: a(); break; }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "switch(foo) { case 0: case 1: break; }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "switch(foo) { case 0:\n case 1: break; }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "switch(foo) { case 0: // comment\n case 1: break; }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "function foo() { switch(foo) { case 0: case 1: return; } }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "function foo() { switch(foo) { case 0: {return;}\n case 1: {return;} } }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "switch(foo) { case 0: case 1: {break;} }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "switch(foo) { }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "switch(foo) { case 0: switch(bar) { case 2: break; } /* falls through */ case 1: break; }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "function foo() { switch(foo) { case 1: return a; a++; }}",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "switch (foo) { case 0: a(); /* falls through */ default:  b(); /* comment */ }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "switch (foo) { case 0: a(); /* falls through */ default: /* comment */ b(); }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "switch (foo) { case 0: if (a) { break; } else { throw 0; } default: b(); }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "switch (foo) { case 0: try { break; } finally {} default: b(); }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "switch (foo) { case 0: try {} finally { break; } default: b(); }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "switch (foo) { case 0: try { throw 0; } catch (err) { break; } default: b(); }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "switch (foo) { case 0: do { throw 0; } while(a); default: b(); }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "switch (foo) { case 0: a(); \n// eslint-disable-next-line rule-to-test/no-fallthrough\n case 1: }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "\n            switch (foo) {\n                case 0:\n                    a();\n                    break;\n                    /* falls through */\n                case 1:\n                    b();\n            }\n        ",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "\n            switch (foo) {\n                case 0:\n                    a();\n                    break;\n                    // eslint-disable-next-line rule-to-test/no-fallthrough\n                    /* falls through */\n                case 1:\n                    b();\n            }\n        ",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "switch (a) {\n case 1: ; break; \n case 3: }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "\nswitch (foo) {\n    case 0:\n        a();\n}\nswitch (bar) {\n    case 1:\n        b();\n}\n            ",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "switch(foo) { case 0: a();\ncase 1: b() }",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "switch(foo) { case 0: a();\ndefault: b() }",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "switch(foo) { case 0: a(); default: b() }",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "switch(foo) { case 0: if (a) { break; } default: b() }",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "switch(foo) { case 0: try { throw 0; } catch (err) {} default: b() }",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "switch(foo) { case 0: while (a) { break; } default: b() }",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "switch(foo) { case 0: do { break; } while (a); default: b() }",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "switch(foo) { case 0:\n\n default: b() }",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "switch(foo) { case 0: {} default: b() }",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "switch(foo) { case 0: a(); { /* falls through */ } default: b() }",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "switch(foo) { case 0: { /* falls through */ } a(); default: b() }",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "switch(foo) { case 0: if (a) { /* falls through */ } default: b() }",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "switch(foo) { case 0: { { /* falls through */ } } default: b() }",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "switch(foo) { case 0: { /* comment */ } default: b() }",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "switch(foo) { case 0:\n // comment\n default: b() }",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "switch(foo) { case 0: a(); /* falling through */ default: b() }",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "switch(foo) { case 0: \n /* with comments */  \ncase 1: b(); }",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "switch(foo) { case 0:\n\ncase 1: b(); }",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "switch(foo) { case 0:\n\ncase 1: b(); }",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "switch (a) { case 1: \n ; case 2:  }",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "switch (foo) { case 0: a(); \n// eslint-enable no-fallthrough\n case 1: }",
+			"ext": "js",
+			"kind": "invalid"
+		}
+	],
+	"skipped": {
+		"options that are not the defaults": 23
+	}
+}

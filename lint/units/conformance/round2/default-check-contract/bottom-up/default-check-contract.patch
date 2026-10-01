@@ -1,5 +1,5 @@
 diff --git a/test/cli/lint/conformance.test.ts b/test/cli/lint/conformance.test.ts
-index 0f294fa055..cecaf5440c 100644
+index 0f294fa055..5a4802189b 100644
 --- a/test/cli/lint/conformance.test.ts
 +++ b/test/cli/lint/conformance.test.ts
 @@ -7,11 +7,14 @@ import { dirname, join } from "node:path";
@@ -212,23 +212,27 @@ index 0f294fa055..cecaf5440c 100644
  
    test.concurrent.each([
      ["a command that lints", "lints-fixture.ts", { ok: true, reason: "" }],
-@@ -974,16 +1070,52 @@ describe("default check", () => {
+@@ -974,16 +1070,62 @@ describe("default check", () => {
      expect(verdict.reason).toStartWith("a file without an error: the command did not start: ");
    });
  
 +  // The one test of this file that needs `bun --lint` itself: a binary without it runs the first file of the probe.
-   test.concurrent(
--    "a command that lints gets the written unit as its operand, and no diagnostic passes an instance without errors",
-+    "the binary under test: the probe takes it, a unit without an error passes and counts for the guard, a syntax error fails and is no crash",
-     async () => {
--      expect(await ending(C, linter(), "const x: number = 1;\n")).toEqual({ outcome: "pass", reason: "" });
++  test.concurrent(
++    "the binary under test: the probe takes it, what is without an error passes, and a syntax error fails the instance and is no crash",
++    async () => {
 +      const options = { command: [bunExe()], env: bunEnv };
 +      const probed = await probe(options);
 +      expect(probed).toEqual({ ok: true, reason: "" });
 +      const check = createSpawnCheck({ ...options, probed });
-+      const [clean, broken] = await Promise.all([
++      using dir = tempDir("lint-conformance", {});
++      // An instance of the corpus goes the whole way: its files are laid out, and the command gets them as its operands.
++      const ofCorpus = (name: string) =>
++        runInstance(instanceOf(name)!, check, { ...corpusRun, directory: String(dir), timeoutMs: spawnTimeout });
++      const [clean, broken, listedC, listedE] = await Promise.all([
 +        run(C, check, "export const x: number = 1;\n"),
 +        run(C, check, "const = ;\n"),
++        ofCorpus("2dArrays.ts"),
++        ofCorpus("ArrowFunctionExpression1.ts"),
 +      ]);
 +      expect({ outcome: clean.outcome, reason: clean.reason, silent: clean.silent, exitCode: clean.exitCode }).toEqual({
 +        outcome: "pass",
@@ -245,13 +249,19 @@ index 0f294fa055..cecaf5440c 100644
 +        exitCode: 2,
 +      });
 +      expect(["syntax", "diagnostics"]).toContain(broken.cause!);
++      expect({ outcome: listedC.outcome, reason: listedC.reason }).toEqual({ outcome: "pass", reason: "" });
++      // Whatever the command makes of the case, it ends with a list: the plain format passes no instance with errors at the level of the whole baseline.
++      expect({ outcome: listedE.outcome, died: listedE.death !== undefined }).toEqual({ outcome: "fail", died: false });
++      expect(listedE.exitCode).toBeNumber();
 +    },
 +    small ? 180_000 : 30_000,
 +  );
 +
-+  test.concurrent(
+   test.concurrent(
+-    "a command that lints gets the written unit as its operand, and no diagnostic passes an instance without errors",
 +    "a command that lints gets the written unit as its operand, and a command that writes nothing passes an instance without errors",
-+    async () => {
+     async () => {
+-      expect(await ending(C, linter(), "const x: number = 1;\n")).toEqual({ outcome: "pass", reason: "" });
 +      const clean = await run(C, linter(), "const x: number = 1;\n");
 +      expect({ outcome: clean.outcome, reason: clean.reason, silent: clean.silent }).toEqual({
 +        outcome: "pass",
@@ -268,7 +278,7 @@ index 0f294fa055..cecaf5440c 100644
      async () => {
        const unit: InputFile = {
          unitName: "/.src/a.ts",
-@@ -1005,11 +1137,17 @@ describe("default check", () => {
+@@ -1005,11 +1147,17 @@ describe("default check", () => {
            },
          ],
        );
@@ -287,7 +297,7 @@ index 0f294fa055..cecaf5440c 100644
      },
      spawnTimeout,
    );
-@@ -1034,44 +1172,245 @@ describe("default check", () => {
+@@ -1034,44 +1182,245 @@ describe("default check", () => {
      spawnTimeout,
    );
  
@@ -553,7 +563,7 @@ index 0f294fa055..cecaf5440c 100644
        });
      },
      spawnTimeout,
-@@ -1137,8 +1476,9 @@ describe("expectations.json", () => {
+@@ -1137,8 +1486,9 @@ describe("expectations.json", () => {
    const listed = sampleListed(lists, small ? 16 : Infinity);
    const check = lazy(() => createSpawnCheck({ command: [bunExe()], env: bunEnv }));
  
@@ -564,7 +574,7 @@ index 0f294fa055..cecaf5440c 100644
    });
  
    // One batch at a time: a batch keeps as many processes in flight as it may, and a second batch beside it would double them.
-@@ -1146,7 +1486,7 @@ describe("expectations.json", () => {
+@@ -1146,7 +1496,7 @@ describe("expectations.json", () => {
      "every listed instance is a run instance of its list and passes: batch %d",
      async (_k, batch) => {
        using dir = tempDir("lint-conformance", {});

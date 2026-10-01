@@ -1,0 +1,721 @@
+diff -ruN -x corpus /tmp/dcx1a/base-lint-after-prior/conformance/expectations.json test/cli/lint/conformance/expectations.json
+--- /tmp/dcx1a/base-lint-after-prior/conformance/expectations.json	2026-10-01 15:11:53.868413172 +0000
++++ test/cli/lint/conformance/expectations.json	2026-10-01 15:16:21.863636252 +0000
+@@ -1,5 +1,5 @@
+ {
+-  "level": "baseline",
++  "level": "first-section",
+   "E": [],
+   "C": []
+ }
+diff -ruN -x corpus /tmp/dcx1a/base-lint-after-prior/conformance/runner/check_bun_lint.ts test/cli/lint/conformance/runner/check_bun_lint.ts
+--- /tmp/dcx1a/base-lint-after-prior/conformance/runner/check_bun_lint.ts	2026-10-01 15:11:53.863686706 +0000
++++ test/cli/lint/conformance/runner/check_bun_lint.ts	2026-10-01 15:37:46.074673014 +0000
+@@ -65,11 +65,6 @@
+   out.NO_COLOR = "1";
+   // A canary build sends a crash to a server unless it is told not to.
+   out.BUN_ENABLE_CRASH_REPORTING = "0";
+-  // A sanitizer that finds an error aborts. Without this it exits with the code 1, which is the code of a refusal.
+-  const sanitizer = out.ASAN_OPTIONS ?? "";
+-  if (!sanitizer.endsWith("abort_on_error=1")) {
+-    out.ASAN_OPTIONS = sanitizer === "" ? "abort_on_error=1" : `${sanitizer}:abort_on_error=1`;
+-  }
+   delete out.FORCE_COLOR;
+   delete out.BUN_OPTIONS;
+   return out;
+@@ -183,7 +178,7 @@
+     if (isRefusal(run)) {
+       return { ok: false, is: "refusal", cause: "refusal", reason: `the command refused: ${head(run.stderr)}` };
+     }
+-    // A sanitizer without abort_on_error ends with this code too, and so does a command that is no linter.
++    // A sanitizer that finds an error ends with this code too, and so does a command that is no linter.
+     return died("exit code 1", said("the command ended with the exit code 1, and what it wrote is no refusal"));
+   }
+   if (run.exitCode !== 0 && run.exitCode !== 2) {
+@@ -246,11 +241,12 @@
+   };
+ }
+ 
+-// The diagnostics of a run with the names of the instance: a real path below the root becomes the name that the harness has. cwd is the current directory that the command had. A report of a rule is counted and left out. What has another name as its code is in no baseline: the instance fails, and the reason names the first such line.
++// The diagnostics of a run with the names of the instance: a real path below the root becomes the name that the harness has. cwd is the current directory that the command had. A report of a rule is counted and left out. What has another name as its code is in no baseline: the instance fails, the reason names the first such line, and every such line is counted by its category and name.
+ function toCheckResult(plain: readonly PlainDiagnostic[], root: string, cwd: string): CheckResult {
+   const diagnostics: Diagnostic[] = [];
+   const standIns: string[] = [];
+   const rules: Record<string, number> = {};
++  const named: Record<string, number> = {};
+   // The lines that fail the instance by their kind: the first of each kind as the harness names it, and how many.
+   const failing = new Map<string, { first: string; count: number }>();
+   const text = (printed: string) => mapRealPaths(root, printed);
+@@ -269,7 +265,11 @@
+     if (p.code === undefined) {
+       if (p.rule === standInCode) standIns.push(p.messageText);
+       else if (isRuleReport(p)) rules[p.rule!] = (rules[p.rule!] ?? 0) + 1;
+-      else fails(p.rule !== undefined && commandCodes.has(p.rule) ? p.rule : "unknown code", p, inInstance ?? p.path);
++      else {
++        const key = `${p.category} ${p.rule}`;
++        named[key] = (named[key] ?? 0) + 1;
++        fails(p.rule !== undefined && commandCodes.has(p.rule) ? p.rule : "unknown code", p, inInstance ?? p.path);
++      }
+       continue;
+     }
+     let location: DiagnosticLocation | undefined;
+@@ -294,7 +294,7 @@
+       location,
+     });
+   }
+-  const more = { standIns, rules };
++  const more = { standIns, rules, named };
+   // The kind that says most of the run comes first: an error of the command itself, then what the runner does not know.
+   const order = [
+     internalErrorCode,
+@@ -401,7 +401,9 @@
+     const cwd = physical(toRealPath(root, currentDirectory));
+     const run = await spawnCommand([...command, "--lint", ...operands], cwd, env, signal);
+     const read = readRun(run);
+-    if (read.ok) return toCheckResult(read.diagnostics, root, cwd);
++    // Only a command that ended with the exit code 0 and wrote nothing counts for the guard of the instances without errors.
++    const silent = run.exitCode === 0 && run.stderr === "";
++    if (read.ok) return { ...toCheckResult(read.diagnostics, root, cwd), silent, exitCode: run.exitCode ?? undefined };
+     // The command wrote a list of diagnostics or it did not: nothing that it wrote besides is read as an empty list.
+     if (read.is === "death") {
+       const death = deathOf(run, root);
+diff -ruN -x corpus /tmp/dcx1a/base-lint-after-prior/conformance/runner/expectations.ts test/cli/lint/conformance/runner/expectations.ts
+--- /tmp/dcx1a/base-lint-after-prior/conformance/runner/expectations.ts	2026-10-01 15:11:53.729546561 +0000
++++ test/cli/lint/conformance/runner/expectations.ts	2026-10-01 15:15:50.184808730 +0000
+@@ -2,7 +2,7 @@
+ import { spawnSync } from "node:child_process";
+ import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
+ import { utf8String } from "./gostrings";
+-import type { Outcome } from "./run";
++import type { Outcome, RunResult } from "./run";
+ 
+ // What a pass compared: every byte of the baseline, or its first section alone.
+ export type Level = "baseline" | "first-section";
+@@ -43,6 +43,11 @@
+   detail: string;
+ }
+ 
++// What a run that compared at the level of the lists says of an instance. A pass of an instance with errors is at the level that the run found equal, which is that level or a stronger one.
++export function factsOf(result: RunResult, level: Level): ResultFacts {
++  return { name: result.instance.name, status: result.outcome, level: result.level ?? level, detail: result.reason };
++}
++
+ // Why a list may not hold a name, or what a run says of a listed name that does not pass.
+ export type FailureReason =
+   | "not-an-instance"
+diff -ruN -x corpus /tmp/dcx1a/base-lint-after-prior/conformance/runner/index.ts test/cli/lint/conformance/runner/index.ts
+--- /tmp/dcx1a/base-lint-after-prior/conformance/runner/index.ts	2026-10-01 15:11:53.737610397 +0000
++++ test/cli/lint/conformance/runner/index.ts	2026-10-01 18:01:34.201672148 +0000
+@@ -5,6 +5,7 @@
+   compareNames,
+   compareWithRevision,
+   expectationsAtRevision,
++  factsOf,
+   formatExpectations,
+   overQuota,
+   parseExpectations,
+diff -ruN -x corpus /tmp/dcx1a/base-lint-after-prior/conformance/runner/run.ts test/cli/lint/conformance/runner/run.ts
+--- /tmp/dcx1a/base-lint-after-prior/conformance/runner/run.ts	2026-10-01 15:11:53.719631868 +0000
++++ test/cli/lint/conformance/runner/run.ts	2026-10-01 15:37:46.074913937 +0000
+@@ -16,6 +16,7 @@
+   getErrorBaseline,
+   removeTestPathPrefixes,
+ } from "./error_baseline";
++import type { Level } from "./expectations";
+ import { readErrorBaseline } from "./reader";
+ import { type Diagnostic, type InputFile, toErrorBaseline, toWriterInput } from "./shape";
+ 
+@@ -101,6 +102,12 @@
+   verdict?: Verdict;
+   // The reports of lint rules that the check left out of the diagnostics: the name of each rule and how many.
+   rules?: Record<string, number>;
++  // What else the command of the check printed under a code that is a name, by category and name: { "error syntax": 2, "warning syntax": 1 }.
++  named?: Record<string, number>;
++  // True: the command of the check ended with the exit code 0 and wrote nothing. A check that starts no command leaves it out.
++  silent?: boolean;
++  // The exit code of a command that ended with a list of diagnostics: 0 without an error among them, 2 with one.
++  exitCode?: number;
+ }
+ 
+ // The signal is aborted when the time limit is reached: a check that starts a process ends it with the signal.
+@@ -119,8 +126,10 @@
+   // The baseline of the diagnostics, when it differs from the oracle.
+   actual?: Uint8Array;
+   standIns?: string[];
+-  // True: the first section equals the oracle's and the baseline does not. It is reported apart and is never a pass.
++  // True: the first section equals the oracle's and the baseline does not. At the level "baseline" that is a failure, which is reported apart.
+   headerOnly?: boolean;
++  // Of a pass of an instance with errors: what was equal, every byte of the baseline or its first section alone.
++  level?: Level;
+   // A word or two that every instance with this kind of reason shares: the key of a count. Absent for a pass and a skip.
+   cause?: string;
+   // The command of the check died. A crash without it is a fault of the check function or of the runner.
+@@ -129,11 +138,16 @@
+   program?: { rootFiles: string[]; currentDirectory: string };
+   // The reports of lint rules that were left out of the comparison: the name of each rule and how many.
+   rules?: Record<string, number>;
++  // What else the command of the check printed under a code that is a name, by category and name: these lines fail the instance.
++  named?: Record<string, number>;
++  // True: the command of the check ended with the exit code 0 and wrote nothing: of the instances without errors only these count for the guard. False: it wrote diagnostics. Absent: the check starts no command, or the command did not end with a list.
++  silent?: boolean;
++  // The exit code of a command that ended with a list of diagnostics: 0 without an error among them, 2 with one.
++  exitCode?: number;
+ }
+ 
+ export interface RunOptions {
+-  // The files of a run instance as newCompilerTest and CompileFilesEx lay them out; with a root, also written below it.
+-  // An instance that cannot be laid out is refused with a reason and is unsupported; what is thrown is a crash.
++  // The files of a run instance as newCompilerTest and CompileFilesEx lay them out; with a root, also written below it. An instance that cannot be laid out is refused with a reason and is unsupported; what is thrown is a crash.
+   input(instance: Instance, root: string | undefined): InputResult;
+   // The bytes of the oracle of an instance of class E. What is thrown is a crash.
+   oracle(instance: Instance): Uint8Array;
+@@ -141,6 +155,8 @@
+   concurrency?: number;
+   // Time for the check of one instance. Absent: 30 seconds.
+   timeoutMs?: number;
++  // What passes an instance with errors: every byte of its baseline, or the bytes of its first section. Absent: "baseline".
++  level?: Level;
+   // Directory below which each instance is written before its check and removed after it. Absent: no file is written.
+   directory?: string;
+   // Called once for each instance when its outcome is known; what it throws is thrown after the last instance.
+@@ -257,7 +273,7 @@
+ }
+ 
+ // error_baseline.go DoErrorBaseline and baseline.go writeComparison: no diagnostic and no baseline, or the same bytes.
+-function compare(input: CheckInput, diagnostics: Diagnostic[], oracle: RunOptions["oracle"]): Ending {
++function compare(input: CheckInput, diagnostics: Diagnostic[], oracle: RunOptions["oracle"], level: Level): Ending {
+   // The reference fails a test with a diagnostic of the code -1, whatever its baseline is.
+   if (diagnostics.some(d => d?.code === -1))
+     return { outcome: "fail", cause: "code -1", reason: "a diagnostic has the code -1" };
+@@ -283,6 +299,8 @@
+     return { outcome: "crash", cause: "oracle", reason: `the oracle cannot be read: ${textOf(error)}` };
+   }
+   const pretty = isPretty(input.options);
++  // The first section is all that the plain format of a command holds: at the level "first-section" it is the pass.
++  const first: Ending = { outcome: "pass", reason: "", level: "first-section" };
+   try {
+     const inSection = sectionTest(input.units);
+     const whole = diagnostics.every(d => isComplete(d, pretty, inSection));
+@@ -293,6 +311,7 @@
+       if (pretty) return { outcome: "fail", cause: "lengths", reason: needs, headerOnly: false };
+       const top = topOf(written.diagnostics.slice().sort(compareByStart), false);
+       if (startsWith(expected, top)) {
++        if (level === "first-section") return first;
+         const reason = `the first section is the oracle's; ${needs}`;
+         return { outcome: "fail", cause: "lengths", reason, headerOnly: true };
+       }
+@@ -307,13 +326,14 @@
+     const actual = model.toBytes(result.text);
+     // A failed check of the writer fails the test of the reference, whatever text it wrote.
+     const refused = result.failedChecks.length > 0;
+-    if (!refused && equalBytes(actual, expected)) return { outcome: "pass", reason: "" };
++    if (!refused && equalBytes(actual, expected)) return { outcome: "pass", reason: "", level: "baseline" };
+     const sorted = written.diagnostics.slice().sort((a, b) => compareDiagnostics(rules, a, b));
+     const headerOnly = startsWith(expected, topOf(sorted, pretty));
+     if (refused) {
+       const reason = `the writer: ${shown(result.failedChecks.join("; "))}`;
+       return { outcome: "fail", cause: "writer", reason, actual, headerOnly };
+     }
++    if (headerOnly && level === "first-section") return first;
+     return { outcome: "fail", cause: "baseline", ...difference("the baseline", expected, actual), actual, headerOnly };
+   } catch (error) {
+     // A panic of the writer of the reference fails its test; its text is in the model of the rules.
+@@ -324,8 +344,8 @@
+   }
+ }
+ 
+-// The counts of a check by the name of a rule; undefined where there is none.
+-function rulesOf(value: unknown): Record<string, number> | undefined {
++// The counts of a check by a name; undefined where there is none.
++function countsOf(value: unknown): Record<string, number> | undefined {
+   if (typeof value !== "object" || value === null) return undefined;
+   const counts = Object.entries(value).filter(([, n]) => typeof n === "number" && n > 0);
+   return counts.length === 0 ? undefined : Object.fromEntries(counts);
+@@ -410,7 +430,13 @@
+       return { outcome: "unavailable", cause: "unavailable", reason: textOf(unavailable) };
+     }
+     const standIns = Array.isArray(value.standIns) ? value.standIns.map(name => textOf(name)) : [];
+-    const more = { standIns: standIns.length > 0 ? standIns : undefined, rules: rulesOf(value.rules) };
++    const more = {
++      standIns: standIns.length > 0 ? standIns : undefined,
++      rules: countsOf(value.rules),
++      named: countsOf(value.named),
++      silent: typeof value.silent === "boolean" ? value.silent : undefined,
++      exitCode: typeof value.exitCode === "number" ? value.exitCode : undefined,
++    };
+     const verdict: unknown = value.verdict;
+     if (verdict !== undefined && verdict !== null) {
+       const { outcome, cause, reason, death } = verdict as Partial<Verdict>;
+@@ -430,7 +456,7 @@
+       const reason = `the check reached ${standIns.length} stand-ins: ${names}`;
+       return { outcome: "provisional", cause: "stand-ins", reason, ...more };
+     }
+-    return { ...compare(input, value.diagnostics, options.oracle), rules: more.rules };
++    return { ...compare(input, value.diagnostics, options.oracle, options.level ?? "baseline"), ...more };
+   } finally {
+     if (root !== undefined) {
+       try {
+diff -ruN -x corpus /tmp/dcx1a/base-lint-after-prior/conformance/sweep.ts test/cli/lint/conformance/sweep.ts
+--- /tmp/dcx1a/base-lint-after-prior/conformance/sweep.ts	2026-10-01 15:11:53.863725989 +0000
++++ test/cli/lint/conformance/sweep.ts	2026-10-01 15:37:46.078691564 +0000
+@@ -15,6 +15,7 @@
+   checkLists,
+   compareWithRevision,
+   expectationsAtRevision,
++  factsOf,
+   formatExpectations,
+   outcomes,
+   parseExpectations,
+@@ -655,6 +656,7 @@
+         directory,
+         concurrency: o.jobs ?? availableParallelism(),
+         timeoutMs: o.timeoutMs,
++        level: lists.level,
+         onResult() {
+           done++;
+           if (!process.stderr.isTTY) {
+@@ -674,7 +676,13 @@
+   const cellOf = (all: readonly Fact[]): Cell => [all.filter(passes).length, all.length];
+   const ratio = ([pass, all]: Cell) => `${pass} of ${all}`;
+   // The two classes are never one number: a check that reports nothing passes every instance of C and none of E.
+-  say(`pass: E ${ratio(cellOf(ranE))}, C ${ratio(cellOf(ranC))}`);
++  say(`pass at the level ${lists.level}: E ${ratio(cellOf(ranE))}, C ${ratio(cellOf(ranC))}`);
++  // A pass of an instance with errors by what was equal: a check with the lengths and the related information reaches every byte.
++  const byLevel = countBy(
++    ranE.map(fact => resultOf.get(fact.name)!).filter(r => r.outcome === "pass"),
++    r => r.level ?? lists.level,
++  );
++  if (byLevel.size > 0) say(`pass by level, E: ${[...byLevel].map(([level, n]) => `${level} ${n}`).join(", ")}`);
+   const outcomesOf = (all: readonly Fact[]) => {
+     const counted = countBy(all, fact => resultOf.get(fact.name)!.outcome);
+     return outcomes.filter(outcome => counted.has(outcome)).map(outcome => [outcome, counted.get(outcome)!] as const);
+@@ -694,9 +702,37 @@
+     const counted = byCause[kind].map(([cause, n]) => `${cause} ${n}`);
+     if (counted.length > 0) say(`by cause, ${kind}: ${counted.join(", ")}`);
+   }
+-  // The plain format of a compiler holds the first section of a baseline and no more: such a match is counted apart.
++  // At the level "baseline" a first section that is the oracle's is no pass: such a match is counted apart.
+   const headerOnly = results.filter(r => r.headerOnly === true).length;
+   if (headerOnly > 0) say(`first section alone: ${headerOnly} instances, none of which is a pass`);
++  // The guard: the instances without errors for which the command wrote nothing and ended with the exit code 0. What is near it is counted apart.
++  const printed = results.filter(r => r.silent !== undefined);
++  const ofKind = (kind: Kind) => printed.filter(r => r.instance.oracle.class === kind);
++  const silent = { E: ofKind("E").filter(r => r.silent).length, C: ofKind("C").filter(r => r.silent).length };
++  const noError = (r: RunResult) => r.exitCode === 0 && r.silent === false;
++  const near = {
++    rulesLeftOut: ofKind("C").filter(r => r.outcome === "pass" && r.silent === false).length,
++    noError: { E: ofKind("E").filter(noError).length, C: ofKind("C").filter(noError).length },
++  };
++  if (printed.length > 0) {
++    say(`the command wrote nothing and ended with the exit code 0: E ${silent.E}, C ${silent.C} (of C: the guard)`);
++    say(
++      `near the guard: C ${near.rulesLeftOut} pass with reports of rules left out; lines and the exit code 0 (no error among them): E ${near.noError.E}, C ${near.noError.C}`,
++    );
++  }
++  // The lines that no baseline holds, by the category and the name that is their code: lines, and the instances that had them.
++  const names = new Map<string, { lines: number; instances: number }>();
++  for (const r of results) {
++    for (const [name, n] of Object.entries(r.named ?? {})) {
++      const count = names.get(name) ?? { lines: 0, instances: 0 };
++      names.set(name, { lines: count.lines + n, instances: count.instances + 1 });
++    }
++  }
++  const byName = [...names].sort((a, b) => b[1].lines - a[1].lines || (a[0] < b[0] ? -1 : 1));
++  if (byName.length > 0) {
++    const counted = byName.map(([name, count]) => `${name} ${count.lines} in ${count.instances}`);
++    say(`lines with a name for a code, and the instances that had them: ${counted.join(", ")}`);
++  }
+   // The reports of rules are no diagnostics of the reference: the comparison leaves them out, and they are counted here.
+   const rules = new Map<string, { reports: number; instances: number }>();
+   for (const r of results) {
+@@ -801,9 +837,7 @@
+ 
+   // The lists: a listed name that does not pass fails the sweep, and a name that passes and is not listed is printed.
+   const resultFacts = new Map<string, ResultFacts>();
+-  for (const { instance, outcome, reason } of results) {
+-    resultFacts.set(instance.name, { name: instance.name, status: outcome, level: "baseline", detail: reason });
+-  }
++  for (const result of results) resultFacts.set(result.instance.name, factsOf(result, lists.level));
+   const notPassing = verify(lists, resultFacts);
+   const listedAndRun = ran.filter(fact => listed.has(fact.name)).length;
+   say();
+@@ -852,8 +886,13 @@
+       causes: { E: Object.fromEntries(byCause.E), C: Object.fromEntries(byCause.C) },
+       headerOnly,
+       deaths,
++      level: lists.level,
++      passByLevel: Object.fromEntries(byLevel),
++      silent,
++      near,
+     },
+     rules: Object.fromEntries(byRule),
++    names: Object.fromEntries(byName),
+     crashes,
+     timeouts,
+     directories: Object.fromEntries(directories),
+@@ -886,7 +925,8 @@
+     instances: Object.fromEntries(
+       ran.map(fact => {
+         const r = resultOf.get(fact.name)!;
+-        const more = { headerOnly: r.headerOnly, standIns: r.standIns, rules: r.rules, diff: r.diff };
++        const counted = { rules: r.rules, named: r.named, silent: r.silent, exitCode: r.exitCode };
++        const more = { level: r.level, headerOnly: r.headerOnly, standIns: r.standIns, ...counted, diff: r.diff };
+         const { outcome, cause, reason } = r;
+         return [fact.name, { kind: fact.kind, casePath: fact.casePath, outcome, cause, reason, ...more }];
+       }),
+diff -ruN -x corpus /tmp/dcx1a/base-lint-after-prior/conformance.test.ts test/cli/lint/conformance.test.ts
+--- /tmp/dcx1a/base-lint-after-prior/conformance.test.ts	2026-10-01 15:11:53.868444240 +0000
++++ test/cli/lint/conformance.test.ts	2026-10-01 16:14:54.397512874 +0000
+@@ -13,6 +13,8 @@
+   InputFile,
+   InputResult,
+   Instance,
++  Level,
++  RunOptions,
+ } from "./conformance/runner";
+ import * as runner from "./conformance/runner";
+ import { emptyCheck, replayCheck, runInstance, runInstances } from "./conformance/runner";
+@@ -167,7 +169,12 @@
+   headerOnly === undefined ? { outcome, reason } : { outcome, reason, headerOnly };
+ 
+ // One batch of listed names through a check: the names that are no run instance of their list or that do not pass.
+-async function failuresOf(batch: readonly { name: string; list: "E" | "C" }[], check: Check, directory: string) {
++async function failuresOf(
++  batch: readonly { name: string; list: "E" | "C" }[],
++  check: Check,
++  directory: string,
++  level: Level = "baseline",
++) {
+   const failures: { name: string; outcome: string; reason: string }[] = [];
+   const instances: CorpusInstance[] = [];
+   for (const { name, list } of batch) {
+@@ -189,6 +196,7 @@
+     directory,
+     concurrency: Math.min(8, availableParallelism()),
+     timeoutMs: small ? 60_000 : 10_000,
++    level,
+   });
+   for (const r of results) {
+     if (r.outcome === "pass") continue;
+@@ -591,7 +599,7 @@
+   function reports(result: CheckResult): Check {
+     return async () => result;
+   }
+-  const ending = async (instance: Instance, check: Check, more: Partial<typeof options> = {}) =>
++  const ending = async (instance: Instance, check: Check, more: Partial<RunOptions> = {}) =>
+     endingOf(await runInstance(instance, check, { ...options, ...more }));
+ 
+   test("the bytes of the baseline are the bytes of the oracle, or it is no pass", async () => {
+@@ -618,21 +626,32 @@
+     });
+   });
+ 
+-  test("the first section alone, which is all that the plain format holds, is reported apart and is never a pass", async () => {
++  test("the first section alone, which is all that the plain format holds, is a pass at the level first-section and at no other", async () => {
+     const reason = "the first section is the oracle's; a baseline needs the lengths and the related information";
+-    expect(await ending(E, reports({ diagnostics: [{ ...known, location: printed }] }))).toEqual({
+-      outcome: "fail",
+-      reason,
+-      headerOnly: true,
+-    });
++    const plain = reports({ diagnostics: [{ ...known, location: printed }] });
++    expect(await ending(E, plain)).toEqual({ outcome: "fail", reason, headerOnly: true });
+     expect(await ending(E, reports({ diagnostics: [{ ...known, relatedInformation: undefined }] }))).toEqual({
+       outcome: "fail",
+       reason,
+       headerOnly: true,
+     });
+-    const other = await ending(E, reports({ diagnostics: [{ ...known, location: printed, messageText: "Other." }] }));
+-    expect({ outcome: other.outcome, headerOnly: other.headerOnly }).toEqual({ outcome: "fail", headerOnly: false });
+-    expect(other.reason).toStartWith("the first section differs from the oracle at byte ");
++    const passed = async (check: Check) => {
++      const r = await runInstance(E, check, { ...options, level: "first-section" });
++      return { outcome: r.outcome, reason: r.reason, level: r.level };
++    };
++    expect(await passed(plain)).toEqual({ outcome: "pass", reason: "", level: "first-section" });
++    // A span of another length changes the baseline and leaves the first section as it is.
++    const longer = reports({ diagnostics: [{ ...known, location: { ...known.location!, length: 5 } }] });
++    expect(await passed(longer)).toEqual({ outcome: "pass", reason: "", level: "first-section" });
++    expect(await passed(reports({ diagnostics: [known] }))).toEqual({ outcome: "pass", reason: "", level: "baseline" });
++    const whole = await runInstance(E, reports({ diagnostics: [known] }), options);
++    expect({ outcome: whole.outcome, level: whole.level }).toEqual({ outcome: "pass", level: "baseline" });
++    for (const level of ["baseline", "first-section"] as const) {
++      const check = reports({ diagnostics: [{ ...known, location: printed, messageText: "Other." }] });
++      const other = await ending(E, check, { level });
++      expect({ outcome: other.outcome, headerOnly: other.headerOnly }).toEqual({ outcome: "fail", headerOnly: false });
++      expect(other.reason).toStartWith("the first section differs from the oracle at byte ");
++    }
+   });
+ 
+   test("what is no list of diagnostics of the instance is no pass", async () => {
+@@ -696,6 +715,9 @@
+       diagnostics: [],
+       verdict: { outcome: "fail", cause: "syntax", reason: "x" },
+       rules: { r: 2 },
++      named: { "error syntax": 3 },
++      silent: false,
++      exitCode: 2,
+     });
+     const { instance: _other, ...fail } = await runInstance(C, fails, options);
+     expect(fail).toEqual({
+@@ -705,18 +727,26 @@
+       death: undefined,
+       standIns: undefined,
+       rules: { r: 2 },
++      named: { "error syntax": 3 },
++      silent: false,
++      exitCode: 2,
+     });
+     const passes = reports({ diagnostics: [], verdict: { outcome: "pass", cause: "", reason: "" } as never });
+     expect(await ending(C, passes)).toEqual({
+       outcome: "crash",
+       reason: "the check returned a verdict of no known outcome",
+     });
+-    // The reports of rules stay with the outcome of the comparison.
+-    const counted = await runInstance(C, reports({ diagnostics: [], rules: { "no-debugger": 1 } }), options);
+-    expect({ outcome: counted.outcome, rules: counted.rules }).toEqual({
++    // The reports of rules, and whether the command wrote anything, stay with the outcome of the comparison.
++    const left = reports({ diagnostics: [], rules: { "no-debugger": 1 }, silent: false });
++    const counted = await runInstance(C, left, options);
++    expect({ outcome: counted.outcome, rules: counted.rules, silent: counted.silent }).toEqual({
+       outcome: "pass",
+       rules: { "no-debugger": 1 },
++      silent: false,
+     });
++    const quiet = await runInstance(C, reports({ diagnostics: [], silent: true }), options);
++    expect({ outcome: quiet.outcome, silent: quiet.silent }).toEqual({ outcome: "pass", silent: true });
++    expect((await runInstance(C, emptyCheck, options)).silent).toBeUndefined();
+   });
+ 
+   const sample = [...cases().values()].filter(path => sampled(path, 250)).sort();
+@@ -976,14 +1006,20 @@
+   const linter = lazy(() => createSpawnCheck({ command: command("lints-fixture.ts"), env: bunEnv }));
+   const C: Instance = { name: "a.ts", status: "run", oracle: { class: "C" } };
+   const E: Instance = { name: "a.ts", status: "run", oracle: { class: "E" } };
+-  type More = { oracle?: () => Uint8Array; unitName?: string; timeoutMs?: number };
++  type More = { oracle?: () => Uint8Array; unitName?: string; timeoutMs?: number; level?: Level };
+   // One unit through a check that starts a command: the unit is written below the directory and is the operand.
+   const run = async (instance: Instance, check: Check, content: string, more: More = {}) => {
+     using dir = tempDir("lint-conformance", {});
+     const input = unitInput({ unitName: more.unitName ?? "/.src/a.ts", content });
+     const oracle = more.oracle ?? (() => new Uint8Array());
+-    const options = { input, oracle, directory: join(String(dir), "instances"), timeoutMs: more.timeoutMs };
+-    return await runInstance(instance, check, options);
++    const directory = join(String(dir), "instances");
++    return await runInstance(instance, check, {
++      input,
++      oracle,
++      directory,
++      timeoutMs: more.timeoutMs,
++      level: more.level,
++    });
+   };
+   const ending = async (instance: Instance, check: Check, content: string, more: More = {}) =>
+     endingOf(await run(instance, check, content, more));
+@@ -1036,23 +1072,60 @@
+ 
+   // The one test of this file that needs `bun --lint` itself: a binary without it runs the first file of the probe.
+   test.concurrent(
+-    "the probe: the binary under test lints, and it ends both runs as the test run asks of a child",
++    "the binary under test: the probe takes it, what is without an error passes, and a syntax error fails the instance and is no crash",
+     async () => {
+-      expect(await probe({ command: [bunExe()], env: bunEnv })).toEqual({ ok: true, reason: "" });
++      const options = { command: [bunExe()], env: bunEnv };
++      const probed = await probe(options);
++      expect(probed).toEqual({ ok: true, reason: "" });
++      const check = createSpawnCheck({ ...options, probed });
++      using dir = tempDir("lint-conformance", {});
++      // An instance of the corpus goes the whole way: its files are laid out, and the command gets them as its operands.
++      const ofCorpus = (name: string) =>
++        runInstance(instanceOf(name)!, check, { ...corpusRun, directory: String(dir), timeoutMs: spawnTimeout });
++      const [clean, broken, listedC, listedE] = await Promise.all([
++        run(C, check, "export const x: number = 1;\n"),
++        run(C, check, "const = ;\n"),
++        ofCorpus("2dArrays.ts"),
++        ofCorpus("ArrowFunctionExpression1.ts"),
++      ]);
++      expect({ outcome: clean.outcome, reason: clean.reason, silent: clean.silent, exitCode: clean.exitCode }).toEqual({
++        outcome: "pass",
++        reason: "",
++        silent: true,
++        exitCode: 0,
++      });
++      // The code of the error is a name until the parser gives it a number of TypeScript: with either the instance fails by what the command printed.
++      const { outcome, death, silent, exitCode } = broken;
++      expect({ outcome, died: death !== undefined, silent, exitCode }).toEqual({
++        outcome: "fail",
++        died: false,
++        silent: false,
++        exitCode: 2,
++      });
++      expect(["syntax", "diagnostics"]).toContain(broken.cause!);
++      expect({ outcome: listedC.outcome, reason: listedC.reason }).toEqual({ outcome: "pass", reason: "" });
++      // Whatever the command makes of the case, it ends with a list: the plain format passes no instance with errors at the level of the whole baseline.
++      expect({ outcome: listedE.outcome, died: listedE.death !== undefined }).toEqual({ outcome: "fail", died: false });
++      expect(listedE.exitCode).toBeNumber();
+     },
+-    spawnTimeout,
++    small ? 180_000 : 30_000,
+   );
+ 
+   test.concurrent(
+-    "a command that lints gets the written unit as its operand, and no diagnostic passes an instance without errors",
++    "a command that lints gets the written unit as its operand, and a command that writes nothing passes an instance without errors",
+     async () => {
+-      expect(await ending(C, linter(), "const x: number = 1;\n")).toEqual({ outcome: "pass", reason: "" });
++      const clean = await run(C, linter(), "const x: number = 1;\n");
++      expect({ outcome: clean.outcome, reason: clean.reason, silent: clean.silent }).toEqual({
++        outcome: "pass",
++        reason: "",
++        silent: true,
++      });
+     },
+     spawnTimeout,
+   );
+ 
+   test.concurrent(
+-    "stderr is read in the plain format, chain lines too: the first section is the oracle's, and that is no pass",
++    "stderr is read in the plain format, chain lines too: the first section is the oracle's, which is a pass at the level first-section and at no other",
+     async () => {
+       const unit: InputFile = {
+         unitName: "/.src/a.ts",
+@@ -1079,6 +1152,12 @@
+         reason: "the first section is the oracle's; a baseline needs the lengths and the related information",
+         headerOnly: true,
+       });
++      const first = await run(E, linter(), unit.content, { oracle: () => expected, level: "first-section" });
++      expect({ outcome: first.outcome, reason: first.reason, level: first.level }).toEqual({
++        outcome: "pass",
++        reason: "",
++        level: "first-section",
++      });
+     },
+     spawnTimeout,
+   );
+@@ -1194,58 +1273,79 @@
+         "//~ print {relative}(1,7): error syntax: This constant must be initialized\n",
+       "syntax",
+       `${named("syntax")}: /.src/a.ts(1,7): error syntax: Expected identifier but found "=", and 1 more`,
++      { "error syntax": 2 },
++      2,
+     ],
+     [
+       "a warning of the parser",
+       '//~ print {relative}(9,22): warning syntax: Reading from setter-only property "#value" will throw\n',
+       "syntax",
+       `${named("syntax")}: /.src/a.ts(9,22): warning syntax: Reading from setter-only property "#value" will throw`,
++      { "warning syntax": 1 },
++      0,
+     ],
+     [
+       "an operand that cannot be read",
+       "//~ print error cannot-read-file: File '{file}' not found.\n",
+       "cannot-read-file",
+       `${named("cannot-read-file")}: error cannot-read-file: File '/.src/a.ts' not found.`,
++      { "error cannot-read-file": 1 },
++      2,
+     ],
+     [
+       "an operand with an unsupported extension",
+       `//~ print ${unsupported("{file}")}\n`,
+       "unsupported-extension",
+       `${named("unsupported-extension")}: ${unsupported("/.src/a.ts")}`,
++      { "error unsupported-extension": 1 },
++      2,
+     ],
+     [
+       "an error of the command",
+       "//~ print {relative}(3,9): error internal-error: This file is nested too deeply to check all of it.\n",
+       "internal-error",
+       "the command reports an error of its own: /.src/a.ts(3,9): error internal-error: This file is nested too deeply to check all of it.",
++      { "error internal-error": 1 },
++      2,
+     ],
+     [
+       "an error of the command beside a syntax error",
+       "//~ print error internal-error: an assertion of the checker\n//~ print {relative}(1,1): error syntax: x\n",
+       "internal-error",
+       "the command reports an error of its own: error internal-error: an assertion of the checker",
++      { "error internal-error": 1, "error syntax": 1 },
++      2,
+     ],
+     [
+       "a name without a file that is no name of the command",
+       "//~ print error made-up-name: x\n",
+       "unknown code",
+       "a code that is no code of TypeScript, no name of the command and, without a file, no rule: error made-up-name: x",
++      { "error made-up-name": 1 },
++      2,
+     ],
+     [
+       "a file that is not of the instance",
+       "//~ print /etc/passwd(1,1): error TS1: x\n",
+       "file outside the instance",
+       "a diagnostic in a file that is not of the instance: /etc/passwd(1,1): error TS1: x",
++      undefined,
++      2,
+     ],
+-  ] as [string, string, string, string][])(
+-    "what no baseline holds fails the instance, with the code, the place and the text in the reason: %s",
+-    async (_label, orders, cause, reason) => {
+-      const { outcome, ...result } = await run(C, linter(), orders);
+-      expect({ outcome, cause: result.cause, reason: result.reason, death: result.death }).toEqual({
++  ] as [string, string, string, string, Record<string, number> | undefined, number][])(
++    "what no baseline holds fails the instance and is no crash, with the code, the place and the text in the reason: %s",
++    async (_label, orders, cause, reason, counts, exitCode) => {
++      const result = await run(C, linter(), orders);
++      const { outcome, death, silent } = result;
++      const found = { outcome, cause: result.cause, reason: result.reason, death, named: result.named, silent };
++      expect({ ...found, exitCode: result.exitCode }).toEqual({
+         outcome: "fail",
+         cause,
+         reason,
+         death: undefined,
++        named: counts,
++        silent: false,
++        exitCode,
+       });
+     },
+     spawnTimeout,
+@@ -1281,7 +1381,7 @@
+   );
+ 
+   test.concurrent(
+-    "the report of a rule is left out of the comparison and counted",
++    "the report of a rule is left out of the comparison and counted, and an instance that has one does not count for the guard",
+     async () => {
+       const reports =
+         "//~ print {relative}(1,1): error no-debugger: Unexpected 'debugger' statement.\n" +
+@@ -1289,10 +1389,11 @@
+         "//~ print {relative}(3,5): warning use-isnan: Use the isNaN function to compare with NaN.\n";
+       const rules = { "no-debugger": 2, "use-isnan": 1 };
+       const clean = await run(C, linter(), reports);
+-      expect({ outcome: clean.outcome, reason: clean.reason, rules: clean.rules }).toEqual({
++      expect({ outcome: clean.outcome, reason: clean.reason, rules: clean.rules, silent: clean.silent }).toEqual({
+         outcome: "pass",
+         reason: "",
+         rules,
++        silent: false,
+       });
+       // A rule says nothing of what the oracle holds.
+       const silent = await run(E, linter(), reports);
+@@ -1385,8 +1486,9 @@
+   const listed = sampleListed(lists, small ? 16 : Infinity);
+   const check = lazy(() => createSpawnCheck({ command: [bunExe()], env: bunEnv }));
+ 
+-  test("is in the form that the update writes", () => {
++  test("is in the form that the update writes, at the level that the plain format of the command reaches", () => {
+     expect(formatExpectations(lists)).toBe(text);
++    expect(lists.level).toBe("first-section");
+   });
+ 
+   // One batch at a time: a batch keeps as many processes in flight as it may, and a second batch beside it would double them.
+@@ -1394,7 +1496,7 @@
+     "every listed instance is a run instance of its list and passes: batch %d",
+     async (_k, batch) => {
+       using dir = tempDir("lint-conformance", {});
+-      const failures = await failuresOf(batch, check(), String(dir));
++      const failures = await failuresOf(batch, check(), String(dir), lists.level);
+       // The first failures in full and the number of all: a binary that cannot lint fails every name for one reason.
+       expect({ failed: failures.length, first: failures.slice(0, 5) }).toEqual({ failed: 0, first: [] });
+     },

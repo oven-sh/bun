@@ -1,0 +1,20 @@
+[
+	{"code":"class A { } foo(A);","module":[],"commonjs":[],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"let A = class A { }; foo(A);","module":[],"commonjs":[],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"class A { b(A) { A = 0; } }","module":[],"commonjs":[],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"class A { b() { let A; A = 0; } }","module":[],"commonjs":[],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"let A = class { b() { A = 0; } }","module":[],"commonjs":[],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"var x = 0; x = 1;","module":[],"commonjs":[],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"let x = 0; x = 1;","module":[],"commonjs":[],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"const x = 0; x = 1;","module":[],"commonjs":[],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"function x() {} x = 1;","module":[],"commonjs":[],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"function foo(x) { x = 1; }","module":[],"commonjs":[],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"try {} catch (x) { x = 1; }","module":[],"commonjs":[],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"class A { } A = 0;","module":[{"line":1,"column":13,"message":"'A' is a class."}],"commonjs":[{"line":1,"column":13,"message":"'A' is a class."}],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"class A { } ({A} = 0);","module":[{"line":1,"column":15,"message":"'A' is a class."}],"commonjs":[{"line":1,"column":15,"message":"'A' is a class."}],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"class A { } ({b: A = 0} = {});","module":[{"line":1,"column":18,"message":"'A' is a class."}],"commonjs":[{"line":1,"column":18,"message":"'A' is a class."}],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"A = 0; class A { }","module":[{"line":1,"column":1,"message":"'A' is a class."}],"commonjs":[{"line":1,"column":1,"message":"'A' is a class."}],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"class A { b() { A = 0; } }","module":[{"line":1,"column":17,"message":"'A' is a class."}],"commonjs":[{"line":1,"column":17,"message":"'A' is a class."}],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"let A = class A { b() { A = 0; } }","module":[{"line":1,"column":25,"message":"'A' is a class."}],"commonjs":[{"line":1,"column":25,"message":"'A' is a class."}],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"class A { } A = 0; A = 1;","module":[{"line":1,"column":13,"message":"'A' is a class."},{"line":1,"column":20,"message":"'A' is a class."}],"commonjs":[{"line":1,"column":13,"message":"'A' is a class."},{"line":1,"column":20,"message":"'A' is a class."}],"bunJs":"ok","bunCjs":"ok"}
+]

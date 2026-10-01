@@ -1,0 +1,24 @@
+instances 14915: run 12797 (E 7027, C 5770), skipped 2118
+    1244  skipped: unsupported target ES5
+     321  skipped: unsupported module kind AMD
+     222  skipped: unsupported module kind System
+      87  skipped: unsupported outFile
+      57  skipped: unsupported module kind UMD
+      57  skipped: unsupported module resolution kind 1
+      52  skipped: alwaysStrict=false is unsupported
+      31  skipped: unsupported baseUrl
+      24  skipped: esModuleInterop=false is unsupported
+      23  skipped: unsupported module resolution kind 2
+check /tmp/dcx1a/plain-replay-check.ts
+pass at the level baseline: E 1 of 7027, C 5770 of 5770
+pass by level, E: baseline 1
+by outcome, E: pass 1, fail 7026
+by outcome, C: pass 5770
+by cause, E: fail: lengths 7026
+first section alone: 7012 instances, none of which is a pass
+
+by directory: instances that pass, of those whose oracle has errors (E) and of those whose oracle has none (C)
+
+by diagnostic code: 959 codes; instances that pass, of those whose oracle has the code
+  and 934 more codes in the report
+

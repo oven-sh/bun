@@ -1,0 +1,1699 @@
+{
+	"valid": [
+		{
+			"code": "import mod from 'mod'; mod.prop = 0",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import mod from 'mod'; mod.prop += 0",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import mod from 'mod'; mod.prop++",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import mod from 'mod'; delete mod.prop",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import mod from 'mod'; for (mod.prop in foo);",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import mod from 'mod'; for (mod.prop of foo);",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import mod from 'mod'; [mod.prop] = foo;",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import mod from 'mod'; [...mod.prop] = foo;",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import mod from 'mod'; ({ bar: mod.prop } = foo);",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import mod from 'mod'; ({ ...mod.prop } = foo);",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import {named} from 'mod'; named.prop = 0",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import {named} from 'mod'; named.prop += 0",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import {named} from 'mod'; named.prop++",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import {named} from 'mod'; delete named.prop",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import {named} from 'mod'; for (named.prop in foo);",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import {named} from 'mod'; for (named.prop of foo);",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import {named} from 'mod'; [named.prop] = foo;",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import {named} from 'mod'; [...named.prop] = foo;",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import {named} from 'mod'; ({ bar: named.prop } = foo);",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import {named} from 'mod'; ({ ...named.prop } = foo);",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import * as mod from 'mod'; mod.named.prop = 0",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import * as mod from 'mod'; mod.named.prop += 0",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import * as mod from 'mod'; mod.named.prop++",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import * as mod from 'mod'; delete mod.named.prop",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import * as mod from 'mod'; for (mod.named.prop in foo);",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import * as mod from 'mod'; for (mod.named.prop of foo);",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import * as mod from 'mod'; [mod.named.prop] = foo;",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import * as mod from 'mod'; [...mod.named.prop] = foo;",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import * as mod from 'mod'; ({ bar: mod.named.prop } = foo);",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import * as mod from 'mod'; ({ ...mod.named.prop } = foo);",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import * as mod from 'mod'; obj[mod] = 0",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import * as mod from 'mod'; obj[mod.named] = 0",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import * as mod from 'mod'; for (var foo in mod.named);",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import * as mod from 'mod'; for (var foo of mod.named);",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import * as mod from 'mod'; [bar = mod.named] = foo;",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import * as mod from 'mod'; ({ bar = mod.named } = foo);",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import * as mod from 'mod'; ({ bar: baz = mod.named } = foo);",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import * as mod from 'mod'; ({ [mod.named]: bar } = foo);",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import * as mod from 'mod'; var obj = { ...mod.named };",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import * as mod from 'mod'; var obj = { foo: mod.named };",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import mod from 'mod'; { let mod = 0; mod = 1 }",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import * as mod from 'mod'; { let mod = 0; mod = 1 }",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import * as mod from 'mod'; { let mod = 0; mod.named = 1 }",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import {} from 'mod'",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import 'mod'",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import mod from 'mod'; Object.assign(mod, obj);",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import {named} from 'mod'; Object.assign(named, obj);",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import * as mod from 'mod'; Object.assign(mod.prop, obj);",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import * as mod from 'mod'; Object.assign(obj, mod, other);",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import * as mod from 'mod'; Object[assign](mod, obj);",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import * as mod from 'mod'; Object.getPrototypeOf(mod);",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import * as mod from 'mod'; Reflect.set(obj, key, mod);",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import * as mod from 'mod'; { var Object; Object.assign(mod, obj); }",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import * as mod from 'mod'; var Object; Object.assign(mod, obj);",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import * as mod from 'mod'; Object.seal(mod, obj)",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import * as mod from 'mod'; Object.preventExtensions(mod)",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		},
+		{
+			"code": "import * as mod from 'mod'; Reflect.preventExtensions(mod)",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			}
+		}
+	],
+	"invalid": [
+		{
+			"code": "import mod1 from 'mod'; mod1 = 0",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonly",
+					"column": 25,
+					"data": {
+						"name": "mod1"
+					}
+				}
+			]
+		},
+		{
+			"code": "import mod2 from 'mod'; mod2 += 0",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonly",
+					"column": 25,
+					"data": {
+						"name": "mod2"
+					}
+				}
+			]
+		},
+		{
+			"code": "import mod3 from 'mod'; mod3++",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonly",
+					"column": 25,
+					"data": {
+						"name": "mod3"
+					}
+				}
+			]
+		},
+		{
+			"code": "import mod4 from 'mod'; for (mod4 in foo);",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonly",
+					"column": 25,
+					"data": {
+						"name": "mod4"
+					}
+				}
+			]
+		},
+		{
+			"code": "import mod5 from 'mod'; for (mod5 of foo);",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonly",
+					"column": 25,
+					"data": {
+						"name": "mod5"
+					}
+				}
+			]
+		},
+		{
+			"code": "import mod6 from 'mod'; [mod6] = foo",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonly",
+					"column": 25,
+					"data": {
+						"name": "mod6"
+					}
+				}
+			]
+		},
+		{
+			"code": "import mod7 from 'mod'; [mod7 = 0] = foo",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonly",
+					"column": 25,
+					"data": {
+						"name": "mod7"
+					}
+				}
+			]
+		},
+		{
+			"code": "import mod8 from 'mod'; [...mod8] = foo",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonly",
+					"column": 25,
+					"data": {
+						"name": "mod8"
+					}
+				}
+			]
+		},
+		{
+			"code": "import mod9 from 'mod'; ({ bar: mod9 } = foo)",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonly",
+					"column": 26,
+					"data": {
+						"name": "mod9"
+					}
+				}
+			]
+		},
+		{
+			"code": "import mod10 from 'mod'; ({ bar: mod10 = 0 } = foo)",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonly",
+					"column": 27,
+					"data": {
+						"name": "mod10"
+					}
+				}
+			]
+		},
+		{
+			"code": "import mod11 from 'mod'; ({ ...mod11 } = foo)",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonly",
+					"column": 27,
+					"data": {
+						"name": "mod11"
+					}
+				}
+			]
+		},
+		{
+			"code": "import {named1} from 'mod'; named1 = 0",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonly",
+					"column": 29,
+					"data": {
+						"name": "named1"
+					}
+				}
+			]
+		},
+		{
+			"code": "import {named2} from 'mod'; named2 += 0",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonly",
+					"column": 29,
+					"data": {
+						"name": "named2"
+					}
+				}
+			]
+		},
+		{
+			"code": "import {named3} from 'mod'; named3++",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonly",
+					"column": 29,
+					"data": {
+						"name": "named3"
+					}
+				}
+			]
+		},
+		{
+			"code": "import {named4} from 'mod'; for (named4 in foo);",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonly",
+					"column": 29,
+					"data": {
+						"name": "named4"
+					}
+				}
+			]
+		},
+		{
+			"code": "import {named5} from 'mod'; for (named5 of foo);",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonly",
+					"column": 29,
+					"data": {
+						"name": "named5"
+					}
+				}
+			]
+		},
+		{
+			"code": "import {named6} from 'mod'; [named6] = foo",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonly",
+					"column": 29,
+					"data": {
+						"name": "named6"
+					}
+				}
+			]
+		},
+		{
+			"code": "import {named7} from 'mod'; [named7 = 0] = foo",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonly",
+					"column": 29,
+					"data": {
+						"name": "named7"
+					}
+				}
+			]
+		},
+		{
+			"code": "import {named8} from 'mod'; [...named8] = foo",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonly",
+					"column": 29,
+					"data": {
+						"name": "named8"
+					}
+				}
+			]
+		},
+		{
+			"code": "import {named9} from 'mod'; ({ bar: named9 } = foo)",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonly",
+					"column": 30,
+					"data": {
+						"name": "named9"
+					}
+				}
+			]
+		},
+		{
+			"code": "import {named10} from 'mod'; ({ bar: named10 = 0 } = foo)",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonly",
+					"column": 31,
+					"data": {
+						"name": "named10"
+					}
+				}
+			]
+		},
+		{
+			"code": "import {named11} from 'mod'; ({ ...named11 } = foo)",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonly",
+					"column": 31,
+					"data": {
+						"name": "named11"
+					}
+				}
+			]
+		},
+		{
+			"code": "import {named12 as foo} from 'mod'; foo = 0; named12 = 0",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonly",
+					"column": 37,
+					"data": {
+						"name": "foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "import * as mod1 from 'mod'; mod1 = 0",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonly",
+					"column": 30,
+					"data": {
+						"name": "mod1"
+					}
+				}
+			]
+		},
+		{
+			"code": "import * as mod2 from 'mod'; mod2 += 0",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonly",
+					"column": 30,
+					"data": {
+						"name": "mod2"
+					}
+				}
+			]
+		},
+		{
+			"code": "import * as mod3 from 'mod'; mod3++",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonly",
+					"column": 30,
+					"data": {
+						"name": "mod3"
+					}
+				}
+			]
+		},
+		{
+			"code": "import * as mod4 from 'mod'; for (mod4 in foo);",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonly",
+					"column": 30,
+					"data": {
+						"name": "mod4"
+					}
+				}
+			]
+		},
+		{
+			"code": "import * as mod5 from 'mod'; for (mod5 of foo);",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonly",
+					"column": 30,
+					"data": {
+						"name": "mod5"
+					}
+				}
+			]
+		},
+		{
+			"code": "import * as mod6 from 'mod'; [mod6] = foo",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonly",
+					"column": 30,
+					"data": {
+						"name": "mod6"
+					}
+				}
+			]
+		},
+		{
+			"code": "import * as mod7 from 'mod'; [mod7 = 0] = foo",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonly",
+					"column": 30,
+					"data": {
+						"name": "mod7"
+					}
+				}
+			]
+		},
+		{
+			"code": "import * as mod8 from 'mod'; [...mod8] = foo",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonly",
+					"column": 30,
+					"data": {
+						"name": "mod8"
+					}
+				}
+			]
+		},
+		{
+			"code": "import * as mod9 from 'mod'; ({ bar: mod9 } = foo)",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonly",
+					"column": 31,
+					"data": {
+						"name": "mod9"
+					}
+				}
+			]
+		},
+		{
+			"code": "import * as mod10 from 'mod'; ({ bar: mod10 = 0 } = foo)",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonly",
+					"column": 32,
+					"data": {
+						"name": "mod10"
+					}
+				}
+			]
+		},
+		{
+			"code": "import * as mod11 from 'mod'; ({ ...mod11 } = foo)",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonly",
+					"column": 32,
+					"data": {
+						"name": "mod11"
+					}
+				}
+			]
+		},
+		{
+			"code": "import * as mod1 from 'mod'; mod1.named = 0",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonlyMember",
+					"column": 30,
+					"data": {
+						"name": "mod1"
+					}
+				}
+			]
+		},
+		{
+			"code": "import * as mod2 from 'mod'; mod2.named += 0",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonlyMember",
+					"column": 30,
+					"data": {
+						"name": "mod2"
+					}
+				}
+			]
+		},
+		{
+			"code": "import * as mod3 from 'mod'; mod3.named++",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonlyMember",
+					"column": 30,
+					"data": {
+						"name": "mod3"
+					}
+				}
+			]
+		},
+		{
+			"code": "import * as mod4 from 'mod'; for (mod4.named in foo);",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonlyMember",
+					"column": 30,
+					"data": {
+						"name": "mod4"
+					}
+				}
+			]
+		},
+		{
+			"code": "import * as mod5 from 'mod'; for (mod5.named of foo);",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonlyMember",
+					"column": 30,
+					"data": {
+						"name": "mod5"
+					}
+				}
+			]
+		},
+		{
+			"code": "import * as mod6 from 'mod'; [mod6.named] = foo",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonlyMember",
+					"column": 30,
+					"data": {
+						"name": "mod6"
+					}
+				}
+			]
+		},
+		{
+			"code": "import * as mod7 from 'mod'; [mod7.named = 0] = foo",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonlyMember",
+					"column": 30,
+					"data": {
+						"name": "mod7"
+					}
+				}
+			]
+		},
+		{
+			"code": "import * as mod8 from 'mod'; [...mod8.named] = foo",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonlyMember",
+					"column": 30,
+					"data": {
+						"name": "mod8"
+					}
+				}
+			]
+		},
+		{
+			"code": "import * as mod9 from 'mod'; ({ bar: mod9.named } = foo)",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonlyMember",
+					"column": 31,
+					"data": {
+						"name": "mod9"
+					}
+				}
+			]
+		},
+		{
+			"code": "import * as mod10 from 'mod'; ({ bar: mod10.named = 0 } = foo)",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonlyMember",
+					"column": 32,
+					"data": {
+						"name": "mod10"
+					}
+				}
+			]
+		},
+		{
+			"code": "import * as mod11 from 'mod'; ({ ...mod11.named } = foo)",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonlyMember",
+					"column": 32,
+					"data": {
+						"name": "mod11"
+					}
+				}
+			]
+		},
+		{
+			"code": "import * as mod12 from 'mod'; delete mod12.named",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonlyMember",
+					"column": 31,
+					"data": {
+						"name": "mod12"
+					}
+				}
+			]
+		},
+		{
+			"code": "import * as mod from 'mod'; Object.assign(mod, obj)",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonlyMember",
+					"column": 29,
+					"data": {
+						"name": "mod"
+					}
+				}
+			]
+		},
+		{
+			"code": "import * as mod from 'mod'; Object.defineProperty(mod, key, d)",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonlyMember",
+					"column": 29,
+					"data": {
+						"name": "mod"
+					}
+				}
+			]
+		},
+		{
+			"code": "import * as mod from 'mod'; Object.defineProperties(mod, d)",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonlyMember",
+					"column": 29,
+					"data": {
+						"name": "mod"
+					}
+				}
+			]
+		},
+		{
+			"code": "import * as mod from 'mod'; Object.setPrototypeOf(mod, proto)",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonlyMember",
+					"column": 29,
+					"data": {
+						"name": "mod"
+					}
+				}
+			]
+		},
+		{
+			"code": "import * as mod from 'mod'; Object.freeze(mod)",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonlyMember",
+					"column": 29,
+					"data": {
+						"name": "mod"
+					}
+				}
+			]
+		},
+		{
+			"code": "import * as mod from 'mod'; Reflect.defineProperty(mod, key, d)",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonlyMember",
+					"column": 29,
+					"data": {
+						"name": "mod"
+					}
+				}
+			]
+		},
+		{
+			"code": "import * as mod from 'mod'; Reflect.deleteProperty(mod, key)",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonlyMember",
+					"column": 29,
+					"data": {
+						"name": "mod"
+					}
+				}
+			]
+		},
+		{
+			"code": "import * as mod from 'mod'; Reflect.set(mod, key, value)",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonlyMember",
+					"column": 29,
+					"data": {
+						"name": "mod"
+					}
+				}
+			]
+		},
+		{
+			"code": "import * as mod from 'mod'; Reflect.setPrototypeOf(mod, proto)",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonlyMember",
+					"column": 29,
+					"data": {
+						"name": "mod"
+					}
+				}
+			]
+		},
+		{
+			"code": "import mod, * as mod_ns from 'mod'; mod.prop = 0; mod_ns.prop = 0",
+			"languageOptions": {
+				"ecmaVersion": 2018,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonlyMember",
+					"column": 51,
+					"data": {
+						"name": "mod_ns"
+					}
+				}
+			]
+		},
+		{
+			"code": "import * as mod from 'mod'; Object?.defineProperty(mod, key, d)",
+			"languageOptions": {
+				"ecmaVersion": 2020,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonlyMember",
+					"column": 29,
+					"data": {
+						"name": "mod"
+					}
+				}
+			]
+		},
+		{
+			"code": "import * as mod from 'mod'; (Object?.defineProperty)(mod, key, d)",
+			"languageOptions": {
+				"ecmaVersion": 2020,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonlyMember",
+					"column": 29,
+					"data": {
+						"name": "mod"
+					}
+				}
+			]
+		},
+		{
+			"code": "import * as mod from 'mod'; delete mod?.prop",
+			"languageOptions": {
+				"ecmaVersion": 2020,
+				"sourceType": "module",
+				"globals": {
+					"Reflect": "readonly"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "readonlyMember",
+					"column": 29,
+					"data": {
+						"name": "mod"
+					}
+				}
+			]
+		}
+	],
+	"skipped": 0,
+	"runs": 1
+}

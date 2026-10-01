@@ -1,0 +1,13 @@
+instances 11880: run 11880 (E 6916, C 4964), skipped 0
+check /tmp/dcx1a/plain-replay-check.ts
+pass at the level first-section: E 6916 of 6916, C 4964 of 4964
+pass by level, E: first-section 6915, baseline 1
+by outcome, E: pass 6916
+by outcome, C: pass 4964
+
+by directory: instances that pass, of those whose oracle has errors (E) and of those whose oracle has none (C)
+
+by diagnostic code: 952 codes; instances that pass, of those whose oracle has the code
+  and 927 more codes in the report
+
+listed: E 6916, C 4964; of them run 11880, not passing 0

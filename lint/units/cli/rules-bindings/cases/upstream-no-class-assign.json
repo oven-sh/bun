@@ -1,0 +1,194 @@
+{
+	"valid": [
+		{
+			"code": "class A { } foo(A);",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "let A = class A { }; foo(A);",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "class A { b(A) { A = 0; } }",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "class A { b() { let A; A = 0; } }",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "let A = class { b() { A = 0; } }",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "var x = 0; x = 1;",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "let x = 0; x = 1;",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "const x = 0; x = 1;",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "function x() {} x = 1;",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "function foo(x) { x = 1; }",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "try {} catch (x) { x = 1; }",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		}
+	],
+	"invalid": [
+		{
+			"code": "class A { } A = 0;",
+			"languageOptions": {
+				"ecmaVersion": 6
+			},
+			"errors": [
+				{
+					"messageId": "class",
+					"line": 1,
+					"column": 13,
+					"data": {
+						"name": "A"
+					}
+				}
+			]
+		},
+		{
+			"code": "class A { } ({A} = 0);",
+			"languageOptions": {
+				"ecmaVersion": 6
+			},
+			"errors": [
+				{
+					"messageId": "class",
+					"line": 1,
+					"column": 15,
+					"data": {
+						"name": "A"
+					}
+				}
+			]
+		},
+		{
+			"code": "class A { } ({b: A = 0} = {});",
+			"languageOptions": {
+				"ecmaVersion": 6
+			},
+			"errors": [
+				{
+					"messageId": "class",
+					"line": 1,
+					"column": 18,
+					"data": {
+						"name": "A"
+					}
+				}
+			]
+		},
+		{
+			"code": "A = 0; class A { }",
+			"languageOptions": {
+				"ecmaVersion": 6
+			},
+			"errors": [
+				{
+					"messageId": "class",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"name": "A"
+					}
+				}
+			]
+		},
+		{
+			"code": "class A { b() { A = 0; } }",
+			"languageOptions": {
+				"ecmaVersion": 6
+			},
+			"errors": [
+				{
+					"messageId": "class",
+					"line": 1,
+					"column": 17,
+					"data": {
+						"name": "A"
+					}
+				}
+			]
+		},
+		{
+			"code": "let A = class A { b() { A = 0; } }",
+			"languageOptions": {
+				"ecmaVersion": 6
+			},
+			"errors": [
+				{
+					"messageId": "class",
+					"line": 1,
+					"column": 25,
+					"data": {
+						"name": "A"
+					}
+				}
+			]
+		},
+		{
+			"code": "class A { } A = 0; A = 1;",
+			"languageOptions": {
+				"ecmaVersion": 6
+			},
+			"errors": [
+				{
+					"messageId": "class",
+					"line": 1,
+					"column": 13,
+					"data": {
+						"name": "A"
+					}
+				},
+				{
+					"messageId": "class",
+					"line": 1,
+					"column": 20,
+					"data": {
+						"name": "A"
+					}
+				}
+			]
+		}
+	],
+	"skipped": 0,
+	"runs": 1
+}

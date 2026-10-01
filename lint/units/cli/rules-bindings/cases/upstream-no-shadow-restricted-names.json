@@ -1,0 +1,880 @@
+{
+	"valid": [
+		{
+			"code": "function foo(bar){ var baz; }",
+			"languageOptions": {
+				"ecmaVersion": 5,
+				"sourceType": "script"
+			}
+		},
+		{
+			"code": "!function foo(bar){ var baz; }",
+			"languageOptions": {
+				"ecmaVersion": 5,
+				"sourceType": "script"
+			}
+		},
+		{
+			"code": "!function(bar){ var baz; }",
+			"languageOptions": {
+				"ecmaVersion": 5,
+				"sourceType": "script"
+			}
+		},
+		{
+			"code": "try {} catch(e) {}",
+			"languageOptions": {
+				"ecmaVersion": 5,
+				"sourceType": "script"
+			}
+		},
+		{
+			"code": "export default function() {}",
+			"languageOptions": {
+				"ecmaVersion": 6,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "try {} catch {}",
+			"languageOptions": {
+				"ecmaVersion": 2019,
+				"sourceType": "script"
+			}
+		},
+		{
+			"code": "var undefined;",
+			"languageOptions": {
+				"ecmaVersion": 5,
+				"sourceType": "script"
+			}
+		},
+		{
+			"code": "var undefined; doSomething(undefined);",
+			"languageOptions": {
+				"ecmaVersion": 5,
+				"sourceType": "script"
+			}
+		},
+		{
+			"code": "var undefined; var undefined;",
+			"languageOptions": {
+				"ecmaVersion": 5,
+				"sourceType": "script"
+			}
+		},
+		{
+			"code": "let undefined",
+			"languageOptions": {
+				"ecmaVersion": 2015,
+				"sourceType": "script"
+			}
+		},
+		{
+			"code": "import { undefined as undef } from 'foo';",
+			"languageOptions": {
+				"ecmaVersion": 2015,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "let globalThis;",
+			"languageOptions": {
+				"ecmaVersion": 2020,
+				"sourceType": "script"
+			},
+			"options": [
+				{
+					"reportGlobalThis": false
+				}
+			]
+		},
+		{
+			"code": "class globalThis {}",
+			"languageOptions": {
+				"ecmaVersion": 2020,
+				"sourceType": "script"
+			},
+			"options": [
+				{
+					"reportGlobalThis": false
+				}
+			]
+		},
+		{
+			"code": "import { baz as globalThis } from 'foo';",
+			"languageOptions": {
+				"ecmaVersion": 2020,
+				"sourceType": "module"
+			},
+			"options": [
+				{
+					"reportGlobalThis": false
+				}
+			]
+		},
+		{
+			"code": "globalThis.foo",
+			"languageOptions": {
+				"ecmaVersion": 2020,
+				"sourceType": "script"
+			}
+		},
+		{
+			"code": "const foo = globalThis",
+			"languageOptions": {
+				"ecmaVersion": 2020,
+				"sourceType": "script"
+			}
+		},
+		{
+			"code": "function foo() { return globalThis; }",
+			"languageOptions": {
+				"ecmaVersion": 2020,
+				"sourceType": "script"
+			}
+		},
+		{
+			"code": "import { globalThis as foo } from 'bar'",
+			"languageOptions": {
+				"ecmaVersion": 2020,
+				"sourceType": "module"
+			}
+		}
+	],
+	"invalid": [
+		{
+			"code": "function NaN(NaN) { var NaN; !function NaN(NaN) { try {} catch(NaN) {} }; }",
+			"languageOptions": {
+				"ecmaVersion": 5,
+				"sourceType": "script"
+			},
+			"errors": [
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 10,
+					"data": {
+						"name": "NaN"
+					}
+				},
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 14,
+					"data": {
+						"name": "NaN"
+					}
+				},
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 25,
+					"data": {
+						"name": "NaN"
+					}
+				},
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 40,
+					"data": {
+						"name": "NaN"
+					}
+				},
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 44,
+					"data": {
+						"name": "NaN"
+					}
+				},
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 64,
+					"data": {
+						"name": "NaN"
+					}
+				}
+			]
+		},
+		{
+			"code": "function undefined(undefined) { !function undefined(undefined) { try {} catch(undefined) {} }; }",
+			"languageOptions": {
+				"ecmaVersion": 5,
+				"sourceType": "script"
+			},
+			"errors": [
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 10,
+					"data": {
+						"name": "undefined"
+					}
+				},
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 20,
+					"data": {
+						"name": "undefined"
+					}
+				},
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 43,
+					"data": {
+						"name": "undefined"
+					}
+				},
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 53,
+					"data": {
+						"name": "undefined"
+					}
+				},
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 79,
+					"data": {
+						"name": "undefined"
+					}
+				}
+			]
+		},
+		{
+			"code": "function Infinity(Infinity) { var Infinity; !function Infinity(Infinity) { try {} catch(Infinity) {} }; }",
+			"languageOptions": {
+				"ecmaVersion": 5,
+				"sourceType": "script"
+			},
+			"errors": [
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 10,
+					"data": {
+						"name": "Infinity"
+					}
+				},
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 19,
+					"data": {
+						"name": "Infinity"
+					}
+				},
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 35,
+					"data": {
+						"name": "Infinity"
+					}
+				},
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 55,
+					"data": {
+						"name": "Infinity"
+					}
+				},
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 64,
+					"data": {
+						"name": "Infinity"
+					}
+				},
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 89,
+					"data": {
+						"name": "Infinity"
+					}
+				}
+			]
+		},
+		{
+			"code": "function arguments(arguments) { var arguments; !function arguments(arguments) { try {} catch(arguments) {} }; }",
+			"languageOptions": {
+				"ecmaVersion": 5,
+				"sourceType": "script"
+			},
+			"errors": [
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 10,
+					"data": {
+						"name": "arguments"
+					}
+				},
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 20,
+					"data": {
+						"name": "arguments"
+					}
+				},
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 37,
+					"data": {
+						"name": "arguments"
+					}
+				},
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 58,
+					"data": {
+						"name": "arguments"
+					}
+				},
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 68,
+					"data": {
+						"name": "arguments"
+					}
+				},
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 94,
+					"data": {
+						"name": "arguments"
+					}
+				}
+			]
+		},
+		{
+			"code": "function eval(eval) { var eval; !function eval(eval) { try {} catch(eval) {} }; }",
+			"languageOptions": {
+				"ecmaVersion": 5,
+				"sourceType": "script"
+			},
+			"errors": [
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 10,
+					"data": {
+						"name": "eval"
+					}
+				},
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 15,
+					"data": {
+						"name": "eval"
+					}
+				},
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 27,
+					"data": {
+						"name": "eval"
+					}
+				},
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 43,
+					"data": {
+						"name": "eval"
+					}
+				},
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 48,
+					"data": {
+						"name": "eval"
+					}
+				},
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 69,
+					"data": {
+						"name": "eval"
+					}
+				}
+			]
+		},
+		{
+			"code": "var eval = (eval) => { var eval; !function eval(eval) { try {} catch(eval) {} }; }",
+			"languageOptions": {
+				"ecmaVersion": 6,
+				"sourceType": "script"
+			},
+			"errors": [
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 5,
+					"data": {
+						"name": "eval"
+					}
+				},
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 13,
+					"data": {
+						"name": "eval"
+					}
+				},
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 28,
+					"data": {
+						"name": "eval"
+					}
+				},
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 44,
+					"data": {
+						"name": "eval"
+					}
+				},
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 49,
+					"data": {
+						"name": "eval"
+					}
+				},
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 70,
+					"data": {
+						"name": "eval"
+					}
+				}
+			]
+		},
+		{
+			"code": "var [undefined] = [1]",
+			"languageOptions": {
+				"ecmaVersion": 6,
+				"sourceType": "script"
+			},
+			"errors": [
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 6,
+					"data": {
+						"name": "undefined"
+					}
+				}
+			]
+		},
+		{
+			"code": "var {undefined} = obj; var {a: undefined} = obj; var {a: {b: {undefined}}} = obj; var {a, ...undefined} = obj;",
+			"languageOptions": {
+				"ecmaVersion": 9,
+				"sourceType": "script"
+			},
+			"errors": [
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 6,
+					"data": {
+						"name": "undefined"
+					}
+				},
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 32,
+					"data": {
+						"name": "undefined"
+					}
+				},
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 63,
+					"data": {
+						"name": "undefined"
+					}
+				},
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 94,
+					"data": {
+						"name": "undefined"
+					}
+				}
+			]
+		},
+		{
+			"code": "var undefined; undefined = 5;",
+			"languageOptions": {
+				"ecmaVersion": 5,
+				"sourceType": "script"
+			},
+			"errors": [
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 5,
+					"data": {
+						"name": "undefined"
+					}
+				}
+			]
+		},
+		{
+			"code": "class undefined {}",
+			"languageOptions": {
+				"ecmaVersion": 2015,
+				"sourceType": "script"
+			},
+			"errors": [
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 7,
+					"data": {
+						"name": "undefined"
+					}
+				}
+			]
+		},
+		{
+			"code": "(class undefined {})",
+			"languageOptions": {
+				"ecmaVersion": 2015,
+				"sourceType": "script"
+			},
+			"errors": [
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 8,
+					"data": {
+						"name": "undefined"
+					}
+				}
+			]
+		},
+		{
+			"code": "import undefined from 'foo';",
+			"languageOptions": {
+				"ecmaVersion": 2015,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 8,
+					"data": {
+						"name": "undefined"
+					}
+				}
+			]
+		},
+		{
+			"code": "import { undefined } from 'foo';",
+			"languageOptions": {
+				"ecmaVersion": 2015,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 10,
+					"data": {
+						"name": "undefined"
+					}
+				}
+			]
+		},
+		{
+			"code": "import { baz as undefined } from 'foo';",
+			"languageOptions": {
+				"ecmaVersion": 2015,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 17,
+					"data": {
+						"name": "undefined"
+					}
+				}
+			]
+		},
+		{
+			"code": "import * as undefined from 'foo';",
+			"languageOptions": {
+				"ecmaVersion": 2015,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 13,
+					"data": {
+						"name": "undefined"
+					}
+				}
+			]
+		},
+		{
+			"code": "function globalThis(globalThis) { var globalThis; !function globalThis(globalThis) { try {} catch(globalThis) {} }; }",
+			"languageOptions": {
+				"ecmaVersion": 2015,
+				"sourceType": "script"
+			},
+			"errors": [
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 10,
+					"data": {
+						"name": "globalThis"
+					}
+				},
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 21,
+					"data": {
+						"name": "globalThis"
+					}
+				},
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 39,
+					"data": {
+						"name": "globalThis"
+					}
+				},
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 61,
+					"data": {
+						"name": "globalThis"
+					}
+				},
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 72,
+					"data": {
+						"name": "globalThis"
+					}
+				},
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 99,
+					"data": {
+						"name": "globalThis"
+					}
+				}
+			]
+		},
+		{
+			"code": "function globalThis(globalThis) { var globalThis; !function globalThis(globalThis) { try {} catch(globalThis) {} }; }",
+			"languageOptions": {
+				"ecmaVersion": 2020,
+				"sourceType": "script"
+			},
+			"errors": [
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 10,
+					"data": {
+						"name": "globalThis"
+					}
+				},
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 21,
+					"data": {
+						"name": "globalThis"
+					}
+				},
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 39,
+					"data": {
+						"name": "globalThis"
+					}
+				},
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 61,
+					"data": {
+						"name": "globalThis"
+					}
+				},
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 72,
+					"data": {
+						"name": "globalThis"
+					}
+				},
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 99,
+					"data": {
+						"name": "globalThis"
+					}
+				}
+			]
+		},
+		{
+			"code": "const [globalThis] = [1]",
+			"languageOptions": {
+				"ecmaVersion": 2020,
+				"sourceType": "script"
+			},
+			"errors": [
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 8,
+					"data": {
+						"name": "globalThis"
+					}
+				}
+			]
+		},
+		{
+			"code": "var {globalThis} = obj; var {a: globalThis} = obj; var {a: {b: {globalThis}}} = obj; var {a, ...globalThis} = obj;",
+			"languageOptions": {
+				"ecmaVersion": 2020,
+				"sourceType": "script"
+			},
+			"errors": [
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 6,
+					"data": {
+						"name": "globalThis"
+					}
+				},
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 33,
+					"data": {
+						"name": "globalThis"
+					}
+				},
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 65,
+					"data": {
+						"name": "globalThis"
+					}
+				},
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 97,
+					"data": {
+						"name": "globalThis"
+					}
+				}
+			]
+		},
+		{
+			"code": "let globalThis; globalThis = 5;",
+			"languageOptions": {
+				"ecmaVersion": 2020,
+				"sourceType": "script"
+			},
+			"errors": [
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 5,
+					"data": {
+						"name": "globalThis"
+					}
+				}
+			]
+		},
+		{
+			"code": "class globalThis {}",
+			"languageOptions": {
+				"ecmaVersion": 2020,
+				"sourceType": "script"
+			},
+			"errors": [
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 7,
+					"data": {
+						"name": "globalThis"
+					}
+				}
+			]
+		},
+		{
+			"code": "(class globalThis {})",
+			"languageOptions": {
+				"ecmaVersion": 2020,
+				"sourceType": "script"
+			},
+			"errors": [
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 8,
+					"data": {
+						"name": "globalThis"
+					}
+				}
+			]
+		},
+		{
+			"code": "import globalThis from 'foo';",
+			"languageOptions": {
+				"ecmaVersion": 2020,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 8,
+					"data": {
+						"name": "globalThis"
+					}
+				}
+			]
+		},
+		{
+			"code": "import { globalThis } from 'foo';",
+			"languageOptions": {
+				"ecmaVersion": 2020,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 10,
+					"data": {
+						"name": "globalThis"
+					}
+				}
+			]
+		},
+		{
+			"code": "import { baz as globalThis } from 'foo';",
+			"languageOptions": {
+				"ecmaVersion": 2020,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 17,
+					"data": {
+						"name": "globalThis"
+					}
+				}
+			]
+		},
+		{
+			"code": "import * as globalThis from 'foo';",
+			"languageOptions": {
+				"ecmaVersion": 2020,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "shadowingRestrictedName",
+					"column": 13,
+					"data": {
+						"name": "globalThis"
+					}
+				}
+			]
+		}
+	],
+	"skipped": 0,
+	"runs": 1
+}

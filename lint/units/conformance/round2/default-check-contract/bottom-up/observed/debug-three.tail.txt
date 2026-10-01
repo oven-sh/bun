@@ -1,0 +1,12 @@
+(pass) default check > the fixture refuses an extension and skips a declaration file as `bun --lint` does [5682.78ms]
+(pass) default check > a refusal is no crash and no pass [3860.17ms]
+(pass) default check > never equal to an oracle without errors: a stand-in [5431.08ms]
+(pass) default check > never equal to an oracle without errors: the code -1 [5698.38ms]
+(pass) default check > the report of a rule is left out of the comparison and counted, and an instance that has one does not count for the guard [8740.01ms]
+(pass) expectations.json > is in the form that the update writes, at the level that the plain format of the command reaches [11.81ms]
+
+ 46 pass
+ 72 filtered out
+ 0 fail
+ 91 expect() calls
+Ran 46 tests across 1 file. [62.93s]

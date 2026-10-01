@@ -1,0 +1,17 @@
+[
+	{"code":"function foo() { var foo = bar; }","module":[],"commonjs":[],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"function foo(foo) { foo = bar; }","module":[],"commonjs":[],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"function foo() { var foo; foo = bar; }","module":[],"commonjs":[],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"var foo = () => {}; foo = bar;","module":[],"commonjs":[],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"var foo = function() {}; foo = bar;","module":[],"commonjs":[],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"var foo = function() { foo = bar; };","module":[],"commonjs":[],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"import bar from 'bar'; function foo() { var foo = bar; }","module":[],"commonjs":null,"bunJs":"ok","bunCjs":"ok"},
+	{"code":"function foo() {}; foo = bar;","module":[{"line":1,"column":20,"message":"'foo' is a function."}],"commonjs":[{"line":1,"column":20,"message":"'foo' is a function."}],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"function foo() { foo = bar; }","module":[{"line":1,"column":18,"message":"'foo' is a function."}],"commonjs":[{"line":1,"column":18,"message":"'foo' is a function."}],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"foo = bar; function foo() { };","module":[{"line":1,"column":1,"message":"'foo' is a function."}],"commonjs":[{"line":1,"column":1,"message":"'foo' is a function."}],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"[foo] = bar; function foo() { };","module":[{"line":1,"column":2,"message":"'foo' is a function."}],"commonjs":[{"line":1,"column":2,"message":"'foo' is a function."}],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"({x: foo = 0} = bar); function foo() { };","module":[{"line":1,"column":6,"message":"'foo' is a function."}],"commonjs":[{"line":1,"column":6,"message":"'foo' is a function."}],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"function foo() { [foo] = bar; }","module":[{"line":1,"column":19,"message":"'foo' is a function."}],"commonjs":[{"line":1,"column":19,"message":"'foo' is a function."}],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"(function() { ({x: foo = 0} = bar); function foo() { }; })();","module":[{"line":1,"column":20,"message":"'foo' is a function."}],"commonjs":[{"line":1,"column":20,"message":"'foo' is a function."}],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"var a = function foo() { foo = 123; };","module":[{"line":1,"column":26,"message":"'foo' is a function."}],"commonjs":[{"line":1,"column":26,"message":"'foo' is a function."}],"bunJs":"ok","bunCjs":"ok"}
+]

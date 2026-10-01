@@ -1,0 +1,20 @@
+instances 208: run 185 (E 148, C 37), skipped 23
+      22  skipped: unsupported target ES5
+       1  skipped: alwaysStrict=false is unsupported
+check /workspace/wt/parser/build/release/bun --lint
+pass at the level first-section: E 0 of 148, C 36 of 37
+by outcome, E: fail 148
+by outcome, C: pass 36, fail 1
+by cause, E: fail: syntax 91, fail: nothing 57
+by cause, C: fail: syntax 1
+the command wrote nothing and ended with the exit code 0: E 57, C 36 (the guard)
+near the guard, C: 0 pass with reports of rules left out, 0 fail with warnings alone; E with warnings alone: 0
+lines with a name for a code, and the instances that had them: error syntax 136 in 92
+
+by directory: instances that pass, of those whose oracle has errors (E) and of those whose oracle has none (C)
+
+by diagnostic code: 59 codes; instances that pass, of those whose oracle has the code
+  and 34 more codes in the report
+
+listed: E 0, C 0; of them run 0, not passing 0
+36 instances pass and may not enter a list: quota 36

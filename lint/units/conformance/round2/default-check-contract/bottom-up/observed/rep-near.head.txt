@@ -1,0 +1,24 @@
+instances 8: run 8 (E 5, C 3), skipped 0
+check /workspace/wt/parser/build/release/bun --lint
+pass at the level first-section: E 0 of 5, C 2 of 3
+by outcome, E: fail 5
+by outcome, C: pass 2, fail 1
+by cause, E: fail: nothing 3, fail: syntax 1, fail: unsupported-extension 1
+by cause, C: fail: syntax 1
+the command wrote nothing and ended with the exit code 0: E 1, C 1 (of C: the guard)
+near the guard: C 1 pass with reports of rules left out; lines and the exit code 0 (no error among them): E 1, C 0
+lines with a name for a code, and the instances that had them: error syntax 1 in 1, error unsupported-extension 1 in 1, warning syntax 1 in 1
+reports of rules left out of the comparison, and the instances that had them: no-self-assign 3 in 1, no-debugger 1 in 1, no-empty-pattern 1 in 1
+  pass 2dArrays.ts
+  pass declarationEmitClassSetAccessorParamNameInJs2.ts (left out: no-empty-pattern 1)
+  fail duplicateVarAndImport.ts: the code syntax is a name of the command and no code of TypeScript: /.src/duplicateVarAndImport.ts(1,1): error syntax: "a" has already been declared
+  fail jsFileCompilationWithMapFileAsJs.ts: the code unsupported-extension is a name of the command and no code of TypeScript: error unsupported-extension: File '/.src/b.js.map' has an unsupported extension. The only supported extensions are '.ts', '.tsx', '.d.ts', '.js', '.jsx', '.cts', '.d.cts', '.cjs', '.mts', '.d.mts', '.mjs'.
+  fail privateNameAccessors.ts: the code syntax is a name of the command and no code of TypeScript: /.src/privateNameAccessors.ts(9,14): warning syntax: Writing to getter-only property "#roProp" will throw
+  fail jsdocTypeTagCast.ts: no diagnostic where the oracle has a baseline (left out: no-self-assign 3)
+  fail typedefOnStatements.ts: no diagnostic where the oracle has a baseline (left out: no-debugger 1)
+  fail objectTypeWithStringIndexerHidingObjectIndexer.ts: no diagnostic where the oracle has a baseline
+
+by directory: instances that pass, of those whose oracle has errors (E) and of those whose oracle has none (C)
+
+by diagnostic code: 14 codes; instances that pass, of those whose oracle has the code
+

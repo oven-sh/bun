@@ -1,0 +1,112 @@
+{
+	"valid": [
+		{
+			"code": "var foo = Symbol('foo');",
+			"languageOptions": {
+				"ecmaVersion": 2022
+			}
+		},
+		{
+			"code": "function bar(Symbol) { var baz = new Symbol('baz');}",
+			"languageOptions": {
+				"ecmaVersion": 2022
+			}
+		},
+		{
+			"code": "function Symbol() {} new Symbol();",
+			"languageOptions": {
+				"ecmaVersion": 2022
+			}
+		},
+		{
+			"code": "new foo(Symbol);",
+			"languageOptions": {
+				"ecmaVersion": 2022
+			}
+		},
+		{
+			"code": "new foo(bar, Symbol);",
+			"languageOptions": {
+				"ecmaVersion": 2022
+			}
+		},
+		{
+			"code": "var foo = BigInt(9007199254740991);",
+			"languageOptions": {
+				"ecmaVersion": 2022
+			}
+		},
+		{
+			"code": "function bar(BigInt) { var baz = new BigInt(9007199254740991);}",
+			"languageOptions": {
+				"ecmaVersion": 2022
+			}
+		},
+		{
+			"code": "function BigInt() {} new BigInt();",
+			"languageOptions": {
+				"ecmaVersion": 2022
+			}
+		},
+		{
+			"code": "new foo(BigInt);",
+			"languageOptions": {
+				"ecmaVersion": 2022
+			}
+		},
+		{
+			"code": "new foo(bar, BigInt);",
+			"languageOptions": {
+				"ecmaVersion": 2022
+			}
+		}
+	],
+	"invalid": [
+		{
+			"code": "var foo = new Symbol('foo');",
+			"languageOptions": {
+				"ecmaVersion": 2022
+			},
+			"errors": [
+				{
+					"message": "`Symbol` cannot be called as a constructor."
+				}
+			]
+		},
+		{
+			"code": "function bar() { return function Symbol() {}; } var baz = new Symbol('baz');",
+			"languageOptions": {
+				"ecmaVersion": 2022
+			},
+			"errors": [
+				{
+					"message": "`Symbol` cannot be called as a constructor."
+				}
+			]
+		},
+		{
+			"code": "var foo = new BigInt(9007199254740991);",
+			"languageOptions": {
+				"ecmaVersion": 2022
+			},
+			"errors": [
+				{
+					"message": "`BigInt` cannot be called as a constructor."
+				}
+			]
+		},
+		{
+			"code": "function bar() { return function BigInt() {}; } var baz = new BigInt(9007199254740991);",
+			"languageOptions": {
+				"ecmaVersion": 2022
+			},
+			"errors": [
+				{
+					"message": "`BigInt` cannot be called as a constructor."
+				}
+			]
+		}
+	],
+	"skipped": 0,
+	"runs": 1
+}

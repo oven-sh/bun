@@ -1,0 +1,288 @@
+{
+	"cases": [
+		{
+			"code": "var foo = { get bar(){return true;} };",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "class foo { get bar(){return true;} }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "class foo { get bar(){if(baz){return true;} else {return false;} } }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "class foo { get(){return true;} }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "Object.defineProperty(foo, \"bar\", { get: function () {return true;}});",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "Object.defineProperty(foo, \"bar\", { get: function () { ~function (){ return true; }();return true;}});",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "Object.defineProperties(foo, { bar: { get: function () {return true;}} });",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "Object.defineProperties(foo, { bar: { get: function () { ~function (){ return true; }(); return true;}} });",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "Reflect.defineProperty(foo, \"bar\", { get: function () {return true;}});",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "Reflect.defineProperty(foo, \"bar\", { get: function () { ~function (){ return true; }();return true;}});",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "Object.create(foo, { bar: { get() {return true;} } });",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "Object.create(foo, { bar: { get: function () {return true;} } });",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "Object.create(foo, { bar: { get: () => {return true;} } });",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "var get = function(){};",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "var get = function(){ return true; };",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "var foo = { bar(){} };",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "var foo = { bar(){ return true; } };",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "var foo = { bar: function(){} };",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "var foo = { bar: function(){return;} };",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "var foo = { bar: function(){return true;} };",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "var foo = { get: function () {} }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "var foo = { get: () => {}};",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "class C { get; foo() {} }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "foo.defineProperty(null, { get() {} });",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "foo.defineProperties(null, { bar: { get() {} } });",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "foo.create(null, { bar: { get() {} } });",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "Object.defineProperty({ get() {} }, 'foo', { value: 1 });",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "Reflect.defineProperty({ get() {} }, 'foo', { value: 1 });",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "Object.defineProperties({ foo: { get() {} } }, { bar: { value: 1 } });",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "Object.create({ foo: { get() {} } }, { bar: { value: 1 } });",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "let Object; Object.defineProperty(foo, 'bar', { get() {} })",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "function f() { Reflect.defineProperty(foo, 'bar', { get() {} }); var Reflect;}",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "function f(Object) { Object.defineProperties(foo, { bar: { get() {} } }) }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "if (x) { const Object = getObject(); Object.create(foo, { bar: { get() {} } }) }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "/* globals Object:off */ Object.defineProperty(foo, 'bar', { get() {} })",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "var foo = { get bar() {} };",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "var foo = { get\n bar () {} };",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "var foo = { get bar(){if(baz) {return true;}} };",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "var foo = { get bar() { ~function () {return true;}} };",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "var foo = { get bar() { return; } };",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "class foo { get bar(){} }",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "var foo = class {\n  static get\nbar(){} }",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "class foo { get bar(){ if (baz) { return true; }}}",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "class foo { get bar(){ ~function () { return true; }()}}",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "Object.defineProperty(foo, 'bar', { get: function (){}});",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "Object.defineProperty(foo, 'bar', { get: function getfoo (){}});",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "Object.defineProperty(foo, 'bar', { get(){} });",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "Object.defineProperty(foo, 'bar', { get: () => {}});",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "Object.defineProperty(foo, \"bar\", { get: function (){if(bar) {return true;}}});",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "Object.defineProperty(foo, \"bar\", { get: function (){ ~function () { return true; }()}});",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "Reflect.defineProperty(foo, 'bar', { get: function (){}});",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "Object.create(foo, { bar: { get: function() {} } })",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "Object.create(foo, { bar: { get() {} } })",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "Object.create(foo, { bar: { get: () => {} } })",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "Object?.defineProperty(foo, 'bar', { get: function (){} });",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "(Object?.defineProperty)(foo, 'bar', { get: function (){} });",
+			"ext": "js",
+			"kind": "invalid"
+		}
+	],
+	"skipped": {
+		"options that are not the defaults": 23,
+		"globals": 2
+	}
+}

@@ -1,0 +1,79 @@
+{
+	"valid": [
+		{
+			"code": "try { } catch (e) { three = 2 + 1; }"
+		},
+		{
+			"code": "try { } catch ({e}) { this.something = 2; }",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "function foo() { try { } catch (e) { return false; } }"
+		}
+	],
+	"invalid": [
+		{
+			"code": "try { } catch (e) { e = 10; }",
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"line": 1,
+					"column": 21
+				}
+			]
+		},
+		{
+			"code": "try { } catch (ex) { ex = 10; }",
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"line": 1,
+					"column": 22
+				}
+			]
+		},
+		{
+			"code": "try { } catch (ex) { [ex] = []; }",
+			"languageOptions": {
+				"ecmaVersion": 6
+			},
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"line": 1,
+					"column": 23
+				}
+			]
+		},
+		{
+			"code": "try { } catch (ex) { ({x: ex = 0} = {}); }",
+			"languageOptions": {
+				"ecmaVersion": 6
+			},
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"line": 1,
+					"column": 27
+				}
+			]
+		},
+		{
+			"code": "try { } catch ({message}) { message = 10; }",
+			"languageOptions": {
+				"ecmaVersion": 6
+			},
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"line": 1,
+					"column": 29
+				}
+			]
+		}
+	],
+	"skipped": 0,
+	"runs": 1
+}

@@ -1,0 +1,10 @@
+[
+	{"code":"try { } catch (e) { three = 2 + 1; }","module":[],"commonjs":[],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"try { } catch ({e}) { this.something = 2; }","module":[],"commonjs":[],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"function foo() { try { } catch (e) { return false; } }","module":[],"commonjs":[],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"try { } catch (e) { e = 10; }","module":[{"line":1,"column":21,"message":"Do not assign to the exception parameter."}],"commonjs":[{"line":1,"column":21,"message":"Do not assign to the exception parameter."}],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"try { } catch (ex) { ex = 10; }","module":[{"line":1,"column":22,"message":"Do not assign to the exception parameter."}],"commonjs":[{"line":1,"column":22,"message":"Do not assign to the exception parameter."}],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"try { } catch (ex) { [ex] = []; }","module":[{"line":1,"column":23,"message":"Do not assign to the exception parameter."}],"commonjs":[{"line":1,"column":23,"message":"Do not assign to the exception parameter."}],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"try { } catch (ex) { ({x: ex = 0} = {}); }","module":[{"line":1,"column":27,"message":"Do not assign to the exception parameter."}],"commonjs":[{"line":1,"column":27,"message":"Do not assign to the exception parameter."}],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"try { } catch ({message}) { message = 10; }","module":[{"line":1,"column":29,"message":"Do not assign to the exception parameter."}],"commonjs":[{"line":1,"column":29,"message":"Do not assign to the exception parameter."}],"bunJs":"ok","bunCjs":"ok"}
+]

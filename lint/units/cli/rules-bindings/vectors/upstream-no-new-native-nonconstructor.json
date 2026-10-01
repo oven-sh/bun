@@ -1,0 +1,16 @@
+[
+	{"code":"var foo = Symbol('foo');","module":[],"commonjs":[],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"function bar(Symbol) { var baz = new Symbol('baz');}","module":[],"commonjs":[],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"function Symbol() {} new Symbol();","module":[],"commonjs":[],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"new foo(Symbol);","module":[],"commonjs":[],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"new foo(bar, Symbol);","module":[],"commonjs":[],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"var foo = BigInt(9007199254740991);","module":[],"commonjs":[],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"function bar(BigInt) { var baz = new BigInt(9007199254740991);}","module":[],"commonjs":[],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"function BigInt() {} new BigInt();","module":[],"commonjs":[],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"new foo(BigInt);","module":[],"commonjs":[],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"new foo(bar, BigInt);","module":[],"commonjs":[],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"var foo = new Symbol('foo');","module":[{"line":1,"column":15,"message":"`Symbol` cannot be called as a constructor."}],"commonjs":[{"line":1,"column":15,"message":"`Symbol` cannot be called as a constructor."}],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"function bar() { return function Symbol() {}; } var baz = new Symbol('baz');","module":[{"line":1,"column":63,"message":"`Symbol` cannot be called as a constructor."}],"commonjs":[{"line":1,"column":63,"message":"`Symbol` cannot be called as a constructor."}],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"var foo = new BigInt(9007199254740991);","module":[{"line":1,"column":15,"message":"`BigInt` cannot be called as a constructor."}],"commonjs":[{"line":1,"column":15,"message":"`BigInt` cannot be called as a constructor."}],"bunJs":"ok","bunCjs":"ok"},
+	{"code":"function bar() { return function BigInt() {}; } var baz = new BigInt(9007199254740991);","module":[{"line":1,"column":63,"message":"`BigInt` cannot be called as a constructor."}],"commonjs":[{"line":1,"column":63,"message":"`BigInt` cannot be called as a constructor."}],"bunJs":"ok","bunCjs":"ok"}
+]

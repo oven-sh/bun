@@ -1,0 +1,35 @@
+type X = { get [a, b](): A };
+type X = { set [a, b](v) };
+type X = ({ [a, b]: c }) => R;
+type X = { m({ [a, b]: c }): R };
+type X = { get [a + b](): A };
+type X = { static get a(): A };
+type X = { readonly get a(): A };
+type X = { get a(): A, set a(v: A) };
+type X = { get a<T>(): A };
+type X = { get a(x): A };
+type X = { set a() };
+type X = { set a(v, w) };
+type X = { get a?(): A };
+type X = { get #a(): A {} };
+type X = { get 1n(): A {} };
+type X = ({ a, ...b = 1 }) => R;
+type X = ([a, ...b = 1]) => R;
+type X = (this?: A) => R;
+type X = (a?: A, this: B) => R;
+type X = (...a?: A[]) => R;
+type X = (...a, ...b) => R;
+type X = (a: A = 1, b?: B = 2) => R;
+type X = (public a?: A = 1) => R;
+type X = (public ...a: A[]) => R;
+type X = { m(public readonly a: A): R };
+type X = { m(readonly public a: A): R };
+interface I { m(a?: A = 1): R }
+interface I { [+1]: A }
+interface I { get [a, b](): A }
+declare function f(a?: A = 1): void;
+declare function f(public private a: A): void;
+function f(a?: A = 1): void;
+function f(public private a: A): void; function f() {}
+class C { m(a?: A = 1): void; m() {} }
+abstract class C { abstract m(public private a: A): void }

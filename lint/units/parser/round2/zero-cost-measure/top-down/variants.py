@@ -337,6 +337,30 @@ def vold(t):
         }
     }
 """)
+    # 6. the body of an interface
+    t.rep(f, """    fn parse_object_type_members(&mut self) -> Result<(), Error> {
+        self.lexer.expect(T::TOpenBrace)?;
+        self.parse_type_member_list()
+    }
+""", """    fn parse_object_type_members(&mut self) -> Result<(), Error> {
+        let mark = self.read_mark();
+        match self.old_skip_type_script_object_type() {
+            Ok(()) => Ok(()),
+            Err(err) => self.object_type_members_after_old_failed(&mark, err),
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn object_type_members_after_old_failed(&mut self, mark: &ReadMark<'a>, err: Error) -> Result<(), Error> {
+        if matches!(err, Error::StackOverflow | Error::Alloc(_)) {
+            return Err(err);
+        }
+        self.rewind_to_read_mark(mark);
+        self.lexer.expect(T::TOpenBrace)?;
+        self.parse_type_member_list()
+    }
+""")
     return {'old fns': len(names)}
 
 def v0(t): return {}

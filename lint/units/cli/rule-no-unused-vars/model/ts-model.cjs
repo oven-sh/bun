@@ -28,6 +28,7 @@ module.exports = {
 		const targets = new Map(), forHeads = new Set(), setters = new Set(), exported = new Set(), marked = new Set(), typeQueries = new Set(), typePredicates = new Set();
 		const globalBlocks = []; // a `global { }` block that stands inside a module declaration: that declaration
 		const namedInParameters = []; // every identifier, whatever it is, inside the parameters of a signature or of a setter
+		const parameterLists = []; // [owner, params] of each signature and of each setter
 		const identifiersUnder = (node, out) => { if (node.type === "Identifier") out.push(node); for (const [, child] of children(node)) identifiersUnder(child, out); return out; };
 		let loopDepth = 0;
 
@@ -78,7 +79,7 @@ module.exports = {
 				}
 				case "Property":
 				case "MethodDefinition":
-					if (node.kind === "set") { setters.add(node.value); for (const p of node.value.params) identifiersUnder(p, namedInParameters); }
+					if (node.kind === "set") { setters.add(node.value); parameterLists.push([node.value, node.value.params]); for (const p of node.value.params) identifiersUnder(p, namedInParameters); }
 					break;
 				case "TSParameterProperty": for (const id of patternNames(node.parameter, []).slice(0, 1)) marked.add(id.range[0]); break;
 				case "ExportNamedDeclaration":
@@ -90,7 +91,7 @@ module.exports = {
 					if (node.body && node.body.type === "TSModuleBlock" && (node.declare || declared || definitionFile)) markAmbient(node.body.body);
 					break;
 			}
-			if (SIGNATURES.has(node.type)) for (const p of node.params) identifiersUnder(p, namedInParameters);
+			if (SIGNATURES.has(node.type)) { parameterLists.push([node, node.params]); for (const p of node.params) identifiersUnder(p, namedInParameters); }
 			const saved = loopDepth;
 			if (isFn(node)) loopDepth = 0;
 			if (isLoop(node)) loopDepth++;
@@ -197,6 +198,21 @@ module.exports = {
 						const region = regions.find(r => token.range[0] >= r[0] && token.range[0] < r[1]);
 						up: for (let s = scopeAt(region[2]); s; s = s.upper) for (const v of s.variables) if (v.name === token.value) { quirk.add(v); if (view === "nearest") break up; }
 					}
+				}
+				if (process.env.BUN_SIG === "tokens") {
+					// BUN_SIG=tokens: in place of the identifier nodes of a parameter list, every identifier token between its first and last parameter, and every variable of the name on the way up.
+					for (const [owner, params] of parameterLists) {
+						if (params.length === 0 || (view && inRegion(params[0].range[0]))) continue;
+						const from = params[0].range[0], to = params.at(-1).range[1];
+						const top = scopeAt(params[0]);
+						void owner;
+						for (const token of sourceCode.ast.tokens) {
+							if (token.range[0] < from || token.range[0] >= to) continue;
+							if (!((token.type === "Identifier" || token.type === "Keyword") && /^[\p{ID_Start}$_]/u.test(token.value))) continue;
+							for (let s = top; s; s = s.upper) for (const v of s.variables) if (v.name === token.value) quirk.add(v);
+						}
+					}
+					namedInParameters.length = 0;
 				}
 				for (const id of namedInParameters) {
 					if (view && inRegion(id.range[0])) continue;

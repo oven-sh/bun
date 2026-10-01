@@ -1,4 +1,8 @@
 // Go value semantics that the ported bodies rely on: nil-able slices, signed lengths, guarded indexing.
+
+// `string` where a record keeps it or a function hands it on: the bytes of a source text, of an arena or of a constant.
+pub type Text<'a> = &'a [u8];
+
 pub trait GoIndex: Copy {
     fn to_index(self) -> Option<usize>;
 }

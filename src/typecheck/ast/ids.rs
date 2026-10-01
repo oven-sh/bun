@@ -67,6 +67,9 @@ define_id!(
     FlowListId,
 );
 
+// A diagnostic is named by its index in the store that made it: bit 31 is never set.
+define_id!(DiagnosticId);
+
 impl ModifierListId {
     // A ModifierList embeds a NodeList upstream.
     #[inline]

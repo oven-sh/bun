@@ -1501,7 +1501,10 @@ impl PostgresSQLConnection {
                 socket.close(uws::CloseKind::Normal);
             } else {
                 // A failed connection does not wait for its peer, which `Normal` does over TLS
-                // (for a close_notify): a peer gone silent is one way connections fail.
+                // (for a close_notify): a peer gone silent is one way connections fail. It still
+                // sends its own: an idle or expired connection has a healthy peer, which logs a
+                // close without one as an error.
+                socket.shutdown();
                 socket.close(uws::CloseKind::FastShutdown);
                 // Parked behind ciphertext the kernel would not take.
                 if !socket.is_closed() {

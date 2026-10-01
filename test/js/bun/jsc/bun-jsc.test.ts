@@ -669,7 +669,6 @@ it.skipIf(!isMacOS && !isWindows).each(["process.exit(0)", "the event loop runni
     using dir = tempDir("sampling-profiler", {});
     const script = `
       require("bun:jsc").startSamplingProfiler(process.argv[1]);
-      for (const end = Date.now() + 50; Date.now() < end; ) Math.sqrt(end);
       ${ending === "process.exit(0)" ? ending : ""}
     `;
     await using proc = Bun.spawn({

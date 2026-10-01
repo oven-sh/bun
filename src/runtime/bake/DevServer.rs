@@ -1091,22 +1091,21 @@ impl Drop for DevServer {
 
         // The map's `Drop` runs `SerializedFailure::drop` for each value.
 
-        if self.current_bundle.is_some() {
+        if let Some(current_bundle) = &mut self.current_bundle {
             debug_assert!(false); // impossible to de-initialize this state correctly.
+            drain_current_bundle_requests(current_bundle);
         }
 
         {
-            let mut r = self.next_bundle.requests.first;
-            while !r.is_null() {
-                // SAFETY: `r` is a live intrusive-list node linked by `defer_request`;
-                // read the link before `deref_` may reclaim the node.
-                let next = unsafe { (*r).next };
-                // SAFETY: `data` was initialized by `defer_request` before being
-                // linked; this exclusive borrow ends at `deref_` below.
+            while let Some(r) = self.next_bundle.requests.pop_first() {
+                // SAFETY: `pop_first` returns a live node linked by `defer_request`,
+                // which initialized `data`; this exclusive borrow ends at `deref_`.
                 let data = unsafe { (*r).data.assume_init_mut() };
                 debug_assert!(!matches!(data.handler, Handler::ServerHandler(_)));
-                data.deref_();
-                r = next;
+                // When the close of the last connection drops `self`, uWS has not
+                // yet run that connection's abort callback, which points at this
+                // node.
+                data.abort_and_deref();
             }
             self.next_bundle.promise.deinit_idempotently();
         }
@@ -1968,7 +1967,7 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
                                     .as_ref()
                                     .expect("infallible: server bound")
                                     .get_or_load_plugins(
-                                        crate::server::ServePluginsCallback::DevServer(dev),
+                                        crate::server::ServePluginsCallback::DevServer,
                                     );
                                 match load_result {
                                     crate::server::GetOrStartLoadResult::Pending => {
@@ -2994,6 +2993,14 @@ impl DeferredRequest {
         }
     }
 
+    /// Ends a request that the dev server will not answer, then drops the dev
+    /// server's reference. The response must be ended first: until then uWS
+    /// holds an abort callback that points at this node.
+    fn abort_and_deref(&mut self) {
+        self.abort();
+        self.deref_();
+    }
+
     pub(crate) fn weak_ref(&mut self) {
         debug_assert!(!self.weakly_referenced_by_requestcontext);
         self.weakly_referenced_by_requestcontext = true;
@@ -3811,8 +3818,7 @@ fn drain_current_bundle_requests(current_bundle: &mut CurrentBundle) {
         // SAFETY: pop_first returns a live `*mut Node<T>`; `data` was
         // initialized by `defer_request`.
         let req = unsafe { (*node).data.assume_init_mut() };
-        req.abort();
-        req.deref_();
+        req.abort_and_deref();
     }
 }
 
@@ -6239,8 +6245,7 @@ impl DevServer {
             // `data` was initialized by `defer_request`.
             unsafe {
                 let d = (*item).data.assume_init_mut();
-                d.abort();
-                d.deref_();
+                d.abort_and_deref();
             }
         }
         self.next_bundle.route_queue.clear_retaining_capacity();

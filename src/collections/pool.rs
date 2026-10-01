@@ -51,6 +51,8 @@ impl<T> Node<T> {
     }
 }
 
+/// Links nodes that it does not own: dropping the list frees nothing. Whoever
+/// allocated the nodes frees them (`DataStruct` for the pool's free list).
 pub struct SinglyLinkedList<T> {
     // INTRUSIVE: list head; pop_first hands node to caller
     pub first: *mut Node<T>,
@@ -60,26 +62,6 @@ impl<T> Default for SinglyLinkedList<T> {
     fn default() -> Self {
         Self {
             first: ptr::null_mut(),
-        }
-    }
-}
-
-impl<T> Drop for SinglyLinkedList<T> {
-    fn drop(&mut self) {
-        // The free list owns its nodes (each `release()` hands ownership back).
-        // Without this, the TLS-backed pool's `DataStruct` strands every cached
-        // node when the thread exits.
-        let mut next = core::mem::replace(&mut self.first, ptr::null_mut());
-        while !next.is_null() {
-            let node = next;
-            next = Node::next_of(node);
-            // SAFETY: free-list nodes always carry initialized `data`
-            // (`release()` only stores nodes that were used) and are
-            // exclusively owned by the list.
-            unsafe {
-                (*node).data.assume_init_drop();
-                drop(bun_core::heap::take(node));
-            }
         }
     }
 }
@@ -150,6 +132,23 @@ impl<T> Default for DataStruct<T> {
             list: SinglyLinkedList::default(),
             loaded: false,
             count: 0,
+        }
+    }
+}
+
+impl<T> Drop for DataStruct<T> {
+    fn drop(&mut self) {
+        // The pool owns the nodes on its free list (each `release()` hands
+        // ownership back). Without this, the TLS-backed storage strands every
+        // cached node when the thread exits.
+        while let Some(node) = self.list.pop_first() {
+            // SAFETY: free-list nodes always carry initialized `data`
+            // (`release()` only stores nodes that were used), are heap boxes
+            // from `push`/`get_node`, and are exclusively owned by the pool.
+            unsafe {
+                (*node).data.assume_init_drop();
+                drop(bun_core::heap::take(node));
+            }
         }
     }
 }
@@ -606,28 +605,48 @@ mod tests {
             assert_eq!(unsafe { *(*node).data.assume_init_ref() }, expect);
         }
         assert!(list.pop_first().is_none());
-        // Nothing was handed to the list's `Drop` (it is empty), so `nodes`
-        // still owns every allocation.
-        core::mem::forget(list);
     }
 
-    /// The list owns whatever is still on it at `Drop` — dropping it must run
-    /// each element's destructor exactly once and free each node.
+    /// The list does not own its nodes: dropping it with a node still linked
+    /// runs no destructor and frees nothing.
     #[test]
-    fn singly_linked_list_drop_frees_nodes() {
+    fn singly_linked_list_drop_leaves_nodes() {
         let _serial = serial();
         let before = drops();
+        let mut node = Box::new(Node {
+            next: ptr::null_mut(),
+            data: MaybeUninit::new(Tracked(Box::new(7))),
+        });
         let mut list: SinglyLinkedList<Tracked> = SinglyLinkedList::default();
+        list.prepend(&mut node);
+        drop(list);
+        assert_eq!(drops(), before);
+        // SAFETY: `data` was initialized above and the list did not drop it.
+        unsafe {
+            assert_eq!(*node.data.assume_init_ref().0, 7);
+            node.data.assume_init_drop();
+        }
+        assert_eq!(drops(), before + 1);
+    }
+
+    /// The pool storage owns whatever is still on its free list at `Drop`:
+    /// dropping it must run each element's destructor exactly once and free
+    /// each node.
+    #[test]
+    fn data_struct_drop_frees_nodes() {
+        let _serial = serial();
+        let before = drops();
+        let mut data: DataStruct<Tracked> = DataStruct::default();
         for i in 0..3 {
             let node = bun_core::heap::into_raw(Box::new(Node {
                 next: ptr::null_mut(),
                 data: MaybeUninit::new(Tracked(Box::new(i))),
             }));
             // SAFETY: freshly allocated and exclusively owned; ownership moves
-            // to the list, whose `Drop` frees it.
-            list.prepend(unsafe { &mut *node });
+            // to the pool storage, whose `Drop` frees it.
+            data.list.prepend(unsafe { &mut *node });
         }
-        drop(list);
+        drop(data);
         assert_eq!(drops(), before + 3);
     }
 

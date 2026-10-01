@@ -1053,9 +1053,6 @@ pub struct ExprIn {
 
     /// The parent only reads, calls or assigns a property of this: `x.a`, `x[a]`, `const { a } = x`, not `delete x.a`.
     pub(crate) is_property_access_target: bool,
-
-    /// This is the function of a method, getter, setter or constructor.
-    pub(crate) is_method_value: bool,
 }
 
 /// This function exists to tie all of these checks together in one place

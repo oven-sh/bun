@@ -1179,13 +1179,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             Some(self.maybe_keep_expr_symbol_name(visited, name, was_anon));
                         self.decorator_class_name = prev_dcn;
                     } else {
-                        self.visit_expr_in_out(
-                            property.value.as_mut().unwrap(),
-                            ExprIn {
-                                is_method_value: property.flags.contains(flags::Property::IsMethod),
-                                ..Default::default()
-                            },
-                        );
+                        self.visit_expr(property.value.as_mut().unwrap());
                     }
 
                     if Self::IS_TYPESCRIPT_ENABLED {

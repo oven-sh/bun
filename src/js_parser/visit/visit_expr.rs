@@ -1756,7 +1756,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     value,
                     ExprIn {
                         assign_target: in_.assign_target,
-                        is_method_value: property.flags.contains(Flags::Property::IsMethod),
                         ..Default::default()
                     },
                 );
@@ -2697,6 +2696,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline(never)] // PERF(port:frame): see e_jsx_element.
     fn e_function(p: &mut Self, e: &mut Expr, in_: ExprIn) {
         let expr = *e;
+        let _ = in_;
         let mut e_ = expr.data.e_function().expect("infallible: variant checked");
         if p.is_revisit_for_substitution {
             return;
@@ -2705,7 +2705,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut react_hook_data: Option<crate::parser::HookContext> = None;
         let prev_hook_ctx = p.react_refresh.hook_ctx_storage;
         // A method cannot be wrapped in a call. Like react-refresh/babel, ignore its hook calls.
-        p.react_refresh.hook_ctx_storage = if in_.is_method_value {
+        let is_method = e_
+            .func
+            .flags
+            .contains(Flags::Function::IsUniqueFormalParameters);
+        p.react_refresh.hook_ctx_storage = if is_method {
             None
         } else {
             Some(core::ptr::NonNull::from(&mut react_hook_data))

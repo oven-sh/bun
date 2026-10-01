@@ -1807,6 +1807,115 @@ describe("a TLS socket over a Duplex transport follows that transport's teardown
   });
 });
 
+it("a wrap whose transport closed before its engine started leaves later wraps alone", async () => {
+  // The close of a transport that has no engine yet is carried out by the
+  // queued StartTLS task, and the native context is freed by a second task
+  // after it. That context holds the four functions it listens with. They
+  // were left set, so a GC between the two tasks could free them, and the
+  // second task then wrote a null data pointer into freed cells. Another
+  // wrap made in between gets those cells for its own functions, and its
+  // handshake never finishes.
+  const script = `
+    const tls = require("node:tls");
+    const { Duplex } = require("node:stream");
+
+    const secureContext = tls.createSecureContext(${JSON.stringify(COMMON_CERT_)});
+    const clients = 8;
+    const earlyCloses = 16;
+
+    // Two streams joined in memory: a write reaches the peer inside the call.
+    function pair(onWrite) {
+      let a, b;
+      a = new Duplex({
+        read() {},
+        write(chunk, _encoding, callback) { if (onWrite) onWrite(); b.push(chunk); callback(); },
+        final(callback) { b.push(null); callback(); },
+      });
+      b = new Duplex({
+        read() {},
+        write(chunk, _encoding, callback) { a.push(chunk); callback(); },
+        final(callback) { a.push(null); callback(); },
+      });
+      return [a, b];
+    }
+    function serve(stream) {
+      const server = new tls.TLSSocket(stream, { isServer: true, secureContext });
+      server.on("error", () => {});
+      server.once("data", data => server.end("hello " + data));
+    }
+
+    const state = [];
+    let answered = 0;
+    function report() {
+      const counts = {};
+      for (const one of state) counts[one] = (counts[one] || 0) + 1;
+      console.log("answered " + answered + " of " + clients + " " + JSON.stringify(counts));
+      process.exit(0);
+    }
+    // Bounds the failure only. The success path reports as soon as the last
+    // client holds its answer.
+    const bound = setTimeout(report, 15000);
+
+    function client(i) {
+      const [serverSide, clientSide] = pair();
+      serve(serverSide);
+      state[i] = "no secureConnect";
+      const socket = tls.connect({ socket: clientSide, rejectUnauthorized: false }, () => {
+        state[i] = "secure, no answer";
+        socket.write("c" + i);
+      });
+      socket.on("data", data => {
+        if (String(data) !== "hello c" + i) return;
+        state[i] = "answered";
+        if (++answered === clients) {
+          clearTimeout(bound);
+          report();
+        }
+      });
+      socket.on("error", err => { state[i] = "error " + err.code; });
+    }
+
+    let started = false;
+    function insideTheWindow() {
+      // Runs while the last wrap writes its ClientHello: after the closed
+      // wraps ran their close, and before the task that frees them.
+      if (started) return;
+      started = true;
+      Bun.gc(true);
+      for (let i = 0; i < clients; i++) client(i);
+    }
+
+    // Wraps whose transport closes in the turn that made them.
+    // resetAndDestroy() holds no closure over the wrap, and
+    // removeAllListeners() takes the four native functions off the
+    // transport, so nothing roots them. Each one alone keeps them rooted.
+    for (let i = 0; i < earlyCloses; i++) {
+      const transport = new Duplex({ read() {}, write(chunk, _encoding, callback) { callback(); } });
+      const socket = tls.connect({ socket: transport, rejectUnauthorized: false });
+      socket.on("error", () => {});
+      socket.resetAndDestroy();
+      transport.removeAllListeners();
+    }
+    {
+      const [serverSide, clientSide] = pair(insideTheWindow);
+      tls.connect({ socket: clientSide, rejectUnauthorized: false }).on("error", () => {});
+      serve(serverSide);
+    }
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: 'answered 8 of 8 {"answered":8}',
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 describe("a TLS socket over a Duplex transport reports that transport's error", () => {
   // Node re-emits the transport's 'error' on its JSStreamSocket wrap, and
   // TLSSocket._init routes the wrap's error through _emitTLSError:

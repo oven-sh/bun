@@ -2803,6 +2803,15 @@ impl ThreadSafeFunction {
     /// microtasks one call queued are drained before the next call
     /// (https://github.com/nodejs/node/pull/38506), but not before the first.
     pub(crate) fn dispatch_one(&mut self, is_first: bool) -> Result<bool, bun_jsc::Stopped> {
+        // A checkpoint can stop the worker. Keep every payload in the queue
+        // (and the C callback intact) until it succeeds, so teardown owns them.
+        if !is_first
+            && !self.is_closing()
+            && let Some(loop_) = self.loop_mut()
+        {
+            loop_.drain_microtasks()?;
+        }
+
         let mut queue_finalizer_after_call = false;
         let task = 'brk: {
             // `MutexGuard` holds the lock by raw pointer, so it does not borrow
@@ -2850,11 +2859,7 @@ impl ThreadSafeFunction {
             break 'brk t;
         };
 
-        let called = match self.loop_mut() {
-            Some(loop_) if !is_first => loop_.drain_microtasks(),
-            _ => Ok(()),
-        }
-        .and_then(|()| self.call(task));
+        let called = self.call(task);
 
         // The last queued call finalizes even when the VM is stopping.
         if queue_finalizer_after_call {
@@ -2870,10 +2875,13 @@ impl ThreadSafeFunction {
     /// One queued call from the drain, which is its landing frame: what it
     /// left pending is folded here. `Err`: the VM is stopping.
     fn call(&mut self, task: *mut c_void) -> Result<(), bun_jsc::Stopped> {
-        let Some(env) = self.env.as_ref().map(NapiEnvRef::get) else {
-            // env torn down; nothing to call into.
-            return Ok(());
-        };
+        // Teardown closes the function before dropping its env; dispatch_one
+        // cannot dequeue from a closed function.
+        let env = self
+            .env
+            .as_ref()
+            .expect("dispatch requires a live env")
+            .get();
         // SAFETY: env is valid while the TSF is live.
         let env = unsafe { &*env };
         match self.deliver(env, task) {

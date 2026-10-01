@@ -725,6 +725,48 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
   });
 
   describe("napi_threadsafe_function", () => {
+    describe.each(["natural", "exit", "terminate"])("payload ownership at worker %s", how => {
+      it.each([
+        [0, 2, 0],
+        [0, 8, 0],
+        [4, 8, 0],
+        [0, 8, 1],
+        [4, 8, 1],
+        [0, 8, 2],
+        [4, 8, 2],
+      ])(
+        "accounts for accepted payloads before finalize (capacity=%d, count=%d, release=%d)",
+        async (capacity, count, mode) => {
+          await using proc = spawn({
+            cmd: [
+              bunExe(),
+              join(__dirname, "napi-app/tsfn-payload-ownership.js"),
+              JSON.stringify([how, capacity, count, mode]),
+            ],
+            env: bunEnv,
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          const result = JSON.parse(stdout.trim());
+          expect(result).toMatchObject({
+            accepted: capacity ? Math.min(capacity, count) : count,
+            at_finalize: result.accepted,
+            finalized: 1,
+            duplicates: 0,
+            late: 0,
+            released: 1,
+          });
+          expect(result.delivered + result.returned).toBe(result.accepted);
+          expect({ stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+            stderr: "",
+            exitCode: 0,
+            signalCode: null,
+          });
+        },
+      );
+    });
+
     it("passes NULL js_callback to call_js when created without a func", async () => {
       const output = await checkSameOutput("test_tsfn_null_js_callback_driver", []);
       expect(output).toContain("js_callback == NULL: 1");

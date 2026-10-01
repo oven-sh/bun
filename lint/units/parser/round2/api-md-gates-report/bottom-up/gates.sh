@@ -92,6 +92,12 @@ case "${1:-}" in
     # The binary names the commit it was built from: commit first.
     [ -z "$(git status --porcelain --untracked-files=no)" ] || say "release: the worktree has uncommitted changes"
     run release bun run build:release -j8 || exit 1
+    # The head build of an earlier commit stays, in a directory of head/ named by its commit: only base/ and head/ are kept out of the notes repository.
+    old=$(cut -c1-10 "$M/head/REVISION" 2>/dev/null)
+    if [ -n "$old" ] && [ "$old" != "$head_rev" ]; then
+      mkdir -p "$M/head/$old"
+      for f in bun bun-profile bun-profile.linker-map REVISION; do [ -e "$M/head/$f" ] && mv "$M/head/$f" "$M/head/$old/"; done
+    fi
     mkdir -p "$M/head"
     cp build/release/bun build/release/bun-profile "$M/head/"
     echo "$(git rev-parse HEAD) built in $WT (bun run build:release -j8), $("$M/head/bun" --revision)" > "$M/head/REVISION"
@@ -99,7 +105,8 @@ case "${1:-}" in
     (cd "$M" && sha256sum base/bun base/bun-profile head/bun head/bun-profile | tee -a "$OUT/summary.txt") ;;
   a1)
     # The base run of a corpus is kept: only the head runs again. diff.mjs exits with 1 for an A>R, a crash, a hang or a record without a cause.
-    R=$OUT/a1; mkdir -p "$R"; cd "$GD" || exit 9
+    # The runs and the list of every differing record (80 MB at be1ebe5295) stay outside the notes repository: only the tables go to $OUT/a1.
+    R=${A1_RUNS:-/tmp/parser-final-a1}; mkdir -p "$R" "$OUT/a1"; cd "$GD" || exit 9
     for corpus in corpus.*.json; do
       c=${corpus#corpus.}; c=${c%.json}
       [ -s "$R/base.$c.jsonl.gz" ] || "$M/base/bun" harness.mjs "$corpus" "$R/base.$c.jsonl.gz" --jobs=4 > "$R/base.$c.log" 2>&1
@@ -107,7 +114,8 @@ case "${1:-}" in
       oracle=oracle.$c.jsonl.gz
       [ -s "$oracle" ] || { oracle=$R/oracle.$c.jsonl.gz; bun oracle.mjs "$corpus" "$oracle" > "$R/oracle.$c.log" 2>&1; }
       bun diff.mjs "$R/base.$c.jsonl.gz" "$R/head.$c.jsonl.gz" "--oracle=$oracle" --causes=causes.mjs "--out=$R/diff.$c.jsonl" --show=3 > "$R/diff.$c.txt" 2>&1
-      say "a1 $c diff rc=$? | $(tail -1 "$R/base.$c.log") | $(tail -1 "$R/head.$c.log") | $(sed -n 3p "$R/diff.$c.txt")"
+      say "a1 $c diff rc=$? | $(tail -1 "$R/base.$c.log" 2>/dev/null) | $(tail -1 "$R/head.$c.log") | $(sed -n 3p "$R/diff.$c.txt")"
+      cp "$R/diff.$c.txt" "$R/head.$c.log" "$OUT/a1/"
     done ;;
   cg)
     # Without the cache of the runtime transpiler: with it, the first run of a binary parses the bench script and a later run does not.

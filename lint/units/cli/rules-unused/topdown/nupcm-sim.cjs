@@ -127,7 +127,7 @@ function run(code, ext) {
 const args = process.argv.slice(2);
 let show = 20, forceExt = null;
 const inputs = [];
-const push = c => inputs.push(typeof c === "string" ? { code: c } : { code: c.code, ext: c.ext });
+const push = c => inputs.push(typeof c === "string" ? { code: c } : { code: c.code, ext: c.ext || (c.jsx ? "jsx" : undefined) });
 while (args.length) {
 	const a = args.shift();
 	if (a === "--show") show = Number(args.shift());

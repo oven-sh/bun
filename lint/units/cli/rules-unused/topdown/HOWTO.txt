@@ -14,21 +14,21 @@ no-unused-private-class-members
                        THE RULE AS PLANNED, in JavaScript, on ESLint's tree, compared with ESLint's rule. It reads no parent: the
                        node above a member says "only written" before the walk reaches the member, and a name is looked up in the
                        class bodies whose text holds it. Run (2026-10-01), no difference anywhere:
-                       ESLint's 61 cases (as .js and as .ts), the 99 of typescript-eslint's test (core rule), cases/own.json 112,
+                       ESLint's 61 cases (as .js and as .ts), the 99 of typescript-eslint's test (core rule), cases/own.json 115,
                        the generated lists 7,084 .js and 33,288 .ts (make-edge.cjs), files with a private name: 550 of bun,
                        192 of TypeScript's tests/cases, 520 of ESLint and its node_modules, 3,675 of test262 and other trees.
   nupcm-real.cjs       node nupcm-real.cjs --probe <binary> [--show N] <file | cases.json | --list files.txt>...
                        a BINARY on Bun's tree (../probe: `nupcm <file>...`) against ESLint. `extra` has to be 0.
   make-edge.cjs        node make-edge.cjs js|ts [--small] > list.json : each declaration form x each place x each form of the member.
-  make-seed-nupcm.cjs  node make-seed-nupcm.cjs > seed/no-unused-private-class-members.json : 836 cases (461 js, 2 jsx, 369 ts, 2 tsx,
-                       2 d.ts; 318 reports) with ESLint's answer as `expect`: ESLint's 61 (`eslintTest`), typescript-eslint's 99, cases/own.json,
+  make-seed-nupcm.cjs  node make-seed-nupcm.cjs > seed/no-unused-private-class-members.json : 839 cases (461 js, 2 jsx, 372 ts, 2 tsx,
+                       2 d.ts; 321 reports) with ESLint's answer as `expect`: ESLint's 61 (`eslintTest`), typescript-eslint's 99, cases/own.json,
                        cases/edge-js.json, cases/edge-ts.json. The seed of test/cli/lint/rules/no-unused-private-class-members.json.
 
   cross-nupcm.cjs      node cross-nupcm.cjs : what rules.test.ts asks across rules. 19 cases of the eleven fixtures of the tree get a line
                        of this rule from ESLint (seed/no-unused-private-class-members.cross.json: add them to its fixture); 1 case of
                        the seed gets a line of no-self-assign (`this.#x = this.#x`: add it to that fixture).
-  Bun's lint parse takes all 836 cases of the seed (checked with the parse of /tmp/nuv/sitesprobe, a probe of the other unit).
-  The generated cases of the fixture (--small) export the class and read the parameters: 321 of the 836 get a line of
+  Bun's lint parse takes all 839 cases of the seed (checked with the parse of /tmp/nuv/sitesprobe, a probe of the other unit).
+  The generated cases of the fixture (--small) export the class and read the parameters: about 321 of the 839 get a line of
                        no-unused-vars from ESLint (830 when they did not), 22 a line of no-undef.
 
 no-unused-vars (the rule itself is modelled in ../../rule-no-unused-vars/topdown: nuv-sim.cjs, nuv-sim-ts.cjs, oracle.cjs)

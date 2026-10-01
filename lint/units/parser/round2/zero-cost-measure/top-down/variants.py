@@ -15,7 +15,8 @@ Build one with paren-expr-seam/run.py (OUT=/tmp/zcm-td/seam/out RELAX=1), link i
            the base first where the sink is Discard; where that returns Err, the lexer and the log go back and the grammar of
            the head reads. The trigger is incomplete: the grammar of the base logs most errors and returns Ok.
   vold2    vold with the trigger `read.is_err() | (log.errors != mark.errors)`: two jumps in the assembly. For reading only.
-  vold3    vold with the trigger as a wrapping sum of the two conditions: one jump. The one to measure and to run the harness on."""
+  vold3    vold with the trigger as a wrapping sum of the two conditions: one jump. The one to measure and to run the harness on.
+  f3       head with the named-like cast recognised at the word of the cast (one jump per cast) instead of before every statement."""
 import os, re, shutil, sys
 
 SRC = '/workspace/wt/parser/src/js_parser'
@@ -478,12 +479,189 @@ def vold3(t):
     t.write(f, s)
     return c
 
+def f3(t):
+    """Named-like cast (`type as = 1`, `interface as {}`) decided where the word of the cast is met, not before every
+    statement. parse_expr_or_let_stmt hands parse_suffix the options of the statement whose first token is the operand; the
+    handler of `as` / `satisfies`, inside the block that already knows the word, asks a cold function whether the operand is the
+    lone name `type`, `interface`, `namespace` or `module` with the word right after it and whether the declaration is read (the
+    rules of the head's parse_stmt_named_like_cast, unchanged). If so it leaves the word unread, and the flow of the base reads
+    the declaration. Cost: one jump per cast. Nothing runs before or after the expression of a statement."""
+    S, PS, M = 'parse/parse_stmt.rs', 'parse/parse_suffix.rs', 'parse/mod.rs'
+    # 1. nothing before the expression of a statement
+    t.rep(S, """        if Self::IS_TYPESCRIPT_ENABLED
+            && is_identifier
+            && let Some(keyword) = js_lexer::TypescriptStmtKeyword::from_bytes(name)
+            && let Some(stmt) = Self::parse_stmt_named_like_cast(p, opts, loc, keyword)?
+        {
+            return Ok(stmt);
+        }
+""", '')
+    # 2. the speculative reading can start on the word
+    t.rep(S, """            && !Self::is_declaration_named_like_cast(p, keyword, opts.is_typescript_declare)
+        {
+            return Ok(None);
+        }
+        p.lexer.next()?;""", """            && !Self::is_declaration_named_like_cast(p, keyword, opts.is_typescript_declare, false)
+        {
+            return Ok(None);
+        }
+        p.lexer.next()?;""")
+    t.rep(S, """    fn is_declaration_named_like_cast(
+        p: &mut Self,
+        keyword: js_lexer::TypescriptStmtKeyword,
+        is_ambient: bool,
+    ) -> bool {
+        let old_lexer = p.lexer.snapshot();""", """    pub(crate) fn is_declaration_named_like_cast(
+        p: &mut Self,
+        keyword: js_lexer::TypescriptStmtKeyword,
+        is_ambient: bool,
+        is_at_word: bool,
+    ) -> bool {
+        let old_lexer = p.lexer.snapshot();""")
+    t.rep(S, """            Self::read_declaration_named_like_cast(p, keyword, is_ambient).unwrap_or(false);""", """            Self::read_declaration_named_like_cast(p, keyword, is_ambient, is_at_word)
+                .unwrap_or(false);""")
+    t.rep(S, """        keyword: js_lexer::TypescriptStmtKeyword,
+        is_ambient: bool,
+    ) -> Result<bool> {
+        p.lexer.next()?;
+        let at_name = p.lexer.snapshot();""", """        keyword: js_lexer::TypescriptStmtKeyword,
+        is_ambient: bool,
+        is_at_word: bool,
+    ) -> Result<bool> {
+        if !is_at_word {
+            p.lexer.next()?;
+        }
+        let at_name = p.lexer.snapshot();""")
+    # 3. parse_suffix knows the statement whose first token is its operand
+    t.rep(PS, """    pub(crate) fn parse_suffix(
+        &mut self,
+        left: &mut Expr,
+        level: Level,
+        mut errors: Option<&mut DeferredErrors>,
+        flags: EFlags,
+    ) -> Result<(), Error> {
+        let p = self;
+""", """    #[inline(always)]
+    pub(crate) fn parse_suffix(
+        &mut self,
+        left: &mut Expr,
+        level: Level,
+        errors: Option<&mut DeferredErrors>,
+        flags: EFlags,
+    ) -> Result<(), Error> {
+        self.parse_suffix_of(left, level, errors, flags, None)
+    }
+
+    /// `parse_suffix` after the name that starts the statement of `opts`.
+    #[inline(always)]
+    pub(crate) fn parse_suffix_of_statement_name(
+        &mut self,
+        left: &mut Expr,
+        opts: &crate::parser::ParseStatementOptions<'a>,
+    ) -> Result<(), Error> {
+        self.parse_suffix_of(left, Level::Lowest, None, EFlags::None, Some(opts))
+    }
+
+    fn parse_suffix_of(
+        &mut self,
+        left: &mut Expr,
+        level: Level,
+        mut errors: Option<&mut DeferredErrors>,
+        flags: EFlags,
+        statement: Option<&crate::parser::ParseStatementOptions<'a>>,
+    ) -> Result<(), Error> {
+        let p = self;
+""")
+    t.rep(PS, "                _ => Self::sfx_handle_typescript_as(p, level, left),", "                _ => Self::sfx_handle_typescript_as(p, level, left, statement),")
+    t.rep(PS, """    fn sfx_handle_typescript_as(p: &mut Self, level: Level, left: &Expr) -> CResult {
+        if Self::IS_TYPESCRIPT_ENABLED
+            && level.lt(Level::Compare)
+            && !p.lexer.has_newline_before
+            && (p.lexer.is_contextual_keyword(b"as") || p.lexer.is_contextual_keyword(b"satisfies"))
+        {
+""", """    /// On the word of a cast after the name that starts a statement: whether the name is "type", "interface", "namespace" or "module" with the word right after it, and the declaration of that word is what is read.
+    #[cold]
+    #[inline(never)]
+    fn is_declaration_at_word_of_cast(
+        p: &mut Self,
+        left: &Expr,
+        opts: &crate::parser::ParseStatementOptions<'a>,
+    ) -> bool {
+        use crate::js_lexer::TypescriptStmtKeyword as Keyword;
+        let ExprData::EIdentifier(ident) = left.data else {
+            return false;
+        };
+        let name = p.load_name_from_ref(ident.ref_);
+        let Some(keyword) = Keyword::from_bytes(name) else {
+            return false;
+        };
+        match keyword {
+            Keyword::TsStmtType | Keyword::TsStmtInterface => {}
+            Keyword::TsStmtNamespace | Keyword::TsStmtModule => {
+                if opts.scope == crate::parser::StatementScope::Nested {
+                    return false;
+                }
+            }
+            Keyword::TsStmtAbstract | Keyword::TsStmtGlobal | Keyword::TsStmtDeclare => return false,
+        }
+        // Blanks and comments on the line are all that may stand between the name and the word.
+        let contents = p.lexer.contents;
+        let mut i = (left.loc.start.max(0) as usize).saturating_add(name.len());
+        let end = p.lexer.start;
+        while i < end {
+            match contents.get(i) {
+                Some(b' ' | b'\\t') => i += 1,
+                Some(b'/') if contents.get(i + 1) == Some(&b'*') => {
+                    i += 2;
+                    while i < end
+                        && !(contents.get(i) == Some(&b'*') && contents.get(i + 1) == Some(&b'/'))
+                    {
+                        i += 1;
+                    }
+                    i += 2;
+                }
+                _ => return false,
+            }
+        }
+        p.is_lint_parse()
+            || Self::is_declaration_named_like_cast(p, keyword, opts.is_typescript_declare, true)
+    }
+
+    fn sfx_handle_typescript_as(
+        p: &mut Self,
+        level: Level,
+        left: &Expr,
+        statement: Option<&crate::parser::ParseStatementOptions<'a>>,
+    ) -> CResult {
+        if Self::IS_TYPESCRIPT_ENABLED
+            && level.lt(Level::Compare)
+            && !p.lexer.has_newline_before
+            && (p.lexer.is_contextual_keyword(b"as") || p.lexer.is_contextual_keyword(b"satisfies"))
+        {
+            if let Some(opts) = statement
+                && Self::is_declaration_at_word_of_cast(p, left, opts)
+            {
+                return Ok(Continuation::Done);
+            }
+""")
+    # 4. the one call whose operand is the name that starts a statement
+    t.rep(M, """        if let js_ast::StmtOrExpr::Expr(ref mut e) = result.stmt_or_expr {
+            p.parse_suffix(e, Level::Lowest, None, EFlags::None)?;
+        }
+        Ok(result)
+    }""", """        if let js_ast::StmtOrExpr::Expr(ref mut e) = result.stmt_or_expr {
+            p.parse_suffix_of_statement_name(e, opts)?;
+        }
+        Ok(result)
+    }""")
+    return {}
+
 def v0(t): return {}
 def v_nolint(t): return nolint(t)
 def v_nolintbt(t):
     c = nolint(t); bt(t); return c
 
-V = {'v0': v0, 'nolint': v_nolint, 'nolintbt': v_nolintbt, 'f1': f1, 'f1b': f1b, 'vold': vold, 'vold2': vold2, 'vold3': vold3}
+V = {'v0': v0, 'nolint': v_nolint, 'nolintbt': v_nolintbt, 'f1': f1, 'f1b': f1b, 'vold': vold, 'vold2': vold2, 'vold3': vold3, 'f3': f3}
 if __name__ == '__main__':
     if '--list' in sys.argv: print(' '.join(V)); sys.exit(0)
     for tag in sys.argv[1:]:

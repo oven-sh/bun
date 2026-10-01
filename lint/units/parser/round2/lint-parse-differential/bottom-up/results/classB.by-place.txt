@@ -1,0 +1,167 @@
+class B: 6586 parses
+  1817 ts   1741 tsx  built                  15 rows | small ts: 1795, small tsx: 1719, targeted ts: 22, targeted tsx: 22
+  1382 ts   1382 tsx  interface-heritage     7 rows | small ts: 1381, small tsx: 1381, targeted ts: 1, targeted tsx: 1
+   121 ts    121 tsx  alias-body             6 rows | small ts: 121, small tsx: 121
+    10 ts     10 tsx  class-implements       3 rows | small ts: 10, small tsx: 10
+     1 ts      1 tsx  class-extends          1 rows | targeted ts: 1, targeted tsx: 1
+
+==== built: 1817 ts, 1741 tsx
+  638 ts   595 tsx   638 src  TS1110 Type expected.
+        without lint: rejects: 657, accepts: 576
+        [ts] "f<[,]>(x);" @3
+        [ts] "let x: [in];" @8
+        [ts] "f<[, B]>(x);" @3
+  460 ts   432 tsx   459 src  TS1005 '{0}' expected.
+        without lint: accepts: 850, rejects: 36, parse pass accepts, visit rejects: 6
+        [ts] "a<b>>=c;" @3
+        [ts] "a<b>>>=c;" @3
+        [ts] "f<<B>>(x);" @5
+  403 ts   397 tsx   401 src  TS1109 Expression expected.
+        without lint: accepts: 742, rejects: 58
+        [ts] "f<[in]>(x);" @3
+        [ts] "f< const>(x);" @3
+        [ts] "f<[in: A]>(x);" @3
+  184 ts   184 tsx   184 src  TS1131 Property or signature expected.
+        without lint: accepts: 364, rejects: 4
+        [ts] "type X = { a A };" @11
+        [ts] "type X = { a b };" @11
+        [ts] "type X = { 1 A };" @11
+   30 ts    30 tsx    30 src  TS1137 Expression or comma expected.
+        without lint: rejects: 30, accepts: 30
+        [ts] "f<[var]>(x);" @3
+        [ts] "f<[enum]>(x);" @3
+        [ts] "f<[const]>(x);" @3
+   29 ts    29 tsx    29 src  TS1136 Property assignment expected.
+        without lint: accepts: 58
+        [ts] "interface I extends { -1 A } {}" @22
+        [ts] "interface I extends { -1: A } {}" @22
+        [ts] "interface I extends { - a: A } {}" @22
+   29 ts    27 tsx    29 src  TS1003 Identifier expected.
+        without lint: accepts: 56
+        [ts] "f<infer>(x);" @7
+        [ts] "f<infer >(x);" @8
+        [ts] "f< infer>(x);" @8
+   19 ts    19 tsx    19 src  TS1442 Expected '=' for property initializer.
+        without lint: accepts: 38
+        [ts] "class C { @d a: b is A }" @18
+        [ts] "class C { @d x: a is A; }" @18
+        [ts] "class C { @d x: x is A; }" @18
+   12 ts    12 tsx    12 src  TS1477 An instantiation expression cannot be followed by a property access.
+        without lint: accepts: 24
+        [ts] "f<A>.b;" @1
+        [ts] "f<A>?.b;" @1
+        [ts] "f<A>.b();" @1
+    6 ts     6 tsx     6 src  TS1144 '{' or ';' expected.
+        without lint: accepts: 12
+        [ts] "function f(): a is a is A { return x; }" @21
+        [ts] "function f(): keyof new () => A { return x; }" @24
+        [ts] "class C { @d m(): a is a is A { return x; } }" @25
+    2 ts     2 tsx     2 src  TS1441 Cannot start a function call in a type annotation.
+        without lint: accepts: 4
+        [ts] "class C { m!(): void {} }" @12
+        [ts] "class C { @d x: keyof new () => A; }" @26
+    2 ts     2 tsx     2 src  TS1034 'super' must be followed by an argument list or member access.
+        without lint: accepts: 2, rejects: 2
+        [ts] "class C implements super {}" @25
+        [ts] "function f<U extends super>() {}" @26
+    2 ts     2 tsx     2 src  TS1128 Declaration or statement expected.
+        without lint: accepts: 4
+        [ts] "export declare;" @0
+        [ts] "type X = ('x')\n.A;" @15
+    0 ts     3 tsx     3 src  TS1434 Unexpected keyword or identifier.
+        without lint: accepts: 3
+        [tsx] "f</a/>(x);" @0
+        [tsx] "f</a/g>(x);" @0
+        [tsx] "f<//c\nA>(x);" @0
+    1 ts     1 tsx     1 src  TS1357 An enum member name must be followed by a ',', '=', or '}'.
+        without lint: accepts: 2
+        [ts] "enum E { A;B }" @10
+
+==== interface-heritage: 1382 ts, 1382 tsx
+  973 ts   973 tsx   973 src  TS1005 '{0}' expected.
+        without lint: accepts: 1928, rejects: 18
+        [ts] "interface I extends A<>[] {}" @23
+        [ts] "interface I extends A<B>[] {}" @24
+        [ts] "interface I extends [a: A] {}" @22
+  293 ts   293 tsx   293 src  TS1109 Expression expected.
+        without lint: accepts: 586
+        [ts] "interface I extends [A?] {}" @23
+        [ts] "interface I extends (| A) {}" @21
+        [ts] "interface I extends [void] {}" @25
+   67 ts    67 tsx    66 src  TS1011 An element access expression should take an argument.
+        without lint: accepts: 134
+        [ts] "interface I extends A[] {}" @22
+        [ts] "interface I extends 1[] {}" @22
+        [ts] "interface I extends A [] {}" @23
+   38 ts    38 tsx    38 src  TS1136 Property assignment expected.
+        without lint: accepts: 76
+        [ts] "interface I extends { () } {}" @22
+        [ts] "interface I extends { (); } {}" @22
+        [ts] "interface I extends { (b) } {}" @22
+    5 ts     5 tsx     5 src  TS1003 Identifier expected.
+        without lint: accepts: 10
+        [ts] "interface I extends A.<B> {}" @22
+        [ts] "interface I extends A.<C> {}" @22
+        [ts] "interface I extends Array.<A> {}" @26
+    3 ts     3 tsx     3 src  TS1477 An instantiation expression cannot be followed by a property access.
+        without lint: accepts: 6
+        [ts] "interface I extends A<>.C {}" @21
+        [ts] "interface I extends A<B>.C {}" @21
+        [ts] "interface I extends  a<B>.c {}" @22
+    3 ts     3 tsx     3 src  TS1137 Expression or comma expected.
+        without lint: accepts: 6
+        [ts] "interface I extends [import: A] {}" @21
+        [ts] "interface I extends [import?: A] {}" @21
+        [ts] "interface I extends [import: A[]] {}" @21
+
+==== alias-body: 121 ts, 121 tsx
+   44 ts    44 tsx    44 src  TS1005 '{0}' expected.
+        without lint: accepts: 84, rejects: 4
+        [ts] "type X = [a.b: A];" @13
+        [ts] "type X = [a is A];" @12
+        [ts] "type X = [a<>: A];" @13
+   44 ts    44 tsx    44 src  TS1131 Property or signature expected.
+        without lint: accepts: 88
+        [ts] "type X = [{ a A }];" @12
+        [ts] "type X = [a: { a A }];" @15
+        [ts] "type X = { extends A };" @11
+   26 ts    26 tsx    26 src  TS1110 Type expected.
+        without lint: accepts: 50, rejects: 2
+        [ts] "type X = |  | B;" @12
+        [ts] "type X = &  & B;" @12
+        [ts] "type X = &  | B;" @12
+    3 ts     3 tsx     3 src  TS1385 Function type notation must be parenthesized when used in a union type.
+        without lint: accepts: 6
+        [ts] "type X = A |  () => B;" @12
+        [ts] "type X =  | () => void;" @11
+        [ts] "type X = A | () => void;" @12
+    2 ts     2 tsx     2 src  TS1386 Constructor type notation must be parenthesized when used in a union type.
+        without lint: accepts: 4
+        [ts] "type X =  | new () => B;" @11
+        [ts] "type X = A | new () => B;" @12
+    2 ts     2 tsx     2 src  TS1359 Identifier expected. '{0}' is a reserved word that cannot be used here.
+        without lint: accepts: 4
+        [ts] "type X = (...this: []) => void;" @13
+        [ts] "type X = (...this: A[]) => void;" @13
+
+==== class-implements: 10 ts, 10 tsx
+    4 ts     4 tsx     4 src  TS1005 '{0}' expected.
+        without lint: rejects: 6, accepts: 2
+        [ts] "class C implements  class {}" @28
+        [ts] "class C implements await A {}" @25
+        [ts] "class C implements function {}" @28
+    3 ts     3 tsx     3 src  TS1477 An instantiation expression cannot be followed by a property access.
+        without lint: accepts: 6
+        [ts] "class C implements A<>.C {}" @20
+        [ts] "class C implements A<B>.C {}" @20
+        [ts] "class C implements  a<B>.c {}" @21
+    3 ts     3 tsx     3 src  TS1003 Identifier expected.
+        without lint: accepts: 6
+        [ts] "class C implements A.<B> {}" @21
+        [ts] "class C implements A.<C> {}" @21
+        [ts] "class C implements Array.<A> {}" @25
+
+==== class-extends: 1 ts, 1 tsx
+    1 ts     1 tsx     1 src  TS1477 An instantiation expression cannot be followed by a property access.
+        without lint: accepts: 2
+        [ts] "class C extends B<A>.D {}" @17

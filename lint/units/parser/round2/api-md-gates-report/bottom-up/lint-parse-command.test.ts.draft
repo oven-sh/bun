@@ -30,6 +30,8 @@ test.concurrent.each([
   // A type that is missing inside an attempt: a parse without lint takes it.
   ["a.ts", "let x: (a: ) => void;\n", "a.ts(1,12): error TS1110: Type expected.\n", 2],
   ["b.ts", "let x = ;\n", "b.ts(1,9): error TS1109: Expression expected.\n", 2],
+  // The reference ends the statement before `=`: research of the operand checks, round2/b3-operand-strictness/top-down/test-rows.txt.
+  ["e.ts", "a + b = c;\n", "e.ts(1,7): error TS1005: ';' expected.\n", 2],
   ["c.tsx", "const e = <A<number> b={(1 as number)!} />;\n", "", 0],
   ["d.ts", "const y = (1 as number)!;\nexport {};\n", "", 0],
 ])("bun --lint %s", async (name, text, stderr, exitCode) => {

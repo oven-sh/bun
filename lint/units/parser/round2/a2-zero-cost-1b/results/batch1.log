@@ -1,0 +1,11 @@
+queued 2026-10-01T20:00:58Z
+lock acquired 2026-10-01T20:23:31Z load 377.06 339.39 301.30
+cache seeded from /tmp/zcm-td/seam/thinlto-cache (1609 files)
+all full rc 0 seconds 205 load 379.97
+cg all rc=0 20:28:51
+raw all rc=0 20:30:09
+allnolint full rc 0 seconds 247 load 340.74
+cg allnolint rc=0 20:35:56
+raw allnolint rc=0 20:38:18
+tests all rc=1 20:38:32
+done 2026-10-01T20:38:32Z load 284.06 322.96 320.86

@@ -1,0 +1,333 @@
+B  ts  "a + b = c;"
+      tsc: TS1005@6+1 ';' expected.
+      lint: ok
+B  ts  "-a = b;"
+      tsc: TS1005@3+1 ';' expected.
+      lint: ok
+B  ts  "a++ = b;"
+      tsc: TS1005@4+1 ';' expected.
+      lint: ok
+B  ts  "async function f() { await x = y; }"
+      tsc: TS1005@29+1 ';' expected.
+      lint: ok
+B  ts  "a++ ++;"
+      tsc: TS1005@4+2 ';' expected.
+      lint: ok
+B  ts  "a--.b;"
+      tsc: TS1005@3+1 ';' expected.
+      lint: ok
+B  ts  "++ delete a.b;"
+      tsc: TS1109@3+6 Expression expected.
+      lint: ok
+B  ts  "new A?.b();"
+      tsc: TS1209@5+2 Invalid optional chain from new expression. Did you mean to call 'A()'?
+      lint: ok
+B  ts  "function* g() { yield*; }"
+      tsc: TS1109@22+1 Expression expected.
+      lint: ok
+B  ts  "a.\nb in c;"
+      tsc: TS1003@2+0 Identifier expected.
+      lint: ok
+B  ts  "for (using of of []) {}"
+      tsc: TS1011@18+0 An element access expression should take an argument.
+      lint: ok
+B  ts  "a<b>.c;"
+      tsc: TS1477@1+3 An instantiation expression cannot be followed by a property access.
+      lint: ok
+B  ts  "<A>x ** 2;"
+      tsc: TS17007@0+4 A type assertion expression is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses.
+      lint: ok
+RR ts  "-x ** 2;"
+      tsc: TS17006@0+2 An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses.
+      lint: no code bun@3+2 Unexpected **
+RR ts  "class C extends B { m() { super<T>.x; } }"
+      tsc: TS2754@31+3 'super' may not use type arguments.
+      lint: no code bun@26+5 Unexpected "super"
+RR ts  "class C extends B { m() { super; } }"
+      tsc: TS1034@31+1 'super' must be followed by an argument list or member access.
+      lint: no code bun@26+5 Unexpected "super"
+B  ts  "class C { #a; m() { this?.#a; } }"
+      tsc: TS18030@26+2 An optional chain cannot contain private identifiers.
+      lint: ok
+AA ts  "import a from 'a' assert { type: 'json' };"
+      tsc: ok
+      lint: ok
+RR ts  "enum E { A B }"
+      tsc: TS1357@11+1 An enum member name must be followed by a ',', '=', or '}'.
+      lint: TS1005@11..12 bun@11+1 Expected "}" but found "B"
+RR ts  "\\u0076ar x = 1;"
+      tsc: TS1260@0+8 Keywords cannot contain escape characters.
+      lint: TS1128@0..8 bun@0+8 Unexpected \u0076ar
+RR ts  "a[];"
+      tsc: TS1011@2+0 An element access expression should take an argument.
+      lint: TS1109@2..3 bun@2+1 Unexpected ]
+B  ts  "class C extends typeof a {}"
+      tsc: TS1109@16+6 Expression expected.
+      lint: ok
+B  ts  "class C extends -a {}"
+      tsc: TS1109@16+1 Expression expected.
+      lint: ok
+B  ts  "class C extends void 0 {}"
+      tsc: TS1109@16+4 Expression expected.
+      lint: ok
+RR ts  "class C extends a ? b : c {}"
+      tsc: TS1005@18+1 ',' expected.
+      lint: TS1005@18..19 bun@18+1 Expected "{" but found "?"
+AA ts  "class C extends (a, b) {}"
+      tsc: ok
+      lint: ok
+RR ts  "class C extends async () => {} {}"
+      tsc: TS1005@25+2 ',' expected.
+      lint: no code bun@25+2 Unexpected =>
+B  ts  "class C implements typeof a {}"
+      tsc: TS1109@19+6 Expression expected.
+      lint: ok
+B  ts  "interface I extends typeof a {}"
+      tsc: TS1109@20+6 Expression expected.
+      lint: ok
+B  ts  "interface I extends A[] {}"
+      tsc: TS1011@22+0 An element access expression should take an argument.
+      lint: ok
+AA ts  "interface I extends { a: 1 } {}"
+      tsc: ok
+      lint: ok
+B  ts  "interface I extends A | B {}"
+      tsc: TS1005@22+1 ',' expected.
+      lint: ok
+AA ts  "interface I extends (A) {}"
+      tsc: ok
+      lint: ok
+AA ts  "interface I extends a.b<C>, d {}"
+      tsc: ok
+      lint: ok
+B  ts  "let x: a is A;"
+      tsc: TS1005@9+2 ',' expected.
+      lint: ok
+B  ts  "let x: unique;"
+      tsc: TS1110@13+1 Type expected.
+      lint: ok
+B  ts  "let x: keyof () => void;"
+      tsc: TS1110@14+1 Type expected.
+      lint: ok
+B  ts  "let x: A extends infer U[] ? U : never;"
+      tsc: TS1005@24+1 '?' expected.
+      lint: ok
+B  ts  "let x: [class: A];"
+      tsc: TS1110@8+5 Type expected.
+      lint: ok
+B  ts  "let x: [in];"
+      tsc: TS1110@8+2 Type expected.
+      lint: ok
+B  ts  "let x: [const];"
+      tsc: TS1110@8+5 Type expected.
+      lint: ok
+B  ts  "function f<U extends class>() {}"
+      tsc: TS1005@26+1 '{' expected.
+      lint: ok
+B  ts  "let x: typeof a.#b;"
+      tsc: TS1003@18+0 Identifier expected.
+      lint: ok
+RR ts  "let x: A<B>.C;"
+      tsc: TS1005@11+1 ',' expected.
+      lint: no code bun@12+1 Unexpected C
+RR ts  "let x: (A).B;"
+      tsc: TS1005@10+1 ',' expected.
+      lint: no code bun@11+1 Unexpected B
+B  ts  "type X = (A).B;"
+      tsc: TS1005@12+1 ';' expected.
+      lint: ok
+B  ts  "type X = A<B>.C;"
+      tsc: TS1005@13+1 ';' expected.
+      lint: ok
+AA ts  "let x: class;"
+      tsc: ok
+      lint: ok
+AA ts  "let x: in;"
+      tsc: ok
+      lint: ok
+B  ts  "let x: [...infer A[]];"
+      tsc: TS1005@18+1 ',' expected.
+      lint: ok
+A  ts  "let x: asserts a;"
+      tsc: ok
+      lint: TS1005@15..16 bun@15+1 Expected ";" but found "a"
+A  ts  "let x: unique A;"
+      tsc: ok
+      lint: TS1005@14..15 bun@14+1 Expected ";" but found "A"
+A  ts  "let x: ?A;"
+      tsc: ok
+      lint: TS1110@7..8 bun@7+1 Unexpected ?
+A  ts  "let x: A?;"
+      tsc: ok
+      lint: TS1005@8..9 bun@8+1 Expected ";" but found "?"
+A  ts  "let x: !A;"
+      tsc: ok
+      lint: TS1110@7..8 bun@7+1 Unexpected !
+AA ts  "let x: A!;"
+      tsc: ok
+      lint: ok
+A  ts  "let x: *;"
+      tsc: ok
+      lint: TS1110@7..8 bun@7+1 Unexpected *
+A  ts  "let x: function(): void;"
+      tsc: ok
+      lint: TS1005@15..16 bun@15+1 Expected ";" but found "("
+AA ts  "let x: <>() => void;"
+      tsc: ok
+      lint: ok
+AA ts  "let x: <in T>() => void;"
+      tsc: ok
+      lint: ok
+AA ts  "let x: <public T>() => void;"
+      tsc: ok
+      lint: ok
+AA ts  "let x: (static a: A) => void;"
+      tsc: ok
+      lint: ok
+AA ts  "let x: (public a: A) => void;"
+      tsc: ok
+      lint: ok
+AA ts  "let x: import(x);"
+      tsc: ok
+      lint: ok
+A  ts  "let x: import('x')<A>;"
+      tsc: ok
+      lint: TS1005@18..19 bun@18+1 Expected ";" but found "<"
+A  ts  "let x: import('x').#a;"
+      tsc: ok
+      lint: TS1003@19..21 bun@19+2 Expected identifier but found "#a"
+A  ts  "let x: typeof a.<C>;"
+      tsc: ok
+      lint: TS1003@16..17 bun@16+1 Expected identifier but found "<"
+AA ts  "let x: A.<C>;"
+      tsc: ok
+      lint: ok
+A  ts  "let x: { export a: A };"
+      tsc: ok
+      lint: TS1005@16..17 bun@16+1 Expected ";" but found "a"
+AA ts  "let x: { [public k: string]: A };"
+      tsc: ok
+      lint: ok
+RR ts  "let x: { readonly get a(): A };"
+      tsc: TS1131@9+8 Property or signature expected.
+      lint: TS1131@9..17 bun@9+8 Unexpected readonly
+RR ts  "let x: { a!: A };"
+      tsc: TS1131@9+1 Property or signature expected.
+      lint: TS1131@9..10 bun@9+1 Unexpected a
+RR ts  "let x: { a = 1 };"
+      tsc: TS1131@9+1 Property or signature expected.
+      lint: TS1131@9..10 bun@9+1 Unexpected a
+RR ts  "let x: { m() {} };"
+      tsc: TS1005@13+1 ';' expected.
+      lint: TS1005@13..14 bun@13+1 Expected ";" but found "{"
+AA ts  "let x: { static a: A };"
+      tsc: ok
+      lint: ok
+AA ts  "let x: { public a: A };"
+      tsc: ok
+      lint: ok
+AA ts  "let x: { async m(): void };"
+      tsc: ok
+      lint: ok
+A  ts  "let x: { get a() { return 1 } };"
+      tsc: ok
+      lint: TS1005@17..18 bun@17+1 Expected ";" but found "{"
+AA ts  "let x: readonly string;"
+      tsc: ok
+      lint: ok
+AA ts  "let x: readonly ([]);"
+      tsc: ok
+      lint: ok
+A  ts  "let f = (a): readonly ([]) => a;"
+      tsc: ok
+      lint: TS1005@11..12 bun@11+1 Expected ";" but found ":"
+A  ts  "function f<U extends /a/>() {}"
+      tsc: ok
+      lint: TS1110@21..22 bun@21+1 Unexpected /
+A  ts  "function f<U extends -a>() {}"
+      tsc: ok
+      lint: no code bun@22+1 Expected number but found "a"
+A  ts  "let x: (await) => void;"
+      tsc: ok
+      lint: no code bun@8+5 Cannot use "yield" or "await" here.
+A  ts  "export {}; let x: (await) => void;"
+      tsc: ok
+      lint: no code bun@19+5 Cannot use "yield" or "await" here.
+AA ts  "let x: (yield) => void;"
+      tsc: ok
+      lint: ok
+A  ts  "function* g() { let x: (yield) => void; }"
+      tsc: ok
+      lint: no code bun@24+5 Cannot use "yield" or "await" here.
+A  ts  "async function g() { let x: (await) => void; }"
+      tsc: ok
+      lint: no code bun@29+5 Cannot use "yield" or "await" here.
+A  ts  "await<A"
+      tsc: ok
+      lint: TS1005@7..7 bun@7+0 Expected ">" but found end of file
+A  ts  "let await = 1;"
+      tsc: ok
+      lint: no code bun@4+5 Cannot use "yield" or "await" here.
+A  ts  "let x = await;"
+      tsc: ok
+      lint: TS1109@13..14 bun@13+1 Unexpected ;
+AA ts  "await(1);"
+      tsc: ok
+      lint: ok
+AA ts  "function f(await) {}"
+      tsc: ok
+      lint: ok
+AA ts  "var yield = 1;"
+      tsc: ok
+      lint: ok
+AA ts  "let x: typeof await;"
+      tsc: ok
+      lint: ok
+AA ts  "type await = 1;"
+      tsc: ok
+      lint: ok
+AA ts  "interface await {}"
+      tsc: ok
+      lint: ok
+AA ts  "namespace await {}"
+      tsc: ok
+      lint: ok
+A  ts  "class await {}"
+      tsc: ok
+      lint: no code bun@12+1 Cannot use "await" as an identifier here
+AA ts  "enum await {}"
+      tsc: ok
+      lint: ok
+AA ts  "function await() {}"
+      tsc: ok
+      lint: ok
+A  ts  "label: await;"
+      tsc: ok
+      lint: TS1109@12..13 bun@12+1 Unexpected ;
+AA ts  "let x: await;"
+      tsc: ok
+      lint: ok
+AA ts  "let x: A<await>;"
+      tsc: ok
+      lint: ok
+AA ts  "let x: { await: 1 };"
+      tsc: ok
+      lint: ok
+A  ts  "x = { await };"
+      tsc: ok
+      lint: no code bun@6+5 Cannot use "await" here
+AA ts  "x.await;"
+      tsc: ok
+      lint: ok
+AA ts  "let { await } = x;"
+      tsc: ok
+      lint: ok
+AA ts  "import await from 'a';"
+      tsc: ok
+      lint: ok
+AA ts  "import { await } from 'a';"
+      tsc: ok
+      lint: ok
+AA ts  "import { a as await } from 'a';"
+      tsc: ok
+      lint: ok

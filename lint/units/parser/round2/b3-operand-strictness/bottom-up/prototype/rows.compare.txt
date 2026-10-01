@@ -232,7 +232,7 @@ same   ts  "<T>(a) = b;"  go: TS1005 @7+1 "';' expected."
 ok     ts  "(<T>a) = b;"  go: parses
 same   ts  "x = <T>a = b;"  go: TS1005 @9+1 "';' expected."
 same   ts  "x = -<T>a = b;"  go: TS1005 @10+1 "';' expected."
-DIFF   ts  "f(<T>a = b);"  go: TS1005 @7+1 "',' expected."  lint: TS1005 @7+1 "')' expected."   [bun: @7+1 "Expected \")\" but found \"=\""]
+same   ts  "f(<T>a = b);"  go: TS1005 @7+1 "',' expected."
 same   ts  "(<T>a = b);"  go: TS1005 @6+1 "')' expected."
 same   ts  "<T>a\n= b;"  go: TS1128 @5+1 "Declaration or statement expected."
 ok     ts  "<T>a!= b;"  go: parses

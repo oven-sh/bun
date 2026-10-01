@@ -1,0 +1,27 @@
+### 2026-10-01T17:11:48Z start; installed bun 1.4.3-canary.1+367d939d9; release with --lint 1.4.3-canary.1+be1ebe529; debug 1.4.3-debug+3110ce85c; load 609.66 580.15 489.91 cpu.pressure avg10=36.56 avg60=33.86 memory 1774 MB disk 270G
+### release (installed bun), tree knobs, cold
+evicted 22182 files, 32380794 bytes, in 10.0 s
+K-rel-cold-1 | load 565.27 571.63 488.10 cpu.pressure avg10=28.94 avg60=32.67 memory 1609 MB disk 269G |  104 pass 1 skip 0 fail | Ran 105 tests across 1 file. [5.08s] | TIME real 5.194 user 0.876 sys 0.294 | exit 0 | sanitizer lines 0 | ENOSPC 0
+evicted 22182 files, 32380794 bytes, in 0.4 s
+K-rel-cold-2 | load 538.39 565.61 487.04 cpu.pressure avg10=31.19 avg60=32.29 memory 1609 MB disk 267G |  104 pass 1 skip 0 fail | Ran 105 tests across 1 file. [13.33s] | TIME real 13.350 user 0.907 sys 0.310 | exit 0 | sanitizer lines 0 | ENOSPC 0
+### release (installed bun), tree knobs, warm
+K-rel-warm-1 | load 539.10 559.10 489.21 cpu.pressure avg10=34.64 avg60=31.61 memory 1712 MB disk 266G |  104 pass 1 skip 0 fail | Ran 105 tests across 1 file. [9.35s] | TIME real 9.468 user 0.832 sys 0.251 | exit 0 | sanitizer lines 0 | ENOSPC 0
+K-rel-warm-2 | load 562.54 563.27 491.69 cpu.pressure avg10=26.54 avg60=30.39 memory 1858 MB disk 284G |  104 pass 1 skip 0 fail | Ran 105 tests across 1 file. [6.04s] | TIME real 6.303 user 0.810 sys 0.278 | exit 0 | sanitizer lines 0 | ENOSPC 0
+K-rel-warm-3 | load 561.45 563.08 492.40 cpu.pressure avg10=20.31 avg60=28.40 memory 1716 MB disk 292G |  104 pass 1 skip 0 fail | Ran 105 tests across 1 file. [4.33s] | TIME real 4.571 user 0.780 sys 0.259 | exit 0 | sanitizer lines 0 | ENOSPC 0
+### release with --lint as a release lane of CI runs the file: CI set, the environment of scripts/runner.node.ts, --timeout=90000
+K-ci-rel-1 | load 536.83 557.95 491.12 cpu.pressure avg10=22.15 avg60=28.19 memory 1804 MB disk 295G | | Ran 105 tests across 1 file. [0m[2m[[1m6.33s[0m[2m][0m | TIME real 6.514 user 2.229 sys 0.555 | exit 0 | sanitizer lines 0 | ENOSPC 0
+K-ci-rel-2 | load 510.42 552.12 489.59 cpu.pressure avg10=31.43 avg60=29.60 memory 1869 MB disk 294G | | Ran 105 tests across 1 file. [0m[2m[[1m5.78s[0m[2m][0m | TIME real 5.793 user 2.176 sys 0.526 | exit 0 | sanitizer lines 0 | ENOSPC 0
+K-ci-rel-3 | load 478.02 543.75 487.54 cpu.pressure avg10=35.46 avg60=30.68 memory 1918 MB disk 294G | | Ran 105 tests across 1 file. [0m[2m[[1m8.62s[0m[2m][0m | TIME real 8.748 user 2.304 sys 0.562 | exit 0 | sanitizer lines 0 | ENOSPC 0
+### the same with the corpus cold
+evicted 22182 files, 32380794 bytes, in 0.4 s
+K-ci-rel-cold | load 444.90 533.02 484.91 cpu.pressure avg10=32.18 avg60=30.64 memory 1823 MB disk 293G | | Ran 105 tests across 1 file. [0m[2m[[1m21.27s[0m[2m][0m | TIME real 21.294 user 2.967 sys 0.822 | exit 0 | sanitizer lines 0 | ENOSPC 0
+### 2026-10-01T17:14:27Z debug build as bun bd test runs it
+K-dbg-plain | load 382.80 513.18 479.41 cpu.pressure avg10=26.13 avg60=29.15 memory 1635 MB disk 292G |  104 pass 1 skip 0 fail | Ran 105 tests across 1 file. [117.71s] | TIME real 118.913 user 68.572 sys 3.671 | exit 0 | sanitizer lines 0 | ENOSPC 0
+### 2026-10-01T17:16:31Z debug build, the leak check of CI; the memory of the cgroup and the number of bun-debug processes are read twice a second
+K-dbg-leak | load 537.36 518.03 484.62 cpu.pressure avg10=29.73 avg60=37.94 memory 1369 MB disk 286G |  99 pass 1 skip 5 fail | Ran 105 tests across 1 file. [139.66s] | TIME real 143.273 user 72.821 sys 4.484 | exit 1 | sanitizer lines 0 | ENOSPC 0
+K-dbg-leak memory of the cgroup, MB: least 1369, most 2818; bun-debug processes at one time, most: 9
+### 2026-10-01T17:19:18Z debug build, the leak check and the exception checks
+K-dbg-leak-validate | load 619.92 564.27 507.80 cpu.pressure avg10=39.55 avg60=38.97 memory 1871 MB disk 279G |  104 pass 1 skip 0 fail | Ran 105 tests across 1 file. [166.71s] | TIME real 170.591 user 106.958 sys 4.188 | exit 0 | sanitizer lines 0 | ENOSPC 0
+### 2026-10-01T17:22:26Z debug build with the whole environment of scripts/runner.node.ts for a run by hand (not CI): --timeout=90000
+K-dbg-runner | load 775.38 651.68 551.07 cpu.pressure avg10=37.05 avg60=36.68 memory 1817 MB disk 281G | | Ran 105 tests across 1 file. [0m[2m[[1m129.56s[0m[2m][0m | TIME real 131.173 user 110.121 sys 4.505 | exit 0 | sanitizer lines 0 | ENOSPC 0
+### 2026-10-01T17:24:45Z done; load 676.73 682.56 578.33 cpu.pressure avg10=21.86 avg60=27.72 memory 2185 MB disk 278G

@@ -1,0 +1,318 @@
+{"loader":"tsx","sources":30030,"ok":21090,"same(new)":4587,"same(head too)":1655,"DIFF(head too)":2286,"MISSED":107,"EXTRA(head too)":95,"EXTRA(new)":32,"DIFF(new)":178}
+MISSED     "new A?.b;"  go: TS1209 @5+2 "Invalid optional chain from new expressi"  lint: parses
+MISSED     "(new A?.b);"  go: TS1209 @6+2 "Invalid optional chain from new expressi"  lint: parses
+MISSED     "f(new A?.b);"  go: TS1209 @7+2 "Invalid optional chain from new expressi"  lint: parses
+MISSED     "let x = new A?.b;"  go: TS1209 @13+2 "Invalid optional chain from new expressi"  lint: parses
+MISSED     "x = new A?.b;"  go: TS1209 @9+2 "Invalid optional chain from new expressi"  lint: parses
+MISSED     "[new A?.b];"  go: TS1209 @6+2 "Invalid optional chain from new expressi"  lint: parses
+MISSED     "x = y ? new A?.b : z;"  go: TS1209 @13+2 "Invalid optional chain from new expressi"  lint: parses
+MISSED     "++new A?.b;"  go: TS1209 @7+2 "Invalid optional chain from new expressi"  lint: parses
+MISSED     "(++new A?.b);"  go: TS1209 @8+2 "Invalid optional chain from new expressi"  lint: parses
+MISSED     "--new A?.b;"  go: TS1209 @7+2 "Invalid optional chain from new expressi"  lint: parses
+MISSED     "(--new A?.b);"  go: TS1209 @8+2 "Invalid optional chain from new expressi"  lint: parses
+MISSED     "-new A?.b;"  go: TS1209 @6+2 "Invalid optional chain from new expressi"  lint: parses
+MISSED     "(-new A?.b);"  go: TS1209 @7+2 "Invalid optional chain from new expressi"  lint: parses
+MISSED     "typeof new A?.b;"  go: TS1209 @12+2 "Invalid optional chain from new expressi"  lint: parses
+MISSED     "(typeof new A?.b);"  go: TS1209 @13+2 "Invalid optional chain from new expressi"  lint: parses
+MISSED     "async function g() { await new A?.b; }"  go: TS1209 @32+2 "Invalid optional chain from new expressi"  lint: parses
+MISSED     "async function g() { (await new A?.b); }"  go: TS1209 @33+2 "Invalid optional chain from new expressi"  lint: parses
+MISSED     "new A\n?.b;"  go: TS1209 @6+2 "Invalid optional chain from new expressi"  lint: parses
+MISSED     "(new A\n?.b);"  go: TS1209 @7+2 "Invalid optional chain from new expressi"  lint: parses
+MISSED     "f(new A\n?.b);"  go: TS1209 @8+2 "Invalid optional chain from new expressi"  lint: parses
+MISSED     "let x = new A\n?.b;"  go: TS1209 @14+2 "Invalid optional chain from new expressi"  lint: parses
+EXTRA(new) "a++\n[0];"  go: parses  lint: TS1005 @4+1 "';' expected."
+EXTRA(new) "let x = a++\n[0];"  go: parses  lint: TS1005 @12+1 "';' expected."
+EXTRA(new) "a++\n(b);"  go: parses  lint: TS1005 @4+1 "';' expected."
+EXTRA(new) "let x = a++\n(b);"  go: parses  lint: TS1005 @12+1 "';' expected."
+DIFF(new)  "a++\n();"  go: TS1109 @5+1 "Expression expected."  lint: TS1005 @4+1 "';' expected."
+DIFF(new)  "let x = a++\n();"  go: TS1109 @13+1 "Expression expected."  lint: TS1005 @12+1 "';' expected."
+EXTRA(new) "a++\n`x`;"  go: parses  lint: TS1005 @4+3 "';' expected."
+EXTRA(new) "let x = a++\n`x`;"  go: parses  lint: TS1005 @12+3 "';' expected."
+EXTRA(new) "a++\n`x${1}`;"  go: parses  lint: TS1005 @4+4 "';' expected."
+EXTRA(new) "let x = a++\n`x${1}`;"  go: parses  lint: TS1005 @12+4 "';' expected."
+DIFF(new)  "f(a++!);"  go: TS1005 @5+1 "',' expected."  lint: TS1005 @5+1 "')' expected."
+DIFF(new)  "let x = a++!;"  go: TS1005 @11+1 "',' expected."  lint: TS1005 @11+1 "';' expected."
+DIFF(new)  "[a++!];"  go: TS1005 @4+1 "',' expected."  lint: TS1005 @4+1 "']' expected."
+DIFF(new)  "++a++!;"  go: TS1005 @3+2 "';' expected."  lint: TS1005 @5+1 "';' expected."
+DIFF(new)  "(++a++!);"  go: TS1005 @4+2 "')' expected."  lint: TS1005 @6+1 "')' expected."
+DIFF(new)  "--a++!;"  go: TS1005 @3+2 "';' expected."  lint: TS1005 @5+1 "';' expected."
+DIFF(new)  "(--a++!);"  go: TS1005 @4+2 "')' expected."  lint: TS1005 @6+1 "')' expected."
+DIFF(new)  "++a++<T>;"  go: TS1005 @3+2 "';' expected."  lint: TS1109 @8+1 "Expression expected."
+DIFF(new)  "(++a++<T>);"  go: TS1005 @4+2 "')' expected."  lint: TS1109 @9+1 "Expression expected."
+DIFF(new)  "--a++<T>;"  go: TS1005 @3+2 "';' expected."  lint: TS1109 @8+1 "Expression expected."
+DIFF(new)  "(--a++<T>);"  go: TS1005 @4+2 "')' expected."  lint: TS1109 @9+1 "Expression expected."
+EXTRA(new) "a--\n[0];"  go: parses  lint: TS1005 @4+1 "';' expected."
+EXTRA(new) "let x = a--\n[0];"  go: parses  lint: TS1005 @12+1 "';' expected."
+EXTRA(new) "a--\n(b);"  go: parses  lint: TS1005 @4+1 "';' expected."
+EXTRA(new) "let x = a--\n(b);"  go: parses  lint: TS1005 @12+1 "';' expected."
+DIFF(new)  "a--\n();"  go: TS1109 @5+1 "Expression expected."  lint: TS1005 @4+1 "';' expected."
+DIFF(new)  "let x = a--\n();"  go: TS1109 @13+1 "Expression expected."  lint: TS1005 @12+1 "';' expected."
+EXTRA(new) "a--\n`x`;"  go: parses  lint: TS1005 @4+3 "';' expected."
+EXTRA(new) "let x = a--\n`x`;"  go: parses  lint: TS1005 @12+3 "';' expected."
+EXTRA(new) "a--\n`x${1}`;"  go: parses  lint: TS1005 @4+4 "';' expected."
+EXTRA(new) "let x = a--\n`x${1}`;"  go: parses  lint: TS1005 @12+4 "';' expected."
+DIFF(new)  "f(a--!);"  go: TS1005 @5+1 "',' expected."  lint: TS1005 @5+1 "')' expected."
+DIFF(new)  "let x = a--!;"  go: TS1005 @11+1 "',' expected."  lint: TS1005 @11+1 "';' expected."
+DIFF(new)  "[a--!];"  go: TS1005 @4+1 "',' expected."  lint: TS1005 @4+1 "']' expected."
+DIFF(new)  "++a--!;"  go: TS1005 @3+2 "';' expected."  lint: TS1005 @5+1 "';' expected."
+DIFF(new)  "(++a--!);"  go: TS1005 @4+2 "')' expected."  lint: TS1005 @6+1 "')' expected."
+DIFF(new)  "--a--!;"  go: TS1005 @3+2 "';' expected."  lint: TS1005 @5+1 "';' expected."
+DIFF(new)  "(--a--!);"  go: TS1005 @4+2 "')' expected."  lint: TS1005 @6+1 "')' expected."
+DIFF(new)  "++a--<T>;"  go: TS1005 @3+2 "';' expected."  lint: TS1109 @8+1 "Expression expected."
+DIFF(new)  "(++a--<T>);"  go: TS1005 @4+2 "')' expected."  lint: TS1109 @9+1 "Expression expected."
+DIFF(new)  "--a--<T>;"  go: TS1005 @3+2 "';' expected."  lint: TS1109 @8+1 "Expression expected."
+DIFF(new)  "(--a--<T>);"  go: TS1005 @4+2 "')' expected."  lint: TS1109 @9+1 "Expression expected."
+DIFF(new)  "++function(){}++;"  go: TS1005 @14+2 "';' expected."  lint: TS1005 @0+0 "';' expected."
+DIFF(new)  "(++function(){}++);"  go: TS1005 @15+2 "')' expected."  lint: TS1005 @1+0 "')' expected."
+DIFF(new)  "--function(){}++;"  go: TS1005 @14+2 "';' expected."  lint: TS1005 @0+0 "';' expected."
+DIFF(new)  "(--function(){}++);"  go: TS1005 @15+2 "')' expected."  lint: TS1005 @1+0 "')' expected."
+DIFF(new)  "++function(){}--;"  go: TS1005 @14+2 "';' expected."  lint: TS1005 @0+0 "';' expected."
+DIFF(new)  "(++function(){}--);"  go: TS1005 @15+2 "')' expected."  lint: TS1005 @1+0 "')' expected."
+DIFF(new)  "--function(){}--;"  go: TS1005 @14+2 "';' expected."  lint: TS1005 @0+0 "';' expected."
+DIFF(new)  "(--function(){}--);"  go: TS1005 @15+2 "')' expected."  lint: TS1005 @1+0 "')' expected."
+DIFF(new)  "++function(){} ++;"  go: TS1005 @15+2 "';' expected."  lint: TS1005 @0+0 "';' expected."
+DIFF(new)  "(++function(){} ++);"  go: TS1005 @16+2 "')' expected."  lint: TS1005 @1+0 "')' expected."
+DIFF(new)  "--function(){} ++;"  go: TS1005 @15+2 "';' expected."  lint: TS1005 @0+0 "';' expected."
+DIFF(new)  "(--function(){} ++);"  go: TS1005 @16+2 "')' expected."  lint: TS1005 @1+0 "')' expected."
+DIFF(new)  "++function(){} --;"  go: TS1005 @15+2 "';' expected."  lint: TS1005 @0+0 "';' expected."
+DIFF(new)  "(++function(){} --);"  go: TS1005 @16+2 "')' expected."  lint: TS1005 @1+0 "')' expected."
+DIFF(new)  "--function(){} --;"  go: TS1005 @15+2 "';' expected."  lint: TS1005 @0+0 "';' expected."
+DIFF(new)  "(--function(){} --);"  go: TS1005 @16+2 "')' expected."  lint: TS1005 @1+0 "')' expected."
+MISSED     "a<T>.b;"  go: TS1477 @1+3 "An instantiation expression cannot be fo"  lint: parses
+MISSED     "(a<T>.b);"  go: TS1477 @2+3 "An instantiation expression cannot be fo"  lint: parses
+MISSED     "f(a<T>.b);"  go: TS1477 @3+3 "An instantiation expression cannot be fo"  lint: parses
+MISSED     "let x = a<T>.b;"  go: TS1477 @9+3 "An instantiation expression cannot be fo"  lint: parses
+MISSED     "x = a<T>.b;"  go: TS1477 @5+3 "An instantiation expression cannot be fo"  lint: parses
+MISSED     "[a<T>.b];"  go: TS1477 @2+3 "An instantiation expression cannot be fo"  lint: parses
+MISSED     "x = y ? a<T>.b : z;"  go: TS1477 @9+3 "An instantiation expression cannot be fo"  lint: parses
+MISSED     "++a<T>.b;"  go: TS1477 @3+3 "An instantiation expression cannot be fo"  lint: parses
+MISSED     "(++a<T>.b);"  go: TS1477 @4+3 "An instantiation expression cannot be fo"  lint: parses
+MISSED     "--a<T>.b;"  go: TS1477 @3+3 "An instantiation expression cannot be fo"  lint: parses
+MISSED     "(--a<T>.b);"  go: TS1477 @4+3 "An instantiation expression cannot be fo"  lint: parses
+MISSED     "-a<T>.b;"  go: TS1477 @2+3 "An instantiation expression cannot be fo"  lint: parses
+MISSED     "(-a<T>.b);"  go: TS1477 @3+3 "An instantiation expression cannot be fo"  lint: parses
+MISSED     "typeof a<T>.b;"  go: TS1477 @8+3 "An instantiation expression cannot be fo"  lint: parses
+MISSED     "(typeof a<T>.b);"  go: TS1477 @9+3 "An instantiation expression cannot be fo"  lint: parses
+MISSED     "async function g() { await a<T>.b; }"  go: TS1477 @28+3 "An instantiation expression cannot be fo"  lint: parses
+MISSED     "async function g() { (await a<T>.b); }"  go: TS1477 @29+3 "An instantiation expression cannot be fo"  lint: parses
+MISSED     "a<T>\n.b;"  go: TS1477 @1+3 "An instantiation expression cannot be fo"  lint: parses
+MISSED     "(a<T>\n.b);"  go: TS1477 @2+3 "An instantiation expression cannot be fo"  lint: parses
+MISSED     "f(a<T>\n.b);"  go: TS1477 @3+3 "An instantiation expression cannot be fo"  lint: parses
+MISSED     "let x = a<T>\n.b;"  go: TS1477 @9+3 "An instantiation expression cannot be fo"  lint: parses
+MISSED     "a<T>?.b;"  go: TS1477 @1+3 "An instantiation expression cannot be fo"  lint: parses
+MISSED     "(a<T>?.b);"  go: TS1477 @2+3 "An instantiation expression cannot be fo"  lint: parses
+MISSED     "f(a<T>?.b);"  go: TS1477 @3+3 "An instantiation expression cannot be fo"  lint: parses
+MISSED     "let x = a<T>?.b;"  go: TS1477 @9+3 "An instantiation expression cannot be fo"  lint: parses
+MISSED     "x = a<T>?.b;"  go: TS1477 @5+3 "An instantiation expression cannot be fo"  lint: parses
+MISSED     "[a<T>?.b];"  go: TS1477 @2+3 "An instantiation expression cannot be fo"  lint: parses
+MISSED     "x = y ? a<T>?.b : z;"  go: TS1477 @9+3 "An instantiation expression cannot be fo"  lint: parses
+MISSED     "++a<T>?.b;"  go: TS1477 @3+3 "An instantiation expression cannot be fo"  lint: parses
+MISSED     "(++a<T>?.b);"  go: TS1477 @4+3 "An instantiation expression cannot be fo"  lint: parses
+MISSED     "--a<T>?.b;"  go: TS1477 @3+3 "An instantiation expression cannot be fo"  lint: parses
+MISSED     "(--a<T>?.b);"  go: TS1477 @4+3 "An instantiation expression cannot be fo"  lint: parses
+MISSED     "-a<T>?.b;"  go: TS1477 @2+3 "An instantiation expression cannot be fo"  lint: parses
+MISSED     "(-a<T>?.b);"  go: TS1477 @3+3 "An instantiation expression cannot be fo"  lint: parses
+MISSED     "typeof a<T>?.b;"  go: TS1477 @8+3 "An instantiation expression cannot be fo"  lint: parses
+MISSED     "(typeof a<T>?.b);"  go: TS1477 @9+3 "An instantiation expression cannot be fo"  lint: parses
+MISSED     "async function g() { await a<T>?.b; }"  go: TS1477 @28+3 "An instantiation expression cannot be fo"  lint: parses
+MISSED     "async function g() { (await a<T>?.b); }"  go: TS1477 @29+3 "An instantiation expression cannot be fo"  lint: parses
+MISSED     "a<T>\n?.b;"  go: TS1477 @1+3 "An instantiation expression cannot be fo"  lint: parses
+MISSED     "(a<T>\n?.b);"  go: TS1477 @2+3 "An instantiation expression cannot be fo"  lint: parses
+MISSED     "f(a<T>\n?.b);"  go: TS1477 @3+3 "An instantiation expression cannot be fo"  lint: parses
+MISSED     "let x = a<T>\n?.b;"  go: TS1477 @9+3 "An instantiation expression cannot be fo"  lint: parses
+DIFF(new)  "++<x/>++;"  go: TS1109 @2+1 "Expression expected."  lint: TS1005 @6+2 "';' expected."
+DIFF(new)  "(++<x/>++);"  go: TS1109 @3+1 "Expression expected."  lint: TS1005 @7+2 "')' expected."
+DIFF(new)  "--<x/>++;"  go: TS1109 @2+1 "Expression expected."  lint: TS1005 @6+2 "';' expected."
+DIFF(new)  "(--<x/>++);"  go: TS1109 @3+1 "Expression expected."  lint: TS1005 @7+2 "')' expected."
+DIFF(new)  "++<x/>--;"  go: TS1109 @2+1 "Expression expected."  lint: TS1005 @6+2 "';' expected."
+DIFF(new)  "(++<x/>--);"  go: TS1109 @3+1 "Expression expected."  lint: TS1005 @7+2 "')' expected."
+DIFF(new)  "--<x/>--;"  go: TS1109 @2+1 "Expression expected."  lint: TS1005 @6+2 "';' expected."
+DIFF(new)  "(--<x/>--);"  go: TS1109 @3+1 "Expression expected."  lint: TS1005 @7+2 "')' expected."
+DIFF(new)  "++<x/>.b;"  go: TS1109 @2+1 "Expression expected."  lint: TS1005 @6+1 "';' expected."
+DIFF(new)  "(++<x/>.b);"  go: TS1109 @3+1 "Expression expected."  lint: TS1005 @7+1 "')' expected."
+DIFF(new)  "--<x/>.b;"  go: TS1109 @2+1 "Expression expected."  lint: TS1005 @6+1 "';' expected."
+DIFF(new)  "(--<x/>.b);"  go: TS1109 @3+1 "Expression expected."  lint: TS1005 @7+1 "')' expected."
+DIFF(new)  "++<x/>?.b;"  go: TS1109 @2+1 "Expression expected."  lint: TS1005 @6+2 "';' expected."
+DIFF(new)  "(++<x/>?.b);"  go: TS1109 @3+1 "Expression expected."  lint: TS1005 @7+2 "')' expected."
+DIFF(new)  "--<x/>?.b;"  go: TS1109 @2+1 "Expression expected."  lint: TS1005 @6+2 "';' expected."
+DIFF(new)  "(--<x/>?.b);"  go: TS1109 @3+1 "Expression expected."  lint: TS1005 @7+2 "')' expected."
+DIFF(new)  "++<x/>[0];"  go: TS1109 @2+1 "Expression expected."  lint: TS1005 @6+1 "';' expected."
+DIFF(new)  "(++<x/>[0]);"  go: TS1109 @3+1 "Expression expected."  lint: TS1005 @7+1 "')' expected."
+DIFF(new)  "--<x/>[0];"  go: TS1109 @2+1 "Expression expected."  lint: TS1005 @6+1 "';' expected."
+DIFF(new)  "(--<x/>[0]);"  go: TS1109 @3+1 "Expression expected."  lint: TS1005 @7+1 "')' expected."
+EXTRA(new) "<x/>\n[0];"  go: parses  lint: TS1005 @5+1 "';' expected."
+EXTRA(new) "let x = <x/>\n[0];"  go: parses  lint: TS1005 @13+1 "';' expected."
+DIFF(new)  "++<x/>(b);"  go: TS1109 @2+1 "Expression expected."  lint: TS1005 @6+1 "';' expected."
+DIFF(new)  "(++<x/>(b));"  go: TS1109 @3+1 "Expression expected."  lint: TS1005 @7+1 "')' expected."
+DIFF(new)  "--<x/>(b);"  go: TS1109 @2+1 "Expression expected."  lint: TS1005 @6+1 "';' expected."
+DIFF(new)  "(--<x/>(b));"  go: TS1109 @3+1 "Expression expected."  lint: TS1005 @7+1 "')' expected."
+EXTRA(new) "<x/>\n(b);"  go: parses  lint: TS1005 @5+1 "';' expected."
+EXTRA(new) "let x = <x/>\n(b);"  go: parses  lint: TS1005 @13+1 "';' expected."
+DIFF(new)  "++<x/>();"  go: TS1109 @2+1 "Expression expected."  lint: TS1005 @6+1 "';' expected."
+DIFF(new)  "(++<x/>());"  go: TS1109 @3+1 "Expression expected."  lint: TS1005 @7+1 "')' expected."
+DIFF(new)  "--<x/>();"  go: TS1109 @2+1 "Expression expected."  lint: TS1005 @6+1 "';' expected."
+DIFF(new)  "(--<x/>());"  go: TS1109 @3+1 "Expression expected."  lint: TS1005 @7+1 "')' expected."
+DIFF(new)  "<x/>\n();"  go: TS1109 @6+1 "Expression expected."  lint: TS1005 @5+1 "';' expected."
+DIFF(new)  "let x = <x/>\n();"  go: TS1109 @14+1 "Expression expected."  lint: TS1005 @13+1 "';' expected."
+DIFF(new)  "++<x/>`x`;"  go: TS1109 @2+1 "Expression expected."  lint: TS1005 @6+3 "';' expected."
+DIFF(new)  "(++<x/>`x`);"  go: TS1109 @3+1 "Expression expected."  lint: TS1005 @7+3 "')' expected."
+DIFF(new)  "--<x/>`x`;"  go: TS1109 @2+1 "Expression expected."  lint: TS1005 @6+3 "';' expected."
+DIFF(new)  "(--<x/>`x`);"  go: TS1109 @3+1 "Expression expected."  lint: TS1005 @7+3 "')' expected."
+EXTRA(new) "<x/>\n`x`;"  go: parses  lint: TS1005 @5+3 "';' expected."
+EXTRA(new) "let x = <x/>\n`x`;"  go: parses  lint: TS1005 @13+3 "';' expected."
+DIFF(new)  "++<x/>`x${1}`;"  go: TS1109 @2+1 "Expression expected."  lint: TS1005 @6+4 "';' expected."
+DIFF(new)  "(++<x/>`x${1}`);"  go: TS1109 @3+1 "Expression expected."  lint: TS1005 @7+4 "')' expected."
+DIFF(new)  "--<x/>`x${1}`;"  go: TS1109 @2+1 "Expression expected."  lint: TS1005 @6+4 "';' expected."
+DIFF(new)  "(--<x/>`x${1}`);"  go: TS1109 @3+1 "Expression expected."  lint: TS1005 @7+4 "')' expected."
+EXTRA(new) "<x/>\n`x${1}`;"  go: parses  lint: TS1005 @5+4 "';' expected."
+EXTRA(new) "let x = <x/>\n`x${1}`;"  go: parses  lint: TS1005 @13+4 "';' expected."
+DIFF(new)  "++<x/> ++;"  go: TS1109 @2+1 "Expression expected."  lint: TS1005 @7+2 "';' expected."
+DIFF(new)  "(++<x/> ++);"  go: TS1109 @3+1 "Expression expected."  lint: TS1005 @8+2 "')' expected."
+DIFF(new)  "--<x/> ++;"  go: TS1109 @2+1 "Expression expected."  lint: TS1005 @7+2 "';' expected."
+DIFF(new)  "(--<x/> ++);"  go: TS1109 @3+1 "Expression expected."  lint: TS1005 @8+2 "')' expected."
+DIFF(new)  "++<x/> --;"  go: TS1109 @2+1 "Expression expected."  lint: TS1005 @7+2 "';' expected."
+DIFF(new)  "(++<x/> --);"  go: TS1109 @3+1 "Expression expected."  lint: TS1005 @8+2 "')' expected."
+DIFF(new)  "--<x/> --;"  go: TS1109 @2+1 "Expression expected."  lint: TS1005 @7+2 "';' expected."
+DIFF(new)  "(--<x/> --);"  go: TS1109 @3+1 "Expression expected."  lint: TS1005 @8+2 "')' expected."
+MISSED     "<x/> < c;"  go: TS1003 @8+1 "Identifier expected."  lint: parses
+MISSED     "(<x/> < c);"  go: TS1003 @9+1 "Identifier expected."  lint: parses
+MISSED     "f(<x/> < c);"  go: TS1003 @10+1 "Identifier expected."  lint: parses
+MISSED     "let x = <x/> < c;"  go: TS1003 @16+1 "Identifier expected."  lint: parses
+MISSED     "x = <x/> < c;"  go: TS1003 @12+1 "Identifier expected."  lint: parses
+MISSED     "[<x/> < c];"  go: TS1003 @9+1 "Identifier expected."  lint: parses
+MISSED     "x = y ? <x/> < c : z;"  go: TS1003 @20+1 "Identifier expected."  lint: parses
+MISSED     "<x/>\n< c;"  go: TS1003 @8+1 "Identifier expected."  lint: parses
+MISSED     "(<x/>\n< c);"  go: TS1003 @9+1 "Identifier expected."  lint: parses
+MISSED     "f(<x/>\n< c);"  go: TS1003 @10+1 "Identifier expected."  lint: parses
+MISSED     "let x = <x/>\n< c;"  go: TS1003 @16+1 "Identifier expected."  lint: parses
+DIFF(new)  "f(<x/>!);"  go: TS1005 @6+1 "',' expected."  lint: TS1005 @6+1 "')' expected."
+DIFF(new)  "let x = <x/>!;"  go: TS1005 @12+1 "',' expected."  lint: TS1005 @12+1 "';' expected."
+DIFF(new)  "[<x/>!];"  go: TS1005 @5+1 "',' expected."  lint: TS1005 @5+1 "']' expected."
+DIFF(new)  "++<x/>!;"  go: TS1109 @2+1 "Expression expected."  lint: TS1005 @6+1 "';' expected."
+DIFF(new)  "(++<x/>!);"  go: TS1109 @3+1 "Expression expected."  lint: TS1005 @7+1 "')' expected."
+DIFF(new)  "--<x/>!;"  go: TS1109 @2+1 "Expression expected."  lint: TS1005 @6+1 "';' expected."
+DIFF(new)  "(--<x/>!);"  go: TS1109 @3+1 "Expression expected."  lint: TS1005 @7+1 "')' expected."
+MISSED     "<x/><T>(b);"  go: TS17008 @5+1 "JSX element 'T' has no corresponding clo"  lint: parses
+MISSED     "(<x/><T>(b));"  go: TS17008 @6+1 "JSX element 'T' has no corresponding clo"  lint: parses
+MISSED     "f(<x/><T>(b));"  go: TS17008 @7+1 "JSX element 'T' has no corresponding clo"  lint: parses
+MISSED     "let x = <x/><T>(b);"  go: TS17008 @13+1 "JSX element 'T' has no corresponding clo"  lint: parses
+MISSED     "x = <x/><T>(b);"  go: TS17008 @9+1 "JSX element 'T' has no corresponding clo"  lint: parses
+MISSED     "[<x/><T>(b)];"  go: TS17008 @6+1 "JSX element 'T' has no corresponding clo"  lint: parses
+MISSED     "x = y ? <x/><T>(b) : z;"  go: TS17008 @13+1 "JSX element 'T' has no corresponding clo"  lint: parses
+MISSED     "<x/>\n<T>(b);"  go: TS17008 @6+1 "JSX element 'T' has no corresponding clo"  lint: parses
+MISSED     "(<x/>\n<T>(b));"  go: TS17008 @7+1 "JSX element 'T' has no corresponding clo"  lint: parses
+MISSED     "f(<x/>\n<T>(b));"  go: TS17008 @8+1 "JSX element 'T' has no corresponding clo"  lint: parses
+MISSED     "let x = <x/>\n<T>(b);"  go: TS17008 @14+1 "JSX element 'T' has no corresponding clo"  lint: parses
+DIFF(new)  "<x/><T>;"  go: TS17008 @5+1 "JSX element 'T' has no corresponding clo"  lint: TS1109 @7+1 "Expression expected."
+DIFF(new)  "(<x/><T>);"  go: TS17008 @6+1 "JSX element 'T' has no corresponding clo"  lint: TS1109 @8+1 "Expression expected."
+DIFF(new)  "f(<x/><T>);"  go: TS17008 @7+1 "JSX element 'T' has no corresponding clo"  lint: TS1109 @9+1 "Expression expected."
+DIFF(new)  "let x = <x/><T>;"  go: TS17008 @13+1 "JSX element 'T' has no corresponding clo"  lint: TS1109 @15+1 "Expression expected."
+DIFF(new)  "x = <x/><T>;"  go: TS17008 @9+1 "JSX element 'T' has no corresponding clo"  lint: TS1109 @11+1 "Expression expected."
+DIFF(new)  "[<x/><T>];"  go: TS17008 @6+1 "JSX element 'T' has no corresponding clo"  lint: TS1109 @8+1 "Expression expected."
+DIFF(new)  "x = y ? <x/><T> : z;"  go: TS17008 @13+1 "JSX element 'T' has no corresponding clo"  lint: TS1109 @16+1 "Expression expected."
+DIFF(new)  "++<x/><T>;"  go: TS1109 @2+1 "Expression expected."  lint: TS1109 @9+1 "Expression expected."
+DIFF(new)  "(++<x/><T>);"  go: TS1109 @3+1 "Expression expected."  lint: TS1109 @10+1 "Expression expected."
+DIFF(new)  "--<x/><T>;"  go: TS1109 @2+1 "Expression expected."  lint: TS1109 @9+1 "Expression expected."
+DIFF(new)  "(--<x/><T>);"  go: TS1109 @3+1 "Expression expected."  lint: TS1109 @10+1 "Expression expected."
+DIFF(new)  "<x/>\n<T>;"  go: TS17008 @6+1 "JSX element 'T' has no corresponding clo"  lint: TS1109 @8+1 "Expression expected."
+DIFF(new)  "(<x/>\n<T>);"  go: TS17008 @7+1 "JSX element 'T' has no corresponding clo"  lint: TS1109 @9+1 "Expression expected."
+DIFF(new)  "f(<x/>\n<T>);"  go: TS17008 @8+1 "JSX element 'T' has no corresponding clo"  lint: TS1109 @10+1 "Expression expected."
+DIFF(new)  "let x = <x/>\n<T>;"  go: TS17008 @14+1 "JSX element 'T' has no corresponding clo"  lint: TS1109 @16+1 "Expression expected."
+DIFF(new)  "++<x></x>++;"  go: TS1109 @2+1 "Expression expected."  lint: TS1005 @9+2 "';' expected."
+DIFF(new)  "(++<x></x>++);"  go: TS1109 @3+1 "Expression expected."  lint: TS1005 @10+2 "')' expected."
+DIFF(new)  "--<x></x>++;"  go: TS1109 @2+1 "Expression expected."  lint: TS1005 @9+2 "';' expected."
+DIFF(new)  "(--<x></x>++);"  go: TS1109 @3+1 "Expression expected."  lint: TS1005 @10+2 "')' expected."
+DIFF(new)  "++<x></x>--;"  go: TS1109 @2+1 "Expression expected."  lint: TS1005 @9+2 "';' expected."
+DIFF(new)  "(++<x></x>--);"  go: TS1109 @3+1 "Expression expected."  lint: TS1005 @10+2 "')' expected."
+DIFF(new)  "--<x></x>--;"  go: TS1109 @2+1 "Expression expected."  lint: TS1005 @9+2 "';' expected."
+DIFF(new)  "(--<x></x>--);"  go: TS1109 @3+1 "Expression expected."  lint: TS1005 @10+2 "')' expected."
+DIFF(new)  "++<x></x>.b;"  go: TS1109 @2+1 "Expression expected."  lint: TS1005 @9+1 "';' expected."
+DIFF(new)  "(++<x></x>.b);"  go: TS1109 @3+1 "Expression expected."  lint: TS1005 @10+1 "')' expected."
+DIFF(new)  "--<x></x>.b;"  go: TS1109 @2+1 "Expression expected."  lint: TS1005 @9+1 "';' expected."
+DIFF(new)  "(--<x></x>.b);"  go: TS1109 @3+1 "Expression expected."  lint: TS1005 @10+1 "')' expected."
+DIFF(new)  "++<x></x>?.b;"  go: TS1109 @2+1 "Expression expected."  lint: TS1005 @9+2 "';' expected."
+DIFF(new)  "(++<x></x>?.b);"  go: TS1109 @3+1 "Expression expected."  lint: TS1005 @10+2 "')' expected."
+DIFF(new)  "--<x></x>?.b;"  go: TS1109 @2+1 "Expression expected."  lint: TS1005 @9+2 "';' expected."
+DIFF(new)  "(--<x></x>?.b);"  go: TS1109 @3+1 "Expression expected."  lint: TS1005 @10+2 "')' expected."
+DIFF(new)  "++<x></x>[0];"  go: TS1109 @2+1 "Expression expected."  lint: TS1005 @9+1 "';' expected."
+DIFF(new)  "(++<x></x>[0]);"  go: TS1109 @3+1 "Expression expected."  lint: TS1005 @10+1 "')' expected."
+DIFF(new)  "--<x></x>[0];"  go: TS1109 @2+1 "Expression expected."  lint: TS1005 @9+1 "';' expected."
+DIFF(new)  "(--<x></x>[0]);"  go: TS1109 @3+1 "Expression expected."  lint: TS1005 @10+1 "')' expected."
+EXTRA(new) "<x></x>\n[0];"  go: parses  lint: TS1005 @8+1 "';' expected."
+EXTRA(new) "let x = <x></x>\n[0];"  go: parses  lint: TS1005 @16+1 "';' expected."
+DIFF(new)  "++<x></x>(b);"  go: TS1109 @2+1 "Expression expected."  lint: TS1005 @9+1 "';' expected."
+DIFF(new)  "(++<x></x>(b));"  go: TS1109 @3+1 "Expression expected."  lint: TS1005 @10+1 "')' expected."
+DIFF(new)  "--<x></x>(b);"  go: TS1109 @2+1 "Expression expected."  lint: TS1005 @9+1 "';' expected."
+DIFF(new)  "(--<x></x>(b));"  go: TS1109 @3+1 "Expression expected."  lint: TS1005 @10+1 "')' expected."
+EXTRA(new) "<x></x>\n(b);"  go: parses  lint: TS1005 @8+1 "';' expected."
+EXTRA(new) "let x = <x></x>\n(b);"  go: parses  lint: TS1005 @16+1 "';' expected."
+DIFF(new)  "++<x></x>();"  go: TS1109 @2+1 "Expression expected."  lint: TS1005 @9+1 "';' expected."
+DIFF(new)  "(++<x></x>());"  go: TS1109 @3+1 "Expression expected."  lint: TS1005 @10+1 "')' expected."
+DIFF(new)  "--<x></x>();"  go: TS1109 @2+1 "Expression expected."  lint: TS1005 @9+1 "';' expected."
+DIFF(new)  "(--<x></x>());"  go: TS1109 @3+1 "Expression expected."  lint: TS1005 @10+1 "')' expected."
+DIFF(new)  "<x></x>\n();"  go: TS1109 @9+1 "Expression expected."  lint: TS1005 @8+1 "';' expected."
+DIFF(new)  "let x = <x></x>\n();"  go: TS1109 @17+1 "Expression expected."  lint: TS1005 @16+1 "';' expected."
+DIFF(new)  "++<x></x>`x`;"  go: TS1109 @2+1 "Expression expected."  lint: TS1005 @9+3 "';' expected."
+DIFF(new)  "(++<x></x>`x`);"  go: TS1109 @3+1 "Expression expected."  lint: TS1005 @10+3 "')' expected."
+DIFF(new)  "--<x></x>`x`;"  go: TS1109 @2+1 "Expression expected."  lint: TS1005 @9+3 "';' expected."
+DIFF(new)  "(--<x></x>`x`);"  go: TS1109 @3+1 "Expression expected."  lint: TS1005 @10+3 "')' expected."
+EXTRA(new) "<x></x>\n`x`;"  go: parses  lint: TS1005 @8+3 "';' expected."
+EXTRA(new) "let x = <x></x>\n`x`;"  go: parses  lint: TS1005 @16+3 "';' expected."
+DIFF(new)  "++<x></x>`x${1}`;"  go: TS1109 @2+1 "Expression expected."  lint: TS1005 @9+4 "';' expected."
+DIFF(new)  "(++<x></x>`x${1}`);"  go: TS1109 @3+1 "Expression expected."  lint: TS1005 @10+4 "')' expected."
+DIFF(new)  "--<x></x>`x${1}`;"  go: TS1109 @2+1 "Expression expected."  lint: TS1005 @9+4 "';' expected."
+DIFF(new)  "(--<x></x>`x${1}`);"  go: TS1109 @3+1 "Expression expected."  lint: TS1005 @10+4 "')' expected."
+EXTRA(new) "<x></x>\n`x${1}`;"  go: parses  lint: TS1005 @8+4 "';' expected."
+EXTRA(new) "let x = <x></x>\n`x${1}`;"  go: parses  lint: TS1005 @16+4 "';' expected."
+DIFF(new)  "++<x></x> ++;"  go: TS1109 @2+1 "Expression expected."  lint: TS1005 @10+2 "';' expected."
+DIFF(new)  "(++<x></x> ++);"  go: TS1109 @3+1 "Expression expected."  lint: TS1005 @11+2 "')' expected."
+DIFF(new)  "--<x></x> ++;"  go: TS1109 @2+1 "Expression expected."  lint: TS1005 @10+2 "';' expected."
+DIFF(new)  "(--<x></x> ++);"  go: TS1109 @3+1 "Expression expected."  lint: TS1005 @11+2 "')' expected."
+DIFF(new)  "++<x></x> --;"  go: TS1109 @2+1 "Expression expected."  lint: TS1005 @10+2 "';' expected."
+DIFF(new)  "(++<x></x> --);"  go: TS1109 @3+1 "Expression expected."  lint: TS1005 @11+2 "')' expected."
+DIFF(new)  "--<x></x> --;"  go: TS1109 @2+1 "Expression expected."  lint: TS1005 @10+2 "';' expected."
+DIFF(new)  "(--<x></x> --);"  go: TS1109 @3+1 "Expression expected."  lint: TS1005 @11+2 "')' expected."
+MISSED     "<x></x> < c;"  go: TS1003 @11+1 "Identifier expected."  lint: parses
+MISSED     "(<x></x> < c);"  go: TS1003 @12+1 "Identifier expected."  lint: parses
+MISSED     "f(<x></x> < c);"  go: TS1003 @13+1 "Identifier expected."  lint: parses
+MISSED     "let x = <x></x> < c;"  go: TS1003 @19+1 "Identifier expected."  lint: parses
+MISSED     "x = <x></x> < c;"  go: TS1003 @15+1 "Identifier expected."  lint: parses
+MISSED     "[<x></x> < c];"  go: TS1003 @12+1 "Identifier expected."  lint: parses
+MISSED     "x = y ? <x></x> < c : z;"  go: TS1003 @23+1 "Identifier expected."  lint: parses
+MISSED     "<x></x>\n< c;"  go: TS1003 @11+1 "Identifier expected."  lint: parses
+MISSED     "(<x></x>\n< c);"  go: TS1003 @12+1 "Identifier expected."  lint: parses
+MISSED     "f(<x></x>\n< c);"  go: TS1003 @13+1 "Identifier expected."  lint: parses
+MISSED     "let x = <x></x>\n< c;"  go: TS1003 @19+1 "Identifier expected."  lint: parses
+DIFF(new)  "f(<x></x>!);"  go: TS1005 @9+1 "',' expected."  lint: TS1005 @9+1 "')' expected."
+DIFF(new)  "let x = <x></x>!;"  go: TS1005 @15+1 "',' expected."  lint: TS1005 @15+1 "';' expected."
+DIFF(new)  "[<x></x>!];"  go: TS1005 @8+1 "',' expected."  lint: TS1005 @8+1 "']' expected."
+DIFF(new)  "++<x></x>!;"  go: TS1109 @2+1 "Expression expected."  lint: TS1005 @9+1 "';' expected."
+DIFF(new)  "(++<x></x>!);"  go: TS1109 @3+1 "Expression expected."  lint: TS1005 @10+1 "')' expected."
+DIFF(new)  "--<x></x>!;"  go: TS1109 @2+1 "Expression expected."  lint: TS1005 @9+1 "';' expected."
+DIFF(new)  "(--<x></x>!);"  go: TS1109 @3+1 "Expression expected."  lint: TS1005 @10+1 "')' expected."
+MISSED     "<x></x><T>(b);"  go: TS17008 @8+1 "JSX element 'T' has no corresponding clo"  lint: parses
+MISSED     "(<x></x><T>(b));"  go: TS17008 @9+1 "JSX element 'T' has no corresponding clo"  lint: parses
+MISSED     "f(<x></x><T>(b));"  go: TS17008 @10+1 "JSX element 'T' has no corresponding clo"  lint: parses
+MISSED     "let x = <x></x><T>(b);"  go: TS17008 @16+1 "JSX element 'T' has no corresponding clo"  lint: parses
+MISSED     "x = <x></x><T>(b);"  go: TS17008 @12+1 "JSX element 'T' has no corresponding clo"  lint: parses
+MISSED     "[<x></x><T>(b)];"  go: TS17008 @9+1 "JSX element 'T' has no corresponding clo"  lint: parses
+MISSED     "x = y ? <x></x><T>(b) : z;"  go: TS17008 @16+1 "JSX element 'T' has no corresponding clo"  lint: parses
+MISSED     "<x></x>\n<T>(b);"  go: TS17008 @9+1 "JSX element 'T' has no corresponding clo"  lint: parses
+MISSED     "(<x></x>\n<T>(b));"  go: TS17008 @10+1 "JSX element 'T' has no corresponding clo"  lint: parses
+MISSED     "f(<x></x>\n<T>(b));"  go: TS17008 @11+1 "JSX element 'T' has no corresponding clo"  lint: parses
+MISSED     "let x = <x></x>\n<T>(b);"  go: TS17008 @17+1 "JSX element 'T' has no corresponding clo"  lint: parses
+DIFF(new)  "<x></x><T>;"  go: TS17008 @8+1 "JSX element 'T' has no corresponding clo"  lint: TS1109 @10+1 "Expression expected."
+DIFF(new)  "(<x></x><T>);"  go: TS17008 @9+1 "JSX element 'T' has no corresponding clo"  lint: TS1109 @11+1 "Expression expected."
+DIFF(new)  "f(<x></x><T>);"  go: TS17008 @10+1 "JSX element 'T' has no corresponding clo"  lint: TS1109 @12+1 "Expression expected."
+DIFF(new)  "let x = <x></x><T>;"  go: TS17008 @16+1 "JSX element 'T' has no corresponding clo"  lint: TS1109 @18+1 "Expression expected."
+DIFF(new)  "x = <x></x><T>;"  go: TS17008 @12+1 "JSX element 'T' has no corresponding clo"  lint: TS1109 @14+1 "Expression expected."
+DIFF(new)  "[<x></x><T>];"  go: TS17008 @9+1 "JSX element 'T' has no corresponding clo"  lint: TS1109 @11+1 "Expression expected."
+DIFF(new)  "x = y ? <x></x><T> : z;"  go: TS17008 @16+1 "JSX element 'T' has no corresponding clo"  lint: TS1109 @19+1 "Expression expected."
+DIFF(new)  "++<x></x><T>;"  go: TS1109 @2+1 "Expression expected."  lint: TS1109 @12+1 "Expression expected."
+DIFF(new)  "(++<x></x><T>);"  go: TS1109 @3+1 "Expression expected."  lint: TS1109 @13+1 "Expression expected."
+DIFF(new)  "--<x></x><T>;"  go: TS1109 @2+1 "Expression expected."  lint: TS1109 @12+1 "Expression expected."
+DIFF(new)  "(--<x></x><T>);"  go: TS1109 @3+1 "Expression expected."  lint: TS1109 @13+1 "Expression expected."
+DIFF(new)  "<x></x>\n<T>;"  go: TS17008 @9+1 "JSX element 'T' has no corresponding clo"  lint: TS1109 @11+1 "Expression expected."
+DIFF(new)  "(<x></x>\n<T>);"  go: TS17008 @10+1 "JSX element 'T' has no corresponding clo"  lint: TS1109 @12+1 "Expression expected."
+DIFF(new)  "f(<x></x>\n<T>);"  go: TS17008 @11+1 "JSX element 'T' has no corresponding clo"  lint: TS1109 @13+1 "Expression expected."
+DIFF(new)  "let x = <x></x>\n<T>;"  go: TS17008 @17+1 "JSX element 'T' has no corresponding clo"  lint: TS1109 @19+1 "Expression expected."

@@ -1,0 +1,121 @@
+STATE load 561.45 563.08 492.40 cpu.pressure avg10=20.31 avg60=28.40 memory 1716 MB disk 292G
+bun test v1.4.3-canary.1 (367d939d9)
+
+test/cli/lint/conformance.test.ts:
+(pass) reference > the pinned answers are those of the commits that UPSTREAM names [0.21ms]
+(pass) reference > the corpus holds the cases, the baselines and the lists of the pinned commits [5.64ms]
+(pass) reference > the list has the instances of the reference's run: 14,915, of which 12,797 run and 2,118 are skipped [57.56ms]
+(pass) reference > the case and space tables are those of Go [143.79ms]
+(pass) directives > the vectors of the reference parser [13.17ms]
+(pass) variations > 72 of the 126 declared options vary [0.23ms]
+(pass) variations > no setting [0.17ms]
+(pass) variations > one value [0.40ms]
+(pass) variations > two values [1.02ms]
+(pass) variations > a value twice [0.11ms]
+(pass) variations > one value by two names keeps the first name [0.02ms]
+(pass) variations > the cross product, keys sorted in the name [0.26ms]
+(pass) variations > the last occurrence wins [0.03ms]
+(pass) variations > every value [0.16ms]
+(pass) variations > every value but one [0.08ms]
+(pass) variations > every value but one leaves nothing to vary [0.02ms]
+(pass) variations > a value that is taken out again [0.38ms]
+(pass) variations > a name in upper case [0.03ms]
+(pass) variations > an option that does not vary
+(pass) variations > a set of variations that is empty stops the case [0.12ms]
+(pass) variations > 25 variations are the most [1.23ms]
+(pass) enumerator > the sample holds cases of both suites [0.54ms]
+(pass) enumerator > the instances of one of 40 cases are their lines of the list: group 1 [34.11ms]
+(pass) enumerator > the instances of one of 40 cases are their lines of the list: group 2 [17.31ms]
+(pass) enumerator > the instances of one of 40 cases are their lines of the list: group 3 [9.78ms]
+(pass) enumerator > the instances of one of 40 cases are their lines of the list: group 4 [15.12ms]
+(pass) enumerator > the instances of one of 40 cases are their lines of the list: group 5 [6.90ms]
+(pass) enumerator > the instances of one of 40 cases are their lines of the list: group 6 [5.38ms]
+(pass) enumerator > the instances of one of 40 cases are their lines of the list: group 7 [5.45ms]
+(pass) enumerator > the instances of one of 40 cases are their lines of the list: group 8 [13.98ms]
+(pass) enumerator > the instances of one of 40 cases are their lines of the list: group 9 [3.26ms]
+(pass) enumerator > 45 cases are left out by name and 8 are run for their diagnostics alone [3.69ms]
+(skip) enumerator > every instance is its line of the list, and the counts are those of the reference
+(pass) error baselines > the sample is 200 files of both tools, and holds the files in the pretty form [1.17ms]
+(pass) error baselines > read and written again, the bytes are the same: group 1 [22.92ms]
+(pass) error baselines > read and written again, the bytes are the same: group 2 [1.46ms]
+(pass) error baselines > read and written again, the bytes are the same: group 3 [4.76ms]
+(pass) error baselines > read and written again, the bytes are the same: group 4 [23.22ms]
+(pass) error baselines > read and written again, the bytes are the same: group 5 [18.04ms]
+(pass) error baselines > read and written again, the bytes are the same: group 6 [8.43ms]
+(pass) error baselines > read and written again, the bytes are the same: group 7 [7.34ms]
+(pass) error baselines > read and written again, the bytes are the same: group 8 [35.66ms]
+(pass) error baselines > read and written again, the bytes are the same: group 9 [10.45ms]
+(pass) error baselines > read and written again, the bytes are the same: group 10 [27.38ms]
+(pass) error baselines > read and written again, the bytes are the same: group 11 [8.73ms]
+(pass) error baselines > read and written again, the bytes are the same: group 12 [1.89ms]
+(pass) run > the bytes of the baseline are the bytes of the oracle, or it is no pass [3.56ms]
+(pass) run > a check that reports nothing passes no instance with errors, and a diagnostic fails an instance without [0.23ms]
+(pass) run > the first section alone, which is all that the plain format holds, is reported apart and is never a pass [0.56ms]
+(pass) run > what is no list of diagnostics of the instance is no pass [0.43ms]
+(pass) run > replayed oracles pass and a check that reports nothing passes no instance with errors: group 1 [16.51ms]
+(pass) run > replayed oracles pass and a check that reports nothing passes no instance with errors: group 2 [8.91ms]
+(pass) run > replayed oracles pass and a check that reports nothing passes no instance with errors: group 3 [8.79ms]
+(pass) run > replayed oracles pass and a check that reports nothing passes no instance with errors: group 4 [6.36ms]
+(pass) run > replayed oracles pass and a check that reports nothing passes no instance with errors: group 5 [14.61ms]
+(pass) run > replayed oracles pass and a check that reports nothing passes no instance with errors: group 6 [12.49ms]
+(pass) run > replayed oracles pass and a check that reports nothing passes no instance with errors: group 7 [7.91ms]
+(pass) run > the sample had instances with errors and without [0.09ms]
+(pass) expectations > the file has one form [0.25ms]
+(pass) expectations > a listed name that does not pass is a failure, and a name that passes enters and never leaves [0.65ms]
+(pass) expectations > the names that pass and are not listed are printed with the one command that adds them [0.14ms]
+(pass) expectations > a check that reports nothing adds no name: list C takes no more names of a directory than list E has [0.05ms]
+(pass) plain format > one located diagnostic [1.08ms]
+(pass) plain format > empty text is an empty list [0.06ms]
+(pass) plain format > a chain: two spaces per level, siblings and a way back up [0.26ms]
+(pass) plain format > a line that is deeper than one level below the line before keeps its spaces [0.05ms]
+(pass) plain format > names: spaces, parentheses, a drive, a line break of Windows [0.06ms]
+(pass) plain format > a line that starts with a category has no file [0.03ms]
+(pass) plain format > the code of a rule [0.02ms]
+(pass) plain format > a text with a crash report is refused whole [0.02ms]
+(pass) plain format > a text with a code frame is refused whole
+(pass) plain format > a text with an empty line is refused whole
+(pass) plain format > a text with a chain line first is refused whole
+(pass) plain format > a text with one space is refused whole
+(pass) plain format > a text with spaces only is refused whole
+(pass) plain format > a text with no line break at the end is refused whole
+(pass) plain format > a text with no code is refused whole
+(pass) plain format > a text with a summary is refused whole
+(pass) plain format > a text with line zero is refused whole
+(pass) plain format > a text with an unknown category is refused whole
+(pass) plain format > a text with a debug log is refused whole
+(pass) plain format > the first section of the baselines of one of 250 cases is the plain format [15.25ms]
+(pass) default check > the probe: a command that is no file [6.30ms]
+(pass) default check > the probe: a command that dies [77.05ms]
+(pass) default check > the probe: a command that runs its operand [82.01ms]
+(pass) default check > a command that runs its operand gets no instance [63.84ms]
+(pass) default check > the probe: a command that takes the flag and does nothing [794.86ms]
+(pass) default check > the probe: a command that lints [1690.65ms]
+(pass) default check > a command that lints gets the written unit as its operand, and no diagnostic passes an instance without errors [1813.28ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: an error and the exit code 0 [1763.50ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: a line of no form [1767.40ms]
+(pass) default check > stderr is read in the plain format, chain lines too: the first section is the oracle's, and that is no pass [1784.54ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: text on stdout [1763.18ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: the exit code of a refusal [1774.94ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: an exit code that is none of 0, 1 and 2 [1775.58ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: no error and the exit code 2 [1763.30ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: an error of the command [1762.98ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: a file that is not of the instance [1763.08ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: a diagnostic of a rule [1762.86ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: a signal [1763.36ms]
+(pass) default check > never equal to an oracle without errors: a stand-in [1961.28ms]
+(pass) default check > never equal to an oracle without errors: the code -1 [1961.38ms]
+(pass) listed instances > a batch passes when the oracle is replayed, and fails its names of list E when nothing is reported [13.43ms]
+(pass) listed instances > a name in the list of the other class, a skipped instance and a name of no instance are failures [1.93ms]
+(pass) expectations.json > is in the form that the update writes [0.05ms]
+
+1 tests skipped:
+(skip) enumerator > every instance is its line of the list, and the counts are those of the reference
+
+ 104 pass
+ 1 skip
+ 0 fail
+ 167 expect() calls
+Ran 105 tests across 1 file. [4.33s]
+TIME real 4.571 user 0.780 sys 0.259
+exit 0
+STATE-AFTER load 536.83 557.95 491.12 cpu.pressure avg10=22.15 avg60=28.19 memory 1802 MB disk 295G

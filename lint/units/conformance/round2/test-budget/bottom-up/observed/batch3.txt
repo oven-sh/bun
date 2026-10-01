@@ -1,0 +1,17 @@
+repo-timeline-1 | STATE load 600.12 664.98 575.33 | Ran 105 tests across 1 file. [4.41s] | TIME real 4.424 user 2.224 sys 0.471
+preload to the first beforeAll: 128 ms (on CPU 52, waits for a CPU 69)
+whole 4178 ms: in tests 3718, between tests 333, starts 105
+repo-timeline-2 | STATE load 572.16 658.11 573.59 | Ran 105 tests across 1 file. [4.15s] | TIME real 4.227 user 2.227 sys 0.450
+preload to the first beforeAll: 92 ms (on CPU 47, waits for a CPU 45)
+whole 4066 ms: in tests 3632, between tests 342, starts 105
+knobs-timeline-1 | STATE load 547.09 651.48 571.90 | Ran 105 tests across 1 file. [1.87s] | TIME real 1.996 user 0.856 sys 0.279
+preload to the first beforeAll: 75 ms (on CPU 52, waits for a CPU 21)
+whole 1637 ms: in tests 1396, between tests 166, starts 104
+knobs-timeline-2 | STATE load 520.89 644.32 570.01 | Ran 105 tests across 1 file. [3.89s] | TIME real 3.966 user 0.915 sys 0.321
+preload to the first beforeAll: 96 ms (on CPU 53, waits for a CPU 42)
+  gap    103 ms (on CPU 1, waits for a CPU 0) before: reference > the corpus holds the cases, the baselines and the lists of the pinned commits
+  gap    131 ms (on CPU 0, waits for a CPU 1) before: enumerator > the instances of one of 40 cases are their lines of the list: group 8
+  gap    104 ms (on CPU 0, waits for a CPU 0) before: error baselines > read and written again, the bytes are the same: group 3
+  gap    151 ms (on CPU 0, waits for a CPU 0) before: run > the sample had instances with errors and without
+whole 3838 ms: in tests 3045, between tests 697, starts 104
+### 2026-10-01T17:25:28Z done

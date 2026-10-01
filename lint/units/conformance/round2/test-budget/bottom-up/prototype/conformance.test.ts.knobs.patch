@@ -1,5 +1,5 @@
 diff --git a/test/cli/lint/conformance.test.ts b/test/cli/lint/conformance.test.ts
-index 0f294fa055..2a25166848 100644
+index 0f294fa055..c59677acf3 100644
 --- a/test/cli/lint/conformance.test.ts
 +++ b/test/cli/lint/conformance.test.ts
 @@ -1,5 +1,5 @@
@@ -9,7 +9,7 @@ index 0f294fa055..2a25166848 100644
  import { createHash } from "node:crypto";
  import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
  import { availableParallelism } from "node:os";
-@@ -48,8 +48,12 @@ const corpusRoot = join(home, "corpus");
+@@ -48,8 +48,14 @@ const corpusRoot = join(home, "corpus");
  
  // A debug or sanitizer build runs this file's JavaScript about a hundred times slower: it takes the samples and leaves the whole corpus to release builds.
  const small = isDebug || isASAN;
@@ -18,13 +18,24 @@ index 0f294fa055..2a25166848 100644
 +// Every case is 12,444 files to read, which a disk that does not hold them in memory answers in tens of seconds: the release builds of CI read them all, a run by hand takes the samples.
 +const whole = !small && isCI;
 +// The processes that a test starts need more than the default time of a test: in a debug build, and in a release build on a machine under load.
-+const spawnTimeout = small ? 60_000 : 30_000;
++const spawnTimeout = small ? 120_000 : 30_000;
++// The time of one check that starts a process; the first checks of a command wait for the two runs of its probe as well. It is less than the time of the test, so that a slow check ends as one.
++const checkTimeout = small ? 100_000 : 20_000;
 +// A debug build needs seconds for a pass over the list, a group of cases or a group of baselines, which a release build makes in milliseconds.
 +const slowTimeout = small ? 60_000 : undefined;
  
  // One of every n names, the same on every platform and without an order of the directory entries.
  const sampled = (name: string, n: number) => Bun.hash.crc32(name) % n === 0;
-@@ -237,130 +241,142 @@ describe("reference", () => {
+@@ -187,7 +193,7 @@ async function failuresOf(batch: readonly { name: string; list: "E" | "C" }[], c
+     ...corpusRun,
+     directory,
+     concurrency: Math.min(8, availableParallelism()),
+-    timeoutMs: small ? 60_000 : 10_000,
++    timeoutMs: checkTimeout,
+   });
+   for (const r of results) {
+     if (r.outcome === "pass") continue;
+@@ -237,130 +243,142 @@ describe("reference", () => {
      });
    });
  
@@ -281,7 +292,7 @@ index 0f294fa055..2a25166848 100644
  });
  
  describe("variations", () => {
-@@ -437,6 +453,7 @@ describe("enumerator", () => {
+@@ -437,6 +455,7 @@ describe("enumerator", () => {
        const want = group.flatMap(path => linesOfCase().get(path) ?? []);
        expect(got.sort()).toEqual(want.sort());
      },
@@ -289,7 +300,7 @@ index 0f294fa055..2a25166848 100644
    );
  
    test("45 cases are left out by name and 8 are run for their diagnostics alone", () => {
-@@ -459,7 +476,7 @@ describe("enumerator", () => {
+@@ -459,7 +478,7 @@ describe("enumerator", () => {
    });
  
    // The whole corpus is a second of work in a release build and minutes in a debug build; the time limit is for a machine under load.
@@ -298,7 +309,7 @@ index 0f294fa055..2a25166848 100644
      "every instance is its line of the list, and the counts are those of the reference",
      () => {
        const instances = corpus().enumerateInstances();
-@@ -527,7 +544,7 @@ describe("enumerator", () => {
+@@ -527,7 +546,7 @@ describe("enumerator", () => {
          });
        }
      },
@@ -307,7 +318,7 @@ index 0f294fa055..2a25166848 100644
    );
  });
  
-@@ -571,6 +588,7 @@ describe("error baselines", () => {
+@@ -571,6 +590,7 @@ describe("error baselines", () => {
          pretty: group.filter(f => pretty.includes(f.name)).length,
        });
      },
@@ -315,7 +326,7 @@ index 0f294fa055..2a25166848 100644
    );
  });
  
-@@ -686,6 +704,7 @@ describe("run", () => {
+@@ -686,6 +706,7 @@ describe("run", () => {
        );
        for (const r of laid) seen[r.instance.oracle.class]++;
      },
@@ -323,7 +334,7 @@ index 0f294fa055..2a25166848 100644
    );
  
    test("the sample had instances with errors and without", () => {
-@@ -886,32 +905,36 @@ describe("plain format", () => {
+@@ -886,32 +907,36 @@ describe("plain format", () => {
      expect({ ok: r.ok, at: r.ok ? undefined : r.at }).toEqual({ ok: false, at });
    });
  
@@ -385,7 +396,21 @@ index 0f294fa055..2a25166848 100644
  });
  
  describe("default check", () => {
-@@ -963,16 +986,20 @@ describe("default check", () => {
+@@ -924,7 +949,12 @@ describe("default check", () => {
+   const ending = async (instance: Instance, check: Check, content: string, oracle?: () => Uint8Array) => {
+     using dir = tempDir("lint-conformance", {});
+     const input = unitInput({ unitName: "/.src/a.ts", content });
+-    const options = { input, oracle: oracle ?? (() => new Uint8Array()), directory: join(String(dir), "instances") };
++    const options = {
++      input,
++      oracle: oracle ?? (() => new Uint8Array()),
++      directory: join(String(dir), "instances"),
++      timeoutMs: checkTimeout,
++    };
+     return endingOf(await runInstance(instance, check, options));
+   };
+ 
+@@ -963,16 +993,20 @@ describe("default check", () => {
      spawnTimeout,
    );
  
@@ -416,7 +441,7 @@ index 0f294fa055..2a25166848 100644
  
    test.concurrent(
      "a command that lints gets the written unit as its operand, and no diagnostic passes an instance without errors",
-@@ -1106,12 +1133,16 @@ describe("listed instances", () => {
+@@ -1106,12 +1140,16 @@ describe("listed instances", () => {
    ];
    const batch = [...E.map(name => ({ name, list: "E" as const })), { name: "2dArrays.ts", list: "C" as const }];
  
@@ -439,3 +464,11 @@ index 0f294fa055..2a25166848 100644
  
    test("a name in the list of the other class, a skipped instance and a name of no instance are failures", async () => {
      using dir = tempDir("lint-conformance", {});
+@@ -1150,6 +1188,6 @@ describe("expectations.json", () => {
+       // The first failures in full and the number of all: a binary that cannot lint fails every name for one reason.
+       expect({ failed: failures.length, first: failures.slice(0, 5) }).toEqual({ failed: 0, first: [] });
+     },
+-    small ? 120_000 : 30_000,
++    spawnTimeout,
+   );
+ });

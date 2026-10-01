@@ -1,0 +1,58 @@
+{"loader":"js","sources":19404,"ok":14566,"same(new)":3515,"same(head too)":613,"DIFF(head too)":559,"MISSED":21,"EXTRA(head too)":94,"EXTRA(new)":16,"DIFF(new)":20}
+MISSED     "new A?.b;"  go: TS1209 @5+2 "Invalid optional chain from new expressi"  lint: parses
+MISSED     "(new A?.b);"  go: TS1209 @6+2 "Invalid optional chain from new expressi"  lint: parses
+MISSED     "f(new A?.b);"  go: TS1209 @7+2 "Invalid optional chain from new expressi"  lint: parses
+MISSED     "let x = new A?.b;"  go: TS1209 @13+2 "Invalid optional chain from new expressi"  lint: parses
+MISSED     "x = new A?.b;"  go: TS1209 @9+2 "Invalid optional chain from new expressi"  lint: parses
+MISSED     "[new A?.b];"  go: TS1209 @6+2 "Invalid optional chain from new expressi"  lint: parses
+MISSED     "x = y ? new A?.b : z;"  go: TS1209 @13+2 "Invalid optional chain from new expressi"  lint: parses
+MISSED     "++new A?.b;"  go: TS1209 @7+2 "Invalid optional chain from new expressi"  lint: parses
+MISSED     "(++new A?.b);"  go: TS1209 @8+2 "Invalid optional chain from new expressi"  lint: parses
+MISSED     "--new A?.b;"  go: TS1209 @7+2 "Invalid optional chain from new expressi"  lint: parses
+MISSED     "(--new A?.b);"  go: TS1209 @8+2 "Invalid optional chain from new expressi"  lint: parses
+MISSED     "-new A?.b;"  go: TS1209 @6+2 "Invalid optional chain from new expressi"  lint: parses
+MISSED     "(-new A?.b);"  go: TS1209 @7+2 "Invalid optional chain from new expressi"  lint: parses
+MISSED     "typeof new A?.b;"  go: TS1209 @12+2 "Invalid optional chain from new expressi"  lint: parses
+MISSED     "(typeof new A?.b);"  go: TS1209 @13+2 "Invalid optional chain from new expressi"  lint: parses
+MISSED     "async function g() { await new A?.b; }"  go: TS1209 @32+2 "Invalid optional chain from new expressi"  lint: parses
+MISSED     "async function g() { (await new A?.b); }"  go: TS1209 @33+2 "Invalid optional chain from new expressi"  lint: parses
+MISSED     "new A\n?.b;"  go: TS1209 @6+2 "Invalid optional chain from new expressi"  lint: parses
+MISSED     "(new A\n?.b);"  go: TS1209 @7+2 "Invalid optional chain from new expressi"  lint: parses
+MISSED     "f(new A\n?.b);"  go: TS1209 @8+2 "Invalid optional chain from new expressi"  lint: parses
+MISSED     "let x = new A\n?.b;"  go: TS1209 @14+2 "Invalid optional chain from new expressi"  lint: parses
+EXTRA(new) "a++\n[0];"  go: parses  lint: TS1005 @4+1 "';' expected."
+EXTRA(new) "let x = a++\n[0];"  go: parses  lint: TS1005 @12+1 "';' expected."
+EXTRA(new) "a++\n(b);"  go: parses  lint: TS1005 @4+1 "';' expected."
+EXTRA(new) "let x = a++\n(b);"  go: parses  lint: TS1005 @12+1 "';' expected."
+DIFF(new)  "a++\n();"  go: TS1109 @5+1 "Expression expected."  lint: TS1005 @4+1 "';' expected."
+DIFF(new)  "let x = a++\n();"  go: TS1109 @13+1 "Expression expected."  lint: TS1005 @12+1 "';' expected."
+EXTRA(new) "a++\n`x`;"  go: parses  lint: TS1005 @4+3 "';' expected."
+EXTRA(new) "let x = a++\n`x`;"  go: parses  lint: TS1005 @12+3 "';' expected."
+EXTRA(new) "a++\n`x${1}`;"  go: parses  lint: TS1005 @4+4 "';' expected."
+EXTRA(new) "let x = a++\n`x${1}`;"  go: parses  lint: TS1005 @12+4 "';' expected."
+EXTRA(new) "a--\n[0];"  go: parses  lint: TS1005 @4+1 "';' expected."
+EXTRA(new) "let x = a--\n[0];"  go: parses  lint: TS1005 @12+1 "';' expected."
+EXTRA(new) "a--\n(b);"  go: parses  lint: TS1005 @4+1 "';' expected."
+EXTRA(new) "let x = a--\n(b);"  go: parses  lint: TS1005 @12+1 "';' expected."
+DIFF(new)  "a--\n();"  go: TS1109 @5+1 "Expression expected."  lint: TS1005 @4+1 "';' expected."
+DIFF(new)  "let x = a--\n();"  go: TS1109 @13+1 "Expression expected."  lint: TS1005 @12+1 "';' expected."
+EXTRA(new) "a--\n`x`;"  go: parses  lint: TS1005 @4+3 "';' expected."
+EXTRA(new) "let x = a--\n`x`;"  go: parses  lint: TS1005 @12+3 "';' expected."
+EXTRA(new) "a--\n`x${1}`;"  go: parses  lint: TS1005 @4+4 "';' expected."
+EXTRA(new) "let x = a--\n`x${1}`;"  go: parses  lint: TS1005 @12+4 "';' expected."
+DIFF(new)  "++function(){}++;"  go: TS1005 @14+2 "';' expected."  lint: TS1005 @0+0 "';' expected."
+DIFF(new)  "(++function(){}++);"  go: TS1005 @15+2 "')' expected."  lint: TS1005 @1+0 "')' expected."
+DIFF(new)  "--function(){}++;"  go: TS1005 @14+2 "';' expected."  lint: TS1005 @0+0 "';' expected."
+DIFF(new)  "(--function(){}++);"  go: TS1005 @15+2 "')' expected."  lint: TS1005 @1+0 "')' expected."
+DIFF(new)  "++function(){}--;"  go: TS1005 @14+2 "';' expected."  lint: TS1005 @0+0 "';' expected."
+DIFF(new)  "(++function(){}--);"  go: TS1005 @15+2 "')' expected."  lint: TS1005 @1+0 "')' expected."
+DIFF(new)  "--function(){}--;"  go: TS1005 @14+2 "';' expected."  lint: TS1005 @0+0 "';' expected."
+DIFF(new)  "(--function(){}--);"  go: TS1005 @15+2 "')' expected."  lint: TS1005 @1+0 "')' expected."
+DIFF(new)  "++function(){} ++;"  go: TS1005 @15+2 "';' expected."  lint: TS1005 @0+0 "';' expected."
+DIFF(new)  "(++function(){} ++);"  go: TS1005 @16+2 "')' expected."  lint: TS1005 @1+0 "')' expected."
+DIFF(new)  "--function(){} ++;"  go: TS1005 @15+2 "';' expected."  lint: TS1005 @0+0 "';' expected."
+DIFF(new)  "(--function(){} ++);"  go: TS1005 @16+2 "')' expected."  lint: TS1005 @1+0 "')' expected."
+DIFF(new)  "++function(){} --;"  go: TS1005 @15+2 "';' expected."  lint: TS1005 @0+0 "';' expected."
+DIFF(new)  "(++function(){} --);"  go: TS1005 @16+2 "')' expected."  lint: TS1005 @1+0 "')' expected."
+DIFF(new)  "--function(){} --;"  go: TS1005 @15+2 "';' expected."  lint: TS1005 @0+0 "';' expected."
+DIFF(new)  "(--function(){} --);"  go: TS1005 @16+2 "')' expected."  lint: TS1005 @1+0 "')' expected."

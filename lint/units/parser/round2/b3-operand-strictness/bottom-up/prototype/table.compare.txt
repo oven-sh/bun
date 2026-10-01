@@ -239,7 +239,7 @@ same   ts  "<T>a! = b;"  go: TS1005 @6+1 "';' expected."
 same   ts  "<T><U>a = b;"  go: TS1005 @8+1 "';' expected."
 same   ts  "/* @__PURE__ */ <T>a = b;"  go: TS1005 @21+1 "';' expected."
 # differences: the reference has another first diagnostic, or none
-DIFF   ts  "f(<T>a = b);"  go: TS1005 @7+1 "',' expected."  lint: TS1005 @7+1 "')' expected."   [bun: @7+1 "Expected \")\" but found \"=\""]
+same   ts  "f(<T>a = b);"  go: TS1005 @7+1 "',' expected."
 EXTRA  ts  "a++\n(b);"  go: parses  lint: TS1005 @4+1 "';' expected."   [bun: @4+1 "Expected \";\" but found \"(\""]
 EXTRA  ts  "a++\n[b];"  go: parses  lint: TS1005 @4+1 "';' expected."   [bun: @4+1 "Expected \";\" but found \"[\""]
 EXTRA  ts  "a++\n`t`;"  go: parses  lint: TS1005 @4+3 "';' expected."   [bun: @4+3 "Expected \";\" but found \"`t`\""]

@@ -24,7 +24,7 @@ for tree in listed knobs; do
   (cd $B/repo && tar cf - --exclude=./$H/corpus --exclude=./.git .) | (cd $B/$tree && tar xf -)
   ln -s $B/repo/$H/corpus $B/$tree/$H/corpus
 done
-(cd $B/knobs && patch -p1 -s < "$here/../prototype/conformance.test.ts.knobs.patch")
+(cd $B/knobs && patch -p1 -s < "$here/../prototype/conformance.test.ts.knobs.patch")   # batch 2 ran an earlier form: spawnTimeout 60 s and no checkTimeout (the tree knobs); batch 5 runs this one (the tree knobs2)
 # The names of list C of the tree "listed": a sweep of one directory with a release build that has --lint, four processes at a time.
 (cd $B/repo && /workspace/wt/parser/build/release/bun $H/sweep.ts --jobs 4 --kind C --report $B/out/es6-C.json conformance/es6/ > /dev/null)
 bun -e '

@@ -1,0 +1,119 @@
+STATE load 510.42 552.12 489.59 cpu.pressure avg10=31.43 avg60=29.60 memory 1869 MB disk 294G
+[0m[1mbun test [0m[2mv1.4.3-canary.1 (be1ebe529)[0m
+[0m
+::group::test/cli/lint/conformance.test.ts:
+[0m[32m✓[0m [0mreference[2m >[0m[1m the pinned answers are those of the commits that UPSTREAM names[0m [0m[2m[4.04ms[0m[2m][0m
+[0m[32m✓[0m [0mreference[2m >[0m[1m the corpus holds the cases, the baselines and the lists of the pinned commits[0m [0m[2m[9.93ms[0m[2m][0m
+[0m[32m✓[0m [0mreference[2m >[0m[1m the list has the instances of the reference's run: 14,915, of which 12,797 run and 2,118 are skipped[0m [0m[2m[[1m35.00ms[0m[2m][0m
+[0m[32m✓[0m [0mreference[2m >[0m[1m the case and space tables are those of Go[0m [0m[2m[[1m192.57ms[0m[2m][0m
+[0m[32m✓[0m [0mdirectives[2m >[0m[1m the vectors of the reference parser[0m [0m[2m[[1m18.17ms[0m[2m][0m
+[0m[32m✓[0m [0mvariations[2m >[0m[1m 72 of the 126 declared options vary[0m [0m[2m[1.84ms[0m[2m][0m
+[0m[32m✓[0m [0mvariations[2m >[0m[1m no setting[0m [0m[2m[0.69ms[0m[2m][0m
+[0m[32m✓[0m [0mvariations[2m >[0m[1m one value[0m [0m[2m[1.82ms[0m[2m][0m
+[0m[32m✓[0m [0mvariations[2m >[0m[1m two values[0m [0m[2m[0.89ms[0m[2m][0m
+[0m[32m✓[0m [0mvariations[2m >[0m[1m a value twice[0m [0m[2m[1.32ms[0m[2m][0m
+[0m[32m✓[0m [0mvariations[2m >[0m[1m one value by two names keeps the first name[0m [0m[2m[0.91ms[0m[2m][0m
+[0m[32m✓[0m [0mvariations[2m >[0m[1m the cross product, keys sorted in the name[0m [0m[2m[0.96ms[0m[2m][0m
+[0m[32m✓[0m [0mvariations[2m >[0m[1m the last occurrence wins[0m [0m[2m[0.44ms[0m[2m][0m
+[0m[32m✓[0m [0mvariations[2m >[0m[1m every value[0m [0m[2m[0.40ms[0m[2m][0m
+[0m[32m✓[0m [0mvariations[2m >[0m[1m every value but one[0m [0m[2m[0.32ms[0m[2m][0m
+[0m[32m✓[0m [0mvariations[2m >[0m[1m every value but one leaves nothing to vary[0m [0m[2m[0.04ms[0m[2m][0m
+[0m[32m✓[0m [0mvariations[2m >[0m[1m a value that is taken out again[0m [0m[2m[1.06ms[0m[2m][0m
+[0m[32m✓[0m [0mvariations[2m >[0m[1m a name in upper case[0m [0m[2m[0.50ms[0m[2m][0m
+[0m[32m✓[0m [0mvariations[2m >[0m[1m an option that does not vary[0m [0m[2m[0.02ms[0m[2m][0m
+[0m[32m✓[0m [0mvariations[2m >[0m[1m a set of variations that is empty stops the case[0m [0m[2m[1.23ms[0m[2m][0m
+[0m[32m✓[0m [0mvariations[2m >[0m[1m 25 variations are the most[0m [0m[2m[3.87ms[0m[2m][0m
+[0m[32m✓[0m [0menumerator[2m >[0m[1m the sample holds cases of both suites[0m [0m[2m[1.18ms[0m[2m][0m
+[0m[32m✓[0m [0menumerator[2m >[0m[1m the instances of one of 40 cases are their lines of the list: group 1[0m [0m[2m[[1m28.03ms[0m[2m][0m
+[0m[32m✓[0m [0menumerator[2m >[0m[1m the instances of one of 40 cases are their lines of the list: group 2[0m [0m[2m[[1m18.91ms[0m[2m][0m
+[0m[32m✓[0m [0menumerator[2m >[0m[1m the instances of one of 40 cases are their lines of the list: group 3[0m [0m[2m[[1m15.49ms[0m[2m][0m
+[0m[32m✓[0m [0menumerator[2m >[0m[1m the instances of one of 40 cases are their lines of the list: group 4[0m [0m[2m[[1m16.16ms[0m[2m][0m
+[0m[32m✓[0m [0menumerator[2m >[0m[1m the instances of one of 40 cases are their lines of the list: group 5[0m [0m[2m[5.44ms[0m[2m][0m
+[0m[32m✓[0m [0menumerator[2m >[0m[1m the instances of one of 40 cases are their lines of the list: group 6[0m [0m[2m[4.47ms[0m[2m][0m
+[0m[32m✓[0m [0menumerator[2m >[0m[1m the instances of one of 40 cases are their lines of the list: group 7[0m [0m[2m[[1m23.34ms[0m[2m][0m
+[0m[32m✓[0m [0menumerator[2m >[0m[1m the instances of one of 40 cases are their lines of the list: group 8[0m [0m[2m[[1m17.45ms[0m[2m][0m
+[0m[32m✓[0m [0menumerator[2m >[0m[1m the instances of one of 40 cases are their lines of the list: group 9[0m [0m[2m[2.94ms[0m[2m][0m
+[0m[32m✓[0m [0menumerator[2m >[0m[1m 45 cases are left out by name and 8 are run for their diagnostics alone[0m [0m[2m[7.28ms[0m[2m][0m
+[0m[32m✓[0m [0menumerator[2m >[0m[1m every instance is its line of the list, and the counts are those of the reference[0m [0m[2m[[1m1721.87ms[0m[2m][0m
+[0m[32m✓[0m [0merror baselines[2m >[0m[1m the sample is 200 files of both tools, and holds the files in the pretty form[0m [0m[2m[2.76ms[0m[2m][0m
+[0m[32m✓[0m [0merror baselines[2m >[0m[1m read and written again, the bytes are the same: group 1[0m [0m[2m[[1m22.45ms[0m[2m][0m
+[0m[32m✓[0m [0merror baselines[2m >[0m[1m read and written again, the bytes are the same: group 2[0m [0m[2m[3.29ms[0m[2m][0m
+[0m[32m✓[0m [0merror baselines[2m >[0m[1m read and written again, the bytes are the same: group 3[0m [0m[2m[9.76ms[0m[2m][0m
+[0m[32m✓[0m [0merror baselines[2m >[0m[1m read and written again, the bytes are the same: group 4[0m [0m[2m[[1m30.01ms[0m[2m][0m
+[0m[32m✓[0m [0merror baselines[2m >[0m[1m read and written again, the bytes are the same: group 5[0m [0m[2m[7.42ms[0m[2m][0m
+[0m[32m✓[0m [0merror baselines[2m >[0m[1m read and written again, the bytes are the same: group 6[0m [0m[2m[8.21ms[0m[2m][0m
+[0m[32m✓[0m [0merror baselines[2m >[0m[1m read and written again, the bytes are the same: group 7[0m [0m[2m[7.99ms[0m[2m][0m
+[0m[32m✓[0m [0merror baselines[2m >[0m[1m read and written again, the bytes are the same: group 8[0m [0m[2m[9.58ms[0m[2m][0m
+[0m[32m✓[0m [0merror baselines[2m >[0m[1m read and written again, the bytes are the same: group 9[0m [0m[2m[8.43ms[0m[2m][0m
+[0m[32m✓[0m [0merror baselines[2m >[0m[1m read and written again, the bytes are the same: group 10[0m [0m[2m[[1m20.30ms[0m[2m][0m
+[0m[32m✓[0m [0merror baselines[2m >[0m[1m read and written again, the bytes are the same: group 11[0m [0m[2m[7.06ms[0m[2m][0m
+[0m[32m✓[0m [0merror baselines[2m >[0m[1m read and written again, the bytes are the same: group 12[0m [0m[2m[5.36ms[0m[2m][0m
+[0m[32m✓[0m [0mrun[2m >[0m[1m the bytes of the baseline are the bytes of the oracle, or it is no pass[0m [0m[2m[5.59ms[0m[2m][0m
+[0m[32m✓[0m [0mrun[2m >[0m[1m a check that reports nothing passes no instance with errors, and a diagnostic fails an instance without[0m [0m[2m[2.33ms[0m[2m][0m
+[0m[32m✓[0m [0mrun[2m >[0m[1m the first section alone, which is all that the plain format holds, is reported apart and is never a pass[0m [0m[2m[2.50ms[0m[2m][0m
+[0m[32m✓[0m [0mrun[2m >[0m[1m what is no list of diagnostics of the instance is no pass[0m [0m[2m[3.86ms[0m[2m][0m
+[0m[32m✓[0m [0mrun[2m >[0m[1m replayed oracles pass and a check that reports nothing passes no instance with errors: group 1[0m [0m[2m[[1m22.93ms[0m[2m][0m
+[0m[32m✓[0m [0mrun[2m >[0m[1m replayed oracles pass and a check that reports nothing passes no instance with errors: group 2[0m [0m[2m[[1m28.87ms[0m[2m][0m
+[0m[32m✓[0m [0mrun[2m >[0m[1m replayed oracles pass and a check that reports nothing passes no instance with errors: group 3[0m [0m[2m[8.84ms[0m[2m][0m
+[0m[32m✓[0m [0mrun[2m >[0m[1m replayed oracles pass and a check that reports nothing passes no instance with errors: group 4[0m [0m[2m[[1m10.06ms[0m[2m][0m
+[0m[32m✓[0m [0mrun[2m >[0m[1m replayed oracles pass and a check that reports nothing passes no instance with errors: group 5[0m [0m[2m[[1m18.95ms[0m[2m][0m
+[0m[32m✓[0m [0mrun[2m >[0m[1m replayed oracles pass and a check that reports nothing passes no instance with errors: group 6[0m [0m[2m[[1m10.91ms[0m[2m][0m
+[0m[32m✓[0m [0mrun[2m >[0m[1m replayed oracles pass and a check that reports nothing passes no instance with errors: group 7[0m [0m[2m[[1m13.05ms[0m[2m][0m
+[0m[32m✓[0m [0mrun[2m >[0m[1m the sample had instances with errors and without[0m [0m[2m[0.26ms[0m[2m][0m
+[0m[32m✓[0m [0mexpectations[2m >[0m[1m the file has one form[0m [0m[2m[3.62ms[0m[2m][0m
+[0m[32m✓[0m [0mexpectations[2m >[0m[1m a listed name that does not pass is a failure, and a name that passes enters and never leaves[0m [0m[2m[3.57ms[0m[2m][0m
+[0m[32m✓[0m [0mexpectations[2m >[0m[1m the names that pass and are not listed are printed with the one command that adds them[0m [0m[2m[1.05ms[0m[2m][0m
+[0m[32m✓[0m [0mexpectations[2m >[0m[1m a check that reports nothing adds no name: list C takes no more names of a directory than list E has[0m [0m[2m[2.51ms[0m[2m][0m
+[0m[32m✓[0m [0mplain format[2m >[0m[1m one located diagnostic[0m [0m[2m[1.28ms[0m[2m][0m
+[0m[32m✓[0m [0mplain format[2m >[0m[1m empty text is an empty list[0m [0m[2m[1.56ms[0m[2m][0m
+[0m[32m✓[0m [0mplain format[2m >[0m[1m a chain: two spaces per level, siblings and a way back up[0m [0m[2m[2.75ms[0m[2m][0m
+[0m[32m✓[0m [0mplain format[2m >[0m[1m a line that is deeper than one level below the line before keeps its spaces[0m [0m[2m[1.65ms[0m[2m][0m
+[0m[32m✓[0m [0mplain format[2m >[0m[1m names: spaces, parentheses, a drive, a line break of Windows[0m [0m[2m[0.87ms[0m[2m][0m
+[0m[32m✓[0m [0mplain format[2m >[0m[1m a line that starts with a category has no file[0m [0m[2m[1.45ms[0m[2m][0m
+[0m[32m✓[0m [0mplain format[2m >[0m[1m the code of a rule[0m [0m[2m[0.92ms[0m[2m][0m
+[0m[32m✓[0m [0mplain format[2m >[0m[1m a text with a crash report is refused whole[0m [0m[2m[0.93ms[0m[2m][0m
+[0m[32m✓[0m [0mplain format[2m >[0m[1m a text with a code frame is refused whole[0m [0m[2m[0.85ms[0m[2m][0m
+[0m[32m✓[0m [0mplain format[2m >[0m[1m a text with an empty line is refused whole[0m [0m[2m[0.89ms[0m[2m][0m
+[0m[32m✓[0m [0mplain format[2m >[0m[1m a text with a chain line first is refused whole[0m [0m[2m[0.71ms[0m[2m][0m
+[0m[32m✓[0m [0mplain format[2m >[0m[1m a text with one space is refused whole[0m [0m[2m[0.71ms[0m[2m][0m
+[0m[32m✓[0m [0mplain format[2m >[0m[1m a text with spaces only is refused whole[0m [0m[2m[0.13ms[0m[2m][0m
+[0m[32m✓[0m [0mplain format[2m >[0m[1m a text with no line break at the end is refused whole[0m [0m[2m[0.97ms[0m[2m][0m
+[0m[32m✓[0m [0mplain format[2m >[0m[1m a text with no code is refused whole[0m [0m[2m[0.76ms[0m[2m][0m
+[0m[32m✓[0m [0mplain format[2m >[0m[1m a text with a summary is refused whole[0m [0m[2m[0.49ms[0m[2m][0m
+[0m[32m✓[0m [0mplain format[2m >[0m[1m a text with line zero is refused whole[0m [0m[2m[0.79ms[0m[2m][0m
+[0m[32m✓[0m [0mplain format[2m >[0m[1m a text with an unknown category is refused whole[0m [0m[2m[0.14ms[0m[2m][0m
+[0m[32m✓[0m [0mplain format[2m >[0m[1m a text with a debug log is refused whole[0m [0m[2m[0.83ms[0m[2m][0m
+[0m[32m✓[0m [0mplain format[2m >[0m[1m the first section of the baselines of one of 250 cases is the plain format[0m [0m[2m[[1m15.59ms[0m[2m][0m
+[0m[32m✓[0m [0mdefault check[2m >[0m[1m the probe: a command that is no file[0m [0m[2m[5.43ms[0m[2m][0m
+[0m[32m✓[0m [0mdefault check[2m >[0m[1m the probe: a command that dies[0m [0m[2m[[1m254.46ms[0m[2m][0m
+[0m[32m✓[0m [0mdefault check[2m >[0m[1m a command that runs its operand gets no instance[0m [0m[2m[[1m228.83ms[0m[2m][0m
+[0m[32m✓[0m [0mdefault check[2m >[0m[1m the probe: a command that lints[0m [0m[2m[[1m798.97ms[0m[2m][0m
+[0m[32m✓[0m [0mdefault check[2m >[0m[1m the probe: a command that runs its operand[0m [0m[2m[[1m263.53ms[0m[2m][0m
+[0m[32m✓[0m [0mdefault check[2m >[0m[1m the probe: a command that takes the flag and does nothing[0m [0m[2m[[1m261.91ms[0m[2m][0m
+[0m[32m✓[0m [0mdefault check[2m >[0m[1m stderr is read in the plain format, chain lines too: the first section is the oracle's, and that is no pass[0m [0m[2m[[1m1315.19ms[0m[2m][0m
+[0m[32m✓[0m [0mdefault check[2m >[0m[1m a run that breaks the rules is a crash and never an empty list of diagnostics: a line of no form[0m [0m[2m[[1m1288.70ms[0m[2m][0m
+[0m[32m✓[0m [0mdefault check[2m >[0m[1m a run that breaks the rules is a crash and never an empty list of diagnostics: the exit code of a refusal[0m [0m[2m[[1m1288.85ms[0m[2m][0m
+[0m[32m✓[0m [0mdefault check[2m >[0m[1m a run that breaks the rules is a crash and never an empty list of diagnostics: an exit code that is none of 0, 1 and 2[0m [0m[2m[[1m1289.25ms[0m[2m][0m
+[0m[32m✓[0m [0mdefault check[2m >[0m[1m a run that breaks the rules is a crash and never an empty list of diagnostics: an error and the exit code 0[0m [0m[2m[[1m1288.53ms[0m[2m][0m
+[0m[32m✓[0m [0mdefault check[2m >[0m[1m a run that breaks the rules is a crash and never an empty list of diagnostics: no error and the exit code 2[0m [0m[2m[[1m1288.42ms[0m[2m][0m
+[0m[32m✓[0m [0mdefault check[2m >[0m[1m a command that lints gets the written unit as its operand, and no diagnostic passes an instance without errors[0m [0m[2m[[1m1327.77ms[0m[2m][0m
+[0m[32m✓[0m [0mdefault check[2m >[0m[1m a run that breaks the rules is a crash and never an empty list of diagnostics: text on stdout[0m [0m[2m[[1m1285.80ms[0m[2m][0m
+[0m[32m✓[0m [0mdefault check[2m >[0m[1m a run that breaks the rules is a crash and never an empty list of diagnostics: a file that is not of the instance[0m [0m[2m[[1m1285.94ms[0m[2m][0m
+[0m[32m✓[0m [0mdefault check[2m >[0m[1m a run that breaks the rules is a crash and never an empty list of diagnostics: a signal[0m [0m[2m[[1m1526.77ms[0m[2m][0m
+[0m[32m✓[0m [0mdefault check[2m >[0m[1m a run that breaks the rules is a crash and never an empty list of diagnostics: a diagnostic of a rule[0m [0m[2m[[1m1566.69ms[0m[2m][0m
+[0m[32m✓[0m [0mdefault check[2m >[0m[1m never equal to an oracle without errors: a stand-in[0m [0m[2m[[1m1736.70ms[0m[2m][0m
+[0m[32m✓[0m [0mdefault check[2m >[0m[1m a run that breaks the rules is a crash and never an empty list of diagnostics: an error of the command[0m [0m[2m[[1m1880.00ms[0m[2m][0m
+[0m[32m✓[0m [0mdefault check[2m >[0m[1m never equal to an oracle without errors: the code -1[0m [0m[2m[[1m2045.79ms[0m[2m][0m
+[0m[32m✓[0m [0mlisted instances[2m >[0m[1m a batch passes when the oracle is replayed, and fails its names of list E when nothing is reported[0m [0m[2m[[1m13.27ms[0m[2m][0m
+[0m[32m✓[0m [0mlisted instances[2m >[0m[1m a name in the list of the other class, a skipped instance and a name of no instance are failures[0m [0m[2m[2.46ms[0m[2m][0m
+[0m[32m✓[0m [0mexpectations.json[2m >[0m[1m is in the form that the update writes[0m [0m[2m[0.08ms[0m[2m][0m
+[0m
+::endgroup::
+
+[0m[32m 105 pass[0m
+[0m[2m 0 fail[0m
+ 171 expect() calls
+Ran 105 tests across 1 file. [0m[2m[[1m5.78s[0m[2m][0m
+TIME real 5.793 user 2.176 sys 0.526
+exit 0
+STATE-AFTER load 478.02 543.75 487.54 cpu.pressure avg10=34.24 avg60=30.34 memory 1903 MB disk 294G

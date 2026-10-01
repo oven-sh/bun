@@ -51,3 +51,26 @@ python3 disfn.py "$S/proto/rel/bun_js_parser.o" '<bun_js_parser::p::P<false, fal
 /workspace/tools/lk python3 build-release-rlib.py head /workspace/wt/parser "$S"
 /workspace/tools/lk python3 build-release-rlib.py proto /workspace/wt/parser "$S"
 /workspace/tools/lk sh measure.sh "$S" /workspace/wt/parser
+
+# 7. More contexts. inputs2.cjs: heritage clauses, enums, decorators, statements of every kind (expected2.txt, lint.proto2.txt, lint.head2.txt).
+#    inputs3.cjs: statements and class members that leave no node (expected3.txt): the walk of the first prototype read the statement
+#    list only and missed all twelve; the prototype as it is now (proto_methods.rs) reads the side table too and the first-message
+#    guard of TS1011. Its test binary is `build-scratch.sh proto2`: queued under the lock when this was written, not run.
+node oracle.cjs inputs2.cjs | diff - expected2.txt
+node oracle.cjs inputs3.cjs | diff - expected3.txt
+/workspace/tools/lk sh build-scratch.sh proto2 /workspace/wt/parser "$S"
+node compare.cjs expected3.txt lint.proto3.statement-list-only.txt   # the first prototype: 12 of 13 ts rows are accepted
+node run-probe.cjs "$S/proto2/out/bun_js_parser" lint inputs3.cjs > "$S/lint.proto3.txt" && node compare.cjs expected3.txt "$S/lint.proto3.txt"
+for g in TS1477 TS17007 TS1209 TS18030 TS2754 TS1011 "for head"; do node run-probe.cjs "$S/proto2/out/bun_js_parser" lint > "$S/lint.proto.new.txt"; node compare.cjs expected.txt "$S/lint.proto.new.txt" "$g" | tail -1; done
+
+# 8. The corpora of round2/strict-members-params-heritage (/tmp/smph/*.hex, 150,708 sources): the lint parse of the head against the
+#    prototype. 691 sources differ, all by the codes of this work (TS1034 419, TS2754 1, TS1011 13 first and 244 later messages,
+#    TS1477 11); the guard of TS1011 takes the 244 later ones back.
+for n in targeted extra1 extra2 extra3 fuzz; do
+  for w in head proto; do B4_INPUTS=/tmp/smph/$n.hex B4_OUT="$S/corpus.$w.$n.tsv" B4_MODE=lint "$S/$w/out/bun_js_parser" zz_probe >/dev/null 2>&1; done
+  diff "$S/corpus.head.$n.tsv" "$S/corpus.proto.$n.tsv" | grep -c '^>' || true
+done
+
+# 9. The release link emulated on the one module of the crate (no lock needed: one process), and the blocks that differ.
+sh emulate-lto.sh "$S" | diff - emulated-lto.txt
+python3 blocks.py "$S/dis2/h.parse_prefix.falsefalse.s" "$S/dis2/p.parse_prefix.falsefalse.s" v | head -120

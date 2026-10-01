@@ -1,0 +1,230 @@
+STATE load 537.36 518.03 484.62 cpu.pressure avg10=29.73 avg60=37.94 memory 1369 MB disk 286G
+bun test v1.4.3 (3110ce85c)
+
+test/cli/lint/conformance.test.ts:
+(pass) reference > the pinned answers are those of the commits that UPSTREAM names [14.86ms]
+(pass) reference > the corpus holds the cases, the baselines and the lists of the pinned commits [350.48ms]
+(pass) reference > the list has the instances of the reference's run: 14,915, of which 12,797 run and 2,118 are skipped [3203.90ms]
+(pass) reference > the case and space tables are those of Go [3776.57ms]
+(pass) directives > the vectors of the reference parser [976.71ms]
+(pass) variations > 72 of the 126 declared options vary [12.30ms]
+(pass) variations > no setting [37.39ms]
+(pass) variations > one value [140.46ms]
+(pass) variations > two values [121.62ms]
+(pass) variations > a value twice [18.79ms]
+(pass) variations > one value by two names keeps the first name [631.68ms]
+(pass) variations > the cross product, keys sorted in the name [62.82ms]
+(pass) variations > the last occurrence wins [3.49ms]
+(pass) variations > every value [4.20ms]
+(pass) variations > every value but one [25.26ms]
+(pass) variations > every value but one leaves nothing to vary [1.81ms]
+(pass) variations > a value that is taken out again [1007.56ms]
+(pass) variations > a name in upper case [21.90ms]
+(pass) variations > an option that does not vary [0.98ms]
+(pass) variations > a set of variations that is empty stops the case [51.84ms]
+(pass) variations > 25 variations are the most [181.32ms]
+(pass) enumerator > the sample holds cases of both suites [73.30ms]
+(pass) enumerator > the instances of one of 40 cases are their lines of the list: group 1 [4610.01ms]
+(pass) enumerator > the instances of one of 40 cases are their lines of the list: group 2 [1455.79ms]
+(pass) enumerator > the instances of one of 40 cases are their lines of the list: group 3 [1710.94ms]
+(pass) enumerator > the instances of one of 40 cases are their lines of the list: group 4 [1227.91ms]
+(pass) enumerator > the instances of one of 40 cases are their lines of the list: group 5 [920.18ms]
+(pass) enumerator > the instances of one of 40 cases are their lines of the list: group 6 [1323.05ms]
+(pass) enumerator > the instances of one of 40 cases are their lines of the list: group 7 [1364.06ms]
+(pass) enumerator > the instances of one of 40 cases are their lines of the list: group 8 [883.70ms]
+(pass) enumerator > the instances of one of 40 cases are their lines of the list: group 9 [561.95ms]
+(pass) enumerator > 45 cases are left out by name and 8 are run for their diagnostics alone [955.42ms]
+(skip) enumerator > every instance is its line of the list, and the counts are those of the reference
+(pass) error baselines > the sample is 200 files of both tools, and holds the files in the pretty form [146.13ms]
+(pass) error baselines > read and written again, the bytes are the same: group 1 [4159.94ms]
+(pass) error baselines > read and written again, the bytes are the same: group 2 [1464.46ms]
+(pass) error baselines > read and written again, the bytes are the same: group 3 [6764.43ms]
+(pass) error baselines > read and written again, the bytes are the same: group 4 [2651.09ms]
+(pass) error baselines > read and written again, the bytes are the same: group 5 [863.15ms]
+(pass) error baselines > read and written again, the bytes are the same: group 6 [698.60ms]
+(pass) error baselines > read and written again, the bytes are the same: group 7 [1061.11ms]
+(pass) error baselines > read and written again, the bytes are the same: group 8 [1302.31ms]
+(pass) error baselines > read and written again, the bytes are the same: group 9 [1994.77ms]
+(pass) error baselines > read and written again, the bytes are the same: group 10 [4266.53ms]
+(pass) error baselines > read and written again, the bytes are the same: group 11 [1880.83ms]
+(pass) error baselines > read and written again, the bytes are the same: group 12 [418.64ms]
+(pass) run > the bytes of the baseline are the bytes of the oracle, or it is no pass [282.46ms]
+(pass) run > a check that reports nothing passes no instance with errors, and a diagnostic fails an instance without [41.81ms]
+(pass) run > the first section alone, which is all that the plain format holds, is reported apart and is never a pass [66.06ms]
+(pass) run > what is no list of diagnostics of the instance is no pass [26.77ms]
+(pass) run > replayed oracles pass and a check that reports nothing passes no instance with errors: group 1 [2007.76ms]
+(pass) run > replayed oracles pass and a check that reports nothing passes no instance with errors: group 2 [219.46ms]
+(pass) run > replayed oracles pass and a check that reports nothing passes no instance with errors: group 3 [557.09ms]
+(pass) run > replayed oracles pass and a check that reports nothing passes no instance with errors: group 4 [340.96ms]
+(pass) run > replayed oracles pass and a check that reports nothing passes no instance with errors: group 5 [1175.35ms]
+(pass) run > replayed oracles pass and a check that reports nothing passes no instance with errors: group 6 [367.41ms]
+(pass) run > replayed oracles pass and a check that reports nothing passes no instance with errors: group 7 [516.23ms]
+(pass) run > the sample had instances with errors and without [6.17ms]
+(pass) expectations > the file has one form [21.61ms]
+(pass) expectations > a listed name that does not pass is a failure, and a name that passes enters and never leaves [76.60ms]
+(pass) expectations > the names that pass and are not listed are printed with the one command that adds them [51.20ms]
+(pass) expectations > a check that reports nothing adds no name: list C takes no more names of a directory than list E has [20.45ms]
+(pass) plain format > one located diagnostic [27.73ms]
+(pass) plain format > empty text is an empty list [5.22ms]
+(pass) plain format > a chain: two spaces per level, siblings and a way back up [29.24ms]
+(pass) plain format > a line that is deeper than one level below the line before keeps its spaces [11.63ms]
+(pass) plain format > names: spaces, parentheses, a drive, a line break of Windows [7.93ms]
+(pass) plain format > a line that starts with a category has no file [6.05ms]
+(pass) plain format > the code of a rule [9.26ms]
+(pass) plain format > a text with a crash report is refused whole [2.82ms]
+(pass) plain format > a text with a code frame is refused whole [30.06ms]
+(pass) plain format > a text with an empty line is refused whole [0.75ms]
+(pass) plain format > a text with a chain line first is refused whole [0.59ms]
+(pass) plain format > a text with one space is refused whole [0.60ms]
+(pass) plain format > a text with spaces only is refused whole [5.64ms]
+(pass) plain format > a text with no line break at the end is refused whole [0.48ms]
+(pass) plain format > a text with no code is refused whole [0.44ms]
+(pass) plain format > a text with a summary is refused whole [0.52ms]
+(pass) plain format > a text with line zero is refused whole [0.96ms]
+(pass) plain format > a text with an unknown category is refused whole [46.80ms]
+(pass) plain format > a text with a debug log is refused whole [0.63ms]
+(pass) plain format > the first section of the baselines of one of 250 cases is the plain format [1256.96ms]
+(pass) default check > the probe: a command that is no file [342.88ms]
+(pass) default check > the probe: a command that dies [2591.90ms]
+(pass) default check > the probe: a command that takes the flag and does nothing [9099.84ms]
+(pass) default check > the probe: a command that runs its operand [10765.22ms]
+(pass) default check > the probe: a command that lints [12049.28ms]
+(pass) default check > a command that runs its operand gets no instance [5173.51ms]
+1002 |   );
+1003 | 
+1004 |   test.concurrent(
+1005 |     "a command that lints gets the written unit as its operand, and no diagnostic passes an instance without errors",
+1006 |     async () => {
+1007 |       expect(await ending(C, linter(), "const x: number = 1;\n")).toEqual({ outcome: "pass", reason: "" });
+                                                                         ^
+error: expect(received).toEqual(expected)
+
+  {
+-   "outcome": "pass",
+-   "reason": "",
++   "outcome": "timeout",
++   "reason": "the check did not end within 30000 ms",
+  }
+
+- Expected  - 2
++ Received  + 2
+
+      at <anonymous> (/tmp/test-budget-1a/knobs/test/cli/lint/conformance.test.ts:1007:67)
+1030 |             location: { file: unit.unitName, start: 6, length: 1 },
+1031 |             relatedInformation: [],
+1032 |           },
+1033 |         ],
+1034 |       );
+1035 |       expect(await ending(E, linter(), unit.content, () => expected)).toEqual({
+                                                                             ^
+error: expect(received).toEqual(expected)
+
+  {
+-   "headerOnly": true,
+-   "outcome": "fail",
+-   "reason": "the first section is the oracle's; a baseline needs the lengths and the related information",
++   "outcome": "timeout",
++   "reason": "the check did not end within 30000 ms",
+  }
+
+- Expected  - 3
++ Received  + 2
+
+      at <anonymous> (/tmp/test-budget-1a/knobs/test/cli/lint/conformance.test.ts:1035:71)
+(fail) default check > a command that lints gets the written unit as its operand, and no diagnostic passes an instance without errors [32092.73ms]
+(fail) default check > stderr is read in the plain format, chain lines too: the first section is the oracle's, and that is no pass [31760.81ms]
+1094 |     // Windows has no signals.
+1095 |     ...(isWindows ? [] : [["a signal", "//~ kill SIGKILL\n", "the command ended by the signal SIGKILL"]]),
+1096 |   ] as [string, string, string][])(
+1097 |     "a run that breaks the rules is a crash and never an empty list of diagnostics: %s",
+1098 |     async (_label, orders, reason) => {
+1099 |       expect(await ending(C, linter(), orders)).toEqual({
+                                                       ^
+error: expect(received).toEqual(expected)
+
+  {
+-   "outcome": "crash",
+-   "reason": "the check threw: Error: the command ended with the exit code 7",
++   "outcome": "timeout",
++   "reason": "the check did not end within 30000 ms",
+  }
+
+- Expected  - 2
++ Received  + 2
+
+      at <anonymous> (/tmp/test-budget-1a/knobs/test/cli/lint/conformance.test.ts:1099:49)
+(fail) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: an exit code that is none of 0, 1 and 2 [30054.66ms]
+1094 |     // Windows has no signals.
+1095 |     ...(isWindows ? [] : [["a signal", "//~ kill SIGKILL\n", "the command ended by the signal SIGKILL"]]),
+1096 |   ] as [string, string, string][])(
+1097 |     "a run that breaks the rules is a crash and never an empty list of diagnostics: %s",
+1098 |     async (_label, orders, reason) => {
+1099 |       expect(await ending(C, linter(), orders)).toEqual({
+                                                       ^
+error: expect(received).toEqual(expected)
+
+  {
+-   "outcome": "crash",
+-   "reason": "the check threw: Error: the command refused: error: no",
++   "outcome": "timeout",
++   "reason": "the check did not end within 30000 ms",
+  }
+
+- Expected  - 2
++ Received  + 2
+
+      at <anonymous> (/tmp/test-budget-1a/knobs/test/cli/lint/conformance.test.ts:1099:49)
+(fail) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: the exit code of a refusal [30031.88ms]
+1094 |     // Windows has no signals.
+1095 |     ...(isWindows ? [] : [["a signal", "//~ kill SIGKILL\n", "the command ended by the signal SIGKILL"]]),
+1096 |   ] as [string, string, string][])(
+1097 |     "a run that breaks the rules is a crash and never an empty list of diagnostics: %s",
+1098 |     async (_label, orders, reason) => {
+1099 |       expect(await ending(C, linter(), orders)).toEqual({
+                                                       ^
+error: expect(received).toEqual(expected)
+
+  {
+-   "outcome": "crash",
+-   "reason": "the check threw: Error: stderr line 1 is neither a diagnostic nor a line of a message chain: Bun has crashed",
++   "outcome": "timeout",
++   "reason": "the check did not end within 30000 ms",
+  }
+
+- Expected  - 2
++ Received  + 2
+
+      at <anonymous> (/tmp/test-budget-1a/knobs/test/cli/lint/conformance.test.ts:1099:49)
+(fail) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: a line of no form [30016.59ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: no error and the exit code 2 [9447.02ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: an error and the exit code 0 [10040.41ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: text on stdout [6189.06ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: an error of the command [3168.55ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: a file that is not of the instance [6671.27ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: a signal [4707.86ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: a diagnostic of a rule [5515.31ms]
+(pass) default check > never equal to an oracle without errors: a stand-in [10613.88ms]
+(pass) default check > never equal to an oracle without errors: the code -1 [13438.85ms]
+(pass) listed instances > a batch passes when the oracle is replayed, and fails its names of list E when nothing is reported [1660.33ms]
+(pass) listed instances > a name in the list of the other class, a skipped instance and a name of no instance are failures [65.31ms]
+(pass) expectations.json > is in the form that the update writes [3.57ms]
+
+1 tests skipped:
+(skip) enumerator > every instance is its line of the list, and the counts are those of the reference
+
+
+5 tests failed:
+(fail) default check > a command that lints gets the written unit as its operand, and no diagnostic passes an instance without errors [32092.73ms]
+(fail) default check > stderr is read in the plain format, chain lines too: the first section is the oracle's, and that is no pass [31760.81ms]
+(fail) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: an exit code that is none of 0, 1 and 2 [30054.66ms]
+(fail) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: the exit code of a refusal [30031.88ms]
+(fail) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: a line of no form [30016.59ms]
+
+ 99 pass
+ 1 skip
+ 5 fail
+ 167 expect() calls
+Ran 105 tests across 1 file. [139.66s]
+TIME real 143.273 user 72.821 sys 4.484
+exit 1
+STATE-AFTER load 636.11 563.33 506.28 cpu.pressure avg10=37.04 avg60=37.88 memory 1824 MB disk 279G

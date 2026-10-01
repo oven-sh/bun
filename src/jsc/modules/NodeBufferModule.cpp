@@ -183,7 +183,7 @@ BUN_DEFINE_HOST_FUNCTION(jsBufferTranscode,
         RELEASE_AND_RETURN(scope, JSValue::encode(WebCore::createEmptyBuffer(globalObject)));
 
     WTF::Vector<uint8_t> storage;
-    const std::span<const uint8_t> input = Bun::stableBytes(globalObject, scope, std::span<const uint8_t> { view->typedVector(), length }, view->isShared(), storage);
+    const std::span<const uint8_t> input = Bun::stableBytes(globalObject, scope, std::span<const uint8_t> { view->typedVector(), length }, storage);
     RETURN_IF_EXCEPTION(scope, {});
     const auto* data = reinterpret_cast<const char*>(input.data());
 

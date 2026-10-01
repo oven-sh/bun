@@ -687,8 +687,11 @@ pub fn to_utf16_alloc_maybe_buffered<const FAIL_IF_INVALID: bool, const FLUSH: b
                 )
             };
             if res.is_successful() {
-                // SAFETY: on success simdutf initialised exactly `out_length` units.
-                unsafe { out.set_len(out_length) };
+                // See `to_utf16_alloc`: commit what simdutf wrote, not the
+                // length pass's count.
+                let written = res.count.min(out.capacity());
+                // SAFETY: simdutf initialised `res.count` units and `written <= capacity`.
+                unsafe { out.set_len(written) };
                 crate::scoped_log!(
                     strings,
                     "toUTF16 {} UTF8 -> {} UTF16",

@@ -242,6 +242,38 @@ unsafe extern "C" fn Bun__encoding__toString(
     }
 }
 
+/// `Bun__encoding__toString` for bytes that another thread can write while
+/// this runs, which is every byte that lives in a JS `ArrayBuffer`. The UTF-8
+/// decoder reads its input twice (a pass that sizes the output, a pass that
+/// writes it), so it needs an input that cannot change between them. Decoding
+/// an owned copy costs nothing extra for an ASCII input, because
+/// [`to_bun_string_from_owned_slice`] adopts the copy as the Latin-1 string
+/// that the borrowing path would have allocated anyway.
+///
+/// # Safety
+/// Caller (C++) must guarantee `input[..len]` is valid for reading.
+#[unsafe(no_mangle)]
+unsafe extern "C" fn Bun__encoding__toStringUnstable(
+    input: *const u8,
+    len: usize,
+    global_object: &JSGlobalObject,
+    encoding: u8,
+) -> JSValue {
+    // SAFETY: forwarded from this fn's contract.
+    let input = unsafe { bun_core::ffi::slice(input, len) };
+    let mut snapshot: Vec<u8> = Vec::new();
+    if snapshot.try_reserve_exact(input.len()).is_err() {
+        return global_object.throw_out_of_memory_value();
+    }
+    snapshot.extend_from_slice(input);
+    match to_bun_string_from_owned_slice(snapshot, encoding_from_u8(encoding))
+        .into_js(global_object)
+    {
+        Ok(v) => v,
+        Err(_) => JSValue::ZERO,
+    }
+}
+
 pub(crate) fn to_string(
     input: &[u8],
     global_object: &JSGlobalObject,

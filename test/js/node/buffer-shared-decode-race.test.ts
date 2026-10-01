@@ -68,8 +68,10 @@ const fixture = String.raw`
   }
 `;
 
+// Not concurrent: each fixture pins a core with a worker that rewrites the
+// buffer in a spin loop, so running them at once starves them all.
 for (const mode of ["toString", "transcode", "string_decoder", "TextDecoderStream", "textStream"]) {
-  test.concurrent(`${mode} on a SharedArrayBuffer that another thread writes`, async () => {
+  test(`${mode} on a SharedArrayBuffer that another thread writes`, async () => {
     using dir = tempDir("buffer-shared-decode-race", { "fixture.mjs": fixture });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "fixture.mjs", mode, "500"],

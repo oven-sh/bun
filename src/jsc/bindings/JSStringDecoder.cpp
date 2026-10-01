@@ -420,8 +420,12 @@ static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_writeBody(JSC
 
         return Bun::ERR::INVALID_ARG_TYPE(throwScope, lexicalGlobalObject, "buf"_s, "Buffer, TypedArray, or DataView"_s, buffer);
     }
+    // Reject before the copy: input this long cannot become a string, and the
+    // decode below would raise the same error after allocating for nothing.
+    if (view->byteLength() > WTF::String::MaxLength) [[unlikely]]
+        return Bun::ERR::STRING_TOO_LONG(throwScope, lexicalGlobalObject);
     WTF::Vector<uint8_t> storage;
-    auto bytes = Bun::stableBytes(lexicalGlobalObject, throwScope, view->span(), view->isShared(), storage);
+    auto bytes = Bun::stableBytes(lexicalGlobalObject, throwScope, view->span(), storage);
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(castedThis->write(vm, lexicalGlobalObject, bytes.data(), bytes.size())));
 }
@@ -439,8 +443,10 @@ static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_endBody(JSC::
         throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Uint8Array"_s);
         return {};
     }
+    if (view->byteLength() > WTF::String::MaxLength) [[unlikely]]
+        return Bun::ERR::STRING_TOO_LONG(throwScope, lexicalGlobalObject);
     WTF::Vector<uint8_t> storage;
-    auto bytes = Bun::stableBytes(lexicalGlobalObject, throwScope, view->span(), view->isShared(), storage);
+    auto bytes = Bun::stableBytes(lexicalGlobalObject, throwScope, view->span(), storage);
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(castedThis->end(vm, lexicalGlobalObject, bytes.data(), bytes.size())));
 }
@@ -464,8 +470,10 @@ static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_textBody(JSC:
     uint32_t byteLength = view->byteLength();
     if (offset < 0 || static_cast<uint32_t>(offset) > byteLength)
         RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::jsEmptyString(vm)));
+    if (byteLength - static_cast<uint32_t>(offset) > WTF::String::MaxLength) [[unlikely]]
+        return Bun::ERR::STRING_TOO_LONG(throwScope, lexicalGlobalObject);
     WTF::Vector<uint8_t> storage;
-    auto bytes = Bun::stableBytes(lexicalGlobalObject, throwScope, view->span().subspan(offset), view->isShared(), storage);
+    auto bytes = Bun::stableBytes(lexicalGlobalObject, throwScope, view->span().subspan(offset), storage);
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(castedThis->write(vm, lexicalGlobalObject, bytes.data(), bytes.size())));
 }

@@ -330,29 +330,24 @@ using namespace JSC;
 using WebCore::JSTextDecoderStream;
 
 // [AllowShared] BufferSource → (ptr, len); a detached buffer yields the empty sequence.
-// The bytes of a SharedArrayBuffer are copied into `storage` (see Bun::stableBytes).
+// The bytes are copied into `storage` (see Bun::stableBytes).
 static std::optional<std::span<const uint8_t>> textDecoderStreamBytes(JSGlobalObject* globalObject, JSValue chunk, WTF::Vector<uint8_t>& storage)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     std::span<const uint8_t> bytes;
-    bool shared = false;
     if (auto* view = dynamicDowncast<JSArrayBufferView>(chunk)) {
-        if (!view->isDetached()) [[likely]] {
+        if (!view->isDetached()) [[likely]]
             bytes = std::span<const uint8_t>(static_cast<const uint8_t*>(view->vector()), view->byteLength());
-            shared = view->isShared();
-        }
     } else if (auto* buffer = dynamicDowncast<JSArrayBuffer>(chunk)) {
         auto* impl = buffer->impl();
-        if (impl && !impl->isDetached()) [[likely]] {
+        if (impl && !impl->isDetached()) [[likely]]
             bytes = std::span<const uint8_t>(static_cast<const uint8_t*>(impl->data()), impl->byteLength());
-            shared = impl->isShared();
-        }
     } else {
         Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "chunk"_s, "BufferSource"_s, chunk);
         return std::nullopt;
     }
-    bytes = Bun::stableBytes(globalObject, scope, bytes, shared, storage);
+    bytes = Bun::stableBytes(globalObject, scope, bytes, storage);
     RETURN_IF_EXCEPTION(scope, std::nullopt);
     return bytes;
 }

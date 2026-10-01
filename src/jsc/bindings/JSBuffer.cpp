@@ -414,9 +414,9 @@ bool Bun::rejectBytesNoCopyAboveArrayBufferLimit(JSC::JSGlobalObject* globalObje
     return true;
 }
 
-std::span<const uint8_t> Bun::stableBytes(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, std::span<const uint8_t> bytes, bool shared, WTF::Vector<uint8_t>& storage)
+std::span<const uint8_t> Bun::stableBytes(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, std::span<const uint8_t> bytes, WTF::Vector<uint8_t>& storage)
 {
-    if (!shared) [[likely]]
+    if (bytes.empty()) [[unlikely]]
         return bytes;
     if (!storage.tryAppend(bytes)) [[unlikely]] {
         JSC::throwOutOfMemoryError(globalObject, scope);
@@ -2040,7 +2040,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_swap64Body(JSC::JSGlobalObj
     return JSC::JSValue::encode(castedThis);
 }
 
-JSC::EncodedJSValue jsBufferToStringFromBytes(JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, std::span<const uint8_t> bytes, BufferEncodingType encoding)
+JSC::EncodedJSValue jsBufferToStringFromBytes(JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, std::span<const uint8_t> bytes, BufferEncodingType encoding, Bun::InputStability stability)
 {
     auto& vm = lexicalGlobalObject->vm();
 
@@ -2111,7 +2111,12 @@ JSC::EncodedJSValue jsBufferToStringFromBytes(JSGlobalObject* lexicalGlobalObjec
     case WebCore::BufferEncodingType::base64:
     case WebCore::BufferEncodingType::base64url:
     case WebCore::BufferEncodingType::hex: {
-        EncodedJSValue res = Bun__encoding__toString(bytes.data(), bytes.size(), lexicalGlobalObject, static_cast<uint8_t>(encoding));
+        // Only the UTF-8 decoder reads its input twice. base64 and hex size
+        // their output from the byte count and read each byte once, so a byte
+        // that changes under them alters the text and nothing else.
+        EncodedJSValue res = (encoding == WebCore::BufferEncodingType::utf8 && stability == Bun::InputStability::CanChange)
+            ? Bun__encoding__toStringUnstable(bytes.data(), bytes.size(), lexicalGlobalObject, static_cast<uint8_t>(encoding))
+            : Bun__encoding__toString(bytes.data(), bytes.size(), lexicalGlobalObject, static_cast<uint8_t>(encoding));
         RETURN_IF_EXCEPTION(scope, {});
 
         JSValue stringValue = JSValue::decode(res);
@@ -2154,12 +2159,9 @@ JSC::EncodedJSValue jsBufferToString(JSC::JSGlobalObject* lexicalGlobalObject, T
         length = byteLength - offset;
     }
 
-    // Only the UTF-8 decoder reads its input twice.
-    WTF::Vector<uint8_t> storage;
-    auto bytes = Bun::stableBytes(lexicalGlobalObject, scope, castedThis->span().subspan(offset, length), encoding == WebCore::BufferEncodingType::utf8 && castedThis->isShared(), storage);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    return jsBufferToStringFromBytes(lexicalGlobalObject, scope, bytes, encoding);
+    // The bytes belong to a JS ArrayBuffer, so another thread can write them
+    // while the decoder runs.
+    return jsBufferToStringFromBytes(lexicalGlobalObject, scope, castedThis->span().subspan(offset, length), encoding, Bun::InputStability::CanChange);
 }
 
 // Mirrors v8::Value::IntegerValue(): NaN becomes 0 and anything outside the

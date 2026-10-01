@@ -124,8 +124,8 @@ const uint32_t kLenientOptionalLFAfterCR = 1 << 6;
 const uint32_t kLenientOptionalCRLFAfterChunk = 1 << 7;
 const uint32_t kLenientOptionalCRBeforeLF = 1 << 8;
 const uint32_t kLenientSpacesAfterChunkSize = 1 << 9;
-// Node's httpValidation:'relaxed' maps to this alias (only header-value bytes are relaxed).
-const uint32_t kLenientHeaderValueRelaxed = kLenientHeaders;
+// Node's httpValidation: "relaxed". Not part of kLenientAll, like Node.
+const uint32_t kLenientHeaderValueRelaxed = 1 << 10;
 const uint32_t kLenientAll = kLenientHeaders | kLenientChunkedLength | kLenientKeepAlive | kLenientTransferEncoding | kLenientVersion | kLenientDataAfterClose | kLenientOptionalLFAfterCR | kLenientOptionalCRLFAfterChunk | kLenientOptionalCRBeforeLF | kLenientSpacesAfterChunkSize;
 
 struct HTTPParser {
@@ -165,6 +165,7 @@ public:
     int onChunkComplete();
 
     int trackHeader(size_t len);
+    int trackHeaderPair();
     void flush();
     // Return value for an llhttp callback whose JS threw: stops llhttp; execute() rethrows the exception.
     int stopForPendingException();
@@ -196,6 +197,9 @@ public:
     size_t m_currentBufferLen;
     const char* m_currentBufferData;
     bool m_headersCompleted = false;
+    size_t m_headerPairs = 0;
+    // Read once per header section; -1 until then.
+    double m_maxHeaderPairs = -1;
     bool m_pendingPause = false;
     // Set while execute() is running llhttp over a buffer. Owned exclusively
     // by execute(); finish() must never clear it.

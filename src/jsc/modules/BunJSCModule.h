@@ -458,6 +458,7 @@ JSC_DEFINE_HOST_FUNCTION(functionNeverInlineFunction,
 }
 
 extern "C" bool Bun__mkdirp(JSC::JSGlobalObject*, const char*);
+extern "C" void Bun__atexit(void (*func)(void));
 
 JSC_DECLARE_HOST_FUNCTION(functionStartSamplingProfiler);
 JSC_DEFINE_HOST_FUNCTION(functionStartSamplingProfiler,
@@ -484,7 +485,20 @@ JSC_DEFINE_HOST_FUNCTION(functionStartSamplingProfiler,
                 return {};
             }
 
-            Options::samplingProfilerPath() = pathCString.data();
+            // registerForReportAtExit() leaves the report to atexit(), which Bun's exit does not run.
+            // The option keeps a pointer into the path.
+            static Lock reportsLock;
+            static NeverDestroyed<Vector<std::pair<Ref<JSC::SamplingProfiler>, decltype(pathCString)>>> reports;
+            Locker locker { reportsLock };
+            if (reports->isEmpty()) {
+                Bun__atexit([] {
+                    Locker locker { reportsLock };
+                    for (auto& report : reports.get())
+                        report.first->reportDataToOptionFile();
+                });
+            }
+            reports->append({ Ref { samplingProfiler }, pathCString });
+            Options::samplingProfilerPath() = reports->last().second.data();
             samplingProfiler.registerForReportAtExit();
         }
     }

@@ -24,7 +24,9 @@ import {
   totalCompileTime,
 } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isBuildKite, isWindows } from "harness";
+import { readdirSync, readFileSync } from "fs";
+import { bunEnv, bunExe, isBuildKite, isMacOS, isWindows, tempDir } from "harness";
+import { join } from "path";
 
 describe("bun:jsc", () => {
   function count() {
@@ -659,6 +661,29 @@ it("deserialize applies the same nesting depth limit to arrays as to objects", a
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, exitCode }).toEqual({ stdout: "rejected\n65\n", exitCode: 0 });
 });
+
+// Elsewhere the call crashes: it writes the directory to JSC's options, which are read-only by then.
+it.skipIf(!isMacOS && !isWindows).each(["process.exit(0)", "the event loop running dry"])(
+  "startSamplingProfiler(directory) writes its report at %s",
+  async ending => {
+    using dir = tempDir("sampling-profiler", {});
+    const script = `
+      require("bun:jsc").startSamplingProfiler(process.argv[1]);
+      for (const end = Date.now() + 50; Date.now() < end; ) Math.sqrt(end);
+      ${ending === "process.exit(0)" ? ending : ""}
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script, join(String(dir), "report")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const reports = readdirSync(join(String(dir), "report"));
+    expect({ reports: reports.length, stderr, exitCode }).toEqual({ reports: 1, stderr: "", exitCode: 0 });
+    expect(readFileSync(join(String(dir), "report", reports[0]), "utf8")).toContain("Sampling rate");
+  },
+);
 
 describe("JsRef::Weak liveness", () => {
   // collectSyncWithoutSweep leaves dead cells allocated until the incremental sweeper reaches them.

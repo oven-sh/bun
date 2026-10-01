@@ -834,6 +834,7 @@ impl<'p> Checker<'p> {
 
     /// `isTypeRelatedTo`
     pub(super) fn related(&mut self, source: TypeId, target: TypeId, relation: Relation) -> bool {
+        let is_marker_comparison = std::mem::take(&mut self.is_marker_comparison);
         if source == target {
             return true;
         }
@@ -896,6 +897,11 @@ impl<'p> Checker<'p> {
         if !self.retracing && is_object_kind(sd) && is_object_kind(td) {
             let key = self.relation_key_as(source, sd, target, td, relation, STATE_NONE);
             if let Some(entry) = self.p.relations.get(&key.0) {
+                // The cache is shared between threads, so another thread measuring the same symbol may have stored this
+                // comparison already. Without its flags the variances would lack `UNMEASURABLE` or `UNRELIABLE`.
+                if is_marker_comparison {
+                    self.reliability |= entry & (REPORTS_UNMEASURABLE | REPORTS_UNRELIABLE);
+                }
                 // The comparison of these two types was cut short when it was made.
                 if entry & COMPLEXITY_OVERFLOW != 0 {
                     self.relation_gave_up = true;
@@ -2701,7 +2707,7 @@ impl<'p> Checker<'p> {
                     with(self, TypeId::MARKER_SUPER),
                     with(self, TypeId::MARKER_SUB),
                 );
-                let mut variance = if self.is_assignable(with_sub, with_super) {
+                let mut variance = if self.is_marker_assignable(with_sub, with_super) {
                     COVARIANT
                 } else {
                     0
@@ -2713,13 +2719,13 @@ impl<'p> Checker<'p> {
                         self.files().atoms.text(self.files().symbol(sym).name)
                     );
                 }
-                if self.is_assignable(with_super, with_sub) {
+                if self.is_marker_assignable(with_super, with_sub) {
                     variance |= CONTRAVARIANT;
                 }
                 // Either way: perhaps because it is nowhere to be seen.
                 if variance == BIVARIANT {
                     let with_other = with(self, TypeId::MARKER_OTHER);
-                    if self.is_assignable(with_other, with_super) {
+                    if self.is_marker_assignable(with_other, with_super) {
                         variance = INDEPENDENT;
                     }
                 }
@@ -2751,6 +2757,13 @@ impl<'p> Checker<'p> {
         } else {
             variances
         }
+    }
+
+    fn is_marker_assignable(&mut self, source: TypeId, target: TypeId) -> bool {
+        self.is_marker_comparison = true;
+        let result = self.is_assignable(source, target);
+        self.is_marker_comparison = false;
+        result
     }
 
     /// `variances_of`, as a list.

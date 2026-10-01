@@ -551,6 +551,7 @@ impl Program {
             free_relaters: Vec::new(),
             reliability: 0,
             in_variance_computation: false,
+            is_marker_comparison: false,
             variances_in_progress: Vec::new(),
             simplified: FxHashMap::default(),
             cond_true_memo: FxHashMap::default(),
@@ -783,6 +784,8 @@ pub struct Checker<'p> {
     /// What the comparisons under way found out about how far the variance being measured can be trusted.
     reliability: u8,
     in_variance_computation: bool,
+    /// The next call of `related` compares two marker types for `variances_of`. Consumed on entry.
+    is_marker_comparison: bool,
     variances_in_progress: Vec<Sym>,
     simplified: FxHashMap<(TypeId, bool), TypeId>,
     /// `resolvedTrueType`, keyed by the conditional type and whether it is read as a source.

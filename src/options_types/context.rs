@@ -219,6 +219,8 @@ pub struct BundlerOptions {
     /// `None`: the target's default (`bun_bundler::options::default_min_chunk_size`).
     pub min_chunk_size: Option<u64>,
     pub module_preload: bool,
+    /// The `--css-target` flag. `None`: derive the CSS targets from the build target.
+    pub css_target: Option<bun_css::Browsers>,
     pub bake: bool,
     pub bake_debug_dump_server: bool,
     pub bake_debug_disable_minify: bool,
@@ -282,6 +284,7 @@ impl Default for BundlerOptions {
             css_chunking: false,
             min_chunk_size: None,
             module_preload: true,
+            css_target: None,
             bake: false,
             bake_debug_dump_server: false,
             bake_debug_disable_minify: false,

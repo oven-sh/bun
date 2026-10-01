@@ -221,7 +221,10 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                             });
 
                             let printer_options = PrinterOptions {
-                                targets: Targets::for_bundler_target(c.options.target),
+                                targets: Targets::for_bundler(
+                                    c.options.target,
+                                    c.options.css_target.as_ref(),
+                                ),
                                 // TODO: make this more configurable
                                 minify: c.options.minify_whitespace
                                     || c.options.minify_syntax

@@ -442,7 +442,11 @@ impl Inner {
                 }
             }
             super::op_submitted(loop_);
-            WorkPool::schedule(&raw mut (*this).task);
+            if (*this).disk {
+                WorkPool::schedule(&raw mut (*this).task);
+            } else {
+                WorkPool::schedule_wait(&raw mut (*this).task);
+            }
         }
     }
 

@@ -90,10 +90,10 @@ Which file of a Bun release carries the notices of `NOTICE.txt` once ported code
   the first five.
 - What a release holds, read in the scripts (no release archive was opened): the zip is the executable alone
   (`scripts/build/ci.ts:257-259`, `:354-355`); the npm packages are the executable and a `package.json` with
-  `license: "MIT"` (`packages/bun-release/scripts/upload-npm.ts:111-136`, `:157-171`). The binary has no command that
-  prints the notices of what it links (`bun pm licenses` is about the packages of a project). So no file of a release
-  carries a third-party notice today. The npm package `bun-types` ships `docs/`, and with it
-  `docs/project/license.mdx` (`packages/bun-types/package.json:22-25`, `scripts/build.ts:30-52`).
+  `license: "MIT"` (`packages/bun-release/scripts/upload-npm.ts:91-137`, `:157-171`). The binary has no command that
+  prints the notices of what it links (`bun pm licenses` lists the packages of a project by licence). So no file of a
+  release carries a third-party notice today. The npm package `bun-types` ships `docs/`, and with it
+  `docs/project/license.mdx` (`packages/bun-types/package.json:22-25`, `scripts/build.ts:30-51`).
 - How the repository credits Apache-2.0 code that the binary links: a row with the name and the licence in
   `LICENSE.md` and in the page (simdutf, uSockets, highway, the fork of uWebSockets, parts of Tigerbeetle's IO code;
   `LICENSE.md:33-48`), without a notice text.

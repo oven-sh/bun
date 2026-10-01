@@ -20,7 +20,7 @@ Reproduce
   bash ../../scratch.sh /tmp/x/repo && bash ../../runner-corpus-binding/top-down/apply.sh /tmp/x/repo && bash apply.sh /tmp/x/repo
   cd /tmp/x/repo && USE_SYSTEM_BUN=1 /workspace/tools/lk bun test test/cli/lint/conformance.test.ts          109 pass, 0 fail
   the same with the debug build of the worktree, -t "sweep --lines|one line for an instance|a line of a baseline is shown"
-                                                     4 pass; a spawn test 14 to 20 s; with the leak check of CI 14 to 17 s
+                                                     4 pass; a spawn test 14 to 22 s; with the leak check of CI 10 to 17 s
   bun H/sweep.ts --lines --check H/fixtures/replay-check-fixture.ts --no-files --names H/fixtures/instances.tsv
                                                      14,915 lines: pass 12,797, skip 2,118; exit 0; 9 s
   H=$PWD/H bun H/sweep.ts --lines --check probes/mutate-check.ts --no-files > lines.txt          exit 1

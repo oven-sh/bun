@@ -379,7 +379,7 @@
  }
  
  // Cuts a directory to the deepest level that leaves at most 60 groups: for the whole corpus, a suite and one directory below it.
-@@ -379,6 +425,70 @@
+@@ -379,6 +425,75 @@
    return { check: module.default as Check, name: path, binary: undefined };
  }
  
@@ -442,6 +442,11 @@
 +  }
 +}
 +
++// What a report holds of an instance.
++function entryOf({ kind, casePath }: Fact, { outcome, reason, first, headerOnly, standIns, diff }: RunResult) {
++  return { kind, casePath, outcome, reason, first, headerOnly, standIns, diff };
++}
++
 +// Instances in flight: what --jobs says, else as many as a check that starts a command may keep alive.
 +function jobsOf(o: Options): number {
 +  return o.jobs ?? Math.min(commandsAtATime, availableParallelism());
@@ -450,7 +455,7 @@
  async function main(argv: readonly string[]): Promise<number> {
    const started = performance.now();
    const o = parseArgs(argv);
-@@ -388,11 +498,13 @@
+@@ -388,11 +503,13 @@
    }
    const corpusRoot = resolve(o.corpus ?? join(import.meta.dir, "corpus"));
    if (o.roundTrip) return roundTripCorpus(corpusRoot);
@@ -466,7 +471,7 @@
    } catch (error) {
      throw new FileError(`${expectationsPath}: ${messageOf(error)}`);
    }
-@@ -410,11 +522,13 @@
+@@ -410,11 +527,13 @@
      return (old?.[list] ?? []).filter(name => !now.has(name));
    });
    const reportPath = resolve(o.report ?? join(tmpdir(), "lint-conformance-report.json"));
@@ -481,7 +486,7 @@
      } catch (error) {
        throw new FileError(`--report ${reportPath}: ${messageOf(error)}`);
      }
-@@ -438,7 +552,7 @@
+@@ -438,7 +557,7 @@
    const caseOf = (name: string) => byBaseName.get(name) ?? byBaseName.get(caseBaseName(name));
  
    // Only the cases that a selector can take an instance of are read; a pattern is for the names of instances, which no case has before it is read.
@@ -490,7 +495,7 @@
    let reached: readonly string[] = cases;
    if (whole ? o.listed : !o.selectors.some(selector => selector.includes("*"))) {
      const wanted = new Set<string | undefined>((whole ? [...listed, ...displaced] : displaced).map(caseOf));
-@@ -463,6 +577,39 @@
+@@ -463,6 +582,34 @@
    const ran = selected.filter(fact => fact.status === "run");
    const ranE = ran.filter(fact => fact.kind === "E");
    const ranC = ran.filter(fact => fact.kind === "C");
@@ -509,12 +514,7 @@
 +        only: { listed: o.listed, kind: o.kind, tag: o.tag },
 +        seconds: Math.round((performance.now() - started) / 100) / 10,
 +        totals: { selected: selected.length, run: ran.length, outcomes: Object.fromEntries(counted) },
-+        instances: Object.fromEntries(
-+          selected.map(({ name, kind, casePath }, k) => {
-+            const { outcome, reason, first, headerOnly, standIns, diff } = results[k];
-+            return [name, { kind, casePath, outcome, reason, first, headerOnly, standIns, diff }];
-+          }),
-+        ),
++        instances: Object.fromEntries(selected.map((fact, k) => [fact.name, entryOf(fact, results[k])])),
 +        text: lines,
 +      };
 +      try {
@@ -539,15 +539,21 @@
          timeoutMs: o.timeoutMs,
          onResult() {
            done++;
-@@ -699,7 +846,7 @@
-     instances: Object.fromEntries(
-       ran.map(fact => {
-         const r = resultOf.get(fact.name)!;
+@@ -696,13 +843,7 @@
+     notListed: planned.added,
+     refused: planned.refused,
+     updated: o.update && added > 0,
+-    instances: Object.fromEntries(
+-      ran.map(fact => {
+-        const r = resultOf.get(fact.name)!;
 -        const more = { headerOnly: r.headerOnly, standIns: r.standIns, diff: r.diff };
-+        const more = { first: r.first, headerOnly: r.headerOnly, standIns: r.standIns, diff: r.diff };
-         return [fact.name, { kind: fact.kind, casePath: fact.casePath, outcome: r.outcome, reason: r.reason, ...more }];
-       }),
-     ),
+-        return [fact.name, { kind: fact.kind, casePath: fact.casePath, outcome: r.outcome, reason: r.reason, ...more }];
+-      }),
+-    ),
++    instances: Object.fromEntries(ran.map(fact => [fact.name, entryOf(fact, resultOf.get(fact.name)!)])),
+     text,
+   };
+   try {
 --- a/test/cli/lint/conformance.test.ts
 +++ b/test/cli/lint/conformance.test.ts
 @@ -14,7 +14,7 @@
@@ -633,13 +639,11 @@
    const sample = [...cases().values()].filter(path => sampled(path, 250)).sort();
    const seen = { E: 0, C: 0 };
  
-@@ -1129,6 +1196,70 @@
+@@ -1129,6 +1196,77 @@
    });
  });
  
 +describe("sweep --lines", () => {
-+  // The selectors in another order than the lines: a case of the conformance suite, a case with two instances of which the reference skips one, and two cases of the compiler suite.
-+  const selectors = ["castingTuple.ts", "abstractPropertyNegative.ts", "2dArrays.ts", "ArrowFunctionExpression1.ts"];
 +  // The first line of each oracle, as a line of the output shows it.
 +  const first = {
 +    arrow:
@@ -649,53 +653,62 @@
 +    casting: "\"castingTuple.ts(3,24): error TS7008: Member 'c' implicitly has an 'any' type.\"",
 +  };
 +  const skipped = "skip abstractPropertyNegative(target=es5).ts: unsupported target ES5";
++  // The command with a check of the fixtures, which reads the units of its input: no file is written and no other command is started.
++  const lines = async (fixture: string, args: string[], stdin = "") => {
++    await using proc = Bun.spawn({
++      cmd: [bunExe(), join(home, "sweep.ts"), "--lines", "--check", join(fixtures, fixture), "--no-files", ...args],
++      env: bunEnv,
++      stdin: new Blob([stdin]),
++      stdout: "pipe",
++      stderr: "pipe",
++    });
++    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
++    return { stdout, stderr, exitCode };
++  };
 +
-+  test.concurrent.each([
-+    [
-+      "a check that replays the oracle passes every instance that runs",
-+      "replay-check-fixture.ts",
-+      [
-+        "pass 2dArrays.ts",
-+        "pass ArrowFunctionExpression1.ts",
-+        "pass abstractPropertyNegative(target=es2015).ts",
-+        skipped,
-+        "pass castingTuple.ts",
-+      ],
-+      0,
-+    ],
-+    [
-+      "a check that reports nothing is held against the first line of each oracle",
-+      "empty-check-fixture.ts",
-+      [
-+        "pass 2dArrays.ts",
-+        `fail ArrowFunctionExpression1.ts: line 1: - ${first.arrow}`,
-+        `fail abstractPropertyNegative(target=es2015).ts: line 1: - ${first.abstract}`,
-+        skipped,
-+        `fail castingTuple.ts: line 1: - ${first.casting}`,
-+      ],
-+      1,
-+    ],
-+  ] as [string, string, string[], number][])(
-+    "one line for each instance in the order of the corpus, and the exit code: %s",
-+    async (_label, fixture, lines, code) => {
-+      await using proc = Bun.spawn({
-+        cmd: [
-+          bunExe(),
-+          join(home, "sweep.ts"),
-+          "--lines",
-+          "--check",
-+          join(fixtures, fixture),
-+          "--no-files",
-+          ...selectors,
-+        ],
-+        env: bunEnv,
-+        stdout: "pipe",
-+        stderr: "pipe",
-+      });
-+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-+      expect(stdout).toBe(lines.map(line => line + "\n").join(""));
-+      expect(stderr).toContain(`instances ${lines.length}: `);
-+      expect(exitCode).toBe(code);
++  test.concurrent(
++    "a check that replays the oracle: pass for each instance that runs, in the order of the corpus whatever that of the selectors",
++    async () => {
++      // A case of the conformance suite, a case with two instances of which the reference skips one, two cases of the compiler suite.
++      const selectors = [
++        "castingTuple.ts",
++        "abstractPropertyNegative.ts",
++        "2dArrays.ts",
++        "ArrowFunctionExpression1.ts",
++      ];
++      const { stdout, stderr, exitCode } = await lines("replay-check-fixture.ts", selectors);
++      expect(stdout).toBe(
++        "pass 2dArrays.ts\n" +
++          "pass ArrowFunctionExpression1.ts\n" +
++          "pass abstractPropertyNegative(target=es2015).ts\n" +
++          `${skipped}\n` +
++          "pass castingTuple.ts\n",
++      );
++      expect(stderr).toContain("instances 5: pass 4, skip 1\n");
++      expect(exitCode).toBe(0);
++    },
++    spawnTimeout,
++  );
++
++  test.concurrent(
++    "a check that reports nothing: the first line of the oracle, and pass where the oracle has no error; names from a list",
++    async () => {
++      // The list on stdin: a name, a line that the command printed, a line of a table, the path of a case, a comment.
++      const list = `castingTuple.ts\r\n${skipped}\n2dArrays.ts\tC\n\n# both instances\ncompiler/abstractPropertyNegative.ts\n`;
++      const { stdout, stderr, exitCode } = await lines(
++        "empty-check-fixture.ts",
++        ["--names", "-", "ArrowFunctionExpression1.ts"],
++        list,
++      );
++      expect(stdout).toBe(
++        "pass 2dArrays.ts\n" +
++          `fail ArrowFunctionExpression1.ts: line 1: - ${first.arrow}\n` +
++          `fail abstractPropertyNegative(target=es2015).ts: line 1: - ${first.abstract}\n` +
++          `${skipped}\n` +
++          `fail castingTuple.ts: line 1: - ${first.casting}\n`,
++      );
++      expect(stderr).toContain("instances 5: pass 1, fail 3, skip 1\n");
++      expect(exitCode).toBe(1);
 +    },
 +    spawnTimeout,
 +  );

@@ -15,10 +15,6 @@
 //! * `user_mut`           — null-checked `*mut c_void → Option<&mut U>`.
 //! * `handle_mut`         — `*mut Opaque → &mut Opaque` for uWS handles.
 //! * `c_slice`            — `(ptr,len) → &[u8]` (empty when len==0 / null).
-//! * `ext_owner`          — `&Option<NonNull<T>> → Option<&mut T>` (the
-//!   `socket.ext(**T).*` pattern).
-//! * `socket_ext_owner` / `connecting_ext_owner` — same, but starting from a
-//!   raw `*us_socket_t` / `*us_connecting_socket_t`.
 //!
 //! All functions are `unsafe fn` (callers uphold the uWS callback contract)
 //! and `#[inline(always)]` so codegen is identical to the hand-rolled thunks.
@@ -134,19 +130,6 @@ pub(crate) unsafe fn c_slice<'a>(ptr: *const u8, len: usize) -> &'a [u8] {
         // SAFETY: per caller contract above.
         unsafe { core::slice::from_raw_parts(ptr, len) }
     }
-}
-
-/// Dereference the `Option<NonNull<T>>` stored in a socket's ext slot.
-/// `None` covers the calloc'd-but-not-yet-stamped window during
-/// connect/accept.
-///
-/// # Safety
-/// The pointee, when present, must be live and uniquely borrowed for `'a`
-/// (uWS dispatch is single-threaded so no aliasing `&mut` exists).
-#[inline(always)]
-pub unsafe fn ext_owner<'a, T>(ext: &Option<NonNull<T>>) -> Option<&'a mut T> {
-    // SAFETY: per caller contract above.
-    ext.map(|mut p| unsafe { p.as_mut() })
 }
 
 // ───────────────────────── safe-surface trampoline ──────────────────────────

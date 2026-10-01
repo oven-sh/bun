@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { once } from "node:events";
 import http from "node:http";
 import net from "node:net";
+import { pipeline, Writable } from "node:stream";
 
 // Each test opens a raw TCP socket against a server whose timeout knob is a
 // few hundred ms and waits for the server to close the connection. A small
@@ -154,6 +155,75 @@ describe("node:http server timeout enforcement", () => {
     }
   });
 
+  test("emits 'clientError' once per stalled request when the listener keeps the socket open", async () => {
+    const server = http.createServer({ connectionsCheckingInterval: 50 }, (req, res) => res.end("ok"));
+    server.headersTimeout = 200;
+    server.requestTimeout = 800;
+    const codes: unknown[] = [];
+    const fires = new Map<unknown, number>();
+    // Log-only listener: records the error but does NOT destroy the socket.
+    server.on("clientError", (err: any, socket) => {
+      codes.push(err.code);
+      fires.set(socket, (fires.get(socket) ?? 0) + 1);
+    });
+    const port = await listen(server);
+    const clients: net.Socket[] = [];
+    const stall = async () => {
+      const c = net.connect(port, "127.0.0.1");
+      clients.push(c);
+      c.on("error", () => {});
+      c.setNoDelay(true);
+      await once(c, "connect");
+      c.write("GET / HTTP/1.1\r\nHost: a\r\n");
+      return c;
+    };
+    const nextDistinctSocket = () => {
+      const before = fires.size;
+      const { promise, resolve } = Promise.withResolvers<void>();
+      const onFire = () => {
+        if (fires.size > before) {
+          server.removeListener("clientError", onFire);
+          resolve();
+        }
+      };
+      server.on("clientError", onFire);
+      return promise;
+    };
+    try {
+      // Three stalled sockets, one headersTimeout apart; the first also trickles
+      // more header bytes after its timeout (slowloris).
+      const first = await stall();
+      await nextDistinctSocket();
+      first.write("X-Slow: v\r\n");
+      await stall();
+      await nextDistinctSocket();
+      first.write("X-Slow: v\r\n");
+      await stall();
+      await nextDistinctSocket();
+      expect({ codes, fires: [...fires.values()] }).toEqual({
+        codes: ["ERR_HTTP_REQUEST_TIMEOUT", "ERR_HTTP_REQUEST_TIMEOUT", "ERR_HTTP_REQUEST_TIMEOUT"],
+        fires: [1, 1, 1],
+      });
+
+      // Completing the message re-arms: a second stalled request on the same
+      // keep-alive socket gets its own timeout.
+      let response = "";
+      first.on("data", d => (response += d.toString("latin1")));
+      first.write("\r\n");
+      while (!response.includes("\r\n\r\nok")) await once(first, "data");
+      first.write("GET / HTTP/1.1\r\nHost: a\r\n");
+      await once(server, "clientError");
+      expect({ codes, fires: [...fires.values()] }).toEqual({
+        codes: Array(4).fill("ERR_HTTP_REQUEST_TIMEOUT"),
+        fires: [2, 1, 1],
+      });
+    } finally {
+      for (const c of clients) c.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
   test("headersTimeout answers 408 when there is no 'clientError' listener", async () => {
     const server = http.createServer({ connectionsCheckingInterval: 50 }, (req, res) => res.end("ok"));
     server.headersTimeout = 200;
@@ -173,6 +243,42 @@ describe("node:http server timeout enforcement", () => {
       const response = await done;
       expect(response).toContain("408 Request Timeout");
       expect(response).toContain("Connection: close");
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
+  test("server.setTimeout callback does not fire after the socket is destroyed (#39681)", async () => {
+    const { promise: done, resolve: onDone } = Promise.withResolvers<void>();
+    const server = http.createServer((req, res) => {
+      res.end();
+      // Hold the event loop until the socket's 5ms inactivity timer is overdue,
+      // so the destroy below races a 'timeout' that is already due.
+      const deadline = Date.now() + 25;
+      while (Date.now() < deadline) {}
+      req.socket.destroy();
+      // Timers run in the order they are due: this one runs behind the overdue
+      // inactivity timer, so a stale 'timeout' (the bug) has fired by then.
+      setTimeout(onDone, 0);
+    });
+    // Keep the 5ms timer in the slot across the response finish; a keep-alive
+    // timeout would replace it with a longer one.
+    server.keepAliveTimeout = 0;
+    const timeoutCalls: boolean[] = [];
+    server.setTimeout(5, (socket: net.Socket) => {
+      timeoutCalls.push(socket.destroyed);
+    });
+    const port = await listen(server);
+    try {
+      const socket = net.connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      socket.resume();
+      socket.on("connect", () => socket.write("GET / HTTP/1.1\r\nHost: a\r\n\r\n"));
+      await done;
+      // Node clears the inactivity timer in Socket._destroy, so the callback
+      // never runs for a socket destroyed before the expired timer fired.
+      expect(timeoutCalls).toEqual([]);
     } finally {
       server.closeAllConnections();
       server.close();
@@ -217,4 +323,263 @@ describe("node:http server timeout enforcement", () => {
       server.close();
     }
   });
+
+  // A POST whose body stalls is pipelined behind a GET that is never answered,
+  // so the GET's response still owns the socket when the inactivity timeout
+  // fires. Like Node's socketOnTimeout (`parser.incoming`), the request that is
+  // still being received sees 'timeout', not the one that owns the response.
+  const pipelinedStalledPost =
+    "GET /a HTTP/1.1\r\nHost: a\r\n\r\n" + "POST /b HTTP/1.1\r\nHost: a\r\nContent-Length: 100\r\n\r\n0123456789";
+
+  test("a pipelined request that is still being received gets 'timeout' and can keep the socket", async () => {
+    const events: string[] = [];
+    const { promise: timedOut, resolve: onTimedOut } = Promise.withResolvers<void>();
+    const server = http.createServer(req => {
+      if (req.url !== "/b") return;
+      req.setTimeout(200, () => events.push(`POST /b 'timeout' complete=${req.complete}`));
+      // Runs after the server's own socket 'timeout' listener, which is the
+      // one that destroys the socket when nothing handled the timeout.
+      req.socket.on("timeout", () => {
+        events.push(`socket destroyed=${req.socket.destroyed}`);
+        onTimedOut();
+      });
+    });
+    const port = await listen(server);
+    const client = net.connect(port, "127.0.0.1");
+    try {
+      client.on("error", () => {});
+      client.on("connect", () => client.write(pipelinedStalledPost));
+      await timedOut;
+      expect(events).toEqual(["POST /b 'timeout' complete=false", "socket destroyed=false"]);
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
+  test("with pipelining, 'timeout' goes to the incoming request, the response that owns the socket, then the server", async () => {
+    const events: string[] = [];
+    const { promise: timedOut, resolve: onTimedOut } = Promise.withResolvers<void>();
+    const server = http.createServer((req, res) => {
+      const name = `${req.method} ${req.url}`;
+      req.on("timeout", () => events.push(`req ${name} complete=${req.complete}`));
+      res.on("timeout", () => events.push(`res ${name}`));
+      if (req.url === "/b") req.socket.setTimeout(200);
+    });
+    server.on("timeout", socket => {
+      events.push(`server destroyed=${socket.destroyed}`);
+      onTimedOut();
+    });
+    const port = await listen(server);
+    const client = net.connect(port, "127.0.0.1");
+    try {
+      client.on("error", () => {});
+      client.on("connect", () => client.write(pipelinedStalledPost));
+      await timedOut;
+      expect(events).toEqual(["req POST /b complete=false", "res GET /a", "server destroyed=false"]);
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
+  test("a pipelined request that stream.pipeline() destroyed does not keep the idle keep-alive socket open", async () => {
+    // POST /b is pipelined behind GET /a. Its destination fails, so pipeline()
+    // destroys the request and leaves the connection open for the 500. Both
+    // responses go out, the client finishes the upload and idles. The destroyed
+    // request never completes in JS. Its response has finished, so its
+    // 'timeout' listener must not veto the keep-alive timeout.
+    const events: string[] = [];
+    const { promise: settled, resolve: onSettled } = Promise.withResolvers<void>();
+    let resA: http.ServerResponse | undefined;
+    const server = http.createServer((req, res) => {
+      if (req.url === "/a") {
+        resA = res;
+        return;
+      }
+      req.setTimeout(30_000, () => {
+        events.push(`req 'timeout' destroyed=${req.destroyed}`);
+        onSettled();
+      });
+      const failing = new Writable({
+        write(chunk, encoding, callback) {
+          callback(new Error("disk full"));
+        },
+      });
+      pipeline(req, failing, () => {
+        res.statusCode = 500;
+        res.end("failed");
+        resA!.end("a");
+      });
+    });
+    server.keepAliveTimeout = 200;
+    server.keepAliveTimeoutBuffer = 0;
+    const port = await listen(server);
+    const client = net.connect(port, "127.0.0.1");
+    try {
+      const body = Buffer.alloc(100, "a").toString();
+      let received = "";
+      let sentRest = false;
+      client.on("error", () => {});
+      client.on("connect", () => {
+        client.write(
+          "GET /a HTTP/1.1\r\nHost: a\r\n\r\n" +
+            "POST /b HTTP/1.1\r\nHost: a\r\nContent-Length: 100\r\n\r\n" +
+            body.slice(0, 10),
+        );
+      });
+      client.on("data", chunk => {
+        received += chunk.toString("latin1");
+        // "failed" ends the second response: the client now finishes its upload and idles.
+        if (!sentRest && received.endsWith("failed")) {
+          sentRest = true;
+          client.write(body.slice(10));
+        }
+      });
+      client.on("close", () => {
+        events.push("closed by the server");
+        onSettled();
+      });
+      await settled;
+      expect({
+        responses: received.match(/HTTP\/1\.1 \d+ [^\r]*/g),
+        keepAlive: received.match(/^connection: keep-alive\r$/gim)?.length,
+        events,
+      }).toEqual({
+        responses: ["HTTP/1.1 200 OK", "HTTP/1.1 500 Internal Server Error"],
+        keepAlive: 2,
+        events: ["closed by the server"],
+      });
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+});
+
+// server.setTimeout (applied per connection), req.setTimeout, res.setTimeout
+// and req.socket.setTimeout all end up in the server socket's setTimeout,
+// which has to check msecs the way net.Socket#setTimeout does.
+describe.concurrent("node:http server socket setTimeout(msecs) checks", () => {
+  const TIMEOUT_MAX = 2 ** 31 - 1;
+
+  function thrownBy(fn: () => unknown) {
+    try {
+      fn();
+      return "did not throw";
+    } catch (err: any) {
+      return { name: err.constructor.name, code: err.code, message: err.message };
+    }
+  }
+
+  function outOfRange(received: string) {
+    return {
+      name: "RangeError",
+      code: "ERR_OUT_OF_RANGE",
+      message: `The value of "msecs" is out of range. It must be a non-negative finite number. Received ${received}`,
+    };
+  }
+
+  function invalidDurations(setTimeout: (msecs: any) => unknown) {
+    return {
+      negative: thrownBy(() => setTimeout(-1)),
+      nan: thrownBy(() => setTimeout(NaN)),
+      infinity: thrownBy(() => setTimeout(Infinity)),
+      string: thrownBy(() => setTimeout("foo")),
+    };
+  }
+
+  const expectedInvalidDurations = {
+    negative: outOfRange("-1"),
+    nan: outOfRange("NaN"),
+    infinity: outOfRange("Infinity"),
+    string: {
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: `The "msecs" argument must be of type number. Received type string ('foo')`,
+    },
+  };
+
+  test("socket, req and res setTimeout reject invalid msecs like net.Socket#setTimeout", async () => {
+    let observed: unknown;
+    const server = http.createServer((req, res) => {
+      const socket = req.socket;
+      observed = {
+        socket: invalidDurations(msecs => socket.setTimeout(msecs)),
+        req: invalidDurations(msecs => req.setTimeout(msecs)),
+        res: invalidDurations(msecs => res.setTimeout(msecs)),
+        msecsIsCheckedBeforeCallback: thrownBy(() => socket.setTimeout(-1, "not a function" as any)),
+        timeoutAfterRejectedCalls: socket.timeout,
+        validCallReturnsSocket: socket.setTimeout(1000) === socket,
+        timeoutAfterValidCall: socket.timeout,
+      };
+      res.end("ok");
+    });
+    const port = await listen(server);
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/`);
+      expect(await response.text()).toBe("ok");
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+    expect(observed).toEqual({
+      socket: expectedInvalidDurations,
+      req: expectedInvalidDurations,
+      res: expectedInvalidDurations,
+      msecsIsCheckedBeforeCallback: outOfRange("-1"),
+      timeoutAfterRejectedCalls: 0,
+      validCallReturnsSocket: true,
+      timeoutAfterValidCall: 1000,
+    });
+  });
+
+  // Node truncates a duration above 2**31 - 1 ms to that maximum and warns.
+  // Passing the raw value on to setTimeout() would instead arm a 1 ms timer
+  // (with a different warning), which destroys the connection at once. Both
+  // warnings start with the duration, so each case gets its own duration to
+  // pick its warning out of the process-wide 'warning' event.
+  type Configure = (msecs: number, server: http.Server) => unknown;
+  type Arm = (msecs: number, req: http.IncomingMessage, res: http.ServerResponse) => unknown;
+  const oversizedDurations: [string, number, Configure | undefined, Arm | undefined][] = [
+    ["server.setTimeout()", TIMEOUT_MAX + 1, (msecs, server) => server.setTimeout(msecs), undefined],
+    ["req.setTimeout()", TIMEOUT_MAX + 2, undefined, (msecs, req) => req.setTimeout(msecs)],
+    ["res.setTimeout()", TIMEOUT_MAX + 3, undefined, (msecs, _req, res) => res.setTimeout(msecs)],
+    ["req.socket.setTimeout()", TIMEOUT_MAX + 4, undefined, (msecs, req) => req.socket.setTimeout(msecs)],
+  ];
+  test.each(oversizedDurations)(
+    "%s truncates a duration above 2**31 - 1 ms like net.Socket#setTimeout",
+    async (_name, msecs, configure, arm) => {
+      const warnings: { name: string; message: string }[] = [];
+      const onWarning = (warning: Error) => {
+        if (warning.message.startsWith(`${msecs} `)) warnings.push({ name: warning.name, message: warning.message });
+      };
+      process.on("warning", onWarning);
+      const server = http.createServer((req, res) => {
+        arm?.(msecs, req, res);
+        res.end("ok");
+      });
+      configure?.(msecs, server);
+      const port = await listen(server);
+      try {
+        const response = await fetch(`http://127.0.0.1:${port}/`);
+        expect(await response.text()).toBe("ok");
+      } finally {
+        server.closeAllConnections();
+        server.close();
+        process.removeListener("warning", onWarning);
+      }
+      // The warning is emitted while the request is handled, so it has been
+      // delivered by the time the response has arrived.
+      expect(warnings).toEqual([
+        {
+          name: "TimeoutOverflowWarning",
+          message: `${msecs} does not fit into a 32-bit signed integer.\nTimer duration was truncated to ${TIMEOUT_MAX}.`,
+        },
+      ]);
+    },
+  );
 });

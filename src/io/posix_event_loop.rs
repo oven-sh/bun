@@ -1,6 +1,8 @@
 #[cfg(unix)]
 use core::ffi::c_int;
+#[cfg(not(windows))]
 use core::ffi::c_void;
+#[cfg(not(windows))]
 use core::fmt;
 #[cfg(unix)]
 use core::ptr;
@@ -302,20 +304,6 @@ pub struct FilePoll {
 }
 
 #[cfg(not(windows))]
-impl Default for FilePoll {
-    fn default() -> Self {
-        Self {
-            fd: INVALID_FD,
-            flags: FlagsSet::empty(),
-            owner: Owner::NULL,
-            generation_number: 0,
-            next_to_free: ptr::null_mut(),
-            allocator_type: AllocatorType::Js,
-        }
-    }
-}
-
-#[cfg(not(windows))]
 impl FilePoll {
     fn update_flags(&mut self, updated: FlagsSet) {
         let mut flags = self.flags;
@@ -335,6 +323,9 @@ impl FilePoll {
         let flags = self.flags;
         if flags.contains(Flags::Socket) {
             return FileType::Socket;
+        }
+        if flags.contains(Flags::Tty) {
+            return FileType::File;
         }
         if flags.contains(Flags::Nonblocking) {
             return FileType::NonblockingPipe;
@@ -917,22 +908,23 @@ impl FilePoll {
     ) -> sys::Result<()> {
         debug_assert!(fd.native() >= 0 && fd != INVALID_FD);
 
-        if !(self.flags.contains(Flags::PollReadable)
+        let registered = self.flags.contains(Flags::PollReadable)
             || self.flags.contains(Flags::PollWritable)
             || self.flags.contains(Flags::PollProcess)
             || self.flags.contains(Flags::PollMachport)
-            || self.flags.contains(Flags::PollMemoryPressure))
-        {
-            // no-op
+            || self.flags.contains(Flags::PollMemoryPressure);
+        // The `needs_rearm` skip below keeps the disarmed kernel registration, so teardown must still delete it.
+        let disarmed_only = !registered && self.flags.contains(Flags::NeedsRearm);
+        if !registered && !(disarmed_only && force_unregister) {
             return sys::Result::Ok(());
         }
 
-        debug_assert!(fd != INVALID_FD);
         let watcher_fd = loop_.fd;
-        let both_directions =
-            self.flags.contains(Flags::PollReadable) && self.flags.contains(Flags::PollWritable);
+        let both_directions = disarmed_only
+            || (self.flags.contains(Flags::PollReadable)
+                && self.flags.contains(Flags::PollWritable));
         let flag: Flags = 'brk: {
-            if self.flags.contains(Flags::PollReadable) {
+            if disarmed_only || self.flags.contains(Flags::PollReadable) {
                 break 'brk Flags::Readable;
             }
             if self.flags.contains(Flags::PollWritable) {
@@ -1223,6 +1215,7 @@ pub enum Flags {
     IgnoreUpdates,
 
     Socket,
+    Tty,
 }
 
 pub type FlagsSet = enumset::EnumSet<Flags>;
@@ -1283,9 +1276,10 @@ impl Flags {
     }
 }
 
-#[allow(dead_code)]
+#[cfg(not(windows))]
 pub(crate) struct FlagsFormatter(pub FlagsSet);
 
+#[cfg(not(windows))]
 impl fmt::Display for FlagsFormatter {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut is_first = true;
@@ -1424,19 +1418,18 @@ impl Store {
 // `impl TypeList for (FilePoll,)`, which trips the orphan rule (foreign trait
 // on a tuple). Since the union has exactly one variant, wrap the raw
 // `TaggedPtr` directly with the same tag scheme (`1024 - index`).
+#[cfg(not(windows))]
 #[derive(Copy, Clone)]
-#[allow(dead_code)]
 pub(crate) struct Pollable {
     repr: bun_collections::TaggedPtr,
 }
 
+#[cfg(not(windows))]
 impl Pollable {
     /// Tag value for `FilePoll` (index 0 → `1024 - 0`).
-    #[allow(dead_code)]
     pub(crate) const FILE_POLL_TAG: u16 = 1024;
 
     #[inline]
-    #[allow(dead_code)]
     pub(crate) fn init(ptr: *const crate::FilePoll) -> Self {
         Self {
             repr: bun_collections::TaggedPtr::init(ptr, Self::FILE_POLL_TAG),
@@ -1444,7 +1437,6 @@ impl Pollable {
     }
 
     #[inline]
-    #[allow(dead_code)]
     pub(crate) fn from(val: *mut c_void) -> Self {
         Self {
             repr: bun_collections::TaggedPtr::from(val),
@@ -1452,19 +1444,16 @@ impl Pollable {
     }
 
     #[inline]
-    #[allow(dead_code)]
     pub(crate) fn tag(self) -> u16 {
         self.repr.data()
     }
 
     #[inline]
-    #[allow(dead_code)]
     pub(crate) fn as_file_poll(self) -> *mut crate::FilePoll {
         self.repr.get::<crate::FilePoll>()
     }
 
     #[inline]
-    #[allow(dead_code)]
     pub(crate) fn ptr(self) -> *mut c_void {
         self.repr.to()
     }
@@ -1530,21 +1519,6 @@ pub enum OneShotFlag {
 
 #[cfg(not(windows))]
 const INVALID_FD: Fd = Fd::INVALID;
-
-// ──────────────────────────────────────────────────────────────────────────
-// Waker / Closer — canonical impls live in this crate's `mod waker` /
-// `mod closer` (lib.rs). Before the bun_io→bun_io merge each crate had its
-// own copy (this file was bun_io's, lib.rs was bun_io's, kept apart so
-// `Loop::load` had no aio→io edge). With the merge there is one definition;
-// re-export here so `posix_event_loop::Waker` / `::Closer` (and therefore
-// the `bun_io::*` shim) keep resolving for downstream callers.
-// ──────────────────────────────────────────────────────────────────────────
-
-pub use crate::closer::Closer;
-#[cfg(target_os = "macos")]
-pub use crate::waker::KEventWaker;
-#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
-pub use crate::waker::Waker;
 
 #[cfg(all(test, not(windows)))]
 mod tests {

@@ -886,19 +886,18 @@ impl Lockfile {
         false
     }
 
-    /// Is package `id` the root, a workspace, or a `file:` folder one of them depends on directly?
-    pub(crate) fn is_local_package_id(&self, id: PackageID) -> bool {
-        match self.packages.items_resolution()[id as usize].tag {
+    /// Is dependency `id` declared by the root, a workspace, or a `file:` package
+    /// one of them depends on directly? Checked, not assumed: a migrated lockfile
+    /// can carry dependencies for a folder that a registry package shipped.
+    pub(crate) fn is_dependency_of_local_package(&self, id: DependencyID) -> bool {
+        let Some(parent_id) = self.get_parent_pkg_of_dependency(id) else {
+            return false;
+        };
+        match self.packages.items_resolution()[parent_id as usize].tag {
             ResolutionTag::Root | ResolutionTag::Workspace => true,
-            ResolutionTag::Folder => self.is_workspace_declared_package(id),
+            ResolutionTag::Folder => self.is_workspace_declared_package(parent_id),
             _ => false,
         }
-    }
-
-    /// Is dependency `id` declared by a package `is_local_package_id` accepts?
-    pub(crate) fn is_dependency_of_local_package(&self, id: DependencyID) -> bool {
-        self.get_parent_pkg_of_dependency(id)
-            .is_some_and(|parent_id| self.is_local_package_id(parent_id))
     }
 
     /// May the folder path of dependency `id` leave its package directory? Yes

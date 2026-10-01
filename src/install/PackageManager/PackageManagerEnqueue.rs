@@ -1708,9 +1708,9 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             let tarball = version.tarball();
             if matches!(tarball.uri, dependency::tarball::Uri::Local(_))
                 && !version_was_replaced
-                && let Some(declarer) = this.lockfile.get_parent_pkg_of_dependency(id)
-                && !this.lockfile.is_local_package_id(declarer)
+                && !this.lockfile.is_dependency_of_local_package(id)
                 && !this.lockfile.has_equal_root_dependency(dependency)
+                && let Some(declarer) = this.lockfile.get_parent_pkg_of_dependency(id)
             {
                 if dependency.behavior.is_required() {
                     reject_local_tarball_of_remote_package(this, declarer, dependency);

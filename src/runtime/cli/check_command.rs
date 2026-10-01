@@ -17,7 +17,7 @@ struct Options {
     threads: usize,
     /// `--pretty`, `--no-pretty`. Not said: by where the output goes.
     pretty: Option<bool>,
-    /// `--all`: every error by itself, however many there are.
+    /// `--all`: never group identical errors.
     all: bool,
     timing: bool,
 }
@@ -230,7 +230,7 @@ fn style_for(
     to: bun_core::Fd,
     is_tty: bool,
     colors: bool,
-    shows_all: bool,
+    show_all: bool,
 ) -> Style<'_> {
     let layout = match pretty {
         Some(true) => Layout::Pretty,
@@ -251,7 +251,7 @@ fn style_for(
         } else {
             0
         },
-        shows_all,
+        show_all,
     }
 }
 

@@ -557,7 +557,7 @@ fn main() {
                         cwd: "",
                         github_annotations: false,
                         width: bun_sema_standalone::terminal_width(),
-                        shows_all: false,
+                        show_all: false,
                     };
                     for tick in 0.. {
                         let mut line = String::new();
@@ -624,7 +624,7 @@ fn main() {
                     .find_map(|a| a.strip_prefix("--width="))
                     .and_then(|w| w.parse().ok())
                     .unwrap_or_else(bun_sema_standalone::terminal_width),
-                shows_all: has("--all"),
+                show_all: has("--all"),
             };
             if progress.is_some() {
                 eprint!("{}", bun_sema_driver::format::ERASE_LINE);

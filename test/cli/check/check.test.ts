@@ -288,8 +288,8 @@ describe.concurrent("bun check", () => {
       expect(stderr).toMatchInlineSnapshot(`
         "Found 64 errors in 2 files, checked 2 files [time]
 
-          40  a.ts:1
-          24  b.ts:1"
+          24  b.ts:1
+          40  a.ts:1"
       `);
       expect(exitCode).toBe(1);
     });
@@ -342,6 +342,18 @@ describe.concurrent("bun check", () => {
       expect(plain.stdout.split("\n")).toHaveLength(64);
     });
 
+    test("file lists are never truncated", async () => {
+      // The same error in 60 files, so it is grouped.
+      using dir = project(
+        Object.fromEntries(Array.from({ length: 60 }, (_, i) => [`f${i}.ts`, `console.lgo(${i});\nexport {};\n`])),
+      );
+      const { stdout, stderr } = await check(dir, ["--pretty"]);
+      expect(stdout).toContain("60 times in 60 files");
+      expect(stdout.match(/^ +1 {2}f\d+\.ts:1$/gm)).toHaveLength(60);
+      expect(stderr.match(/^ +1 {2}f\d+\.ts:1$/gm)).toHaveLength(60);
+      expect(stdout + stderr).not.toContain("more files");
+    });
+
     test("fifty errors are each shown", async () => {
       using dir = project({
         "a.ts": Array.from({ length: 50 }, (_, i) => `console.lgo(${i});`).join("\n") + `\nexport {};\n`,
@@ -382,7 +394,7 @@ describe.concurrent("bun check", () => {
     });
     const [pretty, plain] = await Promise.all([check(dir, ["--pretty"]), check(dir)]);
     expect(pretty.stderr).toMatchInlineSnapshot(`
-      "hint: The types of what Bun provides (console, fetch, Bun, bun:test) are not installed: bun add -d @types/bun
+      "hint: Bun's type definitions (console, fetch, Bun, bun:test) are not installed. Run: bun add -d @types/bun
       Found 2 errors in 1 file, checked 1 file [time]"
     `);
     expect(plain.stderr).not.toContain("hint");

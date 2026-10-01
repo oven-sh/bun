@@ -28,12 +28,12 @@ pub struct Style<'a> {
     pub github_annotations: bool,
     /// How many columns the terminal has. 0: it is not known, or there is none.
     pub width: usize,
-    /// Every error is shown by itself, however many there are.
-    pub shows_all: bool,
+    /// `--all`: never group identical diagnostics.
+    pub show_all: bool,
 }
 
-/// `path` as a person is shown it: from where they are, unless that is further up than down.
-fn shown_path(path: &str, style: &Style) -> String {
+/// Relative to the working directory, or absolute when that would need two or more `../`.
+fn display_path(path: &str, style: &Style) -> String {
     let relative = relative_path(path, style.cwd);
     if relative.starts_with("../../") {
         crate::host::to_native(path).to_string()
@@ -253,9 +253,9 @@ fn write_source(
         if carets == 0 {
             continue;
         }
-        let before_carets = gutter + 3 + usize::from(start > 0) + columns(&line[start..from]);
+        let caret_offset = gutter + 3 + usize::from(start > 0) + columns(&line[start..from]);
         out.push_str(indent);
-        out.extend(std::iter::repeat_n(' ', before_carets));
+        out.extend(std::iter::repeat_n(' ', caret_offset));
         paint.put(
             out,
             &[BOLD, category_color(d.category)],
@@ -388,18 +388,18 @@ fn write_message(
 }
 
 fn write_location(out: &mut String, d: &Diagnostic, style: &Style, paint: &Paint) {
-    paint.put(out, &[CYAN], &shown_path(&d.path, style));
+    paint.put(out, &[CYAN], &display_path(&d.path, style));
     paint.put(out, &[DIM], ":");
     paint.put(out, &[YELLOW], &d.line.to_string());
     paint.put(out, &[DIM], ":");
     paint.put(out, &[YELLOW], &d.column.to_string());
 }
 
-/// `also`: the other errors that say the same.
+/// `duplicates`: other diagnostics with the same code and message, when grouping.
 fn write_pretty(
     out: &mut String,
     d: &Diagnostic,
-    also: &[&Diagnostic],
+    duplicates: &[&Diagnostic],
     style: &Style,
     paint: &Paint,
 ) {
@@ -466,12 +466,12 @@ fn write_pretty(
         write_location(out, d, style, paint);
         out.push('\n');
     }
-    if !also.is_empty() {
-        write_where_else(out, d, also, style, paint);
+    if !duplicates.is_empty() {
+        write_occurrences(out, d, duplicates, style, paint);
     }
-    for note in d.related.iter().take(MOST_NOTES) {
-        // What is in sight already is not shown again.
-        let is_in_sight = note.path == d.path
+    for note in d.related.iter().take(MAX_RELATED) {
+        // Skip the excerpt if the main excerpt already shows that line.
+        let is_already_visible = note.path == d.path
             && note.line <= d.line
             && note.line + 2 >= d.line
             && !d.source.is_empty();
@@ -485,33 +485,33 @@ fn write_pretty(
             write_location(out, note, style, paint);
             out.push('\n');
         }
-        if !is_in_sight {
+        if !is_already_visible {
             write_source(out, note, paint, 0, 0, style.width, "        ");
         }
     }
 }
 
-/// How often the error `first` comes up, `also` being the other times, and in which files most.
-fn write_where_else(
+/// `264 times in 6 files`, then the count for each file. The file list is never truncated.
+fn write_occurrences(
     out: &mut String,
     first: &Diagnostic,
-    also: &[&Diagnostic],
+    duplicates: &[&Diagnostic],
     style: &Style,
     paint: &Paint,
 ) {
-    // The errors are in the order of their paths.
+    // Diagnostics are sorted by path, so each file's are adjacent.
     let mut by_file: Vec<(&Diagnostic, usize)> = vec![(first, 1)];
-    for &d in also {
+    for &d in duplicates {
         match by_file.last_mut() {
             Some((of, count)) if of.path == d.path => *count += 1,
             _ => by_file.push((d, 1)),
         }
     }
     out.push_str("      ");
-    let times = format!("{} times", with_commas(also.len() + 1));
+    let times = format!("{} times", with_commas(duplicates.len() + 1));
     paint.put(out, &[BOLD, YELLOW], &times);
     if let [_] = by_file[..] {
-        let mut lines: Vec<u32> = also
+        let mut lines: Vec<u32> = duplicates
             .iter()
             .map(|d| d.line)
             .filter(|&line| line != first.line)
@@ -521,10 +521,10 @@ fn write_where_else(
             paint.put(out, &[DIM], " on this line\n");
             return;
         }
-        let more = lines.len() > MOST_LINES;
+        let more = lines.len() > MAX_LINES_LISTED;
         let lines: Vec<String> = lines
             .iter()
-            .take(MOST_LINES)
+            .take(MAX_LINES_LISTED)
             .map(|line| line.to_string())
             .collect();
         paint.put(out, &[DIM], " in this file, next on ");
@@ -547,43 +547,26 @@ fn write_where_else(
     );
     out.push('\n');
     by_file.sort_by_key(|&(_, count)| std::cmp::Reverse(count));
-    let shown = if by_file.len() > MOST_PLACES + 1 {
-        MOST_PLACES
-    } else {
-        by_file.len()
-    };
-    let rest: usize = by_file[shown..].iter().map(|(_, count)| count).sum();
-    let width = with_commas(by_file[0].1.max(rest)).len();
-    for (of, count) in &by_file[..shown] {
+    let width = with_commas(by_file[0].1).len();
+    for (of, count) in &by_file {
         let _ = write!(out, "        {:>width$}  ", with_commas(*count));
-        paint.put(out, &[CYAN], &shown_path(&of.path, style));
+        paint.put(out, &[CYAN], &display_path(&of.path, style));
         paint.put(out, &[DIM], &format!(":{}", of.line));
-        out.push('\n');
-    }
-    if shown < by_file.len() {
-        let _ = write!(out, "        {:>width$}  ", with_commas(rest));
-        paint.put(
-            out,
-            &[DIM],
-            &format!("in {} more files", with_commas(by_file.len() - shown)),
-        );
         out.push('\n');
     }
 }
 
-/// How many of the lines an error comes up again on are named.
-const MOST_LINES: usize = 8;
-/// How many more kinds of error get a line each.
-const MOST_KINDS_IN_A_LINE: usize = 15;
+/// Line numbers listed for a group whose duplicates are all in one file.
+const MAX_LINES_LISTED: usize = 8;
+/// Groups after the first `MAX_GROUPS` that still get a one-line entry.
+const MAX_COMPACT_GROUPS: usize = 15;
 
-/// How many of the places an error comes up again in are named.
-const MOST_PLACES: usize = 3;
-/// How many notes are shown under an error.
-const MOST_NOTES: usize = 3;
-/// With more errors than this, a person or an agent is shown what kinds there are instead of each one.
-const MANY: usize = 50;
-/// How many kinds of error are shown then.
-const MOST_KINDS: usize = 12;
+/// Related-information entries printed under a diagnostic.
+const MAX_RELATED: usize = 3;
+/// Above this many diagnostics, identical ones are grouped instead of printed one by one.
+const GROUP_THRESHOLD: usize = 50;
+/// Groups printed in full, with a source excerpt.
+const MAX_GROUPS: usize = 12;
 
 /// `WriteFormatDiagnostic`
 fn write_plain(out: &mut String, d: &Diagnostic, style: &Style) {
@@ -611,13 +594,13 @@ fn attribute(text: &str) -> String {
     text.replace('&', "&amp;").replace('"', "&quot;")
 }
 
-fn write_agent(out: &mut String, d: &Diagnostic, also: &[&Diagnostic], style: &Style) {
+fn write_agent(out: &mut String, d: &Diagnostic, duplicates: &[&Diagnostic], style: &Style) {
     let _ = write!(out, "<{}", d.category.name());
     if !d.path.is_empty() {
         let _ = write!(
             out,
             " file=\"{}\" line=\"{}\" column=\"{}\"",
-            attribute(&shown_path(&d.path, style)),
+            attribute(&display_path(&d.path, style)),
             d.line,
             d.column
         );
@@ -625,8 +608,8 @@ fn write_agent(out: &mut String, d: &Diagnostic, also: &[&Diagnostic], style: &S
     if d.code != 0 {
         let _ = write!(out, " code=\"TS{}\"", d.code);
     }
-    if !also.is_empty() {
-        let _ = write!(out, " times=\"{}\"", also.len() + 1);
+    if !duplicates.is_empty() {
+        let _ = write!(out, " times=\"{}\"", duplicates.len() + 1);
     }
     out.push_str(">\n");
     out.push_str(&d.text);
@@ -642,34 +625,34 @@ fn write_agent(out: &mut String, d: &Diagnostic, also: &[&Diagnostic], style: &S
             let _ = write!(
                 out,
                 " file=\"{}\" line=\"{}\" column=\"{}\"",
-                attribute(&shown_path(&note.path, style)),
+                attribute(&display_path(&note.path, style)),
                 note.line,
                 note.column
             );
         }
         let _ = writeln!(out, ">{}</related>", note.text);
     }
-    if !also.is_empty() {
+    if !duplicates.is_empty() {
         out.push_str("<also>");
-        for (i, other) in also.iter().take(MOST_PLACES_FOR_AGENTS).enumerate() {
+        for (i, other) in duplicates.iter().take(MAX_AGENT_LOCATIONS).enumerate() {
             let _ = write!(
                 out,
                 "{}{}:{}:{}",
                 if i > 0 { " " } else { "" },
-                shown_path(&other.path, style),
+                display_path(&other.path, style),
                 other.line,
                 other.column
             );
         }
-        if also.len() > MOST_PLACES_FOR_AGENTS {
-            let _ = write!(out, " and {} more", also.len() - MOST_PLACES_FOR_AGENTS);
+        if duplicates.len() > MAX_AGENT_LOCATIONS {
+            let _ = write!(out, " and {} more", duplicates.len() - MAX_AGENT_LOCATIONS);
         }
         out.push_str("</also>\n");
     }
     let _ = writeln!(out, "</{}>", d.category.name());
 }
 
-const MOST_PLACES_FOR_AGENTS: usize = 10;
+const MAX_AGENT_LOCATIONS: usize = 10;
 
 /// The data of a workflow command: `%`, carriage returns and line feeds are escaped, and in a property `:` and `,` too.
 fn github_escape(text: &str, is_property: bool) -> String {
@@ -711,8 +694,8 @@ fn write_github_annotation(out: &mut String, d: &Diagnostic, style: &Style) {
 /// The errors, one after the other.
 pub fn write_diagnostics(out: &mut String, report: &Report, style: &Style) {
     let paint = Paint { on: style.color };
-    if shows_kinds(report, style) {
-        write_kinds(out, report, style, &paint);
+    if should_group(report, style) {
+        write_grouped(out, report, style, &paint);
     } else {
         for d in &report.diagnostics {
             match style.layout {
@@ -732,8 +715,8 @@ pub fn write_diagnostics(out: &mut String, report: &Report, style: &Style) {
     }
 }
 
-/// What an error says, in a line. That no overload matches says little: what the last one has against the call says more.
-fn gist(text: &str) -> &str {
+/// The first line of a message. For TS2769 that line is always the same, so use the first specific reason under it.
+fn summary_line(text: &str) -> &str {
     let mut lines = text.lines();
     let first = lines.next().unwrap_or("");
     if first != "No overload matches this call." {
@@ -745,47 +728,46 @@ fn gist(text: &str) -> &str {
         .unwrap_or(first)
 }
 
-/// Whether there are too many errors to show each.
-fn shows_kinds(report: &Report, style: &Style) -> bool {
-    style.layout != Layout::Plain && !style.shows_all && report.diagnostics.len() > MANY
+/// Plain output is never grouped: tools parse it.
+fn should_group(report: &Report, style: &Style) -> bool {
+    style.layout != Layout::Plain && !style.show_all && report.diagnostics.len() > GROUP_THRESHOLD
 }
 
-/// A project in a bad way has the same few things wrong with it over and over. Each kind of error once, with how often and where
-/// else it comes up, what there is most of first: that is where to start.
-fn write_kinds(out: &mut String, report: &Report, style: &Style, paint: &Paint) {
+/// Groups diagnostics by (code, message) and prints the largest groups first, each once with its number of occurrences per file.
+/// A project with thousands of errors usually has a few root causes, and this puts them at the top.
+fn write_grouped(out: &mut String, report: &Report, style: &Style, paint: &Paint) {
     let mut index: std::collections::HashMap<(u32, &str), usize> = std::collections::HashMap::new();
-    let mut kinds: Vec<Vec<&Diagnostic>> = Vec::new();
+    let mut groups: Vec<Vec<&Diagnostic>> = Vec::new();
     for d in &report.diagnostics {
         let at = *index.entry((d.code, d.text.as_str())).or_insert_with(|| {
-            kinds.push(Vec::new());
-            kinds.len() - 1
+            groups.push(Vec::new());
+            groups.len() - 1
         });
-        kinds[at].push(d);
+        groups[at].push(d);
     }
-    // Among those that come up as often, in the order they come up.
-    kinds.sort_by_key(|kind| std::cmp::Reverse(kind.len()));
-    let shown = kinds.len().min(MOST_KINDS);
-    for kind in &kinds[..shown] {
+    // The sort is stable: ties stay in source order.
+    groups.sort_by_key(|group| std::cmp::Reverse(group.len()));
+    let shown = groups.len().min(MAX_GROUPS);
+    for group in &groups[..shown] {
         match style.layout {
-            Layout::Agent => write_agent(out, kind[0], &kind[1..], style),
+            Layout::Agent => write_agent(out, group[0], &group[1..], style),
             _ => {
-                write_pretty(out, kind[0], &kind[1..], style, paint);
+                write_pretty(out, group[0], &group[1..], style, paint);
                 out.push('\n');
             }
         }
     }
-    // The next most common, a line each.
-    let in_a_line = (kinds.len() - shown).min(MOST_KINDS_IN_A_LINE);
-    if style.layout == Layout::Pretty && in_a_line > 0 {
-        let width = with_commas(kinds[shown].len()).len();
-        for kind in &kinds[shown..shown + in_a_line] {
-            let first = kind[0];
-            let _ = write!(out, "  {:>width$}  ", with_commas(kind.len()));
+    let compact_count = (groups.len() - shown).min(MAX_COMPACT_GROUPS);
+    if style.layout == Layout::Pretty && compact_count > 0 {
+        let width = with_commas(groups[shown].len()).len();
+        for group in &groups[shown..shown + compact_count] {
+            let first = group[0];
+            let _ = write!(out, "  {:>width$}  ", with_commas(group.len()));
             let code = format!("TS{:<6}", first.code);
             paint.put(out, &[DIM], &code);
-            let said = gist(&first.text);
-            let place = format!("{}:{}", shown_path(&first.path, style), first.line);
-            // The message, cut to what room there is, and where it comes up first if that fits too.
+            let said = summary_line(&first.text);
+            let place = format!("{}:{}", display_path(&first.path, style), first.line);
+            // Truncate the message to the terminal width. Append the first location only if it fits.
             let room = match style.width {
                 0 => usize::MAX,
                 columns => columns.saturating_sub(width + 12),
@@ -803,30 +785,30 @@ fn write_kinds(out: &mut String, report: &Report, style: &Style, paint: &Paint) 
         out.push('\n');
     }
     let shown = if style.layout == Layout::Pretty {
-        shown + in_a_line
+        shown + compact_count
     } else {
         shown
     };
-    let rest: usize = kinds[shown..].iter().map(Vec::len).sum();
+    let rest: usize = groups[shown..].iter().map(Vec::len).sum();
     if rest == 0 {
         return;
     }
     let (errors, more) = (
         plural(rest, "more error", "more errors"),
-        plural(kinds.len() - shown, "other kind", "other kinds"),
+        plural(groups.len() - shown, "other kind", "other kinds"),
     );
     if style.layout == Layout::Agent {
         let _ = writeln!(
             out,
-            "<not-shown>{errors} of {more}. `bun check --all` shows every error. `bun check <path>` shows those of a file or a directory.</not-shown>"
+            "<not-shown>{errors} of {more}. Run `bun check --all` to list every error, or `bun check <path>` to check one file or directory.</not-shown>"
         );
         return;
     }
     paint.put(out, &[BOLD], &format!("{errors} of {more}"));
     paint.put(out, &[DIM], " not shown\n");
     for (command, shows) in [
-        ("bun check --all ", "every error"),
-        ("bun check <path>", "those of a file or a directory"),
+        ("bun check --all ", "show every error"),
+        ("bun check <path>", "check one file or directory"),
     ] {
         out.push_str("  ");
         paint.put(out, &[CYAN], command);
@@ -878,8 +860,8 @@ pub fn write_progress(out: &mut String, progress: &crate::Progress, style: &Styl
 /// Back to the start of the line, with nothing on it.
 pub const ERASE_LINE: &str = "\r\u{1b}[2K";
 
-/// Whether something is reported missing that `@types/bun` declares.
-fn lacks_types_of_bun(report: &Report) -> bool {
+/// Whether any diagnostic is about a global or module that `@types/bun` declares.
+fn is_missing_bun_types(report: &Report) -> bool {
     report.diagnostics.iter().any(|d| match d.code {
         // `Cannot find name 'console'. Do you need to change your target library? ..`
         2584 => true,
@@ -894,9 +876,21 @@ fn lacks_types_of_bun(report: &Report) -> bool {
     })
 }
 
-/// How it went, in a line or a few.
+/// Warnings, hints, the error count, then a per-file error count for every file.
 pub fn write_summary(out: &mut String, report: &Report, style: &Style) {
     let paint = Paint { on: style.color };
+    // Diagnostics are sorted by path, so each file's errors are adjacent.
+    let mut by_file: Vec<(&Diagnostic, usize)> = Vec::new();
+    for d in &report.diagnostics {
+        if d.category != Category::Error || d.path.is_empty() {
+            continue;
+        }
+        match by_file.last_mut() {
+            Some((first, count)) if first.path == d.path => *count += 1,
+            _ => by_file.push((d, 1)),
+        }
+    }
+    let files_with_errors = by_file.len();
     for path in &report.gave_up {
         paint.put(out, &[YELLOW], "warning");
         paint.put(out, &[DIM], ": ");
@@ -915,11 +909,11 @@ pub fn write_summary(out: &mut String, report: &Report, style: &Style) {
             relative_path(path, style.cwd)
         );
     }
-    if style.layout != Layout::Plain && lacks_types_of_bun(report) {
+    if style.layout != Layout::Plain && is_missing_bun_types(report) {
         paint.put(out, &[BLUE], "hint");
         paint.put(out, &[DIM], ": ");
         out.push_str(
-            "The types of what Bun provides (console, fetch, Bun, bun:test) are not installed: ",
+            "Bun's type definitions (console, fetch, Bun, bun:test) are not installed. Run: ",
         );
         paint.put(out, &[CYAN], "bun add -d @types/bun");
         out.push('\n');
@@ -940,24 +934,13 @@ pub fn write_summary(out: &mut String, report: &Report, style: &Style) {
         out.push('\n');
         return;
     }
-    // In the order the errors are in: by path.
-    let mut by_file: Vec<(&Diagnostic, usize)> = Vec::new();
-    for d in &report.diagnostics {
-        if d.category != Category::Error || d.path.is_empty() {
-            continue;
-        }
-        match by_file.last_mut() {
-            Some((first, count)) if first.path == d.path => *count += 1,
-            _ => by_file.push((d, 1)),
-        }
-    }
     paint.put(
         out,
         &[BOLD, RED],
         &format!("Found {}", plural(errors, "error", "errors")),
     );
-    if !by_file.is_empty() {
-        let _ = write!(out, " in {}", plural(by_file.len(), "file", "files"));
+    if files_with_errors > 0 {
+        let _ = write!(out, " in {}", plural(files_with_errors, "file", "files"));
     }
     paint.put(
         out,
@@ -968,49 +951,31 @@ pub fn write_summary(out: &mut String, report: &Report, style: &Style) {
         ),
     );
     out.push('\n');
-    if by_file.len() < 2 {
+    if files_with_errors < 2 {
         return;
     }
     out.push('\n');
-    // A person reads the top of a list. Whatever reads the rest reads all of it.
-    let shown = if style.layout == Layout::Pretty && by_file.len() > MOST_FILES + 1 {
-        by_file.sort_by_key(|&(_, count)| std::cmp::Reverse(count));
-        MOST_FILES
-    } else {
-        by_file.len()
-    };
-    let rest: usize = by_file[shown..].iter().map(|(_, count)| count).sum();
-    let width = by_file[..shown]
+    // Never truncated. In a terminal the end of the output is what stays on screen, so the files with the most errors go last.
+    if style.layout == Layout::Pretty {
+        by_file.sort_by_key(|&(_, count)| count);
+    }
+    let width = by_file
         .iter()
-        .map(|&(_, count)| count)
-        .chain([rest])
-        .map(|count| with_commas(count).len())
+        .map(|&(_, count)| with_commas(count).len())
         .max()
         .unwrap_or(1);
-    for (first, count) in &by_file[..shown] {
+    for (first, count) in &by_file {
         let _ = write!(out, "  {:>width$}  ", with_commas(*count));
         let path = if style.layout == Layout::Plain {
             relative_path(&first.path, style.cwd)
         } else {
-            shown_path(&first.path, style)
+            display_path(&first.path, style)
         };
         paint.put(out, &[CYAN], &path);
         paint.put(out, &[DIM], &format!(":{}", first.line));
         out.push('\n');
     }
-    if shown < by_file.len() {
-        let _ = write!(out, "  {:>width$}  ", with_commas(rest));
-        paint.put(
-            out,
-            &[DIM],
-            &format!("in {} more files", with_commas(by_file.len() - shown)),
-        );
-        out.push('\n');
-    }
 }
-
-/// How many files the summary lists for a person.
-const MOST_FILES: usize = 12;
 
 #[cfg(test)]
 mod tests {

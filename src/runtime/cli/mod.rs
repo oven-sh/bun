@@ -2181,21 +2181,21 @@ Execute a shell script directly from Bun.
 <b>Usage<r>: <b><green>bun check<r> <cyan>[flags]<r> <blue>[...files or directories]<r>
   Type check a TypeScript project.
 
-  Reads the nearest <b>tsconfig.json<r> and reports the errors <b>tsc<r> would, on every core.
-  Given files or directories, checks those and what they import, with the project's options.
+  Uses the nearest <b>tsconfig.json<r> and reports the same errors as <b>tsc<r>, using all CPU cores.
+  Pass files or directories to check only those and their imports.
 
 <b>Flags:<r>
-  <cyan>-p<r>, <cyan>--project<r> <d>\\<path\\><r>   A tsconfig.json, or a directory with one in it
-      <cyan>--pretty<r>           Show the source around each error <d>(default in a terminal)<r>
-      <cyan>--no-pretty<r>        One line an error, as <b>tsc --pretty false<r> prints them <d>(default elsewhere)<r>
-      <cyan>--all<r>              Show every error by itself <d>(past 50, errors that say the same are shown once)<r>
-      <cyan>--threads<r> <d>\\<n\\><r>      How many threads to check on <d>(default: one for each core)<r>
-      <cyan>--timing<r>           Say how long loading and checking took
-      <cyan>--cwd<r> <d>\\<path\\><r>       Run from another directory
-  <cyan>-h<r>, <cyan>--help<r>             Print this
+  <cyan>-p<r>, <cyan>--project<r> <d>\\<path\\><r>   Path to a tsconfig.json or its directory
+      <cyan>--pretty<r>           Show source code around each error <d>(default in a terminal)<r>
+      <cyan>--no-pretty<r>        One line per error, like <b>tsc --pretty false<r> <d>(default when piped)<r>
+      <cyan>--all<r>              Show every error <d>(above 50, identical errors are grouped)<r>
+      <cyan>--threads<r> <d>\\<n\\><r>      Number of threads <d>(default: one per CPU core)<r>
+      <cyan>--timing<r>           Print load and check times
+      <cyan>--cwd<r> <d>\\<path\\><r>       Set the working directory
+  <cyan>-h<r>, <cyan>--help<r>             Print this help menu
 
 <b>Examples:<r>
-  <d>Check the project around the working directory<r>
+  <d>Check the current project<r>
   <b><green>bun check<r>
 
   <d>Check one file and everything it imports<r>

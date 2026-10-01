@@ -840,7 +840,12 @@ pub fn install_with_manager(
 
     if manager.options.lockfile_only {
         // The same errors fail a full install below, after the packages are linked.
-        if had_errors_before_cleaning_lockfile {
+        if log_level != Options::LogLevel::Silent {
+            manager
+                .log_mut()
+                .print(std::ptr::from_mut(Output::error_writer()))?;
+        }
+        if had_errors_before_cleaning_lockfile || manager.log_mut().has_errors() {
             Global::crash();
         }
         // save the lockfile and exit. make sure metahash is generated for binary lockfile

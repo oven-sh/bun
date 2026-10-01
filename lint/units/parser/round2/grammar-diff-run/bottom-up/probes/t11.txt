@@ -1,0 +1,28 @@
+class C extends [delete A] {}
+let v = [delete A];
+class C implements [delete A] {}
+class C { abstract a: A }
+type X = A<extends>;
+type X = A<extends, B>;
+type X = A[extends];
+f<extends>(x);
+f<extends B ? C : D>(x);
+type X = A< extends B ? C : D>;
+type X = A extends B ? if : 2;
+type X = A extends B ? 1 : if;
+type X = A extends B ? class : 2;
+type X = A extends B ?⏎if : 2;
+type X = A extends B ? (if) : 2;
+type X = A extends if ? 1 : 2;
+let x: A extends B ? if : 2;
+type X = [a: ...A[]];
+type X = [...class?: A[]];
+type X = [...a?: A[]];
+type X = [class?: A];
+type X = [a?: ...A[]];
+type X = [...a: ...A[]];
+type X = [a: A?, ...b: B[]];
+namespace as {}
+module as {}
+interface as {}
+type as = 1;

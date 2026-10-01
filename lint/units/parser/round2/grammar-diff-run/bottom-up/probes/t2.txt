@@ -1,0 +1,85 @@
+function f(public a: A) {}
+function f(public readonly a: A) {}
+function f(readonly public a: A) {}
+function f(public private a: A) {}
+function f(readonly readonly a: A) {}
+function f(override a: A) {}
+function f(public override a: A) {}
+function f(override public a: A) {}
+function f(override readonly a: A) {}
+function f(readonly override a: A) {}
+function f(public override readonly a: A) {}
+function f(private override readonly a: A) {}
+function f(protected readonly a: A) {}
+function f(override override a: A) {}
+function f(public a) {}
+function f(public a?: A) {}
+function f(public a = 1) {}
+function f(public ...a: A[]) {}
+function f(public [a]: A) {}
+function f(public {a}: A) {}
+function f(static a: A) {}
+function f(declare a: A) {}
+function f(abstract a: A) {}
+function f(async a: A) {}
+function f(accessor a: A) {}
+function f(export a: A) {}
+function f(const a: A) {}
+function f(in a: A) {}
+function f(out a: A) {}
+class C { m(public a: A) {} }
+class C { m(public private a: A) {} }
+class C { constructor(public private a: A) {} }
+class C { constructor(readonly public a: A) {} }
+class C { constructor(public a?: A = 1) {} }
+let f = (public a: A) => a;
+let f = function (public a: A) {};
+let f = async (public a: A) => a;
+let o = { m(public a: A) {} };
+let o = { m(public private a: A) {} };
+declare function f(public a: A): void;
+declare function f(public private a: A): void;
+function f(public a: A): void;⏎function f(a: A) {}
+type X = (public a: A) => R;
+type X = (public readonly a: A) => R;
+type X = (readonly public a: A) => R;
+type X = (public override readonly a: A) => R;
+type X = (override readonly a: A) => R;
+type X = (readonly override a: A) => R;
+type X = (public a?: A) => R;
+type X = (public ...a: A[]) => R;
+type X = (public [a]: A) => R;
+type X = (public {a}: A) => R;
+type X = (static a: A) => R;
+type X = (a?: A = 1) => R;
+type X = (a? = 1) => R;
+type X = (...a = []) => R;
+type X = (...a: A[] = []) => R;
+type X = ({ ...a = 1 }) => R;
+type X = ([...a = 1]) => R;
+type X = ([a = 1, ...b]) => R;
+type X = ({ a = 1, ...b }) => R;
+type X = (a = 1, ...b) => R;
+type X = (a = 1) => R;
+type X = (a: A = 1) => R;
+type X = (a?) => R;
+type X = (...a?: A[]) => R;
+type X = (...a?) => R;
+type X = (...a, b) => R;
+type X = (a, ...b,) => R;
+type X = (this: A, a = 1) => R;
+type X = { m(a?: A = 1): R };
+type X = { m(public private a: A): R };
+type X = { m(...a = []): R };
+type X = { m({ ...a = 1 }): R };
+type X = { new (a?: A = 1): R };
+type X = { (a?: A = 1): R };
+type X = new (a?: A = 1) => R;
+declare function f(a?: A = 1): void;
+declare function f(...a = []): void;
+function f(a?: A = 1) {}
+function f(...a = []) {}
+class C { m(a?: A = 1) {} }
+class C { m(a?: A = 1): void; m() {} }
+declare class C { m(a?: A = 1): void }
+abstract class C { abstract m(a?: A = 1): void }

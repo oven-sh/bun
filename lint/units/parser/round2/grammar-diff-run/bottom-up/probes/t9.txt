@@ -1,0 +1,19 @@
+class C { @d a: A extends B ? C : C }
+class K { @d a: A extends B ? C : C }
+class K { @d a: C | C }
+class C { @d a: C | C }
+class K { @d a: A extends B ? C : D }
+class K { @d a: A extends B ? X.Y : X.Y }
+class K { @d a: A extends B ? string : string }
+class K { @d a: A extends B ? C : never }
+class K { @d a: A extends B ? never : C }
+class K { @d a: A extends B ? C : C | C }
+class K { @d a: A extends B ? (C) : C }
+class K { @d a: C & C }
+class K { @d a: (C) | C }
+class K { @d a: C | C | C }
+class K { @d a: A extends B ? C : A extends B ? C : C }
+class K { @d a: A extends B ? C : null }
+class K { @d a: A extends B ? C : undefined }
+class K { @d a: C | null }
+class K { @d a: C | undefined }

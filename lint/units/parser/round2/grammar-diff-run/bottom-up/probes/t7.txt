@@ -1,0 +1,56 @@
+class C { [k: string]: T }
+class C { [k: string]: T; }
+class C { [k: string]: T, }
+class C { [k: string]: T⏎a: A }
+class C { [k: string]: T, a: A }
+class C { [k: string] }
+class C { [k: string]; }
+class C { [k: string], }
+class C { [k: string, l: number]: A }
+class C { [k: string,]: A }
+class C { [k, l]: A }
+class C { [k?: string]: A }
+class C { [k?]: A }
+class C { [...k: string[]]: A }
+class C { [...k]: A }
+class C { []: A }
+class C { [] }
+class C { [k: string = 1]: A }
+class C { [k = 1]: A }
+class C { [k: string]: A = 1 }
+class C { [k: string]?: A }
+class C { [k: string](): A }
+class C { static [k: string]: A }
+class C { readonly [k: string]: A }
+class C { static readonly [k: string]: A }
+class C { public [k: string]: A }
+class C { declare [k: string]: A }
+class C { abstract [k: string]: A }
+class C { override [k: string]: A }
+class C { accessor [k: string]: A }
+class C { async [k: string]: A }
+class C { get [k: string]: A }
+class C { [await: string]: A }
+class C { [yield: string]: A }
+class C { [public k: string]: A }
+class C { [readonly k: string]: A }
+class C { [k: string]: A; [l: number]: B }
+class C { [{a}: string]: A }
+class C { [[a]: string]: A }
+class C { [k: A]: B }
+class C { [k]: A }
+class C { [k] }
+class C { [k]?: A }
+class C { [k](): void {} }
+class C { [a, b]: A }
+class C { [a ? b : c]: A }
+class C { [a?.b]: A }
+class C { x: A⏎[]; }
+class C { x: A⏎[k: string]: A }
+import k from "k";⏎class C { [k: string]: A }
+import k from "k";⏎export class C { [k: string]: A }
+declare class C { [k: string]: T }
+declare class C { [k: string] }
+abstract class C { [k: string]: T }
+let c = class { [k: string]: T };
+let o = { [k: string]: 1 };

@@ -269,6 +269,8 @@
 	{"code":"enum E { A } class C { #x = E.A; }","ext":"ts","expect":[{"line":1,"column":24,"message":"'#x' is defined but never used."}]},
 	{"code":"class A { #x = 1; m() { return <div a={this.#x} />; } }","ext":"tsx","expect":[]},
 	{"code":"class A { #x = 1; m() { return <div>{this.#x!++}</div>; } }","ext":"tsx","expect":[]},
+	{"code":"declare class A { #private; }\nexport class B { #x: number; m(): void; }","ext":"d.ts","expect":[{"line":1,"column":19,"message":"'#private' is defined but never used."},{"line":2,"column":18,"message":"'#x' is defined but never used."}]},
+	{"code":"export declare class A { #a: number; get #b(): number; set #b(v: number); static #c(): void; }","ext":"d.ts","expect":[{"line":1,"column":26,"message":"'#a' is defined but never used."},{"line":1,"column":60,"message":"'#b' is defined but never used."},{"line":1,"column":82,"message":"'#c' is defined but never used."}]},
 	{"code":"class A { #x; m(a, x, f, y) { this.#x; } }","expect":[]},
 	{"code":"class A { #x; m(a, x, f, y) { (this.#x); } }","expect":[]},
 	{"code":"class A { #x; m(a, x, f, y) { a.#x; } }","expect":[]},

@@ -457,12 +457,27 @@ def vold2(t):
         }""")
     return c
 
+def vold3(t):
+    """vold2 with the two conditions of the trigger added, not or-ed: LLVM splits `a | b` of two tests into two jumps
+    (seen in the assembly of vold2), and cannot split a wrapping sum. errors only grows, so the sum is 0 only when both are."""
+    c = vold2(t)
+    f = 'parse/parse_skip_typescript.rs'
+    n = 0
+    s = t.read(f)
+    for name in ('read',):
+        old = "if read.is_err() | (self.log().errors != mark.errors) {"
+        new = "if self.log().errors.wrapping_sub(mark.errors).wrapping_add(read.is_err() as u32) != 0 {"
+        n = s.count(old); s = s.replace(old, new)
+    assert n == 4, n
+    t.write(f, s)
+    return c
+
 def v0(t): return {}
 def v_nolint(t): return nolint(t)
 def v_nolintbt(t):
     c = nolint(t); bt(t); return c
 
-V = {'v0': v0, 'nolint': v_nolint, 'nolintbt': v_nolintbt, 'f1': f1, 'f1b': f1b, 'vold': vold, 'vold2': vold2}
+V = {'v0': v0, 'nolint': v_nolint, 'nolintbt': v_nolintbt, 'f1': f1, 'f1b': f1b, 'vold': vold, 'vold2': vold2, 'vold3': vold3}
 if __name__ == '__main__':
     if '--list' in sys.argv: print(' '.join(V)); sys.exit(0)
     for tag in sys.argv[1:]:

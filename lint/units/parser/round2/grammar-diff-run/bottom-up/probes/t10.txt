@@ -1,0 +1,6 @@
+class K { @d a: A extends B ? C : C } class C {}
+class C {} class K { @d a: A extends B ? C : C }
+class C {} class K { @d a: A extends B ? C : string }
+class C {} class D {} class K { @d a: A extends B ? C : D }
+class C {} class K { @d a: A extends B ? C : never }
+class C<T> { @d a: T extends B ? C<T> : C<T> }

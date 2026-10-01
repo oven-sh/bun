@@ -1,0 +1,56 @@
+let v = A<>.C;
+class C implements A<>.C {}
+class C implements A<B>.C {}
+let v = A<B>.C;
+function f(): (a: A) =>  { return x; }
+function f(): (a = 1) =>  { return x; }
+function f(): (a = 1) => void { return x; }
+function f(): <T>() =>  { return x; }
+let f = (a): <T>() =>  => a;
+let f = (a): <out>() =>  => a;
+f<<T>() => >(x);
+f<<out>() => >(x);
+let f = (a): [a: ?] => a;
+let f = (a): [?] => a;
+let f = (a): [A?] => a;
+f<[?]>(x);
+interface I extends (a: A) => void {}
+interface I extends () => void {}
+interface I extends [a: A] {}
+interface I extends { a: A } {}
+interface I extends A | B {}
+interface I extends A[] {}
+interface I extends keyof A {}
+interface I extends typeof a {}
+interface I extends new () => A {}
+interface I extends A extends B ? C : D {}
+interface I extends import("x").A<C> {}
+interface I extends import("x").A.<C> {}
+class C implements (a: A) => void {}
+class C implements (a = 1) => void {}
+interface I extends A implements B {}
+interface I implements B {}
+interface I implements B extends A {}
+interface I extends A extends B {}
+interface I extends A, B implements C, D {}
+interface I extends A implements B implements C {}
+interface I extends A implements B extends C {}
+interface I extends {}
+interface I extends A, {}
+interface I extends A, B, {}
+interface I implements {}
+interface I implements A, {}
+interface I extends A implements {}
+interface I extends {} {}
+interface I extends { a: 1 } {}
+interface I extends A, { a: 1 } {}
+class C implements {}
+class C implements A, {}
+class C extends A implements {}
+class C implements A implements B {}
+class C implements A extends B {}
+class C extends A extends B {}
+class C extends {}
+class C implements A {} 
+class C implements {} {}
+class C implements A, {} {}

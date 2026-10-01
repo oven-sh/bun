@@ -1,0 +1,41 @@
+class C { accessor a: A }
+class C { accessor a }
+class C { accessor a = 1 }
+class C { accessor a?: A }
+class C { accessor a!: A }
+class C { accessor a(): void {} }
+class C { accessor get a() { return 1 } }
+class C { accessor [a]: A }
+class C { accessor "a": A }
+class C { accessor 1: A }
+class C { accessor #a: A }
+class C { accessor static a: A }
+class C { static accessor a: A }
+class C { public accessor a: A }
+class C { accessor public a: A }
+class C { private accessor a: A }
+class C { protected accessor a: A }
+class C { readonly accessor a: A }
+class C { accessor readonly a: A }
+class C { declare accessor a: A }
+class C { accessor declare a: A }
+class C { override accessor a: A }
+class C { accessor override a: A }
+class C { abstract accessor a: A }
+abstract class C { abstract accessor a: A }
+abstract class C { accessor abstract a: A }
+class C { accessor accessor a: A }
+class C { accessor accessor: A }
+class C { accessor: A }
+class C { accessor }
+class C { accessor⏎a: A }
+class C { static accessor a?: A }
+class C { accessor async a() {} }
+class C { async accessor a() {} }
+class C { accessor *a() {} }
+class C { accessor constructor() {} }
+class C { @d accessor a: A }
+class C { @d static accessor a: A }
+declare class C { accessor a: A }
+class C { accessor a: A; accessor b: B }
+let o = { accessor a: 1 };

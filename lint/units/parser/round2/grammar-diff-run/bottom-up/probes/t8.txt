@@ -1,0 +1,125 @@
+function f<U extends break>() {}
+function f<U extends case>() {}
+function f<U extends catch>() {}
+function f<U extends class>() {}
+function f<U extends const>() {}
+function f<U extends continue>() {}
+function f<U extends debugger>() {}
+function f<U extends default>() {}
+function f<U extends delete>() {}
+function f<U extends do>() {}
+function f<U extends else>() {}
+function f<U extends enum>() {}
+function f<U extends export>() {}
+function f<U extends extends>() {}
+function f<U extends false>() {}
+function f<U extends finally>() {}
+function f<U extends for>() {}
+function f<U extends function>() {}
+function f<U extends if>() {}
+function f<U extends import>() {}
+function f<U extends in>() {}
+function f<U extends instanceof>() {}
+function f<U extends new>() {}
+function f<U extends null>() {}
+function f<U extends return>() {}
+function f<U extends super>() {}
+function f<U extends switch>() {}
+function f<U extends this>() {}
+function f<U extends throw>() {}
+function f<U extends true>() {}
+function f<U extends try>() {}
+function f<U extends typeof>() {}
+function f<U extends var>() {}
+function f<U extends void>() {}
+function f<U extends while>() {}
+function f<U extends with>() {}
+function f<U extends #a>() {}
+function f<U extends super.a>() {}
+function f<U extends class {}>() {}
+function f<U extends function () {}>() {}
+function f<U extends delete a>() {}
+function f<U extends in a>() {}
+function f<U extends yield>() {}
+function f<U extends await>() {}
+function f<U extends async>() {}
+function f<U extends let>() {}
+function f<U extends static>() {}
+function f<U extends implements>() {}
+function f<U extends interface>() {}
+function f<U extends package>() {}
+function f<U extends private>() {}
+function f<U extends protected>() {}
+function f<U extends public>() {}
+function f<U extends as>() {}
+function f<U extends is>() {}
+function f<U = class>() {}
+type X<U extends class> = U;
+class C<U extends class> {}
+interface I<U extends class> {}
+let f = <U extends class>(x) => x;
+type X = <U extends class>() => void;
+type X = A extends infer U extends class ? 1 : 2;
+function f<U = delete>() {}
+type X<U extends delete> = U;
+class C<U extends delete> {}
+interface I<U extends delete> {}
+let f = <U extends delete>(x) => x;
+type X = <U extends delete>() => void;
+type X = A extends infer U extends delete ? 1 : 2;
+function f<U = in>() {}
+type X<U extends in> = U;
+class C<U extends in> {}
+interface I<U extends in> {}
+let f = <U extends in>(x) => x;
+type X = <U extends in>() => void;
+type X = A extends infer U extends in ? 1 : 2;
+function f<U = instanceof>() {}
+type X<U extends instanceof> = U;
+class C<U extends instanceof> {}
+interface I<U extends instanceof> {}
+let f = <U extends instanceof>(x) => x;
+type X = <U extends instanceof>() => void;
+type X = A extends infer U extends instanceof ? 1 : 2;
+function f<U = super>() {}
+type X<U extends super> = U;
+class C<U extends super> {}
+interface I<U extends super> {}
+let f = <U extends super>(x) => x;
+type X = <U extends super>() => void;
+type X = A extends infer U extends super ? 1 : 2;
+function f<U = function>() {}
+type X<U extends function> = U;
+class C<U extends function> {}
+interface I<U extends function> {}
+let f = <U extends function>(x) => x;
+type X = <U extends function>() => void;
+type X = A extends infer U extends function ? 1 : 2;
+function f<U = #a>() {}
+type X<U extends #a> = U;
+class C<U extends #a> {}
+interface I<U extends #a> {}
+let f = <U extends #a>(x) => x;
+type X = <U extends #a>() => void;
+type X = A extends infer U extends #a ? 1 : 2;
+function f<U = super.a>() {}
+type X<U extends super.a> = U;
+class C<U extends super.a> {}
+interface I<U extends super.a> {}
+let f = <U extends super.a>(x) => x;
+type X = <U extends super.a>() => void;
+type X = A extends infer U extends super.a ? 1 : 2;
+function f<U = if>() {}
+type X<U extends if> = U;
+class C<U extends if> {}
+interface I<U extends if> {}
+let f = <U extends if>(x) => x;
+type X = <U extends if>() => void;
+type X = A extends infer U extends if ? 1 : 2;
+function f<U = extends>() {}
+type X<U extends extends> = U;
+class C<U extends extends> {}
+interface I<U extends extends> {}
+let f = <U extends extends>(x) => x;
+type X = <U extends extends>() => void;
+type X = A extends infer U extends extends ? 1 : 2;

@@ -1,0 +1,893 @@
+diff -ru orig_js_parser/parse/mod.rs root/src/js_parser/parse/mod.rs
+--- orig_js_parser/parse/mod.rs	2026-10-01 19:16:49.789787661 +0000
++++ root/src/js_parser/parse/mod.rs	2026-10-01 20:16:54.380524790 +0000
+@@ -401,6 +401,10 @@
+             return as_type;
+         }
+         p.rewind_class_implements_entry(start, logged);
++        // parseLeftHandSideExpressionOrHigher reads no expression at another token: the type reports what it reported before
++        if !p.is_start_of_heritage_expression() {
++            return p.skip_type_script_type(Level::Lowest);
++        }
+         let mut as_expression = p.parse_and_drop_in_class(Level::New);
+         if as_expression.is_ok() {
+             as_expression = p
+diff -ru orig_js_parser/parse/parse_fn.rs root/src/js_parser/parse/parse_fn.rs
+--- orig_js_parser/parse/parse_fn.rs	2026-10-01 19:16:49.789964637 +0000
++++ root/src/js_parser/parse/parse_fn.rs	2026-10-01 19:25:17.764282041 +0000
+@@ -6,6 +6,7 @@
+ use crate::p::P;
+ use crate::parse::attached::Owner;
+ use crate::parse::erased;
++use crate::parse::parse_skip_typescript::parameter_modifier_rank;
+ use crate::parser::{
+     ARGUMENTS_STR as arguments_str, AwaitOrYield, FnOrArrowDataParse, LexicalDecl,
+     ParseStatementOptions, TypeParameterFlag,
+@@ -275,6 +276,7 @@
+             }
+ 
+             let mut is_typescript_ctor_field = false;
++            let mut modifier_rank = 0;
+             let is_identifier = p.lexer.token == T::TIdentifier;
+             let mut text = p.lexer.identifier;
+             let mut arg = p.parse_binding(Default::default())?;
+@@ -293,11 +295,17 @@
+                                 }
+ 
+                                 // Outside a constructor a modifier stands before a name on its line and is dropped.
+-                                if !opts.is_constructor
+-                                    && (p.lexer.token != T::TIdentifier
+-                                        || p.lexer.has_newline_before)
+-                                {
+-                                    break;
++                                if !opts.is_constructor {
++                                    if p.lexer.token != T::TIdentifier || p.lexer.has_newline_before
++                                    {
++                                        break;
++                                    }
++                                    // The checker of the reference takes the modifiers in one order: another order stays an error without lint
++                                    let rank = parameter_modifier_rank(text);
++                                    if rank <= modifier_rank && !p.is_lint_parse() {
++                                        break;
++                                    }
++                                    modifier_rank = rank;
+                                 }
+ 
+                                 is_typescript_ctor_field = opts.is_constructor;
+diff -ru orig_js_parser/parse/parse_property.rs root/src/js_parser/parse/parse_property.rs
+--- orig_js_parser/parse/parse_property.rs	2026-10-01 19:16:49.790160918 +0000
++++ root/src/js_parser/parse/parse_property.rs	2026-10-01 19:25:47.175836583 +0000
+@@ -268,7 +268,8 @@
+     fn is_class_index_signature(&mut self) -> bool {
+         let p = self;
+         match p.lexer.token {
+-            T::TDotDotDot | T::TCloseBracket => return true,
++            // "[...a]" and "[]": the checker of the reference rejects them, so without lint they are the computed names they were
++            T::TDotDotDot | T::TCloseBracket => return p.is_lint_parse(),
+             T::TIdentifier if p.is_class_index_signature_name() => {}
+             _ => return false,
+         }
+@@ -284,10 +285,14 @@
+     fn scan_class_index_signature(&mut self) -> crate::CrateResult<bool> {
+         let p = self;
+         p.lexer.next()?;
+-        // "[id:" is an index signature, and "[id," is one that is not well formed
+-        if p.lexer.token == T::TColon || p.lexer.token == T::TComma {
++        // "[id:" is an index signature
++        if p.lexer.token == T::TColon {
+             return Ok(true);
+         }
++        // "[id," and "[id?" are index signatures that the checker of the reference rejects: without lint they are the computed names they were
++        if p.lexer.token == T::TComma {
++            return Ok(p.is_lint_parse());
++        }
+         if p.lexer.token != T::TQuestion {
+             return Ok(false);
+         }
+@@ -296,7 +301,47 @@
+         Ok(matches!(
+             p.lexer.token,
+             T::TColon | T::TComma | T::TCloseBracket
+-        ))
++        ) && p.is_lint_parse())
++    }
++
++    /// After "accessor" where standard decorators are off, so that "accessor" was a name before. It is a modifier where the checker of the reference takes the property: not after "readonly" or "declare", and not before a name that "?" follows.
++    #[cold]
++    #[inline(never)]
++    fn is_accessor_without_standard_decorators(&mut self, opts: &PropertyOpts) -> bool {
++        let p = self;
++        if p.is_lint_parse() {
++            return true;
++        }
++        if opts.is_ts_readonly_or_declare {
++            return false;
++        }
++        let old_lexer = p.lexer.snapshot();
++        p.lexer.is_log_disabled = true;
++        let is_optional = p.scan_optional_property_name().unwrap_or(false);
++        p.lexer.restore(&old_lexer);
++        !is_optional
++    }
++
++    /// Whether "?" follows the name of a property that the lexer is on. A name in brackets ends at the bracket that closes the first one.
++    fn scan_optional_property_name(&mut self) -> crate::CrateResult<bool> {
++        let p = self;
++        if p.lexer.token == T::TOpenBracket {
++            let mut depth = 0u32;
++            loop {
++                match p.lexer.token {
++                    T::TOpenBracket => depth += 1,
++                    T::TCloseBracket => depth -= 1,
++                    T::TEndOfFile => return Ok(false),
++                    _ => {}
++                }
++                if depth == 0 {
++                    break;
++                }
++                p.lexer.next()?;
++            }
++        }
++        p.lexer.next()?;
++        Ok(p.lexer.token == T::TQuestion)
+     }
+ 
+     /// isIdentifier for a word: "await" and "yield" are names where they are no operators.
+@@ -333,8 +378,8 @@
+                 p.lexer.next()?;
+                 p.skip_type_script_type(Level::Lowest)?;
+             }
+-            // Inside an attempt the "=" ends the attempt, as before.
+-            if p.lexer.token == T::TEquals && !p.lexer.is_log_disabled {
++            // Inside an attempt the "=" ends the attempt, as before. Without lint it ends the parameter too: the checker of the reference rejects the initializer
++            if p.lexer.token == T::TEquals && !p.lexer.is_log_disabled && p.is_lint_parse() {
+                 let at_equals = p.lexer.snapshot();
+                 p.lexer.next()?;
+                 match p.parse_and_drop_in_class(Level::Comma) {
+@@ -344,7 +389,8 @@
+                     Err(err) => return Err(err),
+                 }
+             }
+-            if p.lexer.token != T::TComma {
++            // A second parameter and a comma before "]" are errors of the checker of the reference: without lint the "]" reports the comma, as before
++            if p.lexer.token != T::TComma || !p.is_lint_parse() {
+                 break;
+             }
+             p.lexer.next()?;
+@@ -353,6 +399,9 @@
+         if p.lexer.token == T::TColon {
+             p.lexer.next()?;
+             p.skip_type_script_type(Level::Lowest)?;
++        } else if !p.is_lint_parse() {
++            // An index signature without a type is an error of the checker of the reference: without lint it is the error it was
++            p.lexer.expected(T::TColon)?;
+         }
+         // parseTypeMemberSemicolon
+         if p.lexer.token == T::TComma {
+@@ -552,6 +601,7 @@
+                                             && !p.lexer.has_newline_before
+                                             && raw == b"declare"
+                                         {
++                                            opts.is_ts_readonly_or_declare = true;
+                                             let scope_index = p.scopes_in_order.len();
+                                             if let Some(_prop) =
+                                                 p.parse_property(kind, opts, None)?
+@@ -625,16 +675,28 @@
+                                             && !p.lexer.has_newline_before
+                                             && PropertyModifierKeyword::find(raw)
+                                                 == Some(PropertyModifierKeyword::PAccessor)
++                                            && (p.options.features.standard_decorators
++                                                || p.is_accessor_without_standard_decorators(opts))
+                                         {
+                                             kind = PropertyKind::AutoAccessor;
+                                             errors = None;
+                                             continue 'restart;
+                                         }
+                                     }
++                                    PropertyModifierKeyword::PReadonly => {
++                                        // Skip over the keyword: "accessor" after it is no modifier without standard decorators
++                                        if opts.is_class
++                                            && Self::IS_TYPESCRIPT_ENABLED
++                                            && PropertyModifierKeyword::find(raw) == Some(keyword)
++                                        {
++                                            opts.is_ts_readonly_or_declare = true;
++                                            errors = None;
++                                            continue 'restart;
++                                        }
++                                    }
+                                     PropertyModifierKeyword::PPrivate
+                                     | PropertyModifierKeyword::PProtected
+                                     | PropertyModifierKeyword::PPublic
+-                                    | PropertyModifierKeyword::PReadonly
+                                     | PropertyModifierKeyword::POverride => {
+                                         // Skip over TypeScript keywords
+                                         if opts.is_class
+diff -ru orig_js_parser/parse/parse_skip_typescript.rs root/src/js_parser/parse/parse_skip_typescript.rs
+--- orig_js_parser/parse/parse_skip_typescript.rs	2026-10-01 19:16:49.790215579 +0000
++++ root/src/js_parser/parse/parse_skip_typescript.rs	2026-10-01 20:16:54.379211018 +0000
+@@ -115,6 +115,33 @@
+     warnings: u32,
+ }
+ 
++/// Where a modifier of a parameter stands among the modifiers of one parameter: accessibility, then "override", then "readonly".
++pub(crate) fn parameter_modifier_rank(name: &[u8]) -> u8 {
++    match name {
++        b"readonly" => 3,
++        b"override" => 2,
++        _ => 1,
++    }
++}
++
++/// Whether a label of a tuple element is a reserved word that starts no type: the label of a rest element that the grammar before took for no label.
++fn is_label_that_starts_no_type(label: T) -> bool {
++    label.is_reserved_word()
++        && !matches!(
++            label,
++            T::TConst
++                | T::TFunction
++                | T::TNew
++                | T::TTypeof
++                | T::TImport
++                | T::TVoid
++                | T::TNull
++                | T::TThis
++                | T::TTrue
++                | T::TFalse
++        )
++}
++
+ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+     #[inline]
+     pub(crate) fn skip_typescript_return_type(&mut self) -> Result<(), Error> {
+@@ -285,14 +312,15 @@
+                 // "[a, b]"
+                 while self.lexer.token != T::TCloseBracket {
+                     // "[...a]"
+-                    if self.lexer.token == T::TDotDotDot {
++                    let is_rest = self.lexer.token == T::TDotDotDot;
++                    if is_rest {
+                         self.lexer.next()?;
+                     }
+ 
+                     self.skip_type_script_binding()?;
+ 
+-                    // "[a = 1]"
+-                    if self.lexer.token == T::TEquals {
++                    // "[a = 1]". After "..." the checker of the reference rejects it: only a lint parse reads it
++                    if self.lexer.token == T::TEquals && (!is_rest || self.is_lint_parse()) {
+                         self.parse_initializer_in_type()?;
+                     }
+ 
+@@ -314,6 +342,7 @@
+ 
+                 while self.lexer.token != T::TCloseBrace {
+                     let mut found_identifier = false;
++                    let mut is_rest = false;
+ 
+                     match self.lexer.token {
+                         T::TIdentifier => {
+@@ -330,6 +359,7 @@
+                             }
+ 
+                             found_identifier = true;
++                            is_rest = true;
+                             self.lexer.next()?;
+                         }
+ 
+@@ -354,8 +384,8 @@
+                         self.skip_type_script_binding()?;
+                     }
+ 
+-                    // "{a = 1}"
+-                    if self.lexer.token == T::TEquals {
++                    // "{a = 1}". After "...x" the checker of the reference rejects it: only a lint parse reads it
++                    if self.lexer.token == T::TEquals && (!is_rest || self.is_lint_parse()) {
+                         self.parse_initializer_in_type()?;
+                     }
+ 
+@@ -383,7 +413,8 @@
+ 
+         while self.lexer.token != T::TCloseParen {
+             // "(...a)"
+-            if self.lexer.token == T::TDotDotDot {
++            let is_rest = self.lexer.token == T::TDotDotDot;
++            if is_rest {
+                 self.lexer.next()?;
+             }
+ 
+@@ -397,7 +428,8 @@
+             }
+ 
+             // "(a?)"
+-            if self.lexer.token == T::TQuestion {
++            let is_optional = self.lexer.token == T::TQuestion;
++            if is_optional {
+                 self.lexer.next()?;
+             }
+ 
+@@ -407,8 +439,10 @@
+                 self.skip_type_script_type(Level::Lowest)?;
+             }
+ 
+-            // "(a = 1)"
+-            if self.lexer.token == T::TEquals {
++            // "(a = 1)". After "..." or "?" the checker of the reference rejects it: only a lint parse reads it
++            if self.lexer.token == T::TEquals
++                && (!(is_rest || is_optional) || self.is_lint_parse())
++            {
+                 self.parse_initializer_in_type()?;
+             }
+ 
+@@ -432,11 +466,19 @@
+         if self.lexer.is_log_disabled {
+             return Ok(());
+         }
++        let is_lint = self.is_lint_parse();
+         let mut name = first;
++        let mut last_rank = 0;
+         while crate::lexer::is_type_script_accessibility_modifier(name)
+             && self.lexer.token == T::TIdentifier
+             && !self.lexer.has_newline_before
+         {
++            // The checker of the reference takes the modifiers in one order: another order stays an error without lint
++            let rank = parameter_modifier_rank(name);
++            if rank <= last_rank && !is_lint {
++                break;
++            }
++            last_rank = rank;
+             name = self.lexer.identifier;
+             self.lexer.next()?;
+         }
+@@ -1269,10 +1311,7 @@
+             if is_undefined {
+                 S::keyword(out, TypeKeyword::Object);
+             } else {
+-                S::reference(out, name, |name| {
+-                    self.find_symbol(bun_ast::Loc::EMPTY, name)
+-                        .map(|found| found.r#ref)
+-                })?;
++                S::reference(out, name, |name| self.find_type_name(name))?;
+             }
+         }
+         let _ = self.parse_type_predicate_after_name::<S>(out)?;
+@@ -1383,10 +1422,7 @@
+     ) -> Result<(), Error> {
+         if self.lexer.token == T::TIdentifier {
+             if kind == TsIdentKind::Normal {
+-                S::reference(out, self.lexer.identifier, |name| {
+-                    self.find_symbol(bun_ast::Loc::EMPTY, name)
+-                        .map(|found| found.r#ref)
+-                })?;
++                S::reference(out, self.lexer.identifier, |name| self.find_type_name(name))?;
+             }
+             if S::BUILDS {
+                 S::b_reference(&self.lexer, out);
+@@ -1418,7 +1454,7 @@
+                 S::b_reference(&self.lexer, out);
+             }
+             self.lexer.next()?;
+-            self.parse_entity_name_rest::<S>(out)?;
++            self.parse_entity_name_rest::<S>(out, false)?;
+             self.parse_type_arguments_of_type_reference::<S>(out)?;
+ 
+             // "implements class {}": before "{" the word starts an expression, as before, but in a return type
+@@ -1437,10 +1473,20 @@
+             return Ok(());
+         }
+ 
+-        self.parse_entity_name_rest::<S>(out)?;
++        self.parse_entity_name_rest::<S>(out, false)?;
+         self.parse_type_arguments_of_type_reference::<S>(out)
+     }
+ 
++    /// The symbol that the first name of a type reference stands for, and whether a class that the file declared before has the name.
++    fn find_type_name(&mut self, name: &'a [u8]) -> Result<(bun_ast::Ref, bool), Error> {
++        let found = self.find_symbol(bun_ast::Loc::EMPTY, name)?.r#ref;
++        let is_class = self
++            .symbols
++            .get(found.inner_index() as usize)
++            .is_some_and(|symbol| symbol.kind == bun_ast::symbol::Kind::Class);
++        Ok((found, is_class))
++    }
++
+     /// Whether the reserved word or the private name that the lexer is on is the first name of a type reference.
+     fn is_reserved_type_name<S: TypeSink>(&mut self, opts: SkipTypeOptionsBitset) -> bool {
+         let is_private_name = self.lexer.token == T::TPrivateIdentifier;
+@@ -1450,16 +1496,27 @@
+         if S::STRICT {
+             return true;
+         }
+-        // "{ [if]: A }" and "[#a]": where the reference reads no type, the word is none, as before
+-        if opts.contains(SkipTypeOptions::IsIndexSignature)
+-            || (is_private_name && opts.contains(SkipTypeOptions::AllowTupleLabels))
++        // A private name names no type, and in "{ [if]: A }" the reference reads no type: the word is none, as before
++        if is_private_name || opts.contains(SkipTypeOptions::IsIndexSignature) {
++            return false;
++        }
++        // The constraint of a type parameter: where an expression starts, the reference reads it and its checker reports it
++        if opts.contains(SkipTypeOptions::IsConstraint)
++            && matches!(
++                self.lexer.token,
++                T::TClass | T::TDelete | T::TIn | T::TInstanceof | T::TSuper
++            )
++            && self.is_directly_after(b"extends")
+         {
+             return false;
+         }
++        // "A extends B ? if : C": the reference ends the type before a "?" that no type follows
++        if self.lexer.token != T::TFunction && self.is_directly_after(b"?") {
++            return false;
++        }
+         // Inside an attempt a word that an expression or a new line starts or goes on with is none: `a < (super.x) > (b)` stays a comparison
+         if self.lexer.is_log_disabled
+-            && (is_private_name
+-                || self.lexer.has_newline_before
++            && (self.lexer.has_newline_before
+                 || matches!(
+                     self.lexer.token,
+                     T::TSuper | T::TDelete | T::TIn | T::TInstanceof
+@@ -1470,11 +1527,24 @@
+         !self.is_keyword_of_enclosing_type(opts)
+     }
+ 
+-    /// isListElement for a type: whether the lexer is on a reserved word or a private name that starts no type. "const" and "extends" are read as before.
++    /// Whether `text` ends right before the token the lexer is on, with nothing but white space between.
++    fn is_directly_after(&self, text: &[u8]) -> bool {
++        let lexer = &self.lexer;
++        let start = u32::try_from(lexer.start).unwrap_or(u32::MAX);
++        let before = ts::full_start(lexer.contents, &lexer.all_comments, start) as usize;
++        lexer
++            .contents
++            .get(..before)
++            .is_some_and(|head| head.ends_with(text))
++    }
++
++    /// isListElement for a type: whether the lexer is on a reserved word or a private name that starts no type. "const" is read as before.
+     fn is_word_that_starts_no_type(&mut self) -> bool {
+         match self.lexer.token {
+             T::TPrivateIdentifier => true,
+-            T::TConst | T::TExtends => false,
++            T::TConst => false,
++            // "extends" goes on with a conditional type after a type that is missing, as before: before another token it starts no type
++            T::TExtends => !self.look_ahead(Self::next_is_start_of_type),
+             token => token.is_reserved_word() && !self.is_start_of_type(false),
+         }
+     }
+@@ -1491,11 +1561,15 @@
+     }
+ 
+     /// The loop of `parseEntityName`: the names after the first one.
+-    fn parse_entity_name_rest<S: TypeSink>(&mut self, out: &mut S::Out) -> Result<(), Error> {
++    fn parse_entity_name_rest<S: TypeSink>(
++        &mut self,
++        out: &mut S::Out,
++        is_import_type: bool,
++    ) -> Result<(), Error> {
+         while self.lexer.token == T::TDot {
+             self.lexer.next()?;
+-            // "A.<B>": the type arguments of a JSDoc-style generic follow
+-            if self.lexer.token == T::TLessThan {
++            // "A.<B>": the checker of the reference rejects the "." of a type reference, so without lint it is the error it was
++            if self.lexer.token == T::TLessThan && (S::STRICT || is_import_type) {
+                 break;
+             }
+             self.parse_right_side_of_dot::<S>(out)?;
+@@ -1569,7 +1643,7 @@
+             } else {
+                 self.parse_right_side_of_dot::<S>(out)?;
+             }
+-            self.parse_entity_name_rest::<S>(out)?;
++            self.parse_entity_name_rest::<S>(out, true)?;
+             return self.parse_type_arguments_of_type_reference::<S>(out);
+         }
+ 
+@@ -1770,13 +1844,31 @@
+         {
+             if self.lexer.token == T::TDotDotDot {
+                 self.lexer.next()?;
+-            }
+-            self.lexer.next()?;
+-            if self.lexer.token == T::TQuestion {
++                let label = self.lexer.token;
++                self.lexer.next()?;
++                if self.lexer.token == T::TQuestion {
++                    // "[...if?: A]": the label is one that only this reading takes, and the checker of the reference rejects a rest element that is optional
++                    if is_label_that_starts_no_type(label) && !self.is_lint_parse() {
++                        self.lexer.unexpected()?;
++                    }
++                    self.lexer.next()?;
++                }
++            } else {
+                 self.lexer.next()?;
++                if self.lexer.token == T::TQuestion {
++                    self.lexer.next()?;
++                }
+             }
+             self.lexer.expect(T::TColon)?;
+-            return self.parse_tuple_element_type(SkipTypeOptionsBitset::empty());
++            // "[a: ...A]" and "[a: A?]": the checker of the reference rejects them, so only a lint parse reads them
++            if self.lexer.token == T::TDotDotDot && self.is_lint_parse() {
++                self.lexer.next()?;
++            }
++            self.parse_type::<Discard>(SkipTypeOptionsBitset::empty(), &mut ())?;
++            if self.lexer.token == T::TQuestion && self.is_lint_parse() {
++                self.lexer.next()?;
++            }
++            return Ok(());
+         }
+ 
+         self.parse_tuple_element_type(SkipTypeOptionsBitset::only(
+@@ -2156,8 +2248,9 @@
+                     return self.parse_property_or_method_signature(MemberName::Word, false);
+                 }
+                 // A private name. A bigint too, but not inside an attempt, so that `f<{ 1n: a }>(b)` stays a comparison.
+-                if self.lexer.token == T::TPrivateIdentifier
+-                    || (self.lexer.token == T::TBigIntegerLiteral && !self.lexer.is_log_disabled)
++                if (self.lexer.token == T::TPrivateIdentifier
++                    || (self.lexer.token == T::TBigIntegerLiteral && !self.lexer.is_log_disabled))
++                    && self.is_member_name_of_reference()
+                 {
+                     self.lexer.next()?;
+                     return self.parse_property_or_method_signature_of_reference(false, false);
+@@ -2167,6 +2260,24 @@
+         }
+     }
+ 
++    /// At a private name or a bigint where a member starts. The checker of the reference rejects a property and a method with the first name and a property with the second: without lint they name no member, as before.
++    #[cold]
++    #[inline(never)]
++    fn is_member_name_of_reference(&mut self) -> bool {
++        self.is_lint_parse()
++            || (self.lexer.token == T::TBigIntegerLiteral
++                && self.look_ahead(Self::next_token_starts_signature))
++    }
++
++    /// Whether "(" or "<" follows the token after the current one, with a "?" between them or without one.
++    fn next_token_starts_signature(&mut self) -> Result<bool, Error> {
++        self.lexer.next()?;
++        if self.lexer.token == T::TQuestion {
++            self.lexer.next()?;
++        }
++        Ok(matches!(self.lexer.token, T::TOpenParen | T::TLessThan))
++    }
++
+     /// parseModifiers for a member, and the test for "get" and "set" that parseTypeMember makes after it.
+     fn parse_modifiers_of_type_member(&mut self) -> Result<AfterModifiers, Error> {
+         let mut has_static = false;
+@@ -2388,7 +2499,7 @@
+             if (has_type_annotation || has_question || is_computed_name)
+                 && self.lexer.token == T::TEquals
+             {
+-                self.parse_initializer_in_type()?;
++                self.parse_initializer_of_property_signature()?;
+             }
+         }
+         self.parse_type_member_semicolon()
+@@ -2464,7 +2575,7 @@
+                 self.lexer.next()?;
+                 self.skip_type_script_type(Level::Lowest)?;
+                 if may_have_initializer && self.lexer.token == T::TEquals {
+-                    self.parse_initializer_in_type()?;
++                    self.parse_initializer_of_property_signature()?;
+                 }
+             }
+             _ => {
+@@ -2477,7 +2588,7 @@
+                     && (has_question || name == MemberName::Bracket)
+                     && self.lexer.token == T::TEquals
+                 {
+-                    self.parse_initializer_in_type()?;
++                    self.parse_initializer_of_property_signature()?;
+                 }
+             }
+         }
+@@ -2525,9 +2636,19 @@
+             return result;
+         }
+         let failed = self.set_aside_failed_read(mark);
++        let is_lint = self.is_lint_parse();
+         let reread = if is_member_start && self.is_index_signature() {
+-            self.parse_index_signature_declaration()
+-                .map(|()| Bracketed::Parameters)
++            // Parameters that the first reading did not take are errors of the checker of the reference: without lint they stay errors
++            if is_lint {
++                self.parse_index_signature_declaration()
++                    .map(|()| Bracketed::Parameters)
++            } else {
++                Err(Error::Backtrack)
++            }
++        } else if is_member_start && !is_lint {
++            // The name of a property or of a method: the checker of the reference takes a signed number and a name with "?." of what is no type
++            self.parse_signed_number_or_entity_name_in_brackets()
++                .map(|()| Bracketed::Expression)
+         } else {
+             self.parse_computed_property_name()
+                 .map(|()| Bracketed::Expression)
+@@ -2657,6 +2778,26 @@
+         Ok(())
+     }
+ 
++    /// `[+1]` and `[a?.b]`: the computed names that are no type and that the checker of the reference takes as the name of a property or of a method of a type.
++    fn parse_signed_number_or_entity_name_in_brackets(&mut self) -> Result<(), Error> {
++        self.lexer.expect(T::TOpenBracket)?;
++        if self.lexer.token == T::TPlus {
++            self.lexer.next()?;
++            self.lexer.expect(T::TNumericLiteral)?;
++        } else {
++            self.lexer.expect(T::TIdentifier)?;
++            while matches!(self.lexer.token, T::TDot | T::TQuestionDot) {
++                self.lexer.next()?;
++                if !self.lexer.is_identifier_or_keyword() {
++                    self.lexer.expect(T::TIdentifier)?;
++                }
++                self.lexer.next()?;
++            }
++        }
++        self.lexer.expect(T::TCloseBracket)?;
++        Ok(())
++    }
++
+     /// parseComputedPropertyName
+     fn parse_computed_property_name(&mut self) -> Result<(), Error> {
+         self.lexer.expect(T::TOpenBracket)?;
+@@ -2684,12 +2825,23 @@
+         }
+     }
+ 
++    /// parseInitializer of a property signature, at "=". The checker of the reference rejects it: without lint the "=" is left for the caller to report, as before.
++    #[cold]
++    #[inline(never)]
++    fn parse_initializer_of_property_signature(&mut self) -> Result<(), Error> {
++        if !self.is_lint_parse() {
++            return Ok(());
++        }
++        self.parse_initializer_in_type()
++    }
++
+     /// parseFunctionBlockOrSemicolon of an accessor, at "{". False where no block was read: the "{" is left for the caller to report.
+     #[cold]
+     #[inline(never)]
+     fn parse_function_block_in_type(&mut self) -> Result<bool, Error> {
+         // Inside an attempt the "{" is left where it is, and the separator that is missing ends the attempt.
+-        if self.lexer.is_log_disabled {
++        // The checker of the reference rejects a body in a type: without lint the "{" is left too, as before.
++        if self.lexer.is_log_disabled || !self.is_lint_parse() {
+             return Ok(false);
+         }
+         match self.parse_and_drop_in_type(Dropped::FunctionBlock) {
+@@ -2971,7 +3123,11 @@
+             if self.lexer.token == T::TExtends {
+                 result = SkipTypeParameterResult::DefinitelyTypeParameters;
+                 self.lexer.next()?;
+-                self.skip_type_script_type(Level::Lowest)?;
++                self.skip_type_script_type_with_opts::<Discard>(
++                    Level::Lowest,
++                    SkipTypeOptionsBitset::only(SkipTypeOptions::IsConstraint),
++                    &mut (),
++                )?;
+             }
+ 
+             // "class Foo<T = void> {}"
+@@ -3112,6 +3268,25 @@
+ 
+     /// parseHeritageClauses of an interface
+     fn parse_heritage_clauses(&mut self) -> Result<(), Error> {
++        if self.lexer.token == T::TExtends {
++            self.parse_heritage_clause()?;
++        }
++        if self.lexer.token != T::TOpenBrace {
++            self.parse_heritage_clauses_rest()?;
++        }
++        Ok(())
++    }
++
++    /// The clauses after the first "extends" list. Without lint one "implements" list follows it, as before: the checker of the reference rejects every other clause.
++    #[cold]
++    #[inline(never)]
++    fn parse_heritage_clauses_rest(&mut self) -> Result<(), Error> {
++        if !self.is_lint_parse() {
++            if self.lexer.is_contextual_keyword(b"implements") {
++                self.parse_heritage_clause()?;
++            }
++            return Ok(());
++        }
+         while self.lexer.token == T::TExtends || self.lexer.is_contextual_keyword(b"implements") {
+             self.parse_heritage_clause()?;
+         }
+@@ -3122,8 +3297,10 @@
+     fn parse_heritage_clause(&mut self) -> Result<(), Error> {
+         self.lexer.next()?;
+         loop {
+-            // "extends {}" and "extends A, {}": these braces hold the members
+-            if self.lexer.token == T::TOpenBrace && !self.is_valid_heritage_clause_object_literal()
++            // "extends {}" and "extends A, {}": these braces hold the members. Without lint they are an entry, as before: the checker of the reference rejects a list that is empty or ends with a comma
++            if self.lexer.token == T::TOpenBrace
++                && self.is_lint_parse()
++                && !self.is_valid_heritage_clause_object_literal()
+             {
+                 break;
+             }
+@@ -3193,6 +3370,10 @@
+         if let Err(Error::StackOverflow | Error::Alloc(_)) = result {
+             return result;
+         }
++        // parseLeftHandSideExpressionOrHigher reads no expression at another token: what the type left stays
++        if !self.is_start_of_heritage_expression() {
++            return result;
++        }
+         let failed = self.set_aside_failed_read(mark);
+         match self.parse_expression_with_type_arguments() {
+             Ok(())
+diff -ru orig_js_parser/parse/type_sink.rs root/src/js_parser/parse/type_sink.rs
+--- orig_js_parser/parse/type_sink.rs	2026-10-01 19:16:49.790587025 +0000
++++ root/src/js_parser/parse/type_sink.rs	2026-10-01 19:26:24.836390531 +0000
+@@ -35,11 +35,11 @@
+     fn tuple_type(out: &mut Self::Out);
+     fn object_type(out: &mut Self::Out);
+     fn template_literal_type(out: &mut Self::Out);
+-    /// `name` at the start of a type. `find` is `P::find_symbol`.
++    /// `name` at the start of a type. `find` is `P::find_symbol`, and says whether the name is one of a class that the file declared before.
+     fn reference<'a, E>(
+         out: &mut Self::Out,
+         name: &'a [u8],
+-        find: impl FnOnce(&'a [u8]) -> Result<Ref, E>,
++        find: impl FnOnce(&'a [u8]) -> Result<(Ref, bool), E>,
+     ) -> Result<(), E>;
+     /// `.name` after a type. `is_name` is false when the lexer logged that it is not on a name.
+     fn member<'a, E>(
+@@ -335,7 +335,7 @@
+     fn reference<'a, E>(
+         _out: &mut (),
+         _name: &'a [u8],
+-        _find: impl FnOnce(&'a [u8]) -> Result<Ref, E>,
++        _find: impl FnOnce(&'a [u8]) -> Result<(Ref, bool), E>,
+     ) -> Result<(), E> {
+         Ok(())
+     }
+@@ -420,13 +420,6 @@
+         self.shape = Shape::Leaf;
+     }
+ 
+-    /// The type that was read is an operand of "|" or "&", or a branch of a conditional type.
+-    #[inline]
+-    fn operand(&mut self) {
+-        if self.in_branch {
+-            self.metadata.finish_reference_in_branch();
+-        }
+-    }
+ }
+ 
+ /// Computes the `design:type` tag of `emitDecoratorMetadata`.
+@@ -519,9 +512,15 @@
+     fn reference<'a, E>(
+         out: &mut Tag,
+         name: &'a [u8],
+-        find: impl FnOnce(&'a [u8]) -> Result<Ref, E>,
++        find: impl FnOnce(&'a [u8]) -> Result<(Ref, bool), E>,
+     ) -> Result<(), E> {
+-        out.set(Metadata::MIdentifier(find(name)?));
++        let (found, is_class) = find(name)?;
++        // In a branch of a conditional type tsc serializes a name that it cannot resolve as Object, and a class of the file by its name
++        out.set(if out.in_branch && !is_class {
++            Metadata::MObject
++        } else {
++            Metadata::MIdentifier(found)
++        });
+         Ok(())
+     }
+ 
+@@ -533,6 +532,11 @@
+         is_name: bool,
+         find: impl FnOnce(&'a [u8]) -> Result<Ref, E>,
+     ) -> Result<(), E> {
++        // In a branch of a conditional type no name with a "." is resolved: tsc serializes it as Object
++        if out.in_branch {
++            out.set(Metadata::MObject);
++            return Ok(());
++        }
+         let metadata = &mut out.metadata;
+         match metadata {
+             Metadata::MIdentifier(id) => {
+@@ -572,7 +576,6 @@
+         if out.shape == Shape::Intersection {
+             out.close();
+         }
+-        out.operand();
+         let mut left = out.clone();
+         match left.metadata.finish_union(load_name) {
+             Some(done) => {
+@@ -590,14 +593,12 @@
+         if out.shape == Shape::Intersection {
+             out.close();
+         }
+-        out.operand();
+         out.metadata.merge_union(left.metadata);
+         out.shape = Shape::Union;
+     }
+ 
+     #[inline]
+     fn intersection_left<'n>(out: &mut Tag, load_name: impl Fn(Ref) -> &'n [u8]) -> Operand<Tag> {
+-        out.operand();
+         let mut left = out.clone();
+         match left.metadata.finish_intersection(load_name) {
+             Some(done) => {
+@@ -611,7 +612,6 @@
+ 
+     #[inline]
+     fn intersection_right(out: &mut Tag, left: Tag) {
+-        out.operand();
+         out.metadata.merge_intersection(left.metadata);
+         out.shape = Shape::Intersection;
+     }
+@@ -627,7 +627,6 @@
+         if left.shape != Shape::Leaf {
+             left.close();
+         }
+-        left.operand();
+         match left.metadata.finish_union(load_name) {
+             Some(done) => {
+                 out.set(done);
+@@ -647,7 +646,6 @@
+         if out.shape != Shape::Leaf {
+             out.close();
+         }
+-        out.operand();
+         out.metadata.merge_union(left.metadata);
+         out.close();
+         out.in_branch = left.in_branch;
+@@ -912,7 +910,7 @@
+     fn reference<'a, E>(
+         _out: &mut Self::Out,
+         _name: &'a [u8],
+-        _find: impl FnOnce(&'a [u8]) -> Result<Ref, E>,
++        _find: impl FnOnce(&'a [u8]) -> Result<(Ref, bool), E>,
+     ) -> Result<(), E> {
+         Ok(())
+     }
+diff -ru orig_js_parser/parser.rs root/src/js_parser/parser.rs
+--- orig_js_parser/parser.rs	2026-10-01 19:16:49.790730068 +0000
++++ root/src/js_parser/parser.rs	2026-10-01 19:25:47.167998532 +0000
+@@ -1368,6 +1368,8 @@
+     pub(crate) class_has_extends: bool,
+     pub(crate) allow_ts_decorators: bool,
+     pub(crate) is_ts_abstract: bool,
++    /// "readonly" or "declare" stands before the name of the member.
++    pub(crate) is_ts_readonly_or_declare: bool,
+     pub(crate) ts_decorators: ExprNodeList,
+     pub(crate) has_argument_decorators: bool,
+     pub(crate) has_class_decorators: bool,
+@@ -1384,6 +1386,7 @@
+             class_has_extends: false,
+             allow_ts_decorators: false,
+             is_ts_abstract: false,
++            is_ts_readonly_or_declare: false,
+             ts_decorators: bun_alloc::AstAlloc::vec(),
+             has_argument_decorators: false,
+             has_class_decorators: false,
+diff -ru orig_js_parser/typescript.rs root/src/js_parser/typescript.rs
+--- orig_js_parser/typescript.rs	2026-10-01 19:16:49.791164611 +0000
++++ root/src/js_parser/typescript.rs	2026-10-01 20:16:54.380977726 +0000
+@@ -138,6 +138,14 @@
+         }
+     }
+ 
++    /// Whether parseExpressionWithTypeArguments reads an expression at the token the lexer is on. "await" and "yield" start one where they are names.
++    pub(crate) fn is_start_of_heritage_expression(&mut self) -> bool {
++        if self.lexer.token == T::TIdentifier {
++            return self.ts_is_identifier();
++        }
++        self.is_start_of_left_hand_side_expression()
++    }
++
+     fn look_ahead_next_token_is_open_paren_or_less_than_or_dot(&mut self) -> bool {
+         let p = self;
+         let old_lexer = p.lexer.snapshot();
+@@ -315,6 +323,8 @@
+     DisallowConditionalTypes,
+     /// The type is an element of a list of type arguments, which a token that starts no type ends.
+     IsTypeArgument,
++    /// The type is the constraint of a type parameter, where the reference reads an expression if one starts and no type does.
++    IsConstraint,
+ }
+ 
+ // Inherent associated types (`impl Foo { type Bar = ...; }`) are unstable

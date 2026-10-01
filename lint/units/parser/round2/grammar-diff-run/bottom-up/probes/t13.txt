@@ -1,0 +1,63 @@
+type X = { 1n?(): void };
+type X = { 1n<T>(): void };
+type X = { 1n?: A };
+type X = { [+1]?: A };
+type X = { [+1]?(): A };
+type X = { [a?.b]?: A };
+type X = { [a?.b.c](): A };
+type X = { [a.b?.c]: A };
+type X = { readonly [+1]: A };
+type X = { [+ 1]: A };
+type X = { [+1.5]: A };
+type X = { [+0x10]: A };
+type X = { [- 1]: A };
+type X = { get [+1](): A };
+type X = { set [a + b](v) };
+type X = { get #a(): A; set #a(v: A) };
+interface I { [+1]: A }
+interface I { [a + b]: A }
+interface I { get [a + b](): A }
+class C implements await A {}
+class C implements await {}
+class C implements async () => {} {}
+class C implements new A() {}
+class C implements a! {}
+class C implements a.b() {}
+class C implements a<T>() {}
+class C implements (a) {}
+class C implements (a, b) {}
+class C implements [a] {}
+class C implements function () {} {}
+class C implements class {} {}
+class C implements import("x") {}
+class C implements `a` {}
+class C implements /re/ {}
+class C implements this {}
+class C implements super.a {}
+class C implements null {}
+class C implements a() {}
+class C implements a``{}
+class C implements a?.b {}
+class C implements a.b<T> {}
+class C implements a()<T> {}
+class C implements new A {}
+class C implements new A<T>() {}
+class C implements yield {}
+class C implements yield a {}
+class C implements @d class {} {}
+class C implements #a {}
+class C implements ++a {}
+class C implements a++ {}
+class C implements a + b {}
+class C implements a ? b : c {}
+class C implements a = b {}
+class C implements a as B {}
+class C implements <B>a {}
+class C implements -1 {}
+class C implements 1 {}
+class C implements "a" {}
+interface I extends a() {}
+interface I extends typeof a() {}
+interface I extends new A() {}
+interface I extends +1 {}
+interface I extends await A {}

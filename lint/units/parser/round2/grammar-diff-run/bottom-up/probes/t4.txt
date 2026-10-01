@@ -1,0 +1,151 @@
+type X = [a: A?];
+type X = [a?: A?];
+type X = [a: A];
+type X = [a?: A];
+type X = [A?];
+type X = [...a: A[]];
+type X = [...a?: A[]];
+type X = [...A[]];
+type X = [...A?];
+type X = [a: ...A[]];
+type X = [a: A?, b: B];
+type X = [...class: A[]];
+type X = [...class?: A[]];
+type X = [class: A];
+type X = [function: A];
+type X = [function];
+type X = [if];
+type X = [a: if];
+type X = [const: A];
+type X = [...const: A[]];
+type X = A.<B>;
+type X = A.B.<C>;
+type X = Array.<A>;
+type X = A.<B>[];
+type X = import("x").A.<B>;
+type X = import("x").<B>;
+type X = typeof a.<B>;
+type X = typeof import("x").A.<B>;
+type X = import("x")<B>;
+type X = typeof import("x")<B>;
+type X = import("x").#a;
+type X = import("x", { with: { a: "b" + "c" } });
+type X = import("x", { with: { a: b } });
+type X = import("x", { assert: { a: "b" } });
+type X = import("x", { with: { "a": "b" } });
+type X = import("x", { a: { a: "b" } });
+type X = import("x", { with: { a: "b" } }, );
+type X = #a;
+type X = #a[];
+type X = #a.b;
+type X = A.#b;
+type X = keyof #a;
+type X = #a | B;
+type X = A<#a>;
+type X = [#a];
+type X = { [#a]: A };
+type X = typeof #a;
+type X = typeof a.#b;
+type X = typeof this.#b;
+type X = if;
+type X = class;
+type X = function;
+type X = var;
+type X = super;
+type X = super.a;
+type X = delete;
+type X = in;
+type X = instanceof;
+type X = extends;
+type X = enum;
+type X = export;
+type X = default;
+type X = with;
+type X = new;
+type X = import;
+type X = void.a;
+type X = null.a;
+type X = this.a;
+type X = true.a;
+type X = if.a;
+type X = if<A>;
+type X = if[];
+type X = A | if;
+type X = keyof if;
+type X = typeof if;
+type X = typeof class;
+type X = A<if>;
+type X = A[if];
+type X = () => if;
+type X = (a: if) => void;
+type X = { a: if };
+type X = [if, A];
+type X = A extends if ? 1 : 2;
+type X = A extends B ? if : 2;
+type X = `${if}`;
+let x: if;
+let x: if = 1;
+let x = y as if;
+let x = <if>y;
+function f(): if {}
+function f(): class {}
+function f(a: if) {}
+class C { a: if }
+class C { a: if; }
+class C { m(): if {} }
+class C implements if {}
+class C extends A<if> {}
+interface I extends if {}
+let f = (a): if => a;
+let f = (a: if) => a;
+f<if>(x);
+new A<if>();
+type X = asserts;
+type X = asserts a;
+type X = asserts a is B;
+function f(a): asserts a {}
+function f(a): asserts a is B {}
+function f(a): asserts a⏎is B {}
+function f(a): asserts is B {}
+function f(is): asserts is B {}
+function f(is): asserts is {}
+function f(a): asserts is is B {}
+function f(a): asserts this {}
+function f(a): asserts this is B {}
+function f(a): a is B {}
+function f(a): a⏎is B {}
+type X = (a) => asserts a;
+type X = (a) => asserts a is B;
+type X = (a) => asserts is B;
+type X = () => asserts is A;
+type X = (a: A) => asserts  is B;
+type X = (is) => asserts is B;
+type X = unique;
+type X = unique symbol;
+type X = unique symbol[];
+type X = unique [A];
+type X = unique A;
+type X = abstract new () => A;
+type X = <out>() => out;
+type X = <in>() => A;
+type X = <out T>() => T;
+type X = <in T>() => T;
+type X = <const T>() => T;
+type X = <out >() => T;
+type X = <out, T>() => T;
+type X = <T,>() => T;
+type X = <>() => A;
+type X<> = A;
+type X<out> = A;
+type X<in> = A;
+type X<in out T> = A;
+function f<out>() {}
+function f<in>() {}
+function f<out T>() {}
+function f<out,>() {}
+class C<out> {}
+class C<out T> {}
+interface I<out> {}
+let f = <out>(x) => x;
+let f = <out,>(x) => x;
+let f = <out extends A>(x) => x;

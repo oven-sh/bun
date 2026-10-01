@@ -63,7 +63,8 @@ const proto = {
 					}
 					// no-redeclare
 					const kinds = ts ? ["global", "module", "function", "block", "for", "switch"] : ["global", "module", "function", "class-static-block", "block", "for", "switch"];
-					if (kinds.includes(scope.type)) {
+					// ASK (d): a function scope counts when its block is a function with a body (or the file, as CommonJS).
+					if (kinds.includes(scope.type) && (scope.type !== "function" || ANY_FUNCTION.has(scope.block.type) || scope.block.type === "Program")) {
 						for (const variable of scope.variables) {
 							const list = [];
 							const builtin = variable.eslintImplicitGlobalSetting === "readonly" || variable.eslintImplicitGlobalSetting === "writable";
@@ -135,7 +136,7 @@ if (args.includes("--corpus")) {
 		let code; try { code = fs.readFileSync(path.join("/workspace/wt/cli", f), "utf8"); } catch { continue; }
 		if (code.length > 400000) continue;
 		const ext = path.extname(f).slice(1);
-		check(code, ext, /^c[jt]s$/.test(ext) ? "commonjs" : "module", kind === "ts", f);
+		check(code, ext, process.env.FORCE || (/^c[jt]s$/.test(ext) ? "commonjs" : "module"), kind === "ts", f);
 	}
 } else {
 	for (const a of rest) {

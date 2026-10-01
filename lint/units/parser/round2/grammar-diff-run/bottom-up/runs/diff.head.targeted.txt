@@ -1,0 +1,455 @@
+base 1.4.3 e3566be889995ffff8b08823b9233617f979c889 (3952 sources)
+next 1.4.3 be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb (3952 sources)
+59280 records compared, 2423 differ, in 180 sources
+!!       15 records       1 sources  R>A          RESTORE: grammar error of the checker TS1009
+              base rejected, next accepts, tsc parses and its checker reports a grammar error: keep the rejection when !S::STRICT
+              t.ts.plain       "interface I extends A, {}"
+                base ["e",[["Expected \"{\" but found end of file",1,25]]]
+                next ["o",""]
+              t.ts.exp         "interface I extends A, {}"
+                base ["e",[["Expected \"{\" but found end of file",1,25]]]
+                next ["o",""]
+              t.ts.deco        "interface I extends A, {}"
+                base ["e",[["Expected \"{\" but found end of file",1,25]]]
+                next ["o",""]
+!!      235 records      16 sources  R>A          RESTORE: grammar error of the checker TS1015
+              base rejected, next accepts, tsc parses and its checker reports a grammar error: keep the rejection when !S::STRICT
+              t.ts.plain       "type X = (a?: A = 1) => R;"
+                base ["e",[["Expected \")\" but found \"?\"",1,12],["Expected \";\" but found \":\"",1,13],["Expected \";\" but found \")\"",1,20],["Unexpected =>",1,22]]]
+                next ["o",""]
+              t.ts.exp         "type X = (a?: A = 1) => R;"
+                base ["e",[["Expected \")\" but found \"?\"",1,12],["Expected \";\" but found \":\"",1,13],["Expected \";\" but found \")\"",1,20],["Unexpected =>",1,22]]]
+                next ["o",""]
+              t.ts.deco        "type X = (a?: A = 1) => R;"
+                base ["e",[["Expected \")\" but found \"?\"",1,12],["Expected \";\" but found \":\"",1,13],["Expected \";\" but found \")\"",1,20],["Unexpected =>",1,22]]]
+                next ["o",""]
+!!       15 records       1 sources  R>A          RESTORE: grammar error of the checker TS1017
+              base rejected, next accepts, tsc parses and its checker reports a grammar error: keep the rejection when !S::STRICT
+              t.ts.plain       "class K { @d p: { [...k: string[]]: A }; }"
+                base ["e",[["Unexpected ...",1,20],["Unexpected k",1,23]]]
+                next ["o","import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitialize
+              t.ts.exp         "class K { @d p: { [...k: string[]]: A }; }"
+                base ["e",[["Unexpected ...",1,20],["Unexpected k",1,23]]]
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m } from \"bun:wrap\";\n\nclass K {\n}\n__legacyDecorateClassTS_3r173x8m([\n  d\n], K.prototype, \"p\", undefined);\n"]
+              t.ts.deco        "class K { @d p: { [...k: string[]]: A }; }"
+                base ["e",[["Unexpected ...",1,20],["Unexpected k",1,23]]]
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass K {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+!!       45 records       3 sources  R>A          RESTORE: grammar error of the checker TS1019
+              base rejected, next accepts, tsc parses and its checker reports a grammar error: keep the rejection when !S::STRICT
+              t.ts.plain       "class K { @d p: { [k?: string]: A }; }"
+                base ["e",[["Expected \"]\" but found \"?\"",1,21],["Unexpected ]",1,30]]]
+                next ["o","import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitialize
+              t.ts.exp         "class K { @d p: { [k?: string]: A }; }"
+                base ["e",[["Expected \"]\" but found \"?\"",1,21],["Unexpected ]",1,30]]]
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m } from \"bun:wrap\";\n\nclass K {\n}\n__legacyDecorateClassTS_3r173x8m([\n  d\n], K.prototype, \"p\", undefined);\n"]
+              t.ts.deco        "class K { @d p: { [k?: string]: A }; }"
+                base ["e",[["Expected \"]\" but found \"?\"",1,21],["Unexpected ]",1,30]]]
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass K {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+!!       15 records       1 sources  R>A          RESTORE: grammar error of the checker TS1021
+              base rejected, next accepts, tsc parses and its checker reports a grammar error: keep the rejection when !S::STRICT
+              t.ts.plain       "class C { [k: string] }"
+                base ["e",[["Expected \":\" but found \"}\"",1,23],["Unexpected end of file",1,23]]]
+                next ["o","class C {\n}\n"]
+              t.ts.exp         "class C { [k: string] }"
+                base ["e",[["Expected \":\" but found \"}\"",1,23],["Unexpected end of file",1,23]]]
+                next ["o","class C {\n}\n"]
+              t.ts.deco        "class C { [k: string] }"
+                base ["e",[["Expected \":\" but found \"}\"",1,23],["Unexpected end of file",1,23]]]
+                next ["o","class C {\n}\n"]
+!!       15 records       1 sources  R>A          RESTORE: grammar error of the checker TS1025
+              base rejected, next accepts, tsc parses and its checker reports a grammar error: keep the rejection when !S::STRICT
+              t.ts.plain       "class K { @d p: { [k: string,]: A }; }"
+                base ["e",[["Expected \"]\" but found \",\"",1,29],["Unexpected ]",1,30]]]
+                next ["o","import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitialize
+              t.ts.exp         "class K { @d p: { [k: string,]: A }; }"
+                base ["e",[["Expected \"]\" but found \",\"",1,29],["Unexpected ]",1,30]]]
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m } from \"bun:wrap\";\n\nclass K {\n}\n__legacyDecorateClassTS_3r173x8m([\n  d\n], K.prototype, \"p\", undefined);\n"]
+              t.ts.deco        "class K { @d p: { [k: string,]: A }; }"
+                base ["e",[["Expected \"]\" but found \",\"",1,29],["Unexpected ]",1,30]]]
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass K {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+!!       90 records       6 sources  R>A          RESTORE: grammar error of the checker TS1028
+              base rejected, next accepts, tsc parses and its checker reports a grammar error: keep the rejection when !S::STRICT
+              t.ts.plain       "type X = (public private a: A) => R;"
+                base ["e",[["Expected \")\" but found \"private\"",1,18],["Expected \";\" but found \"a\"",1,26],["Unexpected :",1,27]]]
+                next ["o",""]
+              t.ts.exp         "type X = (public private a: A) => R;"
+                base ["e",[["Expected \")\" but found \"private\"",1,18],["Expected \";\" but found \"a\"",1,26],["Unexpected :",1,27]]]
+                next ["o",""]
+              t.ts.deco        "type X = (public private a: A) => R;"
+                base ["e",[["Expected \")\" but found \"private\"",1,18],["Expected \";\" but found \"a\"",1,26],["Unexpected :",1,27]]]
+                next ["o",""]
+!!       90 records       6 sources  R>A          RESTORE: grammar error of the checker TS1029
+              base rejected, next accepts, tsc parses and its checker reports a grammar error: keep the rejection when !S::STRICT
+              t.ts.plain       "type X = (readonly public a: A) => R;"
+                base ["e",[["Expected \")\" but found \"a\"",1,27],["Expected \";\" but found \":\"",1,28],["Expected \";\" but found \")\"",1,31],["Unexpected =>",1,33]]]
+                next ["o",""]
+              t.ts.exp         "type X = (readonly public a: A) => R;"
+                base ["e",[["Expected \")\" but found \"a\"",1,27],["Expected \";\" but found \":\"",1,28],["Expected \";\" but found \")\"",1,31],["Unexpected =>",1,33]]]
+                next ["o",""]
+              t.ts.deco        "type X = (readonly public a: A) => R;"
+                base ["e",[["Expected \")\" but found \"a\"",1,27],["Expected \";\" but found \":\"",1,28],["Expected \";\" but found \")\"",1,31],["Unexpected =>",1,33]]]
+                next ["o",""]
+!!       45 records       3 sources  R>A          RESTORE: grammar error of the checker TS1030
+              base rejected, next accepts, tsc parses and its checker reports a grammar error: keep the rejection when !S::STRICT
+              t.ts.plain       "type X = (readonly readonly a: A) => R;"
+                base ["e",[["Expected \")\" but found \":\"",1,30],["Expected \";\" but found \"A\"",1,32],["Unexpected )",1,33]]]
+                next ["o",""]
+              t.ts.exp         "type X = (readonly readonly a: A) => R;"
+                base ["e",[["Expected \")\" but found \":\"",1,30],["Expected \";\" but found \"A\"",1,32],["Unexpected )",1,33]]]
+                next ["o",""]
+              t.ts.deco        "type X = (readonly readonly a: A) => R;"
+                base ["e",[["Expected \")\" but found \":\"",1,30],["Expected \";\" but found \"A\"",1,32],["Unexpected )",1,33]]]
+                next ["o",""]
+!!       90 records       6 sources  R>A          RESTORE: grammar error of the checker TS1048
+              base rejected, next accepts, tsc parses and its checker reports a grammar error: keep the rejection when !S::STRICT
+              t.ts.plain       "type X = (...a = []) => R;"
+                base ["e",[["Unexpected ...",1,11],["Expected \";\" but found \"a\"",1,14],["Unexpected =",1,16]]]
+                next ["o",""]
+              t.ts.exp         "type X = (...a = []) => R;"
+                base ["e",[["Unexpected ...",1,11],["Expected \";\" but found \"a\"",1,14],["Unexpected =",1,16]]]
+                next ["o",""]
+              t.ts.deco        "type X = (...a = []) => R;"
+                base ["e",[["Unexpected ...",1,11],["Expected \";\" but found \"a\"",1,14],["Unexpected =",1,16]]]
+                next ["o",""]
+!!      105 records       7 sources  R>A          RESTORE: grammar error of the checker TS1096
+              base rejected, next accepts, tsc parses and its checker reports a grammar error: keep the rejection when !S::STRICT
+              t.ts.plain       "class C { [k: string, l: number]: A }"
+                base ["e",[["Expected \"]\" but found \",\"",1,21],["Expected \":\" but found \"l\"",1,23],["Unexpected :",1,24],["Expected \";\" but found \"]\"",1,32],["Expected identifier but found \":\"",1,33]]]
+                next ["o","class C {\n}\n"]
+              t.ts.exp         "class C { [k: string, l: number]: A }"
+                base ["e",[["Expected \"]\" but found \",\"",1,21],["Expected \":\" but found \"l\"",1,23],["Unexpected :",1,24],["Expected \";\" but found \"]\"",1,32],["Expected identifier but found \":\"",1,33]]]
+                next ["o","class C {\n}\n"]
+              t.ts.deco        "class C { [k: string, l: number]: A }"
+                base ["e",[["Expected \"]\" but found \",\"",1,21],["Expected \":\" but found \"l\"",1,23],["Unexpected :",1,24],["Expected \";\" but found \"]\"",1,32],["Expected identifier but found \":\"",1,33]]]
+                next ["o","class C {\n}\n"]
+!!       15 records       1 sources  R>A          RESTORE: grammar error of the checker TS1097
+              base rejected, next accepts, tsc parses and its checker reports a grammar error: keep the rejection when !S::STRICT
+              t.ts.plain       "interface I extends {}"
+                base ["e",[["Expected \"{\" but found end of file",1,22]]]
+                next ["o",""]
+              t.ts.exp         "interface I extends {}"
+                base ["e",[["Expected \"{\" but found end of file",1,22]]]
+                next ["o",""]
+              t.ts.deco        "interface I extends {}"
+                base ["e",[["Expected \"{\" but found end of file",1,22]]]
+                next ["o",""]
+!!       15 records       1 sources  R>A          RESTORE: grammar error of the checker TS1108
+              base rejected, next accepts, tsc parses and its checker reports a grammar error: keep the rejection when !S::STRICT
+              t.ts.plain       "function f(x: any): class {} { return null as any }"
+                base ["e",[["Unexpected class",1,21]]]
+                next ["o","function f(x) {}\n{\n  return null;\n}\n"]
+              t.ts.exp         "function f(x: any): class {} { return null as any }"
+                base ["e",[["Unexpected class",1,21]]]
+                next ["o","function f(x) {}\n{\n  return null;\n}\n"]
+              t.ts.deco        "function f(x: any): class {} { return null as any }"
+                base ["e",[["Unexpected class",1,21]]]
+                next ["o","function f(x) {}\n{\n  return null;\n}\n"]
+!!       30 records       2 sources  R>A          RESTORE: grammar error of the checker TS1110
+              base rejected, next accepts, tsc parses and its checker reports a grammar error: keep the rejection when !S::STRICT
+              t.ts.plain       "function f<U extends #a, V = #a>() {}"
+                base ["e",[["Unexpected #a",1,22],["Expected identifier but found \",\"",1,24],["Expected \")\" but found \"V\"",1,26],["Expected \";\" but found \"=\"",1,28],["Unexpected #a",1,30]]]
+                next ["o","function f() {}\n"]
+              t.ts.exp         "function f<U extends #a, V = #a>() {}"
+                base ["e",[["Unexpected #a",1,22],["Expected identifier but found \",\"",1,24],["Expected \")\" but found \"V\"",1,26],["Expected \";\" but found \"=\"",1,28],["Unexpected #a",1,30]]]
+                next ["o","function f() {}\n"]
+              t.ts.deco        "function f<U extends #a, V = #a>() {}"
+                base ["e",[["Unexpected #a",1,22],["Expected identifier but found \",\"",1,24],["Expected \")\" but found \"V\"",1,26],["Expected \";\" but found \"=\"",1,28],["Unexpected #a",1,30]]]
+                next ["o","function f() {}\n"]
+!!       60 records       4 sources  R>A          RESTORE: grammar error of the checker TS1170
+              base rejected, next accepts, tsc parses and its checker reports a grammar error: keep the rejection when !S::STRICT
+              t.ts.plain       "type X = { [\"a\" + \"b\"]: A };"
+                base ["e",[["Expected \"]\" but found \"+\"",1,17],["Unexpected \"b\"",1,19]]]
+                next ["o",""]
+              t.ts.exp         "type X = { [\"a\" + \"b\"]: A };"
+                base ["e",[["Expected \"]\" but found \"+\"",1,17],["Unexpected \"b\"",1,19]]]
+                next ["o",""]
+              t.ts.deco        "type X = { [\"a\" + \"b\"]: A };"
+                base ["e",[["Expected \"]\" but found \"+\"",1,17],["Unexpected \"b\"",1,19]]]
+                next ["o",""]
+!!       45 records       3 sources  R>A          RESTORE: grammar error of the checker TS1172
+              base rejected, next accepts, tsc parses and its checker reports a grammar error: keep the rejection when !S::STRICT
+              t.ts.plain       "interface I extends A extends B {}"
+                base ["e",[["Expected \"?\" but found \"{\"",1,33],["Unexpected }",1,34],["Unexpected end of file",1,34]]]
+                next ["o",""]
+              t.ts.exp         "interface I extends A extends B {}"
+                base ["e",[["Expected \"?\" but found \"{\"",1,33],["Unexpected }",1,34],["Unexpected end of file",1,34]]]
+                next ["o",""]
+              t.ts.deco        "interface I extends A extends B {}"
+                base ["e",[["Expected \"?\" but found \"{\"",1,33],["Unexpected }",1,34],["Unexpected end of file",1,34]]]
+                next ["o",""]
+!!       15 records       1 sources  R>A          RESTORE: grammar error of the checker TS1176
+              base rejected, next accepts, tsc parses and its checker reports a grammar error: keep the rejection when !S::STRICT
+              t.ts.plain       "interface I implements A extends B {}"
+                base ["e",[["Expected \"?\" but found \"{\"",1,36],["Unexpected }",1,37],["Unexpected end of file",1,37]]]
+                next ["o",""]
+              t.ts.exp         "interface I implements A extends B {}"
+                base ["e",[["Expected \"?\" but found \"{\"",1,36],["Unexpected }",1,37],["Unexpected end of file",1,37]]]
+                next ["o",""]
+              t.ts.deco        "interface I implements A extends B {}"
+                base ["e",[["Expected \"?\" but found \"{\"",1,36],["Unexpected }",1,37],["Unexpected end of file",1,37]]]
+                next ["o",""]
+!!       30 records       2 sources  R>A          RESTORE: grammar error of the checker TS1183
+              base rejected, next accepts, tsc parses and its checker reports a grammar error: keep the rejection when !S::STRICT
+              t.ts.plain       "type X = { get a(): A {} };"
+                base ["e",[["Unexpected {",1,23]]]
+                next ["o",""]
+              t.ts.exp         "type X = { get a(): A {} };"
+                base ["e",[["Unexpected {",1,23]]]
+                next ["o",""]
+              t.ts.deco        "type X = { get a(): A {} };"
+                base ["e",[["Unexpected {",1,23]]]
+                next ["o",""]
+!!       30 records       2 sources  R>A          RESTORE: grammar error of the checker TS1186
+              base rejected, next accepts, tsc parses and its checker reports a grammar error: keep the rejection when !S::STRICT
+              t.ts.plain       "type X = ({ ...a = 1 }) => R;"
+                base ["e",[["Unexpected ...",1,13]]]
+                next ["o",""]
+              t.ts.exp         "type X = ({ ...a = 1 }) => R;"
+                base ["e",[["Unexpected ...",1,13]]]
+                next ["o",""]
+              t.ts.deco        "type X = ({ ...a = 1 }) => R;"
+                base ["e",[["Unexpected ...",1,13]]]
+                next ["o",""]
+!!       18 records       2 sources  R>A          RESTORE: grammar error of the checker TS1243
+              base rejected, next accepts, tsc parses and its checker reports a grammar error: keep the rejection when !S::STRICT
+              t.ts.exp         "class C { readonly accessor a: A }"
+                base ["e",[["Expected \";\" but found \"a\"",1,29],["Expected identifier but found \":\"",1,30]]]
+                next ["o","import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _a$1;\n\nclass C {\n  constructor() {\n    
+              t.ts.deco        "class C { readonly accessor a: A }"
+                base ["e",[["Expected \";\" but found \"a\"",1,29],["Expected identifier but found \":\"",1,30]]]
+                next ["o","import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _a$1;\n\nclass C {\n  constructor() {\n    
+              t.tsx.exp        "class C { readonly accessor a: A }"
+                base ["e",[["Expected \";\" but found \"a\"",1,29],["Expected identifier but found \":\"",1,30]]]
+                next ["o","import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _a$1;\n\nclass C {\n  constructor() {\n    
+!!       45 records       3 sources  R>A          RESTORE: grammar error of the checker TS1247
+              base rejected, next accepts, tsc parses and its checker reports a grammar error: keep the rejection when !S::STRICT
+              t.ts.plain       "class K { @d p: { a: A = 1 }; }"
+                base ["e",[["Unexpected =",1,24]]]
+                next ["o","import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitialize
+              t.ts.exp         "class K { @d p: { a: A = 1 }; }"
+                base ["e",[["Unexpected =",1,24]]]
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m } from \"bun:wrap\";\n\nclass K {\n}\n__legacyDecorateClassTS_3r173x8m([\n  d\n], K.prototype, \"p\", undefined);\n"]
+              t.ts.deco        "class K { @d p: { a: A = 1 }; }"
+                base ["e",[["Unexpected =",1,24]]]
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass K {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+!!        9 records       1 sources  R>A          RESTORE: grammar error of the checker TS1276
+              base rejected, next accepts, tsc parses and its checker reports a grammar error: keep the rejection when !S::STRICT
+              t.ts.exp         "class C { accessor a?: A }"
+                base ["e",[["Expected \";\" but found \"a\"",1,20],["Expected identifier but found \"?\"",1,21],["Expected \";\" but found \"A\"",1,24]]]
+                next ["o","import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _a$1;\n\nclass C {\n  constructor() {\n    
+              t.ts.deco        "class C { accessor a?: A }"
+                base ["e",[["Expected \";\" but found \"a\"",1,20],["Expected identifier but found \"?\"",1,21],["Expected \";\" but found \"A\"",1,24]]]
+                next ["o","import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _a$1;\n\nclass C {\n  constructor() {\n    
+              t.tsx.exp        "class C { accessor a?: A }"
+                base ["e",[["Expected \";\" but found \"a\"",1,20],["Expected identifier but found \"?\"",1,21],["Expected \";\" but found \"A\"",1,24]]]
+                next ["o","import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _a$1;\n\nclass C {\n  constructor() {\n    
+!!       15 records       1 sources  R>A          RESTORE: grammar error of the checker TS1539
+              base rejected, next accepts, tsc parses and its checker reports a grammar error: keep the rejection when !S::STRICT
+              t.ts.plain       "class K { @d p: { 1n: A }; }"
+                base ["e",[["Unexpected 1n",1,19]]]
+                next ["o","import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitialize
+              t.ts.exp         "class K { @d p: { 1n: A }; }"
+                base ["e",[["Unexpected 1n",1,19]]]
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m } from \"bun:wrap\";\n\nclass K {\n}\n__legacyDecorateClassTS_3r173x8m([\n  d\n], K.prototype, \"p\", undefined);\n"]
+              t.ts.deco        "class K { @d p: { 1n: A }; }"
+                base ["e",[["Unexpected 1n",1,19]]]
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass K {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+!!       45 records       3 sources  R>A          RESTORE: grammar error of the checker TS18016
+              base rejected, next accepts, tsc parses and its checker reports a grammar error: keep the rejection when !S::STRICT
+              t.ts.plain       "interface I { #a: A }"
+                base ["e",[["Unexpected #a",1,15]]]
+                next ["o",""]
+              t.ts.exp         "interface I { #a: A }"
+                base ["e",[["Unexpected #a",1,15]]]
+                next ["o",""]
+              t.ts.deco        "interface I { #a: A }"
+                base ["e",[["Unexpected #a",1,15]]]
+                next ["o",""]
+!!       45 records       3 sources  R>A          RESTORE: grammar error of the checker TS2304
+              base rejected, next accepts, tsc parses and its checker reports a grammar error: keep the rejection when !S::STRICT
+              t.ts.plain       "let x: keyof #a;"
+                base ["e",[["Unexpected #a",1,14]]]
+                next ["o","let x;\n"]
+              t.ts.exp         "let x: keyof #a;"
+                base ["e",[["Unexpected #a",1,14]]]
+                next ["o","let x;\n"]
+              t.ts.deco        "let x: keyof #a;"
+                base ["e",[["Unexpected #a",1,14]]]
+                next ["o","let x;\n"]
+!!      240 records      16 sources  R>A          RESTORE: grammar error of the checker TS8020
+              base rejected, next accepts, tsc parses and its checker reports a grammar error: keep the rejection when !S::STRICT
+              t.ts.plain       "function f(x: A.<B>) {}"
+                base ["e",[["Expected identifier but found \"<\"",1,17],["Expected \")\" but found \">\"",1,19],["Expected \";\" but found \")\"",1,20]]]
+                next ["o","function f(x) {}\n"]
+              t.ts.exp         "function f(x: A.<B>) {}"
+                base ["e",[["Expected identifier but found \"<\"",1,17],["Expected \")\" but found \">\"",1,19],["Expected \";\" but found \")\"",1,20]]]
+                next ["o","function f(x) {}\n"]
+              t.ts.deco        "function f(x: A.<B>) {}"
+                base ["e",[["Expected identifier but found \"<\"",1,17],["Expected \")\" but found \">\"",1,19],["Expected \";\" but found \")\"",1,20]]]
+                next ["o","function f(x) {}\n"]
+         16 records       4 sources  A>A          metadata: a type predicate is Boolean, an assertion predicate is undefined
+              x is T, this is T, asserts x, asserts x is T
+              t.ts.deco        "class C { @d m(): this is A {} }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n  m() {}\n}\n__legacyDecorateClassTS_3r
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n  m() {}\n}\n__legacyDecorateClassTS_3r
+              t.tsx.deco       "class C { @d m(): this is A {} }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n  m() {}\n}\n__legacyDecorateClassTS_3r
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n  m() {}\n}\n__legacyDecorateClassTS_3r
+              t.ts.deco.keep   "class C { @d m(): this is A {} }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n  m() {}\n}\n__legacyDecorateClassTS_3r
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n  m() {}\n}\n__legacyDecorateClassTS_3r
+          4 records       1 sources  A>A          metadata: | and & operands are the check type of a conditional type
+              A | B extends C ? D : E is Conditional(Union(A, B), ...)
+              t.ts.deco        "class C { @d a: A | B extends C ? string : string }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+              t.tsx.deco       "class C { @d a: A | B extends C ? string : string }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+              t.ts.deco.keep   "class C { @d a: A | B extends C ? string : string }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+          8 records       2 sources  A>A          metadata: keyof, readonly and unique end before extends
+              the operand of a type operator does not take `extends ? :`
+              t.ts.deco        "class C { @d a: keyof A extends B ? string : string }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+              t.tsx.deco       "class C { @d a: keyof A extends B ? string : string }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+              t.ts.deco.keep   "class C { @d a: keyof A extends B ? string : string }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+          8 records       2 sources  A>A          metadata: an import type and unique symbol are Object
+              a form without a tag is Object among the operands of | and &, and before []
+              t.ts.deco        "class C { @d a: unique symbol | null }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+              t.tsx.deco       "class C { @d a: unique symbol | null }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+              t.ts.deco.keep   "class C { @d a: unique symbol | null }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+??        4 records       1 sources  A>A          ruling: metadata of a source that tsc does not parse
+              only metadata differs; tsc reports a parse diagnostic, so it writes no value to compare with
+              t.ts.deco        "class C { @d a: b is A }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+              t.tsx.deco       "class C { @d a: b is A }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+              t.ts.deco.keep   "class C { @d a: b is A }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+!!        4 records       1 sources  A>A          FORBIDDEN metadata: differs from tsc
+              only metadata differs and a changed value is not the value of tsc
+              t.ts.deco        "class C { @d a: A extends B ? C : C }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+              t.tsx.deco       "class C { @d a: A extends B ? C : C }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+              t.ts.deco.keep   "class C { @d a: A extends B ? C : C }"
+                base ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+                next ["o","import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m, __legacyMetadataTS as __legacyMetadataTS_5qwxh4wk } from \"bun:wrap\";\n\nclass C {\n}\n__legacyDecorateClassTS_3r173x8m([\n
+??       11 records       2 sources  A>A          ruling: A>A a declaration named as or satisfies, where the base read a cast
+              `interface as {}` and `namespace as {}` were the casts `interface as {}` and `namespace as {}` (output `interface;`); tsc reads a declaration. Not metadata
+              t.ts.plain       "namespace as {}"
+                base ["o","namespace;\n"]
+                next ["o",""]
+              t.ts.exp         "namespace as {}"
+                base ["o","namespace;\n"]
+                next ["o",""]
+              t.ts.deco        "namespace as {}"
+                base ["o","namespace;\n"]
+                next ["o",""]
+        653 records      47 sources  R>R          both reject: another error list
+              the messages or the positions of the errors changed
+              t.ts.exp         "class C { accessor static a: A }"
+                base ["e",[["Expected \";\" but found \"static\"",1,20]]]
+                next ["e",[["Expected \";\" but found \"a\"",1,27],["Expected identifier but found \":\"",1,28]]]
+              t.ts.deco        "class C { accessor static a: A }"
+                base ["e",[["Expected \";\" but found \"static\"",1,20]]]
+                next ["e",[["Expected \";\" but found \"a\"",1,27],["Expected identifier but found \":\"",1,28]]]
+              t.tsx.exp        "class C { accessor static a: A }"
+                base ["e",[["Expected \";\" but found \"static\"",1,20]]]
+                next ["e",[["Expected \";\" but found \"a\"",1,27],["Expected identifier but found \":\"",1,28]]]
+         60 records       4 sources  R>A          as or satisfies names a type alias, an interface or a namespace
+              H15: `type as = 1`, `interface as {}`, `namespace as { ... }`
+              t.ts.plain       "type as = 1;"
+                base ["e",[["Unexpected =",1,9]]]
+                next ["o",""]
+              t.ts.exp         "type as = 1;"
+                base ["e",[["Unexpected =",1,9]]]
+                next ["o",""]
+              t.ts.deco        "type as = 1;"
+                base ["e",[["Unexpected =",1,9]]]
+                next ["o",""]
+         15 records       1 sources  R>A          abstract stands before declare
+              `abstract declare class C {}`
+              t.ts.plain       "abstract declare class C {}"
+                base ["e",[["Expected \";\" but found \"declare\"",1,10]]]
+                next ["o",""]
+              t.ts.exp         "abstract declare class C {}"
+                base ["e",[["Expected \";\" but found \"declare\"",1,10]]]
+                next ["o",""]
+              t.ts.deco        "abstract declare class C {}"
+                base ["e",[["Expected \";\" but found \"declare\"",1,10]]]
+                next ["o",""]
+         15 records       1 sources  R>A          a string in brackets names an enum member
+              `enum E { ["x"] = 1 }`
+              t.ts.plain       "enum E { ['a'] = 1 }"
+                base ["e",[["Expected identifier but found \"[\"",1,10]]]
+                next ["o","var E;\n((E) => {\n  E[E[\"a\"] = 1] = \"a\";\n})(E ||= {});\n"]
+              t.ts.exp         "enum E { ['a'] = 1 }"
+                base ["e",[["Expected identifier but found \"[\"",1,10]]]
+                next ["o","var E;\n((E) => {\n  E[E[\"a\"] = 1] = \"a\";\n})(E ||= {});\n"]
+              t.ts.deco        "enum E { ['a'] = 1 }"
+                base ["e",[["Expected identifier but found \"[\"",1,10]]]
+                next ["o","var E;\n((E) => {\n  E[E[\"a\"] = 1] = \"a\";\n})(E ||= {});\n"]
+         83 records      10 sources  R>A          accessor is a modifier without standard decorators
+              `class C { accessor x: T; }` with experimentalDecorators, and in scanImports, which has no standard decorators either
+              t.ts.exp         "class C { accessor a: A }"
+                base ["e",[["Expected \";\" but found \"a\"",1,20],["Expected identifier but found \":\"",1,21]]]
+                next ["o","import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _a$1;\n\nclass C {\n  constructor() {\n    
+              t.ts.deco        "class C { accessor a: A }"
+                base ["e",[["Expected \";\" but found \"a\"",1,20],["Expected identifier but found \":\"",1,21]]]
+                next ["o","import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _a$1;\n\nclass C {\n  constructor() {\n    
+              t.tsx.exp        "class C { accessor a: A }"
+                base ["e",[["Expected \";\" but found \"a\"",1,20],["Expected identifier but found \":\"",1,21]]]
+                next ["o","import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _a$1;\n\nclass C {\n  constructor() {\n    
+         20 records       2 sources  R>A          out or in names a type or a type parameter
+              `function f<out>() {}`, `<out>x`, `<in>x`, `<out>(x) => x`
+              t.ts.plain       "const v = <out>x;"
+                base ["e",[["The modifier \"out\" is not valid here",1,12]]]
+                next ["o","const v = x;\n"]
+              t.ts.exp         "const v = <out>x;"
+                base ["e",[["The modifier \"out\" is not valid here",1,12]]]
+                next ["o","const v = x;\n"]
+              t.ts.deco        "const v = <out>x;"
+                base ["e",[["The modifier \"out\" is not valid here",1,12]]]
+                next ["o","const v = x;\n"]
+         30 records       2 sources  R>A          an interface extends, or a class implements, an expression
+              `interface I extends a() {}`, `class C implements a() {}`: parseExpressionWithTypeArguments (tsc: TS2499, TS2500 from the checker, no grammar error)
+              t.ts.plain       "interface I extends a() {}"
+                base ["e",[["Expected \"{\" but found \"(\"",1,22],["Unexpected )",1,23]]]
+                next ["o",""]
+              t.ts.exp         "interface I extends a() {}"
+                base ["e",[["Expected \"{\" but found \"(\"",1,22],["Unexpected )",1,23]]]
+                next ["o",""]
+              t.ts.deco        "interface I extends a() {}"
+                base ["e",[["Expected \"{\" but found \"(\"",1,22],["Unexpected )",1,23]]]
+                next ["o",""]
+         75 records       5 sources  R>A          a modifier stands before a parameter that is no parameter property
+              `(public a: A) => void`, `{ a(public b: B): A }`, `function f(public a: A) {}`, `class C { m(public a: A) {} }` (tsc: TS2369 from the checker, no grammar error)
+              t.ts.plain       "function f(public a: A) {}"
+                base ["e",[["Expected \")\" but found \"a\"",1,19],["Expected \";\" but found \")\"",1,23]]]
+                next ["o","function f(a) {}\n"]
+              t.ts.exp         "function f(public a: A) {}"
+                base ["e",[["Expected \")\" but found \"a\"",1,19],["Expected \";\" but found \")\"",1,23]]]
+                next ["o","function f(a) {}\n"]
+              t.ts.deco        "function f(public a: A) {}"
+                base ["e",[["Expected \")\" but found \"a\"",1,19],["Expected \";\" but found \")\"",1,23]]]
+                next ["o","function f(a) {}\n"]
+1421 records with the mark !!, 15 with the mark ??

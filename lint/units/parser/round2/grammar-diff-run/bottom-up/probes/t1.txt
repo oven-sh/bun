@@ -1,0 +1,10 @@
+interface I extends A extends B extends C ? D : E {}
+interface I extends A extends B {}
+class C implements typeof 1 {}
+type X = { [+1]: A };
+let f = (a): [a: ?] => a;
+f<[a: ?]>(x);
+f< extends>(x);
+function f<U extends  class>() {}
+function f<U extends super>() {}
+{ return null as any }

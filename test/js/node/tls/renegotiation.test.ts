@@ -3,7 +3,6 @@ import { afterAll, beforeAll, expect, it } from "bun:test";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, isIPv6, tls } from "harness";
 import type { IncomingMessage } from "http";
-import { request as httpsRequest } from "https";
 import { connect as netConnect } from "net";
 import { join } from "path";
 import { Duplex } from "stream";
@@ -549,7 +548,7 @@ it.concurrent.each([true, false])(
 
 it("https.request fails with the protocol error when the client refuses a renegotiation", async () => {
   const outcome = Promise.withResolvers<string>();
-  const req = httpsRequest(
+  const req = require("https").request(
     { host: "localhost", port: backToBackPort, path: "/", agent: false, ca: tls.cert },
     (res: IncomingMessage) => {
       res.resume();

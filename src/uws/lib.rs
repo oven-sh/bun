@@ -393,9 +393,9 @@ pub mod ssl_wrapper {
         InlineRejected,
         /// `SSL_do_handshake` failed.
         HandshakeError,
-        /// Closed before the handshake finished, or a renegotiation request after our own close_notify.
+        /// Closed before the handshake finished, or a renegotiation was refused.
         Aborted,
-        /// The client refused a renegotiation: a protocol failure with this reason, not a certificate verdict.
+        /// A renegotiation refused while our write side is open: a protocol failure with this reason.
         RenegotiationRefused(&'a core::ffi::CStr),
     }
 
@@ -943,9 +943,15 @@ pub mod ssl_wrapper {
                 }
                 // node:tls reads a failure with no error after end() as its own close.
                 HandshakeOutcome::Aborted => (false, us_bun_verify_error_t::default()),
-                HandshakeOutcome::RenegotiationRefused(reason) => {
-                    (false, us_bun_verify_error_t::protocol_failure(reason))
-                }
+                // The owner copies `reason` before this borrow ends.
+                HandshakeOutcome::RenegotiationRefused(reason) => (
+                    false,
+                    us_bun_verify_error_t {
+                        error_no: -71,
+                        code: c"EPROTO".as_ptr(),
+                        reason: reason.as_ptr(),
+                    },
+                ),
             };
             self.flags.set_authorized(success);
             // trigger the handshake callback

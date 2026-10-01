@@ -351,6 +351,7 @@ impl Program {
             pending_failure_sig: None,
             jsx_resolving: Vec::new(),
             prepared: Default::default(),
+            last_prepared: (FileId(u32::MAX), FnId::NONE),
             provisional: 0,
             provisional_floor: 0,
             provisional_arg_contexts: FxHashMap::default(),
@@ -578,6 +579,7 @@ pub struct Checker<'p> {
     jsx_resolving: Vec<(FileId, ExprId, TypeId)>,
     /// Functions whose context `prepare_enclosing` has seen to.
     prepared: crate::util::FxHashSet<(FileId, FnId)>,
+    last_prepared: (FileId, FnId),
     /// Non-zero while types are computed under assumptions that may not hold: nothing is kept.
     provisional: u32,
     /// How many questions were open when the outermost trial began.

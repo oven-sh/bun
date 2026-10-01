@@ -1007,7 +1007,11 @@ impl<'p> Checker<'p> {
         if let Some(known) = self.p.pat_types.get(file, pat.idx()) {
             return known;
         }
-        self.prepare_question_about_pat(file, pat);
+        if self.prepare_question_about_pat(file, pat)
+            && let Some(known) = self.p.pat_types.get(file, pat.idx())
+        {
+            return known;
+        }
         if !self.enter(Query::Pat(file, pat)) {
             return if self.came_full_circle {
                 TypeId::ANY
@@ -2319,7 +2323,11 @@ impl<'p> Checker<'p> {
         if let Some(known) = self.p.fn_return_types.get(file, func.idx()) {
             return known;
         }
-        self.prepare_question_about_fn(file, func);
+        if self.prepare_question_about_fn(file, func)
+            && let Some(known) = self.p.fn_return_types.get(file, func.idx())
+        {
+            return known;
+        }
         if !self.enter(Query::Return(file, func)) {
             return if self.came_full_circle {
                 TypeId::ANY

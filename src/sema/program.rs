@@ -9,7 +9,8 @@ use crate::resolve::{
     Host, JsxEmit, ModuleDetection, ModuleKind, Options, Resolver, ScriptTarget, is_javascript,
     is_relative, join, known_extension, lib_name, parent_dir,
 };
-use crate::util::{FxHashMap, FxHashSet, ShardedMap};
+use crate::table::{Bases, ByNode, ByNodeKept};
+use crate::util::{FxHashMap, FxHashSet, List};
 use std::sync::Mutex;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
@@ -136,9 +137,12 @@ pub struct Files {
     /// Some file says `export type * from`.
     has_type_only_stars: bool,
 
-    aliases: ShardedMap<Sym, Option<Sym>>,
+    /// For each module that was asked about, the names it has only by way of an `export type *`, in order.
+    type_only_star_names: ByNodeKept<Sym, Box<[Atom]>>,
+
+    aliases: ByNode<Sym, Option<Sym>>,
     /// What each alias is declared to stand for: one step.
-    alias_steps: ShardedMap<Sym, Option<Sym>>,
+    alias_steps: ByNode<Sym, Option<Sym>>,
     /// The order in which declarations of one thing in several files count: it decides the order of overloads.
     order: Vec<FileId>,
     /// What is wrong with what the options name, no file being to blame: the codes.
@@ -750,6 +754,7 @@ impl Files {
         let has_type_only_stars = modules
             .iter()
             .any(|m| m.bound.export_star_type_only.contains(&true));
+        let symbols = Bases::new(modules.iter().map(|m| m.bound.symbols.len()));
         let mut files = Files {
             atoms,
             options,
@@ -765,8 +770,9 @@ impl Files {
             refused_merges: Vec::new(),
             circular_at_merge: Vec::new(),
             has_type_only_stars,
-            aliases: ShardedMap::default(),
-            alias_steps: ShardedMap::default(),
+            type_only_star_names: ByNodeKept::new(&symbols),
+            aliases: ByNode::new(&symbols),
+            alias_steps: ByNode::new(&symbols),
             order: Vec::new(),
             program_errors,
         };
@@ -1291,8 +1297,9 @@ impl Files {
             }
         }
         // What an alias was found to stand for while symbols were being put together may be a part of something by now.
-        self.aliases = ShardedMap::default();
-        self.alias_steps = ShardedMap::default();
+        let symbols = Bases::new(self.modules.iter().map(|m| m.bound.symbols.len()));
+        self.aliases = ByNode::new(&symbols);
+        self.alias_steps = ByNode::new(&symbols);
     }
 
     fn symbol_mut(&mut self, sym: Sym) -> &mut Symbol {
@@ -1456,7 +1463,7 @@ impl Files {
             self.refused_merges.push((target, source));
             return;
         }
-        let source_parts = self.parts(source);
+        let source_parts = self.parts(source).into_vec();
         let source_exports = self.exports(source);
         let target_exports_table = self.symbol(target).exports;
         self.symbol_mut(target).flags |= source_flags | SymFlags::MERGED;
@@ -1584,13 +1591,13 @@ impl Files {
             .collect()
     }
 
-    pub fn parts(&self, sym: Sym) -> Vec<Sym> {
+    pub fn parts(&self, sym: Sym) -> List<'_, Sym> {
         if self.symbol(sym).flags.contains(SymFlags::MERGED)
             && let Some(parts) = self.merged_parts.get(&sym)
         {
-            return parts.clone();
+            return List::Kept(parts);
         }
-        vec![sym]
+        List::One(sym)
     }
 
     pub fn global(&self, name: Atom, meaning: SymFlags) -> Option<Sym> {
@@ -2140,17 +2147,26 @@ impl Files {
         if !self.has_type_only_stars {
             return false;
         }
-        let (mut visited, mut plain, mut type_only) =
-            (Vec::new(), FxHashSet::default(), FxHashSet::default());
-        self.visit_export_stars(
-            self.module_value(module),
-            false,
-            false,
-            &mut visited,
-            &mut plain,
-            &mut type_only,
-        );
-        type_only.contains(&name) && !plain.contains(&name)
+        let module = self.module_value(module);
+        let names = match self.type_only_star_names.get_ref(&module) {
+            Some(names) => names,
+            None => {
+                let (mut visited, mut plain, mut type_only) =
+                    (Vec::new(), FxHashSet::default(), FxHashSet::default());
+                self.visit_export_stars(
+                    module,
+                    false,
+                    false,
+                    &mut visited,
+                    &mut plain,
+                    &mut type_only,
+                );
+                let mut names: Vec<Atom> = type_only.difference(&plain).copied().collect();
+                names.sort_unstable();
+                self.type_only_star_names.insert_ref(module, names.into())
+            }
+        };
+        names.binary_search(&name).is_ok()
     }
 
     /// `visit` of `getExportsOfModuleWorker`, for the names alone: those `module` exports, `export *` included. `through_type_only`: the

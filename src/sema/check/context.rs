@@ -43,25 +43,27 @@ impl<'p> Checker<'p> {
     }
 
     pub fn prepare_parent(&mut self, file: FileId, parent: Parent) {
-        let mut chain = Vec::new();
-        let mut at = self.enclosing_fn(file, parent);
-        while let Some(f) = at {
-            chain.push(f);
-            let enclosing = self.bound(file).fns[f.idx()].enclosing;
-            at = if enclosing.is_some() {
-                Some(enclosing)
-            } else {
-                None
-            };
+        if let Some(func) = self.enclosing_fn(file, parent) {
+            self.prepare_from_the_outside(file, func);
         }
-        for f in chain.into_iter().rev() {
-            if !self.prepared.insert((file, f)) {
-                continue;
-            }
-            if let FnOwner::Expr(owner) = self.bound(file).fns[f.idx()].owner {
-                self.prepare_context(file, owner);
-            }
+    }
+
+    /// The functions around `func` first. One that has been through here has them all behind it.
+    fn prepare_from_the_outside(&mut self, file: FileId, func: FnId) {
+        // One question after another is about the same function.
+        if self.last_prepared == (file, func) || !self.prepared.insert((file, func)) {
+            self.last_prepared = (file, func);
+            return;
         }
+        let info = &self.bound(file).fns[func.idx()];
+        let (enclosing, owner) = (info.enclosing, info.owner);
+        if enclosing.is_some() {
+            self.prepare_from_the_outside(file, enclosing);
+        }
+        if let FnOwner::Expr(owner) = owner {
+            self.prepare_context(file, owner);
+        }
+        self.last_prepared = (file, func);
     }
 
     /// If `e` is (part of) an argument, resolves the call.

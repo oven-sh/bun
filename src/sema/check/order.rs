@@ -19,23 +19,28 @@ impl Checker<'_> {
     }
 
     #[inline]
-    pub(super) fn prepare_question_about_expr(&mut self, file: FileId, e: ExprId) {
-        if self.is_asked_from_outside() && e.is_some() {
+    /// Whether anything may have been worked out.
+    pub(super) fn prepare_question_about_expr(&mut self, file: FileId, e: ExprId) -> bool {
+        let is_from_outside = self.is_asked_from_outside() && e.is_some();
+        if is_from_outside {
             self.prepare_enclosing(file, e);
         }
+        is_from_outside
     }
 
     #[inline]
-    pub(super) fn prepare_question_about_fn(&mut self, file: FileId, func: FnId) {
-        if self.is_asked_from_outside() {
+    pub(super) fn prepare_question_about_fn(&mut self, file: FileId, func: FnId) -> bool {
+        let is_from_outside = self.is_asked_from_outside();
+        if is_from_outside {
             self.prepare_fn(file, func);
         }
+        is_from_outside
     }
 
     #[inline]
-    pub(super) fn prepare_question_about_pat(&mut self, file: FileId, pat: PatId) {
+    pub(super) fn prepare_question_about_pat(&mut self, file: FileId, pat: PatId) -> bool {
         if !self.is_asked_from_outside() {
-            return;
+            return false;
         }
         let bound = self.bound(file);
         let mut root = bound.pat_parent[pat.idx()];
@@ -52,5 +57,6 @@ impl Checker<'_> {
             }
             _ => {}
         }
+        true
     }
 }

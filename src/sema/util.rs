@@ -78,6 +78,7 @@ pub fn fx_hash<T: std::hash::Hash + ?Sized>(value: &T) -> u64 {
 pub enum List<'p, T> {
     Kept(&'p [T]),
     Own(Vec<T>),
+    One(T),
 }
 
 impl<T> std::ops::Deref for List<'_, T> {
@@ -87,6 +88,7 @@ impl<T> std::ops::Deref for List<'_, T> {
         match self {
             List::Kept(kept) => kept,
             List::Own(own) => own,
+            List::One(one) => std::slice::from_ref(one),
         }
     }
 }
@@ -97,6 +99,7 @@ impl<T: Clone> List<'_, T> {
         match self {
             List::Kept(kept) => kept.to_vec(),
             List::Own(own) => own,
+            List::One(one) => vec![one],
         }
     }
 }
@@ -121,6 +124,7 @@ impl<T: Clone> From<List<'_, T>> for Box<[T]> {
         match list {
             List::Kept(kept) => kept.into(),
             List::Own(own) => own.into(),
+            List::One(one) => Box::new([one]),
         }
     }
 }

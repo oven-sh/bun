@@ -241,6 +241,11 @@ impl<'p> Checker<'p> {
         if let Some(known) = self.p.calls.get(&(file, call)) {
             return known;
         }
+        if self.prepare_question_about_expr(file, call)
+            && let Some(known) = self.p.calls.get(&(file, call))
+        {
+            return known;
+        }
         // `resolvingSignature`
         let is_under_way = self.stack.contains(&Query::Call(file, call));
         if is_under_way && self.asking_for_context {

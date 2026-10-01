@@ -1,0 +1,1320 @@
+{
+ "note": "What the default check passes to bun --lint for each of the 12797 instances that run (recorded with a check that reports nothing; corpus of UPSTREAM prototype, typescript-go 89d5d5b, TypeScript 5848bc5).",
+ "instances": 12797,
+ "operands": 16558,
+ "operandExtensions": {
+  ".ts": 13383,
+  ".js": 1180,
+  ".d.ts": 762,
+  ".tsx": 493,
+  ".jsx": 12,
+  ".cts": 164,
+  ".d.cts": 109,
+  ".mjs": 77,
+  ".mts": 190,
+  ".d.mts": 103,
+  ".map": 3,
+  ".cjs": 74,
+  "(none)": 4,
+  ".txt": 4
+ },
+ "instancesWithAnOperandOfAnUnsupportedExtension": [
+  {
+   "name": "jsFileCompilationWithMapFileAsJs.ts",
+   "kind": "E",
+   "rootFiles": [
+    "/.src/a.ts",
+    "/.src/b.js.map",
+    "/.src/b.js"
+   ]
+  },
+  {
+   "name": "jsFileCompilationWithMapFileAsJsWithInlineSourceMap.ts",
+   "kind": "E",
+   "rootFiles": [
+    "/.src/a.ts",
+    "/.src/b.js.map",
+    "/.src/b.js"
+   ]
+  },
+  {
+   "name": "jsFileCompilationWithMapFileAsJsWithOutDir.ts",
+   "kind": "E",
+   "rootFiles": [
+    "/.src/a.ts",
+    "/.src/b.js.map",
+    "/.src/b.js"
+   ]
+  },
+  {
+   "name": "bundlerImportTsExtensions(allowimportingtsextensions=false,noemit=false).ts",
+   "kind": "E",
+   "rootFiles": [
+    "/project/a.ts",
+    "/project/b.ts",
+    "/project/b.js",
+    "/project/b.d.ts",
+    "/project/c.ts",
+    "/project/c.tsx",
+    "/project/d/index.ts",
+    "/project/e",
+    "/project/e.ts",
+    "/project/e.txt",
+    "/project/e.txt.ts",
+    "/project/main.ts",
+    "/project/types.d.ts"
+   ]
+  },
+  {
+   "name": "bundlerImportTsExtensions(allowimportingtsextensions=false,noemit=true).ts",
+   "kind": "E",
+   "rootFiles": [
+    "/project/a.ts",
+    "/project/b.ts",
+    "/project/b.js",
+    "/project/b.d.ts",
+    "/project/c.ts",
+    "/project/c.tsx",
+    "/project/d/index.ts",
+    "/project/e",
+    "/project/e.ts",
+    "/project/e.txt",
+    "/project/e.txt.ts",
+    "/project/main.ts",
+    "/project/types.d.ts"
+   ]
+  },
+  {
+   "name": "bundlerImportTsExtensions(allowimportingtsextensions=true,noemit=false).ts",
+   "kind": "E",
+   "rootFiles": [
+    "/project/a.ts",
+    "/project/b.ts",
+    "/project/b.js",
+    "/project/b.d.ts",
+    "/project/c.ts",
+    "/project/c.tsx",
+    "/project/d/index.ts",
+    "/project/e",
+    "/project/e.ts",
+    "/project/e.txt",
+    "/project/e.txt.ts",
+    "/project/main.ts",
+    "/project/types.d.ts"
+   ]
+  },
+  {
+   "name": "bundlerImportTsExtensions(allowimportingtsextensions=true,noemit=true).ts",
+   "kind": "E",
+   "rootFiles": [
+    "/project/a.ts",
+    "/project/b.ts",
+    "/project/b.js",
+    "/project/b.d.ts",
+    "/project/c.ts",
+    "/project/c.tsx",
+    "/project/d/index.ts",
+    "/project/e",
+    "/project/e.ts",
+    "/project/e.txt",
+    "/project/e.txt.ts",
+    "/project/main.ts",
+    "/project/types.d.ts"
+   ]
+  }
+ ],
+ "instancesWithAJavaScriptOperand": {
+  "count": 946,
+  "E": 576
+ },
+ "instancesWhoseOperandsAreAllDeclarationFiles": {
+  "count": 62,
+  "names": [
+   "ambientClassDeclaredBeforeBase.ts",
+   "augmentExportEquals7.ts",
+   "crashDeclareGlobalTypeofExport.ts",
+   "declarationTypecheckNoUseBeforeReferenceCheck.ts",
+   "erasableSyntaxOnlyDeclaration.ts",
+   "es5-commonjs7(target=es2015).ts",
+   "evalOrArgumentsInDeclarationFunctions.ts",
+   "exportAsNamespace.d.ts",
+   "exportAsNamespaceConflict.ts",
+   "implicitAnyInAmbientDeclaration2.d.ts",
+   "importDeclarationNotCheckedAsValueWhenTargetNonValue.ts",
+   "importHelpersDeclarations(target=es2015).ts",
+   "importTypeTypeofClassStaticLookup.ts",
+   "initializedParameterBeforeNonoptionalNotOptional.ts",
+   "missingRequiredDeclare.d.ts",
+   "moduleAugmentationWithNonExistentNamedImport.ts",
+   "namespaceNotMergedWithFunctionDefaultExport.ts",
+   "noUsedBeforeDefinedErrorInAmbientContext1.ts",
+   "renamingDestructuredPropertyInFunctionType2.ts",
+   "typeAliasDeclareKeyword01.d.ts",
+   "useBeforeDefinitionInDeclarationFiles.ts",
+   "classAbstractDeclarations.d.ts",
+   "classAndInterfaceMerge.d.ts",
+   "staticPropertyNameConflictsInAmbientContext.ts",
+   "generatorInAmbientContext3.d.ts",
+   "generatorInAmbientContext4.d.ts",
+   "initializersInDeclarations.ts",
+   "topLevelAwait.3(module=es2022).ts",
+   "topLevelAwait.3(module=esnext).ts",
+   "verbatimModuleSyntaxDeclarationFile.ts",
+   "parserClassDeclaration7.d.ts",
+   "parserEnumDeclaration2.d.ts",
+   "parserEnumDeclaration3.d.ts",
+   "parserFunctionDeclaration1.d.ts",
+   "parserFunctionDeclaration2.d.ts",
+   "parserModuleDeclaration1.d.ts",
+   "parserModuleDeclaration2.d.ts",
+   "parserModuleDeclaration3.d.ts",
+   "parserModuleDeclaration4.d.ts",
+   "parserBlockStatement1.d.ts",
+   "parserBreakStatement1.d.ts",
+   "parserContinueStatement1.d.ts",
+   "parserDebuggerStatement1.d.ts",
+   "parserDoStatement1.d.ts",
+   "parserES5ForOfStatement1.d(target=es2015).ts",
+   "parserEmptyStatement1.d.ts",
+   "parserExpressionStatement1.d.ts",
+   "parserForInStatement1.d.ts",
+   "parserForStatement1.d.ts",
+   "parserIfStatement1.d.ts",
+   "parserLabeledStatement1.d.ts",
+   "parserReturnStatement1.d.ts",
+   "parserSwitchStatement1.d.ts",
+   "parserThrowStatement1.d.ts",
+   "parserTryStatement1.d.ts",
+   "parserVariableStatement1.d.ts",
+   "parserVariableStatement2.d.ts",
+   "parserWhileStatement1.d.ts",
+   "parserWithStatement1.d.ts",
+   "parserVariableDeclaration4.d.ts",
+   "parserForOfStatement1.d.ts",
+   "genericTypeReferenceWithoutTypeArgument.d.ts"
+  ]
+ },
+ "unsupportedByTheMaterialiser": {
+  "count": 186,
+  "E": 93,
+  "C": 93,
+  "instances": [
+   {
+    "name": "booleanLiteralsContextuallyTypedFromUnion.tsx",
+    "kind": "C",
+    "casePath": "compiler/booleanLiteralsContextuallyTypedFromUnion.tsx",
+    "reason": "absolute-path-in-text: /.src/booleanLiteralsContextuallyTypedFromUnion.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "callsOnComplexSignatures.tsx",
+    "kind": "C",
+    "casePath": "compiler/callsOnComplexSignatures.tsx",
+    "reason": "absolute-path-in-text: /.src/callsOnComplexSignatures.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "caseInsensitiveFileSystemWithCapsImportTypeDeclarations.ts",
+    "kind": "C",
+    "casePath": "compiler/caseInsensitiveFileSystemWithCapsImportTypeDeclarations.ts",
+    "reason": "case-insensitive-requested"
+   },
+   {
+    "name": "checkJsxNotSetError.ts",
+    "kind": "E",
+    "casePath": "compiler/checkJsxNotSetError.ts",
+    "reason": "absolute-path-in-text: /bar.jsx: /foo"
+   },
+   {
+    "name": "commonSourceDir1.ts",
+    "kind": "C",
+    "casePath": "compiler/commonSourceDir1.ts",
+    "reason": "dos-root: A:; dos-root: A:/foo; dos-root: A:/foo/bar.ts; dos-root: A:/foo/baz.ts"
+   },
+   {
+    "name": "commonSourceDir2.ts",
+    "kind": "E",
+    "casePath": "compiler/commonSourceDir2.ts",
+    "reason": "dos-root: A:; dos-root: A:/foo; dos-root: A:/foo/bar.ts; dos-root: B:; dos-root: B:/foo; dos-root: B:/foo/baz.ts"
+   },
+   {
+    "name": "commonSourceDir3.ts",
+    "kind": "C",
+    "casePath": "compiler/commonSourceDir3.ts",
+    "reason": "dos-root: A:; dos-root: A:/foo; dos-root: A:/foo/bar.ts; dos-root: a:/foo/baz.ts; case-insensitive-requested"
+   },
+   {
+    "name": "commonSourceDir4.ts",
+    "kind": "E",
+    "casePath": "compiler/commonSourceDir4.ts",
+    "reason": "dos-root: A:; dos-root: A:/foo; dos-root: A:/foo/bar.ts; dos-root: a:; dos-root: a:/foo; dos-root: a:/foo/baz.ts"
+   },
+   {
+    "name": "conditionalTypeVarianceBigArrayConstraintsPerformance.ts",
+    "kind": "E",
+    "casePath": "compiler/conditionalTypeVarianceBigArrayConstraintsPerformance.ts",
+    "reason": "absolute-path-in-text: /.src/conditionalTypeVarianceBigArrayConstraintsPerformance.ts: /.lib/react16.d.ts"
+   },
+   {
+    "name": "contextuallyTypedJsxAttribute2.tsx",
+    "kind": "C",
+    "casePath": "compiler/contextuallyTypedJsxAttribute2.tsx",
+    "reason": "absolute-path-in-text: /.src/contextuallyTypedJsxAttribute2.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "contextuallyTypedJsxChildren.tsx",
+    "kind": "C",
+    "casePath": "compiler/contextuallyTypedJsxChildren.tsx",
+    "reason": "absolute-path-in-text: /.src/contextuallyTypedJsxChildren.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "contextuallyTypedJsxChildren2.tsx",
+    "kind": "C",
+    "casePath": "compiler/contextuallyTypedJsxChildren2.tsx",
+    "reason": "absolute-path-in-text: /.src/contextuallyTypedJsxChildren2.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "declarationEmitRelativeModuleError.ts",
+    "kind": "E",
+    "casePath": "compiler/declarationEmitRelativeModuleError.ts",
+    "reason": "absolute-path-in-text: /.src/declarationEmitRelativeModuleError.ts: b:/block"
+   },
+   {
+    "name": "errorInfoForRelatedIndexTypesNoConstraintElaboration.ts",
+    "kind": "E",
+    "casePath": "compiler/errorInfoForRelatedIndexTypesNoConstraintElaboration.ts",
+    "reason": "absolute-path-in-text: /.src/errorInfoForRelatedIndexTypesNoConstraintElaboration.ts: /.lib/react16.d.ts"
+   },
+   {
+    "name": "genericInferenceDefaultTypeParameterJsxReact.tsx",
+    "kind": "C",
+    "casePath": "compiler/genericInferenceDefaultTypeParameterJsxReact.tsx",
+    "reason": "absolute-path-in-text: /.src/genericInferenceDefaultTypeParameterJsxReact.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "ignoredJsxAttributes.tsx",
+    "kind": "E",
+    "casePath": "compiler/ignoredJsxAttributes.tsx",
+    "reason": "absolute-path-in-text: /.src/ignoredJsxAttributes.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "jsxCallElaborationCheckNoCrash1.tsx",
+    "kind": "E",
+    "casePath": "compiler/jsxCallElaborationCheckNoCrash1.tsx",
+    "reason": "absolute-path-in-text: /.src/jsxCallElaborationCheckNoCrash1.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "jsxChildWrongType.tsx",
+    "kind": "E",
+    "casePath": "compiler/jsxChildWrongType.tsx",
+    "reason": "absolute-path-in-text: /.src/index.tsx: /.lib/react18/react18.d.ts; absolute-path-in-text: /.src/index.tsx: /.lib/react18/global.d.ts"
+   },
+   {
+    "name": "jsxChildrenArrayWrongType(target=es2015).tsx",
+    "kind": "E",
+    "casePath": "compiler/jsxChildrenArrayWrongType.tsx",
+    "reason": "absolute-path-in-text: /.src/index.tsx: /.lib/react18/react18.d.ts; absolute-path-in-text: /.src/index.tsx: /.lib/react18/global.d.ts"
+   },
+   {
+    "name": "jsxChildrenIndividualErrorElaborations.tsx",
+    "kind": "E",
+    "casePath": "compiler/jsxChildrenIndividualErrorElaborations.tsx",
+    "reason": "absolute-path-in-text: /.src/index.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "jsxChildrenSingleChildConfusableWithMultipleChildrenNoError.tsx",
+    "kind": "C",
+    "casePath": "compiler/jsxChildrenSingleChildConfusableWithMultipleChildrenNoError.tsx",
+    "reason": "absolute-path-in-text: /.src/jsxChildrenSingleChildConfusableWithMultipleChildrenNoError.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "jsxChildrenWrongType.tsx",
+    "kind": "E",
+    "casePath": "compiler/jsxChildrenWrongType.tsx",
+    "reason": "absolute-path-in-text: /.src/other.tsx: /.lib/react18/react18.d.ts; absolute-path-in-text: /.src/other.tsx: /.lib/react18/global.d.ts"
+   },
+   {
+    "name": "jsxComplexSignatureHasApplicabilityError.tsx",
+    "kind": "C",
+    "casePath": "compiler/jsxComplexSignatureHasApplicabilityError.tsx",
+    "reason": "absolute-path-in-text: /.src/jsxComplexSignatureHasApplicabilityError.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "jsxDeclarationsWithEsModuleInteropNoCrash.tsx",
+    "kind": "C",
+    "casePath": "compiler/jsxDeclarationsWithEsModuleInteropNoCrash.tsx",
+    "reason": "absolute-path-in-text: /.src/jsxDeclarationsWithEsModuleInteropNoCrash.jsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "jsxElementType.tsx",
+    "kind": "E",
+    "casePath": "compiler/jsxElementType.tsx",
+    "reason": "absolute-path-in-text: /.src/jsxElementType.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "jsxElementTypeLiteral.tsx",
+    "kind": "E",
+    "casePath": "compiler/jsxElementTypeLiteral.tsx",
+    "reason": "absolute-path-in-text: /.src/jsxElementTypeLiteral.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "jsxElementTypeLiteralWithGeneric.tsx",
+    "kind": "E",
+    "casePath": "compiler/jsxElementTypeLiteralWithGeneric.tsx",
+    "reason": "absolute-path-in-text: /.src/jsxElementTypeLiteralWithGeneric.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "jsxEmptyExpressionNotCountedAsChild(jsx=react).tsx",
+    "kind": "C",
+    "casePath": "compiler/jsxEmptyExpressionNotCountedAsChild.tsx",
+    "reason": "absolute-path-in-text: /.src/jsxEmptyExpressionNotCountedAsChild.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "jsxEmptyExpressionNotCountedAsChild(jsx=react-jsx).tsx",
+    "kind": "C",
+    "casePath": "compiler/jsxEmptyExpressionNotCountedAsChild.tsx",
+    "reason": "absolute-path-in-text: /.src/jsxEmptyExpressionNotCountedAsChild.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "jsxEmptyExpressionNotCountedAsChild(jsx=react-jsxdev).tsx",
+    "kind": "C",
+    "casePath": "compiler/jsxEmptyExpressionNotCountedAsChild.tsx",
+    "reason": "absolute-path-in-text: /.src/jsxEmptyExpressionNotCountedAsChild.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "jsxExcessPropsAndAssignability.tsx",
+    "kind": "E",
+    "casePath": "compiler/jsxExcessPropsAndAssignability.tsx",
+    "reason": "absolute-path-in-text: /.src/jsxExcessPropsAndAssignability.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "jsxFragReactReferenceErrors(jsx=preserve).tsx",
+    "kind": "C",
+    "casePath": "compiler/jsxFragReactReferenceErrors.tsx",
+    "reason": "absolute-path-in-text: /.src/jsxFragReactReferenceErrors.tsx: /.lib/react18/react18.d.ts; absolute-path-in-text: /.src/jsxFragReactReferenceErrors.tsx: /.lib/react18/global.d.ts"
+   },
+   {
+    "name": "jsxFragReactReferenceErrors(jsx=react-native).tsx",
+    "kind": "C",
+    "casePath": "compiler/jsxFragReactReferenceErrors.tsx",
+    "reason": "absolute-path-in-text: /.src/jsxFragReactReferenceErrors.tsx: /.lib/react18/react18.d.ts; absolute-path-in-text: /.src/jsxFragReactReferenceErrors.tsx: /.lib/react18/global.d.ts"
+   },
+   {
+    "name": "jsxFragmentFactoryNoUnusedLocals.tsx",
+    "kind": "E",
+    "casePath": "compiler/jsxFragmentFactoryNoUnusedLocals.tsx",
+    "reason": "absolute-path-in-text: /.src/jsxFragmentFactoryNoUnusedLocals.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "jsxFragmentWrongType.tsx",
+    "kind": "E",
+    "casePath": "compiler/jsxFragmentWrongType.tsx",
+    "reason": "absolute-path-in-text: /.src/a.tsx: /.lib/react18/react18.d.ts; absolute-path-in-text: /.src/a.tsx: /.lib/react18/global.d.ts"
+   },
+   {
+    "name": "jsxFunctionTypeChildren.tsx",
+    "kind": "C",
+    "casePath": "compiler/jsxFunctionTypeChildren.tsx",
+    "reason": "absolute-path-in-text: /.src/jsxFunctionTypeChildren.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "jsxGenericComponentWithSpreadingResultOfGenericFunction.tsx",
+    "kind": "C",
+    "casePath": "compiler/jsxGenericComponentWithSpreadingResultOfGenericFunction.tsx",
+    "reason": "absolute-path-in-text: /.src/jsxGenericComponentWithSpreadingResultOfGenericFunction.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "jsxHasLiteralType.tsx",
+    "kind": "C",
+    "casePath": "compiler/jsxHasLiteralType.tsx",
+    "reason": "absolute-path-in-text: /.src/jsxHasLiteralType.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "jsxImportForSideEffectsNonExtantNoError.tsx",
+    "kind": "E",
+    "casePath": "compiler/jsxImportForSideEffectsNonExtantNoError.tsx",
+    "reason": "absolute-path-in-text: /.src/jsxImportForSideEffectsNonExtantNoError.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "jsxInferenceProducesLiteralAsExpected.tsx",
+    "kind": "C",
+    "casePath": "compiler/jsxInferenceProducesLiteralAsExpected.tsx",
+    "reason": "absolute-path-in-text: /.src/jsxInferenceProducesLiteralAsExpected.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "jsxIntrinsicElementsCompatability.tsx",
+    "kind": "C",
+    "casePath": "compiler/jsxIntrinsicElementsCompatability.tsx",
+    "reason": "absolute-path-in-text: /.src/jsxIntrinsicElementsCompatability.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "jsxIntrinsicElementsTypeArgumentErrors.tsx",
+    "kind": "E",
+    "casePath": "compiler/jsxIntrinsicElementsTypeArgumentErrors.tsx",
+    "reason": "absolute-path-in-text: /.src/jsxIntrinsicElementsTypeArgumentErrors.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "jsxIntrinsicUnions.tsx",
+    "kind": "C",
+    "casePath": "compiler/jsxIntrinsicUnions.tsx",
+    "reason": "absolute-path-in-text: /.src/jsxIntrinsicUnions.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "jsxIssuesErrorWhenTagExpectsTooManyArguments.tsx",
+    "kind": "E",
+    "casePath": "compiler/jsxIssuesErrorWhenTagExpectsTooManyArguments.tsx",
+    "reason": "absolute-path-in-text: /.src/jsxIssuesErrorWhenTagExpectsTooManyArguments.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "jsxNamespacedNameNotComparedToNonMatchingIndexSignature.tsx",
+    "kind": "C",
+    "casePath": "compiler/jsxNamespacedNameNotComparedToNonMatchingIndexSignature.tsx",
+    "reason": "absolute-path-in-text: /.src/jsxNamespacedNameNotComparedToNonMatchingIndexSignature.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "jsxPartialSpread.tsx",
+    "kind": "C",
+    "casePath": "compiler/jsxPartialSpread.tsx",
+    "reason": "absolute-path-in-text: /.src/jsxPartialSpread.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "jsxRuntimePragma(jsx=preserve).ts",
+    "kind": "C",
+    "casePath": "compiler/jsxRuntimePragma.ts",
+    "reason": "absolute-path-in-text: /.src/one.tsx: /.lib/react16.d.ts; absolute-path-in-text: /.src/two.tsx: /.lib/react16.d.ts; absolute-path-in-text: /.src/three.tsx: /.lib/react16.d.ts; absolute-path-in-text: /.src/four.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "jsxRuntimePragma(jsx=react).ts",
+    "kind": "C",
+    "casePath": "compiler/jsxRuntimePragma.ts",
+    "reason": "absolute-path-in-text: /.src/one.tsx: /.lib/react16.d.ts; absolute-path-in-text: /.src/two.tsx: /.lib/react16.d.ts; absolute-path-in-text: /.src/three.tsx: /.lib/react16.d.ts; absolute-path-in-text: /.src/four.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "jsxRuntimePragma(jsx=react-jsx).ts",
+    "kind": "C",
+    "casePath": "compiler/jsxRuntimePragma.ts",
+    "reason": "absolute-path-in-text: /.src/one.tsx: /.lib/react16.d.ts; absolute-path-in-text: /.src/two.tsx: /.lib/react16.d.ts; absolute-path-in-text: /.src/three.tsx: /.lib/react16.d.ts; absolute-path-in-text: /.src/four.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "jsxRuntimePragma(jsx=react-jsxdev).ts",
+    "kind": "C",
+    "casePath": "compiler/jsxRuntimePragma.ts",
+    "reason": "absolute-path-in-text: /.src/one.tsx: /.lib/react16.d.ts; absolute-path-in-text: /.src/two.tsx: /.lib/react16.d.ts; absolute-path-in-text: /.src/three.tsx: /.lib/react16.d.ts; absolute-path-in-text: /.src/four.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "jsxSpreadFirstUnionNoErrors.tsx",
+    "kind": "C",
+    "casePath": "compiler/jsxSpreadFirstUnionNoErrors.tsx",
+    "reason": "absolute-path-in-text: /.src/jsxSpreadFirstUnionNoErrors.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "maxNodeModuleJsDepthDefaultsToZero.ts",
+    "kind": "E",
+    "casePath": "compiler/maxNodeModuleJsDepthDefaultsToZero.ts",
+    "reason": "absolute-path-in-text: /index.ts: /typings/index.d.ts"
+   },
+   {
+    "name": "missingMemberErrorHasShortPath.ts",
+    "kind": "E",
+    "casePath": "compiler/missingMemberErrorHasShortPath.ts",
+    "reason": "dos-root: C:; dos-root: C:/foo; dos-root: C:/foo/bar; dos-root: C:/foo/bar/Baz; dos-root: C:/foo/bar/Baz/src; dos-root: C:/foo/bar/Baz/src/sample.ts; dos-root: C:/foo/bar/Baz/src/utils.ts; case-insensitive-requested"
+   },
+   {
+    "name": "pathMappingBasedModuleResolution1_node.ts",
+    "kind": "E",
+    "casePath": "compiler/pathMappingBasedModuleResolution1_node.ts",
+    "reason": "dos-root: c:; dos-root: c:/root; dos-root: c:/root/f1.ts; dos-root: c:/root/tsconfig.json"
+   },
+   {
+    "name": "pathMappingBasedModuleResolution6_node.ts",
+    "kind": "C",
+    "casePath": "compiler/pathMappingBasedModuleResolution6_node.ts",
+    "reason": "dos-root: c:; dos-root: c:/root; dos-root: c:/root/generated; dos-root: c:/root/generated/src; dos-root: c:/root/generated/src/project; dos-root: c:/root/generated/src/project/file3.ts; dos-root: c:/root/src; dos-root: c:/root/src/file1.ts; dos-root: c:/root/src/file2; dos-root: c:/root/src/file2/index.d.ts; dos-root: c:/root/src/tsconfig.json"
+   },
+   {
+    "name": "reactDefaultPropsInferenceSuccess.tsx",
+    "kind": "E",
+    "casePath": "compiler/reactDefaultPropsInferenceSuccess.tsx",
+    "reason": "absolute-path-in-text: /.src/reactDefaultPropsInferenceSuccess.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "reactHOCSpreadprops.tsx",
+    "kind": "C",
+    "casePath": "compiler/reactHOCSpreadprops.tsx",
+    "reason": "absolute-path-in-text: /.src/reactHOCSpreadprops.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "reactImportUnusedInNewJSXEmit(jsx=react-jsx).tsx",
+    "kind": "E",
+    "casePath": "compiler/reactImportUnusedInNewJSXEmit.tsx",
+    "reason": "absolute-path-in-text: /.src/index.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "reactImportUnusedInNewJSXEmit(jsx=react-jsxdev).tsx",
+    "kind": "E",
+    "casePath": "compiler/reactImportUnusedInNewJSXEmit.tsx",
+    "reason": "absolute-path-in-text: /.src/index.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "reactReadonlyHOCAssignabilityReal.tsx",
+    "kind": "C",
+    "casePath": "compiler/reactReadonlyHOCAssignabilityReal.tsx",
+    "reason": "absolute-path-in-text: /.src/reactReadonlyHOCAssignabilityReal.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "reactSFCAndFunctionResolvable.tsx",
+    "kind": "C",
+    "casePath": "compiler/reactSFCAndFunctionResolvable.tsx",
+    "reason": "absolute-path-in-text: /.src/reactSFCAndFunctionResolvable.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "reactTagNameComponentWithPropsNoOOM.tsx",
+    "kind": "C",
+    "casePath": "compiler/reactTagNameComponentWithPropsNoOOM.tsx",
+    "reason": "absolute-path-in-text: /.src/reactTagNameComponentWithPropsNoOOM.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "reactTagNameComponentWithPropsNoOOM2.tsx",
+    "kind": "C",
+    "casePath": "compiler/reactTagNameComponentWithPropsNoOOM2.tsx",
+    "reason": "absolute-path-in-text: /.src/reactTagNameComponentWithPropsNoOOM2.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "returnTypePredicateIsInstantiateInContextOfTarget.tsx",
+    "kind": "C",
+    "casePath": "compiler/returnTypePredicateIsInstantiateInContextOfTarget.tsx",
+    "reason": "absolute-path-in-text: /.src/returnTypePredicateIsInstantiateInContextOfTarget.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "sourceMapWithNonCaseSensitiveFileNamesAndOutDir.ts",
+    "kind": "C",
+    "casePath": "compiler/sourceMapWithNonCaseSensitiveFileNamesAndOutDir.ts",
+    "reason": "case-insensitive-requested"
+   },
+   {
+    "name": "spellingSuggestionJSXAttribute.tsx",
+    "kind": "E",
+    "casePath": "compiler/spellingSuggestionJSXAttribute.tsx",
+    "reason": "absolute-path-in-text: /.src/spellingSuggestionJSXAttribute.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "styledComponentsInstantiaionLimitNotReached.ts",
+    "kind": "E",
+    "casePath": "compiler/styledComponentsInstantiaionLimitNotReached.ts",
+    "reason": "absolute-path-in-text: /.src/styledComponentsInstantiaionLimitNotReached.ts: /.lib/react16.d.ts"
+   },
+   {
+    "name": "symbolLinkDeclarationEmitModuleNamesImportRef.ts",
+    "kind": "C",
+    "casePath": "compiler/symbolLinkDeclarationEmitModuleNamesImportRef.ts",
+    "reason": "case-insensitive-requested"
+   },
+   {
+    "name": "tripleSlashReferenceAbsoluteWindowsPath.ts",
+    "kind": "C",
+    "casePath": "compiler/tripleSlashReferenceAbsoluteWindowsPath.ts",
+    "reason": "dos-root: C:; dos-root: C:/a; dos-root: C:/a/b; dos-root: C:/a/b/c.ts; dos-root: C:/a/b/d.ts; absolute-path-in-text: C:/a/b/d.ts: C:\\a\\b\\c.ts"
+   },
+   {
+    "name": "tsxDeepAttributeAssignabilityError.tsx",
+    "kind": "E",
+    "casePath": "compiler/tsxDeepAttributeAssignabilityError.tsx",
+    "reason": "absolute-path-in-text: /.src/my-component.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxFragmentChildrenCheck.ts",
+    "kind": "C",
+    "casePath": "compiler/tsxFragmentChildrenCheck.ts",
+    "reason": "absolute-path-in-text: /.src/my-component.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxInvokeComponentType.tsx",
+    "kind": "E",
+    "casePath": "compiler/tsxInvokeComponentType.tsx",
+    "reason": "absolute-path-in-text: /.src/tsxInvokeComponentType.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "tsxNotUsingApparentTypeOfSFC.tsx",
+    "kind": "E",
+    "casePath": "compiler/tsxNotUsingApparentTypeOfSFC.tsx",
+    "reason": "absolute-path-in-text: /.src/tsxNotUsingApparentTypeOfSFC.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "tsxReactPropsInferenceSucceedsOnIntersections.tsx",
+    "kind": "C",
+    "casePath": "compiler/tsxReactPropsInferenceSucceedsOnIntersections.tsx",
+    "reason": "absolute-path-in-text: /.src/tsxReactPropsInferenceSucceedsOnIntersections.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "tsxResolveExternalModuleExportsTypes.ts",
+    "kind": "E",
+    "casePath": "compiler/tsxResolveExternalModuleExportsTypes.ts",
+    "reason": "absolute-path-in-text: /.src/foo.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxSpreadDoesNotReportExcessProps.tsx",
+    "kind": "C",
+    "casePath": "compiler/tsxSpreadDoesNotReportExcessProps.tsx",
+    "reason": "absolute-path-in-text: /.src/tsxSpreadDoesNotReportExcessProps.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "tsxStatelessComponentDefaultProps.tsx",
+    "kind": "C",
+    "casePath": "compiler/tsxStatelessComponentDefaultProps.tsx",
+    "reason": "absolute-path-in-text: /.src/tsxStatelessComponentDefaultProps.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "tsxUnionMemberChecksFilterDataProps.tsx",
+    "kind": "C",
+    "casePath": "compiler/tsxUnionMemberChecksFilterDataProps.tsx",
+    "reason": "absolute-path-in-text: /.src/tsxUnionMemberChecksFilterDataProps.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "typeInferenceWithExcessPropertiesJsx.tsx",
+    "kind": "C",
+    "casePath": "compiler/typeInferenceWithExcessPropertiesJsx.tsx",
+    "reason": "absolute-path-in-text: /.src/typeInferenceWithExcessPropertiesJsx.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "controlFlowOptionalChain3.tsx",
+    "kind": "E",
+    "casePath": "conformance/controlFlow/controlFlowOptionalChain3.tsx",
+    "reason": "absolute-path-in-text: /.src/controlFlowOptionalChain3.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "multiline.tsx",
+    "kind": "E",
+    "casePath": "conformance/directives/multiline.tsx",
+    "reason": "absolute-path-in-text: /.src/b.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "jsDeclarationsNonIdentifierInferredNames.ts",
+    "kind": "C",
+    "casePath": "conformance/jsdoc/declarations/jsDeclarationsNonIdentifierInferredNames.ts",
+    "reason": "absolute-path-in-text: /.src/jsDeclarationsNonIdentifierInferredNames.jsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "jsDeclarationsReactComponents(target=es2015).ts",
+    "kind": "C",
+    "casePath": "conformance/jsdoc/declarations/jsDeclarationsReactComponents.ts",
+    "reason": "absolute-path-in-text: /.src/jsDeclarationsReactComponents1.jsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "jsDeclarationsTypeReassignmentFromDeclaration.ts",
+    "kind": "C",
+    "casePath": "conformance/jsdoc/declarations/jsDeclarationsTypeReassignmentFromDeclaration.ts",
+    "reason": "absolute-path-in-text: /.src/index.js: /some-mod"
+   },
+   {
+    "name": "checkJsxChildrenCanBeTupleType.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/checkJsxChildrenCanBeTupleType.tsx",
+    "reason": "absolute-path-in-text: /.src/checkJsxChildrenCanBeTupleType.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "checkJsxChildrenProperty1.tsx",
+    "kind": "C",
+    "casePath": "conformance/jsx/checkJsxChildrenProperty1.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "checkJsxChildrenProperty12.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/checkJsxChildrenProperty12.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "checkJsxChildrenProperty13.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/checkJsxChildrenProperty13.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "checkJsxChildrenProperty14.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/checkJsxChildrenProperty14.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "checkJsxChildrenProperty15.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/checkJsxChildrenProperty15.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "checkJsxChildrenProperty16.tsx",
+    "kind": "C",
+    "casePath": "conformance/jsx/checkJsxChildrenProperty16.tsx",
+    "reason": "absolute-path-in-text: /.src/checkJsxChildrenProperty16.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "checkJsxChildrenProperty2.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/checkJsxChildrenProperty2.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "checkJsxChildrenProperty3.tsx",
+    "kind": "C",
+    "casePath": "conformance/jsx/checkJsxChildrenProperty3.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "checkJsxChildrenProperty4.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/checkJsxChildrenProperty4.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "checkJsxChildrenProperty5.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/checkJsxChildrenProperty5.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "checkJsxChildrenProperty6.tsx",
+    "kind": "C",
+    "casePath": "conformance/jsx/checkJsxChildrenProperty6.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "checkJsxChildrenProperty7.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/checkJsxChildrenProperty7.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "checkJsxChildrenProperty8.tsx",
+    "kind": "C",
+    "casePath": "conformance/jsx/checkJsxChildrenProperty8.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "checkJsxChildrenProperty9.tsx",
+    "kind": "C",
+    "casePath": "conformance/jsx/checkJsxChildrenProperty9.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "checkJsxGenericTagHasCorrectInferences.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/checkJsxGenericTagHasCorrectInferences.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "checkJsxSubtleSkipContextSensitiveBug.tsx",
+    "kind": "C",
+    "casePath": "conformance/jsx/checkJsxSubtleSkipContextSensitiveBug.tsx",
+    "reason": "absolute-path-in-text: /.src/checkJsxSubtleSkipContextSensitiveBug.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "checkJsxUnionSFXContextualTypeInferredCorrectly.tsx",
+    "kind": "C",
+    "casePath": "conformance/jsx/checkJsxUnionSFXContextualTypeInferredCorrectly.tsx",
+    "reason": "absolute-path-in-text: /.src/checkJsxUnionSFXContextualTypeInferredCorrectly.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "commentEmittingInPreserveJsx1.tsx",
+    "kind": "C",
+    "casePath": "conformance/jsx/commentEmittingInPreserveJsx1.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "correctlyMarkAliasAsReferences1.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/correctlyMarkAliasAsReferences1.tsx",
+    "reason": "absolute-path-in-text: /.src/0.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "correctlyMarkAliasAsReferences2.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/correctlyMarkAliasAsReferences2.tsx",
+    "reason": "absolute-path-in-text: /.src/0.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "correctlyMarkAliasAsReferences3.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/correctlyMarkAliasAsReferences3.tsx",
+    "reason": "absolute-path-in-text: /.src/0.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "correctlyMarkAliasAsReferences4.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/correctlyMarkAliasAsReferences4.tsx",
+    "reason": "absolute-path-in-text: /.src/0.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "jsxCheckJsxNoTypeArgumentsAllowed.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/jsxCheckJsxNoTypeArgumentsAllowed.tsx",
+    "reason": "absolute-path-in-text: /.src/file.jsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "jsxSpreadOverwritesAttributeStrict.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/jsxSpreadOverwritesAttributeStrict.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "jsxJsxsCjsTransformChildren(jsx=react-jsx).tsx",
+    "kind": "C",
+    "casePath": "conformance/jsx/jsxs/jsxJsxsCjsTransformChildren.tsx",
+    "reason": "absolute-path-in-text: /.src/jsxJsxsCjsTransformChildren.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "jsxJsxsCjsTransformChildren(jsx=react-jsxdev).tsx",
+    "kind": "C",
+    "casePath": "conformance/jsx/jsxs/jsxJsxsCjsTransformChildren.tsx",
+    "reason": "absolute-path-in-text: /.src/jsxJsxsCjsTransformChildren.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "jsxJsxsCjsTransformCustomImport(jsx=react-jsx).tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/jsxs/jsxJsxsCjsTransformCustomImport.tsx",
+    "reason": "absolute-path-in-text: /.src/jsxJsxsCjsTransformCustomImport.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "jsxJsxsCjsTransformCustomImport(jsx=react-jsxdev).tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/jsxs/jsxJsxsCjsTransformCustomImport.tsx",
+    "reason": "absolute-path-in-text: /.src/jsxJsxsCjsTransformCustomImport.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "jsxJsxsCjsTransformCustomImportPragma(jsx=react-jsx).tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/jsxs/jsxJsxsCjsTransformCustomImportPragma.tsx",
+    "reason": "absolute-path-in-text: /.src/react.tsx: /.lib/react16.d.ts; absolute-path-in-text: /.src/preact.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "jsxJsxsCjsTransformCustomImportPragma(jsx=react-jsxdev).tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/jsxs/jsxJsxsCjsTransformCustomImportPragma.tsx",
+    "reason": "absolute-path-in-text: /.src/react.tsx: /.lib/react16.d.ts; absolute-path-in-text: /.src/preact.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "jsxJsxsCjsTransformKeyProp(jsx=react-jsx).tsx",
+    "kind": "C",
+    "casePath": "conformance/jsx/jsxs/jsxJsxsCjsTransformKeyProp.tsx",
+    "reason": "absolute-path-in-text: /.src/jsxJsxsCjsTransformKeyProp.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "jsxJsxsCjsTransformKeyProp(jsx=react-jsxdev).tsx",
+    "kind": "C",
+    "casePath": "conformance/jsx/jsxs/jsxJsxsCjsTransformKeyProp.tsx",
+    "reason": "absolute-path-in-text: /.src/jsxJsxsCjsTransformKeyProp.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "jsxJsxsCjsTransformKeyPropCustomImport(jsx=react-jsx).tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/jsxs/jsxJsxsCjsTransformKeyPropCustomImport.tsx",
+    "reason": "absolute-path-in-text: /.src/jsxJsxsCjsTransformKeyPropCustomImport.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "jsxJsxsCjsTransformKeyPropCustomImport(jsx=react-jsxdev).tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/jsxs/jsxJsxsCjsTransformKeyPropCustomImport.tsx",
+    "reason": "absolute-path-in-text: /.src/jsxJsxsCjsTransformKeyPropCustomImport.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "jsxJsxsCjsTransformKeyPropCustomImportPragma(jsx=react-jsx).tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/jsxs/jsxJsxsCjsTransformKeyPropCustomImportPragma.tsx",
+    "reason": "absolute-path-in-text: /.src/react.tsx: /.lib/react16.d.ts; absolute-path-in-text: /.src/preact.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "jsxJsxsCjsTransformKeyPropCustomImportPragma(jsx=react-jsxdev).tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/jsxs/jsxJsxsCjsTransformKeyPropCustomImportPragma.tsx",
+    "reason": "absolute-path-in-text: /.src/react.tsx: /.lib/react16.d.ts; absolute-path-in-text: /.src/preact.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "jsxJsxsCjsTransformNestedSelfClosingChild(jsx=react-jsx).tsx",
+    "kind": "C",
+    "casePath": "conformance/jsx/jsxs/jsxJsxsCjsTransformNestedSelfClosingChild.tsx",
+    "reason": "absolute-path-in-text: /.src/jsxJsxsCjsTransformNestedSelfClosingChild.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "jsxJsxsCjsTransformNestedSelfClosingChild(jsx=react-jsxdev).tsx",
+    "kind": "C",
+    "casePath": "conformance/jsx/jsxs/jsxJsxsCjsTransformNestedSelfClosingChild.tsx",
+    "reason": "absolute-path-in-text: /.src/jsxJsxsCjsTransformNestedSelfClosingChild.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "jsxJsxsCjsTransformSubstitutesNames(jsx=react-jsx).tsx",
+    "kind": "C",
+    "casePath": "conformance/jsx/jsxs/jsxJsxsCjsTransformSubstitutesNames.tsx",
+    "reason": "absolute-path-in-text: /.src/jsxJsxsCjsTransformSubstitutesNames.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "jsxJsxsCjsTransformSubstitutesNames(jsx=react-jsxdev).tsx",
+    "kind": "C",
+    "casePath": "conformance/jsx/jsxs/jsxJsxsCjsTransformSubstitutesNames.tsx",
+    "reason": "absolute-path-in-text: /.src/jsxJsxsCjsTransformSubstitutesNames.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "jsxJsxsCjsTransformSubstitutesNamesFragment(jsx=react-jsx).tsx",
+    "kind": "C",
+    "casePath": "conformance/jsx/jsxs/jsxJsxsCjsTransformSubstitutesNamesFragment.tsx",
+    "reason": "absolute-path-in-text: /.src/jsxJsxsCjsTransformSubstitutesNamesFragment.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "jsxJsxsCjsTransformSubstitutesNamesFragment(jsx=react-jsxdev).tsx",
+    "kind": "C",
+    "casePath": "conformance/jsx/jsxs/jsxJsxsCjsTransformSubstitutesNamesFragment.tsx",
+    "reason": "absolute-path-in-text: /.src/jsxJsxsCjsTransformSubstitutesNamesFragment.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "tsxAttributeResolution15.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/tsxAttributeResolution15.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxAttributeResolution16.tsx",
+    "kind": "C",
+    "casePath": "conformance/jsx/tsxAttributeResolution16.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxDefaultAttributesResolution1.tsx",
+    "kind": "C",
+    "casePath": "conformance/jsx/tsxDefaultAttributesResolution1.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxDefaultAttributesResolution2.tsx",
+    "kind": "C",
+    "casePath": "conformance/jsx/tsxDefaultAttributesResolution2.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxDefaultAttributesResolution3.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/tsxDefaultAttributesResolution3.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxGenericAttributesType1.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/tsxGenericAttributesType1.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxGenericAttributesType2.tsx",
+    "kind": "C",
+    "casePath": "conformance/jsx/tsxGenericAttributesType2.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxGenericAttributesType3.tsx",
+    "kind": "C",
+    "casePath": "conformance/jsx/tsxGenericAttributesType3.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxGenericAttributesType4.tsx",
+    "kind": "C",
+    "casePath": "conformance/jsx/tsxGenericAttributesType4.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxGenericAttributesType5.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/tsxGenericAttributesType5.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxGenericAttributesType6.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/tsxGenericAttributesType6.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxGenericAttributesType7.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/tsxGenericAttributesType7.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxGenericAttributesType8.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/tsxGenericAttributesType8.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxGenericAttributesType9.tsx",
+    "kind": "C",
+    "casePath": "conformance/jsx/tsxGenericAttributesType9.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxReactComponentWithDefaultTypeParameter1.tsx",
+    "kind": "C",
+    "casePath": "conformance/jsx/tsxReactComponentWithDefaultTypeParameter1.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxReactComponentWithDefaultTypeParameter2.tsx",
+    "kind": "C",
+    "casePath": "conformance/jsx/tsxReactComponentWithDefaultTypeParameter2.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxReactComponentWithDefaultTypeParameter3.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/tsxReactComponentWithDefaultTypeParameter3.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxReactEmit8(jsx=react-jsx).tsx",
+    "kind": "C",
+    "casePath": "conformance/jsx/tsxReactEmit8.tsx",
+    "reason": "absolute-path-in-text: /.src/tsxReactEmit8.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "tsxReactEmit8(jsx=react-jsxdev).tsx",
+    "kind": "C",
+    "casePath": "conformance/jsx/tsxReactEmit8.tsx",
+    "reason": "absolute-path-in-text: /.src/tsxReactEmit8.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "tsxReactEmitSpreadAttribute(target=es2015).ts",
+    "kind": "C",
+    "casePath": "conformance/jsx/tsxReactEmitSpreadAttribute.ts",
+    "reason": "absolute-path-in-text: /.src/test.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "tsxReactEmitSpreadAttribute(target=es2018).ts",
+    "kind": "C",
+    "casePath": "conformance/jsx/tsxReactEmitSpreadAttribute.ts",
+    "reason": "absolute-path-in-text: /.src/test.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "tsxReactEmitSpreadAttribute(target=esnext).ts",
+    "kind": "C",
+    "casePath": "conformance/jsx/tsxReactEmitSpreadAttribute.ts",
+    "reason": "absolute-path-in-text: /.src/test.tsx: /.lib/react16.d.ts"
+   },
+   {
+    "name": "tsxSfcReturnUndefinedStrictNullChecks.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/tsxSfcReturnUndefinedStrictNullChecks.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxSpreadAttributesResolution1.tsx",
+    "kind": "C",
+    "casePath": "conformance/jsx/tsxSpreadAttributesResolution1.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxSpreadAttributesResolution10.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/tsxSpreadAttributesResolution10.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxSpreadAttributesResolution11.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/tsxSpreadAttributesResolution11.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxSpreadAttributesResolution12.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/tsxSpreadAttributesResolution12.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxSpreadAttributesResolution13.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/tsxSpreadAttributesResolution13.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxSpreadAttributesResolution14.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/tsxSpreadAttributesResolution14.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxSpreadAttributesResolution15.tsx",
+    "kind": "C",
+    "casePath": "conformance/jsx/tsxSpreadAttributesResolution15.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxSpreadAttributesResolution16.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/tsxSpreadAttributesResolution16.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxSpreadAttributesResolution2.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/tsxSpreadAttributesResolution2.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxSpreadAttributesResolution3.tsx",
+    "kind": "C",
+    "casePath": "conformance/jsx/tsxSpreadAttributesResolution3.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxSpreadAttributesResolution4.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/tsxSpreadAttributesResolution4.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxSpreadAttributesResolution5.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/tsxSpreadAttributesResolution5.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxSpreadAttributesResolution6.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/tsxSpreadAttributesResolution6.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxSpreadAttributesResolution7.tsx",
+    "kind": "C",
+    "casePath": "conformance/jsx/tsxSpreadAttributesResolution7.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxSpreadAttributesResolution8.tsx",
+    "kind": "C",
+    "casePath": "conformance/jsx/tsxSpreadAttributesResolution8.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxSpreadAttributesResolution9.tsx",
+    "kind": "C",
+    "casePath": "conformance/jsx/tsxSpreadAttributesResolution9.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxStatelessFunctionComponentOverload4.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/tsxStatelessFunctionComponentOverload4.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxStatelessFunctionComponentOverload5.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/tsxStatelessFunctionComponentOverload5.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxStatelessFunctionComponentOverload6.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/tsxStatelessFunctionComponentOverload6.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxStatelessFunctionComponents1.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/tsxStatelessFunctionComponents1.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxStatelessFunctionComponents2.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/tsxStatelessFunctionComponents2.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxStatelessFunctionComponentsWithTypeArguments4.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/tsxStatelessFunctionComponentsWithTypeArguments4.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxTypeArgumentResolution.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/tsxTypeArgumentResolution.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxTypeArgumentsJsxPreserveOutput.tsx",
+    "kind": "C",
+    "casePath": "conformance/jsx/tsxTypeArgumentsJsxPreserveOutput.tsx",
+    "reason": "absolute-path-in-text: /.src/foo.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxUnionElementType1.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/tsxUnionElementType1.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxUnionElementType2.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/tsxUnionElementType2.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxUnionElementType3.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/tsxUnionElementType3.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxUnionElementType4.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/tsxUnionElementType4.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxUnionElementType5.tsx",
+    "kind": "C",
+    "casePath": "conformance/jsx/tsxUnionElementType5.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxUnionElementType6.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/tsxUnionElementType6.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxUnionTypeComponent1.tsx",
+    "kind": "C",
+    "casePath": "conformance/jsx/tsxUnionTypeComponent1.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "tsxUnionTypeComponent2.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/tsxUnionTypeComponent2.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "unicodeEscapesInJsxtags.tsx",
+    "kind": "E",
+    "casePath": "conformance/jsx/unicodeEscapesInJsxtags.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "library-reference-13.ts",
+    "kind": "C",
+    "casePath": "conformance/references/library-reference-13.ts",
+    "reason": "absolute-path-in-text: /a/tsconfig.json: /a/types"
+   },
+   {
+    "name": "contextuallyTypedStringLiteralsInJsxAttributes02.tsx",
+    "kind": "E",
+    "casePath": "conformance/types/contextualTypes/jsxAttributes/contextuallyTypedStringLiteralsInJsxAttributes02.tsx",
+    "reason": "absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts"
+   },
+   {
+    "name": "intraExpressionInferencesJsx.tsx",
+    "kind": "C",
+    "casePath": "conformance/types/typeRelationships/typeInference/intraExpressionInferencesJsx.tsx",
+    "reason": "absolute-path-in-text: /.src/intraExpressionInferencesJsx.tsx: /.lib/react16.d.ts"
+   }
+  ]
+ }
+}

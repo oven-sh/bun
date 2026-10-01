@@ -1,0 +1,19 @@
+diff --git a/test/cli/lint/conformance.test.ts b/test/cli/lint/conformance.test.ts
+index 0f294fa055..6c14468270 100644
+--- a/test/cli/lint/conformance.test.ts
++++ b/test/cli/lint/conformance.test.ts
+@@ -1,4 +1,4 @@
+-import { describe, expect, test } from "bun:test";
++import { describe, expect, setDefaultTimeout, test } from "bun:test";
+ import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+ import { createHash } from "node:crypto";
+ import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+@@ -50,6 +50,8 @@ const corpusRoot = join(home, "corpus");
+ const small = isDebug || isASAN;
+ // A debug build needs more than the default time of a test for the processes that a test starts.
+ const spawnTimeout = small ? 60_000 : undefined;
++// It also needs seconds for what a release build reads of the corpus in milliseconds, and a machine under load doubles them.
++if (small) setDefaultTimeout(60_000);
+ 
+ // One of every n names, the same on every platform and without an order of the directory entries.
+ const sampled = (name: string, n: number) => Bun.hash.crc32(name) % n === 0;

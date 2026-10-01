@@ -48,7 +48,7 @@ const linter = new Linter({ configType: "flat" });
 for (const code of codes) {
 	lines.length = 0;
 	const config = {
-		files: ["**/*"],
+		files: ["**/*.js", "**/*.cjs", "**/*.mjs", "**/*.jsx", "**/*.ts", "**/*.tsx"],
 		plugins: { probe: { rules: { dump } } },
 		languageOptions: { ecmaVersion: "latest", sourceType: type, globals, ...(parser ? { parser } : {}), parserOptions: { ecmaFeatures: { jsx: !ts || tsx } } },
 		rules: { "probe/dump": "error", ...Object.fromEntries(rules.map(r => [r, "error"])) },

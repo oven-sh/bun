@@ -3,7 +3,7 @@
 W=/workspace/wt/cli
 D=/tmp/cli-d1b/logs
 P=/tmp/cli-d1b/progress.log
-cd $W || exit 1
+mkdir -p $D; cd $W || exit 1
 echo "### baseline lock acquired $(date -u +%FT%TZ) HEAD=$(git rev-parse --short=10 HEAD) dirty=$(git status --short | wc -l)" >> $P
 step() {
   name=$1; shift

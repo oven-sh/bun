@@ -1,0 +1,68 @@
+### cmd: cargo rustc -p bun_lint --lib --profile test -- -C link-arg=-Wl,--error-limit=0
+### cwd: /tmp/cli-d1/tree
+### start: 2026-10-01T10:56:58Z
+   Compiling bun_lint v0.0.0 (/tmp/cli-d1/tree/src/lint)
+error: linking with `/usr/lib/llvm-23/bin/clang++` failed: exit status: 1
+  |
+  = note:  "/usr/lib/llvm-23/bin/clang++" "-m64" "/tmp/cli-d1/tree/target/debug/build/bun_lint/38e32fce0110c567/out/rustch2OLbT/symbols.o" "<139 object files omitted>" "-Wl,--as-needed" "-Wl,-Bstatic" "<sysroot>/lib/rustlib/x86_64-unknown-linux-gnu/lib/{libtest-*,libgetopts-*,librustc_std_workspace_std-*}.rlib" "/tmp/cli-d1/tree/target/debug/build/bun_js_parser/8559ed13bd7018aa/out/libbun_js_parser-8559ed13bd7018aa.rlib" "/tmp/cli-d1/tree/target/debug/build/bun_crash_handler/3499f480d125577c/out/libbun_crash_handler-3499f480d125577c.rlib" "/tmp/cli-d1/tree/target/debug/build/bun_zlib/64774462c9903a9a/out/libbun_zlib-64774462c9903a9a.rlib" "/tmp/cli-d1/tree/target/debug/build/bun_zlib_sys/c033c2daed451730/out/libbun_zlib_sys-c033c2daed451730.rlib" "/tmp/cli-d1/tree/target/debug/build/bun_base64/8ed3600158a7b5ad/out/libbun_base64-8ed3600158a7b5ad.rlib" "/tmp/cli-d1/tree/target/debug/build/bun_io/2ca76acc73cbe327/out/libbun_io-2ca76acc73cbe327.rlib" "/tmp/cli-d1/tree/target/debug/build/bun_spawn_sys/3d9f29f6d1c5adc1/out/libbun_spawn_sys-3d9f29f6d1c5adc1.rlib" "/tmp/cli-d1/tree/target/debug/build/bun_analytics/1f6e79fb1264bea7/out/libbun_analytics-1f6e79fb1264bea7.rlib" "/tmp/cli-d1/tree/target/debug/build/bun_windows_sys/5093fb27969ac2b8/out/libbun_windows_sys-5093fb27969ac2b8.rlib" "/tmp/cli-d1/tree/target/debug/build/bun_threading/1c48de12387b6139/out/libbun_threading-1c48de12387b6139.rlib" "/tmp/cli-d1/tree/target/debug/build/bun_safety/d405d8be1a266e5e/out/libbun_safety-d405d8be1a266e5e.rlib" "/tmp/cli-d1/tree/target/debug/build/bun_uws_sys/744298a55c0eb844/out/libbun_uws_sys-744298a55c0eb844.rlib" "/tmp/cli-d1/tree/target/debug/build/bun_boringssl_sys/8822419450593b96/out/libbun_boringssl_sys-8822419450593b96.rlib" "/tmp/cli-d1/tree/target/debug/build/bun_http_types/daab981b77728ca7/out/libbun_http_types-daab981b77728ca7.rlib" "/tmp/cli-d1/tree/target/debug/build/bun_react_compiler/68f2075f8e0bbeaa/out/libbun_react_compiler-68f2075f8e0bbeaa.rlib" "/tmp/cli-d1/tree/target/debug/build/bun_options_types/2c54f0bc7e304bac/out/libbun_options_types-2c54f0bc7e304bac.rlib" "/tmp/cli-d1/tree/target/debug/build/bun_install_types/ee119bc003a44430/out/libbun_install_types-ee119bc003a44430.rlib" "/tmp/cli-d1/tree/target/debug/build/bun_dotenv/e709909f1b1c863a/out/libbun_dotenv-e709909f1b1c863a.rlib" "/tmp/cli-d1/tree/target/debug/build/bun_which/74fe69b54ce66bcb/out/libbun_which-74fe69b54ce66bcb.rlib" "/tmp/cli-d1/tree/target/debug/build/bun_url/b492bb9db7c9e044/out/libbun_url-b492bb9db7c9e044.rlib" "/tmp/cli-d1/tree/target/debug/build/bun_semver/857479c876635169/out/libbun_semver-857479c876635169.rlib" "/tmp/cli-d1/tree/target/debug/build/bun_ast/dfb5ce9cce0657c8/out/libbun_ast-dfb5ce9cce0657c8.rlib" "/tmp/cli-d1/tree/target/debug/build/bun_perf/28f68c5308b503dc/out/libbun_perf-28f68c5308b503dc.rlib" "/tmp/cli-d1/tree/target/debug/build/bun_sys/654a2b423608a031/out/libbun_sys-654a2b423608a031.rlib" "/tmp/cli-d1/tree/target/debug/build/scopeguard/e5deabc0ef80f014/out/libscopeguard-e5deabc0ef80f014.rlib" "/tmp/cli-d1/tree/target/debug/build/rustix/54a6d728baccbde1/out/librustix-54a6d728baccbde1.rlib" "/tmp/cli-d1/tree/target/debug/build/linux-raw-sys/83f3118e82d77f34/out/liblinux_raw_sys-83f3118e82d77f34.rlib" "/tmp/cli-d1/tree/target/debug/build/bitflags/ad690312527ce656/out/libbitflags-ad690312527ce656.rlib" "/tmp/cli-d1/tree/target/debug/build/enumset/8867f7780f014e3f/out/libenumset-8867f7780f014e3f.rlib" "/tmp/cli-d1/tree/target/debug/build/bun_paths/1a05ca49c40b8dd7/out/libbun_paths-1a05ca49c40b8dd7.rlib" "/tmp/cli-d1/tree/target/debug/build/bun_errno/7c0194c903682cc5/out/libbun_errno-7c0194c903682cc5.rlib" "/tmp/cli-d1/tree/target/debug/build/bun_libuv_sys/e158de10e1811648/out/libbun_libuv_sys-e158de10e1811648.rlib" "/tmp/cli-d1/tree/target/debug/build/enum-map/a2ef25edf6ade988/out/libenum_map-a2ef25edf6ade988.rlib" "/tmp/cli-d1/tree/target/debug/build/bun_collections/1826de130fc3686f/out/libbun_collections-1826de130fc3686f.rlib" "/tmp/cli-d1/tree/target/debug/build/rustc-hash/3235c5a890450cc4/out/librustc_hash-3235c5a890450cc4.rlib" "/tmp/cli-d1/tree/target/debug/build/smallvec/10643ec2d630207b/out/libsmallvec-10643ec2d630207b.rlib" "/tmp/cli-d1/tree/target/debug/build/bun_ptr/3bcf7beca77be633/out/libbun_ptr-3bcf7beca77be633.rlib" "/tmp/cli-d1/tree/target/debug/build/hashbrown/0131b3b088571df5/out/libhashbrown-0131b3b088571df5.rlib" "/tmp/cli-d1/tree/target/debug/build/bun_core/cc73572b3dba021a/out/libbun_core-cc73572b3dba021a.rlib" "/tmp/cli-d1/tree/target/debug/build/thiserror/dc5bf0719b7079ba/out/libthiserror-dc5bf0719b7079ba.rlib" "/tmp/cli-d1/tree/target/debug/build/bun_output_tags/6a4641e03fecf338/out/libbun_output_tags-6a4641e03fecf338.rlib" "/tmp/cli-d1/tree/target/debug/build/itoa/8d0ab51d268956b3/out/libitoa-8d0ab51d268956b3.rlib" "/tmp/cli-d1/tree/target/debug/build/strum/8b09883ff8f1e3c8/out/libstrum-8b09883ff8f1e3c8.rlib" "/tmp/cli-d1/tree/target/debug/build/bun_simdutf_sys/aa45ee3e8b196920/out/libbun_simdutf_sys-aa45ee3e8b196920.rlib" "/tmp/cli-d1/tree/target/debug/build/bun_hash/2798d99a11728cad/out/libbun_hash-2798d99a11728cad.rlib" "/tmp/cli-d1/tree/target/debug/build/bun_highway/d7e2c505bfab78c8/out/libbun_highway-d7e2c505bfab78c8.rlib" "/tmp/cli-d1/tree/target/debug/build/bstr/1fbb7b33ff81cb14/out/libbstr-1fbb7b33ff81cb14.rlib" "/tmp/cli-d1/tree/target/debug/build/memchr/6965932ad51f07b1/out/libmemchr-6965932ad51f07b1.rlib" "/tmp/cli-d1/tree/target/debug/build/bytemuck/a9d06654efd58ed2/out/libbytemuck-a9d06654efd58ed2.rlib" "/tmp/cli-d1/tree/target/debug/build/bun_alloc/35126272a8c15d1e/out/libbun_alloc-35126272a8c15d1e.rlib" "/tmp/cli-d1/tree/target/debug/build/bun_wyhash/4a892cfc779e6c87/out/libbun_wyhash-4a892cfc779e6c87.rlib" "/tmp/cli-d1/tree/target/debug/build/libc/b2cc9e86bc174c3d/out/liblibc-b2cc9e86bc174c3d.rlib" "/tmp/cli-d1/tree/target/debug/build/allocator-api2/b5807a6031cc6d5c/out/liballocator_api2-b5807a6031cc6d5c.rlib" "/tmp/cli-d1/tree/target/debug/build/bun_mimalloc_sys/2da1ab9a86c1e907/out/libbun_mimalloc_sys-2da1ab9a86c1e907.rlib" "/tmp/cli-d1/tree/target/debug/build/bun_opaque/cd8395d2a04c1b90/out/libbun_opaque-cd8395d2a04c1b90.rlib" "/tmp/cli-d1/tree/target/debug/build/const_format/be8da8d8c0cbd6b4/out/libconst_format-be8da8d8c0cbd6b4.rlib" "/tmp/cli-d1/tree/target/debug/build/konst/3ab7ce7754eff186/out/libkonst-3ab7ce7754eff186.rlib" "/tmp/cli-d1/tree/target/debug/build/konst_macro_rules/a225824503f87ab5/out/libkonst_macro_rules-a225824503f87ab5.rlib" "<sysroot>/lib/rustlib/x86_64-unknown-linux-gnu/lib/{libstd-*,libpanic_unwind-*,libobject-*,libmemchr-*,libaddr2line-*,libgimli-*,libcfg_if-*,librustc_demangle-*,libstd_detect-*,libhashbrown-*,librustc_std_workspace_alloc-*,libminiz_oxide-*,libadler2-*,libunwind-*,liblibc-*,librustc_std_workspace_core-*,liballoc-*,libcore-*,libcompiler_builtins-*}.rlib" "-Wl,-Bdynamic" "-lgcc_s" "-lutil" "-lrt" "-lpthread" "-lm" "-ldl" "-lc" "-L" "/tmp/cli-d1/tree/target/debug/build/bun_lint/38e32fce0110c567/out/rustch2OLbT/raw-dylibs" "-Wl,--eh-frame-hdr" "-Wl,-z,noexecstack" "-L" "<sysroot>/lib/rustlib/x86_64-unknown-linux-gnu/lib" "-o" "/tmp/cli-d1/tree/target/debug/build/bun_lint/38e32fce0110c567/out/bun_lint-38e32fce0110c567" "-Wl,--gc-sections" "-pie" "-Wl,-z,relro,-z,now" "-nodefaultlibs" "-Wl,--error-limit=0" "-fuse-ld=lld" "-Qunused-arguments"
+  = note: some arguments are omitted. use `--verbose` to show all linker arguments
+  = note: ld.lld: error: undefined symbol: mi_heap_new
+          >>> referenced by MimallocArena.rs:102 (src/bun_alloc/MimallocArena.rs:102)
+          >>>               /tmp/cli-d1/tree/target/debug/build/bun_lint/38e32fce0110c567/out/bun_lint-38e32fce0110c567.6ynuvdfkpjfyi3suhbowhlb8t.1sge5yh.rcgu.o:(<bun_alloc::mimalloc_arena::MimallocArena>::new)
+          
+          ld.lld: error: undefined symbol: mi_process_info
+          >>> referenced by lib.rs:2246 (src/crash_handler/lib.rs:2246)
+          >>>               bun_crash_handler-3499f480d125577c.24qhhncoa7opysaewezqisgrd.08va237.rcgu.o:(bun_crash_handler::draft::print_metadata::<bun_crash_handler::StderrWriter>) in archive /tmp/cli-d1/tree/target/debug/build/bun_crash_handler/3499f480d125577c/out/libbun_crash_handler-3499f480d125577c.rlib
+          
+          ld.lld: error: undefined symbol: compress2
+          >>> referenced by lib.rs:2619 (src/crash_handler/lib.rs:2619)
+          >>>               bun_crash_handler-3499f480d125577c.24qhhncoa7opysaewezqisgrd.08va237.rcgu.o:(bun_crash_handler::draft::encode_trace_string::<bun_io::write::FmtAdapter>) in archive /tmp/cli-d1/tree/target/debug/build/bun_crash_handler/3499f480d125577c/out/libbun_crash_handler-3499f480d125577c.rlib
+          
+          ld.lld: error: undefined symbol: bun_cpu_features
+          >>> referenced by CPUFeatures.rs:99 (src/crash_handler/CPUFeatures.rs:99)
+          >>>               bun_crash_handler-3499f480d125577c.bfbawi2jw6cuikeg5qqodmkrk.08va237.rcgu.o:(<bun_crash_handler::cpu_features::CPUFeatures>::get) in archive /tmp/cli-d1/tree/target/debug/build/bun_crash_handler/3499f480d125577c/out/libbun_crash_handler-3499f480d125577c.rlib
+          
+          ld.lld: error: undefined symbol: is_executable_file
+          >>> referenced by lib.rs:2935 (src/sys/lib.rs:2935)
+          >>>               bun_sys-654a2b423608a031.e2gjnri4j8isv4eylx37ufyvv.14qy516.rcgu.o:(bun_sys::posix_impl::is_executable_file_path) in archive /tmp/cli-d1/tree/target/debug/build/bun_sys/654a2b423608a031/out/libbun_sys-654a2b423608a031.rlib
+          
+          ld.lld: error: undefined symbol: getRSS
+          >>> referenced by lib.rs:4769 (src/sys/lib.rs:4769)
+          >>>               bun_sys-654a2b423608a031.ee61bfsz814mztmv87d3o0ivv.14qy516.rcgu.o:(bun_sys::self_process_memory_usage) in archive /tmp/cli-d1/tree/target/debug/build/bun_sys/654a2b423608a031/out/libbun_sys-654a2b423608a031.rlib
+          
+          ld.lld: error: undefined symbol: getPeakRSS
+          >>> referenced by lib.rs:4778 (src/sys/lib.rs:4778)
+          >>>               bun_sys-654a2b423608a031.ee61bfsz814mztmv87d3o0ivv.14qy516.rcgu.o:(bun_sys::self_process_peak_memory_usage) in archive /tmp/cli-d1/tree/target/debug/build/bun_sys/654a2b423608a031/out/libbun_sys-654a2b423608a031.rlib
+          
+          ld.lld: error: undefined symbol: bun_restore_stdio
+          >>> referenced by output.rs:675 (src/bun_core/output.rs:675)
+          >>>               bun_core-cc73572b3dba021a.2bzx07y68rpf7kub2h5y6evm6.1e1okwl.rcgu.o:(bun_core::output::stdio::restore) in archive /tmp/cli-d1/tree/target/debug/build/bun_core/cc73572b3dba021a/out/libbun_core-cc73572b3dba021a.rlib
+          
+          ld.lld: error: undefined symbol: on_before_reload_process_posix
+          >>> referenced by util.rs:4350 (src/bun_core/util.rs:4350)
+          >>>               bun_core-cc73572b3dba021a.2rqnqu6k1ylginnamkezk3o56.1e1okwl.rcgu.o:(bun_core::util::reload_process) in archive /tmp/cli-d1/tree/target/debug/build/bun_core/cc73572b3dba021a/out/libbun_core-cc73572b3dba021a.rlib
+          
+          ld.lld: error: undefined symbol: highway_index_of_needs_escape_for_javascript_string
+          >>> referenced by lib.rs:504 (src/highway/lib.rs:504)
+          >>>               bun_core-cc73572b3dba021a.5sj5vhy5mbel25bah09zow48e.1e1okwl.rcgu.o:(bun_core::string::immutable::index_of_needs_escape_for_java_script_string) in archive /tmp/cli-d1/tree/target/debug/build/bun_core/cc73572b3dba021a/out/libbun_core-cc73572b3dba021a.rlib
+          
+          ld.lld: error: undefined symbol: highway_contains_newline_or_non_ascii_or_quote
+          >>> referenced by lib.rs:489 (src/highway/lib.rs:489)
+          >>>               bun_core-cc73572b3dba021a.85kc0y03vrpkkojf215p88hio.1e1okwl.rcgu.o:(bun_core::fmt::quoted_writer::<core::fmt::Formatter>) in archive /tmp/cli-d1/tree/target/debug/build/bun_core/cc73572b3dba021a/out/libbun_core-cc73572b3dba021a.rlib
+          
+          ld.lld: error: undefined symbol: simdutf__validate_utf8
+          >>> referenced by simdutf.rs:77 (src/simdutf_sys/simdutf.rs:77)
+          >>>               bun_simdutf_sys-aa45ee3e8b196920.3g13mmjedlwrsrnckjc1dj9ln.004u3kg.rcgu.o:(bun_simdutf_sys::simdutf::validate::utf8) in archive /tmp/cli-d1/tree/target/debug/build/bun_simdutf_sys/aa45ee3e8b196920/out/libbun_simdutf_sys-aa45ee3e8b196920.rlib
+          
+          ld.lld: error: undefined symbol: simdutf__base64_encode
+          >>> referenced by simdutf.rs:226 (src/simdutf_sys/simdutf.rs:226)
+          >>>               bun_simdutf_sys-aa45ee3e8b196920.a3ffuegrn3936i46ooebhnb1u.004u3kg.rcgu.o:(bun_simdutf_sys::simdutf::base64::encode) in archive /tmp/cli-d1/tree/target/debug/build/bun_simdutf_sys/aa45ee3e8b196920/out/libbun_simdutf_sys-aa45ee3e8b196920.rlib
+          
+          ld.lld: error: undefined symbol: mi_heap_destroy
+          >>> referenced by MimallocArena.rs:452 (src/bun_alloc/MimallocArena.rs:452)
+          >>>               bun_alloc-35126272a8c15d1e.30q6yfif9g3lra0i8vb3j4bxd.0i77b60.rcgu.o:(<bun_alloc::mimalloc_arena::MimallocArena as core::ops::drop::Drop>::drop) in archive /tmp/cli-d1/tree/target/debug/build/bun_alloc/35126272a8c15d1e/out/libbun_alloc-35126272a8c15d1e.rlib
+          clang++: error: linker command failed with exit code 1 (use -v to see invocation)
+          
+
+error: could not compile `bun_lint` (lib test) due to 1 previous error
+### finished: 2026-10-01T10:57:11Z rc=101 wall=14s

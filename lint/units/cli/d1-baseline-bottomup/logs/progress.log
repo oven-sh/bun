@@ -1,0 +1,51 @@
+### baseline queued 2026-10-01T10:25:28Z
+### baseline lock acquired 2026-10-01T10:29:32Z HEAD=be1ebe5295 dirty=0
+### 00-bootstrap rc=0 wall=1s 2026-10-01T10:29:37Z
+### 01-bd-version rc=0 wall=13s 2026-10-01T10:29:50Z
+### 10-cargo-check rc=0 wall=3s 2026-10-01T10:29:54Z
+### 11-cargo-clippy rc=101 wall=81s 2026-10-01T10:31:16Z
+### 12-cargo-clippy-no-deps rc=0 wall=52s 2026-10-01T10:32:08Z
+### 13-cargo-fmt rc=0 wall=4s 2026-10-01T10:32:12Z
+### 20-lint-test rc=0 wall=44s 2026-10-01T10:32:57Z
+### 21-diagnostics-test rc=0 wall=16s 2026-10-01T10:33:13Z
+### 22-rules-test rc=0 wall=22s 2026-10-01T10:33:36Z
+### 23-as-node-test rc=0 wall=43s 2026-10-01T10:34:20Z
+### 24-bun-options-test rc=0 wall=26s 2026-10-01T10:34:46Z
+### 30-leak-lint-test rc=1 wall=35s 2026-10-01T10:35:21Z
+### 30-leak-lint-test-timeout180 rc=0 wall=41s 2026-10-01T10:36:03Z
+### 31-leak-diagnostics-test rc=0 wall=21s 2026-10-01T10:36:24Z
+### 32-leak-rules-test rc=1 wall=23s 2026-10-01T10:36:47Z
+### 32-leak-rules-test-timeout180 rc=0 wall=26s 2026-10-01T10:37:13Z
+### scratch queued 2026-10-01T10:37:14Z
+### 33-leak-as-node-test rc=0 wall=40s 2026-10-01T10:37:53Z
+### 34-leak-bun-options-test rc=1 wall=58s 2026-10-01T10:38:52Z
+### 34-leak-bun-options-test-timeout180 rc=0 wall=73s 2026-10-01T10:40:06Z
+### 40-cargo-test rc=101 wall=11s 2026-10-01T10:40:17Z
+### 41-rust-miri rc=0 wall=26s 2026-10-01T10:40:43Z
+### baseline complete 2026-10-01T10:40:44Z dirty=0
+### scratch lock acquired 2026-10-01T10:51:58Z
+### scratch w1-clippy-js-parser rc=0 wall=9s 2026-10-01T10:52:07Z
+### applied 0 2026-10-01T10:52:09Z
+### scratch z0-pristine rc=0 wall=1s 2026-10-01T10:52:10Z
+### applied T 2026-10-01T10:52:10Z
+### scratch t1-trace rc=0 wall=95s 2026-10-01T10:53:45Z
+### applied F 2026-10-01T10:53:45Z
+### scratch f1-test rc=0 wall=10s 2026-10-01T10:53:56Z
+### scratch f2-clippy rc=0 wall=27s 2026-10-01T10:54:23Z
+### scratch f3-fmt rc=0 wall=3s 2026-10-01T10:54:26Z
+### scratch f4-miri-lib rc=0 wall=56s 2026-10-01T10:55:22Z
+### scratch f5-miri-ci-form rc=0 wall=26s 2026-10-01T10:55:48Z
+### scratch f6-check-lib rc=0 wall=46s 2026-10-01T10:56:34Z
+### scratch f7-test-no-lib-flag rc=0 wall=15s 2026-10-01T10:56:49Z
+### applied P0 2026-10-01T10:56:49Z
+### scratch p1-miri-no-standins rc=1 wall=8s 2026-10-01T10:56:57Z
+### applied AR 2026-10-01T10:56:57Z
+### scratch r1-link-arena rc=101 wall=14s 2026-10-01T10:57:11Z
+### scratch r2-miri-arena rc=1 wall=8s 2026-10-01T10:57:19Z
+### applied F 2026-10-01T10:57:20Z
+### scratch x1-check-windows rc=0 wall=88s 2026-10-01T10:58:48Z
+### scratch x2-check-darwin rc=0 wall=57s 2026-10-01T10:59:45Z
+### applied 0 2026-10-01T10:59:45Z
+### scratch z9-pristine rc=0 wall=1s 2026-10-01T10:59:46Z
+### scratch complete 2026-10-01T10:59:46Z
+### clippy queued 2026-10-01T11:02:34Z

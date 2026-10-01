@@ -1,0 +1,4 @@
+### cmd: diff -rq /workspace/wt/cli/src/lint /tmp/cli-d1/tree/src/lint
+### cwd: /tmp/cli-d1/tree
+### start: 2026-10-01T10:59:46Z
+### finished: 2026-10-01T10:59:46Z rc=0 wall=1s

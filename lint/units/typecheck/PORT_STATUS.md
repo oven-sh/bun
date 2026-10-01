@@ -81,6 +81,25 @@ declares it in `lib.rs`:
 | `tspath/extension.go` | `tspath/extension.rs` | tested | |
 | `tspath/ignoredpaths.go` | | not started | binder and checker do not call it |
 
+## Faults, the stand-in log and the loop budget (`internal`, no upstream file of its own)
+
+`internal.rs` is the file of the contract byte for byte (`checker-data-model-contract/bottom-up/crate/src/tscore/internal.rs`,
+133 lines, `std::cell` only), at the path that 22 files of the tree import it from: `crate::internal` (`ast` 12,
+`checker` 6, `binder` 2, `evaluator` 1, `importer` 1). Declared by `bc27b2c968` (the file, and `pub mod internal;` in
+`lib.rs`). No `cargo check` was run with that commit: the survey that follows it is the first cargo compile of the file
+in the real crate, so the state below is `translated` until that run passes. What was checked before: `rustc` alone
+beside the five leaf packages with the rust lints of the workspace denied (the look-ahead of the round-3 survey, a
+scratch root in `/tmp`); `cargo check`, `cargo clippy --all-targets` and `cargo fmt --check` of the contract crate, which
+holds the same bytes (`checker-data-model-contract/bottom-up/data/run.log`); `rustfmt --check --edition 2024` on the file
+in the tree. It has no test of its own: the tests that read it are in `ast/tests.rs` and `checker/c02_program_checker.rs`,
+which cargo does not compile yet.
+
+| what of upstream it stands for | items of `internal.rs` | state | not named by the tree yet |
+| --- | --- | --- | --- |
+| `panic`, `debug.Assert`, a failed type assertion, a read or a write through nil, a write to a nil map or to a frozen file, an id space that is used up, a second parent, a stack that Go would grow, a loop that does not end | `FaultKind` (12 kinds), `Fault { kind, message, detail, id }`, `Faults` (`record`, `count`, `first`, `snapshot`: the first 64 faults) | translated | `FaultKind::StoreBusy` |
+| the stand-in log of typecheck.md K3: a callee that is not ported records its name | `StandIns` (`record`, `is_empty`, `count_of`, `snapshot`) | translated | `is_empty`, `count_of`, `snapshot` |
+| the loops whose end depends on checker state (`checker-data-model-contract/bottom-up/data/loops-with-budget.tsv`; four of them are in the tree) | `LOOP_LIMIT` (1 << 20 turns), `LoopGuard` (`new`, `with_limit`, `turn`) | translated | `with_limit` |
+
 ## Checker: signatures, instantiation, types of symbols, widening (K3 steps 18 to 21)
 
 Commits `1cb4b9c183` and `314fac8c09`. The rows of `c15_calls.rs` and `c47_promised_mapped_template.rs` came in with

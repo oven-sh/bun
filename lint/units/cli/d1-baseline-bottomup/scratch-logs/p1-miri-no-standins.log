@@ -1,0 +1,33 @@
+### cmd: cargo miri test -p bun_lint --lib probe_ -- --test-threads=1
+### cwd: /tmp/cli-d1/tree
+### start: 2026-10-01T10:56:49Z
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.51s
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/build/bun_lint/f5b7f9ac214d98b6/out/bun_lint-f5b7f9ac214d98b6)
+
+running 2 tests
+test probe_shims::probe_highway_past_the_scalar_cutoff ... ok
+test probe_shims::probe_is_all_ascii_past_the_scalar_cutoff ... error: unsupported operation: can't call foreign function `simdutf__validate_ascii` on OS `linux`
+ --> src/bun_core/lib.rs:1466:17
+  |
+  = note: unsupported operation occurred here
+  |
+  = help: this means the program tried to do something Miri does not support; it does not indicate a bug in the program
+  = note: this is on thread `probe_shims::pr`
+  = note: stack backtrace:
+          0: bun_core::is_all_ascii
+              at src/bun_core/lib.rs:1466:18: 1466:79
+          1: probe_shims::probe_is_all_ascii_past_the_scalar_cutoff
+              at src/lint/probe_shims.rs:18:13: 18:42
+          2: probe_shims::probe_is_all_ascii_past_the_scalar_cutoff::{closure#0}
+              at src/lint/probe_shims.rs:16:47: 16:47
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error
+
+error: test failed, to rerun pass `-p bun_lint --lib`
+
+Caused by:
+  process didn't exit successfully: `/root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cli-d1/tree/target/miri/x86_64-unknown-linux-gnu/debug/build/bun_lint/f5b7f9ac214d98b6/out/bun_lint-f5b7f9ac214d98b6 probe_ --test-threads=1` (exit status: 1)
+note: test exited abnormally; to see the full output pass --no-capture to the harness.
+### finished: 2026-10-01T10:56:57Z rc=1 wall=8s

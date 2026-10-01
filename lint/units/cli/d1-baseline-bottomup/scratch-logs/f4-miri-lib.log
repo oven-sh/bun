@@ -1,0 +1,69 @@
+### cmd: cargo miri test -p bun_lint --lib
+### cwd: /tmp/cli-d1/tree
+### start: 2026-10-01T10:54:26Z
+   Compiling bun_core v0.0.0 (/tmp/cli-d1/tree/src/bun_core)
+   Compiling bun_ptr v0.0.0 (/tmp/cli-d1/tree/src/ptr)
+   Compiling bun_errno v0.0.0 (/tmp/cli-d1/tree/src/errno)
+   Compiling bun_boringssl_sys v0.0.0 (/tmp/cli-d1/tree/src/boringssl_sys)
+   Compiling bun_safety v0.0.0 (/tmp/cli-d1/tree/src/safety)
+   Compiling bun_zlib_sys v0.0.0 (/tmp/cli-d1/tree/src/zlib_sys)
+   Compiling bun_base64 v0.0.0 (/tmp/cli-d1/tree/src/base64)
+   Compiling bun_paths v0.0.0 (/tmp/cli-d1/tree/src/paths)
+   Compiling bun_collections v0.0.0 (/tmp/cli-d1/tree/src/collections)
+   Compiling bun_sys v0.0.0 (/tmp/cli-d1/tree/src/sys)
+   Compiling bun_semver v0.0.0 (/tmp/cli-d1/tree/src/semver)
+   Compiling bun_url v0.0.0 (/tmp/cli-d1/tree/src/url)
+   Compiling bun_zlib v0.0.0 (/tmp/cli-d1/tree/src/zlib)
+   Compiling bun_http_types v0.0.0 (/tmp/cli-d1/tree/src/http_types)
+   Compiling bun_analytics v0.0.0 (/tmp/cli-d1/tree/src/analytics)
+   Compiling bun_perf v0.0.0 (/tmp/cli-d1/tree/src/perf)
+   Compiling bun_which v0.0.0 (/tmp/cli-d1/tree/src/which)
+   Compiling bun_threading v0.0.0 (/tmp/cli-d1/tree/src/threading)
+   Compiling bun_dotenv v0.0.0 (/tmp/cli-d1/tree/src/dotenv)
+   Compiling bun_ast v0.0.0 (/tmp/cli-d1/tree/src/ast)
+   Compiling bun_spawn_sys v0.0.0 (/tmp/cli-d1/tree/src/spawn_sys)
+   Compiling bun_uws_sys v0.0.0 (/tmp/cli-d1/tree/src/uws_sys)
+   Compiling bun_io v0.0.0 (/tmp/cli-d1/tree/src/io)
+   Compiling bun_install_types v0.0.0 (/tmp/cli-d1/tree/src/install_types)
+   Compiling bun_react_compiler v0.0.0 (/tmp/cli-d1/tree/src/react_compiler)
+   Compiling bun_crash_handler v0.0.0 (/tmp/cli-d1/tree/src/crash_handler)
+   Compiling bun_options_types v0.0.0 (/tmp/cli-d1/tree/src/options_types)
+   Compiling bun_js_parser v0.0.0 (/tmp/cli-d1/tree/src/js_parser)
+   Compiling bun_lint v0.0.0 (/tmp/cli-d1/tree/src/lint)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 29.70s
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/build/bun_lint/f5b7f9ac214d98b6/out/bun_lint-f5b7f9ac214d98b6)
+
+running 29 tests
+test code_frame::tests::a_file_that_the_list_does_not_hold_gives_no_frame ... ok
+test code_frame::tests::a_position_behind_the_text_is_its_last_byte ... ok
+test code_frame::tests::lines_are_found_in_any_order_of_positions_and_files ... ok
+test code_frame::tests::no_diagnostic_writes_nothing ... ok
+test diagnostic::tests::related_information_is_compared_at_every_depth ... ok
+test diagnosticwriter::tests::the_line_break_of_the_options_ends_a_diagnostic_and_starts_each_chain_message ... ok
+test native_test_shims::tests::text_past_the_scalar_paths_of_bun_core_is_searched_by_the_stand_ins ... ok
+test program::tests::one_diagnostic_is_returned_as_it_is ... ok
+test program::tests::related_information_is_sorted_and_deduplicated_only_where_duplicates_merge ... ok
+test scanner::tests::a_byte_that_starts_no_valid_sequence_decodes_as_one_replacement_character ... ok
+test scanner::tests::lines_and_characters_of_text_that_is_not_valid_utf8_are_those_of_the_reference ... ok
+test tests::a_chain_is_indented_and_related_information_is_a_note ... ok
+test tests::a_chain_is_written_in_pre_order ... ok
+test tests::a_chain_takes_part_in_the_order_and_in_what_is_equal ... ok
+test tests::a_column_counts_utf16_code_units ... ok
+test tests::a_line_break_inside_a_text_is_one_space ... ok
+test tests::a_message_of_the_log_becomes_a_diagnostic ... ok
+test tests::an_operand_is_named_from_the_current_directory ... ok
+test tests::bun_and_tsc_differ_at_the_end_of_the_file_and_after_a_lone_cr ... ok
+test tests::every_line_terminator_of_ecmascript_starts_a_line ... ok
+test tests::related_information_can_be_in_another_file ... ok
+test tests::the_four_categories ... ok
+test tests::the_frame_format ... ok
+test tests::the_order_of_the_reference ... ok
+test tests::the_plain_format_is_sorted_and_has_no_duplicate ... ok
+test tspath::tests::a_name_is_printed_relative_to_the_current_directory_as_the_reference_prints_it ... ok
+test tspath::tests::a_root_is_on_disk_untitled_or_a_url ... ok
+test tspath::tests::an_absolute_name_is_normalized_as_the_reference_normalizes_it ... ok
+test tspath::tests::case_is_folded_as_go_folds_it ... ok
+
+test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 15.29s
+
+### finished: 2026-10-01T10:55:22Z rc=0 wall=56s

@@ -1,0 +1,5 @@
+### cmd: cargo clippy -p bun_js_parser --no-deps
+### cwd: /workspace/wt/cli
+### start: 2026-10-01T10:51:59Z
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.21s
+### finished: 2026-10-01T10:52:06Z rc=0 wall=9s

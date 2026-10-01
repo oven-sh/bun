@@ -1,0 +1,4 @@
+### cmd: cargo fmt -p bun_lint -- --check
+### cwd: /tmp/cli-d1/tree
+### start: 2026-10-01T10:54:23Z
+### finished: 2026-10-01T10:54:26Z rc=0 wall=3s

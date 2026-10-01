@@ -4337,11 +4337,7 @@ impl<'a> Resolver<'a> {
             .ok()?;
         let contents = core::mem::take(&mut entry.contents);
         let _ = entry.close_fd();
-        Some(match contents {
-            crate::cache::Contents::Owned(v) => v,
-            crate::cache::Contents::Empty => Vec::new(),
-            other => other.as_slice().to_vec(),
-        })
+        Some(contents.into_vec())
     }
 
     /// On a successful read, also returns the raw file bytes (even when the
@@ -4385,11 +4381,7 @@ impl<'a> Resolver<'a> {
         // `Contents::Owned`/`Empty`. `TSConfigJSON` owns `Box<[u8]>` copies of
         // every field, so the source bytes are dead once `parse` returns and
         // can be dropped with the local `Source`.
-        let contents = match entry_contents {
-            crate::cache::Contents::Owned(v) => v,
-            crate::cache::Contents::Empty => Vec::new(),
-            other => other.as_slice().to_vec(),
-        };
+        let contents = entry_contents.into_vec();
 
         let source = bun_ast::Source::init_path_string_owned(key_path, contents);
         let file_dir = source.path.source_dir();

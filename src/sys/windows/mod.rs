@@ -4,7 +4,7 @@
 //! it does not belong in this namespace.
 
 #![cfg(windows)]
-#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
+#![allow(non_snake_case, non_camel_case_types)]
 
 use core::ffi::{c_char, c_int, c_void};
 use core::mem::{MaybeUninit, size_of};
@@ -219,9 +219,7 @@ pub(crate) const LONG_PATH_PREFIX: [u16; 4] =
 pub(crate) const NT_OBJECT_PREFIX_U8: [u8; 4] = *b"\\??\\";
 pub const LONG_PATH_PREFIX_U8: [u8; 4] = *b"\\\\?\\";
 
-#[cfg(windows)]
 pub use bun_paths::PathBuffer;
-#[cfg(windows)]
 pub use bun_paths::WPathBuffer;
 
 pub use bun_windows_sys::HANDLE;
@@ -1347,7 +1345,7 @@ pub mod rescle {
         // Allocate UTF-16 strings (global mimalloc; allocator param dropped)
 
         // Icon is a path, so use toWPathNormalized with proper buffer handling
-        let mut icon_buf = bun_paths::WPathBuffer::uninit();
+        let mut icon_buf = bun_paths::w_path_buffer_pool::get();
         let icon_w: Option<&bun_core::WStr> = if let Some(i) = icon {
             let path_w = bun_paths::string_paths::to_w_path_normalized(&mut icon_buf, i);
             // toWPathNormalized returns a slice into icon_buf, need to null-terminate it
@@ -1649,7 +1647,7 @@ pub(crate) fn spawn_watcher_child(
     let flags: DWORD = CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT;
 
     let image_path = exe_path_w();
-    let mut wbuf = bun_paths::WPathBuffer::uninit();
+    let mut wbuf = bun_paths::w_path_buffer_pool::get();
     wbuf.as_mut_slice()[0..image_path.len()].copy_from_slice(image_path.as_slice());
     wbuf.as_mut_slice()[image_path.len()] = 0;
 
@@ -1753,12 +1751,7 @@ pub(crate) fn spawn_watcher_child(
 /// broke when I just used it. Not sure. ... but this works!
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__LoadLibraryBunString(str_: &bun_core::String) -> *mut c_void {
-    #[cfg(not(windows))]
-    {
-        compile_error!("unreachable");
-    }
-
-    let mut buf = bun_paths::WPathBuffer::uninit();
+    let mut buf = bun_paths::w_path_buffer_pool::get();
     // The path is JS-supplied; over-length input must surface as the same
     // `null + GetLastError()` shape `LoadLibraryExW` itself would yield, not
     // a Rust panic unwinding across the `extern "C"` boundary.

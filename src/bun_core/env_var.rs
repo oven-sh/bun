@@ -40,6 +40,14 @@ use crate::ZStr;
 
 new!(pub AGENT: string, "AGENT", {});
 new!(pub BUN_AGENT_RULE_DISABLED: boolean, "BUN_AGENT_RULE_DISABLED", { default: false });
+// A compiled executable decodes ALL of its embedded bytecode at exit and writes one digest line per module here: for
+// comparing two builds of the same sources whose bytecode payloads are laid out differently.
+new!(pub BUN_BYTECODE_DIGEST_OUT: string, "BUN_BYTECODE_DIGEST_OUT", {});
+// For the tests (`bun_bundler::bytecode_order::names_out`): a build with `--bytecode-order`, and a compiled executable
+// that writes an order file (`%p` as in its path), write what they call each function here, to be compared.
+new!(pub BUN_BYTECODE_ORDER_NAMES_OUT: string, "BUN_BYTECODE_ORDER_NAMES_OUT", {});
+// A compiled executable writes the payload order file of this run here at exit; `%p` in the path becomes the pid.
+new!(pub BUN_BYTECODE_ORDER_OUT: string, "BUN_BYTECODE_ORDER_OUT", {});
 new!(pub BUN_COMPILE_TARGET_TARBALL_URL: string, "BUN_COMPILE_TARGET_TARBALL_URL", {});
 new!(pub BUN_CONFIG_DISABLE_COPY_FILE_RANGE: boolean, "BUN_CONFIG_DISABLE_COPY_FILE_RANGE", { default: false });
 new!(pub BUN_CONFIG_DISABLE_ioctl_ficlonerange: boolean, "BUN_CONFIG_DISABLE_ioctl_ficlonerange", { default: false });
@@ -71,6 +79,10 @@ new!(pub BUN_DEBUG_FORCE_NIX_HOST: boolean, "BUN_DEBUG_FORCE_NIX_HOST", { defaul
 new!(pub BUN_INTERNAL_NAPI_FORCE_MUSL_CHECK: boolean, "BUN_INTERNAL_NAPI_FORCE_MUSL_CHECK", { default: false });
 new!(pub BUN_DEBUG_HASH_RANDOM_SEED: unsigned, "BUN_DEBUG_HASH_RANDOM_SEED", { deser: { error_handling: NotSet } });
 new!(pub BUN_DEBUG_QUIET_LOGS: boolean, "BUN_DEBUG_QUIET_LOGS", {});
+// Testing hook for `bun build --compile`, debug builds only: lowers the 4 GiB
+// size limit of the embedded module graph (`StandaloneModuleGraph::to_bytes`)
+// so a test can reach it without a 4 GiB input.
+new!(pub BUN_DEBUG_TEST_STANDALONE_GRAPH_MAX_BYTES: unsigned, "BUN_DEBUG_TEST_STANDALONE_GRAPH_MAX_BYTES", {});
 new!(pub BUN_DEBUG_TEST_TEXT_LOCKFILE: boolean, "BUN_DEBUG_TEST_TEXT_LOCKFILE", { default: false });
 new!(pub BUN_DEV_SERVER_TEST_RUNNER: string, "BUN_DEV_SERVER_TEST_RUNNER", {});
 // Debug-only: when set, `NumberRenamer` dumps the symbol table before

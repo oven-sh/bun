@@ -5,7 +5,6 @@
 //! are safe to drop). Use [`File::into_raw`] to hand the fd off,
 //! [`File::borrow`] for a non-owning `&File` view of someone else's fd.
 //! All methods preserve OS errno via [`crate::Maybe`].
-#![allow(clippy::module_inception)]
 
 use super::*;
 
@@ -143,9 +142,6 @@ impl File {
     // ── read / write ─────────────────────────────────────────────────────
     pub fn read(&self, buf: &mut [u8]) -> Maybe<usize> {
         read(self.handle, buf)
-    }
-    pub fn write(&self, buf: &[u8]) -> Maybe<usize> {
-        write(self.handle, buf)
     }
     pub fn write_all(&self, mut buf: &[u8]) -> Maybe<()> {
         while !buf.is_empty() {
@@ -370,7 +366,7 @@ impl File {
         input_path: &[u8],
     ) -> Maybe<Vec<u8>> {
         let dir = dir.as_fd();
-        let mut buf = bun_paths::PathBuffer::default();
+        let mut buf = bun_paths::path_buffer_pool::get();
         let normalized = bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Loose>(
             top_level_dir,
             &mut buf.0,

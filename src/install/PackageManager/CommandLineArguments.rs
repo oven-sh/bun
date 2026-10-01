@@ -17,7 +17,7 @@ use bun_clap as clap;
 use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_install::npm as Npm;
-use bun_paths::{self as Path, PathBuffer};
+use bun_paths as Path;
 
 use std::sync::OnceLock;
 
@@ -1605,8 +1605,8 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
         }
 
         if let Some(cwd_) = args.option(b"--cwd") {
-            let mut buf = PathBuffer::uninit();
-            let mut buf2 = PathBuffer::uninit();
+            let mut buf = bun_paths::path_buffer_pool::get();
+            let mut buf2 = bun_paths::path_buffer_pool::get();
 
             let final_path: &mut bun_core::ZStr = if !cwd_.is_empty() && cwd_[0] == b'.' {
                 let cwd_len = bun_sys::getcwd(&mut buf[..])?;

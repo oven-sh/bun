@@ -55,15 +55,18 @@ pub fn is_shared_library_name(name: &[u8]) -> bool {
     shared_library_kind(name).is_some()
 }
 
-/// The shared-library names that `os` can load: `.node` anywhere, and the
-/// platform's own extension. A package that ships every platform's prebuilt
-/// binaries embeds them all, and the others are never written out.
+/// The shared-library names that `os` can load: `.node` anywhere, the
+/// platform's own extension, and `.so` on macOS too (dyld loads a Mach-O
+/// under any name, and Python and GLib modules ship as `.so` there). A
+/// package that ships every platform's prebuilt binaries embeds them all,
+/// and the others are never written out.
 pub fn is_shared_library_name_for(name: &[u8], os: OperatingSystem) -> bool {
     match shared_library_kind(name) {
         Some(SharedLibraryKind::Node) => true,
-        Some(SharedLibraryKind::So) => {
-            matches!(os, OperatingSystem::Linux | OperatingSystem::Freebsd)
-        }
+        Some(SharedLibraryKind::So) => matches!(
+            os,
+            OperatingSystem::Linux | OperatingSystem::Freebsd | OperatingSystem::Mac
+        ),
         Some(SharedLibraryKind::Dylib) => os == OperatingSystem::Mac,
         Some(SharedLibraryKind::Dll) => os == OperatingSystem::Windows,
         None => false,
@@ -207,6 +210,10 @@ mod tests {
         assert!(!is_shared_library_name_for(b"libfoo.dylib", linux));
         assert!(is_shared_library_name_for(
             b"libfoo.dylib",
+            OperatingSystem::Mac
+        ));
+        assert!(is_shared_library_name_for(
+            b"module.so",
             OperatingSystem::Mac
         ));
         assert!(is_shared_library_name_for(

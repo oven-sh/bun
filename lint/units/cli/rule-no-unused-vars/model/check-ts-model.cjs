@@ -24,7 +24,8 @@ const run = (code, ext) => {
 	}];
 	return linter.verify(code, config, { filename: `c.${ext}` });
 };
-let total = 0, same = 0, fatal = 0, differ = 0, reports = 0;
+let total = 0, same = 0, fatal = 0, differ = 0, reports = 0, extra = 0, missing = 0, moved = 0;
+const view = !!process.env.BUN_VIEW;
 const one = (code, ext, label) => {
 	total++;
 	let messages;
@@ -35,6 +36,17 @@ const one = (code, ext, label) => {
 	reports += real.length;
 	if (JSON.stringify(real) === JSON.stringify(mine)) { same++; return; }
 	differ++;
+	if (view) {
+		// With BUN_VIEW the model may say less than typescript-eslint, never more: only a line that typescript-eslint has not is printed.
+		const names = list => list.map(x => x.replace(/^\d+:\d+ /, "").replace(/ but .*$/, ""));
+		const more = mine.filter(x => !real.includes(x)), less = real.filter(x => !mine.includes(x));
+		const moreNames = names(more), lessNames = names(less);
+		const trulyMore = more.filter((x, i) => !lessNames.includes(moreNames[i]));
+		missing += less.length - (more.length - trulyMore.length); moved += more.length - trulyMore.length; extra += trulyMore.length;
+		if (trulyMore.length) console.log(`EXTRA ${label}\n   model only: ${JSON.stringify(trulyMore)}`);
+		if (process.env.SHOW_MOVED && more.length - trulyMore.length) console.log(`MOVED ${label}\n   tseslint: ${JSON.stringify(less)}\n   model:    ${JSON.stringify(more)}`);
+		return;
+	}
 	console.log(`DIFFER ${label}\n   tseslint: ${JSON.stringify(real.filter(x => !mine.includes(x)))}\n   model:    ${JSON.stringify(mine.filter(x => !real.includes(x)))}`);
 };
 for (const arg of args) {
@@ -52,4 +64,4 @@ for (const arg of args) {
 		}
 	}
 }
-console.log({ total, same, fatal, differ, reportsOfTseslint: reports });
+console.log(view ? { total, same, fatal, differ, reportsOfTseslint: reports, extra, missing, movedOrOtherText: moved } : { total, same, fatal, differ, reportsOfTseslint: reports });

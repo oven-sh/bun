@@ -117,6 +117,19 @@ module.exports = {
 			return found;
 		};
 
+		// ---- BUN_VIEW=names|chain: what a lint parse does not build (the body and the heritage of an interface, the type of an alias,
+		// an index signature of a class) is not referenced and declares nothing; every identifier token in it marks a variable of its name.
+		const view = process.env.BUN_VIEW || "";
+		const regions = [];
+		const weakNames = new Set(), weakAt = [];
+		const inRegion = at => regions.some(r => at >= r[0] && at < r[1]);
+		const collectRegions = node => {
+			if (node.type === "TSInterfaceDeclaration") regions.push([(node.typeParameters || node.id).range[1], node.range[1], node]);
+			else if (node.type === "TSTypeAliasDeclaration") regions.push([node.typeAnnotation.range[0], node.range[1], node]);
+			else if (node.type === "TSIndexSignature" && node.parent && node.parent.type === "ClassBody") regions.push([node.range[0], node.range[1], node]);
+			for (const [, child] of children(node)) collectRegions(child);
+		};
+		const inlineTypeImport = def => def.type === "ImportBinding" && def.node.type === "ImportSpecifier" && def.node.importKind === "type" && def.parent.importKind !== "type";
 		const isTypeImport = def => def.type === "ImportBinding" && (def.parent.importKind === "type" || (def.node.type === "ImportSpecifier" && def.node.importKind === "type"));
 		const onlyAsType = ref => typeQueries.has(ref.identifier.range[0]) || typePredicates.has(ref.identifier.range[0]);
 		const isUsed = variable => {
@@ -130,7 +143,7 @@ module.exports = {
 			const from = (ref, nodes) => { for (let s = ref.from; s; s = s.upper) if (nodes.includes(s.block)) return true; return false; };
 			const importedAsType = variable.defs.every(isTypeImport);
 			let rhs = null;
-			for (const ref of variable.references) {
+			for (const ref of refsOf(variable)) {
 				const at = ref.identifier.range[0];
 				if (forHeads.has(at)) return true;
 				const target = targets.get(at);
@@ -151,6 +164,7 @@ module.exports = {
 			}
 			return false;
 		};
+		const refsOf = variable => (view ? variable.references.filter(ref => !inRegion(ref.identifier.range[0])) : variable.references);
 		const isMarked = (variable, scope) => {
 			if (variable.name === "this") return true;
 			if (scope.type === "class" && scope.block.id && scope.block.id === variable.identifiers[0]) return true;
@@ -166,6 +180,10 @@ module.exports = {
 			"Program:exit"(program) {
 				walk(program, false, false, null);
 				const scopeManager = sourceCode.scopeManager;
+				if (view) {
+					collectRegions(program);
+					for (const token of sourceCode.ast.tokens) if ((token.type === "Identifier" || token.type === "Keyword") && /^[\p{ID_Start}$_]/u.test(token.value) && inRegion(token.range[0])) { weakNames.add(token.value); weakAt.push(token); }
+				}
 				// `global { }` inside a module declaration: the nearest variable named `global` from that declaration up is used.
 				const quirk = new Set();
 				for (const module of globalBlocks) {
@@ -173,7 +191,15 @@ module.exports = {
 				}
 				// The model may read `parent` here: it stands for "the innermost scope at the identifier", which the scope pass knows.
 				const scopeAt = node => { for (let n = node; n; n = n.parent) { const s = scopeManager.acquire(n, n.type !== "Program"); if (s) return s.type === "functionExpressionName" ? s.childScopes[0] : s; } return scopeManager.scopes[0]; };
+				if (view === "chain") {
+					// every variable of the name on the way up from the scope of the declaration that holds the token
+					for (const token of weakAt) {
+						const region = regions.find(r => token.range[0] >= r[0] && token.range[0] < r[1]);
+						for (let s = scopeAt(region[2]); s; s = s.upper) for (const v of s.variables) if (v.name === token.value) quirk.add(v);
+					}
+				}
 				for (const id of namedInParameters) {
+					if (view && inRegion(id.range[0])) continue;
 					for (let s = scopeAt(id); s; s = s.upper) { const v = s.variables.find(x => x.name === id.name); if (v) { quirk.add(v); break; } }
 				}
 				for (const scope of scopeManager.scopes) {
@@ -181,16 +207,21 @@ module.exports = {
 					scope.variables.forEach((variable, index) => {
 						const def = variable.defs[0];
 						if (!def) return;
+						if (view) {
+							// declared inside what is not built, or by a specifier that the parse pass keeps no record of: no variable
+							if (variable.defs.every(d => !d.name || !d.name.range || inRegion(d.name.range[0]) || inlineTypeImport(d))) return;
+							if (view === "names" && weakNames.has(variable.name)) return;
+						}
 						if (quirk.has(variable) || isMarked(variable, scope)) return;
 						if (variable.defs.some(d => d.type !== "Parameter" && exported.has(d.name.range[0]))) return;
 						if (isUsed(variable)) return;
 						if (def.type === "Parameter" && isPlainParameter(def) &&
-							scope.variables.slice(index + 1).some(v => v.defs.some(d => d.type === "Parameter") && (v.references.length > 0 || quirk.has(v) || isMarked(v, scope)))) return;
-						const asType = variable.references.some(onlyAsType);
+							scope.variables.slice(index + 1).some(v => v.defs.some(d => d.type === "Parameter") && (refsOf(v).length > 0 || quirk.has(v) || isMarked(v, scope)))) return;
+						const asType = refsOf(variable).some(onlyAsType);
 						if (asType && variable.defs.some(d => d.type === "ImportBinding")) return;
-						const writes = variable.references.filter(ref => ref.isWrite() && ref.from.variableScope === scope.variableScope);
+						const writes = refsOf(variable).filter(ref => ref.isWrite() && ref.from.variableScope === scope.variableScope);
 						const id = writes.length > 0 ? writes.at(-1).identifier : variable.identifiers[0];
-						context.report({ node: id, loc: { start: id.loc.start, end: { line: id.loc.start.line, column: id.loc.start.column + 1 } }, messageId: asType ? "usedOnlyAsType" : "unusedVar", data: { varName: variable.name, action: variable.references.some(ref => ref.isWrite()) ? "assigned a value" : "defined" } });
+						context.report({ node: id, loc: { start: id.loc.start, end: { line: id.loc.start.line, column: id.loc.start.column + 1 } }, messageId: asType ? "usedOnlyAsType" : "unusedVar", data: { varName: variable.name, action: refsOf(variable).some(ref => ref.isWrite()) ? "assigned a value" : "defined" } });
 					});
 				}
 			},

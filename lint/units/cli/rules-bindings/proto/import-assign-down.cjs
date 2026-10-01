@@ -52,6 +52,25 @@ const proto = {
 					}
 				}
 			},
+			// A declaration that initializes a name of an import (TypeScript lets the two stand in one scope): the report is at
+			// the for-in or for-of statement around it, else at the name, as getWriteNode finds no other node above a declarator.
+			VariableDeclaration(node) {
+				let at = null;
+				for (let up = node.parent; up; up = up.parent) {
+					if (up.type === "ForInStatement" || up.type === "ForOfStatement") { at = up; break; }
+					if (/Function|StaticBlock|TSModuleBlock/.test(up.type)) break;
+				}
+				(function names(pattern) {
+					if (!pattern) return;
+					switch (pattern.type) {
+						case "Identifier": direct(pattern, at || pattern); break;
+						case "ArrayPattern": pattern.elements.forEach(names); break;
+						case "ObjectPattern": pattern.properties.forEach(p => names(p.type === "RestElement" ? p.argument : p.value)); break;
+						case "RestElement": names(pattern.argument); break;
+						case "AssignmentPattern": names(pattern.left); break;
+					}
+				})({ type: "ArrayPattern", elements: node.declarations.map(d => d.id) });
+			},
 			AssignmentExpression(node) { target(node.left, node); },
 			UpdateExpression(node) { target(node.argument, node); },
 			UnaryExpression(node) {

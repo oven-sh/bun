@@ -15,7 +15,14 @@ const FAMILIES = [
   ["INTERFACE-EXTENDS", "entry of an interface `extends` list that is no expression with type arguments (read as a type by the Discard sink)", r => r.ctx === "iextends"],
   ["CLASS-IMPLEMENTS", "entry of a class `implements` list that is no expression with type arguments (read as a type)", r => r.ctx === "heritage"],
   ["ALIAS-DISCARD", "type of a type alias, read by the Discard sink", r => r.ctx === "alias"],
-  ["IS-PREDICATE", "`x is T` outside a return type", r => r.t !== null && has(r.t, /(^|[\s\[(])(\w+) is\b/) && !has(r.t, /^asserts is\s*$/)],
+  ["INTERFACE-EXTENDS", "", r => r.t === null && has(r.src, /^interface I extends /)],
+  ["CLASS-IMPLEMENTS", "", r => r.t === null && has(r.src, /^class C implements typeof/)],
+  ["IS-PREDICATE", "`x is T` outside a return type", r => (r.t !== null && has(r.t, /(^|[\s\[(])(\w+)\s+is\b/) && !has(r.t, /^asserts is\s*$/)) || (r.t === null && has(r.src, /: b is A/))],
+  ["TPARAM-CONSTRAINT-RESERVED", "constraint of a type parameter that is a reserved word which starts an expression", r => r.t !== null && r.ctx === "tparam" && has(r.t, /^\s*(in|class|delete)$/)],
+  ["ASSIGN-TARGET", "assignment whose target is no left-hand side: `a<b>>=c`", r => r.t === null && has(r.src, /^a<b>>>?=c;$/)],
+  ["DEFINITE-BANG", "`!` after a parameter of an arrow, a pattern, a `for` binding, a method name; `?` after an accessor name", r => r.t === null && has(r.src, /^\(a!|m!\(\)|get a\?\(\)|^let [{\[].*\]?!:|for \(let a!/)],
+  ["TS1357", "enum member followed by neither `,`, `=` nor `}`", r => r.go[0] === 1357],
+  ["EXPORT-TYPE-AS", "`export type as = 1`, `declare namespace N;`, `export declare;`", r => r.t === null && has(r.src, /^export type as = 1;$|^declare namespace N;$|^export declare;$/)],
   ["TUPLE-RESERVED-WORD", "tuple element that starts with a reserved word that starts no type", r => r.t !== null && has(r.t, new RegExp(`^\\[(\\.\\.\\.)?(${RESERVED})\\b`)) && !has(r.t, /^\[(\.\.\.)?(new|typeof|import|void|null|true|false|this)\b/)],
   ["INFER-POSTFIX", "`infer U[]`: a postfix after the type parameter of `infer`", r => r.t !== null && has(r.t, /infer \w+\[\]/)],
   ["OPERATOR-FN", "function or constructor type as the operand of `keyof` or `readonly`", r => r.t !== null && has(r.t, /^(keyof|readonly)\s+(new\s*)?\(/)],
@@ -47,10 +54,10 @@ for (const path of joins) {
     e.ctx[r.ctx ?? r.prod] = (e.ctx[r.ctx ?? r.prod] ?? 0) + 1;
   }
 }
-const title = id => FAMILIES.find(f => f[0] === id)?.[1] ?? "";
+const title = id => FAMILIES.find(f => f[0] === id && f[1] !== "")?.[1] ?? "";
 const list = flag("list");
 console.log(["family", ...files].join("\t"));
-const order = [...FAMILIES.map(f => f[0]), "UNCLASSIFIED"].filter(id => table.has(id));
+const order = [...new Set(FAMILIES.map(f => f[0])), "UNCLASSIFIED"].filter(id => table.has(id));
 for (const id of order) console.log([id, ...files.map(f => table.get(id).counts[f] ?? 0)].join("\t"));
 console.log(["TOTAL", ...files.map(f => order.reduce((n, id) => n + (table.get(id).counts[f] ?? 0), 0))].join("\t"));
 console.log("");

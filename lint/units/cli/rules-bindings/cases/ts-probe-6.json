@@ -1,0 +1,18 @@
+[
+"import { a } from 'x'; var a = 1;",
+"import { a } from 'x'; var a;",
+"import { a } from 'x'; for (var a of []) {}",
+"import { a } from 'x'; for (var a in {}) {}",
+"import { a } from 'x'; var [a = 1] = [];",
+"import { a } from 'x'; var { a } = { a: 1 };",
+"import * as ns from 'x'; var ns = { b: 1 }; ns.b = 2;",
+"import { a } from 'x'; function f() { var a = 1; } { var a = 2; }",
+"import a from 'x'; namespace N { var a = 1; }",
+"import a from 'x'; const b = (a = 1);",
+"import type { a } from 'x'; let a2 = 1; var a = 3;",
+"import { a } from 'x'; try {} catch (e) { var a = e; }",
+"import { a } from 'x'; label: for (var a = 0; a < 1; a++) {}",
+"import { a } from 'x'; export var a = 1;",
+"import { a } from 'x'; declare var a: number; var a = 1;",
+"import { a } from 'x'; using a = null;"
+]

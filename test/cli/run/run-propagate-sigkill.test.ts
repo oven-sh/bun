@@ -2,8 +2,10 @@
 // `bun run <package.json script>`, `bun run <binary>` and `bun install`'s
 // lifecycle scripts all end in `raise_ignoring_panic_handler_raw`
 // (src/bun_core/Global.rs), so whatever is waiting on bun sees the child's real
-// termination status.
-import { describe, expect, test } from "bun:test";
+// termination status. A Ctrl+C that arrives while no child is alive ends in
+// the same place (`raise_default_action`) from the handler in
+// src/spawn/ctrl_c.rs.
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isGlibc, isLinux, isPosix, tempDir } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
 import { constants } from "node:os";
@@ -106,6 +108,26 @@ function project(prefix: string) {
     // What the kernel makes of a default-action signal that the init of a pid
     // namespace raises at itself.
     "raise.c": "int raise(int sig) { (void)sig; return 0; }\n",
+    // `pty <command...>`: runs the command with a terminal on its stdio, copies
+    // its output to stdout and ends the way it ended.
+    "pty.c": `
+      #include <pty.h>
+      #include <signal.h>
+      #include <sys/wait.h>
+      #include <unistd.h>
+      int main(int argc, char** argv) {
+        int master;
+        pid_t pid = forkpty(&master, 0, 0, 0);
+        if (argc < 2 || pid < 0) return 98;
+        if (pid == 0) { execvp(argv[1], argv + 1); _exit(99); }
+        char buf[4096];
+        for (;;) { ssize_t n = read(master, buf, sizeof buf); if (n <= 0 || write(1, buf, n) < 0) break; }
+        int status;
+        if (waitpid(pid, &status, 0) < 0) return 97;
+        if (WIFSIGNALED(status)) kill(getpid(), WTERMSIG(status));
+        return WEXITSTATUS(status);
+      }
+    `,
   });
 }
 
@@ -181,16 +203,75 @@ describe.concurrent.skipIf(!cc)("dies from the child's signal when bun was start
 // does, as exit status 128 + signo. Preloading a raise() that does nothing
 // stands in for the kernel here; the real thing is exercised further down.
 describe.concurrent.skipIf(!cc || !isGlibc)("exits 128 + signo when the re-raise is discarded", () => {
+  // The preloaded raise() and the pty wrapper, built once for the block.
+  let tools: ReturnType<typeof project>;
+  let env: NodeJS.Dict<string>;
+  let pty: string;
+  beforeAll(async () => {
+    tools = project("propagate-signal-tools");
+    const preload = join(String(tools), "libraise.so");
+    pty = join(String(tools), "pty");
+    await Promise.all([
+      compile(String(tools), ["-shared", "-fPIC", "-o", preload, "raise.c"]),
+      compile(String(tools), ["-o", pty, "pty.c", "-lutil"]),
+    ]);
+    env = { ...bunEnv, LD_PRELOAD: preload };
+  });
+  afterAll(() => tools[Symbol.dispose]());
+
   test.each(entryPoints)("%s", async (_, cmd, reports) => {
     using dir = project("propagate-signal-discarded");
     await compile(String(dir), ["-o", "sigmask", "sigmask.c"]);
-    const preload = join(String(dir), "libraise.so");
-    await compile(String(dir), ["-shared", "-fPIC", "-o", preload, "raise.c"]);
 
-    const ended = await run(cmd, String(dir), { ...bunEnv, LD_PRELOAD: preload });
-    expectEnding(ended, reports, { exitCode: 128 + SIGTERM, signalCode: null });
+    expectEnding(await run(cmd, String(dir), env), reports, { exitCode: 128 + SIGTERM, signalCode: null });
+  });
+
+  // The Ctrl+C handler re-raises from signal context. Left without its
+  // fallback, it returns with SIGINT reset to SIG_DFL, and bun goes on running
+  // with every later Ctrl+C discarded as well.
+  test("Ctrl+C with no child alive", async () => {
+    await using proc = spawnPiped([bunExe(), "exec", "yes"], String(tools), env);
+    await waitForOutput(proc, "y\n");
+    proc.kill("SIGINT");
+
+    expect(await exitedSoon(proc)).toEqual({ exitCode: 128 + SIGINT, signalCode: null });
+  });
+
+  // The runtime's own SIGINT/SIGTERM handler (`onExitSignal`, installed when
+  // stdio is a terminal, to put the terminal back) re-raises the same way.
+  test("runtime with a terminal on stdio", async () => {
+    const script = "console.log('up'); setInterval(() => {}, 1000)";
+    await using proc = spawnPiped([pty, bunExe(), "-e", script], String(tools), env);
+    await waitForOutput(proc, "up");
+    const [bun] = childrenOf(proc.pid);
+    expect(bun).toBeDefined();
+    process.kill(bun, "SIGTERM");
+
+    expect(await exitedSoon(proc)).toEqual({ exitCode: 128 + SIGTERM, signalCode: null });
   });
 });
+
+/**
+ * `bun exec yes`: the `yes` builtin runs inside bun, so a Ctrl+C finds no
+ * child alive and the handler in src/spawn/ctrl_c.rs re-raises it at bun.
+ */
+function spawnPiped(cmd: string[], cwd: string, env: NodeJS.Dict<string> = bunEnv) {
+  return Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
+}
+
+/** Resolves once the first output has arrived, i.e. bun is up with its handlers installed. */
+async function waitForOutput(proc: Proc, prefix: string) {
+  const reader = proc.stdout.getReader();
+  const { value } = await reader.read();
+  expect(new TextDecoder().decode(value)).toStartWith(prefix);
+  reader.releaseLock();
+}
+
+/** The process's status, or `null`s if it is still running after a while (it is killed on scope exit). */
+async function exitedSoon(proc: Proc) {
+  for (let i = 0; i < 100 && proc.exitCode === null && proc.signalCode === null; i++) await Bun.sleep(20);
+  return { exitCode: proc.exitCode, signalCode: proc.signalCode };
+}
 
 // Unprivileged user namespaces are how a test gets a pid namespace without
 // being root; kernels and sandboxes that refuse them skip this part. The
@@ -284,6 +365,18 @@ describe.concurrent.skipIf(!canBecomePid1)("as PID 1 of a pid namespace", () => 
       exitCode: 128 + SIGTERM,
       signalCode: null,
     });
+  });
+
+  // No script to forward to: the Ctrl+C is bun's own to die from.
+  test("Ctrl+C with no child alive exits 128 + signo", async () => {
+    using dir = pid1Project();
+    await using proc = spawnAsPid1([bunExe(), "exec", "yes"], String(dir));
+    await waitForOutput(proc, "y\n");
+    const [bun] = childrenOf(proc.pid);
+    expect(bun).toBeDefined();
+    process.kill(bun, "SIGINT");
+
+    expect(await exitedSoon(proc)).toEqual({ exitCode: 128 + SIGINT, signalCode: null });
   });
 
   // Nothing is forwarded to lifecycle scripts: this is the script itself being

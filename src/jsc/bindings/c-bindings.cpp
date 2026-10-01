@@ -633,11 +633,14 @@ extern "C" void bun_restore_stdio()
 }
 
 #if !OS(WINDOWS)
+// bun_core::Global::raise_default_action: SIG_DFL, unblock, raise, and _exit(128 + sig) when the raise is discarded
+// (bun as PID 1 of a pid namespace). Async-signal-safe.
+extern "C" [[noreturn]] void Bun__raiseDefaultAction(int sig);
+
 extern "C" void onExitSignal(int sig)
 {
     bun_restore_stdio();
-    signal(sig, SIG_DFL);
-    raise(sig);
+    Bun__raiseDefaultAction(sig);
 }
 #endif
 

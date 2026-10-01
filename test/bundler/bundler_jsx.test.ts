@@ -1369,7 +1369,8 @@ describe("bundler", () => {
       globalThis.$RefreshReg$ = () => {};
       function useThing() { return 1; }
     `;
-    const signatures = (file: string) => file.split("$RefreshSig$()").length - 1;
+    const signatures = (file: string) =>
+      file.match(/(\$RefreshSig\$|createSignatureFunctionForTransform)\(\)/g)?.length ?? 0;
 
     for (const ext of ["tsx", "jsx"]) {
       itBundled(`jsx/FastRefreshClassStatementMethods.${ext}`, {
@@ -1441,8 +1442,12 @@ describe("bundler", () => {
           }
           console.log(Around().m()());
         `,
+        "/node_modules/react-refresh/runtime.js": /* js */ `
+          export const createSignatureFunctionForTransform = () => fn => fn;
+          export const register = () => {};
+        `,
       },
-      backend: "cli",
+      backend: "api",
       reactFastRefresh: true,
       onAfterBundle(api) {
         expect(signatures(api.readFile("out.js"))).toBe(1);

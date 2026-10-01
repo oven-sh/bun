@@ -175,6 +175,35 @@ fn global(code: u32, args: &[String]) -> Diagnostic {
     }
 }
 
+/// `said`, of the bytes `start..end` of the file at `path`, which reads `text` and whose lines start at `starts`.
+fn located(
+    path: &str,
+    text: &[u8],
+    starts: &[u32],
+    start: u32,
+    end: u32,
+    said: Diagnostic,
+) -> Diagnostic {
+    let (line, character) = line_and_character(text, starts, start);
+    let (end_line, end_character) = line_and_character(text, starts, end.max(start));
+    let source_line = line.saturating_sub(LINES_BEFORE);
+    let last_line = (end_line + LINES_AFTER).min(starts.len() as u32 - 1);
+    Diagnostic {
+        path: path.to_owned(),
+        start,
+        end,
+        line: line + 1,
+        column: character + 1,
+        end_line: end_line + 1,
+        end_column: end_character + 1,
+        source: (source_line..=last_line)
+            .map(|l| line_text(text, starts, l))
+            .collect(),
+        source_line: source_line + 1,
+        ..said
+    }
+}
+
 fn is_declaration_path(path: &str) -> bool {
     path.ends_with(".d.ts") || path.ends_with(".d.mts") || path.ends_with(".d.cts")
 }
@@ -326,12 +355,18 @@ pub fn check(request: &Request) -> Report {
             .errors
             .retain(|e| e.code != 18003 && e.code != 18002);
     }
-    report.diagnostics.extend(
-        project
-            .errors
-            .iter()
-            .map(|ConfigError { code, args }| global(*code, args)),
-    );
+    report
+        .diagnostics
+        .extend(project.errors.iter().map(|ConfigError { code, args, at }| {
+            let said = global(*code, args);
+            match at {
+                Some((path, from, to)) => match disk.read(path) {
+                    Some(text) => located(path, &text, &line_starts(&text), *from, *to, said),
+                    None => said,
+                },
+                None => said,
+            }
+        }));
     let lib_dir = match request.lib_dir {
         Some(dir) => Some(host::from_native(dir)),
         None => host::find_lib_dir(
@@ -450,27 +485,13 @@ pub fn check(request: &Request) -> Report {
         let shown: Vec<Diagnostic> = errors
             .into_iter()
             .map(|e| {
-                let (line, character) = line_and_character(text, &starts, e.start);
-                let (end_line, end_character) =
-                    line_and_character(text, &starts, e.end.max(e.start));
-                let source_line = line.saturating_sub(LINES_BEFORE);
-                let last_line = (end_line + LINES_AFTER).min(starts.len() as u32 - 1);
-                Diagnostic {
-                    path: module.path.clone(),
-                    start: e.start,
-                    end: e.end,
-                    line: line + 1,
-                    column: character + 1,
-                    end_line: end_line + 1,
-                    end_column: end_character + 1,
+                let said = Diagnostic {
                     code: e.code,
                     category: e.category,
                     text: e.text,
-                    source: (source_line..=last_line)
-                        .map(|l| line_text(text, &starts, l))
-                        .collect(),
-                    source_line: source_line + 1,
-                }
+                    ..global(0, &[])
+                };
+                located(&module.path, text, &starts, e.start, e.end, said)
             })
             .collect();
         if let Some(progress) = request.progress {

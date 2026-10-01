@@ -10,6 +10,8 @@ use crate::resolve::{Host, Options, join, normalize, parent_dir};
 pub struct ConfigError {
     pub code: u32,
     pub args: Vec<String>,
+    /// Where it is, if it is anywhere: the file, from, to.
+    pub at: Option<(String, u32, u32)>,
 }
 
 impl ConfigError {
@@ -17,6 +19,7 @@ impl ConfigError {
         ConfigError {
             code,
             args: args.iter().map(|&a| a.to_owned()).collect(),
+            at: None,
         }
     }
 }
@@ -161,6 +164,15 @@ fn parse_config(
         }
     }
     if let Some(compiler) = json.get("compilerOptions").and_then(Json::as_object) {
+        errors.extend(
+            crate::config_options::problems(&text, compiler)
+                .into_iter()
+                .map(|problem| ConfigError {
+                    code: problem.code,
+                    args: problem.args,
+                    at: problem.span.map(|(from, to)| (path.to_owned(), from, to)),
+                }),
+        );
         let mut said = Vec::with_capacity(compiler.len());
         for (key, value) in compiler {
             let value = match value {

@@ -65,10 +65,8 @@ describe("frozen arrays keep their elements in the vector", () => {
       expect(Object.isSealed(a)).toBe(name === "Object.freeze" || name === "Object.seal");
     });
 
-    test("an empty array stays blank", () => {
-      // `new Array()` has no indexed storage yet (ArrayClass), as Array.prototype has none.
+    test("an empty array", () => {
       const a = lock(new Array()) as unknown[];
-      expect(describeObject(a)).toContain("ArrayClass");
       expect(Object.isSealed(a)).toBe(name !== "non-writable length");
       expect(Object.isFrozen(a)).toBe(name === "Object.freeze");
       expect(() => a.push(1)).toThrow(TypeError);

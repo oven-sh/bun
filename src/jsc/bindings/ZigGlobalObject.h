@@ -270,8 +270,11 @@ public:
     JSC::Structure* callSiteStructure() const { return m_callSiteStructure.getInitializedOnMainThread(this); }
 
     JSC::Structure* utilInspectOptionsStructure() const { return m_utilInspectOptionsStructure.getInitializedOnMainThread(this); }
-    JSC::JSFunction* utilInspectFunction() const { return m_utilInspectFunction.getInitializedOnMainThread(this); }
-    JSC::JSFunction* utilInspectStylizeColorFunction() const { return m_utilInspectStylizeColorFunction.getInitializedOnMainThread(this); }
+    // These load node:util, which runs JavaScript: it can throw, and it can ask for them again before it is done.
+    // A LazyProperty allows neither. Null means an exception is pending, which asking again is.
+    JSC::JSFunction* utilInspectFunction();
+    JSC::JSFunction* utilInspectStylizeColorFunction();
+    bool isLoadingUtilInspectFunction() const { return m_isLoadingUtilInspectFunction; }
     JSC::JSFunction* utilInspectStylizeNoColorFunction() const { return m_utilInspectStylizeNoColorFunction.getInitializedOnMainThread(this); }
 
     JSC::JSFunction* wasmStreamingConsumeStreamFunction() const { return m_wasmStreamingConsumeStreamFunction.getInitializedOnMainThread(this); }
@@ -363,6 +366,7 @@ public:
     Ref<Bun::GlobalEventScope> globalEventScope;
     RefPtr<WebCore::MessagePort> m_nodeParentPort;
     bool m_nodeWorkerEntrySettled { false };
+    bool m_isLoadingUtilInspectFunction { false };
 
     void resetOnEachMicrotaskTick();
 
@@ -623,9 +627,9 @@ public:
     V(private, LazyPropertyOfGlobalObject<Structure>, m_pendingVirtualModuleResultStructure)                 \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSSocketHandlersStructure)                           \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_nativeMicrotaskTrampoline)                          \
-    V(private, LazyPropertyOfGlobalObject<JSFunction>, m_utilInspectFunction)                                \
+    V(private, WriteBarrier<JSFunction>, m_utilInspectFunction)                                              \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_utilInspectOptionsStructure)                         \
-    V(private, LazyPropertyOfGlobalObject<JSFunction>, m_utilInspectStylizeColorFunction)                    \
+    V(private, WriteBarrier<JSFunction>, m_utilInspectStylizeColorFunction)                                  \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_utilInspectStylizeNoColorFunction)                  \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_wasmStreamingConsumeStreamFunction)                 \
     V(private, WebCore::JSStreamsRuntime, m_streamsRuntime)                                                  \

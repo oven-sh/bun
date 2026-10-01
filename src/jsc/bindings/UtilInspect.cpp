@@ -30,6 +30,9 @@ Structure* createUtilInspectOptionsStructure(VM& vm, JSC::JSGlobalObject* global
 
 JSObject* createInspectOptionsObject(VM& vm, Zig::GlobalObject* globalObject, unsigned max_depth, bool colors)
 {
+    // The one with colors comes from node:util.
+    if (globalObject->isLoadingUtilInspectFunction())
+        colors = false;
     JSFunction* stylizeFn = colors ? globalObject->utilInspectStylizeColorFunction() : globalObject->utilInspectStylizeNoColorFunction();
     if (!stylizeFn) return nullptr;
     JSObject* options = JSC::constructEmptyObject(vm, globalObject->utilInspectOptionsStructure());
@@ -55,14 +58,17 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     JSObject* options = Bun::createInspectOptionsObject(vm, globalObject, max_depth, colors);
     RETURN_IF_EXCEPTION(scope, {});
 
-    JSFunction* inspectFn = globalObject->utilInspectFunction();
-    RETURN_IF_EXCEPTION(scope, {});
+    // Code that the load of node:util runs can print a value.
+    JSValue inspectFn = jsUndefined();
+    if (!globalObject->isLoadingUtilInspectFunction()) {
+        inspectFn = globalObject->utilInspectFunction();
+        RETURN_IF_EXCEPTION(scope, {});
+    }
     auto callData = JSC::getCallData(functionToCall);
     MarkedArgumentBuffer arguments;
     arguments.append(jsNumber(depth));
-    // Both come from node:util and are null while it is loading, which runs code that can get here.
-    arguments.append(options ? JSValue(options) : jsUndefined());
-    arguments.append(inspectFn ? JSValue(inspectFn) : jsUndefined());
+    arguments.append(options);
+    arguments.append(inspectFn);
 
     auto inspectRet = JSC::profiledCall(globalObject, ProfilingReason::API, functionToCall, callData, thisValue, arguments);
     RETURN_IF_EXCEPTION(scope, {});

@@ -1295,30 +1295,83 @@ it("object property enumeration scales linearly with property count", () => {
   });
 });
 
-it("a custom inspect function that is called while node:util loads gets no empty values", async () => {
-  // The first custom inspect function to be called loads node:util, which calls Object.defineProperty.
-  const script = `
-    const seen = [];
-    const value = {
-      [Symbol.for("nodejs.util.inspect.custom")](depth, options, inspect) {
-        seen.push(typeof options + " " + typeof inspect);
-        return "x";
-      },
-    };
+// The first custom inspect function to be called loads node:util, which calls Object.defineProperty.
+describe.concurrent("printing a value while node:util loads", () => {
+  const prelude = `
+    const types = { [Symbol.for("nodejs.util.inspect.custom")]: (depth, options, inspect) => typeof options + " " + typeof inspect };
+    const stylized = { [Symbol.for("nodejs.util.inspect.custom")]: (depth, options) => options.stylize("x", "string") };
+    const attempt = fn => { try { return fn(); } catch (error) { return error.name + ": " + error.message; } };
     const defineProperty = Object.defineProperty;
-    Object.defineProperty = function (...args) {
+    function during(load, print, once = true) {
+      let printed;
+      Object.defineProperty = function (...args) {
+        if (once) Object.defineProperty = defineProperty;
+        printed = attempt(print);
+        return defineProperty.apply(this, args);
+      };
+      const loaded = attempt(load);
       Object.defineProperty = defineProperty;
-      Bun.inspect(value, { colors: true });
-      return defineProperty.apply(this, args);
-    };
-    Bun.inspect(value, { colors: true });
-    console.log(seen.join(", "));
+      return [printed, loaded];
+    }
   `;
-  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, stderr, exitCode }).toEqual({
-    stdout: "undefined undefined, object function\n",
-    stderr: "",
-    exitCode: 0,
+  const unavailable = "TypeError: util.inspect is not available while node:util is loading";
+  it.each([
+    [
+      "a custom inspect function, with colors",
+      `during(() => Bun.inspect(types, { colors: true }), () => Bun.inspect(types, { colors: true }))`,
+      ["object undefined", "object function"],
+    ],
+    [
+      "a custom inspect function, without colors",
+      `during(() => Bun.inspect(types), () => Bun.inspect(types))`,
+      ["object undefined", "object function"],
+    ],
+    [
+      "one that calls options.stylize",
+      `during(() => Bun.inspect(stylized, { colors: true }), () => Bun.inspect(stylized, { colors: true }))`,
+      ["x", "\x1b[32mx\x1b[39m"],
+    ],
+    [
+      "with colors, when it is loaded for one without",
+      `[...during(() => Bun.inspect(types), () => Bun.inspect(types, { colors: true })), Bun.inspect(stylized, { colors: true })]`,
+      ["object undefined", "object function", "\x1b[32mx\x1b[39m"],
+    ],
+    [
+      "from a replacement that stays",
+      `[...during(() => Bun.inspect(types), () => Bun.inspect(types), false), Bun.inspect(types)]`,
+      ["object undefined", "object function", "object function"],
+    ],
+    [
+      "a BroadcastChannel",
+      `during(() => Bun.inspect(types), () => { const channel = new BroadcastChannel("x"); try { return Bun.inspect(channel); } finally { channel.close(); } })`,
+      [unavailable, "object function"],
+    ],
+    [
+      "a ReadableStream",
+      `during(() => Bun.inspect(types), () => Bun.inspect(new ReadableStream()))`,
+      [unavailable, "object function"],
+    ],
+    [
+      "a PerformanceMark",
+      `during(() => Bun.inspect(types), () => Bun.inspect(performance.mark("m")))`,
+      [unavailable, "object function"],
+    ],
+    [
+      "nothing: the replacement throws, and the next load works",
+      `(() => {
+        Object.defineProperty = () => { Object.defineProperty = defineProperty; throw new Error("from the replacement"); };
+        return [attempt(() => Bun.inspect(types, { colors: true })), Bun.inspect(types, { colors: true })];
+      })()`,
+      ["Error: from the replacement", "object function"],
+    ],
+  ])("%s", async (_, expression, expected) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `${prelude} process.stdout.write(JSON.stringify(${expression}));`],
+      env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: JSON.stringify(expected), stderr: "", exitCode: 0 });
   });
 });

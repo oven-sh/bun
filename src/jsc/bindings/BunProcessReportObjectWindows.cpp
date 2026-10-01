@@ -5,7 +5,7 @@
 #include "BunProcess.h"
 #include "ZigGlobalObject.h"
 #include "FormatStackTraceForJS.h"
-#include "headers.h" // For Bun__Process__createExecArgv and other exports
+#include "headers.h" // For Bun__Process__createReportArgv and other exports
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/JSObject.h"
 #include "JavaScriptCore/JSString.h"
@@ -39,7 +39,7 @@ namespace Bun {
 using namespace JSC;
 
 // External functions
-extern "C" EncodedJSValue Bun__Process__createExecArgv(JSGlobalObject*);
+extern "C" EncodedJSValue Bun__Process__createReportArgv(JSGlobalObject*);
 
 JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Process* process)
 {
@@ -82,7 +82,7 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
         }
 
         // Command line
-        JSValue commandLine = JSValue::decode(Bun__Process__createExecArgv(globalObject));
+        JSValue commandLine = JSValue::decode(Bun__Process__createReportArgv(globalObject));
         RETURN_IF_EXCEPTION(scope, {});
         Bun::putDirectNamed(vm, header, "commandLine"_s, commandLine);
 

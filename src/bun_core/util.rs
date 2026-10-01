@@ -3684,7 +3684,8 @@ fn raw_os_argv() -> Option<&'static [*const core::ffi::c_char]> {
     Some(unsafe { core::slice::from_raw_parts(p, n) })
 }
 
-fn argv_storage() -> &'static [ZBox] {
+/// Immutable OS startup arguments, before BUN_OPTIONS or CLI argument splicing.
+pub fn argv_storage() -> &'static [ZBox] {
     ARGV_STORAGE.get_or_init(|| {
         // Windows: the CRT-provided `char** argv` captured by `init_argv` is
         // ANSI-encoded (CP_ACP) — lossy for non-ASCII argv (e.g.

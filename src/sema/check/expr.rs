@@ -128,8 +128,12 @@ impl<'p> Checker<'p> {
         // `getTypeFromBindingElement`: the defaults in a pattern are looked at afresh every time it is worked out what the pattern
         // implies its initializer to be. The names of the pattern are anything meanwhile.
         let mut afresh = false;
+        let mut visible_from = self.resolution_start;
         if !self.contextual_binding_patterns.is_empty() {
-            afresh = self.is_within_contextual_pattern(file, e);
+            if let Some(floor) = self.contextual_pattern_floor(file, e) {
+                afresh = true;
+                visible_from = visible_from.max(floor.min(self.stack.len()));
+            }
             if !afresh
                 && let Some((known, uncertain)) =
                     self.p.expr_types.get_with_uncertainty(file, e.idx())
@@ -162,7 +166,12 @@ impl<'p> Checker<'p> {
         ) {
             self.resolve_chain_from_the_inside(file, e);
         }
-        if !self.enter(Query::Expr(file, e)) {
+        // `checkExpressionWithContextualType` has no guard against re-entry. A visit begun before the pattern was looked at this way
+        // took its names for what they are declared as: this one does not go the same way.
+        let resolution_start = std::mem::replace(&mut self.resolution_start, visible_from);
+        let entered = self.enter(Query::Expr(file, e));
+        self.resolution_start = resolution_start;
+        if !entered {
             return TypeId::UNRESOLVED;
         }
         let around = std::mem::replace(&mut self.uncertain, false);
@@ -245,13 +254,14 @@ impl<'p> Checker<'p> {
         Some(ty)
     }
 
-    /// Whether `e` is written in a default inside a pattern of which it is being worked out what it implies its initializer to be.
-    fn is_within_contextual_pattern(&self, file: FileId, e: ExprId) -> bool {
+    /// If `e` is written in a default inside a pattern of which it is being worked out what it implies its initializer to be: how
+    /// deep `stack` was when that began.
+    fn contextual_pattern_floor(&self, file: FileId, e: ExprId) -> Option<usize> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut at = bound.expr_parent[e.idx()];
         loop {
             let mut inner = match at {
-                Parent::None | Parent::File => return false,
+                Parent::None | Parent::File => return None,
                 Parent::PatPropDefault(p) => hir[p].value,
                 Parent::PatElemDefault(p) => hir[p].pat,
                 _ => {
@@ -262,12 +272,12 @@ impl<'p> Checker<'p> {
             loop {
                 match bound.pat_parent[inner.idx()] {
                     PatParent::Prop(outer, _) | PatParent::Elem(outer, _) => {
-                        if self
+                        if let Some(pattern) = self
                             .contextual_binding_patterns
                             .iter()
-                            .any(|p| p.0 == file && p.1 == outer)
+                            .find(|p| p.0 == file && p.1 == outer)
                         {
-                            return true;
+                            return Some(pattern.2);
                         }
                         inner = outer;
                     }
@@ -279,7 +289,7 @@ impl<'p> Checker<'p> {
                         at = Parent::ParamDefault(p);
                         break;
                     }
-                    PatParent::None => return false,
+                    PatParent::None => return None,
                 }
             }
             at = self.parent_of(file, at);
@@ -948,7 +958,12 @@ impl<'p> Checker<'p> {
             crate::bind::assignment_declaration_kind(hir, a)
                 == crate::bind::JsDeclarationKind::ThisProperty
         };
-        if *declared_in != file || !assignments.iter().all(is_this_property) {
+        // `thisAssignmentDeclarationTyped`
+        let is_annotated = |&a: &ExprId| hir.jsdoc_type(JsDocTypeOwner::Assign(a)).is_some();
+        if *declared_in != file
+            || !assignments.iter().all(is_this_property)
+            || assignments.iter().any(is_annotated)
+        {
             return None;
         }
         // `getDeclaringConstructor`
@@ -2043,6 +2058,12 @@ impl<'p> Checker<'p> {
                 }
                 // To the default of a parameter only a `this` parameter that is written counts.
                 if !self.is_in_parameter_initializer(file, e) {
+                    // `getSignatureOfFullSignatureType` comes before `getSignatureFromDeclaration`.
+                    if let Some(sig) = self.full_signature(file, func)
+                        && let Some(this) = self.sig_this_type(sig)
+                    {
+                        return Some(this);
+                    }
                     // `getSignatureFromDeclaration`: if only one accessor of a pair says what `this` is, that goes for both.
                     let wanted = match f.kind {
                         FnKind::Getter => Some(FnKind::Setter),
@@ -3266,11 +3287,13 @@ impl<'p> Checker<'p> {
         if !self.enter(Query::LiteralProp(file, p)) {
             return TypeId::UNRESOLVED;
         }
+        let cycles_before = self.cycles;
         let ty = self.type_of_literal_prop_uncached(file, p);
+        let came_back = self.cycles != cycles_before;
         if self.leave() {
             self.p.literal_prop_types.set(file, p.idx(), ty);
         } else {
-            self.hold_for_now(file, p, ty);
+            self.hold_for_now(file, p, ty, came_back);
         }
         ty
     }
@@ -3318,6 +3341,11 @@ impl<'p> Checker<'p> {
             // `checkExpressionForMutableLocation`
             _ => {
                 let ty = self.type_of_expr(file, prop.value);
+                // `checkPropertyAssignment`, `checkShorthandPropertyAssignment`: `node.Type()`
+                let annotation = hir.jsdoc_type(JsDocTypeOwner::Prop(p));
+                if annotation.is_some() {
+                    return self.type_from_node(file, annotation);
+                }
                 if self.in_const_context(file, prop.value) {
                     return self.regular(ty);
                 }
@@ -3462,7 +3490,7 @@ impl<'p> Checker<'p> {
                 }
                 let r = self.type_of_expr(file, right);
                 let truthy = self.remove_definitely_falsy(l);
-                let truthy = self.non_nullable(truthy);
+                let truthy = self.non_nullable_operand(truthy);
                 self.union_reduced(&[truthy, r])
             }
             BinOp::Nullish => {
@@ -3472,7 +3500,7 @@ impl<'p> Checker<'p> {
                     return l;
                 }
                 let r = self.type_of_expr(file, right);
-                let present = self.non_nullable(l);
+                let present = self.non_nullable_operand(l);
                 self.union_reduced(&[present, r])
             }
             BinOp::Add => {

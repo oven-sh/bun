@@ -202,6 +202,23 @@ impl<'p, 'a> Lower<'p, 'a> {
                 .import_attributes
                 .push((with_keyword.max(0) as u32, attributes));
         }
+        // `parseModuleSpecifier`. An attempt that was abandoned and made again says everything twice, and nothing is made of a
+        // comment that belongs to no node.
+        let mut specifiers = syntax.specifier_expressions;
+        specifiers.dedup_by_key(|specifier| specifier.loc.start);
+        for specifier in &specifiers {
+            let pos = pos_of(specifier.loc);
+            let is_dropped = this
+                .jsdoc
+                .list
+                .iter()
+                .zip(&this.jsdoc_is_attached)
+                .any(|(doc, &is_attached)| !is_attached && (doc.start..doc.end).contains(&pos));
+            if !is_dropped {
+                let specifier = this.expr(specifier);
+                this.b.file.specifier_expressions.push(specifier);
+            }
+        }
         this.fill_in_pending_parts();
         this.b.file.parens.sort_unstable_by_key(|p| p.0.0);
         this.finish_jsdoc();

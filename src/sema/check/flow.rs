@@ -4987,12 +4987,15 @@ impl<'p> Checker<'p> {
                         }
                         // `getTypeOfExpression` checks an expression again while it is being checked, and ends at the loop. `enter` refuses
                         // all but the reference itself, so a cycle through a value assigned on a back edge may not be one in TypeScript.
+                        // `mark_circle_from` tells which are.
                         let in_loop = !walk.loops.is_empty();
                         if in_loop {
                             self.eager.push(self.stack.len());
+                            self.loop_values.push(self.stack.len());
                         }
                         let assigned = self.assigned_type(walk, value);
                         if in_loop {
+                            self.loop_values.pop();
                             self.eager.pop();
                         }
                         return Some(reduce(self, declared, assigned));

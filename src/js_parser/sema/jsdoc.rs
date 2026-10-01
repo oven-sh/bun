@@ -42,6 +42,8 @@ pub(crate) struct TypeExpr {
     pub(crate) ty: ts::TypeId,
     /// Where it starts, the `...` included.
     pub(crate) pos: u32,
+    /// Where the token after it starts.
+    pub(crate) end: u32,
     /// `...T` (`JSDocVariadicType`)
     pub(crate) is_variadic: bool,
     /// `T=` (`JSDocOptionalType`)
@@ -115,6 +117,8 @@ pub(crate) struct ClassName {
     /// `a.b.c`
     pub(crate) name: Vec<Name>,
     pub(crate) type_args: Option<ts::IdList<ts::Type>>,
+    /// Where the token after the type arguments starts.
+    pub(crate) end: u32,
 }
 
 pub(crate) struct ImportSpecifier {
@@ -135,6 +139,8 @@ pub(crate) struct Import {
     /// The module specifier and where it is. `None` if it is no string.
     pub(crate) specifier: Option<(StoreStr, u32)>,
     pub(crate) mode: ts::ResolutionMode,
+    /// Where the token after it starts.
+    pub(crate) end: u32,
 }
 
 pub(crate) enum TagKind {
@@ -176,6 +182,8 @@ pub(crate) struct JsDoc {
     pub(crate) tags: Vec<Tag>,
     /// What the parser objects to in it: start and code.
     pub(crate) errors: Vec<(u32, u32)>,
+    /// What the checker objects to in its syntax, which it only sees once that is reparsed.
+    pub(crate) checker_errors: Vec<(u32, u32)>,
 }
 
 /// The JSDoc comments of a file that can have tags, in source order.
@@ -322,6 +330,70 @@ fn is_word_part(c: u8) -> bool {
     is_word_start(c) || c.is_ascii_digit()
 }
 
+/// `peekUnicodeEscape`: the code point that the `\uXXXX` or `\u{X}` at `at` stands for, and where the escape ends.
+fn unicode_escape(text: &[u8], at: usize) -> Option<(u32, usize)> {
+    if text.get(at) != Some(&b'\\') || text.get(at + 1) != Some(&b'u') {
+        return None;
+    }
+    let is_extended = text.get(at + 2) == Some(&b'{');
+    let start = at + 2 + usize::from(is_extended);
+    let (mut end, mut value) = (start, 0u32);
+    while let Some(digit) = text.get(end).and_then(|&c| (c as char).to_digit(16)) {
+        if !is_extended && end == start + 4 {
+            break;
+        }
+        value = value.saturating_mul(16).saturating_add(digit);
+        end += 1;
+    }
+    if is_extended {
+        return (end > start && value <= 0x10FFFF && text.get(end) == Some(&b'}'))
+            .then_some((value, end + 1));
+    }
+    (end == start + 4).then_some((value, end))
+}
+
+/// `IsIdentifierPart` if `is_part`, else `IsIdentifierStart`, of a code point.
+fn is_word_code_point(c: u32, is_part: bool) -> bool {
+    match u8::try_from(c) {
+        Ok(c) if is_part => is_word_part(c),
+        Ok(c) => is_word_start(c),
+        Err(_) => true,
+    }
+}
+
+/// `scanIdentifierParts`: where the identifier that goes on at `at` ends.
+fn end_of_word_parts(text: &[u8], mut at: usize) -> usize {
+    loop {
+        match text.get(at) {
+            Some(&c) if is_word_part(c) => at += 1,
+            Some(b'\\') => match unicode_escape(text, at) {
+                Some((c, end)) if is_word_code_point(c, true) => at = end,
+                _ => return at,
+            },
+            _ => return at,
+        }
+    }
+}
+
+/// The identifier `text` with what its unicode escapes stand for in their place.
+pub(crate) fn unescaped_name(text: &[u8]) -> Vec<u8> {
+    let mut name = Vec::with_capacity(text.len());
+    let mut at = 0;
+    while let Some(&c) = text.get(at) {
+        match unicode_escape(text, at).and_then(|(c, end)| Some((char::from_u32(c)?, end))) {
+            Some((c, end)) => {
+                name.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
+                at = end;
+            }
+            None => {
+                name.push(c);
+                at += 1;
+            }
+        }
+    }
+    name
+}
+
 /// `jsdocState`
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum State {
@@ -405,19 +477,22 @@ impl<'p, 'a> Reader<'p, 'a> {
             is_in_lexer: false,
         };
         let tags = reader.comment(start);
+        let (errors, checker_errors) = reader.take_errors(logged);
         JsDoc {
             start: start as u32,
             end: end as u32,
             tags,
-            errors: reader.take_errors(logged),
+            errors,
+            checker_errors,
         }
     }
 
-    /// What was logged since the log had `before` messages, errors and warnings, by the codes TypeScript has for it.
-    fn take_errors(&mut self, before: (usize, u32, u32)) -> Vec<(u32, u32)> {
+    /// What was logged since the log had `before` messages, errors and warnings, by the codes TypeScript has for it: the errors of
+    /// its parser, and those of its checker.
+    fn take_errors(&mut self, before: (usize, u32, u32)) -> (Vec<(u32, u32)>, Vec<(u32, u32)>) {
         let source = self.p.source.contents();
         let log = self.p.log();
-        let mut errors = Vec::new();
+        let (mut errors, mut checker_errors) = (Vec::new(), Vec::new());
         for msg in log.msgs.drain(before.0..) {
             if msg.kind != bun_ast::Kind::Err {
                 continue;
@@ -430,12 +505,20 @@ impl<'p, 'a> Reader<'p, 'a> {
                 // `checkTypeReferenceNode`: `A.<T>` is as good as `A<T>` in a comment.
                 Some((0 | 8020, _)) | None => {}
                 Some((code, delta)) => {
-                    errors.push(((offset as i64 + i64::from(delta)).max(0) as u32, code));
+                    // `Lexer::ts_grammar_error`, `P::ts_checker_error`
+                    let is_of_checker =
+                        msg.data.text.starts_with(b"TG") || msg.data.text.starts_with(b"TC");
+                    let list = if is_of_checker {
+                        &mut checker_errors
+                    } else {
+                        &mut errors
+                    };
+                    list.push(((offset as i64 + i64::from(delta)).max(0) as u32, code));
                 }
             }
         }
         (log.errors, log.warnings) = (before.1, before.2);
-        errors
+        (errors, checker_errors)
     }
 
     /// `parseErrorAt`
@@ -562,9 +645,19 @@ impl<'p, 'a> Reader<'p, 'a> {
             b'.' => Token::Dot,
             b'`' => Token::Backtick,
             b'(' | b')' | b'>' | b'#' => Token::Other,
+            b'\\' => match unicode_escape(text, pos) {
+                Some((c, after)) if is_word_code_point(c, false) => {
+                    end = end_of_word_parts(text, after);
+                    Token::Word
+                }
+                _ => Token::Unknown,
+            },
             _ if is_word_start(c) => {
                 while text.get(end).is_some_and(|&c| is_word_part(c) || c == b'-') {
                     end += 1;
+                }
+                if text.get(end) == Some(&b'\\') {
+                    end = end_of_word_parts(text, end);
                 }
                 Token::Word
             }
@@ -739,9 +832,18 @@ impl<'p, 'a> Reader<'p, 'a> {
         let from = self.start;
         let mut import = Import::default();
         self.p.scopes_in_order.truncate(0);
+        let kept = self.p.type_syntax_mut().specifier_expressions.len();
         let result = Self::read_import_declaration(self.p, &mut import);
+        // `reparseUnhosted` makes nothing of a tag without an import clause.
+        if !import.has_clause {
+            self.p
+                .type_syntax_mut()
+                .specifier_expressions
+                .truncate(kept);
+        }
         self.p.lexer.skips_jsdoc_asterisks = false;
         self.leave_lexer(result);
+        import.end = self.start as u32;
         import.mode = self.resolution_mode_override(from);
         import
     }
@@ -1232,6 +1334,7 @@ impl<'p, 'a> Reader<'p, 'a> {
         TypeExpr {
             ty,
             pos,
+            end: self.start as u32,
             is_variadic,
             is_optional,
         }
@@ -1411,11 +1514,16 @@ impl<'p, 'a> Reader<'p, 'a> {
         self.set_skips_leading_asterisks(true);
         let type_args = self.read_type_arguments();
         self.set_skips_leading_asterisks(false);
+        let end = self.start as u32;
         if used_brace {
             self.skip_whitespace();
             self.expect(Token::CloseBrace);
         }
-        ClassName { name, type_args }
+        ClassName {
+            name,
+            type_args,
+            end,
+        }
     }
 
     /// `parseJSDocTypeNameWithNamespace`, or a missing name.

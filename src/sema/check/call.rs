@@ -223,7 +223,7 @@ impl<'p> Checker<'p> {
     }
 
     /// Whether what is expected of `e` can change its type at all.
-    fn depends_on_context(&self, file: FileId, e: ExprId) -> bool {
+    pub(super) fn depends_on_context(&self, file: FileId, e: ExprId) -> bool {
         let hir = self.hir(file);
         match hir[e].kind {
             ExprKind::Object(_)
@@ -284,6 +284,9 @@ impl<'p> Checker<'p> {
         let keeps = std::mem::replace(&mut self.keeps_arg_contexts, false);
         let resolved = self.resolve_call_uncached(file, call);
         let failure = self.pending_failure_sig.take();
+        if is_under_way {
+            self.report_call_resolved_again(file, call, resolved);
+        }
         self.keeps_arg_contexts = keeps;
         self.asking_for_context = asking;
         self.resolution_start = resolution_start;
@@ -3836,6 +3839,8 @@ impl<'p> Checker<'p> {
                     of: Box::new([]),
                 });
                 let ret = self.type_of_signature(generalized, construct);
+                let returned_type = self.sig_return(sig);
+                self.note_single_signature_type(ret, returned_type, mapper);
                 let (params, this) = (self.sig_params(sig), self.sig_this_type(sig));
                 return self.p.types.intern_sig(SigData::Synth {
                     type_params: Box::new([]),

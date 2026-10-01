@@ -581,9 +581,21 @@ impl<'p> Checker<'p> {
                     let f = self.enclosing_fn(file, Parent::Stmt(s))?;
                     self.contextual_type_for_return_expression(file, e, f)
                 }
+                // `tryGetTypeFromTypeNode(parent)`
+                StmtKind::ExportDefault(_) | StmtKind::ExportAssign(_) => {
+                    let annotation = hir.jsdoc_type(JsDocTypeOwner::Export(s));
+                    annotation
+                        .is_some()
+                        .then(|| self.type_from_node(file, annotation))
+                }
                 _ => None,
             },
             Parent::Prop(p) => {
+                // `getContextualTypeForObjectLiteralElement`: `element.Type()`
+                let annotation = hir.jsdoc_type(JsDocTypeOwner::Prop(p));
+                if annotation.is_some() {
+                    return Some(self.type_from_node(file, annotation));
+                }
                 if let Some(known) = self.explicit_context(file, e) {
                     return Some(known);
                 }
@@ -1444,6 +1456,11 @@ impl<'p> Checker<'p> {
                 _ => None,
             },
             ExprKind::Assign { op, target, value } => {
+                // `binary.Type`
+                let annotation = hir.jsdoc_type(JsDocTypeOwner::Assign(parent));
+                if annotation.is_some() {
+                    return Some(self.type_from_node(file, annotation));
+                }
                 if e != value || !matches!(op, None | Some(BinOp::Or | BinOp::Nullish | BinOp::And))
                 {
                     return None;
@@ -1581,8 +1598,22 @@ impl<'p> Checker<'p> {
                 }
                 // `this.x = value`, where `x` is declared without saying what it is: it is what is assigned to it.
                 ExprKind::This => {
-                    // In JavaScript the assignment may be what declares the property (`binary.Symbol != nil`): nothing is expected of it.
-                    if hir.is_js && bound.this_properties.iter().any(|x| x.3 == assignment) {
+                    // In JavaScript the assignment may be what declares the property (`binary.Symbol != nil`): nothing is expected of it,
+                    // unless the first declaration says what the property is (`binary.Symbol.ValueDeclaration.Type()`).
+                    if hir.is_js
+                        && let Some(&(class, is_static, declared, _)) =
+                            bound.this_properties.iter().find(|x| x.3 == assignment)
+                        && bound
+                            .this_properties_of(class, is_static)
+                            .iter()
+                            .find(|x| x.2 == declared)
+                            .is_none_or(|first| {
+                                hir.jsdoc_type(JsDocTypeOwner::Assign(first.3)).is_none()
+                            })
+                    {
+                        return None;
+                    }
+                    if self.declares_member_of_object_literal(file, assignment, obj) {
                         return None;
                     }
                     let this = self.type_of_expr(file, obj);
@@ -1644,6 +1675,54 @@ impl<'p> Checker<'p> {
             }
         }
         Some(self.declared_type_of_reference(file, target))
+    }
+
+    /// `bindThisPropertyAssignment`, `getThisClassAndSymbolTable`: whether `assignment`, which assigns to a property of `this`, is in
+    /// a method or an accessor of an object literal in JavaScript. It declares a member of the symbol of the literal then
+    /// (`binary.Symbol != nil`). Not if a property of that name has a type of its own (`ValueDeclaration.Type() != nil`).
+    fn declares_member_of_object_literal(
+        &self,
+        file: FileId,
+        assignment: ExprId,
+        this: ExprId,
+    ) -> bool {
+        use crate::bind::{JsDeclarationKind, assignment_declaration_kind};
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        if assignment_declaration_kind(hir, assignment) != JsDeclarationKind::ThisProperty {
+            return false;
+        }
+        let ExprKind::Assign { target, .. } = hir[assignment].kind else {
+            return false;
+        };
+        let name = match hir[target].kind {
+            // `this.#name = value` declares nothing.
+            ExprKind::Dot { name_pos, .. } if hir.text.get(name_pos as usize) == Some(&b'#') => {
+                return false;
+            }
+            ExprKind::Dot { name, .. } => name,
+            _ => Atom::NONE,
+        };
+        let Some(Ok(func)) = self.this_container(file, this) else {
+            return false;
+        };
+        if !matches!(
+            hir[func].kind,
+            FnKind::Method | FnKind::Getter | FnKind::Setter
+        ) {
+            return false;
+        }
+        let FnOwner::Expr(owner) = bound.fns[func.idx()].owner else {
+            return false;
+        };
+        let Parent::Prop(p) = bound.expr_parent[owner.idx()] else {
+            return false;
+        };
+        let ExprKind::Object(props) = hir[bound.prop_owner[p.idx()]].kind else {
+            return false;
+        };
+        !props.iter().any(|x| {
+            hir[x].key == PropKey::Name(name) && hir.jsdoc_type(JsDocTypeOwner::Prop(x)).is_some()
+        })
     }
 
     /// Whether the binder took `assignment` for the declaration of a property of a function (`binary.Symbol != nil`).
@@ -1917,6 +1996,27 @@ impl<'p> Checker<'p> {
                     of: Box::new([]),
                 }))
             }
+        }
+    }
+
+    /// `getContextualCallSignature`: the call signature of `ty` that `func` can have, going by how many parameters it requires.
+    pub(super) fn contextual_call_signature(
+        &mut self,
+        file: FileId,
+        func: FnId,
+        ty: TypeId,
+    ) -> Option<SigId> {
+        let required = self.required_own_params(file, func);
+        let mut fitting: SmallVec<[SigId; 4]> = SmallVec::new();
+        for s in self.signatures(ty, false) {
+            if !self.is_arity_smaller(file, func, s, required) {
+                fitting.push(s);
+            }
+        }
+        match fitting[..] {
+            [] => None,
+            [only] => Some(only),
+            _ => self.intersected_signature(&fitting),
         }
     }
 
@@ -2260,6 +2360,9 @@ impl<'p> Checker<'p> {
             && let Some(taken) = self.annotated_setter_type(file, func)
         {
             return Some(taken);
+        }
+        if let Some(returned) = self.return_type_of_full_signature(file, func) {
+            return Some(returned);
         }
         if let Some(sig) = self.contextual_signature(file, func)
             && !self.is_resolving_return_type(sig)

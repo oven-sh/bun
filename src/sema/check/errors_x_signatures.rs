@@ -456,7 +456,7 @@ fn has_written_body(hir: &hir::File, f: FnId) -> bool {
 }
 
 /// Where the leading `this` parameter of `f` is, if it has one.
-fn this_parameter(hir: &hir::File, f: FnId) -> Option<u32> {
+pub(super) fn this_parameter(hir: &hir::File, f: FnId) -> Option<u32> {
     let (text, func) = (&hir.text[..], &hir[f]);
     if func.kind == FnKind::Arrow || text.get(func.anchor as usize) != Some(&b'(') {
         return None;
@@ -633,7 +633,8 @@ fn check_grammar_parameter_list(
             }
         } else if question.is_some() || param.flags.contains(Flags::OPTIONAL) {
             seen_optional = true;
-            if param.default.is_some() {
+            // A `?` made from a `@param` tag is not written.
+            if param.default.is_some() && !param.flags.contains(Flags::REPARSED) {
                 out.push(Diagnostic {
                     start: name,
                     code: 1015,

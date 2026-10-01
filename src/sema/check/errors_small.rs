@@ -75,7 +75,7 @@ pub(super) fn has_parameter_list_error(hir: &hir::File, func: &Func) -> bool {
             }
         } else if param.flags.contains(Flags::OPTIONAL) {
             seen_optional = true;
-            if param.default.is_some() {
+            if param.default.is_some() && !param.flags.contains(Flags::REPARSED) {
                 return true;
             }
         } else if seen_optional && param.default.is_none() {

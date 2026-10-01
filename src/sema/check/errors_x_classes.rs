@@ -1,5 +1,5 @@
 //! Classes and interfaces against what they extend, and what only the inside of a class can get wrong:
-//! 4112 4113 4114 4115 4116 4117 4127 (`override`), 4121 4122 4123 4128 (`override` in a JavaScript file); 2508 2509 2510 2545 2797
+//! 4112 4113 4114 4115 4116 4117 4127 (`override`), 4119 to 4123 4128 (`override` in a JavaScript file); 2508 2509 2510 2545 2797
 //! 2675 (what a class extends); 2422 (what it implements); 2312 2499 (what an interface extends); 2725 (a class called `Object`);
 //! 2376 2401 (where `super()` is called); 2715 (an abstract property read while the instance is set up); 2816 (`this` in a static
 //! initializer of a decorated class).
@@ -795,7 +795,7 @@ impl Checker<'_> {
         let hir = self.hir(file);
         let class = &hir[c];
         // Otherwise only what says `override` is looked at.
-        let looks_at_all = self.p.files.options.no_implicit_override && !hir.is_js;
+        let looks_at_all = self.p.files.options.no_implicit_override;
         for m in class.members.iter() {
             let member = &hir[m];
             if !looks_at_all
@@ -865,9 +865,8 @@ impl Checker<'_> {
         let has_override = member.flags.contains(Flags::OVERRIDE);
         let no_implicit_override = self.p.files.options.no_implicit_override;
         let is_js = self.hir(file).is_js;
-        // A member without `override` is only checked under `noImplicitOverride`. JSDoc is not parsed, so a JavaScript member
-        // without the keyword may still have an `@override` tag: whether it has the modifier is unknown.
-        if !has_override && (!no_implicit_override || is_js) {
+        // A member without `override` is only checked under `noImplicitOverride`.
+        if !has_override && !no_implicit_override {
             return;
         }
         let mut report = |code: u32| {

@@ -1198,6 +1198,8 @@ pub struct File {
     pub deferred_import_calls: Vec<(ExprId, u32)>,
     /// `with { .. }` of imports and exports: the start of `with`, and the attributes as an `ExprKind::Object`.
     pub import_attributes: Vec<(u32, ExprId)>,
+    /// The module specifiers of imports and exports that are no string literals. They are bound, and nothing in them is checked.
+    pub specifier_expressions: Vec<ExprId>,
     /// The expressions written in parentheses, in order, and where the parentheses open. Nothing else is kept of them.
     pub parens: Vec<(ExprId, u32)>,
     /// What comments at the top say about JSX in this file.
@@ -1466,6 +1468,7 @@ impl File {
             import_options,
             deferred_import_calls,
             import_attributes,
+            specifier_expressions,
             checker_errors,
             after_skipped,
             stray_decorators,

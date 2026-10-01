@@ -1793,9 +1793,41 @@ impl<'p> Checker<'p> {
         ty
     }
 
+    /// `getIntendedTypeFromJSDocTypeReference`, of a name with type arguments, which `checkNoTypeArguments` objects to.
+    fn jsdoc_primitive_with_type_arguments(
+        &mut self,
+        file: FileId,
+        node: TypeNodeId,
+    ) -> Option<TypeId> {
+        let hir = self.hir(file);
+        let TypeNodeKind::Ref { name, args } = hir[node].kind else {
+            return None;
+        };
+        if args.is_empty() || name.len() != 1 || !hir.is_in_jsdoc(hir[node].pos) {
+            return None;
+        }
+        Some(match self.files().atoms.bytes(hir.id_at(name, 0)) {
+            b"String" => TypeId::STRING,
+            b"Number" => TypeId::NUMBER,
+            b"BigInt" => TypeId::BIGINT,
+            b"Boolean" => TypeId::BOOLEAN,
+            b"Void" => TypeId::VOID,
+            b"Undefined" => self.undefined_as_declared(),
+            b"Null" if self.p.files.options.strict_null_checks => TypeId::NULL,
+            b"Null" => TypeId::NULL_DECLARED,
+            b"Function" | b"function" => self.global_ref(known::Function, &[]),
+            _ => return None,
+        })
+    }
+
     fn type_from_node_uncached(&mut self, file: FileId, node: TypeNodeId) -> TypeId {
         let hir = self.hir(file);
         let scope = self.bound(file).type_scope[node.idx()];
+        if hir.is_js
+            && let Some(ty) = self.jsdoc_primitive_with_type_arguments(file, node)
+        {
+            return ty;
+        }
         match hir[node].kind {
             TypeNodeKind::Error => TypeId::UNRESOLVED,
             TypeNodeKind::Keyword(k) => match k {
@@ -2081,7 +2113,7 @@ impl<'p> Checker<'p> {
                     // The module is no value.
                     if names.is_empty()
                         && is_followed
-                        && !self.files().flags(value).intersects(SymFlags::VALUE)
+                        && !self.files().symbol_flags(value).intersects(SymFlags::VALUE)
                     {
                         return TypeId::ANY;
                     }
@@ -2161,6 +2193,26 @@ impl<'p> Checker<'p> {
                     }
                     sym = next;
                 }
+                // `getDeclaredTypeOfAlias`: `resolveSymbol` does not follow an `export =` that is a namespace as well as an alias.
+                if self.files().flags(sym).contains(SymFlags::ALIAS)
+                    && !self.type_flags_of_symbol(sym).intersects(SymFlags::TYPE)
+                {
+                    let Some(target) = self.files().resolve_alias(sym) else {
+                        return if self.is_alias_in_error(sym) {
+                            TypeId::ANY
+                        } else {
+                            TypeId::UNRESOLVED
+                        };
+                    };
+                    // `checkNoTypeArguments`
+                    if !args.is_empty()
+                        || !self.type_flags_of_symbol(target).intersects(SymFlags::TYPE)
+                    {
+                        return TypeId::ANY;
+                    }
+                    let ty = self.declared_type(target);
+                    return self.regular(ty);
+                }
                 // The module is no type; too few type arguments or too many.
                 if !self.type_flags_of_symbol(sym).intersects(SymFlags::TYPE) {
                     return TypeId::ANY;
@@ -2173,6 +2225,9 @@ impl<'p> Checker<'p> {
                 self.written_type_reference(sym, &args)
             }
             TypeNodeKind::Ref { name, args } => {
+                if let Some(intended) = self.intended_type_of_jsdoc_reference(file, node) {
+                    return intended;
+                }
                 let names: SmallVec<[Atom; 4]> = hir.ids(name).collect();
                 // A name nothing goes by is an error, and what is in error can be anything.
                 let Some(found) = self
@@ -2181,6 +2236,13 @@ impl<'p> Checker<'p> {
                 else {
                     return TypeId::ANY;
                 };
+                // `getIntendedTypeFromJSDocTypeReference`
+                if self.is_jsdoc_object_with_arguments(file, node) {
+                    let key = self.type_from_node(file, hir.id_at(args, 0));
+                    if !self.is_valid_index_key_type(key) {
+                        return TypeId::ANY;
+                    }
+                }
                 // `Resolve`: from its static members and from the expression it extends, the type parameters of a class are out of
                 // reach.
                 if names.len() == 1
@@ -2286,7 +2348,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `Resolve`, continued past the scope that declares `skipped`: the symbol found for `name` from `scope` has no type meaning.
-    fn resolve_type_name_beyond(
+    pub(super) fn resolve_type_name_beyond(
         &self,
         file: FileId,
         mut scope: ScopeId,
@@ -2309,12 +2371,50 @@ impl<'p> Checker<'p> {
             .filter(|&outer| outer != skipped)
     }
 
+    /// `getIntendedTypeFromJSDocTypeReference`, as far as it depends on `noImplicitAny`: what `Object`, `array` and `promise` stand for
+    /// in a JSDoc comment. The name is not looked up then.
+    pub(super) fn intended_type_of_jsdoc_reference(
+        &mut self,
+        file: FileId,
+        node: TypeNodeId,
+    ) -> Option<TypeId> {
+        if self.p.files.options.no_implicit_any {
+            return None;
+        }
+        let hir = self.hir(file);
+        let TypeNodeKind::Ref { name, args } = hir[node].kind else {
+            return None;
+        };
+        if name.len() != 1 || !hir.is_in_jsdoc(hir[node].pos) {
+            return None;
+        }
+        match self.files().atoms.bytes(hir.id_at(name, 0)) {
+            b"Object" => Some(TypeId::ANY),
+            b"array" if args.is_empty() => Some(self.array_of(TypeId::ANY)),
+            b"promise" if args.is_empty() => Some(self.promise_of(TypeId::ANY)),
+            _ => None,
+        }
+    }
+
     /// The first type alias declaration of `sym`.
     fn alias_declaration(&self, sym: Sym) -> Option<(FileId, AliasId)> {
         declarations_of(self.files(), sym).find_map(|(file, decl)| match decl {
             Decl::Alias(alias) => Some((file, alias)),
             _ => None,
         })
+    }
+
+    /// Whether `node` is written `Object<K, V>` in a JSDoc comment. The parser makes `Record<K, V>` of it.
+    pub(super) fn is_jsdoc_object_with_arguments(&self, file: FileId, node: TypeNodeId) -> bool {
+        let hir = self.hir(file);
+        let pos = hir[node].pos;
+        matches!(hir[node].kind, TypeNodeKind::Ref { name, args }
+            if args.len() == 2 && name.len() == 1 && hir.id_at(name, 0) == known::Record)
+            && hir.is_in_jsdoc(pos)
+            && hir
+                .text
+                .get(pos as usize..)
+                .is_some_and(|text| text.starts_with(b"Object"))
     }
 
     /// `isLocalTypeAlias`: whether the type alias `sym` is declared inside a function.
@@ -2422,6 +2522,10 @@ impl<'p> Checker<'p> {
             c.members.iter().next().map(|m| hir[m].pos),
         ];
         let pos = hir[node].pos;
+        // The comment of the first member is written after the expression and before the member.
+        if hir.is_in_jsdoc(pos) && pos >= self.end_of_expr(file, c.extends) {
+            return false;
+        }
         pos >= self.start_of(file, c.extends) && next.into_iter().flatten().all(|end| pos < end)
     }
 
@@ -2909,6 +3013,56 @@ impl<'p> Checker<'p> {
             .intern_sig(SigData::Decl { file, func, mapper })
     }
 
+    /// `getSignatureOfFullSignatureType`: the signature a JSDoc `@type` tag gives `func` as a whole.
+    pub(super) fn full_signature(&mut self, file: FileId, func: FnId) -> Option<SigId> {
+        let hir = self.hir(file);
+        let node = hir.jsdoc_type(JsDocTypeOwner::Fn(func));
+        if node.is_none()
+            || !matches!(
+                hir[func].kind,
+                FnKind::Decl | FnKind::Method | FnKind::Expr | FnKind::Arrow
+            )
+        {
+            return None;
+        }
+        let ty = self.type_from_node(file, node);
+        self.single_call_signature(ty, false)
+    }
+
+    /// `getSignaturesOfSymbol`: the signature the declaration `func` adds to its symbol.
+    pub(super) fn sig_of_declaration(&mut self, file: FileId, func: FnId) -> SigId {
+        match self.full_signature(file, func) {
+            Some(full) => full,
+            None => self.sig_of_fn(file, func),
+        }
+    }
+
+    /// `getParameterTypeOfFullSignature`, of the parameter of `func` at `index`.
+    pub(super) fn param_type_of_full_signature(
+        &mut self,
+        file: FileId,
+        func: FnId,
+        index: usize,
+    ) -> Option<TypeId> {
+        let sig = self.full_signature(file, func)?;
+        let params = self.sig_params(sig);
+        let hir = self.hir(file);
+        if hir[hir[func].params.at(index)].flags.contains(Flags::REST) {
+            return Some(self.params_as_tuple(&params, index));
+        }
+        Some(self.param_type_at(&params, index).unwrap_or(TypeId::ANY))
+    }
+
+    /// `getReturnTypeOfFullSignature`
+    pub(super) fn return_type_of_full_signature(
+        &mut self,
+        file: FileId,
+        func: FnId,
+    ) -> Option<TypeId> {
+        let sig = self.full_signature(file, func)?;
+        Some(self.sig_return(sig))
+    }
+
     /// The type parameters that are still to be given.
     pub fn sig_type_params(&mut self, sig: SigId) -> List<'p, TypeId> {
         match self.p.types.sig(sig) {
@@ -3175,6 +3329,7 @@ impl<'p> Checker<'p> {
     pub fn sig_predicate(&mut self, sig: SigId) -> Option<Predicate> {
         let (file, func, mapper) = match *self.p.types.sig(sig) {
             SigData::WithReturn { sig: inner, .. } => return self.sig_predicate(inner),
+            SigData::Synth { ref of, .. } if of.len() > 1 => return self.union_sig_predicate(of),
             SigData::Decl { file, func, mapper } => (file, func, mapper),
             _ => return None,
         };
@@ -3207,6 +3362,37 @@ impl<'p> Checker<'p> {
             param: index,
             ty,
             asserts,
+        })
+    }
+
+    /// `getUnionOrIntersectionTypePredicate`, of the signature of a union that stands for `sigs`.
+    fn union_sig_predicate(&mut self, sigs: &[SigId]) -> Option<Predicate> {
+        let mut last: Option<Predicate> = None;
+        let mut types = Vec::with_capacity(sigs.len());
+        for &sig in sigs {
+            match self.sig_predicate(sig) {
+                // All have to be about the same thing, and nothing is made of assertions.
+                Some(predicate) => {
+                    let differs = last.is_some_and(|last| last.param != predicate.param);
+                    if predicate.asserts || differs {
+                        return None;
+                    }
+                    types.push(predicate.ty?);
+                    last = Some(predicate);
+                }
+                // One that returns `false` is passed over.
+                None => {
+                    if !matches!(self.sig_return(sig), TypeId::FALSE | TypeId::FRESH_FALSE) {
+                        return None;
+                    }
+                }
+            }
+        }
+        let last = last?;
+        let ty = self.union(&types);
+        Some(Predicate {
+            ty: Some(ty),
+            ..last
         })
     }
 

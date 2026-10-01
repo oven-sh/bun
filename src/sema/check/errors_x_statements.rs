@@ -1825,6 +1825,17 @@ impl Checker<'_> {
                 ));
             }
         }
+        // `checkExternalImportOrExportDeclaration` reports 1141 for a module specifier that is no string literal and returns.
+        for &specifier in &hir.specifier_expressions {
+            let range = self.start_of(file, specifier)..self.end_of_expr(file, specifier);
+            out.retain(|d| {
+                !range.contains(&d.start)
+                    || d.code == 1141
+                    || is_said_by_the_binder(d.code)
+                    || is_said_by_the_parser(d.code)
+                        && hir.early_errors.contains(&(d.start, d.code))
+            });
+        }
         if !skipped.is_empty() {
             out.retain(|d| {
                 !skipped

@@ -715,12 +715,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[cold]
     #[inline(never)]
     fn skip_fn_type_args_without_arrow(&mut self, has_head: bool) -> Result<bool, Error> {
-        if self.lexer.token != T::TOpenParen
-            || !(has_head || self.is_unambiguously_start_of_function_type())
-        {
+        if self.lexer.token != T::TOpenParen {
+            if !has_head {
+                return Ok(false);
+            }
+            // `parseParameters`: without a "(" the list is missing, and the token stays.
+            let open_paren = self.lexer.loc().start;
+            self.lexer.expect(T::TOpenParen)?;
+            if self.should_keep_types() {
+                self.finish_params(&[], Some(TypeId::NONE), open_paren);
+            }
+        } else if has_head || self.is_unambiguously_start_of_function_type() {
+            self.skip_typescript_fn_args()?;
+        } else {
             return Ok(false);
         }
-        self.skip_typescript_fn_args()?;
         self.lexer.expect(T::TEqualsGreaterThan)?;
         Ok(true)
     }
@@ -3346,6 +3355,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         let saved_contexts = self.enter_list(ListKind::TypeParameters);
+        let mut is_empty = true;
         while !is_at_greater_than(self) {
             match self.classify_list_token(ListKind::TypeParameters)? {
                 ListStep::Element => {}
@@ -3353,6 +3363,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ListStep::Over => break,
             }
             let element_start = self.lexer.loc();
+            is_empty = false;
             let parameter = self.skip_type_parameter_tolerant(flags, &mut result)?;
             if keeps {
                 is_complete &= parameter.is_some();
@@ -3374,6 +3385,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
         self.lexer.list_contexts = saved_contexts;
+        // `checkGrammarTypeParameterList`
+        if is_empty {
+            self.lexer.ts_grammar_error(
+                bun_ast::Range {
+                    loc: less_than,
+                    len: 1,
+                },
+                1098,
+            );
+        }
 
         self.lexer.expect_greater_than::<false>()?;
         self.mark_type_syntax(

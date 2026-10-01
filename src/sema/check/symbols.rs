@@ -167,6 +167,11 @@ impl<'p> Checker<'p> {
                     && let StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e) =
                         self.hir(file)[stmt].kind
                 {
+                    // `declaration.Type()`
+                    let annotation = self.hir(file).jsdoc_type(JsDocTypeOwner::Export(stmt));
+                    if annotation.is_some() {
+                        return self.type_from_node(file, annotation);
+                    }
                     // A literal stays the literal it is, but for what a JSON file holds (`getTypeOfVariableOrParameterOrPropertyWorker`).
                     let ty = self.type_of_expr(file, e);
                     return if self.hir(file).kind == FileKind::Json {
@@ -229,6 +234,14 @@ impl<'p> Checker<'p> {
             let (Decl::ModuleExports(assignment) | Decl::ExportsProperty(assignment)) = decl else {
                 continue;
             };
+            // `declaration.Type()`: the first declaration that says what it is decides.
+            let annotation = self
+                .hir(file)
+                .jsdoc_type(JsDocTypeOwner::Assign(assignment));
+            if annotation.is_some() {
+                let ty = self.type_from_node(file, annotation);
+                return Some(self.regular_object(ty));
+            }
             // `getAssignmentDeclarationInitializerType`: `Object.defineProperty(exports, "a", descriptor)` declares what the descriptor says.
             if matches!(self.hir(file)[assignment].kind, ExprKind::Call(_)) {
                 let name = self.files().symbol(sym).name;
@@ -373,6 +386,54 @@ impl<'p> Checker<'p> {
             }
             _ => None,
         }
+    }
+
+    /// `getSymbolFlags`: whether the alias `sym` ends at a property, which is a value and nothing else. The symbol tables alone lead
+    /// nowhere then. It is a property of the `export =` value of a module (`getExternalModuleMember`), or the `resolvedSymbol` of
+    /// `a.b` in `exports.x = a.b` and the like (`getTargetOfAliasLikeExpression`).
+    pub(super) fn is_alias_of_property(&mut self, sym: Sym) -> bool {
+        let files = self.files();
+        if !files.flags(sym).contains(SymFlags::ALIAS)
+            || files.resolve_alias_as(sym, SymFlags::TYPE).is_some()
+        {
+            return false;
+        }
+        let (mut last, mut steps) = (sym, 0);
+        while let Some(next) = files.alias_target(last) {
+            steps += 1;
+            if next == last || steps > 32 {
+                return false;
+            }
+            last = files.canonical(next);
+        }
+        if self.imported_property_of_export_equals(last).is_some() {
+            return true;
+        }
+        let Some((file, decl)) = files.declaration_of_alias_symbol(last) else {
+            return false;
+        };
+        let hir = self.hir(file);
+        let e = match decl {
+            Decl::ExportExpr(stmt) => match hir[stmt].kind {
+                StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e) => e,
+                _ => return false,
+            },
+            Decl::ModuleExports(assignment) | Decl::ExportsProperty(assignment) => {
+                match hir[assignment].kind {
+                    ExprKind::Assign { value, .. } => value,
+                    _ => return false,
+                }
+            }
+            _ => return false,
+        };
+        let ExprKind::Dot { obj, name, .. } = hir[e].kind else {
+            return false;
+        };
+        let object = self.type_of_expr(file, obj);
+        let object = self.non_null_type(object);
+        self.is_known(object)
+            && !self.is_any(object)
+            && self.declared_property(object, name).is_some()
     }
 
     /// `resolveESModuleSymbol`: what `import * as ns` names has no signatures, and a `default` where one is made up.
@@ -522,12 +583,22 @@ impl<'p> Checker<'p> {
             origin: Origin::ClassStatic(sym),
             mapper,
         });
-        // `getBaseTypeVariableOfClass`. Where no type parameter is in scope nothing is of such a type, and the expression is left alone.
+        // `getBaseTypeVariableOfClass`
         let Some((file, c)) = class else {
             return statics;
         };
         let extends = self.hir(file)[c].extends;
-        if mapper == MapperId::IDENTITY || extends.is_none() {
+        if extends.is_none() {
+            return statics;
+        }
+        // Where no type parameter is in scope nothing is of such a type. `getBaseConstructorTypeOfClass` checks the expression all
+        // the same, which only shows if a call is resolved for it.
+        if mapper == MapperId::IDENTITY {
+            if matches!(self.hir(file)[extends].kind, ExprKind::Call(_)) {
+                let uncertain = self.uncertain;
+                self.type_of_expr(file, extends);
+                self.uncertain = uncertain;
+            }
             return statics;
         }
         let base = self.type_of_expr(file, extends);
@@ -619,6 +690,16 @@ impl<'p> Checker<'p> {
     /// The type of the property of a module's `export =` value that the import or export specifier `sym` names, if there is one.
     pub(super) fn imported_property_of_export_equals(&mut self, sym: Sym) -> Option<TypeId> {
         self.property_of_export_equals(sym)?.1
+    }
+
+    /// `errorNoModuleMemberSymbol`: whether the import or export specifier `sym` stands for nothing because the `export =` value of its
+    /// module has no property of that name. It has the error type then.
+    pub(super) fn is_missing_from_export_equals(&mut self, sym: Sym) -> bool {
+        !matches!(self.files().alias_target(sym), Some(next) if next != sym)
+            && matches!(
+                self.property_of_export_equals(sym),
+                Some((value, None)) if self.is_known(value) && !self.is_any(value)
+            )
     }
 
     /// `getExternalModuleMember` for an import that resolves to no symbol.
@@ -1052,7 +1133,8 @@ impl<'p> Checker<'p> {
 
     /// What the first to ask for the type of `pat` is told: `getTypeOfVariableOrParameterOrProperty` returns what it worked out, not
     /// what it kept. The two differ for a variable in a circle that goes through a call, which hides the first question from
-    /// the second: the second is in the circle and settles on `any`, the first comes to what the initializer is.
+    /// the second: the second is in the circle and settles on `any`, the first comes to what the initializer is. A variable that is
+    /// in a circle already hides it the same way (`findResolutionCycleStartIndex`).
     /// They also differ for a parameter whose first request resolves the enclosing call (`contextual_param_type_by_argument_index`).
     pub fn type_of_pat_as_first_asked(&mut self, file: FileId, pat: PatId) -> TypeId {
         if let Some(ty) = self.contextual_param_type_by_argument_index(file, pat) {
@@ -2044,6 +2126,9 @@ impl<'p> Checker<'p> {
             let ty = self.return_type_of_fn(file, getter);
             return self.widened_for_declaration(ty);
         }
+        if let Some(ty) = self.param_type_of_full_signature(file, func, index) {
+            return ty;
+        }
         // `getContextuallyTypedParameterType`, `isContextSensitiveFunctionOrObjectLiteralMethod`: of a setter nothing is expected.
         if hir[func].kind != FnKind::Setter
             && let Some(mut ty) = self.contextual_param_type(file, func, index)
@@ -2387,6 +2472,9 @@ impl<'p> Checker<'p> {
         if f.kind == FnKind::Getter
             && let Some(ty) = self.setter_annotation_next_to(file, func)
         {
+            return ty;
+        }
+        if let Some(ty) = self.return_type_of_full_signature(file, func) {
             return ty;
         }
         match f.kind {

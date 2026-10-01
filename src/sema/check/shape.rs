@@ -451,7 +451,7 @@ impl<'p> Checker<'p> {
                 let resolved = self.shape_memo(key, |c| {
                     let mut shape = Shape::default();
                     for &(file, func) in decls.iter() {
-                        let sig = c.sig_of_fn(file, func);
+                        let sig = c.sig_of_declaration(file, func);
                         if c.hir(file)[func].kind == FnKind::ConstructorType {
                             shape.construct.push(sig);
                         } else {
@@ -957,7 +957,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `isValidIndexKeyType`
-    fn is_valid_index_key_type(&mut self, ty: TypeId) -> bool {
+    pub(super) fn is_valid_index_key_type(&mut self, ty: TypeId) -> bool {
         if matches!(ty, TypeId::STRING | TypeId::NUMBER | TypeId::SYMBOL)
             || self.is_pattern_literal(ty)
         {
@@ -1255,6 +1255,9 @@ impl<'p> Checker<'p> {
                 Decl::Interface(i) => (hir[i].members, hir[i].type_params),
                 _ => continue,
             };
+            if !self.is_declaration_of_symbol(sym, file, decl) {
+                continue;
+            }
             let mapper = self.decl_params_mapper(sym, file, params);
             self.add_members(&mut b, file, members, false, mapper, early);
             if let Decl::Class(c) = decl {
@@ -1278,13 +1281,29 @@ impl<'p> Checker<'p> {
         b.shape
     }
 
+    /// `declareSymbolEx`: a class or an interface that is refused the name is listed with what has it, and is a symbol of its own.
+    fn is_declaration_of_symbol(&self, sym: Sym, file: FileId, decl: Decl) -> bool {
+        let bound = self.bound(file);
+        let own = match decl {
+            Decl::Class(c) => bound.class_symbol[c.idx()],
+            Decl::Interface(i) => bound.interface_symbol[i.idx()],
+            _ => return true,
+        };
+        own.is_none() || self.files().sym(file, own) == self.files().canonical(sym)
+    }
+
     /// The declaration of class `sym` that says what it extends.
     fn extending_declaration(&self, sym: Sym) -> Option<(FileId, ClassId)> {
         self.files()
             .decls(sym)
             .into_iter()
             .find_map(|(file, decl)| match decl {
-                Decl::Class(c) if self.hir(file)[c].extends.is_some() => Some((file, c)),
+                Decl::Class(c)
+                    if self.hir(file)[c].extends.is_some()
+                        && self.is_declaration_of_symbol(sym, file, decl) =>
+                {
+                    Some((file, c))
+                }
                 _ => None,
             })
     }
@@ -1363,7 +1382,7 @@ impl<'p> Checker<'p> {
             {
                 continue;
             }
-            sigs.push(self.sig_of_fn(file, f));
+            sigs.push(self.sig_of_declaration(file, f));
         }
         sigs
     }
@@ -1676,6 +1695,9 @@ impl<'p> Checker<'p> {
                 let this = self.intern(TypeData::ThisParam(sym));
                 for (file, decl) in self.files().decls(sym) {
                     let Decl::Class(c) = decl else { continue };
+                    if !self.is_declaration_of_symbol(sym, file, decl) {
+                        continue;
+                    }
                     let hir = self.hir(file);
                     is_abstract |= hir[c].flags.contains(Flags::ABSTRACT);
                     // `resolveAnonymousTypeMembers` instantiates the signatures with what the type parameters around the class stand
@@ -1773,6 +1795,7 @@ impl<'p> Checker<'p> {
                 for (file, decl) in self.files().decls(sym) {
                     if let Decl::Class(c) = decl
                         && self.hir(file)[c].extends.is_some()
+                        && self.is_declaration_of_symbol(sym, file, decl)
                     {
                         let base = self.type_of_expr(file, self.hir(file)[c].extends);
                         // `getBaseConstructorTypeOfClass`: to extend what nothing can be made with is an error, and gives nothing.
@@ -2058,9 +2081,15 @@ impl<'p> Checker<'p> {
             let end = i + list[i..].iter().take_while(|x| x.2 == name).count();
             if !b.has(name) {
                 let assignments: Box<[ExprId]> = list[i..end].iter().map(|x| x.3).collect();
+                // `getDeclarationModifierFlagsFromSymbol`: the modifiers of `symbol.ValueDeclaration`.
+                let modifiers = self.hir(file).jsdoc_modifiers_of(assignments[0]);
+                let mut flags = PropFlags::empty();
+                flags.set(PropFlags::READONLY, modifiers.contains(Flags::READONLY));
+                flags.set(PropFlags::PRIVATE, modifiers.contains(Flags::PRIVATE));
+                flags.set(PropFlags::PROTECTED, modifiers.contains(Flags::PROTECTED));
                 b.add(Prop {
                     name,
-                    flags: PropFlags::empty(),
+                    flags,
                     source: PropSource::Assigned(file, assignments),
                     mapper: MapperId::IDENTITY,
                 });
@@ -2942,7 +2971,20 @@ impl<'p> Checker<'p> {
         // `thisAssignmentDeclarationMethod`
         let mut is_method_only = false;
         // `isConstructorDeclaredThisProperty`
-        if !assignments.is_empty() && assignments.iter().all(|&e| is_this_property(e)) {
+        let all_this = !assignments.is_empty() && assignments.iter().all(|&e| is_this_property(e));
+        // `thisAssignmentDeclarationTyped`: the last annotation counts.
+        let annotation = if all_this {
+            assignments
+                .iter()
+                .rev()
+                .map(|&e| hir.jsdoc_type(JsDocTypeOwner::Assign(e)))
+                .find(|node| node.is_some())
+        } else {
+            None
+        };
+        if let Some(annotation) = annotation {
+            resolved = Some(self.type_from_node(file, annotation));
+        } else if all_this {
             let inherited = match self.class_of_this_property(file, assignments[0]) {
                 Some(class) => self.type_of_property_in_base_class(file, class, name),
                 None => None,
@@ -2968,7 +3010,14 @@ impl<'p> Checker<'p> {
             Some(ty) => ty,
             None => {
                 let mut types = Vec::with_capacity(assignments.len());
+                let mut declared = None;
                 for &e in assignments {
+                    // `declaration.Type()`: the first declaration that says what it is decides.
+                    let annotation = hir.jsdoc_type(JsDocTypeOwner::Assign(e));
+                    if annotation.is_some() {
+                        declared = Some(self.type_from_node(file, annotation));
+                        break;
+                    }
                     // `getAssignmentDeclarationInitializerType`
                     let assigned = match hir[e].kind {
                         ExprKind::Assign { target, value, .. } => {
@@ -2991,7 +3040,9 @@ impl<'p> Checker<'p> {
                         types.push(assigned);
                     }
                 }
-                if types.is_empty() {
+                if let Some(declared) = declared {
+                    declared
+                } else if types.is_empty() {
                     TypeId::ANY
                 } else {
                     let all = self.union(&types);
@@ -3118,6 +3169,45 @@ impl<'p> Checker<'p> {
             return self.type_of_first_parameter(sig);
         }
         TypeId::ANY
+    }
+
+    /// `isReadonlyAssignmentDeclaration`: whether `e` is `Object.defineProperty(f, "name", descriptor)` with a descriptor that has a
+    /// `value` and is not `writable`, or has neither a `value` nor a `set`.
+    pub(super) fn is_readonly_assignment_declaration(&mut self, file: FileId, e: ExprId) -> bool {
+        let hir = self.hir(file);
+        let ExprKind::Call(call) = hir[e].kind else {
+            return false;
+        };
+        let Some(descriptor) = hir.ids(hir[call].args).nth(2) else {
+            return false;
+        };
+        let ty = self.type_of_expr(file, descriptor);
+        if self.type_of_declared_property(ty, known::value).is_none() {
+            return self.type_of_declared_property(ty, known::set).is_none();
+        }
+        let apparent = self.apparent_type(ty);
+        let apparent = self.reduced(apparent);
+        let Some((writable, mapper)) = self.prop_ref(apparent, known::writable) else {
+            return true;
+        };
+        // The property is a `boolean`. What it is given tells `false` from `true`.
+        let writable = match writable.source {
+            PropSource::Literal(of, p) if self.hir(of)[p].kind == PropKind::Init => {
+                self.type_of_expr(of, self.hir(of)[p].value)
+            }
+            _ => self.type_of_prop(writable, mapper),
+        };
+        matches!(writable, TypeId::FALSE | TypeId::FRESH_FALSE)
+    }
+
+    /// `isReadonlySymbol`: whether a declaration of `prop` is a read-only assignment declaration.
+    pub(super) fn has_readonly_assignment_declaration(&mut self, prop: &Prop) -> bool {
+        let PropSource::Assigned(file, declarations) = &prop.source else {
+            return false;
+        };
+        declarations
+            .iter()
+            .any(|&e| self.is_readonly_assignment_declaration(*file, e))
     }
 
     /// `getAssignmentDeclarationInitializerType` for the assignment `target = value`, which declares the property `target`.

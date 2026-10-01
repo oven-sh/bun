@@ -2516,6 +2516,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if !value.is_missing() && p.current_scope().kind == js_ast::scope::Kind::Entry {
                 p.ts_checker_error(path.loc, 1141);
             }
+            if !value.is_missing()
+                && let Some(syntax) = &mut p.type_syntax
+            {
+                syntax.specifier_expressions.push(value);
+            }
         }
 
         // After an import, `with` can be on the next line. The old reader reports `assert` (2880).

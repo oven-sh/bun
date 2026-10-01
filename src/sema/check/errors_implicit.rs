@@ -136,6 +136,8 @@ impl Checker<'_> {
                     // `reportImplicitAny`: one without a name is spoken of as a function expression is.
                     let code = if decl.kind == FnKind::Decl && decl.name.is_none() {
                         7011
+                    } else if decl.flags.contains(Flags::REPARSED) {
+                        7012
                     } else {
                         7010
                     };
@@ -159,7 +161,7 @@ impl Checker<'_> {
                         _ => decl.name == known::empty,
                     };
                     self.explain_to(start, end, code, |c| {
-                        if code == 7011 {
+                        if matches!(code, 7011 | 7012) {
                             vec!["any".to_owned()]
                         } else if is_missing {
                             vec!["(Missing)".to_owned(), "any".to_owned()]
@@ -235,6 +237,9 @@ impl Checker<'_> {
             });
         }
         self.check_assignment_declarations_implicit_any(file, out);
+        if is_checked_js {
+            self.check_binding_element_defaults_implicit_any(file, out);
+        }
         // The patterns of variable declarations that say nothing.
         for d in 0..hir.var_decls.len() {
             let decl = &hir.var_decls[d];
@@ -283,6 +288,90 @@ impl Checker<'_> {
         }
     }
 
+    /// `widenTypeInferredFromInitializer`, as `getBindingElementTypeFromParentType` calls it: in a JavaScript file a binding element with
+    /// the default `[]` and nothing else to go by is an implicit `any[]`. 7031.
+    fn check_binding_element_defaults_implicit_any(
+        &mut self,
+        file: FileId,
+        out: &mut Vec<Diagnostic>,
+    ) {
+        use crate::bind::PatParent;
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        for i in 0..hir.pats.len() {
+            let pat = PatId(i as u32);
+            let PatKind::Ident(name) = hir.pats[i].kind else {
+                continue;
+            };
+            let (pattern, default) = match bound.pat_parent[i] {
+                PatParent::Prop(pattern, p) if !hir[p].is_rest => (pattern, hir[p].default),
+                PatParent::Elem(pattern, e) if !hir[e].is_rest => (pattern, hir[e].default),
+                _ => continue,
+            };
+            if default.is_none() || !is_empty_array_literal(hir, default) {
+                continue;
+            }
+            // `WalkUpBindingElementsAndPatterns`
+            let mut root = pattern;
+            while let PatParent::Prop(outer, _) | PatParent::Elem(outer, _) =
+                bound.pat_parent[root.idx()]
+            {
+                root = outer;
+            }
+            let is_annotated = match bound.pat_parent[root.idx()] {
+                PatParent::Var(d) => hir[d].ty.is_some(),
+                PatParent::Param(p) => hir[p].ty.is_some(),
+                _ => true,
+            };
+            if is_annotated {
+                continue;
+            }
+            let any_array = self.array_of(TypeId::ANY);
+            if self.type_of_pat(file, pat) != any_array {
+                continue;
+            }
+            // An `any[]` that was found for it is not implicit.
+            let taken_apart = self.type_for_binding_element_parent(file, pat, pattern);
+            if self.is_any(taken_apart) {
+                continue;
+            }
+            let taken_apart = self.type_pattern_takes_apart(file, pattern, taken_apart);
+            let found = match bound.pat_parent[i] {
+                PatParent::Prop(_, p) => {
+                    let Some(key) = self.member_name(file, hir[p].key) else {
+                        continue;
+                    };
+                    self.type_of_property(taken_apart, key)
+                }
+                PatParent::Elem(_, e) => {
+                    let PatKind::Array(elems) = hir[pattern].kind else {
+                        continue;
+                    };
+                    let index = (e.0 - elems.start) as usize;
+                    Some(self.element_of_destructured(taken_apart, index, false))
+                }
+                _ => continue,
+            };
+            let empty = self.type_of_expr(file, default);
+            let whole = match found {
+                Some(found) => {
+                    let found = self.narrow_destructured(file, pat, found);
+                    let present = self.non_undefined_type(found);
+                    self.union_reduced(&[present, empty])
+                }
+                None => empty,
+            };
+            if whole != empty {
+                continue;
+            }
+            let start = hir.pats[i].pos;
+            out.push(Diagnostic { start, code: 7031 });
+            let end = self.end_of_pat(file, pat);
+            self.explain_to(start, end, 7031, |c| {
+                vec![c.atom_text(name), "any[]".to_owned()]
+            });
+        }
+    }
+
     /// `getWidenedTypeForAssignmentDeclaration`, `getAssignmentDeclarationInitializerType`: implicit `any` of the exports and
     /// properties that assignments declare. 7008 at each assignment of `[]`, in TypeScript files too. In a JavaScript file also at
     /// `symbol.ValueDeclaration` if every assigned type is `null` or `undefined`.
@@ -314,6 +403,10 @@ impl Checker<'_> {
                     else {
                         continue;
                     };
+                    // The declarations are read up to the first that says what it is.
+                    if hir.jsdoc_type(JsDocTypeOwner::Assign(assignment)).is_some() {
+                        break;
+                    }
                     // `GetRightMostAssignedExpression` also steps through compound assignments.
                     let mut rightmost = assignment;
                     while let ExprKind::Assign { value, .. } = hir[rightmost].kind {
@@ -452,7 +545,11 @@ impl Checker<'_> {
         }
         // Whether tsgo takes the type from the declarations, which is where it reports an assignment of `[]`.
         let mut reads_declarations = true;
-        if let Some(class) = class {
+        let is_annotated = |e: ExprId| hir.jsdoc_type(JsDocTypeOwner::Assign(e)).is_some();
+        if class.is_some() && declarations.iter().any(|&e| is_annotated(e)) {
+            // `thisAssignmentDeclarationTyped`: the annotation is all that is read.
+            reads_declarations = false;
+        } else if let Some(class) = class {
             let is_in_constructor = |e: &&ExprId| matches!(self.this_container(file, **e), Some(Ok(func)) if hir[func].kind == FnKind::Constructor);
             let in_constructor = declarations.iter().filter(is_in_constructor).count();
             if in_constructor == declarations.len() {
@@ -475,6 +572,10 @@ impl Checker<'_> {
         }
         if reads_declarations {
             for &declaration in declarations.iter() {
+                // The declarations are read up to the first that says what it is.
+                if is_annotated(declaration) {
+                    break;
+                }
                 let ExprKind::Assign { target, value, .. } = hir[declaration].kind else {
                     continue;
                 };
@@ -642,7 +743,33 @@ impl Checker<'_> {
     ) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let decl = &hir[func];
+        // `getParameterTypeOfFullSignature` gives every parameter a type, if only `any`.
+        if self.full_signature(file, func).is_some() {
+            return;
+        }
         let mut context_is_known = None;
+        // A leading `this` parameter is not among `params`. The type of a `@this` tag is not its own: the tag is dropped if `this`
+        // is written.
+        if !matches!(decl.kind, FnKind::Getter | FnKind::Setter)
+            && let Some(start) = super::errors_x_signatures::this_parameter(hir, func)
+            && (decl.this_ty.is_none() || hir.is_in_jsdoc(hir[decl.this_ty].pos))
+        {
+            // `getContextualThisParameterType`
+            let is_told = match bound.fns[func.idx()].owner {
+                FnOwner::Expr(e) => {
+                    self.contextual_signature(file, func)
+                        .is_some_and(|sig| self.sig_this_type(sig).is_some())
+                        || !*context_is_known.get_or_insert_with(|| self.is_context_known(file, e))
+                }
+                _ => false,
+            };
+            if !is_told {
+                out.push(Diagnostic { start, code: 7006 });
+                self.explain_to(start, start + 4, 7006, |_| {
+                    vec!["this".to_owned(), "any".to_owned()]
+                });
+            }
+        }
         for (index, p) in decl.params.iter().enumerate() {
             let param = &hir[p];
             if matches!(hir[param.pat].kind, PatKind::Object(_) | PatKind::Array(_)) {
@@ -680,6 +807,36 @@ impl Checker<'_> {
                         out,
                     );
                 }
+            }
+            // `widenTypeInferredFromInitializer`: in a JavaScript file a parameter that defaults to `[]` is an implicit `any[]`.
+            // Without `strictNullChecks` the widening of `undefined[]` says so.
+            if hir.is_js
+                && self.p.files.options.strict_null_checks
+                && decl.kind != FnKind::Setter
+                && param.ty.is_none()
+                && param.default.is_some()
+                && !param.flags.contains(Flags::REST)
+                && is_empty_array_literal(hir, param.default)
+                && let PatKind::Ident(name) = hir[param.pat].kind
+                && hir.jsdoc_type(JsDocTypeOwner::Fn(func)).is_none()
+                && self.is_check_js(file)
+                && match bound.fns[func.idx()].owner {
+                    FnOwner::Expr(e) => {
+                        self.contextual_param_type(file, func, index).is_none()
+                            && *context_is_known
+                                .get_or_insert_with(|| self.is_context_known(file, e))
+                    }
+                    _ => true,
+                }
+            {
+                out.push(Diagnostic {
+                    start: param.pos,
+                    code: 7006,
+                });
+                let end = self.end_of_param(file, p);
+                self.explain_to(param.pos, end, 7006, |c| {
+                    vec![c.atom_text(name), "any[]".to_owned()]
+                });
             }
             if param.ty.is_some() || param.default.is_some() {
                 continue;

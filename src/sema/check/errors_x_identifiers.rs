@@ -3274,13 +3274,14 @@ impl Pass<'_, '_> {
         Some(self.c.type_of_member_declaration(self.file, m))
     }
 
-    /// Whether an assignment in this file declares a property: `f.x = v`, or `this.x = v` and `o.x = v` in JavaScript.
+    /// Whether an assignment in this file declares a property: `f.x = v`, or `this.x = v`, `o.x = v` and `exports.x = v` in JavaScript.
     fn has_assignment_declarations(&self) -> bool {
         let bound = self.bound;
         !bound.declared_fn_expandos.is_empty()
             || !bound.fn_expr_expandos.is_empty()
             || !bound.object_expandos.is_empty()
             || !bound.this_properties.is_empty()
+            || bound.commonjs_indicator.is_some()
     }
 
     /// The second case of `assumeUninitialized`: `prop.ValueDeclaration` is an assignment `a.name = value` in the control flow
@@ -3293,12 +3294,30 @@ impl Pass<'_, '_> {
         let object = self.c.type_of_expr(self.file, obj);
         let apparent = self.c.apparent_type(object);
         let (prop, mapper) = self.c.prop_of(apparent, name)?;
-        let PropSource::Assigned(file, assignments) = &prop.source else {
-            return None;
+        let (file, first) = match &prop.source {
+            PropSource::Assigned(file, assignments) => (*file, *assignments.first()?),
+            // What `exports.name = value` declares is a variable. An alias declaration is no value declaration;
+            // `Object.defineProperty(exports, "name", descriptor)` is one.
+            PropSource::Symbol(sym)
+                if self.c.files().flags(*sym).intersects(SymFlags::VARIABLE) =>
+            {
+                let of = sym.file;
+                let decls = &self.c.files().symbol(*sym).decls;
+                let first = decls.iter().find_map(|&decl| match decl {
+                    Decl::ExportsProperty(x) => match self.c.hir(of)[x].kind {
+                        ExprKind::Assign { value, .. } if self.c.expression_is_alias(of, value) => {
+                            None
+                        }
+                        _ => Some(x),
+                    },
+                    _ => None,
+                })?;
+                (of, first)
+            }
+            _ => return None,
         };
-        let &first = assignments.first()?;
         let container = self.control_flow_container(Node::Expr(e));
-        if *file != self.file
+        if file != self.file
             // The left side of `f[key] = value` is not a property access.
             || !matches!(hir[first].kind, ExprKind::Assign { target, .. } if matches!(hir[target].kind, ExprKind::Dot { .. }))
             || container == Node::Lost
@@ -3539,6 +3558,10 @@ impl Pass<'_, '_> {
                 continue;
             }
             let func = FnId(f as u32);
+            // `getReturnTypeOfFullSignature`, `getParameterTypeOfFullSignature`
+            if self.c.full_signature(self.file, func).is_some() {
+                continue;
+            }
             // What is expected of a function expression comes before what its parameters default to.
             let is_context_known = match owner {
                 FnOwner::Expr(e) => self.c.is_context_known(self.file, e),

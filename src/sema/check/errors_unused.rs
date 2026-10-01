@@ -2082,13 +2082,18 @@ impl Unused<'_> {
                 .iter()
                 .all(|p| self.is_unreferenced_type_parameter(p))
         {
-            // `rangeOfTypeParameters`: from the `<`.
+            // `rangeOfTypeParameters`: from the `<`. A list made of `@template` tags begins at the `@` of the first
+            // (`gatherTypeParameters`), so it is from one before that.
             let first = self.start_of_type_parameter(params.at(0));
-            let open = self
-                .hir
-                .text
-                .get(..first as usize)
-                .and_then(|before| before.iter().rposition(|&c| c == b'<'));
+            let before = self.hir.text.get(..first as usize).unwrap_or_default();
+            let open = if self.hir[params.at(0)].flags.contains(Flags::REPARSED) {
+                before
+                    .windows(b"@template".len())
+                    .rposition(|tag| tag == b"@template")
+                    .map(|at| at.saturating_sub(1))
+            } else {
+                before.iter().rposition(|&c| c == b'<')
+            };
             let start = open.map_or(first.saturating_sub(1), |at| at as u32);
             out.push(Diagnostic { start, code: 6205 });
             self.reported_on

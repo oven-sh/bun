@@ -2277,6 +2277,20 @@ impl Checker<'_> {
                 }
             }
             PropSource::Parameter(f, p) => self.hir(*f)[*p].flags,
+            // The modifiers of the first assignment. Only a member of a class is private or protected.
+            PropSource::Assigned(f, declared) => {
+                let Some(&first) = declared.first() else {
+                    return Flags::empty();
+                };
+                let modifiers = self.hir(*f).jsdoc_modifiers_of(first);
+                if modifiers.is_empty()
+                    || self.bound(*f).this_properties.iter().any(|x| x.3 == first)
+                {
+                    modifiers
+                } else {
+                    modifiers.difference(Flags::PRIVATE | Flags::PROTECTED | Flags::PUBLIC)
+                }
+            }
             _ => Flags::empty(),
         }
     }
@@ -2384,7 +2398,20 @@ impl Checker<'_> {
                     && !member.flags.contains(Flags::ACCESSOR)
                     && matches!(self.bound(f).member_owner[m.idx()], MemberOwner::Class(_))
             };
-            if !is_static && parts.iter().any(|p| matches!(&p.source, PropSource::Members(declared) if declared.iter().any(|d| is_field(d)))) {
+            // In JavaScript so is what `this.name = value` declares.
+            let is_assigned_field = |f: FileId, e: ExprId| {
+                crate::bind::assignment_declaration_kind(self.hir(f), e)
+                    == crate::bind::JsDeclarationKind::ThisProperty
+            };
+            if !is_static
+                && parts.iter().any(|p| match &p.source {
+                    PropSource::Members(declared) => declared.iter().any(|d| is_field(d)),
+                    PropSource::Assigned(f, declared) => {
+                        declared.iter().any(|&e| is_assigned_field(*f, e))
+                    }
+                    _ => false,
+                })
+            {
                 return Some(found(2855, None, containing));
             }
         }

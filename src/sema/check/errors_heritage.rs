@@ -287,7 +287,7 @@ impl Checker<'_> {
         out: &mut Vec<Diagnostic>,
     ) {
         let hir = self.hir(file);
-        let mut issued = false;
+        let mut named: Vec<(MemberId, Atom)> = Vec::new();
         for m in hir[c].members.iter() {
             let member = &hir[m];
             if member.flags.contains(Flags::STATIC)
@@ -301,11 +301,21 @@ impl Checker<'_> {
             {
                 continue;
             }
-            let Some(name) = self.member_name(file, member.key) else {
-                continue;
-            };
+            if let Some(name) = self.member_name(file, member.key) {
+                named.push((m, name));
+            }
+        }
+        // What fits as the two stand is let off, unless that leaves no member to blame.
+        let mut some_fit_neither_way = false;
+        for &(_, name) in &named {
+            some_fit_neither_way |= !self.is_member_assignable(with_this, name)
+                && !self.is_member_assignable(plain, name);
+        }
+        let mut issued = false;
+        for (m, name) in named {
+            let member = &hir[m];
             if !self.is_member_assignable(with_this, name)
-                && !self.is_member_assignable(plain, name)
+                && !(some_fit_neither_way && self.is_member_assignable(plain, name))
             {
                 out.push(Diagnostic {
                     start: member.pos,

@@ -1688,7 +1688,12 @@ impl<'p> Checker<'p> {
     /// What a reference to `base` comes to in the branch taken when the test passes, where it is known to be a `constraint`:
     /// `instantiateTypeWorker` of a substitution type. What is a substitution type still is `constraint & base` where a value
     /// comes from (`getSubstitutionIntersection`) and `base` where one goes to (`getNormalizedType`).
-    fn substitution(&mut self, base: TypeId, constraint: TypeId, as_source: bool) -> TypeId {
+    pub(super) fn substitution(
+        &mut self,
+        base: TypeId,
+        constraint: TypeId,
+        as_source: bool,
+    ) -> TypeId {
         // `getSubstitutionType`
         if self.is_any(constraint) || constraint == TypeId::UNKNOWN || constraint == base {
             return base;
@@ -1717,10 +1722,22 @@ impl<'p> Checker<'p> {
         let (checked, extends) = self.cond_implied_constraint(file, nodes[0], nodes[1]);
         // Substitution types are not represented. `getConditionalFlowTypeOfType` makes one of every reference to the checked type
         // in the branch. A checked type variable (`TypeFlagsTypeVariable`) is replaced through the mapper wherever the branch
-        // references it. Any other checked type is replaced only where it is the whole branch: `any[] extends T ? any[] : never`.
+        // references it. Any other checked type is replaced where it is the whole branch, `any[] extends T ? any[] : never`, or
+        // by making the branch again from its syntax.
         if declared != checked
             && !(self.is_type_variable(checked) && self.references_type_variable(declared, checked))
         {
+            if !self.is_type_variable(checked)
+                && let Some(substituted) = self.true_branch_with_check_type_substituted(
+                    file,
+                    [nodes[0], extends, nodes[2]],
+                    checked,
+                    mapper,
+                    as_source,
+                )
+            {
+                return substituted;
+            }
             return self.instantiate(declared, mapper);
         }
         let extends = self.type_from_node(file, extends);
@@ -5207,6 +5224,13 @@ impl<'p> Checker<'p> {
                     _ => return None,
                 }
             }
+            // `this.name = value` in a member of a class.
+            PropSource::Assigned(file, assignments) => {
+                let first = *assignments.first()?;
+                let bound = self.bound(*file);
+                let class = bound.this_properties.iter().find(|x| x.3 == first)?.0;
+                return Some(self.files().sym(*file, bound.class_symbol[class.idx()]));
+            }
             _ => return None,
         };
         match self.bound(file).member_owner[member.idx()] {
@@ -6250,6 +6274,8 @@ impl<'p> Checker<'p> {
     /// `isObjectTypeWithInferableIndex`: known to have nothing but what is seen.
     pub(super) fn is_object_type_with_inferable_index(&mut self, t: TypeId) -> bool {
         match self.data(t) {
+            // It has no symbol.
+            TypeData::Synth(shape) if shape.literal == Literalness::OfUnknown => false,
             TypeData::Intersection(parts) => parts
                 .iter()
                 .all(|&p| self.is_object_type_with_inferable_index(p)),

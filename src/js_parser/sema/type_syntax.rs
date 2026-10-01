@@ -2538,6 +2538,7 @@ impl<'a> Builder<'a> {
                 Ok(self.file.stmt(StmtKind::Empty, pos))
             }
             T::TExport => {
+                let was_module = self.file.has_module_syntax;
                 self.file.has_module_syntax |= self.depth == 0;
                 let declare = self.said_declare.take();
                 let is_modifier = declare.is_some() && self.is_export_modifier();
@@ -2560,7 +2561,12 @@ impl<'a> Builder<'a> {
                         _ => {}
                     }
                 }
-                self.parse_export(pos, flags)
+                let statement = self.parse_export(pos, flags)?;
+                // `isAnExternalModuleIndicatorNode`
+                if matches!(self.file[statement].kind, StmtKind::ExportAsNamespace(_)) {
+                    self.file.has_module_syntax = was_module;
+                }
+                Ok(statement)
             }
             T::TImport => {
                 let was_module = self.file.has_module_syntax;

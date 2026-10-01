@@ -699,7 +699,7 @@ impl Bound {
             _ => return None,
         };
         let init = hir[d].init;
-        if !hir.is_js || init.is_none() {
+        if !hir.is_js || init.is_none() || hir[d].ty.is_some() {
             return None;
         }
         Some((required_specifier(hir, init)?, part))

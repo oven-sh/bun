@@ -142,6 +142,7 @@ impl Checker<'_> {
                 self.check_bare_returns(file, func, out);
             }
         }
+        self.check_full_signatures(file, out);
         self.check_this_before_super(file, out);
         self.check_super(file, out);
         self.check_this_location(file, out);
@@ -483,6 +484,33 @@ impl Checker<'_> {
         }
     }
 
+    /// `checkFunctionOrMethodDeclaration`, `checkFunctionExpressionOrObjectLiteralMethod`: 8030, of a `@type` tag on a function.
+    fn check_full_signatures(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        for &(owner, node) in &hir.jsdoc_types {
+            let JsDocTypeOwner::Fn(func) = owner else {
+                continue;
+            };
+            if bound.type_scope[node.idx()].is_none()
+                || !matches!(
+                    hir[func].kind,
+                    FnKind::Decl | FnKind::Method | FnKind::Expr | FnKind::Arrow
+                )
+            {
+                continue;
+            }
+            let ty = self.type_from_node(file, node);
+            let ty = self.force(ty);
+            if !self.is_known(ty) || self.contextual_call_signature(file, func, ty).is_some() {
+                continue;
+            }
+            let start = start_of_return_type(hir, node);
+            out.push(Diagnostic { start, code: 8030 });
+            let end = self.end_of_type_node_from(file, node, start);
+            self.explain_to(start, end, 8030, |_| vec![]);
+        }
+    }
+
     /// `checkAllCodePathsInNonVoidFunctionReturnOrThrow`
     fn check_all_code_paths_return(&mut self, file: FileId, func: FnId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
@@ -495,8 +523,19 @@ impl Checker<'_> {
         {
             return;
         }
-        let declared = if f.ret.is_some() {
-            let declared = self.type_from_node(file, f.ret);
+        // `errorNode`: the return type, or else the type of a `@type` tag on the function.
+        let error_node = if f.ret.is_some() {
+            f.ret
+        } else {
+            hir.jsdoc_type(JsDocTypeOwner::Fn(func))
+        };
+        // `getReturnTypeFromAnnotation`
+        let annotated = if f.ret.is_some() {
+            Some(self.type_from_node(file, f.ret))
+        } else {
+            self.return_type_of_full_signature(file, func)
+        };
+        let declared = if let Some(declared) = annotated {
             if !self.is_known(declared) {
                 return;
             }
@@ -525,8 +564,8 @@ impl Checker<'_> {
         let has_explicit_return = bound
             .ids(bound.fns[func.idx()].returns)
             .any(|s| !self.is_flagged_unreachable(file, bound.stmt_flow[s.idx()]));
-        let start = if f.ret.is_some() {
-            start_of_return_type(hir, f.ret)
+        let start = if error_node.is_some() {
+            start_of_return_type(hir, error_node)
         } else {
             self.start_of_function_node(file, func)
         };
@@ -562,8 +601,8 @@ impl Checker<'_> {
             _ => return,
         };
         out.push(Diagnostic { start, code });
-        let end = if f.ret.is_some() {
-            self.end_of_type_node_from(file, f.ret, start)
+        let end = if error_node.is_some() {
+            self.end_of_type_node_from(file, error_node, start)
         } else {
             match bound.fns[func.idx()].owner {
                 FnOwner::Expr(e) if matches!(f.kind, FnKind::Arrow | FnKind::Expr) => {

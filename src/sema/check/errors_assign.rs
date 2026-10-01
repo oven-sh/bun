@@ -233,11 +233,76 @@ impl Checker<'_> {
                 }
             }
         }
+        // `checkPropertyAssignment`, `checkShorthandPropertyAssignment`: the value is held against the type of the `@type` tag.
+        for &(owner, node) in &hir.jsdoc_types {
+            let JsDocTypeOwner::Prop(p) = owner else {
+                continue;
+            };
+            let (value, literal) = (hir[p].value, bound.prop_owner[p.idx()]);
+            // `checkDestructuringAssignment` does not get there.
+            if value.is_none() || literal.is_none() || self.is_assignment_target(file, literal) {
+                continue;
+            }
+            let target = self.type_from_node(file, node);
+            let source = self.type_of_expr(file, value);
+            // `checkExpressionForMutableLocation`, where `target` is what is expected.
+            let source = if self.in_const_context(file, value) {
+                self.regular(source)
+            } else if matches!(hir[value].kind, ExprKind::As { .. } | ExprKind::AsConst(_)) {
+                source
+            } else {
+                self.widen_literal_for_context(source, Some(target))
+            };
+            self.check_assignable_to(
+                file,
+                source,
+                target,
+                Written::At(file, node),
+                |c| {
+                    let end = c.end_if_explained(|c| c.end_of_prop(file, p));
+                    (hir[p].pos, end)
+                },
+                value,
+                false,
+                false,
+                2322,
+                out,
+            );
+        }
         self.check_assertions(file, out);
         self.check_literals_against_patterns(file, out);
         self.check_redeclared_variables(file, out);
         self.check_type_argument_constraints(file, out);
         self.check_mapped_type_keys(file, out);
+        // `checkExportAssignment`: what is exported is held against the type of its `@type` tag.
+        for &(owner, node) in &hir.jsdoc_types {
+            let JsDocTypeOwner::Export(s) = owner else {
+                continue;
+            };
+            let (StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e)) = hir[s].kind else {
+                continue;
+            };
+            if e.is_none() || matches!(bound.expr_parent[e.idx()], Parent::None) {
+                continue;
+            }
+            let target = self.type_from_node(file, node);
+            let source = self.type_of_expr(file, e);
+            self.check_assignable_to(
+                file,
+                source,
+                target,
+                Written::At(file, node),
+                |c| {
+                    let end = c.end_if_explained(|c| c.end_of_expr(file, e));
+                    (c.start_of(file, e), end)
+                },
+                e,
+                false,
+                false,
+                2322,
+                out,
+            );
+        }
         for m in 0..hir.members.len() {
             let member = &hir.members[m];
             if member.kind != MemberKind::Property || member.ty.is_none() || member.init.is_none() {
@@ -445,18 +510,20 @@ impl Checker<'_> {
                 }
                 continue;
             }
-            // `getReturnTypeFromAnnotation`: a getter that says nothing goes by what its setter takes.
-            let from_setter = if func.ret.is_none() && func.kind == FnKind::Getter {
-                self.annotated_setter_type(file, FnId(f as u32))
+            // `getReturnTypeFromAnnotation`: a getter that says nothing goes by what its setter takes, any other function by the
+            // signature of its `@type` tag.
+            let declared = if func.ret.is_some() {
+                self.type_from_node(file, func.ret)
             } else {
-                None
-            };
-            if func.ret.is_none() && from_setter.is_none() {
-                continue;
-            }
-            let declared = match from_setter {
-                Some(ty) => ty,
-                None => self.type_from_node(file, func.ret),
+                let implied = if func.kind == FnKind::Getter {
+                    self.annotated_setter_type(file, FnId(f as u32))
+                } else {
+                    self.return_type_of_full_signature(file, FnId(f as u32))
+                };
+                let Some(implied) = implied else {
+                    continue;
+                };
+                implied
             };
             let is_async = func.flags.contains(Flags::ASYNC);
             // `unwrapReturnType`
@@ -720,8 +787,15 @@ impl Checker<'_> {
             if !self.is_known(given) || self.is_comparable(given, target) {
                 continue;
             }
-            let at = self.start_inside_parentheses(file, ExprId(i as u32));
-            let end = self.end_inside_parentheses(file, ExprId(i as u32));
+            // A type that is made from a JSDoc tag is the error node.
+            let (at, end) = if hir.is_in_jsdoc(hir[ty].pos) {
+                (hir[ty].pos, self.end_of_type_node(file, ty))
+            } else {
+                (
+                    self.start_inside_parentheses(file, ExprId(i as u32)),
+                    self.end_inside_parentheses(file, ExprId(i as u32)),
+                )
+            };
             let error = RelationError {
                 source: given,
                 target,
@@ -1333,6 +1407,7 @@ impl Checker<'_> {
                     known::undefined | known::arguments | known::globalThis
                 ) && self.symbol_of_identifier(file, e, name).is_none_or(|sym| {
                     self.is_alias_in_error(sym)
+                        || self.is_missing_from_export_equals(sym)
                         || !self
                             .files()
                             .flags(sym)
@@ -1473,7 +1548,11 @@ impl Checker<'_> {
             let (args, sym) = match hir.types[i].kind {
                 TypeNodeKind::Ref { name, args } => {
                     let mut names = [Atom::NONE; 8];
-                    if args.is_empty() || name.len() > names.len() {
+                    // No symbol is recorded for `Object<K, V>` in a JSDoc comment.
+                    if args.is_empty()
+                        || name.len() > names.len()
+                        || self.is_jsdoc_object_with_arguments(file, TypeNodeId(i as u32))
+                    {
                         continue;
                     }
                     for (slot, part) in names.iter_mut().zip(hir.ids(name)) {
@@ -1964,6 +2043,25 @@ impl Checker<'_> {
         (substituted != ty || wanted != target) && self.is_assignable(substituted, wanted)
     }
 
+    /// `IsJSDocTypeAssertion`: where the parenthesis opens that a `@type` tag makes a type assertion of, if `e` is that assertion.
+    /// `getEffectiveCheckNode` stops at it (`OEKExcludeJSDocTypeAssertion`).
+    pub(super) fn start_of_jsdoc_type_assertion(&self, file: FileId, e: ExprId) -> Option<u32> {
+        let hir = self.hir(file);
+        let ExprKind::As { ty, .. } = hir[e].kind else {
+            return None;
+        };
+        let pos = hir[ty].pos;
+        let after = hir
+            .jsdoc_comments
+            .partition_point(|comment| comment.0 <= pos);
+        let &(_, comment_end) = hir.jsdoc_comments.get(after.checked_sub(1)?)?;
+        if pos >= comment_end {
+            return None;
+        }
+        let open = self.skip_trivia_from(file, comment_end);
+        (hir.text.get(open as usize) == Some(&b'(')).then_some(open)
+    }
+
     /// `statement`: where the `return` starts, which is where the complaint goes unless it is about one arm of `c ? a : b`.
     fn check_returned(
         &mut self,
@@ -1997,10 +2095,16 @@ impl Checker<'_> {
             // Of a `return` statement it is the keyword that is pointed at.
             |c| match statement {
                 Some(at) => (at, 0),
-                None => (
-                    c.start_inside_parentheses(file, e),
-                    c.end_if_explained(|c| c.error_end_inside_parentheses(file, e)),
-                ),
+                None => match c.start_of_jsdoc_type_assertion(file, e) {
+                    Some(open) => (
+                        open,
+                        c.end_if_explained(|c| c.end_of_bracket_at(file, open)),
+                    ),
+                    None => (
+                        c.start_inside_parentheses(file, e),
+                        c.end_if_explained(|c| c.error_end_inside_parentheses(file, e)),
+                    ),
+                },
             },
             e,
             true,

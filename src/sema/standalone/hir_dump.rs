@@ -89,6 +89,7 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         import_options,
         deferred_import_calls,
         import_attributes,
+        specifier_expressions,
         has_parse_diagnostics,
         checker_errors,
         parens,
@@ -196,6 +197,9 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
     for &(with_pos, attributes) in import_attributes {
         put!(d, 0, "", "import_attributes at {with_pos}:");
         d.expr(1, "attributes", attributes);
+    }
+    for &specifier in specifier_expressions {
+        d.expr(0, "specifier_expression", specifier);
     }
     put!(d, 0, "", "import_options[{}]:", import_options.len());
     for &(spec, options) in import_options {

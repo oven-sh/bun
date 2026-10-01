@@ -1409,6 +1409,46 @@ impl Checker<'_> {
         }
     }
 
+    /// Whether `node` is in the type a JSDoc `@type` tag gives an assignment, and nothing resolves that type. `checkBinaryExpression`
+    /// does not check it. It is resolved for the symbol the assignment declares, and `this.x = v` declares none in a function or
+    /// outside of everything (`getThisClassAndSymbolTable`), and for what an operand is expected to be
+    /// (`getContextualTypeForBinaryOperand`).
+    fn is_in_unresolved_assignment_type(
+        &self,
+        file: FileId,
+        node: TypeNodeId,
+        parents: &[TypeNodeId],
+    ) -> bool {
+        let hir = self.hir(file);
+        if !hir.is_in_jsdoc(hir[node].pos) {
+            return false;
+        }
+        let mut root = node;
+        while parents[root.idx()].is_some() {
+            root = parents[root.idx()];
+        }
+        let assignment = hir.jsdoc_types.iter().find_map(|&(owner, ty)| match owner {
+            JsDocTypeOwner::Assign(e) if ty == root => Some(e),
+            _ => None,
+        });
+        let Some(assignment) = assignment else {
+            return false;
+        };
+        let ExprKind::Assign { target, value, .. } = hir[assignment].kind else {
+            return false;
+        };
+        let (ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }) = hir[target].kind else {
+            return false;
+        };
+        matches!(hir[obj].kind, ExprKind::This)
+            && match self.this_container(file, obj) {
+                Some(Ok(func)) => matches!(hir[func].kind, FnKind::Decl | FnKind::Expr),
+                Some(Err(_)) => false,
+                None => true,
+            }
+            && !self.depends_on_context(file, value)
+    }
+
     /// `getThisType`: 2526.
     fn check_this_type_nodes(
         &mut self,
@@ -1421,6 +1461,7 @@ impl Checker<'_> {
             if matches!(node.kind, TypeNodeKind::Keyword(Keyword::This))
                 && bound.type_scope[t].is_some()
                 && !is_this_type_available(hir, bound, TypeNodeId(t as u32), parents)
+                && !self.is_in_unresolved_assignment_type(file, TypeNodeId(t as u32), parents)
             {
                 out.push(Diagnostic {
                     start: node.pos,

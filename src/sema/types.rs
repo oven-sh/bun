@@ -303,6 +303,8 @@ pub enum Literalness {
     /// What `import()` gives for a module that gets a `default` made up (`getTypeWithSyntheticDefaultImportType`). Its symbol
     /// is a type literal without members, so it counts as `{}` wherever `IsEmptyAnonymousObjectType` is asked, widened or not.
     SyntheticDefault,
+    /// `unknownEmptyObjectType`: the `{}` that `unknown` is where it is neither `null` nor `undefined`. It has no symbol.
+    OfUnknown,
 }
 
 impl Literalness {

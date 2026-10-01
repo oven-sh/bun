@@ -104,6 +104,10 @@ impl Checker<'_> {
         }
         // Everything about the call is worked out for good before candidates are tried again.
         let resolved = self.resolve_call(file, e);
+        if let Some((said, notes)) = self.p.said_of_calls_resolved_again.get_ref(&(file, e)) {
+            out.extend_from_slice(said);
+            self.notes.borrow_mut().extend_from_slice(notes);
+        }
         let called = if is_new {
             self.type_of_expr(file, data.callee)
         } else {
@@ -158,12 +162,17 @@ impl Checker<'_> {
                 construct_sigs.len(),
             ) {
                 if has_type_args && !self.is_callee_in_error(file, data.callee) {
-                    let node_start = self.start_of(file, e);
+                    let node_start = self.start_inside_parentheses(file, e);
                     out.push(Diagnostic {
                         start: node_start,
                         code: 2347,
                     });
-                    self.note(node_start, self.end_of_expr(file, e), 2347, Vec::new());
+                    self.note(
+                        node_start,
+                        self.end_inside_parentheses(file, e),
+                        2347,
+                        Vec::new(),
+                    );
                 }
                 return;
             }
@@ -173,12 +182,12 @@ impl Checker<'_> {
                     return;
                 }
                 if !construct_sigs.is_empty() {
-                    let node_start = self.start_of(file, e);
+                    let node_start = self.start_inside_parentheses(file, e);
                     out.push(Diagnostic {
                         start: node_start,
                         code: 2348,
                     });
-                    let end = self.end_of_expr(file, e);
+                    let end = self.end_inside_parentheses(file, e);
                     self.explain_to(node_start, end, 2348, |c| vec![c.type_to_string(called)]);
                     return;
                 }
@@ -213,23 +222,28 @@ impl Checker<'_> {
         }
         if self.is_any(apparent) {
             if has_type_args && !self.is_callee_in_error(file, data.callee) {
-                let node_start = self.start_of(file, e);
+                let node_start = self.start_inside_parentheses(file, e);
                 out.push(Diagnostic {
                     start: node_start,
                     code: 2347,
                 });
-                self.note(node_start, self.end_of_expr(file, e), 2347, Vec::new());
+                self.note(
+                    node_start,
+                    self.end_inside_parentheses(file, e),
+                    2347,
+                    Vec::new(),
+                );
             }
             return;
         }
         if !construct_sigs.is_empty() {
             if let Some((code, class)) = self.inaccessible_constructor(file, e, construct_sigs[0]) {
-                let node_start = self.start_of(file, e);
+                let node_start = self.start_inside_parentheses(file, e);
                 out.push(Diagnostic {
                     start: node_start,
                     code,
                 });
-                let end = self.end_of_expr(file, e);
+                let end = self.end_inside_parentheses(file, e);
                 self.explain_to(node_start, end, code, |c| {
                     let declaring = c.declared_type(class);
                     vec![c.type_to_string(declaring)]
@@ -237,12 +251,17 @@ impl Checker<'_> {
                 return;
             }
             if self.some_construct_signature_is_abstract(reduced) {
-                let node_start = self.start_of(file, e);
+                let node_start = self.start_inside_parentheses(file, e);
                 out.push(Diagnostic {
                     start: node_start,
                     code: 2511,
                 });
-                self.note(node_start, self.end_of_expr(file, e), 2511, Vec::new());
+                self.note(
+                    node_start,
+                    self.end_inside_parentheses(file, e),
+                    2511,
+                    Vec::new(),
+                );
                 return;
             }
             self.report_call_resolution(file, e, c, &construct_sigs, true, resolved, out);
@@ -250,7 +269,7 @@ impl Checker<'_> {
         }
         if !call_sigs.is_empty() {
             self.report_call_resolution(file, e, c, &call_sigs, true, resolved, out);
-            let node_start = self.start_of(file, e);
+            let node_start = self.start_inside_parentheses(file, e);
             let only = match call_sigs[..] {
                 [only] => Some(only),
                 _ => None,
@@ -267,7 +286,12 @@ impl Checker<'_> {
                         start: node_start,
                         code: 7009,
                     });
-                    self.note(node_start, self.end_of_expr(file, e), 7009, Vec::new());
+                    self.note(
+                        node_start,
+                        self.end_inside_parentheses(file, e),
+                        7009,
+                        Vec::new(),
+                    );
                 }
             } else if let Some(sig) = sig {
                 let returned = self.sig_return(sig);
@@ -279,14 +303,24 @@ impl Checker<'_> {
                         start: node_start,
                         code: 2350,
                     });
-                    self.note(node_start, self.end_of_expr(file, e), 2350, Vec::new());
+                    self.note(
+                        node_start,
+                        self.end_inside_parentheses(file, e),
+                        2350,
+                        Vec::new(),
+                    );
                 }
                 if self.sig_this_type(sig) == Some(TypeId::VOID) {
                     out.push(Diagnostic {
                         start: node_start,
                         code: 2679,
                     });
-                    self.note(node_start, self.end_of_expr(file, e), 2679, Vec::new());
+                    self.note(
+                        node_start,
+                        self.end_inside_parentheses(file, e),
+                        2679,
+                        Vec::new(),
+                    );
                 }
             }
             return;
@@ -1138,6 +1172,45 @@ impl Checker<'_> {
         })
     }
 
+    /// `getResolvedSignature`: a call that is asked for while it is being resolved is resolved once more, and `resolveCall` reports what
+    /// is wrong with it as things stand then. `resolved`: what it was resolved to that time. Only the first time is looked at.
+    /// `check_call` says what is kept here.
+    pub(super) fn report_call_resolved_again(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        resolved: ResolvedCall,
+    ) {
+        let p = self.p;
+        let hir = self.hir(file);
+        let ExprKind::Call(c) = hir[e].kind else {
+            return;
+        };
+        let data = hir[c];
+        if self.provisional > 0
+            || matches!(hir[data.callee].kind, ExprKind::Super)
+            || p.said_of_calls_resolved_again.get_ref(&(file, e)).is_some()
+        {
+            return;
+        }
+        let called = self.chain_receiver(file, data.callee, data.chain).0;
+        if !self.is_known(called) || self.is_uncertain(file, data.callee) {
+            return;
+        }
+        let apparent = self.apparent_type(called);
+        let reduced = self.reduced(apparent);
+        let sigs = self.signatures(reduced, false);
+        if sigs.is_empty() {
+            return;
+        }
+        let noted = self.notes.borrow().len();
+        let mut said = Vec::new();
+        self.report_call_resolution(file, e, c, &sigs, false, resolved, &mut said);
+        let notes = self.notes.borrow_mut().split_off(noted);
+        p.said_of_calls_resolved_again
+            .insert_ref((file, e), (said, notes));
+    }
+
     /// `resolveCall`, for what it reports.
     fn report_call_resolution(
         &mut self,
@@ -1450,8 +1523,13 @@ impl Checker<'_> {
             if let Some(out) = report.as_deref_mut()
                 && node != e
             {
-                let at = self.start_inside_parentheses(file, check_node);
-                let end = self.error_end_inside_parentheses(file, check_node);
+                let (at, end) = match self.start_of_jsdoc_type_assertion(file, check_node) {
+                    Some(open) => (open, self.end_of_bracket_at(file, open)),
+                    None => (
+                        self.start_inside_parentheses(file, check_node),
+                        self.error_end_inside_parentheses(file, check_node),
+                    ),
+                };
                 self.check_assignable_with_end(file, given, wanted, at, end, inner, 2345, out);
             }
             return Applicable::No;
@@ -1469,13 +1547,19 @@ impl Checker<'_> {
                     && args.get(count).is_none_or(|first| first.1 != e)
                 {
                     let (at, end) = match args[count..] {
-                        [] => (self.start_of(file, e), self.end_of_expr(file, e)),
+                        [] => (
+                            self.start_inside_parentheses(file, e),
+                            self.end_inside_parentheses(file, e),
+                        ),
                         [(_, node)] => {
                             let check_node = self.effective_check_node(file, node);
-                            (
-                                self.start_inside_parentheses(file, check_node),
-                                self.error_end_inside_parentheses(file, check_node),
-                            )
+                            match self.start_of_jsdoc_type_assertion(file, check_node) {
+                                Some(open) => (open, self.end_of_bracket_at(file, open)),
+                                None => (
+                                    self.start_inside_parentheses(file, check_node),
+                                    self.error_end_inside_parentheses(file, check_node),
+                                ),
+                            }
                         }
                         [(_, first), .., (_, last)] => {
                             (self.start_of(file, first), self.end_of_expr(file, last))
@@ -1510,7 +1594,7 @@ impl Checker<'_> {
     fn start_of_call_error(&self, file: FileId, e: ExprId, c: CallId, is_new: bool) -> u32 {
         let hir = self.hir(file);
         if is_new || matches!(hir[e].kind, ExprKind::TaggedTemplate(_)) {
-            return self.start_of(file, e);
+            return self.start_inside_parentheses(file, e);
         }
         let callee = hir[c].callee;
         match hir[callee].kind {
@@ -1523,7 +1607,7 @@ impl Checker<'_> {
     fn end_of_call_error(&self, file: FileId, e: ExprId, c: CallId, is_new: bool) -> u32 {
         let hir = self.hir(file);
         if is_new || matches!(hir[e].kind, ExprKind::TaggedTemplate(_)) {
-            return self.end_of_expr(file, e);
+            return self.end_inside_parentheses(file, e);
         }
         let callee = hir[c].callee;
         match hir[callee].kind {

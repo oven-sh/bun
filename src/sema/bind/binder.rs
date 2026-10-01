@@ -928,6 +928,24 @@ impl<'f> Binder<'f> {
             && self.f.kind == FileKind::Declaration
             && !self.has_export_statements(self.f.body);
         self.stmts(self.f.body, Parent::File, all_exported);
+        // `bindContainer`: the aliases tags declare at the top of the file are declared once all its statements are bound.
+        if self.f.is_js {
+            for s in self.f.ids(self.f.body) {
+                if let StmtKind::TypeAlias(alias) = self.f[s].kind
+                    && self.f[alias].flags.contains(Flags::REPARSED)
+                {
+                    let name = self.f[alias].name;
+                    let symbol = self.declare(
+                        self.scope,
+                        name,
+                        SymFlags::TYPE_ALIAS,
+                        Decl::Alias(alias),
+                        true,
+                    );
+                    self.b.alias_symbol[alias.idx()] = symbol;
+                }
+            }
+        }
         // The attributes of `import .. with { .. }` and `export .. with { .. }` are kept beside the statements.
         if !self.f.import_attributes.is_empty() {
             self.flow = self.new_flow(Flow::Start {
@@ -937,6 +955,17 @@ impl<'f> Binder<'f> {
             for i in 0..self.f.import_attributes.len() {
                 let (_, attributes) = self.f.import_attributes[i];
                 self.expr(attributes, Parent::File);
+            }
+        }
+        // So are the module specifiers that are no string literals.
+        if !self.f.specifier_expressions.is_empty() {
+            self.flow = self.new_flow(Flow::Start {
+                outer: FlowId::NONE,
+                arrow: false,
+            });
+            for i in 0..self.f.specifier_expressions.len() {
+                let specifier = self.f.specifier_expressions[i];
+                self.expr(specifier, Parent::File);
             }
         }
         // `declareCommonJSVariable`
@@ -1207,7 +1236,8 @@ impl<'f> Binder<'f> {
         if self.is_in_parens(value) {
             return None;
         }
-        self.expando_initializer(value, false)
+        let is_annotated = self.f.jsdoc_type(JsDocTypeOwner::Assign(first)).is_some();
+        self.expando_initializer(value, is_annotated)
     }
 
     /// `GetContainerFlags`: an object literal and the attributes of a JSX element are containers without locals, so `lookupName`
@@ -2277,14 +2307,17 @@ impl<'f> Binder<'f> {
             }
             StmtKind::TypeAlias(alias) => {
                 let a = &self.f[alias];
-                let symbol = self.declare(
-                    self.scope,
-                    a.name,
-                    SymFlags::TYPE_ALIAS,
-                    Decl::Alias(alias),
-                    is_exported(a.flags) || self.is_implicitly_exported(a.flags),
-                );
-                self.b.alias_symbol[alias.idx()] = symbol;
+                // What a tag declares at the top of the file is declared by `file`, after everything else.
+                if !self.is_implicitly_exported(a.flags) {
+                    let symbol = self.declare(
+                        self.scope,
+                        a.name,
+                        SymFlags::TYPE_ALIAS,
+                        Decl::Alias(alias),
+                        is_exported(a.flags),
+                    );
+                    self.b.alias_symbol[alias.idx()] = symbol;
+                }
                 self.b.alias_scope[alias.idx()] =
                     self.push_scope(ScopeKind::TypeParams, SymbolId::NONE);
                 self.type_params(a.type_params, FnId::NONE);

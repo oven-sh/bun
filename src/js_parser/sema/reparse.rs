@@ -65,6 +65,13 @@ fn modifiers_of(flags: Flags) -> Flags {
 
 /// `IsValidIdentifier`. What is not ASCII is taken for a letter.
 fn is_valid_identifier(text: &[u8]) -> bool {
+    let unescaped;
+    let text = if text.contains(&b'\\') {
+        unescaped = jsdoc::unescaped_name(text);
+        &unescaped[..]
+    } else {
+        text
+    };
     let is_start = |c: u8| c.is_ascii_alphabetic() || matches!(c, b'_' | b'$') || c >= 0x80;
     match text.split_first() {
         Some((&first, rest)) => {
@@ -235,7 +242,11 @@ impl<'p, 'a> Lower<'p, 'a> {
     // ───────────────────────────── helpers ─────────────────────────────
 
     fn name_atom(&self, name: Name) -> Atom {
-        self.b.atom(name.text(self.source))
+        let text = name.text(self.source);
+        if text.contains(&b'\\') {
+            return self.b.atom(&jsdoc::unescaped_name(text));
+        }
+        self.b.atom(text)
     }
 
     /// Where the parenthesis around `e` opens, if `e` is written in parentheses.
@@ -373,6 +384,22 @@ impl<'p, 'a> Lower<'p, 'a> {
         }
     }
 
+    /// Whether the first parameter of `func` is written `this`. No node is kept of one without a type.
+    fn has_written_this_parameter(&self, func: FnId) -> bool {
+        let func = &self.b.file[func];
+        let open = func.anchor as usize;
+        if func.kind == FnKind::Arrow || self.source.get(open) != Some(&b'(') {
+            return false;
+        }
+        let at = super::lower::skip_trivia(self.source, open + 1);
+        self.source
+            .get(at..)
+            .is_some_and(|rest| rest.starts_with(b"this"))
+            && !self.source.get(at + 4).is_some_and(|&next| {
+                next == b'_' || next == b'$' || next >= 0x80 || next.is_ascii_alphanumeric()
+            })
+    }
+
     /// `FullSignature != nil`
     fn has_full_signature(&self, func: FnId) -> bool {
         self.full_signatures.contains(&func.0)
@@ -393,8 +420,22 @@ impl<'p, 'a> Lower<'p, 'a> {
 
     // ───────────────────────────── types ─────────────────────────────
 
+    /// Reports what the checker objects to in the syntax of a comment from `start` to `end`, which is being reparsed.
+    fn note_checker_errors(&mut self, start: u32, end: u32) {
+        let list = &self.jsdoc.list;
+        let after = list.partition_point(|doc| doc.start <= start);
+        if let Some(doc) = after.checked_sub(1).map(|index| &list[index]) {
+            self.b.file.jsdoc_errors.extend(
+                doc.checker_errors
+                    .iter()
+                    .filter(|error| (start..end).contains(&error.0)),
+            );
+        }
+    }
+
     /// `addDeepCloneReparse`, of the type of a type expression.
     fn reparse_type(&mut self, expr: TypeExpr) -> TypeNodeId {
+        self.note_checker_errors(expr.pos, expr.end);
         let outer = std::mem::replace(&mut self.b.in_jsdoc, true);
         let mut ty = self.b.clone_type(expr.ty);
         self.b.in_jsdoc = outer;
@@ -642,6 +683,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                 if !import.has_clause {
                     return;
                 }
+                self.note_checker_errors(tag.pos, import.end);
                 let mode = match import.mode {
                     ts::ResolutionMode::None => ResolutionMode::None,
                     ts::ResolutionMode::Import => ResolutionMode::Import,
@@ -768,7 +810,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             }
             let text = name.text(self.source);
             let name_atom = if is_valid_identifier(text) {
-                self.b.atom(text)
+                self.name_atom(name)
             } else if text.is_empty() {
                 self.b.atom(format!("_{index}").as_bytes())
             } else {
@@ -869,17 +911,44 @@ impl<'p, 'a> Lower<'p, 'a> {
                     && Self::is_optional(property)
                 {
                     self.b.file[param].flags |= Flags::OPTIONAL | Flags::REPARSED;
-                    // `checkGrammarParameterList`: the `?` is where the tag is.
+                    // `checkGrammarParameterList`, `checkGrammarAccessor`: the `?` is where the tag is.
+                    let Func {
+                        kind,
+                        type_params,
+                        params,
+                        ret,
+                        ..
+                    } = self.b.file[func];
                     if self.b.file[param].flags.contains(Flags::REST) {
                         self.b.file.early_errors.push((tag.pos, 1047));
+                    } else if kind == FnKind::Setter
+                        && type_params.is_empty()
+                        && params.len() == 1
+                        && ret.is_none()
+                    {
+                        self.b.file.early_errors.push((tag.pos, 1051));
                     }
                 }
             }
             TagKind::This(ty) => {
                 let func = self.function_like_host(host);
-                if func.is_some() && self.b.file[func].this_ty.is_none() {
+                if func.is_some()
+                    && self.b.file[func].this_ty.is_none()
+                    && !self.has_written_this_parameter(func)
+                {
                     let ty = self.reparse_type(*ty);
                     self.b.file[func].this_ty = ty;
+                    // `checkParameter`: the parameter is where the name of the tag is.
+                    let code = match self.b.file[func].kind {
+                        FnKind::Arrow => Some(2730),
+                        FnKind::Constructor => Some(2681),
+                        FnKind::Getter | FnKind::Setter => Some(2784),
+                        _ => None,
+                    };
+                    self.b
+                        .file
+                        .checker_errors
+                        .extend(code.map(|code| (tag.name_pos, code)));
                 }
             }
             TagKind::Return(Some(ty)) => {
@@ -935,6 +1004,8 @@ impl<'p, 'a> Lower<'p, 'a> {
         let Some(type_args) = class_name.type_args else {
             return IdList::EMPTY;
         };
+        let start = class_name.name.first().map_or(0, |first| first.start);
+        self.note_checker_errors(start, class_name.end);
         let outer = std::mem::replace(&mut self.b.in_jsdoc, true);
         let args = self.b.clone_type_list(type_args);
         self.b.in_jsdoc = outer;

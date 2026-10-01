@@ -541,7 +541,11 @@ impl Checker<'_> {
         const FUNCTION: u8 = 4;
         const CLASS: u8 = 8;
         const INTERFACE: u8 = 16;
+        const TYPE_ALIAS: u8 = 32;
         let hir = self.hir(file);
+        // `IsImplicitlyExportedJSDocDeclaration`
+        let is_top_of_module = (body.start, body.len) == (hir.body.start, hir.body.len)
+            && self.files().module(file).is_module();
         let mut defaults: SmallVec<[DefaultExport; 2]> = SmallVec::new();
         let mut declare = |start: u32, statement: StmtId, includes: u8, excludes: u8, code: u32| {
             defaults.push(DefaultExport {
@@ -607,11 +611,29 @@ impl Checker<'_> {
                         declare(start, StmtId::NONE, ALIAS, ALIAS, 2300);
                     }
                 }
+                // So is a `@typedef` of that name, which a module exports.
+                StmtKind::TypeAlias(a)
+                    if is_top_of_module
+                        && hir[a].name == known::default
+                        && hir[a].flags.contains(Flags::REPARSED) =>
+                {
+                    declare(
+                        hir[a].name_pos,
+                        StmtId::NONE,
+                        TYPE_ALIAS,
+                        CLASS | INTERFACE | TYPE_ALIAS,
+                        2300,
+                    );
+                }
                 _ => {}
             }
         }
-        // `bindEachStatementFunctionsFirst`, which works on one statement list.
-        defaults.sort_by_key(|d| d.includes != FUNCTION);
+        // `bindEachStatementFunctionsFirst`, which works on one statement list. `bindContainer` binds the `@typedef`s of a file last.
+        defaults.sort_by_key(|d| match d.includes {
+            FUNCTION => 0,
+            TYPE_ALIAS => 2,
+            _ => 1,
+        });
         defaults
     }
 

@@ -163,6 +163,7 @@ impl<'p> Checker<'p> {
                 })
             }
             TypeData::Synth(shape) => {
+                let cycles_before = self.cycles;
                 let mut new = Shape {
                     literal: shape.literal,
                     ..Shape::default()
@@ -194,7 +195,12 @@ impl<'p> Checker<'p> {
                     .iter()
                     .map(|&s| self.instantiate_sig(s, mapper))
                     .collect();
-                self.synth(new)
+                let instantiated = self.synth(new);
+                if self.is_generic_single_signature(shape) {
+                    let holds = self.cycles == cycles_before;
+                    return self.single_signature_instantiation(ty, mapper, instantiated, holds);
+                }
+                instantiated
             }
             TypeData::Cond {
                 file,
@@ -399,6 +405,77 @@ impl<'p> Checker<'p> {
             out_flags.push(ElemFlags::REST);
         }
         self.tuple(&out_elems, &out_flags, readonly)
+    }
+
+    /// Whether all there is to `shape` is one made-up signature that has type parameters.
+    fn is_generic_single_signature(&self, shape: &Shape) -> bool {
+        let only = match (shape.call.as_slice(), shape.construct.as_slice()) {
+            ([only], []) | ([], [only]) => *only,
+            _ => return false,
+        };
+        shape.props.is_empty()
+            && shape.index.is_empty()
+            && matches!(self.p.types.sig(only), SigData::Synth { type_params, .. } if !type_params.is_empty())
+    }
+
+    /// Where `instantiations` keeps what goes with the single signature type `ty` and `arguments`: under a mapper from `ty`
+    /// itself, which nothing is instantiated with.
+    fn single_signature_key(&self, ty: TypeId, arguments: TypeId) -> (TypeId, MapperId) {
+        (ty, self.p.types.mapper(vec![(ty, arguments)]))
+    }
+
+    /// `getSignatureInstantiation` with `inferredTypeParameters`: `made` is the type of the clone of the signature of `returned`
+    /// (`ObjectFlagsSingleSignatureType`), and `inferred` is its mapper (`instantiatedSignature.mapper`). Keeps the outer type
+    /// parameters of the declaration of that signature as `inferred` has them, as a tuple.
+    pub(super) fn note_single_signature_type(
+        &mut self,
+        made: TypeId,
+        returned: TypeId,
+        inferred: MapperId,
+    ) {
+        let returned = self.force(returned);
+        let TypeData::Fns { mapper: outer, .. } = self.data(returned) else {
+            return;
+        };
+        let arguments: Vec<TypeId> = self
+            .p
+            .types
+            .mapping(*outer)
+            .iter()
+            .map(|&(param, _)| self.p.types.map(inferred, param).unwrap_or(param))
+            .collect();
+        if arguments.is_empty() || !self.has_type_variables(made) {
+            return;
+        }
+        let flags = vec![ElemFlags::REQUIRED; arguments.len()];
+        let arguments = self.tuple(&arguments, &flags, false);
+        let key = self.single_signature_key(made, made);
+        self.p.instantiations.insert(key, arguments);
+    }
+
+    /// `getObjectTypeInstantiation` of a type that `note_single_signature_type` was told of. `ObjectType.instantiations` goes by the
+    /// type arguments for the outer type parameters of the declaration: the first instantiation with the same ones is the
+    /// answer, whatever else `mapper` says. `instantiated`: `ty` under `mapper`. `holds`: it may be kept.
+    fn single_signature_instantiation(
+        &mut self,
+        ty: TypeId,
+        mapper: MapperId,
+        instantiated: TypeId,
+        holds: bool,
+    ) -> TypeId {
+        let noted = self.single_signature_key(ty, ty);
+        let Some(arguments) = self.p.instantiations.get(&noted) else {
+            return instantiated;
+        };
+        let arguments = self.instantiate(arguments, mapper);
+        let key = self.single_signature_key(ty, arguments);
+        if let Some(first) = self.p.instantiations.get(&key) {
+            return first;
+        }
+        if instantiated == ty || !holds {
+            return instantiated;
+        }
+        self.p.instantiations.insert(key, instantiated)
     }
 
     pub fn instantiate_sig(&mut self, sig: SigId, mapper: MapperId) -> SigId {

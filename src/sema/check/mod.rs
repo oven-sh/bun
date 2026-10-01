@@ -43,6 +43,8 @@ pub mod explain;
 mod explain_relation;
 mod explain_table;
 mod expr;
+mod fix_t7;
+mod fix_t8;
 mod flow;
 mod infer;
 mod instantiate;
@@ -77,6 +79,8 @@ struct Held {
     ty: TypeId,
     depth: usize,
     serial: u64,
+    /// A question came back to itself while it was worked out.
+    came_back: bool,
 }
 
 /// The type of each node of one kind.
@@ -178,6 +182,9 @@ pub struct Program {
     /// `getCandidateForOverloadFailure` for a failed call with a single signature. `calls` holds the signature that the errors
     /// are reported against.
     failure_sigs: ByNode<(FileId, ExprId), SigId>,
+    /// What `resolveCall` reported of a call the first time it was resolved again while it was being resolved, with the notes.
+    said_of_calls_resolved_again:
+        ByNodeKept<(FileId, ExprId), (Vec<errors::Diagnostic>, Vec<explain::Note>)>,
     /// The contextual type of an argument that has to wait for the others, once the call knows it.
     arg_contexts: ByNode<(FileId, ExprId), TypeId>,
     /// Calls with a `const` type parameter in some overload that are resolved to an overload before it, or that it does not apply to.
@@ -345,6 +352,7 @@ impl Program {
             base_types: ByNodeKept::new(&symbols),
             calls: ByNode::new(&exprs),
             failure_sigs: ByNode::new(&exprs),
+            said_of_calls_resolved_again: ByNodeKept::new(&exprs),
             arg_contexts: ByNode::new(&exprs),
             calls_outside_const_context: NodeSet::new(&exprs),
             relations: Default::default(),
@@ -380,6 +388,7 @@ impl Program {
             resolution_start: 0,
             asking_for_context: false,
             eager: Vec::new(),
+            loop_values: Vec::new(),
             contextual_binding_patterns: Vec::new(),
             reporting_nonexistent: Vec::new(),
             came_full_circle: false,
@@ -556,6 +565,9 @@ pub struct Checker<'p> {
     /// How deep the stack was wherever something was asked that TypeScript would not have asked at that point, or not yet.
     /// A circle that goes through there may be nobody's fault but the resolver's: it is unknown, not an error.
     eager: Vec<usize>,
+    /// The entries of `eager` that stand for the value assigned on the back edge of a loop that is being worked out. TypeScript asks
+    /// for that value there as well: see `is_circle_of_initializers`.
+    loop_values: Vec<usize>,
     /// A call is being asked what it expects of an argument, not what it gives.
     asking_for_context: bool,
     /// From where in `stack` on a question counts as under way.
@@ -977,14 +989,22 @@ impl<'p> Checker<'p> {
     /// `pushTypeResolution` finding what is asked for under way at `i`: everything from there up that is a resolution is in the
     /// circle, and comes to `any`. `false`, and nothing is marked: TypeScript does not look that far down, or would not have asked.
     fn mark_circle_from(&mut self, i: usize) -> bool {
-        if i < self.resolution_start
-            || self.eager.iter().any(|&from| from > i)
-            || self.is_answered_since(i)
-        {
+        if i < self.resolution_start || self.is_answered_since(i) {
             return false;
         }
-        // The first resolution of a call hides what is below it, itself included: one that can be seen is resolved again.
-        let through_call = self.stack[i..].iter().any(|q| matches!(q, Query::Call(..)));
+        // Every entry of `loop_values` is an entry of `eager` too.
+        let barriers = self.eager.iter().filter(|&&from| from > i).count();
+        let loop_values = self.loop_values.iter().filter(|&&from| from > i).count();
+        if barriers > loop_values || barriers > 0 && !self.is_circle_of_initializers(i) {
+            return false;
+        }
+        // The first resolution of a call hides what is below it, itself included: one that can be seen is resolved again. So does a
+        // variable that is in a circle already: it has had its answer since the circle was found (`typeResolutionHasProperty`).
+        let through_call = self.stack[i..].iter().any(|q| matches!(q, Query::Call(..)))
+            || self.stack[..i]
+                .iter()
+                .zip(&self.circular[..i])
+                .any(|(q, &circular)| circular && matches!(q, Query::Pat(..) | Query::Symbol(_)));
         for j in i..self.stack.len() {
             let q = self.stack[j];
             if !self.is_resolution(q) {
@@ -1301,7 +1321,7 @@ impl<'p> Checker<'p> {
     /// until then everything it rests on stays as it is. Asked again meanwhile, it is not worked out again. Without this, questions
     /// that each lead to all the others, like the rows of a table that is expected to be an array of its own rows, are gone through
     /// in every order there is.
-    fn hold_for_now(&mut self, file: FileId, p: PropId, ty: TypeId) {
+    fn hold_for_now(&mut self, file: FileId, p: PropId, ty: TypeId, came_back: bool) {
         if let Some(outermost) = self.tainted.iter().position(|&tainted| tainted) {
             self.held_for_now.insert(
                 (file, p),
@@ -1309,6 +1329,7 @@ impl<'p> Checker<'p> {
                     ty,
                     depth: outermost,
                     serial: self.serials[outermost],
+                    came_back,
                 },
             );
         }
@@ -1328,7 +1349,12 @@ impl<'p> Checker<'p> {
             self.held_for_now.remove(&(file, p));
             return None;
         }
-        self.taint_from(held.depth);
+        // Reading it leaves the marks that working it out again would: `cycles` moves only if it did then.
+        if held.came_back {
+            self.taint_from(held.depth);
+        } else {
+            self.tainted[held.depth..].fill(true);
+        }
         Some(held.ty)
     }
 

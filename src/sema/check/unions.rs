@@ -562,7 +562,7 @@ impl<'p> Checker<'p> {
                     continue;
                 }
                 // `emptyObjectType`, which has no symbol, does not go for the type of an object literal with nothing in it.
-                if source == TypeId::EMPTY_OBJECT
+                if (source == TypeId::EMPTY_OBJECT || self.is_unknown_empty_object(source))
                     && matches!(self.data(target), TypeData::Anon { .. })
                     && self.is_empty_anonymous(target)
                 {
@@ -1142,6 +1142,26 @@ impl<'p> Checker<'p> {
             }
         }
         true
+    }
+
+    /// `unknownEmptyObjectType`
+    pub(super) fn unknown_empty_object(&self) -> TypeId {
+        self.synth(Shape {
+            literal: Literalness::OfUnknown,
+            ..Shape::default()
+        })
+    }
+
+    pub(super) fn is_unknown_empty_object(&self, ty: TypeId) -> bool {
+        matches!(self.data(ty), TypeData::Synth(shape) if shape.literal == Literalness::OfUnknown)
+    }
+
+    /// `GetNonNullableType`, of the left operand of `||` or `??`.
+    pub(super) fn non_nullable_operand(&mut self, ty: TypeId) -> TypeId {
+        if ty == TypeId::UNKNOWN && self.p.files.options.strict_null_checks {
+            return self.unknown_empty_object();
+        }
+        self.non_nullable(ty)
     }
 
     /// `ty` without `undefined` and `null`.

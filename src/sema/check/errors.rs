@@ -165,6 +165,7 @@ impl Checker<'_> {
         pass!(check_x_signatures);
         pass!(check_x_operators);
         pass!(check_x_enums_names);
+        pass!(check_type_arguments_of_jsdoc_primitives);
         // It takes back what has been said of decorators that are out of place.
         pass!(check_decorators);
         // `checkWithStatement`, `checkReturnStatement`, `checkExportAssignment`: what they never look at is taken back, whoever said it.
@@ -1750,16 +1751,33 @@ impl Checker<'_> {
                 continue;
             };
             let start = hir.types[i].pos;
+            // `getTypeFromTypeReference`: no symbol is looked for.
+            if self
+                .intended_type_of_jsdoc_reference(file, TypeNodeId(i as u32))
+                .is_some()
+            {
+                continue;
+            }
             if name.len() > 1 {
                 let names: SmallVec<[Atom; 8]> = hir.ids(name).collect();
                 self.check_entity_name(file, scope, &names, start, SymFlags::TYPE, out);
                 continue;
             }
-            if self
+            let found = self
                 .files()
-                .resolve_name(file, scope, first, SymFlags::TYPE)
-                .is_none()
+                .resolve_name(file, scope, first, SymFlags::TYPE);
+            // `getSymbol`: an alias that ends at a property has no type meaning, and the search goes on further out.
+            // `checkAndReportErrorForUsingValueAsType`
+            if let Some(found) = found
+                && self.is_alias_of_property(found)
+                && self
+                    .resolve_type_name_beyond(file, scope, first, found)
+                    .is_none()
             {
+                out.push(Diagnostic { start, code: 2749 });
+                continue;
+            }
+            if found.is_none() {
                 let is_primitive = matches!(
                     self.files().atoms.bytes(first),
                     b"any" | b"string" | b"number" | b"boolean" | b"never" | b"unknown"
@@ -2332,6 +2350,56 @@ impl Checker<'_> {
                     explain_type_argument_count(self, node.pos, end, 2315, sym);
                 }
             }
+        }
+    }
+
+    /// `getIntendedTypeFromJSDocTypeReference`: in a JSDoc comment `String`, `Void` and the like are primitive types, whatever is declared
+    /// by those names. `checkNoTypeArguments`: 2315, in the place of what was said of the name.
+    fn check_type_arguments_of_jsdoc_primitives(
+        &mut self,
+        file: FileId,
+        out: &mut Vec<Diagnostic>,
+    ) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        if hir.jsdoc_comments.is_empty() {
+            return;
+        }
+        for (i, node) in hir.types.iter().enumerate() {
+            let TypeNodeKind::Ref { name, args } = node.kind else {
+                continue;
+            };
+            if args.is_empty()
+                || name.len() != 1
+                || bound.type_scope[i].is_none()
+                || !hir.is_in_jsdoc(node.pos)
+            {
+                continue;
+            }
+            let name = hir.id_at(name, 0);
+            if !matches!(
+                self.files().atoms.bytes(name),
+                b"String"
+                    | b"Number"
+                    | b"BigInt"
+                    | b"Boolean"
+                    | b"Void"
+                    | b"Undefined"
+                    | b"Null"
+                    | b"Function"
+                    | b"function"
+            ) {
+                continue;
+            }
+            out.retain(|d| {
+                d.start != node.pos
+                    || !matches!(d.code, 2304 | 2314 | 2552 | 2583 | 2707 | 2709 | 2749)
+            });
+            out.push(Diagnostic {
+                start: node.pos,
+                code: 2315,
+            });
+            let end = self.end_of_type_node(file, TypeNodeId(i as u32));
+            self.explain_to(node.pos, end, 2315, |c| vec![c.atom_text(name)]);
         }
     }
 
@@ -3831,6 +3899,18 @@ fn explain_early_error(c: &Checker<'_>, file: FileId, start: u32, code: u32) {
         }
         // `createIdentifierWithDiagnostic`, `parsingContextErrors`, `parseErrorForInvalidName`: these name the word they are reported at.
         1359 | 1389 | 1390 | 2819 => c.note(start, 0, code, vec![word_at(c, file, start)]),
+        // `makeQuestionIfOptional`: the `?` is as long as the `@param` tag, which goes on to the next tag.
+        1047 | 1051 if hir.is_in_jsdoc(start) => {
+            let comment = hir.jsdoc_comments.partition_point(|c| c.0 <= start) - 1;
+            let last = (hir.jsdoc_comments[comment].1 as usize)
+                .saturating_sub(2)
+                .min(text.len());
+            let end = text[(at + 1).min(last)..last]
+                .iter()
+                .position(|&b| b == b'@')
+                .map_or(last, |next| at + 1 + next);
+            c.note(start, end as u32, code, Vec::new());
+        }
         // `checkGrammarHeritageClause`: reported where the keyword ends.
         1097 => {
             let end = text[..at.min(text.len())].trim_ascii_end().len();
@@ -4891,10 +4971,32 @@ impl Checker<'_> {
                 .iter()
                 .any(|d| matches!(d, Decl::ExportsProperty(_) | Decl::ModuleExports(_)))
         {
+            // `isReadonlySymbol`: not what `Object.defineProperty(exports, name, descriptor)` makes read-only, unless it is written through
+            // `exports` or `module` itself.
+            let is_through_module = matches!(self.hir(file)[obj].kind, ExprKind::Ident(n)
+            if self.symbol_of_identifier(file, obj, n).is_some_and(|s| {
+                self.files().flags(s).contains(SymFlags::MODULE_EXPORTS)
+            }));
+            if !is_through_module {
+                for (declared_in, decl) in self.files().decls(sym) {
+                    if let Decl::ExportsProperty(declaration) = decl
+                        && self.is_readonly_assignment_declaration(declared_in, declaration)
+                    {
+                        out.push(Diagnostic {
+                            start: at,
+                            code: 2540,
+                        });
+                        explain_readonly_element(self, file, e, at, Some(prop), name);
+                        break;
+                    }
+                }
+            }
             return;
         }
         let is_refused = if prop.flags.contains(PropFlags::READONLY) {
             !self.is_written_in_own_constructor(file, e, obj, prop)
+        } else if self.has_readonly_assignment_declaration(prop) {
+            true
         } else {
             // Whatever is got at through `import * as` can only be read.
             matches!(self.hir(file)[obj].kind, ExprKind::Ident(n)
@@ -5074,6 +5176,12 @@ impl Checker<'_> {
                     && bound.member_owner[m.idx()] == bound.member_owner[constructor.idx()]
             }),
             PropSource::Parameter(other, p) => *other == file && bound.param_fn[p.idx()] == f,
+            // `isLocalThisPropertyAssignment`
+            PropSource::Assigned(other, assignments) => {
+                *other == file
+                    && matches!(bound.member_owner[constructor.idx()], MemberOwner::Class(class)
+                        if bound.this_properties.iter().any(|x| x.0 == class && Some(&x.3) == assignments.first()))
+            }
             _ => false,
         }
     }

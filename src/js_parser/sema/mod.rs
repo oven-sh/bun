@@ -478,6 +478,8 @@ pub(crate) struct TypeSyntax {
     pub(crate) casts: Vec<(ExprKey, CastKind, i32)>,
     /// `with { .. }` after a module specifier: where `with` is, and the attributes as an object literal.
     pub(crate) import_attributes: Vec<(i32, Expr)>,
+    /// The module specifiers that are no string literals (`parseModuleSpecifier`).
+    pub(crate) specifier_expressions: Vec<Expr>,
     /// The `<` of a JSX element, and the name in its closing tag. The element's `tag` is then the name in its opening tag.
     pub(crate) closing_tags: Vec<(i32, Expr)>,
     /// `f<T>` was just parsed: where the `<` is, and where the next token starts.
@@ -526,6 +528,7 @@ impl TypeSyntax {
             marks: Vec::new(),
             casts: Vec::new(),
             import_attributes: Vec::new(),
+            specifier_expressions: Vec::new(),
             closing_tags: Vec::new(),
             pending_type_arguments: (0, 0),
             // BUN_SEMA_KEEP=0 runs the parser in skip mode, as ordinary builds do, to check what it accepts and reports. No types result.

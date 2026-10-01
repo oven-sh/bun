@@ -90,15 +90,23 @@ compiled and does not count as written. Waiting for the lock is normal: give the
 
 ## Building and testing in a worktree
 
-- The machine is heavily loaded and shared by all units. Run EVERY heavy command through the lock helper, so
-  that at most two heavy commands run at a time on the machine: `/workspace/tools/lk bun bd --version`,
+- THE MACHINE HAS 32 GB OF MEMORY FOR EVERYTHING, AND IT IS REMOVED WHEN THAT IS USED UP. That is how the work
+  was lost three times. One debug build of bun needs most of it. So: run EVERY heavy command through the lock
+  helper, which lets ONE heavy command run at a time on the whole machine. Heavy means: any `bun bd`, any
+  `bun run build*`, any `cargo` command, any test run, any script that starts more than four processes.
+  A watchdog ends the largest compiler, linker or test process when memory runs short: if your build dies
+  with signal 9, look at `/workspace/tools/memwatch.log` and run it again alone.
+  Examples: `/workspace/tools/lk bun bd -j8 --version`,
   `/workspace/tools/lk cargo check -p bun_js_parser --message-format=short`,
   `/workspace/tools/lk bun bd test test/cli/lint/lint.test.ts`. A command can wait a long time for the lock:
   give EVERY build or test command an explicit timeout of 3600000 ms. The default 2 minutes kills it, which
   then looks like a hang or like exit code 137.
 - First time in a new worktree: `bun install`, then `(cd test && bun install)`, then
-  `/workspace/tools/lk bun bd --version` (a full debug build, it also fetches `vendor/`). `cargo check` works
-  only after that.
+  `/workspace/tools/lk bun bd -j8 --version` (a full debug build, it also fetches `vendor/`; `-j8` keeps the
+  compilers within the memory). `cargo check` works only after that. Look first whether `build/debug/bun-debug`
+  exists: then the worktree is built and the next build is short.
+- A script of yours that starts `bun`, `bun-debug`, `node` or `tsc` many times runs at most FOUR of them at a
+  time, and goes through the lock helper when it runs longer than a minute.
 - Fast loop: `cargo check -p <crate>`. Full build and run: `bun bd <args>`. Tests: `bun bd test <file>`.
   NEVER plain `bun test` or `bun <file>` to judge your change: those run the installed release binary, not
   your build. If a test fails only with `timed out after 5000ms`, run it again with `--timeout 180000`.

@@ -25,6 +25,15 @@ not in the tree: a generated table is in the notes (`diagnostics-scratch/crate/d
 `sh /workspace/notes/lint/tools/typecheck-survey.sh` exits 0. That means: `cargo check -p bun_typecheck` passes
 AND every `.rs` file under `src/typecheck/` is reached by a `mod` line from `lib.rs`. Nothing else counts.
 
+## How the work is divided (the first survey of this round found this)
+
+- The survey command compiles. A fixer does not build and does not commit: it edits files so that the errors
+  it was given are gone, by reading the code and upstream. A background job commits and pushes the worktree
+  every five minutes. If your instructions for this step say otherwise, follow them.
+- The layers are a chain, not independent work. Only the lowest layer that is not yet green is worked on.
+  A fixer that was given a directory of a later layer changes nothing there and says so.
+- `lib.rs` and `Cargo.toml` are edited by the fixer of the layer that is being declared, by nobody else.
+
 ## How to get there
 
 1. Bottom-up, one layer at a time. Declare a layer in `lib.rs` (or in the `mod.rs` of its directory), make the
@@ -34,12 +43,18 @@ AND every `.rs` file under `src/typecheck/` is reached by a `mod` line from `lib
    2. `diagnostics` (bring the generated table and its generator script into the tree: 2,206 messages from
       `/workspace/ref/typescript-go/_submodules/TypeScript/src/compiler/diagnosticMessages.json` and
       typescript-go's `internal/diagnostics/extraDiagnosticMessages.json`, the extras win by code; a message has
-      a stable id, a code, a category and a text), then `scanner`
-   3. `ast`
-   4. `evaluator`, `binder`
-   5. `module`, `modulespecifiers`, `nodebuilder`, `pseudochecker`, `printer`
-   6. `checker`
-   7. `importer`, `lowering`
+      a stable id, a code, a category and a text; the constants are UPPER_SNAKE, as every use in the tree
+      spells them: the copy under `checker-data-model-contract/bottom-up/crate/src/diagnostics/` of the notes
+      is that form), and `internal` (22 files name `crate::internal`, no file defines it: find what they need)
+   3. `ast` together with `scanner` (the scanner imports `ast`; `scanner/` has no `mod.rs`; no file defines
+      `crate::ast::Arg`, which the scanner and the lowering import)
+   4. `binder`
+   5. `importer`, `lowering` (they import nothing of the layers below this line)
+   6. `module`, `nodebuilder`, `pseudochecker`, `printer`
+   7. `checker` together with `evaluator` and `modulespecifiers` (both import `checker`; `evaluator/` has no
+      `mod.rs`; `checker/mod.rs` declares 15 modules that have NO FILE: those parts of
+      `/workspace/ref/typescript-go/internal/checker` were never translated. Translate each one in full, by the
+      rules of typecheck.md K3, before the layer can compile. List them in `PORT_STATUS.md` first.)
 2. The files were written by many hands that did not compile against each other. Where two files disagree about
    a name, a signature or a type:
    - the contract of round 1 wins where it speaks (`API.md` and the directories `checker-data-model-contract/`
@@ -58,11 +73,10 @@ AND every `.rs` file under `src/typecheck/` is reached by a `mod` line from `lib
 5. Dependencies: add to `src/typecheck/Cargo.toml` what the code uses (`bun_ast`, `bun_js_parser`, `bun_core`,
    `bun_alloc`, `bun_collections`, and crates of `[workspace.dependencies]` such as `bitflags` or `smallvec`).
    No new crate from crates.io. Commit `Cargo.lock` with it.
-6. Work in the real crate. `cargo check -p bun_typecheck --message-format=short` through
-   `/workspace/tools/lk`, with a timeout of 3600000 ms. A file that compiles alone in a scratch crate and not in
-   the real one is not done.
-7. Commit by explicit path, in small steps, and push after every commit. Update `PORT_STATUS.md` (state
-   `ported` now means: compiled by cargo in the real crate) and save the notes.
+6. The real crate is the only one that counts. A file that compiles alone in a scratch crate and not in the
+   real one is not done. Where your step may build, run `cargo check -p bun_typecheck --message-format=short`
+   through `/workspace/tools/lk`, with a timeout of 3600000 ms.
+7. Update `PORT_STATUS.md` (state `ported` now means: compiled by cargo in the real crate) and save the notes.
 8. Comments: one line each. Keep the upstream comment that explains semantics as a one-line comment, drop the
    rest. No comment about this work, its steps or its tools.
 

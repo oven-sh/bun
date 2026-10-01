@@ -1,0 +1,320 @@
+{
+	"cases": [
+		{
+			"code": "class A { }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "class A { constructor() { } }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "class A { constructor() { this.b = 0; } }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "class A { constructor() { this.b(); } }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "class A extends null { }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "class A extends null { constructor() { } }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "class A extends B { }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "class A extends B { constructor() { super(); } }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "class A extends B { constructor() { super(); this.c = this.d; } }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "class A extends B { constructor() { super(); this.c(); } }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "class A extends B { constructor() { super(); super.c(); } }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "class A extends B { constructor() { if (true) { super(); } else { super(); } this.c(); } }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "class A extends B { constructor() { foo = super(); this.c(); } }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "class A extends B { constructor() { foo += super().a; this.c(); } }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "class A extends B { constructor() { foo |= super().a; this.c(); } }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "class A extends B { constructor() { foo &= super().a; this.c(); } }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "class A extends B { constructor() { class B extends C { constructor() { super(); this.d = 0; } } super(); } }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "class A extends B { constructor() { var B = class extends C { constructor() { super(); this.d = 0; } }; super(); } }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "class A extends B { constructor() { function c() { this.d(); } super(); } }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "class A extends B { constructor() { var c = function c() { this.d(); }; super(); } }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "class A extends B { constructor() { var c = () => this.d(); super(); } }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "class A { b() { this.c = 0; } }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "class A extends B { c() { this.d = 0; } }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "function a() { this.b = 0; }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "class A extends B { constructor() { if (a) { super(); this.a(); } else { super(); this.b(); } } }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "class A extends B { constructor() { if (a) super(); else super(); this.a(); } }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "class A extends B { constructor() { try { super(); } finally {} this.a(); } }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "class A extends B {\n            constructor() {\n                while (foo) {\n                    super();\n                    this.a();\n                }\n            }\n        }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "class A extends B {\n            constructor() {\n                while (foo) {\n                    if (init) {\n                        super();\n                        this.a();\n                    }\n                }\n            }\n        }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "class A extends B { constructor(a) { super(); for (const b of a) { this.a(); } } }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "class A extends B { constructor(a) { for (const b of a) { foo(b); } super(); } }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "class A extends B { constructor(a) { super(); this.a = a && function(){} && this.foo; } }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "class A extends Object {\n    constructor() {\n        super();\n        for (let i = 0; i < 0; i++);\n        this;\n    }\n}",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "class A { constructor() { return; this; } }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "class A extends B { constructor() { return; this; } }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "\n            class A extends B {\n                constructor(props) {\n                    super(props);\n\n                    try {\n                        let arr = [];\n                        for (let a of arr) {\n                        }\n                    } catch (err) {\n                    }\n                }\n            }\n        ",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "class C { field = this.toString(); }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "class C extends B { field = this.foo(); }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "class C extends B { field = this.foo(); constructor() { super(); } }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "class C extends B { field = this.foo(); constructor() { } }",
+			"ext": "js",
+			"kind": "valid"
+		},
+		{
+			"code": "class A extends B { constructor() { this.c = 0; } }",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "class A extends B { constructor() { this.c(); } }",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "class A extends B { constructor() { super.c(); } }",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "class A extends B { constructor() { this.c = 0; super(); } }",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "class A extends B { constructor() { this.c(); super(); } }",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "class A extends B { constructor() { super.c(); super(); } }",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "class A extends B { constructor() { super(this.c); } }",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "class A extends B { constructor() { super(this.c()); } }",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "class A extends B { constructor() { super(super.c()); } }",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "class A extends B { constructor() { class C extends D { constructor() { super(); this.e(); } } this.f(); super(); } }",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "class A extends B { constructor() { class C extends D { constructor() { this.e(); super(); } } super(); this.f(); } }",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "class A extends B { constructor() { if (a) super(); this.a(); } }",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "class A extends B { constructor() { try { super(); } finally { this.a; } } }",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "class A extends B { constructor() { try { super(); } catch (err) { } this.a; } }",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "class A extends B { constructor() { foo &&= super().a; this.c(); } }",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "class A extends B { constructor() { foo ||= super().a; this.c(); } }",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "class A extends B { constructor() { foo ??= super().a; this.c(); } }",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "\n            class A extends B {\n                constructor() {\n                    if (foo) {\n                        if (bar) { }\n                        super();\n                    }\n                    this.a();\n                }\n            }",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "\n            class A extends B {\n                constructor() {\n                    if (foo) {\n                    } else {\n                      super();\n                    }\n                    this.a();\n                }\n            }",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "\n            class A extends B {\n                constructor() {\n                    try {\n                        call();\n                    } finally {\n                        this.a();\n                    }\n                }\n            }",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "\n            class A extends B {\n                constructor() {\n                    while (foo) {\n                        super();\n                    }\n                    this.a();\n                }\n            }",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "\n            class A extends B {\n                constructor() {\n                    while (foo) {\n                        this.a();\n                        super();\n                    }\n                }\n            }",
+			"ext": "js",
+			"kind": "invalid"
+		},
+		{
+			"code": "\n            class A extends B {\n                constructor() {\n                    while (foo) {\n                        if (init) {\n                            this.a();\n                            super();\n                        }\n                    }\n                }\n            }",
+			"ext": "js",
+			"kind": "invalid"
+		}
+	],
+	"skipped": {}
+}

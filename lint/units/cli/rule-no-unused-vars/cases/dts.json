@@ -1,0 +1,21 @@
+[
+{"ext":"d.ts","code":"declare const x: number; interface I {} type T = 1; declare function f(a: number): void; declare class C {} declare enum E {} declare namespace N { const y: number }"},
+{"ext":"d.ts","code":"declare const x: number; export {};"},
+{"ext":"d.ts","code":"const x: number; interface I {}"},
+{"ext":"d.ts","code":"import { A } from \"x\"; declare const y: number;"},
+{"ext":"d.ts","code":"declare namespace N { const a: number; namespace M { const b: number } } export {};"},
+{"ext":"d.ts","code":"namespace N { const a: number; }"},
+{"ext":"d.ts","code":"declare module \"m\" { import { Z } from \"z\"; const a: number; }"},
+{"ext":"d.ts","code":"declare const x: number; export default x;"},
+{"ext":"d.ts","code":"declare const x: number, y: string; export { x };"},
+{"ext":"d.ts","code":"declare function f<T>(a: number): void;"},
+{"ext":"d.ts","code":"type A<T> = 1;"},
+{"ext":"d.ts","code":"declare let [a, b]: number[];"},
+{"ext":"d.ts","code":"export * from \"y\"; declare const a: number;"},
+{"ext":"d.ts","code":"declare const a: number; export = a;"},
+{"ext":"d.ts","code":"export type { T } from \"y\"; declare const a: number;"},
+{"ext":"d.ts","code":"export as namespace Lib; declare const a: number;"},
+{"ext":"d.ts","code":"declare namespace N { const a: number; export { a as b }; const c: number; }"},
+{"ext":"d.mts","code":"declare const x: number;"},
+{"ext":"d.cts","code":"declare const x: number;"}
+]

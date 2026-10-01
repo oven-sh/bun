@@ -1,0 +1,297 @@
+diff -ru v1/src/js_parser/parse/parse_skip_typescript.rs v2/src/js_parser/parse/parse_skip_typescript.rs
+--- v1/src/js_parser/parse/parse_skip_typescript.rs	2026-10-01 19:09:17.242129970 +0000
++++ v2/src/js_parser/parse/parse_skip_typescript.rs	2026-10-01 19:09:17.642311276 +0000
+@@ -39,6 +39,47 @@
+     };
+ }
+ 
++/// "!", "[" and ".": what `P::parse_postfix_type_rest` reads.
++const TT_POSTFIX: u8 = 1;
++/// "&", "|" and "extends": what follows an operand of `P::parse_type`.
++const TT_OPERATOR: u8 = 2;
++/// A word, ".", "<" and "<<": what follows the first name of a type reference.
++const TT_AFTER_NAME: u8 = 4;
++
++const fn type_token_flags() -> [u8; 256] {
++    let mut flags = [0u8; 256];
++    flags[T::TExclamation as usize] |= TT_POSTFIX;
++    flags[T::TOpenBracket as usize] |= TT_POSTFIX;
++    flags[T::TDot as usize] |= TT_POSTFIX | TT_AFTER_NAME;
++    flags[T::TAmpersand as usize] |= TT_OPERATOR;
++    flags[T::TBar as usize] |= TT_OPERATOR;
++    flags[T::TExtends as usize] |= TT_OPERATOR;
++    flags[T::TIdentifier as usize] |= TT_AFTER_NAME;
++    flags[T::TLessThan as usize] |= TT_AFTER_NAME;
++    flags[T::TLessThanLessThan as usize] |= TT_AFTER_NAME;
++    flags
++}
++
++static TYPE_TOKEN_FLAGS: [u8; 256] = type_token_flags();
++
++#[inline(always)]
++fn type_token_has(token: T, flags: u8) -> bool {
++    TYPE_TOKEN_FLAGS[token as u8 as usize] & flags != 0
++}
++
++/// What `P::parse_plain_primary` read.
++#[derive(Clone, Copy, PartialEq, Eq)]
++enum Plain {
++    /// Nothing: the token starts no name, no keyword type and no literal type.
++    No,
++    /// Nothing: the word is the name of a type operator or of a modifier.
++    Special,
++    /// A type that no token goes on with.
++    Done,
++    /// A type and what `P::parse_postfix_type_rest` reads after it.
++    More,
++}
++
+ /// A word that is no reserved word and that parseTypeMember tests for.
+ #[derive(Clone, Copy)]
+ pub(crate) enum MemberKeyword {
+@@ -118,13 +159,6 @@
+ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+     #[inline]
+     pub(crate) fn skip_typescript_return_type(&mut self) -> Result<(), Error> {
+-        // "function f(keyof: any): keyof is string"
+-        if self.lexer.token == T::TIdentifier
+-            && self.is_followed_by_is_keyword()
+-            && self.skip_type_script_predicate_of_keyword_name()?
+-        {
+-            return Ok(());
+-        }
+         self.skip_type_script_type_with_opts::<Discard>(
+             Level::Lowest,
+             SkipTypeOptionsBitset::only(SkipTypeOptions::IsReturnType),
+@@ -651,6 +685,38 @@
+             return Err(Error::StackOverflow);
+         }
+ 
++        if !S::BUILDS {
++            match self.parse_plain_primary::<S>(out)? {
++                Plain::Done => return Ok(()),
++                Plain::More => {
++                    if !type_token_has(self.lexer.token, TT_OPERATOR) {
++                        return Ok(());
++                    }
++                    let mut lead: KK<S, b::Lead> = ConstDefault::DEFAULT;
++                    self.parse_union_or_intersection_type_rest::<S, false>(opts, out, &mut lead)?;
++                    let mut lead: KK<S, b::Lead> = ConstDefault::DEFAULT;
++                    self.parse_union_or_intersection_type_rest::<S, true>(opts, out, &mut lead)?;
++                    if self.lexer.token == T::TExtends
++                        && !self.lexer.has_newline_before
++                        && !opts.contains(SkipTypeOptions::DisallowConditionalTypes)
++                    {
++                        self.parse_conditional_type_rest::<S>(out)?;
++                    }
++                    return Ok(());
++                }
++                Plain::Special => {
++                    // "function f(keyof: any): keyof is string"
++                    if opts.contains(SkipTypeOptions::IsReturnType)
++                        && self.is_followed_by_is_keyword()
++                        && self.skip_type_script_predicate_of_keyword_name()?
++                    {
++                        return Ok(());
++                    }
++                }
++                Plain::No => {}
++            }
++        }
++
+         if self.is_start_of_function_type_or_constructor_type() {
+             self.parse_function_or_constructor_type::<S>(opts, out)?;
+             // Where a parenthesized type was read, operators follow it as they follow every other type.
+@@ -670,6 +736,104 @@
+         Ok(())
+     }
+ 
++    /// A name, a keyword type or a literal type with what follows it up to the operators, for a sink that builds no node.
++    #[inline(always)]
++    fn parse_plain_primary<S: TypeSink>(&mut self, out: &mut S::Out) -> Result<Plain, Error> {
++        const AFTER: u8 = TT_AFTER_NAME | TT_POSTFIX | TT_OPERATOR;
++        match self.lexer.token {
++            T::TIdentifier => {
++                let kind =
++                    kind_for_identifier(self.lexer.identifier).unwrap_or(TsIdentKind::Normal);
++                let keyword = match kind {
++                    TsIdentKind::Normal => {
++                        // parse_type_reference
++                        S::reference(out, self.lexer.identifier, |name| {
++                            self.find_symbol(bun_ast::Loc::EMPTY, name)
++                                .map(|found| found.r#ref)
++                        })?;
++                        self.lexer.next()?;
++                        if !type_token_has(self.lexer.token, AFTER) {
++                            return Ok(Plain::Done);
++                        }
++                        if !self.parse_type_predicate_after_name::<S>(out)? {
++                            self.parse_entity_name_rest::<S>(out)?;
++                            self.parse_type_arguments_of_type_reference::<S>(out)?;
++                        }
++                        self.parse_postfix_type_rest::<S>(out)?;
++                        return Ok(Plain::More);
++                    }
++                    TsIdentKind::PrimitiveAny => TypeKeyword::Any,
++                    TsIdentKind::PrimitiveNever => TypeKeyword::Never,
++                    TsIdentKind::PrimitiveUnknown => TypeKeyword::Unknown,
++                    TsIdentKind::PrimitiveUndefined => TypeKeyword::Undefined,
++                    TsIdentKind::PrimitiveObject => TypeKeyword::Object,
++                    TsIdentKind::PrimitiveNumber => TypeKeyword::Number,
++                    TsIdentKind::PrimitiveString => TypeKeyword::String,
++                    TsIdentKind::PrimitiveBoolean => TypeKeyword::Boolean,
++                    TsIdentKind::PrimitiveBigint => TypeKeyword::Bigint,
++                    TsIdentKind::PrimitiveSymbol => TypeKeyword::Symbol,
++                    _ => return Ok(Plain::Special),
++                };
++                // parse_keyword_type_node
++                let name = self.lexer.identifier;
++                let is_undefined = matches!(keyword, TypeKeyword::Undefined);
++                self.lexer.next()?;
++                S::keyword(out, keyword);
++                if !type_token_has(self.lexer.token, AFTER) {
++                    return Ok(Plain::Done);
++                }
++                if self.lexer.token == T::TDot {
++                    if is_undefined {
++                        S::keyword(out, TypeKeyword::Object);
++                    } else {
++                        S::reference(out, name, |name| {
++                            self.find_symbol(bun_ast::Loc::EMPTY, name)
++                                .map(|found| found.r#ref)
++                        })?;
++                    }
++                }
++                let _ = self.parse_type_predicate_after_name::<S>(out)?;
++                self.parse_postfix_type_rest::<S>(out)?;
++                Ok(Plain::More)
++            }
++            T::TStringLiteral
++            | T::TNoSubstitutionTemplateLiteral
++            | T::TNumericLiteral
++            | T::TBigIntegerLiteral
++            | T::TTrue
++            | T::TFalse => {
++                let literal = match self.lexer.token {
++                    T::TNumericLiteral => TypeLiteral::Number,
++                    T::TBigIntegerLiteral => TypeLiteral::Bigint,
++                    T::TTrue | T::TFalse => TypeLiteral::Boolean,
++                    _ => TypeLiteral::String,
++                };
++                self.lexer.next()?;
++                S::literal(out, literal);
++                if !type_token_has(self.lexer.token, TT_POSTFIX | TT_OPERATOR) {
++                    return Ok(Plain::Done);
++                }
++                self.parse_postfix_type_rest::<S>(out)?;
++                Ok(Plain::More)
++            }
++            T::TNull | T::TVoid => {
++                let keyword = if self.lexer.token == T::TNull {
++                    TypeKeyword::Null
++                } else {
++                    TypeKeyword::Void
++                };
++                self.lexer.next()?;
++                S::keyword(out, keyword);
++                if !type_token_has(self.lexer.token, TT_POSTFIX | TT_OPERATOR) {
++                    return Ok(Plain::Done);
++                }
++                self.parse_postfix_type_rest::<S>(out)?;
++                Ok(Plain::More)
++            }
++            _ => Ok(Plain::No),
++        }
++    }
++
+     /// The conditional type of `parseType`, from its "extends" on. `out` holds the check type.
+     fn parse_conditional_type_rest<S: TypeSink>(&mut self, out: &mut S::Out) -> Result<(), Error> {
+         self.lexer.next()?;
+@@ -820,6 +984,21 @@
+         opts: SkipTypeOptionsBitset,
+         out: &mut S::Out,
+     ) -> Result<(), Error> {
++        if !S::BUILDS {
++            match self.parse_plain_primary::<S>(out)? {
++                Plain::Done => return Ok(()),
++                Plain::More => {
++                    if IS_UNION && self.lexer.token == T::TAmpersand {
++                        let mut lead: KK<S, b::Lead> = ConstDefault::DEFAULT;
++                        self.parse_union_or_intersection_type_rest::<S, false>(
++                            opts, out, &mut lead,
++                        )?;
++                    }
++                    return Ok(());
++                }
++                Plain::Special | Plain::No => {}
++            }
++        }
+         if self.is_start_of_function_type_or_constructor_type() {
+             self.parse_function_or_constructor_type::<S>(opts, out)?;
+             if S::STRICT {
+@@ -1067,6 +1246,9 @@
+ 
+     /// The loop of `parsePostfixTypeOrHigher`. Its "?" is read in `parse_tuple_element_type` only.
+     fn parse_postfix_type_rest<S: TypeSink>(&mut self, out: &mut S::Out) -> Result<(), Error> {
++        if !type_token_has(self.lexer.token, TT_POSTFIX) {
++            return Ok(());
++        }
+         loop {
+             match self.lexer.token {
+                 T::TExclamation => {
+@@ -1472,6 +1654,9 @@
+ 
+     /// isListElement for a type: whether the lexer is on a reserved word or a private name that starts no type. "const" and "extends" are read as before.
+     fn is_word_that_starts_no_type(&mut self) -> bool {
++        if self.lexer.token == T::TIdentifier {
++            return false;
++        }
+         match self.lexer.token {
+             T::TPrivateIdentifier => true,
+             T::TConst | T::TExtends => false,
+@@ -1766,7 +1951,7 @@
+         // "[first: number, second?: string, ...rest: boolean[]]"
+         if !is_reserved_word
+             && (self.lexer.token == T::TDotDotDot || self.lexer.is_identifier_or_keyword())
+-            && self.look_ahead(Self::scan_start_of_named_tuple_element)
++            && self.is_start_of_named_tuple_element()
+         {
+             if self.lexer.token == T::TDotDotDot {
+                 self.lexer.next()?;
+@@ -1791,6 +1976,25 @@
+         Ok(())
+     }
+ 
++    /// `lookAhead(scanStartOfNamedTupleElement)`. After a word, blanks and then ":" or "?" decide without a token.
++    #[inline]
++    fn is_start_of_named_tuple_element(&mut self) -> bool {
++        if self.lexer.token != T::TDotDotDot {
++            let contents = self.lexer.contents;
++            let mut i = self.lexer.end;
++            while matches!(contents.get(i), Some(b' ' | b'\t' | b'\n' | b'\r')) {
++                i += 1;
++            }
++            match contents.get(i) {
++                Some(b':') => return true,
++                Some(b'?' | b'/') => {}
++                Some(byte) if *byte > b' ' && *byte < 0x7f => return false,
++                _ => {}
++            }
++        }
++        self.look_ahead(Self::scan_start_of_named_tuple_element)
++    }
++
+     /// A reserved word that starts no type is reported and read as a label, as before.
+     #[cold]
+     fn parse_tuple_element_at_reserved_word(&mut self) -> Result<(), Error> {
+@@ -2113,6 +2317,10 @@
+ 
+     /// parseTypeMember
+     fn parse_type_member(&mut self) -> Result<(), Error> {
++        if self.lexer.token == T::TIdentifier && MEMBER_KEYWORD_MAP.get(self.lexer.raw()).is_none() {
++            self.lexer.next()?;
++            return self.parse_property_or_method_signature(MemberName::Word, false);
++        }
+         // "+" or "-" is accepted before any member, not only before "readonly" of a mapped type
+         if self.lexer.token == T::TPlus || self.lexer.token == T::TMinus {
+             self.lexer.next()?;

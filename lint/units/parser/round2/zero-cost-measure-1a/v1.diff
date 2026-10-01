@@ -1,0 +1,130 @@
+diff -ru /workspace/wt/parser/src/js_parser/parse/parse_prefix.rs v1/src/js_parser/parse/parse_prefix.rs
+--- /workspace/wt/parser/src/js_parser/parse/parse_prefix.rs	2026-10-01 04:32:05.515914443 +0000
++++ v1/src/js_parser/parse/parse_prefix.rs	2026-10-01 19:09:17.212801976 +0000
+@@ -47,7 +47,7 @@
+         let loc = p.lexer.loc();
+         p.lexer.next()?;
+ 
+-        if !SCAN_ONLY && p.is_lint_parse() {
++        if Self::IS_TYPESCRIPT_ENABLED && !SCAN_ONLY && p.is_lint_parse() {
+             return Self::pfx_t_open_paren_for_lint(p, loc, level, flags);
+         }
+ 
+diff -ru /workspace/wt/parser/src/js_parser/parse/parse_property.rs v1/src/js_parser/parse/parse_property.rs
+--- /workspace/wt/parser/src/js_parser/parse/parse_property.rs	2026-10-01 04:32:05.515914443 +0000
++++ v1/src/js_parser/parse/parse_property.rs	2026-10-01 19:09:17.244763401 +0000
+@@ -419,14 +419,6 @@
+                     // p.markSyntaxFeature(compat.objectExtensions, p.lexer.range())
+                     p.lexer.next()?;
+ 
+-                    if Self::IS_TYPESCRIPT_ENABLED && opts.is_class && p.is_class_index_signature()
+-                    {
+-                        p.skip_class_index_signature()?;
+-
+-                        // Skip this property entirely
+-                        return Ok(None);
+-                    }
+-
+                     let was_identifier = p.lexer.token == T::TIdentifier;
+                     let expr = p.parse_expr(Level::Comma)?;
+ 
+diff -ru /workspace/wt/parser/src/js_parser/parse/parse_skip_typescript.rs v1/src/js_parser/parse/parse_skip_typescript.rs
+--- /workspace/wt/parser/src/js_parser/parse/parse_skip_typescript.rs	2026-10-01 04:32:05.521642385 +0000
++++ v1/src/js_parser/parse/parse_skip_typescript.rs	2026-10-01 19:09:17.242129970 +0000
+@@ -3326,9 +3326,7 @@
+         // holds `&mut Log`, so backtracking goes through a POD `LexerSnapshot` + `restore()`.
+         let old_lexer = self.lexer.snapshot();
+         let old_log_disabled = self.lexer.is_log_disabled;
+-        let log = self.log();
+-        let (old_msgs_len, old_errors, old_warnings) = (log.msgs.len(), log.errors, log.warnings);
+-        let recorded = self.sidecar_mark();
++        let old_msgs_len = self.log().msgs.len();
+         self.lexer.is_log_disabled = true;
+         let mut backtrack = false;
+         match func(self) {
+@@ -3340,13 +3338,8 @@
+ 
+         if backtrack {
+             self.lexer.restore(&old_lexer);
+-            // What the attempt logged without asking the lexer goes with it.
+-            let log = self.log();
+-            log.msgs.truncate(old_msgs_len);
+-            log.errors = old_errors;
+-            log.warnings = old_warnings;
+-            if let Some(mark) = recorded {
+-                self.rewind_sidecar(mark);
++            if self.log().msgs.len() != old_msgs_len {
++                self.cut_attempt_log(old_msgs_len);
+             }
+         }
+         self.lexer.is_log_disabled = old_log_disabled;
+@@ -3362,9 +3355,7 @@
+         self.mark_type_script_only();
+         let old_lexer = self.lexer.snapshot();
+         let old_log_disabled = self.lexer.is_log_disabled;
+-        let log = self.log();
+-        let (old_msgs_len, old_errors, old_warnings) = (log.msgs.len(), log.errors, log.warnings);
+-        let recorded = self.sidecar_mark();
++        let old_msgs_len = self.log().msgs.len();
+         self.lexer.is_log_disabled = true;
+         let mut backtrack = false;
+         let result = match func(self) {
+@@ -3377,13 +3368,8 @@
+ 
+         if backtrack {
+             self.lexer.restore(&old_lexer);
+-            // `<out T>x`: the modifier that no type parameter of a function has is logged past the lexer
+-            let log = self.log();
+-            log.msgs.truncate(old_msgs_len);
+-            log.errors = old_errors;
+-            log.warnings = old_warnings;
+-            if let Some(mark) = recorded {
+-                self.rewind_sidecar(mark);
++            if self.log().msgs.len() != old_msgs_len {
++                self.cut_attempt_log(old_msgs_len);
+             }
+         }
+         self.lexer.is_log_disabled = old_log_disabled;
+@@ -3391,6 +3377,25 @@
+         result
+     }
+ 
++    /// Drops what an attempt that failed logged without asking the lexer. The counts are the ones of what stays.
++    #[cold]
++    #[inline(never)]
++    fn cut_attempt_log(&mut self, len: usize) {
++        let log = self.log();
++        log.msgs.truncate(len);
++        let mut errors = 0u32;
++        let mut warnings = 0u32;
++        for msg in log.msgs.iter() {
++            match msg.kind {
++                bun_ast::Kind::Err => errors += 1,
++                bun_ast::Kind::Warn => warnings += 1,
++                _ => {}
++            }
++        }
++        log.errors = errors;
++        log.warnings = warnings;
++    }
++
+     /// As `lexer_backtracker_bool`, and what `func` returned where nothing went back.
+     #[inline]
+     fn lexer_backtracker_kept<F, R>(&mut self, func: F) -> Option<R>
+diff -ru /workspace/wt/parser/src/js_parser/parse/parse_stmt.rs v1/src/js_parser/parse/parse_stmt.rs
+--- /workspace/wt/parser/src/js_parser/parse/parse_stmt.rs	2026-10-01 04:32:05.527642427 +0000
++++ v1/src/js_parser/parse/parse_stmt.rs	2026-10-01 19:09:17.215223462 +0000
+@@ -1845,13 +1845,6 @@
+     ) -> Result<Stmt> {
+         let is_identifier = p.lexer.token == T::TIdentifier;
+         let name = p.lexer.identifier;
+-        if Self::IS_TYPESCRIPT_ENABLED
+-            && is_identifier
+-            && let Some(keyword) = js_lexer::TypescriptStmtKeyword::from_bytes(name)
+-            && let Some(stmt) = Self::parse_stmt_named_like_cast(p, opts, loc, keyword)?
+-        {
+-            return Ok(stmt);
+-        }
+         // Parse either an async function, an async expression, or a normal expression.
+         // Every branch below either assigns `expr` or `return`s.
+         let mut expr: Expr;

@@ -1947,7 +1947,7 @@ describe("the response body is framed by the value of Transfer-Encoding", () => 
   // A run of 1000 or more `a` bytes prints as `<a x count>`.
   function squash(text: string) {
     let out = "";
-    for (let i = 0; i < text.length;) {
+    for (let i = 0; i < text.length; ) {
       let end = i + 1;
       if (text[i] === "a") while (end < text.length && text[end] === "a") end++;
       out += end - i >= 1000 ? `<a x ${end - i}>` : text.slice(i, end);
@@ -4009,6 +4009,32 @@ describe("the allowHTTP1 fallback of http2 frames the body by the value of Trans
       expect(await wire(respond, "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n", end)).toBe(expected);
     },
   );
+
+  // As on the native handle: a framing header that a toString() adds while the head is rendered is not a line of
+  // this head, so it does not frame the body.
+  test.concurrent.each([
+    ["Content-Length", "2"],
+    ["Transfer-Encoding", "identity"],
+  ])("a %s header that a toString() adds while the head is rendered does not frame the body", async (name, value) => {
+    const sent = await wire(res => {
+      let armed = false;
+      res.setHeader("X-A", {
+        toString() {
+          if (armed) {
+            armed = false;
+            res.setHeader(name, value);
+          }
+          return "a";
+        },
+      });
+      armed = true;
+      res.write("ok");
+      res.end();
+    });
+    expect(sent).toBe(
+      "HTTP/1.1 200 OK\r\nX-A: a\r\nDate: <D>\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\n\r\n",
+    );
+  });
 
   const KEEP_ALIVE = "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
   const second = "HTTP/1.1 200 OK\r\nDate: <D>\r\nConnection: close\r\nContent-Length: 3\r\n\r\ntwo";

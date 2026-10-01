@@ -410,11 +410,6 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
         // NOTE: using a 1ms timeout would be ideal, but that actually makes the thread wait for at least 10ms more than it should
         // Instead we use a 0ms timeout, which may not do as much coalescing but is more responsive.
         timeout = Timeout::None;
-        bun_core::scoped_log!(
-            watcher,
-            "number of watched items: {}",
-            this.watchlist.items_file_path().len()
-        );
         while let Some(event) = iter.next() {
             // `event.filename` is a `RawSlice<u16>` into `this.platform.watcher.buf`,
             // live for the duration of this iteration (no `prepare()` until the
@@ -444,6 +439,7 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
             // Backwards, because a batch evicts items: an eviction moves the last item into
             // the hole, so an item this scan has not reached never moves out of its way.
             let mut item_idx = this.watchlist.len();
+            bun_core::scoped_log!(watcher, "number of watched items: {}", item_idx);
             while item_idx > 0 {
                 if event_id >= this.watch_events.len() {
                     // It takes the mutex itself.

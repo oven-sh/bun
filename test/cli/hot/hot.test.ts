@@ -852,35 +852,45 @@ it.if(isWindows)("a burst of file events with a deleted import in it does not en
     env: bunEnv,
     cwd: root,
     stdout: "pipe",
-    stderr: "inherit",
+    stderr: "pipe",
     stdin: "ignore",
   });
-  const reader = runner.stdout.getReader();
-  let stdout = "";
-  const printed = async (text: string) => {
-    while (!stdout.includes(text)) {
-      const { value, done } = await reader.read();
-      if (done) return false;
-      stdout += Buffer.from(value).toString();
-    }
-    return true;
+  const follow = (stream: ReadableStream<Uint8Array>) => {
+    const reader = stream.getReader();
+    let text = "";
+    return async (wanted: string) => {
+      while (!text.includes(wanted)) {
+        const { value, done } = await reader.read();
+        if (done) return text;
+        text += Buffer.from(value).toString();
+      }
+      return true;
+    };
   };
-  expect(await printed("loaded")).toBe(true);
+  const stdout = follow(runner.stdout);
+  const stderr = follow(runner.stderr);
+  expect(await stdout("loaded")).toBe(true);
 
   // Stopped, the process finds the whole burst waiting for it, as it does on a busy machine.
   const PROCESS_SUSPEND_RESUME = 0x0800;
   const handle = OpenProcess(PROCESS_SUSPEND_RESUME, 0, runner.pid);
-  expect(NtSuspendProcess(handle)).toBe(0);
+  expect(handle).not.toBeNull();
   try {
-    // The read that is already waiting completes with the first change alone.
-    writeFileSync(join(root, "other", "first"), "");
-    unlinkSync(join(root, "mods", "b.js"));
-    for (let i = 0; i < 200; i++) writeFileSync(join(root, "other", String(i)), "");
+    expect(NtSuspendProcess(handle)).toBe(0);
+    try {
+      // The read that is already waiting completes with the first change alone.
+      writeFileSync(join(root, "other", "first"), "");
+      unlinkSync(join(root, "mods", "b.js"));
+      for (let i = 0; i < 200; i++) writeFileSync(join(root, "other", String(i)), "");
+    } finally {
+      expect(NtResumeProcess(handle)).toBe(0);
+    }
   } finally {
-    NtResumeProcess(handle);
     CloseHandle(handle);
   }
+  // The delete was not lost in the burst: its reload fails on the import.
+  expect(await stderr("b.js")).toBe(true);
 
   writeFileSync(join(root, "main.js"), `import "./mods/a.js";\nconsole.log("reloaded");\n`);
-  expect(await printed("reloaded")).toBe(true);
+  expect(await stdout("reloaded")).toBe(true);
 });

@@ -1,0 +1,796 @@
+{
+	"valid": [
+		{
+			"code": "'\\u000B';"
+		},
+		{
+			"code": "'\\u000C';"
+		},
+		{
+			"code": "'\\u0085';"
+		},
+		{
+			"code": "'\\u00A0';"
+		},
+		{
+			"code": "'\\u180E';"
+		},
+		{
+			"code": "'\\ufeff';"
+		},
+		{
+			"code": "'\\u2000';"
+		},
+		{
+			"code": "'\\u2001';"
+		},
+		{
+			"code": "'\\u2002';"
+		},
+		{
+			"code": "'\\u2003';"
+		},
+		{
+			"code": "'\\u2004';"
+		},
+		{
+			"code": "'\\u2005';"
+		},
+		{
+			"code": "'\\u2006';"
+		},
+		{
+			"code": "'\\u2007';"
+		},
+		{
+			"code": "'\\u2008';"
+		},
+		{
+			"code": "'\\u2009';"
+		},
+		{
+			"code": "'\\u200A';"
+		},
+		{
+			"code": "'\\u200B';"
+		},
+		{
+			"code": "'\\u2028';"
+		},
+		{
+			"code": "'\\u2029';"
+		},
+		{
+			"code": "'\\u202F';"
+		},
+		{
+			"code": "'\\u205f';"
+		},
+		{
+			"code": "'\\u3000';"
+		},
+		{
+			"code": "'\u000b';"
+		},
+		{
+			"code": "'\f';"
+		},
+		{
+			"code": "'';"
+		},
+		{
+			"code": "' ';"
+		},
+		{
+			"code": "'᠎';"
+		},
+		{
+			"code": "'﻿';"
+		},
+		{
+			"code": "' ';"
+		},
+		{
+			"code": "' ';"
+		},
+		{
+			"code": "' ';"
+		},
+		{
+			"code": "' ';"
+		},
+		{
+			"code": "' ';"
+		},
+		{
+			"code": "' ';"
+		},
+		{
+			"code": "' ';"
+		},
+		{
+			"code": "' ';"
+		},
+		{
+			"code": "' ';"
+		},
+		{
+			"code": "' ';"
+		},
+		{
+			"code": "' ';"
+		},
+		{
+			"code": "'​';"
+		},
+		{
+			"code": "'\\ ';"
+		},
+		{
+			"code": "'\\ ';"
+		},
+		{
+			"code": "' ';"
+		},
+		{
+			"code": "' ';"
+		},
+		{
+			"code": "'　';"
+		},
+		{
+			"code": "// \u000b"
+		},
+		{
+			"code": "// \f"
+		},
+		{
+			"code": "// "
+		},
+		{
+			"code": "//  "
+		},
+		{
+			"code": "// ᠎"
+		},
+		{
+			"code": "// ﻿"
+		},
+		{
+			"code": "//  "
+		},
+		{
+			"code": "//  "
+		},
+		{
+			"code": "//  "
+		},
+		{
+			"code": "//  "
+		},
+		{
+			"code": "//  "
+		},
+		{
+			"code": "//  "
+		},
+		{
+			"code": "//  "
+		},
+		{
+			"code": "//  "
+		},
+		{
+			"code": "//  "
+		},
+		{
+			"code": "//  "
+		},
+		{
+			"code": "//  "
+		},
+		{
+			"code": "// ​"
+		},
+		{
+			"code": "//  "
+		},
+		{
+			"code": "//  "
+		},
+		{
+			"code": "// 　"
+		},
+		{
+			"code": "/* \u000b */"
+		},
+		{
+			"code": "/* \f */"
+		},
+		{
+			"code": "/*  */"
+		},
+		{
+			"code": "/*   */"
+		},
+		{
+			"code": "/* ᠎ */"
+		},
+		{
+			"code": "/* ﻿ */"
+		},
+		{
+			"code": "/*   */"
+		},
+		{
+			"code": "/*   */"
+		},
+		{
+			"code": "/*   */"
+		},
+		{
+			"code": "/*   */"
+		},
+		{
+			"code": "/*   */"
+		},
+		{
+			"code": "/*   */"
+		},
+		{
+			"code": "/*   */"
+		},
+		{
+			"code": "/*   */"
+		},
+		{
+			"code": "/*   */"
+		},
+		{
+			"code": "/*   */"
+		},
+		{
+			"code": "/*   */"
+		},
+		{
+			"code": "/* ​ */"
+		},
+		{
+			"code": "/*   */"
+		},
+		{
+			"code": "/*   */"
+		},
+		{
+			"code": "/*   */"
+		},
+		{
+			"code": "/*   */"
+		},
+		{
+			"code": "/* 　 */"
+		},
+		{
+			"code": "/\u000b/"
+		},
+		{
+			"code": "/\f/"
+		},
+		{
+			"code": "//"
+		},
+		{
+			"code": "/ /"
+		},
+		{
+			"code": "/᠎/"
+		},
+		{
+			"code": "/﻿/"
+		},
+		{
+			"code": "/ /"
+		},
+		{
+			"code": "/ /"
+		},
+		{
+			"code": "/ /"
+		},
+		{
+			"code": "/ /"
+		},
+		{
+			"code": "/ /"
+		},
+		{
+			"code": "/ /"
+		},
+		{
+			"code": "/ /"
+		},
+		{
+			"code": "/ /"
+		},
+		{
+			"code": "/ /"
+		},
+		{
+			"code": "/ /"
+		},
+		{
+			"code": "/ /"
+		},
+		{
+			"code": "/​/"
+		},
+		{
+			"code": "/ /"
+		},
+		{
+			"code": "/ /"
+		},
+		{
+			"code": "/　/"
+		},
+		{
+			"code": "`\u000b`"
+		},
+		{
+			"code": "`\f`"
+		},
+		{
+			"code": "``"
+		},
+		{
+			"code": "` `"
+		},
+		{
+			"code": "`᠎`"
+		},
+		{
+			"code": "`﻿`"
+		},
+		{
+			"code": "` `"
+		},
+		{
+			"code": "` `"
+		},
+		{
+			"code": "` `"
+		},
+		{
+			"code": "` `"
+		},
+		{
+			"code": "` `"
+		},
+		{
+			"code": "` `"
+		},
+		{
+			"code": "` `"
+		},
+		{
+			"code": "` `"
+		},
+		{
+			"code": "` `"
+		},
+		{
+			"code": "` `"
+		},
+		{
+			"code": "` `"
+		},
+		{
+			"code": "`​`"
+		},
+		{
+			"code": "` `"
+		},
+		{
+			"code": "` `"
+		},
+		{
+			"code": "`　`"
+		},
+		{
+			"code": "`　${foo}　`"
+		},
+		{
+			"code": "const error = ` 　 `;"
+		},
+		{
+			"code": "const error = `\n　`;"
+		},
+		{
+			"code": "const error = `　\n`;"
+		},
+		{
+			"code": "const error = `\n　\n`;"
+		},
+		{
+			"code": "const error = `foo　bar\nfoo　bar`;"
+		},
+		{
+			"code": "<div>\u000b</div>;",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
+		},
+		{
+			"code": "<div>\f</div>;",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
+		},
+		{
+			"code": "<div></div>;",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
+		},
+		{
+			"code": "<div> </div>;",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
+		},
+		{
+			"code": "<div>᠎</div>;",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
+		},
+		{
+			"code": "<div>﻿</div>;",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
+		},
+		{
+			"code": "<div> </div>;",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
+		},
+		{
+			"code": "<div> </div>;",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
+		},
+		{
+			"code": "<div> </div>;",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
+		},
+		{
+			"code": "<div> </div>;",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
+		},
+		{
+			"code": "<div> </div>;",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
+		},
+		{
+			"code": "<div> </div>;",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
+		},
+		{
+			"code": "<div> </div>;",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
+		},
+		{
+			"code": "<div> </div>;",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
+		},
+		{
+			"code": "<div> </div>;",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
+		},
+		{
+			"code": "<div> </div>;",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
+		},
+		{
+			"code": "<div> </div>;",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
+		},
+		{
+			"code": "<div>​</div>;",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
+		},
+		{
+			"code": "<div> </div>;",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
+		},
+		{
+			"code": "<div> </div>;",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
+		},
+		{
+			"code": "<div>　</div>;",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
+		},
+		{
+			"code": "﻿console.log('hello BOM');"
+		}
+	],
+	"invalid": [
+		{
+			"code": "var any \u000b = 'thing';"
+		},
+		{
+			"code": "var any \f = 'thing';"
+		},
+		{
+			"code": "var any   = 'thing';"
+		},
+		{
+			"code": "var any ﻿ = 'thing';"
+		},
+		{
+			"code": "var any   = 'thing';"
+		},
+		{
+			"code": "var any   = 'thing';"
+		},
+		{
+			"code": "var any   = 'thing';"
+		},
+		{
+			"code": "var any   = 'thing';"
+		},
+		{
+			"code": "var any   = 'thing';"
+		},
+		{
+			"code": "var any   = 'thing';"
+		},
+		{
+			"code": "var any   = 'thing';"
+		},
+		{
+			"code": "var any   = 'thing';"
+		},
+		{
+			"code": "var any   = 'thing';"
+		},
+		{
+			"code": "var any   = 'thing';"
+		},
+		{
+			"code": "var any   = 'thing';"
+		},
+		{
+			"code": "var any   = 'thing';"
+		},
+		{
+			"code": "var any   = 'thing';"
+		},
+		{
+			"code": "var any   = 'thing';"
+		},
+		{
+			"code": "var any   = 'thing';"
+		},
+		{
+			"code": "var any 　 = 'thing';"
+		},
+		{
+			"code": "var a = 'b', c = 'd',\ne = 'f' "
+		},
+		{
+			"code": "var any 　 = 'thing', other 　 = 'thing';\nvar third 　 = 'thing';"
+		},
+		{
+			"code": "var any = /　/, other = /\u000b/;"
+		},
+		{
+			"code": "var any = '　', other = '\u000b';"
+		},
+		{
+			"code": "var any = `　`, other = `\u000b`;"
+		},
+		{
+			"code": "`something ${　 10} another thing`"
+		},
+		{
+			"code": "`something ${10　} another thing`"
+		},
+		{
+			"code": "　\n`　template`"
+		},
+		{
+			"code": "　\n`　multiline\ntemplate`"
+		},
+		{
+			"code": "　`　template`"
+		},
+		{
+			"code": "　`　multiline\ntemplate`"
+		},
+		{
+			"code": "`　template`　"
+		},
+		{
+			"code": "`　multiline\ntemplate`　"
+		},
+		{
+			"code": "`　template`\n　"
+		},
+		{
+			"code": "`　multiline\ntemplate`\n　"
+		},
+		{
+			"code": "var foo = \u000b bar;"
+		},
+		{
+			"code": "var foo =\u000bbar;"
+		},
+		{
+			"code": "var foo = \u000b\u000b bar;"
+		},
+		{
+			"code": "var foo = \u000b\f bar;"
+		},
+		{
+			"code": "var foo = \u000b \u000b bar;"
+		},
+		{
+			"code": "var foo = \u000bbar\u000b;"
+		},
+		{
+			"code": "\u000b"
+		},
+		{
+			"code": "   "
+		},
+		{
+			"code": "var foo = \u000b\nbar;"
+		},
+		{
+			"code": "var foo =\u000b\n\u000bbar;"
+		},
+		{
+			"code": "var foo = \f\u000b\n\f\u000b\fbar\n;\u000b\f\n"
+		},
+		{
+			"code": "var foo =  bar;"
+		},
+		{
+			"code": "var foo =  bar;"
+		},
+		{
+			"code": "var foo = bar; "
+		},
+		{
+			"code": " "
+		},
+		{
+			"code": "foo  "
+		},
+		{
+			"code": "foo  "
+		},
+		{
+			"code": "foo \n "
+		},
+		{
+			"code": "foo\u000b \u000b"
+		}
+	],
+	"typescript": []
+}

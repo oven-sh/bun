@@ -15,3 +15,6 @@ proto/um-proto.cjs <dir>... [--mutate N]                    the text-only paths 
                                                             against ESLint's own token logic: ESLint's lib with 25 mutants a file (89380 calls, 19823 members, 581 reports) and
                                                             24000 generated statements (node gen2.cjs writes gen2/ and gen3/): 0 wrong answers; "slow" is where the tokens are needed
 proto/rng.cjs                                               the generator of the random cases (the first runs used a poor one and were repeated with this)
+proto/quasi-proto.cjs                                       the fallback that finds the backtick of a tagged template whose first chunk is a copy (it holds a carriage return):
+                                                            the (k+1)th template start after the last place the tag knows, brackets and braces counted, parentheses not:
+                                                            64288 templates over nested tags, 0 wrong, 0 not found

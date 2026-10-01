@@ -16,7 +16,14 @@ function q(s) {
 	return out + '"';
 }
 const b = v => (v ? "1" : "0");
-const num = v => (v === Infinity ? "inf" : String(v));
+// A bound of a quantifier: decimal up to 2^53 - 1, `inf`, else the 64 bits of the double in hex (`{:#018x}` of `to_bits()` in Rust).
+function num(v) {
+	if (v === Infinity) return "inf";
+	if (Number.isSafeInteger(v)) return String(v);
+	const view = new DataView(new ArrayBuffer(8));
+	view.setFloat64(0, v);
+	return "0x" + view.getBigUint64(0).toString(16).padStart(16, "0");
+}
 
 // A fixture of regexpp holds `parent`, `resolved` and `references` as paths ("♻️../.."): make them objects again.
 function revive(root) {

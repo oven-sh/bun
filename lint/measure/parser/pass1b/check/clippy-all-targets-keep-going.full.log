@@ -1,0 +1,74 @@
+    Checking bun_opaque v0.0.0 (/workspace/wt/parser/src/opaque)
+    Checking bun_wyhash v0.0.0 (/workspace/wt/parser/src/wyhash)
+    Checking bun_highway v0.0.0 (/workspace/wt/parser/src/highway)
+    Checking bun_mimalloc_sys v0.0.0 (/workspace/wt/parser/src/mimalloc_sys)
+    Checking bun_output_tags v0.0.0 (/workspace/wt/parser/src/bun_output_tags)
+    Checking bun_simdutf_sys v0.0.0 (/workspace/wt/parser/src/simdutf_sys)
+    Checking bun_alloc v0.0.0 (/workspace/wt/parser/src/bun_alloc)
+    Checking bun_hash v0.0.0 (/workspace/wt/parser/src/hash)
+    Checking bun_libuv_sys v0.0.0 (/workspace/wt/parser/src/libuv_sys)
+    Checking bun_windows_sys v0.0.0 (/workspace/wt/parser/src/windows_sys)
+    Checking bun_core v0.0.0 (/workspace/wt/parser/src/bun_core)
+    Checking bun_ptr v0.0.0 (/workspace/wt/parser/src/ptr)
+    Checking bun_errno v0.0.0 (/workspace/wt/parser/src/errno)
+    Checking bun_boringssl_sys v0.0.0 (/workspace/wt/parser/src/boringssl_sys)
+    Checking bun_safety v0.0.0 (/workspace/wt/parser/src/safety)
+    Checking bun_zlib_sys v0.0.0 (/workspace/wt/parser/src/zlib_sys)
+    Checking bun_collections v0.0.0 (/workspace/wt/parser/src/collections)
+    Checking bun_paths v0.0.0 (/workspace/wt/parser/src/paths)
+    Checking bun_sys v0.0.0 (/workspace/wt/parser/src/sys)
+    Checking bun_base64 v0.0.0 (/workspace/wt/parser/src/base64)
+    Checking bun_semver v0.0.0 (/workspace/wt/parser/src/semver)
+    Checking bun_zlib v0.0.0 (/workspace/wt/parser/src/zlib)
+    Checking bun_perf v0.0.0 (/workspace/wt/parser/src/perf)
+    Checking bun_url v0.0.0 (/workspace/wt/parser/src/url)
+    Checking bun_analytics v0.0.0 (/workspace/wt/parser/src/analytics)
+    Checking bun_http_types v0.0.0 (/workspace/wt/parser/src/http_types)
+    Checking bun_ast v0.0.0 (/workspace/wt/parser/src/ast)
+    Checking bun_which v0.0.0 (/workspace/wt/parser/src/which)
+    Checking bun_spawn_sys v0.0.0 (/workspace/wt/parser/src/spawn_sys)
+    Checking bun_uws_sys v0.0.0 (/workspace/wt/parser/src/uws_sys)
+    Checking bun_threading v0.0.0 (/workspace/wt/parser/src/threading)
+    Checking bun_dotenv v0.0.0 (/workspace/wt/parser/src/dotenv)
+    Checking bun_install_types v0.0.0 (/workspace/wt/parser/src/install_types)
+    Checking bun_io v0.0.0 (/workspace/wt/parser/src/io)
+    Checking bun_react_compiler v0.0.0 (/workspace/wt/parser/src/react_compiler)
+    Checking bun_crash_handler v0.0.0 (/workspace/wt/parser/src/crash_handler)
+    Checking bun_options_types v0.0.0 (/workspace/wt/parser/src/options_types)
+    Checking bun_js_parser v0.0.0 (/workspace/wt/parser/src/js_parser)
+error: this argument is passed by value, but not consumed in the function body
+    --> src/js_parser/p.rs:7962:22
+     |
+7962 |         ts_metadata: bun_ast::ts::Metadata,
+     |                      ^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/main/index.html#needless_pass_by_value
+     = note: requested on the command line with `-D clippy::needless-pass-by-value`
+help: consider taking a reference instead
+     |
+7962 |         ts_metadata: &bun_ast::ts::Metadata,
+     |                      +
+
+error: could not compile `bun_js_parser` (lib) due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `bun_js_parser` (lib) due to 1 previous error
+error: this argument (8 byte) is passed by reference, but would be more efficient if passed by value (limit: 8 byte)
+   --> src/js_parser/parse/erased_tests.rs:147:22
+    |
+147 | fn member_kind(data: &ErasedMemberData) -> &'static str {
+    |                      ^^^^^^^^^^^^^^^^^ help: consider passing by value instead: `ErasedMemberData`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/main/index.html#trivially_copy_pass_by_ref
+    = note: requested on the command line with `-D clippy::trivially-copy-pass-by-ref`
+
+error: use of a disallowed method `alloc::string::String::from_utf8_lossy`
+   --> src/js_parser/parse/generics.rs:719:13
+    |
+719 |             String::from_utf8_lossy(bytes).into_owned()
+    |             ^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: silently corrupts non-UTF-8 bytes and allocates; keep data as bytes (bstr::BStr for Display)
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/main/index.html#disallowed_methods
+    = note: requested on the command line with `-D clippy::disallowed-methods`
+
+error: could not compile `bun_js_parser` (lib test) due to 3 previous errors

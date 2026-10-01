@@ -1,0 +1,109 @@
+{
+	"valid": [
+		{
+			"code": "if (foo) { bar() }"
+		},
+		{
+			"code": "while (foo) { bar() }"
+		},
+		{
+			"code": "for (;foo;) { bar() }"
+		},
+		{
+			"code": "try { foo() } catch (ex) { foo() }"
+		},
+		{
+			"code": "switch(foo) {case 'foo': break;}"
+		},
+		{
+			"code": "(function() { }())"
+		},
+		{
+			"code": "var foo = () => {};"
+		},
+		{
+			"code": "function foo() { }"
+		},
+		{
+			"code": "if (foo) {/* empty */}"
+		},
+		{
+			"code": "while (foo) {/* empty */}"
+		},
+		{
+			"code": "switch (foo) {/* empty */}"
+		},
+		{
+			"code": "for (;foo;) {/* empty */}"
+		},
+		{
+			"code": "try { foo() } catch (ex) {/* empty */}"
+		},
+		{
+			"code": "try { foo() } catch (ex) {// empty\n}"
+		},
+		{
+			"code": "try { foo() } finally {// empty\n}"
+		},
+		{
+			"code": "try { foo() } finally {// test\n}"
+		},
+		{
+			"code": "try { foo() } finally {\n \n // hi i am off no use\n}"
+		},
+		{
+			"code": "try { foo() } catch (ex) {/* test111 */}"
+		},
+		{
+			"code": "if (foo) { bar() } else { // nothing in me \n}"
+		},
+		{
+			"code": "if (foo) { bar() } else { /**/ \n}"
+		},
+		{
+			"code": "if (foo) { bar() } else { // \n}"
+		},
+		{
+			"code": "try { foo(); } catch (ex) {}"
+		},
+		{
+			"code": "try { foo(); } catch (ex) {} finally { bar(); }"
+		}
+	],
+	"invalid": [
+		{
+			"code": "try {} catch (ex) {throw ex}"
+		},
+		{
+			"code": "try { foo() } catch (ex) {}"
+		},
+		{
+			"code": "try { foo() } catch (ex) {throw ex} finally {}"
+		},
+		{
+			"code": "if (foo) {}"
+		},
+		{
+			"code": "while (foo) {}"
+		},
+		{
+			"code": "for (;foo;) {}"
+		},
+		{
+			"code": "switch(foo) {}"
+		},
+		{
+			"code": "switch /* empty */ (/* empty */ foo /* empty */) /* empty */ {} /* empty */"
+		},
+		{
+			"code": "try {} catch (ex) {}"
+		},
+		{
+			"code": "try { foo(); } catch (ex) {} finally {}"
+		},
+		{
+			"code": "try {} catch (ex) {} finally {}"
+		}
+	],
+	"typescript": []
+}

@@ -3,7 +3,7 @@
 		"kind": "valid",
 		"code": "class Foo { static { bar(); } }",
 		"run": 0,
-		"languageOptions": {
+		"testerLanguageOptions": {
 			"ecmaVersion": 2022
 		}
 	},
@@ -11,7 +11,7 @@
 		"kind": "valid",
 		"code": "class Foo { static { /* comments */ } }",
 		"run": 0,
-		"languageOptions": {
+		"testerLanguageOptions": {
 			"ecmaVersion": 2022
 		}
 	},
@@ -19,7 +19,7 @@
 		"kind": "valid",
 		"code": "class Foo { static {\n// comment\n} }",
 		"run": 0,
-		"languageOptions": {
+		"testerLanguageOptions": {
 			"ecmaVersion": 2022
 		}
 	},
@@ -27,7 +27,7 @@
 		"kind": "valid",
 		"code": "class Foo { static { bar(); } static { bar(); } }",
 		"run": 0,
-		"languageOptions": {
+		"testerLanguageOptions": {
 			"ecmaVersion": 2022
 		}
 	},
@@ -35,7 +35,7 @@
 		"kind": "invalid",
 		"code": "class Foo { static {} }",
 		"run": 0,
-		"languageOptions": {
+		"testerLanguageOptions": {
 			"ecmaVersion": 2022
 		},
 		"errors": [
@@ -58,7 +58,7 @@
 		"kind": "invalid",
 		"code": "class Foo { static { } }",
 		"run": 0,
-		"languageOptions": {
+		"testerLanguageOptions": {
 			"ecmaVersion": 2022
 		},
 		"errors": [
@@ -81,7 +81,7 @@
 		"kind": "invalid",
 		"code": "class Foo { static { \n\n } }",
 		"run": 0,
-		"languageOptions": {
+		"testerLanguageOptions": {
 			"ecmaVersion": 2022
 		},
 		"errors": [
@@ -104,7 +104,7 @@
 		"kind": "invalid",
 		"code": "class Foo { static { bar(); } static {} }",
 		"run": 0,
-		"languageOptions": {
+		"testerLanguageOptions": {
 			"ecmaVersion": 2022
 		},
 		"errors": [
@@ -127,7 +127,7 @@
 		"kind": "invalid",
 		"code": "class Foo { static // comment\n {} }",
 		"run": 0,
-		"languageOptions": {
+		"testerLanguageOptions": {
 			"ecmaVersion": 2022
 		},
 		"errors": [
@@ -150,7 +150,7 @@
 		"kind": "invalid",
 		"code": "class Foo { static /* empty */ {} /* empty */ }",
 		"run": 0,
-		"languageOptions": {
+		"testerLanguageOptions": {
 			"ecmaVersion": 2022
 		},
 		"errors": [

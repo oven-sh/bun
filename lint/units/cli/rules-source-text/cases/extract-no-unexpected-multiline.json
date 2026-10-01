@@ -1,0 +1,182 @@
+{
+	"valid": [
+		{
+			"code": "(x || y).aFunction()"
+		},
+		{
+			"code": "[a, b, c].forEach(doSomething)"
+		},
+		{
+			"code": "var a = b;\n(x || y).doSomething()"
+		},
+		{
+			"code": "var a = b\n;(x || y).doSomething()"
+		},
+		{
+			"code": "var a = b\nvoid (x || y).doSomething()"
+		},
+		{
+			"code": "var a = b;\n[1, 2, 3].forEach(console.log)"
+		},
+		{
+			"code": "var a = b\nvoid [1, 2, 3].forEach(console.log)"
+		},
+		{
+			"code": "\"abc\\\n(123)\""
+		},
+		{
+			"code": "var a = (\n(123)\n)"
+		},
+		{
+			"code": "f(\n(x)\n)"
+		},
+		{
+			"code": "(\nfunction () {}\n)[1]"
+		},
+		{
+			"code": "let x = function() {};\n   `hello`"
+		},
+		{
+			"code": "let x = function() {}\nx `hello`"
+		},
+		{
+			"code": "String.raw `Hi\n${2+3}!`;"
+		},
+		{
+			"code": "x\n.y\nz `Valid Test Case`"
+		},
+		{
+			"code": "f(x\n)`Valid Test Case`"
+		},
+		{
+			"code": "x.\ny `Valid Test Case`"
+		},
+		{
+			"code": "(x\n)`Valid Test Case`"
+		},
+		{
+			"code": "\n            foo\n            / bar /2\n        "
+		},
+		{
+			"code": "\n            foo\n            / bar / mgy\n        "
+		},
+		{
+			"code": "\n            foo\n            / bar /\n            gym\n        "
+		},
+		{
+			"code": "\n            foo\n            / bar\n            / ygm\n        "
+		},
+		{
+			"code": "\n            foo\n            / bar /GYM\n        "
+		},
+		{
+			"code": "\n            foo\n            / bar / baz\n        "
+		},
+		{
+			"code": "foo /bar/g"
+		},
+		{
+			"code": "\n            foo\n            /denominator/\n            2\n        "
+		},
+		{
+			"code": "\n            foo\n            / /abc/\n        "
+		},
+		{
+			"code": "\n            5 / (5\n            / 5)\n        "
+		},
+		{
+			"code": "var a = b\n  ?.(x || y).doSomething()"
+		},
+		{
+			"code": "var a = b\n  ?.[a, b, c].forEach(doSomething)"
+		},
+		{
+			"code": "var a = b?.\n  (x || y).doSomething()"
+		},
+		{
+			"code": "var a = b?.\n  [a, b, c].forEach(doSomething)"
+		},
+		{
+			"code": "class C { field1\n[field2]; }"
+		},
+		{
+			"code": "class C { field1\n*gen() {} }"
+		},
+		{
+			"code": "class C { field1 = () => {}\n[field2]; }"
+		},
+		{
+			"code": "class C { field1 = () => {}\n*gen() {} }"
+		}
+	],
+	"invalid": [
+		{
+			"code": "var a = b\n(x || y).doSomething()"
+		},
+		{
+			"code": "var a = (a || b)\n(x || y).doSomething()"
+		},
+		{
+			"code": "var a = (a || b)\n(x).doSomething()"
+		},
+		{
+			"code": "var a = b\n[a, b, c].forEach(doSomething)"
+		},
+		{
+			"code": "var a = b\n    (x || y).doSomething()"
+		},
+		{
+			"code": "var a = b\n  [a, b, c].forEach(doSomething)"
+		},
+		{
+			"code": "let x = function() {}\n `hello`"
+		},
+		{
+			"code": "let x = function() {}\nx\n`hello`"
+		},
+		{
+			"code": "x\n.y\nz\n`Invalid Test Case`"
+		},
+		{
+			"code": "\n                foo\n                / bar /gym\n            "
+		},
+		{
+			"code": "\n                foo\n                / bar /g\n            "
+		},
+		{
+			"code": "\n                foo\n                / bar /g.test(baz)\n            "
+		},
+		{
+			"code": "\n                foo\n                /bar/gimuygimuygimuy.test(baz)\n            "
+		},
+		{
+			"code": "\n                foo\n                /bar/s.test(baz)\n            "
+		},
+		{
+			"code": "\n                foo\n                /bar/d.test(baz)\n            "
+		},
+		{
+			"code": "\n                foo\n                /bar/v.test(baz)\n            "
+		},
+		{
+			"code": "class C { field1 = obj\n[field2]; }"
+		},
+		{
+			"code": "class C { field1 = function() {}\n[field2]; }"
+		}
+	],
+	"typescript": [
+		{
+			"code": "\n                tag<generic>`\n                    multiline\n                `;\n            "
+		},
+		{
+			"code": "\n                tag<\n                  generic\n                >`\n                    multiline\n                `;\n            "
+		},
+		{
+			"code": "\n                tag<\n                  generic\n                >`multiline`;\n            "
+		},
+		{
+			"code": "const x = aaaa<\n  test\n>/*\ntest\n*/`foo`"
+		}
+	]
+}

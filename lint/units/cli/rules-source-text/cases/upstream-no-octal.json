@@ -3,7 +3,7 @@
 		"kind": "valid",
 		"code": "var a = 'hello world';",
 		"run": 0,
-		"languageOptions": {
+		"testerLanguageOptions": {
 			"ecmaVersion": 5,
 			"sourceType": "script"
 		}
@@ -12,7 +12,7 @@
 		"kind": "valid",
 		"code": "0x1234",
 		"run": 0,
-		"languageOptions": {
+		"testerLanguageOptions": {
 			"ecmaVersion": 5,
 			"sourceType": "script"
 		}
@@ -21,7 +21,7 @@
 		"kind": "valid",
 		"code": "0X5;",
 		"run": 0,
-		"languageOptions": {
+		"testerLanguageOptions": {
 			"ecmaVersion": 5,
 			"sourceType": "script"
 		}
@@ -30,7 +30,7 @@
 		"kind": "valid",
 		"code": "a = 0;",
 		"run": 0,
-		"languageOptions": {
+		"testerLanguageOptions": {
 			"ecmaVersion": 5,
 			"sourceType": "script"
 		}
@@ -39,7 +39,7 @@
 		"kind": "valid",
 		"code": "0.1",
 		"run": 0,
-		"languageOptions": {
+		"testerLanguageOptions": {
 			"ecmaVersion": 5,
 			"sourceType": "script"
 		}
@@ -48,7 +48,7 @@
 		"kind": "valid",
 		"code": "0.5e1",
 		"run": 0,
-		"languageOptions": {
+		"testerLanguageOptions": {
 			"ecmaVersion": 5,
 			"sourceType": "script"
 		}
@@ -57,7 +57,7 @@
 		"kind": "invalid",
 		"code": "var a = 01234;",
 		"run": 0,
-		"languageOptions": {
+		"testerLanguageOptions": {
 			"ecmaVersion": 5,
 			"sourceType": "script"
 		},
@@ -71,7 +71,7 @@
 		"kind": "invalid",
 		"code": "a = 1 + 01234;",
 		"run": 0,
-		"languageOptions": {
+		"testerLanguageOptions": {
 			"ecmaVersion": 5,
 			"sourceType": "script"
 		},
@@ -85,7 +85,7 @@
 		"kind": "invalid",
 		"code": "00",
 		"run": 0,
-		"languageOptions": {
+		"testerLanguageOptions": {
 			"ecmaVersion": 5,
 			"sourceType": "script"
 		},
@@ -99,7 +99,7 @@
 		"kind": "invalid",
 		"code": "08",
 		"run": 0,
-		"languageOptions": {
+		"testerLanguageOptions": {
 			"ecmaVersion": 5,
 			"sourceType": "script"
 		},
@@ -113,7 +113,7 @@
 		"kind": "invalid",
 		"code": "09.1",
 		"run": 0,
-		"languageOptions": {
+		"testerLanguageOptions": {
 			"ecmaVersion": 5,
 			"sourceType": "script"
 		},
@@ -127,7 +127,7 @@
 		"kind": "invalid",
 		"code": "09e1",
 		"run": 0,
-		"languageOptions": {
+		"testerLanguageOptions": {
 			"ecmaVersion": 5,
 			"sourceType": "script"
 		},
@@ -141,7 +141,7 @@
 		"kind": "invalid",
 		"code": "09.1e1",
 		"run": 0,
-		"languageOptions": {
+		"testerLanguageOptions": {
 			"ecmaVersion": 5,
 			"sourceType": "script"
 		},
@@ -155,7 +155,7 @@
 		"kind": "invalid",
 		"code": "018",
 		"run": 0,
-		"languageOptions": {
+		"testerLanguageOptions": {
 			"ecmaVersion": 5,
 			"sourceType": "script"
 		},
@@ -169,7 +169,7 @@
 		"kind": "invalid",
 		"code": "019.1",
 		"run": 0,
-		"languageOptions": {
+		"testerLanguageOptions": {
 			"ecmaVersion": 5,
 			"sourceType": "script"
 		},
@@ -183,7 +183,7 @@
 		"kind": "invalid",
 		"code": "019e1",
 		"run": 0,
-		"languageOptions": {
+		"testerLanguageOptions": {
 			"ecmaVersion": 5,
 			"sourceType": "script"
 		},
@@ -197,7 +197,7 @@
 		"kind": "invalid",
 		"code": "019.1e1",
 		"run": 0,
-		"languageOptions": {
+		"testerLanguageOptions": {
 			"ecmaVersion": 5,
 			"sourceType": "script"
 		},

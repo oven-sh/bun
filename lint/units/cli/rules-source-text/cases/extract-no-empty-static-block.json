@@ -1,0 +1,37 @@
+{
+	"valid": [
+		{
+			"code": "class Foo { static { bar(); } }"
+		},
+		{
+			"code": "class Foo { static { /* comments */ } }"
+		},
+		{
+			"code": "class Foo { static {\n// comment\n} }"
+		},
+		{
+			"code": "class Foo { static { bar(); } static { bar(); } }"
+		}
+	],
+	"invalid": [
+		{
+			"code": "class Foo { static {} }"
+		},
+		{
+			"code": "class Foo { static { } }"
+		},
+		{
+			"code": "class Foo { static { \n\n } }"
+		},
+		{
+			"code": "class Foo { static { bar(); } static {} }"
+		},
+		{
+			"code": "class Foo { static // comment\n {} }"
+		},
+		{
+			"code": "class Foo { static /* empty */ {} /* empty */ }"
+		}
+	],
+	"typescript": []
+}

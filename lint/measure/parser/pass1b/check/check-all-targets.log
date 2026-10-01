@@ -1,0 +1,98 @@
+    Checking memchr v2.8.0
+    Checking libc v0.2.186
+    Checking itoa v1.0.18
+    Checking konst_macro_rules v0.2.19
+    Checking bun_opaque v0.0.0 (/workspace/wt/parser/src/opaque)
+    Checking allocator-api2 v0.2.21
+    Checking bun_mimalloc_sys v0.0.0 (/workspace/wt/parser/src/mimalloc_sys)
+    Checking konst v0.2.20
+    Checking bstr v1.12.1
+    Checking strum v0.26.3
+    Checking thiserror v2.0.18
+    Checking const_format v0.2.36
+    Checking bytemuck v1.25.0
+    Checking bun_output_tags v0.0.0 (/workspace/wt/parser/src/bun_output_tags)
+    Checking bun_simdutf_sys v0.0.0 (/workspace/wt/parser/src/simdutf_sys)
+    Checking scopeguard v1.2.0
+    Checking bun_wyhash v0.0.0 (/workspace/wt/parser/src/wyhash)
+    Checking bun_highway v0.0.0 (/workspace/wt/parser/src/highway)
+    Checking enum-map v2.7.3
+    Checking bun_windows_sys v0.0.0 (/workspace/wt/parser/src/windows_sys)
+    Checking bun_hash v0.0.0 (/workspace/wt/parser/src/hash)
+    Checking hashbrown v0.15.5
+    Checking smallvec v1.15.1
+    Checking rustc-hash v2.1.2
+    Checking bitflags v2.11.1
+    Checking linux-raw-sys v0.4.15
+    Checking bun_alloc v0.0.0 (/workspace/wt/parser/src/bun_alloc)
+    Checking bun_libuv_sys v0.0.0 (/workspace/wt/parser/src/libuv_sys)
+    Checking enumset v1.1.10
+    Checking serde_core v1.0.228
+    Checking crossbeam-utils v0.8.21
+    Checking rustix v0.38.44
+    Checking zerocopy v0.8.48
+    Checking bun_core v0.0.0 (/workspace/wt/parser/src/bun_core)
+    Checking crossbeam-epoch v0.9.18
+    Checking either v1.15.0
+    Checking cfg-if v1.0.4
+    Checking crossbeam-deque v0.8.6
+    Checking zmij v1.0.21
+    Checking aho-corasick v1.1.4
+    Checking bun_ptr v0.0.0 (/workspace/wt/parser/src/ptr)
+    Checking bun_errno v0.0.0 (/workspace/wt/parser/src/errno)
+    Checking bun_collections v0.0.0 (/workspace/wt/parser/src/collections)
+    Checking bun_paths v0.0.0 (/workspace/wt/parser/src/paths)
+    Checking serde v1.0.228
+    Checking bun_sys v0.0.0 (/workspace/wt/parser/src/sys)
+    Checking bun_perf v0.0.0 (/workspace/wt/parser/src/perf)
+    Checking regex-syntax v0.8.10
+    Checking half v2.7.1
+    Checking ciborium-io v0.2.2
+    Checking bun_url v0.0.0 (/workspace/wt/parser/src/url)
+    Checking bun_semver v0.0.0 (/workspace/wt/parser/src/semver)
+    Checking plotters-backend v0.3.7
+    Checking anstyle v1.0.14
+    Checking clap_lex v1.1.0
+    Checking bun_analytics v0.0.0 (/workspace/wt/parser/src/analytics)
+    Checking clap_builder v4.6.0
+    Checking plotters-svg v0.3.7
+    Checking bun_http_types v0.0.0 (/workspace/wt/parser/src/http_types)
+    Checking ciborium-ll v0.2.2
+    Checking bun_ast v0.0.0 (/workspace/wt/parser/src/ast)
+    Checking bun_which v0.0.0 (/workspace/wt/parser/src/which)
+    Checking serde_json v1.0.149
+    Checking bun_boringssl_sys v0.0.0 (/workspace/wt/parser/src/boringssl_sys)
+    Checking bun_safety v0.0.0 (/workspace/wt/parser/src/safety)
+    Checking num-traits v0.2.19
+    Checking rayon-core v1.13.0
+    Checking itertools v0.10.5
+    Checking cast v0.3.0
+    Checking same-file v1.0.6
+    Checking plotters v0.3.7
+    Checking walkdir v2.5.0
+    Checking tinytemplate v1.2.1
+    Checking rayon v1.12.0
+    Checking bun_threading v0.0.0 (/workspace/wt/parser/src/threading)
+    Checking bun_uws_sys v0.0.0 (/workspace/wt/parser/src/uws_sys)
+    Checking regex-automata v0.4.14
+    Checking clap v4.6.1
+    Checking ciborium v0.2.2
+    Checking bun_spawn_sys v0.0.0 (/workspace/wt/parser/src/spawn_sys)
+    Checking bun_zlib_sys v0.0.0 (/workspace/wt/parser/src/zlib_sys)
+    Checking bun_base64 v0.0.0 (/workspace/wt/parser/src/base64)
+    Checking criterion-plot v0.5.0
+    Checking is-terminal v0.4.17
+    Checking anes v0.1.6
+    Checking once_cell v1.21.4
+    Checking oorandom v11.1.5
+    Checking bun_zlib v0.0.0 (/workspace/wt/parser/src/zlib)
+    Checking bun_io v0.0.0 (/workspace/wt/parser/src/io)
+    Checking bun_install_types v0.0.0 (/workspace/wt/parser/src/install_types)
+    Checking bun_dotenv v0.0.0 (/workspace/wt/parser/src/dotenv)
+    Checking regex v1.12.3
+    Checking bun_react_compiler v0.0.0 (/workspace/wt/parser/src/react_compiler)
+    Checking bun_crash_handler v0.0.0 (/workspace/wt/parser/src/crash_handler)
+    Checking criterion v0.5.1
+    Checking bun_options_types v0.0.0 (/workspace/wt/parser/src/options_types)
+    Checking bun_js_parser v0.0.0 (/workspace/wt/parser/src/js_parser)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 59.76s

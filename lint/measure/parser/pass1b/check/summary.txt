@@ -1,0 +1,7 @@
+check rc=0 40s warnings=0 errors=0 :: cargo check -p bun_ast -p bun_js_parser --message-format=short
+check-all-targets rc=0 60s warnings=0 errors=0 :: cargo check -p bun_ast -p bun_js_parser --all-targets --message-format=short
+clippy rc=101 42s warnings=0 errors=1 :: cargo clippy -p bun_ast -p bun_js_parser --message-format=short
+clippy-all-targets rc=101 57s warnings=1 errors=3 :: cargo clippy -p bun_ast -p bun_js_parser --all-targets --message-format=short
+fmt rc=0 2s warnings=0 errors=0 :: cargo fmt -p bun_ast -p bun_js_parser -- --check
+clippy default targets rc=101 35s
+clippy all targets rc=101 27s

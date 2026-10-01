@@ -27,4 +27,12 @@ The dump: lib.cjs, function dump. Every node is (Type start end ...); raw and pa
 every case raw is source.slice(start, end) (the whole source for a RegExpLiteral) and parent is the node that holds it.
 
 At the pin (2026-10-01): literal.txt 190812 bytes, 1093 cases; test262.txt 1068267 bytes, 4653 cases; visitor.txt 161465
-bytes, 418 cases; patterns.txt (40, seed 1) 463659 bytes, 3607 cases. check-live: 0 wrong.
+bytes, 418 cases; patterns.txt (40, seed 1) 463591 bytes, 3607 cases (1626 ASTs, 1981 errors). check-live: 0 wrong.
+sha1: literal.txt 4905a007cbf0d33df10f00e9a014a5da0aee7ec4, test262.txt a09888f5550f6267b56920363226d599716b8bac,
+visitor.txt 525d4b72982e69c54ed9068a2f42129cf488ab7e, patterns.txt 10612c3939f186ea98818860bb9288b95905eb8b.
+A bound of a quantifier in a dump: decimal up to 2^53 - 1, `inf`, else `0x` and the 64 bits of the double in hex.
+Coverage of the build by the four files (cov-report.cjs): every range is reached but the 40 `throw new Error("UnknownError")`,
+the entries validateFlags, parseFlags and validateRegExpLiteral, the overload of validatePattern with a boolean, the callbacks
+onLiteralEnter, onLiteralLeave, onFlags, onDisjunctionEnter and onDisjunctionLeave, `visit` entered at a Flags or a Pattern node,
+the getters es2025 and es2026, and two raises that no text reaches: "Unexpected character" in consumePattern and
+"Invalid character class" in consumeClassSetRangeFromOperator.

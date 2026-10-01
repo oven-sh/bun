@@ -72,7 +72,8 @@ public:
     // Explicit == a real, permanent close: close(), context teardown, or an orphaned
     // transferred endpoint; sets ClosedByRequest and always notifies the peer.
     // Collected == the wrapper was GC'd while entangled (node never collects an
-    // entangled port); notifies only a peer on a different context than closingCtx,
+    // entangled port), or the port sat in that wrapper's inbox; notifies only a
+    // peer on a different context than closingCtx,
     // matching node: a collection never closes a channel, and a worker-side close
     // node fires at worker exit has no later trigger here once the port is gone.
     enum class CloseKind : uint8_t { Explicit,

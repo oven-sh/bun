@@ -675,6 +675,69 @@ describe("keeps the event loop alive while a message listener is attached", () =
     expect({ kind, exitCode, signalCode }).toEqual({ kind: "exited", exitCode: 0, signalCode: null });
   });
 
+  test.concurrent(
+    "ref() after a worker-side collection delivered 'close' does not re-pin the process",
+    async () => {
+      // After 'close' the channel is dead: node no-ops ref() on a closed port.
+      // ref() runs a turn after the close handler, once peerClosed() has
+      // already released the refs, so nothing would ever release a re-take.
+      const { kind, exitCode, signalCode } = await expectExitsOnItsOwn(`
+      const { Worker, MessageChannel } = require("node:worker_threads");
+      const channel = new MessageChannel();
+      new Worker(\`
+        const { workerData } = require("worker_threads");
+        workerData.messagePort = null;
+        for (let i = 0; i < 10; i++) Bun.gc(true);
+      \`, { eval: true, workerData: { messagePort: channel.port2 }, transferList: [channel.port2] });
+      channel.port1.on("message", () => {});
+      channel.port1.on("close", () => setImmediate(() => channel.port1.ref()));
+    `);
+      expect({ kind, exitCode, signalCode }).toEqual({ kind: "exited", exitCode: 0, signalCode: null });
+    },
+    15_000,
+  ); // see the sibling worker tests above
+
+  test.concurrent("a port in transit to a collected same-context port keeps its listening peer alive", async () => {
+    // b.port2 sits unread in a.port1's inbox when a.port1 is collected. The
+    // collection must not close b: node never collects a.port1 at all.
+    expect(
+      await expectStaysAlive(`
+        const { MessageChannel } = require("node:worker_threads");
+        const { a2, b1 } = (() => {
+          const a = new MessageChannel();
+          const b = new MessageChannel();
+          b.port1.on("message", () => console.log("RECEIVED"));
+          b.port2.postMessage("hello");
+          a.port2.postMessage(null, [b.port2]);
+          return { a2: a.port2, b1: b.port1 };
+        })(); // a.port1 is now unreferenced, with b.port2 queued in its inbox
+        for (let i = 0; i < 10; i++) Bun.gc(true);
+      `),
+    ).toEqual({ gotMarker: true, outcome: "alive" });
+  });
+
+  test.concurrent(
+    "a port in transit to a collected worker-side port still releases its main-thread peer",
+    async () => {
+      // The cross-context rule applies to the nested port too: b.port2 dies
+      // with the worker-side a.port2 it was queued for, so b.port1 gets 'close'.
+      const { kind, exitCode, signalCode } = await expectExitsOnItsOwn(`
+      const { Worker, MessageChannel } = require("node:worker_threads");
+      const a = new MessageChannel();
+      const b = new MessageChannel();
+      a.port1.postMessage(null, [b.port2]);
+      new Worker(\`
+        const { workerData } = require("worker_threads");
+        workerData.messagePort = null;
+        for (let i = 0; i < 10; i++) Bun.gc(true);
+      \`, { eval: true, workerData: { messagePort: a.port2 }, transferList: [a.port2] });
+      b.port1.on("message", () => {});
+    `);
+      expect({ kind, exitCode, signalCode }).toEqual({ kind: "exited", exitCode: 0, signalCode: null });
+    },
+    15_000,
+  ); // see the sibling worker tests above
+
   test("the listening wrapper is collectable again after a worker-side collection delivers 'close'", async () => {
     // The merely-collected-peer pin in virtualHasPendingActivity() must release once
     // 'close' has fired (cross-context collection), or every such port leaks until

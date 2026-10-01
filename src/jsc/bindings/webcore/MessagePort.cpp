@@ -573,9 +573,10 @@ void MessagePort::jsRef(JSGlobalObject* lexicalGlobalObject)
     // ref taken afterwards. Same once the peer has closed: peerClosed() already
     // ran jsUnref(), and nothing releases a ref re-taken after it, so `.ref()`
     // or a late `onmessage =` would pin the loop forever. Node no-ops both.
-    // Only an explicit peer close counts: node never closes a channel because a
-    // port was collected, so keying on Closed alone made this GC-dependent.
-    if (!isEntangled() || m_pipe->isOtherSideClosedByRequest(m_side))
+    // A peer close counts once it is explicit or once our 'close' has fired
+    // (a cross-context collection); a same-context collection never fires
+    // it, so the hold stays, as it would in node.
+    if (!isEntangled() || m_closeEventDispatched || m_pipe->isOtherSideClosedByRequest(m_side))
         return;
 
     // Re-acquire the message-listener loop-ref (if a listener is present) that .unref() released.

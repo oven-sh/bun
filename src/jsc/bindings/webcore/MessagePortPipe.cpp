@@ -309,11 +309,12 @@ void MessagePortPipe::close(uint8_t side, CloseKind kind, ScriptExecutionContext
         }
 
         // Harvest transferred pipes before `dropped` destructs so their
-        // ~TransferredMessagePort sees pipe == nullptr and is a no-op.
+        // ~TransferredMessagePort sees pipe == nullptr and is a no-op. A port in
+        // transit to a collected side closes the way that side did.
         for (auto& message : dropped) {
             for (auto& tp : message.transferredPorts) {
                 if (auto p = std::exchange(tp.pipe, nullptr))
-                    worklist.append({ WTF::move(p), tp.side, CloseKind::Explicit });
+                    worklist.append({ WTF::move(p), tp.side, sdKind });
             }
         }
         // `dropped` (and the RefPtr in the structured binding) destruct

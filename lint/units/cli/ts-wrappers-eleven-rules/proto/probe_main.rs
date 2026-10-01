@@ -101,7 +101,7 @@ fn parse(file: FileId, loader: Loader, source: &Source, name: &str) -> Vec<Diagn
                     parsed.sidecar.erased.statements.len(),
                     parsed.is_declaration_file,
                 );
-                crate::lint(file, parsed, source)
+                crate::lint(file, parsed, source, loader.is_typescript())
             })
         });
     let raw = std::env::var("PROBE_RAW").is_ok();

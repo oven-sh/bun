@@ -1,0 +1,198 @@
+--- a/test/cli/lint/conformance.test.ts	2026-10-01 11:25:42.708500104 +0000
++++ b/test/cli/lint/conformance.test.ts	2026-10-01 12:21:03.363941701 +0000
+@@ -28,6 +28,7 @@
+   utf8ToByteString,
+ } from "./conformance/runner/gostrings";
+ import { skippedEmitTests } from "./conformance/runner/harnessutil_options";
++import { diffRootOf, loadOracleTable, oracleOf } from "./conformance/runner/oracle";
+ import { type Origin, listErrorBaselines, roundTripFiles, sampleErrorBaselines } from "./conformance/runner/roundtrip";
+ import { skipTrivia } from "./conformance/runner/scanner";
+ import { toWriterInput } from "./conformance/runner/shape";
+@@ -275,6 +276,71 @@
+     expect(reasons).toEqual(reference().instances.skippedBecause);
+   });
+ 
++  test("the list is the run of the reference that is recorded: its subtests and the reasons of its skips", () => {
++    const suiteRun = reference().suiteRun;
++    // Without a recorded run only upstream's files hold the list, which update-reference.ts checks.
++    if (suiteRun === undefined) return;
++    const rows = listLines().map(line => line.split("\t"));
++    const subtests = rows
++      .map(([name, kind]) => `${kind === "skipped" ? "SKIP" : "PASS"}\t${goName(name)}`)
++      .sort((a, b) => compareStrings(a.slice(5), b.slice(5)))
++      .map(l => l + "\n")
++      .join("");
++    const skips = rows
++      .filter(([, kind]) => kind === "skipped")
++      .map(([name, , reason]) => `${goName(name)}\t${reason}`)
++      .sort(compareStrings)
++      .map(l => l + "\n")
++      .join("");
++    expect({ subtests: rows.length, sha256: sha256(subtests), skipReasonsSha256: sha256(skips) }).toEqual({
++      subtests: suiteRun.subtests,
++      sha256: suiteRun.sha256,
++      skipReasonsSha256: suiteRun.skipReasonsSha256,
++    });
++  });
++
++  test("the corpus gives every instance of the list that runs the oracle of its class, and the counts are those of the reference", () => {
++    const table = loadOracleTable(corpus().paths);
++    const suites = {
++      compiler: { instances: 0, run: 0, skipped: 0, E: 0, C: 0 },
++      conformance: { instances: 0, run: 0, skipped: 0, E: 0, C: 0 },
++    };
++    const counts = { accepted: 0, triaged: 0, typescriptGo: 0, typescript: 0 };
++    const otherClass: string[] = [];
++    const names = new Set<string>();
++    for (const [path, lines] of linesOfCase()) {
++      const suite = path.startsWith("compiler/") ? "compiler" : "conformance";
++      for (const line of lines) {
++        const [name, kind] = line.split("\t");
++        names.add(caseBaseName(name));
++        suites[suite].instances++;
++        if (kind === "skipped") {
++          suites[suite].skipped++;
++          continue;
++        }
++        suites[suite].run++;
++        const oracle = oracleOf(table, suite, name);
++        suites[suite][oracle.class]++;
++        if (oracle.class !== kind) otherClass.push(line);
++        const diff = diffRootOf(table, suite, name);
++        if (diff.accepted) counts.accepted++;
++        if (diff.triaged) counts.triaged++;
++        if (oracle.source === "typescript-go") counts.typescriptGo++;
++        if (oracle.source === "typescript") counts.typescript++;
++      }
++    }
++    expect(otherClass.slice(0, 20)).toEqual([]);
++    expect({ cases: names.size, ...suites, ...counts }).toEqual({
++      cases: reference().cases.files - reference().cases.droppedByName,
++      compiler: reference().instances.compiler,
++      conformance: reference().instances.conformance,
++      accepted: reference().instances.accepted,
++      triaged: reference().instances.triaged,
++      typescriptGo: reference().oracle["typescript-go"],
++      typescript: reference().oracle.typescript,
++    });
++  });
++
+   test("the case and space tables are those of Go", () => {
+     const parts: Record<string, string[]> = { lower: [], foldKey: [], space: [], white: [] };
+     for (let r = 0; r <= 0x10ffff; r++) {
+@@ -421,13 +487,33 @@
+ 
+ describe("enumerator", () => {
+   const { skippedTests } = runner;
+-  const sample = [...cases().values()].filter(path => sampled(path, 40)).sort();
++  // One case in 40 holds no case of three of the rules that skip an instance, none with a link and none whose config extends a package: these stand for them.
++  const named = [
++    "anonymousDefaultExportsUmd.ts",
++    "esmModuleExports2.ts",
++    "moduleResolutionWithSuffixes_one.ts",
++    "declarationEmitSymlinkPaths.ts",
++    "tsconfigExtendsPackageJsonExportsWildcard.ts",
++  ];
++  const sample = [
++    ...new Set([
++      ...[...cases().values()].filter(path => sampled(path, 40)),
++      ...named.flatMap(name => cases().get(name) ?? []),
++    ]),
++  ].sort();
+ 
+-  test("the sample holds cases of both suites", () => {
++  test("the sample holds cases of both suites, and an instance of every reason of a skip", () => {
+     expect({
+       compiler: sample.filter(p => p.startsWith("compiler/")).length > 100,
+       conformance: sample.filter(p => p.startsWith("conformance/")).length > 100,
+-    }).toEqual({ compiler: true, conformance: true });
++      named: named.filter(name => !cases().has(name)),
++    }).toEqual({ compiler: true, conformance: true, named: [] });
++    const reasons = new Set<string>();
++    for (const line of sample.flatMap(path => linesOfCase().get(path) ?? [])) {
++      const [, kind, reason] = line.split("\t");
++      if (kind === "skipped") reasons.add(reason.replace(/^(unsupported (?:baseUrl|outFile)) .*/, "$1"));
++    }
++    expect([...reasons].sort()).toEqual(Object.keys(reference().instances.skippedBecause).sort());
+   });
+ 
+   test.each(groupsOf(sample, 40).map((g, k) => [k + 1, g] as const))(
+@@ -457,78 +543,6 @@
+       }),
+     ).toEqual(emitOnly.map(name => ({ name, run: true, flagged: true })));
+   });
+-
+-  // The whole corpus is a second of work in a release build and minutes in a debug build; the time limit is for a machine under load.
+-  test.skipIf(small)(
+-    "every instance is its line of the list, and the counts are those of the reference",
+-    () => {
+-      const instances = corpus().enumerateInstances();
+-      // The lines that differ, not two lists of 14,915 lines.
+-      const got = new Set(instances.map(lineOf));
+-      const want = new Set(listLines());
+-      expect({
+-        notInTheList: [...got].filter(l => !want.has(l)).slice(0, 20),
+-        notEnumerated: [...want].filter(l => !got.has(l)).slice(0, 20),
+-      }).toEqual({ notInTheList: [], notEnumerated: [] });
+-      const count = (f: (i: CorpusInstance) => boolean) => instances.filter(f).length;
+-      const run = (i: CorpusInstance) => i.status === "run";
+-      expect({
+-        instances: instances.length,
+-        run: count(run),
+-        skipped: count(i => !run(i)),
+-        E: count(i => run(i) && i.oracle.class === "E"),
+-        C: count(i => run(i) && i.oracle.class === "C"),
+-      }).toEqual({ instances: 14915, run: 12797, skipped: 2118, E: 7027, C: 5770 });
+-      const suite = (s: string) => {
+-        const of = (f: (i: CorpusInstance) => boolean) => count(i => i.suite === s && f(i));
+-        return {
+-          instances: of(() => true),
+-          run: of(run),
+-          skipped: of(i => !run(i)),
+-          E: of(i => run(i) && i.oracle.class === "E"),
+-          C: of(i => run(i) && i.oracle.class === "C"),
+-        };
+-      };
+-      expect({
+-        cases: new Set(instances.map(i => caseBaseName(i.name))).size,
+-        compiler: suite("compiler"),
+-        conformance: suite("conformance"),
+-        accepted: count(i => run(i) && i.accepted),
+-        triaged: count(i => run(i) && i.triaged),
+-        typescriptGo: count(i => run(i) && i.oracle.source === "typescript-go"),
+-        typescript: count(i => run(i) && i.oracle.source === "typescript"),
+-      }).toEqual({
+-        cases: reference().cases.files - reference().cases.droppedByName,
+-        compiler: reference().instances.compiler,
+-        conformance: reference().instances.conformance,
+-        accepted: reference().instances.accepted,
+-        triaged: reference().instances.triaged,
+-        typescriptGo: reference().oracle["typescript-go"],
+-        typescript: reference().oracle.typescript,
+-      });
+-      // The subtests and the skip reasons as the reference's own run printed them.
+-      const suiteRun = reference().suiteRun;
+-      if (suiteRun !== undefined) {
+-        const subtests = instances
+-          .map(i => `${run(i) ? "PASS" : "SKIP"}\t${goName(i.name)}`)
+-          .sort((a, b) => compareStrings(a.slice(5), b.slice(5)))
+-          .map(l => l + "\n")
+-          .join("");
+-        const reasons = instances
+-          .filter(i => !run(i))
+-          .map(i => `${goName(i.name)}\t${i.skipReason}`)
+-          .sort(compareStrings)
+-          .map(l => l + "\n")
+-          .join("");
+-        expect({ subtests: instances.length, sha256: sha256(subtests), skipReasonsSha256: sha256(reasons) }).toEqual({
+-          subtests: suiteRun.subtests,
+-          sha256: suiteRun.sha256,
+-          skipReasonsSha256: suiteRun.skipReasonsSha256,
+-        });
+-      }
+-    },
+-    30_000,
+-  );
+ });
+ 
+ describe("error baselines", () => {

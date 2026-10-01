@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SCRATCH PROBE of the research unit "ts-entry-codes-harness", not part of the change.
+# SCRATCH PROBE of the research unit "ts-wrappers-eleven-rules" (from the one of "ts-entry-codes-harness"), not part of the change.
 # Copies src/lint of the worktree to a scratch directory, makes the edit that D2 plans in lib.rs and context.rs
 # (`ParsedOnly` -> `ParsedForLint`, the arena read from the parse), adds probe_main.rs (the planned `parse` of lint_command.rs)
 # and compiles it as ONE binary with rustc against the rlibs of the debug build of the worktree: no crate is rebuilt.
@@ -10,24 +10,16 @@ import glob, json, os, shutil, subprocess, sys
 
 WT = os.environ.get("WT", "/workspace/wt/cli")
 HERE = os.path.dirname(os.path.abspath(__file__))
-OUT = sys.argv[1] if len(sys.argv) > 1 else "/tmp/tsentry"
+OUT = sys.argv[1] if len(sys.argv) > 1 else "/tmp/tsw/out"
 SRC = f"{OUT}/src"
 shutil.rmtree(SRC, ignore_errors=True)
 shutil.copytree(f"{WT}/src/lint", SRC, ignore=shutil.ignore_patterns("Cargo.toml", "LICENSE*", "UPSTREAM*"))
 
-def edit(name, pairs):
-    path = f"{SRC}/{name}"
-    text = open(path).read()
-    for old, new in pairs:
-        assert text.count(old) == 1, (name, old, text.count(old))
-        text = text.replace(old, new)
-    open(path, "w").write(text)
-
-edit("lib.rs", [
-    ("use bun_js_parser::parse::parse_entry::ParsedOnly;", "use bun_js_parser::parse::parse_entry::ParsedForLint;"),
-    ("    parsed: &ParsedOnly<'_, 'a>,\n    source: &'a bun_ast::Source,\n    arena: &'a bun_alloc::Arena,\n", "    parsed: &ParsedForLint<'_, 'a>,\n    source: &'a bun_ast::Source,\n"),
-    ("context::Context::new(file, parsed, source, arena)", "context::Context::new(file, parsed, source)"),
-])
+# The planned text of this research unit replaces the files of the tree that it changes.
+for root, _, names in os.walk(f"{HERE}/src-lint"):
+    for name in names:
+        rel = os.path.relpath(os.path.join(root, name), f"{HERE}/src-lint")
+        shutil.copy(os.path.join(root, name), f"{SRC}/{rel}")
 open(f"{SRC}/lib.rs", "a").write('''
 #[path = "%s/src/js_parser/native_test_shims.rs"]
 mod native_test_shims;
@@ -48,11 +40,6 @@ extern "C" fn posix_spawn_bun() -> i32 {
     -1
 }
 ''' % WT)
-edit("context.rs", [
-    ("use bun_js_parser::parse::parse_entry::ParsedOnly;", "use bun_js_parser::parse::parse_entry::ParsedForLint;"),
-    ("    parsed: &'p ParsedOnly<'p, 'a>,\n    source: &'a Source,\n    arena: &'a bun_alloc::Arena,\n    pub(crate) stack_check", "    parsed: &'p ParsedForLint<'p, 'a>,\n    source: &'a Source,\n    arena: &'a bun_alloc::Arena,\n    pub(crate) stack_check"),
-    ("        parsed: &'p ParsedOnly<'p, 'a>,\n        source: &'a Source,\n        arena: &'a bun_alloc::Arena,\n    ) -> Self {", "        parsed: &'p ParsedForLint<'p, 'a>,\n        source: &'a Source,\n    ) -> Self {\n        let arena = parsed.arena;"),
-])
 shutil.copy(f"{HERE}/probe_main.rs", f"{SRC}/probe_main.rs")
 os.rename(f"{SRC}/lib.rs", f"{SRC}/main.rs")
 

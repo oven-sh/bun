@@ -1,0 +1,232 @@
+--- a/test/cli/lint/conformance/runner/harnessutil_options.ts	2026-10-01 12:01:23.304555454 +0000
++++ b/test/cli/lint/conformance/runner/harnessutil_options.ts	2026-10-01 12:06:07.600652360 +0000
+@@ -99,15 +99,20 @@
+   { name: "captureSuggestions", kind: "boolean" },
+ ];
+ 
+-// harnessutil.go:1182
+-export function getCommandLineOption(option: string): CommandLineOption | undefined {
+-  return compilerOptions.find(optionDecl => equalFold(optionDecl.name, option));
++// The declaration that a name finds in a table; the tables never change, so a name is searched once in each.
++function findByName(table: readonly CommandLineOption[]): (name: string) => CommandLineOption | undefined {
++  const found = new Map<string, CommandLineOption | undefined>();
++  return name => {
++    if (!found.has(name)) found.set(name, table.find(option => equalFold(option.name, name)));
++    return found.get(name);
++  };
+ }
+ 
++// harnessutil.go:1182
++export const getCommandLineOption = findByName(compilerOptions);
++
+ // harnessutil.go:399
+-export function getHarnessOption(name: string): CommandLineOption | undefined {
+-  return harnessCommandLineOptions.find(option => equalFold(option.name, name));
+-}
++export const getHarnessOption = findByName(harnessCommandLineOptions);
+ 
+ // harnessutil.go:405; returns the text of t.Fatalf, undefined when the option is set.
+ export function parseHarnessOption(key: string, value: unknown, harnessOptions: HarnessOptions): string | undefined {
+@@ -343,13 +348,16 @@
+   notes: string[];
+ }
+ 
++// The bytes of a file of a file system that nothing reads.
++const noBytes = new Uint8Array(0);
++
+ // test_case_parser.go:65 and tsoptionstest/vfsparseconfighost.go:45: the units and the links of a case as the file system of its config. The reference walks the links as a Go map and keeps either of two links of one name; this keeps the later. Throws MemFsPanic where the reference panics.
+-function newParseConfigHost(test: TestFiles, currentDirectory: string): ParseConfigHost {
++function newParseConfigHost(test: TestFiles, currentDirectory: string, read: boolean): ParseConfigHost {
+   const entries = new Map<string, MemInput>();
+   for (const data of test.units) {
+     entries.set(getNormalizedAbsolutePath(data.name, currentDirectory), {
+       kind: "file",
+-      data: Buffer.from(data.content, "utf8"),
++      data: read ? Buffer.from(data.content, "utf8") : noBytes,
+     });
+   }
+   for (const [link, target] of entriesOf(test.symlinks)) {
+@@ -382,9 +390,9 @@
+   // The text of the panic with which the reference leaves makeUnitsFromTest.
+   let panic: string | undefined;
+   try {
+-    // The reference makes this file system for every case, with or without a config.
+-    const parseConfigHost = newParseConfigHost(test, unitsDirectory);
+     const configUnit = test.units.find(unit => getConfigNameFromFileName(unit.name) !== "");
++    // The reference makes this file system for every case, with or without a config; only a config and what it extends are read from it.
++    const parseConfigHost = newParseConfigHost(test, unitsDirectory, configUnit !== undefined);
+     if (configUnit !== undefined) {
+       let existingOptions: CompilerOptions | undefined;
+       if (new Map(entriesOf(test.globalOptions)).get("runexternalcode") === "true") {
+--- a/test/cli/lint/conformance/runner/harnessutil_variations.ts	2026-10-01 12:01:23.306532635 +0000
++++ b/test/cli/lint/conformance/runner/harnessutil_variations.ts	2026-10-01 12:01:23.402023045 +0000
+@@ -139,9 +139,15 @@
+   return value;
+ }
+ 
++// The declaration that a name finds; the declarations never change, so a name is searched once.
++const commandLineOptionOfName = new Map<string, CommandLineOption | undefined>();
++
+ // harnessutil.go:1182
+ export function getCommandLineOption(option: string): CommandLineOption | undefined {
+-  return compilerOptions.find(optionDecl => equalFold(optionDecl.name, option));
++  if (commandLineOptionOfName.has(option)) return commandLineOptionOfName.get(option);
++  const found = compilerOptions.find(optionDecl => equalFold(optionDecl.name, option));
++  commandLineOptionOfName.set(option, found);
++  return found;
+ }
+ 
+ // harnessutil.go:1188; the values of an enum come in the order of the keys of its map.
+--- a/test/cli/lint/conformance/runner/tsconfig.ts	2026-10-01 12:01:23.306446109 +0000
++++ b/test/cli/lint/conformance/runner/tsconfig.ts	2026-10-01 12:03:40.242544181 +0000
+@@ -171,8 +171,148 @@
+   return kind === "tristate" || kind === "enum" ? 0 : kind === "string" ? "" : undefined;
+ }
+ 
+-const zeroCompilerOptions: Record<string, unknown> = {};
+-for (const [name, kind] of fieldKinds) zeroCompilerOptions[name] = zeroValue(kind);
++// Every field of fieldKinds with its zero value, in that order. It is written out: the engine copies an object that a literal made a fifty times faster than one that was filled name by name.
++const zeroCompilerOptions: CompilerOptions = {
++  allowJs: TSUnknown,
++  allowImportingTsExtensions: TSUnknown,
++  allowSyntheticDefaultImports: TSUnknown,
++  allowNonTsExtensions: TSUnknown,
++  allowUmdGlobalAccess: TSUnknown,
++  allowUnreachableCode: TSUnknown,
++  allowUnusedLabels: TSUnknown,
++  allowArbitraryExtensions: TSUnknown,
++  alwaysStrict: TSUnknown,
++  assumeChangesOnlyAffectDirectDependencies: TSUnknown,
++  build: TSUnknown,
++  checkJs: TSUnknown,
++  composite: TSUnknown,
++  deduplicatePackages: TSUnknown,
++  diagnostics: TSUnknown,
++  disableSizeLimit: TSUnknown,
++  disableSourceOfProjectReferenceRedirect: TSUnknown,
++  disableSolutionSearching: TSUnknown,
++  disableReferencedProjectLoad: TSUnknown,
++  declarationMap: TSUnknown,
++  declaration: TSUnknown,
++  downlevelIteration: TSUnknown,
++  erasableSyntaxOnly: TSUnknown,
++  emitDeclarationOnly: TSUnknown,
++  extendedDiagnostics: TSUnknown,
++  emitDecoratorMetadata: TSUnknown,
++  emitBOM: TSUnknown,
++  esModuleInterop: TSUnknown,
++  exactOptionalPropertyTypes: TSUnknown,
++  explainFiles: TSUnknown,
++  experimentalDecorators: TSUnknown,
++  forceConsistentCasingInFileNames: TSUnknown,
++  isolatedModules: TSUnknown,
++  ignoreConfig: TSUnknown,
++  importHelpers: TSUnknown,
++  incremental: TSUnknown,
++  init: TSUnknown,
++  inlineSourceMap: TSUnknown,
++  inlineSources: TSUnknown,
++  isolatedDeclarations: TSUnknown,
++  libReplacement: TSUnknown,
++  listEmittedFiles: TSUnknown,
++  listFiles: TSUnknown,
++  listFilesOnly: TSUnknown,
++  noCheck: TSUnknown,
++  noFallthroughCasesInSwitch: TSUnknown,
++  noEmitForJsFiles: TSUnknown,
++  noErrorTruncation: TSUnknown,
++  noImplicitAny: TSUnknown,
++  noImplicitThis: TSUnknown,
++  noLib: TSUnknown,
++  noPropertyAccessFromIndexSignature: TSUnknown,
++  noUncheckedIndexedAccess: TSUnknown,
++  noEmitHelpers: TSUnknown,
++  noEmitOnError: TSUnknown,
++  noImplicitReturns: TSUnknown,
++  noUnusedLocals: TSUnknown,
++  noUnusedParameters: TSUnknown,
++  noImplicitOverride: TSUnknown,
++  noUncheckedSideEffectImports: TSUnknown,
++  noResolve: TSUnknown,
++  preserveWatchOutput: TSUnknown,
++  preserveConstEnums: TSUnknown,
++  preserveSymlinks: TSUnknown,
++  pretty: TSUnknown,
++  resolveJsonModule: TSUnknown,
++  resolvePackageJsonExports: TSUnknown,
++  resolvePackageJsonImports: TSUnknown,
++  rewriteRelativeImportExtensions: TSUnknown,
++  removeComments: TSUnknown,
++  stableTypeOrdering: TSUnknown,
++  strict: TSUnknown,
++  strictBindCallApply: TSUnknown,
++  strictBuiltinIteratorReturn: TSUnknown,
++  strictFunctionTypes: TSUnknown,
++  strictNullChecks: TSUnknown,
++  strictPropertyInitialization: TSUnknown,
++  skipDefaultLibCheck: TSUnknown,
++  sourceMap: TSUnknown,
++  stripInternal: TSUnknown,
++  suppressOutputPathCheck: TSUnknown,
++  traceResolution: TSUnknown,
++  useDefineForClassFields: TSUnknown,
++  useUnknownInCatchVariables: TSUnknown,
++  verbatimModuleSyntax: TSUnknown,
++  version: TSUnknown,
++  help: TSUnknown,
++  all: TSUnknown,
++  skipLibCheck: TSUnknown,
++  noEmit: TSUnknown,
++  showConfig: TSUnknown,
++  noDtsResolution: TSUnknown,
++  watch: TSUnknown,
++  singleThreaded: TSUnknown,
++  quiet: TSUnknown,
++  runExternalCode: TSUnknown,
++  baseUrl: "",
++  declarationDir: "",
++  generateCpuProfile: "",
++  generateTrace: "",
++  ignoreDeprecations: "",
++  jsxFactory: "",
++  jsxFragmentFactory: "",
++  jsxImportSource: "",
++  locale: "",
++  mapRoot: "",
++  outFile: "",
++  project: "",
++  reactNamespace: "",
++  rootDir: "",
++  sourceRoot: "",
++  tsBuildInfoFile: "",
++  configFilePath: "",
++  pathsBasePath: "",
++  outDir: "",
++  pprofDir: "",
++  customConditions: undefined,
++  lib: undefined,
++  moduleSuffixes: undefined,
++  rootDirs: undefined,
++  typeRoots: undefined,
++  types: undefined,
++  jsx: 0,
++  module: 0,
++  moduleResolution: 0,
++  moduleDetection: 0,
++  target: 0,
++  newLine: 0,
++  maxNodeModuleJsDepth: undefined,
++  checkers: undefined,
++  paths: undefined,
++};
++if (Object.keys(zeroCompilerOptions).join() !== [...fieldKinds.keys()].join()) {
++  throw new Error("zeroCompilerOptions does not have the fields of fieldKinds in their order");
++}
++for (const [name, kind] of fieldKinds) {
++  if ((zeroCompilerOptions as Record<string, unknown>)[name] !== zeroValue(kind)) {
++    throw new Error(`zeroCompilerOptions.${name} is not the zero value of its kind`);
++  }
++}
+ 
+ // The zero value of core.CompilerOptions.
+ export function newCompilerOptions(): CompilerOptions {

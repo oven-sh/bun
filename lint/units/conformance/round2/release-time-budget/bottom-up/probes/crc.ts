@@ -1,0 +1,16 @@
+import { readFileSync } from "node:fs";
+const cpu = () => Number(readFileSync("/proc/thread-self/schedstat", "latin1").split(" ")[0]) / 1e6;
+let t = cpu();
+const step = (label: string) => { const n = cpu(); console.log(`${(n - t).toFixed(1).padStart(8)} ms  ${label}`); t = cpu(); };
+const names: string[] = [];
+for (let k = 0; k < 12444; k++) names.push(`conformance/some/directory/of/cases/caseNumber${k}.ts`);
+step("12,444 names made");
+Bun.hash.crc32("a");
+step("the first call of Bun.hash.crc32");
+let n = 0;
+for (const name of names) if (Bun.hash.crc32(name) % 40 === 0) n++;
+step(`crc32 of 12,444 names (${n} taken)`);
+const a = names.filter(name => Bun.hash.crc32(name) % 250 === 0).sort();
+step(`filter and sort again (${a.length})`);
+const spread = [...new Map(names.map(x => [x, x])).values()];
+step(`a map of the names made and spread (${spread.length})`);

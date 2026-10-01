@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use bun_ast::lexer_tables::T;
 use bun_ast::{E, Expr, ExprData, G, Loc, Log, OpCode, Ref, S, Source, StmtData};
 use bun_core::StackCheck;
+use bun_js_parser::parse::attached::ModuleExportName;
 use bun_js_parser::parse::erased::{ErasedFlags, ErasedMemberData};
 use bun_js_parser::parse::generics::TypeArgumentsOf;
 use bun_js_parser::parse::parse_entry::ParsedForLint;
@@ -241,6 +242,18 @@ impl<'p, 'a> Context<'p, 'a> {
     /// A declaration of `name` is somewhere in the file.
     pub(crate) fn declare_name(&mut self, name: &[u8]) {
         self.declared = self.declared.or(Globals::named(name));
+    }
+
+    /// The names with `type` in the clause of the import statement that starts at `statement` leave no item: ESLint has them declared.
+    pub(crate) fn declare_type_only_names(&mut self, statement: u32) {
+        let Ok(start) = i32::try_from(statement) else {
+            return;
+        };
+        for record in self.parsed.sidecar.attached.specifiers_of(Loc { start }) {
+            if let ModuleExportName::Identifier(name) = &record.specifier.name {
+                self.declared = self.declared.or(Globals::named(name.text.slice()));
+            }
+        }
     }
 
     /// A diagnostic of `rule` at the token that starts at `at`. Its length is that token.

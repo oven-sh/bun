@@ -142,16 +142,8 @@ describe("bundler", () => {
       "/foo.magic": [`123`],
     },
   });
-  // A plugin answer whose string passes the JS-side type check can still fail
-  // to convert: a 16-bit rope of the maximum length (2^31 - 1 chars) only
-  // allocates rope nodes, but flattening it asks WTF for a buffer it refuses,
-  // so the first reader gets JSC's "Out of memory" RangeError. The reader is
-  // the native thunk that answers the request, which used to panic. Each
-  // callback prints that it returned normally, so the error is known to come
-  // from the conversion and not from the callback itself. The resolve answers
-  // are external so that the JS-side path and namespace checks do not read the
-  // string first. Spawned because the unfixed binary takes the whole test
-  // process down.
+  // A max-length 16-bit rope throws "Out of memory" on its first flatten, so
+  // `external: true` keeps the JS-side path checks from reading it first.
   test.concurrent("plugin/string answer that cannot be flattened fails the build", async () => {
     using dir = tempDir("plugin-string-answer-cannot-flatten", {
       "entry.ts": `import { foo } from "./foo.magic"; console.log(foo);`,

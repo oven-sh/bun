@@ -5,10 +5,10 @@
 // 0 while that query is still pending. Each scenario runs in its own process
 // because the test runner keeps the event loop alive on its own; see the
 // fixture for what each scenario sets up. The scenarios run against a mock
-// server (everywhere, including platforms without docker) and against a real
-// one.
+// server (everywhere, including platforms without docker) and, like the other
+// mysql_plain suites in this directory, against a real one where docker runs.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, describeWithContainer, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, describeWithContainer, isDockerEnabled, normalizeBunSnapshot } from "harness";
 import type { Socket } from "node:net";
 import path from "path";
 import { listeningServer, mysqlHandshakeV10, mysqlOkPacket, mysqlReadPackets, mysqlTextResultSet } from "./wire-frames";
@@ -79,9 +79,11 @@ describe.concurrent("against a mock server", () => {
   });
 });
 
-describeWithContainer("against mysql", { image: "mysql_plain", concurrent: true }, container => {
-  test.each(scenarios)("the process stays alive for a query issued after %s", async scenario => {
-    await container.ready;
-    await expectFixtureToFinish(`mysql://root@${container.host}:${container.port}/bun_sql_test`, scenario);
+if (isDockerEnabled()) {
+  describeWithContainer("against mysql", { image: "mysql_plain", concurrent: true }, container => {
+    test.each(scenarios)("the process stays alive for a query issued after %s", async scenario => {
+      await container.ready;
+      await expectFixtureToFinish(`mysql://root@${container.host}:${container.port}/bun_sql_test`, scenario);
+    });
   });
-});
+}

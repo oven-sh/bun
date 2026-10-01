@@ -1400,7 +1400,12 @@ impl<'p> Checker<'p> {
                 (TypeData::Tuple { elems: x, flags: f, readonly: r }, TypeData::Tuple { elems: y, flags: g, readonly: q }) => r
                     .cmp(q)
                     .then_with(|| x.len().cmp(&y.len()))
-                    .then_with(|| f.iter().map(|e| e.bits()).cmp(g.iter().map(|e| e.bits())))
+                    .then_with(|| f.iter().map(|e| e.with_label(Atom::NONE).bits()).cmp(g.iter().map(|e| e.with_label(Atom::NONE).bits())))
+                    // `compareElementLabels`: what has none comes first.
+                    .then_with(|| {
+                        let label = |e: &ElemFlags| e.label().is_some().then(|| atoms.bytes(e.label()));
+                        f.iter().map(label).cmp(g.iter().map(label))
+                    })
                     .then_with(|| self.compare_type_lists(x, y)),
                 // The lists TypeScript compares are in this order. Those of intersections are as written.
                 (TypeData::Union(_), TypeData::Union(_)) => self.compare_type_lists(&self.parts_in_order(a), &self.parts_in_order(b)),

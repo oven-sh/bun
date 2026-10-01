@@ -45,12 +45,36 @@ pub enum Intrinsic {
 
 bitflags::bitflags! {
     #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
-    pub struct ElemFlags: u8 {
+    pub struct ElemFlags: u32 {
         const REQUIRED = 1;
         const OPTIONAL = 2;
         const REST = 4;
         /// `...T` where `T` is a type parameter.
         const VARIADIC = 8;
+    }
+}
+
+impl ElemFlags {
+    /// `TupleElementInfo.labeledDeclaration`, as far as its name goes, is kept above the flags.
+    const LABEL_SHIFT: u32 = 8;
+
+    /// `name` in `[name: T]`. `NONE`: the element has no label.
+    #[inline]
+    pub fn label(self) -> Atom {
+        match self.bits() >> Self::LABEL_SHIFT {
+            0 => Atom::NONE,
+            label => Atom(label - 1),
+        }
+    }
+
+    /// The same flags, with `label` for a label.
+    #[inline]
+    pub fn with_label(self, label: Atom) -> ElemFlags {
+        let flags = self.bits() & ((1 << Self::LABEL_SHIFT) - 1);
+        if label.is_none() || label.0 >= (u32::MAX >> Self::LABEL_SHIFT) {
+            return ElemFlags::from_bits_retain(flags);
+        }
+        ElemFlags::from_bits_retain(flags | ((label.0 + 1) << Self::LABEL_SHIFT))
     }
 }
 

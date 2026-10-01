@@ -388,7 +388,7 @@ impl<'p> Checker<'p> {
             }
             TypeData::Keyof(t) => {
                 let t = self.instantiate(*t, mapper);
-                self.keyof(t)
+                self.keyof_with_origin(t)
             }
             TypeData::NoInfer(t) => {
                 let t = self.instantiate(*t, mapper);
@@ -457,7 +457,7 @@ impl<'p> Checker<'p> {
             }
             if self.is_any(elem) {
                 out_elems.push(elem);
-                out_flags.push(ElemFlags::REST);
+                out_flags.push(ElemFlags::REST.with_label(flag.label()));
                 continue;
             }
             // What is generic stays as it is: `TypeFlagsInstantiableNonPrimitive`, `isGenericMappedType`.
@@ -480,7 +480,7 @@ impl<'p> Checker<'p> {
             };
             if waits {
                 out_elems.push(elem);
-                out_flags.push(ElemFlags::VARIADIC);
+                out_flags.push(flag);
                 continue;
             }
             if let TypeData::Tuple {
@@ -534,7 +534,7 @@ impl<'p> Checker<'p> {
                 }
             };
             out_elems.push(element);
-            out_flags.push(ElemFlags::REST);
+            out_flags.push(ElemFlags::REST.with_label(flag.label()));
         }
         self.tuple(&out_elems, &out_flags, readonly)
     }

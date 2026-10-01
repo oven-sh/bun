@@ -377,6 +377,16 @@ impl Checker<'_> {
         {
             note.start = to;
             note.end = end;
+            // What is said of the same node goes along.
+            for related in &mut note.related {
+                if matches!(related.code, 6212 | 6213)
+                    && let Some(at) = &mut related.at
+                    && at.1 == start
+                {
+                    at.1 = to;
+                    at.2 = end;
+                }
+            }
         }
     }
 

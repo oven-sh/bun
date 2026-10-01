@@ -435,8 +435,8 @@ impl<'p> Checker<'p> {
 // ───────────────────────────── names ─────────────────────────────
 
 impl<'p> Checker<'p> {
-    /// `getParameterNameAtPosition`. The labels of a tuple are not kept: an element of a rest parameter goes by the name of the
-    /// parameter and its place (`getTupleElementLabel`).
+    /// `getParameterNameAtPosition`. An element of a rest parameter that has no label goes by the name of the parameter and its
+    /// place (`getTupleElementLabel`).
     fn parameter_name_at_position(&self, params: &[SigParam], pos: usize) -> String {
         let name_of = |index: usize| {
             let name = params[index].name;
@@ -457,6 +457,11 @@ impl<'p> Checker<'p> {
         match self.data(params[fixed].ty) {
             TypeData::Tuple { flags, .. } => {
                 let index = pos - fixed;
+                if let Some(flag) = flags.get(index)
+                    && flag.label().is_some()
+                {
+                    return self.atom_text(flag.label());
+                }
                 let is_variable = flags
                     .get(index)
                     .is_some_and(|f| f.intersects(ElemFlags::REST | ElemFlags::VARIADIC));
@@ -2143,6 +2148,7 @@ impl<'p> Checker<'p> {
         let source_is_primitive = self.has_primitive_flag(source);
         let source_is_object_keyword = source == TypeId::OBJECT;
         let source = self.apparent_type_for_relation(source);
+        let source = self.apparent_type_of_intersection(source);
         match (self.data(source), self.data(target)) {
             (
                 TypeData::Ref {

@@ -3441,6 +3441,17 @@ impl<'p> Checker<'p> {
                 TypeId::UNRESOLVED
             };
         }
+        // `checkJsxAttribute`: an attribute without an initializer is `true` whatever is expected of it. The parser puts a `true`
+        // where its name ends.
+        if matches!(hir[prop.value].kind, ExprKind::True) {
+            let owner = self.bound(file).prop_owner[p.idx()];
+            if owner.is_some()
+                && matches!(hir[owner].kind, ExprKind::Jsx(_))
+                && self.end_of_jsx_attr(file, p) == self.end_of_jsx_attr_name(file, p)
+            {
+                return TypeId::FRESH_TRUE;
+            }
+        }
         match prop.kind {
             PropKind::Getter => {
                 let ExprKind::Fn(f) = hir[prop.value].kind else {

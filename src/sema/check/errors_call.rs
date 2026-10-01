@@ -219,6 +219,16 @@ impl Checker<'_> {
                 };
                 self.note(start, end, code, Vec::new());
                 self.explain_chain(start, code, |c| c.invocation_error_lines(apparent, false));
+                self.relate(start, code, |c| {
+                    let has_one_argument = data.args.len() == 1;
+                    c.related_to_invocation_error(
+                        file,
+                        data.callee,
+                        apparent,
+                        false,
+                        has_one_argument,
+                    )
+                });
                 return;
             }
             self.report_call_resolution(file, e, c, &call_sigs, false, resolved, out);
@@ -339,6 +349,83 @@ impl Checker<'_> {
             Vec::new(),
         );
         self.explain_chain(start, 2351, |c| c.invocation_error_lines(apparent, true));
+        self.relate(start, 2351, |c| {
+            c.related_to_invocation_error(file, data.callee, apparent, true, false)
+        });
+    }
+
+    /// What `invocationError` relates to 2349, 6234 or 2351, said of `target`, whose apparent type is `apparent`.
+    /// `has_one_argument`: it is called, not made or used as a tag, and with one argument.
+    fn related_to_invocation_error(
+        &mut self,
+        file: FileId,
+        target: ExprId,
+        apparent: TypeId,
+        construct: bool,
+        has_one_argument: bool,
+    ) -> Vec<super::explain::Related> {
+        let hir = self.hir(file);
+        let (from, to) = self.error_range_of_expr(file, target);
+        let here = |code: u32| super::explain::Related {
+            at: Some((file, from, to)),
+            code,
+            args: Vec::new(),
+        };
+        let mut related = Vec::new();
+        // `invocationErrorDetails`
+        if let Some(awaited) = self.awaited_or_none(apparent) {
+            let awaited = self.apparent_type(awaited);
+            let awaited = self.reduced(awaited);
+            if self.is_known(awaited) && !self.signatures(awaited, construct).is_empty() {
+                related.push(here(2773));
+            }
+        }
+        // `resolveCallExpression`
+        if has_one_argument && line_breaks_after(&hir.text, self.end_of_expr(file, target) as usize)
+        {
+            related.push(here(2734));
+        }
+        // `invocationErrorRecovery`
+        if let Some((module, import)) = self.originating_import(file, apparent) {
+            let imported = self.type_of_symbol(module);
+            if !self.signatures(imported, construct).is_empty() {
+                related.push(import);
+            }
+        }
+        related
+    }
+
+    /// `exportTypeLinks.Get(t.symbol)`, of a type `import * as ns` made: its `target`, which is what is imported, and 7038 at its
+    /// `originatingImport`. The type does not say which import made it: the first in `file` that imports the same.
+    fn originating_import(
+        &self,
+        file: FileId,
+        ty: TypeId,
+    ) -> Option<(Sym, super::explain::Related)> {
+        let TypeData::Anon {
+            origin: Origin::Namespace { module, .. },
+            ..
+        } = *self.data(ty)
+        else {
+            return None;
+        };
+        let (hir, files) = (self.hir(file), self.files());
+        let index = hir.stmts.iter().position(|s| match s.kind {
+            StmtKind::Import(i) if hir[i].namespace.is_some() => {
+                let mode = files.mode_of_import(file, hir[i].mode);
+                files
+                    .module_of_specifier_as(file, hir[i].spec, mode)
+                    .is_some_and(|of| files.module_value(of) == module)
+            }
+            _ => false,
+        })?;
+        let statement = StmtId(index as u32);
+        let import = super::explain::Related {
+            at: Some((file, hir[statement].pos, self.end_of_stmt(file, statement))),
+            code: 7038,
+            args: Vec::new(),
+        };
+        Some((module, import))
     }
 
     /// `invocationErrorDetails`: the lines under 2349, 6234 or 2351, of what has the apparent type `apparent`.
@@ -611,6 +698,9 @@ impl Checker<'_> {
             );
             if !is_element {
                 self.explain_chain(start, code, |c| c.invocation_error_lines(apparent, false));
+                self.relate(start, code, |c| {
+                    c.related_to_invocation_error(file, data.callee, apparent, false, false)
+                });
             }
             return;
         }
@@ -1369,8 +1459,24 @@ impl Checker<'_> {
                 is_new,
                 Some(&mut said),
             );
+            let is_overloaded = for_argument_error.len() > 1;
+            let related = if said.is_empty() {
+                Vec::new()
+            } else {
+                self.related_to_failed_candidate(
+                    file,
+                    e,
+                    c,
+                    &args,
+                    &type_args,
+                    this_arg,
+                    is_new,
+                    last,
+                    is_overloaded,
+                )
+            };
             for d in said {
-                out.push(if for_argument_error.len() > 1 {
+                let d = if is_overloaded {
                     self.explain_under(d.start, d.code, 2770, Vec::new());
                     self.explain_under(d.start, 2770, 2769, Vec::new());
                     Diagnostic {
@@ -1379,7 +1485,11 @@ impl Checker<'_> {
                     }
                 } else {
                     d
-                });
+                };
+                if !related.is_empty() {
+                    self.relate(d.start, d.code, |_| related.clone());
+                }
+                out.push(d);
             }
         } else if let Some(sig) = for_arity_error {
             self.report_argument_arity(file, e, c, is_new, &[sig], &args, out);
@@ -1414,6 +1524,205 @@ impl Checker<'_> {
                 self.report_argument_arity(file, e, c, is_new, &fitting, &args, out);
             }
         }
+    }
+
+    /// `GetErrorRangeForNode`, of the declaration `func` of a signature.
+    pub(super) fn place_of_signature_declaration(
+        &self,
+        file: FileId,
+        func: FnId,
+    ) -> (FileId, u32, u32) {
+        let hir = self.hir(file);
+        // There is no text of the default library.
+        if hir.text.is_empty() {
+            return (file, hir[func].pos, hir[func].pos);
+        }
+        let (start, end) = match self.bound(file).fns[func.idx()].owner {
+            FnOwner::Stmt(s) => self.error_range_of_stmt(file, s),
+            FnOwner::Expr(e) if hir[func].kind == FnKind::Expr => (
+                self.error_start_inside_parentheses(file, e),
+                self.error_end_inside_parentheses(file, e),
+            ),
+            _ => self.error_range_of_fn(file, func),
+        };
+        (file, start, end)
+    }
+
+    /// `The last overload is declared here.`, of the candidate `last`. Nothing if it has no declaration.
+    pub(super) fn last_overload_declared_here(
+        &mut self,
+        last: SigId,
+    ) -> Vec<super::explain::Related> {
+        let declared = self.declared_sig(last);
+        match self.sig_decl(declared) {
+            Some((file, func, _)) => vec![super::explain::Related {
+                at: Some(self.place_of_signature_declaration(file, func)),
+                code: 2771,
+                args: Vec::new(),
+            }],
+            None => Vec::new(),
+        }
+    }
+
+    /// `addImplementationSuccessElaboration`: the first declaration with a body of what declares the overload `failed`, as
+    /// `getSignatureFromDeclaration` has it. `None`: there is none, or nothing else declares what `failed` declares.
+    fn implementation_of_overload(&mut self, failed: SigId) -> Option<SigId> {
+        let declared = self.declared_sig(failed);
+        let SigData::Construct {
+            class, file, func, ..
+        } = *self.p.types.sig(declared)
+        else {
+            return self.implementation_signature(failed);
+        };
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let FnOwner::Member(member) = bound.fns[func.idx()].owner else {
+            return None;
+        };
+        let MemberOwner::Class(written) = bound.member_owner[member.idx()] else {
+            return None;
+        };
+        let constructors: SmallVec<[FnId; 4]> = hir[written]
+            .members
+            .iter()
+            .filter(|&m| hir[m].kind == MemberKind::Constructor)
+            .map(|m| hir[m].func)
+            .collect();
+        if constructors.len() < 2 {
+            return None;
+        }
+        let implementation = constructors.iter().copied().find(|&f| {
+            !matches!(hir[f].body, FnBody::None) || hir[f].flags.contains(Flags::BODY_DROPPED)
+        })?;
+        // The mapper the construct signatures of the class have as they are declared.
+        let statics = self.type_of_symbol(class);
+        let mapper = self.signatures(statics, true).iter().find_map(|&sig| {
+            match *self.p.types.sig(sig) {
+                SigData::Construct {
+                    class: of,
+                    file: at,
+                    mapper,
+                    ..
+                } if of == class && at == file => Some(mapper),
+                _ => None,
+            }
+        })?;
+        Some(self.p.types.intern_sig(SigData::Construct {
+            class,
+            file,
+            func: implementation,
+            mapper,
+        }))
+    }
+
+    /// `addImplementationSuccessElaboration`: whether `chooseOverload` takes `implementation`, as the only candidate, for the call,
+    /// `new` or tagged template `e`. `false` where it cannot be told.
+    fn does_implementation_apply(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        c: CallId,
+        args: &[(Arg, ExprId)],
+        type_args: &[TypeId],
+        this_arg: Option<ExprId>,
+        is_new: bool,
+        implementation: SigId,
+    ) -> bool {
+        let hir = self.hir(file);
+        let close_pos = hir[c].close_pos;
+        // `callIsIncomplete`
+        let is_incomplete = if matches!(hir[e].kind, ExprKind::TaggedTemplate(_)) {
+            close_pos == INCOMPLETE_TEMPLATE
+        } else {
+            close_pos != u32::MAX
+                && !hir.text.is_empty()
+                && hir.text.get(close_pos as usize) != Some(&b')')
+        };
+        let (type_params, params) = (
+            self.sig_type_params(implementation),
+            self.sig_params(implementation),
+        );
+        if !self.has_correct_type_argument_arity(&type_params, type_args.len())
+            || !self.has_correct_arity_for(&params, args, is_incomplete)
+        {
+            return false;
+        }
+        let mut check = implementation;
+        if !type_params.is_empty() {
+            if !type_args.is_empty()
+                && !matches!(
+                    self.failing_type_argument(implementation, &type_params, type_args),
+                    Ok(None)
+                )
+            {
+                return false;
+            }
+            let plain: SmallVec<[Arg; 4]> = args.iter().map(|a| a.0).collect();
+            let outer = std::mem::replace(&mut self.keeps_arg_contexts, true);
+            check = self.instantiate_for_call(
+                file,
+                e,
+                implementation,
+                type_args,
+                &plain,
+                this_arg,
+                false,
+            );
+            self.keeps_arg_contexts = outer;
+            // With a rest parameter that is a type parameter, how many it takes is only known now.
+            if self.non_array_rest_type(&params).is_some() {
+                let instantiated = self.sig_params(check);
+                if !self.has_correct_arity_for(&instantiated, args, is_incomplete) {
+                    return false;
+                }
+            }
+        }
+        self.is_signature_applicable(file, e, c, args, check, this_arg, is_new, None)
+            == Applicable::Yes
+    }
+
+    /// What `reportCallResolutionErrors` relates to each thing it says of `last`, the last of `candidatesForArgumentError`.
+    /// `is_overloaded`: there are more of those.
+    fn related_to_failed_candidate(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        c: CallId,
+        args: &[(Arg, ExprId)],
+        type_args: &[TypeId],
+        this_arg: Option<ExprId>,
+        is_new: bool,
+        last: SigId,
+        is_overloaded: bool,
+    ) -> Vec<super::explain::Related> {
+        if !self.explains {
+            return Vec::new();
+        }
+        let mut related = if is_overloaded {
+            self.last_overload_declared_here(last)
+        } else {
+            Vec::new()
+        };
+        if !self.stack.contains(&Query::Call(file, e))
+            && let Some(implementation) = self.implementation_of_overload(last)
+            && self.does_implementation_apply(
+                file,
+                e,
+                c,
+                args,
+                type_args,
+                this_arg,
+                is_new,
+                implementation,
+            )
+            && let Some((of, func, _)) = self.sig_decl(implementation)
+        {
+            related.push(super::explain::Related {
+                at: Some(self.place_of_signature_declaration(of, func)),
+                code: 2793,
+                args: Vec::new(),
+            });
+        }
+        related
     }
 
     /// Records in `context_checked_for` that an attempt that has ended checked the function expressions in the argument `e`.
@@ -1639,7 +1948,20 @@ impl Checker<'_> {
                         self.error_end_inside_parentheses(file, check_node),
                     ),
                 };
+                let said = out.len();
                 self.check_assignable_with_end(file, given, wanted, at, end, inner, 2345, out);
+                let (from, to) = self.error_range_of_expr(file, node);
+                let first = out.get(said).copied();
+                self.maybe_add_missing_await_info((file, from, to), given, wanted, first);
+                // `checkTypeRelatedToEx`: what `import * as ns` imports would have done.
+                if self.explains
+                    && let Some((module, import)) = self.originating_import(file, given)
+                {
+                    let imported = self.type_of_symbol(module);
+                    if self.is_assignable(imported, wanted) {
+                        self.relate(at, 2345, |_| vec![import]);
+                    }
+                }
             }
             return Applicable::No;
         }
@@ -1674,6 +1996,7 @@ impl Checker<'_> {
                             (self.start_of(file, first), self.end_of_expr(file, last))
                         }
                     };
+                    let said = out.len();
                     self.check_assignable_with_end(
                         file,
                         given,
@@ -1684,11 +2007,47 @@ impl Checker<'_> {
                         2345,
                         out,
                     );
+                    let first = out.get(said).copied();
+                    self.maybe_add_missing_await_info((file, at, end), given, rest, first);
                 }
                 return Applicable::No;
             }
         }
         Applicable::Yes
+    }
+
+    /// `maybeAddMissingAwaitInfo`. `place`: the argument. `said`: the first thing that was said of it.
+    fn maybe_add_missing_await_info(
+        &mut self,
+        place: (FileId, u32, u32),
+        source: TypeId,
+        target: TypeId,
+        said: Option<Diagnostic>,
+    ) {
+        let Some(d) = said else { return };
+        if !self.explains {
+            return;
+        }
+        // `getAwaitedTypeOfPromise`
+        let awaited_of_promise = |c: &mut Self, ty: TypeId| {
+            let promised = c.thenable_value(ty)?;
+            c.awaited_or_none(promised)
+        };
+        if awaited_of_promise(self, target).is_some() {
+            return;
+        }
+        let Some(awaited) = awaited_of_promise(self, source) else {
+            return;
+        };
+        if self.is_known(awaited) && self.is_assignable(awaited, target) {
+            self.relate(d.start, d.code, |_| {
+                vec![super::explain::Related {
+                    at: Some(place),
+                    code: 2773,
+                    args: Vec::new(),
+                }]
+            });
+        }
     }
 
     /// `getEffectiveCheckNode`: `e` without `satisfies` around it. (Parentheses are not kept.)
@@ -1755,6 +2114,63 @@ impl Checker<'_> {
         counts
     }
 
+    /// `getArgumentArityError`: the parameter of `closestSignature` that the first argument that is left out is for. `given`: how
+    /// many arguments there are.
+    pub(super) fn parameter_without_argument(
+        &mut self,
+        sigs: &[SigId],
+        given: usize,
+    ) -> Vec<super::explain::Related> {
+        let mut closest: Option<(usize, SigId)> = None;
+        for &sig in sigs {
+            let params = self.sig_params(sig);
+            let least = self.min_argument_count(&params);
+            if closest.is_none_or(|(fewest, _)| least < fewest) {
+                closest = Some((least, sig));
+            }
+        }
+        let Some((_, sig)) = closest else {
+            return Vec::new();
+        };
+        let declared = self.declared_sig(sig);
+        let Some((file, func, _)) = self.sig_decl(declared) else {
+            return Vec::new();
+        };
+        let hir = self.hir(file);
+        // A `this` parameter is not among `params`. What is made for a union may have one where its declaration has none.
+        let declares_this = hir[func].this_ty.is_some();
+        let has_this = match self.p.types.sig(sig) {
+            SigData::Synth { this, .. } => this.is_some(),
+            _ => declares_this,
+        };
+        let Some(param) = (given + usize::from(has_this))
+            .checked_sub(usize::from(declares_this))
+            .and_then(|index| hir[func].params.iter().nth(index))
+        else {
+            return Vec::new();
+        };
+        let (code, args) = match hir[hir[param].pat].kind {
+            PatKind::Object(_) | PatKind::Array(_) => (6211, Vec::new()),
+            PatKind::Ident(name) if hir[param].flags.contains(Flags::REST) => {
+                (6236, vec![self.atom_text(name)])
+            }
+            PatKind::Ident(name) => (6210, vec![self.atom_text(name)]),
+            PatKind::Missing => (6210, vec![String::new()]),
+        };
+        let start = hir[param].pos;
+        // There is no text of the default library.
+        let end = if hir.text.is_empty() {
+            start
+        } else {
+            self.end_of_param(file, param)
+        };
+        vec![super::explain::Related {
+            at: Some((file, start, end)),
+            code,
+            args,
+        }]
+    }
+
     /// `getArgumentArityError`: 2554 2555 2556 2575 2794 2810
     fn report_argument_arity(
         &mut self,
@@ -1818,6 +2234,11 @@ impl Checker<'_> {
             });
             let end = self.end_of_call_error(file, e, c, is_new);
             self.note(error_start, end, code, vec![expected, given]);
+            if args.len() < least && code != 2810 {
+                self.relate(error_start, code, |c| {
+                    c.parameter_without_argument(sigs, args.len())
+                });
+            }
         } else if args[most].1 != e {
             let start = self.start_of(file, args[most].1);
             out.push(Diagnostic { start, code });
@@ -1863,6 +2284,21 @@ impl Checker<'_> {
         }
         matches!(hir[hir[outer].callee].kind, ExprKind::Ident(known::Promise))
             && bound.expr_symbol[hir[outer].callee.idx()].is_none()
+    }
+
+    /// `typeArgumentList.Loc.End()`: a trailing comma is part of the list.
+    pub(super) fn end_of_type_argument_list(
+        &self,
+        file: FileId,
+        type_args: IdList<TypeNodeId>,
+    ) -> u32 {
+        let end = self.end_of_type_args(file, type_args);
+        let next = self.skip_trivia_from(file, end);
+        if self.hir(file).text.get(next as usize) == Some(&b',') {
+            next + 1
+        } else {
+            end
+        }
     }
 
     /// `getTypeArgumentArityError`: 2558 2743
@@ -1922,8 +2358,31 @@ impl Checker<'_> {
             start: hir[first].pos,
             code,
         });
-        let end = self.end_of_type_args(file, hir[c].type_args);
+        let end = self.end_of_type_argument_list(file, hir[c].type_args);
         self.note(hir[first].pos, end, code, counts);
+    }
+}
+
+/// `SkipTriviaEx` with `StopAfterLineBreak`: whether the line ends after `at`, with nothing but blanks and comments before that.
+fn line_breaks_after(text: &[u8], mut at: usize) -> bool {
+    loop {
+        match text.get(at) {
+            Some(b'\n' | b'\r') => return true,
+            Some(b' ' | b'\t' | 0x0B | 0x0C) => at += 1,
+            Some(b'/') if text.get(at + 1) == Some(&b'/') => {
+                while text.get(at).is_some_and(|b| !matches!(b, b'\n' | b'\r')) {
+                    at += 1;
+                }
+            }
+            Some(b'/') if text.get(at + 1) == Some(&b'*') => {
+                at += 2;
+                while at < text.len() && !text[at..].starts_with(b"*/") {
+                    at += 1;
+                }
+                at += 2;
+            }
+            _ => return false,
+        }
     }
 }
 

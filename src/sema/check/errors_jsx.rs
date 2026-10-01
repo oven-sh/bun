@@ -290,6 +290,8 @@ impl Checker<'_> {
         };
         let jsx = &hir[j];
         let (tag_name, tag_end) = (tag_name_start(hir, e), tag_name_end(hir, e));
+        // The last of several candidates.
+        let mut last_candidate = None;
         let wanted: Vec<TypeId> = match hir[jsx.tag].kind {
             ExprKind::String(name) => {
                 // An intrinsic element takes no type arguments. The attributes are checked all the same.
@@ -400,6 +402,7 @@ impl Checker<'_> {
                             None => return,
                         }
                     } else {
+                        last_candidate = candidates.last().copied();
                         match self.jsx_props_of_each(file, e, &candidates, construct) {
                             Some(wanted) => wanted,
                             None => return,
@@ -451,6 +454,9 @@ impl Checker<'_> {
             if wanted.len() > 1 {
                 self.explain_under(tag_name, 6229, 2770, Vec::new());
                 self.explain_under(tag_name, 2770, 2769, Vec::new());
+                if let Some(last) = last_candidate {
+                    self.relate(tag_name, 2769, |c| c.last_overload_declared_here(last));
+                }
             }
             return;
         }
@@ -488,13 +494,48 @@ impl Checker<'_> {
             self.report_not_assignable_with_end(given, props, tag_name, tag_end, 2322, &mut said);
         }
         if wanted.len() > 1 {
+            let related = self.related_to_last_jsx_candidate(file, e, last_candidate, given);
             for d in &mut said {
                 self.explain_under(d.start, d.code, 2770, Vec::new());
                 self.explain_under(d.start, 2770, 2769, Vec::new());
                 d.code = 2769;
+                self.relate(d.start, 2769, |_| related.clone());
             }
         }
         out.append(&mut said);
+    }
+
+    /// What `reportCallResolutionErrors` relates to each thing it says of `last`, the last of several candidates for the element
+    /// `e`. `given`: the attributes.
+    fn related_to_last_jsx_candidate(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        last: Option<SigId>,
+        given: TypeId,
+    ) -> Vec<super::explain::Related> {
+        let Some(last) = last else {
+            return Vec::new();
+        };
+        if !self.explains {
+            return Vec::new();
+        }
+        let mut related = self.last_overload_declared_here(last);
+        // `addImplementationSuccessElaboration`. Only a function has an implementation that is found here.
+        if let Some(implementation) = self.implementation_signature(last)
+            && let Some(props) = self.jsx_props_of_each(file, e, &[implementation], false)
+            && let [props] = props[..]
+            && self.is_known(props)
+            && self.is_assignable(given, props)
+            && let Some((of, func, _)) = self.sig_decl(implementation)
+        {
+            related.push(super::explain::Related {
+                at: Some(self.place_of_signature_declaration(of, func)),
+                code: 2793,
+                args: Vec::new(),
+            });
+        }
+        related
     }
 
     /// `getTypeArgumentArityError`: reports 2558 or 2743 at `type_args`, the type arguments of an element, unless one of `sigs`, the
@@ -530,7 +571,7 @@ impl Checker<'_> {
             2558
         };
         out.push(Diagnostic { start, code });
-        let end = self.end_of_type_args(file, type_args);
+        let end = self.end_of_type_argument_list(file, type_args);
         self.explain_to(start, end, code, |c| {
             let mut range = "0".to_owned();
             let (mut below, mut above) = (None::<usize>, None::<usize>);
@@ -973,6 +1014,13 @@ impl Checker<'_> {
             };
             if !self.elaborate(file, inner, given, wanted, 2322, &mut said) {
                 let end = self.jsx_child_end(file, child, at);
+                // `removeMissingType`
+                let name = self.number_name(i as f64);
+                let apparent = self.apparent_type(arrays);
+                let target_is_optional = self
+                    .prop_of(apparent, name)
+                    .is_some_and(|(prop, _)| prop.flags.contains(PropFlags::OPTIONAL));
+                let wanted = self.remove_missing_type(wanted, target_is_optional);
                 self.report_not_assignable_with_end(given, wanted, at, end, 2322, &mut said);
             }
         }

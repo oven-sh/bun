@@ -1637,7 +1637,7 @@ impl Checker<'_> {
                 // `boolean` is not taken apart (`getIndexedAccessTypeOrUndefined`).
                 let key = if keys == TypeId::BOOLEAN { keys } else { key };
                 let end = self.end_of_type_node(file, index);
-                self.explain_to(hir[index].pos, end, code, |c| {
+                self.explain_another(hir[index].pos, end, code, |c| {
                     c.names_in_no_lookup(code, looked_into, key)
                 });
             }

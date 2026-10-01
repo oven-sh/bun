@@ -556,6 +556,7 @@ impl Program {
             retracing: false,
             explaining: Vec::new(),
             keeps_arg_contexts: false,
+            keyof_origins: FxHashMap::default(),
             context_checked_for: FxHashMap::default(),
             uncertain: false,
             union_too_complex: false,
@@ -784,6 +785,8 @@ pub struct Checker<'p> {
     pub(super) explaining: Vec<(TypeId, TypeId)>,
     /// A call that is resolved is gone over again, for its errors: what its arguments are expected to be stays what it is.
     pub(super) keeps_arg_contexts: bool,
+    /// `UnionType.origin`, where that is an index type: the `T` whose keys a union was made of as `keyof T`.
+    keyof_origins: FxHashMap<TypeId, TypeId>,
     /// `NodeCheckFlagsContextChecked` for function expressions among the arguments of a call with several candidates: the candidate
     /// whose attempt checked the function first. Only that attempt infers from the function's annotations. `None` once the attempt
     /// has ended.
@@ -2191,7 +2194,7 @@ impl<'p> Checker<'p> {
         // `TupleNormalizer.normalize`: what comes before an element that may not be left out may not be left out either.
         for info in &mut infos[..last_required] {
             if info.contains(ElemFlags::OPTIONAL) {
-                *info = ElemFlags::REQUIRED;
+                *info = ElemFlags::REQUIRED.with_label(info.label());
             }
         }
         // From the first rest element to the last optional or rest element there was, it is all one rest element.
@@ -2212,7 +2215,9 @@ impl<'p> Checker<'p> {
             infos.drain(first + 1..=last);
         }
         // `getTupleTargetType`: `[...X[]]` is `X[]`.
-        if let ([element], [ElemFlags::REST]) = (&types[..], &infos[..]) {
+        if let ([element], [only]) = (&types[..], &infos[..])
+            && only.contains(ElemFlags::REST)
+        {
             return if readonly {
                 self.readonly_array_of(*element)
             } else {

@@ -752,6 +752,9 @@ impl<'p> Checker<'p> {
         };
         self.note(at, end, code, args);
         self.explain_under(at, code, head, Vec::new());
+        if given < counts.least {
+            self.relate(at, head, |c| c.parameter_without_argument(sigs, given));
+        }
     }
 
     /// `resolveDecorator`, `resolveCall`, `checkDecorator`

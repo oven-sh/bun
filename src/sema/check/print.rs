@@ -15,6 +15,8 @@ const USE_FULLY_QUALIFIED_TYPE: u32 = 1 << 1;
 const ALLOW_UNIQUE_ES_SYMBOL_TYPE: u32 = 1 << 2;
 const USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE: u32 = 1 << 3;
 const NO_TYPE_REDUCTION: u32 = 1 << 4;
+/// There is an enclosing declaration: parameters and results are written as they are annotated.
+const REUSES_TYPE_NODES: u32 = 1 << 5;
 /// Not of `nodebuilder.Flags`: the type that is asked about has no `alias`. What it is made of goes by what it goes by.
 const WRITTEN_OUT: u32 = 1 << 16;
 
@@ -72,13 +74,44 @@ impl Checker<'_> {
         )
     }
 
+    /// `typeToString(t, t.symbol.ValueDeclaration)` if `symbolValueDeclarationIsContextSensitive`, which says the opposite of its
+    /// name: of a function expression that is not context sensitive. Otherwise `typeToString(t)`.
+    fn type_to_string_where_it_is_declared(&mut self, ty: TypeId) -> String {
+        let is_enclosed = match self.data(ty) {
+            TypeData::Fns { decls, .. } => match decls[..] {
+                [(file, func)] => match self.bound(file).fns[func.idx()].owner {
+                    FnOwner::Expr(e) => {
+                        matches!(self.hir(file)[func].kind, FnKind::Expr | FnKind::Arrow)
+                            && !self.is_context_sensitive(file, e)
+                    }
+                    _ => false,
+                },
+                _ => false,
+            },
+            _ => false,
+        };
+        let flags = ALLOW_UNIQUE_ES_SYMBOL_TYPE | USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE;
+        type_to_string_with(
+            self,
+            ty,
+            if is_enclosed {
+                flags | REUSES_TYPE_NODES
+            } else {
+                flags
+            },
+        )
+    }
+
     /// `getTypeNamesForErrorDisplay`: both, with qualified names if they would read the same.
     pub fn type_names_for_error_display(
         &mut self,
         left: TypeId,
         right: TypeId,
     ) -> (String, String) {
-        let (left_text, right_text) = (self.type_to_string(left), self.type_to_string(right));
+        let (left_text, right_text) = (
+            self.type_to_string_where_it_is_declared(left),
+            self.type_to_string_where_it_is_declared(right),
+        );
         if left_text != right_text {
             return (left_text, right_text);
         }
@@ -1743,7 +1776,7 @@ impl<'p> Printer<'_, 'p> {
         node
     }
 
-    /// `typeReferenceToTypeNode`, of a tuple. The labels of the elements are not kept.
+    /// `typeReferenceToTypeNode`, of a tuple.
     fn tuple_to_node(&mut self, elems: &[TypeId], flags: &[ElemFlags], readonly: bool) -> Node {
         let mut types = Vec::with_capacity(elems.len());
         for (&elem, flag) in elems.iter().zip(flags) {
@@ -1756,6 +1789,26 @@ impl<'p> Printer<'_, 'p> {
         let mut parts = Vec::with_capacity(nodes.len());
         for (i, node) in nodes.into_iter().enumerate() {
             let flag = flags.get(i).copied().unwrap_or(ElemFlags::REQUIRED);
+            // `NewNamedTupleMember`
+            if flag.label().is_some() {
+                let dots = if flag.intersects(ElemFlags::REST | ElemFlags::VARIADIC) {
+                    "..."
+                } else {
+                    ""
+                };
+                let question = if flag.contains(ElemFlags::OPTIONAL) {
+                    "?"
+                } else {
+                    ""
+                };
+                let ty = if flag.contains(ElemFlags::REST) {
+                    format!("{}[]", node.emit(POSTFIX))
+                } else {
+                    node.text
+                };
+                parts.push(format!("{dots}{}{question}: {ty}", self.text(flag.label())));
+                continue;
+            }
             parts.push(if flag.contains(ElemFlags::REST) {
                 format!("...{}[]", node.emit(POSTFIX))
             } else if flag.contains(ElemFlags::VARIADIC) {
@@ -1921,6 +1974,12 @@ impl<'p> Printer<'_, 'p> {
     // ───────────────────────────── unions and intersections ─────────────────────────────
 
     fn union_to_node(&mut self, ty: TypeId) -> Node {
+        // `UnionType.origin`: `keyof T`.
+        if let Some(&of) = self.c.keyof_origins.get(&ty) {
+            self.approximate_length += 6;
+            let of = self.type_to_node(of);
+            return Node::new(format!("keyof {}", of.emit(TYPE_OPERATOR)), TYPE_OPERATOR);
+        }
         // `UnionType.origin`: the intersection it was distributed from.
         if let Some(origin) = self.c.p.union_origins.get(&ty) {
             return self.intersection_to_node(&origin);
@@ -2300,6 +2359,23 @@ impl<'p> Printer<'_, 'p> {
         }
     }
 
+    /// `isStaticMethodSymbol`: the name of the static method `ty` is the type of.
+    fn name_of_static_method(&self, ty: TypeId) -> Option<String> {
+        let TypeData::Fns { decls, .. } = self.c.data(ty) else {
+            return None;
+        };
+        decls.iter().find_map(|&(file, func)| {
+            let FnOwner::Member(member) = self.c.bound(file).fns[func.idx()].owner else {
+                return None;
+            };
+            let member = &self.c.hir(file)[member];
+            if member.kind != MemberKind::Method || !member.flags.contains(Flags::STATIC) {
+                return None;
+            }
+            member.key.name().map(|name| self.text(name))
+        })
+    }
+
     /// `createAnonymousTypeNode`
     fn anonymous_type_to_node(&mut self, ty: TypeId) -> Node {
         let identity = match self.c.data(ty) {
@@ -2321,7 +2397,10 @@ impl<'p> Printer<'_, 'p> {
             _ => Identity::Type(ty),
         };
         if self.visited_types.contains(&ty) {
-            if let Some(name) = self.variable_of_function_expression(ty) {
+            if let Some(name) = self
+                .variable_of_function_expression(ty)
+                .or_else(|| self.name_of_static_method(ty))
+            {
                 self.approximate_length += 2 * (name.len() + 1);
                 return Node::new(format!("typeof {name}"), TYPE_OPERATOR);
             }
@@ -2368,7 +2447,12 @@ impl<'p> Printer<'_, 'p> {
                 _ => {}
             }
         }
-        let properties = self.ordered_properties(&shape.props);
+        let properties = match *self.c.data(ty) {
+            TypeData::ReverseMapped { source, .. } => {
+                self.properties_ordered_as_in(source, &shape.props)
+            }
+            _ => self.ordered_properties(&shape.props),
+        };
         let (abstract_signatures, construct): (Vec<SigId>, Vec<SigId>) = construct
             .into_iter()
             .partition(|&signature| self.c.is_abstract_signature(signature));
@@ -2622,6 +2706,24 @@ impl<'p> Printer<'_, 'p> {
         }
         keyed.sort_by(|a, b| a.0.cmp(&b.0));
         keyed.into_iter().map(|entry| entry.1.clone()).collect()
+    }
+
+    /// `resolveReverseMappedTypeMembers`: each of `props` has the declarations of the property of `source` it is made from, and is
+    /// ordered by those.
+    fn properties_ordered_as_in(&mut self, source: TypeId, props: &[Prop]) -> Vec<Prop> {
+        let Some(members) = self.c.members(source) else {
+            return props.to_vec();
+        };
+        let ordered: Vec<Prop> = self
+            .ordered_properties(&members.shape().props)
+            .iter()
+            .filter_map(|of| props.iter().find(|prop| prop.name == of.name).cloned())
+            .collect();
+        if ordered.len() == props.len() {
+            ordered
+        } else {
+            props.to_vec()
+        }
     }
 
     /// How the declarations of `prop` write its name.
@@ -3282,8 +3384,8 @@ impl<'p> Printer<'_, 'p> {
         format!("arg_{index}")
     }
 
-    /// `getTupleElementLabel`, of element `index` of the `arity` elements of the tuple the rest parameter `rest` is. Tuples do not keep
-    /// their labels: they are read off the type of the parameter if that is written as a tuple of as many elements.
+    /// `getTupleElementLabel`, of element `index` of the `arity` elements of the tuple the rest parameter `rest` is. One without a
+    /// label of its own is read off the type of the parameter if that is written as a tuple of as many elements.
     fn tuple_element_label(
         &self,
         rest: &Parameter,
@@ -3291,6 +3393,9 @@ impl<'p> Printer<'_, 'p> {
         arity: usize,
         flags: ElemFlags,
     ) -> String {
+        if flags.label().is_some() {
+            return self.text(flags.label());
+        }
         let Some((file, parameter)) = rest.declaration else {
             return format!("{}_{index}", rest.name);
         };
@@ -3365,9 +3470,30 @@ impl<'p> Printer<'_, 'p> {
         expanded
     }
 
+    /// `serializeTypeForDeclaration`, `pseudoTypeEquivalentToType`: the annotation of `parameter`, if there is an enclosing
+    /// declaration and the annotation still is what the parameter comes to.
+    fn annotation_to_reuse(&mut self, parameter: &Parameter) -> Option<(FileId, TypeNodeId)> {
+        if self.flags & REUSES_TYPE_NODES == 0 {
+            return None;
+        }
+        let (file, declaration) = parameter.declaration?;
+        let written = self.c.hir(file)[declaration].ty;
+        if written.is_none() {
+            return None;
+        }
+        let declared = self.c.type_from_node(file, written);
+        let declared = self.c.instantiate(declared, self.mapper);
+        let is_equivalent = declared == parameter.ty
+            || parameter.optional && declared == self.c.without_undefined(parameter.ty);
+        is_equivalent.then_some((file, written))
+    }
+
     /// `symbolToParameterDeclaration`
     fn parameter_text(&mut self, parameter: &Parameter) -> String {
-        let node = self.type_to_node(parameter.ty);
+        let node = match self.annotation_to_reuse(parameter) {
+            Some((file, written)) => self.type_node_to_node(file, written),
+            None => self.type_to_node(parameter.ty),
+        };
         self.approximate_length += parameter.name_length + 3;
         let text = self
             .library_alias_of_parameter(parameter)
@@ -3414,6 +3540,17 @@ impl<'p> Printer<'_, 'p> {
     fn return_type_text(&mut self, signature: SigId, parameters: &[Parameter]) -> String {
         let Some(predicate) = self.c.sig_predicate(signature) else {
             let returned = self.c.sig_return_for_inference(signature);
+            if self.flags & REUSES_TYPE_NODES != 0
+                && let Some((file, func, _)) = self.c.sig_decl(signature)
+            {
+                let written = self.c.hir(file)[func].ret;
+                if written.is_some() {
+                    let declared = self.c.type_from_node(file, written);
+                    if self.c.instantiate(declared, self.mapper) == returned {
+                        return self.type_node_to_node(file, written).text;
+                    }
+                }
+            }
             return self.type_to_node(returned).text;
         };
         let mut text = String::new();

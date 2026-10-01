@@ -3095,7 +3095,17 @@ impl Checker<'_> {
                     } else {
                         (self.start_of(file, e), self.error_end_of(file, e))
                     };
+                    let said = out.len();
                     self.report_not_assignable_with_end(source, target, at, end, head, out);
+                    if let Some(&d) = out.get(said) {
+                        self.relate(d.start, d.code, |_| {
+                            vec![super::explain::Related {
+                                at: Some((file, at, end)),
+                                code: if construct { 6213 } else { 6212 },
+                                args: Vec::new(),
+                            }]
+                        });
+                    }
                     return true;
                 }
             }

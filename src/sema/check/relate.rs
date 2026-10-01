@@ -3403,7 +3403,7 @@ impl<'p> Checker<'p> {
                 key.hasher.write_u8(if *readonly { b'!' } else { b't' });
                 key.hasher.write_usize(flags.len());
                 for flag in flags.iter() {
-                    key.hasher.write_u8(flag.bits());
+                    key.hasher.write_u32(flag.bits());
                 }
                 elems
             }
@@ -3952,7 +3952,7 @@ impl<'p> Checker<'p> {
                 5,
                 flags.len() as u32,
                 flags.iter().fold(*readonly as u32, |h, f| {
-                    h.wrapping_mul(31) + f.bits() as u32
+                    h.wrapping_mul(31).wrapping_add(f.bits())
                 }),
             ),
             TypeData::Cond { file, node, .. } => (2, file.0, node.0),

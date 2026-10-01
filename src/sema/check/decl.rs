@@ -1343,9 +1343,6 @@ impl<'p> Checker<'p> {
             return;
         }
         let files = self.files();
-        if files.modules[sym.file.idx()].is_lib {
-            return;
-        }
         for decl in files.decls_of(sym).iter() {
             if let (file, Decl::Alias(alias)) = *decl {
                 let hir = self.hir(file);
@@ -2048,6 +2045,10 @@ impl<'p> Checker<'p> {
                         });
                     }
                 }
+                // `getTupleElementInfo`
+                for (flag, e) in flags.iter_mut().zip(elems.iter()) {
+                    *flag = flag.with_label(hir[e].name);
+                }
                 let made_before = self.p.types.len();
                 let ty = self.normalized_tuple(&types, &flags, false);
                 self.p.types.mark_manifest(ty, made_before);
@@ -2149,7 +2150,7 @@ impl<'p> Checker<'p> {
             }
             TypeNodeKind::Keyof(inner) => {
                 let inner = self.type_from_node(file, inner);
-                self.keyof(inner)
+                self.keyof_with_origin(inner)
             }
             TypeNodeKind::Template { types, texts } => {
                 let types = self.types_from_nodes(file, types);

@@ -62,6 +62,33 @@ impl<'p> Checker<'p> {
         self.keyof_ex(ty, false)
     }
 
+    /// `getIndexType`, where `keyof` is written or a `keyof T` that waited is instantiated. `getLiteralTypeFromProperties` gives the
+    /// union of the keys of a class, an interface or what has an alias the origin `keyof T`, which it is written as. Unions are
+    /// hash-consed, so that is noted on the side, and not of a union that may as well come from elsewhere.
+    pub(super) fn keyof_with_origin(&mut self, ty: TypeId) -> TypeId {
+        let keys = self.keyof(ty);
+        if !self.is_union(keys)
+            || self.keyof_origins.contains_key(&keys)
+            || !self.every_type(keys, |c, key| c.is_unit(key))
+        {
+            return keys;
+        }
+        let of = self.force(ty);
+        let of = self.reduced(of);
+        let has_origin = match self.data(of) {
+            TypeData::Ref { .. } => true,
+            TypeData::Anon {
+                origin: Origin::TypeLiteral(..),
+                ..
+            } => self.alias_for_display(of).is_some(),
+            _ => false,
+        };
+        if has_origin {
+            self.keyof_origins.insert(keys, of);
+        }
+        keys
+    }
+
     /// `getIndexTypeEx`. `no_reducible_check` is `IndexFlagsNoReducibleCheck`.
     pub(super) fn keyof_ex(&mut self, ty: TypeId, no_reducible_check: bool) -> TypeId {
         self.guard("keyof");
@@ -1595,9 +1622,11 @@ impl<'p> Checker<'p> {
                     return TypeId::ANY;
                 }
                 let flag = match mapped.optional {
-                    MappedModifier::Add if f.contains(ElemFlags::REQUIRED) => ElemFlags::OPTIONAL,
+                    MappedModifier::Add if f.contains(ElemFlags::REQUIRED) => {
+                        ElemFlags::OPTIONAL.with_label(f.label())
+                    }
                     MappedModifier::Remove if f.contains(ElemFlags::OPTIONAL) => {
-                        ElemFlags::REQUIRED
+                        ElemFlags::REQUIRED.with_label(f.label())
                     }
                     _ => f,
                 };

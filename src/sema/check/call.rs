@@ -1236,7 +1236,7 @@ impl<'p> Checker<'p> {
     /// The signature of the first declaration with a body of the symbol that declares the overload `failed`, if the symbol has more
     /// than one declaration (`addImplementationSuccessElaboration`). Constructors are not supported: `sig_of_fn` does not give them
     /// the type parameters of the class.
-    fn implementation_signature(&mut self, failed: SigId) -> Option<SigId> {
+    pub(super) fn implementation_signature(&mut self, failed: SigId) -> Option<SigId> {
         let (file, func, _) = self.sig_decl(self.p.types.sig_origin(failed))?;
         let (hir, bound) = (self.hir(file), self.bound(file));
         let has_body =
@@ -3694,8 +3694,29 @@ impl<'p> Checker<'p> {
                         .collect();
                     !self.has_correct_arity(&instantiated, args)
                 };
+                // `chooseOverload`: once a generic function was skipped `argCheckMode` has `CheckModeSkipGenericFunctions`, and
+                // `isSignatureApplicable` takes every generic function given where one that is not generic is expected for
+                // `anyFunctionType`, also where nothing is inferred from it.
+                let mut is_skipped = is_sensitive.clone();
+                if generic_functions.iter().any(Option::is_some) {
+                    for (i, &arg) in args.iter().enumerate() {
+                        if let Arg::Expr(e) = arg
+                            && !is_skipped[i]
+                            && !self.depends_on_context(file, e)
+                            && let Some(param) =
+                                self.context_of_arg_at(&params, i, Some(args.len()))
+                            && !self.has_type_variables(param)
+                            && let Some(wants_construct) =
+                                self.wants_plain_signature(param, from_result)
+                        {
+                            let ty = self.type_of_expr(file, e);
+                            is_skipped[i] =
+                                self.single_generic_signature(ty, wants_construct).is_some();
+                        }
+                    }
+                }
                 if has_wrong_arity
-                    || !self.fits_without_sensitive(file, args, &params, &is_sensitive, early)
+                    || !self.fits_without_sensitive(file, args, &params, &is_skipped, early)
                 {
                     let rejected: SmallVec<[SigParam; 8]> = params
                         .iter()

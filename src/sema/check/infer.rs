@@ -1947,7 +1947,7 @@ impl<'p> Checker<'p> {
                 .iter()
                 .map(|&f| {
                     if adds_optional && f.contains(ElemFlags::OPTIONAL) {
-                        ElemFlags::REQUIRED
+                        ElemFlags::REQUIRED.with_label(f.label())
                     } else {
                         f
                     }
@@ -2150,10 +2150,14 @@ impl<'p> Checker<'p> {
     ) -> TypeId {
         // Position by position: `...args: [a: A, b?: B, ...c: C[]]` is as good as `a: A, b?: B, ...c: C[]`.
         let mut elems = Parts::new();
+        // `getNameableDeclarationAtPosition`: what each is called.
+        let mut labels: SmallVec<[Atom; 8]> = SmallVec::new();
         let mut rest = None;
+        let mut rest_label = Atom::NONE;
         for p in params {
             if !p.rest {
                 elems.push(p.ty);
+                labels.push(p.name);
                 continue;
             }
             let TypeData::Tuple {
@@ -2167,6 +2171,7 @@ impl<'p> Checker<'p> {
                 } else {
                     p.ty
                 });
+                rest_label = p.name;
                 continue;
             };
             let fixed = tf
@@ -2174,7 +2179,9 @@ impl<'p> Checker<'p> {
                 .take_while(|f| !f.intersects(ElemFlags::REST | ElemFlags::VARIADIC))
                 .count();
             elems.extend_from_slice(&te[..fixed]);
+            labels.extend(tf[..fixed].iter().map(|f| f.label()));
             if fixed < te.len() {
+                rest_label = tf[fixed].label();
                 let tail = self.normalized_tuple(&te[fixed..], &tf[fixed..], *tr);
                 rest = Some(match self.data(tail) {
                     TypeData::Tuple { elems, flags, .. }
@@ -2191,11 +2198,12 @@ impl<'p> Checker<'p> {
         let min = self.min_argument_count(params);
         let mut flags: SmallVec<[ElemFlags; 8]> = (0..elems.len())
             .map(|i| {
-                if i < min {
+                let flag = if i < min {
                     ElemFlags::REQUIRED
                 } else {
                     ElemFlags::OPTIONAL
-                }
+                };
+                flag.with_label(labels[i])
             })
             .collect();
         if let Some(rest) = rest {
@@ -2207,7 +2215,7 @@ impl<'p> Checker<'p> {
                 return self.array_of(element);
             }
             elems.push(rest);
-            flags.push(ElemFlags::VARIADIC);
+            flags.push(ElemFlags::VARIADIC.with_label(rest_label));
         }
         let from = from.min(elems.len());
         self.normalized_tuple(&elems[from..], &flags[from..], readonly)

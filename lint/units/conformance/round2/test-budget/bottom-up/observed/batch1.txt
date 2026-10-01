@@ -1,0 +1,29 @@
+### 2026-10-01T15:47:04Z start; installed bun 1.4.3-canary.1+367d939d9; release with --lint 1.4.3-canary.1+be1ebe529; debug 1.4.3-debug+3110ce85c
+### release (installed bun), tree repo, cold: the data pages of the corpus are put out of the page cache before the run
+evicted 22182 files, 32380794 bytes, in 4.1 s
+rel-cold-1 | load 312.45 310.36 331.67 cpu.pressure avg10=9.32 avg60=12.70 memory 1554 MB |  105 pass 0 fail | Ran 105 tests across 1 file. [23.25s] | TIME real 23.275 user 2.906 sys 0.807 | exit 0 | sanitizer lines 0
+evicted 22182 files, 32380794 bytes, in 0.3 s
+rel-cold-2 | load 319.29 312.07 331.66 cpu.pressure avg10=14.58 avg60=12.99 memory 1652 MB |  105 pass 0 fail | Ran 105 tests across 1 file. [21.40s] | TIME real 21.412 user 2.941 sys 0.777 | exit 0 | sanitizer lines 0
+### release (installed bun), tree repo, warm
+rel-warm-1 | load 319.98 313.00 331.25 cpu.pressure avg10=10.20 avg60=13.03 memory 1645 MB |  105 pass 0 fail | Ran 105 tests across 1 file. [8.52s] | TIME real 8.572 user 2.213 sys 0.679 | exit 0 | sanitizer lines 0
+rel-warm-2 | load 321.51 313.44 331.29 cpu.pressure avg10=12.88 avg60=13.30 memory 1522 MB |  105 pass 0 fail | Ran 105 tests across 1 file. [6.44s] | TIME real 6.474 user 2.162 sys 0.591 | exit 0 | sanitizer lines 0
+rel-warm-3 | load 330.24 315.55 331.79 cpu.pressure avg10=15.21 avg60=13.74 memory 1528 MB |  105 pass 0 fail | Ran 105 tests across 1 file. [9.32s] | TIME real 9.349 user 2.195 sys 0.564 | exit 0 | sanitizer lines 0
+### release (installed bun), tree repo, warm, with the meter of every test
+rel-percpu-1 | load 339.37 317.97 332.40 cpu.pressure avg10=12.46 avg60=13.37 memory 1526 MB |  105 pass 0 fail | Ran 105 tests across 1 file. [7.63s] | TIME real 7.646 user 2.202 sys 0.522 | exit 0 | sanitizer lines 0
+rel-percpu-2 | load 340.53 318.93 332.56 cpu.pressure avg10=13.70 avg60=13.75 memory 1509 MB |  105 pass 0 fail | Ran 105 tests across 1 file. [8.22s] | TIME real 8.303 user 2.148 sys 0.516 | exit 0 | sanitizer lines 0
+### release with --lint, tree repo (lists empty) and tree listed (128 names of class C), warm
+rellint-empty-1 | load 339.48 319.43 332.57 cpu.pressure avg10=14.62 avg60=13.89 memory 1506 MB |  105 pass 0 fail | Ran 105 tests across 1 file. [8.05s] | TIME real 8.408 user 2.145 sys 0.525 | exit 0 | sanitizer lines 0
+rellint-empty-2 | load 338.16 319.48 332.52 cpu.pressure avg10=14.98 avg60=14.06 memory 1542 MB |  105 pass 0 fail | Ran 105 tests across 1 file. [8.30s] | TIME real 8.396 user 2.186 sys 0.477 | exit 0 | sanitizer lines 0
+rellint-empty-3 | load 338.07 320.10 332.58 cpu.pressure avg10=12.35 avg60=13.66 memory 1547 MB |  105 pass 0 fail | Ran 105 tests across 1 file. [8.60s] | TIME real 8.797 user 2.166 sys 0.450 | exit 0 | sanitizer lines 0
+rellint-listed-1 | load 332.49 319.51 332.26 cpu.pressure avg10=11.82 avg60=13.47 memory 1556 MB |  107 pass 0 fail | Ran 107 tests across 1 file. [14.14s] | TIME real 14.155 user 2.166 sys 0.860 | exit 0 | sanitizer lines 0
+rellint-listed-2 | load 324.29 318.39 331.69 cpu.pressure avg10=8.19 avg60=12.15 memory 1571 MB |  105 pass 2 fail | Ran 107 tests across 1 file. [12.39s] | TIME real 12.439 user 2.530 sys 0.844 | exit 1 | sanitizer lines 0
+rellint-listed-3 | load 315.77 316.76 331.02 cpu.pressure avg10=9.69 avg60=11.99 memory 1599 MB |  107 pass 0 fail | Ran 107 tests across 1 file. [9.74s] | TIME real 9.768 user 2.298 sys 0.839 | exit 0 | sanitizer lines 0
+### 2026-10-01T15:49:56Z debug build as bun bd test runs it (BUN_DEBUG_QUIET_LOGS=1, the default time of a test)
+dbg-plain | load 314.02 316.28 330.70 cpu.pressure avg10=15.71 avg60=13.10 memory 1596 MB |  104 pass 1 skip 0 fail | Ran 105 tests across 1 file. [94.38s] | TIME real 94.531 user 71.481 sys 3.757 | exit 0 | sanitizer lines 0
+### 2026-10-01T15:51:31Z debug build, the leak check of CI
+dbg-leak | load 303.98 310.71 327.20 cpu.pressure avg10=25.29 avg60=23.44 memory 2779 MB |  104 pass 1 skip 0 fail | Ran 105 tests across 1 file. [87.06s] | TIME real 87.951 user 76.179 sys 4.890 | exit 0 | sanitizer lines 0
+### 2026-10-01T15:52:59Z debug build, the leak check and the exception checks
+dbg-leak-validate | load 295.55 304.11 323.21 cpu.pressure avg10=34.36 avg60=26.10 memory 2918 MB |  101 pass 1 skip 3 fail | Ran 105 tests across 1 file. [112.74s] | TIME real 113.603 user 110.471 sys 4.770 | exit 1 | sanitizer lines 0
+### 2026-10-01T15:54:52Z debug build, the leak check, tree listed (a sample of 16 of the 128 names, two batches of 8)
+dbg-leak-listed | load 316.16 312.27 324.14 cpu.pressure avg10=23.23 avg60=25.09 memory 2108 MB |  106 pass 1 skip 0 fail | Ran 107 tests across 1 file. [74.94s] | TIME real 76.242 user 78.049 sys 6.823 | exit 0 | sanitizer lines 0
+### 2026-10-01T15:56:09Z done

@@ -140,6 +140,11 @@ for (const raw of raws) {
 }
 const codes: string[] = [];
 codes.push(`raw runs ${raws.length}; ended by themselves with a list of diagnostics ${normal}`);
+const times = raws.map(raw => raw.ms ?? 0).sort((a, b) => a - b);
+if (times.length > 0) {
+  const at = (q: number) => times[Math.min(times.length - 1, Math.floor(times.length * q))];
+  codes.push(`ms per process: median ${at(0.5)}, p99 ${at(0.99)}, max ${times[times.length - 1]}; exit codes: ${[...raws.reduce((m, raw) => m.set(String(raw.exitCode), (m.get(String(raw.exitCode)) ?? 0) + 1), new Map<string, number>())].map(([code, n]) => `${code}: ${n}`).join(", ")}`);
+}
 codes.push("");
 codes.push("diagnostic lines by class, category and code:");
 for (const [key, n] of mostFirst(lineCounts)) codes.push(`  ${pad(n)}  ${key}`);

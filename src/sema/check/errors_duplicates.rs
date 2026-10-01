@@ -1244,10 +1244,18 @@ impl Checker<'_> {
                 ) {
                     continue;
                 }
-                let Some(symbol) = files.export(files.sym(file, container), exported) else {
+                // The specifier's own symbol, with what the binder merged into it. What other files add to the name goes to what the
+                // alias stands for (`mergeSymbol`).
+                let exports = bound.symbols[container.idx()].exports;
+                let Some(&(_, id)) = bound
+                    .table(exports)
+                    .iter()
+                    .find(|&&(name, _)| name == exported)
+                else {
                     continue;
                 };
-                let own = files.flags(symbol);
+                let symbol = Sym { file, id };
+                let own = bound.symbols[id.idx()].flags;
                 let mut excluded = SymFlags::empty();
                 for meaning in [SymFlags::VALUE, SymFlags::TYPE, SymFlags::NAMESPACE] {
                     if own.intersects(meaning) {

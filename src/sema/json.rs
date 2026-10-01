@@ -340,7 +340,7 @@ const OBJECT_LITERAL_MEMBERS: u8 = 1;
 const ARRAY_LITERAL_MEMBERS: u8 = 2;
 
 /// `KindFirstReservedWord` to `KindLastReservedWord`
-fn is_reserved_word(word: &str) -> bool {
+pub(crate) fn is_reserved_word(word: &str) -> bool {
     matches!(
         word,
         "break"

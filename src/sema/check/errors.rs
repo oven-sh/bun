@@ -1744,6 +1744,12 @@ impl Checker<'_> {
             {
                 continue;
             }
+            // After an `=` that is left out, the 1005 there is the one error at that place.
+            if start as usize == equals
+                && crate::json::is_reserved_word(&self.files().atoms.text(names[0]))
+            {
+                continue;
+            }
             let before = out.len();
             self.check_entity_name(
                 file,

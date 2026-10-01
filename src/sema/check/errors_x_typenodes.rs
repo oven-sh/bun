@@ -2799,8 +2799,24 @@ impl Checker<'_> {
         let sym = self
             .files()
             .resolve_entity(file, scope, &names[..name.len()], SymFlags::TYPE)?;
+        let files = self.files();
+        // `resolveNameHelper`: an import is among the locals and an exported declaration of the same name is not, so the import is
+        // found first if what it stands for is a type.
+        let is_import_beside_exported_type = files.flags(sym).contains(SymFlags::ALIAS)
+            && files.decls(sym).iter().all(|&(f, decl)| match decl {
+                Decl::Alias(a) => self.hir(f)[a].flags.contains(Flags::EXPORT),
+                Decl::Interface(i) => self.hir(f)[i].flags.contains(Flags::EXPORT),
+                Decl::ImportDefault(_) | Decl::ImportNamespace(_) | Decl::ImportSpec(_) => true,
+                _ => false,
+            });
+        if is_import_beside_exported_type
+            && let Some(target) = files.resolve_alias_if_needed(sym)
+            && files.flags(target).intersects(SymFlags::TYPE)
+        {
+            return Some(target);
+        }
         // `resolveEntityName`: a symbol that is a type itself is not resolved further.
-        self.files().resolve_alias_as(sym, SymFlags::TYPE)
+        files.resolve_alias_as(sym, SymFlags::TYPE)
     }
 
     /// The type alias `node` names, if that is all it does and the alias takes no type arguments; and what it is declared as.

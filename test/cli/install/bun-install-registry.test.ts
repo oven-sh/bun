@@ -432,11 +432,9 @@ describe("certificate authority", () => {
         stdout: "pipe",
         env,
       });
-      const out = await stdout.text();
+      const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
       expect(out).not.toContain("no-deps");
-      const err = await stderr.text();
-      expect(await exited).toBe(1);
-      return err;
+      return { err, exitCode };
     }
 
     test.each([
@@ -445,8 +443,9 @@ describe("certificate authority", () => {
       ["is far past the buffer", 4090, (cafile: string) => cafile],
     ])("non-existent --cafile that %s", async (_, delta, expectedPath) => {
       const cafile = nameFor(delta);
-      const err = await install(["--cafile", cafile]);
+      const { err, exitCode } = await install(["--cafile", cafile]);
       expect(err).toContain(`HTTPThread: could not find CA file: '${expectedPath(cafile)}'`);
+      expect(exitCode).toBe(1);
     });
 
     test("non-existent cafile from bunfig that is one byte past the buffer", async () => {
@@ -455,8 +454,9 @@ describe("certificate authority", () => {
         join(packageDir, "bunfig.toml"),
         Bun.TOML.stringify({ install: { cache: false, registry: `http://localhost:${port}/`, cafile } }),
       );
-      const err = await install([]);
+      const { err, exitCode } = await install([]);
       expect(err).toContain(`HTTPThread: could not find CA file: '${cafile}'`);
+      expect(exitCode).toBe(1);
     });
   });
 

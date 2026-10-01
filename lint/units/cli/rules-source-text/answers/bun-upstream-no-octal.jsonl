@@ -1,0 +1,3 @@
+{"i":14,"code":"019.1","ext":"js","eslint":["1:1-1:6 Octal literals should not be used."],"lines":["1,4: error syntax: Expected \";\" but found \".1\""]}
+{"i":15,"code":"019e1","ext":"js","eslint":["1:1-1:6 Octal literals should not be used."],"lines":["1,1: error syntax: Syntax Error"]}
+{"i":16,"code":"019.1e1","ext":"js","eslint":["1:1-1:8 Octal literals should not be used."],"lines":["1,4: error syntax: Expected \";\" but found \".1e1\""]}

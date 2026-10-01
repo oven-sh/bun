@@ -1,0 +1,6 @@
+{"i":14,"code":"'\\1'","ext":"js","eslint":[],"lines":["1,1: error syntax: Syntax Error"]}
+{"i":15,"code":"'\\7'","ext":"js","eslint":[],"lines":["1,1: error syntax: Syntax Error"]}
+{"i":16,"code":"'\\01'","ext":"js","eslint":[],"lines":["1,1: error syntax: Syntax Error"]}
+{"i":17,"code":"'\\08'","ext":"js","eslint":[],"lines":["1,2: error syntax: Invalid legacy octal literal"]}
+{"i":18,"code":"'\\19'","ext":"js","eslint":[],"lines":["1,2: error syntax: Invalid legacy octal literal"]}
+{"i":34,"code":"'\\1\\28'","ext":"js","eslint":[],"lines":["1,4: error syntax: Invalid legacy octal literal"]}

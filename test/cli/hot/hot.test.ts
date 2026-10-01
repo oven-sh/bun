@@ -828,3 +828,44 @@ it(
   },
   timeout,
 );
+
+it("holds the promise of the entry point itself, which it looks at on every tick", async () => {
+  const source = (comment: string) => `
+    globalThis.loads = (globalThis.loads ?? 0) + 1;
+    const load = globalThis.loads;
+    setTimeout(() => {
+      Bun.gc(true);
+      const { nodes, nodeClassNames, edges } = require("bun:jsc").generateHeapSnapshotForDebugging();
+      const className = new Map();
+      for (let i = 0; i < nodes.length; i += 7) className.set(nodes[i], nodeClassNames[nodes[i + 2]]);
+      let held = 0;
+      for (let i = 0; i < edges.length; i += 4)
+        if (className.get(edges[i]) === "StrongRootBlock" && className.get(edges[i + 1]) === "Promise") held++;
+      console.log("load " + load + ": " + held + " held");
+    }, 0);
+    // ${comment}
+  `;
+  using dir = tempDir("hot-entry-promise", { "main.js": source("first") });
+  await using runner = spawn({
+    cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  const reader = runner.stdout.getReader();
+  let stdout = "";
+  const line = async (prefix: string) => {
+    for (;;) {
+      const found = stdout.split("\n").find(line => line.startsWith(prefix));
+      if (found) return found;
+      const { value, done } = await reader.read();
+      if (done) return stdout;
+      stdout += Buffer.from(value).toString();
+    }
+  };
+  expect(await line("load 1:")).toBe("load 1: 1 held");
+  writeFileSync(join(String(dir), "main.js"), source("second"));
+  expect(await line("load 2:")).toBe("load 2: 1 held");
+});

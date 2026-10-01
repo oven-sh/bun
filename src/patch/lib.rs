@@ -1891,8 +1891,7 @@ fn git_diff_postprocess(
     let old_folder_trimmed = strings::trim(old_folder, b"/");
     let new_folder_trimmed = strings::trim(new_folder, b"/");
 
-    /// The folder that follows an `a/` or `b/` prefix at `pos` in `line`:
-    /// its length and whether it is the old folder.
+    /// `(folder length, is the old folder)` for an `a/$folder/` or `b/$folder/` at `pos`.
     fn folder_after_prefix(
         line: &[u8],
         pos: usize,
@@ -1915,9 +1914,7 @@ fn git_diff_postprocess(
         None
     }
 
-    /// The leftmost `<prefix>/$old_folder/` or `<prefix>/$new_folder/` in
-    /// `line`: the index of the folder, its length and whether it is the old
-    /// folder.
+    /// `(folder index, folder length, is the old folder)` of the leftmost `<prefix>/$folder/`.
     fn leftmost_prefixed_folder(
         line: &[u8],
         prefix: u8,
@@ -1940,11 +1937,8 @@ fn git_diff_postprocess(
         found
     }
 
-    /// The prefixed folders on one header line, at most one per side. An
-    /// added or deleted file names the same folder on both sides, and a file
-    /// path can hold `b/$new_folder/` as a substring, so the two known header
-    /// shapes are anchored: `--- ` and `+++ ` at column 4, `diff --git` at
-    /// column 11 with the `b/` operand found by its equal relative path.
+    /// The `a/` and `b/` folder spans of one header line, anchored to the
+    /// line shape so a path that contains `b/$folder/` is left alone.
     fn prefixed_folder_spans(
         line: &[u8],
         old_folder: &[u8],
@@ -1976,8 +1970,7 @@ fn git_diff_postprocess(
                     }
                     p += 1;
                 }
-                // A rename names two paths, so the `b/` operand is the first
-                // one after the `a/` operand starts.
+                // a rename: the operands differ
                 if spans[1].is_none() {
                     spans[1] =
                         leftmost_prefixed_folder(&line[rel_start..], b'b', old_folder, new_folder)

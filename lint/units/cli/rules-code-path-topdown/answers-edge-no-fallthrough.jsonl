@@ -1,0 +1,223 @@
+{"code":"switch (a) { case 1: b();\n// falls through\ncase 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: { b();\n// falls through\n} case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: b();\n/* falls through */\ncase 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: { b();\n/* falls through */\n} case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: b();\n// fall through\ncase 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: { b();\n// fall through\n} case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: b();\n// fallthrough\ncase 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: { b();\n// fallthrough\n} case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: b();\n// fallsthrough\ncase 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: { b();\n// fallsthrough\n} case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: b();\n// FALLS THROUGH\ncase 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: { b();\n// FALLS THROUGH\n} case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: b();\n// Falls Through\ncase 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: { b();\n// Falls Through\n} case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: b();\n// falls  through\ncase 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 3:1 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: { b();\n// falls  through\n} case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 3:3 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: b();\n// falls\tthrough\ncase 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: { b();\n// falls\tthrough\n} case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: b();\n// fall-through\ncase 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 3:1 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: { b();\n// fall-through\n} case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 3:3 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: b();\n// fall through\ncase 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: { b();\n// fall through\n} case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: b();\n// fall　through\ncase 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: { b();\n// fall　through\n} case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: b();\n// fall﻿through\ncase 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: { b();\n// fall﻿through\n} case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: b();\n// fall​through\ncase 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 3:1 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: { b();\n// fall​through\n} case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 3:3 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: b();\n// fallſ through\ncase 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: { b();\n// fallſ through\n} case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: b();\n// fallſthrough\ncase 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: { b();\n// fallſthrough\n} case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: b();\n/* falls\nthrough */\ncase 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: { b();\n/* falls\nthrough */\n} case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: b();\n/* falls\r\nthrough */\ncase 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 4:1 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: { b();\n/* falls\r\nthrough */\n} case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 4:3 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: b();\n/* falls through */\ncase 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: { b();\n/* falls through */\n} case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: b();\n// no break\ncase 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 3:1 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: { b();\n// no break\n} case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 3:3 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: b();\n// eslint-disable-line falls through\ncase 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 3:1 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: { b();\n// eslint-disable-line falls through\n} case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 3:3 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: b();\n// eslint falls through\ncase 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 3:1 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: { b();\n// eslint falls through\n} case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 3:3 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: b();\n// eslintfalls through\ncase 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: { b();\n// eslintfalls through\n} case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: b();\n// eslint-disable falls through\ncase 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 3:1 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: { b();\n// eslint-disable falls through\n} case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 3:3 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: b();\n// eslint-disable-next-line falls through\ncase 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 3:1 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: { b();\n// eslint-disable-next-line falls through\n} case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 3:3 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: b();\n// eslint-enable falls through\ncase 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 3:1 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: { b();\n// eslint-enable falls through\n} case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 3:3 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: b();\n// eslint-env falls through\ncase 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 3:1 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: { b();\n// eslint-env falls through\n} case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 3:3 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: b();\n// exported falls through\ncase 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 3:1 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: { b();\n// exported falls through\n} case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 3:3 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: b();\n// global falls through\ncase 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 3:1 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: { b();\n// global falls through\n} case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 3:3 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: b();\n// globals falls through\ncase 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 3:1 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: { b();\n// globals falls through\n} case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 3:3 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: b();\n// globalsfalls through\ncase 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: { b();\n// globalsfalls through\n} case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: b();\n//   eslint falls through\ncase 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 3:1 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: { b();\n//   eslint falls through\n} case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 3:3 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: b();\n// eslint\tfalls through\ncase 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 3:1 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: { b();\n// eslint\tfalls through\n} case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 3:3 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: b();\n/* eslint\nfalls through */\ncase 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 4:1 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: { b();\n/* eslint\nfalls through */\n} case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 4:3 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: b();\n// eslint-disable-linefalls through\ncase 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: { b();\n// eslint-disable-linefalls through\n} case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: b();\n// eslint-foo falls through\ncase 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: { b();\n// eslint-foo falls through\n} case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: b();\n// exports falls through\ncase 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: { b();\n// exports falls through\n} case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: b();\n/*falls through*/\ncase 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: { b();\n/*falls through*/\n} case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: b();\n//falls through\ncase 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: { b();\n//falls through\n} case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: b();\n/** falls through */\ncase 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: { b();\n/** falls through */\n} case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: b();\n/* falls through */ /* x */\ncase 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 3:1 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: { b();\n/* falls through */ /* x */\n} case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 3:3 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: b();\n/* x */ /* falls through */\ncase 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: { b();\n/* x */ /* falls through */\n} case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: b();\n// falls through\n// x\ncase 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 4:1 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: { b();\n// falls through\n// x\n} case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 4:3 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: b();\n// x\n// falls through\ncase 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: { b();\n// x\n// falls through\n} case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: b();\n// falls through\n\n\ncase 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: { b();\n// falls through\n\n\n} case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: b();\n/* falls through */\n\n\n\ncase 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: { b();\n/* falls through */\n\n\n\n} case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: b(); /* falls through */ default: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: b() /* falls through */; default: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 1:47 Expected a 'break' statement before 'default'."]}
+{"code":"switch (a) { case 1: /* falls through */ b(); default: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 1:47 Expected a 'break' statement before 'default'."]}
+{"code":"switch (a) { case /* falls through */ 1: b(); default: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 1:47 Expected a 'break' statement before 'default'."]}
+{"code":"switch (a) { case 1: b(); default: /* falls through */ c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 1:27 Expected a 'break' statement before 'default'."]}
+{"code":"switch (a) { case 1: b(); case /* falls through */ 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 1:27 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { /* falls through */ case 1: b(); case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 1:47 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: { b(); } /* falls through */ case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: { b(); /* falls through */ } case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: { /* falls through */ b(); } case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 1:51 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: { /* falls through */ } case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: { } /* falls through */ case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: { { /* falls through */ } } case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 1:50 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: { b(); /* falls through */ }; case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 1:52 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: { b(); /* falls through */ } { } case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 1:55 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: b(); { /* falls through */ } case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 1:51 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: if (x) { /* falls through */ } case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 1:53 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: L: { /* falls through */ } case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 1:49 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: { b(); /* falls through */ /* x */ } case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 1:59 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: { b(); /* x */ } /* falls through */ case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: { b(); /* falls through */ } /* x */ case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: { b(); /* eslint-disable falls through */ } /* falls through */ case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: { ; /* falls through */ } case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: { \"use strict\"; /* falls through */ } case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: { \"use strict\" /* falls through */ } case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: { /re/; /* falls through */ } case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: { x = `}`; /* falls through */ } case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: { x = `${ {a:1} }`; /* falls through */ } case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: x = /[/]case 2:/; \n/* falls through */ case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: x = \"// falls through\"; case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 1:46 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: x = `// falls through\n`; case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 2:4 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: x = /falls through/; case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 1:43 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1:\ncase 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1:\n\ncase 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 3:1 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1:\n\n\ncase 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 4:1 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1:\r\n\r\ncase 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 3:1 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1:\r\rcase 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 3:1 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1:  case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 3:1 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: \ncase 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 3:1 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1:\n // x\ncase 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 3:1 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: // x\n\ncase 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 3:1 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: /* x\n\n */ case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 3:5 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: /* falls through\n\n */ case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1:\n\n// falls through\ncase 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1\n\n:\ncase 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case\n\n1:\ncase 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1:\n\ndefault: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 3:1 Expected a 'break' statement before 'default'."]}
+{"code":"switch (a) { default:\n\ncase 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 3:1 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { default\n\n:\ncase 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { default:\n\n}","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1:\n\n}","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: ;\ncase 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 2:1 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: ;\n\ncase 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 3:1 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: {}\ncase 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 2:1 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: break;\n\ncase 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case (1):\n\ncase 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 3:1 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case (1\n\n):\ncase 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case `\n\n`:\ncase 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case function(){\n\n}:\ncase 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: break; case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: return; case 2: c(); }","ext":"js","sourceType":"script","fatal":"Parsing error: 'return' outside of function"}
+{"code":"function f() { switch (a) { case 1: return; case 2: c(); } }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: throw x; case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"for (;;) switch (a) { case 1: continue; case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: if (x) break; case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 1:36 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: if (x) break; else break; case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: { break; } case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: while (true) {} case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: for (;;) {} case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: do {} while (true); case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: while (true) { break; } case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 1:46 Expected a 'break' statement before 'case'."]}
+{"code":"L: switch (a) { case 1: break L; case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"L: for (;;) switch (a) { case 1: continue L; case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: try { break; } finally { } case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: try { b(); } finally { break; } case 2: c(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: try { throw 1; } catch (e) { } case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 1:53 Expected a 'break' statement before 'case'."]}
+{"code":"function f() { switch (a) { case 1: try { return; } catch (e) { return; } case 2: c(); } }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: switch (b) { case 1: break; } case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 1:52 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: switch (b) { case 1: d(); case 2: e(); } break; case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 1:48 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: switch (b) { default: } case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 1:46 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: (function () { switch (b) { case 1: d(); default: } })(); break; case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 1:63 Expected a 'break' statement before 'default'."]}
+{"code":"switch (a) { case 1: (() => { switch (b) { case 1: d(); default: } })(); case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 1:57 Expected a 'break' statement before 'default'.","no-fallthrough 1:74 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case (() => { switch (b) { case 1: d(); default: } })(): case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 1:54 Expected a 'break' statement before 'default'."]}
+{"code":"switch (a) { case 1: b(); case (() => { switch (b) { case 1: break; default: } })(): c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 1:27 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: b(); default: c(); case 2: d(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 1:27 Expected a 'break' statement before 'default'.","no-fallthrough 1:41 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { default: c(); case 2: d(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 1:28 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { default: case 2: d(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { default: break; case 2: d(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: b(); default: }","ext":"js","sourceType":"script","reports":["no-fallthrough 1:27 Expected a 'break' statement before 'default'."]}
+{"code":"switch (a) { case 1: b(); }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: b(); case 2: c(); case 3: d(); default: e(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 1:27 Expected a 'break' statement before 'case'.","no-fallthrough 1:40 Expected a 'break' statement before 'case'.","no-fallthrough 1:53 Expected a 'break' statement before 'default'."]}
+{"code":"switch (a) { case 1: class A { m() { switch (b) { case 1: d(); default: } } } case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 1:64 Expected a 'break' statement before 'default'.","no-fallthrough 1:79 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: function f() { } case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 1:39 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: var x; case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 1:29 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: let x; case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 1:29 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: debugger; case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 1:32 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: \"use strict\"; case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 1:36 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: L: ; case 2: c(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 1:27 Expected a 'break' statement before 'case'."]}
+{"code":"if (x) return; switch (a) { case 1: b(); case 2: c(); }","ext":"js","sourceType":"script","fatal":"Parsing error: 'return' outside of function"}
+{"code":"function f() { return; switch (a) { case 1: b(); case 2: c(); } }","ext":"js","sourceType":"script","reports":[]}
+{"code":"function f() { throw 1; switch (a) { case 1: case 2: c();\n\ncase 3: } }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: b(); case 2: c(); } switch (d) { case 1: e(); case 2: f(); }","ext":"js","sourceType":"script","reports":["no-fallthrough 1:27 Expected a 'break' statement before 'case'.","no-fallthrough 1:68 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: b()\n// falls through\ncase 2: c() }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: b() // falls through\ncase 2: c() }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: b(); // falls through\n\n\n  case 2: c() }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: b(); <!-- falls through\ncase 2: c() }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: b();\n--> falls through\ncase 2: c() }","ext":"js","sourceType":"script","reports":[]}
+{"code":"switch (a) { case 1: type T = number; case 2: c(); }","ext":"ts","sourceType":"module","reports":["no-fallthrough 1:39 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: interface I { } case 2: c(); }","ext":"ts","sourceType":"module","reports":["no-fallthrough 1:38 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: declare const x: number; case 2: c(); }","ext":"ts","sourceType":"module","reports":["no-fallthrough 1:47 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: enum E { } case 2: c(); }","ext":"ts","sourceType":"module","reports":["no-fallthrough 1:33 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: const enum E { } case 2: c(); }","ext":"ts","sourceType":"module","reports":["no-fallthrough 1:39 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: declare function f(): void; case 2: c(); }","ext":"ts","sourceType":"module","reports":["no-fallthrough 1:50 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: function f(): void; case 2: c(); }","ext":"ts","sourceType":"module","reports":["no-fallthrough 1:42 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: function f(): void; function f() {} case 2: c(); }","ext":"ts","sourceType":"module","reports":["no-fallthrough 1:58 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: import x = require(\"x\"); case 2: c(); }","ext":"ts","sourceType":"module","reports":["no-fallthrough 1:47 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: b() as any; case 2: c(); }","ext":"ts","sourceType":"module","reports":["no-fallthrough 1:34 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a as any) { case 1 as any: b(); case <any>2: c(); }","ext":"ts","sourceType":"module","reports":["no-fallthrough 1:41 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1 as any:\n\ncase 2: c(); }","ext":"ts","sourceType":"module","reports":["no-fallthrough 3:1 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1!:\n\ncase 2: c(); }","ext":"ts","sourceType":"module","reports":["no-fallthrough 3:1 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case <any>1\n\n:\ncase 2: c(); }","ext":"ts","sourceType":"module","reports":[]}
+{"code":"switch (a) { case x<T>:\n\ncase 2: c(); }","ext":"ts","sourceType":"module","reports":["no-fallthrough 3:1 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: type T = number;\n// falls through\ncase 2: c(); }","ext":"ts","sourceType":"module","reports":[]}
+{"code":"switch (a) { case 1: { type T = number; /* falls through */ } case 2: c(); }","ext":"ts","sourceType":"module","reports":[]}
+{"code":"switch (a) { case 1: { type T = number /* falls through */ } case 2: c(); }","ext":"ts","sourceType":"module","reports":[]}
+{"code":"switch (a) { case 1: { b(); /* falls through */ } type T = number; case 2: c(); }","ext":"ts","sourceType":"module","reports":["no-fallthrough 1:68 Expected a 'break' statement before 'case'."]}
+{"code":"function f(x: never): never { switch (a) { case 1: return f(a); case 2: c(); } }","ext":"ts","sourceType":"module","reports":[]}
+{"code":"switch (a) { case 1: abstract class A { } case 2: c(); }","ext":"ts","sourceType":"module","reports":["no-fallthrough 1:43 Expected a 'break' statement before 'case'."]}
+{"code":"switch (a) { case 1: declare class A { } case 2: c(); }","ext":"ts","sourceType":"module","reports":["no-fallthrough 1:42 Expected a 'break' statement before 'case'."]}

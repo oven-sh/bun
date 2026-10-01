@@ -54,8 +54,8 @@ for (let t = 0; t < count; t++) {
 	const prefix = ["", "é = ", "x =\n"][rnd(3)];
 	if (form === 0) { const q = rnd(2) ? "'" : '"'; code = `${prefix}${q}${body(7).replace(/\n|\r|\u2028(?<!\\.)/g, "")}${q};`; }
 	else if (form === 1) code = `${prefix}\`${body(7)}\`;`;
-	else if (form === 2) code = `${prefix}\`${body(4)}\${'${body(3).replace(/[\n\r\u2028]/g, "")}'}${body(4)}\${y}${body(3)}\`;`;
-	else code = `${prefix}tag\`${body(4)}\${\`${body(3)}\`}${body(4)}\`;`;
+	else if (form === 2) code = `${prefix}\`${body(4)}a\${'${body(3).replace(/[\n\r\u2028]/g, "")}'}${body(4)}a\${y}${body(3)}\`;`; // the `a` keeps the text before a substitution from escaping its `$`
+	else code = `${prefix}tag\`${body(4)}a\${\`${body(3)}\`}${body(4)}\`;`;
 	const messages = linter.verify(code, config);
 	if (messages.some(m => m.fatal)) { skipped++; continue; }
 	const src = Buffer.from(code, "utf8");

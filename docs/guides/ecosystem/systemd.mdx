@@ -63,7 +63,7 @@ The command attaches the capability to the `bun` binary itself. Replacing the bi
 
 Two of systemd's resource-control and sandboxing options change how Bun runs:
 
-- `LimitAS=` caps the address space of the service, like `ulimit -v`. Bun reserves more address space than the memory it uses, and it sizes those reservations to fit the limit. Set `LimitAS=` to 512M or more. To cap memory, use `MemoryMax=`.
+- `LimitAS=` caps the address space of the service, like `ulimit -v`. Bun reserves more address space than the memory it uses, and it sizes those reservations to fit the limit. Set `LimitAS=` to 512M or more. Below 512M, Bun runs JavaScript in the interpreter. To cap memory, use `MemoryMax=`.
 - `MemoryDenyWriteExecute=yes` forbids memory that is writable and executable at the same time, and forbids making memory executable later. A JIT compiler needs one of the two, so Bun runs JavaScript and WebAssembly in the interpreter. Compute-heavy code runs several times slower.
 
 ---

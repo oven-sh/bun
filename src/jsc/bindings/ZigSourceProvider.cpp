@@ -21,7 +21,6 @@
 #include <JavaScriptCore/AOTFunction.h>
 #include <zstd.h>
 #include "BunBuiltinNames.h"
-#include "ModuleGraph.h"
 
 #if OS(DARWIN)
 #include <execinfo.h>
@@ -85,7 +84,8 @@ Ref<SourceProvider> SourceProvider::create(
     Zig::GlobalObject* globalObject,
     ResolvedSource& resolvedSource,
     JSC::SourceProviderSourceType sourceType,
-    bool isBuiltin)
+    bool isBuiltin,
+    bool isForModuleGraph)
 {
     // Use BunTranspiledModule when module_info is present.
     // This allows JSC to skip parsing during the analyze phase (uses pre-computed imports/exports).
@@ -130,8 +130,8 @@ Ref<SourceProvider> SourceProvider::create(
             bytecode->setEntryOffset(resolvedSource.bytecode_cache_entry_offset);
             // The static heap refers to the provider by its address, so it is constructed there and never moves.
             JSC::SourceProvider* made = nullptr;
-            // (For the program itself. A Bun.ModuleGraph is a further instance of it, which may come first.)
-            void* place = resolvedSource.bytecode_cache_persistent && !Bun::currentModuleGraph(globalObject) ? JSC::StaticHeap::takePlaceForSourceProvider(globalObject->vm(), resolvedSource.bytecode_cache_entry_offset, sizeof(SourceProvider), made) : nullptr;
+            // (For the program itself. A further instance of it may come first.)
+            void* place = resolvedSource.bytecode_cache_persistent && !isForModuleGraph ? JSC::StaticHeap::takePlaceForSourceProvider(globalObject->vm(), resolvedSource.bytecode_cache_entry_offset, sizeof(SourceProvider), made) : nullptr;
             // Another thread's VM has already loaded the module, and all VMs share its provider. (Analyzing a module from its
             // module_info consumes the provider's copy, so in that case a new provider is needed.)
             if (made && !resolvedSource.module_info)
@@ -486,6 +486,7 @@ static std::optional<off_t> offsetInExecutableFile(const void* address)
 // For AOT builds: the codec that an image uses to compress rarely used data. (For JSCInitialize().)
 extern "C" void Bun__AOT__setCodecOfImages()
 {
+#if ENABLE(AOT)
     JSC::AOT::setCodec(
         [](const uint8_t* source, size_t sourceSize, uint8_t* destination, size_t capacity) -> size_t {
             size_t size = ZSTD_compress(destination, capacity, source, sourceSize, 19);
@@ -494,6 +495,7 @@ extern "C" void Bun__AOT__setCodecOfImages()
         [](const uint8_t* source, size_t sourceSize, uint8_t* destination, size_t size) -> bool {
             return ZSTD_decompress(destination, size, source, sourceSize) == size;
         });
+#endif
 }
 
 // For AOT builds: creates, at build time, the objects that the program needs however it is run (JSC::StaticHeap). Runs on the
@@ -632,8 +634,13 @@ extern "C" void Bun__StaticHeap__map(const uint8_t* bytes, size_t length, int fi
 // function, or -1.
 extern "C" int64_t Bun__AOT__offsetInCode(const void* address)
 {
+#if ENABLE(AOT)
     auto offset = JSC::AOT::offsetInCodeOfImage(address);
     return offset ? static_cast<int64_t>(*offset) : -1;
+#else
+    UNUSED_PARAM(address);
+    return -1;
+#endif
 }
 
 // Registers the machine code that an AOT executable carries. The executable's section is mapped as data, so the code is

@@ -436,6 +436,35 @@ test.skipIf(!supported)("--compile-aot requires --format=esm", async () => {
   ).toThrow("compile.aot requires format: 'esm'");
 });
 
+// Compiled code is for one instance of a program, which is the host's, whoever loads a module first. Without bytecode
+// there is nothing else to run, so this tells: a graph is refused, and the host is not.
+test.skipIf(!supported)("a Bun.ModuleGraph that loads a module first does not take the host's compiled code", async () => {
+  using dir = tempDir("compile-aot-module-graph", {
+    "entry.ts": `
+      const url = new URL("./app.js", import.meta.url).href;
+      const inGraph = await new Bun.ModuleGraph().import(url).then(() => "loaded", e => e.name + ": " + e.message.split(",")[0]);
+      console.log(inGraph);
+      console.log((await import(url)).count());
+    `,
+    "app.ts": `let n = 0; export function count() { return ++n; }`,
+  });
+  await using build = Bun.spawn({
+    cmd: [bunExe(), "build", "--compile", "--compile-aot", "--splitting", "entry.ts", "app.ts", "--outfile", "out"],
+    env: { ...bunEnv, BUN_COMPILE_OMIT_SOURCE_TEXT: "1", BUN_COMPILE_OMIT_BYTECODE: "1" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect([await build.stderr.text(), await build.exited]).toEqual([expect.not.stringContaining("error"), 0]);
+  await using proc = Bun.spawn({ cmd: [join(String(dir), "out")], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "SyntaxError: This code was compiled ahead of time\n1\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 // The compiler must not depend on the JIT of the process that runs the build. It used to link regular expressions in
 // JIT memory. Without a JIT the executable silently had no code for them, and matched them with the interpreter, ten
 // times slower.

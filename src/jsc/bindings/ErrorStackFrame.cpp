@@ -74,6 +74,7 @@ ZigStackFramePosition getAdjustedPositionForBytecode(JSC::CodeBlock* code, JSC::
 {
     // Code that was compiled ahead of time may record its position in the executable's original sources, in which case none
     // of what follows is needed.
+#if ENABLE(AOT)
     if (auto function = JSC::AOT::FunctionRef::of(code)) {
         if (auto position = function.reportedPositionFor(bc, JSC::AOT::FunctionRef::OfConstruction::WhereItStarts)) {
             return ZigStackFramePosition {
@@ -83,6 +84,7 @@ ZigStackFramePosition getAdjustedPositionForBytecode(JSC::CodeBlock* code, JSC::
             };
         }
     }
+#endif
 
     auto expr = code->expressionInfoForBytecodeIndex(bc);
     // Expression info has offsets only. The provider derives the line and the column from the divot.
@@ -100,10 +102,13 @@ ZigStackFramePosition getAdjustedPositionForBytecode(JSC::CodeBlock* code, JSC::
     // printf("off = %d : %d\n", expr.startOffset, expr.endOffset);
 
     bool constructs = false;
+#if ENABLE(AOT)
     // Code that was compiled ahead of time may have no instructions to look at.
     if (auto function = JSC::AOT::FunctionRef::of(code))
         constructs = function.constructsAt(bc);
-    else {
+    else
+#endif
+    {
         switch (code->instructionAt(bc)->opcodeID()) {
         case op_construct:
         case op_construct_varargs:

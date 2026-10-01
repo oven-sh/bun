@@ -522,7 +522,7 @@ extern "C" void Bun__onFulfillAsyncModule(
             }
         }
     } else {
-        auto provider = Zig::SourceProvider::create(globalObject, res->result.value);
+        auto provider = Zig::SourceProvider::create(globalObject, res->result.value, JSC::SourceProviderSourceType::Module, false, !!graph);
         if (Bun::IsolatedModuleCache::canUse(vm, globalObject->bunVM())) {
             Bun::IsolatedModuleCache::insert(vm, specifier->toWTFString(BunString::ZeroCopy), provider.get());
         }
@@ -1049,7 +1049,7 @@ static JSValue fetchESMSourceCode(
         auto tag = res->result.value.tag;
         switch (tag) {
         case SyntheticModuleType::ESM: {
-            auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value, JSC::SourceProviderSourceType::Module, true);
+            auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value, JSC::SourceProviderSourceType::Module, true, !!graph);
             if (useIsolationCacheForBuiltin)
                 Bun::IsolatedModuleCache::insert(vm, moduleKey, provider.get());
             RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, JSC::SourceCode(provider))));
@@ -1092,7 +1092,7 @@ static JSValue fetchESMSourceCode(
                 auto source = JSC::SourceCode(JSC::SyntheticSourceProvider::createWithLazyExports(generateInternalModuleSourceCode(globalObject, static_cast<InternalModuleRegistry::Field>(tag & mask)), JSC::SourceOrigin(URL(makeString("builtins://"_s, moduleKey))), moduleKey));
                 RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, WTF::move(source))));
             } else {
-                auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value, JSC::SourceProviderSourceType::Module, true);
+                auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value, JSC::SourceProviderSourceType::Module, true, !!graph);
                 if (useIsolationCacheForBuiltin)
                     Bun::IsolatedModuleCache::insert(vm, moduleKey, provider.get());
                 RELEASE_AND_RETURN(scope, rejectOrResolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(provider))));
@@ -1233,7 +1233,7 @@ static JSValue fetchESMSourceCode(
         RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(globalObject->vm(), WTF::move(source))));
     }
 
-    auto provider = Zig::SourceProvider::create(globalObject, res->result.value);
+    auto provider = Zig::SourceProvider::create(globalObject, res->result.value, JSC::SourceProviderSourceType::Module, false, !!graph);
     if (useIsolationCache) {
         Bun::IsolatedModuleCache::insert(vm, specifier->toWTFString(BunString::ZeroCopy), provider.get());
     }

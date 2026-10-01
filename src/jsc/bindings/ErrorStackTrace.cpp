@@ -281,12 +281,14 @@ ALWAYS_INLINE String JSCStackFrame::retrieveSourceURL()
         return String(sourceURLWasmString);
     }
 
+#if ENABLE(AOT)
     if (m_codeBlock && hasBytecodeIndex()) {
         if (auto function = JSC::AOT::FunctionRef::of(m_codeBlock)) {
             if (auto position = function.reportedPositionFor(m_bytecodeIndex); position && position->source)
                 return JSC::StaticHeap::nameOfSource(position->source);
         }
     }
+#endif
 
     auto url = Zig::sourceURL(m_codeBlock);
     if (!url.isEmpty()) {

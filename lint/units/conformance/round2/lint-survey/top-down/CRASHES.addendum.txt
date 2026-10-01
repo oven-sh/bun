@@ -1,0 +1,71 @@
+What the top-down pass adds to ../bottom-up/CRASHES.md. Two blocks: the first goes after the section "The same
+instances with the leak check of CI", the second at the end of the section for the parser unit.
+
+------------------------------------------------------------------------------------------------------------------
+## Beyond the sweep: the files of the corpus that no sweep hands to the command
+
+The sweep gives the command the root files of the 12,611 instances that it can lay out, through a pipe. These passes
+give it the rest, with `round2/lint-survey/top-down/direct.ts` (debug build `1.4.3-debug+3110ce85c` unless said; a run
+died by the rules of the default check, and an exit code of 1 counts as died too, because that is how a report of
+AddressSanitizer ends a debug build when `abort_on_error` is not set):
+
+| pass | what the command got | processes | died or hung |
+|---|---|---:|---:|
+| `--not-laid-out` | the root files of the 186 run instances that the sweep refuses before it starts a process (175 an absolute name in a text, 8 a DOS root, 3 a disk without case) | 186 | 0 |
+| `--units` | every file of every case that has a loader, 100 to a process: 16,205 files of the 12,444 cases and the 4 of `/.lib`, roots or not, of instances that run or that the reference skips (437 files have no loader and were not given) | 166 | 0 |
+| `--units`, leak check of CI | the same; LeakSanitizer checks at the exit of the command ("LeakSanitizer: checking for leaks" with `verbosity=1`) and a report would end it with SIGABRT | 166 | 0 |
+| `--units --pty plain` | the same with a terminal on stderr, where the command writes code frames (`lint_command.rs` `write_diagnostics`: another writer than the lines of tsc), `NO_COLOR=1` | 165 | 0 |
+| `--units --pty color` | the same with colours forced | 165 | 0 |
+| `--units`, release build | the same through `/workspace/wt/parser/build/release/bun` (`1.4.3-canary.1+be1ebe529`; `git diff be1ebe5295 3110ce85cf -- src` is empty) | 163 | 0 |
+| `--cases` | the 12,444 case files as they lie in the corpus: directive lines, all units in one text, 846 with a byte order mark, 7 in UTF-16 | 125 | 0 |
+
+The slowest process of 100 files took 7.7 s; the limit was 120 s. Every pass printed the same 3,447 errors and 27
+warnings of Bun's parser and 6 reports of rules (no-self-assign 3, no-empty-pattern 2, no-debugger 1) over the unit
+files. The command did not die on any file of the corpus, in any of these ways of running it.
+
+Seen on the way, no crash, for the owner of the command:
+- A file in UTF-16 big endian is not decoded: `bun --lint corpus/cases/compiler/bom-utf16be.ts` prints syntax errors
+  (`Expected ";" but found ""`), `bom-utf16le.ts` is read. `bun_core::strings::BOM` has `Utf8` and `Utf16Le` alone
+  (src/bun_core/string/immutable/unicode.rs:535). No instance shows it: the harness writes every unit as UTF-8.
+- The debug build and the release build print another text for one message: `expect_contextual_keyword`
+  (src/js_parser/lexer.rs:1117) appends ` (token: TIdentifier)` under `cfg!(debug_assertions)`. 27 instances of
+  the sweep have such a line; class and first code are the same in both builds for all 12,797.
+
+------------------------------------------------------------------------------------------------------------------
+### Outside the sweep: three more instances of class C, which the sweep does not lay out
+
+`direct.ts --not-laid-out` gave their root files to the command. The sweep refuses all three with
+`absolute-path-in-text: ... /.lib/react16.d.ts` (a `/// <reference path="/.lib/react16.d.ts" />`), so no report of
+sweep.ts names them.
+
+#### conformance/jsx/jsxs/jsxJsxsCjsTransformKeyProp.tsx
+
+- Instances: `jsxJsxsCjsTransformKeyProp(jsx=react-jsx).tsx`, `jsxJsxsCjsTransformKeyProp(jsx=react-jsxdev).tsx`; root files `/.src/jsxJsxsCjsTransformKeyProp.tsx`
+- Exit code 0: a warning.
+- Owner: parser (the text is a note of the transpiler), or the command (it prints warnings: `log.level = Level::Warn`, src/runtime/cli/lint_command.rs:236)
+- Cause: `<div {...props} key="bar">`: src/js_parser/parse/parse_jsx.rs:234 says which JSX runtime the transpiler falls back to. It says nothing about the file, and TypeScript reports nothing. The same warning is in 4 instances of class E that are not laid out either (`jsxJsxsCjsTransformKeyPropCustomImport`, `...CustomImportPragma`, each with `jsx=react-jsx` and `jsx=react-jsxdev`).
+
+```
+jsxJsxsCjsTransformKeyProp.tsx(4,20): warning syntax: "key" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.
+```
+
+#### conformance/jsdoc/declarations/jsDeclarationsReactComponents.ts
+
+- Instances: `jsDeclarationsReactComponents(target=es2015).ts`; root files `/.src/jsDeclarationsReactComponents1.jsx` to `5.jsx`
+- Owner: a rule (no-empty-pattern), not the parser
+- Cause: the same as compiler/declarationEmitClassSetAccessorParamNameInJs2.ts: a rule report in a JavaScript root fails an instance of class C as long as rule reports are part of the comparison.
+
+```
+jsDeclarationsReactComponents1.jsx(5,27): error no-empty-pattern: Unexpected empty object pattern.
+```
+
+### Beyond class C: lines of Bun's parser in class E that the oracle has no error on (a heuristic)
+
+`round2/lint-survey/top-down/e-lines.ts` holds every error line of Bun's parser in an instance of class E against the
+first section of the oracle: the same file name and the same line. Of the 1,292 instances of class E where Bun's
+parser prints an error, every line of Bun is on a line where the oracle has an error (of any code) in 1,125, some
+lines are in 107, and no line is in 60. Of 3,505 error lines, 226 are on a line where the oracle has nothing: most
+often `Unexpected }` (55), `Expected "…" but found "…"` (52), `"…" has already been declared` (34: a namespace that
+merges with a function, a class or an import), `Expected "…" but found end of file` (14). Some of the 226 are the
+same error one line later (a decorator on a declaration that is no class: the oracle reports at the decorator, Bun
+at the keyword after it). The list is `round2/lint-survey/top-down/observed/e-lines.tsv`.

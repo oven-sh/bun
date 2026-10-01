@@ -1,0 +1,39 @@
+Survey of `bun --lint` over the corpus (E4, round 2), top-down pass. Nothing here is in the worktree, no file of the
+repository was changed, and nothing below src/ was fixed.
+
+The sweep itself (every run instance through sweep.ts as it is, debug build 1.4.3-debug+3110ce85c) is the work of
+the bottom-up pass: ../bottom-up/HOWTO.txt, driver sweep-chunks.sh, then finish.sh, which writes ../bottom-up/CRASHES.md
+and ../bottom-up/LOG.entry.txt. This pass adds a second count of the same reports and what the sweep cannot reach.
+
+Files
+  tally.ts     bun tally.ts <directory of reports | ../bottom-up/observed/instances.tsv> [--markdown]
+               The table of E4 by top directory and in total, from the reports of the nine chunks; the classes are
+               written out in its head. "the command refused" (exit code 1) is counted as died: no operand of a sweep
+               is refused, and 1 is the exit code of a report of AddressSanitizer without abort_on_error.
+               observed/tally.txt, observed/tally-markdown.txt (the table for LOG.md).
+  direct.ts    bun direct.ts --tree <clone with the corpus> --bin <binary> --out <file.jsonl> (--not-laid-out | --units | --cases)
+                 [--jobs 2] [--batch 100] [--from k --to n] [--pty plain|color] [--keep <directory>]
+               The files that sweep.ts never hands to the command. --not-laid-out: the 186 run instances whose layout
+               is refused, their root files alone. --units: every file of every case that has a loader (roots or not,
+               of instances that run or are skipped), 100 to a process; where a process dies, each file alone.
+               --cases: the case files as they lie in the corpus (directive lines, byte order marks, UTF-16).
+               --pty: with a terminal, where the command writes code frames (another writer than the lines of tsc).
+               The whole corpus is about 170 processes: 2 to 3 minutes with --jobs 2, through /workspace/tools/lk in
+               one go, or in slices of --from/--to that each end within a minute.
+               With the leak check of CI: give the environment of CI to the command line of direct.ts.
+               observed/direct-units.txt (the summary line of every pass), observed/not-laid-out.tsv.
+  e-lines.ts   bun e-lines.ts <clone> <raw.jsonl of ../bottom-up/raw.ts> <out.tsv>
+               A heuristic for the parser unit beyond class C: the error lines of Bun's parser in class E instances
+               that are on no line where the oracle has an error. observed/e-lines.txt, observed/e-lines.tsv.
+  observed/class-c-stderr.txt   the 28 class C instances of the sweep where Bun prints a diagnostic: stderr as it is.
+  CRASHES.addendum.txt, LOG.entry.addendum.txt   what this pass adds to the two texts of the bottom-up pass.
+
+What was run (2026-10-01, 16:30 to 17:10 UTC, Linux x64, debug build 1.4.3-debug+3110ce85c unless said)
+  tally.ts over /tmp/ls1a/reports (nine reports) and over ../bottom-up/observed/instances.tsv: the same numbers.
+  direct.ts --not-laid-out                     186 instances, 186 processes, died 0
+  direct.ts --units                            16,205 files of 12,444 cases + 4 of /.lib, 166 processes, died 0
+  the same with the leak check of CI           166 processes, died 0 (LeakSanitizer checks at the exit of the command)
+  direct.ts --units --pty plain                165 processes, died 0
+  direct.ts --units --pty color                165 processes, died 0
+  direct.ts --units, release build be1ebe529   163 processes, died 0 (/workspace/wt/parser/build/release/bun; the same src/)
+  direct.ts --cases                            12,444 case files, 125 processes, died 0

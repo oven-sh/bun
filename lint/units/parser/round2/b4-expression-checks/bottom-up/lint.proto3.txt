@@ -1,0 +1,41 @@
+
+== erased statements and members
+"declare const x = new A?.b();"
+  a.ts  ok
+  a.js  @8+5 Expected ";" but found "const" -> TS1005 8+5 "';' expected."
+"declare namespace N { const x = new A?.b(); }"
+  a.ts  ok
+  a.js  @8+9 Expected ";" but found "namespace" -> TS1005 8+9 "';' expected." | @20+1 Expected ";" but found "{" -> TS1005 20+1 "';' expected." | @44+1 Unexpected } -> TS1128 44+1 "Declaration or statement expected."
+"declare class C { x = new A?.b(); }"
+  a.ts  ok
+  a.js  @8+5 Expected ";" but found "class" -> TS1005 8+5 "';' expected." | @16+1 Expected ";" but found "{" -> TS1005 16+1 "';' expected." | @34+1 Unexpected } -> TS1128 34+1 "Declaration or statement expected."
+"abstract class C { abstract x = new A?.b(); }"
+  a.ts  ok
+  a.js  @9+5 Expected ";" but found "class" -> TS1005 9+5 "';' expected." | @17+1 Expected ";" but found "{" -> TS1005 17+1 "';' expected." | @28+1 Expected ";" but found "x" -> TS1005 28+1 "';' expected." | @30+1 Unexpected = -> TS1128 30+1 "Declaration or statement expected."
+"class C { declare x = new A?.b(); }"
+  a.ts  ok
+  a.js  @18+1 Expected ";" but found "x" -> TS1005 18+1 "';' expected." | @20+1 Expected identifier but found "=" -> TS1003 20+1 "Identifier expected." | @26+1 Expected ";" but found "A" -> TS1005 26+1 "';' expected." | @27+2 Expected identifier but found "?." -> TS1003 27+2 "Identifier expected." | @32+1 Expected "{" but found ";" -> TS1005 32+1 "'{' expected." | @35+0 Expected "}" but found end of file -> TS1005 35+0 "'}' expected."
+"declare enum E { A = new B?.c() }"
+  a.ts  ok
+  a.js  @8+4 Expected ";" but found "enum" -> TS1005 8+4 "';' expected." | @15+1 Expected ";" but found "{" -> TS1005 15+1 "';' expected." | @32+1 Unexpected } -> TS1128 32+1 "Declaration or statement expected."
+"declare function f(a = new A?.b()): void;"
+  a.ts  ok
+  a.js  @8+8 Expected ";" but found "function" -> TS1005 8+8 "';' expected." | @34+1 Expected ";" but found ":" -> TS1005 34+1 "';' expected." | @40+1 Unexpected ; -> TS1109 40+1 "Expression expected."
+"function f(a = new A?.b()): void; function f(a) {}"
+  a.ts  ok
+  a.js  @26+1 Expected "{" but found ":" -> TS1005 26+1 "'{' expected." | @32+1 Unexpected ; -> TS1109 32+1 "Expression expected."
+"class C { m(a = new A?.b()): void; m(a) {} }"
+  a.ts  ok
+  a.js  @27+1 Expected "{" but found ":" -> TS1005 27+1 "'{' expected." | @33+1 Unexpected ; -> TS1109 33+1 "Expression expected."
+"declare module 'm' { export const x = new A?.b(); }"
+  a.ts  ok
+  a.js  @8+6 Expected ";" but found "module" -> TS1005 8+6 "';' expected." | @19+1 Expected ";" but found "{" -> TS1005 19+1 "';' expected." | @50+1 Unexpected } -> TS1128 50+1 "Declaration or statement expected."
+"declare global { var x = new A?.b(); }"
+  a.ts  ok
+  a.js  @8+6 Expected ";" but found "global" -> TS1005 8+6 "';' expected."
+"class C { #b; declare x = a?.#b; }"
+  a.ts  ok
+  a.js  @22+1 Expected ";" but found "x" -> TS1005 22+1 "';' expected." | @24+1 Expected identifier but found "=" -> TS1003 24+1 "Identifier expected." | @27+2 Expected ";" but found "?." -> TS1005 27+2 "';' expected." | @29+2 "#b" has already been declared
+"declare const y = a?.#b;"
+  a.ts  @21+2 Expected identifier but found "#b" -> TS18030 21+2 "An optional chain cannot contain private identifiers."
+  a.js  @8+5 Expected ";" but found "const" -> TS1005 8+5 "';' expected." | @21+2 Expected identifier but found "#b" -> TS18030 21+2 "An optional chain cannot contain private identifiers."

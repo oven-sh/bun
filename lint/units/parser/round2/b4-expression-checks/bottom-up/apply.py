@@ -302,7 +302,7 @@ edit(
         ),
         (
             "use crate::p::P;\nuse crate::typescript::{SkipTypeOptions, SkipTypeOptionsBitset};\n",
-            "use crate::p::P;\nuse crate::parse::generics::TypeArgumentsOf;\nuse crate::parse::wrappers::{WrapperData, Wrappers};\n"
+            "use crate::p::P;\nuse crate::parse::erased::{ErasedData, ErasedMemberData};\nuse crate::parse::generics::TypeArgumentsOf;\nuse crate::parse::wrappers::{WrapperData, Wrappers};\n"
             "use crate::typescript::{SkipTypeOptions, SkipTypeOptionsBitset};\n",
             1,
         ),

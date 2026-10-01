@@ -1,0 +1,15 @@
+module.exports = [["erased statements and members", [
+  "declare const x = new A?.b();",
+  "declare namespace N { const x = new A?.b(); }",
+  "declare class C { x = new A?.b(); }",
+  "abstract class C { abstract x = new A?.b(); }",
+  "class C { declare x = new A?.b(); }",
+  "declare enum E { A = new B?.c() }",
+  "declare function f(a = new A?.b()): void;",
+  "function f(a = new A?.b()): void; function f(a) {}",
+  "class C { m(a = new A?.b()): void; m(a) {} }",
+  "declare module 'm' { export const x = new A?.b(); }",
+  "declare global { var x = new A?.b(); }",
+  "class C { #b; declare x = a?.#b; }",
+  "declare const y = a?.#b;",
+]]];

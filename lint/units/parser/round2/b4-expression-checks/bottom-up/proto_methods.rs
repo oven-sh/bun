@@ -337,6 +337,33 @@
         for stmt in stmts {
             checks.visit_stmt(stmt);
         }
+        // What the side table holds of the statements and class members that leave no node is read by the reference too.
+        if let Some(starts) = &self.starts_for_parse_only {
+            for erased in &starts.erased.statements {
+                match &erased.data {
+                    ErasedData::Declaration(stmt) => checks.visit_stmt(stmt),
+                    ErasedData::Module(module) => {
+                        if let Some(body) = module.body {
+                            for stmt in body.slice() {
+                                checks.visit_stmt(stmt);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            for member in &starts.erased.members {
+                if let ErasedMemberData::Property(property) = &member.data {
+                    for decorator in property.ts_decorators.iter() {
+                        checks.visit_expr(decorator);
+                    }
+                    let held = [&property.key, &property.value, &property.initializer];
+                    for expr in held.into_iter().flatten() {
+                        checks.visit_expr(expr);
+                    }
+                }
+            }
+        }
         let mut found = checks.found;
         // The first message is the first in the source.
         found.sort_by_key(Finding::start);

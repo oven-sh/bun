@@ -728,7 +728,7 @@ pub(super) fn remove_leftover_node_modules(
     node_modules_buf[b"node_modules".len()] = bun_paths::SEP;
     let name_hashes = manager.lockfile.packages.items_name_hash();
     for request in updates.iter() {
-        // Only top-level folders are removed; nested copies are left alone.
+        // Only top-level folders are removed here. The hoisted linker removes nested copies (`prune::remove_collapsed_copies`).
         let name_hash = bun_semver::semver_string::Builder::string_hash(request.name);
         if !name_hashes.contains(&name_hash) {
             let offset_buf = &mut node_modules_buf[b"node_modules/".len()..];

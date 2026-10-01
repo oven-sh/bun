@@ -1022,6 +1022,14 @@ impl Tag {
             || self == Tag::Github
     }
 
+    /// Kinds `PackageInstall::verify` never finds installed, so the hoisted linker installs them again on every run.
+    pub(crate) fn is_reinstalled_every_run(self) -> bool {
+        self == Tag::Folder
+            || self == Tag::Symlink
+            || self == Tag::LocalTarball
+            || self == Tag::RemoteTarball
+    }
+
     /// Returns the snake_case tag name, or `None` for an unnamed
     /// (non-exhaustive) value.
     pub(crate) fn name(self) -> Option<&'static str> {

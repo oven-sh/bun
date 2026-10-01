@@ -107,8 +107,8 @@ To: nobody. No line is asked.
 
 `bun --lint` reads `BUN_FEATURE_FLAG_EXPERIMENTAL_LINT` with `getenv_z` (`src/runtime/cli/Arguments.rs:1771-1773`),
 not through a line of `pub mod feature_flag` (`src/bun_core/env_var.rs:217`, beside line 277). The runner sets
-the variable for its own processes (`runner/check_bun_lint.ts:45`), and `bunEnv` (`test/harness.ts:66-90`)
-does not get it.
+the variable for its own processes (`test/cli/lint/conformance/runner/check_bun_lint.ts:45`), and `bunEnv`
+(`test/harness.ts:66-90`) does not get it.
 
 ### RP-6. What the corpus does to the file list of the pull request
 
@@ -129,8 +129,8 @@ To: integrator. For information, no file to change.
 - 339 of the first 500 places are taken by files before `test/`. When the files below `src/` of this work
   grow by 156 more, `conformance.test.ts` itself is past place 500, with or without the corpus.
 - The path filters of the workflows are not touched by this. GitHub's documentation says that a filter sees
-  the first 300 files of a diff (not measured). This pull request matches the filters of `rust-lints.yml:8-15`
-  and `source-lints.yml:37-60` with files below `src/`, which are files 5 to 339.
+  the first 300 files of a diff (not measured). This pull request matches the filters of `rust-lints.yml:9-15`
+  and `source-lints.yml:38-60` with files below `src/`, which are files 5 to 339.
 - `comment-cop.yml:92-94` reads the same list from GitHub, and `src/` sorts before `test/`: it sees every
   file below `src/` as long as the pull request has fewer than 3,000 files before `test/`.
 

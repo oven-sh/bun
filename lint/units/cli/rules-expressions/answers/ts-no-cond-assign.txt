@@ -1,0 +1,64 @@
+"let a: any, b: any; if (a = b) {}"
+      => no-cond-assign 1:25 Expected a conditional expression and instead saw an assignment.
+"let a: any, b: any; if ((a = b)) {}"
+      => (none)
+"let a: any, b: any; if ((a = b) as any) {}"
+      => (none)
+"let a: any, b: any; if (((a = b) as any)) {}"
+      => (none)
+"let a: any, b: any; if ((a = b)!) {}"
+      => (none)
+"let a: any, b: any; if (<any>(a = b)) {}"
+      => (none)
+"let a: any, b: any; if ((a = b) satisfies any) {}"
+      => (none)
+"let a: any, b: any; if (a = b as any) {}"
+      => no-cond-assign 1:25 Expected a conditional expression and instead saw an assignment.
+"let a: any, b: any; if (a = b!) {}"
+      => no-cond-assign 1:25 Expected a conditional expression and instead saw an assignment.
+"let a: any, b: any; if (a! = b) {}"
+      => no-cond-assign 1:25 Expected a conditional expression and instead saw an assignment.
+"let a: any, b: any; if ((a as any) = b) {}"
+      => no-cond-assign 1:25 Expected a conditional expression and instead saw an assignment.
+"let a: any, b: any; if ((<any>a) = b) {}"
+      => no-cond-assign 1:25 Expected a conditional expression and instead saw an assignment.
+"let a: any, b: any; if ((a = <any>b)) {}"
+      => (none)
+"let a: any, b: any; while (a = b as any) {}"
+      => no-cond-assign 1:28 Expected a conditional expression and instead saw an assignment.
+"let a: any, b: any; while ((a = b)!) {}"
+      => (none)
+"let a: any, b: any; do {} while (a = b!);"
+      => no-cond-assign 1:34 Expected a conditional expression and instead saw an assignment.
+"let a: any, b: any; do {} while ((a = b) as boolean);"
+      => (none)
+"let a: any, b: any; for (; a = b as any;) {}"
+      => no-cond-assign 1:28 Expected a conditional expression and instead saw an assignment.
+"let a: any, b: any; for (; (a = b) as any;) {}"
+      => (none)
+"let a: any, b: any; for (; (a = b as any);) {}"
+      => (none)
+"let a: any, b: any; var x = (a = b) ? 1 : 2;"
+      => no-cond-assign 1:30 Expected a conditional expression and instead saw an assignment.
+"let a: any, b: any; var x = ((a = b)) ? 1 : 2;"
+      => (none)
+"let a: any, b: any; var x = (a = b)! ? 1 : 2;"
+      => (none)
+"let a: any, b: any; var x = ((a = b) as any) ? 1 : 2;"
+      => (none)
+"let a: any, b: any; var x = (a = b as any) ? 1 : 2;"
+      => no-cond-assign 1:30 Expected a conditional expression and instead saw an assignment.
+"let a: any, b: any; var x = ((a = b!)) ? 1 : 2;"
+      => (none)
+"let a: any, b: any; if (a ??= b) {}"
+      => no-cond-assign 1:25 Expected a conditional expression and instead saw an assignment.
+"let a: any, b: any; if (a ||= b as any) {}"
+      => no-cond-assign 1:25 Expected a conditional expression and instead saw an assignment.
+"let a: number, b: number; if (a += b) {}"
+      => no-cond-assign 1:31 Expected a conditional expression and instead saw an assignment.
+"let a: any, b: any; if ((a) = (b)) {}"
+      => no-cond-assign 1:25 Expected a conditional expression and instead saw an assignment.
+"//tsx\nlet a: any, b: any; const e = <div>{(a = b) ? 1 : 2}</div>;"
+      => no-cond-assign 2:38 Expected a conditional expression and instead saw an assignment.
+"//tsx\nlet a: any, b: any; if (a = b as any) {}"
+      => no-cond-assign 2:25 Expected a conditional expression and instead saw an assignment.

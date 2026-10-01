@@ -1,0 +1,11 @@
+control_outside                local = e 
+D2_interface_computed_in       local = z   <-- comment NOT subtracted (dropped from all_comments)
+D2_interface_computed_first    local = e 
+D2_type_literal_computed       local = z   <-- comment NOT subtracted (dropped from all_comments)
+D2_fn_type_initializer         local = z   <-- comment NOT subtracted (dropped from all_comments)
+D2_import_attr_value           local = t 
+D2_heritage_iface_expr         local = z   <-- comment NOT subtracted (dropped from all_comments)
+D3_class_index_sig_init        local = z   <-- comment NOT subtracted (dropped from all_comments)
+D3_class_implements_expr       local = e 
+ok_class_implements_typeref    local = e 
+ok_typeof                      local = e 

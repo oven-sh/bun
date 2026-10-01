@@ -1,0 +1,18 @@
+[
+ ["erased-interface.ts", "/*a*/ interface I /*b*/ <T> /*c*/ { a: 1 } /*d*/ x;"],
+ ["erased-type-alias.ts", "type A /*a*/ <T> /*b*/ = T /*c*/ ; /*d*/ type B = 1 /*e*/\nx;"],
+ ["erased-declare.ts", "declare /*a*/ const v: number /*b*/ ; declare function f(): void /*c*/\ny;"],
+ ["erased-member.ts", "abstract class C { /*a*/ abstract m(): void /*b*/ ; n(): void /*c*/\n n() {} [k: string]: any /*d*/ ; }"],
+ ["wrapper-as.ts", "y = x /*a*/ as /*b*/ T /*c*/ ; y = x satisfies T /*d*/ ;"],
+ ["wrapper-non-null.ts", "y = x /*a*/ ! /*b*/ ; y = (x /*c*/) /*d*/ ; y = <T> /*e*/ x /*f*/ ;"],
+ ["annotation.ts", "let x /*a*/ : /*b*/ number /*c*/ = 1; function f(this /*d*/ : /*e*/ T /*f*/, p /*g*/ ? /*h*/ : string /*i*/) /*j*/ : /*k*/ void /*l*/ {}"],
+ ["type-parameters.ts", "function f /*a*/ < /*b*/ T /*c*/ > /*d*/ () {} const g = < /*e*/ U /*f*/ > /*g*/ (x: U) => x;"],
+ ["heritage.ts", "class A extends B /*a*/ <T> /*b*/ implements I /*c*/ , J<K> /*d*/ {} class D implements a /*e*/ [ /*f*/ 0 /*g*/ ] /*h*/ {}"],
+ ["jsx-type-arguments.tsx", "const e = <Foo /*a*/ < /*b*/ T /*c*/ > /*d*/ a=\"1\" /*e*/ />;"],
+ ["keywords.ts", "class C { public /*a*/ readonly /*b*/ x /*c*/ ! /*d*/ : number; declare /*e*/ y /*f*/ ? /*g*/ : string; }"],
+ ["specifiers.ts", "import { type /*a*/ A /*b*/ , type B as /*c*/ C /*d*/ } from \"m\"; export { type /*e*/ A /*f*/ };"],
+ ["type-arguments.ts", "f /*a*/ < /*b*/ T /*c*/ > /*d*/ (x); new C /*e*/ <T> /*f*/ (); let i = f<T> /*g*/ ;"],
+ ["in-type.ts", "let v: { [ /*a*/ k /*b*/ ] /*c*/ : 1 }; let m: { [K in /*d*/ keyof A /*e*/ ] /*f*/ ? /*g*/ : 1 }; let q: typeof a /*h*/ . /*i*/ b /*j*/ ;"],
+ ["leading.ts", "// a\n/** b */ interface I {}\n// c\nlet x: number /* d */;"],
+ ["hashbang.ts", "#!/usr/bin/env bun\n// a\ninterface I {} // b\n"]
+]

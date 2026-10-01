@@ -1,17 +1,20 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import { lstatSync, realpathSync } from "fs";
 import { access, mkdir, writeFile } from "fs/promises";
 import {
   bunExe,
   bunEnv as env,
   isWindows,
+  MAX_PATH_BYTES,
+  mkdirToLength,
   readdirSorted,
   runBunInstall,
   tmpdirSync,
   toBeValidBin,
   toHaveBins,
 } from "harness";
-import { basename, join } from "path";
+import { basename, join, relative } from "path";
 import { dummyAfterAll, dummyAfterEach, dummyBeforeAll, dummyBeforeEach, package_dir } from "./dummy.registry";
 
 beforeAll(dummyBeforeAll);
@@ -560,4 +563,54 @@ describe("link: specifier longer than the path buffers", () => {
     expect(err).not.toContain("ENAMETOOLONG");
     expect(exitCode).toBe(1);
   });
+
+  // The hoisted installer links the package with a relative symlink: one `../` for each level
+  // of the project, then the real path of the package. That can be longer than both. Windows
+  // links with an absolute target.
+  it.skipIf(isWindows)(
+    "fails to install a linked package when the relative symlink target does not fit",
+    async () => {
+      const link_name = basename(link_dir).slice("bun-link.".length);
+      const link_root = realpathSync(link_dir);
+      // Deep enough that the `../` levels outgrow what the two paths share.
+      const depth = Math.ceil((link_root.length + 64) / 3);
+      const project = join(realpathSync(package_dir), ...Array(depth).fill("d"));
+      const node_modules = join(project, "node_modules");
+
+      // Pad the directory of the package until the target is one byte longer than a path.
+      const pad = MAX_PATH_BYTES - relative(node_modules, link_root).length;
+      const linked = mkdirToLength(link_root, link_root.length + pad);
+      expect(relative(node_modules, linked)).toHaveLength(MAX_PATH_BYTES);
+
+      await mkdir(project, { recursive: true });
+      await writeFile(join(linked, "package.json"), JSON.stringify({ name: link_name, version: "0.0.1" }));
+      await writeFile(
+        join(project, "package.json"),
+        JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { [link_name]: `link:${link_name}` } }),
+      );
+
+      const registered = await run(linked, "link");
+      let unlinked: Awaited<ReturnType<typeof run>>;
+      try {
+        expect(registered.err).toBe("");
+        expect(registered.out).toContain(`Success! Registered "${link_name}"`);
+        expect(registered.exitCode).toBe(0);
+
+        const { out, err, exitCode } = await run(project, "install", "--linker", "hoisted");
+
+        expect(err).toContain(
+          `ENAMETOOLONG: failed linking dependency/workspace to node_modules for package ${link_name}`,
+        );
+        expect(out).toContain("Failed to install 1 package");
+        expect(lstatSync(join(node_modules, link_name), { throwIfNoEntry: false })).toBeUndefined();
+        expect(exitCode).toBe(1);
+      } finally {
+        unlinked = await run(linked, "unlink");
+      }
+      expect(unlinked.out).toContain(`success: unlinked package "${link_name}"`);
+      expect(unlinked.exitCode).toBe(0);
+      // A debug build also prints a symbolized stack trace for this failure. That takes seconds.
+    },
+    30_000,
+  );
 });

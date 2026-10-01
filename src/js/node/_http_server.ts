@@ -1725,11 +1725,7 @@ function getNodeHTTPServerSocket() {
     }
     #closeHandle(handle, callback, err?: Error) {
       this[kHandle] = undefined;
-      // Capture the in-flight response before detachSocket() can clear it: a
-      // synchronous res.destroy() inside the request handler runs detachSocket()
-      // between here and the native close delivering #onClose. The abort itself
-      // is deferred to #onClose, after the native on_abort has released the
-      // pending-request ref.
+      // A res.destroy() in the request handler detaches the response before the native close runs #onClose, which aborts it.
       this.#pendingAbortMessage = this._httpMessage;
       handle.onclose = this.#onCloseForDestroy.bind(this, callback, err, handle);
       if (this.resetAndClosing) {

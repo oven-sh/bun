@@ -1260,12 +1260,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     /// Invoke the JS-side
     /// `node:http` request handler (`NodeHTTPServer__onRequest_{http,https}`),
-    /// then drive its [`NodeHTTPResponse`] through the completion / abort /
-    /// error paths. The handler returns nothing: a response that it leaves
-    /// open completes when JS ends it or the connection closes.
+    /// then drive its [`NodeHTTPResponse`] through the
+    /// completion / abort / error paths.
     ///
     /// receiver is `*mut Self` (not `&mut self`) — the body
-    /// re-enters JS (the handler, `drain_microtasks`) which may call back into
+    /// re-enters JS (`drain_microtasks`) which may call back into
     /// other server methods, so a long-lived `&mut Self` would alias. Each use
     /// site below derives a short-lived borrow that ends before the next
     /// re-entry point.
@@ -1387,13 +1386,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 break 'brk HttpResult::Exception(err);
             }
 
-            // SAFETY: out-param written by `on_request_ffi`, non-null (checked
-            // above); owned ref held until `deref()` below. Shared —
-            // `NodeHTTPResponse` state is `Cell`/`JsCell`.
+            // SAFETY: non-null (checked above), alive until the `deref()` below; its state is `Cell`/`JsCell`.
             let nhr = unsafe { &*node_http_response };
-            // The listener left the connection's current response open: its
-            // promise jobs and ticks run before the tail arms the abort handler,
-            // so a response that ends in them is not armed.
+            // Open and current: its promise jobs and ticks run first, so a response that ends in them is never armed.
             if !nhr
                 .flags
                 .get()
@@ -1405,9 +1400,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 needs_to_drain = false;
                 // SAFETY: `vm` is the process-static VirtualMachine.
                 unsafe { (*vm).drain_microtasks() };
-                // The drain ran script: an exception it left (a termination
-                // request landing in it) ends this dispatch like a throw
-                // from the handler; nothing below may enter script over it.
+                // An exception that the drain left (a termination request) ends the dispatch like a throw from the handler.
                 if global.has_exception() {
                     break 'brk HttpResult::Exception(global.take_error(bun_jsc::JsError::Thrown));
                 }

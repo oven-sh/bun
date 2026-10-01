@@ -4336,8 +4336,7 @@ describe("differences from Node in the framing of a response body that stay", ()
   });
 
   // Node sends `Content-Length: 2` in these two heads, also when the wrapper wrote one byte more. In Bun only the
-  // end() that sends the head can give it a Content-Length. The catch is there because this end() throws
-  // ERR_HTTP_HEADERS_SENT in Bun when the wrapper sent the head.
+  // end() that sends the head can give it a Content-Length.
   test.concurrent.each([
     [
       "flushHeaders()",
@@ -4360,11 +4359,7 @@ describe("differences from Node in the framing of a response body that stay", ()
           inWrapper(this);
           return result;
         };
-        try {
-          res.end("ok");
-        } catch {
-          res.end("ok");
-        }
+        res.end("ok");
         chunkedEncoding = res.chunkedEncoding;
       }, "0\r\n\r\n");
       expect({ chunkedEncoding, sent }).toEqual({ chunkedEncoding: true, sent: expected + probeResponse });

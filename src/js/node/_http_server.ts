@@ -3495,8 +3495,11 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     }
   }
 
-  const headerState = this[headerStateSymbol];
-  callWriteHeadIfObservable(this, headerState, true);
+  let headerState = this[headerStateSymbol];
+  // A writeHead() wrapper can send the head itself, with write() or flushHeaders().
+  if (callWriteHeadIfObservable(this, headerState, true) && this[headerStateSymbol] === NodeHTTPHeaderState.sent) {
+    headerState = NodeHTTPHeaderState.sent;
+  }
 
   const flags = handle.flags;
   if (!!(flags & NodeHTTPResponseFlags.closed_or_completed)) {
@@ -4121,7 +4124,9 @@ function callWriteHeadIfObservable(self, headerState, fromEnd?) {
     } finally {
       if (fromEnd) self[kImplicitHeaderFromEnd] = false;
     }
+    return true;
   }
+  return false;
 }
 
 function allowWritesToContinue() {

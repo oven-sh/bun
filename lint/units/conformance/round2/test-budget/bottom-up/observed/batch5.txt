@@ -1,0 +1,16 @@
+### 2026-10-01T18:05:08Z start; load 359.37 395.80 392.01 cpu.pressure avg10=29.63 avg60=21.41 memory 1599 MB disk 257G
+K2-rel-warm | load 348.76 389.90 390.17 cpu.pressure avg10=12.60 avg60=17.58 memory 1962 MB disk 255G |  104 pass 1 skip 0 fail | Ran 105 tests across 1 file. [3.00s] | TIME real 3.033 user 0.906 sys 0.281 | exit 0 | sanitizer lines 0 | ENOSPC 0
+K2-ci-rel | load 342.38 387.89 389.52 cpu.pressure avg10=18.14 avg60=18.37 memory 1967 MB disk 255G |  105 pass 0 fail | Ran 105 tests across 1 file. [7.23s] | TIME real 7.270 user 2.439 sys 0.588 | exit 0 | sanitizer lines 0 | ENOSPC 0
+### 2026-10-01T18:05:47Z debug build, the leak check of CI, with the times of every start and end of a test
+K2-dbg-leak-1 | load 333.62 385.32 388.68 cpu.pressure avg10=23.33 avg60=19.64 memory 2055 MB disk 254G |  104 pass 1 skip 0 fail | Ran 105 tests across 1 file. [78.07s] | TIME real 79.324 user 74.523 sys 4.175 | exit 0 | sanitizer lines 0 | ENOSPC 0
+preload to the first beforeAll: 8933 ms (on CPU 2993, waits for a CPU 5418)
+whole 73576 ms: in tests 64075, between tests 568, starts 104
+### 2026-10-01T18:07:07Z debug build, the leak check of CI, with the times of every start and end of a test
+K2-dbg-leak-2 | load 330.40 371.31 383.41 cpu.pressure avg10=25.60 avg60=25.86 memory 1797 MB disk 249G |  104 pass 1 skip 0 fail | Ran 105 tests across 1 file. [104.89s] | TIME real 107.204 user 81.356 sys 4.420 | exit 0 | sanitizer lines 0 | ENOSPC 0
+preload to the first beforeAll: 5186 ms (on CPU 2878, waits for a CPU 1414)
+whole 101472 ms: in tests 91340, between tests 4946, starts 104
+### 2026-10-01T18:08:57Z debug build, the leak check and the exception checks
+K2-dbg-leak-validate | load 406.00 374.41 382.48 cpu.pressure avg10=28.22 avg60=30.86 memory 1441 MB disk 239G |  104 pass 1 skip 0 fail | Ran 105 tests across 1 file. [173.36s] | TIME real 174.789 user 116.342 sys 4.409 | exit 0 | sanitizer lines 0 | ENOSPC 0
+### 2026-10-01T18:11:54Z the type check of the notes on the tree with the final form of the test file
+no type error below test/cli/lint (12 elsewhere, in files that these import)
+### 2026-10-01T18:11:59Z done; load 580.55 467.59 417.06 cpu.pressure avg10=22.95 avg60=30.08 memory 1482 MB disk 230G

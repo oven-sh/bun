@@ -305,7 +305,7 @@ Compared with upstream when the directory was declared, by name: each of the 167
 (`python3 round2-layer4-binder/names.py <file.go>` of the notes). Read side by side, because they are the places that
 call what layer 4 added: `binder.go` 95-130 (`BindSourceFile` to `bindSourceFile`), 215-290 (the diagnostics of a
 declaration that conflicts, in `declareSymbolEx`), 1299-1330 (`checkContextualIdentifier`, `checkPrivateIdentifier`)
-and 2709-2728 (`errorOnNode` to `addDiagnostic`): no difference was found there besides the ones of the last column.
+and 2710-2728 (`errorOnNode` to `addDiagnostic`): no difference was found there besides the ones of the last column.
 No other body was compared when the directory was declared.
 
 | upstream file, lines | Rust module under `src/typecheck/` | state | not ported |

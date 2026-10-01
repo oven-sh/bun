@@ -98,7 +98,7 @@ function stmts(depth, n, ctx) {
 	for (let i = 0; i < k; i++) out.push(stmt(rnd(depth + 1), full));
 	return out.join(" ");
 }
-const HERITAGE = ["B", "B", "B", "B", "B", "null", "undefined", "(B)", "B.c", "B()", "class {}", "'x'", "1", "a && b", "a || b", "a ?? b", "(a ? b : c)", "(a, b)", "void 0", "this", "new B", "`b`", "tag`b`", "(a = b)", "(a += b)", "(a &&= b)", "(a ||= b)", "(a ??= 1)", "function () {}", "(() => {})", "-a", "!a", "[]", "({})", "a?.b", "(a?.b)", "(a, null)", "(a ? null : 1)", "(a || null)", "(null && a)", "/r/", "1n", "true"];
+const HERITAGE = ["B", "B", "B", "B", "B", "null", "undefined", "(B)", "B.c", "B()", "class {}", "'x'", "1", "(a && b)", "(a || b)", "(a ?? b)", "(a ? b : c)", "(a, b)", "(void 0)", "this", "new B", "`b`", "tag`b`", "(a = b)", "(a += b)", "(a &&= b)", "(a ||= b)", "(a ??= 1)", "function () {}", "(() => {})", "(-a)", "(!a)", "[]", "({})", "a?.b", "(a?.b)", "(a, null)", "(a ? null : 1)", "(a || null)", "(null && a)", "/r/", "1n", "true", "(a && null)", "(null ?? a)", "(a = null)", "(a &&= null)", "(a ||= null)", "(a ??= null)", "(x, y, null)", "(x, y, B)", "(a -= b)", "(null || 1)", "(1 ? 2 : 3)", "(1 ? a : 3)", "(yield)", "new.target", "import.meta", "B[c]", "B?.()", "(B)()", "`b${c}`", "async function () {}", "(async () => {})", "(class {})", "(typeof a)", "(a++)", "(await a)", "super.x"];
 const heritage = () => pick(HERITAGE);
 function ctorCase() {
 	const body = stmts(3, 4, { fn: true, ctor: true });

@@ -1,0 +1,19 @@
+### 2026-10-01T18:01:07Z start; load 423.47 455.09 406.85 cpu.pressure avg10=22.25 avg60=28.10 disk 282G
+### cold: the data pages of the corpus are put out of the page cache before each run
+repo-cold-1 | load 396.36 448.21 405.13 cpu.pressure avg10=13.32 avg60=25.08 disk 281G |  105 pass 0 fail | Ran 105 tests across 1 file. [32.08s] | TIME real 32.157 user 3.195 sys 0.901 | exit 0
+knobs-cold-1 | load 330.58 426.15 399.35 cpu.pressure avg10=15.92 avg60=19.88 disk 278G |  104 pass 1 skip 0 fail | Ran 105 tests across 1 file. [2.42s] | TIME real 2.447 user 0.991 sys 0.282 | exit 0
+repo-cold-2 | load 330.58 426.15 399.35 cpu.pressure avg10=15.03 avg60=19.59 disk 278G |  105 pass 0 fail | Ran 105 tests across 1 file. [16.68s] | TIME real 17.112 user 2.917 sys 0.830 | exit 0
+knobs-cold-2 | load 317.30 416.72 396.80 cpu.pressure avg10=14.38 avg60=18.22 disk 275G |  104 pass 1 skip 0 fail | Ran 105 tests across 1 file. [6.57s] | TIME real 6.610 user 0.890 sys 0.294 | exit 0
+repo-cold-3 | load 316.90 413.44 395.96 cpu.pressure avg10=14.94 avg60=17.73 disk 274G |  105 pass 0 fail | Ran 105 tests across 1 file. [16.46s] | TIME real 16.543 user 2.667 sys 0.750 | exit 0
+knobs-cold-3 | load 307.01 405.16 393.62 cpu.pressure avg10=13.54 avg60=17.25 disk 271G |  104 pass 1 skip 0 fail | Ran 105 tests across 1 file. [5.69s] | TIME real 5.775 user 0.859 sys 0.338 | exit 0
+### warm
+repo-warm-1 | load 330.85 400.85 392.51 cpu.pressure avg10=5.05 avg60=12.41 disk 266G |  105 pass 0 fail | Ran 105 tests across 1 file. [7.05s] | TIME real 7.101 user 2.321 sys 0.578 | exit 0
+knobs-warm-1 | load 348.01 402.26 393.06 cpu.pressure avg10=6.98 avg60=12.00 disk 265G |  104 pass 1 skip 0 fail | Ran 105 tests across 1 file. [2.78s] | TIME real 2.853 user 0.861 sys 0.320 | exit 0
+repo-warm-2 | load 350.97 401.97 393.02 cpu.pressure avg10=7.23 avg60=11.71 disk 264G |  105 pass 0 fail | Ran 105 tests across 1 file. [4.55s] | TIME real 4.796 user 2.143 sys 0.479 | exit 0
+knobs-warm-2 | load 352.17 401.37 392.87 cpu.pressure avg10=13.20 avg60=12.53 disk 264G |  104 pass 1 skip 0 fail | Ran 105 tests across 1 file. [3.96s] | TIME real 4.094 user 0.881 sys 0.291 | exit 0
+repo-warm-3 | load 351.68 400.45 392.62 cpu.pressure avg10=16.38 avg60=13.23 disk 263G |  105 pass 0 fail | Ran 105 tests across 1 file. [3.95s] | TIME real 4.045 user 2.047 sys 0.518 | exit 0
+knobs-warm-3 | load 356.91 400.73 392.75 cpu.pressure avg10=19.03 avg60=14.07 disk 263G |  104 pass 1 skip 0 fail | Ran 105 tests across 1 file. [2.47s] | TIME real 2.735 user 0.891 sys 0.285 | exit 0
+### the knobs tree without the tests that start processes
+knobs-noproc-1 | load 362.20 401.10 392.91 cpu.pressure avg10=17.30 avg60=14.06 disk 263G |  84 pass 1 skip 0 fail | Ran 85 tests across 1 file. [1.56s] | TIME real 1.888 user 0.572 sys 0.104 | exit 0
+knobs-noproc-2 | load 362.20 401.10 392.91 cpu.pressure avg10=16.34 avg60=13.99 disk 262G |  84 pass 1 skip 0 fail | Ran 85 tests across 1 file. [1389.00ms] | TIME real 1.609 user 0.619 sys 0.098 | exit 0
+### 2026-10-01T18:03:52Z done; load 366.91 401.43 393.06 cpu.pressure avg10=15.31 avg60=14.02 disk 262G

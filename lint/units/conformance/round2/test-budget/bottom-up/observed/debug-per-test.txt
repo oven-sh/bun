@@ -1,0 +1,56 @@
+dbg-plain | dbg-leak | dbg-leak-validate | K-dbg-plain | K-dbg-leak | K-dbg-leak-validate | K-dbg-runner.plain | K2-dbg-leak-1 | K2-dbg-leak-2 | K2-dbg-leak-validate
+   4214    3416 FAIL 14031.60    5128    3204   13890   12662    6473    4505   14871  reference > the list has the instances of the reference's run: 14,915, of which 12,797 run and 2,118 are skipped
+   2128    2562    2072    2757    3777    7611    2031    1814    2345    3337  reference > the case and space tables are those of Go
+    967    1984    2455    2518     977    2341    1725     970    1234    5099  directives > the vectors of the reference parser
+      4       9      53      15    1008      14      22       8      17       9  variations > a value that is taken out again
+   3748    2308 FAIL 5946.34    5826    4610    8617    3728    1892    5023    8611  enumerator > the instances of one of 40 cases are their lines of the list: group 1
+   1116    1021    2079    4589    1456    1935    2186    1154    3975    4871  enumerator > the instances of one of 40 cases are their lines of the list: group 2
+   1630    1744    1458    2764    1711    1587    1699    1631    2444    3997  enumerator > the instances of one of 40 cases are their lines of the list: group 3
+    982     741    1888    2087    1228    1810    2053     472    2222    4138  enumerator > the instances of one of 40 cases are their lines of the list: group 4
+   2343     755    1421     805     920    1547    2017    1201    1993    1885  enumerator > the instances of one of 40 cases are their lines of the list: group 5
+    891    1166    1160    2981    1323    2674     999    1266    2101    2580  enumerator > the instances of one of 40 cases are their lines of the list: group 6
+   1611    1086    1794    1313    1364    2115    2147    2138     839    1648  enumerator > the instances of one of 40 cases are their lines of the list: group 7
+   1440    1431    1458     759     884    1067     753     639     425    1021  enumerator > the instances of one of 40 cases are their lines of the list: group 8
+    178     237     744     172     955     320     440     204     276     513  enumerator > 45 cases are left out by name and 8 are run for their diagnostics alone
+   2132    2378    3653    3021    4160    2494    2853    2567    2188    4527  error baselines > read and written again, the bytes are the same: group 1
+    283     278     412     193    1464     282     331     413     187     619  error baselines > read and written again, the bytes are the same: group 2
+    606     841     989     798    6764    1512    1109     753     968    1973  error baselines > read and written again, the bytes are the same: group 3
+   2708    2431    3965    3932    2651    4356    3780    2476    2538    7857  error baselines > read and written again, the bytes are the same: group 4
+    619     560    1016     806     863     621     956     787     502    1107  error baselines > read and written again, the bytes are the same: group 5
+    881    1147    1093    1106     699    1650    1530     846     899    1893  error baselines > read and written again, the bytes are the same: group 6
+   1136     781    1430    1135    1061    1058    1785     626    1016    1862  error baselines > read and written again, the bytes are the same: group 7
+   1146     735    1626    1225    1302    1445    1196     752    1855    1540  error baselines > read and written again, the bytes are the same: group 8
+   2290     742    1853    1120    1995    1344    1580    1407    1557    2849  error baselines > read and written again, the bytes are the same: group 9
+   4576    2347 FAIL 5671.66    4598    4267    7271    6998    4204    5004   12886  error baselines > read and written again, the bytes are the same: group 10
+   1151    1294    2011    1763    1881    1365     977    1289    1553    4616  error baselines > read and written again, the bytes are the same: group 11
+    970     814     861     725     419     892     583     765     353    1440  error baselines > read and written again, the bytes are the same: group 12
+    700     294     357     145     282    2005     265     355     127     508  run > the bytes of the baseline are the bytes of the oracle, or it is no pass
+   1310    2432    3129    1838    2008    4241    3312    1818    2710    7660  run > replayed oracles pass and a check that reports nothing passes no instance with errors: group 1
+    619    1062     624     444     219     666    1835     754     519    1279  run > replayed oracles pass and a check that reports nothing passes no instance with errors: group 2
+   2684     590     739    1702     557     908     864     459     861    1063  run > replayed oracles pass and a check that reports nothing passes no instance with errors: group 3
+    929     427     387     816     341     330     601     232    1335     929  run > replayed oracles pass and a check that reports nothing passes no instance with errors: group 4
+   2767    2097    2112    3010    1175    2177    4030    2166    3468    5566  run > replayed oracles pass and a check that reports nothing passes no instance with errors: group 5
+    540     324     890    1219     367    1101    1109     359     697    1842  run > replayed oracles pass and a check that reports nothing passes no instance with errors: group 6
+    608     460    1123     898     516     770     802     247    1055     684  run > replayed oracles pass and a check that reports nothing passes no instance with errors: group 7
+      1       1       5     923       1       2       6       1       1       1  plain format > a text with one space is refused whole
+   3578    1292    2778    2047    1257    3796    2604    1510    2074    3039  plain format > the first section of the baselines of one of 250 cases is the plain format
+   1890    3458    2377    6302    9100   12969    2792    3848    3565    6499  default check > the probe: a command that takes the flag and does nothing
+   3037    3046    3116    5078   10765    8628    4935    4031    4931    6359  default check > the probe: a command that runs its operand
+   3703    2583    1398    1948    2592    3346    1289    1183    1775    1216  default check > the probe: a command that dies
+   4381    4943    5629    8049   12049   23621    8783    6474    7283   10558  default check > the probe: a command that lints
+   2044    2377    3232    7069    5174    8484    4411    2521    7609    4027  default check > a command that runs its operand gets no instance
+   9892   10969   11302   11594 FAIL 32092.73   29968   16705   10203   18377   15007  default check > a command that lints gets the written unit as its operand, and no diagnostic passes an instance without errors
+   8782    9196   10398   14336 FAIL 31760.81   28567   17951    8437   14359   16696  default check > stderr is read in the plain format, chain lines too: the first section is the oracle's, and that is no pass
+   6710    9742    6461    5020 FAIL 30031.88   13999    9530    4161    7556    6656  default check > a run that breaks the rules is a crash and never an empty list of diagnostics: the exit code of a refusal
+   6872    5632    5512    6376 FAIL 30016.59    8658    7830    4056    5459    6385  default check > a run that breaks the rules is a crash and never an empty list of diagnostics: a line of no form
+   2298    2162    3593    6272    6189    8209    5930    3536    5985    8405  default check > a run that breaks the rules is a crash and never an empty list of diagnostics: text on stdout
+   9391    8772    8652    8268 FAIL 30054.66   18800   13089    6278   12808   12721  default check > a run that breaks the rules is a crash and never an empty list of diagnostics: an exit code that is none of 0, 1 and 2
+   2928    6135    3587    9420    9447    9497    6712    2281    6063    6562  default check > a run that breaks the rules is a crash and never an empty list of diagnostics: no error and the exit code 2
+   4061    7120    3519    7040   10040    8426    5211    2066    7722    4759  default check > a run that breaks the rules is a crash and never an empty list of diagnostics: an error and the exit code 0
+   2913    3894    1749    8239    6671    8181    6460    2716    4271    8527  default check > a run that breaks the rules is a crash and never an empty list of diagnostics: a file that is not of the instance
+   1279    1698    1431    6460    4708    2244    1704     831     764    1867  default check > a run that breaks the rules is a crash and never an empty list of diagnostics: a signal
+   2295    2153    2527   11926    5515    5126    7684    1544    3831    4409  default check > a run that breaks the rules is a crash and never an empty list of diagnostics: a diagnostic of a rule
+   2802    1994    2533    9735    3169    8440    4790    3231    3813    6360  default check > a run that breaks the rules is a crash and never an empty list of diagnostics: an error of the command
+   1902    3696    1838    5850   13439    4651    4822    2232    6170    3825  default check > never equal to an oracle without errors: the code -1
+   3501    3670    2428    6625   10614    7354    5544    2321    5236    3880  default check > never equal to an oracle without errors: a stand-in
+   3615    1687    1533    2053    1660    1267    1257    1448    1294    1642  listed instances > a batch passes when the oracle is replayed, and fails its names of list E when nothing is reported

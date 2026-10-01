@@ -1,0 +1,147 @@
+[
+  ["P1 an initializer after ? or ... of a parameter of a signature", [
+    ["ts", "type X = (a?: A = 1) => R;"],
+    ["ts", "type X = { m(a? = 1): R };"],
+    ["ts", "type X = new (a?: A = 1) => R;"],
+    ["ts", "type X = (...a = []) => R;"],
+    ["ts", "type X = { m(...a: A[] = []): R };"],
+    ["ts", "type X = ({ ...a = 1 }) => R;"],
+    ["ts", "type X = ([...a = 1]) => R;"],
+    ["decorators", "class K { @d p: (a?: A = 1) => R; }"],
+    ["tsx", "type X = (a?: A = 1) => R;"]
+  ]],
+  ["P2 the modifiers of a parameter, repeated or in another order", [
+    ["ts", "type X = (public private a: A) => R;"],
+    ["ts", "type X = (readonly public a: A) => R;"],
+    ["ts", "type X = (override public a: A) => R;"],
+    ["ts", "type X = (readonly readonly a: A) => R;"],
+    ["ts", "type X = { m(readonly override a: A): R };"],
+    ["ts", "function f(public private a: A) {}"],
+    ["ts", "function f(readonly public a: A) {}"],
+    ["ts", "function f(override override a: A) {}"],
+    ["ts", "class C { m(readonly override a: A) {} }"],
+    ["ts", "let o = { m(public private a: A) {} };"],
+    ["ts", "declare function f(public public a: A): void;"]
+  ]],
+  ["P3 a comma after a rest parameter outside an ambient context", [
+    ["ts", "function f(...a,): void;\nfunction f(...a) {}"],
+    ["ts", "class C { m(...a,): void; m(...a) {} }"],
+    ["ts", "abstract class C { abstract m(...a,): void }"],
+    ["ts", "class C { constructor(...a,); constructor(...a) {} }"]
+  ]],
+  ["T1 a named element of a tuple with ... or ? at its type", [
+    ["ts", "type X = [a: A?];"],
+    ["ts", "type X = [a?: A?];"],
+    ["ts", "type X = [a: ...A[]];"],
+    ["ts", "type X = [...if?: A[]];"],
+    ["ts", "let f = (a): [a: ?] => a;"],
+    ["ts", "f<[a: ?]>(x);"]
+  ]],
+  ["N1 the type arguments of a type reference after a dot", [
+    ["ts", "type X = A.<B>;"],
+    ["ts", "let x: Array.<A>;"],
+    ["ts", "type X = A.B.<C>[];"],
+    ["ts", "class C implements A.<B> {}"],
+    ["tsx", "let x: A.<B>;"]
+  ]],
+  ["N2 a private name where a type is named", [
+    ["ts", "let x: #a;"],
+    ["ts", "let x: #a[];"],
+    ["ts", "let x: keyof #a;"],
+    ["ts", "let x: #a | B;"],
+    ["ts", "let x: #a.b;"],
+    ["ts", "function f<U extends #a, V = #a>() {}"],
+    ["ts", "type X = import(\"x\").#a;"]
+  ]],
+  ["N3 a word that starts an expression as the constraint of a type parameter", [
+    ["ts", "function f<U extends super>() {}"],
+    ["ts", "function f<U extends super.a>() {}"],
+    ["ts", "function f<U extends class>() {}"],
+    ["ts", "type X<U extends delete> = U;"],
+    ["ts", "class C<U extends in> {}"],
+    ["ts", "interface I<U extends instanceof> {}"],
+    ["ts", "let f = <U extends class>(x) => x;"]
+  ]],
+  ["N4 a reserved word where the reference reads a type only if one starts", [
+    ["ts", "f<extends>(x);"],
+    ["ts", "type X = A<extends>;"],
+    ["ts", "type X = A[extends];"],
+    ["ts", "type X = A extends B ? if : 2;"],
+    ["ts", "type X = A extends B ? class : 2;"]
+  ]],
+  ["O1 a member of a type named by a private name or a bigint", [
+    ["ts", "type X = { #a: A };"],
+    ["ts", "interface I { #a: A }"],
+    ["ts", "interface I { #a(): void }"],
+    ["ts", "type X = { readonly #a: A };"],
+    ["ts", "type X = { 1n: A };"],
+    ["ts", "type X = { 1n?: A };"],
+    ["ts", "let f = (a): { #a:  } => a;"]
+  ]],
+  ["O2 a property signature with an initializer", [
+    ["ts", "type X = { a: A = 1 };"],
+    ["ts", "type X = { a? = 1 };"],
+    ["ts", "type X = { [a] = 1 };"],
+    ["ts", "interface I { a?: A = 1 }"]
+  ]],
+  ["O3 an accessor of a type with a body", [
+    ["ts", "type X = { get a(): A {} };"],
+    ["ts", "interface I { set a(v) {} }"]
+  ]],
+  ["O4 an index signature that is not one plain parameter", [
+    ["ts", "type X = { [k?: string]: A };"],
+    ["ts", "type X = { [k?]: A };"],
+    ["ts", "type X = { [...k: string[]]: A };"],
+    ["ts", "type X = { [k: string,]: A };"],
+    ["ts", "type X = { [k: string, l: number]: A };"],
+    ["ts", "type X = { [a, b]: A };"],
+    ["ts", "type X = { []: A };"],
+    ["ts", "type X = { readonly []: A };"],
+    ["ts", "type X = { [k: string = 1]: A };"],
+    ["ts", "class C { [k: string] }"],
+    ["ts", "class C { [k: string, l: number]: A }"],
+    ["ts", "class C { [k?: string]: A }"],
+    ["ts", "class C { [...k: string[]]: A }"],
+    ["ts", "class C { []: A }"],
+    ["ts", "class C { x: A\n[]; }"],
+    ["ts", "class C { [k: string = 1]: A }"],
+    ["ts", "declare class C { [k: string] }"]
+  ]],
+  ["O5 a computed name of a property or a method of a type that is an expression", [
+    ["ts", "type X = { [a + b]: A };"],
+    ["ts", "type X = { [\"a\" + \"b\"]: A };"],
+    ["ts", "type X = { [a as B]: A };"],
+    ["ts", "type X = { [k = 1]: A };"],
+    ["ts", "type X = { [+a]: A };"],
+    ["ts", "type X = { [a()]: A };"],
+    ["ts", "interface I { [a + b](): void }"]
+  ]],
+  ["H1 the extends and implements lists of an interface", [
+    ["ts", "interface I extends A extends B {}"],
+    ["ts", "interface I extends A, B extends C {}"],
+    ["ts", "interface I implements A extends B {}"],
+    ["ts", "interface I extends A implements B implements C {}"],
+    ["ts", "interface I extends {}"],
+    ["ts", "interface I extends A, {}"],
+    ["ts", "interface I implements {}"]
+  ]],
+  ["H2 an entry of an extends or implements list that no left-hand-side expression starts", [
+    ["ts", "class C implements typeof a() {}"],
+    ["ts", "class C implements typeof 1 {}"],
+    ["ts", "interface I extends +1 {}"],
+    ["ts", "class C implements !A {}"],
+    ["ts", "class C implements void A {}"],
+    ["ts", "class C implements delete A {}"],
+    ["ts", "class C implements await A {}"],
+    ["ts", "class C implements <B>a {}"],
+    ["ts", "class C implements ++a {}"],
+    ["ts", "class C implements @d class {} {}"]
+  ]],
+  ["C2 accessor without standard decorators", [
+    ["decorators", "class C { readonly accessor a: A }"],
+    ["decorators", "class C { declare accessor a: A }"],
+    ["decorators", "class C { accessor a?: A }"],
+    ["decorators", "class C { static accessor a?: A }"],
+    ["decorators", "class C { readonly static accessor a: A }"]
+  ]]
+]

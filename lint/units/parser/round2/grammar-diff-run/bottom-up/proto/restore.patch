@@ -1,6 +1,6 @@
-diff -ru orig_js_parser/parse/mod.rs root/src/js_parser/parse/mod.rs
---- orig_js_parser/parse/mod.rs	2026-10-01 19:16:49.789787661 +0000
-+++ root/src/js_parser/parse/mod.rs	2026-10-01 20:16:54.380524790 +0000
+diff --git a/src/js_parser/parse/mod.rs b/src/js_parser/parse/mod.rs
+--- a/src/js_parser/parse/mod.rs
++++ b/src/js_parser/parse/mod.rs
 @@ -401,6 +401,10 @@
              return as_type;
          }
@@ -12,9 +12,9 @@ diff -ru orig_js_parser/parse/mod.rs root/src/js_parser/parse/mod.rs
          let mut as_expression = p.parse_and_drop_in_class(Level::New);
          if as_expression.is_ok() {
              as_expression = p
-diff -ru orig_js_parser/parse/parse_fn.rs root/src/js_parser/parse/parse_fn.rs
---- orig_js_parser/parse/parse_fn.rs	2026-10-01 19:16:49.789964637 +0000
-+++ root/src/js_parser/parse/parse_fn.rs	2026-10-01 19:25:17.764282041 +0000
+diff --git a/src/js_parser/parse/parse_fn.rs b/src/js_parser/parse/parse_fn.rs
+--- a/src/js_parser/parse/parse_fn.rs
++++ b/src/js_parser/parse/parse_fn.rs
 @@ -6,6 +6,7 @@
  use crate::p::P;
  use crate::parse::attached::Owner;
@@ -54,9 +54,23 @@ diff -ru orig_js_parser/parse/parse_fn.rs root/src/js_parser/parse/parse_fn.rs
                                  }
  
                                  is_typescript_ctor_field = opts.is_constructor;
-diff -ru orig_js_parser/parse/parse_property.rs root/src/js_parser/parse/parse_property.rs
---- orig_js_parser/parse/parse_property.rs	2026-10-01 19:16:49.790160918 +0000
-+++ root/src/js_parser/parse/parse_property.rs	2026-10-01 19:25:47.175836583 +0000
+@@ -384,8 +392,11 @@
+                 if opts.is_typescript_declare {
+                     // TypeScript does allow a comma after a rest argument in a "declare" context
+                     p.lexer.next()?;
+-                } else if opts.allow_missing_body_for_type_script && p.next_token_is_close_paren() {
+-                    // A member of a "declare class" or an overload: the comma is an error once a body follows
++                } else if opts.allow_missing_body_for_type_script
++                    && p.is_lint_parse()
++                    && p.next_token_is_close_paren()
++                {
++                    // An overload outside an ambient context: the checker of the reference rejects the comma, so only a lint parse reads it, and it is an error once a body follows
+                     rest_comma = p.lexer.range();
+                     p.lexer.next()?;
+                 } else {
+diff --git a/src/js_parser/parse/parse_property.rs b/src/js_parser/parse/parse_property.rs
+--- a/src/js_parser/parse/parse_property.rs
++++ b/src/js_parser/parse/parse_property.rs
 @@ -268,7 +268,8 @@
      fn is_class_index_signature(&mut self) -> bool {
          let p = self;
@@ -67,7 +81,7 @@ diff -ru orig_js_parser/parse/parse_property.rs root/src/js_parser/parse/parse_p
              T::TIdentifier if p.is_class_index_signature_name() => {}
              _ => return false,
          }
-@@ -284,10 +285,14 @@
+@@ -284,19 +285,60 @@
      fn scan_class_index_signature(&mut self) -> crate::CrateResult<bool> {
          let p = self;
          p.lexer.next()?;
@@ -84,12 +98,13 @@ diff -ru orig_js_parser/parse/parse_property.rs root/src/js_parser/parse/parse_p
          if p.lexer.token != T::TQuestion {
              return Ok(false);
          }
-@@ -296,7 +301,47 @@
-         Ok(matches!(
-             p.lexer.token,
-             T::TColon | T::TComma | T::TCloseBracket
+         // After "?" these tokens cannot continue a conditional expression
+         p.lexer.next()?;
+-        Ok(matches!(
+-            p.lexer.token,
+-            T::TColon | T::TComma | T::TCloseBracket
 -        ))
-+        ) && p.is_lint_parse())
++        Ok(matches!(p.lexer.token, T::TColon | T::TComma | T::TCloseBracket) && p.is_lint_parse())
 +    }
 +
 +    /// After "accessor" where standard decorators are off, so that "accessor" was a name before. It is a modifier where the checker of the reference takes the property: not after "readonly" or "declare", and not before a name that "?" follows.
@@ -133,7 +148,7 @@ diff -ru orig_js_parser/parse/parse_property.rs root/src/js_parser/parse/parse_p
      }
  
      /// isIdentifier for a word: "await" and "yield" are names where they are no operators.
-@@ -333,8 +378,8 @@
+@@ -333,8 +375,8 @@
                  p.lexer.next()?;
                  p.skip_type_script_type(Level::Lowest)?;
              }
@@ -144,7 +159,7 @@ diff -ru orig_js_parser/parse/parse_property.rs root/src/js_parser/parse/parse_p
                  let at_equals = p.lexer.snapshot();
                  p.lexer.next()?;
                  match p.parse_and_drop_in_class(Level::Comma) {
-@@ -344,7 +389,8 @@
+@@ -344,7 +386,8 @@
                      Err(err) => return Err(err),
                  }
              }
@@ -154,7 +169,7 @@ diff -ru orig_js_parser/parse/parse_property.rs root/src/js_parser/parse/parse_p
                  break;
              }
              p.lexer.next()?;
-@@ -353,6 +399,9 @@
+@@ -353,6 +396,9 @@
          if p.lexer.token == T::TColon {
              p.lexer.next()?;
              p.skip_type_script_type(Level::Lowest)?;
@@ -164,7 +179,7 @@ diff -ru orig_js_parser/parse/parse_property.rs root/src/js_parser/parse/parse_p
          }
          // parseTypeMemberSemicolon
          if p.lexer.token == T::TComma {
-@@ -552,6 +601,7 @@
+@@ -552,6 +598,7 @@
                                              && !p.lexer.has_newline_before
                                              && raw == b"declare"
                                          {
@@ -172,7 +187,7 @@ diff -ru orig_js_parser/parse/parse_property.rs root/src/js_parser/parse/parse_p
                                              let scope_index = p.scopes_in_order.len();
                                              if let Some(_prop) =
                                                  p.parse_property(kind, opts, None)?
-@@ -625,16 +675,28 @@
+@@ -625,16 +672,28 @@
                                              && !p.lexer.has_newline_before
                                              && PropertyModifierKeyword::find(raw)
                                                  == Some(PropertyModifierKeyword::PAccessor)
@@ -202,9 +217,9 @@ diff -ru orig_js_parser/parse/parse_property.rs root/src/js_parser/parse/parse_p
                                      | PropertyModifierKeyword::POverride => {
                                          // Skip over TypeScript keywords
                                          if opts.is_class
-diff -ru orig_js_parser/parse/parse_skip_typescript.rs root/src/js_parser/parse/parse_skip_typescript.rs
---- orig_js_parser/parse/parse_skip_typescript.rs	2026-10-01 19:16:49.790215579 +0000
-+++ root/src/js_parser/parse/parse_skip_typescript.rs	2026-10-01 20:16:54.379211018 +0000
+diff --git a/src/js_parser/parse/parse_skip_typescript.rs b/src/js_parser/parse/parse_skip_typescript.rs
+--- a/src/js_parser/parse/parse_skip_typescript.rs
++++ b/src/js_parser/parse/parse_skip_typescript.rs
 @@ -115,6 +115,33 @@
      warnings: u32,
  }
@@ -305,20 +320,19 @@ diff -ru orig_js_parser/parse/parse_skip_typescript.rs root/src/js_parser/parse/
                  self.lexer.next()?;
              }
  
-@@ -407,8 +439,10 @@
+@@ -407,8 +439,9 @@
                  self.skip_type_script_type(Level::Lowest)?;
              }
  
 -            // "(a = 1)"
 -            if self.lexer.token == T::TEquals {
 +            // "(a = 1)". After "..." or "?" the checker of the reference rejects it: only a lint parse reads it
-+            if self.lexer.token == T::TEquals
-+                && (!(is_rest || is_optional) || self.is_lint_parse())
++            if self.lexer.token == T::TEquals && (!(is_rest || is_optional) || self.is_lint_parse())
 +            {
                  self.parse_initializer_in_type()?;
              }
  
-@@ -432,11 +466,19 @@
+@@ -432,11 +465,19 @@
          if self.lexer.is_log_disabled {
              return Ok(());
          }
@@ -338,7 +352,7 @@ diff -ru orig_js_parser/parse/parse_skip_typescript.rs root/src/js_parser/parse/
              name = self.lexer.identifier;
              self.lexer.next()?;
          }
-@@ -1269,10 +1311,7 @@
+@@ -1269,10 +1310,7 @@
              if is_undefined {
                  S::keyword(out, TypeKeyword::Object);
              } else {
@@ -350,7 +364,7 @@ diff -ru orig_js_parser/parse/parse_skip_typescript.rs root/src/js_parser/parse/
              }
          }
          let _ = self.parse_type_predicate_after_name::<S>(out)?;
-@@ -1383,10 +1422,7 @@
+@@ -1383,10 +1421,7 @@
      ) -> Result<(), Error> {
          if self.lexer.token == T::TIdentifier {
              if kind == TsIdentKind::Normal {
@@ -362,7 +376,7 @@ diff -ru orig_js_parser/parse/parse_skip_typescript.rs root/src/js_parser/parse/
              }
              if S::BUILDS {
                  S::b_reference(&self.lexer, out);
-@@ -1418,7 +1454,7 @@
+@@ -1418,7 +1453,7 @@
                  S::b_reference(&self.lexer, out);
              }
              self.lexer.next()?;
@@ -371,7 +385,7 @@ diff -ru orig_js_parser/parse/parse_skip_typescript.rs root/src/js_parser/parse/
              self.parse_type_arguments_of_type_reference::<S>(out)?;
  
              // "implements class {}": before "{" the word starts an expression, as before, but in a return type
-@@ -1437,10 +1473,20 @@
+@@ -1437,10 +1472,20 @@
              return Ok(());
          }
  
@@ -393,7 +407,7 @@ diff -ru orig_js_parser/parse/parse_skip_typescript.rs root/src/js_parser/parse/
      /// Whether the reserved word or the private name that the lexer is on is the first name of a type reference.
      fn is_reserved_type_name<S: TypeSink>(&mut self, opts: SkipTypeOptionsBitset) -> bool {
          let is_private_name = self.lexer.token == T::TPrivateIdentifier;
-@@ -1450,16 +1496,27 @@
+@@ -1450,16 +1495,27 @@
          if S::STRICT {
              return true;
          }
@@ -426,7 +440,7 @@ diff -ru orig_js_parser/parse/parse_skip_typescript.rs root/src/js_parser/parse/
                  || matches!(
                      self.lexer.token,
                      T::TSuper | T::TDelete | T::TIn | T::TInstanceof
-@@ -1470,11 +1527,24 @@
+@@ -1470,11 +1526,24 @@
          !self.is_keyword_of_enclosing_type(opts)
      }
  
@@ -453,7 +467,7 @@ diff -ru orig_js_parser/parse/parse_skip_typescript.rs root/src/js_parser/parse/
              token => token.is_reserved_word() && !self.is_start_of_type(false),
          }
      }
-@@ -1491,11 +1561,15 @@
+@@ -1491,11 +1560,15 @@
      }
  
      /// The loop of `parseEntityName`: the names after the first one.
@@ -472,7 +486,18 @@ diff -ru orig_js_parser/parse/parse_skip_typescript.rs root/src/js_parser/parse/
                  break;
              }
              self.parse_right_side_of_dot::<S>(out)?;
-@@ -1569,7 +1643,7 @@
+@@ -1563,13 +1636,16 @@
+         // "import('fs').promises.FileHandle"
+         if self.lexer.token == T::TDot {
+             self.lexer.next()?;
+-            // "import('fs').#a": the first name is an identifier name, which a private name is. Inside an attempt it ends the attempt, as before
+-            if self.lexer.token == T::TPrivateIdentifier && !self.lexer.is_log_disabled {
++            // "import('fs').#a": the first name is an identifier name, which a private name is for the reference. No module exports one: without lint, and inside an attempt, it is the error it was
++            if self.lexer.token == T::TPrivateIdentifier
++                && !self.lexer.is_log_disabled
++                && self.is_lint_parse()
++            {
+                 self.lexer.next()?;
              } else {
                  self.parse_right_side_of_dot::<S>(out)?;
              }
@@ -481,7 +506,7 @@ diff -ru orig_js_parser/parse/parse_skip_typescript.rs root/src/js_parser/parse/
              return self.parse_type_arguments_of_type_reference::<S>(out);
          }
  
-@@ -1770,13 +1844,31 @@
+@@ -1770,13 +1846,31 @@
          {
              if self.lexer.token == T::TDotDotDot {
                  self.lexer.next()?;
@@ -517,7 +542,7 @@ diff -ru orig_js_parser/parse/parse_skip_typescript.rs root/src/js_parser/parse/
          }
  
          self.parse_tuple_element_type(SkipTypeOptionsBitset::only(
-@@ -2156,8 +2248,9 @@
+@@ -2156,8 +2250,9 @@
                      return self.parse_property_or_method_signature(MemberName::Word, false);
                  }
                  // A private name. A bigint too, but not inside an attempt, so that `f<{ 1n: a }>(b)` stays a comparison.
@@ -529,7 +554,7 @@ diff -ru orig_js_parser/parse/parse_skip_typescript.rs root/src/js_parser/parse/
                  {
                      self.lexer.next()?;
                      return self.parse_property_or_method_signature_of_reference(false, false);
-@@ -2167,6 +2260,24 @@
+@@ -2167,6 +2262,24 @@
          }
      }
  
@@ -554,7 +579,7 @@ diff -ru orig_js_parser/parse/parse_skip_typescript.rs root/src/js_parser/parse/
      /// parseModifiers for a member, and the test for "get" and "set" that parseTypeMember makes after it.
      fn parse_modifiers_of_type_member(&mut self) -> Result<AfterModifiers, Error> {
          let mut has_static = false;
-@@ -2388,7 +2499,7 @@
+@@ -2388,7 +2501,7 @@
              if (has_type_annotation || has_question || is_computed_name)
                  && self.lexer.token == T::TEquals
              {
@@ -563,7 +588,7 @@ diff -ru orig_js_parser/parse/parse_skip_typescript.rs root/src/js_parser/parse/
              }
          }
          self.parse_type_member_semicolon()
-@@ -2464,7 +2575,7 @@
+@@ -2464,7 +2577,7 @@
                  self.lexer.next()?;
                  self.skip_type_script_type(Level::Lowest)?;
                  if may_have_initializer && self.lexer.token == T::TEquals {
@@ -572,7 +597,7 @@ diff -ru orig_js_parser/parse/parse_skip_typescript.rs root/src/js_parser/parse/
                  }
              }
              _ => {
-@@ -2477,7 +2588,7 @@
+@@ -2477,7 +2590,7 @@
                      && (has_question || name == MemberName::Bracket)
                      && self.lexer.token == T::TEquals
                  {
@@ -581,7 +606,7 @@ diff -ru orig_js_parser/parse/parse_skip_typescript.rs root/src/js_parser/parse/
                  }
              }
          }
-@@ -2525,9 +2636,19 @@
+@@ -2525,9 +2638,19 @@
              return result;
          }
          let failed = self.set_aside_failed_read(mark);
@@ -603,7 +628,7 @@ diff -ru orig_js_parser/parse/parse_skip_typescript.rs root/src/js_parser/parse/
          } else {
              self.parse_computed_property_name()
                  .map(|()| Bracketed::Expression)
-@@ -2657,6 +2778,26 @@
+@@ -2657,6 +2780,26 @@
          Ok(())
      }
  
@@ -630,7 +655,7 @@ diff -ru orig_js_parser/parse/parse_skip_typescript.rs root/src/js_parser/parse/
      /// parseComputedPropertyName
      fn parse_computed_property_name(&mut self) -> Result<(), Error> {
          self.lexer.expect(T::TOpenBracket)?;
-@@ -2684,12 +2825,23 @@
+@@ -2684,12 +2827,22 @@
          }
      }
  
@@ -648,14 +673,14 @@ diff -ru orig_js_parser/parse/parse_skip_typescript.rs root/src/js_parser/parse/
      #[cold]
      #[inline(never)]
      fn parse_function_block_in_type(&mut self) -> Result<bool, Error> {
-         // Inside an attempt the "{" is left where it is, and the separator that is missing ends the attempt.
+-        // Inside an attempt the "{" is left where it is, and the separator that is missing ends the attempt.
 -        if self.lexer.is_log_disabled {
-+        // The checker of the reference rejects a body in a type: without lint the "{" is left too, as before.
++        // Inside an attempt, and without lint, the "{" is left where it is: the checker of the reference rejects a body in a type, and the separator that is missing is the error, as before.
 +        if self.lexer.is_log_disabled || !self.is_lint_parse() {
              return Ok(false);
          }
          match self.parse_and_drop_in_type(Dropped::FunctionBlock) {
-@@ -2971,7 +3123,11 @@
+@@ -2971,7 +3124,11 @@
              if self.lexer.token == T::TExtends {
                  result = SkipTypeParameterResult::DefinitelyTypeParameters;
                  self.lexer.next()?;
@@ -668,7 +693,7 @@ diff -ru orig_js_parser/parse/parse_skip_typescript.rs root/src/js_parser/parse/
              }
  
              // "class Foo<T = void> {}"
-@@ -3112,6 +3268,25 @@
+@@ -3112,6 +3269,25 @@
  
      /// parseHeritageClauses of an interface
      fn parse_heritage_clauses(&mut self) -> Result<(), Error> {
@@ -694,7 +719,7 @@ diff -ru orig_js_parser/parse/parse_skip_typescript.rs root/src/js_parser/parse/
          while self.lexer.token == T::TExtends || self.lexer.is_contextual_keyword(b"implements") {
              self.parse_heritage_clause()?;
          }
-@@ -3122,8 +3297,10 @@
+@@ -3122,8 +3298,10 @@
      fn parse_heritage_clause(&mut self) -> Result<(), Error> {
          self.lexer.next()?;
          loop {
@@ -707,20 +732,21 @@ diff -ru orig_js_parser/parse/parse_skip_typescript.rs root/src/js_parser/parse/
              {
                  break;
              }
-@@ -3193,6 +3370,10 @@
-         if let Err(Error::StackOverflow | Error::Alloc(_)) = result {
+@@ -3194,6 +3372,11 @@
              return result;
          }
+         let failed = self.set_aside_failed_read(mark);
 +        // parseLeftHandSideExpressionOrHigher reads no expression at another token: what the type left stays
 +        if !self.is_start_of_heritage_expression() {
++            self.restore_failed_read(mark, failed);
 +            return result;
 +        }
-         let failed = self.set_aside_failed_read(mark);
          match self.parse_expression_with_type_arguments() {
              Ok(())
-diff -ru orig_js_parser/parse/type_sink.rs root/src/js_parser/parse/type_sink.rs
---- orig_js_parser/parse/type_sink.rs	2026-10-01 19:16:49.790587025 +0000
-+++ root/src/js_parser/parse/type_sink.rs	2026-10-01 19:26:24.836390531 +0000
+                 if self.log().errors == mark.errors && self.is_end_of_heritage_clause_element() =>
+diff --git a/src/js_parser/parse/type_sink.rs b/src/js_parser/parse/type_sink.rs
+--- a/src/js_parser/parse/type_sink.rs
++++ b/src/js_parser/parse/type_sink.rs
 @@ -35,11 +35,11 @@
      fn tuple_type(out: &mut Self::Out);
      fn object_type(out: &mut Self::Out);
@@ -744,10 +770,11 @@ diff -ru orig_js_parser/parse/type_sink.rs root/src/js_parser/parse/type_sink.rs
      ) -> Result<(), E> {
          Ok(())
      }
-@@ -420,13 +420,6 @@
+@@ -419,14 +419,6 @@
+         self.metadata.finish_combined();
          self.shape = Shape::Leaf;
      }
- 
+-
 -    /// The type that was read is an operand of "|" or "&", or a branch of a conditional type.
 -    #[inline]
 -    fn operand(&mut self) {
@@ -758,7 +785,7 @@ diff -ru orig_js_parser/parse/type_sink.rs root/src/js_parser/parse/type_sink.rs
  }
  
  /// Computes the `design:type` tag of `emitDecoratorMetadata`.
-@@ -519,9 +512,15 @@
+@@ -519,9 +511,15 @@
      fn reference<'a, E>(
          out: &mut Tag,
          name: &'a [u8],
@@ -776,7 +803,7 @@ diff -ru orig_js_parser/parse/type_sink.rs root/src/js_parser/parse/type_sink.rs
          Ok(())
      }
  
-@@ -533,6 +532,11 @@
+@@ -533,6 +531,11 @@
          is_name: bool,
          find: impl FnOnce(&'a [u8]) -> Result<Ref, E>,
      ) -> Result<(), E> {
@@ -788,7 +815,7 @@ diff -ru orig_js_parser/parse/type_sink.rs root/src/js_parser/parse/type_sink.rs
          let metadata = &mut out.metadata;
          match metadata {
              Metadata::MIdentifier(id) => {
-@@ -572,7 +576,6 @@
+@@ -572,7 +575,6 @@
          if out.shape == Shape::Intersection {
              out.close();
          }
@@ -796,7 +823,7 @@ diff -ru orig_js_parser/parse/type_sink.rs root/src/js_parser/parse/type_sink.rs
          let mut left = out.clone();
          match left.metadata.finish_union(load_name) {
              Some(done) => {
-@@ -590,14 +593,12 @@
+@@ -590,14 +592,12 @@
          if out.shape == Shape::Intersection {
              out.close();
          }
@@ -811,7 +838,7 @@ diff -ru orig_js_parser/parse/type_sink.rs root/src/js_parser/parse/type_sink.rs
          let mut left = out.clone();
          match left.metadata.finish_intersection(load_name) {
              Some(done) => {
-@@ -611,7 +612,6 @@
+@@ -611,7 +611,6 @@
  
      #[inline]
      fn intersection_right(out: &mut Tag, left: Tag) {
@@ -819,7 +846,7 @@ diff -ru orig_js_parser/parse/type_sink.rs root/src/js_parser/parse/type_sink.rs
          out.metadata.merge_intersection(left.metadata);
          out.shape = Shape::Intersection;
      }
-@@ -627,7 +627,6 @@
+@@ -627,7 +626,6 @@
          if left.shape != Shape::Leaf {
              left.close();
          }
@@ -827,7 +854,7 @@ diff -ru orig_js_parser/parse/type_sink.rs root/src/js_parser/parse/type_sink.rs
          match left.metadata.finish_union(load_name) {
              Some(done) => {
                  out.set(done);
-@@ -647,7 +646,6 @@
+@@ -647,7 +645,6 @@
          if out.shape != Shape::Leaf {
              out.close();
          }
@@ -835,7 +862,7 @@ diff -ru orig_js_parser/parse/type_sink.rs root/src/js_parser/parse/type_sink.rs
          out.metadata.merge_union(left.metadata);
          out.close();
          out.in_branch = left.in_branch;
-@@ -912,7 +910,7 @@
+@@ -912,7 +909,7 @@
      fn reference<'a, E>(
          _out: &mut Self::Out,
          _name: &'a [u8],
@@ -844,9 +871,9 @@ diff -ru orig_js_parser/parse/type_sink.rs root/src/js_parser/parse/type_sink.rs
      ) -> Result<(), E> {
          Ok(())
      }
-diff -ru orig_js_parser/parser.rs root/src/js_parser/parser.rs
---- orig_js_parser/parser.rs	2026-10-01 19:16:49.790730068 +0000
-+++ root/src/js_parser/parser.rs	2026-10-01 19:25:47.167998532 +0000
+diff --git a/src/js_parser/parser.rs b/src/js_parser/parser.rs
+--- a/src/js_parser/parser.rs
++++ b/src/js_parser/parser.rs
 @@ -1368,6 +1368,8 @@
      pub(crate) class_has_extends: bool,
      pub(crate) allow_ts_decorators: bool,
@@ -864,9 +891,9 @@ diff -ru orig_js_parser/parser.rs root/src/js_parser/parser.rs
              ts_decorators: bun_alloc::AstAlloc::vec(),
              has_argument_decorators: false,
              has_class_decorators: false,
-diff -ru orig_js_parser/typescript.rs root/src/js_parser/typescript.rs
---- orig_js_parser/typescript.rs	2026-10-01 19:16:49.791164611 +0000
-+++ root/src/js_parser/typescript.rs	2026-10-01 20:16:54.380977726 +0000
+diff --git a/src/js_parser/typescript.rs b/src/js_parser/typescript.rs
+--- a/src/js_parser/typescript.rs
++++ b/src/js_parser/typescript.rs
 @@ -138,6 +138,14 @@
          }
      }

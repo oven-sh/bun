@@ -21,6 +21,11 @@ next 1.4.3 be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb (209628 sources)
               t.ts.plain       "class C implements A<>.C {}"
                 base ["e",[["Unexpected >",1,22]]]
                 next ["o","class C {\n}\n"]
+~~       30 records       2 sources  R>A          explained: delete of a name in strict mode code
+              the entry is read as an expression now; `class C extends [delete A] {}` and `let v = [delete A];` are accepted by both builds and tsc reports TS1102 for them
+              t.ts.plain       "class C implements [delete A] {}"
+                base ["e",[["Unexpected delete",1,21],["Expected \":\" but found \"A\"",1,28]]]
+                next ["o","class C {\n}\n"]
 !!      120 records       8 sources  R>A          RESTORE: tsc does not parse TS1003
               base rejected, next accepts, tsc reports a parse diagnostic: keep the rejection when !S::STRICT
               t.ts.plain       "class C implements A.<B> {}"
@@ -161,11 +166,6 @@ next 1.4.3 be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb (209628 sources)
               t.ts.plain       "class C { @d m(): keyof<A> { return x; } }"
                 base ["e",[["Expected \"(\" but found \"{\"",1,28],["Unexpected return",1,30],["Expected \";\" but found \"x\"",1,37],["Unexpected }",1,42]]]
                 next ["e",[["Expected \"(\" but found \"{\"",1,28],["Expected \")\" but found \"x\"",1,37],["Unexpected }",1,42]]]
-??       30 records       2 sources  R>A          ruling: tsc reports a rule of syntax outside its grammar checks TS1102
-              valid by the rule of A1 (parser and grammar checks report nothing); tsc as a whole reports the code. No committed test accepts such a source
-              t.ts.plain       "class C implements [delete A] {}"
-                base ["e",[["Unexpected delete",1,21],["Expected \":\" but found \"A\"",1,28]]]
-                next ["o","class C {\n}\n"]
         510 records      36 sources  R>A          out or in names a type or a type parameter
               `function f<out>() {}`, `<out>x`, `<in>x`, `<out>(x) => x`
               t.ts.plain       "let v = <out>x;"
@@ -221,4 +221,4 @@ next 1.4.3 be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb (209628 sources)
               t.ts.plain       "type X = import('x').#a;"
                 base ["e",[["Expected identifier but found \"#a\"",1,22]]]
                 next ["o",""]
-6410 records with the mark !!, 414 with the mark ??, 1935 with the mark ~~
+6410 records with the mark !!, 384 with the mark ??, 1965 with the mark ~~

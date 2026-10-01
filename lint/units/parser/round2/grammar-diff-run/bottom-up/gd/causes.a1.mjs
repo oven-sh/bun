@@ -55,6 +55,12 @@ const explained = [
     title: "the entry is read as an expression now; `class C implements A<B>.C {}` and `let v = A<>.C;` are accepted by both builds and tsc reports TS1477 for them",
     match: d => d.cls === "R>A" && !tscParses(d) && codes(d.tsc?.[dialect(d)]).every(c => c === 1477) && heritageEntry(d) !== null,
   },
+  {
+    id: "explained: delete of a name in strict mode code",
+    explained: true,
+    title: "the entry is read as an expression now; `class C extends [delete A] {}` and `let v = [delete A];` are accepted by both builds and tsc reports TS1102 for them",
+    match: d => d.cls === "R>A" && validForTsc(d) && (d.tsc?.oth?.[dialect(d)] ?? []).includes(1102) && /\[delete [\w$]+\]/.test(d.src) && heritageEntry(d) !== null,
+  },
 ];
 
 const at = base.findIndex(c => c.id.startsWith("RESTORE"));

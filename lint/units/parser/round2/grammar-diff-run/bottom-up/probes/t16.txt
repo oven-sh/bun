@@ -1,0 +1,31 @@
+type X = { 1n(): void };
+type X = { get #a(): A };
+type X = { [+1]: A };
+type X = { [a?.b]: A };
+type X = { get [a + b](): A };
+type X = import("x").A.<B>;
+function f<U extends if>() {}
+function f<U extends function>() {}
+type X = A extends B ? function : 2;
+type X = A extends B ? 1 : if;
+type X = A extends if ? 1 : 2;
+type X = (public readonly a: A) => R;
+type X = (public override readonly a: A) => R;
+function f(public readonly a: A) {}
+class C { [await: string]: A }
+type X = [...if: A[]];
+type X = [...a?: A[]];
+type X = (a = 1, ...b) => R;
+type X = ([a = 1, ...b]) => R;
+interface I extends A implements B {}
+interface I extends a() {}
+class C implements a.b() {}
+class C implements new A() {}
+class C implements /re/ {}
+declare class C { m(...a,): void; }
+declare namespace N { class C { m(...a,): void } }
+type X = A<extends B ? C : D>;
+f<extends B ? C : D>(x);
+let x: in;
+let x: super;
+let x: class<T>;

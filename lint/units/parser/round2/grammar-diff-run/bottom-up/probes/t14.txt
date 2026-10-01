@@ -1,0 +1,62 @@
+enum E { ["x"] = 1 }
+enum E { [x] = 1 }
+enum E { [`x`] = 1 }
+enum E { ["x" + "y"] = 1 }
+enum E { [1] = 1 }
+enum E { ["x"] }
+enum E { ['x']: 1 }
+abstract declare class C {}
+declare abstract class C {}
+abstract declare abstract class C {}
+abstract declare function f(): void;
+abstract declare const x: number;
+abstract declare interface I {}
+abstract declare enum E {}
+abstract class C {}
+abstract declare⏎class C {}
+namespace N { import("x"); }
+namespace N { import.meta; }
+namespace N { import x = require("x"); }
+namespace N { import { a } from "x"; }
+import A from "x"⏎with { type: "json" }
+import A from "x"⏎with⏎{ type: "json" }
+import A from "x"⏎assert { type: "json" }
+export { a } from "x"⏎with { type: "json" }
+export * from "x"⏎with { type: "json" }
+import type A from "x"⏎with { type: "json" }
+import type A from "x" with { type: "json" }
+import "x"⏎with { type: "json" }
+import A from "x" with { type: "json", }
+import A from "x" with { "type": "json" }
+import A from "x" with { type: 1 }
+import A from "x" with {}
+type as = 1;
+type satisfies = 1;
+type as as = 1;
+type as⏎= 1;
+type⏎as = 1;
+interface as {}
+interface satisfies {}
+interface as extends B {}
+namespace as {}
+namespace satisfies.x {}
+module as {}
+declare module as {}
+declare namespace as {}
+declare class C { m(...a,): void; }
+declare class C { m(...a,) {} }
+class C { m(...a,): void; m(...a) {} }
+class C { m(...a,) {} }
+declare function f(...a,): void;
+function f(...a,): void;⏎function f(...a) {}
+function f<out>() {}
+function f<in>() {}
+const v = <out>x;
+const v = <in>x;
+const v = <out>(x) => x;
+let v = x as T <= y;
+let v = x satisfies T <= y;
+let v = x as T << y;
+let v = x as T < y;
+x = a ? 1 + async(b) : c;
+x = a ? <T>(b) : c => d;

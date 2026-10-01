@@ -1,0 +1,22 @@
+type X = { 1n(): void }; let x: X;
+type X = { get #a(): A }; let x: X;
+type X = { [+1]: A }; let x: X;
+type X = { [a?.b]: A }; let x: X;
+type X = { get [a + b](): A }; let x: X;
+let x: import("x").A.<B>;
+function f<U extends if>() {}
+function f<U extends function>() {}
+let x: A extends B ? function : 2;
+let x: A extends B ? 1 : if;
+let x: A extends if ? 1 : 2;
+let x: (public readonly a: A) => R;
+let x: (public override readonly a: A) => R;
+function f(public readonly a: A) {}
+class C { [await: string]: A }
+let x: [...if: A[]];
+let x: (a = 1, ...b) => R;
+let x: ([a = 1, ...b]) => R;
+interface I extends a() {}
+class C implements a.b() {}
+class C implements /re/ {}
+declare namespace N { class C { m(...a,): void } }

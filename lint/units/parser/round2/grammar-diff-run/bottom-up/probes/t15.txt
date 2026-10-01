@@ -1,0 +1,25 @@
+declare class C { m(...a,): void; }
+declare class C { m(...a,) {} }
+declare class C { m(...a) {} }
+declare class C { constructor(...a,); }
+class C { m(...a,): void; m(...a) {} }
+class C { m(...a,): void }
+class C { m(...a,) }
+class C { constructor(...a,); constructor(...a) {} }
+abstract class C { abstract m(...a,): void }
+function f(...a,): void;⏎function f(...a) {}
+function f(...a,): void;
+function f(...a,);
+declare function f(...a,): void;
+declare namespace N { function f(...a,): void; }
+declare namespace N { class C { m(...a,): void } }
+namespace N { declare function f(...a,): void; }
+export declare function f(...a,): void;
+declare function f(...[a],): void;
+declare function f(...a, b): void;
+let o = { m(...a,) {} };
+function f(...a,) {}
+type X = (...a,) => void;
+type X = { m(...a,): void };
+interface I { m(...a,): void }
+declare class C { m(...a,); }

@@ -1,0 +1,117 @@
+[same-error] "type A = | | B"
+   tsc  : error TS1110 [11,12) Type expected.
+   proto: error TS1110 [11,12) Type expected.
+   head : ok
+[same-error] "interface I { a A }"
+   tsc  : error TS1131 [14,15) Property or signature expected.
+   proto: error TS1131 [14,15) Property or signature expected.
+   head : ok
+[same-error] "interface I extends A | B {}"
+   tsc  : error TS1005 [22,23) ',' expected.
+   proto: error TS1005 [22,23) ',' expected.
+   head : ok
+[same-error] "class C { [k: string]: | | B }"
+   tsc  : error TS1110 [25,26) Type expected.
+   proto: error TS1110 [25,26) Type expected.
+   head : ok
+[same-error] "type A = { a A }"
+   tsc  : error TS1131 [11,12) Property or signature expected.
+   proto: error TS1131 [11,12) Property or signature expected.
+   head : ok
+[same-error] "type A = B | () => void"
+   tsc  : error TS1385 [12,23) Function type notation must be parenthesized when used in a union type.
+   proto: error TS1385 [12,23) Function type notation must be parenthesized when used in a union type.
+   head : ok
+[same-error] "interface I { m(): | | B }"
+   tsc  : error TS1110 [21,22) Type expected.
+   proto: error TS1110 [21,22) Type expected.
+   head : ok
+[same-error] "class C { [a!: string]: number }"
+   tsc  : error TS1005 [13,14) ']' expected.
+   proto: error TS1005 [13,14) ']' expected.
+   head : ok
+[same-error] "interface I { +a: string }"
+   tsc  : error TS1131 [14,15) Property or signature expected.
+   proto: error TS1131 [14,15) Property or signature expected.
+   head : ok
+[same-error] "interface I extends typeof A {}"
+   tsc  : error TS1109 [20,26) Expression expected.
+   proto: error TS1109 [20,26) Expression expected.
+   head : ok
+[same-error] "interface I extends A B {}"
+   tsc  : error TS1005 [22,23) ',' expected.
+   proto: error TS1005 [22,23) ',' expected.
+   head : error TS1005 [22,23) '{' expected.
+[same-error] "type A = intrinsic | B"
+   tsc  : error TS1005 [19,20) ';' expected.
+   proto: error TS1005 [19,20) ';' expected.
+   head : ok
+[same-error] "interface I {"
+   tsc  : error TS1005 [13,13) '}' expected.
+   proto: error TS1005 [13,13) '}' expected.
+   head : error nocode [13,13) Unexpected end of file
+[same-error] "interface I { a: 1,, }"
+   tsc  : error TS1131 [19,20) Property or signature expected.
+   proto: error TS1131 [19,20) Property or signature expected.
+   head : error nocode [19,20) Unexpected ,
+[same-error] "interface I extends A,, B {}"
+   tsc  : error TS1109 [22,23) Expression expected.
+   proto: error TS1109 [22,23) Expression expected.
+   head : error TS1110 [22,23) Type expected.
+[same-error] "interface I extends ;"
+   tsc  : error TS1109 [20,21) Expression expected.
+   proto: error TS1109 [20,21) Expression expected.
+   head : error TS1110 [20,21) Type expected.
+[same-error] "interface I { a!: string }"
+   tsc  : error TS1131 [14,15) Property or signature expected.
+   proto: error TS1131 [14,15) Property or signature expected.
+   head : ok
+[same-error] "type A = B<C | >"
+   tsc  : error TS1110 [15,16) Type expected.
+   proto: error TS1110 [15,16) Type expected.
+   head : error TS1110 [15,16) Type expected.
+[same-error] "interface I<T> extends A<T | > {}"
+   tsc  : error TS1110 [29,30) Type expected.
+   proto: error TS1110 [29,30) Type expected.
+   head : error TS1110 [29,30) Type expected.
+[same-error] "class C { [k: string]: any x }"
+   tsc  : error TS1005 [27,28) ';' expected.
+   proto: error TS1005 [27,28) ';' expected.
+   head : error TS1005 [27,28) ';' expected.
+[same-error] "class C { static [k: string] = 1 }"
+   tsc  : error TS1005 [29,30) ';' expected.
+   proto: error TS1005 [29,30) ';' expected.
+   head : error TS1005 [29,30) ';' expected.
+[same-error] "interface I extends void {}"
+   tsc  : error TS1109 [20,24) Expression expected.
+   proto: error TS1109 [20,24) Expression expected.
+   head : ok
+[same-error] "type A = B type C = D"
+   tsc  : error TS1005 [11,15) ';' expected.
+   proto: error TS1005 [11,15) ';' expected.
+   head : error TS1005 [11,15) ';' expected.
+[same-error] "export type A = | | B"
+   tsc  : error TS1110 [18,19) Type expected.
+   proto: error TS1110 [18,19) Type expected.
+   head : ok
+[same-error] "declare interface I { a A }"
+   tsc  : error TS1131 [22,23) Property or signature expected.
+   proto: error TS1131 [22,23) Property or signature expected.
+   head : ok
+[same-error] "namespace N { export interface I extends A | B {} }"
+   tsc  : error TS1005 [43,44) ',' expected.
+   proto: error TS1005 [43,44) ',' expected.
+   head : ok
+[same-error] "const r = a ? (b): c => { type T = | | B; return 1 } : e;"
+   tsc  : error TS1110 [37,38) Type expected.
+   proto: error TS1110 [37,38) Type expected.
+   head : ok
+[same-error] "class C { get [k: string]: any }"
+   tsc  : error TS1005 [16,17) ']' expected.
+   proto: error TS1005 [16,17) ']' expected.
+   head : ok
+[same-error] "class C { *[k: string]: any }"
+   tsc  : error TS1005 [13,14) ']' expected.
+   proto: error TS1005 [13,14) ']' expected.
+   head : ok
+{"same-error":29}

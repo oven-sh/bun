@@ -1,0 +1,29 @@
+"type A = | | B" => go: TS1110@[11,12) Type expected.
+"interface I { a A }" => go: TS1131@[14,15) Property or signature expected. | TS1128@[18,19) Declaration or statement expected.
+"interface I extends A | B {}" => go: TS1005@[22,23) ',' expected. | TS1005@[26,27) ';' expected.
+"class C { [k: string]: | | B }" => go: TS1110@[25,26) Type expected.
+"type A = { a A }" => go: TS1131@[11,12) Property or signature expected. | TS1128@[15,16) Declaration or statement expected.
+"type A = B | () => void" => go: TS1385@[12,23) Function type notation must be parenthesized when used in a union type.
+"interface I { m(): | | B }" => go: TS1110@[21,22) Type expected.
+"class C { [a!: string]: number }" => go: TS1005@[13,14) ']' expected. | TS1442@[21,22) Expected '=' for property initializer. | TS1068@[22,23) Unexpected token. A constructor, method, accessor, or property was expected.
+"interface I { +a: string }" => go: TS1131@[14,15) Property or signature expected. | TS1005@[16,17) ';' expected. | TS1128@[25,26) Declaration or statement expected.
+"interface I extends typeof A {}" => go: TS1109@[20,26) Expression expected. | TS1005@[29,30) ';' expected.
+"interface I extends A B {}" => go: TS1005@[22,23) ',' expected.
+"type A = intrinsic | B" => go: TS1005@[19,20) ';' expected.
+"interface I {" => go: TS1005@[13,13) '}' expected.
+"interface I { a: 1,, }" => go: TS1131@[19,20) Property or signature expected.
+"interface I extends A,, B {}" => go: TS1109@[22,23) Expression expected.
+"interface I extends ;" => go: TS1109@[20,21) Expression expected. | TS1005@[21,21) '{' expected.
+"interface I { a!: string }" => go: TS1131@[14,15) Property or signature expected. | TS1005@[16,17) ';' expected. | TS1128@[25,26) Declaration or statement expected.
+"type A = B<C | >" => go: TS1110@[15,16) Type expected.
+"interface I<T> extends A<T | > {}" => go: TS1110@[29,30) Type expected.
+"class C { [k: string]: any x }" => go: TS1005@[27,28) ';' expected.
+"class C { static [k: string] = 1 }" => go: TS1005@[29,30) ';' expected.
+"interface I extends void {}" => go: TS1109@[20,24) Expression expected.
+"type A = B type C = D" => go: TS1005@[11,15) ';' expected.
+"export type A = | | B" => go: TS1110@[18,19) Type expected.
+"declare interface I { a A }" => go: TS1131@[22,23) Property or signature expected. | TS1128@[26,27) Declaration or statement expected.
+"namespace N { export interface I extends A | B {} }" => go: TS1005@[43,44) ',' expected. | TS1005@[47,48) ';' expected.
+"const r = a ? (b): c => { type T = | | B; return 1 } : e;" => go: TS1110@[37,38) Type expected.
+"class C { get [k: string]: any }" => go: TS1005@[16,17) ']' expected. | TS1005@[24,25) '{' expected. | TS1068@[25,26) Unexpected token. A constructor, method, accessor, or property was expected.
+"class C { *[k: string]: any }" => go: TS1005@[13,14) ']' expected. | TS1144@[21,22) '{' or ';' expected. | TS1068@[22,23) Unexpected token. A constructor, method, accessor, or property was expected.

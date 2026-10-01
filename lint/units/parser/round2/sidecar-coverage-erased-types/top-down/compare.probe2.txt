@@ -1,0 +1,9 @@
+[DIFFERENT-TREE] "class C { readonly\n[k: string]: any }"
+   tsc  : IndexSignature[19,35) parameters[20,29) Parameter[20,29) StringKeyword[23,29) AnyKeyword[32,35)
+   proto: IndexSignature[10,35) Readonly[10,18) parameters[20,29) Parameter[20,29) StringKeyword[23,29) AnyKeyword[32,35)
+   head : ok
+[other-error] "class C { static static [k: string]: any }"
+   tsc  : error TS1434 [17,23) Unexpected keyword or identifier.
+   proto: error TS1005 [24,25) ';' expected.
+   head : error TS1005 [24,25) ';' expected.
+{"same-error":15,"same-tree":27,"DIFFERENT-TREE":1,"other-error":1}

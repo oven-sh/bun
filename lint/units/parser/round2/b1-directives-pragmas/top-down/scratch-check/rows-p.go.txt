@@ -1,0 +1,126 @@
+--- p00
+path 21..25 preserve=0
+--- p01
+types 22..26 mode=none preserve=0
+--- p02
+lib 20..26 preserve=0
+--- p03
+lib 20..23 preserve=0
+--- p04
+types 22..23 mode=import preserve=0
+--- p05
+types 22..23 mode=require preserve=0
+--- p06
+path 21..25 preserve=1
+--- p07
+lib 20..23 preserve=0
+--- p08
+--- p09
+--- p10
+types 39..40 mode=none preserve=0
+--- p11
+path 21..25 preserve=0
+--- p12
+path 22..26 preserve=0
+--- p13
+path 21..21 preserve=0
+--- p14
+path 21..29 preserve=0
+--- p15
+path 21..22 preserve=0
+--- p16
+diag TS1084 0..17
+--- p17
+diag TS1084 0..40
+--- p18
+diag TS1084 0..27
+--- p19
+diag TS1084 0..27
+--- p20
+diag TS1084 0..28
+--- p21
+diag TS1084 0..29
+--- p22
+diag TS1084 0..17
+diag TS1084 18..43
+--- p23
+types 22..23 mode=none preserve=0
+diag TS1453 42..46
+--- p24
+types 22..23 mode=none preserve=0
+diag TS1453 42..48
+--- p25
+types 22..22 mode=none preserve=0
+diag TS1453 41..42
+--- p26
+check 1 15..27
+--- p27
+check 0 13..27
+--- p28
+check 0 0..14
+--- p29
+check 1 0..11
+--- p30
+check 1 0..12
+--- p31
+check 0 0..15
+--- p32
+check 0 0..23
+--- p33
+check 0 0..14
+--- p34
+check 0 8..22
+--- p35
+--- p36
+--- p37
+--- p38
+--- p39
+--- p40
+check 1 49..61
+types 41..44 mode=none preserve=0
+--- p41
+lib 40..43 preserve=0
+--- p42
+--- p43
+--- p44
+check 0 31..45
+path 21..25 preserve=0
+--- p45
+path 36..40 preserve=0
+--- p46
+path 29..33 preserve=0
+--- p47
+check 0 32..46
+path 21..25 preserve=0
+--- p48
+path 24..28 preserve=0
+--- p49
+path 21..25 preserve=0
+--- p50
+--- p51
+--- p52
+--- p53
+--- p54
+--- p55
+--- p56
+--- p57
+--- p58
+--- p59
+--- p60
+path 21..25 preserve=0
+--- p61
+diag TS1084 0..14
+--- p62
+diag TS1084 0..16
+--- p63
+path 33..37 preserve=0
+--- p64
+diag TS1084 0..37
+--- p65
+--- p66
+path 37..38 preserve=1
+--- p67
+--- p68
+diag TS1084 0..14
+--- p69
+diag TS1084 0..21

@@ -1,0 +1,46 @@
+--- d00
+directive Ignore 0..13
+--- d01
+directive Ignore 0..14
+--- d02
+directive ExpectError 0..26
+--- d03
+directive ExpectError 0..21
+--- d04
+directive Ignore 3..16
+directive ExpectError 20..42
+--- d05
+directive Ignore 3..16
+--- d06
+directive Ignore 0..16
+directive ExpectError 17..37
+--- d07
+directive Ignore 0..13
+directive ExpectError 23..43
+--- d08
+directive ExpectError 0..22
+--- d09
+directive Ignore 3..19
+--- d10
+--- d11
+directive ExpectError 12..34
+--- d12
+directive ExpectError 3..28
+--- d13
+directive Ignore 7..21
+--- d14
+directive Ignore 3..17
+--- d15
+PARSE-ERROR None 10..11 Expected "class" but found "-"
+--- d16
+--- d17
+--- d18
+--- d19
+--- d20
+--- d21
+--- d22
+directive Ignore 0..15
+--- d23
+--- d24
+--- d25
+PARSE-ERROR None 12..12 Expected "*/" to terminate multi-line comment

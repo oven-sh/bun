@@ -1,0 +1,7 @@
+main.go
+oracle
+proto2
+libtest
+*.rmeta
+*.hex
+*.out

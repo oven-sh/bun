@@ -405,7 +405,7 @@ impl<'p, 'a> Context<'p, 'a> {
         u32::try_from(count).unwrap_or(u32::MAX)
     }
 
-    /// Whether parentheses or a TypeScript node stand around `expr` in its place: a literal there is no pattern.
+    /// Whether parentheses or a TypeScript node stand around `expr` in its place.
     pub(crate) fn is_wrapped(&self, expr: &Expr) -> bool {
         !self.around(expr).is_empty()
     }

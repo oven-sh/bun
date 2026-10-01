@@ -1,0 +1,122 @@
+--- p-path "/// <reference path=\"a.ts\" />\nx;"
+pragma reference 0..29 S {"path":{"value":"a.ts","pos":21,"end":25}}
+path 21..25 preserve=0 "a.ts"
+--- p-types "/// <reference types=\"node\" />\nx;"
+pragma reference 0..30 S {"types":{"value":"node","pos":22,"end":26}}
+types 22..26 mode=none preserve=0 "node"
+--- p-lib-double "/// <reference lib=\"es2015\" />\nx;"
+pragma reference 0..30 S {"lib":{"value":"es2015","pos":20,"end":26}}
+lib 20..26 preserve=0 "es2015"
+--- p-lib-single "/// <reference lib='dom' />\nx;"
+pragma reference 0..27 S {"lib":{"value":"dom","pos":20,"end":23}}
+lib 20..23 preserve=0 "dom"
+--- p-mode-import "/// <reference types=\"a\" resolution-mode=\"import\" />\nx;"
+pragma reference 0..52 S {"types":{"value":"a","pos":22,"end":23},"resolution-mode":"import"}
+types 22..23 mode=import preserve=0 "a"
+--- p-mode-require "/// <reference types=\"a\" resolution-mode=\"require\" />\nx;"
+pragma reference 0..53 S {"types":{"value":"a","pos":22,"end":23},"resolution-mode":"require"}
+types 22..23 mode=require preserve=0 "a"
+--- p-mode-other "/// <reference types=\"a\" resolution-mode=\"node\" />\nx;"
+pragma reference 0..50 S {"types":{"value":"a","pos":22,"end":23},"resolution-mode":"node"}
+types 22..23 mode=none preserve=0 "a"
+diag TS1453 22..23 "`resolution-mode` should be either `require` or `import`."
+--- p-preserve "/// <reference path=\"a.ts\" preserve=\"true\" />\nx;"
+pragma reference 0..45 S {"path":{"value":"a.ts","pos":21,"end":25},"preserve":"true"}
+path 21..25 preserve=1 "a.ts"
+--- p-preserve-false "/// <reference lib=\"dom\" preserve=\"false\" />\nx;"
+pragma reference 0..44 S {"lib":{"value":"dom","pos":20,"end":23},"preserve":"false"}
+lib 20..23 preserve=0 "dom"
+--- p-no-default-lib "/// <reference no-default-lib=\"true\" />\nx;"
+pragma reference 0..39 S {"no-default-lib":"true"}
+--- p-no-default-lib-false "/// <reference no-default-lib=\"false\" />\nx;"
+pragma reference 0..40 S {"no-default-lib":"false"}
+diag TS1084 0..40 "Invalid 'reference' directive syntax."
+--- p-no-argument "/// <reference />\nx;"
+pragma reference 0..17 S {}
+diag TS1084 0..17 "Invalid 'reference' directive syntax."
+--- p-no-argument-unclosed "/// <reference\nx;"
+--- p-after-first-token "x;\n/// <reference path=\"a.ts\" />\n// @ts-nocheck\n"
+--- p-nocheck-then-check "// @ts-nocheck\n// @ts-check\nx;"
+pragma ts-nocheck 0..14 S {}
+pragma ts-check 15..27 S {}
+check 1 15..27
+--- p-check-then-nocheck "// @ts-check\n// @ts-nocheck\nx;"
+pragma ts-check 0..12 S {}
+pragma ts-nocheck 13..27 S {}
+check 0 13..27
+--- p-nocheck-alone "// @ts-nocheck\nx;"
+pragma ts-nocheck 0..14 S {}
+check 0 0..14
+--- p-crlf "/// <reference path=\"a.ts\" />\r\n// @ts-nocheck\r\nx;\r\n"
+pragma reference 0..29 S {"path":{"value":"a.ts","pos":21,"end":25}}
+pragma ts-nocheck 31..45 S {}
+check 0 31..45
+path 21..25 preserve=0 "a.ts"
+--- p-shebang "#!/usr/bin/env bun\n/// <reference types=\"bun\" />\n// @ts-check\nx;"
+pragma reference 19..48 S {"types":{"value":"bun","pos":41,"end":44}}
+pragma ts-check 49..61 S {}
+check 1 49..61
+types 41..44 mode=none preserve=0 "bun"
+--- p-shebang-crlf "#!/usr/bin/env bun\r\n/// <reference lib=\"dom\" />\r\nx;"
+pragma reference 20..47 S {"lib":{"value":"dom","pos":40,"end":43}}
+lib 40..43 preserve=0 "dom"
+--- p-two-slashes-reference "// <reference path=\"a.ts\" />\nx;"
+--- p-four-slashes-reference "//// <reference path=\"a.ts\" />\nx;"
+--- p-block-reference "/* <reference path=\"a.ts\" /> */\nx;"
+--- p-block-nocheck "/* @ts-nocheck */\nx;"
+--- p-triple-slash-nocheck "/// @ts-nocheck\nx;"
+pragma ts-nocheck 0..15 S {}
+check 0 0..15
+--- p-nocheck-reason "// @ts-nocheck: because\nx;"
+pragma ts-nocheck 0..23 S {}
+check 0 0..23
+--- p-nocheck-upper "// @TS-NOCHECK\nx;"
+pragma ts-nocheck 0..14 S {}
+check 0 0..14
+--- p-nocheck-suffix "// @ts-nocheckx\nx;"
+--- p-upper-tag "/// <REFERENCE PATH=\"a.ts\" />\nx;"
+pragma reference 0..29 S {"path":{"value":"a.ts","pos":21,"end":25}}
+path 21..25 preserve=0 "a.ts"
+--- p-duplicate-argument "/// <reference path=\"a.ts\" path=\"b.ts\" />\nx;"
+pragma reference 0..41 S {"path":{"value":"a.ts","pos":21,"end":25}}
+path 21..25 preserve=0 "a.ts"
+--- p-types-lib-path "/// <reference path=\"p\" lib=\"l\" types=\"t\" />\nx;"
+pragma reference 0..44 S {"types":{"value":"t","pos":39,"end":40},"lib":{"value":"l","pos":29,"end":30},"path":{"value":"p","pos":21,"end":22}}
+types 39..40 mode=none preserve=0 "t"
+--- p-unknown-argument "/// <reference foo=\"bar\" />\nx;"
+pragma reference 0..27 S {}
+diag TS1084 0..27 "Invalid 'reference' directive syntax."
+--- p-unquoted "/// <reference path=a.ts />\nx;"
+pragma reference 0..27 S {}
+diag TS1084 0..27 "Invalid 'reference' directive syntax."
+--- p-unclosed-quote "/// <reference path=\"a.ts />\nx;"
+pragma reference 0..28 S {}
+diag TS1084 0..28 "Invalid 'reference' directive syntax."
+--- p-empty-value "/// <reference path=\"\" />\nx;"
+pragma reference 0..25 S {"path":{"value":"","pos":21,"end":21}}
+path 21..21 preserve=0 ""
+--- p-after-blank-lines-and-comments "\n\n// a\n/* b */\n/// <reference path=\"a.ts\" />\nx;"
+pragma reference 15..44 S {"path":{"value":"a.ts","pos":36,"end":40}}
+path 36..40 preserve=0 "a.ts"
+--- p-two-errors "/// <reference />\n/// <reference foo=\"1\" />\nx;"
+pragma reference 0..17 S {}
+pragma reference 18..43 S {}
+diag TS1084 0..17 "Invalid 'reference' directive syntax."
+diag TS1084 18..43 "Invalid 'reference' directive syntax."
+--- p-mode-without-types "/// <reference path=\"a\" resolution-mode=\"bad\" />\nx;"
+pragma reference 0..48 S {"path":{"value":"a","pos":21,"end":22},"resolution-mode":"bad"}
+path 21..22 preserve=0 "a"
+--- p-no-default-lib-with-types "/// <reference no-default-lib=\"true\" types=\"a\" />\nx;"
+pragma reference 0..49 S {"types":{"value":"a","pos":44,"end":45},"no-default-lib":"true"}
+--- p-jsx-block "/** @jsx h */\n/* @jsxFrag Fragment */\n/** @jsxImportSource preact */\n/** @jsxRuntime automatic */\nx;"
+pragma jsx 0..13 M {"factory":"h"}
+pragma jsxfrag 14..37 M {"factory":"Fragment"}
+pragma jsximportsource 38..68 M {"factory":"preact"}
+pragma jsxruntime 69..97 M {"factory":"automatic"}
+--- p-jsx-line "// @jsx h\nx;"
+--- p-only-header-no-token "/// <reference path=\"a.ts\" />"
+pragma reference 0..29 S {"path":{"value":"a.ts","pos":21,"end":25}}
+path 21..25 preserve=0 "a.ts"
+--- p-bom "﻿/// <reference path=\"a.ts\" />\nx;"
+pragma reference 3..32 S {"path":{"value":"a.ts","pos":22,"end":26}}
+path 24..28 preserve=0 "a.ts"

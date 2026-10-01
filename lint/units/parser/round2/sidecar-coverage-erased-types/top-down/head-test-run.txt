@@ -1,0 +1,41 @@
+
+running 1 test
+test parse::erased_tests::an_erased_statement_is_read_as_the_reference_reads_it ... FAILED
+
+failures:
+
+---- parse::erased_tests::an_erased_statement_is_read_as_the_reference_reads_it stdout ----
+
+thread 'parse::erased_tests::an_erased_statement_is_read_as_the_reference_reads_it' (686321) panicked at /tmp/erased-types/scratch-head/src/js_parser/parse/erased_tests.rs:884:5:
+type A = | | B: None
+interface I { a A }: None
+interface I extends A | B {}: None
+class C { [k: string]: | | B }: None
+type A = { a A }: None
+type A = B | () => void: None
+interface I { m(): | | B }: None
+class C { [a!: string]: number }: None
+interface I { +a: string }: None
+interface I extends typeof A {}: None
+interface I extends A B {}: Some((1005, 22, 23, [39, 123, 39, 32, 101, 120, 112, 101, 99, 116, 101, 100, 46]))
+type A = intrinsic | B: None
+interface I {: Some((0, 0, 0, []))
+interface I { a: 1,, }: Some((0, 0, 0, []))
+interface I extends A,, B {}: Some((1110, 22, 23, [84, 121, 112, 101, 32, 101, 120, 112, 101, 99, 116, 101, 100, 46]))
+interface I extends ;: Some((1110, 20, 21, [84, 121, 112, 101, 32, 101, 120, 112, 101, 99, 116, 101, 100, 46]))
+interface I { a!: string }: None
+interface I extends void {}: None
+export type A = | | B: None
+declare interface I { a A }: None
+namespace N { export interface I extends A | B {} }: None
+const r = a ? (b): c => { type T = | | B; return 1 } : e;: None
+class C { get [k: string]: any }: None
+class C { *[k: string]: any }: None
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    parse::erased_tests::an_erased_statement_is_read_as_the_reference_reads_it
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 70 filtered out; finished in 0.05s
+

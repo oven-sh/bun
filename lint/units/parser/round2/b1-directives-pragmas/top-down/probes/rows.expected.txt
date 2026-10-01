@@ -1,0 +1,43 @@
+tsc differs d22 "//// @ts-ignore\nx;"
+   tsc : 
+   tsgo: directive Ignore 0..15
+tsc differs d23 "// @ts-ignore\nx;"
+   tsc : directive Ignore 0..14
+   tsgo: 
+tsc differs d24 "//\u000b@ts-ignore\nx;"
+   tsc : directive Ignore 0..13
+   tsgo: 
+tsc differs p23 "/// <reference types=\"a\" resolution-mode=\"node\" />\nx;"
+   tsc : types 22..23 mode=none preserve=0; diag TS1453 22..23
+   tsgo: types 22..23 mode=none preserve=0; diag TS1453 42..46
+tsc differs p24 "/// <reference types=\"a\" resolution-mode=\"IMPORT\" />\nx;"
+   tsc : types 22..23 mode=none preserve=0; diag TS1453 22..23
+   tsgo: types 22..23 mode=none preserve=0; diag TS1453 42..48
+tsc differs p25 "/// <reference types=\"\" resolution-mode=\"x\" />\nx;"
+   tsc : types 22..22 mode=none preserve=0; diag TS1453 22..22
+   tsgo: types 22..22 mode=none preserve=0; diag TS1453 41..42
+tsc differs p60 "/// <reference path=\"a.ts\"\nx;"
+   tsc : 
+   tsgo: path 21..25 preserve=0
+tsc differs p61 "/// <reference\nx;"
+   tsc : 
+   tsgo: diag TS1084 0..14
+tsc differs p62 "/// <reference/>\nx;"
+   tsc : 
+   tsgo: diag TS1084 0..16
+tsc differs p63 "/// <reference path=\"a.ts\" path=\"b.ts\" />\nx;"
+   tsc : path 21..25 preserve=0
+   tsgo: path 33..37 preserve=0
+tsc differs p64 "/// <reference garbage path=\"a.ts\" />\nx;"
+   tsc : path 29..33 preserve=0
+   tsgo: diag TS1084 0..37
+tsc differs p65 "/// <reference path=\"a.ts\" />\nx;"
+   tsc : path 22..26 preserve=0
+   tsgo: 
+tsc differs p68 "/// <reference"
+   tsc : 
+   tsgo: diag TS1084 0..14
+tsc differs p69 "/// <reference path=\""
+   tsc : 
+   tsgo: diag TS1084 0..21
+rows: 26 directive sources, 70 header sources; port differs from typescript-go on 0; tsc 6.0.2 differs from typescript-go on 3 + 11

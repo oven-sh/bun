@@ -1,0 +1,32 @@
+--- d-line-ignore "// @ts-ignore\nlet x: number = 'a';"
+directive Ignore 0..13
+--- d-triple-slash-ignore "/// @ts-ignore\nx;"
+directive Ignore 0..14
+--- d-expect-error-reason "//@ts-expect-error: reason\nx;"
+directive ExpectError 0..26
+--- d-block-last-line "/*\n * @ts-ignore */\nx;"
+directive Ignore 3..19
+--- d-block-first-line-only "/* @ts-ignore\n */\nx;"
+--- d-block-one-line "/* @ts-expect-error */\nx;"
+directive ExpectError 0..22
+--- d-words-before-at-line "// see @ts-ignore\nx;"
+--- d-words-before-at-block "/* x @ts-ignore */\nx;"
+--- d-crlf "// @ts-ignore\r\nx;\r\n/*\r\n @ts-expect-error */\r\ny;\r\n"
+directive Ignore 0..13
+directive ExpectError 23..43
+--- d-after-code "x; // @ts-ignore\ny; /* @ts-expect-error */ z;\n"
+directive Ignore 3..16
+directive ExpectError 20..42
+--- d-four-slashes "//// @ts-ignore\nx;"
+--- d-nbsp-before-at "// @ts-ignore\nx;"
+directive Ignore 0..14
+--- d-prefix-only "// @ts-ignoreXYZ\n// @ts-expect-errors\nx;"
+directive Ignore 0..16
+directive ExpectError 17..37
+--- d-upper-case "// @TS-IGNORE\nx;"
+--- d-jsdoc-last-line "/**\n * text\n * @ts-expect-error */\nx;"
+directive ExpectError 12..34
+--- d-ls-in-block "/* a  @ts-ignore */\nx;"
+directive Ignore 7..21
+--- d-eof-no-newline "x;\n// @ts-ignore"
+directive Ignore 3..16

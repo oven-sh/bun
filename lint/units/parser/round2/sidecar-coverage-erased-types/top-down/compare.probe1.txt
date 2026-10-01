@@ -1,0 +1,17 @@
+[other-error] "type T = "
+   tsc  : error TS1110 [8,8) Type expected.
+   proto: error TS1110 [9,9) Type expected.
+   head : error TS1110 [9,9) Type expected.
+[LINT-ACCEPTS] "interface I extends A.B<C>.D {}"
+   tsc  : error TS1477 [23,26) An instantiation expression cannot be followed by a property access.
+   proto: InterfaceDeclaration[0,31) name[10,11) extends[12,28) ExpressionWithTypeArguments[20,28) members[30,30)
+   head : ok
+[LINT-ACCEPTS] "interface I extends A<B>.C {}"
+   tsc  : error TS1477 [21,24) An instantiation expression cannot be followed by a property access.
+   proto: InterfaceDeclaration[0,29) name[10,11) extends[12,26) ExpressionWithTypeArguments[20,26) members[28,28)
+   head : ok
+[other-error] "interface I extends A[] {}"
+   tsc  : error TS1011 [22,22) An element access expression should take an argument.
+   proto: error TS1109 [22,23) Expression expected.
+   head : ok
+{"same-error":25,"other-error":2,"same-tree":25,"LINT-ACCEPTS":2}

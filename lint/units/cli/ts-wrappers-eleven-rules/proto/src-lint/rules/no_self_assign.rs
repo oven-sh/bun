@@ -40,8 +40,11 @@ fn each_self_assignment(context: &mut Context<'_, '_>, left: &Expr, right: &Expr
     if context.ts_wrapper(left).is_some() || context.ts_wrapper(right).is_some() {
         return;
     }
-    // A literal in parentheses on the left is an expression for typescript-eslint, no pattern, and a syntax error for ESLint's parser.
-    if matches!(left.data, ExprData::EArray(_) | ExprData::EObject(_)) && context.is_wrapped(left) {
+    // A literal in parentheses on the left is an expression for typescript-eslint, no pattern. ESLint's parser rejects it: a JavaScript file keeps the pattern.
+    if context.is_typescript()
+        && matches!(left.data, ExprData::EArray(_) | ExprData::EObject(_))
+        && context.is_wrapped(left)
+    {
         return;
     }
     match (&left.data, &right.data) {

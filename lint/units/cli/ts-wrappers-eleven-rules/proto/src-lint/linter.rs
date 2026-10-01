@@ -93,13 +93,13 @@ fn target_of(expr: &Expr) -> Option<usize> {
 }
 
 impl Linter<'_, '_> {
-    /// `expr` is written where a target is expected. In parentheses or in a TypeScript node it is an expression there, as for typescript-eslint: no pattern.
+    /// `expr` is written where a target is expected. In a TypeScript file a literal in parentheses or in a TypeScript node is an expression there, as typescript-eslint reads it: no pattern. ESLint's own parser rejects such parentheses, and a JavaScript file keeps the pattern.
     fn mark(&mut self, expr: &Expr) {
         let written = match &expr.data {
             ExprData::ESpread(spread) => &spread.value,
             _ => expr,
         };
-        if self.context.is_wrapped(written) {
+        if self.context.is_typescript() && self.context.is_wrapped(written) {
             return;
         }
         if let Some(address) = target_of(expr) {

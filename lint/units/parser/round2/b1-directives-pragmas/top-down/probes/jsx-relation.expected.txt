@@ -1,0 +1,51 @@
+block-header               "let e = h(\"a\", null);"
+line-header                "let e = h(\"a\", null);"
+block-after-first-token    "let e = h(\"a\", null);"
+upper-case-name            "let e = React.createElement(\"a\", null);"
+hash-trigger               "let e = h(\"a\", null);"
+second-at-on-line          "let e = h(\"a\", null);"
+two-pragmas-last-wins      "let e = g(\"a\", null);"
+value-on-next-line         "let e = React.createElement(\"a\", null);"
+colon-after-name           "let e = React.createElement(\"a\", null);"
+frag                       "let e = h(F, null);"
+frag-lower                 "let e = h(React.Fragment, null);"
+inside-jsx-tag             "let e = React.createElement(\"a\", null);"
+value-then-star-slash      "let e = h(\"a\", null);"
+1.4.3 367d939d9afc919c6ccce278c970e7c3f23da8c9
+---- tsc 6.0.2
+block-header               jsx="h"
+line-header                
+block-after-first-token    
+upper-case-name            jsx="h"
+hash-trigger               
+second-at-on-line          
+two-pragmas-last-wins      jsx="h" jsx="g"
+value-on-next-line         jsx="h"
+colon-after-name           
+frag                       jsx="h" jsxfrag="F"
+frag-lower                 jsx="h" jsxfrag="F"
+inside-jsx-tag             
+value-then-star-slash      jsx="h*/"
+---- typescript-go
+--- block-header
+pragma jsx 0..13 M nl=1 [factory=9..10]
+--- line-header
+--- block-after-first-token
+--- upper-case-name
+pragma jsx 0..13 M nl=1 [factory=9..10]
+--- hash-trigger
+--- second-at-on-line
+--- two-pragmas-last-wins
+pragma jsx 0..12 M nl=0 [factory=8..9]
+pragma jsx 13..25 M nl=1 [factory=21..22]
+--- value-on-next-line
+--- colon-after-name
+--- frag
+pragma jsx 0..13 M nl=1 [factory=9..10]
+pragma jsxfrag 14..31 M nl=1 [factory=27..28]
+--- frag-lower
+pragma jsx 0..13 M nl=1 [factory=9..10]
+pragma jsxfrag 14..31 M nl=1 [factory=27..28]
+--- inside-jsx-tag
+--- value-then-star-slash
+pragma jsx 0..10 M nl=1 [factory=7..8]

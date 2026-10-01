@@ -107,7 +107,10 @@ const server = Bun.listen<State>({
 // Every wait goes through until(): it has the deadline, and its turns keep the queue moving.
 async function roundTrip() {
   let back = false;
-  loopbackRoundTrip().then(() => (back = true));
+  loopbackRoundTrip().then(
+    () => (back = true),
+    e => report({ error: `loopback round trip: ${e}` }),
+  );
   await until("a loopback round trip", () => back);
 }
 

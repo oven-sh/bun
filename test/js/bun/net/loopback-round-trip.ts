@@ -8,30 +8,41 @@
 // iterations later.
 //
 // Both kernels deliver loopback segments in the order sent. So when a byte written to an echo
-// pair has come back, every segment that any process sent before that write has arrived.
+// pair has come back, every segment that any process sent before that write has arrived. Windows
+// is not analyzed: there the round trip is a delay of two loopback hops, not a proof.
 //
-// The pair is plain TCP, so the TLS handshake budget never holds it back.
-const waiting: (() => void)[] = [];
+// The pair is plain TCP, so the TLS handshake budget never holds it back. It is unref'd, so it
+// never keeps a process alive: a fixture's child must still exit when its parent is gone.
+type Waiter = { resolve: () => void; reject: (error: Error) => void };
+const waiting: Waiter[] = [];
 
 async function connect() {
   const listener = Bun.listen({
     hostname: "127.0.0.1",
     port: 0,
     socket: {
+      open(socket) {
+        socket.unref();
+      },
       data(socket, bytes) {
         socket.write(bytes);
       },
     },
   });
+  listener.unref();
   const socket = await Bun.connect({
     hostname: "127.0.0.1",
     port: listener.port,
     socket: {
       data(_, bytes) {
-        for (let i = 0; i < bytes.length; i++) waiting.shift()?.();
+        for (let i = 0; i < bytes.length; i++) waiting.shift()?.resolve();
+      },
+      close() {
+        for (const { reject } of waiting.splice(0)) reject(new Error("the loopback echo pair closed"));
       },
     },
   });
+  socket.unref();
   return { listener, socket };
 }
 let pair: ReturnType<typeof connect> | undefined;
@@ -39,8 +50,8 @@ let pair: ReturnType<typeof connect> | undefined;
 /** Resolves when everything that was sent over loopback before the call has arrived. */
 export async function loopbackRoundTrip() {
   const { socket } = await (pair ??= connect());
-  const { promise, resolve } = Promise.withResolvers<void>();
-  waiting.push(resolve);
-  socket.write("x");
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
+  if (socket.write("x") !== 1) throw new Error("the loopback echo pair is closed");
+  waiting.push({ resolve, reject });
   await promise;
 }

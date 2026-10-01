@@ -35,8 +35,12 @@ probes/
   clean-clone.sh      a clone of a commit without sync.sh: what a checkout of CI has, and what the commit lacks
   lint-leak.sh        `bun --lint` itself under the leak check and the exception checks on three small files
   table.ts            bun table.ts <min ms> <log> ...: the tests of several logs side by side
+  by-describe.ts      bun by-describe.ts <log> ...: the time of the tests of each describe block
+  cold-reads.ts       bun cold-reads.ts <H>: the files that the file reads once the whole enumeration has left it, cold or warm
   evict.py            python3 evict.py <directory> ...: puts the data pages of the files out of the page cache
 observed/
+  numbers.txt                        every run of this pass on one page: start here
+  cold-reads.txt                     what a cold page cache costs the changed file: 0.6 s; all 12,444 cases: 15 to 21 s
   batch1.txt, batch1/                the tree glue: what batch1.sh printed, and the logs
   batch1-debug-table.txt             the tests of glue above 0.9 s in the three debug runs
   batch1-release-table.txt           the tests of glue above 0.3 s in the four release runs
@@ -47,6 +51,7 @@ observed/
 The acceptance, once corpus-commit and corpus-glue are in the worktree (each line one call, timeout 3600000 ms)
   /workspace/tools/lk bun bd test test/cli/lint/conformance.test.ts
   /workspace/tools/lk bash probes/batch1.sh /workspace/wt/conformance /tmp/<out> final
-  and once more in a clone of the pushed commit that sync.sh has not touched (git clone --shared --no-checkout, the sparse
-  set of ../../scratch.sh, git checkout): the worktree holds the file that .gitignore:139 (*.generated.ts) keeps out of a
-  commit, so only a clone shows whether the commit has all 12,444 cases.
+  bash probes/clean-clone.sh /tmp/<clone> && /workspace/tools/lk bash probes/batch1.sh /tmp/<clone> /tmp/<out> clean
+  The last line is a clone of the pushed commit that sync.sh has not touched: the worktree holds the file that
+  .gitignore:139 (*.generated.ts) keeps out of a commit, so only a clone shows whether the commit has all 12,444 cases.
+  A file whose test starts the binary under test needs REL=<release build with --lint> before batch1.sh.

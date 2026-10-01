@@ -86,6 +86,8 @@ struct Inner {
     disk: bool,
     /// A write was asked for.
     wrote: bool,
+    /// See [`File::shares_position`].
+    shares_position: bool,
     port: Arc<Port>,
     state: AtomicU32,
     /// After the request was orphaned, the owner and the pool thread each let
@@ -132,6 +134,7 @@ impl File {
             close_fd,
             disk,
             wrote: false,
+            shares_position: false,
             port,
             state: AtomicU32::new(IDLE),
             released: AtomicBool::new(false),
@@ -170,6 +173,13 @@ impl File {
     pub fn is_busy(&self) -> bool {
         // SAFETY: `inner` is live while the owner's `File` is.
         unsafe { (*self.inner.as_ptr()).state.load(Ordering::Acquire) != IDLE }
+    }
+
+    /// The HANDLE is a duplicate of a descriptor somebody else reads at its
+    /// position, which a read at an offset leaves where it was.
+    pub fn shares_position(&mut self) {
+        // SAFETY: `inner` is live while the owner's `File` is, and no request is out.
+        unsafe { (*self.inner.as_ptr()).shares_position = true };
     }
 
     /// Read up to `len` bytes, at `offset` or at the file position, then call
@@ -493,6 +503,9 @@ impl Inner {
                     let spare = bun_core::vec::spare_bytes_mut(buf);
                     let spare = &mut spare[..*len];
                     let result = match offset {
+                        Some(offset) if (*this).shares_position => {
+                            sys::windows::fs::pread_keeping_position(fd, spare, *offset)
+                        }
                         Some(offset) => sys::pread(fd, spare, *offset as i64),
                         None => sys::read(fd, spare),
                     };

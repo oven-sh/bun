@@ -215,7 +215,7 @@ impl CopyFile {
                 self.source_file_store
                     .pathlike
                     .path()
-                    .slice_z_as_written(&mut path_buf1),
+                    .slice_z(&mut path_buf1),
                 OPEN_SOURCE_FLAGS,
                 0,
             ) {
@@ -555,7 +555,7 @@ impl CopyFile {
                 .destination_file_store
                 .pathlike
                 .path()
-                .slice_z_as_written(&mut dest_buf)
+                .slice_z(&mut dest_buf)
                 .len();
             // SAFETY: `slice_z` wrote `dest_len` bytes + NUL into `dest_buf`.
             let dest = bun_core::ZStr::from_buf(&dest_buf[..], dest_len);
@@ -563,7 +563,7 @@ impl CopyFile {
                 self.source_file_store
                     .pathlike
                     .path()
-                    .slice_z_as_written(&mut source_buf),
+                    .slice_z(&mut source_buf),
                 dest,
             ) {
                 bun_sys::Result::Err(errno) => {
@@ -648,7 +648,7 @@ impl CopyFile {
                             self.source_file_store
                                 .pathlike
                                 .path()
-                                .slice_z_as_written(&mut path_buf),
+                                .slice_z(&mut path_buf),
                         ) {
                             bun_sys::Result::Ok(result) => {
                                 stat_ = Some(result);
@@ -683,7 +683,7 @@ impl CopyFile {
                                             self.destination_file_store
                                                 .pathlike
                                                 .path()
-                                                .slice_z_as_written(&mut path_buf)
+                                                .slice_z(&mut path_buf)
                                                 .as_ptr(),
                                             i64::try_from(self.max_length).expect("int cast"),
                                         )
@@ -700,7 +700,7 @@ impl CopyFile {
                                         self.destination_file_store
                                             .pathlike
                                             .path()
-                                            .slice_z_as_written(&mut path_buf),
+                                            .slice_z(&mut path_buf),
                                         mode,
                                     ) {
                                         bun_sys::Result::Err(err) => {
@@ -950,7 +950,7 @@ fn copyable_path<'a>(
     buf: &'a mut bun_paths::PathBuffer,
 ) -> bun_sys::Result<Option<&'a bun_core::ZStr>> {
     match pathlike {
-        PathOrFileDescriptor::Path(path) => Ok(Some(path.slice_z_as_written(buf))),
+        PathOrFileDescriptor::Path(path) => Ok(Some(path.slice_z(buf))),
         PathOrFileDescriptor::Fd(fd) => match bun_sys::File::borrow(fd).kind()? {
             bun_sys::FileKind::Directory => Err(bun_sys::Error::from_code(
                 bun_sys::E::EISDIR,
@@ -1005,7 +1005,6 @@ fn copy_by_path(
         Ok(None) => return CopyByPath::Unavailable,
         Err(err) => return CopyByPath::Failed(err.to_system_error()),
     };
-    // Named as every other `Bun.file` call names them.
     let dest_w = match w::fs::WPath::new(dest_path.as_bytes()) {
         Ok(path) => path,
         Err(err) => {
@@ -1049,9 +1048,14 @@ fn copy_by_path(
                 }
                 if *mkdirp_if_not_exists {
                     *mkdirp_if_not_exists = false;
-                    match blob::mkdirp_parent(dest_path.as_bytes()) {
+                    match blob::mkdirp_parent(dest_path.as_bytes(), false) {
                         Ok(()) => continue,
-                        Err(mkdir_err) => return CopyByPath::Failed(mkdir_err.to_system_error()),
+                        Err(mkdir_err) => {
+                            return CopyByPath::Failed(error_with_pathlike(
+                                mkdir_err,
+                                &destination.pathlike,
+                            ));
+                        }
                     }
                 }
             }
@@ -1059,7 +1063,10 @@ fn copy_by_path(
             E::EPERM => {
                 if matches!(bun_sys::stat(source_path), Ok(stat) if bun_sys::S::ISDIR(stat.st_mode as u32))
                 {
-                    return CopyByPath::Failed(unsupported_directory_error());
+                    return CopyByPath::Failed(error_with_pathlike(
+                        bun_sys::Error::from_code(E::EISDIR, bun_sys::Tag::copyfile),
+                        &source.pathlike,
+                    ));
                 }
             }
             _ => {}
@@ -1099,7 +1106,6 @@ fn copy_by_path(
                 path: destination.pathlike.clone(),
                 len: max_length as u64,
                 flags: 0,
-                as_written: true,
             },
             node_fs::Flavor::Sync,
         );

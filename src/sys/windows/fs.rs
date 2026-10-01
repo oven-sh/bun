@@ -647,7 +647,8 @@ fn overlapped_at(off: u64) -> win32::OVERLAPPED {
 /// A positioned `ReadFile`/`WriteFile` on a synchronous handle moves its
 /// file pointer too. `fs.read(fd, .., position)` must leave it alone, so it
 /// is put back for the fds JS can see (CRT fds). HANDLE-kind callers never
-/// mix positioned and sequential I/O on one handle and skip the two calls.
+/// mix positioned and sequential I/O on one handle and skip the two calls,
+/// but for a duplicate of such an fd ([`pread_keeping_position`]).
 struct RestoreFilePointer {
     handle: HANDLE,
     saved: Option<i64>,
@@ -655,11 +656,15 @@ struct RestoreFilePointer {
 
 impl RestoreFilePointer {
     fn new(fd: Fd) -> Self {
+        Self::new_if(fd, fd.kind() == crate::FdKind::Crt)
+    }
+
+    fn new_if(fd: Fd, restore: bool) -> Self {
         const FILE_POSITION_INFORMATION: win32::FILE_INFORMATION_CLASS =
             win32::FILE_INFORMATION_CLASS::FilePositionInformation;
         let handle = fd.native();
         let mut saved = None;
-        if fd.kind() == crate::FdKind::Crt {
+        if restore {
             let mut io: win32::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
             let mut current: i64 = 0;
             // One system call; `SetFilePointerEx(FILE_CURRENT)` is this
@@ -706,6 +711,13 @@ pub fn pread(fd: Fd, buf: &mut [u8], off: i64) -> Maybe<usize> {
     }
     let _restore = RestoreFilePointer::new(fd);
     read_at(fd, buf, Some(off as u64))
+}
+
+/// [`pread`] of a HANDLE that shares its file pointer with an fd JS can see: a
+/// duplicate is the same file object.
+pub fn pread_keeping_position(fd: Fd, buf: &mut [u8], off: u64) -> Maybe<usize> {
+    let _restore = RestoreFilePointer::new_if(fd, true);
+    read_at(fd, buf, Some(off))
 }
 
 /// `ReadFile` at `at`, or at the file pointer. A positioned read runs

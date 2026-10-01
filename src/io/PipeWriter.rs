@@ -2041,13 +2041,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
             }
             sys::Result::Err(err) => {
                 log!("onWrite() = {}", bstr::BStr::new(err.name()));
-                Self::r(this).last_write_result = WriteResult::Err(err.clone());
-                Self::r_on_error(this, err);
-                core::hint::black_box(this);
-                // `close()`, not `close_without_reporting()`: the parent must still
-                // observe `on_close` after `on_error` (the `PosixStreamingWriter`
-                // contract). FileSink's stream teardown only runs from `on_close`.
-                Self::r(this).close();
+                Self::fail_send(this, err);
                 return;
             }
             sys::Result::Ok(written) => written.min(submitted),
@@ -2104,12 +2098,19 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         unsafe { Parent::on_writable(Self::r(this).parent()) };
     }
 
-    /// Report a failure to start a write like a failed write.
+    /// A write failed, or could not be started.
     fn fail_send(this: *mut Self, err: sys::Error) {
         Self::r(this).last_write_result = WriteResult::Err(err.clone());
+        // Before the parent hears, as in `PosixStreamingWriter`: what it calls
+        // from `on_error` finds a writer that is done, not a write in flight.
+        Self::r(this).is_done = true;
+        Self::r(this).current_payload.reset();
+        Self::r(this).outgoing.reset();
         Self::r_on_error(this, err);
         core::hint::black_box(this);
-        // See `on_write_result`: the parent must get `on_close`.
+        // `close()`, not `close_without_reporting()`: the parent must still
+        // observe `on_close` after `on_error` (the `PosixStreamingWriter`
+        // contract). FileSink's stream teardown only runs from `on_close`.
         Self::r(this).close();
     }
 

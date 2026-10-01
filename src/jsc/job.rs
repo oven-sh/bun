@@ -215,7 +215,8 @@ pub trait JobContext: Sized + 'static {
 
     /// [`run`](Self::run) writes what script takes for written when the call
     /// that made the job returns: `process.exit()` waits for it
-    /// ([`WorkPool::owe_write`]), unless it [`waits`](Self::waits).
+    /// ([`WorkPool::owe_write`]), and if it [`waits`](Self::waits), not for long
+    /// ([`WorkPool::write_held_up`]).
     const OWED_AT_EXIT: bool = false;
 
     /// [`waits`](Self::waits) is true whatever the job was given: nothing has
@@ -578,6 +579,8 @@ pub struct Job<C: JobContext> {
     places: [Option<FdPlace>; 2],
     /// Counted by [`WorkPool::owe_write`]. The pool's with the job.
     owed: bool,
+    /// Counted by [`WorkPool::write_held_up`] instead.
+    held_up: bool,
     /// The [`FdUse::Appends`] job that goes to the pool when this one is done,
     /// or [`APPENDED`].
     next_append: AtomicPtr<WorkPoolTask>,
@@ -653,6 +656,7 @@ impl<C: JobContext> Job<C> {
             keep_alive,
             places: [None, None],
             owed: false,
+            held_up: false,
             next_append: AtomicPtr::new(core::ptr::null_mut()),
             off,
             js,
@@ -750,7 +754,8 @@ impl<C: JobContext> Job<C> {
             let cancelled = (*this).ticket.as_ref().expect("job").cancelled();
             if !cancelled && C::waits(&(*this).off) {
                 if core::mem::take(&mut (*this).owed) {
-                    WorkPool::write_settled();
+                    (*this).held_up = true;
+                    WorkPool::write_held_up();
                 }
                 (*task).callback = Self::run;
                 return WorkPool::schedule_wait(task);
@@ -848,6 +853,9 @@ impl<C: JobContext> Completion<C> {
         if C::OWED_AT_EXIT && core::mem::take(&mut job.owed) {
             WorkPool::write_settled();
         }
+        if C::OWED_AT_EXIT && core::mem::take(&mut job.held_up) {
+            WorkPool::held_up_write_settled();
+        }
         // SAFETY: moving the field out of a value that is never dropped.
         let ticket = unsafe { core::ptr::read(&raw const me.ticket) };
         ticket.post(bun_event_loop::ConcurrentTask::ConcurrentTask::create_from(
@@ -855,12 +863,16 @@ impl<C: JobContext> Completion<C> {
         ));
     }
     /// The job found that it may wait on something outside the process, which
-    /// [`JobContext::waits`] could not tell: an exit does not wait for it
+    /// [`JobContext::waits`] could not tell: an exit does not wait long for it
     /// ([`JobContext::OWED_AT_EXIT`]).
-    pub fn not_owed_at_exit(&self) {
+    pub fn held_up_at_exit(&self) {
         // SAFETY: the job is the holder's until it is finished.
-        if unsafe { core::mem::take(&mut (*self.job.as_ptr()).owed) } {
-            WorkPool::write_settled();
+        unsafe {
+            let job = self.job.as_ptr();
+            if core::mem::take(&mut (*job).owed) {
+                (*job).held_up = true;
+                WorkPool::write_held_up();
+            }
         }
     }
 

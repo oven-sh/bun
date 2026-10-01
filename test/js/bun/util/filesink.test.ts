@@ -479,6 +479,48 @@ if (isWindows) {
     expect(missed).toEqual([]);
   });
 
+  // The continuation of the rejected promise runs while the writer is still reporting the failure.
+  it("what is called once a write has failed settles, and the process exits", async () => {
+    using dir = tempDir("filesink-after-failed-write", { "file.txt": "contents" });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const fs = require("fs");
+          const outcomes = {};
+          for (const [name, next] of Object.entries({
+            end: writer => writer.end(),
+            flush: writer => writer.flush(),
+            write: writer => writer.write("more"),
+          })) {
+            const fd = fs.openSync("file.txt", "r");
+            const writer = Bun.file(fd).writer();
+            writer.write("refused");
+            const settled = promise => promise.then(() => "resolved", err => err.code);
+            outcomes[name] = [await settled(writer.flush()), await settled((async () => next(writer))())];
+            fs.closeSync(fd);
+          }
+          console.log(JSON.stringify(outcomes));
+        `,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({
+        end: ["EBADF", "resolved"],
+        flush: ["EBADF", "resolved"],
+        write: ["EBADF", "resolved"],
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   // fs.openSync gives a synchronous pipe end, which is written from a helper thread. In PIPE_NOWAIT
   // mode a write that does not fit the pipe's buffer gives a read that is waiting what that asked for,
   // or nothing to nobody, and says so by succeeding short: the writer sends the rest again. Bun puts
@@ -599,156 +641,6 @@ if (isWindows) {
     expect(exitCode).toBe(0);
   });
 }
-
-// `CreateFileW` has rules for names: `NUL` and `LPT1` are devices, in a directory too, and a trailing
-// dot or space is dropped. Which names those are differs between Windows versions, so the ways of
-// writing a `Bun.file` are compared with each other, for a relative name and for the absolute path of it.
-// A directory on the way to the file loses one trailing dot and nothing else; the missing ones are
-// created under the names the open then looks for.
-it.skipIf(!isWindows)(
-  "every way of writing a Bun.file writes to the same place for names Win32 treats specially",
-  async () => {
-    const names = [
-      "NUL",
-      "nul",
-      "sub/NUL",
-      "lpt1",
-      "conin$",
-      "trail.",
-      "sp ",
-      "trail./f.txt",
-      "sp ./deep./f.txt",
-      "sp /f.txt",
-      "dots../f.txt",
-    ];
-    using dir = tempDir("filesink-win32-names", {
-      "fixture.mjs": String.raw`
-        import fs from "node:fs";
-        import path from "node:path";
-
-        const root = process.cwd();
-        const source = path.join(root, "source.txt");
-        fs.writeFileSync(source, "x");
-        const longer = path.join(root, "longer.txt");
-        fs.writeFileSync(longer, "xyz");
-        const apis = {
-          write: name => Bun.write(Bun.file(name), "x"),
-          copy: name => Bun.write(Bun.file(name), Bun.file(source)),
-          copySlice: name => Bun.write(Bun.file(name).slice(0, 1), Bun.file(longer)),
-          empty: async name => {
-            await Bun.write(Bun.file(name), "xy");
-            await Bun.write(Bun.file(name), "");
-            await Bun.write(Bun.file(name), "x");
-          },
-          writePath: name => Bun.write(name, "x"),
-          writeStream: name => Bun.write(name, new Response(new Blob(["x"]).stream())),
-          writer: async name => {
-            const writer = Bun.file(name).writer();
-            writer.write("x");
-            await writer.end();
-          },
-        };
-        const results = {};
-        let count = 0;
-        for (const name of JSON.parse(process.argv[2])) {
-          for (const absolute of [false, true]) {
-            const key = (absolute ? "absolute " : "") + name;
-            results[key] = {};
-            for (const [api, run] of Object.entries(apis)) {
-              const cwd = path.join(root, "d" + count++);
-              fs.mkdirSync(path.join(cwd, "sub"), { recursive: true });
-              process.chdir(cwd);
-              // Not path.join: it drops a trailing dot.
-              const target = absolute ? cwd + path.sep + name : name;
-              let ok = true;
-              try {
-                await run(target);
-              } catch {
-                ok = false;
-              }
-              const created = fs.readdirSync(cwd, { recursive: true }).filter(entry => entry !== "sub");
-              // What a file was written under is what it is read, measured and deleted under. A device
-              // has nothing to read.
-              let readBack = null;
-              if (created.length) {
-                const file = Bun.file(target);
-                readBack = {
-                  text: await file.text().catch(error => error.code),
-                  exists: await file.exists(),
-                  size: await file.stat().then(stat => stat.size, error => error.code),
-                  deleted: await file.delete().then(() => fs.readdirSync(cwd, { recursive: true }).filter(entry => entry !== "sub"), error => error.code),
-                };
-              }
-              process.chdir(root);
-              results[key][api] = { ok, created: created.sort(), readBack };
-            }
-          }
-        }
-        console.log(JSON.stringify(results));
-        // Prefixed, so that whatever was created is removed under the name it has.
-        for (let i = 0; i < count; i++) {
-          fs.rmSync("\\\\?\\" + path.join(root, "d" + i), { recursive: true, force: true });
-        }
-      `,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "fixture.mjs", JSON.stringify(names)],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "inherit",
-    });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    type ReadBack = { text: string; exists: boolean; size: number | string; deleted: string[] | string };
-    type Result = { ok: boolean; created: string[]; readBack: ReadBack | null };
-    const results = JSON.parse(stdout) as Record<
-      string,
-      Record<"write" | "copy" | "copySlice" | "empty" | "writePath" | "writeStream" | "writer", Result>
-    >;
-    const keys = names.flatMap(name => [name, "absolute " + name]);
-    // `writer()` does not create directories.
-    const inExistingDirectory = keys.filter(key => !key.endsWith("/f.txt"));
-    for (const api of ["copy", "writePath", "writeStream", "writer"] as const) {
-      const compared = api === "writer" ? inExistingDirectory : keys;
-      expect(Object.fromEntries(compared.map(key => [key, { api, ...results[key][api] }]))).toEqual(
-        Object.fromEntries(compared.map(key => [key, { api, ...results[key].write }])),
-      );
-    }
-    // These two cut the file to a length, which a device refuses: compared where the name is a file's.
-    const files = keys.filter(key => results[key].write.created.length > 0);
-    expect(files.length).toBeGreaterThan(0);
-    for (const api of ["copySlice", "empty"] as const) {
-      expect(Object.fromEntries(files.map(key => [key, { api, ...results[key][api] }]))).toEqual(
-        Object.fromEntries(files.map(key => [key, { api, ...results[key].write }])),
-      );
-    }
-    // A bare `NUL` is the null device on every Windows version, under any directory.
-    expect(results.NUL.write).toEqual({ ok: true, created: [], readBack: null });
-    expect(results["absolute NUL"].write).toEqual({ ok: true, created: [], readBack: null });
-    // What was written under a name is read, measured and deleted under that name.
-    expect(results["absolute trail."].write).toEqual({
-      ok: true,
-      created: ["trail"],
-      readBack: { text: "x", exists: true, size: 1, deleted: [] },
-    });
-    for (const [name, parents] of [
-      ["trail./f.txt", ["trail"]],
-      ["sp ./deep./f.txt", ["sp ", "sp \\deep"]],
-      ["sp /f.txt", ["sp "]],
-      ["dots../f.txt", ["dots.."]],
-    ] as const) {
-      for (const key of [name, "absolute " + name]) {
-        expect({ key, ...results[key].write }).toEqual({
-          key,
-          ok: true,
-          created: [...parents, parents.at(-1) + "\\f.txt"],
-          readBack: { text: "x", exists: true, size: 1, deleted: [...parents] },
-        });
-      }
-    }
-    expect(exitCode).toBe(0);
-  },
-);
 
 // When a write to a pollable fd returns `.pending`, FileSink takes a
 // `must_be_kept_alive_until_eof` ref on itself so it survives until the

@@ -256,8 +256,6 @@ impl FileRoute {
 
         let open_flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NONBLOCK;
 
-        // Opened as every `Bun.file` path is, so that a route and
-        // `Bun.file(path).text()` agree on what `path` names.
         let mut path_buf = bun_paths::path_buffer_pool::get();
         let opened = if path.len() < path_buf.len() {
             bun_sys::open(

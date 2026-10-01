@@ -1021,6 +1021,34 @@ describe("copyFileSync", () => {
     }).toThrow();
   });
 
+  // Bare, Win32 reads "a:s" as a path on drive A.
+  it.skipIf(!isWindows)("a relative path is resolved from how it is written", async () => {
+    using dir = tempDir("fs-copyfile-dot-slash", { "src.txt": "contents", "sub/keep.txt": "" });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const fs = require("fs");
+          fs.copyFileSync("src.txt", "./a:s");
+          fs.copyFileSync("./src.txt", ".\\\\b:s");
+          await fs.promises.copyFile("sub/../src.txt", "sub/../c:s");
+          console.log(JSON.stringify([fs.readdirSync(".").sort(), fs.readFileSync("./c:s", "utf8")]));
+        `,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify([["a", "b", "c", "src.txt", "sub"], "contents"]),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   it("throws ENOENT with syscall, path and dest for a destination in a missing directory", async () => {
     const tempdir = tmpdirTestMkdir();
     const src = import.meta.path;
@@ -3966,6 +3994,53 @@ describe("rm", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "{}", stderr: "", exitCode: 0 });
+  });
+
+  // Windows takes ".." off the spelling of the current directory. The directory's own path is where the link leads.
+  it.skipIf(!isWindows)("removes what .. names from a current directory reached through a junction", async () => {
+    using dir = tempDir("fs-rm-dotdot-link", {
+      "links/other/file.txt": "",
+      "real/dist/file.txt": "beside the target",
+      "real/target/file.txt": "",
+    });
+    symlinkSync(join(String(dir), "real", "target"), join(String(dir), "links", "link"), "junction");
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const fs = require("fs");
+          const path = require("path");
+          const root = path.resolve("..", "..");
+          const left = {};
+          for (const [name, remove] of Object.entries({
+            rmSync: () => fs.rmSync("../dist", { recursive: true }),
+            "rmSync force": () => fs.rmSync("..\\\\dist", { recursive: true, force: true }),
+            "promises.rm": () => fs.promises.rm("../other/../dist", { recursive: true }),
+            "rmdirSync recursive": () => fs.rmdirSync("./../dist", { recursive: true }),
+          })) {
+            fs.mkdirSync(path.join(root, "links", "dist", "inner"), { recursive: true });
+            await remove();
+            left[name] = ["links", "real"].filter(side => fs.existsSync(path.join(root, side, "dist")));
+          }
+          console.log(JSON.stringify(left));
+        `,
+      ],
+      env: bunEnv,
+      cwd: join(String(dir), "links", "link"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({
+      stdout: JSON.parse(stdout),
+      stderr,
+      exitCode,
+    }).toEqual({
+      stdout: { rmSync: ["real"], "rmSync force": ["real"], "promises.rm": ["real"], "rmdirSync recursive": ["real"] },
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   // To the native calls on Windows no name at all, relative to a directory, is that directory.
@@ -8701,6 +8776,35 @@ describe.skipIf(!isWindows).concurrent("what was written is in the file when pro
       Array(processes).fill(100_000),
     );
     expect(await proc.exited).toBe(0);
+  });
+});
+
+// What fits the pipe waits on nobody.
+describe.skipIf(!isWindows).concurrent("what was written to a pipe arrives when process.exit() follows at once", () => {
+  it.each([
+    ["fs.write()", n => `fs.write(1, Buffer.alloc(${n}, "x"), () => {});`],
+    ["fs.write() of a string", n => `fs.write(1, "x".repeat(${n}), () => {});`],
+    ["fs.writev()", n => `fs.writev(1, [Buffer.alloc(${n}, "x")], () => {});`],
+    [
+      "one fs.write() behind the other",
+      n => `fs.write(1, Buffer.alloc(${n} - 1, "x"), () => {}); fs.write(1, "x", () => {});`,
+    ],
+    ["Bun.write() of a Blob", n => `Bun.write(Bun.stdout, new Blob(["x".repeat(${n})]));`],
+  ] as [string, (n: number) => string][])("%s", async (_name, write) => {
+    const arrived: Record<number, number[]> = {};
+    for (const n of [1, 1000, 65536]) {
+      arrived[n] = [];
+      for (let i = 0; i < 5; i++) {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", `const fs = require("fs"); ${write(n)} process.exit(0);`],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "inherit",
+        });
+        arrived[n].push((await proc.stdout.bytes()).length);
+      }
+    }
+    expect(arrived).toEqual({ 1: Array(5).fill(1), 1000: Array(5).fill(1000), 65536: Array(5).fill(65536) });
   });
 });
 

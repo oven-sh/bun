@@ -1556,13 +1556,13 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 match &store.data.as_file().pathlike {
                     PathOrFileDescriptor::Fd(fd) => bun_sys::dup(*fd),
                     PathOrFileDescriptor::Path(path) => {
-                        let zpath = path.slice_z_as_written(&mut open_path_buf);
+                        let zpath = path.slice_z(&mut open_path_buf);
                         let flags = if cfg!(windows) {
                             bun_sys::O::RDONLY
                         } else {
                             bun_sys::O::RDONLY | bun_sys::O::NOCTTY
                         };
-                        bun_sys::open(zpath, flags, 0)
+                        bun_sys::open(zpath, flags, 0).map_err(|err| err.with_path(path.slice()))
                     }
                 }
             };

@@ -586,23 +586,12 @@ impl FileSink {
             // `Pipe::open_foreign` caches what it learned by which standard stream it is.
             PathOrFileDescriptor::Fd(fd) if fd.stdio_tag().is_some() => Ok(*fd),
             PathOrFileDescriptor::Fd(fd) => sys::dup(*fd),
-            // `sys::open`, not `sys::openat`: Win32's name rules (`NUL`, `CON`, a trailing
-            // dot or space) apply, as for every other way of opening a `Bun.file`.
             PathOrFileDescriptor::Path(path) => {
-                let path = path.slice();
+                use crate::node::types::PathLikeExt as _;
                 let mut buf = bun_paths::path_buffer_pool::get();
-                if path.len() >= buf.len() {
-                    return Err(
-                        sys::Error::from_code(sys::E::ENAMETOOLONG, sys::Tag::open).with_path(path)
-                    );
-                }
-                buf[..path.len()].copy_from_slice(path);
-                buf[path.len()] = 0;
-                sys::open(
-                    bun_core::ZStr::from_buf(&buf[..], path.len()),
-                    options.flags(),
-                    options.mode,
-                )
+                let path = crate::node::PathLike::borrowed(path.slice());
+                sys::open(path.slice_z(&mut buf), options.flags(), options.mode)
+                    .map_err(|err| err.with_path(path.slice()))
             }
         }
     }
@@ -672,8 +661,8 @@ impl FileSink {
                 (&result, &options.input_path)
             && err.get_errno() == sys::E::ENOENT
         {
-            result =
-                webcore::blob::mkdirp_parent(path.slice()).and_then(|()| self.open_input(options));
+            result = webcore::blob::mkdirp_parent(path.slice(), false)
+                .and_then(|()| self.open_input(options));
         }
         if self.force_sync.get() {
             // SAFETY(JsCell): single-field write; does not call into JS.

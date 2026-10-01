@@ -3444,7 +3444,6 @@ impl FormDataContext<'_> {
                             let mut rf_args = crate::node::fs::args::ReadFile::default();
                             rf_args.encoding = crate::node::types::Encoding::Buffer;
                             rf_args.path = file.pathlike.clone();
-                            rf_args.as_written = true;
                             rf_args.offset = blob.offset.get();
                             rf_args.max_size = Some(blob.size.get());
                             let res = node_fs.read_file(&rf_args, crate::node::fs::Flavor::Sync);
@@ -3795,10 +3794,11 @@ pub(crate) enum Retry {
     No,
 }
 
-/// Create the parent directories of `path`, a `Bun.file`'s. An error names
-/// `path`, as the write it is for does.
+/// Create the parent directories of `path`, a `Bun.file`'s, which the write they
+/// are for opens `as_written` ([`PathLikeExt::slice_z_as_written`]) or not. An
+/// error names `path`, as that write does.
 #[inline(never)]
-pub(crate) fn mkdirp_parent(path: &[u8]) -> bun_sys::Result<()> {
+pub(crate) fn mkdirp_parent(path: &[u8], as_written: bool) -> bun_sys::Result<()> {
     let Some(dirname) = bun_core::dirname(path) else {
         return Err(
             bun_sys::Error::from_code(bun_sys::E::ENOENT, bun_sys::Tag::mkdir).with_path(path),
@@ -3808,7 +3808,7 @@ pub(crate) fn mkdirp_parent(path: &[u8]) -> bun_sys::Result<()> {
         path: PathLike::borrowed(dirname),
         recursive: true,
         always_return_none: true,
-        as_written: true,
+        as_written,
         ..Default::default()
     }) {
         Ok(_) => Ok(()),
@@ -3825,7 +3825,7 @@ pub(crate) fn mkdir_if_not_exists<T: MkdirpTarget>(
     err_path: &[u8],
 ) -> Retry {
     if err.get_errno() == bun_sys::E::ENOENT && this.mkdirp_if_not_exists() {
-        match mkdirp_parent(path_string.as_bytes()) {
+        match mkdirp_parent(path_string.as_bytes(), true) {
             bun_sys::Result::Ok(()) => {
                 this.set_mkdirp_if_not_exists(false);
                 return Retry::Continue;
@@ -3922,7 +3922,6 @@ fn write_file_with_empty_source_to_destination(
                     path: file.pathlike.clone(),
                     len: 0,
                     flags: bun_sys::O::CREAT,
-                    as_written: true,
                 },
                 node::fs::Flavor::Sync,
             );
@@ -3945,7 +3944,6 @@ fn write_file_with_empty_source_to_destination(
                         path: PathLike::borrowed(dirpath),
                         recursive: true,
                         always_return_none: true,
-                        as_written: true,
                         ..Default::default()
                     });
                     if let bun_sys::Result::Err(e) = mkdir_result {
@@ -3956,7 +3954,7 @@ fn write_file_with_empty_source_to_destination(
                     let mut buf = bun_paths::path_buffer_pool::get();
                     let mode: bun_sys::Mode = options.mode.unwrap_or(node::fs::DEFAULT_PERMISSION);
                     match bun_sys::File::open(
-                        path.slice_z_as_written(&mut buf),
+                        path.slice_z(&mut buf),
                         bun_sys::O::CREAT | bun_sys::O::TRUNC,
                         mode,
                     ) {
@@ -4859,11 +4857,13 @@ fn write_bytes_to_file_fast(
         pathlike.fd()
     } else {
         let mut file_path = bun_paths::path_buffer_pool::get();
-        match bun_sys::open(
-            pathlike.path().slice_z_as_written(&mut file_path),
-            FAST_WRITE_OPEN_FLAGS,
-            WRITE_PERMISSIONS,
-        ) {
+        // Writing nothing is a truncation, which names its file as a read does.
+        let path = if bytes.is_empty() {
+            pathlike.path().slice_z(&mut file_path)
+        } else {
+            pathlike.path().slice_z_as_written(&mut file_path)
+        };
+        match bun_sys::open(path, FAST_WRITE_OPEN_FLAGS, WRITE_PERMISSIONS) {
             bun_sys::Result::Ok(result) => result,
             bun_sys::Result::Err(err) => {
                 if err.get_errno() == bun_sys::E::ENOENT {
@@ -5412,7 +5412,7 @@ fn resolve_file_stat(store: &RefPtr<Store>) {
     match &file.pathlike {
         PathOrFileDescriptor::Path(path) => {
             let mut buffer = bun_paths::path_buffer_pool::get();
-            match bun_sys::stat(path.slice_z_as_written(&mut buffer)) {
+            match bun_sys::stat(path.slice_z(&mut buffer)) {
                 bun_sys::Result::Ok(stat) => {
                     file.max_size = if bun_sys::S::ISREG(stat.st_mode as _) || stat.st_size > 0 {
                         ((stat.st_size.max(0)) as u64) as SizeType
@@ -6063,6 +6063,8 @@ pub(crate) trait FileOpener: Sized {
     /// Override if you need different open flags; defaults to RDONLY.
     const OPEN_FLAGS: i32 = bun_sys::O::RDONLY;
     const OPENER_FLAGS: i32 = bun_sys::O::NONBLOCK | bun_sys::O::CLOEXEC;
+    /// See [`PathLikeExt::slice_z_as_written`].
+    const AS_WRITTEN: bool = false;
 
     fn opened_fd(&self) -> Fd;
     fn set_opened_fd(&mut self, fd: Fd);
@@ -6089,7 +6091,11 @@ pub(crate) trait FileOpener: Sized {
             PathOrFileDescriptor::Path(p) => p.clone(),
             PathOrFileDescriptor::Fd(_) => unreachable!(),
         };
-        let path = path_string.slice_z_as_written(&mut buf);
+        let path = if Self::AS_WRITTEN {
+            path_string.slice_z_as_written(&mut buf)
+        } else {
+            path_string.slice_z(&mut buf)
+        };
 
         loop {
             match bun_sys::open(

@@ -909,11 +909,11 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       using dir = tempDir("bun-write-error-shape", { "source": {} });
       const source = join(String(dir), "source");
       const copied = rejectionOf(Bun.write(Bun.file(join(String(dir), "dest.txt")), Bun.file(source)));
-      expect(await copied).toMatchObject({
-        syscall: "fstat",
-        path: source,
-        message: "That doesn't work on folders",
-      });
+      expect(await copied).toMatchObject(
+        isWindows && !IS_UV_FS_COPYFILE_DISABLED
+          ? systemError("EISDIR", "copyfile", source)
+          : { syscall: "fstat", path: source, message: "That doesn't work on folders" },
+      );
     });
 
     // Reading with no sharing allowed makes every other open of the file fail.

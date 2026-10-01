@@ -1,6 +1,7 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import fsPromises from "fs/promises";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { closeSync, openSync, readdirSync, readSync } from "node:fs";
 import { join } from "path";
 
 test("delete() and stat() should work with unicode paths", async () => {
@@ -210,3 +211,103 @@ test.each(["pipe", "file"] as const)(
     expect(exitCode).toBe(0);
   },
 );
+
+// On Windows a Bun.file(fd) is read at offsets of the file, whatever the descriptor's position.
+test.skipIf(!isWindows).each([
+  ["text()", (fd: number) => Bun.file(fd).text(), "0123456789"],
+  ["slice(2, 5).text()", (fd: number) => Bun.file(fd).slice(2, 5).text(), "234"],
+  ["stream()", (fd: number) => new Response(Bun.file(fd).stream()).text(), "0123456789"],
+  ["slice(2, 5).stream()", (fd: number) => new Response(Bun.file(fd).slice(2, 5).stream()).text(), "234"],
+  [
+    "a stream() cancelled after a chunk",
+    async (fd: number) => {
+      const reader = Bun.file(fd).stream().getReader();
+      const { value } = await reader.read();
+      await reader.cancel();
+      return new TextDecoder().decode(value);
+    },
+    "0123456789",
+  ],
+  ["new Response(file)", (fd: number) => new Response(Bun.file(fd)).text(), "0123456789"],
+])("Bun.file(fd): %s leaves the descriptor's position where it was", async (_, read, contents) => {
+  using dir = tempDir("bun-file-fd-position", { "file.txt": "0123456789" });
+  const fd = openSync(join(String(dir), "file.txt"), "r");
+  try {
+    const next = () => {
+      const bytes = Buffer.alloc(2);
+      return bytes.toString("utf8", 0, readSync(fd, bytes, 0, 2, null));
+    };
+    expect({ before: next(), read: await read(fd), after: next() }).toEqual({
+      before: "01",
+      read: contents,
+      after: "23",
+    });
+  } finally {
+    closeSync(fd);
+  }
+});
+
+// Win32 would drop the dot or the space and open the device. A check of the name in front of
+// Bun.file(join(root, name)) sees the name that is opened.
+describe.skipIf(!isWindows)("an absolute path names its file literally", () => {
+  const code = (promise: Promise<unknown>) =>
+    promise.then(
+      () => "resolved",
+      err => err.code,
+    );
+
+  test.each(["file.txt.", "file.txt ", "dir.\\inner.txt", "nul"])("%j is no file", async name => {
+    using dir = tempDir("bun-file-literal-name", { "file.txt": "contents", "dir/inner.txt": "contents" });
+    const path = String(dir) + "\\" + name;
+    using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response(Bun.file(path)),
+      error: err => new Response((err as NodeJS.ErrnoException).code, { status: 500 }),
+    });
+    expect({
+      exists: await Bun.file(path).exists(),
+      size: Bun.file(path).size,
+      text: await code(Bun.file(path).text()),
+      bytes: await code(Bun.file(path).bytes()),
+      sliced: await code(Bun.file(path).slice(1, 3).text()),
+      stat: await code(Bun.file(path).stat()),
+      response: await code(new Response(Bun.file(path)).text()),
+      blob: await code(new Blob([Bun.file(path)]).text()),
+      copied: await code(Bun.write(join(String(dir), "copy.txt"), Bun.file(path))),
+      served: await (await fetch(server.url)).text(),
+      deleted: await code(Bun.file(path).delete()),
+      left: (readdirSync(String(dir), { recursive: true }) as string[]).sort(),
+    }).toEqual({
+      exists: false,
+      size: 0,
+      text: "ENOENT",
+      bytes: "ENOENT",
+      sliced: "ENOENT",
+      stat: "ENOENT",
+      response: "ENOENT",
+      blob: "ENOENT",
+      copied: "ENOENT",
+      served: "ENOENT",
+      deleted: "ENOENT",
+      left: ["dir", join("dir", "inner.txt"), "file.txt"],
+    });
+  });
+
+  test("writer(), a stream, a copy and an empty write make the file of that name", async () => {
+    using dir = tempDir("bun-file-literal-name-made", { "source.txt": "contents" });
+    const at = (name: string) => String(dir) + "\\" + name;
+    const writer = Bun.file(at("writer.")).writer();
+    writer.write("contents");
+    await writer.end();
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("contents"));
+        controller.close();
+      },
+    });
+    await Bun.write(at("stream."), new Response(stream));
+    await Bun.write(at("copy."), Bun.file(at("source.txt")));
+    await Bun.write(at("empty."), "");
+    expect(readdirSync(String(dir)).sort()).toEqual(["copy.", "empty.", "source.txt", "stream.", "writer."]);
+  });
+});

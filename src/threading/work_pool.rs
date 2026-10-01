@@ -135,6 +135,11 @@ static POOL: OnceLock<ThreadPool> = OnceLock::new();
 static WAITING_POOL: OnceLock<ThreadPool> = OnceLock::new();
 /// [`WorkPool::owe_write`].
 static WRITES_OWED: AtomicU32 = AtomicU32::new(0);
+/// [`WorkPool::write_held_up`].
+static WRITES_HELD_UP: AtomicU32 = AtomicU32::new(0);
+/// How long an exit goes on waiting for writes that are held up while none of
+/// them ends.
+const HELD_UP_GRACE_NS: u64 = 100 * 1_000_000;
 
 #[cold]
 fn create() -> ThreadPool {
@@ -189,11 +194,41 @@ impl WorkPool {
         }
     }
 
+    /// A write that is owed goes to something other than a disk (a pipe), whose
+    /// other end takes it when it likes, or never. One that is being read is
+    /// over in no time, so the exit waits for it too, but not for long.
+    pub fn write_held_up() {
+        // Counted by one of the two at any time.
+        WRITES_HELD_UP.fetch_add(1, Ordering::AcqRel);
+        Self::write_settled();
+    }
+
+    /// As [`write_settled`](Self::write_settled), after
+    /// [`write_held_up`](Self::write_held_up).
+    pub fn held_up_write_settled() {
+        WRITES_HELD_UP.fetch_sub(1, Ordering::AcqRel);
+        crate::Futex::wake(&WRITES_HELD_UP, u32::MAX);
+    }
+
     pub fn wait_for_writes() {
         loop {
             match WRITES_OWED.load(Ordering::Acquire) {
-                0 => return,
-                owed => crate::Futex::wait_forever(&WRITES_OWED, owed),
+                0 => {}
+                owed => {
+                    crate::Futex::wait_forever(&WRITES_OWED, owed);
+                    continue;
+                }
+            }
+            match WRITES_HELD_UP.load(Ordering::Acquire) {
+                // One that ends owes what was written behind it first.
+                0 if WRITES_OWED.load(Ordering::Acquire) == 0 => return,
+                0 => {}
+                held_up => {
+                    if crate::Futex::wait(&WRITES_HELD_UP, held_up, Some(HELD_UP_GRACE_NS)).is_err()
+                    {
+                        return;
+                    }
+                }
             }
         }
     }

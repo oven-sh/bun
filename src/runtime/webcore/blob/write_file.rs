@@ -140,6 +140,7 @@ impl FileOpener for WriteFile {
         | bun_sys::O::TRUNC
         | bun_sys::O::NONBLOCK
         | bun_sys::O::SEQUENTIAL;
+    const AS_WRITTEN: bool = true;
 
     fn opened_fd(&self) -> Fd {
         self.opened_fd
@@ -417,7 +418,7 @@ impl WriteFile {
             && !sys::windows::fs::is_disk_file(fd_)
             && let Some(task) = &self.io_task
         {
-            task.not_owed_at_exit();
+            task.held_up_at_exit();
         }
 
         #[cfg(not(windows))]

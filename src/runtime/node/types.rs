@@ -822,8 +822,9 @@ pub(crate) trait PathLikeExt {
     /// platform's own rules for names. On Windows those are Win32's: a device
     /// name (`NUL`, `CON`) is the device, trailing dots and spaces are dropped,
     /// and the call puts a path past `MAX_PATH` in the long form itself.
-    /// `Bun.file` paths are opened this way.
-    /// [`slice_z`](Self::slice_z) is `node:fs`'s, which names files literally.
+    /// `Bun.write(path, data)` opens its destination this way.
+    /// [`slice_z`](Self::slice_z), which everything else uses, names the file of
+    /// an absolute path literally.
     fn slice_z_as_written<'a>(&'a self, buf: &'a mut PathBuffer) -> &'a ZStr
     where
         Self: Sized;
@@ -895,7 +896,7 @@ pub(crate) trait PathOrFdExt {
 /// together with the current directory if it is relative, reaches `MAX_PATH`
 /// (`bun_sys::windows::fs::kernel32_path`).
 #[cfg(windows)]
-fn kernel32_path_past_max_path<'a>(
+pub(crate) fn kernel32_path_past_max_path<'a>(
     buf: &'a mut PathBuffer,
     normal: &[u8],
 ) -> Result<&'a OSPathSliceZ, NameTooLong> {

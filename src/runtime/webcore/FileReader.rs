@@ -107,6 +107,8 @@ pub(crate) struct OpenedFileBlob {
     pub(crate) fd: Fd,
     pub(crate) pollable: bool,
     pub(crate) nonblocking: bool,
+    /// `fd` is a duplicate of the caller's.
+    pub(crate) duplicate: bool,
     #[cfg(not(windows))]
     pub(crate) file_type: FileType,
 }
@@ -117,6 +119,7 @@ impl Default for OpenedFileBlob {
             fd: Fd::INVALID,
             pollable: false,
             nonblocking: true,
+            duplicate: false,
             #[cfg(not(windows))]
             file_type: FileType::File,
         }
@@ -160,6 +163,7 @@ impl Lazy {
                         Ok(fd) => fd,
                         Err(err) => return Err(err.with_fd(*pl_fd)),
                     };
+                    this.duplicate = true;
 
                     #[cfg(unix)]
                     {
@@ -339,6 +343,9 @@ impl FileReader {
                                 .flags
                                 .set(ReaderFlags::NONBLOCKING, opened.nonblocking);
                             self.reader().flags.set(ReaderFlags::POLLABLE, pollable);
+                            self.reader()
+                                .flags
+                                .set(ReaderFlags::SHARES_POSITION, opened.duplicate);
                         }
                     }
                 }

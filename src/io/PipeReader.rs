@@ -213,6 +213,8 @@ bitflags::bitflags! {
         const KEEP_ALIVE               = 1 << 10; // default true
         /// A read failed with a non-retry errno. Set before the bytes read ahead of the failure are delivered, so a pull from inside that delivery cannot read the fd past the error. `start()`, `unpause()` and `from()` keep it: a reader from `init()` reads again, and one whose owner takes the flag off.
         const READ_FAILED              = 1 << 11;
+        /// Windows: the fd is a duplicate of one JS has, and shares its file position.
+        const SHARES_POSITION          = 1 << 12;
     }
 }
 
@@ -1248,6 +1250,12 @@ impl BufferedReader {
         debug_assert!(self.source.is_none());
         if !self.flags.contains(ReaderFlags::KEEP_ALIVE) {
             source.unref();
+        }
+        let mut source = source;
+        if let Source::File(file) = &mut source
+            && self.flags.contains(ReaderFlags::SHARES_POSITION)
+        {
+            file.shares_position();
         }
         self.source = Some(source);
         self.buffer().clear();

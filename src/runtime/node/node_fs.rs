@@ -2215,8 +2215,6 @@ pub(crate) mod args {
         pub path: PathOrFileDescriptor<'a>,
         pub(crate) len: u64, // u63
         pub(crate) flags: i32,
-        /// `path` is a `Bun.file`'s: see [`PathLikeExt::slice_z_as_written`].
-        pub(crate) as_written: bool,
     }
     impl Truncate<'static> {
         pub(crate) fn from_js(
@@ -2237,7 +2235,6 @@ pub(crate) mod args {
                 path,
                 len,
                 flags: 0,
-                as_written: false,
             })
         }
     }
@@ -2528,8 +2525,6 @@ pub(crate) mod args {
         pub path: PathLike<'a>,
         pub(crate) big_int: bool,
         pub(crate) throw_if_no_entry: bool,
-        /// `path` is a `Bun.file`'s: see [`PathLikeExt::slice_z_as_written`].
-        pub(crate) as_written: bool,
     }
     impl Stat<'static> {
         pub(crate) fn from_js(
@@ -2560,7 +2555,6 @@ pub(crate) mod args {
                 path,
                 big_int,
                 throw_if_no_entry,
-                as_written: false,
             })
         }
 
@@ -2572,7 +2566,6 @@ pub(crate) mod args {
                     path: PathLike::owned(path),
                     big_int: false,
                     throw_if_no_entry: true,
-                    as_written: true,
                 })
             }
         }
@@ -2777,8 +2770,6 @@ pub(crate) mod args {
 
     pub(crate) struct Unlink<'a> {
         pub path: PathLike<'a>,
-        /// `path` is a `Bun.file`'s: see [`PathLikeExt::slice_z_as_written`].
-        pub(crate) as_written: bool,
     }
     impl Unlink<'static> {
         pub(crate) fn from_js(
@@ -2786,10 +2777,7 @@ pub(crate) mod args {
             arguments: &mut ArgumentsSlice,
         ) -> JsResult<Self> {
             let path = PathLike::from_js_required(ctx, arguments, "path")?;
-            Ok(Unlink {
-                path,
-                as_written: false,
-            })
+            Ok(Unlink { path })
         }
 
         /// `Bun.file(path).delete()`, for a work-pool job.
@@ -2798,7 +2786,6 @@ pub(crate) mod args {
             unsafe {
                 ThreadIsolated::new(Unlink {
                     path: PathLike::owned(path),
-                    as_written: true,
                 })
             }
         }
@@ -3574,8 +3561,6 @@ pub(crate) mod args {
         pub(crate) limit_size_for_javascript: bool,
         pub(crate) flag: FileSystemFlags,
         pub(crate) signal: Option<AbortSignalRef>,
-        /// `path` is a `Bun.file`'s: see [`PathLikeExt::slice_z_as_written`].
-        pub(crate) as_written: bool,
     }
     impl Default for ReadFile<'_> {
         fn default() -> Self {
@@ -3587,7 +3572,6 @@ pub(crate) mod args {
                 limit_size_for_javascript: false,
                 flag: FileSystemFlags::R,
                 signal: None,
-                as_written: false,
             }
         }
     }
@@ -4771,11 +4755,26 @@ impl NodeFS {
                 path: path.slice().into(),
                 ..Default::default()
             };
+            // Win32 resolves a relative path itself, from how it is written:
+            // `./aux` is a file and `./a:s` a stream, `aux` a device and `a:s`
+            // a path on drive A.
+            fn convert<'a>(
+                path: &'a PathLike,
+                buf: &'a mut paths::PathBuffer,
+            ) -> Result<&'a OSPathSliceZ, NameTooLong> {
+                if paths::is_absolute(path.slice()) {
+                    return path.os_path_kernel32(buf);
+                }
+                if !strings::fits_in_wide_path_buffer(path.slice()) {
+                    return Err(NameTooLong);
+                }
+                crate::node::types::kernel32_path_past_max_path(buf, path.slice())
+            }
             let mut dest_buf = paths::path_buffer_pool::get();
-            let Ok(src) = args.src.os_path_kernel32(&mut self.sync_error_buf) else {
+            let Ok(src) = convert(&args.src, &mut self.sync_error_buf) else {
                 return Err(too_long(&args.src));
             };
-            let Ok(dest) = args.dest.os_path_kernel32(&mut dest_buf) else {
+            let Ok(dest) = convert(&args.dest, &mut dest_buf) else {
                 return Err(too_long(&args.dest));
             };
             // SAFETY: src/dest are NUL-terminated wide paths; CopyFileW is the Win32 FFI
@@ -6313,11 +6312,7 @@ impl NodeFS {
         let path_is_path = matches!(args.path, PathOrFileDescriptor::Path(_));
         let fd: FD = match &args.path {
             PathOrFileDescriptor::Path(p) => {
-                let path = if args.as_written {
-                    p.slice_z_as_written(&mut self.sync_error_buf)
-                } else {
-                    p.slice_z(&mut self.sync_error_buf)
-                };
+                let path = p.slice_z(&mut self.sync_error_buf);
 
                 if let Some(graph) = standalone_module_graph() {
                     if let Some(file) = graph.find_ref(path.as_bytes()) {
@@ -6937,7 +6932,10 @@ impl NodeFS {
             // slice_z so the path already carries a drive letter, the same way
             // existsSync/statSync/unlinkSync see it.
             #[cfg(windows)]
-            let resolved = args.path.slice_z(&mut self.sync_error_buf).as_bytes();
+            let resolved = match tree_path_windows(&args.path, &mut self.sync_error_buf) {
+                Ok(resolved) => resolved,
+                Err(err) => return Err(err.with_path(args.path.slice())),
+            };
             #[cfg(not(windows))]
             let resolved = args.path.slice();
             if let Err(err) = zig_delete_tree(&sys::Dir::cwd(), resolved, sys::FileKind::Directory)
@@ -6975,7 +6973,10 @@ impl NodeFS {
             // drive prepended before reaching the dt_* / sys::*at helpers,
             // which do not do that themselves.
             #[cfg(windows)]
-            let resolved = args.path.slice_z(&mut self.sync_error_buf).as_bytes();
+            let resolved = match tree_path_windows(&args.path, &mut self.sync_error_buf) {
+                Ok(resolved) => resolved,
+                Err(err) => return Err(err.with_path(args.path.slice())),
+            };
             #[cfg(not(windows))]
             let resolved = args.path.slice();
             if let Err(err) = zig_delete_tree(&sys::Dir::cwd(), resolved, sys::FileKind::File) {
@@ -7025,11 +7026,7 @@ impl NodeFS {
     }
 
     pub(crate) fn stat(&mut self, args: &args::Stat, _: Flavor) -> Maybe<ret::Stat> {
-        let path = if args.as_written {
-            args.path.slice_z_as_written(&mut self.sync_error_buf)
-        } else {
-            args.path.slice_z(&mut self.sync_error_buf)
-        };
+        let path = args.path.slice_z(&mut self.sync_error_buf);
         if let Some(graph) = standalone_module_graph() {
             if let Some(result) = graph.stat(path.as_bytes()) {
                 return Ok(StatOrNotFound::Stats(Box::new(Stats::init(
@@ -7176,24 +7173,14 @@ impl NodeFS {
         }
     }
 
-    fn truncate_inner(
-        &mut self,
-        path: &PathLike,
-        len: u64,
-        flags: i32,
-        as_written: bool,
-    ) -> Maybe<ret::Truncate> {
+    fn truncate_inner(&mut self, path: &PathLike, len: u64, flags: i32) -> Maybe<ret::Truncate> {
         // Mask `len` to a `u63` envelope so the `i64` cast is always in range,
         // rather than `try_from().unwrap()`-panicking
         // on a hostile `> i64::MAX` value.
         let len_i64 = (len & ((1u64 << 63) - 1)) as i64;
         #[cfg(windows)]
         {
-            let path_z = if as_written {
-                path.slice_z_as_written(&mut self.sync_error_buf)
-            } else {
-                path.slice_z(&mut self.sync_error_buf)
-            };
+            let path_z = path.slice_z(&mut self.sync_error_buf);
             let fd = sys::open(path_z, sys::O::WRONLY | flags, 0o644)
                 .map_err(|err| err.with_path_and_syscall(path.slice(), sys::Tag::truncate))?;
             let _close = scopeguard::guard(fd, |fd| fd.close());
@@ -7202,7 +7189,7 @@ impl NodeFS {
         }
         #[cfg(not(windows))]
         {
-            let _ = (flags, as_written);
+            let _ = flags;
             // SAFETY: path is NUL-terminated by slice_z; truncate(2) is the libc FFI
             Maybe::<ret::Truncate>::errno_sys_p(
                 unsafe {
@@ -7224,18 +7211,12 @@ impl NodeFS {
             PathOrFileDescriptor::Fd(fd) => {
                 sys::ftruncate(*fd, (args.len & ((1u64 << 63) - 1)) as i64)
             }
-            PathOrFileDescriptor::Path(p) => {
-                self.truncate_inner(p, args.len, args.flags, args.as_written)
-            }
+            PathOrFileDescriptor::Path(p) => self.truncate_inner(p, args.len, args.flags),
         }
     }
 
     pub(crate) fn unlink(&mut self, args: &args::Unlink, _: Flavor) -> Maybe<ret::Unlink> {
-        let path = if args.as_written {
-            args.path.slice_z_as_written(&mut self.sync_error_buf)
-        } else {
-            args.path.slice_z(&mut self.sync_error_buf)
-        };
+        let path = args.path.slice_z(&mut self.sync_error_buf);
         match sys::unlink(path) {
             Err(err) => Err(err.with_path(args.path.slice())),
             Ok(result) => Ok(result),
@@ -8800,6 +8781,37 @@ struct DeleteTreeStackItem {
 /// where deletes lack POSIX semantics (FAT, exFAT), a file that is open
 /// elsewhere stays listed until it is closed.
 const DELETE_TREE_MAX_RESCANS: u8 = 50;
+
+/// `path` for [`zig_delete_tree`]. See `rmdir` for a rooted path. A relative one
+/// with `.` or `..` in it is resolved here, off the spelling of the current
+/// directory, as Win32 and Node resolve it: the `sys::*at` helpers resolve it off
+/// the directory's own path, which is where a link in that spelling leads.
+#[cfg(windows)]
+fn tree_path_windows<'a>(
+    path: &'a PathLike,
+    buf: &'a mut bun_paths::PathBuffer,
+) -> Maybe<&'a [u8]> {
+    let written = path.slice();
+    let has_drive =
+        written.len() >= 2 && bun_paths::is_drive_letter(written[0]) && written[1] == b':';
+    if has_drive
+        || bun_paths::is_absolute(written)
+        || !strings::split_any(written, b"/\\").any(|name| name == b"." || name == b"..")
+    {
+        return Ok(path.slice_z(buf).as_bytes());
+    }
+    let mut cwd = bun_paths::path_buffer_pool::get();
+    let cwd_len = sys::getcwd(&mut cwd[..])?;
+    let joined = bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Windows>(
+        &cwd[..cwd_len],
+        &mut buf[..],
+        &[written],
+    );
+    let Some(len) = joined.map(<[u8]>::len) else {
+        return Err(sys::Error::from_code(E::ENAMETOOLONG, sys::Tag::rm));
+    };
+    Ok(&buf[..len])
+}
 
 pub(crate) fn zig_delete_tree(
     self_: &sys::Dir,

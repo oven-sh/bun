@@ -2328,6 +2328,10 @@ interface Http2StreamReadableState {
 interface Http2StreamWritableState {
   ending: boolean;
   destroyed: boolean;
+  errored: Error | null;
+  errorEmitted: boolean;
+  finalCalled: boolean;
+  length: number;
 }
 type DuplexStream = import("node:stream").Duplex;
 interface DuplexStateAccessors {
@@ -2750,6 +2754,13 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
     if (session) {
       const native = session[bunHTTP2Native];
       if (native) {
+        if ((status & StreamState.NativeClosed) !== 0) {
+          // Nothing is left to end, and the native side may have dropped the stream already.
+          this[bunHTTP2StreamStatus] = status | StreamState.FinalCalled;
+          native.flush();
+          callback();
+          return;
+        }
         if (this instanceof ServerHttp2Stream && !this.headersSent && (this.id & 1) === 0) {
           // A locally-pushed (even-id) stream ended before respond() (HEAD/endStream pushes): an
           // empty DATA frame would precede the response HEADERS on the wire. respond() forces
@@ -2901,7 +2912,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
     const session = this[bunHTTP2Session];
     if (session) {
       const native = session[bunHTTP2Native];
-      if (native) {
+      if (native && (this[bunHTTP2StreamStatus] & StreamState.NativeClosed) === 0) {
         let batchLength = 0;
         for (let i = 0; i < data.length; i++) {
           batchLength += data[i].chunk.length;
@@ -2961,7 +2972,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
     const session = this[bunHTTP2Session];
     if (session) {
       const native = session[bunHTTP2Native];
-      if (native) {
+      if (native && (this[bunHTTP2StreamStatus] & StreamState.NativeClosed) === 0) {
         let wireChunk = chunk;
         let wireEncoding = encoding;
         if (typeof chunk === "string" && (encoding === "utf-16le" || encoding === "utf16le" || encoding === "ucs-2")) {
@@ -3012,7 +3023,7 @@ class ClientHttp2Stream extends Http2Stream {
 // native seam, not to public emit(), so user-driven emit()/destroy() observe
 // the caller's ALS context (matching Node).
 function withStreamFrame(handler) {
-  return function (self, stream, a, b, c) {
+  return function (self, stream, a?, b?, c?) {
     if (typeof stream !== "object" || stream === null) return handler(self, stream, a, b, c);
     // A session mid-destroy() fans onStreamError out via emitErrorToAllStreams
     // under the destroy() caller's captured frame (Node's teardown context),
@@ -3781,8 +3792,9 @@ function emitHeadersEventNT(stream, event, headers, flags, rawheaders) {
   if (headers[HTTP2_HEADER_STATUS] === HTTP_STATUS_CONTINUE) stream.emit("continue");
   stream.emit(event, headers, flags, rawheaders);
 }
-// node's closeStream: a stream that the peer resets ends its writable side before it is destroyed.
+// node's closeStream: a stream that is reset while a frame is read ends its writable side first.
 function endWritableOnReset(stream: Http2Stream) {
+  stream[bunHTTP2StreamStatus] |= StreamState.NativeClosed;
   if (stream._writableState.ending || stream[kPush]) return;
   if (!stream.aborted) {
     stream[kAborted] = true;
@@ -4110,7 +4122,13 @@ class ServerHttp2Session extends Http2Session {
       // Emit the frameError event with the frame type and error code
       process.nextTick(emitFrameErrorEventNT, stream, frameType, errorCode);
     },
-    aborted(self: ServerHttp2Session, stream: ServerHttp2Stream, error: any, old_state: number) {
+    aborted(
+      self: ServerHttp2Session,
+      stream: ServerHttp2Stream,
+      error: any,
+      old_state: number,
+      inboundReset?: boolean,
+    ) {
       if (!self || typeof stream !== "object") return;
       stream.rstCode = constants.NGHTTP2_CANCEL;
       // if writable and not closed emit aborted
@@ -4120,26 +4138,27 @@ class ServerHttp2Session extends Http2Session {
       }
       self.#connections--;
       if (stream.id % 2 === 1) self.#peerInitiatedStreams--;
-      process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
-    },
-    streamError(self: ServerHttp2Session, stream: ServerHttp2Stream, error: number, fromPeer?: boolean) {
-      if (!self || typeof stream !== "object") return;
-      if (fromPeer === true) {
-        endWritableOnReset(stream);
-        // node's onStreamClose: a reset with NO_ERROR closes like END_STREAM, the destroy waits for 'end'.
-        if (error === NGHTTP2_NO_ERROR) return ServerHttp2Session.#Handlers.streamEnd(self, stream, 7);
+      if (inboundReset !== true) {
+        process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
+        return;
       }
+      stream[bunHTTP2StreamStatus] |= StreamState.NativeClosed;
+      emitStreamErrorNT(self, stream, error, true, false);
+      if (self.#connections === 0 && self.#closed) process.nextTick(destroyIfNotDestroyedNT, self);
+    },
+    streamError(self: ServerHttp2Session, stream: ServerHttp2Stream, error: number, inboundReset?: boolean) {
+      if (!self || typeof stream !== "object") return;
+      if (inboundReset !== true) {
+        self.#connections--;
+        if (stream.id % 2 === 1) self.#peerInitiatedStreams--;
+        process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
+        return;
+      }
+      endWritableOnReset(stream);
+      // node's onStreamClose: a reset with NO_ERROR closes like END_STREAM, the destroy waits for 'end'.
+      if (error === NGHTTP2_NO_ERROR) return ServerHttp2Session.#Handlers.streamEnd(self, stream, 7);
       self.#connections--;
       if (stream.id % 2 === 1) self.#peerInitiatedStreams--;
-      if (fromPeer !== true)
-        return void process.nextTick(
-          emitStreamErrorNT,
-          self,
-          stream,
-          error,
-          true,
-          self.#connections === 0 && self.#closed,
-        );
       emitStreamErrorNT(self, stream, error, true, false);
       if (self.#connections === 0 && self.#closed) process.nextTick(destroyIfNotDestroyedNT, self);
     },
@@ -5130,36 +5149,38 @@ class ClientHttp2Session extends Http2Session {
         process.nextTick(emitFrameErrorEventNT, stream, frameType, errorCode);
       },
     ),
-    aborted: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream, error: any, old_state: number) => {
-      if (!self || typeof stream !== "object") return;
-      stream.rstCode = constants.NGHTTP2_CANCEL;
-      // if writable and not closed emit aborted
-      if (old_state != 5 && old_state != 7) {
-        stream[kAborted] = true;
-        stream.emit("aborted");
-      }
-      self.#connections--;
-      process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
-    }),
-    streamError: withStreamFrame(
-      (self: ClientHttp2Session, stream: ClientHttp2Stream, error: number, fromPeer?: boolean) => {
+    aborted: withStreamFrame(
+      (self: ClientHttp2Session, stream: ClientHttp2Stream, error: any, old_state: number, inboundReset?: boolean) => {
         if (!self || typeof stream !== "object") return;
-
-        if (fromPeer === true) {
-          endWritableOnReset(stream);
-          // node's onStreamClose: a reset with NO_ERROR closes like END_STREAM, the destroy waits for 'end'.
-          if (error === NGHTTP2_NO_ERROR) return ClientHttp2Session.#Handlers.streamEnd(self, stream, 7);
+        stream.rstCode = constants.NGHTTP2_CANCEL;
+        // if writable and not closed emit aborted
+        if (old_state != 5 && old_state != 7) {
+          stream[kAborted] = true;
+          stream.emit("aborted");
         }
         self.#connections--;
-        if (fromPeer !== true)
-          return void process.nextTick(
-            emitStreamErrorNT,
-            self,
-            stream,
-            error,
-            true,
-            self.#connections === 0 && self.#closed,
-          );
+        if (inboundReset !== true) {
+          process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
+          return;
+        }
+        stream[bunHTTP2StreamStatus] |= StreamState.NativeClosed;
+        emitStreamErrorNT(self, stream, error, true, false);
+        if (self.#connections === 0 && self.#closed) process.nextTick(destroyIfNotDestroyedNT, self);
+      },
+    ),
+    streamError: withStreamFrame(
+      (self: ClientHttp2Session, stream: ClientHttp2Stream, error: number, inboundReset?: boolean) => {
+        if (!self || typeof stream !== "object") return;
+
+        if (inboundReset !== true) {
+          self.#connections--;
+          process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
+          return;
+        }
+        endWritableOnReset(stream);
+        // node's onStreamClose: a reset with NO_ERROR closes like END_STREAM, the destroy waits for 'end'.
+        if (error === NGHTTP2_NO_ERROR) return ClientHttp2Session.#Handlers.streamEnd(self, stream, 7);
+        self.#connections--;
         emitStreamErrorNT(self, stream, error, true, false);
         if (self.#connections === 0 && self.#closed) process.nextTick(destroyIfNotDestroyedNT, self);
       },

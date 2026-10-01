@@ -2476,6 +2476,33 @@ impl H2FrameParser {
         );
     }
 
+    pub(crate) fn dispatch_with_3_extra(
+        &self,
+        event: JSH2FrameParser::Gc,
+        value: JSValue,
+        extra: JSValue,
+        extra2: JSValue,
+        extra3: JSValue,
+    ) {
+        let Some(this_value) = self.strong_this.get().try_get() else {
+            return;
+        };
+        let Some(ctx_value) = JSH2FrameParser::Gc::context.get(this_value) else {
+            return;
+        };
+        value.ensure_still_alive();
+        extra.ensure_still_alive();
+        extra2.ensure_still_alive();
+        extra3.ensure_still_alive();
+        let _dispatch = self.enter_dispatch();
+        let _ = self.handlers.get().call_event_handler(
+            event,
+            this_value,
+            ctx_value,
+            &[ctx_value, value, extra, extra2, extra3],
+        );
+    }
+
     /// A header block the HPACK encoder cannot emit fails the whole session in nghttp2, so node
     /// reports ERR_HTTP2_SESSION_ERROR (COMPRESSION_ERROR) rather than resetting the stream.
     /// The stream is left open for the session teardown to error, matching node's request error.
@@ -4201,17 +4228,18 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
             }
         }
         let stream_ctx = self.rewrite_stream_ctx(stream_id);
+        // The trailing `true` tells JS that the engine reset this stream while it read a frame.
         if code == crate::api::h2::wire::ErrorCode::Cancel.as_u32() {
             // A peer CANCEL is an abort, not an error (node emits 'aborted' and closes with
             // rstCode 8 without an 'error' event).
-            self.dispatch_with_2_extra(
+            self.dispatch_with_3_extra(
                 JSH2FrameParser::Gc::onAborted,
                 stream_ctx,
                 JSValue::UNDEFINED,
                 JSValue::js_number(old_state as f64),
+                JSValue::TRUE,
             );
         } else {
-            // The only onStreamError dispatch that is a peer RST_STREAM: the extra `true` tells JS so.
             self.dispatch_with_2_extra(
                 JSH2FrameParser::Gc::onStreamError,
                 stream_ctx,

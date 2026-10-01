@@ -1,0 +1,26 @@
+RESEARCH OF D4, "rule-no-unused-vars" (pass 1b, from the goal): the tools. Nothing here is in the tree.
+ESLint is the checkout of the pin (/workspace/ref/eslint, eslint-scope 9.1.2); TypeScript cases run with the parser, the scope
+manager and the rule of typescript-eslint 8.58.2 (/workspace/ref/tseslint). No comment configures a run (noInlineConfig).
+
+oracle.cjs        node oracle.cjs [--ext js|jsx|mjs|cjs|ts|tsx|mts|cts|d.ts] [--type script|module|commonjs] [--core] [--both] [--scope] <code | list.json>...
+                  What ESLint says of a snippet: the core rule for JavaScript, @typescript-eslint/no-unused-vars for TypeScript
+                  (--core / --both: the core rule on typescript-eslint's tree). --scope: every scope, variable and reference.
+nuv-sim.cjs       node nuv-sim.cjs [--type t] [--source-order] [--show N] <file.js | list.json | --list files.txt | --code "...">...
+                  THE RULE AS PLANNED, in JavaScript, on eslint-scope's scopes: it reads of a reference only what the plan gives one
+                  (its number in creation order, read/write, its scope, its variable, and the site facts of one top-down walk), and is
+                  compared with ESLint's rule. Run: ESLint's cases 1041 runs, fixtures of the tree 9838, cases/edge-js.json 791,
+                  the files of ESLint 4029, of its node_modules 5797, of bun's test/ 17266: no difference.
+                  --source-order numbers the references by where they stand: also no difference (23,063 runs of real files).
+nuv-sim-ts.cjs    node nuv-sim-ts.cjs [--show N] <file.ts | list.json | --list files.txt | --code "...">...
+                  The TypeScript side as planned (the marks M1 to M11 restated as facts of definitions, scopes and references), on
+                  typescript-eslint's scopes, compared with @typescript-eslint/no-unused-vars. Run: cases/ts-*.json 330 cases,
+                  TypeScript's tests/cases 11143 files that parse (44,260 reports), bun's .ts/.tsx 3436, 668 .d.ts: no difference.
+extract-default-cases.cjs   the cases of ESLint's own test that run with options equal to the defaults ("all" and an object that
+                  restates defaults included): 376, 368 of them distinct. All parse with bun's parser.
+make-seed.cjs     node make-seed.cjs > seed/no-unused-vars.json : those cases and cases/*.json with ESLint's answer as `expect`
+                  (922 cases: 623 js, 32 jsx, 251 ts, 16 tsx; 599 reports). It is the seed of test/cli/lint/rules/no-unused-vars.json:
+                  `expect` becomes what bun prints, and a case where that is not ESLint's answer gets `differs` and `eslint`.
+real.cjs          BUN_LINT_EXE=<bun-debug> node real.cjs [--list files.txt] <file>... : no-unused-vars of `bun --lint` over real files
+                  against ESLint. `extra` (a report of bun on a name ESLint calls used) has to be 0. For the build that has the rule.
+cases/            edge-js.json (storable functions, self updates, loops, patterns, parameters, setters, exports), ts-a/b/c.json
+                  (types, enums, namespaces, ambient declarations, parameter properties, wrappers), jsx.json (jsx and tsx).

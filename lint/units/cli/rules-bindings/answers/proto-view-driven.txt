@@ -1,3 +1,7 @@
 module: cases 669: same 577, different 0, ESLint's parser rejects 92; 250 reports of ESLint
 commonjs: cases 669: same 454, different 0, ESLint's parser rejects 215; 320 reports of ESLint
 script: cases 669: same 453, different 0, ESLint's parser rejects 216; 398 reports of ESLint
+DIFFER "function f(a) { namespace a {} }" 
+   eslint: [] 
+   proto:  [ "1:27 no-redeclare: 'a' is already defined." ]
+ts: cases 872: same 870, different 1, ESLint's parser rejects 1; 486 reports of ESLint

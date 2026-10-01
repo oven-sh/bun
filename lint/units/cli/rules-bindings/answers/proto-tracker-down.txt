@@ -1,0 +1,4 @@
+cases 181: same 181, different 0, ESLint's parser rejects 0; 139 reports of ESLint
+cases 10: same 10, different 0, ESLint's parser rejects 0; 34 reports of ESLint
+cases 4000: same 3355, different 0, ESLint's parser rejects 645; 3175 reports of ESLint
+cases 4000: same 3427, different 0, ESLint's parser rejects 573; 3301 reports of ESLint

@@ -613,6 +613,15 @@ pub fn cached_github_folder_name_print_auto(
     ZStr::EMPTY
 }
 
+/// `<registry>/<name>/-/…`, the layout `ExtractTarball::build_url` writes. A
+/// registry nested under `registry` has more path before `<name>` and does not match.
+fn is_package_tarball_on_registry(url: &[u8], registry: &[u8], name: &[u8]) -> bool {
+    url.strip_prefix(bun_core::strings::without_trailing_slash(registry))
+        .and_then(|rest| rest.strip_prefix(b"/"))
+        .and_then(|rest| rest.strip_prefix(name))
+        .is_some_and(|rest| rest.starts_with(b"/-/"))
+}
+
 /// `<name>@<version>@@@<ver>` on the default registry, `@@<host>__<hash of the
 /// registry URL>@@@<ver>` on any other configured registry, and `@@<host>__<hash
 /// of tarball_url>@@@<ver>` for a tarball that is on neither (a lockfile URL).
@@ -631,7 +640,7 @@ pub fn cached_npm_package_folder_name_print<'a>(
     // configured registry, so both spellings have to name the registry's slot.
     let from_registry = tarball_url.is_empty()
         || url_is_under_registry(tarball_url, Npm::Registry::DEFAULT_URL.as_bytes())
-        || url_is_under_registry(tarball_url, scope.url.href());
+        || is_package_tarball_on_registry(tarball_url, scope.url.href(), name);
     if from_registry && scope.name.is_empty() && !this.options.did_override_default_scope {
         let include_version_number = true;
         return cached_npm_package_folder_print_basename(

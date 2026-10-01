@@ -1,0 +1,229 @@
+[
+	{
+		"code": "\"\\8\""
+	},
+	{
+		"code": "\"\\8\"; \"\\9\""
+	},
+	{
+		"code": "x; \"\\8\""
+	},
+	{
+		"code": "(\"\\8\")"
+	},
+	{
+		"code": "'use strict'; \"\\8\""
+	},
+	{
+		"code": "function f() { \"\\8\" }"
+	},
+	{
+		"code": "({\"\\8\": 1})"
+	},
+	{
+		"code": "({'a\\9'() {}})"
+	},
+	{
+		"code": "class A { \"\\8\"() {} static '\\9' = 1 }"
+	},
+	{
+		"code": "a[\"\\8\"]"
+	},
+	{
+		"code": "var {\"\\8\": b} = c"
+	},
+	{
+		"code": "({\"\\8\": b} = c)"
+	},
+	{
+		"code": "f(\"\\8\", '\\9')"
+	},
+	{
+		"code": "`\\8`"
+	},
+	{
+		"code": "tag`\\8`"
+	},
+	{
+		"code": "`${'\\8'}`"
+	},
+	{
+		"code": "/\\8/"
+	},
+	{
+		"code": "import(\"\\8\")"
+	},
+	{
+		"code": "require(\"\\8\")"
+	},
+	{
+		"code": "\"\\\\8\""
+	},
+	{
+		"code": "\"\\\\\\8\""
+	},
+	{
+		"code": "\"a\\\n\\8\""
+	},
+	{
+		"code": "\"a\\\r\n\\8\""
+	},
+	{
+		"code": "\"a\\ \\8\""
+	},
+	{
+		"code": "\" \\8\""
+	},
+	{
+		"code": "'\\8'.length"
+	},
+	{
+		"code": "x = '\\8' + \"\\9\""
+	},
+	{
+		"code": "\"\\u{38}\""
+	},
+	{
+		"code": "\"\\x38\""
+	},
+	{
+		"code": "'\\88'"
+	},
+	{
+		"code": "'\\89'"
+	},
+	{
+		"code": "'8\\8'"
+	},
+	{
+		"code": "'\\'8'"
+	},
+	{
+		"code": "\"\\\"\\8\""
+	},
+	{
+		"code": "'café\\8'"
+	},
+	{
+		"code": "'👍\\9\\8'"
+	},
+	{
+		"code": "switch (a) { case \"\\8\": }"
+	},
+	{
+		"code": "a = b ? \"\\8\" : \"\\9\""
+	},
+	{
+		"code": "new A(\"\\8\")"
+	},
+	{
+		"code": "typeof \"\\8\""
+	},
+	{
+		"code": "label: \"\\8\""
+	},
+	{
+		"code": "import \"\\8\"",
+		"languageOptions": {
+			"sourceType": "module"
+		}
+	},
+	{
+		"code": "import a from \"\\8\"",
+		"languageOptions": {
+			"sourceType": "module"
+		}
+	},
+	{
+		"code": "export * from \"\\8\"",
+		"languageOptions": {
+			"sourceType": "module"
+		}
+	},
+	{
+		"code": "export {a} from \"\\9\"",
+		"languageOptions": {
+			"sourceType": "module"
+		}
+	},
+	{
+		"code": "import {\"\\8\" as a} from \"b\"",
+		"languageOptions": {
+			"sourceType": "module"
+		}
+	},
+	{
+		"code": "export {a as \"\\8\"}; var a",
+		"languageOptions": {
+			"sourceType": "module"
+		}
+	},
+	{
+		"code": "export * as \"\\9\" from \"b\"",
+		"languageOptions": {
+			"sourceType": "module"
+		}
+	},
+	{
+		"code": "import a from \"b\" with {type: \"\\8\"}",
+		"languageOptions": {
+			"sourceType": "module"
+		}
+	},
+	{
+		"code": "import a from \"b\" with {\"\\8\": \"c\"}",
+		"languageOptions": {
+			"sourceType": "module"
+		}
+	},
+	{
+		"code": "export default \"\\8\"",
+		"languageOptions": {
+			"sourceType": "module"
+		}
+	},
+	{
+		"code": "<a b=\"\\8\"/>",
+		"jsx": true
+	},
+	{
+		"code": "<a b='\\9'/>",
+		"jsx": true
+	},
+	{
+		"code": "<a b={\"\\8\"}/>",
+		"jsx": true
+	},
+	{
+		"code": "<a>\\8</a>",
+		"jsx": true
+	},
+	{
+		"code": "<a>{\"\\8\"}</a>",
+		"jsx": true
+	},
+	{
+		"code": "<a b=\"x\\\"/>",
+		"jsx": true
+	},
+	{
+		"code": "<a b=\"\\8\\\"/>",
+		"jsx": true
+	},
+	{
+		"code": "<a b=\"\\8\n\\9\"/>",
+		"jsx": true
+	},
+	{
+		"code": "<a {...\"\\8\"}/>",
+		"jsx": true
+	},
+	{
+		"code": "<a b=<c d=\"\\8\"/>/>",
+		"jsx": true
+	},
+	{
+		"code": "<a>\"\\8\"</a>",
+		"jsx": true
+	}
+]

@@ -104,18 +104,17 @@ fn main() {
         hex_mode(&args);
         return;
     }
-    let expected: Vec<&str> = include_str!("../pragmas/expected-go-reduced.txt").lines().collect();
     let (mut same, mut diff) = (0, 0);
-    for (i, text) in vectors::PRAGMA_TEXTS.iter().enumerate() {
+    for (i, (text, want)) in vectors::PRAGMA_VECTORS.iter().enumerate() {
         let got = describe(text);
-        if expected.get(i) == Some(&got.as_str()) {
+        if got == *want {
             same += 1;
         } else {
             diff += 1;
-            println!("PRAGMA DIFF #{} {:?}\n  go  : {}\n  rust: {}", i, String::from_utf8_lossy(text), expected.get(i).unwrap_or(&"?"), got);
+            println!("PRAGMA DIFF #{} {:?}\n  go  : {}\n  rust: {}", i, String::from_utf8_lossy(text), want, got);
         }
     }
-    println!("pragmas: same={} diff={} of {} (expected lines {})", same, diff, vectors::PRAGMA_TEXTS.len(), expected.len());
+    println!("pragmas: same={} diff={} of {}", same, diff, vectors::PRAGMA_VECTORS.len());
     let (mut same, mut diff) = (0, 0);
     for (name, text, comments, want) in vectors::DIRECTIVE_VECTORS {
         let got = comment_directives(text, comments.iter().copied())

@@ -1,0 +1,20 @@
+{"code":"enum E { \"\\8\" = 1 }","type":"ts","fatal":"1:10 Parsing error: Escape sequence '\\8' is not allowed.","reports":[]}
+{"code":"enum E { A = \"\\8\" }","type":"ts","fatal":"1:14 Parsing error: Escape sequence '\\8' is not allowed.","reports":[]}
+{"code":"type T = \"\\8\"","type":"ts","fatal":"1:10 Parsing error: Escape sequence '\\8' is not allowed.","reports":[]}
+{"code":"let x: \"\\8\" | '\\9'","type":"ts","fatal":"1:8 Parsing error: Escape sequence '\\8' is not allowed.","reports":[]}
+{"code":"declare module \"\\8\" {}","type":"ts","fatal":"1:16 Parsing error: Escape sequence '\\8' is not allowed.","reports":[]}
+{"code":"import x = require(\"\\8\")","type":"ts","fatal":"1:20 Parsing error: Escape sequence '\\8' is not allowed.","reports":[]}
+{"code":"type T = import(\"\\8\")","type":"ts","fatal":"1:17 Parsing error: Escape sequence '\\8' is not allowed.","reports":[]}
+{"code":"type T = { \"\\8\": 1 }","type":"ts","fatal":"1:12 Parsing error: Escape sequence '\\8' is not allowed.","reports":[]}
+{"code":"interface I { \"\\8\"(): void }","type":"ts","fatal":"1:15 Parsing error: Escape sequence '\\8' is not allowed.","reports":[]}
+{"code":"let x = \"\\8\" as \"\\9\"","type":"ts","fatal":"1:9 Parsing error: Escape sequence '\\8' is not allowed.","reports":[]}
+{"code":"let x = <\"\\8\">\"\\9\"","type":"ts","fatal":"1:10 Parsing error: Escape sequence '\\8' is not allowed.","reports":[]}
+{"code":"class A { \"\\8\"?: string; declare \"\\9\": string }","type":"ts","fatal":"1:11 Parsing error: Escape sequence '\\8' is not allowed.","reports":[]}
+{"code":"abstract class A { abstract \"\\8\"(): void }","type":"ts","fatal":"1:29 Parsing error: Escape sequence '\\8' is not allowed.","reports":[]}
+{"code":"namespace N { export const a = \"\\8\" }","type":"ts","fatal":"1:32 Parsing error: Escape sequence '\\8' is not allowed.","reports":[]}
+{"code":"declare const a: \"\\8\"","type":"ts","fatal":"1:18 Parsing error: Escape sequence '\\8' is not allowed.","reports":[]}
+{"code":"function f(a: \"\\8\" = \"\\9\") {}","type":"ts","fatal":"1:15 Parsing error: Escape sequence '\\8' is not allowed.","reports":[]}
+{"code":"type T = `\\8`","type":"ts","reports":[]}
+{"code":"export = \"\\8\"","type":"ts","fatal":"1:10 Parsing error: Escape sequence '\\8' is not allowed.","reports":[]}
+{"code":"let x = \"\\8\"!","type":"ts","fatal":"1:9 Parsing error: Escape sequence '\\8' is not allowed.","reports":[]}
+{"code":"let x = (\"\\8\" satisfies string)","type":"ts","fatal":"1:10 Parsing error: Escape sequence '\\8' is not allowed.","reports":[]}

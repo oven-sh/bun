@@ -144,7 +144,7 @@ fn dump(path: &str) -> Option<String> {
         }
         out.push_str(&format!("records={} symbols={}\n", parsed.sidecar.wrappers.records.len(), parsed.symbols.len()));
         for symbol in parsed.symbols {
-            out.push_str(&format!("  symbol {} {}\n", symbol.kind as u8, bstr::BStr::new(symbol.original_name.slice())));
+            out.push_str(&format!("  symbol {} {}\n", <&'static str>::from(symbol.kind), bstr::BStr::new(symbol.original_name.slice())));
         }
         out
     });

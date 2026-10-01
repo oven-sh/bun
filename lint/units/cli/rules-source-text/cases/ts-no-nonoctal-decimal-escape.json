@@ -1,0 +1,82 @@
+[
+	{
+		"code": "enum E { \"\\8\" = 1 }",
+		"ts": true
+	},
+	{
+		"code": "enum E { A = \"\\8\" }",
+		"ts": true
+	},
+	{
+		"code": "type T = \"\\8\"",
+		"ts": true
+	},
+	{
+		"code": "let x: \"\\8\" | '\\9'",
+		"ts": true
+	},
+	{
+		"code": "declare module \"\\8\" {}",
+		"ts": true
+	},
+	{
+		"code": "import x = require(\"\\8\")",
+		"ts": true
+	},
+	{
+		"code": "type T = import(\"\\8\")",
+		"ts": true
+	},
+	{
+		"code": "type T = { \"\\8\": 1 }",
+		"ts": true
+	},
+	{
+		"code": "interface I { \"\\8\"(): void }",
+		"ts": true
+	},
+	{
+		"code": "let x = \"\\8\" as \"\\9\"",
+		"ts": true
+	},
+	{
+		"code": "let x = <\"\\8\">\"\\9\"",
+		"ts": true
+	},
+	{
+		"code": "class A { \"\\8\"?: string; declare \"\\9\": string }",
+		"ts": true
+	},
+	{
+		"code": "abstract class A { abstract \"\\8\"(): void }",
+		"ts": true
+	},
+	{
+		"code": "namespace N { export const a = \"\\8\" }",
+		"ts": true
+	},
+	{
+		"code": "declare const a: \"\\8\"",
+		"ts": true
+	},
+	{
+		"code": "function f(a: \"\\8\" = \"\\9\") {}",
+		"ts": true
+	},
+	{
+		"code": "type T = `\\8`",
+		"ts": true
+	},
+	{
+		"code": "export = \"\\8\"",
+		"ts": true
+	},
+	{
+		"code": "let x = \"\\8\"!",
+		"ts": true
+	},
+	{
+		"code": "let x = (\"\\8\" satisfies string)",
+		"ts": true
+	}
+]

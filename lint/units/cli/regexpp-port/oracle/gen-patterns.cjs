@@ -45,6 +45,20 @@ const CLASS = [
 	"\\p{L}", "\\P{Lu}", "\\p{RGI_Emoji}", "\\p{Nope}", "\\q{a|bc}", "\\q{}", "\\q{a}", "\\q{", "&&", "--", "&&&", "!!", "##", "^^", "\\&", "\\!",
 	"[a]", "[^a]", "[a-z]", "[", "[\\q{ab}]", "[^\\q{ab}]", "[^\\q{a}]", "\u00e9", "\u200d", "\ud83d\ude00", "\ud83d", "\ude00", "a-z", "z-a", "\\d-a", "a-\\d",
 ];
+// Patterns that every group of options gets first: the paths that random pieces seldom reach.
+const ALWAYS = [
+	"", "\\", "a\\", "(a)\\", "[a]\\", "(?<n>a)\\",
+	"(?<n>a)|(?<n>b)", "(?<n>a)|((?<n>b))", "((?<n>a))|(?<n>b)", "((?<n>a))|((?<n>b))", "(?<n>a)(?<n>b)", "(?<n>a)|(?<n>b)(?<n>c)",
+	"(?:(?<n>a)|(?<n>b))\\k<n>", "(?<n>a)(?:b|(?<n>c))", "(?:(?<n>a)|b)(?<n>c)", "(?:(?:(?<n>a)|b)|c)|(?<n>d)", "(?<n>a)|(?:b(?:c|(?<n>d)))",
+	"(?<n>a)|(?<m>b)|(?<n>c)\\k<n>\\k<m>", "\\k<n>(?<n>a)", "\\k<m>(?<n>a)", "(?<n>\\k<n>)", "\\1(a)", "(a)\\2", "(a)(b)\\2\\1", "(?=(a))\\1", "(?<=(a))\\1", "(?!(?<n>a))\\k<n>",
+	"(((((((((((((((((((((?<n>a)(?<n>b)))))))))))))))))))))", "(((((((((((((((((((((?<n>a)|(?<n>b)))))))))))))))))))))",
+	"a{9007199254740993,9007199254740992}", "a{99999999999999999999999}", "a{0}", "a{0,0}?", "\\99999999999999999999999", "\\u{00000000000000000000000000000041}",
+	"[\\d-a]", "[a-\\d]", "[\\d-\\w]", "[a-]", "[-a]", "[a-b-c]", "[\\c]", "[\\c1-\\c_]", "\\c", "\\c1", "[^]", "[]", "[]]", "[[]]", "[^[]]",
+	"[a&&b&&c]", "[a--b--c]", "[a&&b--c]", "[a--b&&c]", "[[a]&&[b]]", "[^[a]--[b]]", "[\\q{a|bc}--\\q{a}]", "[^\\q{ab}]", "[^\\q{a}]", "[^\\q{}]", "[\\p{RGI_Emoji}--a]", "[^\\p{RGI_Emoji}]", "[a-z&&b]", "[&&]", "[a&&]", "[a&&&b]", "[a-]&&b]",
+	"(?i:a)", "(?-i:a)", "(?i-:a)", "(?-:a)", "(?i-i:a)", "(?im-s:a)", "(?ii:a)", "(?:a)", "(?", "(?a)", "(?<", "(?<n", "(?<n>", "(?<n>a", "(", ")", "]", "}", "{", "{1}", "a{1", "a{", "a{,}", "a{1,2", "a**", "a?+", "^*", "$+", "\\b+", "(?=a)*", "(?<=a)*", "(?!a){2}",
+	"\ud83d\ude00", "[\ud83d\ude00]", "\ud83d", "[\ude00-\ud83d]", "[\ud83d-\ude00]", "(?<\ud835\udc9c>a)", "(?<\\ud835\\udc9c>a)", "(?<\\u{1d49c}>a)\\k<\ud835\udc9c>", "(?<a\u200d>b)", "(?<\u200d>b)",
+	"\\p{Script=Greek}", "\\p{Script_Extensions=Greek}", "\\p{scx=Kawi}", "\\p{sc=Berf}", "\\p{gc=Lu}", "\\p{Lu}", "\\p{Any}", "\\p{EBase}", "\\p{Extended_Pictographic}", "\\P{Basic_Emoji}", "\\p{Basic_Emoji}", "\\p{=}", "\\p{L=}", "\\p{}", "\\p{L}\\P{L}",
+];
 const GROUPS = [
 	// What ESLint's rules run: no options, so ES2025 and not strict.
 	...["-", "u", "v", "uv"].map(flags => ({ version: "-", strict: "-", flags, weight: flags === "uv" ? 0.1 : 6 })),
@@ -109,11 +123,12 @@ for (const group of GROUPS) {
 	const parser = new regexpp.RegExpParser(options);
 	const count = Math.round(unit * group.weight);
 	const seen = new Set();
-	for (let made = 0, tries = 0; made < count && tries < count * 20; tries++) {
-		const pattern = make();
+	const fixed = ALWAYS.slice();
+	for (let made = 0, tries = 0; fixed.length > 0 || (made < count && tries < count * 20); tries++) {
+		const pattern = fixed.length > 0 ? fixed.shift() : make();
 		if (seen.has(pattern)) continue;
 		seen.add(pattern);
-		made++;
+		if (fixed.length === 0) made++;
 		let result;
 		try {
 			const ast = parser.parsePattern(pattern, 0, pattern.length, flags);

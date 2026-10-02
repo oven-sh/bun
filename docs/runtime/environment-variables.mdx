@@ -65,12 +65,14 @@ process.env.FOO = "hello";
 
 ## Manually specifying `.env` files
 
-The `--env-file` flag overrides which `.env` files Bun loads. It works both when running a file with `bun` and when running `package.json` scripts.
+The `--env-file` flag overrides which `.env` files Bun loads. It works when running a file with `bun`, when running `package.json` scripts, and with `bun install` and the other package manager commands (where the loaded values are used for `$VARIABLE` substitution in `bunfig.toml` and are passed to lifecycle scripts).
 
 ```sh
 bun --env-file=.env.1 src/index.ts
 
 bun --env-file=.env.abc --env-file=.env.def run build
+
+bun install --env-file=.env.ci
 ```
 
 The path does not have to be a regular file. Bun reads a pipe, a FIFO, or a device until the end of the input, so secrets can reach the process without a file on disk:
@@ -89,6 +91,8 @@ Use `--no-env-file` to disable Bun's automatic `.env` file loading, for example 
 
 ```sh
 bun run --no-env-file index.ts
+
+bun install --no-env-file
 ```
 
 You can also disable it in `bunfig.toml`:

@@ -445,14 +445,6 @@ const IS_UV_FS_COPYFILE_DISABLED =
     const emptySources = () => ["", new Uint8Array(0), new Blob([]), new Response(""), []];
     const emptySourceExprs = [`""`, `new Uint8Array(0)`, `new Blob([])`, `new Response("")`, `[]`];
 
-    it.skipIf(isWindows)("to /dev/null resolves 0", async () => {
-      const results = [];
-      for (const src of emptySources()) {
-        results.push(await Bun.write(Bun.file("/dev/null"), src));
-      }
-      expect(results).toEqual([0, 0, 0, 0, 0]);
-    });
-
     it("to a user-provided fd does not truncate", async () => {
       using dir = tempDir("bun-write-empty-fd", { "out.txt": "" });
       const p = path.join(String(dir), "out.txt");

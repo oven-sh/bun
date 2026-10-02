@@ -432,12 +432,26 @@ impl Macro {
             // JSC needs to be initialized if building from CLI
             jsc::initialize(jsc::InitializeOptions::default());
 
+            // The VM outlives this build (later builds' macros reuse it; it is
+            // never destroyed) and `env` does not, so the VM gets its own copy.
+            let env_loader = NonNull::new(env).map(|env| {
+                // SAFETY: the caller's loader, live and unwritten during this build.
+                let copy = bun_core::handle_oom(unsafe { env.as_ref() }.clone());
+                bun_core::heap::into_raw_nn(Box::new(copy))
+            });
             let _vm = VirtualMachine::init(VirtualMachineInitOptions {
                 transform_options,
                 log: Some(NonNull::from(&mut *log)),
-                env_loader: NonNull::new(env),
+                env_loader,
                 is_main_thread: false,
                 ..Default::default()
+            })
+            .inspect_err(|_| {
+                if let Some(copy) = env_loader {
+                    // SAFETY: a failed `init` never wrote the transpiler that
+                    // would have kept this pointer, so the copy is still ours.
+                    unsafe { bun_core::heap::destroy(copy.as_ptr()) };
+                }
             })?;
             (_vm, true)
         };

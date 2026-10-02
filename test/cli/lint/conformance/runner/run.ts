@@ -36,8 +36,8 @@ export type Outcome = (typeof outcomes)[number];
 export interface Instance {
   // The configured name of the reference: "ES5For-of1(target=es2015).ts".
   name: string;
-  // Anything but "run" is an instance that the reference skips.
-  status: "run" | "skip";
+  // Anything but "run" is an instance that is not run: the reference skips it ("skip"), or it fails it whatever its diagnostics are ("invalid").
+  status: "run" | "skip" | "invalid";
   skipReason?: string;
   // Class E: the oracle is an error baseline. Class C: the reference has no diagnostic and writes no baseline.
   oracle: { class: "E" | "C" };

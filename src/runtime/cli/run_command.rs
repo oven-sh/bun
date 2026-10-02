@@ -1564,13 +1564,22 @@ impl Run<'_> {
         vm.on_unhandled_rejection = Run::on_unhandled_rejection_before_close;
         let _ = vm.global().handle_rejected_promises();
         // The loop stopped on an uncaught error: Node's fatal-exception exit, not a drain.
-        if vm.unhandled_error_counter > 0 {
+        let fatal = vm.unhandled_error_counter > 0;
+        if fatal {
             vm.exit_handler.requested = true;
+        }
+        // Before on_exit(): the 'exit' listeners receive this code.
+        if ANY_UNHANDLED.load(Ordering::Relaxed) {
+            vm.exit_handler.exit_code = 1;
         }
         vm.on_exit();
 
         if ANY_UNHANDLED.load(Ordering::Relaxed) {
-            print_unhandled_version_note(vm);
+            // As in Node, an 'exit' listener can replace the code of a fatal error. Other printed errors keep 1.
+            if !fatal {
+                vm.exit_handler.exit_code = 1;
+            }
+            print_unhandled_version_note();
         }
 
         // These create undefined references to externally-defined C symbols
@@ -1639,8 +1648,7 @@ fn exit_with_unhandled_note(vm: &mut VirtualMachine) -> ! {
     vm.exit_handler.requested = true;
     vm.on_exit();
     if ANY_UNHANDLED.load(Ordering::Relaxed) {
-        bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo::print();
-        pretty_errorln!("<r>\n<d>{}<r>", Global::unhandled_error_bun_version_string,);
+        print_unhandled_version_note();
     }
     vm.global_exit();
 }
@@ -1666,16 +1674,14 @@ fn entry_point_load_failed(vm: &mut VirtualMachine, err: &crate::Error) -> ! {
     exit_with_unhandled_note(vm);
 }
 
-/// Cold tail of `Run::start` when `ANY_UNHANDLED` tripped on an otherwise-clean
-/// exit: bump the exit code and print the sourcemap note + version string.
+/// Prints the sourcemap note + version string after `ANY_UNHANDLED` tripped.
 #[cold]
 #[inline(never)]
 #[cfg_attr(
     any(target_os = "linux", target_os = "android"),
     unsafe(link_section = ".text.unlikely")
 )]
-fn print_unhandled_version_note(vm: &mut VirtualMachine) {
-    vm.exit_handler.exit_code = 1;
+fn print_unhandled_version_note() {
     bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo::print();
     pretty_errorln!("<r>\n<d>{}<r>", Global::unhandled_error_bun_version_string,);
 }

@@ -292,17 +292,22 @@ const corpus = JSON.parse(readFileSync(corpusPath, "utf8"));
 const inputs = [];
 for (const f of corpus.forms) for (const template of Object.values(corpus.contexts)) inputs.push(template.replace("%T%", () => f.t));
 for (const s of corpus.sources) inputs.push(s.src);
+// Every file is there before the first build, each extension in its own directory: the bundler keeps what it read of a
+// directory, and it looks for s1.ts and s1.tsx where s1.js is asked for.
+const EXTS = ["ts", "tsx", "js"];
 rmSync(dir, { recursive: true, force: true });
-mkdirSync(join(dir, "in"), { recursive: true });
+for (const ext of EXTS) {
+  mkdirSync(join(dir, ext), { recursive: true });
+  for (let i = 0; i < inputs.length; i++) writeFileSync(join(dir, ext, `s${i}.${ext}`), inputs[i]);
+}
 writeFileSync(outPath, "");
 const at = p => [p?.line ?? null, p?.column ?? null, p?.length ?? null, p?.lineText ?? null];
 const logs = list => list.map(l => [String(l.message).replace(/ \(token: T[A-Za-z]+\)$/, ""), l.level ?? null, ...at(l.position)]);
 let buffer = "";
 let records = 0;
 for (let i = 0; i < inputs.length; i++) {
-  for (const ext of ["ts", "tsx", "js"]) {
-    const file = join(dir, "in", `f.${ext}`);
-    writeFileSync(file, inputs[i]);
+  for (const ext of EXTS) {
+    const file = join(dir, ext, `s${i}.${ext}`);
     const outdir = join(dir, "out");
     rmSync(outdir, { recursive: true, force: true });
     let record;
@@ -311,14 +316,13 @@ for (let i = 0; i < inputs.length; i++) {
       if (!result.success) {
         record = { e: logs(result.logs) };
       } else {
-        const js = existsSync(join(outdir, "f.js")) ? readFileSync(join(outdir, "f.js"), "utf8") : null;
-        const map = existsSync(join(outdir, "f.js.map")) ? JSON.parse(readFileSync(join(outdir, "f.js.map"), "utf8")) : null;
+        const js = existsSync(join(outdir, `s${i}.js`)) ? readFileSync(join(outdir, `s${i}.js`), "utf8") : null;
+        const map = existsSync(join(outdir, `s${i}.js.map`)) ? JSON.parse(readFileSync(join(outdir, `s${i}.js.map`), "utf8")) : null;
         record = { js, mappings: map?.mappings ?? null, names: map?.names ?? null, w: logs(result.logs) };
       }
     } catch (e) {
       record = { threw: String(e?.message ?? e).slice(0, 300) };
     }
-    rmSync(file, { force: true });
     records++;
     buffer += JSON.stringify({ i, ext, src: inputs[i], ...record }) + "\n";
     if (buffer.length > 1 << 16) {
@@ -478,14 +482,14 @@ golden() {
     0.extra.targeted) echo 8d963576d4e66888ec4389e6ca9f46f738bdfd4f274f23207d7a7731a1a0ae19 ;;
     0.extra.small-sub) echo 2c5ab7ff4fc64f0afca2ef969d9c8f06fdbb05a8f46008e47ccc858f2ab95ce0 ;;
     0.extra.small) echo 4b4a01e5fbdadff0c584d23853b3b7292db84966d458adc9070c7169d236fa83 ;;
-    1.main.seams) echo SEAMS_MAIN_GOLDEN ;;
+    1.main.seams) echo 68aad3ce786f63a5a63fd8a766bcc6532091e3eeda47d70333ea3aa04832635a ;;
     1.main.testrows) echo 425c436806c46c5c01b0ba16c81d3b9ac3e92a6089e14eea7e1cff2053493c93 ;;
     1.main.comments) echo 0e74102d0cd37a5d9529a5815c2cd136a443801bfa710159541e0067b0039aea ;;
     1.main.targeted) echo a42a1c9f81a3cc1b5ce95f0c7472d0bf5ecf4599ec4f790da4645154f7716d7e ;;
     1.main.small-sub) echo 3d29777be9d305f2c9f7a1bd42beaa086bcaf653999b0af1cff31cf9aa60376e ;;
     1.main.check) echo e7eb1e9cbd2e1079d0c3d84fe52ac86edc5df6f286932f8cbed010b99c549297 ;;
     1.main.small) echo 550b15871c279c804e1bfcc0ff9886bbb118c248fedd84b561c71bff35e84d97 ;;
-    1.extra.seams) echo SEAMS_EXTRA_GOLDEN ;;
+    1.extra.seams) echo 42fceddbac8d8d0512a7431478ce2c00ec8d30b9d060b4aec8d16a9705e0c70b ;;
     1.extra.testrows) echo a2344c70cd5705e693b3814f65df335504d9f3025dc5ba21af0fd4a5be45ea19 ;;
     1.extra.comments) echo 864080cb8f259d443b5345c21248268973f322d3e86dd75575bd686cd0edf7f3 ;;
     1.extra.targeted) echo 0b12128e2fc0add9ddaf51ccba0941300b8acd655517f27e6a40d1585b675154 ;;

@@ -468,6 +468,9 @@ static constexpr uint32_t kAutoHeaderKeepAliveTimeout = 1 << 3;
 // Node's _storeHeader emits chunked Transfer-Encoding after Connection/Keep-Alive, so it
 // cannot ride in the flat array (written first). Carry as an auto-header bit, rendered last.
 static constexpr uint32_t kAutoHeaderTransferEncodingChunked = 1 << 4;
+// Not header lines: how node:http frames the body (Node's chunkedEncoding). At most one of the two is set. Neither is set for the head that gets the writer's automatic Content-Length.
+static constexpr uint32_t kAutoHeaderBodyChunked = 1 << 5;
+static constexpr uint32_t kAutoHeaderBodyRaw = 1 << 6;
 
 // "Date: <IMF-fixdate>\r\n", rebuilt at most once per second. Hand-rolled
 // (not strftime) so the day/month names are locale-independent.
@@ -529,9 +532,15 @@ static void writeAutoHeaders(uWS::HttpResponse<isSSL>* response, uint32_t autoHe
     if (autoHeaderBits & kAutoHeaderTransferEncodingChunked) {
         static constexpr const char te[] = "Transfer-Encoding: chunked\r\n";
         response->uWS::template AsyncSocket<isSSL>::write(te, sizeof(te) - 1);
-        // Same state the flat-array path sets when it sees the header, so uWS
-        // chunk-frames the body.
+        // Same state the flat-array path sets when it sees the header: the writer adds no Content-Length.
         response->getHttpResponseData()->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER;
+    }
+    // A stated framing holds only under a head that has the line for it. JS that runs while the head is rendered can add or remove a framing header after its line: then the writer frames the body itself.
+    const uint32_t state = response->getHttpResponseData()->state;
+    if ((autoHeaderBits & kAutoHeaderBodyChunked)
+            ? !(state & uWS::HttpResponseData<isSSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER)
+            : ((autoHeaderBits & kAutoHeaderBodyRaw) && !(state & (uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER | uWS::HttpResponseData<isSSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER | uWS::HttpResponseData<isSSL>::HTTP_CLOSE_DELIMITED | uWS::HttpResponseData<isSSL>::HTTP_NO_BODY_STATUS)))) {
+        response->getHttpResponseData()->state &= ~(uWS::HttpResponseData<isSSL>::HTTP_NODE_BODY_CHUNKED | uWS::HttpResponseData<isSSL>::HTTP_NODE_BODY_RAW);
     }
 }
 
@@ -567,6 +576,10 @@ static void NodeHTTPServer__writeHead(
         response->getHttpResponseData()->state |= uWS::HttpResponseData<isSSL>::HTTP_NO_BODY_STATUS;
     }
 
+    if (autoHeaderBits & (kAutoHeaderBodyChunked | kAutoHeaderBodyRaw)) {
+        response->getHttpResponseData()->setNodeBodyChunked(autoHeaderBits & kAutoHeaderBodyChunked);
+    }
+
     if (headersObject) {
         if (auto* fetchHeaders = dynamicDowncast<WebCore::JSFetchHeaders>(headersObject)) {
             writeFetchHeadersToUWSResponse<isSSL>(fetchHeaders->wrapped(), response);
@@ -595,7 +608,7 @@ static void NodeHTTPServer__writeHead(
 
                 // node:http marks framing decisions with a NUL-named sentinel
                 // pair instead of a real header: value "1" = close-delimited
-                // (the user removed the framing headers), value "2" = no body
+                // (no framing header, the close ends the body), value "2" = no body
                 // (HEAD - suppress all body framing like 204/304).
                 if (name.length() == 1 && name[0] == 0) {
                     if (value == "2"_s) {

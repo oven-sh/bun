@@ -1123,10 +1123,10 @@ pub(crate) struct H2FrameParser {
     /// node strictSingleValueFields session option (default true): when false, duplicate
     /// single-value headers and array values for them are encoded as-is instead of rejected.
     strict_single_value_fields: Cell<bool>,
-    /// Highest stream id registered in either direction; a GOAWAY carries `last_peer_stream_id`.
+    /// Highest stream id registered in either direction; a GOAWAY carries `last_proc_stream_id`.
     last_stream_id: Cell<u32>,
-    /// Copy of `Connection::last_peer_stream_id` (GOAWAY last-stream-id, state.lastProcStreamID).
-    last_peer_stream_id: Cell<u32>,
+    /// Copy of `Connection::last_proc_stream_id` (GOAWAY last-stream-id, state.lastProcStreamID).
+    last_proc_stream_id: Cell<u32>,
     /// Last-Stream-ID of the last GOAWAY this session wrote, `MAX_STREAM_ID` before the first one
     /// (nghttp2's local_last_stream_id).
     sent_goaway_last_stream_id: Cell<u32>,
@@ -2211,7 +2211,7 @@ impl H2FrameParser {
         emit_error: bool,
     ) {
         let last_stream_id = self.next_goaway_last_stream_id(
-            last_stream_id.unwrap_or_else(|| self.last_peer_stream_id.get()),
+            last_stream_id.unwrap_or_else(|| self.last_proc_stream_id.get()),
         );
         bun_output::scoped_log!(
             H2FrameParser,
@@ -3730,8 +3730,8 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         self.engine_frames_sent.set(sent);
     }
 
-    fn on_last_peer_stream_id(&self, stream_id: u32) {
-        self.last_peer_stream_id.set(stream_id);
+    fn on_last_proc_stream_id(&self, stream_id: u32) {
+        self.last_proc_stream_id.set(stream_id);
     }
 
     fn clamp_goaway_last_stream_id(&self, wanted: u32) -> u32 {
@@ -4675,7 +4675,7 @@ impl H2FrameParser {
         result.put(
             global_object,
             b"lastProcStreamID",
-            JSValue::js_number(this.last_peer_stream_id.get() as f64),
+            JSValue::js_number(this.last_proc_stream_id.get() as f64),
         );
 
         let settings = this.remote_settings.get().unwrap_or_default();
@@ -7497,7 +7497,7 @@ impl H2FrameParser {
             max_send_header_block_length: Cell::new(0),
             strict_single_value_fields: Cell::new(true),
             last_stream_id: Cell::new(0),
-            last_peer_stream_id: Cell::new(0),
+            last_proc_stream_id: Cell::new(0),
             sent_goaway_last_stream_id: Cell::new(MAX_STREAM_ID),
             is_server: Cell::new(false),
             left_exception: Cell::new(false),

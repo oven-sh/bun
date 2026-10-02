@@ -254,8 +254,8 @@ pub(crate) trait Sink {
     /// counter moves, while the connection is mutably borrowed — the embedder must only
     /// store the values.
     fn on_frame_counters(&self, _received: u64, _sent: u64) {}
-    /// `last_peer_stream_id` advanced. Store-only, like on_frame_counters.
-    fn on_last_peer_stream_id(&self, _stream_id: u32) {}
+    /// `last_proc_stream_id` advanced. Store-only, like on_frame_counters.
+    fn on_last_proc_stream_id(&self, _stream_id: u32) {}
     /// The Last-Stream-ID for a GOAWAY that the engine is about to write. The embedder lowers
     /// `wanted` to the id of an earlier GOAWAY of this session (§6.8) and records the result.
     /// Store-only, like on_frame_counters.
@@ -364,9 +364,10 @@ pub(crate) struct Connection {
     preface_received: usize,
     /// Highest stream id in either direction, for the §5.1 idle checks; never sent in a GOAWAY.
     pub last_stream_id: u32,
-    /// Highest peer-initiated id that counts as processed (nghttp2's last_proc_stream_id): what a
-    /// GOAWAY carries (§6.8).
-    pub last_peer_stream_id: u32,
+    /// Highest peer-initiated id that counts as processed, as nghttp2's last_proc_stream_id: what
+    /// a GOAWAY carries (§6.8). It is not the highest id that the peer used: a stream that is
+    /// refused or promised after a GOAWAY of ours does not raise it.
+    last_proc_stream_id: u32,
     pub going_away: bool,
 }
 
@@ -406,7 +407,7 @@ impl Connection {
             evict_buf: Vec::new(),
             preface_received: 0,
             last_stream_id: 0,
-            last_peer_stream_id: 0,
+            last_proc_stream_id: 0,
             going_away: false,
         }
     }
@@ -457,7 +458,7 @@ impl Connection {
     ) {
         self.going_away = true;
         self.terminated = true;
-        let last = sink.clamp_goaway_last_stream_id(self.last_peer_stream_id);
+        let last = sink.clamp_goaway_last_stream_id(self.last_proc_stream_id);
         let mut payload = Vec::with_capacity(8 + debug.len());
         payload.extend_from_slice(&last.to_be_bytes());
         payload.extend_from_slice(&code.as_u32().to_be_bytes());
@@ -467,10 +468,10 @@ impl Connection {
     }
 
     /// Must run before the stream is surfaced to the embedder.
-    fn note_peer_stream(&mut self, sink: &impl Sink, stream_id: u32) {
-        if stream_id > self.last_peer_stream_id {
-            self.last_peer_stream_id = stream_id;
-            sink.on_last_peer_stream_id(stream_id);
+    fn note_processed_stream(&mut self, sink: &impl Sink, stream_id: u32) {
+        if stream_id > self.last_proc_stream_id {
+            self.last_proc_stream_id = stream_id;
+            sink.on_last_proc_stream_id(stream_id);
         }
     }
 
@@ -1143,7 +1144,7 @@ impl Connection {
             };
             // A client's "new" HEADERS is the response to its own request: not a peer stream.
             if self.is_server && processed {
-                self.note_peer_stream(sink, hdr.stream_id);
+                self.note_processed_stream(sink, hdr.stream_id);
             }
             if !refused {
                 sink.on_stream_open(hdr.stream_id);
@@ -1889,7 +1890,7 @@ impl Connection {
         }
         // §6.8: the id in a GOAWAY must not rise above the id in an earlier one.
         if !sink.goaway_sent() {
-            self.note_peer_stream(sink, promised);
+            self.note_processed_stream(sink, promised);
         }
 
         self.header_block.clear();
@@ -2169,8 +2170,8 @@ mod tests {
         /// nghttp2-style lib error code from on_error (locally-detected connection errors).
         local_error: Cell<Option<i32>>,
         local_error_last_stream_id: Cell<Option<u32>>,
-        /// Values received through on_last_peer_stream_id, in order.
-        peer_marks: RefCell<Vec<u32>>,
+        /// Values received through on_last_proc_stream_id, in order.
+        proc_marks: RefCell<Vec<u32>>,
         /// Makes can_open_stream refuse every new peer stream (maxSessionMemory exhausted).
         refuse_streams: Cell<bool>,
         /// What goaway_sent reports: the embedder wrote a GOAWAY of its own.
@@ -2197,8 +2198,8 @@ mod tests {
             self.local_error.set(Some(lib_code));
             self.local_error_last_stream_id.set(Some(last_stream_id));
         }
-        fn on_last_peer_stream_id(&self, stream_id: u32) {
-            self.peer_marks.borrow_mut().push(stream_id);
+        fn on_last_proc_stream_id(&self, stream_id: u32) {
+            self.proc_marks.borrow_mut().push(stream_id);
         }
         fn can_open_stream(&self) -> bool {
             !self.refuse_streams.get()
@@ -2582,7 +2583,7 @@ mod tests {
             Some((3, ErrorCode::ProtocolError.as_u32()))
         );
         assert_eq!(sink.local_error_last_stream_id.get(), Some(3));
-        assert_eq!(*sink.peer_marks.borrow(), vec![1, 3]);
+        assert_eq!(*sink.proc_marks.borrow(), vec![1, 3]);
     }
 
     #[test]
@@ -2604,7 +2605,7 @@ mod tests {
             goaway_sent(&sink),
             Some((1, ErrorCode::ProtocolError.as_u32()))
         );
-        assert_eq!(*sink.peer_marks.borrow(), vec![1]);
+        assert_eq!(*sink.proc_marks.borrow(), vec![1]);
     }
 
     #[test]
@@ -2626,7 +2627,7 @@ mod tests {
             Some((0, ErrorCode::ProtocolError.as_u32()))
         );
         assert_eq!(sink.local_error_last_stream_id.get(), Some(0));
-        assert!(sink.peer_marks.borrow().is_empty());
+        assert!(sink.proc_marks.borrow().is_empty());
     }
 
     #[test]
@@ -2657,7 +2658,7 @@ mod tests {
             goaway_sent(&sink),
             Some((2, ErrorCode::ProtocolError.as_u32()))
         );
-        assert_eq!(*sink.peer_marks.borrow(), vec![2]);
+        assert_eq!(*sink.proc_marks.borrow(), vec![2]);
     }
 
     #[test]
@@ -2685,7 +2686,7 @@ mod tests {
             goaway_sent(&sink),
             Some((1, ErrorCode::ProtocolError.as_u32()))
         );
-        assert_eq!(*sink.peer_marks.borrow(), vec![1]);
+        assert_eq!(*sink.proc_marks.borrow(), vec![1]);
     }
 
     #[test]
@@ -2713,7 +2714,7 @@ mod tests {
             goaway_sent(&sink),
             Some((0, ErrorCode::ProtocolError.as_u32()))
         );
-        assert!(sink.peer_marks.borrow().is_empty());
+        assert!(sink.proc_marks.borrow().is_empty());
     }
 
     #[test]
@@ -2741,6 +2742,6 @@ mod tests {
             Some((1, ErrorCode::ProtocolError.as_u32()))
         );
         assert_eq!(sink.local_error_last_stream_id.get(), Some(1));
-        assert_eq!(c.last_peer_stream_id, 3);
+        assert_eq!(c.last_proc_stream_id, 3);
     }
 }

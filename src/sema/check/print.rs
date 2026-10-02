@@ -1821,11 +1821,73 @@ impl<'p> Printer<'_, 'p> {
         vec![symbol]
     }
 
+    /// `lookupSymbolChain` from `at`, which may be a block `enterNewScope` made up. Its locals only count if one of them has the name
+    /// of `symbol`, or of what the chain starts with without them: `trySymbolTable` and `needsQualification` look up nothing else.
+    fn lookup_symbol_chain_from(
+        &mut self,
+        symbol: Sym,
+        is_value: bool,
+        yields_module: bool,
+        at: Enclosing,
+    ) -> (bool, Vec<Sym>) {
+        let found = self
+            .c
+            .lookup_symbol_chain_at(symbol, is_value, yields_module, at);
+        let first = if found.0 { None } else { found.1.first() };
+        if at.fake_scope == 0
+            || !self.is_name_of_fake_local(symbol)
+                && !first.is_some_and(|&first| self.is_name_of_fake_local(first))
+        {
+            return found;
+        }
+        let files = self.c.files();
+        let mut locals: Vec<(Atom, SymFlags, Option<Sym>)> = Vec::new();
+        // The block of the type parameters is inside that of the parameters. In each a later entry hides an earlier one.
+        for (name, parameter) in self.fake_scope_type_parameters.iter().rev() {
+            let Some(name) = files.atoms.lookup(name.as_bytes()) else {
+                continue;
+            };
+            if locals.iter().any(|local| local.0 == name) {
+                continue;
+            }
+            let symbol = parameter.and_then(|parameter| match *self.c.data(parameter) {
+                TypeData::TypeParam(file, tp, _) => {
+                    let id = self.c.bound(file).type_param_symbol[tp.idx()];
+                    id.is_some().then_some(Sym { file, id })
+                }
+                _ => None,
+            });
+            locals.push((name, SymFlags::TYPE_PARAMETER, symbol));
+        }
+        let type_parameters = locals.len();
+        for &(name, parameter) in self.fake_scope_parameters.iter().rev() {
+            let mut parameters = locals[type_parameters..].iter();
+            if !parameters.any(|local| local.0 == name) {
+                locals.push((name, SymFlags::FUNCTION_SCOPED_VARIABLE, parameter));
+            }
+        }
+        self.c
+            .lookup_symbol_chain_in_fake_scopes_at(symbol, is_value, yields_module, at, locals)
+    }
+
+    fn is_name_of_fake_local(&self, symbol: Sym) -> bool {
+        let files = self.c.files();
+        let name = files.symbol(symbol).name;
+        if name.is_none() {
+            return false;
+        }
+        let text = files.atoms.bytes(name);
+        let mut parameters = self.fake_scope_parameters.iter();
+        let mut type_parameters = self.fake_scope_type_parameters.iter();
+        parameters.any(|local| local.0 == name)
+            || type_parameters.any(|local| local.0.as_bytes() == text)
+    }
+
     /// `symbolToExpression(symbol, SymbolFlagsValue)`
     fn symbol_to_expression(&mut self, symbol: Sym) -> String {
         self.track_symbol(symbol, SymFlags::VALUE);
         let (starts_with_global_this, chain) = match self.enclosing_declaration {
-            Some(at) => self.c.lookup_symbol_chain_at(symbol, true, false, at),
+            Some(at) => self.lookup_symbol_chain_from(symbol, true, false, at),
             None => (false, self.lookup_symbol_chain(symbol, false)),
         };
         // `createExpressionFromSymbolChain`
@@ -1893,8 +1955,7 @@ impl<'p> Printer<'_, 'p> {
             .contains(SymFlags::TYPE_PARAMETER);
         let (starts_with_global_this, chain) = match self.enclosing_declaration {
             Some(at) if !is_type_parameter => {
-                self.c
-                    .lookup_symbol_chain_at(symbol, is_type_of, yields_module, at)
+                self.lookup_symbol_chain_from(symbol, is_type_of, yields_module, at)
             }
             _ => (false, self.lookup_symbol_chain(symbol, yields_module)),
         };
@@ -3251,9 +3312,9 @@ impl<'p> Printer<'_, 'p> {
                     None => Place::Nowhere,
                 }
             }
-            PropSource::Mapped(of, _) if depth < 8 => {
-                match self.c.synthetic_origin_of_mapped_property(*of, prop.name) {
-                    Some(origin) => self.place_of_property(&origin, depth + 1),
+            PropSource::Mapped(..) if depth < 8 => {
+                match prop.declared_by_modifiers_property().first() {
+                    Some(first) => self.place_of_property(first, depth + 1),
                     None => Place::Nowhere,
                 }
             }
@@ -3367,9 +3428,9 @@ impl<'p> Printer<'_, 'p> {
                     self.written_names(part, depth + 1, out);
                 }
             }
-            PropSource::Mapped(of, _) if depth < 8 => {
-                if let Some(origin) = self.c.synthetic_origin_of_mapped_property(*of, prop.name) {
-                    self.written_names(&origin, depth + 1, out);
+            PropSource::Mapped(..) if depth < 8 => {
+                for part in prop.declared_by_modifiers_property() {
+                    self.written_names(part, depth + 1, out);
                 }
             }
             _ => {}
@@ -3387,9 +3448,9 @@ impl<'p> Printer<'_, 'p> {
             PropSource::Intersected(_, parts) | PropSource::Copy(_, parts, _) if depth < 8 => {
                 return self.computed_key_text(parts.first()?, depth + 1);
             }
-            PropSource::Mapped(of, _) if depth < 8 => {
-                let origin = self.c.synthetic_origin_of_mapped_property(*of, prop.name)?;
-                return self.computed_key_text(&origin, depth + 1);
+            PropSource::Mapped(..) if depth < 8 => {
+                let first = prop.declared_by_modifiers_property().first()?;
+                return self.computed_key_text(first, depth + 1);
             }
             _ => return None,
         };
@@ -3526,9 +3587,9 @@ impl<'p> Printer<'_, 'p> {
                     return self.name_of_property_as_written(first, depth + 1);
                 }
             }
-            PropSource::Mapped(of, _) if depth < 8 => {
-                if let Some(origin) = self.c.synthetic_origin_of_mapped_property(*of, prop.name) {
-                    return self.name_of_property_as_written(&origin, depth + 1);
+            PropSource::Mapped(..) if depth < 8 => {
+                if let Some(first) = prop.declared_by_modifiers_property().first() {
+                    return self.name_of_property_as_written(first, depth + 1);
                 }
             }
             _ => {}
@@ -3656,9 +3717,9 @@ impl<'p> Printer<'_, 'p> {
                 }
                 return;
             }
-            PropSource::Mapped(of, _) => {
-                match self.c.synthetic_origin_of_mapped_property(*of, prop.name) {
-                    Some(origin) if depth < 8 => self.track_late_bound_name(&origin, depth + 1),
+            PropSource::Mapped(..) => {
+                match prop.declared_by_modifiers_property().first() {
+                    Some(first) if depth < 8 => self.track_late_bound_name(first, depth + 1),
                     Some(_) => {}
                     // It has no declaration.
                     None => {

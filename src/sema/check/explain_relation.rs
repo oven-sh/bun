@@ -1922,10 +1922,7 @@ impl<'p> Checker<'p> {
             _ => false,
         };
         if same_body
-            && let (Some((alias, source_args)), Some((target_alias, target_args))) =
-                (self.alias_of(source), self.alias_of(target))
-            && alias == target_alias
-            && !source_args.is_empty()
+            && let Some((alias, source_args, target_args, true)) = self.same_alias(source, target)
         {
             let params = self.type_params_of_symbol(alias);
             if !self.are_marker_arguments(alias, &params, &source_args)

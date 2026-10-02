@@ -26,7 +26,8 @@ pub enum VisitedKind {
     Parenthesized(ExprId, u32),
     /// The `b` of `a.b`, the `target` of `new.target`, the `meta` of `import.meta`.
     AccessName(ExprId),
-    /// An identifier where the string of `import a = require("m")` must be, which is in no expression context.
+    /// An identifier where the string of `import a = require("m")` or `export * from "m"` must be, which is in no expression
+    /// context.
     ModuleSpecifier(ExprId),
     /// The `defer` of `import.defer("m")`.
     ImportDeferName(ExprId),
@@ -79,6 +80,14 @@ pub enum VisitedKind {
     ImportEqualsName(ImportEqualsId, u32),
     /// The `x` of `x is T` and of `asserts x`.
     TypePredicateParameter(TypeNodeId),
+}
+
+/// What stands, without parentheses, where the module specifier of an import or an export goes and is no string literal.
+fn module_specifier_expressions(hir: &File) -> impl Iterator<Item = ExprId> + '_ {
+    let required = hir.import_equals.iter().map(|import| import.expression);
+    required
+        .chain(hir.specifier_expressions.iter().copied())
+        .filter(|&e| e.is_some() && !is_parenthesized(hir, e))
 }
 
 impl Checker<'_> {
@@ -472,15 +481,10 @@ impl Visitor<'_, '_> {
             _ => None,
         }));
         // Nor is what stands for a module specifier: an identifier is visited as that, a literal not at all.
-        let required = hir.import_equals.iter().map(|import| import.expression);
-        not_visited.extend(required.filter(|&e| {
-            e.is_some()
-                && !is_parenthesized(hir, e)
-                && (is_literal(e) || matches!(hir[e].kind, ExprKind::Ident(_)))
-        }));
-        // Nor right under an `ImportDeclaration` or an `ExportDeclaration`, where the module specifier goes.
-        let specifiers = hir.specifier_expressions.iter().copied();
-        not_visited.extend(specifiers.filter(|&e| !is_parenthesized(hir, e) && is_literal(e)));
+        not_visited.extend(
+            module_specifier_expressions(hir)
+                .filter(|&e| is_literal(e) || matches!(hir[e].kind, ExprKind::Ident(_))),
+        );
         // `ImportAttributes` is no expression node, and the value of an `ImportAttribute` is in no expression context.
         for &(_, attributes) in hir.import_attributes.iter() {
             not_visited.push(attributes);
@@ -718,15 +722,13 @@ impl Visitor<'_, '_> {
                 );
             }
         }
+        for specifier in module_specifier_expressions(hir) {
+            if matches!(hir[specifier].kind, ExprKind::Ident(_)) {
+                self.token(hir[specifier].pos, VisitedKind::ModuleSpecifier(specifier));
+            }
+        }
         for (index, import) in hir.import_equals.iter().enumerate() {
             let id = ImportEqualsId(index as u32);
-            let required = import.expression;
-            if required.is_some()
-                && !is_parenthesized(hir, required)
-                && matches!(hir[required].kind, ExprKind::Ident(_))
-            {
-                self.token(hir[required].pos, VisitedKind::ModuleSpecifier(required));
-            }
             if let ImportEqualsTarget::Entity(entity) = import.target
                 && let Some(start) = self.c.start_of_import_equals_reference(file, id)
             {

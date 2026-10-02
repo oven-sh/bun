@@ -121,10 +121,10 @@ impl Checker<'_> {
                 .iter()
                 .find_map(|part| self.place_of_first_prop_declaration_within(part, depth + 1)),
             // `resolveMappedTypeMembers`: those of the property the modifiers come from.
-            &PropSource::Mapped(of, _) => {
-                let origin = self.synthetic_origin_of_mapped_property(of, prop.name)?;
-                self.place_of_first_prop_declaration_within(&origin, depth + 1)
-            }
+            PropSource::Mapped(..) => prop
+                .declared_by_modifiers_property()
+                .iter()
+                .find_map(|part| self.place_of_first_prop_declaration_within(part, depth + 1)),
             PropSource::Type(_) => None,
         }
     }

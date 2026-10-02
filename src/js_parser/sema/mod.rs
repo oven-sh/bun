@@ -233,6 +233,7 @@ pub(crate) fn error_end(
             | 1442
             | 1478
             | 1490
+            | 2499
             | 17014
     ) {
         return None;

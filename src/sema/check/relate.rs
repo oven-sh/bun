@@ -627,7 +627,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `anyFunctionType`: the type of a context sensitive function under `CheckModeSkipContextSensitive`.
-    pub(super) fn any_function_type(&mut self) -> TypeId {
+    pub(super) fn any_function_type(&self) -> TypeId {
         self.synth(Shape {
             literal: Literalness::Partial,
             ..Shape::default()
@@ -2370,65 +2370,12 @@ impl<'p> Checker<'p> {
         self.variances_in_progress.contains(&sym) || self.p.variances.get(&sym).is_some()
     }
 
-    /// `t.alias`, of an object or a conditional type: the generic alias whose whole right side `t` is made from, and what stands
-    /// for its type parameters in `t`.
-    pub(super) fn alias_of(&mut self, t: TypeId) -> Option<(Sym, Vec<TypeId>)> {
-        if let Some(&(alias, ref type_arguments)) = self.stored_alias(t)
-            && matches!(
-                self.data(t),
-                TypeData::Anon { .. } | TypeData::Cond { .. } | TypeData::Fns { .. }
-            )
-        {
-            return (!type_arguments.is_empty() && !self.stack.contains(&Query::Declared(alias)))
-                .then(|| (alias, type_arguments.to_vec()));
-        }
-        let (file, node, mapper) = match *self.data(t) {
-            TypeData::Anon {
-                origin: Origin::TypeLiteral(file, node) | Origin::Mapped(file, node),
-                mapper,
-            } => (file, node, mapper),
-            TypeData::Cond { file, node, mapper } => (file, node, mapper),
-            // `getTypeFromTypeLiteralOrFunctionOrConstructorTypeNode`: a function or constructor type node has an alias too.
-            TypeData::Fns { ref decls, mapper } => {
-                let [(file, func)] = decls[..] else {
-                    return None;
-                };
-                let crate::bind::FnOwner::Type(node) = self.bound(file).fns[func.idx()].owner
-                else {
-                    return None;
-                };
-                (file, node, mapper)
-            }
-            _ => return None,
-        };
-        let a = self
-            .hir(file)
-            .aliases
-            .iter()
-            .position(|alias| alias.ty == node)?;
-        let symbol = self.bound(file).alias_symbol[a];
-        if symbol.is_none() || self.hir(file).aliases[a].type_params.is_empty() {
-            return None;
-        }
-        let sym = self.files().sym(file, symbol);
-        // While it is being worked out a reference to it is a mere name, and nothing can be measured. Nor of a name that is a class
-        // or an interface as well, which is what a reference to it then means.
-        if self.stack.contains(&Query::Declared(sym))
-            || self
-                .files()
-                .flags(sym)
-                .intersects(SymFlags::CLASS | SymFlags::INTERFACE)
-        {
-            return None;
-        }
-        let params = self.type_params_of_symbol(sym);
-        Some((
-            sym,
-            params
-                .iter()
-                .map(|&p| self.p.types.map(mapper, p).unwrap_or(p))
-                .collect(),
-        ))
+    /// `t.alias`, if it has type arguments. While the alias is being worked out a reference to it is a mere name, and nothing can be
+    /// measured.
+    pub(super) fn alias_of(&self, t: TypeId) -> Option<(Sym, Vec<TypeId>)> {
+        self.alias_of_type(t).filter(|(alias, type_arguments)| {
+            !type_arguments.is_empty() && !self.stack.contains(&Query::Declared(*alias))
+        })
     }
 
     /// `getTypeParameterModifiers`: what any of the declarations of `sym` says of its type parameter `param`.
@@ -4404,9 +4351,7 @@ impl<'p> Checker<'p> {
             _ => false,
         };
         if same_body
-            && let (Some((alias, source_args)), Some((target_alias, target_args))) = (self.alias_of(source), self.alias_of(target))
-            && alias == target_alias
-            && !source_args.is_empty()
+            && let Some((alias, source_args, target_args, true)) = self.same_alias(source, target)
             // With a wildcard for every type parameter there are no marker types left.
             && (relation == Relation::Permissive || {
                 let params = self.type_params_of_symbol(alias);

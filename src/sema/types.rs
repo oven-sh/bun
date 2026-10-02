@@ -372,7 +372,9 @@ pub enum PropSource {
     /// A property of the mapped type given (`containingType`). Its type is the template of that type instantiated with
     /// `Prop::mapper`: the mapper of the mapped type plus its type parameter mapped to `keyType`. `type_of_mapped_prop` resolves it
     /// on demand (`getTypeOfMappedSymbol`). The flag is `CheckFlagsStripOptional`: `-?` removes `undefined` from the type.
-    Mapped(TypeId, bool),
+    /// Last, the symbols whose `Declarations` it has, those of `modifiersProp` (`addMemberForKeyTypeWorker`), by the rule of `Copy`.
+    /// `None`: it has none.
+    Mapped(TypeId, bool, Option<std::sync::Arc<[Prop]>>),
     /// A symbol made from others (`createSymbolWithType`, `getSpreadSymbol`, `getSpreadType`, `resolveReverseMappedTypeMembers`): its
     /// own type, and the symbols whose `Declarations` it has, one after the other. None of those is made up, a copy or
     /// `Intersected`. The flag: it has the `ValueDeclaration` and the `Parent` of the first as well. `Checker::copy_of` makes it.
@@ -389,6 +391,16 @@ pub struct Prop {
 }
 
 const _: () = assert!(size_of::<Prop>() <= 40);
+
+impl Prop {
+    /// The last field of `PropSource::Mapped`.
+    pub fn declared_by_modifiers_property(&self) -> &[Prop] {
+        match &self.source {
+            PropSource::Mapped(_, _, Some(declared)) => declared,
+            _ => &[],
+        }
+    }
+}
 
 /// `ElementWithComputedPropertyName`
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -776,7 +788,13 @@ fn is_prop_local(prop: &Prop, file: FileId) -> bool {
             PropSource::Intersected(t, props) | PropSource::Copy(t, props, _) => {
                 t.is_local() || props.iter().any(|p| is_prop_local(p, file))
             }
-            PropSource::Mapped(t, _) => t.is_local(),
+            PropSource::Mapped(t, ..) => {
+                t.is_local()
+                    || prop
+                        .declared_by_modifiers_property()
+                        .iter()
+                        .any(|p| is_prop_local(p, file))
+            }
         }
 }
 

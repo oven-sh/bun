@@ -1066,6 +1066,12 @@ impl SpecifierKind {
     pub fn is_call(self) -> bool {
         matches!(self, SpecifierKind::ImportCall | SpecifierKind::RequireCall)
     }
+
+    /// `ForEachDynamicImportOrRequireCall`: in `file.Imports()` these come after what the statements name.
+    #[inline]
+    pub fn is_dynamic(self) -> bool {
+        self.is_call() || self == SpecifierKind::ImportType
+    }
 }
 
 #[derive(Copy, Clone, Debug)]

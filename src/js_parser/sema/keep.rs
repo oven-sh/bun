@@ -1262,6 +1262,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// `modifiers` are those of the parameter whose name is at `loc`.
+    pub(crate) fn note_parameter_modifiers(&mut self, loc: Loc, modifiers: &[Modifier]) {
+        if self.should_keep_types() && !modifiers.is_empty() {
+            let syntax = self.type_syntax_mut();
+            let list = syntax.ast.add_modifiers(modifiers);
+            syntax.modifier_lists.push((loc.start, list));
+        }
+    }
+
     /// Those pushed since there were `base` are the modifiers of the parameter whose name is at `loc`.
     pub(crate) fn end_parameter_modifiers(&mut self, base: usize, loc: Loc) {
         if !self.should_keep_types() {

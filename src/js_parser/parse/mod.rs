@@ -801,6 +801,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut comma_after_spread = bun_ast::Loc::EMPTY;
         // One bit for each item that had a modifier before it: "(public x) => 0". Only set when parsing for the type checker.
         let mut with_modifiers: u32 = 0;
+        // Those words: which item each is a modifier of.
+        let mut parameter_modifiers: Vec<(usize, bun_ast::ts_syntax::Modifier)> = Vec::new();
         // "(a, )". Only set in tolerant mode.
         let mut has_trailing_comma = false;
 
@@ -1018,6 +1020,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let _ = items_list.pop();
                     let _ = item_ends.pop();
                     with_modifiers |= 1u32 << items_list.len().min(31);
+                    if let js_ast::expr::Data::EIdentifier(word) = item.data
+                        && let Some(flag) = crate::lexer::PropertyModifierKeyword::find(
+                            p.load_name_from_ref(word.ref_),
+                        )
+                        .and_then(crate::sema::keep::modifier_flag)
+                    {
+                        let modifier = bun_ast::ts_syntax::Modifier {
+                            flag,
+                            loc: item.loc,
+                            decorator: None,
+                        };
+                        parameter_modifiers.push((items_list.len(), modifier));
+                    }
                     opts.force_arrow_fn = true;
                     continue;
                 }
@@ -1133,13 +1148,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     continue;
                 }
                 // double allocations
+                let binding = tuple.binding.unwrap_or(Binding {
+                    data: B::B::BMissing(B::Missing {}),
+                    loc: item.loc,
+                });
+                let is_typescript_ctor_field = with_modifiers & (1u32 << i.min(31)) != 0;
+                if is_typescript_ctor_field {
+                    let modifiers: Vec<bun_ast::ts_syntax::Modifier> = parameter_modifiers
+                        .iter()
+                        .filter(|modifier| modifier.0 == i)
+                        .map(|modifier| modifier.1)
+                        .collect();
+                    p.note_parameter_modifiers(binding.loc, &modifiers);
+                }
                 args.push(G::Arg {
-                    binding: tuple.binding.unwrap_or(Binding {
-                        data: B::B::BMissing(B::Missing {}),
-                        loc: item.loc,
-                    }),
+                    binding,
                     default: tuple.expr,
-                    is_typescript_ctor_field: with_modifiers & (1u32 << i.min(31)) != 0,
+                    is_typescript_ctor_field,
                     ..Default::default()
                 });
             }

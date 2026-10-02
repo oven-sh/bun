@@ -72,6 +72,13 @@ impl<'p> Checker<'p> {
         if self.resolving.is_empty() {
             return ty;
         }
+        if self
+            .check_mode()
+            .contains(CheckMode::SKIP_GENERIC_FUNCTIONS)
+            && self.is_nested_generic_function_skipped(file, e)
+        {
+            return self.any_function_type();
+        }
         if let Some(ty) = self.type_with_nested_generic_functions(file, e) {
             return ty;
         }
@@ -1638,6 +1645,17 @@ impl<'p> Checker<'p> {
                 }
             }
             ExprKind::Call(c) => {
+                // `resolveCallExpression` under `CheckModeSkipGenericFunctions` defers a call of a generic function that returns a
+                // function: `resolvingSignature`, of which `checkCallExpression` makes `silentNeverType`. `getResolvedSignature`
+                // returns a signature that is cached first.
+                if self
+                    .check_mode()
+                    .contains(CheckMode::SKIP_GENERIC_FUNCTIONS)
+                    && self.p.calls.get(&(file, e)).is_none()
+                    && self.is_call_of_generic_function_returning_function(file, e)
+                {
+                    return (TypeId::SILENT_NEVER, false);
+                }
                 let resolved = self.resolve_call(file, e);
                 let call = &hir[c];
                 let stops = match call.chain {
@@ -1743,6 +1761,13 @@ impl<'p> Checker<'p> {
             ExprKind::Array(items) => self.type_of_array_literal(file, e, items),
             ExprKind::Object(props) => self.type_of_object_literal(file, e, props),
             ExprKind::Fn(func) => {
+                if self
+                    .check_mode()
+                    .contains(CheckMode::SKIP_CONTEXT_SENSITIVE)
+                    && self.is_context_sensitive(file, e)
+                {
+                    return self.type_of_skipped_function(file, func);
+                }
                 let scope = self.bound(file).fns[func.idx()].scope;
                 let parent = self.bound(file).scopes[scope.idx()].parent;
                 let mapper = self.identity_mapper(file, parent);
@@ -2918,7 +2943,26 @@ impl<'p> Checker<'p> {
         shape.literal = Literalness::Literal;
         shape.symbol_declared_at = self.symbol_declaration_of_object_type(kept);
         shape.is_js_literal = self.has_js_literal_flag(kept);
-        self.synth(shape)
+        let ty = self.synth(shape);
+        self.with_propagated_non_inferrable_flag(ty)
+    }
+
+    /// `ObjectFlagsNonInferrableType` is one of `ObjectFlagsPropagatingFlags`: `ty`, what `checkObjectLiteral` has made, has it if the
+    /// type of a property has.
+    fn with_propagated_non_inferrable_flag(&mut self, ty: TypeId) -> TypeId {
+        self.map_type(ty, |c, m| {
+            let TypeData::Synth(shape) = c.data(m) else {
+                return m;
+            };
+            let is_non_inferrable = |prop: &Prop| matches!(prop.source, PropSource::Copy(ty, ..) if c.is_non_inferrable(ty, 0));
+            if !shape.props.iter().any(is_non_inferrable) {
+                return m;
+            }
+            c.synth(Shape {
+                literal: Literalness::Partial,
+                ..(**shape).clone()
+            })
+        })
     }
 
     /// `getSuperContainer`, arrow functions seen through unless `super` is called: the member of a class, an interface or a type
@@ -3210,6 +3254,7 @@ impl<'p> Checker<'p> {
             // `createArrayLiteralType`, which what is assigned to does not get to.
             if !in_pattern {
                 self.p.types.mark_manifest(ty, made_before);
+                self.note_array_literal_type(file, e, ty);
             }
             return ty;
         }
@@ -3234,7 +3279,19 @@ impl<'p> Checker<'p> {
         let made_before = self.p.types.len();
         let ty = self.array_of(element);
         self.p.types.mark_manifest(ty, made_before);
+        self.note_array_literal_type(file, e, ty);
         ty
+    }
+
+    /// `createArrayLiteralType` sets `ObjectFlagsArrayLiteral`, which a type does not hold here: the inference that `e` is checked for
+    /// is told (`Inference::array_literals`).
+    fn note_array_literal_type(&mut self, file: FileId, e: ExprId, ty: TypeId) {
+        if let Some(at) = self.get_inference_context(file, e)
+            && let Some(inference) = &mut self.inference_contexts[at].context
+            && !inference.array_literals.contains(&ty)
+        {
+            inference.array_literals.push(ty);
+        }
     }
 
     /// Whether `checkArrayLiteral` makes a tuple of the array literal `e`.
@@ -3504,7 +3561,7 @@ impl<'p> Checker<'p> {
         ) {
             result = self.spread_in_literal(result, segment, is_const);
         }
-        result
+        self.with_propagated_non_inferrable_flag(result)
     }
 
     /// `checkObjectLiteral` looks at every name and then at every value there and then: what leads back to something that is being

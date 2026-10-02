@@ -241,7 +241,6 @@ impl Checker<'_> {
         // `GetDeclarationDiagnostics`: no comment directive takes these back, and plain JavaScript has them too.
         let semantic = std::mem::take(&mut out);
         self.check_module_exports_assignments(file, &mut out);
-        pass!(check_isolated_declarations);
         if self.files().options.emits_declaration_files {
             pass!(check_declaration_emit);
         }

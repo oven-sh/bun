@@ -37,8 +37,7 @@ pub(super) struct Binder<'f> {
     idents: Vec<(ExprId, ScopeId)>,
     /// Identifiers that are assigned to.
     assigned: Vec<ExprId>,
-    /// `ForEachDynamicImportOrRequireCall`: where each is, and the module it names. They come after what the statements name.
-    dynamic_specifiers: Vec<(u32, Atom)>,
+
     /// `bindExpandoPropertyAssignment`: `a.b = c`, `a[b] = c` and, in JavaScript, `Object.defineProperty(a, "b", c)`, each with the
     /// scope it is written in.
     expando_assignments: Vec<(ExprId, ScopeId)>,
@@ -162,7 +161,7 @@ impl<'f> Binder<'f> {
             is_reached: false,
             is_unchecked: false,
             label_edges: Vec::new(),
-            dynamic_specifiers: Vec::new(),
+
             start_of_signatures: FlowId::NONE,
             spared: 0,
             break_target: FlowId::NONE,
@@ -298,20 +297,9 @@ impl<'f> Binder<'f> {
             let is_refused = !is_own_name && Self::is_refused(there.flags, flags, decl);
             if is_refused {
                 self.report_redeclaration(existing, includes, decl);
-            }
-            let symbol = &mut self.b.symbols[existing.idx()];
-            if is_refused {
-                // Listed all the same, for errors_duplicates.rs, which goes through specifiers by itself.
-                let is_listed = !matches!(
-                    decl,
-                    Decl::ExportSpec(_) | Decl::ExportStarAs(_) | Decl::ExportExpr(_)
-                );
-                if is_listed {
-                    symbol.decls.push(decl);
-                    self.b.refused_declarations.push((existing, decl));
-                }
                 return self.new_symbol(name, includes, decl, parent);
             }
+            let symbol = &mut self.b.symbols[existing.idx()];
             symbol.decls.push(decl);
             symbol.flags |= includes;
             // What is more than `export { a as b }` is in scope.
@@ -1435,9 +1423,11 @@ impl<'f> Binder<'f> {
             self.b.flow_edges.extend_from_slice(&edges[..]);
         }
         // `collectExternalModuleReferences`
-        self.dynamic_specifiers.sort_by_key(|dynamic| dynamic.0);
-        let dynamic = self.dynamic_specifiers.iter().map(|dynamic| dynamic.1);
-        let dynamic = dynamic.filter(|spec| spec.is_some());
+        let uses = self.f.specifier_uses.iter();
+        let dynamic = uses.filter(|u| u.kind.is_dynamic() && u.spec.is_some());
+        let mut dynamic: Vec<(u32, Atom)> = dynamic.map(|u| (u.pos, u.spec)).collect();
+        dynamic.sort_by_key(|dynamic| dynamic.0);
+        let dynamic = dynamic.iter().map(|dynamic| dynamic.1);
         self.b.specifiers.extend(dynamic);
         let mut seen = crate::util::FxHashSet::default();
         self.b.specifiers.retain(|s| seen.insert(*s));
@@ -3308,10 +3298,7 @@ impl<'f> Binder<'f> {
                 }
                 self.tys(args)
             }
-            TypeNodeKind::Import { spec, args, .. } => {
-                self.dynamic_specifiers.push((self.f[id].pos, spec));
-                self.tys(args);
-            }
+            TypeNodeKind::Import { args, .. } => self.tys(args),
             TypeNodeKind::Template { types, .. } => {
                 for t in self.f.ids(types) {
                     self.note_infer(t, InferPosition::Template);
@@ -3663,12 +3650,7 @@ impl<'f> Binder<'f> {
             // `bindCallExpressionFlow`
             ExprKind::Call(c) => {
                 let call = &self.f[c];
-                // `collectExternalModuleReferences`: what JavaScript requires is loaded like what it imports.
-                if self.f.is_js
-                    && let Some(spec) = required_specifier(self.f, id)
-                {
-                    self.dynamic_specifiers.push((self.f[id].pos, spec));
-                }
+
                 // What an immediately invoked function sees has the arguments evaluated.
                 if matches!(self.f[call.callee].kind, ExprKind::Fn(_)) {
                     self.tys(call.type_args);
@@ -3865,9 +3847,6 @@ impl<'f> Binder<'f> {
                 self.expr(e, me);
             }
             ExprKind::ImportCall { args, type_args } => {
-                if let ExprKind::String(spec) = self.f[self.f.id_at(args, 0)].kind {
-                    self.dynamic_specifiers.push((self.f[id].pos, spec));
-                }
                 // `checkImportCallExpression` never looks at them.
                 let around = std::mem::replace(&mut self.is_unchecked, true);
                 self.tys(type_args);

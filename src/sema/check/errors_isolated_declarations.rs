@@ -208,15 +208,14 @@ impl<'p> SymbolTracker<'p> for Emit {
 }
 
 impl<'p> Checker<'p> {
-    pub(super) fn check_isolated_declarations(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    /// `state.isolatedDeclarations`, for the transformer of `file`.
+    pub(super) fn new_isolated_declarations(&self, file: FileId) -> Option<Emit> {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        // `getSourceFilesToEmit`, `sourceFileMayBeEmitted`
         if !self.files().options.isolated_declarations
-            || matches!(hir.kind, FileKind::Declaration | FileKind::Json)
             || hir.has_errors
             || self.files().module(file).path.contains("/node_modules/")
         {
-            return;
+            return None;
         }
         let mut tx = Emit {
             file,
@@ -245,6 +244,13 @@ impl<'p> Checker<'p> {
                 tx.module_scopes[m.idx()] = ScopeId(i as u32);
             }
         }
+        Some(tx)
+    }
+
+    /// What the transformer has reported is said. The way over the file further down is gone first, into the same list: what both
+    /// report is one error.
+    pub(super) fn finish_isolated_declarations(&mut self, mut tx: Emit, out: &mut Vec<Diagnostic>) {
+        let hir = self.hir(tx.file);
         // `visitSourceFile`, `transformSourceFile`
         self.iso_mark_exported_aliases(&mut tx);
         self.iso_transform_expando_assignments(&mut tx);
@@ -361,7 +367,7 @@ impl<'p> Checker<'p> {
     }
 
     /// The expression as it is written.
-    fn iso_written(&self, file: FileId, e: ExprId) -> Node {
+    pub(super) fn iso_written(&self, file: FileId, e: ExprId) -> Node {
         if is_parenthesized(self.hir(file), e) {
             Node::Written(e)
         } else {
@@ -370,7 +376,7 @@ impl<'p> Checker<'p> {
     }
 
     /// What binds the pattern `pat`.
-    fn iso_owner_of_pattern(&self, file: FileId, pat: PatId) -> Option<Node> {
+    pub(super) fn iso_owner_of_pattern(&self, file: FileId, pat: PatId) -> Option<Node> {
         match self.bound(file).pat_parent[pat.idx()] {
             PatParent::Var(d) => Some(Node::Var(d)),
             PatParent::Param(p) => Some(Node::Param(p)),
@@ -486,7 +492,12 @@ impl<'p> Checker<'p> {
     }
 
     /// `IsPrimitiveLiteralValue`, of `e` itself, whatever parentheses it is in.
-    fn iso_is_primitive_literal(&self, file: FileId, e: ExprId, with_bigint: bool) -> bool {
+    pub(super) fn iso_is_primitive_literal(
+        &self,
+        file: FileId,
+        e: ExprId,
+        with_bigint: bool,
+    ) -> bool {
         let hir = self.hir(file);
         match hir[e].kind {
             ExprKind::True | ExprKind::False | ExprKind::Number(_) | ExprKind::String(_) => true,
@@ -1033,7 +1044,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `reportExpandoFunctionErrors`: 9023 at what first assigns each property to the function `node` declares.
-    fn iso_report_expandos(&mut self, tx: &mut Emit, node: Node) {
+    pub(super) fn iso_report_expandos(&mut self, tx: &mut Emit, node: Node) {
         let Some(ty) = self.iso_type_of_declared(tx.file, node) else {
             return;
         };
@@ -1142,7 +1153,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `SymbolTrackerImpl.ReportInferenceFallback`, of a node of the file.
-    fn iso_report(&mut self, tx: &mut Emit, node: Node) {
+    pub(super) fn iso_report(&mut self, tx: &mut Emit, node: Node) {
         if node == Node::Nowhere {
             return;
         }
@@ -2740,7 +2751,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `transformImportDeclaration`: 9026
-    fn iso_transform_import(&mut self, tx: &mut Emit, s: StmtId, i: ImportId) {
+    pub(super) fn iso_transform_import(&mut self, tx: &mut Emit, s: StmtId, i: ImportId) {
         let file = tx.file;
         let (hir, files) = (self.hir(file), self.files());
         let import = &hir[i];
@@ -2754,11 +2765,11 @@ impl<'p> Checker<'p> {
                 return;
             }
         }
-        if import.default.is_some() && self.iso_is_declaration_visible(tx, Decl::ImportDefault(i))
-            || import
-                .named
-                .iter()
-                .any(|x| self.iso_is_declaration_visible(tx, Decl::ImportSpec(x)))
+        let mut is_visible = |decl: Decl| {
+            self.with_emit_resolver(file, |resolver| resolver.is_declaration_visible(file, decl))
+        };
+        if import.default.is_some() && is_visible(Decl::ImportDefault(i))
+            || import.named.iter().any(|x| is_visible(Decl::ImportSpec(x)))
         {
             return;
         }
@@ -2911,7 +2922,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `transformEnumDeclaration`: 9020
-    fn iso_transform_enum(&mut self, tx: &mut Emit, e: EnumId) {
+    pub(super) fn iso_transform_enum(&mut self, tx: &mut Emit, e: EnumId) {
         let file = tx.file;
         let hir = self.hir(file);
         for m in hir[e].members.iter() {
@@ -3246,27 +3257,8 @@ impl<'p> Checker<'p> {
             return;
         }
         let dynamic = self.iso_dynamic_name(file, member.key);
-        if let Some(name) = dynamic
-            && !self.iso_is_global_symbol_reference(file, name)
-        {
-            let code = match bound.member_owner[m.idx()] {
-                MemberOwner::Class(c)
-                    if matches!(bound.class_owner[c.idx()], ClassOwner::Stmt(_)) =>
-                {
-                    9038
-                }
-                MemberOwner::Interface(_) | MemberOwner::TypeLiteral(_)
-                    if !is_entity_name_expression(self.hir(file), name) =>
-                {
-                    9014
-                }
-                _ => 0,
-            };
-            if code != 0 {
-                let said = self.iso_said(file, Node::Member(m), code);
-                tx.said.push(said);
-                return;
-            }
+        if self.iso_report_dynamic_name(tx, m) {
+            return;
         }
         // `IsImplementationOfOverload`
         if matches!(member.kind, MemberKind::Method | MemberKind::Constructor)
@@ -3325,6 +3317,35 @@ impl<'p> Checker<'p> {
         {
             self.iso_check_expression_visibility(tx, name);
         }
+    }
+
+    /// `visitDeclarationSubtree`, of a member with a dynamic name under `isolatedDeclarations`: 9038, 9014. Whether it is left out.
+    pub(super) fn iso_report_dynamic_name(&mut self, tx: &mut Emit, m: MemberId) -> bool {
+        let file = tx.file;
+        let bound = self.bound(file);
+        if let Some(name) = self.iso_dynamic_name(file, self.hir(file)[m].key)
+            && !self.iso_is_global_symbol_reference(file, name)
+        {
+            let code = match bound.member_owner[m.idx()] {
+                MemberOwner::Class(c)
+                    if matches!(bound.class_owner[c.idx()], ClassOwner::Stmt(_)) =>
+                {
+                    9038
+                }
+                MemberOwner::Interface(_) | MemberOwner::TypeLiteral(_)
+                    if !is_entity_name_expression(self.hir(file), name) =>
+                {
+                    9014
+                }
+                _ => 0,
+            };
+            if code != 0 {
+                let said = self.iso_said(file, Node::Member(m), code);
+                tx.said.push(said);
+                return true;
+            }
+        }
+        false
     }
 
     /// `visitDeclarationSubtree`, of a type that is written

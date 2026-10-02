@@ -206,9 +206,9 @@ impl<'p> Printer<'_, 'p> {
                 let &declaration = annotated.or(list.first())?;
                 Some((*file, SyntaxNode::Expr(declaration)))
             }
-            PropSource::Mapped(of, _) if depth < 8 => {
-                let origin = self.c.synthetic_origin_of_mapped_property(*of, prop.name)?;
-                self.value_declaration_of_property(&origin, depth + 1)
+            PropSource::Mapped(..) if depth < 8 => {
+                let first = prop.declared_by_modifiers_property().first()?;
+                self.value_declaration_of_property(first, depth + 1)
             }
             PropSource::Copy(_, of, _) if depth < 8 => {
                 self.value_declaration_of_property(of.first()?, depth + 1)
@@ -972,10 +972,19 @@ impl<'p> Printer<'_, 'p> {
                 is_typeof,
                 mode,
             } => {
+                let query = if is_typeof { "typeof " } else { "" };
+                // Not `IsLiteralImportTypeNode`: `VisitEachChild`. The argument is the one type in `args`.
+                if spec.is_none() {
+                    let argument = self.visit_existing_type_node(file, hir.ids(args).next()?, 0)?;
+                    let mut text = format!("{query}import({})", argument.text);
+                    for part in hir.ids(name) {
+                        text.push('.');
+                        text.push_str(&self.text(part));
+                    }
+                    return Some(Node::simple(text));
+                }
                 let declared = self.c.type_from_node(file, node);
-                // `IsLiteralImportTypeNode`
-                if spec.is_none()
-                    || mode != ResolutionMode::None
+                if mode != ResolutionMode::None
                     || self.c.instantiate(declared, self.mapper) != declared
                 {
                     return None;
@@ -992,7 +1001,6 @@ impl<'p> Printer<'_, 'p> {
                         self.string_literal_to_node(spec, quote).text
                     }
                 };
-                let query = if is_typeof { "typeof " } else { "" };
                 let mut text = format!("{query}import({specifier})");
                 for part in hir.ids(name) {
                     text.push('.');
@@ -1329,6 +1337,10 @@ impl<'p> Printer<'_, 'p> {
                     }
                     _ => self.text(name),
                 }
+            }
+            // `#x` with no class around it names nothing (`getDeclarationName`). The node has the name all the same.
+            PropKey::None if is_private_name_at(hir, start_of_member_name(hir, m)) => {
+                self.property_key_text(file, member.key, start_of_member_name(hir, m))
             }
             PropKey::None => String::new(),
             PropKey::Computed(e) => {

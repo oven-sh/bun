@@ -285,8 +285,7 @@ pub fn required_specifier(hir: &File, e: ExprId) -> Option<Atom> {
 pub struct Symbol {
     pub name: Atom,
     pub flags: SymFlags,
-    /// In the order they are bound. Those that what has the name refuses (`declareSymbolEx`) are listed too, for what is said of
-    /// duplicates: they add nothing to `flags`, and each is the one declaration of a symbol of its own that is in no table.
+    /// `Declarations`, in the order they are bound.
     pub decls: Decls,
     /// The module, namespace or enum it is a member of.
     pub parent: SymbolId,
@@ -744,8 +743,6 @@ pub struct Bound {
     /// global.
     pub global_augmentations: Few<SymbolId>,
     pub redeclarations: Few<Redeclaration>,
-    /// `declareSymbolEx`: the declarations that the symbol they are listed with refused. Each has a symbol of its own.
-    pub refused_declarations: Few<(SymbolId, Decl)>,
     /// `export as namespace N`
     pub umd_globals: Few<(Atom, SymbolId)>,
     /// `file.Imports()`: the module specifiers in the file that are looked for, in the order they are first mentioned.
@@ -1244,14 +1241,6 @@ impl Bound {
         let is_static =
             f[member].flags.contains(Flags::STATIC) || f[member].kind == MemberKind::StaticBlock;
         Some((class, is_static, name))
-    }
-
-    /// `symbol.Declarations`
-    pub fn declarations_of_symbol(&self, symbol: SymbolId) -> SmallVec<[Decl; 4]> {
-        let listed = self.symbols[symbol.idx()].decls.iter().copied();
-        listed
-            .filter(|&decl| !self.refused_declarations.contains(&(symbol, decl)))
-            .collect()
     }
 
     /// Those of one side of `class`.

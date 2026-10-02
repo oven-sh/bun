@@ -171,10 +171,10 @@ impl Checker<'_> {
                 .iter()
                 .find_map(|part| self.first_declaration_of_prop(part, depth + 1)),
             // `addMemberForKeyTypeWorker`: those of the property of the type the modifiers are taken from.
-            &PropSource::Mapped(of, _) => {
-                let origin = self.synthetic_origin_of_mapped_property(of, prop.name)?;
-                self.first_declaration_of_prop(&origin, depth + 1)
-            }
+            PropSource::Mapped(..) => prop
+                .declared_by_modifiers_property()
+                .iter()
+                .find_map(|part| self.first_declaration_of_prop(part, depth + 1)),
             PropSource::Type(_) => None,
         }
     }

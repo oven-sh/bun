@@ -970,6 +970,21 @@ fn end_of_string_literal(text: &[u8], start: u32) -> u32 {
     at.min(text.len()) as u32
 }
 
+/// `getModeForUsageLocation`. `default_mode`: of the file the use is in.
+fn mode_for_usage_location(
+    options: &Options,
+    default_mode: ResolutionMode,
+    u: &SpecifierUse,
+) -> ResolutionMode {
+    match u.kind {
+        _ if u.mode != ResolutionMode::None => u.mode,
+        // `getEmitSyntaxForUsageLocationWorker`: the argument of `require()` is resolved as CommonJS, whatever the file is emitted as.
+        SpecifierKind::Require | SpecifierKind::RequireCall => ResolutionMode::Require,
+        SpecifierKind::ImportCall => options.import_call_mode(default_mode),
+        _ => default_mode,
+    }
+}
+
 /// `referenceFileLocation` of each `/// <reference path>` and each import in `module` that leads to a file of the program: that file,
 /// the code of the message that says so, from where to where. In the order of `parseTask.subTasks`.
 fn reference_locations(
@@ -1005,47 +1020,13 @@ fn reference_locations(
     }
     // `file.Imports()`: the specifiers of statements, then those of `import()`, the call and the type.
     let mut uses = hir.specifier_uses.clone();
-    uses.retain(|u| !u.kind.is_call());
-    uses.sort_by_key(|u| u.pos);
-    let mut dynamic = Vec::new();
+    uses.sort_by_key(|u| (u.kind.is_dynamic(), u.pos));
     for u in &uses {
-        let mode = if u.mode != ResolutionMode::None {
-            u.mode
-        } else if u.kind == SpecifierKind::Require {
-            ResolutionMode::Require
-        } else {
-            module.default_mode
-        };
-        let Some(&target) = module.imports.get(&(u.spec, mode)) else {
-            continue;
-        };
-        let location = (target, 1393, u.pos, end_of_string_literal(text, u.pos));
-        if u.kind == SpecifierKind::ImportType {
-            dynamic.push(location);
-        } else {
-            locations.push(location);
+        let mode = mode_for_usage_location(options, module.default_mode, u);
+        if let Some(&target) = module.imports.get(&(u.spec, mode)) {
+            locations.push((target, 1393, u.pos, end_of_string_literal(text, u.pos)));
         }
     }
-    let call_mode = options.import_call_mode(module.default_mode);
-    for (i, e) in hir.exprs.iter().enumerate() {
-        let found = match e.kind {
-            ExprKind::ImportCall { args, .. } => match hir[hir.id_at(args, 0)].kind {
-                ExprKind::String(spec) => Some((hir.id_at(args, 0), spec, call_mode)),
-                _ => None,
-            },
-            ExprKind::Call(_) if hir.is_js => bind::require_call_argument(hir, ExprId(i as u32))
-                .map(|(argument, spec)| (argument, spec, ResolutionMode::Require)),
-            _ => None,
-        };
-        if let Some((argument, spec, mode)) = found
-            && let Some(&target) = module.imports.get(&(spec, mode))
-        {
-            let pos = hir[argument].pos;
-            dynamic.push((target, 1393, pos, end_of_string_literal(text, pos)));
-        }
-    }
-    dynamic.sort_by_key(|location| location.2);
-    locations.extend(dynamic);
     locations
 }
 
@@ -2232,26 +2213,7 @@ impl Files {
                 imports.push((spec, default_mode, found, true, increases_depth));
             }
         }
-        // The arguments of `import()` calls, and of `require()` calls in JavaScript (`ForEachDynamicImportOrRequireCall`).
-        let (mut called, mut required): (Vec<Atom>, Vec<Atom>) = (Vec::new(), Vec::new());
-        if !bound.specifiers.is_empty() {
-            for (i, e) in hir.exprs.iter().enumerate() {
-                if matches!(bound.expr_parent[i], bind::Parent::None) {
-                    continue;
-                }
-                match e.kind {
-                    ExprKind::ImportCall { args, .. } => {
-                        if let ExprKind::String(spec) = hir[hir.id_at(args, 0)].kind {
-                            called.push(spec);
-                        }
-                    }
-                    ExprKind::Call(_) if hir.is_js => {
-                        required.extend(bind::required_specifier(&hir, ExprId(i as u32)))
-                    }
-                    _ => {}
-                }
-            }
-        }
+
         // `collectModuleReferences`: of what the body of `declare module "m"` in a script imports, only what is not relative is looked
         // for. Statements come before `import()` and the like.
         let ambient = bound
@@ -2279,28 +2241,13 @@ impl Files {
                 .any(|e| host.is_file(&format!("{stem}{e}")));
                 extensionless_imports.push((spec, is_there));
             }
-            // `getModeForUsageLocation`: it is looked for in each way something in the file asks for it, in the order they do.
-            let written = hir
-                .specifier_uses
-                .iter()
-                .filter(|u| u.spec == spec && !u.kind.is_call())
-                .map(|u| {
-                    if u.mode != ResolutionMode::None {
-                        u.mode
-                    } else if u.kind == SpecifierKind::Require {
-                        ResolutionMode::Require
-                    } else {
-                        default_mode
-                    }
-                });
-            let import_call = called
-                .contains(&spec)
-                .then_some(options.import_call_mode(default_mode));
-            // `getEmitSyntaxForUsageLocationWorker`: the argument of `require()` is resolved as CommonJS, whatever the file is emitted as.
-            let require_call = required.contains(&spec).then_some(ResolutionMode::Require);
+            // It is looked for in each way something in the file asks for it, in the order they do, calls last.
+            let uses = || hir.specifier_uses.iter().filter(move |u| u.spec == spec);
+            let written = uses().filter(|u| !u.kind.is_call());
+            let written = written.chain(uses().filter(|u| u.kind.is_call()));
             let mut modes = [default_mode; 3];
             let mut count = 0;
-            for mode in written.chain(import_call).chain(require_call) {
+            for mode in written.map(|u| mode_for_usage_location(options, default_mode, u)) {
                 if !modes[..count].contains(&mode) {
                     modes[count] = mode;
                     count += 1;
@@ -3381,10 +3328,8 @@ impl Files {
             || bound
                 .lookup(bound.symbols[declared.parent.idx()].exports, declared.name)
                 .is_some_and(|there| {
-                    declared
-                        .decls
-                        .iter()
-                        .any(|&decl| bound.refused_declarations.contains(&(there, decl)))
+                    let mut refused = bound.redeclarations.iter();
+                    refused.any(|it| it.symbol == there && declared.decls.contains(&it.decl))
                 });
         has_parent.then_some(parent)
     }

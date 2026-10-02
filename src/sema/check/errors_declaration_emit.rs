@@ -8,7 +8,7 @@
 
 use super::enclosing_declaration::Enclosing;
 use super::errors::Diagnostic;
-use super::errors_isolated_declarations::Node as SyntaxNode;
+use super::errors_isolated_declarations::{Emit, Node as SyntaxNode};
 use super::explain::Related;
 use super::print::{
     DECLARATION_EMIT_NODE_BUILDER_FLAGS, Report, SymbolTracker,
@@ -220,6 +220,8 @@ struct SymbolTrackerImpl {
     error_name_node: Option<NameNode>,
     fallback_stack: Vec<FallbackNode>,
     late_marked_statements: Vec<StmtId>,
+    /// `state.isolatedDeclarations`, with what `getIsolatedDeclarationError` goes by and has made.
+    isolated_declarations: Option<Emit>,
 }
 
 /// `DeclarationTransformer`
@@ -268,14 +270,14 @@ impl<'p> Checker<'p> {
             self.union_too_complex,
         );
         self.eager.push(self.stack.len());
-        let found = {
+        let (found, isolated_declarations) = {
             let mut emit = DeclarationEmit::new(self, file);
             if module.hir.is_js {
                 emit.transform_javascript_file();
             } else {
                 emit.transform_source_file();
             }
-            emit.tracker.diagnostics
+            (emit.tracker.diagnostics, emit.tracker.isolated_declarations)
         };
         self.eager.pop();
         (
@@ -284,6 +286,9 @@ impl<'p> Checker<'p> {
             self.relation_too_complex,
             self.union_too_complex,
         ) = saved;
+        if let Some(isolated_declarations) = isolated_declarations {
+            self.finish_isolated_declarations(isolated_declarations, out);
+        }
         for error in found {
             let Found {
                 start,
@@ -316,6 +321,7 @@ impl<'c, 'p> DeclarationEmit<'c, 'p> {
             }
         }
         let top = Enclosing::at_scope(file, ScopeId(0));
+        let isolated_declarations = c.new_isolated_declarations(file);
         DeclarationEmit {
             c,
             tracker: SymbolTrackerImpl {
@@ -325,6 +331,7 @@ impl<'c, 'p> DeclarationEmit<'c, 'p> {
                 error_name_node: None,
                 fallback_stack: Vec::new(),
                 late_marked_statements: Vec::new(),
+                isolated_declarations,
             },
             enclosing: top,
             suppresses_new_contexts: false,
@@ -360,6 +367,9 @@ pub(super) struct EmitResolverLinks {
     variable_matches: FxHashMap<(Sym, FileId, ScopeId), Rc<Vec<Sym>>>,
     exports: FxHashMap<Sym, Rc<Vec<(Atom, Sym)>>>,
     global_aliases: Option<Rc<Vec<(Atom, Sym)>>>,
+    /// The locals of the blocks `enterNewScope` has put in front of the enclosing declaration, the innermost first, for as long as one
+    /// chain is looked up from there. No symbol: it is one `instantiateSymbol` made.
+    fake_locals: Vec<(Atom, SymFlags, Option<Sym>)>,
     /// `specifierCache`
     specifiers: FxHashMap<(Sym, FileId, ResolutionMode), String>,
 }
@@ -390,7 +400,7 @@ pub(super) struct SymbolChainCache {
 
 impl<'p> Checker<'p> {
     /// Asks the `EmitResolver` something for a printer whose enclosing declaration is in `file`.
-    fn with_emit_resolver<T>(
+    pub(super) fn with_emit_resolver<T>(
         &mut self,
         file: FileId,
         ask: impl FnOnce(&mut EmitResolver<'_, 'p>) -> T,
@@ -418,13 +428,28 @@ impl<'p> Checker<'p> {
         yields_module: bool,
         at: Enclosing,
     ) -> (bool, Vec<Sym>) {
+        self.lookup_symbol_chain_in_fake_scopes_at(symbol, is_value, yields_module, at, Vec::new())
+    }
+
+    /// The same from inside the blocks `enterNewScope` makes up, whose locals are `fake_locals`.
+    pub(super) fn lookup_symbol_chain_in_fake_scopes_at(
+        &mut self,
+        symbol: Sym,
+        is_value: bool,
+        yields_module: bool,
+        at: Enclosing,
+        fake_locals: Vec<(Atom, SymFlags, Option<Sym>)>,
+    ) -> (bool, Vec<Sym>) {
         let meaning = if is_value {
             Meaning::Value
         } else {
             Meaning::Type
         };
         let mut chain = self.with_emit_resolver(at.file, |resolver| {
-            resolver.symbol_chain_ex(symbol, at, meaning, yields_module, 0)
+            resolver.links.fake_locals = fake_locals;
+            let chain = resolver.symbol_chain_ex(symbol, at, meaning, yields_module, 0);
+            resolver.links.fake_locals.clear();
+            chain
         });
         let starts_with_global_this =
             chain.len() > 1 && chain[0] == self.files().global_this_symbol;
@@ -1317,8 +1342,10 @@ impl<'p> EmitResolver<'_, 'p> {
         meaning: Meaning,
         visited: &mut Vec<(Sym, Table)>,
     ) -> Rc<Vec<Sym>> {
+        // What is found past the locals of a block that is made up holds for that block alone.
+        let is_kept = self.links.fake_locals.is_empty();
         let key = (symbol, at.file, at.scope, meaning);
-        if let Some(known) = self.links.chains.get(&key) {
+        if is_kept && let Some(known) = self.links.chains.get(&key) {
             return Rc::clone(known);
         }
         let mut result = Vec::new();
@@ -1329,7 +1356,9 @@ impl<'p> EmitResolver<'_, 'p> {
             }
         }
         let result = Rc::new(result);
-        self.links.chains.insert(key, Rc::clone(&result));
+        if is_kept {
+            self.links.chains.insert(key, Rc::clone(&result));
+        }
         result
     }
 
@@ -1610,6 +1639,15 @@ impl<'p> EmitResolver<'_, 'p> {
 
     /// `needsQualification`
     fn needs_qualification(&mut self, symbol: Sym, at: Enclosing, meaning: Meaning) -> bool {
+        let name = self.c.name_of(symbol);
+        for &(local, flags, found) in &self.links.fake_locals {
+            if local == name && found == Some(symbol) {
+                return false;
+            }
+            if local == name && flags.intersects(meaning.flags()) {
+                return true;
+            }
+        }
         for table in self.tables_in_scope(at) {
             let Some(found) = self.lookup_symbol(table, symbol) else {
                 continue;
@@ -2373,8 +2411,14 @@ impl<'p> SymbolTracker<'p> for SymbolTrackerImpl {
         }
     }
 
-    /// `ReportInferenceFallback`: `if !s.state.isolatedDeclarations { return }`, and errors_isolated_declarations.rs has that case.
-    fn report_inference_fallback(&mut self, _: &mut Checker<'p>, _: FileId, _: SyntaxNode) {}
+    /// `ReportInferenceFallback`. What is in another file is reported for that file.
+    fn report_inference_fallback(&mut self, c: &mut Checker<'p>, file: FileId, node: SyntaxNode) {
+        if let Some(isolated_declarations) = &mut self.isolated_declarations
+            && file == self.current_source_file
+        {
+            c.iso_report(isolated_declarations, node);
+        }
+    }
 }
 
 // ───────────────────────────── `DeclarationTransformer` ─────────────────────────────
@@ -2450,6 +2494,10 @@ impl<'p> DeclarationEmit<'_, 'p> {
                     self.tracker.get_symbol_accessibility_diagnostic = Context::Variable(pat);
                     self.transform_signature(function);
                     self.tracker.get_symbol_accessibility_diagnostic = saved;
+                    if let Some(isolated_declarations) = &mut self.tracker.isolated_declarations {
+                        self.c
+                            .iso_report_expandos(isolated_declarations, SyntaxNode::Var(d));
+                    }
                 }
             } else {
                 // `shouldEmitFunctionProperties`
@@ -2477,7 +2525,11 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 let function = self.c.type_of_symbol(host);
                 if let Some(ty) = self.c.type_of_property(function, name) {
                     self.tracker.error_name_node = None;
-                    self.create_type_of_declaration(None, ty, DECLARATION_EMIT_NODE_BUILDER_FLAGS);
+                    self.create_type_of_declaration(
+                        Some(SyntaxNode::Expr(e)),
+                        ty,
+                        DECLARATION_EMIT_NODE_BUILDER_FLAGS,
+                    );
                 }
             }
             (
@@ -2621,6 +2673,12 @@ impl<'p> DeclarationEmit<'_, 'p> {
             return;
         }
         match statement.kind {
+            // `transformImportDeclaration`
+            StmtKind::Import(i) => {
+                if let Some(isolated_declarations) = &mut self.tracker.isolated_declarations {
+                    self.c.iso_transform_import(isolated_declarations, s, i);
+                }
+            }
             StmtKind::ExportDefault(e) => self.transform_export_assignment(s, e, false),
             StmtKind::ExportAssign(e) => self.transform_export_assignment(s, e, true),
             StmtKind::Fn(_)
@@ -2723,9 +2781,19 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 true
             }
             StmtKind::Fn(f) => {
+                if let Some(isolated_declarations) = &mut self.tracker.isolated_declarations {
+                    self.c
+                        .iso_report_expandos(isolated_declarations, SyntaxNode::Stmt(s));
+                }
                 self.enter(bound.fns[f.idx()].scope);
                 self.tracker.get_symbol_accessibility_diagnostic = Context::Return(f);
                 self.transform_signature(f);
+                true
+            }
+            StmtKind::Enum(e) => {
+                if let Some(isolated_declarations) = &mut self.tracker.isolated_declarations {
+                    self.c.iso_transform_enum(isolated_declarations, e);
+                }
                 true
             }
             StmtKind::Module(m) => {
@@ -2989,6 +3057,10 @@ impl<'p> DeclarationEmit<'_, 'p> {
             } else if is_declaration && !matches!(hir[class.extends].kind, ExprKind::Null) {
                 self.tracker.get_symbol_accessibility_diagnostic =
                     Context::Heritage(4020, name, node);
+                let file = self.file();
+                let expression = self.c.iso_written(file, class.extends);
+                self.tracker
+                    .report_inference_fallback(self.c, file, expression);
                 self.create_type_of_expression(class.extends);
                 for argument in hir.ids(class.extends_args) {
                     self.visit_type(argument, false);
@@ -3262,8 +3334,13 @@ impl<'p> DeclarationEmit<'_, 'p> {
             }
             _ => None,
         };
+        if let Some(isolated_declarations) = &mut self.tracker.isolated_declarations {
+            if self.c.iso_report_dynamic_name(isolated_declarations, m) {
+                return;
+            }
+        }
         // `IsLateBound`
-        if let Some(key) = dynamic_name
+        else if let Some(key) = dynamic_name
             && !(is_entity_name_expression(self.c.hir(self.file()), key)
                 && self.c.member_name(self.file(), member.key).is_some())
         {
@@ -3553,6 +3630,18 @@ impl<'p> DeclarationEmit<'_, 'p> {
             return;
         }
         if let Some(literal) = self.literal_const_type(node) {
+            let file = self.file();
+            let declaration = match node {
+                Typed::Variable(d) => Some((SyntaxNode::Var(d), hir[d].init)),
+                Typed::Property(m) => Some((SyntaxNode::Member(m), hir[m].init)),
+                _ => None,
+            };
+            if let Some((declaration, initializer)) = declaration
+                && !self.c.iso_is_primitive_literal(file, initializer, true)
+            {
+                self.tracker
+                    .report_inference_fallback(self.c, file, declaration);
+            }
             // `CreateLiteralConstValue`: a member of an enum is named.
             if let TypeData::EnumLit { member, .. } | TypeData::Enum { symbol: member, .. } =
                 *self.c.data(literal)
@@ -3644,7 +3733,8 @@ impl<'p> DeclarationEmit<'_, 'p> {
             }
             Typed::Element(pat) => {
                 let ty = self.c.type_of_pat(file, pat);
-                self.create_type_of_declaration(None, ty, flags);
+                let element = self.c.iso_owner_of_pattern(file, pat);
+                self.create_type_of_declaration(element, ty, flags);
             }
             Typed::Property(m) => {
                 let ty = self.c.iso_type_of_member(file, m);

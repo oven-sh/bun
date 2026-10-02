@@ -107,6 +107,29 @@ impl<'p> Checker<'p> {
         Some((alias, parameters.iter().map(map).collect()))
     }
 
+    /// `source.alias.symbol == target.alias.symbol`: that alias, and `fillMissingTypeArguments` of the type arguments of each. Both
+    /// lists are empty if neither has any. The flag: `len(source.alias.typeArguments) != 0`. `None` while the alias is being worked
+    /// out too: nothing can be measured.
+    pub(super) fn same_alias(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<(Sym, Vec<TypeId>, Vec<TypeId>, bool)> {
+        let (alias, sources) = self.alias_of_type(source)?;
+        let (target_alias, targets) = self.alias_of_type(target)?;
+        if alias != target_alias || self.stack.contains(&Query::Declared(alias)) {
+            return None;
+        }
+        if sources.is_empty() && targets.is_empty() {
+            return Some((alias, sources, targets, false));
+        }
+        let has_type_arguments = !sources.is_empty();
+        let params = self.local_type_params_of_symbol(alias);
+        let sources = self.fill_type_args(&params, &sources);
+        let targets = self.fill_type_args(&params, &targets);
+        Some((alias, sources, targets, has_type_arguments))
+    }
+
     /// `getAliasForTypeNode`
     pub(super) fn alias_for_type_node(
         &self,

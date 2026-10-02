@@ -3291,7 +3291,7 @@ impl<'p> Checker<'p> {
         let base = match &prop.source {
             PropSource::Type(t) | PropSource::Copy(t, ..) => *t,
             // `getTypeOfMappedSymbol` instantiates the template with `prop.mapper` before it adjusts for optionality.
-            PropSource::Mapped(of, strips_optional) => {
+            PropSource::Mapped(of, strips_optional, _) => {
                 own_mapper = MapperId::IDENTITY;
                 self.type_of_mapped_prop(*of, prop, *strips_optional)
             }
@@ -4678,11 +4678,26 @@ impl<'p> Checker<'p> {
     /// `keeps_value_declaration`: and the `ValueDeclaration` and the `Parent` of the first (`createSymbolWithType`, and where
     /// `getSpreadSymbol` answers with the symbol itself), not only those (what `getSpreadSymbol` and `getSpreadType` make anew).
     pub(super) fn copy_of(ty: TypeId, of: &[&Prop], keeps_value_declaration: bool) -> PropSource {
+        let declared = Self::declared_properties(of);
+        if declared.is_empty() {
+            return PropSource::Type(ty);
+        }
+        let has_value_declaration =
+            keeps_value_declaration && Self::value_declaration(of[0]).is_some();
+        PropSource::Copy(ty, declared.into(), has_value_declaration)
+    }
+
+    /// The symbols whose `Declarations` the properties `of` have, one after the other. None of them is made up, a copy,
+    /// `Intersected` or `Mapped`.
+    pub(super) fn declared_properties(of: &[&Prop]) -> Vec<Prop> {
         fn add_declared(prop: &Prop, declared: &mut Vec<Prop>) {
             match &prop.source {
                 PropSource::Type(_) => {}
                 PropSource::Copy(_, parts, _) | PropSource::Intersected(_, parts) => {
                     parts.iter().for_each(|part| add_declared(part, declared));
+                }
+                PropSource::Mapped(..) => {
+                    declared.extend_from_slice(prop.declared_by_modifiers_property());
                 }
                 _ => declared.push(Prop {
                     mapper: MapperId::IDENTITY,
@@ -4692,12 +4707,7 @@ impl<'p> Checker<'p> {
         }
         let mut declared = Vec::new();
         of.iter().for_each(|prop| add_declared(prop, &mut declared));
-        if declared.is_empty() {
-            return PropSource::Type(ty);
-        }
-        let has_value_declaration =
-            keeps_value_declaration && Self::value_declaration(of[0]).is_some();
-        PropSource::Copy(ty, declared.into(), has_value_declaration)
+        declared
     }
 
     /// The member `written` of an object literal, or attribute of a JSX element, as it is when checked otherwise than

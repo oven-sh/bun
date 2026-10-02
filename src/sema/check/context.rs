@@ -2440,6 +2440,26 @@ impl<'p> Checker<'p> {
         }
     }
 
+    /// `getInferenceContext`: which of `inference_contexts` `e` is checked for.
+    pub(super) fn get_inference_context(&self, file: FileId, e: ExprId) -> Option<usize> {
+        self.inference_contexts
+            .iter()
+            .rposition(|info| info.file == file && self.is_node_descendant_of(file, e, info.node))
+    }
+
+    /// `IsNodeDescendantOf`
+    fn is_node_descendant_of(&self, file: FileId, e: ExprId, ancestor: ExprId) -> bool {
+        let mut at = Parent::Expr(e);
+        loop {
+            match at {
+                Parent::Expr(x) if x == ancestor => return true,
+                Parent::Expr(x) if x.is_none() => return false,
+                Parent::None | Parent::File | Parent::Module(_) => return false,
+                _ => at = self.parent_of(file, at),
+            }
+        }
+    }
+
     /// `getContextualType` of `e` with nothing pushed: what is expected of an argument, and of all that is part of one, comes from the
     /// parameter type of the resolved signature (`getContextualTypeForArgumentAtIndex`). `arg_contexts` keeps what was pushed while
     /// the call was resolved. A call that is not resolved, or is being resolved, expects nothing.

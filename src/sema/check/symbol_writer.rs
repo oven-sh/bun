@@ -218,9 +218,6 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                     return None;
                 }
                 let symbol = files.sym(file, id);
-                if bound.refused_declarations.contains(&(id, decl)) {
-                    return None;
-                }
                 if matches!(kind, VisitedKind::DeclarationName(..)) {
                     return Some(Found::Symbol(symbol));
                 }
@@ -806,10 +803,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
     fn get_symbol_of_identifier(&self, e: ExprId, name: Atom) -> Option<Found> {
         let file = self.file;
         let (hir, bound, files) = (self.c.hir(file), self.c.bound(file), self.c.files());
-        // The `a` of `export * from a` is neither an expression node nor a name in a type.
-        if hir.specifier_expressions.contains(&e) {
-            return None;
-        }
+
         // `export default a`, `export = a`: every meaning counts.
         if let Parent::Stmt(statement) = bound.expr_parent[e.idx()]
             && statement.is_some()
@@ -1179,12 +1173,8 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
     fn declarations_of_symbol_alone(&mut self, symbol: Sym) -> Vec<(FileId, Declaration)> {
         let mut declarations = Vec::new();
         for &part in self.c.files().parts(symbol).iter() {
-            let of_part = self.c.bound(part.file).declarations_of_symbol(part.id);
-            declarations.extend(
-                of_part
-                    .into_iter()
-                    .map(|decl| (part.file, Declaration::Bound(decl))),
-            );
+            let of_part = self.c.files().symbol(part).decls.iter();
+            declarations.extend(of_part.map(|&decl| (part.file, Declaration::Bound(decl))));
         }
         declarations
     }
@@ -1259,12 +1249,12 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                 }
                 declarations
             }
-            // `depth`: a mapped type over itself leads round in a circle. tsgo sets `Declarations` once, while the type is resolved.
-            PropSource::Mapped(of, _) if depth < 1000 => {
-                match self.c.synthetic_origin_of_mapped_property(*of, prop.name) {
-                    Some(origin) => self.declarations_of_property(&origin, depth + 1),
-                    None => Vec::new(),
+            PropSource::Mapped(..) => {
+                let mut declarations = Vec::new();
+                for part in prop.declared_by_modifiers_property() {
+                    declarations.extend(self.declarations_of_property(part, depth));
                 }
+                declarations
             }
             _ => Vec::new(),
         }

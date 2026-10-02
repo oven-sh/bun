@@ -1,12 +1,10 @@
 //! Working out what type parameters stand for from a type that is given and a type that mentions them.
 //!
 //! Follows `internal/checker/inference.go` of TypeScript 7.0.2 function by function. The names in `backticks` at the head of
-//! a function are the ones there. Types do not store `Type.alias`: `alias_of` reconstructs it for object and conditional types,
-//! and `Program::alias_of` records it for unions and intersections. Left out: what the language service blocks, `wildcardType`
-//! (there is none here), and the arity a spread argument implies for `[...T, ...U]`.
+//! a function are the ones there. Left out: what the language service blocks, `wildcardType` (there is none here), and the
+//! arity a spread argument implies for `[...T, ...U]`.
 
 use super::*;
-use crate::bind::FnOwner;
 use smallvec::{SmallVec, smallvec};
 
 /// The members of a union or an intersection while they are gone through.
@@ -241,7 +239,7 @@ impl<'p> Checker<'p> {
             return;
         }
         // Two instantiations of one alias: infer between the type arguments only. Without type arguments there is nothing to infer.
-        if let Some((alias, sources, targets)) = self.same_alias(source, target) {
+        if let Some((alias, sources, targets, _)) = self.same_alias(source, target) {
             if !sources.is_empty() {
                 self.infer_from_type_arguments_of(n, alias, &sources, &targets);
             }
@@ -309,7 +307,7 @@ impl<'p> Checker<'p> {
                         (TypeData::Fns { decls: a, .. }, TypeData::Fns { decls: b, .. }) => a == b,
                         _ => c
                             .same_alias(s, t)
-                            .is_some_and(|(_, type_arguments, _)| !type_arguments.is_empty()),
+                            .is_some_and(|(.., has_type_arguments)| has_type_arguments),
                     }
                 });
                 if targets.is_empty() {
@@ -574,91 +572,6 @@ impl<'p> Checker<'p> {
             TypeData::Union(parts) | TypeData::Intersection(parts) => self.has_lazy_alias(parts),
             _ => false,
         })
-    }
-
-    /// `source.alias.symbol == target.alias.symbol`: the type alias that `source` and `target` both instantiate, and the type
-    /// arguments of each. Both lists are empty for an alias without type parameters.
-    fn same_alias(
-        &mut self,
-        source: TypeId,
-        target: TypeId,
-    ) -> Option<(Sym, Vec<TypeId>, Vec<TypeId>)> {
-        match (self.data(source), self.data(target)) {
-            (TypeData::Anon { origin: s, .. }, TypeData::Anon { origin: t, .. }) if s == t => {}
-            (TypeData::Fns { decls: s, .. }, TypeData::Fns { decls: t, .. }) if s == t => {}
-            (
-                TypeData::Cond {
-                    file: sf, node: sn, ..
-                },
-                TypeData::Cond {
-                    file: tf, node: tn, ..
-                },
-            ) if (sf, sn) == (tf, tn) => {}
-            // One alias can produce different kinds of type: `X & (A | B)` is a union, and a homomorphic mapped type distributes
-            // over a union. The union or intersection is looked up first: few have an alias, and that lookup is cheap.
-            (TypeData::Union(_) | TypeData::Intersection(_), _) => {
-                let (alias, sources) = self.generic_alias_of(source)?;
-                let (target_alias, targets) = self.generic_alias_of(target)?;
-                return (alias == target_alias).then_some((alias, sources, targets));
-            }
-            (_, TypeData::Union(_) | TypeData::Intersection(_)) => {
-                let (alias, targets) = self.generic_alias_of(target)?;
-                let (source_alias, sources) = self.generic_alias_of(source)?;
-                return (alias == source_alias).then_some((alias, sources, targets));
-            }
-            _ => return None,
-        }
-        if let Some((alias, sources)) = self.alias_of(source) {
-            let (_, targets) = self.alias_of(target)?;
-            return Some((alias, sources, targets));
-        }
-        self.non_generic_alias_of(source)
-            .map(|alias| (alias, Vec::new(), Vec::new()))
-    }
-
-    /// `Type.alias` of `ty`, if the alias has type parameters.
-    fn generic_alias_of(&mut self, ty: TypeId) -> Option<(Sym, Vec<TypeId>)> {
-        if !matches!(
-            self.data(ty),
-            TypeData::Union(_) | TypeData::Intersection(_)
-        ) {
-            return self.alias_of(ty);
-        }
-        let &(alias, ref type_arguments) = self.stored_alias(ty)?;
-        // As in `alias_of`: variances cannot be measured while the alias is being resolved.
-        if type_arguments.is_empty() || self.stack.contains(&Query::Declared(alias)) {
-            return None;
-        }
-        Some((alias, type_arguments.to_vec()))
-    }
-
-    /// `Type.alias` of an object or a conditional type made from the body of an alias without type parameters. Such a type has
-    /// type variables only if the alias is declared inside something generic.
-    pub(super) fn non_generic_alias_of(&self, ty: TypeId) -> Option<Sym> {
-        let (file, node) = match *self.data(ty) {
-            TypeData::Anon {
-                origin: Origin::TypeLiteral(file, node) | Origin::Mapped(file, node),
-                ..
-            }
-            | TypeData::Cond { file, node, .. } => (file, node),
-            TypeData::Fns { ref decls, .. } => {
-                let [(file, func)] = decls[..] else {
-                    return None;
-                };
-                let FnOwner::Type(node) = self.bound(file).fns[func.idx()].owner else {
-                    return None;
-                };
-                (file, node)
-            }
-            _ => return None,
-        };
-        let index = self
-            .hir(file)
-            .aliases
-            .iter()
-            .position(|alias| alias.ty == node && alias.type_params.is_empty())?;
-        let symbol = self.bound(file).alias_symbol[index];
-        symbol.is_some().then(|| self.files().sym(file, symbol))
     }
 
     /// What `inferFromTypes` does once it has found the type parameter `target` is.
@@ -2031,7 +1944,7 @@ impl<'p> Checker<'p> {
 
     /// `ObjectFlagsNonInferrableType`: `ty` is, or holds, `autoType`, `silentNeverType` or a literal looked at without the functions
     /// in it that wait for their context.
-    fn is_non_inferrable(&self, ty: TypeId, depth: u32) -> bool {
+    pub(super) fn is_non_inferrable(&self, ty: TypeId, depth: u32) -> bool {
         if depth > 8 {
             return false;
         }

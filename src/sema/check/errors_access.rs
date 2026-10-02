@@ -1207,9 +1207,9 @@ impl Checker<'_> {
             {
                 return self.order_of_property(&parts[0]);
             }
-            PropSource::Mapped(of, _) => {
-                return match self.synthetic_origin_of_mapped_property(*of, prop.name) {
-                    Some(origin) => self.order_of_property(&origin),
+            PropSource::Mapped(..) => {
+                return match prop.declared_by_modifiers_property().first() {
+                    Some(first) => self.order_of_property(first),
                     None => (1, FileId(0), 0),
                 };
             }

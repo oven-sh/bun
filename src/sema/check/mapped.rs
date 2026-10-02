@@ -2004,41 +2004,6 @@ impl<'p> Checker<'p> {
         any.then(|| self.intersection(&types))
     }
 
-    /// `syntheticOrigin` (`addMemberForKeyTypeWorker`): the property of the modifiers type that the property `name` of the mapped type
-    /// `of` has its `Declarations` from. `None`: there is none, or an `as` clause renames (`MappedTypeNameTypeKindRemapping`).
-    pub(super) fn synthetic_origin_of_mapped_property(
-        &mut self,
-        of: TypeId,
-        name: Atom,
-    ) -> Option<Prop> {
-        let (file, node, mapper) = self.mapped_origin(of)?;
-        if self.hir(file)[self.mapped_decl(file, node).param]
-            .constraint
-            .is_none()
-        {
-            return None;
-        }
-        if let Some(renamed) = self.mapped_name_type(of) {
-            let key = self.mapped_type_param(of);
-            if !self.is_assignable(renamed, key) {
-                return None;
-            }
-        }
-        let (declared, _) = self.mapped_modifiers_source(file, node)?;
-        let modifiers = self.instantiate(declared, mapper);
-        // `getPropertyOfType`: `getReducedApparentType`
-        let modifiers = self.reduced(modifiers);
-        let modifiers = self.apparent_type(modifiers);
-        let modifiers = self.reduced(modifiers);
-        // `getUnionOrIntersectionProperty`
-        let modifiers = if self.is_union(modifiers) {
-            self.union_as_object(modifiers)
-        } else {
-            modifiers
-        };
-        self.prop_of(modifiers, name).map(|found| found.0)
-    }
-
     /// What can be said of a value of the union `ty` without knowing which member it is: the properties all of them have,
     /// by name or by index signature (`getPropertiesOfUnionOrIntersectionType`), and the index signatures all of them have.
     pub fn union_as_object(&mut self, ty: TypeId) -> TypeId {
@@ -2312,6 +2277,12 @@ impl<'p> Checker<'p> {
         if keys.len() > 4 {
             shape.props.reserve_exact(keys.len());
         }
+        // `shouldLinkPropDeclarations`: `getMappedTypeNameTypeKind(mappedType) != MappedTypeNameTypeKindRemapping`
+        let links_declarations = modifiers.is_some()
+            && match name_declared {
+                Some(declared) => self.is_assignable(declared, param),
+                None => true,
+            };
         // Where in `shape.props` each name is, once there are many.
         let mut places: FxHashMap<Atom, usize> = FxHashMap::default();
         for key in keys {
@@ -2322,7 +2293,7 @@ impl<'p> Checker<'p> {
             };
             let key_name = self.property_name_of_type(key);
             let source_prop = match (&modifiers, key_name) {
-                (Some(m), Some(name)) => m.resolved.prop(name).map(|p| p.flags),
+                (Some(m), Some(name)) => m.resolved.prop(name),
                 _ => None,
             };
             // `addMemberForKeyTypeWorker`
@@ -2361,7 +2332,7 @@ impl<'p> Checker<'p> {
                         }
                         None => {
                             let was_optional =
-                                source_prop.is_some_and(|f| f.contains(PropFlags::OPTIONAL));
+                                source_prop.is_some_and(|p| p.flags.contains(PropFlags::OPTIONAL));
                             let optional = match mapped.optional {
                                 MappedModifier::Add => true,
                                 MappedModifier::Remove => false,
@@ -2370,9 +2341,8 @@ impl<'p> Checker<'p> {
                             let readonly = match mapped.readonly {
                                 MappedModifier::Add => true,
                                 MappedModifier::Remove => false,
-                                MappedModifier::None => {
-                                    source_prop.is_some_and(|f| f.contains(PropFlags::READONLY))
-                                }
+                                MappedModifier::None => source_prop
+                                    .is_some_and(|p| p.flags.contains(PropFlags::READONLY)),
                             };
                             let strips = self.p.files.options.strict_null_checks
                                 && !optional
@@ -2391,11 +2361,19 @@ impl<'p> Checker<'p> {
                             if !places.is_empty() {
                                 places.insert(name, shape.props.len());
                             }
+                            // `prop.Declarations = modifiersProp.Declarations`
+                            let declared = match source_prop {
+                                Some(modifiers_prop) if links_declarations => {
+                                    Self::declared_properties(&[modifiers_prop])
+                                }
+                                _ => Vec::new(),
+                            };
+                            let declared = (!declared.is_empty()).then(|| declared.into());
                             // The type is resolved on demand (`type_of_mapped_prop`): the template under `with_key`.
                             shape.props.push(Prop {
                                 name,
                                 flags,
-                                source: PropSource::Mapped(of, strips),
+                                source: PropSource::Mapped(of, strips, declared),
                                 mapper: with_key,
                             });
                         }

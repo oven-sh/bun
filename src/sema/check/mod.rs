@@ -534,9 +534,10 @@ impl Program {
             contextual: Vec::new(),
             pulls_contextual_types_at: usize::MAX,
             rechecks_at: usize::MAX,
+            mode_of_recheck: CheckMode::empty(),
             rechecked_exprs: FxHashMap::default(),
             rechecked_members: FxHashMap::default(),
-            inference: Vec::new(),
+            inference_contexts: Vec::new(),
             instantiation_depth: 0,
             recent_instantiations: Default::default(),
             deferring_type_arguments: 0,
@@ -692,6 +693,29 @@ enum Query {
     InitializerIsUndefined(FileId, ParamId),
 }
 
+bitflags::bitflags! {
+    /// `CheckMode`. `CheckModeNormal` is `empty()`.
+    #[derive(Copy, Clone, PartialEq, Eq, Debug)]
+    struct CheckMode: u8 {
+        const CONTEXTUAL = 1 << 0;
+        const INFERENTIAL = 1 << 1;
+        const SKIP_CONTEXT_SENSITIVE = 1 << 2;
+        const SKIP_GENERIC_FUNCTIONS = 1 << 3;
+        const IS_FOR_SIGNATURE_HELP = 1 << 4;
+        const REST_BINDING_ELEMENT = 1 << 5;
+        const TYPE_ONLY = 1 << 6;
+        const FORCE_TUPLE = 1 << 7;
+    }
+}
+
+/// `InferenceContextInfo`
+struct InferenceContextInfo {
+    file: FileId,
+    node: ExprId,
+    /// `None`: `pushInferenceContext(node, nil)`.
+    context: Option<infer::Inference>,
+}
+
 /// How an `enter` ended.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum EnterOutcome {
@@ -795,11 +819,14 @@ pub struct Checker<'p> {
     /// How high `stack` is where `checkExpression` is not memoised: an expression is checked again, its kept type neither read nor
     /// replaced. See `get_type_of_expression`. `usize::MAX`: nowhere.
     rechecks_at: usize,
+    /// `checkMode` of the check that is not memoised. See `check_mode`.
+    mode_of_recheck: CheckMode,
     /// What checking again has come to, with nothing pushed: it is the same whoever asks. By expression, and by member of an object
     /// literal or JSX attribute.
     rechecked_exprs: FxHashMap<(FileId, ExprId), TypeId>,
     rechecked_members: FxHashMap<(FileId, PropId), TypeId>,
-    inference: Vec<infer::Inference>,
+    /// `inferenceContextInfos`
+    inference_contexts: Vec<InferenceContextInfo>,
     instantiation_depth: u32,
     /// What was last read from or put into `Program::instantiations`.
     recent_instantiations: instantiate::Recent,
@@ -1808,6 +1835,16 @@ impl<'p> Checker<'p> {
     #[inline]
     fn is_rechecking(&self) -> bool {
         self.stack.len() == self.rechecks_at
+    }
+
+    /// The `checkMode` parameter of `checkExpression`. What is kept is checked in `CheckModeNormal`.
+    #[inline]
+    fn check_mode(&self) -> CheckMode {
+        if self.is_rechecking() {
+            self.mode_of_recheck
+        } else {
+            CheckMode::empty()
+        }
     }
 
     /// From here, and as long as `stack` is as high as it is, expressions are checked again, with nothing pushed. Returns what

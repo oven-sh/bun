@@ -352,16 +352,15 @@ impl Checker<'_> {
             args: Vec::new(),
         };
         // Each report: where, with which code, and what goes with it.
-        let mut reports: Vec<((u32, u32, bool), u32, Vec<Related>, bool)> = Vec::new();
-        let is_export_equals = |at: Decl| matches!(at, Decl::ExportExpr(statement) if matches!(self.hir(file)[statement].kind, StmtKind::ExportAssign(_)));
+        let mut reports: Vec<((u32, u32, bool), u32, Vec<Related>, Decl)> = Vec::new();
         for refusal in bound.redeclarations.iter() {
             let (symbol, code) = (refusal.symbol, refusal.code);
+            self.relate_export_type_without_braces(file, refusal.decl, code, out);
+            let reported = reports.len();
             let Some(new) = self.range_of_declaration_name(file, refusal.decl) else {
                 continue;
             };
             let earlier = bound.symbols[symbol.idx()].decls[..refusal.count as usize].iter();
-            let earlier =
-                earlier.filter(|&&at| !bound.refused_declarations.contains(&(symbol, at)));
             // `multipleDefaultExports`
             let are_defaults = code == 2528;
             let mut firsts = Vec::new();
@@ -374,14 +373,14 @@ impl Checker<'_> {
                     another.push(related_at(new, if index == 0 { 2753 } else { 6204 }));
                     firsts.push(related_at(range, 2752));
                 }
-                reports.push((range, code, another, is_export_equals(at)));
+                reports.push((range, code, another, at));
             }
-            reports.push((new, code, firsts, is_export_equals(refusal.decl)));
+            reports.push((new, code, firsts, refusal.decl));
+            out.extend(reports[reported..].iter().map(|report| Diagnostic {
+                start: report.0.0,
+                code: report.1,
+            }));
         }
-        out.extend(reports.iter().map(|report| Diagnostic {
-            start: report.0.0,
-            code: report.1,
-        }));
         // `compactAndMergeRelatedInfos`: the reports of one error are one, with what goes with any of them in the order of errors.
         reports.sort_by_key(|report| (report.0.0, report.1));
         for same in reports.chunk_by(|a, b| (a.0.0, a.1) == (b.0.0, b.1)) {
@@ -391,10 +390,15 @@ impl Checker<'_> {
                 related.sort_by_key(|r| (r.at, r.code));
                 related.dedup();
             }
-            if same[0].3 {
-                // `getDisplayName`: `export = e` has no name, so `getDeclarationName`.
+            // `getDisplayName`
+            let at = same[0].3;
+            if matches!(at, Decl::ExportExpr(it) if matches!(self.hir(file)[it].kind, StmtKind::ExportAssign(_)))
+            {
+                // `export = e` has no name, so `getDeclarationName`.
                 let end = if is_token { 0 } else { end };
                 self.note(start, end, code, vec!["export=".to_owned()]);
+            } else if self.is_declaration_name_missing(file, at) {
+                self.note(start, NO_LENGTH, code, vec!["(Missing)".to_owned()]);
             } else if !is_token {
                 self.note(start, end, code, Vec::new());
             }

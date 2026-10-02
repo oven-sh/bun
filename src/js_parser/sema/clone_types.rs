@@ -246,8 +246,12 @@ impl Builder<'_> {
                     assert_keyword_loc,
                 } = self.ts[import];
                 if argument.is_some() {
-                    let node =
-                        self.clone_import_type_without_specifier(argument, is_typeof, pos(loc));
+                    let node = self.clone_import_type_without_specifier(
+                        argument,
+                        name,
+                        is_typeof,
+                        pos(loc),
+                    );
                     self.file[node].end = pos(end);
                     return node;
                 }
@@ -391,11 +395,12 @@ impl Builder<'_> {
     }
 
     /// `getTypeFromImportTypeNode`: 1141 for `import(T)`, whose type is the error type. `checkImportType` still checks `T`, which is kept
-    /// in `args` of a node without a specifier. The qualifier and the type arguments are never looked at.
+    /// in `args` of a node without a specifier. The type arguments are never looked at.
     #[cold]
     fn clone_import_type_without_specifier(
         &mut self,
         argument: ts::TypeId,
+        name: ts::Span<ts::Name>,
         is_typeof: bool,
         at: u32,
     ) -> TypeNodeId {
@@ -404,10 +409,11 @@ impl Builder<'_> {
             .push((pos(self.ts[argument].loc), 1141));
         let argument = self.clone_type(argument);
         let args = self.file.list(&[argument]);
+        let name = self.clone_names(name);
         self.file.ty(
             TypeNodeKind::Import {
                 spec: Atom::NONE,
-                name: IdList::EMPTY,
+                name,
                 args,
                 is_typeof,
                 mode: ResolutionMode::None,

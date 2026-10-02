@@ -5317,7 +5317,7 @@ impl<'p> Checker<'p> {
                             e,
                             param,
                             return_mapper,
-                            &mut inference.array_literals,
+                            &mut inference,
                         )
                     }
                     _ => None,
@@ -5463,7 +5463,7 @@ impl<'p> Checker<'p> {
                         e,
                         element,
                         return_mapper,
-                        &mut inference.array_literals,
+                        &mut inference,
                     );
                 }
             }
@@ -5715,7 +5715,11 @@ impl<'p> Checker<'p> {
     }
 
     /// `isGenericFunctionReturningFunction`, of some signature of what the call `e` calls, if `e` is a call without type arguments.
-    fn is_call_of_generic_function_returning_function(&mut self, file: FileId, e: ExprId) -> bool {
+    pub(super) fn is_call_of_generic_function_returning_function(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+    ) -> bool {
         let hir = self.hir(file);
         let ExprKind::Call(c) = hir[e].kind else {
             return false;
@@ -5831,17 +5835,32 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `checkExpressionWithContextualType`: `pushContextualType`, `checkExpression`, which is not memoised, `popContextualType`.
-    /// What tsgo keeps of what is in `e` is kept: `resolvedSignature`, `NodeCheckFlagsContextChecked`.
-    /// `array_literals`: receives the types of the array literals (`ObjectFlagsArrayLiteral`).
-    fn check_expression_with_contextual_type(
+    /// `checkExpressionWithContextualType`: `pushContextualType`, `pushInferenceContext`, `checkExpression`, which is not memoised, and
+    /// the two pops. What tsgo keeps of what is in `e` is kept: `resolvedSignature`, `NodeCheckFlagsContextChecked`.
+    /// `inference_context` is lent to `inference_contexts` for as long as the check lasts.
+    pub(super) fn check_expression_with_contextual_type(
         &mut self,
         file: FileId,
         e: ExprId,
         contextual_type: TypeId,
-        array_literals: &mut Vec<TypeId>,
+        inference_context: Option<&mut Inference>,
+        check_mode: CheckMode,
     ) -> TypeId {
         self.contextual.push((file, e, contextual_type));
+        let mut inference_context = inference_context;
+        let context = inference_context
+            .as_deref_mut()
+            .map(|inference| std::mem::replace(inference, Inference::for_params(&[], None)));
+        let mut check_mode = check_mode | CheckMode::CONTEXTUAL;
+        if context.is_some() {
+            check_mode |= CheckMode::INFERENTIAL;
+        }
+        self.inference_contexts.push(InferenceContextInfo {
+            file,
+            node: e,
+            context,
+        });
+        let mode_outside = std::mem::replace(&mut self.mode_of_recheck, check_mode);
         // What is found under one pushed type is not what is found under another, or under none.
         let found_outside = (
             std::mem::take(&mut self.rechecked_exprs),
@@ -5849,11 +5868,18 @@ impl<'p> Checker<'p> {
         );
         let outer = self.begin_recheck();
         let ty = self.type_of_expr(file, e);
-        self.note_array_literals(file, e, array_literals);
         self.end_recheck(outer);
         (self.rechecked_exprs, self.rechecked_members) = found_outside;
-        if self.resolving.last().is_some_and(|r| r.is_inferential) {
+        self.mode_of_recheck = mode_outside;
+        // A function that is skipped is not `ContextChecked`.
+        if !check_mode.contains(CheckMode::SKIP_CONTEXT_SENSITIVE)
+            && self.resolving.last().is_some_and(|r| r.is_inferential)
+        {
             self.resolve_return_types_in(file, e);
+        }
+        let lent = self.inference_contexts.pop().and_then(|info| info.context);
+        if let (Some(inference), Some(lent)) = (inference_context, lent) {
+            *inference = lent;
         }
         self.contextual.pop();
         ty
@@ -5867,7 +5893,7 @@ impl<'p> Checker<'p> {
         e: ExprId,
         param: TypeId,
         return_mapper: MapperId,
-        array_literals: &mut Vec<TypeId>,
+        inference: &mut Inference,
     ) -> Option<TypeId> {
         if !self.is_literal_that_depends_on_context(file, e) {
             return None;
@@ -5876,7 +5902,13 @@ impl<'p> Checker<'p> {
         let uninstantiated = self.instantiate_with_expected_result(param, return_mapper);
         let uninstantiated = self.without_no_infer(uninstantiated);
         let uninstantiated = self.force(uninstantiated);
-        Some(self.check_expression_with_contextual_type(file, e, uninstantiated, array_literals))
+        Some(self.check_expression_with_contextual_type(
+            file,
+            e,
+            uninstantiated,
+            Some(inference),
+            CheckMode::empty(),
+        ))
     }
 
     /// `isConstContext` asks `getContextualType`, which gives the parameter type as declared: `returnMapper` comes after it
@@ -8251,195 +8283,89 @@ impl<'p> Checker<'p> {
         in_tuple
     }
 
-    /// `e` as `CheckModeSkipContextSensitive` sees it. A function that waits for the types of its parameters is a blank
-    /// (`anyFunctionType`), one that only returns something that waits is kept for what it returns (`returnOnlyType`), and what
-    /// holds either is marked (`ObjectFlagsNonInferrableType`). Nothing is asked of such a function.
-    /// A generic function in `Resolving::nested_generic_functions` is `anyFunctionType` too (`CheckModeSkipGenericFunctions`).
+    /// `instantiateTypeWithSingleGenericCallSignature` under `CheckModeSkipGenericFunctions`: whether `e` is a generic function in
+    /// `Resolving::nested_generic_functions` that is skipped.
+    pub(super) fn is_nested_generic_function_skipped(&self, file: FileId, e: ExprId) -> bool {
+        self.nested_generic_function(file, e) == Some(None)
+    }
+
+    /// `e` as the first round of `inferTypeArguments` checks it.
     fn partial_type(&mut self, file: FileId, e: ExprId) -> TypeId {
         if !self.is_skipped_in_first_round(file, e) {
             return self.type_of_expr(file, e);
         }
+        // `getTypeAtPosition`: where there is no parameter anything is expected.
+        let contextual_type = self.contextual_type(file, e).unwrap_or(TypeId::ANY);
+        self.check_expression_with_contextual_type(
+            file,
+            e,
+            contextual_type,
+            None,
+            CheckMode::INFERENTIAL
+                | CheckMode::SKIP_CONTEXT_SENSITIVE
+                | CheckMode::SKIP_GENERIC_FUNCTIONS,
+        )
+    }
+
+    /// `checkFunctionExpressionOrObjectLiteralMethod` under `CheckModeSkipContextSensitive`, of the context sensitive function `f`:
+    /// `anyFunctionType`, or `returnOnlyType` if it has no context sensitive parameters and something can be inferred from what it
+    /// returns.
+    pub(super) fn type_of_skipped_function(&mut self, file: FileId, f: FnId) -> TypeId {
         let hir = self.hir(file);
-        let blank = self.synth(Shape {
+        let any_function_type = self.any_function_type();
+        if !self.is_return_only_function(file, f) {
+            return any_function_type;
+        }
+        let Some(expected) = self.contextual_signature(file, f) else {
+            return any_function_type;
+        };
+        let wanted = self.sig_return(expected);
+        if !self.has_type_variables(wanted) {
+            return any_function_type;
+        }
+        // `getReturnTypeFromBody(node, checkMode)`, without the widening at its end.
+        let ret = match hir[f].body {
+            FnBody::Expr(body) => self.type_of_expr(file, body),
+            // `checkAndAggregateReturnExpressionTypes`. A return expression is context sensitive, so there is at least one type.
+            FnBody::Block(_) => {
+                let bound = self.bound(file);
+                let info = &bound.fns[f.idx()];
+                // `functionHasImplicitReturn`
+                let mut has_return_without_expression =
+                    info.end != UNREACHABLE && self.is_reachable(file, info.end);
+                let mut types: Vec<TypeId> = Vec::new();
+                for s in bound.ids(info.returns) {
+                    let StmtKind::Return(value) = hir[s].kind else {
+                        continue;
+                    };
+                    if value.is_none() {
+                        has_return_without_expression = true;
+                        continue;
+                    }
+                    let ty = self.type_of_expr(file, value);
+                    if !types.contains(&ty) {
+                        types.push(ty);
+                    }
+                }
+                if has_return_without_expression && self.p.files.options.strict_null_checks {
+                    types.push(TypeId::UNDEFINED);
+                }
+                self.union_reduced(&types)
+            }
+            FnBody::None => return any_function_type,
+        };
+        let returns = self.p.types.intern_sig(SigData::Synth {
+            type_params: Box::new([]),
+            params: Box::new([]),
+            ret,
+            this: None,
+            of: Box::new([]),
+        });
+        self.synth(Shape {
+            call: vec![returns],
             literal: Literalness::Partial,
             ..Shape::default()
-        });
-        if let Some(instantiated) = self.nested_generic_function(file, e) {
-            return instantiated.unwrap_or(blank);
-        }
-        match hir[e].kind {
-            ExprKind::Object(props) => {
-                let mut shape = Shape {
-                    literal: Literalness::Partial,
-                    ..Shape::default()
-                };
-                for p in props.iter() {
-                    let prop = &hir[p];
-                    if prop.kind == PropKind::Spread
-                        || prop.value.is_none()
-                        || self.is_setter_beside_getter(file, props, p)
-                    {
-                        continue;
-                    }
-                    let Some(name) = self.member_name(file, prop.key) else {
-                        continue;
-                    };
-                    let ty = if self.is_skipped_in_first_round(file, prop.value) {
-                        self.partial_type(file, prop.value)
-                    } else {
-                        self.type_of_literal_prop(file, p)
-                    };
-                    shape.props.retain(|x| x.name != name);
-                    shape
-                        .props
-                        .push(Self::literal_member_of_type(file, p, name, ty));
-                }
-                self.synth(shape)
-            }
-            ExprKind::Array(items) => {
-                let mut types = Vec::with_capacity(items.len());
-                for item in hir.ids(items) {
-                    // What is spread is who knows how many.
-                    if matches!(hir[item].kind, ExprKind::Spread(_)) {
-                        return blank;
-                    }
-                    types.push(if self.is_skipped_in_first_round(file, item) {
-                        self.partial_type(file, item)
-                    } else {
-                        let ty = self.type_of_expr(file, item);
-                        let expected = self.contextual_type(file, item);
-                        self.widen_literal_for_context(ty, expected)
-                    });
-                }
-                if self.array_literal_wants_tuple(file, e) {
-                    let flags = vec![ElemFlags::REQUIRED; types.len()];
-                    return self.tuple(&types, &flags, false);
-                }
-                // `checkArrayLiteral` uses `UnionReductionSubtype` in every check mode. `anyFunctionType` is a subtype of every function
-                // type (`signaturesRelatedTo`), so it is removed next to one.
-                let element = self.union_reduced(&types);
-                self.array_of(element)
-            }
-            // `checkConditionalExpression`: `UnionReductionSubtype`.
-            ExprKind::Cond { yes, no, .. } => {
-                let (yes, no) = (self.partial_type(file, yes), self.partial_type(file, no));
-                self.union_reduced(&[yes, no])
-            }
-            // `checkBinaryLikeExpression`
-            ExprKind::Binary {
-                op: op @ (BinOp::Or | BinOp::Nullish),
-                left,
-                right,
-            } => {
-                let is_or = matches!(op, BinOp::Or);
-                let left = self.partial_type(file, left);
-                let may_be_right = if is_or {
-                    self.can_be_falsy(left)
-                } else {
-                    self.can_be_nullish(left)
-                };
-                if !may_be_right {
-                    return left;
-                }
-                let right = self.partial_type(file, right);
-                let left = if is_or {
-                    self.remove_definitely_falsy(left)
-                } else {
-                    left
-                };
-                let left = self.non_nullable(left);
-                let ty = self.union_reduced(&[left, right]);
-                // `checkExpressionEx` applies `instantiateTypeWithSingleGenericCallSignature` to the result as well. An operand that is
-                // skipped has the same contextual type.
-                if self.contains_nested_generic_function(file, e)
-                    && (self.single_generic_signature(ty, false).is_some()
-                        || self.single_generic_signature(ty, true).is_some())
-                {
-                    return blank;
-                }
-                ty
-            }
-            ExprKind::Binary {
-                op: BinOp::And,
-                left,
-                right,
-            } => {
-                let left = self.type_of_expr(file, left);
-                if !self.can_be_truthy(left) {
-                    return left;
-                }
-                let right = self.partial_type(file, right);
-                let of = if self.p.files.options.strict_null_checks || left == TypeId::UNRESOLVED {
-                    left
-                } else {
-                    self.base_of_literal(right)
-                };
-                let falsy = self.definitely_falsy_part(of);
-                self.union(&[falsy, right])
-            }
-            ExprKind::Binary {
-                op: BinOp::Comma,
-                right,
-                ..
-            } => self.partial_type(file, right),
-            ExprKind::Fn(f) => {
-                if !self.is_return_only_function(file, f) {
-                    return blank;
-                }
-                let Some(expected) = self.contextual_signature(file, f) else {
-                    return blank;
-                };
-                let wanted = self.sig_return(expected);
-                if !self.has_type_variables(wanted) {
-                    return blank;
-                }
-                // `getReturnTypeFromBody(node, checkMode)`, without the widening at its end.
-                let ret = match hir[f].body {
-                    FnBody::Expr(body) => self.partial_type(file, body),
-                    // `checkAndAggregateReturnExpressionTypes`. A return expression is context sensitive, so there is at least one type.
-                    FnBody::Block(_) => {
-                        let bound = self.bound(file);
-                        let info = &bound.fns[f.idx()];
-                        // `functionHasImplicitReturn`
-                        let mut has_return_without_expression =
-                            info.end != UNREACHABLE && self.is_reachable(file, info.end);
-                        let mut types: Vec<TypeId> = Vec::new();
-                        for s in bound.ids(info.returns) {
-                            let StmtKind::Return(value) = hir[s].kind else {
-                                continue;
-                            };
-                            if value.is_none() {
-                                has_return_without_expression = true;
-                                continue;
-                            }
-                            let ty = self.partial_type(file, value);
-                            if !types.contains(&ty) {
-                                types.push(ty);
-                            }
-                        }
-                        if has_return_without_expression && self.p.files.options.strict_null_checks
-                        {
-                            types.push(TypeId::UNDEFINED);
-                        }
-                        self.union_reduced(&types)
-                    }
-                    FnBody::None => return blank,
-                };
-                let returns = self.p.types.intern_sig(SigData::Synth {
-                    type_params: Box::new([]),
-                    params: Box::new([]),
-                    ret,
-                    this: None,
-                    of: Box::new([]),
-                });
-                self.synth(Shape {
-                    call: vec![returns],
-                    literal: Literalness::Partial,
-                    ..Shape::default()
-                })
-            }
-            _ => blank,
-        }
+        })
     }
 
     /// Records the contextual type of each context sensitive argument of a call to a signature with the parameters `params`.

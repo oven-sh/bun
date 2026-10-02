@@ -1,18 +1,165 @@
-// checker.go:30164-30672 (layer E-DECOR): the functions of 30265-30672: the synthetic arguments and call signatures of decorators, decorator context types and synthetic function types.
+// checker.go:30164-30672 (layers E-CALL, E-DECOR): the effective arguments of a call-like node with the synthetic expressions of its spread arguments, the spread indices of an array literal, the synthetic arguments and call signatures of decorators, decorator context types and synthetic function types.
 use crate::ast::{
-    Factory, Kind, NodeFactory, NodeId, NodeListId, SymbolId, get_this_parameter,
+    Ast, Factory, Kind, NodeFactory, NodeId, NodeListId, SymbolId, get_this_parameter,
     has_accessor_modifier, has_static_modifier, is_auto_accessor_property_declaration,
-    is_class_like, is_constructor_declaration, is_get_accessor_declaration, is_method_declaration,
-    is_private_identifier, is_property_declaration, is_set_accessor_declaration, is_static,
+    is_binary_expression, is_class_like, is_constructor_declaration, is_decorator,
+    is_get_accessor_declaration, is_jsx_opening_element, is_jsx_opening_fragment,
+    is_jsx_opening_like_element, is_method_declaration, is_private_identifier,
+    is_property_declaration, is_set_accessor_declaration, is_spread_element, is_static,
+    is_synthetic_expression, is_tagged_template_expression, is_template_expression,
 };
 use crate::checker::{
-    CachedTypeKey, CachedTypeKind, Checker, SignatureFlags, SignatureId, TypeFlags, TypeId,
-    TypePredicateId,
+    CachedTypeKey, CachedTypeKind, Checker, ElementFlags, SignatureFlags, SignatureId, TypeFlags,
+    TypeId, TypePredicateId, is_tuple_type,
 };
-use crate::core::List;
+use crate::core::{List, find_index};
 use crate::jsnum::Number;
 
 impl<'a> Checker<'a> {
+    // Returns the effective arguments for an expression that works like a function invocation.
+    pub fn get_effective_call_arguments(&mut self, node: NodeId) -> Vec<NodeId> {
+        if !self.stack_check.is_safe_to_recurse() {
+            return self.stack_limit();
+        }
+        let a = self.ast;
+        if is_jsx_opening_fragment(a, node) {
+            // This attributes Type does not include a children property yet, the same way a fragment created with <React.Fragment> does not at this stage
+            return vec![self.create_synthetic_expression(
+                node,
+                self.empty_fresh_jsx_object_type,
+                false,
+                NodeId::NIL,
+            )];
+        }
+        if is_tagged_template_expression(a, node) {
+            let template = a.as_tagged_template_expression(node).template;
+            let template_strings_array_type = self.get_global_template_strings_array_type();
+            let first_arg = self.create_synthetic_expression(
+                template,
+                template_strings_array_type,
+                false,
+                NodeId::NIL,
+            );
+            if !is_template_expression(a, template) {
+                return vec![first_arg];
+            }
+            let spans = a.nodes(a.as_template_expression(template).template_spans);
+            let mut args: Vec<NodeId> = Vec::with_capacity(spans.as_slice().len() + 1);
+            args.push(first_arg);
+            for &span in spans.as_slice() {
+                args.push(a.expression(span));
+            }
+            return args;
+        }
+        if is_decorator(a, node) {
+            return self.get_effective_decorator_arguments(node);
+        }
+        if is_binary_expression(a, node) {
+            // Handles instanceof operator
+            return vec![a.as_binary_expression(node).left];
+        }
+        if is_jsx_opening_like_element(a, node) {
+            if a.properties(a.attributes(node)).len() != 0
+                || (is_jsx_opening_element(a, node)
+                    && a.nodes(a.children(a.parent(node))).len() != 0)
+            {
+                return vec![a.attributes(node)];
+            }
+            return Vec::new();
+        }
+        let args = a.arguments(node);
+        let spread_index = self.get_spread_argument_index(args);
+        if spread_index >= 0 {
+            // Create synthetic arguments from spreads of tuple types.
+            let mut effective_args: Vec<NodeId> = args.sub(0, spread_index).as_slice().to_vec();
+            for i in spread_index..args.len() {
+                let arg = args.at(i);
+                let mut spread_type = TypeId::NIL;
+                // We can call checkExpressionCached because spread expressions never have a contextual type.
+                if is_spread_element(a, arg) {
+                    if !self.flow_loop_stack.is_empty() {
+                        spread_type = self.check_expression(a.expression(arg));
+                    } else {
+                        spread_type = self.check_expression_cached(a.expression(arg));
+                    }
+                }
+                if !spread_type.is_nil() && is_tuple_type(self, spread_type) {
+                    let element_types = self.get_element_types(spread_type);
+                    for (i, &t) in element_types.as_slice().iter().enumerate() {
+                        let element_infos = self.type_target_tuple_type(spread_type).element_infos;
+                        let flags = element_infos.at(i).flags;
+                        let mut synthetic_type = t;
+                        if flags.intersects(ElementFlags::REST) {
+                            synthetic_type = self.create_array_type(t);
+                        }
+                        let synthetic_arg = self.create_synthetic_expression(
+                            arg,
+                            synthetic_type,
+                            flags.intersects(ElementFlags::VARIABLE),
+                            element_infos.at(i).labeled_declaration,
+                        );
+                        effective_args.push(synthetic_arg);
+                    }
+                } else {
+                    effective_args.push(arg);
+                }
+            }
+            return effective_args;
+        }
+        args.as_slice().to_vec()
+    }
+
+    pub fn get_spread_argument_index(&self, args: List<'_, NodeId>) -> isize {
+        let a = self.ast;
+        find_index(args.as_slice(), |arg| is_spread_argument(a, arg))
+    }
+}
+
+pub fn is_spread_argument(a: Ast<'_>, arg: NodeId) -> bool {
+    is_spread_element(a, arg)
+        || is_synthetic_expression(a, arg) && a.as_synthetic_expression(arg).is_spread
+}
+
+impl<'a> Checker<'a> {
+    pub fn create_synthetic_expression(
+        &self,
+        parent: NodeId,
+        t: TypeId,
+        is_spread: bool,
+        tuple_name_source: NodeId,
+    ) -> NodeId {
+        let a = self.ast;
+        let mut factory = Factory::new(a);
+        let result = factory.new_synthetic_expression(t.0, is_spread, tuple_name_source);
+        a.set_loc(result, a.loc(parent));
+        a.set_parent(result, parent);
+        result
+    }
+
+    pub fn get_spread_indices(&mut self, node: NodeId) -> (isize, isize) {
+        let a = self.ast;
+        let links = self.array_literal_links.get(node);
+        if !self.array_literal_links[links].indices_computed {
+            let mut first: isize = -1;
+            let mut last: isize = -1;
+            for (i, &element) in a.elements(node).as_slice().iter().enumerate() {
+                if is_spread_element(a, element) {
+                    if first < 0 {
+                        first = i as isize;
+                    }
+                    last = i as isize;
+                }
+            }
+            self.array_literal_links[links].first_spread_index = first;
+            self.array_literal_links[links].last_spread_index = last;
+            self.array_literal_links[links].indices_computed = true;
+        }
+        (
+            self.array_literal_links[links].first_spread_index,
+            self.array_literal_links[links].last_spread_index,
+        )
+    }
+
     // Returns the synthetic argument list for a decorator invocation.
     pub fn get_effective_decorator_arguments(&mut self, node: NodeId) -> Vec<NodeId> {
         let expr = self.ast.expression(node);

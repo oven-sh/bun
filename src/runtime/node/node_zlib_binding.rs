@@ -884,6 +884,8 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
     }
 
     /// Closes the handle before `onerror` runs, so user JS cannot drive a handle that has no context.
+    #[cold]
+    #[inline(never)]
     pub(crate) fn init_failed(
         this: &T,
         global_this: &JSGlobalObject,

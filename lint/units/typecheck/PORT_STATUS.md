@@ -521,9 +521,12 @@ left as a stand-in. 108 are functions of `checker.go`; the 13 of `binder/nameres
 first commit also has the three leaf files that these functions call and the tree did not have (`module/types.rs`,
 `module/util.rs`, `core/nodemodules.rs`).
 
-States of this section. Cargo compiles none of it: `lib.rs` declares no module, and `checker/mod.rs` names modules that
-the tree does not have yet. `checked` is more than `translated`: `rustc` and `clippy-driver` accept the file, with the
-deny set and the clippy table of the workspace, in the scratch of `k3-symbols-names-aliases-modules-scratch/run.sh`.
+States of this section. Cargo compiles none of the files of `checker/`: `lib.rs` does not declare `checker`, and
+`checker/mod.rs` names modules that the tree does not have yet. `lib.rs` declares `core`, `binder` and `module`: the
+rows of `core/nodemodules.rs` and `binder/nameresolver.rs` are under "Leaf packages" and "Binder" as well, and
+`module/` is in the paragraph "Layer 6 of round 2" under the table. `checked` is more than `translated`: `rustc` and
+`clippy-driver` accept the file, with the deny set and the clippy table of the workspace, in the scratch of
+`k3-symbols-names-aliases-modules-scratch/run.sh`.
 That scratch compiles it in place in one crate with the real `core`, `collections`, `stringutil`, `tspath`, `jsnum`,
 `ast`, `evaluator`, `binder/nameresolver.rs` and the data model of the checker (`c01_data.rs`,
 `c02_program_checker.rs`, `types.rs`, `mapper.rs`, `links.rs` of `761df39dfb`), and with stand-ins for what the tree
@@ -547,6 +550,42 @@ other steps that the stand-ins replace (API.md, same heading).
 | `module/util.go` 58-79, 122-178 (`MangleScopedPackageName`, `UnmangleScopedPackageName`, `GetTypesPackageName`, `GetResolutionDiagnostic`) | | `module/util.rs` | run (own test for the names; `get_resolution_diagnostic` by the tests of the scratch) | |
 | `module/types.go` 14-45 and 81-137, `module/util.go` 17-56, 81-120 and 180-201, `module/cache.go`, `module/resolver.go` | | | not started | the resolver: a resolved module is an input of the program |
 | `core/nodemodules.go` | | `core/nodemodules.rs` | tested (own test; compiled with the other leaf packages by `rustc` alone, clippy clean) | |
+
+Layer 6 of round 2 declares `module`: the line `pub mod module;` of `lib.rs` is `01d46502e3` (written by the job that
+commits the worktree, under its message "typecheck: compile the port, work in progress"; the commit holds that line and
+nothing else). `module/mod.rs` declares `types.rs` and `util.rs` and re-exports both; the three files (219 lines) are
+unchanged since `404d95dbe9`. `types.rs` names nothing outside itself. `util.rs` names `crate::ast::{Ast, NodeId}`,
+`crate::core::{CompilerOptions, JsxEmit}`, `crate::diagnostics::{self, MessageId}` with four messages,
+`crate::stringutil::strings` and twelve extension constants of `crate::tspath`: `lib.rs` had the five packages before
+the line, so no other file and no line of `src/typecheck/Cargo.toml` changed for this directory. No `cargo check`, no
+`cargo clippy` and no `cargo test` was run with that commit: the survey that follows it is the first cargo compile of
+the three files in the real crate, so the two rows of `module/` keep the state `run` of the scratch until that run
+passes. What was checked when the line was written:
+
+- By reading the tree of `2b4094382b`, each name of `util.rs` against its definition: `Ast` and `as_source_file`
+  (`ast/reader.rs` 164, 526) with `SourceFile.is_declaration_file` (`ast/file.rs` 570), `NodeId` (`ast/ids.rs` 61),
+  `CompilerOptions` with `allow_arbitrary_extensions`, `jsx`, `no_implicit_any`, `strict`, `get_resolve_json_module`
+  and `get_allow_js`, and `JsxEmit::NONE` (`core/compileroptions.rs` 11, 13, 47, 64, 92, 234, 251, 507),
+  `Tristate::is_true` and `default_if_unknown` (`core/tristate.rs` 13, 33), `MessageId::NIL` and `is_nil`
+  (`diagnostics/mod.rs` 132, 135), the four messages (`diagnostics/diagnostics_generated.rs` 1314, 1422, 1695, 1720),
+  `strings::{slice, slice_from, index, cut}` (`stringutil/util.rs` 730, 737, 777, 841) and the twelve constants
+  (`tspath/extension.rs` 5-17): each is there, `pub`, with the types of the call.
+- The look-ahead of the round-7 survey is reported as: `rustc` alone from a scratch root with the modules of layers 1
+  to 5 and `pub mod module;`, the rust lints of the workspace denied: exit 0, no warning. Its log
+  (`/tmp/rdr-sweep-r7.log`) was not on the machine when the line was written, so it was not read again.
+- `rustfmt --check --edition 2024 src/typecheck/module/mod.rs`, which follows both `mod` lines and the two
+  `#[cfg(test)]` ones: exit 0. The same on `lib.rs` alone with the new line (`--config skip_children=true`): exit 0.
+- `python3 /workspace/notes/lint/tools/undeclared.py src/typecheck` on the tree of `01d46502e3`: 97 of 179 files are
+  reached, and no file of `module/` is outside (the 82 files of `nodebuilder`, `pseudochecker`, `printer` and of the
+  three directories of layer 7 are).
+- The three files have no `unsafe`, `unwrap()`, `expect(`, `panic!`, `todo!`, `unimplemented!`, `unreachable!` and no
+  `allow(`, and no run of two comment lines.
+- Read side by side with upstream: `types.go` 47-79 and `util.go` 58-79 and 122-178. No difference was found besides
+  the one of the last column and these: `get_resolution_diagnostic` takes `a: Ast` first and the file as a `NodeId`,
+  a nil message is `MessageId::NIL`, and the nil receiver of `IsResolved` is the `None` of a program's answer.
+- Not run on these bytes in the real crate: clippy (`clippy-driver` was clean in the scratch of
+  `k3-symbols-names-aliases-modules-scratch/run.sh`, which is not the crate of today). `cargo check` does not compile
+  `mod tests` of `types.rs` (lines 49 to 77) and of `util.rs` (lines 120 to 136): they ran from that scratch only.
 
 The lines that the tests of the scratch run: `c04` 23 of 23, `c21` 36 of 72, `c22` 401 of 461, `c23` 562 of 889, `c24`
 556 of 998, `c25` 212 of 317, `c26` 337 of 442, `c27` 122 of 160 (`K3SYM_COVERAGE=1 run.sh`).

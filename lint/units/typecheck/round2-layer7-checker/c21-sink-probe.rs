@@ -1,7 +1,7 @@
 //! Probe of checker/c21_resolved_symbols_diagnostics.rs: the file of the tree, by #[path], beside stand-ins for what it names.
 //! Real files by #[path]: diagnostics/, core/{arena,golang,linkstore,text,tristate,tristate_stringer_generated}.rs, ast/{diagnostic,ids}.rs. Stand-ins: the rest of `ast`, `core` and `checker` with the shapes of the tree of f49ea57437, and `SourceFiles`, `Diagnostics`, `DiagnosticsCollection` with the signatures of checker-data-model-contract/bottom-up/crate/src/ast_diagnostic.rs.
 //! Run: rustc --edition 2024 --crate-type lib --emit=metadata -o /tmp/c21-sink-probe.rmeta c21-sink-probe.rs
-//! The test of the end runs the deferred callbacks and the serialization limit of the real file over the stand-ins: rustc --edition 2024 --test -o /tmp/c21-sink-probe-test c21-sink-probe.rs && /tmp/c21-sink-probe-test
+//! The test at the end runs the 18 functions of 14052-14168 and `ProgramFiles` of the real file over the stand-ins: rustc --edition 2024 --test -o /tmp/c21-sink-probe-test c21-sink-probe.rs && /tmp/c21-sink-probe-test
 #![allow(dead_code)]
 #![deny(warnings)]
 #![deny(unused_imports, unused_variables, unused_mut, unreachable_pub, unused_assignments)]
@@ -417,7 +417,7 @@ mod tests {
 
     // checker-data-model-contract/bottom-up/crate/src/tests.rs 985, without what needs the collection of the contract (the same diagnostic twice is kept once).
     #[test]
-    fn deferred_diagnostics_run_once_in_order() {
+    fn the_sink_over_the_stand_ins() {
         let options = CompilerOptions::default();
         // The stand-in context finds the file of a node by the number of the node: node 1 is the root of `file`, node 2 a node of it.
         let none = File::default();

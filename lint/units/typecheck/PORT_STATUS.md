@@ -631,15 +631,17 @@ are of the file before that commit. What was checked when the 18 were written:
   clippy table of the workspace on the command line and `CLIPPY_CONF_DIR` at the worktree: exit 0 (run before the
   test below was added, which it does not compile). The stand-ins are the assumptions: the probe says nothing about
   the modules they replace.
-- The test at the end of the probe (`rustc --test`, the command is in its head) runs 11 of the 18 functions of the
-  file of the tree over those stand-ins: the two deferred callbacks run once and in order and the one that a
-  callback adds does not, a diagnostic at the serialization limit is not added, `add_error_or_suggestion(false, d)`
-  puts a copy with the category of a suggestion into the other collection, `error_and_maybe_suggest_await` adds one
-  related diagnostic when asked, `error_skipped_on_no_emit` sets its flag, a deprecation suggestion carries the name,
-  and the nil symbol is not deprecated. It passes (with the twelve tests of the real files beside it). The collection
-  of the stand-ins is a list: equal diagnostics, the order of a file and `get_diagnostics` over a checked file are
-  not run, and neither are `is_deprecated_declaration`, the tag of `add_deprecated_suggestion_worker` and
-  `has_parse_diagnostics`, whose answers the stand-ins fix.
+- The test at the end of the probe (`rustc --test`, the command is in its head) enters the 18 functions and
+  `ProgramFiles` of the file of the tree over those stand-ins: the two deferred callbacks run once and in order and
+  the one that a callback adds does not, a diagnostic at the serialization limit is not added,
+  `add_error_or_suggestion(false, d)` puts a copy with the category of a suggestion into the other collection and
+  `error_or_suggestion` adds to one collection each way, `error_and_maybe_suggest_await` adds one related diagnostic
+  when asked, `error_skipped_on_no_emit` sets its flag, a deprecation suggestion carries the name, a canceled check
+  answers no diagnostics, a file with a parse diagnostic has one, and `ProgramFiles` answers the name and the path of
+  a root and nothing for another node. It passes (with the twelve tests of the real files beside it). What it cannot
+  show: the collection of the stand-ins is a list (equal diagnostics and the order of a file are not run), and
+  `check_source_file`, the flags of a declaration, the parent of a symbol and the JSDoc tag are stand-ins with one
+  answer, so `is_deprecated_symbol` is entered for the nil symbol only.
 - `rustfmt --check --edition 2024 --config skip_children=true` on the file: exit 0. No `unsafe`, `unwrap`, `expect`,
   `panic!`, `todo!`, `unimplemented!`, `unreachable!`, no `allow(`, no run of two comment lines.
 

@@ -514,6 +514,105 @@ test("can install folder dependencies", async () => {
   ).toBe("module.exports = 'hello from pkg-1';");
 });
 
+test("file deleted from a folder dependency is removed on reinstall", async () => {
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-folder-dep-prune",
+        dependencies: {
+          "folder-dep": "file:./pkg-1",
+        },
+      }),
+    ),
+    write(
+      join(packageDir, "pkg-1", "package.json"),
+      JSON.stringify({
+        name: "folder-dep",
+        version: "1.0.0",
+        dependencies: { "no-deps": "1.0.0" },
+      }),
+    ),
+    write(join(packageDir, "pkg-1", "index.js"), "module.exports = 1;"),
+    write(join(packageDir, "pkg-1", "extra.js"), "module.exports = 2;"),
+    write(join(packageDir, "pkg-1", "nested", "inner.js"), "module.exports = 3;"),
+  ]);
+
+  await runBunInstall(bunEnv, packageDir);
+
+  const installedDep = join(packageDir, "node_modules", "folder-dep");
+  expect(await file(join(installedDep, "extra.js")).exists()).toBe(true);
+  expect(await file(join(installedDep, "nested", "inner.js")).exists()).toBe(true);
+
+  // The store entry rebuilds from the source folder on every install, so a
+  // file or directory deleted from the source must not survive the rebuild.
+  await Promise.all([
+    rm(join(packageDir, "pkg-1", "extra.js")),
+    rm(join(packageDir, "pkg-1", "nested"), { recursive: true }),
+    write(join(packageDir, "pkg-1", "index.js"), "module.exports = 'updated';"),
+  ]);
+
+  await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+
+  expect(await file(join(installedDep, "extra.js")).exists()).toBe(false);
+  expect(existsSync(join(installedDep, "nested"))).toBe(false);
+  expect(await file(join(installedDep, "index.js")).text()).toBe("module.exports = 'updated';");
+
+  // The rebuild replaces only the package dir inside the store entry; the
+  // entry's dependency symlinks still resolve.
+  expect(readlinkSync(join(packageDir, "node_modules", "folder-dep"))).toBe(
+    join(".bun", "folder-dep@file+pkg-1", "node_modules", "folder-dep"),
+  );
+  expect(
+    await file(
+      join(packageDir, "node_modules", ".bun", "folder-dep@file+pkg-1", "node_modules", "no-deps", "package.json"),
+    ).json(),
+  ).toMatchObject({ name: "no-deps", version: "1.0.0" });
+});
+
+test("missing folder dependency source fails without destroying the previous build", async () => {
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-folder-dep-missing-source",
+        dependencies: {
+          "folder-dep": "file:./pkg-1",
+        },
+      }),
+    ),
+    write(join(packageDir, "pkg-1", "package.json"), JSON.stringify({ name: "folder-dep", version: "1.0.0" })),
+    write(join(packageDir, "pkg-1", "index.js"), "module.exports = 1;"),
+  ]);
+
+  await runBunInstall(bunEnv, packageDir);
+
+  const storeIndex = join(
+    packageDir,
+    "node_modules",
+    ".bun",
+    "folder-dep@file+pkg-1",
+    "node_modules",
+    "folder-dep",
+    "index.js",
+  );
+  expect(await file(storeIndex).exists()).toBe(true);
+
+  // The relink opens the source folder before deleting the previous build,
+  // so a missing source fails the install but keeps the old build intact.
+  await rm(join(packageDir, "pkg-1"), { recursive: true });
+  await runBunInstall(bunEnv, packageDir, { allowErrors: true, expectedExitCode: 1, savesLockfile: false });
+
+  expect(await file(storeIndex).exists()).toBe(true);
+  expect(readlinkSync(join(packageDir, "node_modules", "folder-dep"))).toBe(
+    join(".bun", "folder-dep@file+pkg-1", "node_modules", "folder-dep"),
+  );
+});
+
 test("can install folder dependencies on root package", async () => {
   const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
@@ -537,6 +636,7 @@ test("can install folder dependencies on root package", async () => {
         },
       }),
     ),
+    write(join(packageDir, "extra.js"), "module.exports = 1;"),
   ]);
 
   await runBunInstall(bunEnv, packageDir);
@@ -552,6 +652,24 @@ test("can install folder dependencies on root package", async () => {
     join("..", "..", "..", "node_modules", ".bun", "root-file-dep@root", "node_modules", "root-file-dep"),
     await file(packageJson).json(),
   ]);
+
+  // The root-as-dependency store entry also rebuilds from the project dir on
+  // every install; a file deleted from the project must not survive in it,
+  // and the rebuild must not touch the project's own files.
+  expect(await file(join(packageDir, "node_modules", "self", "extra.js")).exists()).toBe(true);
+
+  await rm(join(packageDir, "extra.js"));
+  await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+
+  expect(await file(join(packageDir, "node_modules", "self", "extra.js")).exists()).toBe(false);
+  expect(await file(packageJson).exists()).toBe(true);
+  expect(await file(join(packageDir, "packages", "pkg1", "package.json")).exists()).toBe(true);
+  expect(readlinkSync(join(packageDir, "node_modules", "self"))).toBe(
+    join(".bun", "root-file-dep@root", "node_modules", "root-file-dep"),
+  );
+  expect(await file(join(packageDir, "node_modules", "self", "package.json")).json()).toEqual(
+    await file(packageJson).json(),
+  );
 });
 
 describe("isolated workspaces", () => {

@@ -75,7 +75,12 @@ impl<'a> Checker<'a> {
     }
 
     // The recursion follows the structure of the two types, so the entry tests the stack.
-    pub fn infer_from_types(&mut self, n: InferenceStateId, mut source: TypeId, mut target: TypeId) {
+    pub fn infer_from_types(
+        &mut self,
+        n: InferenceStateId,
+        mut source: TypeId,
+        mut target: TypeId,
+    ) {
         if !self.stack_check.is_safe_to_recurse() {
             return self.stack_limit();
         }
@@ -166,26 +171,17 @@ impl<'a> Checker<'a> {
             target = self.get_union_type(List::from_slice(&targets));
             if sources.is_empty() {
                 // All source constituents have been matched and there is nothing further to infer from. However, simply making no inferences is undesirable because it could ultimately mean inferring a type parameter constraint. Instead, make a lower priority inference from the full source to whatever remains in the target. For example, when inferring from string to 'string | T', make a lower priority inference of string for T.
-                self.infer_with_priority(
-                    n,
-                    source,
-                    target,
-                    InferencePriority::NAKED_TYPE_VARIABLE,
-                );
+                self.infer_with_priority(n, source, target, InferencePriority::NAKED_TYPE_VARIABLE);
                 return;
             }
             source = self.get_union_type(List::from_slice(&sources));
-        } else if self.types[target]
-            .flags
-            .intersects(TypeFlags::INTERSECTION)
-            && {
-                let target_types = self.type_types(target);
-                !target_types
-                    .as_slice()
-                    .iter()
-                    .all(|&t| self.is_non_generic_object_type(t))
-            }
-        {
+        } else if self.types[target].flags.intersects(TypeFlags::INTERSECTION) && {
+            let target_types = self.type_types(target);
+            !target_types
+                .as_slice()
+                .iter()
+                .all(|&t| self.is_non_generic_object_type(t))
+        } {
             // We reduce intersection types unless they're simple combinations of object types. For example, when inferring from 'string[] & { extra: any }' to 'string[] & T' we want to remove string[] and infer { extra: any } for T. But when inferring to 'string[] & Iterable<T>' we want to keep the string[] on the source side and infer string for T.
             if !self.types[source].flags.intersects(TypeFlags::UNION) {
                 let single_source = [source];
@@ -653,8 +649,12 @@ pub fn get_type_depth(c: &mut Checker<'_>, t: TypeId, max_depth: isize) -> isize
     0
 }
 
-pub fn get_type_list_depth(c: &mut Checker<'_>, types: List<'_, TypeId>, max_depth: isize) -> isize {
-    let mut depth = 0;
+pub fn get_type_list_depth(
+    c: &mut Checker<'_>,
+    types: List<'_, TypeId>,
+    max_depth: isize,
+) -> isize {
+    let mut depth: isize = 0;
     for &t in types.as_slice() {
         depth = depth.max(get_type_depth(c, t, max_depth));
     }
@@ -745,12 +745,7 @@ impl<'a> Checker<'a> {
         {
             for &t in targets.as_slice() {
                 if !get_inference_info_for_type(self, n, t).is_nil() {
-                    self.infer_with_priority(
-                        n,
-                        source,
-                        t,
-                        InferencePriority::NAKED_TYPE_VARIABLE,
-                    );
+                    self.infer_with_priority(n, source, t, InferencePriority::NAKED_TYPE_VARIABLE);
                 }
             }
         }
@@ -883,140 +878,136 @@ impl<'a> Checker<'a> {
                                     all_type_flags =
                                         all_type_flags.without(TypeFlags::BIG_INT_LIKE);
                                 }
-                                let choose = |c: &mut Checker<'a>,
-                                              left: TypeId,
-                                              right: TypeId|
-                                 -> TypeId {
-                                    let left_flags = c.types[left].flags;
-                                    let right_flags = c.types[right].flags;
-                                    if !right_flags.intersects(all_type_flags) {
-                                        return left;
-                                    }
-                                    if left_flags.intersects(TypeFlags::STRING) {
-                                        return left;
-                                    }
-                                    if right_flags.intersects(TypeFlags::STRING) {
-                                        return source;
-                                    }
-                                    if left_flags.intersects(TypeFlags::TEMPLATE_LITERAL) {
-                                        return left;
-                                    }
-                                    if right_flags.intersects(TypeFlags::TEMPLATE_LITERAL)
-                                        && c.is_type_matched_by_template_literal_type(
-                                            source,
-                                            right,
-                                            TypeComparer::Assignable,
-                                        )
-                                    {
-                                        return source;
-                                    }
-                                    if left_flags.intersects(TypeFlags::STRING_MAPPING) {
-                                        return left;
-                                    }
-                                    if right_flags.intersects(TypeFlags::STRING_MAPPING)
-                                        && *str
-                                            == *apply_string_mapping(
-                                                c.ast,
-                                                c.types[right].symbol,
-                                                str,
+                                let choose =
+                                    |c: &mut Checker<'a>, left: TypeId, right: TypeId| -> TypeId {
+                                        let left_flags = c.types[left].flags;
+                                        let right_flags = c.types[right].flags;
+                                        if !right_flags.intersects(all_type_flags) {
+                                            return left;
+                                        }
+                                        if left_flags.intersects(TypeFlags::STRING) {
+                                            return left;
+                                        }
+                                        if right_flags.intersects(TypeFlags::STRING) {
+                                            return source;
+                                        }
+                                        if left_flags.intersects(TypeFlags::TEMPLATE_LITERAL) {
+                                            return left;
+                                        }
+                                        if right_flags.intersects(TypeFlags::TEMPLATE_LITERAL)
+                                            && c.is_type_matched_by_template_literal_type(
+                                                source,
+                                                right,
+                                                TypeComparer::Assignable,
                                             )
-                                    {
-                                        return source;
-                                    }
-                                    if left_flags.intersects(TypeFlags::STRING_LITERAL) {
-                                        return left;
-                                    }
-                                    if right_flags.intersects(TypeFlags::STRING_LITERAL)
-                                        && get_string_literal_value(c, right) == str
-                                    {
-                                        return right;
-                                    }
-                                    if left_flags.intersects(TypeFlags::NUMBER) {
-                                        return left;
-                                    }
-                                    if right_flags.intersects(TypeFlags::NUMBER) {
-                                        return c.get_number_literal_type(from_string(str));
-                                    }
-                                    if left_flags.intersects(TypeFlags::ENUM) {
-                                        return left;
-                                    }
-                                    if right_flags.intersects(TypeFlags::ENUM) {
-                                        return c.get_number_literal_type(from_string(str));
-                                    }
-                                    if left_flags.intersects(TypeFlags::NUMBER_LITERAL) {
-                                        return left;
-                                    }
-                                    if right_flags.intersects(TypeFlags::NUMBER_LITERAL)
-                                        && get_number_literal_value(c, right) == from_string(str)
-                                    {
-                                        return right;
-                                    }
-                                    if left_flags.intersects(TypeFlags::BIG_INT) {
-                                        return left;
-                                    }
-                                    if right_flags.intersects(TypeFlags::BIG_INT) {
-                                        return c.parse_big_int_literal_type(str);
-                                    }
-                                    if left_flags.intersects(TypeFlags::BIG_INT_LITERAL) {
-                                        return left;
-                                    }
-                                    if right_flags.intersects(TypeFlags::BIG_INT_LITERAL)
-                                        && pseudo_big_int_to_string(get_big_int_literal_value(
-                                            c, right,
-                                        )) == str
-                                    {
-                                        return right;
-                                    }
-                                    if left_flags.intersects(TypeFlags::BOOLEAN) {
-                                        return left;
-                                    }
-                                    if right_flags.intersects(TypeFlags::BOOLEAN) {
-                                        if str == b"true" {
-                                            return c.true_type;
+                                        {
+                                            return source;
                                         }
-                                        if str == b"false" {
-                                            return c.false_type;
+                                        if left_flags.intersects(TypeFlags::STRING_MAPPING) {
+                                            return left;
                                         }
-                                        return c.boolean_type;
-                                    }
-                                    if left_flags.intersects(TypeFlags::BOOLEAN_LITERAL) {
-                                        return left;
-                                    }
-                                    if right_flags.intersects(TypeFlags::BOOLEAN_LITERAL)
-                                        && if_else(
-                                            get_boolean_literal_value(c, right),
-                                            b"true".as_slice(),
-                                            b"false".as_slice(),
-                                        ) == str
-                                    {
-                                        return right;
-                                    }
-                                    if left_flags.intersects(TypeFlags::UNDEFINED) {
-                                        return left;
-                                    }
-                                    if right_flags.intersects(TypeFlags::UNDEFINED)
-                                        && c.as_intrinsic_type(right).intrinsic_name == str
-                                    {
-                                        return right;
-                                    }
-                                    if left_flags.intersects(TypeFlags::NULL) {
-                                        return left;
-                                    }
-                                    if right_flags.intersects(TypeFlags::NULL)
-                                        && c.as_intrinsic_type(right).intrinsic_name == str
-                                    {
-                                        return right;
-                                    }
-                                    left
-                                };
+                                        if right_flags.intersects(TypeFlags::STRING_MAPPING)
+                                            && *str
+                                                == *apply_string_mapping(
+                                                    c.ast,
+                                                    c.types[right].symbol,
+                                                    str,
+                                                )
+                                        {
+                                            return source;
+                                        }
+                                        if left_flags.intersects(TypeFlags::STRING_LITERAL) {
+                                            return left;
+                                        }
+                                        if right_flags.intersects(TypeFlags::STRING_LITERAL)
+                                            && get_string_literal_value(c, right) == str
+                                        {
+                                            return right;
+                                        }
+                                        if left_flags.intersects(TypeFlags::NUMBER) {
+                                            return left;
+                                        }
+                                        if right_flags.intersects(TypeFlags::NUMBER) {
+                                            return c.get_number_literal_type(from_string(str));
+                                        }
+                                        if left_flags.intersects(TypeFlags::ENUM) {
+                                            return left;
+                                        }
+                                        if right_flags.intersects(TypeFlags::ENUM) {
+                                            return c.get_number_literal_type(from_string(str));
+                                        }
+                                        if left_flags.intersects(TypeFlags::NUMBER_LITERAL) {
+                                            return left;
+                                        }
+                                        if right_flags.intersects(TypeFlags::NUMBER_LITERAL)
+                                            && get_number_literal_value(c, right)
+                                                == from_string(str)
+                                        {
+                                            return right;
+                                        }
+                                        if left_flags.intersects(TypeFlags::BIG_INT) {
+                                            return left;
+                                        }
+                                        if right_flags.intersects(TypeFlags::BIG_INT) {
+                                            return c.parse_big_int_literal_type(str);
+                                        }
+                                        if left_flags.intersects(TypeFlags::BIG_INT_LITERAL) {
+                                            return left;
+                                        }
+                                        if right_flags.intersects(TypeFlags::BIG_INT_LITERAL)
+                                            && pseudo_big_int_to_string(get_big_int_literal_value(
+                                                c, right,
+                                            )) == str
+                                        {
+                                            return right;
+                                        }
+                                        if left_flags.intersects(TypeFlags::BOOLEAN) {
+                                            return left;
+                                        }
+                                        if right_flags.intersects(TypeFlags::BOOLEAN) {
+                                            if str == b"true" {
+                                                return c.true_type;
+                                            }
+                                            if str == b"false" {
+                                                return c.false_type;
+                                            }
+                                            return c.boolean_type;
+                                        }
+                                        if left_flags.intersects(TypeFlags::BOOLEAN_LITERAL) {
+                                            return left;
+                                        }
+                                        if right_flags.intersects(TypeFlags::BOOLEAN_LITERAL)
+                                            && if_else(
+                                                get_boolean_literal_value(c, right),
+                                                b"true".as_slice(),
+                                                b"false".as_slice(),
+                                            ) == str
+                                        {
+                                            return right;
+                                        }
+                                        if left_flags.intersects(TypeFlags::UNDEFINED) {
+                                            return left;
+                                        }
+                                        if right_flags.intersects(TypeFlags::UNDEFINED)
+                                            && c.as_intrinsic_type(right).intrinsic_name == str
+                                        {
+                                            return right;
+                                        }
+                                        if left_flags.intersects(TypeFlags::NULL) {
+                                            return left;
+                                        }
+                                        if right_flags.intersects(TypeFlags::NULL)
+                                            && c.as_intrinsic_type(right).intrinsic_name == str
+                                        {
+                                            return right;
+                                        }
+                                        left
+                                    };
                                 let mut matching_type = self.never_type;
                                 for &t in constraint_types.as_slice() {
                                     matching_type = choose(self, matching_type, t);
                                 }
-                                if !self.types[matching_type]
-                                    .flags
-                                    .intersects(TypeFlags::NEVER)
-                                {
+                                if !self.types[matching_type].flags.intersects(TypeFlags::NEVER) {
                                     self.infer_from_types(n, matching_type, target);
                                     continue;
                                 }
@@ -1148,11 +1139,7 @@ impl<'a> Checker<'a> {
                     let rest_type = self.get_type_arguments(source).at(start_length);
                     for i in start_length..target_arity - end_length {
                         let mut t = rest_type;
-                        if element_infos
-                            .at(i)
-                            .flags
-                            .intersects(ElementFlags::VARIADIC)
-                        {
+                        if element_infos.at(i).flags.intersects(ElementFlags::VARIADIC) {
                             t = self.create_array_type(t);
                         }
                         self.infer_from_types(n, t, element_types.at(i));
@@ -2299,9 +2286,9 @@ impl<'a> Checker<'a> {
                                     }
                                 }
                                 let candidates = self.inference_infos[other].candidates.clone();
-                                candidates
-                                    .iter()
-                                    .all(|&t| self.is_type_assignable_to(t, inferred_covariant_type))
+                                candidates.iter().all(|&t| {
+                                    self.is_type_assignable_to(t, inferred_covariant_type)
+                                })
                             });
                     }
                     if prefer_covariant_type {

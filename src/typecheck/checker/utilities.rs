@@ -2392,7 +2392,7 @@ pub fn get_set_accessor_value_parameter(a: Ast<'_>, accessor: NodeId) -> NodeId 
 }
 
 // slices.SortFunc of Go (slices/zsortanyfunc.go): a pattern-defeating quicksort that is not stable. The sequence of its comparisons decides which of two symbols without declaration gets the lower symbol id first, so the algorithm is part of what upstream computes.
-mod slices {
+pub(crate) mod slices {
     #[derive(Clone, Copy, PartialEq, Eq)]
     enum SortedHint {
         Unknown,
@@ -2723,7 +2723,7 @@ mod slices {
     }
 
     // slices.SortFunc with `cmp(a, b) < 0` as the comparison.
-    pub(super) fn sort_func<E: Copy>(x: &mut [E], is_less: &mut dyn FnMut(E, E) -> bool) {
+    pub(crate) fn sort_func<E: Copy>(x: &mut [E], is_less: &mut dyn FnMut(E, E) -> bool) {
         let n = x.len() as isize;
         let mut sorter = Sorter { data: x, is_less };
         sorter.pdqsort(0, n, bits_len(n) as isize);

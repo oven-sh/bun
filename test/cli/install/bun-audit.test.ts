@@ -10,6 +10,7 @@ import {
   normalizeBunSnapshot,
   runBunInstall,
   tempDir,
+  tls,
 } from "harness";
 import { join } from "node:path";
 import { resolveBulkAdvisoryFixture } from "./registry/fixtures/audit/audit-fixtures";
@@ -247,10 +248,11 @@ async function reinstall(dir: string, pkgJson: object) {
   await runBunInstall(installEnv(dir), dir);
 }
 
-async function run(dir: string, args: string[], root: string = dir) {
+// An `undefined` value in `extraEnv` removes that variable from the environment.
+async function run(dir: string, args: string[], root: string = dir, extraEnv: Record<string, string | undefined> = {}) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...args],
-    env: installEnv(root),
+    env: { ...installEnv(root), ...extraEnv },
     cwd: dir,
     stdout: "pipe",
     stderr: "pipe",
@@ -1230,6 +1232,37 @@ describe("`bun audit` report", () => {
     expect(fix.exitCode).toBe(1);
     expect(await lock(dir)).toBe(lockBefore);
   });
+
+  // `bun install`, `bun info` and `bun pm diff` read this variable for their requests in the same way.
+  test.concurrent(
+    "NODE_TLS_REJECT_UNAUTHORIZED=0 applies from the environment and not from the project's .env",
+    async () => {
+      // `tls` is self-signed, so a client that checks certificates rejects it.
+      await using server = Bun.serve({ port: 0, tls, fetch: () => Response.json({}) });
+      using dir = tempDir("audit-self-signed-", {
+        "package.json": JSON.stringify({ name: "foo", dependencies: { leaf: "1.0.0" } }),
+        "bun.lock": JSON.stringify({
+          lockfileVersion: 1,
+          configVersion: 1,
+          workspaces: { "": { name: "foo", dependencies: { leaf: "1.0.0" } } },
+          packages: { leaf: ["leaf@1.0.0", "", {}, ""] },
+        }),
+        ".env": "NODE_TLS_REJECT_UNAUTHORIZED=0\n",
+      });
+      await writeBunfig(String(dir), `https://localhost:${server.port}/`);
+
+      const fromDotenv = await run(String(dir), ["audit"], String(dir), { NODE_TLS_REJECT_UNAUTHORIZED: undefined });
+      expect(fromDotenv.stderr).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
+      expect(fromDotenv.stderr).toContain(
+        "note: bun audit reads NODE_TLS_REJECT_UNAUTHORIZED from the environment only, not from .env files.",
+      );
+      expect(fromDotenv.exitCode).toBe(1);
+
+      const fromRealEnv = await run(String(dir), ["audit"], String(dir), { NODE_TLS_REJECT_UNAUTHORIZED: "0" });
+      expect(normalizeBunSnapshot(fromRealEnv.stdout)).toBe(AUDIT_HEADER + noVulnerabilities(1));
+      expect(fromRealEnv.exitCode).toBe(0);
+    },
+  );
 
   test.concurrent("a scoped registry that refuses the connection is skipped", async () => {
     await using scoped = startRegistry({});

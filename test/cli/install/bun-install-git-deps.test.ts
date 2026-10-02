@@ -773,6 +773,22 @@ function serveLeaf(tarball: Uint8Array, seen: SeenRequest[], registryUrl: () => 
   });
 }
 
+// A registry that closes every connection at once: a request to it fails, with
+// no DNS lookup and no race for a free port.
+function listenAndClose(onConnection: () => void = () => {}) {
+  return Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      open(socket) {
+        onConnection();
+        socket.end();
+      },
+      data() {},
+    },
+  });
+}
+
 // `<bun> <script> <args>` as git runs it: through `sh -c`. Forward slashes, so
 // that the sh of Git for Windows takes the paths too.
 function shCommand(script: string, ...args: string[]) {
@@ -899,7 +915,6 @@ test.concurrent(
     expectInstalled(fromRealEnv.stdout, { leaf: "1.0.0" });
     expect(fromRealEnv.exitCode).toBe(0);
   },
-  30_000,
 );
 
 test.concurrent(
@@ -942,7 +957,6 @@ test.concurrent(
     expectInstalled(fromRealEnv.stdout, { leaf: leafUrl });
     expect(fromRealEnv.exitCode).toBe(0);
   },
-  30_000,
 );
 
 // `bun info`, `bun pm view`, `bun pm diff` and `bun audit` send their requests
@@ -950,74 +964,98 @@ test.concurrent(
 // every connection, and only the project's `.env` names a proxy that answers for
 // it: each command fails without a request to that proxy, and says which
 // variable it did not take from `.env`.
-test.concurrent(
-  "a command that fails without the ALL_PROXY of the project's .env names the variable",
-  async () => {
-    const tarball = await tarballOf("package", packageFiles("leaf", "leaf"));
-    let closed = 0;
-    using down = Bun.listen({
-      hostname: "127.0.0.1",
-      port: 0,
-      socket: {
-        open(socket) {
-          closed++;
-          socket.end();
-        },
-        data() {},
-      },
-    });
-    const registryUrl = `http://127.0.0.1:${down.port}/`;
-    const proxied: SeenRequest[] = [];
-    await using proxy = serveLeaf(tarball, proxied, () => registryUrl);
+test.concurrent("a command that fails without the ALL_PROXY of the project's .env names the variable", async () => {
+  const tarball = await tarballOf("package", packageFiles("leaf", "leaf"));
+  let closed = 0;
+  using down = listenAndClose(() => closed++);
+  const registryUrl = `http://127.0.0.1:${down.port}/`;
+  const proxied: SeenRequest[] = [];
+  await using proxy = serveLeaf(tarball, proxied, () => registryUrl);
 
-    const manifest = JSON.stringify({ name: "project", version: "1.0.0", dependencies: { leaf: "1.0.0" } });
-    const dotenv = `ALL_PROXY=http://127.0.0.1:${proxy.port}\n`;
-    using dir = tempDir("registry-down-dotenv-proxy", {
-      "project/package.json": manifest,
-      "project/.env": dotenv,
-      // `bun audit` reads the lockfile.
-      "locked/package.json": manifest,
-      "locked/.env": dotenv,
-      "locked/bun.lock": JSON.stringify({
-        lockfileVersion: 1,
-        configVersion: 1,
-        workspaces: { "": { name: "project", dependencies: { leaf: "1.0.0" } } },
-        packages: { leaf: ["leaf@1.0.0", "", {}, ""] },
-      }),
-    });
-    const root = String(dir);
+  const manifest = JSON.stringify({ name: "project", version: "1.0.0", dependencies: { leaf: "1.0.0" } });
+  const dotenv = `ALL_PROXY=http://127.0.0.1:${proxy.port}\n`;
+  using dir = tempDir("registry-down-dotenv-proxy", {
+    "project/package.json": manifest,
+    "project/.env": dotenv,
+    // `bun audit` reads the lockfile.
+    "locked/package.json": manifest,
+    "locked/.env": dotenv,
+    "locked/bun.lock": JSON.stringify({
+      lockfileVersion: 1,
+      configVersion: 1,
+      workspaces: { "": { name: "project", dependencies: { leaf: "1.0.0" } } },
+      packages: { leaf: ["leaf@1.0.0", "", {}, ""] },
+    }),
+  });
+  const root = String(dir);
 
-    const commands = [
-      { cwd: "project", args: ["install", "--ignore-scripts"] },
-      { cwd: "project", args: ["info", "leaf"] },
-      { cwd: "project", args: ["pm", "view", "leaf"] },
-      { cwd: "project", args: ["pm", "diff", "leaf@1.0.0", "1.0.0"] },
-      { cwd: "locked", args: ["audit"] },
-    ];
-    const results = await Promise.all(
-      commands.map(async ({ cwd, args }, i) => {
-        const { stderr, exitCode } = await runBun(
-          join(root, cwd),
-          join(root, `cache-${i}`),
-          { ...noProxy, BUN_CONFIG_REGISTRY: registryUrl },
-          ...args,
-        );
-        return { command: args.join(" "), note: /^note: .*$/m.exec(stderr)?.[0] ?? null, exitCode };
-      }),
-    );
-    const noteFor = (subcommand: string) =>
-      `note: bun ${subcommand} reads ALL_PROXY from the environment only, not from .env files.`;
-    expect(results).toEqual([
-      { command: "install --ignore-scripts", note: noteFor("install"), exitCode: 1 },
-      { command: "info leaf", note: noteFor("info"), exitCode: 1 },
-      { command: "pm view leaf", note: noteFor("pm"), exitCode: 1 },
-      { command: "pm diff leaf@1.0.0 1.0.0", note: noteFor("pm"), exitCode: 1 },
-      { command: "audit", note: noteFor("audit"), exitCode: 1 },
-    ]);
-    expect({ proxied, registryClosedAConnection: closed > 0 }).toEqual({
-      proxied: [],
-      registryClosedAConnection: true,
-    });
-  },
-  30_000,
-);
+  const commands = [
+    { cwd: "project", args: ["install", "--ignore-scripts"] },
+    { cwd: "project", args: ["info", "leaf"] },
+    { cwd: "project", args: ["pm", "view", "leaf"] },
+    { cwd: "project", args: ["pm", "diff", "leaf@1.0.0", "1.0.0"] },
+    { cwd: "locked", args: ["audit"] },
+  ];
+  const results = await Promise.all(
+    commands.map(async ({ cwd, args }, i) => {
+      const { stderr, exitCode } = await runBun(
+        join(root, cwd),
+        join(root, `cache-${i}`),
+        { ...noProxy, BUN_CONFIG_REGISTRY: registryUrl },
+        ...args,
+      );
+      return { command: args.join(" "), note: /^note: .*$/m.exec(stderr)?.[0] ?? null, exitCode };
+    }),
+  );
+  const noteFor = (subcommand: string) =>
+    `note: bun ${subcommand} reads ALL_PROXY from the environment only, not from .env files.`;
+  expect(results).toEqual([
+    { command: "install --ignore-scripts", note: noteFor("install"), exitCode: 1 },
+    { command: "info leaf", note: noteFor("info"), exitCode: 1 },
+    { command: "pm view leaf", note: noteFor("pm"), exitCode: 1 },
+    { command: "pm diff leaf@1.0.0 1.0.0", note: noteFor("pm"), exitCode: 1 },
+    { command: "audit", note: noteFor("audit"), exitCode: 1 },
+  ]);
+  expect({ proxied, registryClosedAConnection: closed > 0 }).toEqual({
+    proxied: [],
+    registryClosedAConnection: true,
+  });
+});
+
+// The runtime's auto-install is not `bun install`: it loads no `.env*` file
+// itself, and the project's code runs in the same process. `fetch()` there takes
+// its proxy from the project's `.env` or from a `process.env` write, and
+// auto-install takes the same one.
+test.concurrent("auto-install takes its proxy from the environment of the runtime, as fetch() does", async () => {
+  const tarball = await tarballOf("package", packageFiles("leaf", "leaf"));
+  using down = listenAndClose();
+  const registryUrl = `http://127.0.0.1:${down.port}/`;
+  const proxied: SeenRequest[] = [];
+  await using proxy = serveLeaf(tarball, proxied, () => registryUrl);
+  const proxyUrl = `http://127.0.0.1:${proxy.port}`;
+
+  const app = `
+    if (process.argv[2]) process.env.HTTP_PROXY = process.argv[2];
+    const { status } = await fetch(${JSON.stringify(registryUrl + "leaf")});
+    const { default: leaf } = await import("leaf");
+    console.log(JSON.stringify({ status, leaf }));
+  `;
+  const manifest = JSON.stringify({ name: "app" });
+  using dir = tempDir("autoinstall-runtime-proxy", {
+    "dotenv/package.json": manifest,
+    "dotenv/app.mjs": app,
+    "dotenv/.env": `HTTP_PROXY=${proxyUrl}\n`,
+    "assigned/package.json": manifest,
+    "assigned/app.mjs": app,
+  });
+  const root = String(dir);
+
+  const env = { ...noProxy, BUN_CONFIG_REGISTRY: registryUrl };
+  const [fromDotenv, assigned] = await Promise.all([
+    runBun(join(root, "dotenv"), join(root, "cache-dotenv"), env, "app.mjs"),
+    runBun(join(root, "assigned"), join(root, "cache-assigned"), env, "app.mjs", proxyUrl),
+  ]);
+  const ok = JSON.stringify({ status: 200, leaf: "leaf" }) + "\n";
+  expect({ fromDotenv: fromDotenv.stdout, assigned: assigned.stdout }).toEqual({ fromDotenv: ok, assigned: ok });
+  expect([fromDotenv.exitCode, assigned.exitCode]).toEqual([0, 0]);
+});

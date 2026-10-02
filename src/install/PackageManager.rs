@@ -320,10 +320,10 @@ pub struct PackageManager {
     // Set once in `init()`/`init_with_runtime()` to the process-singleton
     // `DotEnv.Loader` (leaked allocation; outlives the manager). `BackRef`
     // encapsulates the liveness invariant so `env()` is a safe accessor.
-    // Holds the project's `.env*` files too: git, proxy and TLS settings come from `process_env`.
+    // Holds the project's `.env*` files too: git, proxy and TLS settings come from `tooling_env()`.
     pub env: Option<bun_ptr::BackRef<dot_env::Loader, bun_ptr::Mut>>,
-    /// The process environment with no `.env*` file merged in (git children, proxy, TLS).
-    pub(crate) process_env: dot_env::Loader,
+    /// The process environment with no `.env*` file merged in. `None` for the runtime's auto-install.
+    pub(crate) process_env: Option<dot_env::Loader>,
     pub progress: Progress,
     pub(crate) downloads_node: Option<*mut ProgressNode>, // BORROW_FIELD — points into self.progress
     pub scripts_node: Option<NonNull<ProgressNode>>, // points to a caller stack-local Progress node; only valid while that caller frame is live
@@ -889,27 +889,36 @@ impl PackageManager {
         Ok(unsafe { &mut *ptr })
     }
 
+    /// The environment of the git children and of the proxy / TLS settings.
+    pub(crate) fn tooling_env(&self) -> &dot_env::Loader {
+        self.process_env.as_ref().unwrap_or_else(|| self.env())
+    }
+
     pub fn http_proxy(&self, url: &URL<'_>) -> Option<URL<'static>> {
-        // SAFETY: the manager is a leaked process-lifetime singleton and
-        // `process_env` is never written after `init()`.
-        let process_env: &'static dot_env::Loader =
-            unsafe { bun_ptr::detach_lifetime_ref(&self.process_env) };
-        process_env.get_http_proxy_for(url)
+        // SAFETY: the manager and the loader behind `env` are leaked
+        // process-lifetime singletons, and `process_env` is never written
+        // after `init()`.
+        let env: &'static dot_env::Loader =
+            unsafe { bun_ptr::detach_lifetime_ref(self.tooling_env()) };
+        env.get_http_proxy_for(url)
     }
 
     pub fn tls_reject_unauthorized(&self) -> bool {
-        self.process_env.get_tls_reject_unauthorized()
+        self.tooling_env().get_tls_reject_unauthorized()
     }
 
     /// After a failed request or git command: names, once, the settings that only `.env*` has.
     pub fn note_dotenv_only_vars(&self, kind: ProcessOnlyEnv) {
         static NOTED: [AtomicBool; 2] = [AtomicBool::new(false), AtomicBool::new(false)];
-        if NOTED[kind as usize].swap(true, Ordering::Relaxed) {
+        let Some(process_env) = &self.process_env else {
+            return;
+        };
+        if NOTED[kind as usize].swap(true, Ordering::SeqCst) {
             return;
         }
         let mut names: Vec<u8> = Vec::new();
         for key in self.env().map.map.keys() {
-            if kind.reads(key) && self.process_env.get(key).is_none() {
+            if kind.reads(key) && process_env.get(key).is_none() {
                 if !names.is_empty() {
                     names.extend_from_slice(b", ");
                 }
@@ -1382,12 +1391,6 @@ impl ProcessOnlyEnv {
             Self::Git => key.starts_with(b"GIT_"),
         }
     }
-}
-
-fn load_process_env() -> Result<dot_env::Loader, bun_alloc::AllocError> {
-    let mut env = dot_env::Loader::init();
-    env.load_process()?;
-    Ok(env)
 }
 
 fn allocate_package_manager() {
@@ -1957,7 +1960,8 @@ pub fn init(
     };
 
     env.load_process()?;
-    let process_env = load_process_env()?;
+    let mut process_env = dot_env::Loader::init();
+    process_env.load_process()?;
     // Copy the listing's basenames out under `entries_mutex`; `.data` must
     // only be probed while the lock is held.
     let env_probe_keys = {
@@ -2116,7 +2120,7 @@ pub fn init(
         // reads. `BackRef` stores a raw pointer —
         // ending the reborrow here does not alias the later uses.
         wr!(env, Some(bun_ptr::BackRef::new_mut(&mut *env)));
-        wr!(process_env, process_env);
+        wr!(process_env, Some(process_env));
         wr!(
             thread_pool,
             ThreadPool::init(thread_pool::Config {
@@ -2380,7 +2384,7 @@ pub fn init(
             }
 
             // If any HTTP proxy is set, use a diferent limit
-            if mgr_ref.process_env.has_http_proxy() {
+            if mgr_ref.tooling_env().has_http_proxy() {
                 break 'brk DEFAULT_MAX_SIMULTANEOUS_REQUESTS_FOR_BUN_INSTALL_FOR_PROXIES;
             }
 
@@ -2503,7 +2507,6 @@ fn init_with_runtime_once(
     };
 
     let cpu_count: u32 = u32::from(bun_core::get_thread_count());
-    let process_env = load_process_env()?;
     allocate_package_manager();
     // SAFETY: holder::RAW_PTR was just set by allocate_package_manager() to a
     // freshly allocated, *uninitialized* PackageManager. Do NOT call `get()` /
@@ -2578,7 +2581,7 @@ fn init_with_runtime_once(
         // reads. `BackRef` stores a raw pointer —
         // ending the reborrow here does not alias the later uses.
         wr!(env, Some(bun_ptr::BackRef::new_mut(&mut *env)));
-        wr!(process_env, process_env);
+        wr!(process_env, None);
         wr!(
             thread_pool,
             ThreadPool::init(thread_pool::Config {

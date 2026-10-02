@@ -71,6 +71,7 @@
             "pages": [
               "/runtime/index",
               "/runtime/watch-mode",
+              "/runtime/check",
               "/runtime/debugger",
               "/runtime/repl",
               "/runtime/bunfig",

@@ -2212,7 +2212,7 @@ Execute a shell script directly from Bun.
   <d>Check a file, then run it<r>
   <b><green>bun<r> <cyan>--check<r> <blue>src/index.ts<r>
 
-Full documentation is available at <magenta>https://bun.com/docs/cli/check<r>
+Full documentation is available at <magenta>https://bun.com/docs/runtime/check<r>
 "
                 );
                 Output::flush();

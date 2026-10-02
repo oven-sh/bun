@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { mkdirSync, symlinkSync } from "node:fs";
+import { existsSync, mkdirSync, symlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 // `lib.*.d.ts` come from the `typescript` package a project has installed.
@@ -947,6 +947,20 @@ export {};
       using dir = project(files);
       const { stdout } = await check(dir, ["--strict", "a.ts"]);
       expect(stdout).toMatchInlineSnapshot(`"a.ts(1,19): error TS7006: Parameter 'x' implicitly has an 'any' type."`);
+    });
+
+    test("--noEmit takes a value like any other, and nothing is written whatever it is", async () => {
+      using dir = project(files);
+      const results = await Promise.all([
+        check(dir, ["--noEmit"]),
+        check(dir, ["--noEmit", "true"]),
+        check(dir, ["--noEmit", "false", "--outDir", "out"]),
+        check(dir, ["--noEmit=false", "--outDir", "out", "a.ts"]),
+      ]);
+      expect(results.map(({ stdout, exitCode }) => ({ stdout, exitCode }))).toEqual(
+        Array.from({ length: 4 }, () => ({ stdout: "", exitCode: 0 })),
+      );
+      expect(existsSync(join(String(dir), "out"))).toBe(false);
     });
 
     test("lists, and values that are not allowed", async () => {

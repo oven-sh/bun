@@ -49,7 +49,10 @@ Bundlers solve several problems:
 - **Framework features.** Frameworks rely on bundler plugins & code transformations to implement common patterns like file-system routing, client-server code co-location (think `getServerSideProps` or Remix loaders), and server components.
 - **Full-stack Applications.** Bun's bundler can handle both server and client code in a single command, enabling optimized production builds and single-file executables. With build-time HTML imports, you can bundle your entire application — frontend assets and backend server — into a single deployable unit.
 
-<Note>The Bun bundler is not intended to replace `tsc` for typechecking or generating type declarations.</Note>
+<Note>
+  `bun build` checks types only when you pass [`--check`](/runtime/check#check-before-you-run-build-or-test). It does
+  not generate type declarations. Use `tsc` to produce `.d.ts` files.
+</Note>
 
 ## Basic example
 

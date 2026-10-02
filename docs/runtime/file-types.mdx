@@ -43,7 +43,7 @@ Same as the `js` loader, but JSX syntax is supported. By default, Bun down-conve
 
 **TypeScript loader**. Default for `.ts`, `.mts`, and `.cts`.
 
-Strips out all TypeScript syntax, then behaves identically to the `js` loader. Bun does not perform typechecking.
+Strips out all TypeScript syntax, then behaves identically to the `js` loader. The loader does not check types. Use [`bun check`](/runtime/check) to type check your project.
 
 ### `tsx`
 

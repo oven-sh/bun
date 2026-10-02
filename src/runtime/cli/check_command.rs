@@ -107,8 +107,8 @@ fn parse(args: &[&ZStr]) -> Options {
             options.all = true;
         } else if arg == b"--timing" {
             options.timing = true;
-        } else if arg == b"--noEmit" || arg == b"--no-emit" {
-            // Nothing is ever emitted.
+        } else if arg == b"--no-emit" {
+            // Nothing is ever emitted. `--noEmit` is a compiler option like any other, which the driver sets last.
         } else if arg == b"-b" || arg == b"--build" {
             options.build = true;
         } else if let Some(flag) = arg.strip_prefix(b"--") {

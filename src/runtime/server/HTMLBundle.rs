@@ -40,7 +40,7 @@ use debug_scope::HTMLBundle as debug;
 // hence the ref count alongside the JS wrapper.
 #[derive(bun_ptr::RefCounted)]
 #[ref_count(debug_name = "HTMLBundle")]
-pub struct HTMLBundle {
+pub(crate) struct HTMLBundle {
     ref_count: RefCount<HTMLBundle>,
     pub global: bun_ptr::BackRef<JSGlobalObject>,
     pub path: Box<[u8]>,
@@ -95,7 +95,7 @@ const _: () = {
     impl HTMLBundle {
         /// `jsc.Codegen.JSHTMLBundle.toJS` — the JS wrapper takes over `this`'
         /// ref (released in `finalize`).
-        pub fn to_js(this: RefPtr<HTMLBundle>, global: &JSGlobalObject) -> JSValue {
+        pub(crate) fn to_js(this: RefPtr<HTMLBundle>, global: &JSGlobalObject) -> JSValue {
             __create(global.as_mut_ptr(), this.into_raw())
         }
     }
@@ -144,7 +144,7 @@ pub(crate) type HTMLBundleRoute = Route;
 // stack — `&mut self` would alias (UB); `&self` + `UnsafeCell` is sound.
 #[derive(bun_ptr::RefCounted)]
 #[ref_count(debug_name = "HTMLBundleRoute")]
-pub struct Route {
+pub(crate) struct Route {
     pub(crate) bundle: RefPtr<HTMLBundle>,
     /// One HTMLBundle.Route can be specified multiple times
     ref_count: RefCount<Route>,
@@ -160,7 +160,7 @@ pub struct Route {
     pending_responses: JsCell<Vec<PendingResponse>>,
 }
 
-pub enum State {
+pub(crate) enum State {
     Pending,
     /// The server's plugins are loading, or the `JSBundleCompletionTask` (which
     /// holds a ref on this route until it delivers the result) is running. In
@@ -720,7 +720,7 @@ impl Drop for Route {
 }
 
 /// Represents an in-flight response before the bundle has finished building.
-pub struct PendingResponse {
+pub(crate) struct PendingResponse {
     method: Method,
     resp: AnyResponse,
     is_response_pending: Cell<bool>,

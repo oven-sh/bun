@@ -124,6 +124,7 @@ using namespace JSC;
     macro(makeGetterTypeError) \
     macro(masked) \
     macro(maxAge) \
+    macro(maxHeaderPairs) \
     macro(metafileJson) \
     macro(method) \
     macro(min) \

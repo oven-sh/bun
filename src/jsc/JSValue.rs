@@ -353,7 +353,9 @@ impl JSValue {
         JSC__JSValue__isAnyError(self)
     }
     /// Whether this object's realm was retired by `bun test --isolate` (its file finished).
-    #[inline]
+    /// Out of line: inlined into [`call`](Self::call), it keeps that from being inlined in turn.
+    #[cold]
+    #[inline(never)]
     pub fn is_from_retired_test_isolation_realm(self) -> bool {
         self.is_cell() && Bun__JSValue__isFromRetiredTestIsolationRealm(self)
     }
@@ -1719,8 +1721,12 @@ impl JSValue {
         this_value: JSValue,
         args: &[JSValue],
     ) -> JsResult<JSValue> {
-        // A `Bun.ModuleGraph` that was disposed hears nothing more from native code.
-        if global.bun_vm().calls_nobody() {
+        // A `Bun.ModuleGraph` that was disposed hears nothing more from native code, nor does a
+        // test file that finished (only `--isolate` retires a realm).
+        let vm = global.bun_vm();
+        if vm.calls_nobody()
+            || (vm.test_isolation_enabled && self.is_from_retired_test_isolation_realm())
+        {
             return Ok(JSValue::UNDEFINED);
         }
         host_fn::from_js_host_call(global, || {
@@ -1858,37 +1864,15 @@ impl FromAny for &[u16] {
     }
 }
 
-impl FromAny for () {
-    #[inline]
-    fn into_js_value(self, _global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(JSValue::UNDEFINED)
-    }
-}
 impl FromAny for &[u8] {
     #[inline]
     fn into_js_value(self, global: &JSGlobalObject) -> JsResult<JSValue> {
         bun_string_jsc::create_utf8_for_js(global, self)
     }
 }
-impl FromAny for &str {
-    #[inline]
-    fn into_js_value(self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_string_jsc::create_utf8_for_js(global, self.as_bytes())
-    }
-}
 impl FromAny for Box<[bun_core::String]> {
     fn into_js_value(self, global: &JSGlobalObject) -> JsResult<JSValue> {
         bun_string_jsc::to_js_array(global, &self)
-    }
-}
-impl<T: FromAny> FromAny for Option<T> {
-    /// `None` → `undefined`.
-    #[inline]
-    fn into_js_value(self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        match self {
-            Some(v) => v.into_js_value(global),
-            None => Ok(JSValue::UNDEFINED),
-        }
     }
 }
 

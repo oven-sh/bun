@@ -1390,11 +1390,7 @@ impl Default for Log {
             warnings: 0,
             errors: 0,
             msgs: Vec::new(),
-            level: if cfg!(debug_assertions) {
-                Level::Info
-            } else {
-                Level::Warn
-            },
+            level: DEFAULT_LOG_LEVEL.load(),
             clone_line_text: false,
             owned_strings: Vec::new(),
             line_column_tracker: None,
@@ -1459,7 +1455,7 @@ bun_core::comptime_string_map! {
 }
 
 // PORTING.md §Global mutable state: written by CLI startup, read by every
-// `Log::init()` (including from bundler worker threads). `AtomicCell<Level>`
+// `Log` constructor (including from bundler worker threads). `AtomicCell<Level>`
 // — Acquire/Release, no `unsafe` at call sites.
 pub static DEFAULT_LOG_LEVEL: bun_core::AtomicCell<Level> = bun_core::AtomicCell::new(Level::Warn);
 
@@ -1515,13 +1511,9 @@ impl Log {
         (self.warnings + self.errors) > 0
     }
 
+    #[inline]
     pub fn init() -> Log {
-        let level = DEFAULT_LOG_LEVEL.load();
-        Log {
-            msgs: Vec::new(),
-            level,
-            ..Default::default()
-        }
+        Log::default()
     }
 
     /// Alias of [`Log::init`].

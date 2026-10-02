@@ -3997,19 +3997,29 @@ impl<'a> Resolver<'a> {
         &mut self,
         file: &[u8],
         dirname_fd: FD,
+        opened: Option<FD>,
     ) -> crate::CrateResult<Option<Box<TSConfigJSON>>> {
         // Since tsconfig.json is cached permanently, in our DirEntries cache
         // we must use the global allocator
-        let mut entry = self.caches.fs.read_file_with_allocator(
+        let read = self.caches.fs.read_file_with_allocator(
             // SAFETY: process-global `FileSystem` singleton (see `fs()` NOTE); narrow `&mut`
             // for this call only — `self.caches` is a field of `self` (disjoint allocation).
             unsafe { &mut *self.fs() },
             file,
             dirname_fd,
             false,
+            opened,
             None,
-            None,
-        )?;
+        );
+        let mut entry = match read {
+            Ok(entry) => entry,
+            Err(err) => {
+                if let Some(opened) = opened {
+                    opened.close();
+                }
+                return Err(err);
+            }
+        };
         // NOTE: reshaped for borrowck — `mem::take` the contents (leaving
         // `Contents::Empty` behind) so `entry` stays whole for the close-guard.
         let entry_contents = core::mem::take(&mut entry.contents);
@@ -6409,38 +6419,45 @@ impl<'a> Resolver<'a> {
         // Record if this directory has a tsconfig.json or jsconfig.json file
         if self.opts.load_tsconfig_json {
             let mut tsconfig_path: Option<&[u8]> = None;
+            #[cfg(unix)]
+            let mut tsconfig_fd: Option<FD> = None;
+            #[cfg(not(unix))]
+            let tsconfig_fd: Option<FD> = None;
             if self.opts.tsconfig_override.is_none() {
-                if let Some(lookup) = entries!().get_comptime_query(b"tsconfig.json") {
+                for name in [b"tsconfig.json".as_slice(), b"jsconfig.json".as_slice()] {
+                    let Some(lookup) = entries!().get_comptime_query(name) else {
+                        continue;
+                    };
                     // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
                     // dies (NLL) before any later `&mut` to this slot.
                     let entry = lookup.entry();
                     // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
                     if unsafe { entry.kind(rfs_ptr, self.store_fd) }
-                        == Fs::file_system::EntryKind::File
+                        != Fs::file_system::EntryKind::File
                     {
-                        let parts = [path, b"tsconfig.json".as_slice()];
-                        tsconfig_path = Some(
-                            self.fs_ref()
-                                .abs_buf(&parts, bufs!(dir_info_uncached_filename)),
-                        );
+                        continue;
                     }
-                }
-                if tsconfig_path.is_none() {
-                    if let Some(lookup) = entries!().get_comptime_query(b"jsconfig.json") {
-                        // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
-                        // dies (NLL) before any later `&mut` to this slot.
-                        let entry = lookup.entry();
-                        // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
-                        if unsafe { entry.kind(rfs_ptr, self.store_fd) }
-                            == Fs::file_system::EntryKind::File
-                        {
-                            let parts = [path, b"jsconfig.json".as_slice()];
-                            tsconfig_path = Some(
-                                self.fs_ref()
-                                    .abs_buf(&parts, bufs!(dir_info_uncached_filename)),
+                    let found = self
+                        .fs_ref()
+                        .abs_buf(&[path, name], bufs!(dir_info_uncached_filename));
+                    #[cfg(unix)]
+                    match vet_auto_discovered_config(fd, name) {
+                        AutoConfig::AsFound => {}
+                        AutoConfig::Opened(opened) => tsconfig_fd = Some(opened),
+                        AutoConfig::Skip => {
+                            let _ = self.log_mut().add_debug_fmt(
+                                None,
+                                bun_ast::Loc::EMPTY,
+                                format_args!(
+                                    "Ignoring {} because another user can write to its directory and it is not a plain file that you own. Pass --tsconfig-override to load it anyway.",
+                                    bun_core::fmt::quote(found)
+                                ),
                             );
+                            continue;
                         }
                     }
+                    tsconfig_path = Some(found);
+                    break;
                 }
             } else if parent.is_none() {
                 // NOTE: re-borrow as 'static so the `&self.opts` borrow ends before
@@ -6463,6 +6480,7 @@ impl<'a> Resolver<'a> {
                     } else {
                         FD::ZERO
                     },
+                    tsconfig_fd,
                 ) {
                     Ok(v) => v.map(bun_core::heap::into_raw),
                     Err(err) => {
@@ -6520,7 +6538,7 @@ impl<'a> Resolver<'a> {
                             bun_paths::Platform::AUTO,
                         );
                         let parent_config_maybe: Option<*mut TSConfigJSON> =
-                            match self.parse_tsconfig(abs_path, FD::INVALID) {
+                            match self.parse_tsconfig(abs_path, FD::INVALID, None) {
                                 Ok(v) => v.map(bun_core::heap::into_raw),
                                 Err(err) => {
                                     let _ = self.log_mut().add_debug_fmt(
@@ -6744,6 +6762,81 @@ fn is_dot_slash(path: &[u8]) -> bool {
     {
         path.len() == 2 && path[0] == b'.' && strings::char_is_any_slash(path[1])
     }
+}
+
+/// Owner of the directory bun was started in, when it can be read.
+#[cfg(unix)]
+fn top_level_dir_owner() -> Option<libc::uid_t> {
+    static OWNER: std::sync::OnceLock<Option<libc::uid_t>> = std::sync::OnceLock::new();
+    *OWNER.get_or_init(|| {
+        let dir = Fs::FileSystem::instance().top_level_dir;
+        let mut buf = bun_paths::path_buffer_pool::get();
+        if dir.is_empty() || dir.len() >= buf.len() {
+            return None;
+        }
+        buf[..dir.len()].copy_from_slice(dir);
+        buf[dir.len()] = 0;
+        let span = bun_core::ZStr::from_buf(&buf[..], dir.len());
+        bun_sys::stat(span).ok().map(|stat| stat.st_uid)
+    })
+}
+
+/// Whether a uid's files count as this process's own: the invoking user, root, or the owner of the directory bun started in.
+#[cfg(unix)]
+fn owner_is_trusted(owner: libc::uid_t) -> bool {
+    owner == 0 || owner == bun_sys::c::getuid() || top_level_dir_owner() == Some(owner)
+}
+
+/// How a config found by the upward walk may be read. `Opened` carries the descriptor the checks ran on.
+#[cfg(unix)]
+enum AutoConfig {
+    AsFound,
+    Opened(FD),
+    Skip,
+}
+
+/// A directory vouches for its files unless others can write to it; there, only a plain file you own vouches for itself.
+#[cfg(unix)]
+fn vet_auto_discovered_config(dir: FD, name: &[u8]) -> AutoConfig {
+    if !others_can_write_dir(dir) {
+        return AutoConfig::AsFound;
+    }
+    match open_own_plain_file(dir, name) {
+        Some(opened) => AutoConfig::Opened(opened),
+        None => AutoConfig::Skip,
+    }
+}
+
+/// Whether a user outside `owner_is_trusted` can add entries to the open directory `dir`.
+#[cfg(unix)]
+fn others_can_write_dir(dir: FD) -> bool {
+    const STICKY_GROUP_WRITE: libc::mode_t = libc::S_ISVTX | libc::S_IWGRP;
+    if !dir.is_valid() {
+        return true;
+    }
+    bun_sys::fstat(dir).map_or(true, |stat| {
+        !owner_is_trusted(stat.st_uid)
+            || (stat.st_mode & libc::S_IWOTH) != 0
+            || (stat.st_mode & STICKY_GROUP_WRITE) == STICKY_GROUP_WRITE
+    })
+}
+
+/// Opens `name` in `dir` without following a symlink; keeps the descriptor only for a singly linked regular file that a trusted user owns.
+#[cfg(unix)]
+fn open_own_plain_file(dir: FD, name: &[u8]) -> Option<FD> {
+    use bun_sys::O;
+    let flags = O::RDONLY | O::NOFOLLOW | O::NONBLOCK | O::CLOEXEC;
+    let opened = bun_sys::openat_a(dir, name, flags, 0).ok()?;
+    let own = bun_sys::fstat(opened).is_ok_and(|stat| {
+        (stat.st_mode & libc::S_IFMT) == libc::S_IFREG
+            && stat.st_nlink == 1
+            && owner_is_trusted(stat.st_uid)
+    });
+    if !own {
+        opened.close();
+        return None;
+    }
+    Some(opened)
 }
 
 bun_core::comptime_string_map! {

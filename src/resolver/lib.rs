@@ -1490,8 +1490,6 @@ pub mod fs {
                     kind_from_mode(stat_.st_mode as bun_sys::Mode) == FileKind::SymLink;
                 let mut file_kind = kind_from_mode(stat_.st_mode as bun_sys::Mode);
 
-                let mut symlink: &[u8] = b"";
-
                 if is_symlink {
                     let file: Fd = if let Some(valid) = existing_fd.unwrap_valid() {
                         valid
@@ -1512,23 +1510,28 @@ pub mod fs {
                     };
                     FileSystem::set_max_fd(file.native());
 
-                    // The close-or-store cleanup runs on
-                    // BOTH success and error paths — use scopeguard so close-or-store happens even if
-                    // fstat()/get_fd_path() return early with `?`.
-                    let need_to_close_files = self.need_to_close_files();
-                    let cache_ptr: *mut EntryCache = &raw mut cache;
-                    let _guard = scopeguard::guard(file, move |file| {
-                        if (!store_fd || need_to_close_files) && !existing_fd.is_valid() {
+                    let we_opened_it = !existing_fd.is_valid();
+                    let close_even_on_success = !store_fd || self.need_to_close_files();
+                    let fd_published = core::cell::Cell::new(false);
+                    let _guard = scopeguard::guard((), |()| {
+                        if we_opened_it && (close_even_on_success || !fd_published.get()) {
                             let _ = bun_sys::close(file);
-                        } else if bun_core::feature_flags::STORE_FILE_DESCRIPTORS {
-                            // SAFETY: `cache_ptr` points into a stack local that outlives this guard.
-                            unsafe { (*cache_ptr).fd = file };
                         }
                     });
 
-                    let file_stat = bun_sys::fstat(*_guard)?;
-                    symlink = bun_sys::get_fd_path(*_guard, &mut outpath)?;
+                    let file_stat = bun_sys::fstat(file)?;
+                    let symlink = bun_sys::get_fd_path(file, &mut outpath)?;
                     file_kind = kind_from_mode(file_stat.st_mode as bun_sys::Mode);
+                    if !symlink.is_empty() {
+                        cache.symlink =
+                            Interned::from_static(FilenameStore::instance().append_slice(symlink)?);
+                    }
+                    if bun_core::feature_flags::STORE_FILE_DESCRIPTORS
+                        && !(we_opened_it && close_even_on_success)
+                    {
+                        cache.fd = file;
+                    }
+                    fd_published.set(true);
                 }
 
                 debug_assert!(file_kind != FileKind::SymLink);
@@ -1538,10 +1541,6 @@ pub mod fs {
                 } else {
                     EntryKind::File
                 };
-                if !symlink.is_empty() {
-                    cache.symlink =
-                        Interned::from_static(FilenameStore::instance().append_slice(symlink)?);
-                }
 
                 Ok(cache)
             }

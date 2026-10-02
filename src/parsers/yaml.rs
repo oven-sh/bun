@@ -2430,6 +2430,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         if let AliasCheck::Count(counter) = &mut self.alias_check {
             counter.anchors.clear();
             counter.events.clear();
+            counter.aliases.clear();
             counter.leaves = 0;
             counter.open.clear();
             counter.merges.clear();
@@ -3337,7 +3338,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         if !self.has_cyclic_alias || !self.is_open_collection(node) {
             return Ok(());
         }
-        // There it merges itself again and again until the count exceeds any limit.
+        // There it merges itself again and again, until the count exceeds the limit or the stack ends.
         if matches!(self.alias_check, AliasCheck::Count(_)) {
             return Err(ParseError::ExcessiveAliasCount);
         }
@@ -3412,6 +3413,7 @@ impl AliasCheck {
                     limit,
                     anchors: Vec::new(),
                     events: Vec::new(),
+                    aliases: Vec::new(),
                     leaves: 0,
                     open: Vec::new(),
                     merges: Vec::new(),
@@ -3431,6 +3433,8 @@ pub(crate) struct AliasCounter {
     limit: f64,
     anchors: Vec<AnchorCount>,
     events: Vec<AliasEvent>,
+    /// Where the `Alias` events are in `events`.
+    aliases: Vec<usize>,
     /// Scalars that became an item, a key or a value and are not aliases. An aliased scalar is
     /// taken off when it is parsed and added when it is appended, so this wraps.
     leaves: usize,
@@ -3440,7 +3444,8 @@ pub(crate) struct AliasCounter {
     merges: Vec<usize>,
     /// A cyclic alias needs the rest of its collection: `events` are converted at the document's end.
     deferred: bool,
-    /// Events one parse may still convert. A merge converts its source again, merges included.
+    /// Events that one parse may still convert again. A merge converts its source once more,
+    /// the merges in it included, so this is what stops merges of merges.
     work: usize,
 }
 
@@ -3468,10 +3473,12 @@ impl AliasCounter {
         if kind == AnchorKind::Scalar {
             return Ok(1.0);
         }
-        self.spend(end - start)?;
+        let first = self.aliases.partition_point(|&at| at < start);
+        let written = self.aliases[first..].partition_point(|&at| at < end);
+        self.spend(written)?;
         let mut largest: f64 = if has_leaf { 1.0 } else { 0.0 };
-        for event in &self.events[start..end] {
-            if let AliasEvent::Alias(target) = *event {
+        for &at in &self.aliases[first..first + written] {
+            if let AliasEvent::Alias(target) = self.events[at] {
                 let target = &self.anchors[target];
                 if target.visited {
                     largest = largest.max(target.count * target.alias_count);
@@ -3507,6 +3514,8 @@ enum AnchorKind {
 #[derive(Clone, Copy)]
 struct AnchorCount {
     kind: AnchorKind,
+    /// Where the node is written, which tells the `<<` it is an anchor of from any other scalar.
+    loc: i32,
     /// See `Written`.
     start: usize,
     end: usize,
@@ -3629,6 +3638,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 ast::ExprData::EObject(_) => AnchorKind::Mapping,
                 _ => AnchorKind::Scalar,
             },
+            loc: node.loc.start,
             start: 0,
             end: 0,
             has_leaf: false,
@@ -3792,6 +3802,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 if !is_collection {
                     counter.leaves = counter.leaves.wrapping_sub(1);
                 }
+                counter.aliases.push(counter.events.len());
                 counter.events.push(AliasEvent::Alias(anchor.id));
                 if !counter.deferred && counter.merges.is_empty() {
                     self.resolve_counted(anchor.id)?;
@@ -3822,7 +3833,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             let AliasCheck::Count(counter) = &mut self.alias_check else {
                 break;
             };
-            counter.spend(1)?;
             let event = counter.events[at];
             at += 1;
             match event {
@@ -3848,7 +3858,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         let AliasCheck::Count(counter) = &mut self.alias_check else {
             return Ok(());
         };
-        counter.spend(1)?;
         let anchor = &mut counter.anchors[id];
         if !anchor.visited {
             // The anchor of a `<<` source written in place: a merge does not convert the source
@@ -3884,13 +3893,18 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         match value {
             Some((_, AliasEvent::Alias(id))) => {
                 self.resolve_counted(id)?;
-                let AliasCheck::Count(counter) = &self.alias_check else {
+                let AliasCheck::Count(counter) = &mut self.alias_check else {
                     return Ok(());
                 };
-                let anchor = counter.anchors[id];
-                match anchor.kind {
-                    AnchorKind::Mapping => self.convert_events(anchor.start, anchor.end, true),
-                    AnchorKind::Sequence => self.convert_merge_items(anchor.start, anchor.end),
+                let AnchorCount {
+                    kind, start, end, ..
+                } = counter.anchors[id];
+                match kind {
+                    AnchorKind::Mapping => self.convert_source(start, end),
+                    AnchorKind::Sequence => {
+                        counter.spend(end - start)?;
+                        self.convert_merge_items(start, end)
+                    }
                     AnchorKind::Scalar => Ok(()),
                 }
             }
@@ -3911,6 +3925,14 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             // A scalar, so `<<` is an ordinary key.
             _ => self.convert_events(start, end, false),
         }
+    }
+
+    /// Converts once more the contents of a mapping that a `<<` takes through an alias.
+    fn convert_source(&mut self, start: usize, end: usize) -> Result<(), ParseError> {
+        if let AliasCheck::Count(counter) = &mut self.alias_check {
+            counter.spend(end - start)?;
+        }
+        self.convert_events(start, end, true)
     }
 
     /// That package's `mergeValue` for each item written in `events[start..end]`: an alias is
@@ -3936,7 +3958,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 AliasEvent::Define(_) | AliasEvent::Merge { .. } => {}
             }
         }
-        counter.spend(items.len())?;
         for at in items.into_iter().rev() {
             let AliasCheck::Count(counter) = &self.alias_check else {
                 break;
@@ -3949,7 +3970,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     };
                     let anchor = counter.anchors[id];
                     if anchor.kind == AnchorKind::Mapping {
-                        self.convert_events(anchor.start, anchor.end, true)?;
+                        self.convert_source(anchor.start, anchor.end)?;
                     }
                 }
                 AliasEvent::Close {
@@ -3982,8 +4003,21 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         if let AliasCheck::Count(counter) = &mut self.alias_check
             && is_merge_key(key)
         {
+            // That package does not convert the `<<` itself, so a merge does not define an
+            // anchor on it either: the `Define` goes with the value.
+            let own = match counter.events.last() {
+                Some(&AliasEvent::Define(id))
+                    if counter.anchors[id].kind == AnchorKind::Scalar
+                        && counter.anchors[id].loc == key.loc.start =>
+                {
+                    counter.anchors[id].visited = false;
+                    counter.events.pop()
+                }
+                _ => None,
+            };
             counter.merges.push(counter.events.len());
             counter.events.push(AliasEvent::Merge { end: 0 });
+            counter.events.extend(own);
         }
     }
 

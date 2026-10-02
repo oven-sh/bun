@@ -1115,7 +1115,7 @@ fn parse_limit(
     let Some(value) = options.get(global, field_name)? else {
         return Ok(None);
     };
-    // `validate_integer_range` takes NaN for the default, here no limit at all.
+    // `validate_integer_range` would take NaN for the default it is given.
     if value.is_number() && value.as_number().is_nan() {
         return Err(global.throw_range_error(
             f64::NAN,

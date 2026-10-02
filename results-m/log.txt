@@ -1,0 +1,6 @@
+tier ftl exit 0
+tier llint exit 0
+tier base exit 0
+tier dfg exit 0
+cold exit 0
+ALLDONE

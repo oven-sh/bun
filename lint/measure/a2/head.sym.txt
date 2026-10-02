@@ -1,0 +1,14 @@
+bun_js_parser text        1184  1,670,251
+P<false, false>            288    416,099
+P<true, false>             472    611,843
+P<false, true>              95    136,295
+P<true, true>              268    318,030
+type grammar               136    124,308
+with_opts discard            0          0
+with_opts metadata           0          0
+parse_suffix TS              1     17,833
+parse_prefix TS              1     15,804
+parse_property TS            1     10,780
+parse_fn_stmt TS             1      2,128
+parse_stmt TS                1      3,878
+Lexer::next                  1     15,372

@@ -241,6 +241,103 @@ test("inspector.open() serves the DevTools protocol and /json discovery endpoint
   expect(summary.urlAfterClose).toBeNull();
 }, 30_000);
 
+// CDP Runtime.Timestamp is milliseconds since epoch, and console.count /
+// console.time{Log,End} must surface as Runtime.consoleAPICalled events over
+// the DevTools WebSocket (Node emits type "count" / "timeEnd"; JSC reports
+// count at level "debug" and timeEnd/timeLog as type "timing").
+const consoleTimestampAndCountersFixture = `
+import inspector from "node:inspector";
+
+inspector.open(0, "127.0.0.1", false);
+const ws = new WebSocket(inspector.url());
+const pending = new Map();
+const consoleEvents = [];
+let nextId = 1;
+let resolveDone;
+const donePromise = new Promise(resolve => (resolveDone = resolve));
+ws.onmessage = event => {
+  const message = JSON.parse(event.data);
+  if (message.id) {
+    pending.get(message.id)?.(message);
+    pending.delete(message.id);
+  } else if (message.method === "Runtime.consoleAPICalled") {
+    consoleEvents.push(message.params);
+    if (message.params.args?.[0]?.value === "__done__") resolveDone();
+  }
+};
+const send = (method, params) =>
+  new Promise(resolve => {
+    const id = nextId++;
+    pending.set(id, resolve);
+    ws.send(JSON.stringify({ id, method, params }));
+  });
+await new Promise(resolve => (ws.onopen = resolve));
+await send("Runtime.enable", {});
+
+const beforeMs = Date.now();
+await send("Runtime.evaluate", {
+  expression:
+    'console.log("first-log");' +
+    'console.count("cnt"); console.count("cnt"); console.countReset("cnt"); console.count("cnt");' +
+    'console.time("tm"); console.timeLog("tm", "mid"); console.timeEnd("tm");' +
+    'console.log("__done__");',
+});
+await donePromise;
+const afterMs = Date.now();
+ws.close();
+inspector.close();
+
+const types = consoleEvents.map(event => event.type);
+const firstTimestamp = consoleEvents[0]?.timestamp;
+const countTexts = consoleEvents
+  .filter(event => String(event.args?.[0]?.value ?? "").startsWith("cnt: "))
+  .map(event => event.args[0].value);
+const timingArgs = consoleEvents
+  .filter(event => event.type === "timeEnd")
+  .map(event => (event.args ?? []).map(arg => arg.value));
+process.stdout.write(
+  JSON.stringify({ types, firstTimestamp, beforeMs, afterMs, countTexts, timingArgs }) + "\\n",
+);
+process.exit(0);
+`;
+
+test("Runtime.consoleAPICalled over the DevTools WebSocket reports a millisecond timestamp and emits events for console.count/time*", async () => {
+  using dir = tempDir("inspector-console-ws", {
+    "fixture.mjs": consoleTimestampAndCountersFixture,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.mjs"],
+    env: injectedScriptChildEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+
+  const summary = JSON.parse(stdout.trim().split("\n").at(-1)!);
+
+  // JSC sends Console.messageAdded.timestamp in seconds (~1e9). CDP wants
+  // milliseconds: the adapter must rescale so the value lands between the
+  // Date.now() readings that bracket the console call.
+  expect(summary.firstTimestamp).toBeGreaterThanOrEqual(summary.beforeMs - 1);
+  expect(summary.firstTimestamp).toBeLessThanOrEqual(summary.afterMs + 1);
+
+  // console.count / console.countReset / console.timeLog / console.timeEnd
+  // reach InspectorConsoleAgent and emit events. JSC reports count at
+  // {type:"log", level:"debug"} (so CDP type "debug") and both timeLog and
+  // timeEnd as {type:"timing"} (so CDP type "timeEnd"). countReset emits
+  // nothing itself; the third count reads "cnt: 1" only if the reset reached
+  // the inspector agent.
+  expect(summary.types).toEqual(["log", "debug", "debug", "debug", "timeEnd", "timeEnd", "log"]);
+  expect(summary.countTexts).toEqual(["cnt: 1", "cnt: 2", "cnt: 1"]);
+  // JSC's timeLog puts the elapsed-time string in `text` and only the caller's
+  // extra data in `parameters`; the adapter prepends the text so the timing is
+  // args[0] for both timeLog and timeEnd, matching Node.
+  const timingText = expect.stringMatching(/^tm: \d+(\.\d+)?ms$/);
+  expect(summary.timingArgs).toEqual([[timingText, "mid"], [timingText]]);
+}, 30_000);
+
 // Node supports close() followed by open() again; a second open() while one is
 // active throws ERR_INSPECTOR_ALREADY_ACTIVATED.
 const reopenInspectorFixture = `
@@ -459,7 +556,7 @@ test("inspector.waitForDebugger() blocks until a client resumes the process", as
 
   expect(JSON.parse(stdout.trim().split("\n").at(-1)!)).toEqual({ resumedByClient: true });
   expect(exitCode).toBe(0);
-});
+}, 30_000);
 
 // A second waitForDebugger() must block again for a fresh
 // Runtime.runIfWaitingForDebugger — Node blocks on every call, and it must be
@@ -549,7 +646,7 @@ test("inspector.waitForDebugger() blocks again on the second call after a fronte
 
   expect(JSON.parse(stdout.trim().split("\n").at(-1)!)).toEqual({ first: 1, second: 2 });
   expect(exitCode).toBe(0);
-});
+}, 30_000);
 
 test("Runtime.consoleAPICalled is emitted while the Runtime domain is enabled", () => {
   const session = new inspector.Session();

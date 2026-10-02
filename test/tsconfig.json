@@ -8,6 +8,7 @@
     "paths": {
       "harness": ["./harness.ts"],
       "mkfifo": ["./mkfifo.ts"],
+      "socketpair": ["./socketpair.ts"],
       "node-harness": ["./js/node/harness.ts"],
       "s3-server": ["./packages/s3-server/index.ts"],
       "deno:harness": ["./js/deno/harness.ts"],

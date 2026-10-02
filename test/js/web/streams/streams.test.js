@@ -7,11 +7,32 @@ import {
   readableStreamToText,
 } from "bun";
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isDebug,
+  isLinux,
+  isMacOS,
+  isWindows,
+  libcPathForDlopen,
+  tempDir,
+  tmpdirSync,
+} from "harness";
 import { mkfifo } from "mkfifo";
-import { closeSync, createReadStream, openSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  createReadStream,
+  openSync,
+  readFileSync,
+  realpathSync,
+  unlinkSync,
+  writeFileSync,
+  writeSync,
+} from "node:fs";
 import { join } from "node:path";
 import { Duplex, PassThrough, Readable, Writable, finished, pipeline } from "node:stream";
+import { positionDependentBytes, unixSockets } from "socketpair";
 import {
   consumers as directConsumers,
   expected as directExpected,
@@ -2661,6 +2682,110 @@ describe.skipIf(isWindows)("Bun.file().stream() surfaces read() errors", () => {
     const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toMatch(/^first x\nsettled (EIO|done)\n$/);
     expect(exitCode).toBe(0);
+  });
+});
+
+// A hangup says that the writer is gone. It does not say that one read took
+// every byte. A sink that native code wires to the stream must get every byte
+// that was queued when the writer closed, and the read error behind them when
+// there is one. Each row queues its bytes on one end of a socketpair and
+// closes that end, in one turn of this thread. A host whose limit for a socket
+// buffer is too low for the largest row skips them all.
+const sockets = isLinux || isMacOS ? unixSockets(libcPathForDlopen()) : undefined;
+const skipHungUpSockets = !sockets || sockets.limitIsBelow(270_000);
+describe.skipIf(skipHungUpSockets)("a native sink over a socket that hung up with bytes unread", () => {
+  // The element gives the rewriter's handler one call.
+  const html = length => Buffer.concat([Buffer.from("<p>"), positionDependentBytes(length - 3)]);
+
+  const sinks = {
+    "Bun.write(file, stream)": async (stream, dir) => {
+      const out = join(dir, "out.bin");
+      await Bun.write(out, stream);
+      return readFileSync(out);
+    },
+    "HTMLRewriter.transform(new Response(stream))": async stream =>
+      Buffer.from(await new HTMLRewriter().transform(new Response(stream)).arrayBuffer()),
+    // The handler suspends the rewriter, so this sink pushes back while the reader has more to deliver.
+    "HTMLRewriter with a handler that suspends": async stream =>
+      Buffer.from(
+        await new HTMLRewriter()
+          .on("p", {
+            async element() {
+              await new Promise(resolve => setImmediate(resolve));
+            },
+          })
+          .transform(new Response(stream))
+          .arrayBuffer(),
+      ),
+  };
+
+  // Nothing here depends on a race: the reader starts on its poll, and the first wakeup reports the bytes and the
+  // hangup. One read takes 256 KiB, which is all of the first row and not all of the others.
+  it.each([
+    ["Bun.write(file, stream)", 262_144],
+    ["Bun.write(file, stream)", 262_145],
+    ...Object.keys(sinks).map(sink => [sink, 270_000]),
+  ])("%s gets all %d bytes of a source that hung up before it attached", async (sink, length) => {
+    using dir = tempDir("native-sink-hung-up", {});
+    using pair = sockets.pair();
+    const body = html(length);
+    const queued = pair.hangUp(body);
+    const received = await sinks[sink](Bun.file(pair.source).stream(), String(dir));
+    expect({ queued, received: received.length, intact: received.equals(body) }).toEqual({
+      queued: body.length,
+      received: body.length,
+      intact: true,
+    });
+  });
+
+  // The read loops of one thread share a 256 KiB buffer. A read loop that runs while another one holds it reads
+  // into a buffer of its own and delivers at 128 KiB. The first row is the most that one such delivery takes.
+  it.each([131_072, 131_073, 200_000])(
+    "Bun.write(file, stream) gets all %d bytes when the callback of another reader handles the hangup",
+    async length => {
+      using dir = tempDir("native-sink-hung-up", {});
+      using outer = sockets.pair();
+      using inner = sockets.pair();
+      const out = join(String(dir), "out.bin");
+      const body = html(length);
+      const written = Bun.write(out, Bun.file(inner.source).stream());
+      const reader = Bun.file(outer.source).stream().getReader();
+      const read = reader.read();
+      writeSync(outer.peer, "x");
+      await read;
+      let queued;
+      try {
+        // This runs inside the read loop of `outer`. `resolves` runs the event loop until the promise settles, so
+        // the wakeup of `inner` is handled from in here.
+        queued = inner.hangUp(body);
+        await expect(written).resolves.toBe(body.length);
+      } finally {
+        await reader.cancel();
+      }
+      const received = readFileSync(out);
+      expect({ queued, received: received.length, intact: received.equals(body) }).toEqual({
+        queued: body.length,
+        received: body.length,
+        intact: true,
+      });
+    },
+  );
+
+  // On Linux a unix socket whose peer closes with unread input is reset: the read after the peer's last bytes
+  // fails with ECONNRESET. The bytes are enough to end one read before that error (half of the read buffer), so
+  // a sink that ends on them never sees it.
+  it.skipIf(!isLinux).each(Object.keys(sinks))("%s rejects with the read error behind the bytes", async sink => {
+    using dir = tempDir("native-sink-hung-up", {});
+    using pair = sockets.pair();
+    writeSync(pair.source, "input that the peer never reads");
+    const settled = sinks[sink](Bun.file(pair.source).stream(), String(dir)).then(
+      () => null,
+      err => err,
+    );
+    const queued = pair.hangUp(html(160_000));
+    const err = await settled;
+    expect(err).toBeInstanceOf(Error);
+    expect({ queued, code: err.code }).toEqual({ queued: 160_000, code: "ECONNRESET" });
   });
 });
 

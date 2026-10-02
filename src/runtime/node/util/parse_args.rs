@@ -73,16 +73,6 @@ enum Token<'a> {
     OptionTerminator { index: u32 },
 }
 
-impl Token<'_> {
-    fn kind(&self) -> TokenKind {
-        match self {
-            Token::Positional { .. } => TokenKind::Positional,
-            Token::Option(_) => TokenKind::Option,
-            Token::OptionTerminator { .. } => TokenKind::OptionTerminator,
-        }
-    }
-}
-
 #[derive(Copy, Clone)]
 enum OptionParseType {
     LoneShortOption,
@@ -100,7 +90,6 @@ struct OptionToken<'a> {
     inline_value: bool,
     optgroup_idx: Option<u32>,
     option_idx: Option<usize>,
-    negative: bool,
 
     /// The full raw arg string (e.g. "--arg=1").
     /// If the value existed as-is in the input "args" list, it is stored as so, otherwise is null
@@ -248,77 +237,19 @@ fn check_option_like_value(global: &JSGlobalObject, token: &OptionToken) -> JsRe
     Ok(())
 }
 
-/// In strict mode, throw for usage errors.
+/// In strict mode, throw for usage errors. `negated_name` (the name without `no-`) is a fallback for an undeclared name, and must be a boolean option.
 fn check_option_usage(
     global: &JSGlobalObject,
     options: &[OptionDefinition],
     allow_positionals: bool,
     token: &OptionToken,
+    negated_name: Option<&String>,
 ) -> JsResult<()> {
-    if let Some(option_idx) = token.option_idx {
-        let option = &options[option_idx];
-        match option.r#type {
-            OptionValueType::String => {
-                if matches!(token.value, ValueRef::Jsvalue(v) if !v.is_string()) {
-                    if token.negative {
-                        // the option was found earlier because we trimmed 'no-' from the name, so we throw
-                        // the expected unknown option error.
-                        let raw_name = RawNameFormatter {
-                            token: *token,
-                            raw: token.raw.as_bun_string(global)?,
-                        };
-                        let err = global.to_type_error(
-                            bun_jsc::ErrorCode::PARSE_ARGS_UNKNOWN_OPTION,
-                            format_args!("Unknown option '{raw_name}'"),
-                        );
-                        return Err(global.throw_value(err));
-                    }
-                    let err = global.to_type_error(
-                        bun_jsc::ErrorCode::PARSE_ARGS_INVALID_OPTION_VALUE,
-                        format_args!(
-                            "Option '{}{}{}--{} <value>' argument missing",
-                            if !option.short_name.is_empty() {
-                                "-"
-                            } else {
-                                ""
-                            },
-                            option.short_name,
-                            if !option.short_name.is_empty() {
-                                ", "
-                            } else {
-                                ""
-                            },
-                            token.name.as_bun_string(global)?,
-                        ),
-                    );
-                    return Err(global.throw_value(err));
-                }
-            }
-            OptionValueType::Boolean => {
-                if !matches!(token.value, ValueRef::Jsvalue(v) if v.is_undefined()) {
-                    let err = global.to_type_error(
-                        bun_jsc::ErrorCode::PARSE_ARGS_INVALID_OPTION_VALUE,
-                        format_args!(
-                            "Option '{}{}{}--{}' does not take an argument",
-                            if !option.short_name.is_empty() {
-                                "-"
-                            } else {
-                                ""
-                            },
-                            option.short_name,
-                            if !option.short_name.is_empty() {
-                                ", "
-                            } else {
-                                ""
-                            },
-                            token.name.as_bun_string(global)?,
-                        ),
-                    );
-                    return Err(global.throw_value(err));
-                }
-            }
-        }
-    } else {
+    let option_idx = token.option_idx.or_else(|| {
+        find_option_by_long_name(negated_name?, options)
+            .filter(|&idx| options[idx].r#type == OptionValueType::Boolean)
+    });
+    let Some(option_idx) = option_idx else {
         let raw_name = RawNameFormatter {
             token: *token,
             raw: token.raw.as_bun_string(global)?,
@@ -328,7 +259,7 @@ fn check_option_usage(
             global.to_type_error(
                 bun_jsc::ErrorCode::PARSE_ARGS_UNKNOWN_OPTION,
                 format_args!(
-                    "Unknown option '{raw_name}'. To specify a positional argument starting with a '-', place it at the end of the command after '--', as in '-- \"{raw_name}\"",
+                    "Unknown option '{raw_name}'. To specify a positional argument starting with a '-', place it at the end of the command after '--', as in '-- \"{raw_name}\""
                 ),
             )
         } else {
@@ -338,55 +269,72 @@ fn check_option_usage(
             )
         };
         return Err(global.throw_value(err));
+    };
+
+    let option = &options[option_idx];
+    let short_prefix = if option.short_name.is_empty() {
+        ""
+    } else {
+        "-"
+    };
+    let short_sep = if option.short_name.is_empty() {
+        ""
+    } else {
+        ", "
+    };
+    match option.r#type {
+        OptionValueType::String => {
+            if matches!(token.value, ValueRef::Jsvalue(v) if !v.is_string()) {
+                let err = global.to_type_error(
+                    bun_jsc::ErrorCode::PARSE_ARGS_INVALID_OPTION_VALUE,
+                    format_args!(
+                        "Option '{short_prefix}{}{short_sep}--{} <value>' argument missing",
+                        option.short_name, option.long_name,
+                    ),
+                );
+                return Err(global.throw_value(err));
+            }
+        }
+        OptionValueType::Boolean => {
+            if !matches!(token.value, ValueRef::Jsvalue(v) if v.is_undefined()) {
+                let err = global.to_type_error(
+                    bun_jsc::ErrorCode::PARSE_ARGS_INVALID_OPTION_VALUE,
+                    format_args!(
+                        "Option '{short_prefix}{}{short_sep}--{}' does not take an argument",
+                        option.short_name, option.long_name,
+                    ),
+                );
+                return Err(global.throw_value(err));
+            }
+        }
     }
     Ok(())
 }
 
-/// Store the option value in `values`.
-/// Parameters:
-/// - `option_name`: long option name e.g. "foo"
-/// - `option_value`: value from user args
-/// - `options`: option configs, from `parseArgs({ options })`
-/// - `values`: option values returned in `values` by parseArgs
+/// Store `value` under `key` in `values`, as an array when the option is `multiple`.
 fn store_option(
     global: &JSGlobalObject,
-    option_name: ValueRef,
-    option_value: ValueRef,
+    key: &String,
+    value: JSValue,
     option_idx: Option<usize>,
-    negative: bool,
     options: &[OptionDefinition],
     values: JSValue,
 ) -> JsResult<()> {
-    let key = option_name.as_bun_string(global)?;
-    if key.eq_ascii(b"__proto__") {
-        return Ok(());
-    }
-
-    let value = option_value.as_js_value(global)?;
-
-    // We store based on the option value rather than option type,
-    // preserving the users intent for author to deal with.
-    let new_value: JSValue = if value.is_undefined() {
-        JSValue::from(!negative)
-    } else {
-        value
-    };
-
     let is_multiple = option_idx.is_some_and(|idx| options[idx].multiple);
     if is_multiple {
         // Always store value in array, including for boolean.
         // values[long_option] starts out not present,
-        // first value is added as new array [new_value],
+        // first value is added as new array [value],
         // subsequent values are pushed to existing array.
-        if let Some(value_list) = values.get_own(global, &key)? {
-            value_list.push(global, new_value)?;
+        if let Some(value_list) = values.get_own(global, key)? {
+            value_list.push(global, value)?;
         } else {
             let value_list = JSValue::create_empty_array(global, 1)?;
-            value_list.put_index(global, 0, new_value)?;
-            values.put_may_be_index(global, &key, value_list)?;
+            value_list.put_index(global, 0, value)?;
+            values.put_may_be_index(global, key, value_list)?;
         }
     } else {
-        values.put_may_be_index(global, &key, new_value)?;
+        values.put_may_be_index(global, key, value)?;
     }
     Ok(())
 }
@@ -587,7 +535,6 @@ fn tokenize_args(
                     raw: arg_ref,
                     option_idx,
                     optgroup_idx: None,
-                    negative: false,
                 }))?;
 
                 if !has_inline_value {
@@ -632,7 +579,6 @@ fn tokenize_args(
                             parse_type: OptionParseType::LoneShortOption,
                             raw: arg_ref,
                             option_idx,
-                            negative: false,
                         }))?;
 
                         if !has_inline_value {
@@ -656,7 +602,6 @@ fn tokenize_args(
                             parse_type: OptionParseType::ShortOptionAndValue,
                             raw: arg_ref,
                             option_idx,
-                            negative: false,
                         }))?;
 
                         break; // finished short group
@@ -683,27 +628,18 @@ fn tokenize_args(
                     raw: ValueRef::Bunstr(&raw),
                     option_idx,
                     optgroup_idx: None,
-                    negative: false,
                 }))?;
             }
 
             TokenSubtype::LoneLongOption => {
                 // e.g. '--foo'
-                let mut long_option = arg.substring(2);
-
-                let negative = if ctx.allow_negative && long_option.starts_with_ascii(b"no-") {
-                    long_option = arg.substring(2 + 3);
-                    true
-                } else {
-                    false
-                };
-
+                let long_option = arg.substring(2);
                 let option_idx = find_option_by_long_name(&long_option, options);
                 let option_type: OptionValueType =
                     option_idx.map_or(OptionValueType::Boolean, |idx| options[idx].r#type);
 
                 let mut value: Option<JSValue> = None;
-                if option_type == OptionValueType::String && index + 1 < num_args && !negative {
+                if option_type == OptionValueType::String && index + 1 < num_args {
                     // e.g. '--foo', "bar"
                     value = Some(args.get(global, index + 1)?);
                     bun_output::scoped_log!(parseArgs, "  (consuming next as value)");
@@ -718,7 +654,6 @@ fn tokenize_args(
                     raw: arg_ref,
                     option_idx,
                     optgroup_idx: None,
-                    negative,
                 }))?;
 
                 if value.is_some() {
@@ -741,7 +676,6 @@ fn tokenize_args(
                     raw: arg_ref,
                     option_idx: find_option_by_long_name(&long_option, options),
                     optgroup_idx: None,
-                    negative: false,
                 }))?;
             }
 
@@ -779,23 +713,9 @@ impl<'a> ParseArgsState<'a> {
     fn handle_token(&mut self, token_generic: &Token) -> JsResult<()> {
         let global = self.global;
 
-        match &token_generic {
-            Token::Option(token) => {
-                if self.strict {
-                    check_option_usage(global, self.option_defs, self.allow_positionals, token)?;
-                    check_option_like_value(global, token)?;
-                }
-                store_option(
-                    global,
-                    token.name,
-                    token.value,
-                    token.option_idx,
-                    token.negative,
-                    self.option_defs,
-                    self.values,
-                )?;
-            }
-            Token::Positional { value, .. } => {
+        match token_generic {
+            Token::Option(token) => self.handle_option_token(token),
+            Token::Positional { index, value } => {
                 if !self.allow_positionals {
                     let err = global.to_type_error(
                         bun_jsc::ErrorCode::PARSE_ARGS_UNEXPECTED_POSITIONAL,
@@ -808,69 +728,121 @@ impl<'a> ParseArgsState<'a> {
                 }
                 let value = value.as_js_value(global)?;
                 self.positionals.push(global, value)?;
-            }
-            Token::OptionTerminator { .. } => {}
-        }
-
-        // Append to the parseArgs result "tokens" field
-        // This field is opt-in, and people usually don't ask for it, so only create the js values if they are asked for
-        if !self.tokens.is_undefined() {
-            let num_properties: usize = match &token_generic {
-                Token::Option(token) => {
-                    if matches!(token.value, ValueRef::Jsvalue(v) if v.is_undefined()) {
-                        4
-                    } else {
-                        6
-                    }
-                }
-                Token::Positional { .. } => 3,
-                Token::OptionTerminator { .. } => 2,
-            };
-
-            // reuse JSValue for the kind names: "positional", "option", "option-terminator"
-            let kind = token_generic.kind();
-            let kind_idx = kind as usize;
-            let kind_jsvalue = match self.kinds_jsvalues[kind_idx] {
-                Some(v) => v,
-                None => {
-                    let val = String::static_(<&'static str>::from(kind)).to_js(global)?;
-                    self.kinds_jsvalues[kind_idx] = Some(val);
-                    val
-                }
-            };
-
-            let obj = JSValue::create_empty_object(global, num_properties);
-            obj.put(global, b"kind", kind_jsvalue);
-            match &token_generic {
-                Token::Option(token) => {
-                    obj.put(global, b"name", token.name.as_js_value(global)?);
-                    obj.put(global, b"rawName", token.make_raw_name_js_value(global)?);
-                    obj.put(global, b"index", JSValue::js_number(token.index as f64));
-
-                    // value exists only for string options, otherwise the property exists with "undefined" as value
-                    let value = token.value.as_js_value(global)?;
+                self.push_token(TokenKind::Positional, 3, |obj| {
+                    obj.put(global, b"index", JSValue::js_number(*index as f64));
                     obj.put(global, b"value", value);
-                    obj.put(
-                        global,
-                        b"inlineValue",
-                        if value.is_undefined() {
-                            JSValue::UNDEFINED
-                        } else {
-                            JSValue::from(token.inline_value)
-                        },
-                    );
-                }
-                Token::Positional { index, value } => {
-                    obj.put(global, b"index", JSValue::js_number(*index as f64));
-                    obj.put(global, b"value", value.as_js_value(global)?);
-                }
-                Token::OptionTerminator { index } => {
-                    obj.put(global, b"index", JSValue::js_number(*index as f64));
-                }
+                    Ok(())
+                })
             }
-            self.tokens.push(global, obj)?;
+            Token::OptionTerminator { index } => {
+                self.push_token(TokenKind::OptionTerminator, 2, |obj| {
+                    obj.put(global, b"index", JSValue::js_number(*index as f64));
+                    Ok(())
+                })
+            }
         }
-        Ok(())
+    }
+
+    /// Resolves `--no-foo` negation here, like Node's `checkOptionUsage` and `storeOption`, never in the tokenizer.
+    fn handle_option_token(&mut self, token: &OptionToken) -> JsResult<()> {
+        let global = self.global;
+        let full_name = token.name.as_bun_string(global)?;
+        let negated_name = if self.allow_negative && full_name.starts_with_ascii(b"no-") {
+            Some(full_name.substring(3))
+        } else {
+            None
+        };
+
+        if self.strict {
+            check_option_usage(
+                global,
+                self.option_defs,
+                self.allow_positionals,
+                token,
+                negated_name.as_deref(),
+            )?;
+            check_option_like_value(global, token)?;
+        }
+
+        // Store by option value, not option type: the `no-` prefix is stripped only when there is no value.
+        let value = token.value.as_js_value(global)?;
+        let (key, stored_value, option_idx): (&String, JSValue, Option<usize>) = match &negated_name
+        {
+            Some(negated_name) if value.is_undefined() => (
+                negated_name,
+                JSValue::FALSE,
+                find_option_by_long_name(negated_name, self.option_defs),
+            ),
+            _ => (
+                &full_name,
+                if value.is_undefined() {
+                    JSValue::TRUE
+                } else {
+                    value
+                },
+                token.option_idx,
+            ),
+        };
+
+        if !full_name.eq_ascii(b"__proto__") {
+            store_option(
+                global,
+                key,
+                stored_value,
+                option_idx,
+                self.option_defs,
+                self.values,
+            )?;
+        }
+
+        let num_properties = if value.is_undefined() { 4 } else { 6 };
+        self.push_token(TokenKind::Option, num_properties, |obj| {
+            obj.put(global, b"name", key.to_js(global)?);
+            obj.put(global, b"rawName", token.make_raw_name_js_value(global)?);
+            obj.put(global, b"index", JSValue::js_number(token.index as f64));
+
+            // value exists only for string options, otherwise the property exists with "undefined" as value
+            obj.put(global, b"value", value);
+            obj.put(
+                global,
+                b"inlineValue",
+                if value.is_undefined() {
+                    JSValue::UNDEFINED
+                } else {
+                    JSValue::from(token.inline_value)
+                },
+            );
+            Ok(())
+        })
+    }
+
+    /// Append to the opt-in `tokens` result field. No JS values are created when it is off.
+    fn push_token(
+        &mut self,
+        kind: TokenKind,
+        num_properties: usize,
+        fill: impl FnOnce(JSValue) -> JsResult<()>,
+    ) -> JsResult<()> {
+        if self.tokens.is_undefined() {
+            return Ok(());
+        }
+        let global = self.global;
+
+        // reuse JSValue for the kind names: "positional", "option", "option-terminator"
+        let kind_idx = kind as usize;
+        let kind_jsvalue = match self.kinds_jsvalues[kind_idx] {
+            Some(v) => v,
+            None => {
+                let val = String::static_(<&'static str>::from(kind)).to_js(global)?;
+                self.kinds_jsvalues[kind_idx] = Some(val);
+                val
+            }
+        };
+
+        let obj = JSValue::create_empty_object(global, num_properties);
+        obj.put(global, b"kind", kind_jsvalue);
+        fill(obj)?;
+        self.tokens.push(global, obj)
     }
 }
 

@@ -71,7 +71,7 @@ GROUPS="js-control"; [ "$MODE" = cg ] && GROUPS="bun-types typescript-lib src-js
 # (identical code folding) depends on the path of the executable
 RUN=$S/run; mkdir -p $RUN
 for t in ref $TAG; do
-  ln -f $S/link/$t/bun-profile $RUN/bun-profile 2>/dev/null || cp -f $S/link/$t/bun-profile $RUN/bun-profile
+  f=$(readlink -f $S/link/$t/bun-profile); ln -f "$f" $RUN/bun-profile 2>/dev/null || cp -f "$f" $RUN/bun-profile
   for g in $GROUPS; do
     [ -f $S/cg/raw$t.$g.cg ] && { [ $t = ref ] || [ -n "$NOBUILD" ]; } && continue
     ( cd $RUN && BUN_JSC_useJIT=0 BUN_DEBUG_QUIET_LOGS=1 /workspace/tools/vg --tool=cachegrind --cache-sim=no --branch-sim=yes --vex-guest-chase=no \

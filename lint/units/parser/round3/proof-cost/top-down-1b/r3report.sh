@@ -35,7 +35,8 @@ mkdir -p "$O"
 # code folding (RawVec::grow_one, BabyVec::grow_exact) also runs at start-up on the path of the executable, and a longer
 # path moved it by 203 Ir between two links of the same text.
 RUN=$S/run; mkdir -p $RUN
-place() { ln -f "$1" $RUN/bun-profile 2>/dev/null || cp -f "$1" $RUN/bun-profile; }
+# (the file behind a symbolic link: /workspace/base/bun-profile.f4d755a9c is one)
+place() { f=$(readlink -f "$1"); ln -f "$f" $RUN/bun-profile 2>/dev/null || cp -f "$f" $RUN/bun-profile; }
 for b in "$BASE" "$REF" "$HEAD"; do [ -x "$b" ] || { echo "no binary $b"; exit 1; }; done
 bin() { case $1 in base) echo $BASE ;; ref) echo $REF ;; head) echo $HEAD ;; esac; }
 # 1. sizes: parser text, the four P rows, the skipper by sink, the stripped binaries

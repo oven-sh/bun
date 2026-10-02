@@ -1191,9 +1191,9 @@ booga"
       let procEnv = JSON.parse(str1);
       expect(procEnv).toEqual({ ...bunEnv, BAZ: "1", FOO: "bar" });
       procEnv = JSON.parse(str2);
+      // `BAZ=1` was a prefix assignment on the previous command only.
       expect(procEnv).toEqual({
         ...bunEnv,
-        BAZ: "1",
         FOO: "bar",
         BUN_TEST_VAR: "1",
       });

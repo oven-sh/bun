@@ -704,9 +704,10 @@ impl Checker<'_> {
         if hir.kind == FileKind::Declaration
             || hir[c].flags.contains(Flags::AMBIENT)
             || decls.iter().any(|&(f, m)| {
-                self.hir(f)[m]
-                    .flags
-                    .intersects(Flags::AMBIENT | Flags::ABSTRACT)
+                let member = &self.hir(f)[m];
+                // `SymbolFlagsTransient`: `lateBindMember` made the symbol.
+                member.flags.intersects(Flags::AMBIENT | Flags::ABSTRACT)
+                    || matches!(member.key, PropKey::Computed(name) if is_dynamic_name(self.hir(f), name))
             })
         {
             return false;

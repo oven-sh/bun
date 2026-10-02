@@ -3609,6 +3609,13 @@ impl<'p> Checker<'p> {
                 continue;
             }
             match hir[prop.value].kind {
+                // `checkFunctionExpressionOrObjectLiteralMethod` under `CheckModeSkipContextSensitive` answers `anyFunctionType` before it
+                // looks at anything of the function. A pattern for a parameter would ask what is expected of it, and keep that.
+                ExprKind::Fn(_)
+                    if self
+                        .check_mode()
+                        .contains(CheckMode::SKIP_CONTEXT_SENSITIVE)
+                        && self.is_context_sensitive(file, prop.value) => {}
                 ExprKind::Fn(func) => self.look_at_signature(file, func),
                 _ => {
                     self.check_literal_member(file, p);
@@ -4603,12 +4610,18 @@ impl<'p> Checker<'p> {
         if let Some(known) = self.p.calls.get(&(file, e)) {
             return (known.ret != TypeId::UNRESOLVED).then_some(known.ret);
         }
-        if !self.enter(Query::Call(file, e)) {
+        // `getContextualTypeForArgumentAtIndex`: "If we're already in the process of resolving the given signature, don't resolve again".
+        let asking = std::mem::replace(&mut self.asking_for_context, true);
+        let is_entered = self.enter(Query::Call(file, e));
+        self.asking_for_context = asking;
+        if !is_entered {
             return None;
         }
         // An element that is resolved settles what its own attributes are expected to be, whatever is gone over again around it.
         let keeps = std::mem::replace(&mut self.keeps_arg_contexts, false);
+        let asking = std::mem::replace(&mut self.asking_for_context, false);
         let props = self.jsx_props_type_uncached(file, e);
+        self.asking_for_context = asking;
         self.keeps_arg_contexts = keeps;
         if self.leave() {
             self.p.calls.insert(

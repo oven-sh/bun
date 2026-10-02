@@ -42,10 +42,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let mut decorators: BumpVec<'_, ExprNodeIndex> = BumpVec::new_in(p.arena);
         while p.lexer.token == T::TAt {
+            let at = p.lexer.loc();
             p.lexer.next()?;
 
             if p.lexer.tolerant {
                 decorators.push(p.parse_decorator_expression_tolerant()?);
+                p.note_decorator_end(at);
                 continue;
             }
 

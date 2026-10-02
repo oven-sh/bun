@@ -136,6 +136,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// The lexer is after the decorator whose `@` is at `at`.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn note_decorator_end(&mut self, at: Loc) {
+        let kept = self.with_end(());
+        if let Some(syntax) = &mut self.type_syntax {
+            syntax.by_offset.decorators.insert(at.start, kept);
+        }
+    }
+
     /// Records a finished top-level type by its start offset.
     pub(crate) fn record_type(&mut self, start: i32, ty: TypeId) {
         let kept = self.with_end(ty);
@@ -1433,6 +1443,8 @@ pub(crate) struct KeptNodes {
     pub(crate) parameters: HashMap<i32, KeptNode<Span<Param>>>,
     /// Keyed by the offset of `{`.
     pub(crate) object_types: HashMap<i32, KeptNode<ObjectTypeBody>>,
+    /// Where each decorator ends, keyed by the offset of `@`.
+    pub(crate) decorators: HashMap<i32, KeptNode<()>>,
 }
 
 /// An identifier, keyword, string, number or private name at the start of an object type member. It is either a modifier or the member's

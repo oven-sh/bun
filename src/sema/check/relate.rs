@@ -3888,6 +3888,17 @@ impl<'p> Checker<'p> {
                     | TypeData::Fns { .. }
                     | TypeData::TypeParam(..)
                     | TypeData::ThisParam(_)
+            ) || matches!(
+                c.data(ty),
+                // That of an object literal.
+                TypeData::Synth(shape) if shape.symbol_declared_at.is_some()
+                    || matches!(
+                        shape.literal,
+                        Literalness::Literal
+                            | Literalness::WithSpread
+                            | Literalness::JsxAttributes
+                            | Literalness::Partial
+                    )
             )
         };
         // Aliases that go round in a circle are an error somewhere else. Here they have to end.

@@ -5278,10 +5278,12 @@ impl<'p> Checker<'p> {
                         self.instantiate_with_expected_result(param, return_mapper)
                     };
                     // `checkExpression` is not memoised: a literal is checked anew for every inference and for every signature it is
-                    // held against, each time under what is expected of it then. Nothing is recorded for it.
+                    // held against, each time under what is expected of it then. Nothing is recorded for it, unless what is
+                    // expected of it has nothing to do with the inference.
                     if pass == 1
                         || sensitive.is_some()
                         || !self.is_literal_that_depends_on_context(file, e)
+                        || !self.has_type_variables(param)
                     {
                         self.set_context(file, e, context);
                     }

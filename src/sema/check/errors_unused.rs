@@ -964,7 +964,16 @@ impl Unused<'_> {
             } else {
                 (SymFlags::NAMESPACE, NAMESPACE)
             };
-            self.note_name(scope, first, meaning, bit);
+            // `resolveEntityName`: what is found to be no namespace is looked up once more, as an alias, with `isUse`.
+            if self.note_name(scope, first, meaning, bit).is_none()
+                && meaning == SymFlags::NAMESPACE
+                && self
+                    .files
+                    .resolve_name(self.file, scope, first, meaning)
+                    .is_none()
+            {
+                self.note_name(scope, first, SymFlags::ALIAS, ALIAS);
+            }
         }
         for (i, s) in hir.stmts.iter().enumerate() {
             if matches!(bound.stmt_parent[i], Parent::None) {

@@ -1951,11 +1951,41 @@ impl<'p> Checker<'p> {
         match self.data(ty) {
             TypeData::Synth(shape) => shape.literal == Literalness::Partial,
             TypeData::Intrinsic(Intrinsic::Auto | Intrinsic::SilentNever) => true,
+            // `checkObjectLiteral`: `objectFlags |= getObjectFlags(t) & ObjectFlagsPropagatingFlags`. `autoType` gets into a literal only
+            // as what a target of an assignment pattern is declared as. The members were looked at with the literal.
+            &TypeData::Anon {
+                origin: Origin::ObjectLiteral(file, e, ..),
+                ..
+            } if self.is_assignment_target(file, e) => match self.hir(file)[e].kind {
+                ExprKind::Object(props) => props.iter().any(|p| {
+                    self.p
+                        .literal_prop_types
+                        .get(file, p.idx())
+                        .is_some_and(|member| self.is_non_inferrable(member, depth + 1))
+                }),
+                _ => false,
+            },
             TypeData::Tuple { elems: list, .. }
             | TypeData::Ref { args: list, .. }
             | TypeData::Union(list)
             | TypeData::Intersection(list) => {
                 list.iter().any(|&m| self.is_non_inferrable(m, depth + 1))
+            }
+            // `instantiateAnonymousType`: `objectFlags |= getPropagatingFlagsOfTypes(aliasTypeArguments)`. What is put for a type
+            // parameter in an anonymous type does not mark it, unless an alias stands for it and that is a type argument of the alias.
+            TypeData::Anon { mapper, .. } | TypeData::Fns { mapper, .. }
+                if self
+                    .p
+                    .types
+                    .mapping(*mapper)
+                    .iter()
+                    .any(|pair| self.is_non_inferrable(pair.1, depth + 1)) =>
+            {
+                self.alias_of_type(ty).is_some_and(|(_, type_arguments)| {
+                    type_arguments
+                        .iter()
+                        .any(|&argument| self.is_non_inferrable(argument, depth + 1))
+                })
             }
             _ => false,
         }

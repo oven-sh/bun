@@ -1825,6 +1825,8 @@ impl Files {
             .collect();
         if options.drops_what_nothing_refers_to {
             let mut is_referred_to = vec![false; modules.len()];
+            // `Files::new_symbol`: the symbols no file declares are kept with those of the first file, which has to stay for that.
+            is_referred_to.iter_mut().take(1).for_each(|it| *it = true);
             for module in &modules {
                 for &target in module.edges.iter().chain(module.imports.values()) {
                     is_referred_to[target.idx()] = true;

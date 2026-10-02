@@ -1815,6 +1815,11 @@ impl<'a> Builder<'a> {
     }
 
     fn skip_decorator(&mut self) -> R<()> {
+        // The parser says where it ends.
+        let kept = self.kept.decorators.get(&(self.pos() as i32)).copied();
+        if self.reuse_kept(kept)?.is_some() {
+            return Ok(());
+        }
         self.expect(T::TAt)?;
         if self.tok() == T::TOpenParen {
             return self.skip_balanced();

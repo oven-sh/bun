@@ -350,6 +350,10 @@ impl<'p> Checker<'p> {
                 node,
                 mapper: own,
             } => {
+                // A declared type has no mapper in tsgo. Here it has one of identity pairs.
+                if self.p.types.mapping(mapper).iter().all(|p| p.0 == p.1) {
+                    return ty;
+                }
                 let new = self.map_mapper(*own, mapper);
                 self.conditional_type(*file, *node, new)
             }

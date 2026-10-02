@@ -1,4 +1,3 @@
-use crate::error::ThrowSqlError;
 use crate::jsc::{JSGlobalObject, JSValue, MarkedArgumentBuffer};
 use bun_core::String as BunString;
 
@@ -286,7 +285,11 @@ impl MySQLQuery {
                 Ok(s) => s,
                 Err(err) => {
                     if !global_object.has_exception() {
-                        let _ = global_object.throw_sql_error(err, "failed to generate signature");
+                        let _ = global_object.throw_value(mysql_error_to_js(
+                            global_object,
+                            "failed to generate signature",
+                            err,
+                        ));
                     }
                     return Err(crate::Error::JSError);
                 }
@@ -375,8 +378,11 @@ impl MySQLQuery {
                         None => self.query.to_utf8(),
                     };
                     if let Err(err) = mysql_request::prepare_request(query.slice(), writer) {
-                        let _ =
-                            global_object.throw_sql_error(err.into(), "failed to prepare query");
+                        let _ = global_object.throw_value(mysql_error_to_js(
+                            global_object,
+                            "failed to prepare query",
+                            crate::Error::from(err),
+                        ));
                         return Err(crate::Error::JSError);
                     }
                     // `self.statement` was set in both branches above; route

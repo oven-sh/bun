@@ -3762,6 +3762,16 @@ describe("server names for a connection handed in with server.emit('connection')
     }
   });
 
+  it("addContext(): an entry added while the server listens is loaded again by the next listen()", async () => {
+    const server = createServer({ ...agent2 });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    server.addContext("during.test", { ...agent3 });
+    server.close();
+    await once(server, "close");
+    expect((await connectThrough(server, "listen", { servername: "during.test" })).cn).toBe("agent3");
+  });
+
   it("addContext() requires a name", () => {
     const server = createServer({ ...agent2 });
     expect(() => server.addContext("", { ...agent1 })).toThrow(

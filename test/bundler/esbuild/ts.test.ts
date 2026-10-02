@@ -2067,9 +2067,6 @@ describe("bundler", () => {
     minifySyntax: false, // intentionally disabled. enum inlining always happens
   });
   itBundled("ts/EnumJSX", {
-    // Blocking:
-    // - jsx bugs (configuration does not seem to be respected)
-    todo: true,
     files: {
       "/element.tsx": /* tsx */ `
         import { create } from 'not-react'

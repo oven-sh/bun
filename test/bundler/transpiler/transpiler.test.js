@@ -3322,7 +3322,7 @@ console.log(a)
 `);
     });
 
-    it.todo("macros can return a promise", () => {
+    it("macros can return a promise", () => {
       var object = {
         helloooooooo: {
           message: [12345],

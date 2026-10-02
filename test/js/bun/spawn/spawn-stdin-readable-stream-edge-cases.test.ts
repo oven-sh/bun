@@ -175,37 +175,20 @@ describe("spawn stdin ReadableStream edge cases", () => {
     expect(await proc.exited).toBe(0);
   });
 
-  test.todo("ReadableStream with cancel callback verification", async () => {
-    let cancelReason: any = null;
-    let cancelCalled = false;
+  test("ReadableStream with cancel callback verification", async () => {
+    const cancelled = Promise.withResolvers<void>();
 
+    // Never closes: the only way this stream ends is spawn cancelling it.
     const stream = new ReadableStream({
       start(controller) {
-        // Start sending data
-        let count = 0;
-        const interval = setInterval(() => {
-          count++;
-          try {
-            controller.enqueue(`data ${count}\n`);
-          } catch (e) {
-            clearInterval(interval);
-          }
-        }, 50);
-
-        // Store interval for cleanup
-        (controller as any).interval = interval;
+        controller.enqueue("data\n");
       },
-      cancel(reason) {
-        cancelCalled = true;
-        cancelReason = reason;
-        // Clean up interval if exists
-        if ((this as any).interval) {
-          clearInterval((this as any).interval);
-        }
+      pull() {},
+      cancel() {
+        cancelled.resolve();
       },
     });
 
-    // Kill the process after some data
     const proc = spawn({
       cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
       stdin: stream,
@@ -213,20 +196,17 @@ describe("spawn stdin ReadableStream edge cases", () => {
       env: bunEnv,
     });
 
-    // Wait a bit then kill
-    await Bun.sleep(150);
+    // Kill only once the chunk has made the round trip, so the stream is
+    // attached to stdin and waiting for more data at that point.
+    const reader = proc.stdout.getReader();
+    const { value } = await reader.read();
+    expect(new TextDecoder().decode(value)).toBe("data\n");
+    reader.releaseLock();
+
     proc.kill();
+    await proc.exited;
 
-    try {
-      await proc.exited;
-    } catch (e) {
-      // Expected - process was killed
-    }
-
-    // Give time for cancel to be called
-    await Bun.sleep(50);
-
-    expect(cancelCalled).toBe(true);
+    await cancelled.promise;
   });
 
   test("ReadableStream with high frequency small chunks", async () => {

@@ -67,11 +67,15 @@ printf 'ref      %s\n' "$(tail -1 $S/check/ref.optsites.strict.txt)"
 export BUN_RUNTIME_TRANSPILER_CACHE_PATH=0
 BENCH=/workspace/notes/lint/benchroot/bench/snippets/transpiler-typescript.mjs
 GROUPS="js-control"; [ "$MODE" = cg ] && GROUPS="bun-types typescript-lib src-js tsx js-control"
+# every binary is counted from one path and one working directory: start-up code that shares a body with the parser
+# (identical code folding) depends on the path of the executable
+RUN=$S/run; mkdir -p $RUN
 for t in ref $TAG; do
+  ln -f $S/link/$t/bun-profile $RUN/bun-profile 2>/dev/null || cp -f $S/link/$t/bun-profile $RUN/bun-profile
   for g in $GROUPS; do
     [ -f $S/cg/raw$t.$g.cg ] && { [ $t = ref ] || [ -n "$NOBUILD" ]; } && continue
-    ( BUN_JSC_useJIT=0 BUN_DEBUG_QUIET_LOGS=1 /workspace/tools/vg --tool=cachegrind --cache-sim=no --branch-sim=yes --vex-guest-chase=no \
-        --cachegrind-out-file=$S/cg/raw$t.$g.cg $S/link/$t/bun-profile $BENCH --iterations=20 --group=$g > $S/cg/raw$t.$g.log 2>&1 ) &
+    ( cd $RUN && BUN_JSC_useJIT=0 BUN_DEBUG_QUIET_LOGS=1 /workspace/tools/vg --tool=cachegrind --cache-sim=no --branch-sim=yes --vex-guest-chase=no \
+        --cachegrind-out-file=$S/cg/raw$t.$g.cg $RUN/bun-profile $BENCH --iterations=20 --group=$g > $S/cg/raw$t.$g.log 2>&1 ) &
   done
   wait
 done

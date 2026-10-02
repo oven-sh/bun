@@ -1,0 +1,43 @@
+
+running 4 tests
+test parse::grammar_rows_tests::the_type_parameters_of_a_row_end_at_their_closer ... ok
+test parse::grammar_rows_tests::a_return_type_of_a_row_is_the_nodes_that_tsc_builds ... ok
+test parse::grammar_rows_tests::a_type_of_a_row_is_the_nodes_that_tsc_builds ... FAILED
+test parse::grammar_rows_tests::a_lint_parse_reads_a_row_as_tsc_does ... FAILED
+
+failures:
+
+---- parse::grammar_rows_tests::a_type_of_a_row_is_the_nodes_that_tsc_builds stdout ----
+
+thread 'parse::grammar_rows_tests::a_type_of_a_row_is_the_nodes_that_tsc_builds' (95164) panicked at /tmp/r4td/root/src/js_parser/parse/grammar_rows_tests.rs:293:5:
+typeof import("x")<C>;: Some(("ImportType[0,18) LiteralType[14,17)", 0, 18))
+import("x")<T>;: Some(("ImportType[0,11) LiteralType[7,10)", 0, 11))
+import("x", { with: { a: "b" } })<T>;: Some(("ImportType[0,33) LiteralType[7,10)", 0, 33))
+import("x").A.<T>;: Some(("ImportType[0,16) LiteralType[7,10)", 1, 16))
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- parse::grammar_rows_tests::a_lint_parse_reads_a_row_as_tsc_does stdout ----
+
+thread 'parse::grammar_rows_tests::a_lint_parse_reads_a_row_as_tsc_does' (95162) panicked at /tmp/r4td/root/src/js_parser/parse/grammar_rows_tests.rs:337:5:
+import-type Ts let x: typeof import("x")<C>;: Err((1005, 25, 26))
+import-type Ts let x: import("x")<T>;: Err((1005, 18, 19))
+import-type Ts let x: import("x", { with: { a: "b" } })<T>;: Err((1005, 40, 41))
+import-type Ts let x: import("x").A.<T>;: Err((1003, 21, 22))
+index-signature-comma Ts class C { [k: string]: T, }: Ok("kept[s_class] erased[member index-signature [10,25) scope@8#0] wrappers[] nodes[] enums[] returns[0] types[] return_types[] type_parameters[] heritage[]")
+index-signature-comma Ts abstract class C extends B { [k: string]: T, }: Ok("kept[s_class] erased[member index-signature [29,44) scope@27#0] wrappers[] nodes[] enums[] returns[0] types[] return_types[] type_parameters[] heritage[extends: ExpressionWithTypeArguments[25,26)]")
+index-signature-comma Ts const c = class { [k: string]: T, };: Ok("kept[s_local] erased[member index-signature [18,33) scope@16#0] wrappers[] nodes[] enums[] returns[0] types[] return_types[] type_parameters[] heritage[]")
+index-signature-comma Ts declare class C { [k: string]: T, }: Ok("kept[] erased[class [0,35) module#0 declare ambient name=C@[14,15) | member index-signature [18,33) scope@16#0] wrappers[] nodes[] enums[] returns[0] types[] return_types[] type_parameters[] heritage[]")
+export-attributes-next-line Ts export { a } from "x"
+with { type: "json" };: Ok("kept[s_export_from] erased[] wrappers[] nodes[] enums[] returns[0] types[] return_types[] type_parameters[] heritage[]")
+export-attributes-next-line Ts export * from "x"
+with { type: "json" };: Ok("kept[s_export_star] erased[] wrappers[] nodes[] enums[] returns[0] types[] return_types[] type_parameters[] heritage[]")
+export-attributes-next-line Js export * from "x"
+with { type: "json" };: Ok("kept[s_export_star] erased[] wrappers[] nodes[] enums[] returns[0] types[] return_types[] type_parameters[] heritage[]")
+
+
+failures:
+    parse::grammar_rows_tests::a_lint_parse_reads_a_row_as_tsc_does
+    parse::grammar_rows_tests::a_type_of_a_row_is_the_nodes_that_tsc_builds
+
+test result: FAILED. 2 passed; 2 failed; 0 ignored; 0 measured; 70 filtered out; finished in 0.03s
+

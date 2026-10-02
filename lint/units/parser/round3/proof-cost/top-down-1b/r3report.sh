@@ -31,6 +31,11 @@ STRICT='^(?!.*(<true, ?false>|_parse::?<true>))'
 SITE=${SITE:-'^\s*if (?:p|self)\.lint\(\)'}
 export BUN_RUNTIME_TRANSPILER_CACHE_PATH=0
 mkdir -p "$O"
+# Every binary is counted from ONE path and ONE working directory: code that is shared with the parser through identical
+# code folding (RawVec::grow_one, BabyVec::grow_exact) also runs at start-up on the path of the executable, and a longer
+# path moved it by 203 Ir between two links of the same text.
+RUN=$S/run; mkdir -p $RUN
+place() { ln -f "$1" $RUN/bun-profile 2>/dev/null || cp -f "$1" $RUN/bun-profile; }
 for b in "$BASE" "$REF" "$HEAD"; do [ -x "$b" ] || { echo "no binary $b"; exit 1; }; done
 bin() { case $1 in base) echo $BASE ;; ref) echo $REF ;; head) echo $HEAD ;; esac; }
 # 1. sizes: parser text, the four P rows, the skipper by sink, the stripped binaries
@@ -52,21 +57,22 @@ python3 $P/fnclass.py $BASE $REF --inst . > $O/fnclass.base-ref.txt
 for t in base ref head; do python3 $P/optsites.py $(bin $t) --inst "$STRICT" > $O/optsites.strict.$t.txt; done
 python3 $P/lintcalls.py $HEAD --inst "$STRICT" --callee "$LINTONLY" > $O/lintcalls.strict.head.txt
 # 3. counts in both VEX modes, transpiler cache of the run time off
-for t in base ref head; do
-  [ -f $O/$t.js-control.cg ] || $L/cgbench.sh $(bin $t) $O $t 20 > $O/$t.jsonl
-  [ -f $O/raw$t.js-control.cg ] || $P/cgbench-raw.sh $(bin $t) $O raw$t 20 > $O/raw$t.jsonl
-done
-# 3b. what the five groups do not run: JavaScript with classes, accessors, private names, async arrows, generators and
-#     import attributes (js-classes), and the DecoratorMetadata sink (deco: 7,595 decorated inputs with emitDecoratorMetadata)
 J=/workspace/notes/lint/units/parser/round2/zero-cost-measure/top-down/js-classes-bench.mjs
 DB=/workspace/notes/lint/units/parser/measure/deco-bench.mjs
-for x in js-classes deco; do
-  [ $x = deco ] && SCRIPT=$DB || SCRIPT=$J
-  for t in base ref head; do
-    [ -f $O/raw$t.$x.cg ] || ( BUN_JSC_useJIT=0 BUN_DEBUG_QUIET_LOGS=1 /workspace/tools/vg --tool=cachegrind --cache-sim=no --branch-sim=yes --vex-guest-chase=no \
-        --cachegrind-out-file=$O/raw$t.$x.cg $(bin $t) $SCRIPT --iterations=5 > $O/raw$t.$x.log 2>&1 ) &
+for t in base ref head; do
+  place $(bin $t)
+  [ -f $O/$t.js-control.cg ] || ( cd $RUN && $L/cgbench.sh $RUN/bun-profile $O $t 20 > $O/$t.jsonl )
+  [ -f $O/raw$t.js-control.cg ] || ( cd $RUN && $P/cgbench-raw.sh $RUN/bun-profile $O raw$t 20 > $O/raw$t.jsonl )
+  # what the five groups do not run: JavaScript with classes, accessors, private names, async arrows, generators and
+  # import attributes (js-classes), and the DecoratorMetadata sink (deco: 7,595 decorated inputs with emitDecoratorMetadata)
+  for x in js-classes deco; do
+    [ $x = deco ] && SCRIPT=$DB || SCRIPT=$J
+    [ -f $O/raw$t.$x.cg ] || ( cd $RUN && BUN_JSC_useJIT=0 BUN_DEBUG_QUIET_LOGS=1 /workspace/tools/vg --tool=cachegrind --cache-sim=no --branch-sim=yes --vex-guest-chase=no \
+        --cachegrind-out-file=$O/raw$t.$x.cg $RUN/bun-profile $SCRIPT --iterations=5 > $O/raw$t.$x.log 2>&1 ) &
   done
   wait
+done
+for x in js-classes deco; do
   python3 $H/cgclass.py $REF $O/rawref.$x.cg $HEAD $O/rawhead.$x.cg --src "$HEAD_TREE" --site "$SITE" --top 200 > $O/cgclass.raw.$x.ref-head.txt
   python3 $H/cgclass.py $BASE $O/rawbase.$x.cg $REF $O/rawref.$x.cg --top 200 > $O/cgclass.raw.$x.base-ref.txt
 done

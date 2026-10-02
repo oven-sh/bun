@@ -736,7 +736,7 @@ impl Checker<'_> {
     }
 
     /// `getReducedApparentType`
-    fn reduced_apparent_type(&mut self, ty: TypeId) -> TypeId {
+    pub(super) fn reduced_apparent_type(&mut self, ty: TypeId) -> TypeId {
         let ty = self.reduced(ty);
         let apparent = self.apparent_type(ty);
         self.reduced(apparent)

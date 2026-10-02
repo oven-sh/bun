@@ -4655,7 +4655,7 @@ impl<'p> Checker<'p> {
             TypeId::UNKNOWN
         };
         let result = match self.data(t) {
-            TypeData::TypeParam(..) | TypeData::ThisParam(_) => {
+            TypeData::TypeParam(..) | TypeData::ThisParam(_) | TypeData::Marker(_) => {
                 match self.constraint_of_type_param(t) {
                     Some(c) => self.next_base_constraint(c),
                     None => TypeId::UNKNOWN,

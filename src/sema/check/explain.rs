@@ -337,23 +337,6 @@ impl Checker<'_> {
         String::from_utf8_lossy(&text[(start as usize).min(end)..end]).into_owned()
     }
 
-    /// In the first line of what was last noted of the error `code` at `start`, the type that reads `from` goes by the name `to`.
-    pub(super) fn explain_first_line_renamed(&self, start: u32, code: u32, from: &str, to: &str) {
-        if let Some(note) = self
-            .notes
-            .borrow_mut()
-            .iter_mut()
-            .rev()
-            .find(|n| n.start == start && n.code == code)
-        {
-            for arg in &mut note.args {
-                if arg.as_str() == from {
-                    *arg = to.to_owned();
-                }
-            }
-        }
-    }
-
     /// Adds lines under the message last noted for the error `code` at `start`: the reasons, outermost first.
     pub(super) fn explain_chain(
         &mut self,

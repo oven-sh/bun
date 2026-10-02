@@ -208,8 +208,6 @@ pub(super) struct Relater {
     pub(super) error_chain: Chain,
     /// `relatedInfo`
     pub(super) related_info: Vec<Related>,
-    /// The two types asked about, if one of them is written as an alias that is not the name it is compared under.
-    pub(super) named_otherwise: Option<(TypeId, TypeId)>,
 }
 
 impl Relater {
@@ -238,7 +236,6 @@ impl Relater {
             head_message: None,
             error_chain: None,
             related_info: Vec::new(),
-            named_otherwise: None,
         }
     }
 }
@@ -2769,7 +2766,7 @@ impl<'p> Checker<'p> {
                     } else {
                         target
                     };
-                    self.report_relation_error(r, head, source, shown, false);
+                    self.report_relation_error(r, head, source, shown);
                 }
                 return Ternary::FALSE;
             }
@@ -3017,7 +3014,7 @@ impl<'p> Checker<'p> {
                     };
                     let mut suggestion = None;
                     if is_identifier {
-                        let properties = self.properties_for_suggestion(error_target);
+                        let properties = self.properties_of_type(error_target);
                         let written = self.atom_text(prop.name);
                         suggestion = self
                             .suggested_property(&written, &properties)
@@ -4422,53 +4419,6 @@ impl<'p> Checker<'p> {
         None
     }
 
-    /// The alias probe of `structuredTypeRelatedToWorker` under the assignable relation, for two instantiations of the generic
-    /// alias `alias` that are known by their type arguments only. `None`: the variances do not settle it.
-    pub(super) fn alias_arguments_related(
-        &mut self,
-        alias: Sym,
-        sources: &[TypeId],
-        targets: &[TypeId],
-    ) -> Option<bool> {
-        let variances = self.variances_of(alias);
-        // Being measured.
-        if variances.is_empty() {
-            return None;
-        }
-        let mut r = self
-            .free_relaters
-            .pop()
-            .unwrap_or_else(|| Relater::new(Relation::Assignable, self.cycles));
-        r.relation = Relation::Assignable;
-        r.top_source = TypeId::NEVER;
-        r.top_target = TypeId::NEVER;
-        r.relation_count = 2_000_000;
-        r.cycles = self.cycles;
-        r.steps = 0;
-        let result = self.relate_variances::<false>(
-            &mut r,
-            sources,
-            targets,
-            &variances,
-            STATE_NONE,
-            &mut WorkerState::default(),
-        );
-        let overflow = r.overflow;
-        r.maybe_keys.clear();
-        r.maybe_keys_set.clear();
-        r.source_stack.clear();
-        r.target_stack.clear();
-        r.expanding = 0;
-        r.overflow = false;
-        r.hit_cached_overflow = false;
-        self.free_relaters.push(r);
-        if overflow {
-            self.relation_gave_up = true;
-            return None;
-        }
-        result.map(Ternary::holds)
-    }
-
     /// `structuredTypeRelatedToWorker`. `sd`, `td`: what `source` and `target` are.
     pub(super) fn structured_type_related_to_worker<const REPORT: bool>(
         &mut self,
@@ -5394,6 +5344,17 @@ impl<'p> Checker<'p> {
         self.apparent_type(t)
     }
 
+    /// What `getPropertiesOfType`, `getPropertyOfType` and `getIndexInfosOfType` go by: `getReducedApparentType(ty)`, and of a union what
+    /// all its members have (`getPropertiesOfUnionOrIntersectionType`).
+    pub(super) fn reduced_apparent_type_as_object(&mut self, ty: TypeId) -> TypeId {
+        let ty = self.reduced_apparent_type(ty);
+        if self.is_union(ty) {
+            self.union_as_object(ty)
+        } else {
+            ty
+        }
+    }
+
     /// `getTypeWithThisArgument`: `t` with `this_argument` for `this` in its members. As there, it goes after the type arguments
     /// of a reference to a class or an interface, where `members` finds it.
     pub(super) fn reference_with_this(&mut self, t: TypeId, this_argument: TypeId) -> TypeId {
@@ -5738,7 +5699,12 @@ impl<'p> Checker<'p> {
             return Ternary::FALSE;
         }
         let excluded: Vec<Atom> = telling.iter().map(|(p, _)| p.name).collect();
-        let types = self.parts(target);
+        // All that is asked of a member goes by `getReducedApparentType`.
+        let types: SmallVec<[TypeId; 8]> = self
+            .parts(target)
+            .iter()
+            .map(|&t| self.reduced_apparent_type_as_object(t))
+            .collect();
         // Every combination has to be some member's.
         let mut matching = vec![false; types.len()];
         let skip_optional =

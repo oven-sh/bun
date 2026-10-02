@@ -337,7 +337,7 @@ impl<'p> Checker<'p> {
             }
             (Some(false), Some(at)) => {
                 let (is_related, diagnostic) =
-                    self.relation_diagnostic(source, target, relation, at, head_message, false);
+                    self.relation_diagnostic(source, target, relation, at, head_message);
                 (
                     is_related,
                     diagnostic.and_then(RelationDiagnostic::into_reported),
@@ -389,7 +389,7 @@ impl<'p> Checker<'p> {
     }
 
     /// The run of `checkTypeRelatedToEx` with `reportErrors`: whether the two are related, and what is reported if they are not. `head`:
-    /// the code of `headMessage`. `is_named_otherwise`: see `Relater::named_otherwise`.
+    /// the code of `headMessage`.
     pub(super) fn relation_diagnostic(
         &mut self,
         source: TypeId,
@@ -397,11 +397,9 @@ impl<'p> Checker<'p> {
         relation: Relation,
         error_node: Place,
         head: Option<u32>,
-        is_named_otherwise: bool,
     ) -> (bool, Option<RelationDiagnostic>) {
         let mut r = Relater::new(relation, self.cycles);
         r.error_node = error_node;
-        r.named_otherwise = is_named_otherwise.then(|| (self.force(source), self.force(target)));
         r.keeps_failures = true;
         // These two are never a `headMessage`: they are what `reportRelationError` says for lack of one.
         let head = head.filter(|&code| code != 2322 && code != 2678);
@@ -526,7 +524,7 @@ impl<'p> Checker<'p> {
     ) -> (Vec<Line>, Vec<Related>) {
         // No node: only the lines are asked for.
         let nowhere = (self.checking.unwrap_or(FileId(0)), 0, 0);
-        match self.relation_diagnostic(source, target, relation, nowhere, head, false) {
+        match self.relation_diagnostic(source, target, relation, nowhere, head) {
             (_, Some(mut diagnostic)) => {
                 for line in &mut diagnostic.lines {
                     line.level += level;
@@ -644,24 +642,13 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getPropertiesOfType`, for `getSpellingSuggestionForName`: of a union, the properties that all its members have.
-    pub(super) fn properties_for_suggestion(&mut self, ty: TypeId) -> Vec<Prop> {
-        let mut found = Vec::new();
-        for &part in self.parts(ty) {
-            let Some(members) = self.members(part) else {
-                break;
-            };
-            for prop in &members.shape().props {
-                if part == ty || self.type_of_property(ty, prop.name).is_some() {
-                    found.push(prop.clone());
-                }
-            }
-            // `getPropertiesOfUnionOrIntersectionType`: no further than the first member without index signatures.
-            if members.shape().index.is_empty() {
-                break;
-            }
+    /// `getPropertiesOfType`: of a union, the properties that all its members have.
+    pub(super) fn properties_of_type(&mut self, ty: TypeId) -> Vec<Prop> {
+        let ty = self.reduced_apparent_type_as_object(ty);
+        match self.members(ty) {
+            Some(members) => members.shape().props.clone(),
+            None => Vec::new(),
         }
-        found
     }
 
     /// `getSpellingSuggestionForName(name, properties, SymbolFlagsValue)`
@@ -750,7 +737,6 @@ impl<'p> Checker<'p> {
         target: TypeId,
         head: Option<u32>,
     ) {
-        let is_named_otherwise = r.named_otherwise == Some((original_source, original_target));
         let source = if self.has_alias(original_source)
             || self.has_single_base_for_non_augmenting_subtype(original_source)
         {
@@ -791,7 +777,7 @@ impl<'p> Checker<'p> {
             let name = self.prop_to_string(&prop);
             r.report_error(code, vec![intersection, name]);
         }
-        self.report_relation_error(r, head, source, target, is_named_otherwise);
+        self.report_relation_error(r, head, source, target);
         if let TypeData::TypeParam(file, tp, _) = *self.data(source)
             && self.constraint_of(source).is_none()
             && self.copy_may_extend(source, (file, tp), target)
@@ -932,15 +918,13 @@ impl<'p> Checker<'p> {
             )
     }
 
-    /// `reportRelationError`. `is_named_otherwise`: this names one of the two by an alias, what is missing is said of what they are
-    /// compared as (`chainArgsMatch`).
+    /// `reportRelationError`
     pub(super) fn report_relation_error(
         &mut self,
         r: &mut Relater,
         message: Option<u32>,
         source: TypeId,
         target: TypeId,
-        is_named_otherwise: bool,
     ) {
         let (source_type, target_type) = self.type_names_for_error_display(source, target);
         let mut generalized_source = source;
@@ -1023,8 +1007,7 @@ impl<'p> Checker<'p> {
             Some(generalized_source_type.as_str()),
             Some(target_type.as_str()),
         ];
-        let gives_way =
-            !is_conversion_or_interface_implementation_message(message) && !is_named_otherwise;
+        let gives_way = !is_conversion_or_interface_implementation_message(message);
         let is_said_already = match r.get_chain_message(0) {
             Some(2353 | 2561) => true,
             Some(2859 | 2321 | 4104) => r.chain_args_match(&names),
@@ -1188,7 +1171,7 @@ impl<'p> Checker<'p> {
         in_type: String,
     ) {
         // `getSuggestedSymbolForNonexistentJSXAttribute`
-        let properties = self.properties_for_suggestion(error_target);
+        let properties = self.properties_of_type(error_target);
         let specific = match name.as_str() {
             "for" => Some("htmlFor"),
             "class" => Some("className"),

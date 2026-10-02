@@ -1160,6 +1160,12 @@ impl<'p> Checker<'p> {
             if self.is_never_intersection(apparent) {
                 continue;
             }
+            // What a type parameter extends is a union: `getPropertyOfType` makes the property of that in turn.
+            let apparent = if self.is_union(apparent) {
+                self.union_as_object(apparent)
+            } else {
+                apparent
+            };
             let Some((prop, mapper)) = self.prop_ref(apparent, name) else {
                 continue;
             };

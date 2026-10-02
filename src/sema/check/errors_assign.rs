@@ -66,15 +66,6 @@ fn is_covariant_below(
     covariant
 }
 
-/// Where the type that something is held against is written out.
-#[derive(Copy, Clone)]
-enum Written {
-    Nowhere,
-    At(FileId, TypeNodeId),
-    /// Where the variable or parameter that the expression names is annotated, if it is.
-    AnnotationOf(ExprId),
-}
-
 impl Checker<'_> {
     pub(super) fn check_assignments(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let hir = self.hir(file);
@@ -119,7 +110,6 @@ impl Checker<'_> {
                 file,
                 source,
                 target,
-                Written::At(file, decl.ty),
                 |c| {
                     let end = c.end_if_explained(|c| c.end_of_pat(file, decl.pat));
                     (hir[decl.pat].pos, end)
@@ -144,16 +134,10 @@ impl Checker<'_> {
             }
             let target = self.param_default_target(file, ParamId(p as u32));
             let source = self.type_of_expr(file, param.default);
-            let written = if param.ty.is_some() {
-                Written::At(file, param.ty)
-            } else {
-                Written::Nowhere
-            };
             self.check_assignable_to(
                 file,
                 source,
                 target,
-                written,
                 |c| {
                     let end = c.end_if_explained(|c| c.end_of_param(file, ParamId(p as u32)));
                     (param.pos.min(hir[param.pat].pos), end)
@@ -205,7 +189,6 @@ impl Checker<'_> {
                         file,
                         source,
                         target,
-                        Written::Nowhere,
                         |c| {
                             let end = c.end_if_explained(|c| c.end_of_pat(file, pat));
                             (hir[pat].pos, end)
@@ -242,7 +225,6 @@ impl Checker<'_> {
                 file,
                 source,
                 target,
-                Written::At(file, node),
                 |c| {
                     let end = c.end_if_explained(|c| c.end_of_prop(file, p));
                     (hir[p].pos, end)
@@ -275,7 +257,6 @@ impl Checker<'_> {
                 file,
                 source,
                 target,
-                Written::At(file, node),
                 |c| {
                     let end = c.end_if_explained(|c| c.end_of_expr(file, e));
                     (c.start_of(file, e), end)
@@ -303,16 +284,10 @@ impl Checker<'_> {
             } else {
                 declared
             };
-            let written = if is_optional {
-                Written::Nowhere
-            } else {
-                Written::At(file, member.ty)
-            };
             self.check_assignable_to(
                 file,
                 source,
                 target,
-                written,
                 |c| {
                     let end =
                         c.end_if_explained(|c| c.end_of_member_name(file, MemberId(m as u32)));
@@ -404,7 +379,6 @@ impl Checker<'_> {
                 file,
                 source,
                 wanted,
-                Written::AnnotationOf(target),
                 |c| {
                     let end = c.end_if_explained(|c| c.end_of_expr(file, target));
                     (c.start_of(file, target), end)
@@ -658,25 +632,7 @@ impl Checker<'_> {
                 )
             };
             let comparable = Relation::Comparable;
-            let Some(said) =
-                self.report_unrelated(given, target, comparable, (at, end), 2352, false, out)
-            else {
-                continue;
-            };
-            if self.explains {
-                let written = [
-                    (self.annotation_of_reference(file, expr), given),
-                    (Some((file, ty)), target),
-                ];
-                for (node, named) in written {
-                    if let Some((of, node)) = node
-                        && let Some(alias) = self.alias_name_as_written(of, node, named)
-                    {
-                        let written_out = self.type_to_string(named);
-                        self.explain_renamed(said.start, said.code, &written_out, &alias);
-                    }
-                }
-            }
+            self.report_unrelated(given, target, comparable, (at, end), 2352, out);
         }
     }
 
@@ -1609,7 +1565,6 @@ impl Checker<'_> {
             file,
             ty,
             wanted,
-            Written::Nowhere,
             // Of a `return` statement it is the keyword that is pointed at.
             |c| match statement {
                 Some(at) => (at, 0),
@@ -1643,17 +1598,7 @@ impl Checker<'_> {
         head: u32,
         out: &mut Vec<Diagnostic>,
     ) -> bool {
-        self.check_assignable_to(
-            file,
-            source,
-            target,
-            Written::Nowhere,
-            |_| (at, 0),
-            e,
-            false,
-            head,
-            out,
-        )
+        self.check_assignable_to(file, source, target, |_| (at, 0), e, false, head, out)
     }
 
     /// The same. `end`: where the node that starts at `at` ends.
@@ -1669,17 +1614,7 @@ impl Checker<'_> {
         head: u32,
         out: &mut Vec<Diagnostic>,
     ) -> bool {
-        self.check_assignable_to(
-            file,
-            source,
-            target,
-            Written::Nowhere,
-            |_| (at, end),
-            e,
-            false,
-            head,
-            out,
-        )
+        self.check_assignable_to(file, source, target, |_| (at, end), e, false, head, out)
     }
 
     /// The same. `end` is only asked where the node ends once there is something to complain of.
@@ -1695,17 +1630,7 @@ impl Checker<'_> {
         head: u32,
         out: &mut Vec<Diagnostic>,
     ) -> bool {
-        self.check_assignable_to(
-            file,
-            source,
-            target,
-            Written::Nowhere,
-            |c| (at, end(c)),
-            e,
-            false,
-            head,
-            out,
-        )
+        self.check_assignable_to(file, source, target, |c| (at, end(c)), e, false, head, out)
     }
 
     /// `end()`, if where errors end is going to be read.
@@ -1713,7 +1638,7 @@ impl Checker<'_> {
         if self.explains { end(self) } else { 0 }
     }
 
-    /// `written`: where `target` is written out, if it is. `is_effective`: the parentheses around `e` are no part of it.
+    /// `is_effective`: the parentheses around `e` are no part of it.
     /// `place`: where to complain if not further in, and where the node that starts there ends (`0`: with the token there). It is
     /// only asked once there is something to complain of.
     #[allow(clippy::too_many_arguments)]
@@ -1723,23 +1648,20 @@ impl Checker<'_> {
         file: FileId,
         source: TypeId,
         target: TypeId,
-        written: Written,
         place: impl FnOnce(&Self) -> (u32, u32),
         e: ExprId,
         is_effective: bool,
         head: u32,
         out: &mut Vec<Diagnostic>,
     ) -> bool {
-        let Some(is_too_complex) = self.finds_unassignable(file, source, target, written, e) else {
+        let Some(is_too_complex) = self.finds_unassignable(file, source, target, e) else {
             return true;
         };
         let (at, end) = place(&*self);
-        let said_before = out.len();
         self.report_unassignable(
             file,
             source,
             target,
-            written,
             (at, end),
             e,
             is_effective,
@@ -1747,12 +1669,6 @@ impl Checker<'_> {
             head,
             out,
         );
-        if self.explains
-            && let [said] = out[said_before..]
-            && said.start == at
-        {
-            self.explain_aliases_as_written(file, said, (e, source), (written, target));
-        }
         false
     }
 
@@ -1763,7 +1679,6 @@ impl Checker<'_> {
         file: FileId,
         source: TypeId,
         target: TypeId,
-        written: Written,
         e: ExprId,
     ) -> Option<bool> {
         if !self.is_known(source) || !self.is_known(target) {
@@ -1773,11 +1688,7 @@ impl Checker<'_> {
         let fits = self.compare_if_certain(|c| c.is_assignable(source, target));
         let is_too_complex = std::mem::take(&mut self.relation_too_complex) && !self.timed_out();
         match fits {
-            Some(true) => {
-                if !self.is_refused_by_hosting_alias(file, written, e, source, target) {
-                    return None;
-                }
-            }
+            Some(true) => return None,
             // Cut short for another reason than complexity: the result is unknown. tsgo's own depth limit (2321) is among those.
             None if !is_too_complex => return None,
             _ => {}
@@ -1795,7 +1706,6 @@ impl Checker<'_> {
         file: FileId,
         source: TypeId,
         target: TypeId,
-        written: Written,
         (at, end): (u32, u32),
         e: ExprId,
         is_effective: bool,
@@ -1828,616 +1738,8 @@ impl Checker<'_> {
             return;
         }
         if e.is_none() || !self.elaborate_from(file, e, is_effective, source, target, head, out) {
-            let given = if e.is_some() {
-                self.annotation_of_reference(file, e)
-            } else {
-                None
-            };
-            let written = self.written_at(file, written);
-            let named_otherwise = (
-                self.is_named_otherwise(given, source),
-                self.is_named_otherwise(written, target),
-            );
-            let said = out.len();
-            self.report_not_assignable_as(source, target, at, end, head, named_otherwise, out);
-            if self.explains
-                && let Some(&said) = out.get(said)
-            {
-                // The union a type alias stands for is no enum, though it has all the members of one (`TypeFlagsEnumLiteral`): as
-                // of any union, what is wrong with the first member that does not fit is said (`eachTypeRelatedToType`).
-                if named_otherwise.0 && self.is_whole_enum(source) {
-                    let (gave_up, too_complex) = (self.relation_gave_up, self.relation_too_complex);
-                    let unfit = self
-                        .parts(source)
-                        .iter()
-                        .copied()
-                        .find(|&member| !self.is_assignable(member, target));
-                    self.relation_gave_up = gave_up;
-                    self.relation_too_complex = too_complex;
-                    if let Some(unfit) = unfit {
-                        self.explain_chain(said.start, said.code, |c| {
-                            c.assignability_lines(unfit, target, 1)
-                        });
-                    }
-                }
-                let sides = [
-                    (named_otherwise.0, given, source),
-                    (named_otherwise.1, written, target),
-                ];
-                for (is_named_otherwise, node, ty) in sides {
-                    if is_named_otherwise
-                        && let Some((of, node)) = node
-                        && let Some(alias) = self.alias_written_at(of, node)
-                    {
-                        let (from, to) = (self.type_to_string(ty), self.type_to_string(alias));
-                        self.explain_first_line_renamed(said.start, said.code, &from, &to);
-                    }
-                }
-            }
+            self.report_not_assignable_with_end(source, target, at, end, head, out);
         }
-    }
-
-    /// `Type.alias` of what is written at `node`, a reference to a type alias that `is_named_otherwise` holds for, as a type that
-    /// goes by it.
-    fn alias_written_at(&mut self, mut file: FileId, mut node: TypeNodeId) -> Option<TypeId> {
-        use crate::bind::Decl;
-        let resolve = |c: &Self, file: FileId, node: TypeNodeId| {
-            let TypeNodeKind::Ref { name, .. } = c.hir(file)[node].kind else {
-                return None;
-            };
-            let names: Vec<Atom> = c.hir(file).ids(name).collect();
-            c.files()
-                .resolve_entity(
-                    file,
-                    c.bound(file).type_scope[node.idx()],
-                    &names,
-                    SymFlags::TYPE,
-                )
-                .and_then(|s| c.files().resolve_alias_if_needed(s))
-        };
-        for _ in 0..16 {
-            let sym = resolve(self, file, node)?;
-            let mut decls = self.files().decls(sym).into_iter();
-            let (of, alias) = decls.find_map(|(of, decl)| match decl {
-                Decl::Alias(alias) => Some((of, alias)),
-                _ => None,
-            })?;
-            // All it says is the name of an alias without type parameters: it is what that alias is.
-            let body = self.hir(of)[alias].ty;
-            if body.is_some()
-                && let Some(inner) = resolve(self, of, body)
-                && self.files().flags(inner).contains(SymFlags::TYPE_ALIAS)
-                && !self
-                    .files()
-                    .flags(inner)
-                    .intersects(SymFlags::CLASS | SymFlags::INTERFACE)
-                && self.type_params_of_symbol(inner).is_empty()
-            {
-                (file, node) = (of, body);
-                continue;
-            }
-            let TypeNodeKind::Ref { args, .. } = self.hir(file)[node].kind else {
-                return None;
-            };
-            let params = self.type_params_of_symbol(sym);
-            let args = self.types_from_nodes(file, args);
-            if args.len() > params.len() {
-                return None;
-            }
-            let args = self.fill_type_args(&params, &args);
-            return Some(self.intern(TypeData::LazyAlias {
-                sym,
-                args: args.into(),
-            }));
-        }
-        None
-    }
-
-    fn written_at(&self, file: FileId, written: Written) -> Option<(FileId, TypeNodeId)> {
-        match written {
-            Written::Nowhere => None,
-            Written::At(of, node) => Some((of, node)),
-            Written::AnnotationOf(e) => self.annotation_of_reference(file, e),
-        }
-    }
-
-    /// The alias probe of `structuredTypeRelatedToWorker`, where `target` and the variable `e` are both annotated with instantiations
-    /// of one `hosting_alias`: whether its variances say that `source` is not related to `target`.
-    fn is_refused_by_hosting_alias(
-        &mut self,
-        file: FileId,
-        written: Written,
-        e: ExprId,
-        source: TypeId,
-        target: TypeId,
-    ) -> bool {
-        if e.is_none() || !self.may_have_hosting_alias(target) {
-            return false;
-        }
-        let written = self.written_at(file, written);
-        let Some((alias, targets)) = self.hosting_alias(written, target) else {
-            return false;
-        };
-        let given = self.annotation_of_reference(file, e);
-        let Some((same, sources)) = self.hosting_alias(given, source) else {
-            return false;
-        };
-        same == alias
-            && self.compare_if_certain(|c| {
-                c.alias_arguments_related(alias, &sources, &targets) == Some(false)
-            }) == Some(true)
-    }
-
-    /// The kinds of type `hosting_alias` has something for.
-    fn may_have_hosting_alias(&self, ty: TypeId) -> bool {
-        matches!(
-            self.data(ty),
-            TypeData::Anon { .. } | TypeData::Fns { .. } | TypeData::Cond { .. }
-        )
-    }
-
-    /// `getTypeFromTypeAliasReference`: `Type.alias` of the object or conditional type `ty`, written at `written` as `A<..>`, where
-    /// the body of the generic alias `A` is a reference to another generic alias. That reference is instantiated under `A`
-    /// (`getAliasSymbolForTypeNode`), and `alias_of` only knows the innermost alias.
-    fn hosting_alias(
-        &mut self,
-        written: Option<(FileId, TypeNodeId)>,
-        ty: TypeId,
-    ) -> Option<(Sym, Vec<TypeId>)> {
-        use crate::bind::ScopeKind;
-        let (file, node) = written?;
-        if !self.may_have_hosting_alias(ty) {
-            return None;
-        }
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let TypeNodeKind::Ref { name, args } = hir[node].kind else {
-            return None;
-        };
-        let scope = bound.type_scope[node.idx()];
-        if args.is_empty() || scope.is_none() {
-            return None;
-        }
-        // Narrowed, it is no longer what is written.
-        if self.type_from_node(file, node) != ty {
-            return None;
-        }
-        let names: Vec<Atom> = hir.ids(name).collect();
-        let host = self
-            .files()
-            .resolve_entity(file, scope, &names, SymFlags::TYPE)
-            .and_then(|s| self.files().resolve_alias_if_needed(s))?;
-        let (of, alias) = self.generic_alias_declaration(host)?;
-        let (hir, bound) = (self.hir(of), self.bound(of));
-        let body = hir[alias].ty;
-        if body.is_none() {
-            return None;
-        }
-        let TypeNodeKind::Ref {
-            name: hosted,
-            args: hosted_args,
-        } = hir[body].kind
-        else {
-            return None;
-        };
-        let scope = bound.type_scope[body.idx()];
-        if hosted_args.is_empty() || scope.is_none() {
-            return None;
-        }
-        let names: Vec<Atom> = hir.ids(hosted).collect();
-        let hosted = self
-            .files()
-            .resolve_entity(of, scope, &names, SymFlags::TYPE)
-            .and_then(|s| self.files().resolve_alias_if_needed(s))?;
-        self.generic_alias_declaration(hosted)?;
-        // `getConditionalType`, `getObjectTypeInstantiation`: only an instantiation of the body of the hosted alias gets the alias.
-        if self.alias_of(ty)?.0 != hosted {
-            return None;
-        }
-        // `instantiateMappedType`: an instantiation of a homomorphic mapped type keeps the alias of the mapped type.
-        if let Some((mapped_in, mapped, _)) = self.mapped_origin(ty) {
-            let param = self.type_param(mapped_in, self.mapped_decl(mapped_in, mapped).param);
-            if let Some(constraint) = self.constraint_of_type_param(param)
-                && matches!(self.data(constraint), TypeData::Keyof(_))
-            {
-                return None;
-            }
-        }
-        // `isLocalTypeAlias`: an alias declared in a function does not host a reference to a top-level alias.
-        let mut around = bound.alias_scope[alias.idx()];
-        while around.is_some() {
-            let s = &bound.scopes[around.idx()];
-            if matches!(s.kind, ScopeKind::Fn(_)) {
-                return None;
-            }
-            around = s.parent;
-        }
-        let params = self.type_params_of_symbol(host);
-        let args = self.types_from_nodes(file, args);
-        if args.len() > params.len() {
-            return None;
-        }
-        Some((host, self.fill_type_args(&params, &args)))
-    }
-
-    /// Has what was noted of the error `said`, that `given.1`, the type of `given.0`, does not fit `wanted.1`, go by `Type.alias` where
-    /// the printer cannot tell it.
-    fn explain_aliases_as_written(
-        &mut self,
-        file: FileId,
-        said: Diagnostic,
-        given: (ExprId, TypeId),
-        wanted: (Written, TypeId),
-    ) {
-        let annotation = if given.0.is_some() {
-            self.annotation_of_reference(file, given.0)
-        } else {
-            None
-        };
-        let sides = [
-            (annotation, given.1, false),
-            (self.written_at(file, wanted.0), wanted.1, true),
-        ];
-        let mut names = Vec::new();
-        for (written, ty, writing) in sides {
-            // `getNormalizedUnionOrIntersectionType` makes an intersection anew, without alias.
-            let compared = self.normalized(ty, writing);
-            if compared != ty && self.is_intersection(ty) && self.is_intersection(compared) {
-                names.push((
-                    self.type_to_string(compared),
-                    self.type_to_string_written_out(compared),
-                ));
-            }
-            let Some((of, node)) = written else {
-                continue;
-            };
-            // Narrowed, it is no longer what is written.
-            let there = self.type_from_node(of, node);
-            if self.force(there) == self.force(ty) {
-                self.aliases_as_written(of, node, MapperId::IDENTITY, 0, &mut names);
-            }
-        }
-        for (printed, alias) in names {
-            self.explain_renamed(said.start, said.code, &printed, &alias);
-        }
-    }
-
-    /// `getTypeFromTypeAliasReference`, `instantiateTypeWithAlias`. For the reference to a generic type alias at `node`, and for those
-    /// its body is made of: what the printer calls the type and what `Type.alias` calls it, if the body is a reference to another
-    /// generic alias, a union or an intersection. `mapper`: what the type parameters around `node` stand for.
-    fn aliases_as_written(
-        &mut self,
-        file: FileId,
-        node: TypeNodeId,
-        mapper: MapperId,
-        depth: u32,
-        names: &mut Vec<(String, String)>,
-    ) {
-        if node.is_none() || depth > 4 {
-            return;
-        }
-        let hir = self.hir(file);
-        if let TypeNodeKind::Union(members) | TypeNodeKind::Intersection(members) = hir[node].kind {
-            for member in hir.ids(members) {
-                self.aliases_as_written(file, member, mapper, depth + 1, names);
-            }
-            return;
-        }
-        let Some((sym, arguments)) = self.deferrable_alias_reference(file, node) else {
-            return;
-        };
-        let Some((of, alias)) = self.generic_alias_declaration(sym) else {
-            return;
-        };
-        let body = self.hir(of)[alias].ty;
-        if body.is_none() {
-            return;
-        }
-        let declared = self.type_from_node(file, node);
-        let ty = self.instantiate(declared, mapper);
-        let ty = self.force(ty);
-        let params = self.local_type_params_of_symbol(sym);
-        let mut given = self.types_from_nodes(file, arguments);
-        for argument in &mut given {
-            *argument = self.instantiate(*argument, mapper);
-        }
-        let given = self.fill_type_args(&params, &given);
-        let is_named = match self.hir(of)[body].kind {
-            TypeNodeKind::Union(_) | TypeNodeKind::Intersection(_) => {
-                ty != TypeId::BOOLEAN && self.is_union_or_intersection(ty) && self.reduced(ty) == ty
-            }
-            TypeNodeKind::Ref { .. } => self.is_hosted_by(of, alias, ty),
-            _ => false,
-        };
-        if is_named {
-            // The printer names one of these by its alias.
-            let named = self.intern(TypeData::LazyAlias {
-                sym,
-                args: given.clone().into(),
-            });
-            let (printed, named) = (self.type_to_string(ty), self.type_to_string(named));
-            if printed != named {
-                names.push((printed, named));
-            }
-        }
-        let inner = self.mapper_from(&params, &given);
-        self.aliases_as_written(of, body, inner, depth + 1, names);
-    }
-
-    /// `getTypeFromTypeAliasReference`: whether `ty`, which comes of the generic type alias declared as `alias` of `file`, whose body
-    /// is a reference to another generic alias, has the former for its `Type.alias`.
-    fn is_hosted_by(&mut self, file: FileId, alias: AliasId, ty: TypeId) -> bool {
-        use crate::bind::ScopeKind;
-        if !self.may_have_hosting_alias(ty) {
-            return false;
-        }
-        if let Some((host, _)) = self.stored_alias(ty) {
-            let symbol = self.bound(file).alias_symbol[alias.idx()];
-            return *host == self.files().sym(file, symbol);
-        }
-        // The alias at the end of the references: the one `alias_of` knows.
-        let (mut of, mut body) = (file, self.hir(file)[alias].ty);
-        let mut innermost = None;
-        for _ in 0..8 {
-            let Some((hosted, _)) = self.deferrable_alias_reference(of, body) else {
-                break;
-            };
-            let Some((next, declaration)) = self.generic_alias_declaration(hosted) else {
-                break;
-            };
-            innermost = Some(hosted);
-            (of, body) = (next, self.hir(next)[declaration].ty);
-        }
-        if innermost.is_none() || self.alias_of(ty).map(|found| found.0) != innermost {
-            return false;
-        }
-        // `instantiateMappedType`: an instantiation of a homomorphic mapped type keeps the alias of the mapped type.
-        if let Some((mapped_in, mapped, _)) = self.mapped_origin(ty) {
-            let param = self.type_param(mapped_in, self.mapped_decl(mapped_in, mapped).param);
-            if let Some(constraint) = self.constraint_of_type_param(param)
-                && matches!(self.data(constraint), TypeData::Keyof(_))
-            {
-                return false;
-            }
-        }
-        // `isLocalTypeAlias`: an alias declared in a function does not host a reference to a top-level alias.
-        let bound = self.bound(file);
-        let mut around = bound.alias_scope[alias.idx()];
-        while around.is_some() {
-            let scope = &bound.scopes[around.idx()];
-            if matches!(scope.kind, ScopeKind::Fn(_)) {
-                return false;
-            }
-            around = scope.parent;
-        }
-        true
-    }
-
-    /// The declaration of `sym`, if it is a type alias with type parameters and no class or interface as well.
-    fn generic_alias_declaration(&self, sym: Sym) -> Option<(FileId, AliasId)> {
-        use crate::bind::Decl;
-        let flags = self.files().flags(sym);
-        if !flags.contains(SymFlags::TYPE_ALIAS)
-            || flags.intersects(SymFlags::CLASS | SymFlags::INTERFACE)
-        {
-            return None;
-        }
-        self.files()
-            .decls(sym)
-            .into_iter()
-            .find_map(|(file, decl)| match decl {
-                Decl::Alias(alias) if !self.hir(file)[alias].type_params.is_empty() => {
-                    Some((file, alias))
-                }
-                _ => None,
-            })
-    }
-
-    /// How `typeToString` names the union or intersection `ty` that is written at `node` as `A<..>`, where the body of the generic
-    /// type alias `A` is a union or an intersection: `getTypeAliasInstantiation` gives it `A<..>` for `Type.alias`. `None`: it is
-    /// not written so, or the printer has a name for it.
-    pub(super) fn alias_name_as_written(
-        &mut self,
-        file: FileId,
-        node: TypeNodeId,
-        ty: TypeId,
-    ) -> Option<String> {
-        let forced = self.force(ty);
-        if !matches!(
-            self.data(forced),
-            TypeData::Union(_) | TypeData::Intersection(_)
-        ) || self.reduced(forced) != forced
-            || self.alias_for_display(forced).is_some()
-        {
-            return None;
-        }
-        let (sym, arguments) = self.deferrable_alias_reference(file, node)?;
-        if arguments.is_empty() {
-            return None;
-        }
-        let (of, alias) = self.generic_alias_declaration(sym)?;
-        let body = self.hir(of)[alias].ty;
-        if body.is_none()
-            || !matches!(
-                self.hir(of)[body].kind,
-                TypeNodeKind::Union(_) | TypeNodeKind::Intersection(_)
-            )
-        {
-            return None;
-        }
-        // Narrowed, it is no longer what is written.
-        let written = self.type_from_node(file, node);
-        if self.force(written) != forced {
-            return None;
-        }
-        let hir = self.hir(file);
-        let nodes: Vec<TypeNodeId> = hir.ids(arguments).collect();
-        let given = self.types_from_nodes(file, arguments);
-        let params = self.local_type_params_of_symbol(sym);
-        let mut names = Vec::with_capacity(params.len());
-        for (i, argument) in self.fill_type_args(&params, &given).into_iter().enumerate() {
-            // `getAliasSymbolForTypeNode`: a union or an intersection that is written out there has no alias.
-            let is_written_out = nodes.get(i).is_some_and(|&n| {
-                matches!(
-                    hir[n].kind,
-                    TypeNodeKind::Union(_) | TypeNodeKind::Intersection(_)
-                )
-            });
-            names.push(if is_written_out {
-                self.type_to_string_written_out(argument)
-            } else {
-                self.type_to_string(argument)
-            });
-        }
-        Some(format!(
-            "{}<{}>",
-            self.symbol_to_string(sym),
-            names.join(", ")
-        ))
-    }
-
-    /// Where the type of the variable or parameter that `e` names is written.
-    fn annotation_of_reference(&self, file: FileId, e: ExprId) -> Option<(FileId, TypeNodeId)> {
-        use crate::bind::{Decl, PatParent};
-        let ExprKind::Ident(name) = self.hir(file)[e].kind else {
-            return None;
-        };
-        let sym = self.symbol_of_identifier(file, e, name)?;
-        let files = self.files();
-        let (of, pat) = files.parts(sym).iter().find_map(|&part| {
-            files
-                .symbol(part)
-                .decls
-                .iter()
-                .find_map(|&decl| match decl {
-                    Decl::Var(pat) | Decl::Param(pat) => Some((part.file, pat)),
-                    _ => None,
-                })
-        })?;
-        let ty = match self.bound(of).pat_parent[pat.idx()] {
-            PatParent::Var(d) => self.hir(of)[d].ty,
-            PatParent::Param(p) => self.hir(of)[p].ty,
-            _ => return None,
-        };
-        ty.is_some().then_some((of, ty))
-    }
-
-    /// Whether `ty` goes by the name of an alias where it is written, at `written`, and is compared under another.
-    fn is_named_otherwise(&mut self, written: Option<(FileId, TypeNodeId)>, ty: TypeId) -> bool {
-        let Some((file, node)) = written else {
-            return false;
-        };
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let TypeNodeKind::Ref { name, .. } = hir[node].kind else {
-            return false;
-        };
-        let scope = bound.type_scope[node.idx()];
-        if scope.is_none() {
-            return false;
-        }
-        // Narrowed, or with `undefined` added for being optional, it is no longer what is written.
-        let there = self.type_from_node(file, node);
-        if self.force(there) != self.force(ty) {
-            return false;
-        }
-        let names: Vec<Atom> = hir.ids(name).collect();
-        let sym = self
-            .files()
-            .resolve_entity(file, scope, &names, SymFlags::TYPE)
-            .and_then(|s| self.files().resolve_alias_if_needed(s));
-        sym.is_some_and(|sym| self.is_alias_of_reference(sym, ty))
-    }
-
-    /// Whether the type alias `sym`, which stands for `ty`, gives its name to a type that is compared under another
-    /// (`getNormalizedType`): all it says is a reference with type arguments to a class or an interface, an array or a tuple
-    /// (`isDeferredTypeReferenceNode`), or a union, of which it is the members that are compared.
-    fn is_alias_of_reference(&mut self, mut sym: Sym, ty: TypeId) -> bool {
-        use crate::bind::Decl;
-        // An alias for such an alias is one too.
-        for _ in 0..16 {
-            let found = self
-                .files()
-                .decls(sym)
-                .into_iter()
-                .find_map(|(file, decl)| match decl {
-                    Decl::Alias(alias) => Some((file, alias)),
-                    _ => None,
-                });
-            let Some((file, alias)) = found else {
-                return false;
-            };
-            let (hir, bound) = (self.hir(file), self.bound(file));
-            // `getAliasSymbolForTypeNode` looks through `readonly`.
-            let mut body = hir[alias].ty;
-            loop {
-                if body.is_none() {
-                    return false;
-                }
-                match hir[body].kind {
-                    TypeNodeKind::Readonly(inner) => body = inner,
-                    _ => break,
-                }
-            }
-            match hir[body].kind {
-                TypeNodeKind::Array(_) => return true,
-                // `[]` is one type whoever writes it, and what is spread into a tuple decides what becomes of the tuple.
-                TypeNodeKind::Tuple(elems) => {
-                    return !elems.is_empty()
-                        && !elems.iter().any(|e| {
-                            hir[e].rest && array_element_type_node(hir, hir[e].ty).is_none()
-                        });
-                }
-                // `getIndexedAccessTypeOrUndefined` makes the union of what the keys give with the alias.
-                TypeNodeKind::Union(_) | TypeNodeKind::IndexedAccess { .. } => {
-                    return self.is_union(ty);
-                }
-                TypeNodeKind::Ref { name, .. } => {
-                    let names: Vec<Atom> = hir.ids(name).collect();
-                    let next = self
-                        .files()
-                        .resolve_entity(file, bound.type_scope[body.idx()], &names, SymFlags::TYPE)
-                        .and_then(|s| self.files().resolve_alias_if_needed(s));
-                    let Some(next) = next else { return false };
-                    if self
-                        .files()
-                        .flags(next)
-                        .intersects(SymFlags::CLASS | SymFlags::INTERFACE)
-                    {
-                        return !self.type_params_of_symbol(next).is_empty();
-                    }
-                    sym = next;
-                }
-                _ => return false,
-            }
-        }
-        false
-    }
-
-    /// `getJsxPropsTypeFromClassType`: whether `target`, which the attributes `source` are held against, is what the alias
-    /// `JSX.IntrinsicClassAttributes` stands for.
-    fn is_aliased_jsx_class_attributes(&mut self, source: TypeId, target: TypeId) -> bool {
-        let TypeData::Ref { target: wanted, .. } = *self.data(target) else {
-            return false;
-        };
-        if !matches!(self.data(source), TypeData::Synth(shape) if shape.literal == Literalness::JsxAttributes)
-        {
-            return false;
-        }
-        let Some(file) = self.checking else {
-            return false;
-        };
-        let Some(ns) = self.jsx_namespace(file) else {
-            return false;
-        };
-        let member = self
-            .files()
-            .namespace_member(ns, known::IntrinsicClassAttributes)
-            .and_then(|m| self.files().resolve_alias_if_needed(m));
-        let Some(member) = member else { return false };
-        if !self.is_alias_of_reference(member, target) {
-            return false;
-        }
-        let declared = self.declared_type(member);
-        matches!(*self.data(declared), TypeData::Ref { target: aliased, .. } if aliased == wanted)
     }
 
     // ───────────────────────────── further in ─────────────────────────────
@@ -2978,10 +2280,7 @@ impl Checker<'_> {
         {
             return false;
         }
-        let Some(wanted) = self.members(target) else {
-            return false;
-        };
-        for prop in &wanted.shape().props {
+        for prop in &self.properties_of_type(target) {
             if prop.flags.contains(PropFlags::OPTIONAL)
                 && let Some(given) = self.type_of_property(source, prop.name)
                 && self.is_exact_optional_property_mismatch(given, target, prop.name)
@@ -3174,7 +2473,7 @@ impl Checker<'_> {
         head: u32,
         out: &mut Vec<Diagnostic>,
     ) {
-        self.report_not_assignable_as(source, target, at, 0, head, (false, false), out);
+        self.report_not_assignable_with_end(source, target, at, 0, head, out);
     }
 
     /// The same. `end`: where the node that starts at `at` ends.
@@ -3185,21 +2484,6 @@ impl Checker<'_> {
         at: u32,
         end: u32,
         head: u32,
-        out: &mut Vec<Diagnostic>,
-    ) {
-        self.report_not_assignable_as(source, target, at, end, head, (false, false), out);
-    }
-
-    /// `named_otherwise`: whether `source`, and whether `target`, is written as an alias that is not the name it is compared under.
-    #[allow(clippy::too_many_arguments)]
-    fn report_not_assignable_as(
-        &mut self,
-        source: TypeId,
-        target: TypeId,
-        at: u32,
-        end: u32,
-        head: u32,
-        named_otherwise: (bool, bool),
         out: &mut Vec<Diagnostic>,
     ) {
         self.trace_pair(head, at, source, target);
@@ -3222,23 +2506,11 @@ impl Checker<'_> {
         } else {
             Relation::Assignable
         };
-        let is_named_otherwise = named_otherwise.0
-            || named_otherwise.1
-            || self.is_aliased_jsx_class_attributes(source, target);
-        self.report_unrelated(
-            source,
-            target,
-            relation,
-            (at, end),
-            head,
-            is_named_otherwise,
-            out,
-        );
+        self.report_unrelated(source, target, relation, (at, end), head, out);
     }
 
     /// `checkTypeRelatedToEx(source, target, relation, errorNode, headMessage)`, of two types that the caller has found not to be
     /// related: reports what it reports, and gives that back. `place`: from where to where `errorNode` goes.
-    #[allow(clippy::too_many_arguments)]
     fn report_unrelated(
         &mut self,
         source: TypeId,
@@ -3246,20 +2518,13 @@ impl Checker<'_> {
         relation: Relation,
         place: (u32, u32),
         head: u32,
-        is_named_otherwise: bool,
         out: &mut Vec<Diagnostic>,
     ) -> Option<Diagnostic> {
         let place = (self.checking?, place.0, place.1);
-        let (is_related, diagnostic) = self.relation_diagnostic(
-            source,
-            target,
-            relation,
-            place,
-            Some(head),
-            is_named_otherwise,
-        );
+        let (is_related, diagnostic) =
+            self.relation_diagnostic(source, target, relation, place, Some(head));
         let diagnostic = match diagnostic {
-            // It is not the relation that the caller goes by (`is_refused_by_hosting_alias`): there are no reasons to give.
+            // It is not the relation that the caller goes by: there are no reasons to give.
             None if is_related && self.related(source, target, relation) => {
                 self.relation_error_without_reasons(source, target, relation, place, head)
             }
@@ -3283,19 +2548,6 @@ impl Checker<'_> {
         self.explain_chain(start, said.code, |_| lines);
         self.relate(start, said.code, |_| related);
         Some(said)
-    }
-
-    /// Whether `ty` is the union of all the members of an enum.
-    fn is_whole_enum(&mut self, ty: TypeId) -> bool {
-        match self.data(ty) {
-            TypeData::Union(parts) => match *self.data(parts[0]) {
-                TypeData::EnumLit { member, .. } | TypeData::Enum { symbol: member, .. } => {
-                    self.enum_type_of_member(member) == ty
-                }
-                _ => false,
-            },
-            _ => false,
-        }
     }
 
     /// `getSingleBaseForNonAugmentingSubtype`, whether there is one: a class or an interface that extends one type and adds nothing

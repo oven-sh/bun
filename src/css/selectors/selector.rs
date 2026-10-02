@@ -631,17 +631,17 @@ pub(crate) mod serialize {
 
         let mut first = true;
         let mut combinators_exhausted = false;
-        while let Some(compound_) = compound_selectors.next() {
+        while let Some(compound) = compound_selectors.next() {
             debug_assert!(!combinators_exhausted);
-            let mut compound = compound_;
 
-            // Skip implicit :scope in relative selectors (e.g. :has(:scope > foo) -> :has(> foo))
-            if is_relative && compound.len() >= 1 && matches!(compound[0], Component::Scope) {
-                if let Some(combinator) = combinators.next() {
-                    serialize_combinator(combinator, dest)?;
-                }
-                compound = &compound[1..];
-                is_relative = false;
+            // `:has(> a)` parses as `:scope > a`. Only that leading, lone `:scope` is dropped.
+            if core::mem::take(&mut is_relative)
+                && compound.len() == 1
+                && matches!(compound[0], Component::Scope)
+                && let Some(combinator) = combinators.next()
+            {
+                serialize_combinator(combinator, dest)?;
+                continue;
             }
 
             // https://drafts.csswg.org/cssom/#serializing-selectors

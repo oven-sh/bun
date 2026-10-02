@@ -5443,24 +5443,33 @@ describe("css tests", () => {
       });
     });
 
-    // `&` inside the :host() or ::slotted() of a parent selector is the grandparent. It used to
-    // resolve to the parent itself, and the printer recursed until the stack overflowed, so
-    // this runs in a child process.
-    test("& inside :host() and ::slotted() of a parent selector", async () => {
-      const cases = [
-        [".a { :host(&) { color: red } }", ":host(.a){color:red}"],
-        [".a { :host(&) { .c { color: red } } }", ":host(.a) .c{color:red}"],
-        [".a { :host(&) { .c { &.d { color: red } } } }", ":host(.a) .c.d{color:red}"],
-        [".a { ::slotted(&) { color: red } }", "::slotted(.a){color:red}"],
-        [".a { ::slotted(&) { &:hover { color: red } } }", "::slotted(.a):hover{color:red}"],
+    // These inputs ended an unfixed debug build, so they run in a child process. `&` inside the
+    // :host() or ::slotted() of a parent selector resolved to the parent itself and overflowed
+    // the stack. `:scope` with more in its compound tripped a debug assertion in :has().
+    test("selectors that crashed the printer", async () => {
+      const chrome95 = { chrome: 95 << 16 };
+      const cases: [string, object | undefined, string][] = [
+        [".a { :host(&) { color: red } }", chrome95, ":host(.a){color:red}"],
+        [".a { :host(&) { .c { color: red } } }", chrome95, ":host(.a) .c{color:red}"],
+        [".a { :host(&) { .c { &.d { color: red } } } }", chrome95, ":host(.a) .c.d{color:red}"],
+        [".a { ::slotted(&) { color: red } }", chrome95, "::slotted(.a){color:red}"],
+        [".a { ::slotted(&) { &:hover { color: red } } }", chrome95, "::slotted(.a):hover{color:red}"],
+        [":has(:scope.x > a) { color: red }", undefined, ":has(:scope.x>a){color:red}"],
+        ["b:has(:scope.x > a > c) { color: red }", undefined, "b:has(:scope.x>a>c){color:red}"],
+        [
+          ":nth-child(1 of :has(:scope.x > a)) { color: red }",
+          undefined,
+          ":nth-child(1 of :has(:scope.x>a)){color:red}",
+        ],
+        [".p { :has(:scope.x > &) { color: red } }", chrome95, ":has(:scope.x>.p){color:red}"],
       ];
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),
           "-e",
           `const { minifyTest } = require("bun:internal-for-testing").cssInternals;
-const sources = ${JSON.stringify(cases.map(([source]) => source))};
-console.log(JSON.stringify(sources.map(source => minifyTest(source, "", { chrome: 95 << 16 }))));`,
+const cases = ${JSON.stringify(cases.map(([source, targets]) => [source, targets ?? null]))};
+console.log(JSON.stringify(cases.map(([source, targets]) => (targets ? minifyTest(source, "", targets) : minifyTest(source, "")))));`,
         ],
         env: bunEnv,
         stdout: "pipe",
@@ -5469,7 +5478,7 @@ console.log(JSON.stringify(sources.map(source => minifyTest(source, "", { chrome
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-        stdout: JSON.stringify(cases.map(([, expected]) => expected)),
+        stdout: JSON.stringify(cases.map(([, , expected]) => expected)),
         stderr: "",
         exitCode: 0,
       });
@@ -5500,6 +5509,13 @@ console.log(JSON.stringify(sources.map(source => minifyTest(source, "", { chrome
     minify_test(".sm\\:text-5xl { font-size: 3rem }", ".sm\\:text-5xl{font-size:3rem}");
     minify_test("a:has(> img) {color:red}", "a:has(>img){color:red}");
     minify_test("dt:has(+ dt) {color:red}", "dt:has(+dt){color:red}");
+    // Only the leading, lone `:scope` that stands for a leading combinator is dropped.
+    minify_test(":has(:scope > a) {color:red}", ":has(>a){color:red}");
+    minify_test(":has(:scope) {color:red}", ":has(:scope){color:red}");
+    minify_test(":has(:scope.x) {color:red}", ":has(:scope.x){color:red}");
+    minify_test(":has(a :scope > b) {color:red}", ":has(a :scope>b){color:red}");
+    minify_test(":nth-child(1 of :has(> a)) {color:red}", ":nth-child(1 of :has(>a)){color:red}");
+    minify_test(":nth-child(1 of :has(:scope)) {color:red}", ":nth-child(1 of :has(:scope)){color:red}");
     minify_test(
       "section:not(:has(h1, h2, h3, h4, h5, h6)) {color:red}",
       "section:not(:has(h1,h2,h3,h4,h5,h6)){color:red}",

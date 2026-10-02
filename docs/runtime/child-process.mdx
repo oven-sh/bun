@@ -360,6 +360,9 @@ const proc = Bun.spawn(["bash"], {
 // Write to the terminal
 proc.terminal.write("echo hello\n");
 
+// bash runs until it reads `exit`
+proc.terminal.write("exit\n");
+
 // Wait for the process to exit
 await proc.exited;
 

@@ -140,8 +140,8 @@ declare module "bun" {
        *
        * **Read as base64 string**
        * ```ts
-       * const output = await $`echo ${atob("hello")}`.text("base64");
-       * console.log(output); // "hello\n"
+       * const output = await $`echo hello`.text("base64");
+       * console.log(output); // "aGVsbG8K"
        * ```
        */
       text(encoding?: BufferEncoding): Promise<string>;
@@ -171,7 +171,7 @@ declare module "bun" {
        *
        * ```ts
        * const output = await $`echo hello`.arrayBuffer();
-       * console.log(output); // ArrayBuffer { byteLength: 6 }
+       * console.log(output); // ArrayBuffer(6) [ 104, 101, 108, 108, 111, 10 ]
        * ```
        */
       arrayBuffer(): Promise<ArrayBuffer>;
@@ -184,7 +184,7 @@ declare module "bun" {
        * @example
        * ```ts
        * const output = await $`echo hello`.blob();
-       * console.log(output); // Blob { size: 6, type: "" }
+       * console.log(output); // Blob (6 bytes)
        * ```
        */
       blob(): Promise<Blob>;
@@ -238,8 +238,8 @@ declare module "bun" {
        *
        * **Read as base64 string**
        * ```ts
-       * const output = await $`echo ${atob("hello")}`;
-       * console.log(output.text("base64")); // "hello\n"
+       * const output = await $`echo hello`;
+       * console.log(output.text("base64")); // "aGVsbG8K"
        * ```
        */
       text(encoding?: BufferEncoding): string;
@@ -266,7 +266,7 @@ declare module "bun" {
        *
        * ```ts
        * const output = await $`echo hello`;
-       * console.log(output.arrayBuffer()); // ArrayBuffer { byteLength: 6 }
+       * console.log(output.arrayBuffer()); // ArrayBuffer(6) [ 104, 101, 108, 108, 111, 10 ]
        * ```
        */
       arrayBuffer(): ArrayBuffer;
@@ -278,7 +278,7 @@ declare module "bun" {
        * @example
        * ```ts
        * const output = await $`echo hello`;
-       * console.log(output.blob()); // Blob { size: 6, type: "" }
+       * console.log(output.blob()); // Blob (6 bytes)
        * ```
        */
       blob(): Blob;
@@ -290,7 +290,7 @@ declare module "bun" {
        * @example
        * ```ts
        * const output = await $`echo hello`;
-       * console.log(output.bytes()); // Uint8Array { byteLength: 6 }
+       * console.log(output.bytes()); // Uint8Array(6) [ 104, 101, 108, 108, 111, 10 ]
        * ```
        */
       bytes(): Uint8Array<ArrayBuffer>;
@@ -316,8 +316,8 @@ declare module "bun" {
        *
        * **Read as base64 string**
        * ```ts
-       * const output = await $`echo ${atob("hello")}`;
-       * console.log(output.text("base64")); // "hello\n"
+       * const output = await $`echo hello`;
+       * console.log(output.text("base64")); // "aGVsbG8K"
        * ```
        */
       text(encoding?: BufferEncoding): string;
@@ -344,7 +344,7 @@ declare module "bun" {
        *
        * ```ts
        * const output = await $`echo hello`;
-       * console.log(output.arrayBuffer()); // ArrayBuffer { byteLength: 6 }
+       * console.log(output.arrayBuffer()); // ArrayBuffer(6) [ 104, 101, 108, 108, 111, 10 ]
        * ```
        */
       arrayBuffer(): ArrayBuffer;
@@ -357,7 +357,7 @@ declare module "bun" {
        *
        * ```ts
        * const output = await $`echo hello`;
-       * console.log(output.bytes()); // Uint8Array { byteLength: 6 }
+       * console.log(output.bytes()); // Uint8Array(6) [ 104, 101, 108, 108, 111, 10 ]
        * ```
        */
       bytes(): Uint8Array<ArrayBuffer>;
@@ -369,7 +369,7 @@ declare module "bun" {
        * @example
        * ```ts
        * const output = await $`echo hello`;
-       * console.log(output.blob()); // Blob { size: 6, type: "" }
+       * console.log(output.blob()); // Blob (6 bytes)
        * ```
        */
       blob(): Blob;

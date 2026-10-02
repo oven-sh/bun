@@ -103,6 +103,51 @@ switch (mode) {
     break;
   }
 
+  case "id-stability": {
+    // DevTools' Comparison view and memlab key on the V8 contract that a
+    // surviving object keeps the same node id across snapshots. The tagged
+    // object is held on globalThis so it outlives both snapshots and is easy to
+    // find via its property edge.
+    globalThis.__ID_STABILITY_TAG__ = { marker: "id-stability-probe" };
+
+    const findTagId = (text: string) => {
+      const j = JSON.parse(text);
+      const m = j.snapshot.meta;
+      const nodeStride = m.node_fields.length;
+      const edgeStride = m.edge_fields.length;
+      const idIdx = m.node_fields.indexOf("id");
+      const edgeCountIdx = m.node_fields.indexOf("edge_count");
+      const edgeTypeIdx = m.edge_fields.indexOf("type");
+      const edgeNameIdx = m.edge_fields.indexOf("name_or_index");
+      const toNodeIdx = m.edge_fields.indexOf("to_node");
+      const propertyType = m.edge_types[edgeTypeIdx].indexOf("property");
+      const tagString = j.strings.indexOf("__ID_STABILITY_TAG__");
+      if (tagString === -1) return null;
+
+      let e = 0;
+      for (let n = 0; n < j.nodes.length; n += nodeStride) {
+        const edgeCount = j.nodes[n + edgeCountIdx];
+        for (let k = 0; k < edgeCount; k++) {
+          const base = e + k * edgeStride;
+          if (j.edges[base + edgeTypeIdx] === propertyType && j.edges[base + edgeNameIdx] === tagString) {
+            return j.nodes[j.edges[base + toNodeIdx] + idIdx];
+          }
+        }
+        e += edgeCount * edgeStride;
+      }
+      return null;
+    };
+
+    const id1 = findTagId(Bun.generateHeapSnapshot("v8"));
+    // Unrelated allocation between snapshots so the second one is not just a
+    // byte-for-byte replay of the first.
+    globalThis.__pad__ = Array.from({ length: 1000 }, (_, i) => ({ i }));
+    const id2 = findTagId(new TextDecoder().decode(Bun.generateHeapSnapshot("v8", "arraybuffer")));
+
+    result = { id1, id2, found: id1 !== null, stable: id1 === id2 };
+    break;
+  }
+
   case "stream-edges": {
     // Build a graph touching the main Web Streams cell classes and keep every
     // handle live across the snapshot so analyzeHeap can see the edges.

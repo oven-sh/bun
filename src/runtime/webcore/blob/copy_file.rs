@@ -214,11 +214,13 @@ impl CopyFile {
         }
     }
 
-    pub(crate) fn do_open_file<const WHICH: IOWhich>(&mut self) -> Result<(), crate::Error> {
+    /// Opens nothing, and leaves `destination_fd` invalid, when the destination path names `source`'s file.
+    pub(crate) fn do_open_file<const WHICH: IOWhich>(
+        &mut self,
+        source: Option<&Stat>,
+    ) -> Result<(), crate::Error> {
         let mut path_buf1 = bun_paths::path_buffer_pool::get();
-        // open source file first
-        // if it fails, we don't want the extra destination file hanging out
-        if matches!(WHICH, IOWhich::Both | IOWhich::Source) {
+        if matches!(WHICH, IOWhich::Source) {
             self.source_fd = match bun_sys::open(
                 self.source_file_store
                     .pathlike
@@ -246,7 +248,7 @@ impl CopyFile {
             };
         }
 
-        if matches!(WHICH, IOWhich::Both | IOWhich::Destination) {
+        if matches!(WHICH, IOWhich::Destination) {
             loop {
                 // detach `dest` lifetime from `self` (borrowck) — slice_z
                 // copies into path_buf1, so build the ZStr directly from the buffer.
@@ -259,6 +261,12 @@ impl CopyFile {
                 };
                 // SAFETY: path_buf1[dest_len] == 0 written above.
                 let dest: &bun_core::ZStr = bun_core::ZStr::from_buf(&path_buf1[..], dest_len);
+                // Before every open: a parent directory from the last pass can make the path name the source.
+                if source
+                    .is_some_and(|source| Self::is_same_file(source, &bun_sys::stat_no_path(dest)))
+                {
+                    return Ok(());
+                }
                 let mode = self.destination_mode.unwrap_or(node_fs::DEFAULT_PERMISSION);
                 match bun_sys::open(dest, OPEN_DESTINATION_FLAGS, mode) {
                     bun_sys::Result::Ok(result) => {
@@ -277,18 +285,9 @@ impl CopyFile {
                         match blob::mkdir_if_not_exists(self, &errno, dest, dest.as_bytes()) {
                             Retry::Continue => continue,
                             Retry::Fail => {
-                                if matches!(WHICH, IOWhich::Both) {
-                                    self.source_fd.close();
-                                    self.source_fd = Fd::INVALID;
-                                }
                                 return Err(bun_errno::from_errno(errno.errno as i32).into());
                             }
                             Retry::No => {}
-                        }
-
-                        if matches!(WHICH, IOWhich::Both) {
-                            self.source_fd.close();
-                            self.source_fd = Fd::INVALID;
                         }
 
                         self.system_error = Some(
@@ -620,20 +619,6 @@ impl CopyFile {
             if source.st_ino != 0 && dest.st_dev == source.st_dev && dest.st_ino == source.st_ino)
     }
 
-    /// Whether the destination path names the regular file that `source` describes.
-    fn destination_is_source(&self, source: &Stat) -> bool {
-        if !bun_sys::S::ISREG(source.st_mode as _) {
-            return false;
-        }
-        let mut path_buf = bun_paths::path_buffer_pool::get();
-        let path = self
-            .destination_file_store
-            .pathlike
-            .path()
-            .slice_z(&mut path_buf);
-        Self::is_same_file(source, &bun_sys::stat_no_path(path))
-    }
-
     pub(crate) fn run_async(&mut self) {
         if let PathOrFileDescriptor::Fd(fd) = &self.destination_file_store.pathlike {
             self.destination_fd = *fd;
@@ -743,7 +728,7 @@ impl CopyFile {
                 }
             }
 
-            if self.do_open_file::<{ IOWhich::Source }>().is_err() {
+            if self.do_open_file::<{ IOWhich::Source }>(None).is_err() {
                 return;
             }
         }
@@ -778,19 +763,24 @@ impl CopyFile {
         }
 
         if self.destination_fd == Fd::INVALID {
-            if self.destination_is_source(&stat) {
-                // A copy of a file onto itself: nothing to open, empty or write.
+            // Only a regular file has an identity to compare.
+            let source = bun_sys::S::ISREG(stat.st_mode as _).then_some(&stat);
+            if self
+                .do_open_file::<{ IOWhich::Destination }>(source)
+                .is_err()
+            {
+                self.do_close();
+                return;
+            }
+
+            if self.destination_fd == Fd::INVALID {
+                // A copy of a file onto itself: nothing to empty or write.
                 self.read_len = SizeType::try_from(stat.st_size).expect("int cast");
                 if let Some(mode) = self.destination_mode {
                     if let bun_sys::Result::Err(err) = bun_sys::fchmod(self.source_fd, mode) {
                         self.system_error = Some(err.to_system_error());
                     }
                 }
-                self.do_close();
-                return;
-            }
-
-            if self.do_open_file::<{ IOWhich::Destination }>().is_err() {
                 self.do_close();
                 return;
             }

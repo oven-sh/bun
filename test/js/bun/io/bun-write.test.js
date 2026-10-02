@@ -321,6 +321,11 @@ const IS_UV_FS_COPYFILE_DISABLED =
       ["a symlink as the source", ({ file, symlink }) => Bun.write(file, Bun.file(symlink))],
       ["a hard link as the destination", ({ file, hardlink }) => Bun.write(hardlink, Bun.file(file))],
       ["a relative and an absolute path", ({ file }) => Bun.write(path.relative(process.cwd(), file), Bun.file(file))],
+      // The first open fails, Bun makes `new`, and only then does the path name the file.
+      [
+        "a path through a directory that does not exist yet",
+        ({ file, dir }) => Bun.write(`${dir}/new/../file.txt`, Bun.file(file)),
+      ],
       [
         "an open fd as the source",
         async ({ file }) => {
@@ -341,7 +346,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
       fs.symlinkSync(file, symlink);
       fs.linkSync(file, hardlink);
 
-      const written = await write({ file, symlink, hardlink });
+      const written = await write({ file, symlink, hardlink, dir: String(dir) });
       expect({ written, intact: fs.readFileSync(file, "utf8") === content }).toEqual({
         written: content.length,
         intact: true,

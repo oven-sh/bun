@@ -5085,15 +5085,18 @@ describe("hoisting", async () => {
   // The linker that lays out node_modules decides which copy of a peer a package resolves, so it
   // is the one that checks the peer's range: on every install, for both linkers, naming the
   // dependent (#7403). The cases below get the same report from either linker.
-  describe.each(["hoisted", "isolated"] as const)("peer a dependent cannot resolve in range (%s linker)", linker => {
+  const linkers = ["hoisted", "isolated"] as const;
+  describe.concurrent.each(linkers)("peer a dependent cannot resolve in range (%s linker)", linker => {
     async function install(dir: string, ...args: string[]) {
+      // These cases run concurrently: each project gets its own cache, not the one in the shared `env`.
+      const tmp = join(dir, ".bun-tmp");
       await using proc = spawn({
         cmd: [bunExe(), "install", "--linker", linker, ...args],
         cwd: dir,
         stdout: "pipe",
         stdin: "ignore",
         stderr: "pipe",
-        env,
+        env: { ...env, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache"), BUN_TMPDIR: tmp, TMPDIR: tmp, TEMP: tmp },
       });
       const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(err).not.toContain("error:");
@@ -5256,11 +5259,13 @@ describe("hoisting", async () => {
       expect(peerWarnings((await install(packageDir, "--dry-run")).err)).toEqual(expected);
     });
 
-    test("a copy is reported only when a dependent loads it from disk", async () => {
+    // Only the isolated linker resolves a peer in a subtree that it then does not install.
+    test.skipIf(linker !== "isolated")("a copy is reported only when a dependent loads it from disk", async () => {
       // Both workspaces depend on dedupe-divergent-peers, whose dedupe-divergent-strict wants
       // no-deps@^2.0.0. Only `provider` has a no-deps of its own, and it is 1.0.0. The isolated
       // linker resolves the peer once per workspace and then keeps one store entry for both, so
       // one of the two resolutions is never installed.
+      let reported = 0;
       for (const [bare, provider] of [
         ["ws-a", "ws-b"],
         ["ws-b", "ws-a"],
@@ -5300,16 +5305,17 @@ describe("hoisting", async () => {
           loaded.add((await file(at).json()).version);
         }
 
-        expect({ bare, warnings: peerWarnings(err) }).toEqual({
-          bare,
-          warnings: [...loaded]
-            .filter(version => !Bun.semver.satisfies(version, "^2.0.0"))
-            .map(
-              version =>
-                `warn: incorrect peer dependency "no-deps@${version}" (dedupe-divergent-strict@1.0.0 requires "^2.0.0")`,
-            ),
-        });
+        const expected = [...loaded]
+          .filter(version => !Bun.semver.satisfies(version, "^2.0.0"))
+          .map(
+            version =>
+              `warn: incorrect peer dependency "no-deps@${version}" (dedupe-divergent-strict@1.0.0 requires "^2.0.0")`,
+          );
+        expect({ bare, warnings: peerWarnings(err) }).toEqual({ bare, warnings: expected });
+        reported += expected.length;
       }
+      // One of the two layouts installs the provider's resolution, so a line was compared.
+      expect(reported).toBeGreaterThan(0);
     });
 
     test("a workspace reached twice is reported for what its one node_modules holds", async () => {

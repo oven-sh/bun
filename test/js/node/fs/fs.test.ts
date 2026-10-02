@@ -7119,13 +7119,47 @@ describe("a throw from a node-style callback is an uncaughtException", () => {
     expect(exitCode).toBe(0);
   });
 
-  it("leaves a non-callable symlink callback as an ignored handler, like node", async () => {
-    const { stdout, exitCode } = await runScript(`
-      require("fs").symlink(${file}, ${dirLit} + "/lnc", "file", "notafunc");
-      setTimeout(() => console.log("quiet"), 50);
-    `);
-    expect(stdout).toBe("quiet");
-    expect(exitCode).toBe(0);
+  // node does not validate the 4-argument overload's callback: it is stored on
+  // the request as-is and a non-function one is skipped when the operation
+  // completes, whether the link was created or the operation failed. The
+  // pending operation keeps the process alive, so "exited" is printed after
+  // it completed and anything it reported would precede it.
+  describe.concurrent("ignores a non-callable 4-argument symlink callback, like node", () => {
+    function symlinkIgnoringCallback(link: string, callbackLiteral: string) {
+      return runScript(`
+        process.on("uncaughtException", e => console.log("UNCAUGHT:" + e.code));
+        process.on("unhandledRejection", e => console.log("REJECTED:" + e.code));
+        process.on("exit", () => console.log("exited"));
+        require("fs").symlink(${file}, ${JSON.stringify(link)}, "file", ${callbackLiteral});
+      `);
+    }
+
+    it("still creates the link", async () => {
+      const link = join(dir, "lnc-created");
+      const { stdout, exitCode } = await symlinkIgnoringCallback(link, `"notafunc"`);
+      expect(stdout).toBe("exited");
+      expect(lstatSync(link).isSymbolicLink()).toBe(true);
+      expect(exitCode).toBe(0);
+    });
+
+    it.each([`"notafunc"`, "null"])("drops the error of a failed operation (callback: %s)", async callbackLiteral => {
+      const link = join(dir, "missing-dir", "lnc");
+      const { stdout, exitCode } = await symlinkIgnoringCallback(link, callbackLiteral);
+      expect(stdout).toBe("exited");
+      expect(existsSync(link)).toBe(false);
+      expect(exitCode).toBe(0);
+    });
+
+    // An undefined callback selects the 3-argument overload, whose callback
+    // (here the string "file") node does validate.
+    it("still throws when the callback is undefined", () => {
+      const link = join(dir, "lnc-undefined");
+      expect(() => fs.symlink(join(dir, "file.txt"), link, "file", undefined as any)).toThrowWithCode(
+        TypeError,
+        "ERR_INVALID_ARG_TYPE",
+      );
+      expect(existsSync(link)).toBe(false);
+    });
   });
 });
 

@@ -1882,7 +1882,6 @@ impl EmitResolver {
         }
     }
 
-    // Upstream does not lock here: it is only called via error reporters invoked via node builder calls to the symbol tracker already within locked contexts.
     pub fn get_properties_of_container_function<'a>(
         self,
         c: &mut Checker<'a>,

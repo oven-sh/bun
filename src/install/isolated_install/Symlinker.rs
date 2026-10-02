@@ -137,16 +137,11 @@ impl Symlinker {
         // libuv adds a trailing slash to junctions.
         let current_link = strings::without_trailing_slash(current_link);
 
-        if strings::eql_long(current_link, self.target.slice_z().as_bytes(), true) {
-            return true;
-        }
-
+        let is_target = strings::eql_long(current_link, self.target.slice_z().as_bytes(), true);
         #[cfg(windows)]
-        if strings::eql_long(current_link, self.fallback_junction_target.slice(), true) {
-            return true;
-        }
-
-        false
+        let is_target = is_target
+            || strings::eql_long(current_link, self.fallback_junction_target.slice(), true);
+        is_target
     }
 
     fn unlink(&mut self) {

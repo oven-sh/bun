@@ -4049,6 +4049,47 @@ describe("hoist", () => {
     });
   });
 
+  test("removes the package-name link an older version left for an entry that holds no fallback name", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+    });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "hoist-upgraded-tree-unhoisted",
+        dependencies: {
+          // claims the fallback name `alias1`
+          "alias1": "npm:a-dep@1.0.1",
+          // declares `alias1: npm:alias-loop-2`, so alias-loop-2's store entry
+          // is created under a name that is taken and holds no fallback name
+          "alias-loop-1": "1.0.0",
+        },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    const links = {
+      "alias-loop-1": inStore("alias-loop-1@1.0.0", "alias-loop-1"),
+      "alias1": inStore("a-dep@1.0.1", "a-dep"),
+      // alias-loop-2 declares `alias2: npm:alias-loop-1`, which joins alias-loop-1's entry
+      "alias2": inStore("alias-loop-1@1.0.0", "alias-loop-1"),
+    };
+    expect(await fallbackLinks(packageDir)).toEqual(links);
+
+    // an older version that hoisted this entry named its link after the package
+    await symlink(
+      inStore("alias-loop-2@1.0.0", "alias-loop-2"),
+      join(packageDir, "node_modules", ".bun", "node_modules", "alias-loop-2"),
+      "dir",
+    );
+
+    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+
+    expect(await fallbackLinks(packageDir)).toEqual(links);
+  });
+
   test("npmrc hoist=false", async () => {
     const { packageJson, packageDir } = await registry.createTestDir({
       bunfigOpts: { linker: "isolated" },

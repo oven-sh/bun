@@ -2001,7 +2001,6 @@ pub(crate) fn install_isolated_packages(
         let entry_node_ids = entries.items_node_id();
         let entry_steps = entries.items_step();
         let entry_dependencies = entries.items_dependencies();
-        let entry_hoisted = entries.items_hoisted();
 
         // Reborrow through a
         // `BackRef` so `string_buf` / `pkgs` don't tie up `&mut lockfile` for
@@ -2169,14 +2168,15 @@ pub(crate) fn install_isolated_packages(
             }
 
             // Runs before the first task so it cannot remove a link this install writes.
+            // Covers entries this version does not hoist: an older version may have.
             if !is_new_bun_modules {
                 for entry_idx in 0..store.entries.len() {
-                    if !entry_hoisted[entry_idx] {
+                    let node_id = entry_node_ids[entry_idx];
+                    let dep_id = node_dep_ids[node_id.get() as usize];
+                    if dep_id == invalid_dependency_id {
                         continue;
                     }
-                    let node_id = entry_node_ids[entry_idx];
                     let pkg_id = node_pkg_ids[node_id.get() as usize];
-                    let dep_id = node_dep_ids[node_id.get() as usize];
                     if dependencies[dep_id as usize].name_hash == pkg_name_hashes[pkg_id as usize] {
                         continue;
                     }

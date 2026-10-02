@@ -49,7 +49,13 @@ if not off:
         if x and int(x.group(1), 16) > 0x400: off = x.group(1); break
 OPT = re.compile(r'(?<![0-9a-fx])' + re.escape(off or '0xffffffff') + r'\(%r')
 short = lambda n: re.sub(r'bun_js_parser::(p::)?', '', n)[:120]
-def calls(lines): return [l.split(' ', 1)[1] for l in lines if l.startswith('call') and ' ' in l]
+def calls(lines):
+    # calls, and jumps out of the function (a tail call): the target is a name, not a label or a register
+    out = []
+    for l in lines:
+        x = re.match(r'^(call\w*|j\w+) (.+)$', l)
+        if x and not re.match(r'^L\d+$', x.group(2)) and not x.group(2).startswith(('*', '%', '0x')): out.append(x.group(2))
+    return out
 rows = []; bad = 0; new_lint = 0
 for n in sorted(set(A) | set(B)):
     may = bool(MAY.search(n) or LINT.search(n))

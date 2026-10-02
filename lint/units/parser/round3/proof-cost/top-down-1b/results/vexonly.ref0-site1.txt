@@ -1,0 +1,4 @@
+group              Bc default       Bc raw           Ir  function
+src-js                 +15060        +9680       +29140  <bun_js_parser::p::P<true, false>>::parse_suffix
+tsx                    +34000       +22000       +72000  <bun_js_parser::p::P<true, false>>::parse_suffix
+2 rows

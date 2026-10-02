@@ -1,0 +1,17 @@
+IDENT 120  OFFSETS 219  CONSTS 8  DIFF 7  ONLY-A 0  ONLY-B 0  LINT-ONLY 0
+DIFF      bytes    436    349 (  -87)  insns   126   102 (  -24)  jcc   15   15 (  +0)  <P<true, false>>::skip_type_script_paren_or_fn_type::<SINK metadata>
+DIFF      bytes   3043   3122 (  +79)  insns   585   608 (  +23)  jcc   42   42 (  +0)  <P<true, false>>::parse_async_prefix_expr
+DIFF      bytes   7045   7017 (  -28)  insns  1601  1605 (   +4)  jcc  269  265 (  -4)  <P<true, false>>::skip_type_script_type_with_opts::<SINK metadata>
+DIFF      bytes   2901   2901 (   +0)  insns   620   621 (   +1)  jcc   61   61 (  +0)  <P<true, false>>::parse_class
+DIFF      bytes   3825   3825 (   +0)  insns   563   563 (   +0)  jcc   19   19 (  +0)  <P<true, false>>::init
+DIFF      bytes   1457   1433 (  -24)  insns   319   319 (   +0)  jcc   31   31 (  +0)  <P<true, false>>::parse_arrow_body
+DIFF      bytes  31187  31187 (   +0)  insns  5899  5899 (   +0)  jcc  666  666 (  +0)  <parse::parse_entry::Parser>::_parse::<true>
+CONSTS    bytes   1728   1728 (   +0)  insns   395   395 (   +0)  jcc   18   18 (  +0)  <P<true, false>>::call_runtime
+CONSTS    bytes   2279   2279 (   +0)  insns   499   499 (   +0)  jcc   60   60 (  +0)  <P<true, false>>::handle_identifier
+CONSTS    bytes   4526   4526 (   +0)  insns   946   946 (   +0)  jcc   66   66 (  +0)  <P<true, false>>::parse_type_script_namespace_stmt
+CONSTS    bytes    658    658 (   +0)  insns   159   159 (   +0)  jcc   16   16 (  +0)  <P<true, false>>::s_import
+CONSTS    bytes   1080   1080 (   +0)  insns   252   252 (   +0)  jcc   21   21 (  +0)  <P<true, false>>::s_namespace
+CONSTS    bytes    193    193 (   +0)  insns    61    61 (   +0)  jcc    7    7 (  +0)  <P<true, false>>::s_return
+CONSTS    bytes     43     43 (   +0)  insns    13    13 (   +0)  jcc    0    0 (  +0)  <react_compiler_host::ReactCompilerHost<true, false> as bun_react_compiler::program::Host>::jsx_import_kind
+CONSTS    bytes   1939   1939 (   +0)  insns   380   380 (   +0)  jcc   22   22 (  +0)  <react_compiler_host::ReactCompilerHost<true, false> as bun_react_compiler::program::Host>::runtime_sentinel
+FAIL: 7 DIFF, 0 only in a, 0 only in b

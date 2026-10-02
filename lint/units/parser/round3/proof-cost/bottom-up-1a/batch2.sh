@@ -18,3 +18,7 @@ t0=$(date +%s)
 S=$S sh $D/cycle2.sh nolint1 $S/root/nolint1; echo "cycle2 nolint1 exit $?  $(( $(date +%s) - t0 )) s"
 cat $S/check/nolint1.tsdiff.txt | cut -c1-200
 echo "done $(date +%T)"
+cp $S/check/testeq.ref0-site2.txt $D/results/testeq.ref0-site2.txt 2>/dev/null
+cp $S/check/site2.tsdiff.txt $D/results/tsdiff.ref0-site2.txt 2>/dev/null
+cp $S/check/nolint1.tsdiff.txt $D/results/tsdiff.ref0-nolint1.txt 2>/dev/null
+cp $S/batch2.log $D/results/batch2.log 2>/dev/null

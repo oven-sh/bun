@@ -1,0 +1,78 @@
+# /workspace/base/bun-profile.bc7a813b1 (main at bc7a813b10), transpiler cache off (BUN_RUNTIME_TRANSPILER_CACHE_PATH=0), 20 passes.
+# The same binary several times: the counts of the parser are equal to the last digit, the totals of the program are not.
+mode                 group           run  selection                            Ir             Bc           Bi
+--vex-guest-chase=no bun-types       1    program                     489,090,901     97,096,906    5,514,307
+--vex-guest-chase=no bun-types       1    names (cgsum.py)            308,220,108     46,501,115    4,503,843
+--vex-guest-chase=no bun-types       1    function bodies             308,381,361     46,510,578    4,503,843
+--vex-guest-chase=no bun-types       2    program                     489,096,366     97,098,191    5,514,329
+--vex-guest-chase=no bun-types       2    names (cgsum.py)            308,220,108     46,501,115    4,503,843
+--vex-guest-chase=no bun-types       2    function bodies             308,381,361     46,510,578    4,503,843
+--vex-guest-chase=no bun-types       3    program                     489,090,803     97,097,168    5,514,336
+--vex-guest-chase=no bun-types       3    names (cgsum.py)            308,220,108     46,501,115    4,503,843
+--vex-guest-chase=no bun-types       3    function bodies             308,381,361     46,510,578    4,503,843
+--vex-guest-chase=no typescript-lib  1    program                   1,615,980,166    337,546,861   16,605,569
+--vex-guest-chase=no typescript-lib  1    names (cgsum.py)          1,074,172,988    167,572,135   14,325,783
+--vex-guest-chase=no typescript-lib  1    function bodies           1,074,678,489    167,611,062   14,325,783
+--vex-guest-chase=no typescript-lib  2    program                   1,615,694,412    337,502,196   16,604,108
+--vex-guest-chase=no typescript-lib  2    names (cgsum.py)          1,074,172,988    167,572,135   14,325,783
+--vex-guest-chase=no typescript-lib  2    function bodies           1,074,678,489    167,611,062   14,325,783
+--vex-guest-chase=no typescript-lib  3    program                   1,615,540,922    337,481,591   16,603,700
+--vex-guest-chase=no typescript-lib  3    names (cgsum.py)          1,074,172,988    167,572,135   14,325,783
+--vex-guest-chase=no typescript-lib  3    function bodies           1,074,678,489    167,611,062   14,325,783
+--vex-guest-chase=no src-js          1    program                   7,425,631,551  1,146,958,676   73,781,720
+--vex-guest-chase=no src-js          1    names (cgsum.py)          4,397,331,499    528,731,635   47,409,482
+--vex-guest-chase=no src-js          1    function bodies           4,437,301,629    532,034,684   47,409,482
+--vex-guest-chase=no src-js          2    program                   7,430,495,960  1,147,716,294   73,798,462
+--vex-guest-chase=no src-js          2    names (cgsum.py)          4,397,331,499    528,731,635   47,409,482
+--vex-guest-chase=no src-js          2    function bodies           4,437,301,629    532,034,684   47,409,482
+--vex-guest-chase=no src-js          3    program                   7,430,118,876  1,147,655,091   73,795,689
+--vex-guest-chase=no src-js          3    names (cgsum.py)          4,397,331,499    528,731,635   47,409,482
+--vex-guest-chase=no src-js          3    function bodies           4,437,301,629    532,034,684   47,409,482
+--vex-guest-chase=no tsx             1    program                   2,080,506,677    341,990,237   19,584,984
+--vex-guest-chase=no tsx             1    names (cgsum.py)          1,166,761,850    142,450,868   12,927,642
+--vex-guest-chase=no tsx             1    function bodies           1,174,459,299    143,057,464   12,927,642
+--vex-guest-chase=no tsx             2    program                   2,080,683,886    342,024,487   19,586,362
+--vex-guest-chase=no tsx             2    names (cgsum.py)          1,166,761,850    142,450,868   12,927,642
+--vex-guest-chase=no tsx             2    function bodies           1,174,459,299    143,057,464   12,927,642
+--vex-guest-chase=no tsx             3    program                   2,080,732,756    342,032,610   19,586,542
+--vex-guest-chase=no tsx             3    names (cgsum.py)          1,166,761,850    142,450,868   12,927,642
+--vex-guest-chase=no tsx             3    function bodies           1,174,459,299    143,057,464   12,927,642
+--vex-guest-chase=no js-control      1    program                   5,096,316,106    720,507,867   53,860,653
+--vex-guest-chase=no js-control      1    names (cgsum.py)          2,891,194,329    319,771,089   35,878,822
+--vex-guest-chase=no js-control      1    function bodies           2,911,879,798    321,498,325   35,878,822
+--vex-guest-chase=no js-control      2    program                   5,095,332,449    720,391,835   53,859,520
+--vex-guest-chase=no js-control      2    names (cgsum.py)          2,891,194,329    319,771,089   35,878,822
+--vex-guest-chase=no js-control      2    function bodies           2,911,879,798    321,498,325   35,878,822
+--vex-guest-chase=no js-control      3    program                   5,095,624,537    720,442,274   53,862,529
+--vex-guest-chase=no js-control      3    names (cgsum.py)          2,891,194,329    319,771,089   35,878,822
+--vex-guest-chase=no js-control      3    function bodies           2,911,879,798    321,498,325   35,878,822
+default VEX          bun-types       1    program                     495,903,378     95,070,396    5,514,330
+default VEX          bun-types       1    names (cgsum.py)            314,899,568     44,605,344    4,503,843
+default VEX          bun-types       1    function bodies             315,060,821     44,614,807    4,503,843
+default VEX          bun-types       2    program                     495,889,909     95,069,227    5,514,318
+default VEX          bun-types       2    names (cgsum.py)            314,899,568     44,605,344    4,503,843
+default VEX          bun-types       2    function bodies             315,060,821     44,614,807    4,503,843
+default VEX          typescript-lib  1    program                   1,649,948,191    330,758,474   16,605,275
+default VEX          typescript-lib  1    names (cgsum.py)          1,107,124,588    160,906,944   14,325,783
+default VEX          typescript-lib  1    function bodies           1,107,630,089    160,945,871   14,325,783
+default VEX          typescript-lib  2    program                   1,648,971,561    330,617,231   16,603,813
+default VEX          typescript-lib  2    names (cgsum.py)          1,107,124,588    160,906,944   14,325,783
+default VEX          typescript-lib  2    function bodies           1,107,630,089    160,945,871   14,325,783
+default VEX          src-js          1    program                   7,498,776,616  1,123,126,654   73,796,706
+default VEX          src-js          1    names (cgsum.py)          4,451,382,499    515,058,105   47,409,482
+default VEX          src-js          1    function bodies           4,491,352,629    518,361,154   47,409,482
+default VEX          src-js          2    program                   7,499,990,617  1,123,323,339   73,804,189
+default VEX          src-js          2    names (cgsum.py)          4,451,382,499    515,058,105   47,409,482
+default VEX          src-js          2    function bodies           4,491,352,629    518,361,154   47,409,482
+default VEX          tsx             1    program                   2,097,012,673    334,353,135   19,587,389
+default VEX          tsx             1    names (cgsum.py)          1,179,608,030    137,933,718   12,927,642
+default VEX          tsx             1    function bodies           1,187,305,479    138,540,314   12,927,642
+default VEX          tsx             2    program                   2,096,921,865    334,339,095   19,586,360
+default VEX          tsx             2    names (cgsum.py)          1,179,608,030    137,933,718   12,927,642
+default VEX          tsx             2    function bodies           1,187,305,479    138,540,314   12,927,642
+default VEX          js-control      1    program                   5,118,283,483    706,402,899   53,862,442
+default VEX          js-control      1    names (cgsum.py)          2,904,765,529    312,385,279   35,878,822
+default VEX          js-control      1    function bodies           2,925,450,998    314,112,515   35,878,822
+default VEX          js-control      2    program                   5,117,599,468    706,280,411   53,860,059
+default VEX          js-control      2    names (cgsum.py)          2,904,765,529    312,385,279   35,878,822
+default VEX          js-control      2    function bodies           2,925,450,998    314,112,515   35,878,822

@@ -1,0 +1,34 @@
+IDENT 468  OFFSETS 323  CONSTS 11  DIFF 19  ONLY-A 1  ONLY-B 1  LINT-ONLY 0
+DIFF      bytes    436    349 (  -87)  insns   126   102 (  -24)  jcc   15   15 (  +0)  <P<true, true>>::skip_type_script_paren_or_fn_type::<SINK metadata>
+DIFF      bytes   9207   9190 (  -17)  insns  1837  1856 (  +19)  jcc  180  179 (  -1)  <parse::parse_entry::Parser>::parse_only::<function_identities::FunctionIdentities, <function_identities::FunctionIdentities>::of_
+DIFF      bytes   3146   3208 (  +62)  insns   611   626 (  +15)  jcc   46   46 (  +0)  <P<true, true>>::parse_async_prefix_expr
+DIFF      bytes   7045   7001 (  -44)  insns  1599  1603 (   +4)  jcc  269  265 (  -4)  <P<true, true>>::skip_type_script_type_with_opts::<SINK metadata>
+DIFF      bytes   1827   1830 (   +3)  insns   394   396 (   +2)  jcc   33   33 (  +0)  <P<false, false>>::parse_async_prefix_expr
+DIFF      bytes   1827   1830 (   +3)  insns   394   396 (   +2)  jcc   33   33 (  +0)  <P<false, true>>::parse_async_prefix_expr
+DIFF      bytes   5144   5144 (   +0)  insns  1089  1090 (   +1)  jcc   93   93 (  +0)  <function_identities::Walker>::class
+DIFF      bytes   2901   2901 (   +0)  insns   620   621 (   +1)  jcc   61   61 (  +0)  <P<true, true>>::parse_class
+DIFF      bytes   3831   3831 (   +0)  insns   563   563 (   +0)  jcc   19   19 (  +0)  <P<false, false>>::init
+DIFF      bytes   1457   1433 (  -24)  insns   319   319 (   +0)  jcc   31   31 (  +0)  <P<false, false>>::parse_arrow_body
+DIFF      bytes   2984   2984 (   +0)  insns   628   628 (   +0)  jcc   58   58 (  +0)  <P<false, false>>::parse_class
+DIFF      bytes   3818   3818 (   +0)  insns   560   560 (   +0)  jcc   19   19 (  +0)  <P<false, true>>::init
+DIFF      bytes   1457   1433 (  -24)  insns   319   319 (   +0)  jcc   31   31 (  +0)  <P<false, true>>::parse_arrow_body
+DIFF      bytes   2984   2984 (   +0)  insns   628   628 (   +0)  jcc   58   58 (  +0)  <P<false, true>>::parse_class
+DIFF      bytes   3810   3810 (   +0)  insns   559   559 (   +0)  jcc   19   19 (  +0)  <P<true, true>>::init
+DIFF      bytes   1457   1433 (  -24)  insns   319   319 (   +0)  jcc   31   31 (  +0)  <P<true, true>>::parse_arrow_body
+DIFF      bytes   4565   4565 (   +0)  insns   846   846 (   +0)  jcc  122  122 (  +0)  <parse::parse_entry::Parser>::_scan_imports::<false>
+DIFF      bytes   5199   5199 (   +0)  insns   991   991 (   +0)  jcc  148  148 (  +0)  <parse::parse_entry::Parser>::_scan_imports::<true>
+DIFF      bytes   2525   2525 (   +0)  insns   524   524 (   +0)  jcc   97   97 (  +0)  core::ptr::drop_glue::<P<false, false>>
+ONLY-A    bytes    131      0 ( -131)  insns    39     0 (  -39)  jcc    7    0 (  -7)  core::ptr::drop_glue::<core::option::Option<StartsForParseOnly>>
+ONLY-B    bytes      0    130 ( +130)  insns     0    37 (  +37)  jcc    0    7 (  +7)  core::ptr::drop_glue::<core::option::Option<alloc::boxed::Box<StartsForParseOnly>>>
+CONSTS    bytes   1686   1686 (   +0)  insns   386   386 (   +0)  jcc   17   17 (  +0)  <P<false, false>>::call_runtime
+CONSTS    bytes   1037   1037 (   +0)  insns   248   248 (   +0)  jcc   29   29 (  +0)  <P<false, false>>::find_label_symbol
+CONSTS    bytes   3064   3064 (   +0)  insns   649   649 (   +0)  jcc   64   64 (  +0)  <P<false, false>>::parse_paren_expr
+CONSTS    bytes    658    658 (   +0)  insns   159   159 (   +0)  jcc   16   16 (  +0)  <P<false, false>>::s_import
+CONSTS    bytes   1080   1080 (   +0)  insns   252   252 (   +0)  jcc   21   21 (  +0)  <P<false, false>>::s_namespace
+CONSTS    bytes    193    193 (   +0)  insns    61    61 (   +0)  jcc    7    7 (  +0)  <P<false, false>>::s_return
+CONSTS    bytes   4526   4526 (   +0)  insns   946   946 (   +0)  jcc   66   66 (  +0)  <P<true, true>>::parse_type_script_namespace_stmt
+CONSTS    bytes  26320  26320 (   +0)  insns  4963  4963 (   +0)  jcc  504  504 (  +0)  <parse::parse_entry::Parser>::_parse::<false>
+CONSTS    bytes   3033   3033 (   +0)  insns   526   526 (   +0)  jcc   35   35 (  +0)  <parse::parse_entry::Parser>::to_lazy_export_ast
+CONSTS    bytes     43     43 (   +0)  insns    13    13 (   +0)  jcc    0    0 (  +0)  <react_compiler_host::ReactCompilerHost<false, false> as bun_react_compiler::program::Host>::jsx_import_kind
+CONSTS    bytes   1939   1939 (   +0)  insns   380   380 (   +0)  jcc   22   22 (  +0)  <react_compiler_host::ReactCompilerHost<false, false> as bun_react_compiler::program::Host>::runtime_sentinel
+FAIL: 19 DIFF, 1 only in a, 1 only in b

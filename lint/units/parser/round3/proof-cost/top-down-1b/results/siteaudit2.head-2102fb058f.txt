@@ -1,0 +1,157 @@
+VIOLATION  p.rs:193  [deref_mut]  inserted code that is not a site
+             + sidecar: Option<SidecarMark>,
+VIOLATION  p.rs:224  [deref_mut]  new function in a shared file: for_lint mark rewind
+             + /// What a lint parse keeps of the statements and class members that leave no node.
+             + pub erased: crate::parse::erased::ErasedTables,
+VIOLATION  p.rs:5556  [mark_expr_as_parenthesized]  new function in a shared file: is_lint_parse
+             + /// Whether `Parser::parse_for_lint` runs this parse.
+             + #[inline]
+VIOLATION  parse/mod.rs:73  [parse_expr_with_flags]  new function in a shared file: parse_expr_flagged arrow_body_flags
+             + }
+             + /// `parse_expr`, read with `flags`.
+VIOLATION  parse/mod.rs:175  [parse_class]  inserted code that is not a site
+             + let mut auto_accessor_loc = bun_ast::Loc::EMPTY;
+VIOLATION  parse/mod.rs:177  [parse_class]  reference text removed or changed (1 lines out, 6 in)
+             - if p.lexer.token == T::TExtends {
+             + if p.lexer.token == T::TExtends
+             + && Self::IS_TYPESCRIPT_ENABLED
+VIOLATION  parse/parse_entry.rs:19  [-]  reference text removed or changed (2 lines out, 2 in)
+             - Jest, ParseStatementOptions, RuntimeFeatures, RuntimeImports, ScanPassResult, StatementScope,
+             - WrapMode,
+             + Jest, ParseStatementOptions, RuntimeFeatures, RuntimeImports, ScanPassResult, ScopeOrder,
+             + StatementScope, WrapMode,
+VIOLATION  parse/parse_entry.rs:95  [import_path]  new function in a shared file: name_of is_declaration_file_name
+             + }
+             + 
+VIOLATION  parse/parse_entry.rs:520  [parse_only]  new function in a shared file: parse_for_lint parse_for_lint_with_codes _parse_for_lint
+             + }))
+             + }
+VIOLATION  parse/parse_fn.rs:70  [parse_fn_stmt]  reference text removed or changed (2 lines out, 7 in)
+             - if Self::IS_TYPESCRIPT_ENABLED {
+             - let _ = p.skip_type_script_type_parameters(TypeParameterFlag::ALLOW_CONST_MODIFIER)?;
+             + if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TLessThan {
+             + if p.starts_for_parse_only.is_some() {
+VIOLATION  parse/parse_fn.rs:132  [parse_fn_stmt]  inserted code that is not a site
+             + if let Some(starts) = &mut p.starts_for_parse_only {
+             + let mut flags = erased::ErasedFlags::ambient(opts.is_typescript_declare);
+VIOLATION  parse/parse_fn.rs:239  [parse_fn]  inserted code that is not a site
+             + let mut rest_comma = bun_ast::Range::NONE;
+VIOLATION  parse/parse_jsx.rs:26  [parse_jsx_element]  reference text removed or changed (1 lines out, 4 in)
+             - if TYPESCRIPT {
+             + if TYPESCRIPT && matches!(p.lexer.token, T::TLessThan | T::TLessThanLessThan) {
+             + if p.starts_for_parse_only.is_some() {
+VIOLATION  parse/parse_jsx.rs:32  [parse_jsx_element]  an inserted `}` that closes no site
+             + }
+VIOLATION  parse/parse_prefix.rs:50  [pfx_t_open_paren]  inserted code that is not a site
+             + if !SCAN_ONLY && p.is_lint_parse() {
+             + return Self::pfx_t_open_paren_for_lint(p, loc, level, flags);
+VIOLATION  parse/parse_prefix.rs:76  [pfx_t_open_paren]  new function in a shared file: pfx_t_open_paren_for_lint
+             + }
+             + 
+VIOLATION  parse/parse_prefix.rs:325  [pfx_t_identifier]  reference text removed or changed (1 lines out, 3 in)
+             - let arrow_result = p.parse_arrow_body(args, &mut fn_or_arrow_data);
+             + let body_flags = Self::arrow_body_flags(flags);
+             + let arrow_result =
+VIOLATION  parse/parse_property.rs:109  [parse_method_expression]  inserted code that is not a site
+             + // A signature of an ambient class may end its arguments with a rest argument and a comma.
+             + is_typescript_declare: p.fn_or_arrow_data_parse.is_typescript_declare,
+VIOLATION  parse/parse_property.rs:128  [parse_method_expression]  inserted code that is not a site
+             + if let Some(starts) = &mut p.starts_for_parse_only {
+             + let mut prop_flags = flags::PropertySet::empty();
+VIOLATION  parse/parse_property.rs:267  [parse_method_expression]  new function in a shared file: is_class_index_signature scan_class_index_signature is_class_index_signature_name skip_class_index_signature
+             + /// isIndexSignature of a class element, after "[". No modifier is read: "[async x => x]" is a computed name.
+             + fn is_class_index_signature(&mut self) -> bool {
+VIOLATION  parse/parse_skip_typescript.rs:5  [-]  reference text removed or changed (1 lines out, 1 in)
+             - use crate::p::P;
+             + use crate::p::{P, SidecarMark};
+VIOLATION  parse/parse_skip_typescript.rs:7  [-]  reference text removed or changed (1 lines out, 2 in)
+             - DecoratorMetadata, Discard, Operand, TypeKeyword, TypeLiteral, TypeSink,
+             + ConstDefault, DecoratorMetadata, Discard, KK, Operand, Tag, TypeKeyword, TypeLiteral, TypeSink,
+             + b,
+VIOLATION  parse/parse_skip_typescript.rs:24  [-]  inserted code that is not a site
+             + bun_core::comptime_string_map! {
+             + static MEMBER_KEYWORD_MAP: MemberKeyword = {
+VIOLATION  parse/parse_stmt.rs:435  [t_try]  inserted code that is not a site
+             + if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+             + p.lint_type_annotation(value.loc)?;
+VIOLATION  parse/parse_stmt.rs:439  [t_try]  an inserted `}` that closes no site
+             + }
+VIOLATION  parse/parse_stmt.rs:900  [t_export]  inserted code that is not a site
+             + let name = p
+             + .starts_for_parse_only
+VIOLATION  parse/parse_suffix.rs:23  [sfx_handle_typescript_as]  reference text removed or changed (1 lines out, 1 in)
+             - fn sfx_handle_typescript_as(p: &mut Self, level: Level) -> CResult {
+             + fn sfx_handle_typescript_as(p: &mut Self, level: Level, left: &Expr) -> CResult {
+VIOLATION  parse/parse_suffix.rs:29  [sfx_handle_typescript_as]  inserted code that is not a site
+             + if p.starts_for_parse_only.is_some() {
+             + Self::sfx_typescript_as_for_lint(p, *left)?;
+VIOLATION  parse/parse_suffix.rs:34  [sfx_handle_typescript_as]  an inserted `}` that closes no site
+             + }
+VIOLATION  parse/parse_typescript.rs:83  [parse_standard_decorator]  inserted code that is not a site
+             + let open = p.lexer.loc();
+VIOLATION  parse/parse_typescript.rs:86  [parse_standard_decorator]  inserted code that is not a site
+             + if let Some(starts) = &mut p.starts_for_parse_only
+             + && starts.is_lint
+VIOLATION  parse/parse_typescript.rs:123  [parse_standard_decorator]  inserted code that is not a site
+             + }
+             + if let Some(starts) = &mut p.starts_for_parse_only {
+VIOLATION  parse/type_sink.rs:7  [-]  reference text removed or changed (2 lines out, 0 in)
+             - use bun_ast::Ref;
+             - use bun_ast::StoreSlice;
+VIOLATION  parse/type_sink.rs:8  [-]  reference text removed or changed (1 lines out, 3 in)
+             - use bun_ast::ts::Metadata;
+             + use bun_ast::ts;
+             + use bun_ast::ts::{IntoTypeData as _, Metadata};
+VIOLATION  parse/type_sink.rs:17  [-]  reference text removed or changed (2 lines out, 10 in)
+             - /// Binding level of the type after the ":" of a conditional type.
+             - const CONDITIONAL_FALSE_LEVEL: Level;
+             + /// No type read yet.
+             + const NONE: Self::Out;
+VIOLATION  typescript.rs:316  [kind_for_identifier]  inserted code that is not a site
+             + /// The type is an element of a list of type arguments, which a token that starts no type ends.
+             + IsTypeArgument,
+
+shared file                           sites site-else   decl  tests  exception  VIOLATION reads of starts_for_parse_only that the reference lacks
+lib.rs                                    0         0      1      0          0          0 0
+p.rs                                      0         0      0      0          0          6 3
+parse/mod.rs                              0         0      4      0          0         34 15
+parse/parse_entry.rs                      0         0      1      0          0          4 2
+parse/parse_fn.rs                         0         0      2      0          0         17 9
+parse/parse_jsx.rs                        0         0      0      0          0          2 1
+parse/parse_prefix.rs                     0         0      0      0          0         16 10
+parse/parse_property.rs                   0         0      1      0          0         11 8
+parse/parse_skip_typescript.rs            0         0      6      0          0        144 5
+parse/parse_stmt.rs                       0         0      1      0          0         43 27
+parse/parse_suffix.rs                     0         0      0      0          0         13 5
+parse/parse_typescript.rs                 0         0      1      0          0         15 9
+parse/type_sink.rs                        0         0      1      0          0         44 0
+typescript.rs                             0         0      0      0          0          1 0
+22 shared files equal the reference
+
+NEW        native_test_shims.rs                       1012 lines  reached by a mod line
+NEW        parse/annotation_tests.rs                   412 lines  reached by a mod line
+NEW        parse/attached.rs                          1020 lines  reached by a mod line
+NEW        parse/erased.rs                            1396 lines  reached by a mod line
+NEW        parse/erased_tests.rs                       813 lines  reached by a mod line
+NEW        parse/generics.rs                           931 lines  reached by a mod line
+NEW        parse/syntax_errors.rs                      954 lines  reached by a mod line
+NEW        parse/wrappers.rs                           553 lines  reached by a mod line
+NEW        type_sink_tests.rs                          452 lines  reached by a mod line
+
+DECL       src/ast/ts.rs:8  
+DECL       src/ast/ts.rs:178  /// The names of `a.b.c`, in the arena of the parse: a node that an arena holds is never dropped.
+VIOLATION  src/ast/ts.rs:224  [merge_union]  differs from bc7a813b10 (6 lines out, 1 in)
+             - } else {
+             - // Reshaped for borrowck — copy Ref out before reassigning *result
+             + } else if !result.is_same_name(&left) {
+VIOLATION  src/ast/ts.rs:226  [merge_union]  differs from bc7a813b10 (3 lines out, 0 in)
+             - }
+             - }
+VIOLATION  src/ast/ts.rs:275  [merge_intersection]  differs from bc7a813b10 (6 lines out, 1 in)
+             - } else {
+             - // Reshaped for borrowck — copy Ref out before reassigning *result
+             + } else if !result.is_same_name(&left) {
+src/ast/ts.rs: 6 violations
+
+0 sites, 356 violations
+FAIL

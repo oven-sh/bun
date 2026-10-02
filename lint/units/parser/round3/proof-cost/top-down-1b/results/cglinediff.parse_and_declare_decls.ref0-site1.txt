@@ -1,0 +1,15 @@
+# tsx: no test runs in the function, it pays 4 Ir per declaration all the same
+functions a: Ir 5,240,000 Bc 656,000 Bi 28,000   b: Ir 5,352,000 Bc 656,000 Bi 28,000   delta Ir +112,000 Bc +0 Bi +0
+5 lines differ in ir; sum +112,000
+      delta           a           b         dIr  file:line(a|b)  text
+    +56,000     196,000     252,000     +56,000  /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smallvec-1.15.1/src/lib.rs:790|790  SmallVec {
+    +28,000      28,000      56,000     +28,000  src/ast/lexer_tables.rs:0|0  <line 0>
+    +28,000           0      28,000     +28,000  /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smallvec-1.15.1/src/lib.rs:-|0  <line 0>
+    +26,000       2,000      28,000     +26,000  parse/mod.rs:0|0  <line 0>
+    -26,000      52,000      26,000     -26,000  parse/mod.rs:1321|1324  p.lexer.next()?;
+# bun-types: one jump more than the test per typed declaration: the token test of expect() is no longer folded away
+functions a: Ir 750,360 Bc 94,620 Bi 4,440   b: Ir 785,880 Bc 103,500 Bi 4,440   delta Ir +35,520 Bc +8,880 Bi +0
+2 lines differ in bc; sum +8,880
+      delta           a           b         dIr  file:line(a|b)  text
+     +4,440           0       4,440      +4,440  lexer.rs:-|960  if self.token != token {
+     +4,440           0       4,440      +4,440  parse/mod.rs:-|1315  if p.lint() {

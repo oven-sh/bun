@@ -1,0 +1,46 @@
+<function_identities::Walker>::class                                   -   1 +   2 jcc -0 +0
+<P<false, false>>::init                                                -   3 +   3 jcc -0 +0
+<P<false, false>>::parse_arrow_body                                    -   9 +   9 jcc -0 +0
+<P<false, false>>::parse_async_prefix_expr                             -  67 +  69 jcc -0 +0
+<P<false, false>>::parse_class                                         -  15 +  15 jcc -0 +0
+<P<false, true>>::init                                                 -   3 +   3 jcc -0 +0
+<P<false, true>>::parse_arrow_body                                     -   9 +   9 jcc -0 +0
+<P<false, true>>::parse_async_prefix_expr                              -  67 +  69 jcc -0 +0
+<P<false, true>>::parse_class                                          -  15 +  15 jcc -0 +0
+<P<true, false>>::init                                                 -   3 +   3 jcc -0 +0
+<P<true, false>>::parse_arrow_body                                     -   9 +   9 jcc -0 +0
+<P<true, false>>::parse_async_prefix_expr                              - 225 + 248 jcc -15 +15
+      + call <P>::parse_paren_expr
+<P<true, false>>::parse_class                                          -  16 +  17 jcc -0 +0
+<P<true, false>>::skip_type_script_paren_or_fn_type::<SINK metadata>   -  44 +  20 jcc -2 +2
+<P<true, false>>::skip_type_script_type_with_opts::<SINK metadata>     - 869 + 878 jcc -174 +170
+      - call <bun_ast::ts::Metadata>::merge_intersection
+      - call L82
+      + call L81
+<P<true, true>>::init                                                  -   3 +   3 jcc -0 +0
+<P<true, true>>::parse_arrow_body                                      -   9 +   9 jcc -0 +0
+<P<true, true>>::parse_async_prefix_expr                               - 239 + 254 jcc -17 +17
+      + call <P>::parse_paren_expr
+<P<true, true>>::parse_class                                           -  16 +  17 jcc -0 +0
+<P<true, true>>::skip_type_script_paren_or_fn_type::<SINK metadata>    -  44 +  20 jcc -2 +2
+<P<true, true>>::skip_type_script_type_with_opts::<SINK metadata>      - 869 + 878 jcc -171 +167
+      - call <bun_ast::ts::Metadata>::merge_intersection
+      - call L82
+      + call L81
+<parse::parse_entry::Parser>::_parse::<true>                           -   8 +   8 jcc -0 +0
+      - call core::ptr::drop_glue::<core::option::Option<StartsForParseOnly>>
+      + call core::ptr::drop_glue::<core::option::Option<alloc::boxed::Box<StartsForParseOnly>>>
+<parse::parse_entry::Parser>::_scan_imports::<false>                   -   2 +   2 jcc -0 +0
+      - call core::ptr::drop_glue::<core::option::Option<StartsForParseOnly>>
+      + call core::ptr::drop_glue::<core::option::Option<alloc::boxed::Box<StartsForParseOnly>>>
+<parse::parse_entry::Parser>::_scan_imports::<true>                    -   2 +   2 jcc -0 +0
+      - call core::ptr::drop_glue::<core::option::Option<StartsForParseOnly>>
+      + call core::ptr::drop_glue::<core::option::Option<alloc::boxed::Box<StartsForParseOnly>>>
+<parse::parse_entry::Parser>::parse_only::<function_identities::Functi - 619 + 637 jcc -169 +168
+      - call core::ptr::drop_glue::<core::option::Option<StartsForParseOnly>>
+      + call alloc::alloc::handle_alloc_error
+      + call core::ptr::drop_glue::<core::option::Option<alloc::boxed::Box<StartsForParseOnly>>>
+      + call mi_malloc
+core::ptr::drop_glue::<P<false, false>>                                -   2 +   2 jcc -0 +0
+      - call core::ptr::drop_glue::<core::option::Option<StartsForParseOnly>>
+      + call core::ptr::drop_glue::<core::option::Option<alloc::boxed::Box<StartsForParseOnly>>>

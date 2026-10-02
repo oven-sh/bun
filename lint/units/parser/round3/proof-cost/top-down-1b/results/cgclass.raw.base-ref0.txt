@@ -1,0 +1,47 @@
+== bun-types
+program                    Ir     489,090,901 ->     489,103,556 (+12655)  Bc     97,096,906 ->     97,097,548 (+642)  Bi    5,514,307 ->    5,514,296 (-11)
+names that match           Ir     308,220,108 ->     308,230,410 (+10302)  Bc     46,501,115 ->     46,501,115 (+0)  Bi    4,503,843 ->    4,503,843 (+0)
+classes of the parser      Ir     308,381,361 ->     308,391,663 (+10302)  Bc     46,510,578 ->     46,510,578 (+0)  Bi    4,503,843 ->    4,503,843 (+0)
+4 classes of the parser differ
+  Ir       +14940  Bc          +0  Bi        +0  (a Ir 1,409,780)  <bun_js_parser::p::P<true, false>>::parse_class
+  Ir        -6391  Bc        -581  Bi        +0  (a Ir 6,391)  core::ptr::drop_glue::<core::option::Option<bun_js_parser::p::StartsForParseOnly>>
+  Ir        +1743  Bc        +581  Bi        +0  (a Ir 0)  core::ptr::drop_glue::<core::option::Option<alloc::boxed::Box<bun_js_parser::p::StartsForParseOnly>>>
+  Ir          +10  Bc          +0  Bi        +0  (a Ir 1,793)  <bun_js_parser::p::P<false, false>>::parse_arrow_body
+== typescript-lib
+program                    Ir   1,615,980,166 ->   1,615,429,578 (-550588)  Bc    337,546,861 ->    337,484,567 (-62294)  Bi   16,605,569 ->   16,602,533 (-3036)
+names that match           Ir   1,074,172,988 ->   1,074,155,810 (-17178)  Bc    167,572,135 ->    167,572,135 (+0)  Bi   14,325,783 ->   14,325,783 (+0)
+classes of the parser      Ir   1,074,678,489 ->   1,074,661,311 (-17178)  Bc    167,611,062 ->    167,611,062 (+0)  Bi   14,325,783 ->   14,325,783 (+0)
+4 classes of the parser differ
+  Ir       -23771  Bc       -2161  Bi        +0  (a Ir 23,771)  core::ptr::drop_glue::<core::option::Option<bun_js_parser::p::StartsForParseOnly>>
+  Ir        +6483  Bc       +2161  Bi        +0  (a Ir 0)  core::ptr::drop_glue::<core::option::Option<alloc::boxed::Box<bun_js_parser::p::StartsForParseOnly>>>
+  Ir         +100  Bc          +0  Bi        +0  (a Ir 22,600)  <bun_js_parser::p::P<true, false>>::parse_class
+  Ir          +10  Bc          +0  Bi        +0  (a Ir 1,793)  <bun_js_parser::p::P<false, false>>::parse_arrow_body
+== src-js
+program                    Ir   7,425,631,551 ->   7,428,691,183 (+3059632)  Bc  1,146,958,676 ->  1,147,458,023 (+499347)  Bi   73,781,720 ->   73,792,548 (+10828)
+names that match           Ir   4,397,331,499 ->   4,397,435,921 (+104422)  Bc    528,731,635 ->    528,731,635 (+0)  Bi   47,409,482 ->   47,409,482 (+0)
+classes of the parser      Ir   4,437,301,629 ->   4,437,406,051 (+104422)  Bc    532,034,684 ->    532,034,684 (+0)  Bi   47,409,482 ->   47,409,482 (+0)
+6 classes of the parser differ
+  Ir      +125340  Bc          +0  Bi        +0  (a Ir 7,607,380)  <bun_js_parser::p::P<true, false>>::parse_class
+  Ir       -42471  Bc       -3861  Bi        +0  (a Ir 42,471)  core::ptr::drop_glue::<core::option::Option<bun_js_parser::p::StartsForParseOnly>>
+  Ir       +11583  Bc       +3861  Bi        +0  (a Ir 0)  core::ptr::drop_glue::<core::option::Option<alloc::boxed::Box<bun_js_parser::p::StartsForParseOnly>>>
+  Ir        +7340  Bc          +0  Bi        +0  (a Ir 2,577,240)  <bun_js_parser::p::P<true, false>>::parse_arrow_body
+  Ir        +2620  Bc          +0  Bi        +0  (a Ir 60,480)  <bun_js_parser::p::P<true, false>>::parse_async_prefix_expr
+  Ir          +10  Bc          +0  Bi        +0  (a Ir 1,793)  <bun_js_parser::p::P<false, false>>::parse_arrow_body
+== tsx
+program                    Ir   2,080,506,677 ->   2,080,679,928 (+173251)  Bc    341,990,237 ->    342,013,362 (+23125)  Bi   19,584,984 ->   19,586,192 (+1208)
+names that match           Ir   1,166,761,850 ->   1,166,813,852 (+52002)  Bc    142,450,868 ->    142,450,868 (+0)  Bi   12,927,642 ->   12,927,642 (+0)
+classes of the parser      Ir   1,174,459,299 ->   1,174,511,301 (+52002)  Bc    143,057,464 ->    143,057,464 (+0)  Bi   12,927,642 ->   12,927,642 (+0)
+5 classes of the parser differ
+  Ir       +38000  Bc          +0  Bi        +0  (a Ir 3,666,000)  <bun_js_parser::p::P<true, false>>::parse_class
+  Ir       +30000  Bc          +0  Bi        +0  (a Ir 6,042,000)  <bun_js_parser::p::P<true, false>>::parse_arrow_body
+  Ir       -22011  Bc       -2001  Bi        +0  (a Ir 22,011)  core::ptr::drop_glue::<core::option::Option<bun_js_parser::p::StartsForParseOnly>>
+  Ir        +6003  Bc       +2001  Bi        +0  (a Ir 0)  core::ptr::drop_glue::<core::option::Option<alloc::boxed::Box<bun_js_parser::p::StartsForParseOnly>>>
+  Ir          +10  Bc          +0  Bi        +0  (a Ir 1,793)  <bun_js_parser::p::P<false, false>>::parse_arrow_body
+== js-control
+program                    Ir   5,096,316,106 ->   5,094,624,057 (-1692049)  Bc    720,507,867 ->    720,214,057 (-293810)  Bi   53,860,653 ->   53,855,154 (-5499)
+names that match           Ir   2,891,194,329 ->   2,891,194,271 (-58)  Bc    319,771,089 ->    319,771,089 (+0)  Bi   35,878,822 ->   35,878,822 (+0)
+classes of the parser      Ir   2,911,879,798 ->   2,911,879,740 (-58)  Bc    321,498,325 ->    321,498,325 (+0)  Bi   35,878,822 ->   35,878,822 (+0)
+3 classes of the parser differ
+  Ir         -231  Bc         -21  Bi        +0  (a Ir 231)  core::ptr::drop_glue::<core::option::Option<bun_js_parser::p::StartsForParseOnly>>
+  Ir         +110  Bc          +0  Bi        +0  (a Ir 52,253)  <bun_js_parser::p::P<false, false>>::parse_arrow_body
+  Ir          +63  Bc         +21  Bi        +0  (a Ir 0)  core::ptr::drop_glue::<core::option::Option<alloc::boxed::Box<bun_js_parser::p::StartsForParseOnly>>>

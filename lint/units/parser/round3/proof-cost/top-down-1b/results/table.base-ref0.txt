@@ -1,0 +1,23 @@
+ref against base, by function body                   bun-types  typescript-lib          src-js             tsx      js-control
+input bytes per pass                                 1,076,221       3,784,758       3,268,179           7,003       1,506,667
+passes                                                      20              20              20           2,000              20
+-- default VEX (cgbench.sh)
+parser Ir a                                        315,060,821   1,107,630,089   4,491,352,629   1,187,305,479   2,925,450,998
+parser Ir b - a                                        +10,302         -17,178        +104,422         +52,002             -58
+parser Ir b - a, percent                              +0.0033%        -0.0016%        +0.0023%        +0.0044%        -0.0000%
+parser Bc a                                         44,614,807     160,945,871     518,361,154     138,540,314     314,112,515
+parser Bc b - a                                             +0              +0              +0              +0              +0
+parser Bc b - a, percent                              +0.0000%        +0.0000%        +0.0000%        +0.0000%        +0.0000%
+parser Bi b - a                                             +0              +0              +0              +0              +0
+functions that differ                                        4               4               6               5               3
+program Ir b - a (has run-to-run noise)                   +868        -903,396        +635,563        -685,004        -665,586
+-- --vex-guest-chase=no (cgbench-raw.sh)
+parser Ir a                                        308,381,361   1,074,678,489   4,437,301,629   1,174,459,299   2,911,879,798
+parser Ir b - a                                        +10,302         -17,178        +104,422         +52,002             -58
+parser Ir b - a, percent                              +0.0033%        -0.0016%        +0.0024%        +0.0044%        -0.0000%
+parser Bc a                                         46,510,578     167,611,062     532,034,684     143,057,464     321,498,325
+parser Bc b - a                                             +0              +0              +0              +0              +0
+parser Bc b - a, percent                              +0.0000%        +0.0000%        +0.0000%        +0.0000%        +0.0000%
+parser Bi b - a                                             +0              +0              +0              +0              +0
+functions that differ                                        4               4               6               5               3
+program Ir b - a (has run-to-run noise)                +12,655        -550,588      +3,059,632        +173,251      -1,692,049

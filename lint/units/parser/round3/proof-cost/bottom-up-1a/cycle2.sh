@@ -31,7 +31,7 @@ if [ ! -x $S/link/$TAG/bun-profile ]; then
   ( cd $R && sh -c "$(cat $S/link/$TAG/link.cmd) -Wl,--warn-unresolved-symbols -Wl,--error-limit=0" > $S/link/$TAG/link.unresolved.log 2>&1 )
   grep 'undefined symbol' $S/link/$TAG/link.unresolved.log | sed 's/.*undefined symbol: //' | sort -u > $S/check/$TAG.unresolved.txt
   echo "$TAG: linked with $(wc -l < $S/check/$TAG.unresolved.txt) unresolved symbols ($S/check/$TAG.unresolved.txt)"
-  grep -vE "$LINTONLY" $S/check/$TAG.unresolved.txt > $S/check/$TAG.stale.txt
+  python3 $P2/stale.py $S/check/$TAG.unresolved.txt "$ROOT" "${HEADTREE:-/workspace/wt/parser}" --lint "$LINTONLY" > $S/check/$TAG.stale.txt
   [ -s $S/check/$TAG.stale.txt ] && { echo "   STALE: $(wc -l < $S/check/$TAG.stale.txt) unresolved names are not lint-only: the comparison is void, run the release build ($S/check/$TAG.stale.txt):"; head -5 $S/check/$TAG.stale.txt | sed 's/^/      /'; }
 fi
 t2=$(date +%s)

@@ -1497,7 +1497,8 @@ declare module "bun" {
        * number throws instead of being ignored:
        *
        * - `0` rejects every alias.
-       * - A negative number or `Infinity` turns the check off, and the built-in limit with it.
+       * - A negative number or `Infinity` turns the check off, and the built-in limit with it. A
+       *   collection that is a mapping key still counts toward the built-in limit.
        * - For any other number, an anchor counts `1` and each of its aliases `1` more. That count is
        *   multiplied by the largest such product among the aliases written inside the anchored node, where a
        *   scalar written inside it counts `1`. The result may not exceed the limit. One alias of a scalar
@@ -1508,7 +1509,8 @@ declare module "bun" {
        *
        * A built-in limit, high enough for hand-written documents, stops exponential expansion with a
        * `SyntaxError`. It applies without this option and with a positive number, which does not count an
-       * alias of a node that holds no scalar.
+       * alias of a node that holds no scalar. With a positive number the same size also bounds how often
+       * merge keys (`<<`) make Bun count the same aliases again.
        *
        * @example
        * ```ts
@@ -1518,7 +1520,7 @@ declare module "bun" {
        * YAML.parse("a: &x [1, 2]\nb: *x", { maxAliasCount: 1 }); // ReferenceError
        * ```
        */
-      maxAliasCount?: number;
+      maxAliasCount?: number | undefined;
 
       /**
        * How deep the sequences and mappings of a document may nest. A scalar has depth `0`, `[]` depth `1`
@@ -1529,6 +1531,10 @@ declare module "bun" {
        * Exceeding it throws a `SyntaxError`. Without this option the depth is limited by the stack alone,
        * and exceeding that throws a `RangeError`.
        *
+       * The value is an integer from `0` to `Number.MAX_SAFE_INTEGER`. No value turns the limit off: leave
+       * the option out. A number outside that range throws a `RangeError`. A fraction, or a value that is
+       * neither a number nor `undefined`, throws a `TypeError`.
+       *
        * @example
        * ```ts
        * import { YAML } from "bun";
@@ -1537,7 +1543,7 @@ declare module "bun" {
        * YAML.parse("a: [1]", { maxDepth: 1 }); // SyntaxError
        * ```
        */
-      maxDepth?: number;
+      maxDepth?: number | undefined;
     }
 
     /**
@@ -1547,7 +1553,6 @@ declare module "bun" {
      * @category Utilities
      *
      * @param input The YAML string to parse
-     * @param options Limits for input from an untrusted source, see {@link ParseOptions}
      * @returns A JavaScript value, or an array of them for a multi-document stream
      *
      * @example
@@ -1560,6 +1565,24 @@ declare module "bun" {
      * console.log(YAML.parse("abc")) // "abc"
      * console.log(YAML.parse("- abc")) // [ "abc" ]
      * console.log(YAML.parse("abc: def")) // { "abc": "def" }
+     * ```
+     */
+    export function parse(input: string): unknown;
+    /**
+     * Parse a YAML string into a JavaScript value, with limits for input from an untrusted source.
+     *
+     * @category Utilities
+     *
+     * @param input The YAML string to parse
+     * @param options The limits, see {@link ParseOptions}
+     * @returns A JavaScript value, or an array of them for a multi-document stream
+     *
+     * @example
+     * ```ts
+     * import { YAML } from "bun";
+     *
+     * YAML.parse("a: &x [1, 2]\nb: *x", { maxAliasCount: 0 }); // ReferenceError
+     * YAML.parse("a: [[1]]", { maxDepth: 2 }); // SyntaxError
      * ```
      */
     export function parse(input: string, options?: ParseOptions): unknown;

@@ -125,9 +125,11 @@ try {
 
 An alias (`*name`) becomes a reference to the node that its anchor (`&name`) marks, so a small document can describe a very large value. Code that walks or serializes the result visits an aliased node once for each alias that leads to it. A merge key (`<<`) copies the properties of its source. Deep nesting can overflow the stack of code that recurses over the result.
 
-`Bun.YAML.parse` takes two options that limit both. Bun checks them while it parses the document.
+`Bun.YAML.parse` takes two options for such input. `maxAliasCount` limits aliases and merge keys. `maxDepth` limits nesting. Bun checks both while it parses the document.
 
 ```ts
+const text = await Bun.file("untrusted.yaml").text();
+
 const data = Bun.YAML.parse(text, {
   maxAliasCount: 0, // no aliases at all
   maxDepth: 64,
@@ -169,12 +171,16 @@ Bun counts each document of a stream on its own. The source of a merge key (`<<:
 
 Bun differs from the `yaml` package in these ways:
 
-- A `maxAliasCount` that is not a number throws a `TypeError`, and `NaN` throws a `RangeError`. The package uses its default for the first and no limit for the second, so a mistyped limit goes unnoticed.
-- A positive `maxAliasCount` adds to the built-in limit and does not replace it. An alias of a node that holds no scalar, such as `[[], []]`, counts `0`, so the built-in limit is what stops a document made of such nodes.
+- A `maxAliasCount` that is neither a number nor `undefined` throws a `TypeError`, and `NaN` throws a `RangeError`. The package uses its default for the first and no limit for the second, so a mistyped limit goes unnoticed.
+- A positive `maxAliasCount` adds to the built-in limit and does not replace it. The count is `0` for an alias of a node that holds no scalar, such as `[[], []]`. Only the built-in limit stops a document that is made of such nodes.
 - A negative number or `Infinity` turns off the built-in limit too. Bun still applies the built-in limit to a collection that is a mapping key.
+- Bun limits the work of the count itself. A merge counts the aliases in its source once more, so merges of merges multiply that work. Past the size of the built-in limit, Bun throws the same `SyntaxError`.
+- Merge keys can copy 1,048,576 properties in one parse. No value of `maxAliasCount` changes that limit.
 - The package's default is `100`. Bun's built-in limit is far higher, so pass a limit for input that you do not trust.
 
-For `maxDepth`, the node that an alias refers to counts as if it were written in the place of the alias, so the limit holds for the value that `Bun.YAML.parse` returns. Bun rejects an alias to a collection that contains the alias, because such a value nests without end. The value of a merge key counts as written, before Bun merges it. The array that holds the documents of a multi-document stream does not count.
+`maxDepth` is an integer from `0` to `Number.MAX_SAFE_INTEGER`. To parse without a depth limit, leave the option out.
+
+For `maxDepth`, the node that an alias refers to counts as if it were written in the place of the alias. The limit therefore holds for the value that `Bun.YAML.parse` returns. Bun rejects an alias to a collection that contains the alias, because such a value nests without end. The value of a merge key counts as written, before Bun merges it. The array that holds the documents of a multi-document stream does not count.
 
 Merge keys need no option of their own. With `maxAliasCount: 0`, a merge can only copy a mapping that is written in place.
 

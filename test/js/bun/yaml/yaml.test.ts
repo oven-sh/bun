@@ -720,8 +720,7 @@ root: &root
       });
 
       test("is a callback for Array.prototype.map, which passes an index", () => {
-        const parse = YAML.parse as (input: string) => unknown;
-        expect(["a: 1", "- &x 2\n- *x", "[[3]]"].map(parse)).toEqual([{ a: 1 }, [2, 2], [[3]]]);
+        expect(["a: 1", "- &x 2\n- *x", "[[3]]"].map(YAML.parse)).toEqual([{ a: 1 }, [2, 2], [[3]]]);
       });
 
       // Every number here is what the `yaml` package (v2.9.1) does with the same document and limit.
@@ -813,6 +812,25 @@ root: &root
           ["the anchor of a mapping in a sequence of merge sources", "x: &x 1\nm: {<<: [&d {k: *x}]}\nn: *d\np: *x", 6],
           ["the anchor of a sequence of merge sources", "a: &a {k: 1}\nm: {<<: &s [*a]}\nn: {<<: *s}\np: *a", 6],
           ["an anchor inside a merge source written in place", "m: {<<: {k: &x 1}}\na: *x\nb: *x", 3],
+          [
+            "the anchor of a merge source written in place when a cyclic alias follows",
+            "x: &x 1\nbase: {<<: &d {k: *x}}\ndev: *d\nc: &c [*c]\nlast: *x",
+            6,
+          ],
+          // Nor does a merge convert its `<<`.
+          [
+            "the anchor of the `<<` of a merge",
+            "m: &m {a: 1}\nn: &n\n  &k <<: *m\nx: *k\ny: *k\nz: {<<: *n}\nw: *k\nv: *k\nu: *k",
+            6,
+          ],
+          ["the anchor of a `<<` in a flow mapping", "n: &n {&k <<: {a: 1}}\nx: *k\nz: {<<: *n}\nw: *k", 3],
+          [
+            "the anchor of a scalar before a `<<`",
+            "m: &m {a: 1}\nn: &n {b: &v <<, <<: *m}\nx: *v\nz: {<<: *n}\nw: *v",
+            4,
+          ],
+          ["the `<<` of a merge of a sequence as a scalar", "e: &e {}\na: &a {<<: [*e]}\nb: *a\nc: *a", 3],
+          ["a merge in an explicit flow pair", "x: &x 1\nm: &m {k: *x}\ns: [? << : *m]\ny: *x\nz: *x", 5],
         ])("counts %s", (_, input, count) => {
           expect(outcome(input, { maxAliasCount: count })).toEqual(outcome(input));
           expect(outcome(input, { maxAliasCount: count })).toHaveProperty("value");
@@ -849,6 +867,7 @@ root: &root
           expect(outcome(input, { maxAliasCount: undefined })).toHaveProperty("value");
         });
 
+        // That package runs out of stack first where the limit is some thousands or more.
         test("a mapping that merges itself exceeds every limit", () => {
           const input = "&A { <<: *A, B: b }";
           expect(outcome(input)).toEqual({
@@ -1016,19 +1035,34 @@ root: &root
             try {
               (YAML.parse as Function)(aliased, { maxAliasCount });
             } catch (e: any) {
-              return { name: e.name, code: e.code, namesTheOption: e.message.includes('"maxAliasCount"') };
+              return { name: e.name, code: e.code, message: e.message };
             }
           }
 
-          test.each([["0"], ["2"], [null], [true], [1n], [{}], [[]], [function limit() {}], [Symbol("0")]])(
-            "rejects %p as the wrong type",
-            value => {
-              expect(thrown(value)).toEqual({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE", namesTheOption: true });
-            },
-          );
+          test.each([
+            ["0", "string"],
+            ["2", "string"],
+            [null, "object"],
+            [true, "boolean"],
+            [1n, "bigint"],
+            [{}, "object"],
+            [[], "object"],
+            [function limit() {}, "function"],
+            [Symbol("0"), "symbol"],
+          ])("rejects %p as the wrong type", (value, received) => {
+            expect(thrown(value)).toEqual({
+              name: "TypeError",
+              code: "ERR_INVALID_ARG_TYPE",
+              message: `The "maxAliasCount" property must be of type number. Received ${received}`,
+            });
+          });
 
           test("rejects NaN as out of range", () => {
-            expect(thrown(NaN)).toEqual({ name: "RangeError", code: "ERR_OUT_OF_RANGE", namesTheOption: true });
+            expect(thrown(NaN)).toEqual({
+              name: "RangeError",
+              code: "ERR_OUT_OF_RANGE",
+              message: `The value of "maxAliasCount" is out of range. It must be a number. Received NaN`,
+            });
           });
 
           test("a mistyped limit throws instead of parsing without protection", () => {
@@ -1087,8 +1121,9 @@ root: &root
           describe("Excessive recursion", () => {
             test("Nested flow collections", () => {
               const depth = 5000;
-              const nesting = nestingOf(repeat("[", depth) + "1" + repeat("]", depth));
-              expect([{ depth, innermost: 1 }, stackExhausted]).toContainEqual(nesting);
+              const input = repeat("[", depth) + "1" + repeat("]", depth);
+              expect([{ depth, innermost: 1 }, stackExhausted]).toContainEqual(nestingOf(input));
+              expect(outcome(input, { maxDepth: 64 })).toEqual(tooDeep(64));
             });
 
             test("excessive tag indicators", () => {
@@ -1100,8 +1135,9 @@ root: &root
 
             test("excessive block sequence indicators", () => {
               const depth = 5000;
-              const nesting = nestingOf(repeat("- ", depth) + "b");
-              expect([{ depth, innermost: "b" }, stackExhausted]).toContainEqual(nesting);
+              const input = repeat("- ", depth) + "b";
+              expect([{ depth, innermost: "b" }, stackExhausted]).toContainEqual(nestingOf(input));
+              expect(outcome(input, { maxDepth: 64 })).toEqual(tooDeep(64));
             });
 
             test("excessive empty lines in flow collection", () => {
@@ -1123,7 +1159,8 @@ root: &root
             });
 
             // There, js-yaml case 1 and 2 parse as well: their collection key is written as `*id057`.
-            // Bun writes it out in full and refuses both: see "bounds alias expansion".
+            // Bun writes it out in full and refuses both: see "a negative maxAliasCount keeps the budget
+            // for collection keys".
             describe("Work sensibly even with disabled limits", () => {
               test("billion laughs", () => {
                 const obj = YAML.parse(fixture("billion-laughs.yml"), { maxAliasCount: -1 }) as object;
@@ -5917,9 +5954,8 @@ test("bounds alias expansion for parsed and imported YAML documents", async () =
   expect(exitCode).toBe(0);
 }, 60_000);
 
-// Each refusal walks the whole budget, 16 * 1024 * 1024 nodes: seconds in a debug build.
-test("the alias expansion budget holds whatever maxAliasCount is", () => {
-  const outcome = (input: string, options: { maxAliasCount: number }) => {
+describe("maxAliasCount and the alias expansion budget", () => {
+  const outcome = (input: string, options: { maxAliasCount?: number; maxDepth?: number }) => {
     try {
       YAML.parse(input, options);
       return "parsed";
@@ -5928,20 +5964,40 @@ test("the alias expansion budget holds whatever maxAliasCount is", () => {
     }
   };
   const refused = "SyntaxError: YAML Parse error: Excessive aliasing";
-  const thirty = (item: string) => `[${new Array(30).fill(item).join(", ")}]`;
-  // 30 ** 5 nodes behind thirty aliases of `d`, as in the test above.
+  const list = (count: number, item: string) => `[${new Array(count).fill(item).join(", ")}]`;
+  // Each alias of `d` reaches 30 ** 4 nodes, as in the test above.
   const levels = (leaf: string) =>
-    `a: &a ${thirty(leaf)}\nb: &b ${thirty("*a")}\nc: &c ${thirty("*b")}\nd: &d ${thirty("*c")}\n`;
+    `a: &a ${list(30, leaf)}\nb: &b ${list(30, "*a")}\nc: &c ${list(30, "*b")}\nd: &d ${list(30, "*c")}\n`;
 
-  // A limit on the count does not replace the budget. The count sees no alias of a node that
-  // holds no scalar, so it accepts this document at any limit.
-  expect(outcome(`${levels("[]")}e: ${thirty("*d")}\n`, { maxAliasCount: 1 })).toBe(refused);
+  // A refusal walks the whole budget, 16 * 1024 * 1024 nodes. That takes seconds in a debug build.
+  test("options without maxAliasCount, and a positive maxAliasCount, keep the budget", () => {
+    expect(outcome(`${levels("0")}e: ${list(30, "*d")}\n`, { maxDepth: 64 })).toBe(refused);
 
-  // A negative limit turns the count and the budget off. A collection key is still charged to
-  // the budget, because Bun writes such a key out in full.
-  expect(outcome(`${levels("0")}e: ${thirty("*d")}\n`, { maxAliasCount: -1 })).toBe("parsed");
-  expect(outcome(`${levels("0")}? ${thirty("*d")}\n: v\n`, { maxAliasCount: -1 })).toBe(refused);
-}, 60_000);
+    // The count sees no alias of a node that holds no scalar, so it accepts this document at
+    // any limit. The budget is what refuses it.
+    expect(outcome(`${levels("[]")}e: ${list(30, "*d")}\n`, { maxAliasCount: 1 })).toBe(refused);
+  }, 60_000);
+
+  test("a negative maxAliasCount keeps the budget for collection keys", () => {
+    expect(outcome(`${levels("0")}e: ${list(30, "*d")}\n`, { maxAliasCount: -1 })).toBe("parsed");
+
+    // Bun writes a collection key out in full. Each key here reaches 15 * 30 ** 4 nodes, which is
+    // under the budget. The key of the block mapping and the key of the flow pair are over it.
+    const key = list(15, "*d");
+    expect(outcome(`${levels("0")}? ${key}\n: v\ne: [? ${key} : v]\n`, { maxAliasCount: -1 })).toBe(refused);
+  }, 60_000);
+
+  test("the count has a bound of its own", () => {
+    // A merge counts the aliases in its source once more. Here that is 1,000 aliases of `b`, and
+    // each looks at the 1,000 aliases in `b`. The `k` of `s` hides what `s` merges, so the value
+    // stays small and the budget sees nothing. The count is 0 for `e` and `b`, which hold no scalar.
+    const hidden = `e: &e []\nb: &b ${list(1000, "*e")}\ns: &s {k: 0, <<: {k: ${list(1000, "*b")}}}\n`;
+    const merged = (times: number) => hidden + Array.from({ length: times }, (_, i) => `t${i}: {<<: *s}\n`).join("");
+    expect(outcome(merged(8), { maxAliasCount: 100 })).toBe("parsed");
+    expect(outcome(merged(20), { maxAliasCount: 100 })).toBe(refused);
+    expect(outcome(merged(20), { maxAliasCount: -1 })).toBe("parsed");
+  });
+});
 
 describe("plain scalar whitespace handling", () => {
   test("internal whitespace runs are preserved exactly", () => {

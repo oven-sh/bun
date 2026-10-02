@@ -5864,10 +5864,6 @@ impl read_file::ReadFileToJs for ToFormDataWithBytesFn {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// get / fromJSMove / fromJSClone / fromJSWithoutDeferGC
-// ──────────────────────────────────────────────────────────────────────────
-
-// ──────────────────────────────────────────────────────────────────────────
 // Core constructors / JS bridging (init_with_store / to_js /
 // find_or_create_file_from_path). These are referenced by `Bun.file` /
 // `Bun.stdin` / `Bun.stdout` / `Bun.stderr` callers in BunObject /

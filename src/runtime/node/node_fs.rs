@@ -7409,8 +7409,7 @@ impl NodeFS {
         if PREALLOCATE_SUPPORTED && buf.len() >= PREALLOCATE_LENGTH {
             'preallocate: {
                 let is_path = matches!(args.file, PathOrFileDescriptor::Path(_));
-                // An O_APPEND write lands at the end of the file, wherever the
-                // cursor is, so a reservation at the cursor is not used.
+                // An O_APPEND write lands at EOF, not at the cursor.
                 let appends = if is_path {
                     (args.flag.as_int() & sys::O::APPEND) != 0
                 } else {

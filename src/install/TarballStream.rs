@@ -591,10 +591,8 @@ impl TarballStream {
                     Phase::WantData => {
                         let mut offset: i64 = 0;
                         let Some(block) = archive.next(&mut offset) else {
-                            // End of this entry's data. libarchive sets the
-                            // offset to the entry's real size, which is past
-                            // the last data block when the entry ends in a
-                            // sparse hole.
+                            // End of this entry's data. The offset is now the
+                            // entry's real size, past any trailing sparse hole.
                             (*this).entry_final_offset = (*this).entry_final_offset.max(offset);
                             (*this).close_output_file();
                             (*this).phase = Phase::WantHeader;

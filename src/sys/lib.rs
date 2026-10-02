@@ -7300,13 +7300,9 @@ pub fn write_nowait(fd: Fd, buf: &[u8]) -> Maybe<Option<usize>> {
     }
 }
 
-/// Reserve blocks for a write of `len` bytes at `offset`. Best-effort, the
-/// result is discarded. No-op outside Linux.
-///
-/// `FALLOC_FL_KEEP_SIZE` leaves the visible file size to the write that
-/// follows. Without it, `fallocate` grows a shorter file to `offset + len`,
-/// and a write on an `O_APPEND` fd (`bun x.js >> log`) lands after the grown
-/// end, behind a hole of NUL bytes.
+/// Reserve blocks for `len` bytes at `offset`. Best-effort, Linux only.
+/// `FALLOC_FL_KEEP_SIZE` leaves the file size to the write that follows, so
+/// an `O_APPEND` write lands at the real end and not after a grown one.
 pub fn preallocate_file(
     fd: FdNative,
     offset: i64,

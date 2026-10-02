@@ -537,6 +537,7 @@ impl Program {
             came_full_circle: false,
             left_a_circle: false,
             cycles: 0,
+            lowest_taint: usize::MAX,
             depth: 0,
             contextual: Vec::new(),
             inference: Vec::new(),
@@ -646,6 +647,12 @@ impl Program {
                 .unwrap_or(u64::MAX),
         }
     }
+}
+
+/// See `Checker::begin_taint_scope`.
+struct TaintScope {
+    outer: usize,
+    depth: usize,
 }
 
 /// A question that may come back to itself.
@@ -760,6 +767,8 @@ pub struct Checker<'p> {
     left_a_circle: bool,
     /// How many questions have come back to themselves.
     cycles: u64,
+    /// The lowest index given to `mark_tainted_from` since the innermost `begin_taint_scope`.
+    lowest_taint: usize,
     depth: usize,
     /// Expressions that are being checked against a type somebody pushed, innermost last.
     contextual: Vec<(FileId, ExprId, TypeId)>,
@@ -1722,9 +1731,29 @@ impl<'p> Checker<'p> {
 
     /// The answers to the questions from `stack[from]` up do not hold whoever asks.
     fn mark_tainted_from(&mut self, from: usize) {
+        self.lowest_taint = self.lowest_taint.min(from);
         for frame in &mut self.frames[from..] {
             frame.tainted = true;
         }
+    }
+
+    /// Begins a computation that is not a query on `stack` but whose result is cached, such as a type comparison.
+    #[inline]
+    fn begin_taint_scope(&mut self) -> TaintScope {
+        TaintScope {
+            outer: std::mem::replace(&mut self.lowest_taint, usize::MAX),
+            depth: self.frames.len(),
+        }
+    }
+
+    /// Whether the result computed since `scope` began depends on a query that is still open, so that it must not be cached for others.
+    /// The computation counts as a frame on top of those open when it began. A cycle among queries that were opened and closed
+    /// meanwhile taints only frames above that one: those queries have their final answers, and so has the computation.
+    #[inline]
+    fn end_taint_scope(&mut self, scope: TaintScope) -> bool {
+        let lowest = self.lowest_taint;
+        self.lowest_taint = lowest.min(scope.outer);
+        lowest <= scope.depth
     }
 
     fn is_innermost_tainted(&self) -> bool {

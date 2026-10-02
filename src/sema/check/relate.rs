@@ -2667,7 +2667,7 @@ impl<'p> Checker<'p> {
         if !was_computing {
             self.resolution_start = self.stack.len();
         }
-        let cycles_before = self.cycles;
+        let taint_scope = self.begin_taint_scope();
         let flags = self.files().flags(sym);
         let is_alias = flags.contains(SymFlags::TYPE_ALIAS)
             && !flags.intersects(SymFlags::CLASS | SymFlags::INTERFACE);
@@ -2744,15 +2744,16 @@ impl<'p> Checker<'p> {
         self.resolution_start = resolution_start;
         self.variances_in_progress.pop();
         let variances: Arc<[u8]> = variances.into();
+        let is_tainted = self.end_taint_scope(taint_scope);
         if self.trace_slow_relations {
             eprintln!(
                 "VARIANCE {} {:?} kept {}",
                 self.files().atoms.text(self.files().symbol(sym).name),
                 variances,
-                self.cycles == cycles_before
+                !is_tainted
             );
         }
-        if self.cycles == cycles_before {
+        if !is_tainted {
             self.p.variances.insert(sym, variances)
         } else {
             variances
@@ -3877,8 +3878,7 @@ impl<'p> Checker<'p> {
             return Ternary::FALSE;
         }
         let maybe_start = r.maybe_keys.len();
-        // What is found out from here on holds for others as long as the resolver does not run into itself meanwhile.
-        let cycles_before = self.cycles;
+        let taint_scope = self.begin_taint_scope();
         let events_before = self.deep_events;
         r.maybe_keys.push(key);
         let save_expanding = r.expanding;
@@ -3906,6 +3906,7 @@ impl<'p> Checker<'p> {
         } else {
             self.structured_type_related_to(r, source, sd, target, td, state)
         };
+        let is_tainted = self.end_taint_scope(taint_scope);
         let propagating = self.reliability;
         self.reliability |= save_reliability;
         if recursion & REC_SOURCE != 0 {
@@ -3935,7 +3936,7 @@ impl<'p> Checker<'p> {
         }
         // tsgo reports an instantiation limit at the node that is current when the comparison is first made. A comparison that hit one
         // that could not be reported is made again, so that `check_excessive_depth` comes to the limit.
-        let is_cacheable = self.cycles == cycles_before && self.unreported_event <= events_before;
+        let is_cacheable = !is_tainted && self.unreported_event <= events_before;
         if result.holds() {
             if result == Ternary::TRUE || r.source_stack.is_empty() && r.target_stack.is_empty() {
                 // What held on assumptions holds now that there are none left. What is not known stays so.

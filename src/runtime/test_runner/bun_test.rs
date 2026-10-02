@@ -1744,9 +1744,7 @@ pub(crate) struct DescribeScope {
 }
 
 impl Drop for DescribeScope {
-    /// Children are moved onto a worklist and dropped one at a time. Letting `entries` drop
-    /// in place would recurse once per `describe()` level, and that depth comes straight
-    /// from the test file.
+    /// Iterative: the default drop recurses once per nested `describe()`, an unbounded depth.
     fn drop(&mut self) {
         let mut pending: Vec<TestScheduleEntry> = core::mem::take(&mut self.entries);
         while let Some(entry) = pending.pop() {

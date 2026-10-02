@@ -1808,9 +1808,7 @@ unsafe fn retroactively_report_discovered_tests(
 
     let mut max_id: i32 = next_test_id;
 
-    // Report all discovered tests in pre-order starting from the root scope. The walk keeps
-    // its own stack of (unreported children, parent id) instead of recursing: the describe()
-    // nesting depth comes straight from the test file.
+    // Explicit stack, not recursion: describe() nesting depth is unbounded user input.
     let mut open: Vec<(core::slice::IterMut<'_, TestScheduleEntry>, i32)> =
         vec![(active_file.collection.root_scope.entries.iter_mut(), -1)];
     while let Some((children, parent_id)) = open.last_mut() {
@@ -1823,8 +1821,7 @@ unsafe fn retroactively_report_discovered_tests(
             TestScheduleEntry::Describe(describe) => {
                 if describe.base.test_id_for_debugger == 0 {
                     max_id += 1;
-                    // Assign the ID so start/end events will fire during
-                    // execution.
+                    // Assign the ID so start/end events will fire during execution.
                     describe.base.test_id_for_debugger = max_id;
                     let name = bun_core::String::from_bytes(
                         describe.base.name.as_deref().unwrap_or(b"(unnamed)"),
@@ -1839,8 +1836,6 @@ unsafe fn retroactively_report_discovered_tests(
                         describe.base.line_no as i32,
                     );
                 }
-                // Report this describe's children (with it as their parent) before its
-                // next sibling. A describe that already had an ID keeps it.
                 let describe_id = describe.base.test_id_for_debugger;
                 open.push((describe.entries.iter_mut(), describe_id));
             }

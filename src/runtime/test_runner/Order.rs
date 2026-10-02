@@ -68,9 +68,7 @@ impl Order {
         Ok(AllOrderResult { start, end })
     }
 
-    /// Schedules `root` and everything nested inside it. The walk keeps its own stack of
-    /// open describe scopes instead of recursing: the nesting depth comes straight from the
-    /// test file, so one native frame per `describe()` level can exhaust the thread stack.
+    /// Explicit stack, not recursion: `describe()` nesting depth is unbounded user input.
     pub(crate) fn generate_order_describe(&mut self, root: &mut DescribeScope) -> JsResult<()> {
         let mut open: Vec<OpenDescribe<'_>> = Vec::new();
         if let Some(frame) = self.enter_describe(root)? {
@@ -88,7 +86,6 @@ impl Order {
             }
             match entry {
                 TestScheduleEntry::Describe(describe) => {
-                    // A child is scheduled completely, afterAll included, before its next sibling.
                     if let Some(child) = self.enter_describe(describe)? {
                         open.push(child);
                     }
@@ -101,8 +98,6 @@ impl Order {
         Ok(())
     }
 
-    /// Schedules `current`'s beforeAll hooks and shuffles its children. Returns `None` for a
-    /// describe scope whose callback threw: nothing inside it is scheduled.
     fn enter_describe<'a>(
         &mut self,
         current: &'a mut DescribeScope,
@@ -133,8 +128,6 @@ impl Order {
         }))
     }
 
-    /// Runs once every child of the scope has been scheduled: points its beforeAll failures
-    /// at the first afterAll, then schedules the afterAll hooks.
     fn exit_describe(&mut self, frame: &OpenDescribe<'_>) -> JsResult<()> {
         // update skip_to values for beforeAll to skip to the first afterAll
         frame.beforeall_order.set_failure_skip_to(self);
@@ -274,7 +267,6 @@ impl Order {
 
 /// A describe scope whose children `generate_order_describe` is still scheduling.
 struct OpenDescribe<'a> {
-    /// The children not yet scheduled.
     children: core::slice::IterMut<'a, TestScheduleEntry>,
     only: Only,
     use_hooks: bool,

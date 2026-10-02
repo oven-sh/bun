@@ -813,11 +813,11 @@ impl BunxCommand {
             };
         // Cloned to avoid borrowck overlap when PATH is reassigned below.
 
-        // `BUN_WHICH_IGNORE_CWD` is set only for the node-gyp shim that
-        // `bun install` puts on a lifecycle script's PATH. That PATH already
-        // has the order the script must keep, so take the `node_modules/.bin`
-        // walk that was prepended above back out, for the lookup below and for
-        // the process that is spawned.
+        // `bun install` sets `BUN_WHICH_IGNORE_CWD` for a lifecycle script, to
+        // the directory of its `node-gyp` shim. The script's PATH already has
+        // the order it must keep, so take the `node_modules/.bin` walk that
+        // was prepended above back out, for the lookup below and for the
+        // process that is spawned.
         if !ignore_cwd.is_empty() {
             let mut kept: Vec<u8> = Vec::with_capacity(path.len());
             for entry in strings::tokenize(&local_bin_dirs, &[DELIMITER]) {
@@ -921,26 +921,27 @@ impl BunxCommand {
             }
 
             // Remove the cwd passed through BUN_WHICH_IGNORE_CWD from path. This prevents temp node-gyp script from finding and running itself
+            //
+            // The shim is `node-gyp` at its place in PATH. The entries behind
+            // it are the `node_modules/.bin` directories that any installed
+            // package links into, and they do not outrank it.
+            let stop_at_shim = initial_bin_name == b"node-gyp";
             let mut new_path: Vec<u8> = Vec::with_capacity(path.len());
-            let mut path_iter = strings::tokenize(&path, &[DELIMITER]);
-            if let Some(segment) = path_iter.next() {
-                if !strings::eql_long(
+            for segment in strings::tokenize(&path, &[DELIMITER]) {
+                if strings::eql_long(
                     strings::without_trailing_slash(segment),
                     strings::without_trailing_slash(&ignore_cwd),
                     true,
                 ) {
-                    new_path.extend_from_slice(segment);
+                    if stop_at_shim {
+                        break;
+                    }
+                    continue;
                 }
-            }
-            while let Some(segment) = path_iter.next() {
-                if !strings::eql_long(
-                    strings::without_trailing_slash(segment),
-                    strings::without_trailing_slash(&ignore_cwd),
-                    true,
-                ) {
+                if !new_path.is_empty() {
                     new_path.push(DELIMITER);
-                    new_path.extend_from_slice(segment);
                 }
+                new_path.extend_from_slice(segment);
             }
 
             break 'brk new_path;

@@ -18,7 +18,6 @@ use bun_install::{
     self as install, DEFAULT_TRUSTED_DEPENDENCIES_LIST, DependencyID, LifecycleScriptSubprocess,
     PackageID, PackageManager, Resolution, ResolutionTag,
 };
-use bun_install_types::NodeLinker::NodeLinker;
 use bun_paths::AutoAbsPath;
 
 use crate::cli::Command;
@@ -260,10 +259,8 @@ impl TrustCommand {
         // `pm`/`pm.lockfile` access in between goes through `pm_raw`.
         let pm_raw: *mut PackageManager = pm;
         let log_level = pm.options.log_level;
-        let configured_linker = pm.options.node_linker;
         let load_lockfile = pm.load_lockfile_from_cwd::<true>();
         PackageManagerCommand::handle_load_lockfile_errors_for(&load_lockfile, log_level, "trust");
-        let isolated = load_lockfile.node_linker(configured_linker) == NodeLinker::Isolated;
         // `update_lockfile_if_needed` consumes `LoadResult` but we
         // need it again for `save_to_disk`; inline the body (it only flips
         // `meta.has_install_script` when `packages_need_update`).
@@ -381,12 +378,12 @@ impl TrustCommand {
 
                 let owner = match resolution.tag {
                     ResolutionTag::Root | ResolutionTag::Workspace => ScriptsOwner::Project,
-                    _ if isolated => ScriptsOwner::StoreEntry,
-                    _ => ScriptsOwner::Hoisted {
+                    _ => PackageManager::installed_dependency_owner(
+                        node_modules_path.slice_z(),
                         package_id,
-                        tree_id: node_modules.tree_id,
-                        dependency_id: dep_id,
-                    },
+                        node_modules.tree_id,
+                        dep_id,
+                    ),
                 };
 
                 // SAFETY: `log` derived from `pm.log`; single-threaded CLI.

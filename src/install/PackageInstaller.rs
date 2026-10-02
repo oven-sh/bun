@@ -482,10 +482,11 @@ impl OwnerBinDir {
     }
 }
 
-/// Links the bins of `package_id`'s declared dependencies that are installed
-/// in a tree above it into `<owner_dir>/node_modules/.bin`. A lifecycle script
-/// of the package then finds its own tools before any `.bin` directory that
-/// other packages link into. Names already in that directory are kept.
+/// Links `package_id`'s own bins, and the bins of its declared dependencies
+/// that are installed in a tree above it, into `<owner_dir>/node_modules/.bin`.
+/// A lifecycle script of the package then finds its own tools before any
+/// `.bin` directory that other packages link into. Names already in that
+/// directory are kept.
 #[cold]
 pub(crate) fn link_owner_dependency_bins(
     manager: &PackageManager,
@@ -551,22 +552,22 @@ pub(crate) fn link_owner_dependency_bins(
     let mut real_buf = bun_paths::path_buffer_pool::get();
 
     let owner_deps = pkgs.items_dependencies()[package_id as usize];
-    for edge in owner_deps.begin()..owner_deps.end() {
-        let dep_package_id = resolutions[edge as usize];
+    let declared = (owner_deps.begin()..owner_deps.end()).filter_map(|edge| {
+        let (dep_tree_id, placed_dep_id) = resolve(deps[edge as usize].name_hash)?;
+        // The nested tree's own bin pass already linked it.
+        (Some(dep_tree_id) != nested_tree_id
+            && resolutions[placed_dep_id as usize] == resolutions[edge as usize])
+            .then_some((dep_tree_id, placed_dep_id))
+    });
+    // The package's own bins first: the root `.bin` can hold another package's
+    // bin under the same name.
+    for (dep_tree_id, placed_dep_id) in core::iter::once((tree_id, dependency_id)).chain(declared) {
+        let dep_package_id = resolutions[placed_dep_id as usize];
         if dep_package_id as usize >= bins.len() {
             continue;
         }
         let bin = bins[dep_package_id as usize];
         if bin.tag == bin::Tag::None {
-            continue;
-        }
-        let Some((dep_tree_id, placed_dep_id)) = resolve(deps[edge as usize].name_hash) else {
-            continue;
-        };
-        // The nested tree's own bin pass already linked it.
-        if Some(dep_tree_id) == nested_tree_id
-            || resolutions[placed_dep_id as usize] != dep_package_id
-        {
             continue;
         }
 
@@ -830,10 +831,6 @@ impl<'a> PackageInstaller<'a> {
         // `defer node_modules_path.deinit()` — AbsPath impls Drop.
 
         let pkgs = lockfile.packages.slice();
-        let pkg_name_hashes = pkgs.items_name_hash();
-        let pkg_metas = pkgs.items_meta();
-        let pkg_resolutions_lists = pkgs.items_resolutions();
-        let pkg_resolutions_buffer = lockfile.buffers.resolutions.as_slice();
         let pkg_names = pkgs.items_name();
 
         let completed_trees = &self.completed_trees;
@@ -854,80 +851,31 @@ impl<'a> PackageInstaller<'a> {
             let mut target_package_name = package_name_;
             let mut can_retry_without_native_binlink_optimization = false;
             let mut target_node_modules_path_opt: Option<AbsPath> = None;
-            let mut defer_this_bin = false;
             // `defer if (target_node_modules_path_opt) |*path| path.deinit()` — Option<AbsPath> drops.
 
-            'native_binlink_optimization: {
-                if !manager.postinstall_optimizer.is_native_binlink_enabled() {
-                    break 'native_binlink_optimization;
-                }
-                // Check for native binlink optimization
-                let name_hash = pkg_name_hashes[package_id as usize];
-                if let Some(optimizer) =
-                    manager
-                        .postinstall_optimizer
-                        .get(&postinstall_optimizer::PkgInfo {
-                            name_hash,
-                            ..Default::default()
-                        })
+            if let Some((target_tree_id, replacement_pkg_id)) =
+                native_binlink_target(manager, lockfile, tree_id, alias, package_id)
+            {
+                if target_tree_id != tree_id
+                    && can_defer
+                    && !completed_trees.is_set(target_tree_id as usize)
                 {
-                    match optimizer {
-                        PostinstallOptimizer::NativeBinlink => {
-                            let target_cpu = manager.options.cpu;
-                            let target_os = manager.options.os;
-                            if let Some(replacement_pkg_id) =
-                                PostinstallOptimizer::get_native_binlink_replacement_package_id(
-                                    pkg_resolutions_lists[package_id as usize]
-                                        .get(pkg_resolutions_buffer),
-                                    pkg_metas,
-                                    target_cpu,
-                                    target_os,
-                                )
-                            {
-                                let Some(target_tree_id) = find_native_binlink_target_tree(
-                                    lockfile.buffers.trees.as_slice(),
-                                    lockfile.buffers.hoisted_dependencies.as_slice(),
-                                    lockfile.buffers.resolutions.as_slice(),
-                                    lockfile.buffers.dependencies.as_slice(),
-                                    string_buf,
-                                    tree_id,
-                                    alias,
-                                    replacement_pkg_id,
-                                ) else {
-                                    break 'native_binlink_optimization;
-                                };
-
-                                if target_tree_id != tree_id {
-                                    if can_defer && !completed_trees.is_set(target_tree_id as usize)
-                                    {
-                                        // Platform package's tree isn't installed
-                                        // yet: link the package's own bin now and
-                                        // re-queue for `link_remaining_bins`.
-                                        defer_this_bin = true;
-                                        break 'native_binlink_optimization;
-                                    }
-                                    target_node_modules_path_opt = Some(abs_node_modules_path(
-                                        lockfile,
-                                        string_buf,
-                                        target_tree_id,
-                                    ));
-                                }
-
-                                let replacement_name =
-                                    pkg_names[replacement_pkg_id as usize].slice(string_buf);
-                                target_package_name =
-                                    strings::StringOrTinyString::init(replacement_name);
-                                can_retry_without_native_binlink_optimization = true;
-                            }
-                        }
-                        PostinstallOptimizer::Ignore => {}
+                    // Platform package's tree isn't installed yet: link the
+                    // package's own bin now and re-queue for
+                    // `link_remaining_bins`.
+                    deferred.push(dep_id);
+                } else {
+                    if target_tree_id != tree_id {
+                        target_node_modules_path_opt =
+                            Some(abs_node_modules_path(lockfile, string_buf, target_tree_id));
                     }
+                    target_package_name = strings::StringOrTinyString::init(
+                        pkg_names[replacement_pkg_id as usize].slice(string_buf),
+                    );
+                    can_retry_without_native_binlink_optimization = true;
                 }
             }
 
-            if defer_this_bin {
-                deferred.push(dep_id);
-            }
             // globally linked packages shouls always belong to the root
             // tree (0).
             let global = if !manager.options.global || tree_id != 0 {

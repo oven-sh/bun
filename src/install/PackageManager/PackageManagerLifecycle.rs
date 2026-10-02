@@ -24,7 +24,7 @@ use crate::lockfile_real::package::scripts::{List as ScriptsList, Owner as Scrip
 use crate::package_manager_real::Command;
 use crate::resolution_real::Tag as ResolutionTag;
 use bun_install::lockfile::{Lockfile, Package};
-use bun_install::{PackageID, PackageManager, PreinstallState, invalid_package_id};
+use bun_install::{DependencyID, PackageID, PackageManager, PreinstallState, invalid_package_id};
 
 impl PackageManager {
     pub(crate) fn ensure_preinstall_state_list_capacity(&mut self, count: usize) {
@@ -453,20 +453,38 @@ impl PackageManager {
 
     /// `bun run`, `npm run` and bunx put every ancestor `node_modules/.bin` at
     /// the front of the PATH that a `bun install` they start inherits. Takes
-    /// those entries out of PATH once and returns them, so that
-    /// `lifecycle_script_path` can put them behind the user's PATH.
+    /// the entries for the install root, and for the directories above and
+    /// inside it, out of PATH once and returns them, so that
+    /// `lifecycle_script_path` can put them behind the user's PATH. Any other
+    /// `node_modules/.bin` on the user's PATH stays where the user put it.
     fn demote_inherited_bin_dirs(&mut self) -> Result<&'static [u8], crate::Error> {
         static DEMOTED: std::sync::OnceLock<Box<[u8]>> = std::sync::OnceLock::new();
         if let Some(demoted) = DEMOTED.get() {
             return Ok(demoted);
         }
 
+        let install_root = FileSystem::instance().top_level_dir();
+        let is_install_bin_dir = |entry: &[u8]| {
+            is_node_modules_bin_dir(entry)
+                && bun_paths::dirname(strings::without_trailing_slash(entry))
+                    .and_then(bun_paths::dirname)
+                    .is_some_and(|dir| {
+                        !matches!(
+                            is_parent_or_equal(dir, install_root),
+                            ParentEqual::Unrelated
+                        ) || !matches!(
+                            is_parent_or_equal(install_root, dir),
+                            ParentEqual::Unrelated
+                        )
+                    })
+        };
+
         let inherited = self.env().get(b"PATH").unwrap_or(b"");
         let mut kept: Vec<u8> = Vec::with_capacity(inherited.len());
         let mut kept_any = false;
         let mut demoted: Vec<u8> = Vec::new();
         for entry in strings::split(inherited, &[DELIMITER]) {
-            if is_node_modules_bin_dir(entry) {
+            if is_install_bin_dir(entry) {
                 if !demoted.is_empty() {
                     demoted.push(DELIMITER);
                 }
@@ -483,6 +501,25 @@ impl PackageManager {
             self.env_mut().map.put(b"PATH", &kept)?;
         }
         Ok(DEMOTED.get_or_init(|| demoted.into_boxed_slice()))
+    }
+
+    /// The owner of a dependency that is installed at `dir`, for a caller that
+    /// does not know which linker installed it (`bun pm trust`).
+    pub fn installed_dependency_owner(
+        dir: &ZStr,
+        package_id: PackageID,
+        tree_id: bun_install::lockfile::tree::Id,
+        dependency_id: DependencyID,
+    ) -> ScriptsOwner {
+        if store_entry_node_modules(dir).is_some() {
+            ScriptsOwner::StoreEntry
+        } else {
+            ScriptsOwner::Hoisted {
+                package_id,
+                tree_id,
+                dependency_id,
+            }
+        }
     }
 
     pub(crate) fn find_trusted_dependencies_from_update_requests(

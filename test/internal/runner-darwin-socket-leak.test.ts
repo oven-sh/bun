@@ -1,17 +1,18 @@
 /**
- * scripts/runner.node.mjs calls rebootDarwinAgentIfOutOfSockets() (scripts/utils.mjs) before
- * it runs tests. macOS leaks kernel TCP sockets from job to job on the bare-metal agents, and
- * past a limit the host can no longer run the network tests, so the job reboots the host and
- * lets Buildkite retry it on another agent. A reboot is only safe on those agents, only where
- * the job is retried, and only for a leak: sockets the previous job just closed leave the
- * count on their own.
+ * scripts/runner.node.ts calls checkDarwinAgentSockets() (scripts/agent.ts) before it
+ * runs tests. macOS leaks kernel TCP sockets from job to job on the bare-metal agents. The job
+ * prints the count, and past a limit macOS 26 can no longer run the network tests, so the job
+ * can reboot the machine and let Buildkite retry it on another agent. A reboot is only safe
+ * when it is turned on, on those agents, where the job is retried, and for a leak: sockets the
+ * previous job just closed leave the count on their own.
  */
 import { describe, expect, spyOn, test } from "bun:test";
 import {
+  checkDarwinAgentSockets,
   getDarwinLeakedSocketLimit,
   ignoreTerminationSignals,
-  rebootDarwinAgentIfOutOfSockets,
-} from "../../scripts/utils.mjs";
+  type DarwinAgentHost,
+} from "../../scripts/agent.ts";
 
 const GiB = 2 ** 30;
 
@@ -20,65 +21,83 @@ const bareMetalAgent = {
   BUILDKITE_AGENT_META_DATA_EPHEMERAL: "false",
   BUILDKITE_AGENT_META_DATA_RELEASE_TIER: "latest",
 };
+const rebootTurnedOn = { ...bareMetalAgent, BUN_RUNNER_REBOOT_DARWIN_AGENT: "1" };
 
-/** Reads return `counts` in order, then the last one forever. Every side effect lands in `calls`. */
-function fakeHost(options: {
+/** From `netstat -s -p tcp` on darwin-arm64-hardtack. */
+const netstat = `tcp:
+\t4234664 connection requests
+\t2653037 connection accepts
+\t605109 retransmit timeouts
+\t\t287 connections dropped by rexmit timeout
+`;
+
+interface Scenario {
   os?: string;
   release?: string;
   env?: Record<string, string | undefined>;
   totalMemory?: number;
+  uptime?: number;
+  /** What `sysctl -n net.inet.tcp.pcbcount` prints: these in order, then the last one forever. */
   counts: (number | undefined)[];
   rebootStarts?: boolean;
   loggedInUsers?: number | string;
-}) {
-  const { os = "darwin", release = "25.6.0", env = bareMetalAgent, totalMemory = 8 * GiB } = options;
-  const { counts, rebootStarts = true, loggedInUsers = 0 } = options;
-  const calls: string[] = [];
-  let reads = 0;
-  return {
-    calls,
-    host: {
-      hostname: "darwin-arm64-hardtack",
-      os,
-      release,
-      env,
-      totalMemory,
-      readPcbCount: () => counts[Math.min(reads++, counts.length - 1)],
-      loggedInUsers: () => loggedInUsers,
-      reboot: () => (calls.push("reboot"), rebootStarts),
-      annotate: (content: string) => void calls.push(`annotate ${content.trim()}`),
-      ignoreSignals: () => (calls.push("ignore signals"), () => void calls.push("restore signals")),
-      sleep: async (ms: number) => void calls.push(`sleep ${ms}`),
-    },
-  };
 }
 
-async function run(options: Parameters<typeof fakeHost>[0]) {
-  const { host, calls } = fakeHost(options);
-  const silenced = (["log", "warn", "group"] as const).map(method =>
-    spyOn(console, method).mockImplementation(() => {}),
-  );
+/** Runs the check on a fake machine. `calls` is every side effect in order, `printed` the job log. */
+async function run(scenario: Scenario) {
+  const { os = "darwin", release = "25.6.0", env = rebootTurnedOn, totalMemory = 8 * GiB, uptime = 79_000 } = scenario;
+  const { counts, rebootStarts = true, loggedInUsers = 0 } = scenario;
+  const calls: string[] = [];
+  const printed: string[] = [];
+  let reads = 0;
+  const host: DarwinAgentHost = {
+    hostname: "darwin-arm64-hardtack",
+    os,
+    release,
+    env,
+    totalMemory,
+    uptime,
+    command(command) {
+      if (command[0] === "sysctl") {
+        const count = counts[Math.min(reads++, counts.length - 1)];
+        return count === undefined ? undefined : `${count}\n`;
+      }
+      if (command[0] === "netstat") {
+        return netstat;
+      }
+      calls.push(command.join(" "));
+      return rebootStarts ? "" : undefined;
+    },
+    loggedInUsers: () => loggedInUsers,
+    annotate: content => void calls.push(`annotate ${content.trim()}`),
+    group: () => {},
+    ignoreSignals: () => (calls.push("ignore signals"), () => void calls.push("restore signals")),
+    sleep: async ms => void calls.push(`sleep ${ms}`),
+  };
+  const print = (...args: unknown[]) => void printed.push(args.join(" "));
+  const spies = [spyOn(console, "log").mockImplementation(print), spyOn(console, "warn").mockImplementation(print)];
   try {
-    await rebootDarwinAgentIfOutOfSockets(host);
+    await checkDarwinAgentSockets(host);
   } finally {
-    for (const spy of silenced) spy.mockRestore();
+    for (const spy of spies) spy.mockRestore();
   }
-  return calls;
+  return { calls, printed };
 }
 
 /** What darwin-arm64-hardtack (8 GB) held when every job on it failed. */
 const leaked = 64_728;
-const overLimit = "annotate `darwin-arm64-hardtack` holds 64728 leaked kernel TCP sockets (limit 40000) and ";
-const notRebooted =
-  overLimit +
-  "did not reboot when a test job asked it to. Its network fails at about 1.6 times the limit. Reboot it by hand.";
-const someoneLoggedIn =
-  overLimit +
-  "was not rebooted because someone is logged in. Its network fails at about 1.6 times the limit. " +
-  "It needs a reboot when they are done.";
+const counters = (count: number, hours = "21.9") =>
+  `Up ${hours} h. TCP sockets held by the kernel: ${count}. ` +
+  "TCP since boot: 4234664 connection requests, 605109 retransmit timeouts.";
+const overLimit =
+  "`darwin-arm64-hardtack` holds 64728 leaked kernel TCP sockets (limit 20075). " +
+  "macOS drops TCP data on it when the tests take the count past 65075.";
+const settled = Array(9).fill("sleep 5000");
 
-test("the limit is half of the 10,000 sockets per GiB that macOS can leak", () => {
-  expect([8, 16, 64].map(gib => getDarwinLeakedSocketLimit(gib * GiB))).toEqual([40_000, 80_000, 320_000]);
+test("the limit leaves room for 45,000 sockets under 80% of the TCP memory cap", () => {
+  // The cap is 1/32 of RAM at 3.3 KB per socket: 81,349 sockets on 8 GiB. socket() failed at about 81,300.
+  expect([8, 16].map(gib => getDarwinLeakedSocketLimit(gib * GiB))).toEqual([20_075, 85_150]);
+  expect(getDarwinLeakedSocketLimit(4 * GiB)).toBeLessThan(0);
 });
 
 test("ignoreTerminationSignals() silences the listeners a process had and then puts them back", () => {
@@ -104,54 +123,97 @@ test("ignoreTerminationSignals() silences the listeners a process had and then p
   expect(signals.map(signal => process.listenerCount(signal))).toEqual(before);
 });
 
-describe("rebootDarwinAgentIfOutOfSockets", () => {
-  test.each([
+describe("checkDarwinAgentSockets", () => {
+  test.each<[string, Partial<Scenario>]>([
     ["a Linux agent", { os: "linux", release: "6.8.0-1021-aws" }],
-    ["macOS 15, whose kernel has no cap on TCP memory", { release: "24.6.0" }],
-    ["a macOS machine that is not a Buildkite agent", { env: { ...bareMetalAgent, BUILDKITE: undefined } }],
-    ["a tart agent, which has no ephemeral tag", { env: { BUILDKITE: "true" } }],
-    ["an ephemeral agent", { env: { ...bareMetalAgent, BUILDKITE_AGENT_META_DATA_EPHEMERAL: "true" } }],
-    [
-      "the beta tier, whose jobs are not retried",
-      { env: { ...bareMetalAgent, BUILDKITE_AGENT_META_DATA_RELEASE_TIER: "beta" } },
-    ],
-  ])("leaves %s alone", async (_, where) => {
-    expect(await run({ ...where, counts: [leaked] })).toEqual([]);
+    ["a macOS machine that is not a Buildkite agent", { env: { ...rebootTurnedOn, BUILDKITE: undefined } }],
+    ["a tart agent, which has no ephemeral tag", { env: { BUILDKITE: "true", BUN_RUNNER_REBOOT_DARWIN_AGENT: "1" } }],
+    ["an ephemeral agent", { env: { ...rebootTurnedOn, BUILDKITE_AGENT_META_DATA_EPHEMERAL: "true" } }],
+  ])("does not look at %s", async (_, where) => {
+    expect(await run({ ...where, counts: [leaked] })).toEqual({ calls: [], printed: [] });
   });
 
-  test("runs the tests on a bare-metal macOS agent under its limit", async () => {
-    expect(await run({ counts: [39_999] })).toEqual([]);
-    expect(await run({ counts: [leaked], totalMemory: 16 * GiB })).toEqual([]);
+  test.each<[string, Partial<Scenario>]>([
+    ["macOS 14, whose kernel has no cap on TCP memory", { release: "23.6.0", totalMemory: 64 * GiB }],
+    [
+      "the beta tier, whose jobs are not retried",
+      { env: { ...rebootTurnedOn, BUILDKITE_AGENT_META_DATA_RELEASE_TIER: "beta" } },
+    ],
+    ["a machine too small for a reboot to help", { totalMemory: 4 * GiB }],
+  ])("prints the counters and does nothing else on %s", async (_, where) => {
+    expect(await run({ ...where, counts: [leaked] })).toEqual({ calls: [], printed: [counters(leaked)] });
+  });
+
+  test("runs the tests on a bare-metal macOS 26 agent under its limit", async () => {
+    expect(await run({ counts: [20_074] })).toEqual({ calls: [], printed: [counters(20_074)] });
+    expect(await run({ counts: [leaked], totalMemory: 16 * GiB })).toEqual({ calls: [], printed: [counters(leaked)] });
   });
 
   test("runs the tests when sysctl has no answer", async () => {
-    expect(await run({ counts: [undefined] })).toEqual([]);
+    expect(await run({ counts: [undefined] })).toEqual({ calls: [], printed: [] });
+    expect((await run({ counts: [leaked, undefined] })).calls).toEqual(["sleep 5000"]);
   });
 
   test("waits for the sockets the previous job closed to leave the count", async () => {
-    expect(await run({ counts: [56_000, 55_500, 30_000] })).toEqual(["sleep 5000", "sleep 5000"]);
+    expect((await run({ counts: [56_000, 55_500, 19_000] })).calls).toEqual(["sleep 5000", "sleep 5000"]);
   });
 
-  test("reboots when the count stays over the limit, and does not exit on SIGTERM while it waits", async () => {
-    const calls = await run({ counts: [leaked] });
-    // 45 seconds outlast the 30 a closed socket is counted for.
-    expect(calls.slice(0, 9)).toEqual(Array(9).fill("sleep 5000"));
+  test("only says that the machine is over its limit when the reboot is not turned on", async () => {
+    // No wait either: the 45 seconds only matter before a reboot.
+    expect(await run({ counts: [leaked], env: bareMetalAgent })).toEqual({
+      calls: [],
+      printed: [
+        counters(leaked),
+        "darwin-arm64-hardtack is over its limit of 20075 leaked kernel TCP sockets (a socket closed in the last " +
+          "30 seconds counts too). A test job reboots such a machine when the job has BUN_RUNNER_REBOOT_DARWIN_AGENT=1.",
+      ],
+    });
+  });
+
+  test("reboots when it is turned on, and does not exit on SIGTERM while it waits", async () => {
+    const { calls } = await run({ counts: [leaked] });
+    // 45 seconds of samples first: they outlast the 30 a closed socket is counted for.
     // Signals are ignored before the shutdown is asked for: no window in which this process
     // exits by itself and the job is recorded as an ordinary failure. The real reboot ends
-    // the process during the sleep. What follows it is the case where the host stayed up.
-    expect(calls.slice(9)).toEqual(["ignore signals", "reboot", "sleep 300000", "restore signals", notRebooted]);
-  });
-
-  test("does not reboot under someone who is logged in, and says so without naming them", async () => {
-    const who = "1 currently logged in users:\n- administrator on ttys001 from 100.64.0.7";
-    const calls = await run({ counts: [leaked], loggedInUsers: who });
-    // No "ignore signals" and no "reboot": nothing that cannot be undone happens.
-    expect(calls.slice(9)).toEqual([someoneLoggedIn]);
-    expect(calls.join("\n")).not.toContain("100.64.0.7");
+    // the process during the sleep. What follows it is the case where the machine stayed up.
+    expect(calls).toEqual([
+      ...settled,
+      "ignore signals",
+      "sudo -n shutdown -r now",
+      "sleep 300000",
+      "restore signals",
+      `annotate ${overLimit} It did not reboot when a test job asked it to. Reboot it by hand.`,
+    ]);
   });
 
   test("says so in an annotation, and runs the tests, when the reboot does not start", async () => {
-    const calls = await run({ counts: [leaked], rebootStarts: false });
-    expect(calls.slice(9)).toEqual(["ignore signals", "reboot", "restore signals", notRebooted]);
+    const { calls } = await run({ counts: [leaked], rebootStarts: false });
+    expect(calls).toEqual([
+      ...settled,
+      "ignore signals",
+      "sudo -n shutdown -r now",
+      "restore signals",
+      `annotate ${overLimit} It did not reboot when a test job asked it to. Reboot it by hand.`,
+    ]);
+  });
+
+  test("does not reboot under someone who is logged in, and does not name them in the annotation", async () => {
+    const who = "1 currently logged in users:\n- administrator on ttys001 from 100.64.0.7";
+    const { calls } = await run({ counts: [leaked], loggedInUsers: who });
+    // No "ignore signals" and no shutdown: nothing that cannot be undone happens.
+    expect(calls).toEqual([
+      ...settled,
+      `annotate ${overLimit} It was not rebooted because someone is logged in. It needs a reboot when they are done.`,
+    ]);
+  });
+
+  test("does not reboot a machine that booted less than an hour ago", async () => {
+    // It cannot have leaked this much, so the count or the limit is wrong and every job would reboot it again.
+    const { calls, printed } = await run({ counts: [leaked], uptime: 3599 });
+    expect(calls).toEqual([
+      ...settled,
+      `annotate ${overLimit} It was not rebooted because it booted less than an hour ago. The count or the limit is wrong.`,
+    ]);
+    expect(printed[0]).toBe(counters(leaked, "1.0"));
   });
 });

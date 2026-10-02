@@ -35,7 +35,6 @@ macro_rules! pfmt {
 pub(crate) trait S3CredentialsExt {
     fn guess_region(endpoint: &[u8]) -> &[u8];
     fn guess_bucket(endpoint: &[u8]) -> Option<&[u8]>;
-    #[allow(clippy::too_many_arguments)]
     fn get_credentials_with_options(
         // Takes `&S3Credentials` (not by-value) — `bun_s3_signing::S3Credentials`
         // has a private `ref_count` field and no `Clone`, so callers holding a borrow
@@ -247,7 +246,7 @@ where
 }
 
 #[bun_jsc::JsClass]
-pub struct S3Client {
+pub(crate) struct S3Client {
     pub(crate) credentials: bun_ptr::RefPtr<S3Credentials>,
     pub(crate) options: MultiPartUploadOptions,
     pub(crate) acl: Option<ACL>,

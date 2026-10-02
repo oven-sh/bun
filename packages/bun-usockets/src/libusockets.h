@@ -292,7 +292,12 @@ struct us_bun_verify_error_t {
 };
 
 /* Immutable callback table. ~20 instances total (one per kind), all static
- * const / .rodata. Nullable entries are skipped by dispatch. */
+ * const / .rodata. Nullable entries are skipped by dispatch.
+ *
+ * Whoever holds a socket hears that it is gone exactly once, whoever closed it:
+ * on_close if on_open ran, on_connect_error if the connect never completed,
+ * on_connecting_error for a us_connecting_socket_t. It is already closed then,
+ * and freed after the loop iteration. */
 struct us_socket_vtable_t {
     struct us_socket_t *(*on_open)(us_socket_r, int is_client, char *ip, int ip_length);
     struct us_socket_t *(*on_data)(us_socket_r, char *data, int length);
@@ -338,8 +343,10 @@ void us_socket_group_init(us_socket_group_r group, us_loop_r loop,
  * to free the embedding storage. */
 void us_socket_group_deinit(us_socket_group_r group) nonnull_fn_decl;
 
-/* Close every socket in the group (fires on_close for each). Used by server
- * shutdown. The group itself stays valid. */
+/* Close every socket that is in the group now; each holder hears of it (see
+ * us_socket_vtable_t). What a handler opens into the group meanwhile stays open, so
+ * an owner that frees the group next has made sure none can
+ * (us_socket_group_deinit asserts it). The group itself stays valid. */
 void us_socket_group_close_all(us_socket_group_r group) nonnull_fn_decl;
 /* As above; `also_listeners=0` leaves head_listen_sockets alone (process-exit
  * teardown — listen sockets are owned by a Listener/App that frees them in
@@ -377,6 +384,11 @@ struct us_socket_t *us_socket_tls_feed(us_socket_r s, const char *data, int leng
 /* Send ClientHello after adopt_tls. Separate so the caller can repoint the
  * ext slot before any dispatch can fire. */
 void us_socket_start_tls_handshake(us_socket_r s) nonnull_fn_decl;
+/* Client TLS socket whose rejectUnauthorized policy is on: refuse a bad chain
+ * during the handshake, so the client's own Certificate flight never reaches a
+ * server that fails verification. Must run before the handshake is driven
+ * (on_open, or between adopt_tls and start_tls_handshake). No-op otherwise. */
+void us_socket_set_inline_reject(us_socket_r s) nonnull_fn_decl;
 
 /* ── Listen ───────────────────────────────────────────────────────────────
  * The listener owns: an embedded group for accepted sockets, the SSL_CTX
@@ -408,6 +420,11 @@ void *us_listen_socket_find_server_name_userdata(struct us_listen_socket_t *ls,
 /* Returns an owned reference; the caller must release it. */
 struct ssl_ctx_st *us_listen_socket_find_server_name_ctx(struct us_listen_socket_t *ls,
     const char *hostname_pattern) nonnull_fn_decl;
+/* tls.Server#setSecureContext(): swap the default SSL_CTX used for NEWLY
+ * accepted sockets (SNI-selected contexts are untouched). Up_refs ctx; live
+ * connections keep the previous context alive through their own SSL refs. */
+void us_listen_socket_set_default_ssl_ctx(struct us_listen_socket_t *ls,
+    struct ssl_ctx_st *ctx) __attribute__((nonnull(1, 2)));
 /* Parses a PKCS#12 blob into malloc'd PEM key/cert/ca strings (caller frees);
  * returns 0 with a static *err_reason tag on failure. */
 int us_ssl_parse_pkcs12(const char *data, size_t len, const char *pass,
@@ -432,11 +449,8 @@ void us_ssl_ctx_set_sni_policy(struct ssl_ctx_st *ctx, int request_cert,
 int us_socket_server_name_reject_unauthorized(us_socket_r s);
 int us_ssl_ctx_reject_unauthorized(struct ssl_ctx_st *ctx);
 /* Socket-level SNI resolver, for a server-side socket adopted into TLS with no
- * listen socket behind it. Same contract as the listener resolver: an owned
- * SSL_CTX ref or NULL; *abort_handshake 1 = drop silently, 2 = suspend. */
-typedef struct ssl_ctx_st *(*us_socket_server_name_cb)(struct us_socket_t *socket,
-    const char *hostname, int *abort_handshake);
-void us_socket_on_server_name(us_socket_r s, us_socket_server_name_cb cb);
+ * listen socket behind it: us_dispatch_socket_server_name then resolves. */
+void us_socket_on_server_name(us_socket_r s);
 
 /* ── Connect ──────────────────────────────────────────────────────────────
  * Returns either us_socket_t* (fast path, *is_connecting=1) or
@@ -556,24 +570,15 @@ long us_ssl_ctx_live_count(void);
 /* Appends the certificates in the PEM `content` to `ctx`'s trust store;
  * returns 0 when nothing could be added. */
 int us_ssl_ctx_add_ca_cert(struct ssl_ctx_st *ctx, const char *content);
-/* TLS-over-duplex / named-pipe SSL owners (no us_socket_t): opt an SSL into
- * the parked new-session/keylog queues, then drain them with the pop calls
- * after each SSL_read/SSL_do_handshake stack unwinds. Pop returns the entry
- * length (0 = queue empty); entries are capped at 64 KB (sessions) and
- * 4 KB+1 (keylog lines). */
-void us_ssl_enable_pending_events(struct ssl_st *ssl);
-int us_ssl_pop_pending_session(struct ssl_st *ssl, unsigned char *out, int out_cap);
-int us_ssl_pop_pending_keylog(struct ssl_st *ssl, unsigned char *out, int out_cap);
-/* The resumable session most recently delivered via the new-session callback,
- * or NULL if none. Borrowed; valid until the next NewSessionTicket or SSL_free. */
-struct ssl_session_st *us_ssl_get_new_session(struct ssl_st *ssl);
-/* Per-SSL session sink: each resumable session reaching the new-session
- * callback is SSL_SESSION_up_ref'd and handed to on_new_session (which takes
- * ownership of that reference). on_free(owner) runs once on SSL_free. */
-void us_ssl_set_session_sink(struct ssl_st *ssl, void *owner,
-                             void (*on_new_session)(void *, struct ssl_session_st *),
-                             void (*on_free)(void *));
-void *us_ssl_get_session_sink_owner(struct ssl_st *ssl);
+/* 1 when the verify step of this handshake asked the owner for the server's name. */
+int us_ssl_identity_checked(struct ssl_st *ssl);
+/* For an SSL that no us_socket_t drives: its callbacks go to `wrapper`, which must outlive `ssl`. */
+void us_ssl_set_wrapper(struct ssl_st *ssl, void *wrapper);
+/* `ctx` is the X509_STORE_CTX of a verify callback. */
+void *us_ssl_wrapper_from_verify(void *ctx);
+/* Owner data for us_dispatch_new_session. `on_free(sink)` runs once, on SSL_free. */
+void us_socket_set_session_sink(us_socket_r s, void *sink, void (*on_free)(void *));
+void *us_socket_session_sink(us_socket_r s);
 
 /* Public interfaces for loops */
 
@@ -650,6 +655,8 @@ struct us_iovec_t {
  * partial-write poll handling, one writev for all chunks (sequential sends
  * on platforms without writev). Returns total bytes written. */
 int us_socket_raw_writev(us_socket_r s, const struct us_iovec_t *iov, int count) nonnull_fn_decl;
+/* Vectored us_socket_write: through TLS if `s->ssl` is set, with the records of all chunks in one write. */
+int us_socket_writev(us_socket_r s, const struct us_iovec_t *iov, int count) nonnull_fn_decl;
 
 int us_socket_raw_write(us_socket_r s, const char *data, int length);
 /* Like us_socket_write, but additionally reports a fatal (non-would-block)
@@ -702,7 +709,6 @@ int us_socket_remote_port(us_socket_r s) nonnull_fn_decl;
 void us_socket_remote_address(us_socket_r s, char *nonnull_arg buf, int *nonnull_arg length) nonnull_fn_decl;
 void us_socket_local_address(us_socket_r s, char *nonnull_arg buf, int *nonnull_arg length) nonnull_fn_decl;
 
-struct us_socket_t *us_socket_detach(us_socket_r s) nonnull_fn_decl;
 int us_socket_ipc_write_fd(us_socket_r s, const char *data, int length, int fd) nonnull_fn_decl;
 void us_socket_sendfile_needs_more(us_socket_r s) nonnull_fn_decl;
 void *us_listen_socket_ext(struct us_listen_socket_t *ls) nonnull_fn_decl;

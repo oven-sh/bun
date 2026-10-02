@@ -14,7 +14,7 @@ use strings::{u16_is_lead, u16_is_trail};
 const UNICODE_REPLACEMENT_U16: u16 = strings::UNICODE_REPLACEMENT as u16;
 
 #[derive(Default, Clone, Copy)]
-pub struct Buffered {
+pub(crate) struct Buffered {
     pub(crate) buf: [u8; 3],
     pub(crate) len: u8,
 }
@@ -29,7 +29,7 @@ impl Buffered {
 // interior mutability via `Cell` (`RefCell` for the decoder; its borrow is
 // released before anything can call back into JS).
 #[bun_jsc::JsClass]
-pub struct TextDecoder {
+pub(crate) struct TextDecoder {
     // used for utf8 decoding
     pub(crate) buffered: Cell<Buffered>,
 
@@ -649,8 +649,7 @@ impl TextDecoder {
 /// `TextDecoder` is allocated: `*out_utf8_fast_path` is set and null is
 /// returned with no exception.
 #[unsafe(no_mangle)]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn TextDecoder__createForStream(
+pub(crate) extern "C" fn TextDecoder__createForStream(
     global: &JSGlobalObject,
     label: JSValue,
     fatal: bool,
@@ -701,7 +700,7 @@ pub extern "C" fn TextDecoder__createForStream(
 
 /// `TextDecoderStream.prototype.encoding`.
 #[unsafe(no_mangle)]
-pub extern "C" fn TextDecoder__encodingToJS(
+pub(crate) extern "C" fn TextDecoder__encodingToJS(
     global: &JSGlobalObject,
     encoding: EncodingLabel,
 ) -> JSValue {
@@ -709,8 +708,7 @@ pub extern "C" fn TextDecoder__encodingToJS(
 }
 
 #[unsafe(no_mangle)]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn TextDecoder__destroyForStream(this: *mut TextDecoder) {
+pub(crate) extern "C" fn TextDecoder__destroyForStream(this: *mut TextDecoder) {
     if !this.is_null() {
         // SAFETY: `this` was returned by `TextDecoder__createForStream` and has not been
         // freed (the C++ cell clears its pointer before calling).
@@ -723,8 +721,7 @@ pub extern "C" fn TextDecoder__destroyForStream(this: *mut TextDecoder) {
 /// `input_len == 0`. Returns a JSString on success, or `JSValue::zero` with
 /// the exception pending on `global`.
 #[unsafe(no_mangle)]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn TextDecoder__decodeForStream(
+pub(crate) extern "C" fn TextDecoder__decodeForStream(
     this: *mut TextDecoder,
     global: &JSGlobalObject,
     input: *const u8,

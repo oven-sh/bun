@@ -2450,10 +2450,11 @@ NOT compiled by cargo when this was written: it does not reach the file while a 
   and an `assign_op_pattern` put into a copy of the file were both reported, so the probe sees the file.
 - Assumptions of the probe, written by hand because the tree did not have them: `pub struct EmitResolver;`, `Map` of
   `crate::core` as the contract has it, and the four callees of the last section.
-- Per function, the calls of methods of the checker are upstream's, by name and number (28 in
-  `get_symbol_at_location`, 24 in `get_symbol_of_name_or_property_access_expression`, 23 in `get_type_of_node`), and
-  so are the calls of free functions of `ast`, `core` and the package, but for `core.IfElse`, `core.Filter` (the
-  method `filter`) and `newEmitResolver`. Read against upstream statement by statement.
+- `python3 round2-layer7-checker/c52-callseq.py`: per function, the calls of methods of the checker are upstream's,
+  by name and number (28 in `get_symbol_at_location`, 24 in `get_symbol_of_name_or_property_access_expression`, 23 in
+  `get_type_of_node`), and so are the calls of free functions of `ast`, `core` and the package, but for `core.IfElse`
+  (five `if` expressions), `core.Filter` (the method `filter`) and `newEmitResolver`. The script compares names and
+  counts, not arguments and not order: each function was also read against upstream statement by statement.
 - `python3 round2-layer7-checker/ranges.py c52_symbol_at_location`: 16 of 16 functions of the range have a `fn` of
   their name in the file. `python3 round2-layer7-checker/globs.py`: the module is under E (a file, no `pub` name, no
   glob).

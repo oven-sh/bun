@@ -356,6 +356,32 @@ it("invalid syntax counts towards bail", async () => {
   }
 });
 
+it("--rerun-each counts an error outside a test on every run and a file that fails to load once", async () => {
+  using test_dir = tempDir("rerun-each-errors", {
+    "a-describe.test.js": `
+      import { describe, expect, test } from "bun:test";
+      describe("boom", () => {
+        throw new Error("describe-body-throw");
+      });
+      test("ok", () => {
+        expect(1).toBe(1);
+      });
+    `,
+    "b-load.test.js": `throw new Error("top-level-throw");`,
+  });
+  await using proc = spawn({
+    cmd: [bunExe(), "test", "--rerun-each=2"],
+    cwd: String(test_dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain(" 2 pass\n 1 fail\n 3 errors\n");
+  expect(stderr).toContain("Ran 3 tests across 2 files.");
+  expect(exitCode).toBe(1);
+});
+
 describe("skip test inner", () => {
   it("should pass", () => {
     expect(2 + 2).toBe(4);
@@ -719,7 +745,7 @@ test("my-test", () => {
         "package.json": "{}",
       });
 
-      const { stderr, exited } = spawnSync({
+      const { stderr, exitCode } = spawnSync({
         cmd: [bunExe(), "test", "my-test.test.js"],
         cwd: test_dir,
         stdout: "inherit",
@@ -746,6 +772,7 @@ test("my-test", () => {
       expect(output).toContain("1 error");
 
       expect(output).toContain("Ran 1 test across 1 file");
+      expect(exitCode).toBe(1);
     });
   }
 });

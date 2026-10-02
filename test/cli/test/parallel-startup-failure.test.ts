@@ -67,6 +67,11 @@ test.skipIf(!hasHook)(
     const spawns = (stderr.match(/exited during startup/g) ?? []).length;
     expect(spawns).toBeGreaterThanOrEqual(2);
     expect(spawns).toBeLessThanOrEqual(4);
+    // Each file that no worker could take counts as one failure.
+    expect(stderr).toContain("✗ a.test.js (no live workers)\n");
+    expect(stderr).toContain("✗ b.test.js (no live workers)\n");
+    expect(stderr).toContain(" 0 pass\n 2 fail\n");
+    expect(stderr).toContain("Ran 2 tests across 2 files.");
     expect(exitCode).not.toBe(0);
   },
   60_000,
@@ -87,6 +92,8 @@ test.skipIf(!hasHook)(
     expect(stderr).toContain("a.test.js");
     expect(stderr).toContain("b.test.js");
     expect(stderr).not.toContain("retrying");
+    expect(stderr).toContain(" 0 pass\n 2 fail\n");
+    expect(stderr).toContain("Ran 2 tests across 2 files.");
     expect(exitCode).not.toBe(0);
   },
   60_000,

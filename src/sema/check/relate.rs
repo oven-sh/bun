@@ -195,7 +195,6 @@ pub(super) struct Relater {
     relation_count: i32,
     /// `Checker::cycles` when the question was asked. Once it has moved, nothing found out holds for others.
     cycles: u64,
-    steps: u32,
     /// What fails is remembered in `failed` and not in the table: in a run with reports (P2), and in the run without reports that goes
     /// before one where tsgo makes none (`check_type_related_to_ex`), which is to leave the table as tsgo's run finds it.
     pub(super) keeps_failures: bool,
@@ -229,7 +228,6 @@ impl Relater {
             top_key: None,
             relation_count: 2_000_000,
             cycles,
-            steps: 0,
             keeps_failures: false,
             failed: FxHashSet::default(),
             error_node: (FileId(0), 0, 0),
@@ -551,7 +549,7 @@ impl<'p> Checker<'p> {
         let (alias, _) = self.stored_alias(ty)?;
         self.files()
             .flags(*alias)
-            .contains(SymFlags::ENUM)
+            .intersects(SymFlags::ENUM)
             .then_some(*alias)
     }
 
@@ -751,32 +749,12 @@ impl<'p> Checker<'p> {
         } else if self.p.files.options.exact_optional_property_types {
             self.remove_missing_type(ty, true)
         } else {
-            self.optional_kept(ty)
+            self.optional_property_kept(ty)
         }
-    }
-
-    /// `optional`. It is kept where `union` goes by nothing but what the members are.
-    fn optional_kept(&mut self, ty: TypeId) -> TypeId {
-        if let Some(known) = self.p.optional_types.get(&ty) {
-            return known;
-        }
-        let optional = self.optional(ty);
-        let asks_something = self.parts(ty).iter().any(|&p| {
-            matches!(
-                self.data(p),
-                TypeData::Intersection(_)
-                    | TypeData::Template { .. }
-                    | TypeData::StringMapping { .. }
-            )
-        });
-        if !asks_something {
-            self.p.optional_types.insert(ty, optional);
-        }
-        optional
     }
 
     /// `getTypeOfSymbol` of a property: with what stands for its being left out.
-    fn type_of_prop_with_missing(&mut self, prop: &Prop, mapper: MapperId) -> TypeId {
+    pub(super) fn type_of_prop_with_missing(&mut self, prop: &Prop, mapper: MapperId) -> TypeId {
         let ty = self.type_of_prop(prop, mapper);
         if prop.flags.contains(PropFlags::OPTIONAL) {
             self.optional_property(ty)
@@ -927,8 +905,8 @@ impl<'p> Checker<'p> {
         if relation != Relation::Identity {
             if relation == Relation::Comparable
                 && !target.is_never()
-                && self.is_simple_type_related_to(target, td, source, sd, relation)
-                || self.is_simple_type_related_to(source, sd, target, td, relation)
+                && self.is_simple_type_related_to(target, td, source, sd, relation, None)
+                || self.is_simple_type_related_to(source, sd, target, td, relation, None)
             {
                 return true;
             }
@@ -948,7 +926,7 @@ impl<'p> Checker<'p> {
             return false;
         }
         let mut missed = None;
-        if !self.retracing && is_object_kind(sd) && is_object_kind(td) {
+        if is_object_kind(sd) && is_object_kind(td) {
             let key = self.relation_key_as(source, sd, target, td, relation, STATE_NONE);
             if let Some(entry) = self.p.relations.get(&key.0) {
                 // The cache is shared between threads, so another thread measuring the same symbol may have stored this
@@ -969,6 +947,15 @@ impl<'p> Checker<'p> {
             return self.check_type_related_to(source, target, relation, missed, is_trial);
         }
         false
+    }
+
+    /// What `ask` answers. `None`: a comparison was cut short or time ran out on the way, and the answer is not to be told anybody.
+    pub(super) fn answer_if_sure(&mut self, ask: impl FnOnce(&mut Self) -> bool) -> Option<bool> {
+        let gave_up_before = std::mem::replace(&mut self.relation_gave_up, false);
+        let answer = ask(self);
+        let is_sure = !self.relation_gave_up && !self.timed_out();
+        self.relation_gave_up |= gave_up_before;
+        is_sure.then_some(answer)
     }
 
     fn may_simplify(&self, ty: TypeId) -> bool {
@@ -1002,20 +989,11 @@ impl<'p> Checker<'p> {
         r.top_target = target;
         r.relation_count = 2_000_000;
         r.cycles = self.cycles;
-        r.steps = 0;
         // Under the identity relation `related` goes by other rules.
         r.is_from_related = relation != Relation::Identity;
         r.top_key = missed;
         r.keeps_failures = is_trial;
         let result = self.is_related_to_ex::<false>(&mut r, source, target, REC_BOTH, STATE_NONE);
-        if r.steps > 20_000 && self.trace_slow_relations {
-            let mut describer = crate::describe::Describer::new(self);
-            let (a, b) = (describer.describe(source), describer.describe(target));
-            eprintln!(
-                "SLOW {} steps, {relation:?}, in variance {}: {:.150} TO {:.150}",
-                r.steps, self.in_variance_computation, a, b
-            );
-        }
         let overflow = r.overflow;
         // `relationCount <= 0`. Running out of nesting depth, native stack or time is not a complexity overflow.
         let is_too_complex =
@@ -1068,12 +1046,13 @@ impl<'p> Checker<'p> {
         t: TypeId,
         td: &'p TypeData,
         relation: Relation,
+        error_reporter: Option<&mut Relater>,
     ) -> bool {
         // But for the wildcard, no rule has an object type on both sides.
         if is_object_kind(sd) && is_object_kind(td) && relation != Relation::Permissive {
             return false;
         }
-        self.is_simple_type_related_to_by_rule(s, sd, t, td, relation)
+        self.is_simple_type_related_to_by_rule(s, sd, t, td, relation, error_reporter)
     }
 
     /// The rules of `is_simple_type_related_to`.
@@ -1084,6 +1063,7 @@ impl<'p> Checker<'p> {
         t: TypeId,
         td: &'p TypeData,
         relation: Relation,
+        mut error_reporter: Option<&mut Relater>,
     ) -> bool {
         // It goes by the flags, which the kinds of `undefined` and of `null` share.
         let ((s, sd), (t, td)) = (self.plain_as(s, sd), self.plain_as(t, td));
@@ -1159,7 +1139,7 @@ impl<'p> Checker<'p> {
                 if self.files().symbol(*a).name == self.files().symbol(*b).name =>
             {
                 let (a, b) = (self.enum_of(*a), self.enum_of(*b));
-                if self.is_enum_type_related_to(a, b) {
+                if self.is_enum_type_related_to(a, b, error_reporter.as_deref_mut()) {
                     return true;
                 }
             }
@@ -1176,13 +1156,13 @@ impl<'p> Checker<'p> {
                 },
             ) if av == bv => {
                 let (a, b) = (self.enum_of(*a), self.enum_of(*b));
-                if self.is_enum_type_related_to(a, b) {
+                if self.is_enum_type_related_to(a, b, error_reporter.as_deref_mut()) {
                     return true;
                 }
             }
             (TypeData::Union(_), TypeData::Union(_)) => {
                 if let (Some(a), Some(b)) = (self.union_enum_symbol(s), self.union_enum_symbol(t))
-                    && self.is_enum_type_related_to(a, b)
+                    && self.is_enum_type_related_to(a, b, error_reporter.as_deref_mut())
                 {
                     return true;
                 }
@@ -1369,8 +1349,13 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `isEnumTypeRelatedTo`: two declarations of what is by all appearances the same enum.
-    fn is_enum_type_related_to(&mut self, source: Sym, target: Sym) -> bool {
+    /// `isEnumTypeRelatedTo`
+    fn is_enum_type_related_to(
+        &mut self,
+        source: Sym,
+        target: Sym,
+        error_reporter: Option<&mut Relater>,
+    ) -> bool {
         if source == target {
             return true;
         }
@@ -1390,28 +1375,45 @@ impl<'p> Checker<'p> {
             if !self.files().flags(member).contains(SymFlags::ENUM_MEMBER) {
                 continue;
             }
-            let Some(&(_, other)) = theirs.iter().find(|(n, _)| *n == name) else {
+            let other = theirs
+                .iter()
+                .find(|(n, _)| *n == name)
+                .map(|&(_, other)| other)
+                .filter(|&other| self.files().flags(other).contains(SymFlags::ENUM_MEMBER));
+            let Some(other) = other else {
+                if let Some(r) = error_reporter {
+                    let declared = self.enum_type(target);
+                    let declared = self.type_to_string_fully_qualified(declared);
+                    r.report_error(2324, vec![self.symbol_to_string(member), declared]);
+                }
                 return false;
             };
-            if !self.files().flags(other).contains(SymFlags::ENUM_MEMBER) {
-                return false;
-            }
             let (a, b) = (self.enum_member_type(member), self.enum_member_type(other));
             let value = |c: &Self, ty: TypeId| match c.data(ty) {
                 TypeData::EnumLit { value, .. } => Some(*value),
                 _ => None,
             };
-            match (value(self, a), value(self, b)) {
-                (Some(a), Some(b)) if a != b => return false,
-                // `NaN` differs from itself.
-                (Some(EnumValue::Number(bits)), Some(_)) if f64::from_bits(bits).is_nan() => {
-                    return false;
+            // `NaN` differs from itself.
+            let is_nan = |value: EnumValue| matches!(value, EnumValue::Number(bits) if f64::from_bits(bits).is_nan());
+            let (code, values) = match (value(self, a), value(self, b)) {
+                (Some(given), Some(wanted)) if given != wanted || is_nan(given) => {
+                    (4125, [Some(wanted), Some(given)])
                 }
-                (Some(EnumValue::String(_)), None) | (None, Some(EnumValue::String(_))) => {
-                    return false;
-                }
-                _ => {}
+                (Some(known @ EnumValue::String(_)), None)
+                | (None, Some(known @ EnumValue::String(_))) => (4126, [Some(known), None]),
+                _ => continue,
+            };
+            if let Some(r) = error_reporter {
+                let mut args = vec![self.symbol_to_string(target), self.symbol_to_string(other)];
+                args.extend(
+                    values
+                        .into_iter()
+                        .flatten()
+                        .map(|v| self.enum_value_text(v)),
+                );
+                r.report_error(code, args);
             }
+            return false;
         }
         true
     }
@@ -2413,14 +2415,6 @@ impl<'p> Checker<'p> {
         self.variances_in_progress.contains(&sym) || self.p.variances.get(&sym).is_some()
     }
 
-    /// `t.alias`, if it has type arguments. While the alias is being worked out a reference to it is a mere name, and nothing can be
-    /// measured.
-    pub(super) fn alias_of(&self, t: TypeId) -> Option<(Sym, Vec<TypeId>)> {
-        self.alias_of_type(t).filter(|(alias, type_arguments)| {
-            !type_arguments.is_empty() && !self.stack.contains(&Query::Declared(*alias))
-        })
-    }
-
     /// `getTypeParameterModifiers`: what any of the declarations of `sym` says of its type parameter `param`.
     fn type_param_modifiers(&self, sym: Sym, param: TypeId) -> Flags {
         let TypeData::TypeParam(of, id, ..) = *self.data(param) else {
@@ -2523,13 +2517,6 @@ impl<'p> Checker<'p> {
                 } else {
                     0
                 };
-                if self.trace_slow_relations && variance == 0 {
-                    let why = self.explain_not_assignable(with_sub, with_super);
-                    eprintln!(
-                        "NOT COVARIANT {} because {why:.300}",
-                        self.files().atoms.text(self.files().symbol(sym).name)
-                    );
-                }
                 if self.is_marker_assignable(with_super, with_sub) {
                     variance |= CONTRAVARIANT;
                 }
@@ -2556,14 +2543,6 @@ impl<'p> Checker<'p> {
         self.variances_in_progress.pop();
         let variances: Arc<[u8]> = variances.into();
         let is_tainted = self.end_taint_scope(taint_scope);
-        if self.trace_slow_relations {
-            eprintln!(
-                "VARIANCE {} {:?} kept {}",
-                self.files().atoms.text(self.files().symbol(sym).name),
-                variances,
-                !is_tainted
-            );
-        }
         if !is_tainted {
             self.p.variances.insert(sym, variances)
         } else {
@@ -2646,6 +2625,7 @@ impl<'p> Checker<'p> {
                     original_source,
                     original_sd,
                     relation,
+                    None,
                 )
                 || self.is_simple_type_related_to(
                     original_source,
@@ -2653,6 +2633,7 @@ impl<'p> Checker<'p> {
                     original_target,
                     original_td,
                     relation,
+                    None,
                 );
             if REPORT && !is_related {
                 self.report_error_results(
@@ -2737,17 +2718,14 @@ impl<'p> Checker<'p> {
                 td = self.data(target);
             }
         }
+        let error_reporter = REPORT.then_some(&mut *r);
         if !(is_from_related && source == original_source && target == original_target)
             && (relation == Relation::Comparable
                 && !target.is_never()
-                && self.is_simple_type_related_to(target, td, source, sd, relation)
-                || self.is_simple_type_related_to(source, sd, target, td, relation))
+                && self.is_simple_type_related_to(target, td, source, sd, relation, None)
+                || self.is_simple_type_related_to(source, sd, target, td, relation, error_reporter))
         {
             return Ternary::TRUE;
-        }
-        // `isSimpleTypeRelatedTo`, with an `errorReporter`
-        if REPORT {
-            self.report_enum_relation(r, source, target);
         }
         let source_is_structured_or_instantiable = is_structured_or_instantiable_kind(sd);
         if source_is_structured_or_instantiable || is_structured_or_instantiable_kind(td) {
@@ -3010,9 +2988,9 @@ impl<'p> Checker<'p> {
                     let mut suggestion = None;
                     if is_identifier {
                         let properties = self.properties_of_type(error_target);
-                        let written = self.atom_text(prop.name);
+                        let written = self.files().atoms.bytes(prop.name);
                         suggestion = self
-                            .suggested_property(&written, &properties)
+                            .suggested_property(written, &properties)
                             .map(|i| self.atom_text(properties[i].name));
                     }
                     match suggestion {
@@ -3750,7 +3728,6 @@ impl<'p> Checker<'p> {
         if r.overflow {
             return Ternary::FALSE;
         }
-        r.steps += 1;
         // `related` has looked already.
         let missed = r
             .top_key
@@ -3761,7 +3738,6 @@ impl<'p> Checker<'p> {
             None => self.relation_key_as(source, sd, target, td, r.relation, state),
         };
         if missed.is_none()
-            && !self.retracing
             && let Some(entry) = self.p.relations.get(&key)
             // A failure that is remembered is gone through again for what there is to say about it.
             && !(REPORT && entry & FAILED != 0 && entry & COMPLEXITY_OVERFLOW == 0)
@@ -3787,15 +3763,6 @@ impl<'p> Checker<'p> {
         }
         // The key goes into the set here, and out again wherever the comparison is not begun after all.
         if !r.maybe_keys_set.insert(key) {
-            if self.retracing {
-                eprintln!(
-                    "{:w$}assumed: {} to {}",
-                    "",
-                    source.0,
-                    target.0,
-                    w = r.maybe_keys.len() * 2
-                );
-            }
             return Ternary::MAYBE;
         }
         // `broadestEquivalentId`: the key the comparison would have if no type parameter had a constraint.
@@ -3805,21 +3772,6 @@ impl<'p> Checker<'p> {
                 r.maybe_keys_set.remove(&key);
                 return Ternary::MAYBE;
             }
-        }
-        if self.retracing && r.maybe_keys.len() < 40 {
-            self.retracing = false;
-            let (a, b) = (
-                crate::describe::Describer::new(self).describe(source),
-                crate::describe::Describer::new(self).describe(target),
-            );
-            self.retracing = true;
-            eprintln!(
-                "{:w$}{} to {} state {state}: {a:.70} TO {b:.70}",
-                "",
-                source.0,
-                target.0,
-                w = r.maybe_keys.len() * 2
-            );
         }
         let is_too_deep = r.source_stack.len() == 100 || r.target_stack.len() == 100;
         if is_too_deep || self.is_stack_low() || self.is_out_of_time() {
@@ -3869,24 +3821,6 @@ impl<'p> Checker<'p> {
             r.target_stack.pop();
         }
         r.expanding = save_expanding;
-        if self.retracing && r.maybe_keys.len() <= 40 {
-            eprintln!(
-                "{:w$}=> {} to {}: {}{}",
-                "",
-                source.0,
-                target.0,
-                result.0,
-                if r.overflow { " OVERFLOW" } else { "" },
-                w = (r.maybe_keys.len() - 1) * 2
-            );
-        }
-        if self.retracing {
-            let kept = maybe_start + usize::from(result.holds() && result != Ternary::TRUE);
-            for dropped in r.maybe_keys.drain(kept..) {
-                r.maybe_keys_set.remove(&dropped);
-            }
-            return result;
-        }
         // tsgo reports an instantiation limit at the node that is current when the comparison is first made. A comparison that hit one
         // that could not be reported is made again, so that `check_excessive_depth` comes to the limit.
         // With reports the answer can be another (`relate_variances`): it is nobody else's.
@@ -4816,7 +4750,7 @@ impl<'p> Checker<'p> {
                     // `foo-${number}` fits `foo-${string}` though `number` does not fit `string`.
                     self.report_unreliable(source);
                 }
-                if self.is_matched_by_template(source, texts, types) {
+                if self.is_type_matched_by_template_literal_type(source, texts, types) {
                     return Ternary::TRUE;
                 }
             }
@@ -6094,14 +6028,6 @@ impl<'p> Checker<'p> {
                 r.relation == Relation::Comparable,
             );
             if !related.holds() {
-                if self.trace_relations {
-                    let depth = r.source_stack.len();
-                    eprintln!(
-                        "{:depth$}not related at .{}",
-                        "",
-                        self.p.files.atoms.text(tp.name)
-                    );
-                }
                 return Ternary::FALSE;
             }
             result &= related;
@@ -6468,7 +6394,15 @@ impl<'p> Checker<'p> {
         if r.relation == Relation::Identity {
             let mut result = Ternary::TRUE;
             for (&s, &t) in source_sigs.iter().zip(&target_sigs) {
-                let related = self.signatures_identical_to(r, s, t);
+                let mut is_related_to = |c: &mut Self, s, t| c.is_related_to(r, s, t, REC_BOTH);
+                let related = self.compare_signatures_identical(
+                    s,
+                    t,
+                    false,
+                    false,
+                    false,
+                    &mut is_related_to,
+                );
                 if !related.holds() {
                     return Ternary::FALSE;
                 }
@@ -7061,14 +6995,6 @@ impl<'p> Checker<'p> {
                 related = Ternary::FALSE;
             }
             if !related.holds() {
-                if self.trace_relations {
-                    let depth = r.source_stack.len();
-                    eprintln!(
-                        "{:depth$}parameter {i} (strict {strict_variance}, callbacks {})",
-                        "",
-                        callbacks.is_some()
-                    );
-                }
                 if REPORT {
                     let names = vec![
                         self.labeled_parameter_name_at_position(source, &sp, i),
@@ -7134,10 +7060,6 @@ impl<'p> Checker<'p> {
                     state,
                 );
             }
-            if !related.holds() && self.trace_relations {
-                let depth = r.source_stack.len();
-                eprintln!("{:depth$}what is returned", "");
-            }
             result &= related;
             // `incompatibleErrorReporter`
             if REPORT && !result.holds() {
@@ -7191,129 +7113,6 @@ impl<'p> Checker<'p> {
             r.report_error(1226, predicates);
         }
         related
-    }
-
-    /// What stands for the type parameters around `sig` where it was found.
-    fn sig_around(&self, sig: SigId) -> MapperId {
-        match *self.p.types.sig(sig) {
-            SigData::Decl { mapper, .. }
-            | SigData::Construct { mapper, .. }
-            | SigData::DefaultConstruct { mapper, .. } => mapper,
-            SigData::WithReturn { sig, .. } => self.sig_around(sig),
-            _ => MapperId::IDENTITY,
-        }
-    }
-
-    /// `compareSignaturesIdentical`
-    fn signatures_identical_to(
-        &mut self,
-        r: &mut Relater,
-        source: SigId,
-        target: SigId,
-    ) -> Ternary {
-        if source == target {
-            return Ternary::TRUE;
-        }
-        let (sp, tp) = (self.sig_params(source), self.sig_params(target));
-        // `isMatchingSignature`
-        if self.parameter_count(&sp) != self.parameter_count(&tp)
-            || self.min_argument_count(&sp) != self.min_argument_count(&tp)
-            || self.has_effective_rest_parameter(&sp) != self.has_effective_rest_parameter(&tp)
-        {
-            return Ternary::FALSE;
-        }
-        let (source_type_params, target_type_params) =
-            (self.sig_type_params(source), self.sig_type_params(target));
-        if source_type_params.len() != target_type_params.len() {
-            return Ternary::FALSE;
-        }
-        let mut source = source;
-        if !target_type_params.is_empty() {
-            // What the type parameters extend and default to has to be the same, those of the one in terms of those of the other.
-            // A fresh one (`cloneTypeParameter`) says it as seen from where its signature was found. A declared one says it as
-            // declared, whatever its signature was found in: that is filled in here, in the one step in which it is renamed.
-            let (source_around, target_around) = (self.sig_around(source), self.sig_around(target));
-            let renaming = self.mapper_from(&source_type_params, &target_type_params);
-            let mut pairs = self.p.types.mapping(source_around).to_vec();
-            pairs.extend(
-                source_type_params
-                    .iter()
-                    .copied()
-                    .zip(target_type_params.iter().copied()),
-            );
-            let renaming_as_declared = self.p.types.mapper(pairs);
-            let is_declared = |c: &Self, param: TypeId| matches!(*c.data(param), TypeData::TypeParam(_, _, around) if around == MapperId::IDENTITY);
-            for (&s, &t) in source_type_params.iter().zip(&target_type_params) {
-                if s == t && source_around == target_around {
-                    continue;
-                }
-                let source_mapper = if is_declared(self, s) {
-                    renaming_as_declared
-                } else {
-                    renaming
-                };
-                let target_mapper = if is_declared(self, t) {
-                    target_around
-                } else {
-                    MapperId::IDENTITY
-                };
-                let bounds = [
-                    (
-                        self.constraint_of_type_param(s),
-                        self.constraint_of_type_param(t),
-                    ),
-                    (self.default_of_type_param(s), self.default_of_type_param(t)),
-                ];
-                for (a, b) in bounds {
-                    let a = self.instantiate(a.unwrap_or(TypeId::UNKNOWN), source_mapper);
-                    let b = self.instantiate(b.unwrap_or(TypeId::UNKNOWN), target_mapper);
-                    // What is not known makes no difference.
-                    if self.is_known(a)
-                        && self.is_known(b)
-                        && !self.is_related_to(r, a, b, REC_BOTH).holds()
-                    {
-                        return Ternary::FALSE;
-                    }
-                }
-            }
-            if source_type_params != target_type_params {
-                source =
-                    self.with_own_type_params(source, &source_type_params, &target_type_params);
-            }
-        }
-        let mut result = Ternary::TRUE;
-        if let (Some(s), Some(t)) = (self.sig_this_type(source), self.sig_this_type(target)) {
-            let related = self.is_related_to(r, s, t, REC_BOTH);
-            if !related.holds() {
-                return Ternary::FALSE;
-            }
-            result &= related;
-        }
-        let sp = self.sig_params(source);
-        for i in 0..self.parameter_count(&tp) {
-            let s = self.param_type_at(&sp, i).unwrap_or(TypeId::ANY);
-            let t = self.param_type_at(&tp, i).unwrap_or(TypeId::ANY);
-            let related = self.is_related_to(r, t, s, REC_BOTH);
-            if !related.holds() {
-                return Ternary::FALSE;
-            }
-            result &= related;
-        }
-        // `compareTypePredicatesIdentical`
-        match (self.sig_predicate(source), self.sig_predicate(target)) {
-            (None, None) => {
-                let (sr, tr) = (self.sig_return(source), self.sig_return(target));
-                result & self.is_related_to(r, sr, tr, REC_BOTH)
-            }
-            (Some(s), Some(t)) if s.param == t.param && s.asserts == t.asserts => {
-                match (s.ty, t.ty) {
-                    (a, b) if a == b => result,
-                    (Some(a), Some(b)) => result & self.is_related_to(r, a, b, REC_BOTH),
-                    _ => Ternary::FALSE,
-                }
-            }
-            _ => Ternary::FALSE,
-        }
     }
 
     // ───────────────────────────── index signatures ─────────────────────────────
@@ -7665,32 +7464,67 @@ impl<'p> Checker<'p> {
     }
 
     /// `isTypeMatchedByTemplateLiteralType`
-    pub(super) fn is_matched_by_template(
+    pub(super) fn is_type_matched_by_template_literal_type(
         &mut self,
         source: TypeId,
         texts: &[Atom],
         types: &[TypeId],
     ) -> bool {
+        let Some(inferences) = self.infer_types_from_template_literal_type(source, texts, types)
+        else {
+            return false;
+        };
+        inferences.into_iter().zip(types).all(|(inference, &t)| {
+            self.is_valid_type_for_template_literal_placeholder(inference, t)
+        })
+    }
+
+    /// `inferTypesFromTemplateLiteralType`
+    pub(super) fn infer_types_from_template_literal_type(
+        &mut self,
+        source: TypeId,
+        texts: &[Atom],
+        types: &[TypeId],
+    ) -> Option<Vec<TypeId>> {
         match self.data(source) {
             // `TypeFlagsStringLiteral`, which a member of an enum that is a string has too.
             TypeData::StringLit { value, .. }
             | TypeData::EnumLit {
                 value: EnumValue::String(value),
                 ..
-            } => self.matches_template(*value, texts, types),
+            } => self.infer_from_literal_parts_to_template_literal(&[*value], &[], texts),
             TypeData::Template {
                 texts: st,
                 types: sy,
-            } => {
-                let Some(pieces) = self.template_pieces(st, sy, texts, types) else {
-                    return false;
-                };
-                pieces
-                    .into_iter()
-                    .zip(types.iter())
-                    .all(|(piece, &hole)| self.fits_placeholder(piece, hole))
+            } if st[..] == *texts => {
+                let mut pieces = Vec::with_capacity(sy.len());
+                for (&s, &t) in sy.iter().zip(types) {
+                    let (sb, tb) = (self.constraint_or_self(s), self.constraint_or_self(t));
+                    // An `infer` in a template stands for a piece of a string, though it does not say so.
+                    let tb = if tb == TypeId::UNKNOWN {
+                        TypeId::STRING
+                    } else {
+                        tb
+                    };
+                    pieces.push(
+                        if self.is_assignable(sb, tb)
+                            || self.is_any(s)
+                            || self.every_type(s, Self::is_string_like)
+                        {
+                            s
+                        } else {
+                            let empty = self.files().atoms.intern(b"");
+                            self.template_type(&[empty, empty], &[s])
+                        },
+                    );
+                }
+                Some(pieces)
             }
-            _ => false,
+            TypeData::Template {
+                texts: st,
+                types: sy,
+            } => self.infer_from_literal_parts_to_template_literal(st, sy, texts),
+            _ => None,
         }
     }
 
@@ -7725,39 +7559,13 @@ impl<'p> Checker<'p> {
         (self.string_mapping(kind, source), inner)
     }
 
-    /// What each placeholder of the template `target_texts`/`target_types` stands for in a string made of `texts` with
-    /// `types` in between, if such a string can be of that form at all.
-    pub(super) fn template_pieces(
+    /// `inferFromLiteralPartsToTemplateLiteral`
+    fn infer_from_literal_parts_to_template_literal(
         &mut self,
         texts: &[Atom],
         types: &[TypeId],
         target_texts: &[Atom],
-        target_types: &[TypeId],
     ) -> Option<Vec<TypeId>> {
-        if texts == target_texts {
-            let mut pieces = Vec::with_capacity(types.len());
-            for (&s, &t) in types.iter().zip(target_types) {
-                let (sb, tb) = (self.constraint_or_self(s), self.constraint_or_self(t));
-                // An `infer` in a template stands for a piece of a string, though it does not say so.
-                let tb = if tb == TypeId::UNKNOWN {
-                    TypeId::STRING
-                } else {
-                    tb
-                };
-                pieces.push(
-                    if self.is_assignable(sb, tb)
-                        || self.is_any(s)
-                        || self.every_type(s, Self::is_string_like)
-                    {
-                        s
-                    } else {
-                        let empty = self.files().atoms.intern(b"");
-                        self.template_type(&[empty, empty], &[s])
-                    },
-                );
-            }
-            return Some(pieces);
-        }
         let atoms = &self.files().atoms;
         let last_source = texts.len() - 1;
         let last_target = target_texts.len() - 1;
@@ -7791,7 +7599,7 @@ impl<'p> Checker<'p> {
                     let text = text_of(s);
                     if let Some(at) = text
                         .get(p..)
-                        .and_then(|rest| rest.windows(delimiter.len()).position(|w| w == delimiter))
+                        .and_then(|rest| bun_core::strings::index_of(rest, delimiter))
                     {
                         p += at;
                         break;
@@ -7804,7 +7612,11 @@ impl<'p> Checker<'p> {
                 }
                 (s, p)
             } else if pos < text_of(seg).len() {
-                (seg, pos + first_char_len(&text_of(seg)[pos..]))
+                let first_byte = text_of(seg)[pos];
+                (
+                    seg,
+                    pos + usize::from(bun_core::strings::wtf8_byte_sequence_length(first_byte)),
+                )
             } else if seg < last_source {
                 (seg + 1, 0)
             } else {
@@ -7839,12 +7651,17 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `isValidTypeForTemplateLiteralPlaceholder`: whether `piece` can be what is written for a placeholder of type `hole`.
-    pub(super) fn fits_placeholder(&mut self, piece: TypeId, hole: TypeId) -> bool {
+    /// `isValidTypeForTemplateLiteralPlaceholder`
+    pub(super) fn is_valid_type_for_template_literal_placeholder(
+        &mut self,
+        piece: TypeId,
+        hole: TypeId,
+    ) -> bool {
         if let TypeData::Intersection(parts) = self.data(hole) {
-            return parts
-                .iter()
-                .all(|&p| p == TypeId::EMPTY_OBJECT || self.fits_placeholder(piece, p));
+            return parts.iter().all(|&p| {
+                p == TypeId::EMPTY_OBJECT
+                    || self.is_valid_type_for_template_literal_placeholder(piece, p)
+            });
         }
         if hole == TypeId::STRING || self.is_assignable(piece, hole) {
             return true;
@@ -7874,53 +7691,6 @@ impl<'p> Checker<'p> {
             _ => false,
         }
     }
-
-    /// `isTypeMatchedByTemplateLiteralType` of the string `value`: `inferFromLiteralPartsToTemplateLiteral` of one text, piece by
-    /// piece.
-    fn matches_template(&mut self, value: Atom, texts: &[Atom], types: &[TypeId]) -> bool {
-        let text = self.files().atoms.bytes(value);
-        let first = self.files().atoms.bytes(texts[0]);
-        let last = self.files().atoms.bytes(texts[texts.len() - 1]);
-        if text.len() < first.len() + last.len()
-            || !text.starts_with(first)
-            || !text.ends_with(last)
-        {
-            return false;
-        }
-        let mut rest = &text[first.len()..text.len() - last.len()];
-        for (i, &ty) in types.iter().enumerate() {
-            let is_last = i + 1 == types.len();
-            let piece: &[u8] = if is_last {
-                std::mem::take(&mut rest)
-            } else {
-                let delimiter = self.files().atoms.bytes(texts[i + 1]);
-                let at = if !delimiter.is_empty() {
-                    match rest.windows(delimiter.len()).position(|w| w == delimiter) {
-                        Some(at) => at,
-                        None => return false,
-                    }
-                } else if !rest.is_empty() {
-                    // With nothing in between, a placeholder takes one character.
-                    first_char_len(rest)
-                } else {
-                    return false;
-                };
-                let piece = &rest[..at];
-                rest = &rest[at + delimiter.len()..];
-                piece
-            };
-            // Whatever the piece is. No type need be made of it.
-            if ty == TypeId::STRING || self.is_any(ty) {
-                continue;
-            }
-            let literal = self.files().atoms.intern(piece);
-            let literal = self.string_literal(literal, false);
-            if !self.fits_placeholder(literal, ty) {
-                return false;
-            }
-        }
-        true
-    }
 }
 
 /// `forEachProperty`: appends the properties `prop` stands for. A property of an intersection stands for the properties of the
@@ -7932,18 +7702,6 @@ fn push_underlying_props<'a>(prop: &'a Prop, out: &mut Vec<&'a Prop>) {
             .for_each(|part| push_underlying_props(part, out)),
         _ => out.push(prop),
     }
-}
-
-/// How many bytes the character `text` starts with takes.
-fn first_char_len(text: &[u8]) -> usize {
-    let len = match text.first().copied() {
-        None => 0,
-        Some(0xF0..) => 4,
-        Some(0xE0..=0xEF) => 3,
-        Some(0xC0..=0xDF) => 2,
-        Some(_) => 1,
-    };
-    len.min(text.len())
 }
 
 /// `isValidNumberString(s, false)`: `Number(s)` is a number, and not an infinite one (`jsnum.FromString`).

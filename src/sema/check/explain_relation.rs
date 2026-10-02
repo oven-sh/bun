@@ -219,34 +219,6 @@ fn quoted(text: &str) -> String {
     out
 }
 
-/// `GetSpellingSuggestion`: which of `candidates` `name` is most likely meant to be. They come in the order of its `compare`, so of
-/// two that are as close the first stays.
-fn spelling_suggestion(name: &str, candidates: &[String]) -> Option<usize> {
-    let name_chars: Vec<char> = name.chars().collect();
-    let maximum_length_difference = 2usize.max((name_chars.len() as f64 * 0.34) as usize);
-    let mut best_distance = (name_chars.len() as f64 * 0.4).floor() + 0.9;
-    let mut best = None;
-    for (i, candidate) in candidates.iter().enumerate() {
-        if candidate.is_empty()
-            || candidate.len().abs_diff(name_chars.len()) > maximum_length_difference
-            || candidate == name
-            || candidate.len() < 3 && !candidate.eq_ignore_ascii_case(name)
-        {
-            continue;
-        }
-        let candidate_chars: Vec<char> = candidate.chars().collect();
-        let Some(distance) = levenshtein_with_max(&name_chars, &candidate_chars, best_distance)
-        else {
-            continue;
-        };
-        if distance < best_distance || best.is_none() {
-            best_distance = distance;
-            best = Some(i);
-        }
-    }
-    best
-}
-
 // ───────────────────────────── what is asked from outside ─────────────────────────────
 
 /// `createDiagnosticChainFromErrorChain(r.errorChain, r.errorNode, r.relatedInfo)`
@@ -635,7 +607,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `valueToString` of the value of an enum member.
-    fn enum_value_text(&self, value: EnumValue) -> String {
+    pub(super) fn enum_value_text(&self, value: EnumValue) -> String {
         match value {
             EnumValue::String(text) => quoted(&self.atom_text(text)),
             EnumValue::Number(bits) => crate::atom::number_to_string(f64::from_bits(bits)),
@@ -652,35 +624,25 @@ impl<'p> Checker<'p> {
     }
 
     /// `getSpellingSuggestionForName(name, properties, SymbolFlagsValue)`
-    pub(super) fn suggested_property(&self, name: &str, properties: &[Prop]) -> Option<usize> {
-        let names: Vec<String> = properties
-            .iter()
-            .map(|p| {
-                let bytes = self.written_name(p.name);
-                if matches!(bytes.first(), Some(b'"' | 0xFE)) {
-                    String::new()
-                } else {
-                    String::from_utf8_lossy(bytes).into_owned()
-                }
-            })
-            .collect();
-        spelling_suggestion(name, &names)
+    pub(super) fn suggested_property(&self, name: &[u8], properties: &[Prop]) -> Option<usize> {
+        // `getCandidateName`
+        let get_name = |i: usize| match self.written_name(properties[i].name) {
+            [b'"' | 0xFE, ..] => &[][..],
+            name => name,
+        };
+        get_spelling_suggestion(name, 0..properties.len(), get_name, |a, b| a.cmp(&b))
     }
 
     /// `getSuggestedTypeForNonexistentStringLiteralType`
     fn suggested_string_literal_type(&self, source: TypeId, target: TypeId) -> Option<TypeId> {
-        let TypeData::StringLit { value, .. } = *self.data(source) else {
-            return None;
+        let value = |t: TypeId| match *self.data(t) {
+            TypeData::StringLit { value, .. } => Some(self.files().atoms.bytes(value)),
+            _ => None,
         };
-        let mut types = Vec::new();
-        let mut names = Vec::new();
-        for &part in self.parts(target) {
-            if let TypeData::StringLit { value, .. } = *self.data(part) {
-                types.push(part);
-                names.push(self.atom_text(value));
-            }
-        }
-        spelling_suggestion(&self.atom_text(value), &names).map(|i| types[i])
+        let types = self.parts(target);
+        let get_name = |i: usize| value(types[i]).unwrap_or_default();
+        get_spelling_suggestion(value(source)?, 0..types.len(), get_name, |a, b| a.cmp(&b))
+            .map(|i| types[i])
     }
 }
 
@@ -1069,100 +1031,6 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// What `isSimpleTypeRelatedTo` has `isEnumTypeRelatedTo` say of two enums that go by one name.
-    pub(super) fn report_enum_relation(&mut self, r: &mut Relater, s: TypeId, t: TypeId) {
-        let (s, t) = (s.plain(), t.plain());
-        let pair = match (self.data(s), self.data(t)) {
-            (TypeData::Enum { symbol: a, .. }, TypeData::Enum { symbol: b, .. })
-                if self.files().symbol(*a).name == self.files().symbol(*b).name =>
-            {
-                Some((self.enum_of(*a), self.enum_of(*b)))
-            }
-            (
-                TypeData::EnumLit {
-                    member: a,
-                    value: av,
-                    ..
-                },
-                TypeData::EnumLit {
-                    member: b,
-                    value: bv,
-                    ..
-                },
-            ) if av == bv => Some((self.enum_of(*a), self.enum_of(*b))),
-            (TypeData::Union(_), TypeData::Union(_)) => {
-                self.union_enum_symbol(s).zip(self.union_enum_symbol(t))
-            }
-            _ => None,
-        };
-        let Some((source, target)) = pair else {
-            return;
-        };
-        if source == target {
-            return;
-        }
-        // `SymbolFlagsRegularEnum`
-        let is_regular = |c: &Self, sym: Sym| {
-            c.files().decls(sym).iter().any(|&(file, decl)| matches!(decl, crate::bind::Decl::Enum(e) if !c.hir(file)[e].flags.contains(Flags::CONST)))
-        };
-        if self.files().symbol(source).name != self.files().symbol(target).name
-            || !is_regular(self, source)
-            || !is_regular(self, target)
-        {
-            return;
-        }
-        let theirs = self.exports_in_order(target);
-        for (name, member) in self.exports_in_order(source) {
-            if !self.files().flags(member).contains(SymFlags::ENUM_MEMBER) {
-                continue;
-            }
-            let other = theirs
-                .iter()
-                .find(|(n, _)| *n == name)
-                .map(|&(_, other)| other)
-                .filter(|&other| self.files().flags(other).contains(SymFlags::ENUM_MEMBER));
-            let Some(other) = other else {
-                let declared = self.enum_type(target);
-                let (member, declared) = (
-                    self.symbol_to_string(member),
-                    self.type_to_string_fully_qualified(declared),
-                );
-                r.report_error(2324, vec![member, declared]);
-                return;
-            };
-            let (a, b) = (self.enum_member_type(member), self.enum_member_type(other));
-            let value = |c: &Self, ty: TypeId| match c.data(ty) {
-                TypeData::EnumLit { value, .. } => Some(*value),
-                _ => None,
-            };
-            let (given, wanted) = (value(self, a), value(self, b));
-            let is_nan = |value: EnumValue| matches!(value, EnumValue::Number(bits) if f64::from_bits(bits).is_nan());
-            match (given, wanted) {
-                (Some(given), Some(wanted)) if given != wanted || is_nan(given) => {
-                    let args = vec![
-                        self.symbol_to_string(target),
-                        self.symbol_to_string(other),
-                        self.enum_value_text(wanted),
-                        self.enum_value_text(given),
-                    ];
-                    r.report_error(4125, args);
-                    return;
-                }
-                (Some(string_value @ EnumValue::String(_)), None)
-                | (None, Some(string_value @ EnumValue::String(_))) => {
-                    let args = vec![
-                        self.symbol_to_string(target),
-                        self.symbol_to_string(other),
-                        self.enum_value_text(string_value),
-                    ];
-                    r.report_error(4126, args);
-                    return;
-                }
-                _ => {}
-            }
-        }
-    }
-
     /// The part of `hasExcessProperties` for an `errorNode` in a JSX opening element: 2551 or 2339.
     pub(super) fn report_unknown_jsx_attribute(
         &mut self,
@@ -1184,7 +1052,7 @@ impl<'p> Checker<'p> {
                     .iter()
                     .position(|p| self.written_name(p.name) == specific.as_bytes())
             })
-            .or_else(|| self.suggested_property(&name, &properties));
+            .or_else(|| self.suggested_property(name.as_bytes(), &properties));
         match suggested {
             Some(i) => {
                 let suggestion = self.prop_to_string(&properties[i]);

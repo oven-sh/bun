@@ -83,7 +83,7 @@ use crate::types::Prop;
 use crate::types::*;
 use crate::util::{FxHashMap, List};
 use errors::edit_distance;
-use errors_x_regexp_scanner::levenshtein_with_max;
+use errors_x_regexp_scanner::get_spelling_suggestion;
 use errors_x_typenodes::array_element_type_node;
 use errors_x_typenodes::has_parse_diagnostics;
 use sink::{Arg, Reported};
@@ -158,8 +158,8 @@ impl Slots {
 pub struct Program {
     /// Whether a `TypeData::UnresolvedName` has been made.
     pub has_unresolved_names: std::sync::atomic::AtomicBool,
-    /// Whether what `reportNonexistentProperty` prints has come back to a return type that is under way: see `inline_const_enums`.
-    pub printing_closed_a_circle: AtomicBool,
+    /// Whether anything asked has come back to itself. Nothing else depends on the order things are asked in.
+    pub closed_a_circle: AtomicBool,
     pub files: Files,
     pub types: TypeStore,
 
@@ -254,8 +254,6 @@ pub struct Program {
     constraints: ById<TypeId, TypeId>,
     /// See `holder_of_index_signatures`.
     tuple_bases: ById<TypeId, TypeId>,
-    /// `T | undefined` for `T`: see `optional_kept`.
-    optional_types: ById<TypeId, TypeId>,
     /// `global_ref` of a name, without type arguments.
     plain_global_refs: ById<Atom, TypeId>,
     /// The types whose base constraint depends on itself (`circularConstraintType`).
@@ -389,7 +387,7 @@ impl Program {
         let symbols = bases(|m| m.bound.symbols.len());
         Program {
             has_unresolved_names: Default::default(),
-            printing_closed_a_circle: Default::default(),
+            closed_a_circle: Default::default(),
             types: TypeStore::new(),
             expr_types: Slots::new(&exprs),
             exprs_at_hand: Default::default(),
@@ -447,7 +445,6 @@ impl Program {
             inferred_constraints: Default::default(),
             constraints: Default::default(),
             tuple_bases: Default::default(),
-            optional_types: Default::default(),
             plain_global_refs: Default::default(),
             circular_constraints: Default::default(),
             type_param_constraints: Default::default(),
@@ -569,8 +566,6 @@ impl Program {
             recent_intersected_props: Box::new(
                 [((TypeId(u32::MAX), Atom::NONE), TypeId::NEVER); shape::RECENT_PROPS],
             ),
-            retracing: false,
-            explaining: Vec::new(),
             keeps_arg_contexts: false,
             context_checked_for: FxHashMap::default(),
             uncertain: false,
@@ -588,7 +583,7 @@ impl Program {
             held_for_now: FxHashMap::default(),
             trials: FxHashMap::default(),
             enclosing_module_specifier_mode: None,
-            symbol_chain_cache: Default::default(),
+            emit_resolver_links: Default::default(),
             explains: false,
             only_syntax: false,
             notes: Default::default(),
@@ -622,8 +617,6 @@ impl Program {
             trace_cycles: std::env::var_os("BUN_SEMA_TRACE_CYCLES").is_some(),
             looked_at: Default::default(),
             deferred_nodes: Default::default(),
-            trace_relations: std::env::var_os("BUN_SEMA_TRACE_RELATIONS").is_some(),
-            trace_slow_relations: std::env::var_os("BUN_SEMA_TRACE_SLOW_RELATIONS").is_some(),
             resolving: Vec::new(),
             pending_failed_call: None,
             own_of_compared_sigs: Vec::new(),
@@ -875,10 +868,6 @@ pub struct Checker<'p> {
     recent_members: Box<[shape::RecentMembers<'p>; shape::RECENT_MEMBERS]>,
     recent_signatures: Box<[(TypeId, &'p [SigId]); shape::RECENT_SIGNATURES]>,
     recent_intersected_props: Box<[((TypeId, Atom), TypeId); shape::RECENT_PROPS]>,
-    /// For debugging: a relation is gone through again, without what is remembered of relations, and printed.
-    pub(super) retracing: bool,
-    /// The pairs `explain_not_assignable` is on its way through.
-    pub(super) explaining: Vec<(TypeId, TypeId)>,
     /// A call that is resolved is gone over again, for its errors: what its arguments are expected to be stays what it is.
     pub(super) keeps_arg_contexts: bool,
     /// `NodeCheckFlagsContextChecked` for function expressions among the arguments of a call with several candidates: the candidate
@@ -917,7 +906,7 @@ pub struct Checker<'p> {
     /// `GetModeForUsageLocation` of `TryGetModuleSpecifierFromDeclaration(enclosingDeclaration)`, while the name of an import or an
     /// export is printed.
     enclosing_module_specifier_mode: Option<ResolutionMode>,
-    symbol_chain_cache: errors_declaration_emit::SymbolChainCache,
+    emit_resolver_links: errors_declaration_emit::EmitResolverLinks,
     /// What is noted of errors is kept: somebody is going to read it.
     explains: bool,
     /// `GetSyntacticDiagnostics`: only what the parser and the scanner say is reported.
@@ -972,9 +961,6 @@ pub struct Checker<'p> {
     looked_at: crate::util::FxHashSet<(FileId, ExprId)>,
     /// `deferredNodes` of the file being checked.
     deferred_nodes: std::collections::VecDeque<in_order::DeferredNode>,
-    /// Say which property or signature a relation between two object types fails on.
-    pub(super) trace_relations: bool,
-    trace_slow_relations: bool,
     /// Asking what is expected regardless of what patterns imply.
     skip_binding_patterns: u32,
     /// `inferTypeArguments` is reading the contextual type of a call: see `arg_context_keeping_boolean`.
@@ -1376,10 +1362,9 @@ impl<'p> Checker<'p> {
             }
         }
         self.cycles += 1;
-        if matches!(q, Query::Return(..)) && !self.reporting_nonexistent.is_empty() {
-            self.p
-                .printing_closed_a_circle
-                .store(true, Ordering::Relaxed);
+        // Written once: the line it is in is read by every thread.
+        if !self.p.closed_a_circle.load(Ordering::Relaxed) {
+            self.p.closed_a_circle.store(true, Ordering::Relaxed);
         }
         if self.trace_cycles {
             eprintln!("cycle: {:?}", &self.stack[i..]);

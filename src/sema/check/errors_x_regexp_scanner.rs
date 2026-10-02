@@ -1464,46 +1464,68 @@ fn decode_rune(text: &[u8]) -> (u32, usize) {
     (ch, size)
 }
 
-/// `GetSpellingSuggestionForStrings`: the closest of `candidates` to `name`, of those that are close. Of two that are as close, the one
-/// that sorts first.
-pub(super) fn spelling_suggestion<'c>(
+/// `GetSpellingSuggestion`
+pub(super) fn get_spelling_suggestion<'c, T: Copy>(
     name: &[u8],
-    candidates: impl Iterator<Item = &'c [u8]>,
-) -> Option<String> {
-    let name_text = String::from_utf8_lossy(name);
-    let name_runes: Vec<char> = name_text.chars().collect();
+    candidates: impl Iterator<Item = T>,
+    get_name: impl Fn(T) -> &'c [u8],
+    compare: impl Fn(T, T) -> std::cmp::Ordering,
+) -> Option<T> {
+    let runes = |text: &[u8]| -> Vec<char> {
+        let invalid = |chunk: &std::str::Utf8Chunk| !chunk.invalid().is_empty();
+        text.utf8_chunks()
+            .flat_map(|c| c.valid().chars().chain(invalid(&c).then_some('\u{FFFD}')))
+            .collect()
+    };
+    let name_runes = runes(name);
     let maximum_length_difference = 2.max((name_runes.len() as f64 * 0.34) as usize);
     // Anything worse than this is not worth saying.
     let mut best_distance = (name_runes.len() as f64 * 0.4).floor() + 0.9;
-    let mut best: Option<&[u8]> = None;
+    let mut best: Option<T> = None;
     for candidate in candidates {
-        if candidate.is_empty()
-            || candidate.len().abs_diff(name_runes.len()) > maximum_length_difference
-            || candidate == name
+        let candidate_name = get_name(candidate);
+        if candidate_name.is_empty()
+            || candidate_name.len().abs_diff(name_runes.len()) > maximum_length_difference
+            || candidate_name == name
         {
             continue;
         }
-        let text = String::from_utf8_lossy(candidate);
+        let candidate_runes = runes(candidate_name);
         // Two letters are told apart at a glance, unless it is by their case.
-        if candidate.len() < 3 && text.to_lowercase() != name_text.to_lowercase() {
+        let lower = |runes: &[char]| {
+            runes
+                .iter()
+                .flat_map(|c| c.to_lowercase())
+                .collect::<Vec<_>>()
+        };
+        if candidate_name.len() < 3 && lower(&candidate_runes) != lower(&name_runes) {
             continue;
         }
-        let runes: Vec<char> = text.chars().collect();
-        let Some(distance) = levenshtein_with_max(&name_runes, &runes, best_distance) else {
+        let Some(distance) = levenshtein_with_max(&name_runes, &candidate_runes, best_distance)
+        else {
             continue;
         };
         if distance < best_distance {
             best_distance = distance;
             best = Some(candidate);
-        } else if best.is_none_or(|best| candidate < best) {
+        } else if best.is_none_or(|best| compare(candidate, best).is_lt()) {
             best = Some(candidate);
         }
     }
-    best.map(|best| String::from_utf8_lossy(best).into_owned())
+    best
+}
+
+/// `GetSpellingSuggestionForStrings`
+pub(super) fn spelling_suggestion<'c>(
+    name: &[u8],
+    candidates: impl Iterator<Item = &'c [u8]>,
+) -> Option<String> {
+    get_spelling_suggestion(name, candidates, |c| c, |a, b| a.cmp(b))
+        .map(|best| String::from_utf8_lossy(best).into_owned())
 }
 
 /// `levenshteinWithMax`: changing a letter costs two, and changing its case next to nothing. `None` for its -1: more than `max_value`.
-pub(super) fn levenshtein_with_max(s1: &[char], s2: &[char], max_value: f64) -> Option<f64> {
+fn levenshtein_with_max(s1: &[char], s2: &[char], max_value: f64) -> Option<f64> {
     let mut previous: Vec<f64> = (0..=s2.len()).map(|j| j as f64).collect();
     let mut current = vec![0.0; s2.len() + 1];
     let big = max_value + 0.01;

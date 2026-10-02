@@ -1,10 +1,10 @@
 //! What a name or `this` comes to where it is written, and what a declaration is left with for a type:
 //! 2815, 7005, 7041,
-//! 7018 7025 7055 (and 7006 7008 7010 7011 7019 where `null` and `undefined` widen), 2700, 2842.
+//! 7025 7055 (and 7010 7011 where `null` and `undefined` widen), 2700, 2842.
 //!
 //! Follows `checkIdentifier`, `checkThisExpression`, `getBindingElementTypeFromParentType`,
-//! `checkUnusedRenamedBindingElements`, `widenTypeForVariableLikeDeclaration`, `reportErrorsFromWidening`,
-//! `reportWideningErrorsInType` and `reportImplicitAny` of TypeScript 7.0.2's checker.go.
+//! `checkUnusedRenamedBindingElements`, `widenTypeForVariableLikeDeclaration`, `reportErrorsFromWidening` and `reportImplicitAny` of
+//! TypeScript 7.0.2's checker.go.
 
 use super::errors::Diagnostic;
 use super::*;
@@ -364,39 +364,6 @@ impl Pass<'_, '_> {
 
 // ───────────────────────────── declarations that are left with `any` ─────────────────────────────
 
-/// What the type of an expression has of the `null` and `undefined` that widen to `any` (`ObjectFlagsContainsWideningType`), as far as
-/// the way it is written tells. There are none under `strictNullChecks`.
-enum Widening {
-    No,
-    /// `nullWideningType`, `undefinedWideningType`
-    Nullish,
-    /// An array or a tuple, and what its type arguments have.
-    Elements(Vec<Widening>),
-    /// An object literal in which something was written that has some: where each of its properties that still does is written.
-    Object(Vec<(u32, Widening)>),
-    /// It cannot be told.
-    Unknown,
-}
-
-impl Widening {
-    fn is_unknown(&self) -> bool {
-        match self {
-            Widening::Unknown => true,
-            Widening::Elements(args) => args.iter().any(Widening::is_unknown),
-            Widening::Object(props) => props.iter().any(|p| p.1.is_unknown()),
-            _ => false,
-        }
-    }
-
-    fn contains_widening_type(&self) -> bool {
-        match self {
-            Widening::Nullish | Widening::Object(_) => true,
-            Widening::Elements(args) => args.iter().any(Widening::contains_widening_type),
-            _ => false,
-        }
-    }
-}
-
 impl Pass<'_, '_> {
     /// The name bound by `d`, if `d` binds a plain identifier without a type annotation, is `symbol.ValueDeclaration` (the only
     /// declaration `getTypeOfVariableOrParameterOrPropertyWorker` reports errors for) and is not auto-typed.
@@ -441,188 +408,23 @@ impl Pass<'_, '_> {
         }
     }
 
-    /// Notes what `reportImplicitAny` and `reportWideningErrorsInType` say of a declaration that takes its type from the expression
-    /// `from`. `name`: where its name is written.
-    fn explain_implicit_any(&mut self, start: u32, end: u32, code: u32, name: u32, from: ExprId) {
-        let file = self.file;
-        self.c.explain_to(start, end, code, |c| {
-            let ty = c.type_of_expr(file, from);
-            let ty = c.widened(ty);
-            vec![c.declaration_name_at(file, name), c.type_to_string(ty)]
-        });
-    }
-
-    /// `reportErrorsFromWidening`, wherever a type is taken from an expression: 7018, or else 7005, 7006 7019, 7008, 7010 7011, 7025 7055.
+    /// `reportErrorsFromWidening`, of what the functions yield and return: 7018, or else 7010 7011, 7025 7055.
     fn check_widening(&mut self) {
-        let (hir, bound) = (self.hir, self.bound);
+        let bound = self.bound;
         if !self.no_implicit_any || self.strict {
             return;
         }
-        for d in 0..hir.var_decls.len() {
-            let init = hir.var_decls[d].init;
-            if init.is_some()
-                && let Some(pat) = self.untyped_variable(VarDeclId(d as u32))
-            {
-                let widening = self.widening_of(init);
-                let start = hir[pat].pos;
-                if self.report_errors_from_widening(&widening, start, 7005) {
-                    self.explain_implicit_any(start, 0, 7005, start, init);
-                }
-            }
-        }
-        for m in 0..hir.members.len() {
-            let member = &hir.members[m];
-            if member.kind == MemberKind::Property
-                && member.ty.is_none()
-                && member.init.is_some()
-                && matches!(bound.member_owner[m], MemberOwner::Class(_))
-            {
-                let widening = self.widening_of(member.init);
-                if self.report_errors_from_widening(&widening, member.pos, 7008) {
-                    let end = self.c.end_of_name_at(self.file, member.pos);
-                    self.explain_implicit_any(member.pos, end, 7008, member.pos, member.init);
-                }
-            }
-        }
-        for f in 0..hir.fns.len() {
-            let owner = bound.fns[f].owner;
-            if matches!(owner, FnOwner::None) {
-                continue;
-            }
-            let func = FnId(f as u32);
-            // `getReturnTypeOfFullSignature`, `getParameterTypeOfFullSignature`
-            if self.c.full_signature(self.file, func).is_some() {
-                continue;
-            }
-            // What is expected of a function expression comes before what its parameters default to.
-            let is_context_known = match owner {
+        for f in 0..self.hir.fns.len() {
+            // What is expected of a function expression says whether it is reported.
+            let is_context_known = match bound.fns[f].owner {
+                FnOwner::None => false,
                 FnOwner::Expr(e) => self.c.is_context_known(self.file, e),
                 _ => true,
             };
-            if !is_context_known {
-                continue;
+            if is_context_known {
+                self.check_widening_of_results(FnId(f as u32));
             }
-            for (index, p) in hir.fns[f].params.iter().enumerate() {
-                let param = &hir[p];
-                if param.ty.is_some()
-                    || param.default.is_none()
-                    || !matches!(hir[param.pat].kind, PatKind::Ident(_))
-                    || matches!(owner, FnOwner::Expr(_))
-                        && self
-                            .c
-                            .contextual_param_type(self.file, func, index)
-                            .is_some()
-                {
-                    continue;
-                }
-                let widening = self.widening_of(param.default);
-                let code = if param.flags.contains(Flags::REST) {
-                    7019
-                } else {
-                    7006
-                };
-                if self.report_errors_from_widening(&widening, param.pos, code) {
-                    let end = self.c.end_of_param(self.file, p);
-                    let name = hir[param.pat].pos;
-                    self.explain_implicit_any(param.pos, end, code, name, param.default);
-                }
-            }
-            self.check_widening_of_results(func);
         }
-    }
-
-    /// Whether the getter `func` goes with a setter that says what it takes.
-    fn has_annotated_setter(&self, func: FnId) -> bool {
-        let (hir, bound) = (self.hir, self.bound);
-        let is_annotated = |setter: FnId| {
-            setter.is_some()
-                && hir[setter]
-                    .params
-                    .iter()
-                    .next()
-                    .is_some_and(|p| hir[p].ty.is_some())
-        };
-        match bound.fns[func.idx()].owner {
-            FnOwner::Member(m) => {
-                let MemberOwner::Class(c) = bound.member_owner[m.idx()] else {
-                    return false;
-                };
-                hir[c].members.iter().any(|x| {
-                    hir[x].kind == MemberKind::Setter
-                        && hir[x].key == hir[m].key
-                        && hir[x].flags.contains(Flags::STATIC)
-                            == hir[m].flags.contains(Flags::STATIC)
-                        && is_annotated(hir[x].func)
-                })
-            }
-            FnOwner::Expr(e) => {
-                let Parent::Prop(p) = bound.expr_parent[e.idx()] else {
-                    return false;
-                };
-                let ExprKind::Object(props) = hir[bound.prop_owner[p.idx()]].kind else {
-                    return false;
-                };
-                props.iter().any(|x| {
-                    hir[x].kind == PropKind::Setter
-                        && hir[x].key == hir[p].key
-                        && hir[x].value.is_some()
-                        && matches!(hir[hir[x].value].kind, ExprKind::Fn(setter) if is_annotated(setter))
-                })
-            }
-            _ => false,
-        }
-    }
-
-    /// `checkAndAggregateReturnExpressionTypes`: whether `e`, which `func` returns, is a bare call of `func` itself, which says nothing of
-    /// what it returns.
-    fn is_call_of_itself(&self, func: FnId, e: ExprId) -> bool {
-        let (hir, bound) = (self.hir, self.bound);
-        let mut call = e;
-        if hir[func].flags.contains(Flags::ASYNC)
-            && let ExprKind::Await(awaited) = hir[call].kind
-        {
-            call = awaited;
-        }
-        let ExprKind::Call(c) = hir[call].kind else {
-            return false;
-        };
-        let callee = hir[c].callee;
-        let symbol = bound.expr_symbol[callee.idx()];
-        if !matches!(hir[callee].kind, ExprKind::Ident(_))
-            || is_parenthesized(self.hir, callee)
-            || symbol.is_none()
-        {
-            return false;
-        }
-        if bound.fn_symbol[func.idx()] == symbol {
-            return true;
-        }
-        // A function expression by the name of the variable it is given to, if that holds nothing else (`isConstantReference`).
-        let FnOwner::Expr(owner) = bound.fns[func.idx()].owner else {
-            return false;
-        };
-        let s = &bound.symbols[symbol.idx()];
-        let Some(&Decl::Var(pat)) = s.decls.first() else {
-            return false;
-        };
-        let PatParent::Var(d) = bound.pat_parent[pat.idx()] else {
-            return false;
-        };
-        matches!(hir[func].kind, FnKind::Expr | FnKind::Arrow)
-            && hir[d].init == owner
-            && hir[d].ty.is_none()
-            && (s.flags.contains(SymFlags::CONST)
-                || !s.flags.contains(SymFlags::ASSIGNED) && self.is_mutable_local(d))
-    }
-
-    /// `isMutableLocalVariableDeclaration`
-    fn is_mutable_local(&self, d: VarDeclId) -> bool {
-        let decl = &self.hir[d];
-        let stmt = self.bound.var_stmt[d.idx()];
-        decl.kind == VarKind::Let
-            && !decl.flags.contains(Flags::EXPORT)
-            && !(matches!(self.bound.stmt_parent[stmt.idx()], Parent::File)
-                && !self.c.files().module(self.file).is_module())
     }
 
     /// The call and its argument that what is expected of `e` is taken from: `e` itself, or a literal or the like that `e` is in.
@@ -714,55 +516,19 @@ impl Pass<'_, '_> {
         let (hir, bound) = (self.hir, self.bound);
         let f = &hir[func];
         let owner = bound.fns[func.idx()].owner;
-        if f.ret.is_some()
-            || !matches!(
-                f.kind,
-                FnKind::Decl | FnKind::Expr | FnKind::Arrow | FnKind::Method | FnKind::Getter
-            )
+        // `yieldType`, `returnType`, `nextType`
+        let mut unwidened = [None; 3];
+        self.c
+            .return_type_from_body(self.file, func, &mut unwidened);
+        if !unwidened
+            .iter()
+            .flatten()
+            .any(|&ty| self.c.contains_widening_type(ty, 0))
         {
             return;
         }
-        // `getTypeOfAccessors`, `getReturnTypeFromAnnotation`: a getter gives what its setter says it takes, and its body is not asked.
-        if f.kind == FnKind::Getter && self.has_annotated_setter(func) {
-            return;
-        }
-        let returned = match f.body {
-            FnBody::None => return,
-            FnBody::Expr(body) => self.widening_of(body),
-            FnBody::Block(_) => {
-                let mut returned = Vec::new();
-                for s in bound.ids(bound.fns[func.idx()].returns) {
-                    if let StmtKind::Return(e) = hir[s].kind
-                        && e.is_some()
-                        && !self.is_call_of_itself(func, e)
-                    {
-                        returned.push((self.widening_of(e), e));
-                    }
-                }
-                self.union_of_widenings(returned)
-            }
-        };
         let is_generator = f.flags.contains(Flags::GENERATOR);
         let is_async = f.flags.contains(Flags::ASYNC);
-        let mut yielded = Vec::new();
-        if is_generator {
-            for y in bound.ids(bound.fns[func.idx()].yields) {
-                let ExprKind::Yield { value, star } = hir[y].kind else {
-                    continue;
-                };
-                yielded.push(if value.is_none() {
-                    (Widening::Nullish, ExprId::NONE)
-                } else if star {
-                    (self.widening_of_what_is_spread(value), ExprId::NONE)
-                } else {
-                    (self.widening_of(value), value)
-                });
-            }
-        }
-        let yielded = self.union_of_widenings(yielded);
-        if !returned.contains_widening_type() && !yielded.contains_widening_type() {
-            return;
-        }
         // `reportImplicitAny`: at the name, of which a function expression may have none but that of what it is given to.
         let (start, is_named) = match (f.kind, owner) {
             (FnKind::Method | FnKind::Getter, FnOwner::Member(m)) => (hir[m].pos, true),
@@ -775,8 +541,7 @@ impl Pass<'_, '_> {
             (FnKind::Arrow, _) => (f.pos, false),
             _ => return,
         };
-        // `shouldReportErrorsFromWideningWithContextualSignature`. What `next` is given is what is expected of the `yield`s, which comes
-        // of annotations: there is nothing in it to widen.
+        // `shouldReportErrorsFromWideningWithContextualSignature`
         let expected = self.contextual_return_type(func);
         let iteration = expected
             .filter(|_| is_generator)
@@ -784,6 +549,10 @@ impl Pass<'_, '_> {
         let reports_yield = match expected {
             None => true,
             Some(_) => iteration.is_some_and(|t| self.c.is_generic(t.yielded)),
+        };
+        let reports_next = match expected {
+            None => true,
+            Some(_) => iteration.is_some_and(|t| self.c.is_generic(t.next)),
         };
         let reports_return = match expected {
             None => true,
@@ -798,23 +567,21 @@ impl Pass<'_, '_> {
                 self.c.is_generic(ty)
             }
         };
-        for (reports, widening, code, is_yield) in [
+        let of_return = if is_named { 7010 } else { 7011 };
+        for (reports, ty, code) in [
             (
                 reports_yield,
-                &yielded,
+                unwidened[0],
                 if is_named { 7055 } else { 7025 },
-                true,
             ),
-            (
-                reports_return,
-                &returned,
-                if is_named { 7010 } else { 7011 },
-                false,
-            ),
+            (reports_return, unwidened[1], of_return),
+            (reports_next, unwidened[2], of_return),
         ] {
-            if !reports || !self.report_errors_from_widening(widening, start, code) {
+            let Some(ty) = ty else { continue };
+            if !reports || !self.c.report_errors_from_widening(ty) {
                 continue;
             }
+            self.report(start, code);
             // `GetErrorRangeForNode`
             let file = self.file;
             let end = match (f.kind, owner) {
@@ -824,22 +591,7 @@ impl Pass<'_, '_> {
                 _ => self.c.end_of_name_at(file, start),
             };
             self.c.explain_to(start, end, code, |c| {
-                let sig = c.sig_of_fn(file, func);
-                let result = c.sig_return(sig);
-                let ty = if is_generator {
-                    c.iteration_types(result, is_async)
-                        .map_or(TypeId::ANY, |types| {
-                            if is_yield {
-                                types.yielded
-                            } else {
-                                types.returned
-                            }
-                        })
-                } else if is_async {
-                    c.awaited(result)
-                } else {
-                    result
-                };
+                let ty = c.regular_object(ty);
                 let ty = c.type_to_string(ty);
                 if is_named {
                     vec![c.source_text(file, start, end), ty]
@@ -848,341 +600,6 @@ impl Pass<'_, '_> {
                 }
             });
         }
-    }
-
-    /// `reportErrorsFromWidening`. `start`, `code`: what `reportImplicitAny` says of the declaration if there is nothing in the type
-    /// to point at. Whether it did say that.
-    fn report_errors_from_widening(&mut self, widening: &Widening, start: u32, code: u32) -> bool {
-        let is_reported = !widening.is_unknown()
-            && widening.contains_widening_type()
-            && !self.report_widening_errors_in_type(widening);
-        if is_reported {
-            self.report(start, code);
-        }
-        is_reported
-    }
-
-    /// `reportWideningErrorsInType`: 7018
-    fn report_widening_errors_in_type(&mut self, widening: &Widening) -> bool {
-        let mut is_reported = false;
-        match widening {
-            Widening::Elements(args) => {
-                for arg in args {
-                    is_reported = is_reported || self.report_widening_errors_in_type(arg);
-                }
-            }
-            Widening::Object(props) => {
-                for (start, prop) in props {
-                    is_reported = self.report_widening_errors_in_type(prop);
-                    if !is_reported {
-                        self.report(*start, 7018);
-                        if let Some(p) = self.hir.props.iter().position(|p| p.pos == *start) {
-                            let p = PropId(p as u32);
-                            let end = self.c.end_of_prop(self.file, p);
-                            self.explain_implicit_any(*start, end, 7018, *start, self.hir[p].value);
-                        }
-                        is_reported = true;
-                    }
-                }
-            }
-            _ => {}
-        }
-        is_reported
-    }
-
-    /// What the elements of `e` have, which is gone through by `...e` or `yield* e`.
-    fn widening_of_what_is_spread(&mut self, e: ExprId) -> Widening {
-        match self.widening_of(e) {
-            Widening::No => Widening::No,
-            Widening::Elements(mut args) if args.len() == 1 => args.remove(0),
-            _ => Widening::Unknown,
-        }
-    }
-
-    fn widening_of(&mut self, e: ExprId) -> Widening {
-        let hir = self.hir;
-        if self.c.is_stack_low() {
-            return Widening::Unknown;
-        }
-        match hir[e].kind {
-            ExprKind::Null | ExprKind::Missing | ExprKind::Unary { op: UnOp::Void, .. } => {
-                Widening::Nullish
-            }
-            ExprKind::Ident(name) => {
-                let symbol = self.bound.expr_symbol[e.idx()];
-                if symbol.is_none() {
-                    if name == known::undefined {
-                        Widening::Nullish
-                    } else {
-                        Widening::No
-                    }
-                } else {
-                    let declared = self.c.type_of_symbol(self.c.files().sym(self.file, symbol));
-                    if self.c.is_automatic_type(declared) {
-                        // It is whatever was last assigned to it.
-                        Widening::Unknown
-                    } else {
-                        Widening::No
-                    }
-                }
-            }
-            ExprKind::NonNull(x)
-            | ExprKind::AsConst(x)
-            | ExprKind::Await(x)
-            | ExprKind::Satisfies { expr: x, .. } => self.widening_of(x),
-            ExprKind::Binary {
-                op: BinOp::Comma,
-                right: x,
-                ..
-            }
-            | ExprKind::Assign {
-                op: None, value: x, ..
-            } => self.widening_of(x),
-            ExprKind::Spread(x) => self.widening_of_what_is_spread(x),
-            ExprKind::Cond { yes, no, .. } => {
-                let branches = vec![(self.widening_of(yes), yes), (self.widening_of(no), no)];
-                self.union_of_widenings(branches)
-            }
-            ExprKind::Array(items) => {
-                let ty = self.c.type_of_expr(self.file, e);
-                let is_tuple = self.c.is_tuple(ty);
-                let mut elements = Vec::with_capacity(items.len());
-                for item in hir.ids(items) {
-                    elements.push((self.widening_of(item), item));
-                }
-                if is_tuple {
-                    return Widening::Elements(elements.into_iter().map(|x| x.0).collect());
-                }
-                // Nothing in it: an array of `undefined`.
-                if elements.is_empty() {
-                    return Widening::Elements(vec![Widening::Nullish]);
-                }
-                match self.union_of_widenings(elements) {
-                    Widening::No => Widening::No,
-                    Widening::Unknown => Widening::Unknown,
-                    element => Widening::Elements(vec![element]),
-                }
-            }
-            ExprKind::Object(props) => self.widening_of_object(props),
-            ExprKind::Binary {
-                op: BinOp::And | BinOp::Or | BinOp::Nullish,
-                left,
-                right,
-            }
-            | ExprKind::Assign {
-                op: Some(BinOp::And | BinOp::Or | BinOp::Nullish),
-                target: left,
-                value: right,
-            } => match (self.widening_of(left), self.widening_of(right)) {
-                (Widening::No, Widening::No) => Widening::No,
-                _ => Widening::Unknown,
-            },
-            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => {
-                match self.widening_of(obj) {
-                    Widening::No => Widening::No,
-                    _ => Widening::Unknown,
-                }
-            }
-            _ => Widening::No,
-        }
-    }
-
-    /// What a union, reduced to what is no subtype of anything else in it, has: `null` and `undefined` go where there is anything
-    /// else. Each with the expression it is the type of, if there is one.
-    fn union_of_widenings(&mut self, members: Vec<(Widening, ExprId)>) -> Widening {
-        let mut structured = None;
-        let mut plain = Vec::new();
-        let mut has_nullish = false;
-        for (widening, e) in members {
-            match widening {
-                Widening::Unknown => return Widening::Unknown,
-                Widening::Nullish => has_nullish = true,
-                Widening::No => plain.push(e),
-                // Which of two would be left, or both, is a matter of what is in them.
-                _ if structured.is_some() => return Widening::Unknown,
-                _ => structured = Some(widening),
-            }
-        }
-        let Some(structured) = structured else {
-            return if plain.is_empty() && has_nullish {
-                Widening::Nullish
-            } else {
-                Widening::No
-            };
-        };
-        // A primitive has nothing to do with an object.
-        for e in plain {
-            if e.is_none() {
-                return Widening::Unknown;
-            }
-            let ty = self.c.type_of_expr(self.file, e);
-            if !self.c.is_known(ty) || !self.c.every_type(ty, |c, m| c.is_primitive(m)) {
-                return Widening::Unknown;
-            }
-        }
-        structured
-    }
-
-    /// `getSpreadType`: whether spreading a `part` after a property `name` that is `null` or `undefined` leaves nothing of that.
-    /// `is_partial`: all the properties of `part` may be left out.
-    fn overrides(&mut self, part: TypeId, name: Atom, is_partial: bool) -> bool {
-        let Some((prop, mapper)) = self.c.prop_of(part, name) else {
-            return false;
-        };
-        // What is private or protected is not spread, and what was there by the name goes with it.
-        if prop
-            .flags
-            .intersects(PropFlags::PRIVATE | PropFlags::PROTECTED)
-        {
-            return !is_partial;
-        }
-        // `isSpreadableProperty`: nor are the methods and accessors of a class.
-        if prop
-            .flags
-            .intersects(PropFlags::METHOD | PropFlags::ACCESSOR | PropFlags::WRITE_ONLY)
-            && let PropSource::Members(members) = &prop.source
-            && members.iter().any(|&(file, m)| {
-                matches!(
-                    self.c.bound(file).member_owner[m.idx()],
-                    MemberOwner::Class(_)
-                )
-            })
-        {
-            return false;
-        }
-        if !is_partial && !prop.flags.contains(PropFlags::OPTIONAL) {
-            return true;
-        }
-        // What may be left out is put together with what was there.
-        let ty = self.c.type_of_prop(&prop, mapper);
-        !self.c.remove_missing_or_undefined_type(ty).is_never()
-    }
-
-    fn widening_of_object(&mut self, props: Span<PropId>) -> Widening {
-        let hir = self.hir;
-        // What is written that has some: which property it is, its name, where it is, what it has.
-        let mut found: Vec<(usize, Atom, u32, Widening)> = Vec::new();
-        let mut is_flagged = false;
-        // What is spread: after which property, what it may be, and whether all its properties may be left out.
-        let mut spreads: Vec<(usize, Vec<TypeId>, bool)> = Vec::new();
-        for (i, p) in props.iter().enumerate() {
-            let prop = &hir[p];
-            if prop.value.is_none() {
-                continue;
-            }
-            if prop.kind == PropKind::Spread {
-                let ty = self.c.type_of_expr(self.file, prop.value);
-                if !self.c.is_known(ty) {
-                    return Widening::Unknown;
-                }
-                // With `any` in it, it is `any`.
-                if self.c.is_any(ty) {
-                    return Widening::No;
-                }
-                // Nothing that could be spread: an error, and what is in error has nothing to widen.
-                let truthy = self.c.remove_definitely_falsy(ty);
-                if truthy.is_never() {
-                    return Widening::No;
-                }
-                let mut parts = self.c.parts(truthy).to_vec();
-                // `false` and the like spread nothing.
-                if truthy != ty {
-                    parts.push(TypeId::EMPTY_OBJECT);
-                }
-                spreads.push((i, parts, false));
-                continue;
-            }
-            // A later property of the same name takes the place of an earlier one.
-            let name = self.c.member_name(self.file, prop.key);
-            if let Some(name) = name {
-                found.retain(|x| x.1 != name);
-            }
-            if !matches!(prop.kind, PropKind::Init | PropKind::Shorthand) {
-                continue;
-            }
-            let widening = self.widening_of(prop.value);
-            if widening.is_unknown() {
-                return Widening::Unknown;
-            }
-            if widening.contains_widening_type() {
-                is_flagged = true;
-                // Under a name that is worked out it goes into an index signature, where there is nothing to point at.
-                if let Some(name) = name {
-                    found.push((i, name, prop.pos, widening));
-                }
-            }
-        }
-        if !is_flagged {
-            return Widening::No;
-        }
-        // With something in it that is yet to be known it is an intersection, which is not looked into.
-        for (_, parts, _) in &spreads {
-            for &part in parts {
-                if self.c.is_generic_object_type(part) {
-                    return Widening::Object(Vec::new());
-                }
-                if !self.c.is_object_type(part) {
-                    return Widening::Unknown;
-                }
-            }
-        }
-        // `tryMergeUnionOfObjectTypeAndEmptyObject`: a union with no more than one member that has anything in it is that member, all
-        // of whose properties may be left out.
-        for (_, parts, is_partial) in &mut spreads {
-            if parts.len() > 1 {
-                let mut full = Vec::new();
-                for &part in parts.iter() {
-                    if !self.c.is_empty_object_type(part) {
-                        full.push(part);
-                    }
-                }
-                if full.len() <= 1 {
-                    (*parts, *is_partial) = (full, true);
-                }
-            }
-        }
-        spreads.retain(|s| !s.1.is_empty());
-        // It is one object for each choice of what is spread. The first that has something to report is reported: which that is
-        // makes no difference if they all have the same.
-        let choices: usize = spreads.iter().map(|s| s.1.len()).product();
-        if choices > 16 {
-            return Widening::Unknown;
-        }
-        let mut surviving: Option<Vec<usize>> = None;
-        for choice in 0..choices {
-            let mut rest = choice;
-            let mut chosen = Vec::with_capacity(spreads.len());
-            for (after, parts, is_partial) in &spreads {
-                chosen.push((*after, parts[rest % parts.len()], *is_partial));
-                rest /= parts.len();
-            }
-            let mut left = Vec::new();
-            for (k, x) in found.iter().enumerate() {
-                let mut is_overridden = false;
-                for &(after, part, is_partial) in &chosen {
-                    is_overridden |= after > x.0 && self.overrides(part, x.1, is_partial);
-                }
-                if !is_overridden {
-                    left.push(k);
-                }
-            }
-            if left.is_empty() {
-                continue;
-            }
-            if surviving.as_ref().is_some_and(|others| *others != left) {
-                return Widening::Unknown;
-            }
-            surviving = Some(left);
-        }
-        let surviving = surviving.unwrap_or_default();
-        Widening::Object(
-            found
-                .into_iter()
-                .enumerate()
-                .filter(|(k, _)| surviving.contains(k))
-                .map(|(_, x)| (x.2, x.3))
-                .collect(),
-        )
     }
 
     // ───────────────────────────── patterns ─────────────────────────────

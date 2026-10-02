@@ -221,7 +221,10 @@ impl Checker<'_> {
         }) {
             return;
         }
-        let (factory, fragment_factory) = super::errors_jsx::jsx_factory_names(self.files(), hir);
+        let (factory, fragment_factory) = (
+            super::errors_jsx::jsx_namespace(self.files(), hir, false),
+            super::errors_jsx::jsx_namespace(self.files(), hir, true),
+        );
         for &e in index.of(ExprTag::Jsx) {
             let ExprKind::Jsx(j) = hir[e].kind else {
                 continue;

@@ -291,6 +291,7 @@ impl<'p> Checker<'p> {
                 let mut new = Shape {
                     literal: shape.literal,
                     is_regular: shape.is_regular,
+                    contains_widening_type: shape.contains_widening_type,
                     ..Shape::default()
                 };
                 for p in &shape.props {

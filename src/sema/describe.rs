@@ -334,7 +334,7 @@ impl<'c, 'p> Describer<'c, 'p> {
                     let flags = self.c.p.files.flags(module);
                     if flags.contains(SymFlags::CLASS) {
                         format!("typeof {}", self.sym_name(module))
-                    } else if flags.contains(SymFlags::ENUM) {
+                    } else if flags.intersects(SymFlags::ENUM) {
                         format!("enumobj {}", self.sym_name(module))
                     } else if flags.intersects(SymFlags::MODULE) {
                         self.module(ty, d)

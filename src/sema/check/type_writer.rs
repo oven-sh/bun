@@ -503,18 +503,16 @@ impl Checker<'_> {
             .and_then(|found| files.resolve_alias(found));
         // `undefined` and `globalThis` have no symbol here, and the expression has the error type if the name does not resolve.
         let symbol = symbol?;
-        Some(
-            if self.type_flags_of_symbol(symbol).intersects(SymFlags::TYPE) {
-                self.declared_type(symbol)
-            } else {
-                // The target of a namespace import can be a copy of the module (`resolveESModuleSymbol`): its type is that of the alias.
-                let written = bound
-                    .expr_scope
-                    .get(&e)
-                    .and_then(|&scope| files.resolve_name(file, scope, name, meaning));
-                self.type_of_symbol(written.unwrap_or(symbol))
-            },
-        )
+        Some(if self.files().flags(symbol).intersects(SymFlags::TYPE) {
+            self.declared_type(symbol)
+        } else {
+            // The target of a namespace import can be a copy of the module (`resolveESModuleSymbol`): its type is that of the alias.
+            let written = bound
+                .expr_scope
+                .get(&e)
+                .and_then(|&scope| files.resolve_name(file, scope, name, meaning));
+            self.type_of_symbol(written.unwrap_or(symbol))
+        })
     }
 
     /// `getTypeOfNode` of the name of `decl`, which starts at `start`. `symbol`: that of `decl`.

@@ -236,7 +236,20 @@ impl Checker<'_> {
         }
         // `SortAndDeduplicateDiagnostics`: in what order the checkers got there does not show.
         reported.sort_by(|a, b| self.compare_diagnostics(&a.0, &b.0));
-        reported.dedup_by(|a, b| a.0 == b.0);
+        // `compactAndMergeRelatedInfos`: those that differ in nothing but what they are related to are one, related to all of it.
+        reported.dedup_by(|(next, _), (first, _)| {
+            let is_same = (next.file, next.start, next.end, next.code)
+                == (first.file, first.start, first.end, first.code)
+                && next.args == first.args
+                && next.message_chain == first.message_chain;
+            if is_same && !next.related_information.is_empty() {
+                let related = &mut first.related_information;
+                related.append(&mut next.related_information);
+                related.sort_by(|a, b| self.compare_diagnostics(a, b));
+                related.dedup();
+            }
+            is_same
+        });
         let mut notes = self.notes.borrow_mut();
         for (diagnostic, _) in reported {
             if never_checked

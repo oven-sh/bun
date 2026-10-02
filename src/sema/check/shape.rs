@@ -1,10 +1,19 @@
 //! What is in an object type: properties, signatures, index signatures.
 
+use super::relate::Ternary;
 use super::*;
 use crate::bind::{Decl, FnOwner, MemberOwner, Parent, SymbolId};
 use crate::table::Handle;
 use crate::util::group_by_key;
 use smallvec::{SmallVec, smallvec};
+
+/// A declaration of a property that does not say what the property is.
+#[derive(Copy, Clone)]
+pub(super) enum UntypedProperty {
+    Member(MemberId),
+    /// `f.name = value`, `this.name = value`, or `Object.defineProperty(f, "name", descriptor)`.
+    Assignment(ExprId),
+}
 
 /// Where the properties of a list are, by name. It is for more than `FEW` of them: fewer are gone through one by one.
 #[derive(Default)]
@@ -1333,6 +1342,12 @@ impl<'p> Checker<'p> {
     /// `#x`: as renamed for the class that declares it (`#x@<file>.<class>`), or as written where no class around declares it.
     pub(super) fn is_private_name(&self, name: Atom) -> bool {
         self.files().atoms.bytes(name).first() == Some(&b'#')
+    }
+
+    /// `IsPrivateIdentifierSymbol`: it is the renaming that tells. A string that starts with `#` is a string like another.
+    pub(super) fn is_private_identifier_symbol(&self, name: Atom) -> bool {
+        self.is_private_name(name)
+            && self.written_name(name).len() < self.files().atoms.bytes(name).len()
     }
 
     /// `SymbolName`: the `#x` of a private name; any other name as it is.
@@ -2751,7 +2766,9 @@ impl<'p> Checker<'p> {
     }
 
     fn signatures_identical(&mut self, a: SigId, b: SigId) -> bool {
-        self.compare_signatures_identical(a, b, false, false, false)
+        let compare_types = &mut Self::compare_types_identical;
+        self.compare_signatures_identical(a, b, false, false, false, compare_types)
+            .holds()
     }
 
     /// `isMixinConstructorType`, of a type whose construct signatures are `sigs`: one signature, without type parameters, that
@@ -2946,25 +2963,6 @@ impl<'p> Checker<'p> {
         b.shape
     }
 
-    fn has_no_members(&mut self, ty: TypeId) -> bool {
-        if ty == TypeId::EMPTY_OBJECT || ty == TypeId::OBJECT {
-            return true;
-        }
-        if !self.is_object_type(ty) || self.is_generic(ty) {
-            return false;
-        }
-        match self.members(ty) {
-            Some(m) => {
-                let s = m.shape();
-                s.props.is_empty()
-                    && s.call.is_empty()
-                    && s.construct.is_empty()
-                    && s.index.is_empty()
-            }
-            None => false,
-        }
-    }
-
     /// `tryMergeUnionOfObjectTypeAndEmptyObject`: `{ a: T } | {}`, which is what `cond ? { a } : {}` and `cond && { a }` are,
     /// spreads like `{ a?: T }`.
     pub fn merge_object_or_nothing(&mut self, ty: TypeId) -> TypeId {
@@ -2974,7 +2972,7 @@ impl<'p> Checker<'p> {
         let mut object = None;
         let mut empty = None;
         for &part in self.parts(ty) {
-            if self.has_no_members(part) {
+            if self.is_empty_object_type(part) {
                 empty.get_or_insert(part);
             } else if (self.is_primitive(part)
                 && part != TypeId::VOID
@@ -3149,7 +3147,7 @@ impl<'p> Checker<'p> {
             return left;
         }
         if self.is_generic_object_type(left) || self.is_generic_object_type(right) {
-            if left == TypeId::EMPTY_OBJECT || self.has_no_members(left) {
+            if self.is_empty_object_type(left) {
                 return right;
             }
             // `T & { a: string }` and `{ b: string }` make `T & { a: string, b: string }`.
@@ -3486,6 +3484,8 @@ impl<'p> Checker<'p> {
         self.resolution_start = resolution_start;
         // The last step of `getWidenedTypeForAssignmentDeclaration`: in a JavaScript file an all-nullable type is an implicit `any`.
         let ty = if self.hir(file).is_js && self.is_all_null_or_undefined(ty) {
+            let value_declaration = UntypedProperty::Assignment(assignments[0]);
+            self.report_implicit_any(file, value_declaration, TypeId::ANY);
             TypeId::ANY
         } else {
             ty
@@ -3528,6 +3528,55 @@ impl<'p> Checker<'p> {
         ty
     }
 
+    /// `GetErrorRangeForNode`, of `declaration`: of a property declaration or signature its name.
+    pub(super) fn place_of_untyped_property(
+        &self,
+        file: FileId,
+        declaration: UntypedProperty,
+    ) -> (FileId, u32, u32) {
+        match declaration {
+            UntypedProperty::Member(member) => (
+                file,
+                self.hir(file)[member].pos,
+                self.end_of_member_name(file, member),
+            ),
+            UntypedProperty::Assignment(e) => (
+                file,
+                self.start_inside_parentheses(file, e),
+                self.end_inside_parentheses(file, e),
+            ),
+        }
+    }
+
+    /// `reportImplicitAny`, of a property that comes to be `ty`.
+    fn report_implicit_any(&mut self, file: FileId, declaration: UntypedProperty, ty: TypeId) {
+        let no_implicit_any = self.p.files.options.no_implicit_any;
+        if self.hir(file).is_js && !self.is_check_js(file)
+            || !no_implicit_any && !self.captures_suggestions()
+        {
+            return;
+        }
+        // `case KindBinaryExpression, KindPropertyDeclaration, KindPropertySignature`. A call expression takes the default case.
+        let is_call = matches!(declaration, UntypedProperty::Assignment(e)
+            if !matches!(self.hir(file)[e].kind, ExprKind::Assign { .. }));
+        let code = match (is_call, no_implicit_any) {
+            (false, true) => 7008,
+            (false, false) => 7045,
+            (true, true) => 7005,
+            (true, false) => 7043,
+        };
+        let at = self.place_of_untyped_property(file, declaration);
+        // `DeclarationNameToString(GetNameOfDeclaration(declaration))`
+        let name = match declaration {
+            UntypedProperty::Member(_) => self.source_text(file, at.1, at.2),
+            UntypedProperty::Assignment(e) => {
+                super::errors_implicit::name_of_assignment_declaration(self, file, e)
+            }
+        };
+        let diagnostic = self.new_diagnostic(at, code, &[Arg::Text(&name), Arg::Type(ty)]);
+        self.add_error_or_suggestion(no_implicit_any, diagnostic);
+    }
+
     /// `filterType(ty, flags &^ TypeFlagsNullable != 0) == neverType`: `ty` is `never`, or a union of `null` and `undefined` only.
     /// `void` is not nullable, and `any` is kept by the filter.
     pub(super) fn is_all_null_or_undefined(&self, ty: TypeId) -> bool {
@@ -3535,7 +3584,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `getWidenedTypeForAssignmentDeclaration` without its last step, which replaces an all-nullable type by `any` in a
-    /// JavaScript file and reports 7008.
+    /// JavaScript file and reports that.
     pub(super) fn widened_type_of_assignments(
         &mut self,
         file: FileId,
@@ -3580,7 +3629,8 @@ impl<'p> Checker<'p> {
                 Some(func) => {
                     // `getFlowTypeOfProperty`: the walk starts from the inherited type, or from `undefinedType`.
                     let initial = inherited.unwrap_or(self.undefined_as_declared());
-                    resolved = self.flow_type_in_constructor_from(file, func, name, initial);
+                    let first = UntypedProperty::Assignment(assignments[0]);
+                    resolved = self.flow_type_in_constructor_from(file, func, name, initial, first);
                 }
                 None => (resolved, is_method_only) = (inherited, true),
             }
@@ -3605,7 +3655,7 @@ impl<'p> Checker<'p> {
                             {
                                 continue;
                             }
-                            self.type_of_assignment_declaration(file, target, value)
+                            self.type_of_assignment_declaration(file, e, target, value)
                         }
                         ExprKind::Call(call) => match hir.ids(hir[call].args).nth(2) {
                             Some(descriptor) => {
@@ -3794,10 +3844,12 @@ impl<'p> Checker<'p> {
             .any(|&e| self.is_readonly_assignment_declaration(*file, e))
     }
 
-    /// `getAssignmentDeclarationInitializerType` for the assignment `target = value`, which declares the property `target`.
+    /// `getAssignmentDeclarationInitializerType` for `declaration`, the assignment `target = value`, which declares the property
+    /// `target`.
     fn type_of_assignment_declaration(
         &mut self,
         file: FileId,
+        declaration: ExprId,
         target: ExprId,
         value: ExprId,
     ) -> TypeId {
@@ -3829,7 +3881,9 @@ impl<'p> Checker<'p> {
                 && ty == self.array_of(TypeId::NEVER);
         // The property is `any[]`, unless its owner initializes a variable that has a type annotation.
         if is_empty_array && !self.is_property_of_annotated_variable(file, target) {
-            return self.array_of(TypeId::ANY);
+            let any_array = self.array_of(TypeId::ANY);
+            self.report_implicit_any(file, UntypedProperty::Assignment(declaration), any_array);
+            return any_array;
         }
         // `checkExpressionForMutableLocation`: what is asserted is what it is said to be, and a literal stays one where a literal
         // is expected.
@@ -4050,6 +4104,24 @@ impl<'p> Checker<'p> {
             // `getTypeOfSymbol` asks for an accessor first, and `PropertyExcludes` lets a property be one symbol with the accessors
             // of its name.
             MemberKind::Property if !self.has_get_or_set_accessor(members) => {
+                // `reportErrors`: `getTypeOfSymbol` asks. Of a later declaration by itself it is
+                // `getWidenedTypeForVariableLikeDeclaration(node, false)`.
+                let value_declaration = (file, crate::bind::MemberDeclaration::Member(first));
+                let reports_errors = members.len() > 1
+                    || self
+                        .files()
+                        .declarations_of_member(file, value_declaration.1)
+                        .first()
+                        .is_none_or(|&it| it == value_declaration);
+                let value_declaration = UntypedProperty::Member(first);
+                // `getTypeOfAccessors`: `core.Find(symbol.Declarations, ast.IsAutoAccessorPropertyDeclaration)` says what it is.
+                let (file, first) = members
+                    .iter()
+                    .copied()
+                    .find(|&(f, m)| self.hir(f)[m].flags.contains(Flags::ACCESSOR))
+                    .unwrap_or((file, first));
+                let hir = self.hir(file);
+                let member = &hir[first];
                 let owner = self.bound(file).member_owner[first.idx()];
                 // `isValidESSymbolDeclaration`: `readonly` in an interface or a type literal, `static readonly` in a class. To any
                 // other property a `unique symbol` is a `symbol`.
@@ -4116,7 +4188,15 @@ impl<'p> Checker<'p> {
                     if hir.is_js
                         && matches!(hir[member.init].kind, ExprKind::Array(items) if items.is_empty())
                     {
-                        return self.array_of(TypeId::ANY);
+                        let any_array = self.array_of(TypeId::ANY);
+                        if !matches!(owner, MemberOwner::None) {
+                            self.report_implicit_any(
+                                file,
+                                UntypedProperty::Member(first),
+                                any_array,
+                            );
+                        }
+                        return any_array;
                     }
                     let ty = self.type_of_declaration_initializer(file, member.init);
                     // `widenTypeForVariableLikeDeclaration`: a `unique symbol` belongs to the declaration it was made for. To any
@@ -4126,10 +4206,17 @@ impl<'p> Checker<'p> {
                     } else {
                         ty
                     };
-                    if member.flags.contains(Flags::READONLY) {
-                        return self.regular_object(ty);
+                    let ty = if member.flags.contains(Flags::READONLY) {
+                        ty
+                    } else {
+                        self.widen_literal(ty)
+                    };
+                    let widened = self.regular_object(ty);
+                    // `widenTypeForVariableLikeDeclaration`
+                    if reports_errors && self.report_errors_from_widening(ty) {
+                        self.report_implicit_any(file, UntypedProperty::Member(first), widened);
                     }
-                    return self.widened(ty);
+                    return widened;
                 }
                 // `getTypeForVariableLikeDeclaration`: where an implicit `any` is an error, what is assigned to it is looked at first.
                 if self.p.files.options.no_implicit_any
@@ -4159,6 +4246,7 @@ impl<'p> Checker<'p> {
                                 hir[constructor].func,
                                 name,
                                 initial,
+                                value_declaration,
                             ) {
                                 return ty;
                             }
@@ -4174,6 +4262,7 @@ impl<'p> Checker<'p> {
                                 hir[block].func,
                                 name,
                                 initial,
+                                value_declaration,
                             ) {
                                 return ty;
                             }
@@ -4183,6 +4272,26 @@ impl<'p> Checker<'p> {
                     if !has_flow_container && let Some(inherited) = inherited {
                         return inherited;
                     }
+                }
+                // `widenTypeForVariableLikeDeclaration`, `declarationBelongsToPrivateAmbientMember`. A property that says `declare` is
+                // ambient by itself. `bindClassLikeDeclaration`: a static `prototype` is one symbol with the `prototype` of the class,
+                // whose type is `getTypeOfPrototypeProperty`.
+                let is_exempt = match owner {
+                    MemberOwner::Class(c) => {
+                        let is_ambient = hir[c].flags.contains(Flags::AMBIENT)
+                            || member.flags.contains(Flags::AMBIENT)
+                            || hir.kind == FileKind::Declaration;
+                        is_ambient
+                            && (member.flags.contains(Flags::PRIVATE)
+                                || matches!(member.key, PropKey::Private(_)))
+                            || member.flags.contains(Flags::STATIC)
+                                && member.key == PropKey::Name(known::prototype)
+                    }
+                    MemberOwner::None => true,
+                    _ => false,
+                };
+                if reports_errors && !is_exempt {
+                    self.report_implicit_any(file, UntypedProperty::Member(first), TypeId::ANY);
                 }
                 TypeId::ANY
             }
@@ -5186,11 +5295,8 @@ impl<'p> Checker<'p> {
         if self.files().atoms.is_symbol_name(name) {
             return self.applicable_index_info(members, TypeId::SYMBOL, None);
         }
-        // No index signature stands in for the `#x` of a class (`checkPropertyAccessExpressionOrQualifiedName`). A string that
-        // starts with `#` is a string like another: it is the renaming that tells.
-        if self.is_private_name(name)
-            && self.written_name(name).len() < self.files().atoms.bytes(name).len()
-        {
+        // No index signature stands in for the `#x` of a class (`checkPropertyAccessExpressionOrQualifiedName`).
+        if self.is_private_identifier_symbol(name) {
             return None;
         }
         self.applicable_index_info(members, TypeId::STRING, Some(name))
@@ -5614,12 +5720,35 @@ impl<'p> Checker<'p> {
         partial_match: bool,
         ignore_return_types: bool,
     ) -> Option<SigId> {
+        let mut compare_types: fn(&mut Self, TypeId, TypeId) -> Ternary = if partial_match {
+            Self::compare_types_subtype_of
+        } else {
+            Self::compare_types_identical
+        };
         list.iter().copied().find(|&s| {
-            self.compare_signatures_identical(s, sig, partial_match, false, ignore_return_types)
+            self.compare_signatures_identical(
+                s,
+                sig,
+                partial_match,
+                false,
+                ignore_return_types,
+                &mut compare_types,
+            )
+            .holds()
         })
     }
 
-    /// `compareSignaturesIdentical`, comparing types for identity, or with `partial_match` for being subtypes.
+    /// `compareTypesIdentical`
+    pub(super) fn compare_types_identical(&mut self, s: TypeId, t: TypeId) -> Ternary {
+        Ternary::of(self.is_identical(s, t))
+    }
+
+    /// `compareTypesSubtypeOf`
+    fn compare_types_subtype_of(&mut self, s: TypeId, t: TypeId) -> Ternary {
+        Ternary::of(self.is_subtype(s, t))
+    }
+
+    /// `compareSignaturesIdentical`
     pub(super) fn compare_signatures_identical(
         &mut self,
         source: SigId,
@@ -5627,9 +5756,10 @@ impl<'p> Checker<'p> {
         partial_match: bool,
         ignore_this_types: bool,
         ignore_return_types: bool,
-    ) -> bool {
+        compare_types: &mut dyn FnMut(&mut Self, TypeId, TypeId) -> Ternary,
+    ) -> Ternary {
         if source == target {
-            return true;
+            return Ternary::TRUE;
         }
         let (sp, tp) = (self.sig_params(source), self.sig_params(target));
         // `isMatchingSignature`
@@ -5639,19 +5769,12 @@ impl<'p> Checker<'p> {
             && source_least == target_least
             && self.has_effective_rest_parameter(&sp) == self.has_effective_rest_parameter(&tp);
         if !same_shape && !(partial_match && source_least <= target_least) {
-            return false;
+            return Ternary::FALSE;
         }
-        let compare = |c: &mut Self, s: TypeId, t: TypeId| {
-            if partial_match {
-                c.is_subtype(s, t)
-            } else {
-                c.is_identical(s, t)
-            }
-        };
         let (source_type_params, target_type_params) =
             (self.sig_type_params(source), self.sig_type_params(target));
         if source_type_params.len() != target_type_params.len() {
-            return false;
+            return Ternary::FALSE;
         }
         let mut source = source;
         let (source_around, target_around) = if target_type_params.is_empty() {
@@ -5698,8 +5821,8 @@ impl<'p> Checker<'p> {
                     let a = self.instantiate(a.unwrap_or(TypeId::UNKNOWN), source_mapper);
                     let b = self.instantiate(b.unwrap_or(TypeId::UNKNOWN), target_mapper);
                     // What is not known makes no difference.
-                    if self.is_known(a) && self.is_known(b) && !compare(self, a, b) {
-                        return false;
+                    if self.is_known(a) && self.is_known(b) && !compare_types(self, a, b).holds() {
+                        return Ternary::FALSE;
                     }
                 }
             }
@@ -5708,38 +5831,38 @@ impl<'p> Checker<'p> {
                     self.with_own_type_params(source, &source_type_params, &target_type_params);
             }
         }
+        let mut result = Ternary::TRUE;
         if !ignore_this_types
             && let (Some(s), Some(t)) = (self.sig_this_type(source), self.sig_this_type(target))
-            && !compare(self, s, t)
         {
-            return false;
+            result &= compare_types(self, s, t);
         }
         let sp = self.sig_params(source);
         for i in 0..self.parameter_count(&tp) {
             let s = self.param_type_at(&sp, i).unwrap_or(TypeId::ANY);
             let t = self.param_type_at(&tp, i).unwrap_or(TypeId::ANY);
-            if !compare(self, t, s) {
-                return false;
+            if !result.holds() {
+                return result;
             }
+            result &= compare_types(self, t, s);
         }
-        if ignore_return_types {
-            return true;
+        if ignore_return_types || !result.holds() {
+            return result;
         }
         match (self.sig_predicate(source), self.sig_predicate(target)) {
             (None, None) => {
                 let (s, t) = (self.sig_return(source), self.sig_return(target));
-                compare(self, s, t)
+                result & compare_types(self, s, t)
             }
-            (Some(s), Some(t)) => {
-                s.param == t.param
-                    && s.asserts == t.asserts
-                    && match (s.ty, t.ty) {
-                        (Some(a), Some(b)) => compare(self, a, b),
-                        (None, None) => true,
-                        _ => false,
-                    }
+            // `compareTypePredicatesIdentical`
+            (Some(s), Some(t)) if s.param == t.param && s.asserts == t.asserts => {
+                match (s.ty, t.ty) {
+                    (Some(a), Some(b)) => result & compare_types(self, a, b),
+                    (None, None) => result,
+                    _ => Ternary::FALSE,
+                }
             }
-            _ => false,
+            _ => Ternary::FALSE,
         }
     }
 

@@ -622,7 +622,7 @@ impl Checker<'_> {
             }
             // `reportMergeSymbolError`
             let either = files.flags(target) | files.flags(source);
-            let code = if either.contains(SymFlags::ENUM) {
+            let code = if either.intersects(SymFlags::ENUM) {
                 2567
             } else if either.contains(SymFlags::BLOCK_SCOPED_VARIABLE) {
                 2451

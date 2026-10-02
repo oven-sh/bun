@@ -706,11 +706,11 @@ impl Checker<'_> {
         match self.hir(file)[e].kind {
             ExprKind::Ident(name) => self
                 .symbol_of_identifier(file, e, name)
-                .is_some_and(|s| self.files().flags(s).contains(SymFlags::ENUM)),
+                .is_some_and(|s| self.files().flags(s).intersects(SymFlags::ENUM)),
             ExprKind::Dot { obj, name, .. } => {
                 let of = self.type_of_expr(file, obj);
                 let of = self.apparent_type(of);
-                self.prop_of(of, name).is_some_and(|(prop, _)| matches!(prop.source, PropSource::Symbol(s) if self.files().flags(s).contains(SymFlags::ENUM)))
+                self.prop_of(of, name).is_some_and(|(prop, _)| matches!(prop.source, PropSource::Symbol(s) if self.files().flags(s).intersects(SymFlags::ENUM)))
             }
             _ => false,
         }
@@ -1106,7 +1106,7 @@ impl Checker<'_> {
         let bound = self.bound(file);
         for i in 0..bound.symbols.len() {
             let symbol = &bound.symbols[i];
-            if !symbol.flags.contains(SymFlags::ENUM)
+            if !symbol.flags.intersects(SymFlags::ENUM)
                 || symbol.decls.len() < 2 && !symbol.flags.contains(SymFlags::MERGED)
             {
                 continue;

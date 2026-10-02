@@ -424,18 +424,23 @@ impl<'p> Checker<'p> {
                 None => self.intern(TypeData::Union(Box::from(members))),
             };
         }
+        // `containsType` is asked for identity.
+        let mut in_named: Vec<TypeId> = Vec::new();
+        for &u in &named {
+            in_named.extend_from_slice(self.parts(u));
+        }
+        in_named.sort_unstable();
         let mut origin: Vec<TypeId> = members
             .iter()
             .copied()
-            .filter(|m| !named.iter().any(|&u| self.contains_type(self.parts(u), *m)))
+            .filter(|m| in_named.binary_search(m).is_err())
             .collect();
         if let [only] = named[..]
             && origin.is_empty()
         {
             return only;
         }
-        let in_named: usize = named.iter().map(|&u| self.parts(u).len()).sum();
-        let origin = if in_named + origin.len() == members.len() {
+        let origin = if in_named.len() + origin.len() == members.len() {
             // `insertType`
             origin.extend_from_slice(&named);
             self.sort_types(&mut origin);
@@ -500,7 +505,7 @@ impl<'p> Checker<'p> {
             // the mapping makes of the type to be the type, and it makes the plain literal.
             let matched = patterns.iter().any(|&pattern| match self.data(pattern) {
                 TypeData::Template { texts, types } => {
-                    self.is_matched_by_template(literal, texts, types)
+                    self.is_type_matched_by_template_literal_type(literal, texts, types)
                 }
                 _ => is_plain && self.is_assignable(m, pattern),
             });
@@ -1824,9 +1829,10 @@ impl<'p> Checker<'p> {
         types.sort_by(|&a, &b| self.compare_types(a, b));
     }
 
-    /// `containsType`, of the members of a union.
+    /// `containsType`, of the members of a union. It is asked for identity, and a comparison of two types costs more than going
+    /// through hundreds of numbers.
     pub(super) fn contains_type(&self, types: &[TypeId], t: TypeId) -> bool {
-        if types.len() <= 8 {
+        if types.len() <= 512 {
             return types.contains(&t);
         }
         types

@@ -34,6 +34,15 @@ impl Checker<'_> {
         }
     }
 
+    /// `checkTruthinessExpression`
+    fn check_truthiness_expression(&mut self, file: FileId, node: ExprId) {
+        if node.is_some() {
+            self.check_expression(file, node);
+            let ty = self.type_of_expr(file, node);
+            self.check_truthiness_of_type(file, node, ty);
+        }
+    }
+
     /// `checkDeferredNodes`: what is put off meanwhile goes to the end of the line.
     fn check_deferred_nodes(&mut self, file: FileId) {
         let hir = self.hir(file);
@@ -44,6 +53,7 @@ impl Checker<'_> {
             match node {
                 // `checkFunctionExpressionOrObjectLiteralMethodDeferred`
                 DeferredNode::FunctionExpression(func) => {
+                    self.check_getter_returns_a_value(file, func);
                     if hir[func].ret.is_none() {
                         self.return_type_of_fn(file, func);
                     }
@@ -62,7 +72,10 @@ impl Checker<'_> {
     fn check_function_body(&mut self, file: FileId, func: FnId) {
         match self.hir(file)[func].body {
             FnBody::Block(list) => self.check_source_elements(file, list),
-            FnBody::Expr(e) => self.check_expression(file, e),
+            FnBody::Expr(e) => {
+                self.check_expression(file, e);
+                self.check_returned_body(file, func, e);
+            }
             FnBody::None => {}
         }
     }
@@ -112,6 +125,7 @@ impl Checker<'_> {
             Some(TypeNodeKind::Predicate { ty, .. }) => self.check_type_node(file, ty),
             _ => self.check_type_node(file, ret),
         }
+        self.check_async_function_return_type(file, func);
     }
 
     /// `checkFunctionOrMethodDeclaration`: the body is not put off.
@@ -237,6 +251,7 @@ impl Checker<'_> {
             self.check_type_node(file, member.ty);
             if member.func.is_some() {
                 self.check_signature_declaration(file, member.func);
+                self.check_getter_returns_a_value(file, member.func);
             }
             // `checkComputedPropertyName`
             if let PropKey::Computed(key) = member.key {
@@ -369,6 +384,7 @@ impl Checker<'_> {
                 {
                     self.return_type_of_fn(file, func);
                     self.check_expression(file, e);
+                    self.check_return_statement(file, s, func, e);
                 }
             }
             StmtKind::Var(decls) => self.check_variable_declaration_list(file, decls),
@@ -382,7 +398,7 @@ impl Checker<'_> {
             StmtKind::Interface(interface) => self.check_interface_declaration(file, interface),
             StmtKind::TypeAlias(alias) => self.check_type_alias_declaration(file, alias),
             StmtKind::If { test, yes, no } => {
-                self.check_expression(file, test);
+                self.check_truthiness_expression(file, test);
                 self.check_source_element(file, yes);
                 self.check_source_element(file, no);
             }
@@ -393,7 +409,7 @@ impl Checker<'_> {
                 body,
             } => {
                 self.check_source_element(file, init);
-                self.check_expression(file, test);
+                self.check_truthiness_expression(file, test);
                 self.check_expression(file, update);
                 self.check_source_element(file, body);
             }
@@ -422,12 +438,12 @@ impl Checker<'_> {
                 self.check_source_element(file, body);
             }
             StmtKind::While { test, body } => {
-                self.check_expression(file, test);
+                self.check_truthiness_expression(file, test);
                 self.check_source_element(file, body);
             }
             StmtKind::DoWhile { body, test } => {
                 self.check_source_element(file, body);
-                self.check_expression(file, test);
+                self.check_truthiness_expression(file, test);
             }
             // `checkWithStatement`: the object, and not the body.
             StmtKind::Block(list) if is_with_statement(hir, s) => {
@@ -437,7 +453,10 @@ impl Checker<'_> {
             StmtKind::Switch { expr, cases } => {
                 self.check_expression(file, expr);
                 for c in cases.iter() {
-                    self.check_expression(file, hir[c].test);
+                    if hir[c].test.is_some() {
+                        self.check_expression(file, hir[c].test);
+                        self.check_case_clause(file, expr, hir[c].test);
+                    }
                     self.check_source_elements(file, hir[c].body);
                 }
             }

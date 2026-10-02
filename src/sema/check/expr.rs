@@ -585,7 +585,8 @@ impl<'p> Checker<'p> {
                     }
                     // What a generator written where one is expected yields: on from the generator.
                     ExprKind::Yield { star: false, .. } => {
-                        let Some(func) = self.enclosing_fn_of_expr(file, parent) else {
+                        let Some(func) = self.get_containing_function(file, parent).flatten()
+                        else {
                             return false;
                         };
                         let FnOwner::Expr(function) = bound.fns[func.idx()].owner else {
@@ -801,7 +802,7 @@ impl<'p> Checker<'p> {
             // A member of an enum.
             ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => self
                 .resolve_entity_name_expression(file, obj, SymFlags::VALUE)
-                .is_some_and(|sym| self.files().flags(sym).contains(SymFlags::ENUM)),
+                .is_some_and(|sym| self.files().flags(sym).intersects(SymFlags::ENUM)),
             _ => false,
         }
     }
@@ -1697,7 +1698,11 @@ impl<'p> Checker<'p> {
                 _ => TypeId::ERROR,
             },
             ExprKind::Ident(name) => self.type_of_identifier(file, e, name),
-            ExprKind::This => self.type_of_this(file, e),
+            ExprKind::This => {
+                let ty = self.type_of_this(file, e);
+                self.check_this_is_typed(file, e);
+                ty
+            }
             ExprKind::Super => self.type_of_super(file, e),
             ExprKind::Null => TypeId::NULL,
             ExprKind::True => TypeId::FRESH_TRUE,
@@ -1785,7 +1790,7 @@ impl<'p> Checker<'p> {
                 if stops { self.optional(ty) } else { ty }
             }
             ExprKind::New(_) => self.resolve_call(file, e).ret,
-            ExprKind::Unary { op, operand } => self.type_of_unary(file, op, operand),
+            ExprKind::Unary { op, operand } => self.type_of_unary(file, e, op, operand),
             ExprKind::Binary { op, left, right } => self.type_of_binary(file, e, op, left, right),
             ExprKind::Assign { op, target, value } => match op {
                 None => {
@@ -1810,7 +1815,10 @@ impl<'p> Checker<'p> {
             },
             // `checkConditionalExpression`
             ExprKind::Cond { test, yes, no } => {
-                self.look_at(file, test);
+                let uncertain = self.uncertain;
+                let tested = self.type_of_expr(file, test);
+                self.uncertain = uncertain;
+                self.check_truthiness_of_type(file, test, tested);
                 let (yes, no) = (self.type_of_expr(file, yes), self.type_of_expr(file, no));
                 self.union_reduced(&[yes, no])
             }
@@ -1831,9 +1839,10 @@ impl<'p> Checker<'p> {
                 let ty = self.type_of_expr(file, x);
                 self.regular(ty)
             }
+            // `checkAwaitExpression`
             ExprKind::Await(x) => {
                 let ty = self.type_of_expr(file, x);
-                self.awaited(ty)
+                self.check_awaited_type(ty, true, self.place_of_expr(file, e), 1320)
             }
             ExprKind::Yield { value, star } => {
                 let ty = self.type_of_yield(file, e, value, star);
@@ -2958,8 +2967,33 @@ impl<'p> Checker<'p> {
         shape.literal = Literalness::Literal;
         shape.symbol_declared_at = self.symbol_declaration_of_object_type(kept);
         shape.is_js_literal = self.has_js_literal_flag(kept);
+        shape.contains_widening_type = self.has_member_with_widening_type(file, e, 0);
         let ty = self.synth(shape);
         self.with_propagated_non_inferrable_flag(ty)
+    }
+
+    /// `getSpreadType(left, right, symbol, objectFlags, readonly)`: `ty`, what the literal `e` with something spread in it has come
+    /// to, has the symbol of the literal, and `ObjectFlagsContainsWideningType` if a member that is written has.
+    fn with_propagated_widening_flag(&mut self, file: FileId, e: ExprId, ty: TypeId) -> TypeId {
+        match self.data(ty) {
+            TypeData::Union(_) => {
+                self.map_type(ty, |c, m| c.with_propagated_widening_flag(file, e, m))
+            }
+            // What is yet to be known is not spread: `getIntersectionType([left, right])`.
+            TypeData::Intersection(parts) => {
+                let parts: Vec<TypeId> = parts
+                    .iter()
+                    .map(|&part| self.with_propagated_widening_flag(file, e, part))
+                    .collect();
+                self.intersection(&parts)
+            }
+            TypeData::Synth(shape) if shape.literal.is_of_expression() => self.synth(Shape {
+                contains_widening_type: true,
+                symbol_declared_at: Some((file, self.hir(file)[e].pos)),
+                ..(**shape).clone()
+            }),
+            _ => ty,
+        }
     }
 
     /// `ObjectFlagsNonInferrableType` is one of `ObjectFlagsPropagatingFlags`: `ty`, what `checkObjectLiteral` has made, has it if the
@@ -3473,6 +3507,7 @@ impl<'p> Checker<'p> {
     fn type_of_object_literal(&mut self, file: FileId, e: ExprId, props: Span<PropId>) -> TypeId {
         let hir = self.hir(file);
         self.look_at_members(file, props);
+        self.check_spread_overrides(file, props);
         if !props.iter().any(|p| hir[p].kind == PropKind::Spread) {
             let scope = self.scope_of_expr(file, e);
             let mapper = self.identity_mapper(file, scope);
@@ -3575,6 +3610,9 @@ impl<'p> Checker<'p> {
             is_const,
         ) {
             result = self.spread_in_literal(result, segment, is_const);
+        }
+        if self.has_member_with_widening_type(file, e, 0) {
+            result = self.with_propagated_widening_flag(file, e, result);
         }
         self.with_propagated_non_inferrable_flag(result)
     }
@@ -4128,7 +4166,7 @@ impl<'p> Checker<'p> {
 
     // ───────────────────────────── operators ─────────────────────────────
 
-    fn type_of_unary(&mut self, file: FileId, op: UnOp, operand: ExprId) -> TypeId {
+    fn type_of_unary(&mut self, file: FileId, e: ExprId, op: UnOp, operand: ExprId) -> TypeId {
         match op {
             UnOp::Typeof => {
                 self.look_at(file, operand);
@@ -4149,6 +4187,10 @@ impl<'p> Checker<'p> {
             UnOp::Void => TypeId::UNDEFINED,
             UnOp::Delete => {
                 self.look_at(file, operand);
+                // How sure the property is says nothing about `boolean`. It says itself what it is not sure of.
+                let uncertain = self.uncertain;
+                self.check_delete_expression(file, e, operand);
+                self.uncertain = uncertain;
                 TypeId::BOOLEAN
             }
             UnOp::Not => {
@@ -4156,6 +4198,7 @@ impl<'p> Checker<'p> {
                 if ty == TypeId::SILENT_NEVER {
                     return ty;
                 }
+                self.check_truthiness_of_type(file, operand, ty);
                 // `getTypeFacts(operandType, TypeFactsTruthy | TypeFactsFalsy)`
                 match (self.can_be_truthy(ty), self.can_be_falsy(ty)) {
                     (true, false) => TypeId::FRESH_FALSE,
@@ -4301,6 +4344,9 @@ impl<'p> Checker<'p> {
             }
             BinOp::And => {
                 let l = self.type_of_expr(file, left);
+                if !is_assignment {
+                    self.check_truthiness_of_type(file, left, l);
+                }
                 if !self.can_be_truthy(l) {
                     self.look_at(file, right);
                     return l;
@@ -4318,6 +4364,9 @@ impl<'p> Checker<'p> {
             }
             BinOp::Or => {
                 let l = self.type_of_expr(file, left);
+                if !is_assignment {
+                    self.check_truthiness_of_type(file, left, l);
+                }
                 if !self.can_be_falsy(l) {
                     self.look_at(file, right);
                     return l;
@@ -4328,6 +4377,9 @@ impl<'p> Checker<'p> {
                 self.union_reduced(&[truthy, r])
             }
             BinOp::Nullish => {
+                if !is_assignment {
+                    self.check_nullish_coalesce_operands(file, e, left, right);
+                }
                 let l = self.type_of_expr(file, left);
                 if !self.can_be_nullish(l) {
                     self.look_at(file, right);
@@ -4515,7 +4567,11 @@ impl<'p> Checker<'p> {
     // ───────────────────────────── JSX ─────────────────────────────
 
     /// `getJsxNamespaceAt`. A `JSX` that stands for nothing that can be found is as good as none: on to the global one.
-    pub(super) fn jsx_namespace(&mut self, file: FileId) -> Option<Sym> {
+    pub(super) fn jsx_namespace_at(
+        &mut self,
+        file: FileId,
+        is_opening_fragment: bool,
+    ) -> Option<Sym> {
         let files = self.files();
         // `getJsxNamespaceContainerForImplicitImport`: the module elements are made with, if it can be found.
         let member = match files
@@ -4523,36 +4579,9 @@ impl<'p> Checker<'p> {
             .and_then(|spec| files.module_of_specifier(file, spec))
         {
             Some(module) => files.module_export(module, known::JSX),
-            // `getJsxNamespace`: `h.JSX` for `@jsx h`, then what `jsxFactory` or `reactNamespace` say, `React.JSX` otherwise.
             None => {
-                let options = &files.options;
-                let first_name = |text: &[u8]| {
-                    files.atoms.intern(
-                        text.split(|&c| c == b'.')
-                            .next()
-                            .unwrap_or(text)
-                            .trim_ascii(),
-                    )
-                };
-                // `parseIsolatedEntityName`: a factory that is not an entity name is ignored.
-                let parses = |text: &[u8]| {
-                    std::str::from_utf8(text).is_ok_and(crate::verify::is_entity_name)
-                };
-                let factory = self.hir(file).jsx_pragmas.factory;
-                let name = if factory.is_some() && parses(files.atoms.bytes(factory)) {
-                    first_name(files.atoms.bytes(factory))
-                } else if !options.jsx_factory.is_empty() {
-                    // `_jsxNamespace` stays `React` if `jsxFactory` does not parse. `reactNamespace` is not consulted.
-                    if parses(options.jsx_factory.as_bytes()) {
-                        first_name(options.jsx_factory.as_bytes())
-                    } else {
-                        known::React
-                    }
-                } else if !options.react_namespace.is_empty() {
-                    files.atoms.intern(options.react_namespace.as_bytes())
-                } else {
-                    known::React
-                };
+                let name =
+                    super::errors_jsx::jsx_namespace(files, self.hir(file), is_opening_fragment);
                 files
                     .resolve_name(file, ScopeId(0), name, SymFlags::NAMESPACE)
                     .and_then(|container| files.resolve_alias_if_needed(container))
@@ -4571,7 +4600,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `getJsxElementTypeAt`: without a `JSX.Element` it is the error type, which can be anything.
-    fn jsx_element_type(&mut self, file: FileId) -> TypeId {
+    pub(super) fn jsx_element_type(&mut self, file: FileId) -> TypeId {
         self.jsx_type(file, known::Element).unwrap_or(TypeId::ERROR)
     }
 
@@ -4904,7 +4933,7 @@ impl<'p> Checker<'p> {
         if self.is_any(component) {
             return None;
         }
-        let (sigs, construct) = self.jsx_signatures_of_tag(file, component)?;
+        let (sigs, construct) = self.uninstantiated_jsx_signatures_of_type(file, component, e)?;
         match sigs[..] {
             [] => None,
             [sig] => self.jsx_props_of_sig(file, e, sig, construct),

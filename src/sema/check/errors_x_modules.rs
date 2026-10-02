@@ -742,7 +742,7 @@ impl Checker<'_> {
         let has_values = || {
             decls.iter().any(|&d| matches!(d, Decl::Module(part) if is_here(part) && bound.module_instance_state[part.idx()] != ModuleInstanceState::NonInstantiated))
         };
-        if (is_variable || flags.contains(SymFlags::ENUM) && is_const_enum()) && has_values() {
+        if (is_variable || flags.intersects(SymFlags::ENUM) && is_const_enum()) && has_values() {
             if flags.contains(SymFlags::NAMESPACE_MODULE) {
                 report(2649, false);
                 cx.named_symbols.borrow_mut().push((start, 2649, main));

@@ -83,10 +83,19 @@ impl From<Reported> for Note {
             related: reported
                 .related_information
                 .into_iter()
-                .map(|related| Related {
-                    at: Some((related.file, related.start, related.end)),
-                    code: related.code,
-                    args: related.args,
+                .map(|related| {
+                    // An argument that starts on a new line is a line under the message.
+                    let mut args = related.args;
+                    args.extend(lines_of(related.message_chain).iter().map(|line| {
+                        let template = messages::message(line.code).map_or("", |m| m.1);
+                        let said = messages::format(template, &line.args);
+                        format!("\n{}{said}", "  ".repeat(line.level as usize))
+                    }));
+                    Related {
+                        at: Some((related.file, related.start, related.end)),
+                        code: related.code,
+                        args,
+                    }
                 })
                 .collect(),
             is_another: true,

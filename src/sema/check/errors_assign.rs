@@ -389,131 +389,6 @@ impl Checker<'_> {
                 out,
             );
         }
-        for f in 0..hir.fns.len() {
-            let func = &hir.fns[f];
-            if matches!(func.body, FnBody::None) {
-                continue;
-            }
-            if matches!(func.kind, FnKind::Constructor | FnKind::Setter) {
-                let instance = match (func.kind, bound.fns[f].owner) {
-                    (FnKind::Constructor, FnOwner::Member(m)) => {
-                        match bound.member_owner[m.idx()] {
-                            crate::bind::MemberOwner::Class(c) => {
-                                let sym = self.files().sym(file, bound.class_symbol[c.idx()]);
-                                Some(self.declared_type(sym))
-                            }
-                            _ => None,
-                        }
-                    }
-                    _ => None,
-                };
-                for s in bound.ids(bound.fns[f].returns) {
-                    let StmtKind::Return(e) = hir[s].kind else {
-                        continue;
-                    };
-                    if e.is_none() {
-                        continue;
-                    }
-                    match instance {
-                        // What a constructor returns takes the place of the instance.
-                        Some(instance) => {
-                            let ty = self.type_of_expr(file, e);
-                            let at = Some(self.place_of_token(file, hir[s].pos));
-                            if !self.is_uncertain(file, e)
-                                && !self.check_type_assignable_to_and_optionally_elaborate(
-                                    ty,
-                                    instance,
-                                    at,
-                                    Some((file, e)),
-                                    None,
-                                    None,
-                                )
-                            {
-                                out.push(Diagnostic {
-                                    start: hir[s].pos,
-                                    code: 2409,
-                                });
-                            }
-                        }
-                        None if func.kind == FnKind::Setter => out.push(Diagnostic {
-                            start: hir[s].pos,
-                            code: 2408,
-                        }),
-                        None => {}
-                    }
-                }
-                continue;
-            }
-            // `getReturnTypeFromAnnotation`: a getter that says nothing goes by what its setter takes, any other function by the
-            // signature of its `@type` tag.
-            let declared = if func.ret.is_some() {
-                self.type_from_node(file, func.ret)
-            } else {
-                let implied = if func.kind == FnKind::Getter {
-                    self.annotated_setter_type(file, FnId(f as u32))
-                } else {
-                    self.return_type_of_full_signature(file, FnId(f as u32))
-                };
-                let Some(implied) = implied else {
-                    continue;
-                };
-                implied
-            };
-            let is_async = func.flags.contains(Flags::ASYNC);
-            // `unwrapReturnType`
-            let wanted = if func.flags.contains(Flags::GENERATOR) {
-                // `IterationUseAsyncGeneratorReturnType`: `[Symbol.iterator]` says nothing of what an async generator returns.
-                if is_async {
-                    let apparent = self.apparent_type(declared);
-                    if self
-                        .type_of_property(apparent, known::sym_async_iterator)
-                        .is_none()
-                        && self.type_of_property(apparent, known::next).is_none()
-                    {
-                        continue;
-                    }
-                }
-                match self.iteration_types(declared, is_async) {
-                    // Where awaiting it is an error, what is declared is what is wanted.
-                    Some(t) if is_async => {
-                        let returned =
-                            self.map_type(t.returned, |c, m| c.awaited_argument(m).unwrap_or(m));
-                        self.awaited_no_alias(returned).unwrap_or(declared)
-                    }
-                    Some(t) => t.returned,
-                    // In error, and anything goes into that.
-                    None => continue,
-                }
-            } else if is_async {
-                self.awaited_no_alias(declared).unwrap_or(TypeId::ERROR)
-            } else {
-                declared
-            };
-            match func.body {
-                FnBody::Expr(body) => self.check_returned(file, body, wanted, is_async, None, out),
-                _ => {
-                    for s in bound.ids(bound.fns[f].returns) {
-                        let StmtKind::Return(e) = hir[s].kind else {
-                            continue;
-                        };
-                        if e.is_some() {
-                            self.check_returned(file, e, wanted, is_async, Some(hir[s].pos), out);
-                        } else if self.p.files.options.strict_null_checks || declared.is_never() {
-                            // `checkReturnStatement`: `undefined`, which without strictNullChecks nothing refuses but `never`.
-                            self.check_assignable(
-                                file,
-                                TypeId::UNDEFINED,
-                                wanted,
-                                hir[s].pos,
-                                ExprId::NONE,
-                                2322,
-                                out,
-                            );
-                        }
-                    }
-                }
-            }
-        }
     }
 
     /// Whether `pat` is, or is part of, a parameter of a function without a body.
@@ -1194,7 +1069,7 @@ impl Checker<'_> {
                 if !self.is_known(argument) || !self.is_known(constraint) {
                     continue;
                 }
-                let fits = self.compare_if_certain(|c| c.is_assignable(argument, constraint));
+                let fits = self.answer_if_sure(|c| c.is_assignable(argument, constraint));
                 if fits != Some(false) {
                     continue;
                 }
@@ -1252,7 +1127,7 @@ impl Checker<'_> {
                     let argument = filled[k];
                     if !self.is_known(argument)
                         || !self.is_known(constraint)
-                        || self.compare_if_certain(|c| c.is_assignable(argument, constraint))
+                        || self.answer_if_sure(|c| c.is_assignable(argument, constraint))
                             != Some(false)
                     {
                         continue;
@@ -1295,21 +1170,12 @@ impl Checker<'_> {
             if at.is_none() || !self.is_known(ty) {
                 continue;
             }
-            let fits = self.compare_if_certain(|c| c.is_assignable(ty, keys));
+            let fits = self.answer_if_sure(|c| c.is_assignable(ty, keys));
             if fits == Some(false) {
                 let place = (file, hir[at].pos, self.end_of_type_node(file, at));
                 self.check_type_assignable_to(ty, keys, Some(place), None);
             }
         }
-    }
-
-    /// The result of `compare`. `None` if a comparison inside it was cut short (nesting depth, native stack, time): its result is unknown.
-    fn compare_if_certain(&mut self, compare: impl FnOnce(&mut Self) -> bool) -> Option<bool> {
-        let gave_up_before = std::mem::replace(&mut self.relation_gave_up, false);
-        let result = compare(self);
-        let is_certain = !self.relation_gave_up && !self.timed_out();
-        self.relation_gave_up |= gave_up_before;
-        is_certain.then_some(result)
     }
 
     /// What each type is written directly in, of the types of a file. `NONE` for those that are in no other type.
@@ -1530,58 +1396,185 @@ impl Checker<'_> {
         (hir.text.get(open as usize) == Some(&b'(')).then_some(open)
     }
 
-    /// `statement`: where the `return` starts, which is where the complaint goes unless it is about one arm of `c ? a : b`.
-    fn check_returned(
+    /// `checkReturnStatement`, of the `return e` at `s` in `container`: 2408, 2409, or that what is returned does not fit.
+    pub(super) fn check_return_statement(
         &mut self,
         file: FileId,
+        s: StmtId,
+        container: FnId,
         e: ExprId,
-        wanted: TypeId,
-        is_async: bool,
-        statement: Option<u32>,
-        out: &mut Vec<Diagnostic>,
     ) {
-        if let ExprKind::Cond { yes, no, .. } = self.hir(file)[e].kind {
-            self.check_returned(file, yes, wanted, is_async, None, out);
-            self.check_returned(file, no, wanted, is_async, None, out);
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        // `GetErrorRangeForNode`: the keyword.
+        let node = self.place_of_token(file, hir[s].pos);
+        match hir[container].kind {
+            FnKind::Setter => {
+                if e.is_some() {
+                    self.error(node, 2408, &[]);
+                }
+            }
+            // What a constructor returns takes the place of the instance.
+            FnKind::Constructor => {
+                if e.is_some()
+                    && let FnOwner::Member(m) = bound.fns[container.idx()].owner
+                    && let crate::bind::MemberOwner::Class(c) = bound.member_owner[m.idx()]
+                {
+                    let sym = self.files().sym(file, bound.class_symbol[c.idx()]);
+                    let instance = self.declared_type(sym);
+                    let ty = self.type_of_expr(file, e);
+                    if !self.is_uncertain(file, e)
+                        && !self.check_type_assignable_to_and_optionally_elaborate(
+                            ty,
+                            instance,
+                            Some(node),
+                            Some((file, e)),
+                            false,
+                            None,
+                            None,
+                        )
+                    {
+                        self.error(node, 2409, &[]);
+                    }
+                }
+            }
+            _ => {
+                let Some(declared) = self.return_type_from_annotation(file, container) else {
+                    return;
+                };
+                // `undefined`, which without strictNullChecks nothing refuses but `never`.
+                if e.is_some() || self.p.files.options.strict_null_checks || declared.is_never() {
+                    let wanted = self.unwrap_return_type(file, container, declared);
+                    self.check_return_expression(file, container, wanted, node, true, e, false);
+                }
+            }
+        }
+    }
+
+    /// `checkFunctionExpressionOrObjectLiteralMethodDeferred`, of a function whose body is the expression `body`.
+    pub(super) fn check_returned_body(&mut self, file: FileId, container: FnId, body: ExprId) {
+        if let Some(declared) = self.return_type_from_annotation(file, container) {
+            let wanted = self.unwrap_return_type(file, container, declared);
+            let node = (
+                file,
+                self.start_of(file, body),
+                self.end_of_expr(file, body),
+            );
+            self.check_return_expression(file, container, wanted, node, false, body, false);
+        }
+    }
+
+    /// `getReturnTypeFromAnnotation`: a getter that says nothing goes by what its setter takes, any other function by the signature
+    /// of its `@type` tag.
+    fn return_type_from_annotation(&mut self, file: FileId, f: FnId) -> Option<TypeId> {
+        let func = &self.hir(file)[f];
+        if func.ret.is_some() {
+            Some(self.type_from_node(file, func.ret))
+        } else if func.kind == FnKind::Getter {
+            self.annotated_setter_type(file, f)
+        } else {
+            self.return_type_of_full_signature(file, f)
+        }
+    }
+
+    /// `unwrapReturnType`, of what `f` is declared to return. Where there is nothing to unwrap it is in error, and anything goes
+    /// into that.
+    fn unwrap_return_type(&mut self, file: FileId, f: FnId, declared: TypeId) -> TypeId {
+        let flags = self.hir(file)[f].flags;
+        let is_async = flags.contains(Flags::ASYNC);
+        if !flags.contains(Flags::GENERATOR) {
+            return if is_async {
+                self.awaited_no_alias(declared).unwrap_or(TypeId::ERROR)
+            } else {
+                declared
+            };
+        }
+        // `IterationUseAsyncGeneratorReturnType`: `[Symbol.iterator]` says nothing of what an async generator returns.
+        if is_async {
+            let apparent = self.apparent_type(declared);
+            if self
+                .type_of_property(apparent, known::sym_async_iterator)
+                .is_none()
+                && self.type_of_property(apparent, known::next).is_none()
+            {
+                return TypeId::ERROR;
+            }
+        }
+        match self.iteration_types(declared, is_async) {
+            // Where awaiting it is an error, what is declared is what is wanted.
+            Some(t) if is_async => {
+                let returned = self.map_type(t.returned, |c, m| c.awaited_argument(m).unwrap_or(m));
+                self.awaited_no_alias(returned).unwrap_or(declared)
+            }
+            Some(t) => t.returned,
+            None => TypeId::ERROR,
+        }
+    }
+
+    /// `checkReturnExpression`. `node`: the `return` statement, or the body that is an expression. `e`: `NONE` where nothing is
+    /// returned.
+    #[allow(clippy::too_many_arguments)]
+    fn check_return_expression(
+        &mut self,
+        file: FileId,
+        container: FnId,
+        wanted: TypeId,
+        node: Place,
+        in_return_statement: bool,
+        e: ExprId,
+        in_conditional_expression: bool,
+    ) {
+        let hir = self.hir(file);
+        if e.is_none() {
+            self.check_type_assignable_to(TypeId::UNDEFINED, wanted, Some(node), None);
+            return;
+        }
+        if let ExprKind::Cond { yes, no, .. } = hir[e].kind {
+            for arm in [yes, no] {
+                self.check_return_expression(
+                    file,
+                    container,
+                    wanted,
+                    node,
+                    in_return_statement,
+                    arm,
+                    true,
+                );
+            }
             return;
         }
         let ty = self.type_of_expr(file, e);
         if self.is_uncertain(file, e) {
             return;
         }
-        // `checkAwaitedType`, `withAlias` false
-        let ty = if is_async {
-            self.awaited_no_alias(ty).unwrap_or(TypeId::ERROR)
+        let ty = if hir[container].flags.contains(Flags::ASYNC) {
+            self.check_awaited_type(ty, false, node, 1058)
         } else {
             ty
         };
         // `getEffectiveCheckNode`
         let mut e = e;
-        while let ExprKind::Satisfies { expr, .. } = self.hir(file)[e].kind {
+        while let ExprKind::Satisfies { expr, .. } = hir[e].kind {
             e = expr;
         }
-        self.check_assignable_to(
-            file,
+        let error_node = if in_return_statement && !in_conditional_expression {
+            node
+        } else if let Some(open) = self.start_of_jsdoc_type_assertion(file, e) {
+            (file, open, self.end_of_bracket_at(file, open))
+        } else {
+            (
+                file,
+                self.start_inside_parentheses(file, e),
+                self.error_end_inside_parentheses(file, e),
+            )
+        };
+        self.check_type_assignable_to_and_optionally_elaborate(
             ty,
             wanted,
-            // Of a `return` statement it is the keyword that is pointed at.
-            |c| match statement {
-                Some(at) => (at, 0),
-                None => match c.start_of_jsdoc_type_assertion(file, e) {
-                    Some(open) => (
-                        open,
-                        c.end_if_explained(|c| c.end_of_bracket_at(file, open)),
-                    ),
-                    None => (
-                        c.start_inside_parentheses(file, e),
-                        c.end_if_explained(|c| c.error_end_inside_parentheses(file, e)),
-                    ),
-                },
-            },
-            e,
+            Some(error_node),
+            Some((file, e)),
             true,
-            2322,
-            out,
+            None,
+            None,
         );
     }
 
@@ -1684,7 +1677,7 @@ impl Checker<'_> {
             return None;
         }
         self.relation_too_complex = false;
-        let fits = self.compare_if_certain(|c| c.is_assignable(source, target));
+        let fits = self.answer_if_sure(|c| c.is_assignable(source, target));
         let is_too_complex = std::mem::take(&mut self.relation_too_complex) && !self.timed_out();
         match fits {
             Some(true) => return None,
@@ -1743,13 +1736,16 @@ impl Checker<'_> {
 
     // ───────────────────────────── further in ─────────────────────────────
 
-    /// `checkTypeAssignableToAndOptionallyElaborate`. `expr`: as it is written, with the parentheses around it.
+    /// `checkTypeAssignableToAndOptionallyElaborate`. `is_effective`: `expr` is what `getEffectiveCheckNode` leaves, so the parentheses
+    /// around it are no part of it.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn check_type_assignable_to_and_optionally_elaborate(
         &mut self,
         source: TypeId,
         target: TypeId,
         error_node: Option<Place>,
         expr: Option<(FileId, ExprId)>,
+        is_effective: bool,
         head_message: Option<u32>,
         mut diagnostic_output: Option<&mut Vec<Reported>>,
     ) -> bool {
@@ -1759,7 +1755,15 @@ impl Checker<'_> {
             Some(false) => {
                 let output = diagnostic_output.as_deref_mut();
                 if let Some((file, e)) = expr
-                    && self.elaborate_error(file, e, false, source, target, head_message, output)
+                    && self.elaborate_error(
+                        file,
+                        e,
+                        is_effective,
+                        source,
+                        target,
+                        head_message,
+                        output,
+                    )
                 {
                     return false;
                 }
@@ -2485,20 +2489,6 @@ impl Checker<'_> {
         head: u32,
         out: &mut Vec<Diagnostic>,
     ) {
-        self.trace_pair(head, at, source, target);
-        if std::env::var_os("BUN_SEMA_EXPLAIN").is_some() {
-            let why = self.explain_not_assignable(source, target);
-            let path = self
-                .checking
-                .map_or("", |f| self.files().module(f).path.as_str());
-            eprintln!("WHY {head} at {at} {why} IN {path}");
-            if std::env::var("BUN_SEMA_RETRACE").is_ok_and(|p| p == at.to_string()) {
-                self.retracing = true;
-                let again = self.is_assignable(source, target);
-                self.retracing = false;
-                eprintln!("RETRACED at {at}: {again}");
-            }
-        }
         // 2678 is what `reportRelationError` says without a head message under the comparable relation.
         let relation = if head == 2678 {
             Relation::Comparable
@@ -2671,209 +2661,5 @@ impl Checker<'_> {
             }
         }
         false
-    }
-}
-
-// ───────────────────────────── why ─────────────────────────────
-
-impl Checker<'_> {
-    /// Where, going in from the outside, `source` stops fitting `target`: the way there, and the two types at the end of it.
-    /// Made for reading, not for speed: it is asked once an error is about to be shown.
-    pub fn explain_not_assignable(&mut self, source: TypeId, target: TypeId) -> String {
-        let mut path = String::new();
-        self.explaining.clear();
-        let (s, t) = self.descend_to_the_reason(source, target, &mut path, 0);
-        let leaf = |c: &mut Self, ty: TypeId| match c.data(ty) {
-            TypeData::StringLit { value, .. } => format!("{:?}", c.files().atoms.text(*value)),
-            TypeData::BoolLit { value, .. } => value.to_string(),
-            _ => crate::describe::Describer::new(c).describe(ty),
-        };
-        let kind = |c: &Self, ty: TypeId| {
-            let text = format!("{:?}", c.data(ty));
-            text[..text.find([' ', '(', '{']).unwrap_or(text.len())].to_owned()
-        };
-        let kinds = (kind(self, s), kind(self, t));
-        let (s, t) = (leaf(self, s), leaf(self, t));
-        format!("{path}: {s} to {t} [{} to {}]", kinds.0, kinds.1)
-    }
-
-    /// Whether `s` does not fit `t` only because a pair that is being explained does not: no reason, but a consequence.
-    fn leads_back(&mut self, s: TypeId, t: TypeId) -> bool {
-        let mark = self.explaining.len();
-        let mut scratch = String::new();
-        let end = self.descend_to_the_reason(s, t, &mut scratch, 6);
-        let back = self.explaining[..mark].contains(&end);
-        self.explaining.truncate(mark);
-        back
-    }
-
-    fn descend_to_the_reason(
-        &mut self,
-        s: TypeId,
-        t: TypeId,
-        path: &mut String,
-        depth: u32,
-    ) -> (TypeId, TypeId) {
-        use std::fmt::Write;
-        if depth > 12 {
-            return (s, t);
-        }
-        if self.explaining.contains(&(s, t)) {
-            return (s, t);
-        }
-        self.explaining.push((s, t));
-        if let TypeData::Union(parts) = self.data(s).clone() {
-            for part in parts.iter().copied() {
-                if !self.is_assignable(part, t) {
-                    path.push_str("|one of them|");
-                    return self.descend_to_the_reason(part, t, path, depth + 1);
-                }
-            }
-            return (s, t);
-        }
-        if let TypeData::Union(parts) = self.data(t).clone() {
-            // The member it is meant for: the one what tells them apart points to, or else the one it has most in common with.
-            let mut best = None;
-            let mut best_score = -1i32;
-            if let Some(sm) = self.members(s) {
-                for part in parts.iter().copied() {
-                    if !self.is_object_type(part) {
-                        continue;
-                    }
-                    let mut score = 0;
-                    for sp in sm.shape().props.clone() {
-                        let Some(wanted) = self.type_of_property(part, sp.name) else {
-                            continue;
-                        };
-                        score += 1;
-                        if self.is_discriminant_property(t, sp.name) {
-                            let given = self.type_of_prop(&sp, sm.mapper);
-                            score += if self.is_assignable(given, wanted) {
-                                100
-                            } else {
-                                -100
-                            };
-                        }
-                    }
-                    if score > best_score {
-                        best_score = score;
-                        best = Some(part);
-                    }
-                }
-            }
-            return match best {
-                Some(part) => {
-                    path.push_str("|the member meant|");
-                    self.descend_to_the_reason(s, part, path, depth + 1)
-                }
-                None => (s, t),
-            };
-        }
-        if let (Some(a), Some(b)) = (self.array_element(s), self.array_element(t)) {
-            path.push_str("[]");
-            return self.descend_to_the_reason(a, b, path, depth + 1);
-        }
-        if let (TypeData::Ref { target: st, .. }, TypeData::Ref { target: tt, .. }) =
-            (self.data(s), self.data(t))
-            && st == tt
-        {
-            let (sa, ta) = (self.type_arguments(s), self.type_arguments(t));
-            for (i, (&a, &b)) in sa.iter().zip(ta.iter()).enumerate() {
-                if !self.is_assignable(a, b) && !self.leads_back(a, b) {
-                    let _ = write!(path, "<{i}>");
-                    return self.descend_to_the_reason(a, b, path, depth + 1);
-                }
-            }
-        }
-        // All that the members of an intersection have, together.
-        if matches!(self.data(s), TypeData::Intersection(_))
-            && self.is_object_type(t)
-            && let Some(tm) = self.members(t)
-        {
-            for tp in tm.shape().props.clone() {
-                let name = self.files().atoms.text(tp.name).into_owned();
-                let wanted = self.type_of_prop(&tp, tm.mapper);
-                match self.type_of_property(s, tp.name) {
-                    None if !tp.flags.contains(PropFlags::OPTIONAL) => {
-                        let _ = write!(path, "&.{name} is missing");
-                        return (s, t);
-                    }
-                    Some(given) if !self.is_assignable(given, wanted) => {
-                        let _ = write!(path, "&.{name}");
-                        return self.descend_to_the_reason(given, wanted, path, depth + 1);
-                    }
-                    _ => {}
-                }
-            }
-            path.push_str("&nothing found");
-            return (s, t);
-        }
-        if !self.is_object_type(s) || !self.is_object_type(t) {
-            return (s, t);
-        }
-        let (Some(sm), Some(tm)) = (self.members(s), self.members(t)) else {
-            return (s, t);
-        };
-        if depth == 0 && std::env::var_os("BUN_SEMA_EXPLAIN_ALL").is_some() {
-            for tp in tm.shape().props.clone() {
-                if let Some(sp) = sm.resolved.prop(tp.name).cloned() {
-                    let (given, wanted) = (
-                        self.type_of_prop(&sp, sm.mapper),
-                        self.type_of_prop(&tp, tm.mapper),
-                    );
-                    if !self.is_assignable(given, wanted) {
-                        let mut d = crate::describe::Describer::new(self);
-                        let (a, b) = (d.describe(given), d.describe(wanted));
-                        eprintln!(
-                            "  FAILS .{}: {a:.110} TO {b:.110}",
-                            self.files().atoms.text(tp.name)
-                        );
-                    }
-                }
-            }
-        }
-        for tp in tm.shape().props.clone() {
-            let name = self.files().atoms.text(tp.name).into_owned();
-            let Some(sp) = sm.resolved.prop(tp.name).cloned() else {
-                if !tp.flags.contains(PropFlags::OPTIONAL) {
-                    let _ = write!(path, ".{name} is missing");
-                    return (s, t);
-                }
-                continue;
-            };
-            let (given, wanted) = (
-                self.type_of_prop(&sp, sm.mapper),
-                self.type_of_prop(&tp, tm.mapper),
-            );
-            if !self.is_assignable(given, wanted) && !self.leads_back(given, wanted) {
-                let _ = write!(path, ".{name}");
-                return self.descend_to_the_reason(given, wanted, path, depth + 1);
-            }
-            if sp.flags.contains(PropFlags::OPTIONAL) && !tp.flags.contains(PropFlags::OPTIONAL) {
-                let _ = write!(path, ".{name} is optional");
-                return (s, t);
-            }
-        }
-        if let (&[a], &[b]) = (&sm.shape().call[..], &tm.shape().call[..]) {
-            let (a, b) = (
-                self.instantiate_sig(a, sm.mapper),
-                self.instantiate_sig(b, tm.mapper),
-            );
-            let (ar, br) = (self.sig_return(a), self.sig_return(b));
-            if br != TypeId::VOID && !self.is_assignable(ar, br) {
-                path.push_str("()");
-                return self.descend_to_the_reason(ar, br, path, depth + 1);
-            }
-            let (ap, bp) = (self.sig_params(a), self.sig_params(b));
-            for i in 0..ap.len().min(bp.len()) {
-                if !self.is_assignable(bp[i].ty, ap[i].ty)
-                    && !self.is_assignable(ap[i].ty, bp[i].ty)
-                {
-                    let _ = write!(path, "(parameter {i})");
-                    return self.descend_to_the_reason(bp[i].ty, ap[i].ty, path, depth + 1);
-                }
-            }
-        }
-        (s, t)
     }
 }

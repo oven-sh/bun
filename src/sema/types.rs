@@ -579,6 +579,9 @@ pub struct Shape {
     pub literal: Literalness,
     /// Of what `literal` says is of an expression: `ObjectFlagsFreshLiteral` is gone (`getRegularTypeOfObjectLiteral`).
     pub is_regular: bool,
+    /// `ObjectFlagsContainsWideningType`, of what `checkObjectLiteral` makes by value: a member that is written has it, be it one that
+    /// what is spread after it replaces.
+    pub contains_widening_type: bool,
     /// `ObjectFlagsJSLiteral`
     pub is_js_literal: bool,
     /// Of what `getInstantiationExpressionType` makes.

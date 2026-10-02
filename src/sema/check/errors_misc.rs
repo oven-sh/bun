@@ -1,10 +1,9 @@
-//! Smaller checks of expressions and statements: 1345 2872 2873, 2869 2871 5076, 2703 2704 2790 18011, 2378, 2683, 2678.
+//! Smaller checks of expressions and statements, called where the type is computed or by the walk: 1345 2872 2873, 2869 2871 5076,
+//! 2703 2704 2790 18011, 2378, 2683, 2678.
 //!
 //! Follows `checkTruthinessOfType`, `checkNullishCoalesceOperands`, `checkDeleteExpression`, `checkAccessorDeclaration`,
 //! `checkThisExpression` and `checkSwitchStatement` of TypeScript 7.0.2's checker.go.
 
-use super::errors::Diagnostic;
-use super::errors_small::in_file_order;
 use super::*;
 use crate::bind::{FnOwner, MemberOwner, Parent, ScopeKind, UNREACHABLE};
 
@@ -27,173 +26,110 @@ pub(super) enum QueriedThisContainer {
 }
 
 impl Checker<'_> {
-    pub(super) fn check_miscellaneous(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let index = self.exprs_by_kind(file);
-        let this = if self.p.files.options.no_implicit_this {
-            index.of(ExprTag::This)
-        } else {
-            &[]
+    /// `checkNullishCoalesceOperands`, of `e`, which is `left ?? right`.
+    pub(super) fn check_nullish_coalesce_operands(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        left: ExprId,
+        right: ExprId,
+    ) {
+        let hir = self.hir(file);
+        if let Some(mixed) = self.operand_mixed_with_nullish(file, e, left, right) {
+            let (first, second) = if mixed == left {
+                match hir[left].kind {
+                    ExprKind::Binary { op: BinOp::And, .. } => ("&&", "??"),
+                    _ => ("||", "??"),
+                }
+            } else if mixed == right {
+                ("??", "&&")
+            } else {
+                ("??", "||")
+            };
+            let at = (
+                file,
+                self.start_of(file, mixed),
+                self.end_of_expr(file, mixed),
+            );
+            self.grammar_error_on_node(at, 5076, &[Arg::Text(first), Arg::Text(second)]);
+        }
+        // `checkNullishCoalesceOperandLeft`
+        let target = self.skip_outer_expressions(file, left);
+        let code = match self.syntactic_nullishness(file, target) {
+            ALWAYS => 2871,
+            NEVER => 2869,
+            _ => return,
         };
-        for e in in_file_order([
-            index.of(ExprTag::Unary),
-            index.of(ExprTag::Binary),
-            index.of(ExprTag::Cond),
-            index.of(ExprTag::Object),
-            this,
-        ]) {
-            let i = e.idx();
-            if bound.is_unchecked(i) {
-                continue;
-            }
-            match hir.exprs[i].kind {
-                ExprKind::Unary {
-                    op: UnOp::Not,
-                    operand,
-                } => self.check_truthiness(file, operand, out),
-                ExprKind::Cond { test, .. } => self.check_truthiness(file, test, out),
-                ExprKind::Binary {
-                    op: BinOp::And | BinOp::Or,
-                    left,
-                    ..
-                } => self.check_truthiness(file, left, out),
-                ExprKind::Binary {
-                    op: BinOp::Nullish,
-                    left,
-                    right,
-                } => {
-                    if let Some(mixed) = self.operand_mixed_with_nullish(file, e, left, right) {
-                        let start = self.start_of(file, mixed);
-                        out.push(Diagnostic { start, code: 5076 });
-                        let (first, second) = if mixed == left {
-                            match hir[left].kind {
-                                ExprKind::Binary { op: BinOp::And, .. } => ("&&", "??"),
-                                _ => ("||", "??"),
-                            }
-                        } else if mixed == right {
-                            ("??", "&&")
-                        } else {
-                            ("??", "||")
-                        };
-                        self.note(
-                            start,
-                            self.end_of_expr(file, mixed),
-                            5076,
-                            vec![first.to_owned(), second.to_owned()],
-                        );
-                    }
-                    let target = self.skip_outer_expressions(file, left);
-                    let code = match self.syntactic_nullishness(file, target) {
-                        ALWAYS => 2871,
-                        NEVER => 2869,
-                        _ => 0,
-                    };
-                    if code != 0 {
-                        let start = self.error_start_inside_parentheses(file, target);
-                        out.push(Diagnostic { start, code });
-                        let end = self.error_end_inside_parentheses(file, target);
-                        self.note(start, end, code, Vec::new());
-                    }
-                }
-                ExprKind::Unary {
-                    op: UnOp::Delete,
-                    operand,
-                } => self.check_delete(file, e, operand, out),
-                ExprKind::Object(props) => self.check_spread_overrides(file, props, out),
-                ExprKind::This if self.p.files.options.no_implicit_this => {
-                    let is_implicit = if bound.is_in_type_query(e) {
-                        self.is_queried_this_implicitly_any(file, e)
-                    } else {
-                        self.is_this_implicitly_any(file, e)
-                    };
-                    if is_implicit {
-                        out.push(Diagnostic {
-                            start: hir[e].pos,
-                            code: 2683,
-                        });
-                        self.relate(hir[e].pos, 2683, |c| c.container_shadowing_this(file, e));
-                    }
-                }
-                _ => {}
+        let at = (
+            file,
+            self.error_start_inside_parentheses(file, target),
+            self.error_end_inside_parentheses(file, target),
+        );
+        self.error(at, code, &[]);
+    }
+
+    /// The end of `checkThisExpression`: 2683.
+    pub(super) fn check_this_is_typed(&mut self, file: FileId, e: ExprId) {
+        if !self.p.files.options.no_implicit_this {
+            return;
+        }
+        let is_implicit = if self.bound(file).is_in_type_query(e) {
+            self.is_queried_this_implicitly_any(file, e)
+        } else {
+            self.is_this_implicitly_any(file, e)
+        };
+        if is_implicit {
+            let shadowed = self.container_shadowing_this(file, e);
+            let shadowed = shadowed.map(|container| self.new_diagnostic(container, 2738, &[]));
+            let at = self.place_of_token(file, self.hir(file)[e].pos);
+            let diagnostic = self.error(at, 2683, &[]);
+            if let Some(shadowed) = shadowed {
+                diagnostic.add_related_info(shadowed);
             }
         }
-        for s in 0..hir.stmts.len() {
-            if !matches!(
-                hir.stmts[s].kind,
-                StmtKind::If { .. }
-                    | StmtKind::While { .. }
-                    | StmtKind::DoWhile { .. }
-                    | StmtKind::For { .. }
-                    | StmtKind::Switch { .. }
-            ) || matches!(bound.stmt_parent[s], Parent::None)
-            {
-                continue;
-            }
-            match hir.stmts[s].kind {
-                StmtKind::If { test, .. }
-                | StmtKind::While { test, .. }
-                | StmtKind::DoWhile { test, .. } => self.check_truthiness(file, test, out),
-                StmtKind::For { test, .. } if test.is_some() => {
-                    self.check_truthiness(file, test, out)
-                }
-                StmtKind::Switch { expr, cases } => {
-                    let subject = self.type_of_expr(file, expr);
-                    if !self.is_known(subject) || self.is_uncertain(file, expr) {
-                        continue;
-                    }
-                    for c in cases.iter() {
-                        let test = hir[c].test;
-                        if test.is_none() {
-                            continue;
-                        }
-                        let case = self.type_of_expr(file, test);
-                        if !self.is_known(case) || self.is_uncertain(file, test) {
-                            continue;
-                        }
-                        // `isTypeEqualityComparableTo`, then the other way round.
-                        let is_nullable = case.is_null() || case.is_undefined();
-                        if !is_nullable
-                            && !self.is_comparable(subject, case)
-                            && !self.is_comparable(case, subject)
-                        {
-                            let at = self.error_start_of(file, test);
-                            let end = self.error_end_of(file, test);
-                            self.check_type_comparable_to(
-                                case,
-                                subject,
-                                Some((file, at, end)),
-                                None,
-                            );
-                        }
-                    }
-                }
-                _ => {}
-            }
+    }
+
+    /// `checkSwitchStatement`, of one `case test:` of a `switch (expr)`: 2678.
+    pub(super) fn check_case_clause(&mut self, file: FileId, expr: ExprId, test: ExprId) {
+        let (subject, case) = (self.type_of_expr(file, expr), self.type_of_expr(file, test));
+        if !self.is_known(subject)
+            || !self.is_known(case)
+            || self.is_uncertain(file, expr)
+            || self.is_uncertain(file, test)
+        {
+            return;
         }
-        // A getter that gets to its end and never says `return`.
-        if hir.kind != FileKind::Declaration {
-            for f in 0..hir.fns.len() {
-                let func = &hir.fns[f];
-                if func.kind == FnKind::Getter
-                    && !func.flags.contains(Flags::AMBIENT)
-                    && !matches!(func.body, FnBody::None)
-                    && bound.fns[f].end != UNREACHABLE
-                    && bound.fns[f].end.is_some()
-                    && bound.fns[f].returns.is_empty()
-                {
-                    let (start, end) = match bound.fns[f].owner {
-                        FnOwner::Member(m) => (hir[m].pos, self.end_of_member_name(file, m)),
-                        FnOwner::Expr(e) => match bound.expr_parent[e.idx()] {
-                            Parent::Prop(p) => (hir[p].pos, self.end_of_prop_name(file, p)),
-                            _ => continue,
-                        },
-                        _ => continue,
-                    };
-                    out.push(Diagnostic { start, code: 2378 });
-                    self.note(start, end, 2378, Vec::new());
-                }
-            }
+        // `isTypeEqualityComparableTo`, then the other way round.
+        let is_nullable = case.is_null() || case.is_undefined();
+        if !is_nullable && !self.is_comparable(subject, case) {
+            let at = self.place_of_written_expr(file, test);
+            self.check_type_comparable_to(case, subject, Some(at), None);
         }
+    }
+
+    /// `checkAccessorDeclaration`: 2378, of a getter that gets to its end and never says `return`.
+    pub(super) fn check_getter_returns_a_value(&mut self, file: FileId, f: FnId) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let func = &hir[f];
+        if hir.kind == FileKind::Declaration
+            || func.kind != FnKind::Getter
+            || func.flags.contains(Flags::AMBIENT)
+            || matches!(func.body, FnBody::None)
+            || bound.fns[f.idx()].end == UNREACHABLE
+            || bound.fns[f.idx()].end.is_none()
+            || !bound.fns[f.idx()].returns.is_empty()
+        {
+            return;
+        }
+        let (start, end) = match bound.fns[f.idx()].owner {
+            FnOwner::Member(m) => (hir[m].pos, self.end_of_member_name(file, m)),
+            FnOwner::Expr(e) => match bound.expr_parent[e.idx()] {
+                Parent::Prop(p) => (hir[p].pos, self.end_of_prop_name(file, p)),
+                _ => return,
+            },
+            _ => return,
+        };
+        self.error((file, start, end), 2378, &[]);
     }
 
     /// `checkNullishCoalesceOperands`: the binary expression that mixes `||` or `&&` with the `??` of `e`, which is `left ?? right`,
@@ -264,19 +200,17 @@ impl Checker<'_> {
     }
 
     /// `checkTruthinessOfType`
-    fn check_truthiness(&mut self, file: FileId, e: ExprId, out: &mut Vec<Diagnostic>) {
-        let code = if self.type_of_expr(file, e) == TypeId::VOID {
+    pub(super) fn check_truthiness_of_type(&mut self, file: FileId, node: ExprId, ty: TypeId) {
+        let code = if ty == TypeId::VOID {
             1345
         } else {
-            match self.syntactic_truthiness(file, e) {
+            match self.syntactic_truthiness(file, node) {
                 ALWAYS => 2872,
                 NEVER => 2873,
                 _ => return,
             }
         };
-        let start = self.error_start_of(file, e);
-        out.push(Diagnostic { start, code });
-        self.note(start, self.error_end_of(file, e), code, Vec::new());
+        self.error(self.place_of_written_expr(file, node), code, &[]);
     }
 
     /// `GetErrorRangeForNode`, for an expression as it is written: where an error about the whole of `e` goes. In parentheses it is
@@ -433,11 +367,7 @@ impl Checker<'_> {
 
     /// The end of `checkThisExpression`: 2738 at the function the `this` at `e` belongs to, if something says what `this` is around
     /// that function.
-    fn container_shadowing_this(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-    ) -> Vec<super::explain::Related> {
+    fn container_shadowing_this(&mut self, file: FileId, e: ExprId) -> Option<(FileId, u32, u32)> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let container = if bound.is_in_type_query(e) {
             match self.this_container_of_type_query(file, e) {
@@ -451,7 +381,7 @@ impl Checker<'_> {
             }
         };
         let Some(func) = container else {
-            return Vec::new();
+            return None;
         };
         // What is around it, and its `GetErrorRangeForNode`.
         let (around, below, (from, to)) = match bound.fns[func.idx()].owner {
@@ -471,16 +401,12 @@ impl Checker<'_> {
                 };
                 (bound.expr_parent[owner.idx()], owner, range)
             }
-            _ => return Vec::new(),
+            _ => return None,
         };
         if !self.is_this_said_around(file, around, below) {
-            return Vec::new();
+            return None;
         }
-        vec![super::explain::Related {
-            at: Some((file, from, to)),
-            code: 2738,
-            args: Vec::new(),
-        }]
+        Some((file, from, to))
     }
 
     /// The same for a `this` in the body of a namespace or in an enum, which is what `container` stands for.
@@ -599,13 +525,7 @@ impl Checker<'_> {
     }
 
     /// `checkDeleteExpression`
-    fn check_delete(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        operand: ExprId,
-        out: &mut Vec<Diagnostic>,
-    ) {
+    pub(super) fn check_delete_expression(&mut self, file: FileId, e: ExprId, operand: ExprId) {
         let hir = self.hir(file);
         let start = match hir[operand].kind {
             // `createMissingNode`: a missing operand starts where the token before it ends.
@@ -616,9 +536,7 @@ impl Checker<'_> {
         };
         // A missing node is empty.
         let end = match hir[operand].kind {
-            ExprKind::Missing if !is_parenthesized(self.hir(file), operand) => {
-                super::explain::NO_LENGTH
-            }
+            ExprKind::Missing if !is_parenthesized(self.hir(file), operand) => start,
             _ => self.error_end_inside_parentheses(file, operand),
         };
         let (obj, name) = match hir[operand].kind {
@@ -637,8 +555,7 @@ impl Checker<'_> {
             }
             // A missing operand is an identifier without text, which is no access expression either.
             _ => {
-                out.push(Diagnostic { start, code: 2703 });
-                self.note(start, end, 2703, Vec::new());
+                self.error((file, start, end), 2703, &[]);
                 return;
             }
         };
@@ -646,8 +563,7 @@ impl Checker<'_> {
         if self.files().atoms.bytes(name).first() == Some(&b'#')
             && matches!(hir[operand].kind, ExprKind::Dot { .. })
         {
-            out.push(Diagnostic { start, code: 18011 });
-            self.note(start, end, 18011, Vec::new());
+            self.error((file, start, end), 18011, &[]);
         }
         let object = self.type_of_expr(file, obj);
         if !self.is_known(object) || self.is_any(object) || self.is_uncertain(file, obj) {
@@ -682,8 +598,7 @@ impl Checker<'_> {
             types.push(self.type_of_prop(&prop, mapper));
         }
         if is_readonly {
-            out.push(Diagnostic { start, code: 2704 });
-            self.note(start, end, 2704, Vec::new());
+            self.error((file, start, end), 2704, &[]);
             return;
         }
         // `checkDeleteExpressionMustBeOptional`
@@ -702,8 +617,7 @@ impl Checker<'_> {
                     m.is_undefined() || m == TypeId::VOID || c.is_deferred(m)
                 });
         if !is_optional {
-            out.push(Diagnostic { start, code: 2790 });
-            self.note(start, end, 2790, Vec::new());
+            self.error((file, start, end), 2790, &[]);
         }
     }
 

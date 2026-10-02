@@ -499,7 +499,10 @@ impl Checker<'_> {
         let untyped_runtime = runtime
             .map(|spec| (spec, module.default_mode))
             .filter(|untyped| !runtime_is_no_module && module.untyped_imports.contains(untyped));
-        let (factory, fragment_factory) = jsx_factory_names(self.files(), hir);
+        let (factory, fragment_factory) = (
+            jsx_namespace(self.files(), hir, false),
+            jsx_namespace(self.files(), hir, true),
+        );
         let names_fragment_factory = atoms.bytes(fragment_factory) != b"null";
         // `markJsxAliasReferenced`: a module that is not found is as good as none asked for.
         let imports_nothing = runtime.is_none() || runtime_is_missing;
@@ -616,7 +619,7 @@ impl Checker<'_> {
             }
             self.check_jsx_attributes(file, e, out);
             self.check_jsx_children_given_twice(file, e, out);
-            self.check_spread_overrides(file, element.attrs, out);
+            self.check_spread_overrides(file, element.attrs);
             self.check_jsx_component(file, e, out);
             // `checkJsxElementDeferred`: `getIntrinsicTagSymbol` of the opening element, then of the closing one, each by its own name.
             // A closing name that is not intrinsic is an expression, checked like any other.
@@ -658,19 +661,12 @@ impl Checker<'_> {
     /// `resolveJsxOpeningLikeElement` of the fragment `e`, which is a call of what fragments are made with: 2322 and what says more,
     /// of its children. Of several candidates, and of one that is generic, nothing is said.
     fn check_jsx_fragment(&mut self, file: FileId, e: ExprId, out: &mut Vec<Diagnostic>) {
-        let (hir, files) = (self.hir(file), self.files());
+        let hir = self.hir(file);
         let ExprKind::Jsx(j) = hir[e].kind else {
             return;
         };
         // `getJsxNamespaceAt` goes by the name fragments are made with. Only where that leads to the `JSX` elements go by.
-        let jsx_of = |name: Atom| {
-            files
-                .resolve_name(file, ScopeId(0), name, SymFlags::NAMESPACE)
-                .and_then(|container| files.resolve_alias_if_needed(container))
-                .and_then(|container| files.namespace_member(container, known::JSX))
-        };
-        let (factory, fragment_factory) = jsx_factory_names(files, hir);
-        if factory != fragment_factory && jsx_of(factory) != jsx_of(fragment_factory) {
+        if self.jsx_namespace_at(file, false) != self.jsx_namespace_at(file, true) {
             return;
         }
         let Some(fragment) = self.jsx_fragment_type(file, e) else {
@@ -684,7 +680,7 @@ impl Checker<'_> {
         if self.is_error_type(apparent) {
             return;
         }
-        let Some((sigs, _)) = self.jsx_signatures_of_tag(file, fragment) else {
+        let Some((sigs, _)) = self.uninstantiated_jsx_signatures_of_type(file, fragment, e) else {
             return;
         };
         if self.is_untyped_function_call(fragment, apparent, sigs.len(), 0) {
@@ -762,9 +758,14 @@ impl Checker<'_> {
         let mut last_candidate = None;
         let wanted: Vec<TypeId> = match self.jsx_intrinsic_tag_name(file, jsx.tag) {
             Some(name) => {
+                let attributes = self.jsx_intrinsic_attributes(file, name);
                 // An intrinsic element takes no type arguments. The attributes are checked all the same.
-                self.report_jsx_type_argument_arity(file, jsx.type_args, &[], out);
-                match self.jsx_intrinsic_attributes(file, name) {
+                if !jsx.type_args.is_empty() {
+                    let fake =
+                        self.jsx_intrinsic_signature(file, attributes.unwrap_or(TypeId::ERROR));
+                    self.report_type_argument_arity(file, jsx.type_args, &[fake], out);
+                }
+                match attributes {
                     Some(attributes) => vec![attributes],
                     None => return,
                 }
@@ -777,113 +778,54 @@ impl Checker<'_> {
                 {
                     return;
                 }
-                // `getUninstantiatedJsxSignaturesOfType`: `anySignature`, which has no parameter and takes no type arguments.
-                if component == TypeId::STRING {
-                    if self.report_jsx_type_argument_arity(file, jsx.type_args, &[], out) {
-                        return;
-                    }
-                    match self.jsx_props_type(file, e) {
-                        Some(props) => vec![props],
-                        None => return,
-                    }
-                } else if let Some(name) = self.string_literal_value(component) {
-                    // A string literal stands for the element of that name.
-                    match self.jsx_attributes_of_literal_tag(file, name) {
-                        Ok(Some(_)) => {}
-                        Ok(None) => {
-                            out.push(Diagnostic {
-                                start: hir[e].pos,
-                                code: 2339,
-                            });
-                            let end = hir[j].opening_end;
-                            self.explain_to(hir[e].pos, end, 2339, |c| {
-                                vec![c.atom_text(name), "JSX.IntrinsicElements".to_owned()]
-                            });
-                            out.push(Diagnostic {
-                                start: tag_name,
-                                code: 2604,
-                            });
-                            self.explain_by_tag_name(file, e, 2604);
-                            return;
-                        }
-                        Err(()) => return,
-                    }
-                    // `createSignatureForJSXIntrinsic` is not generic, and `chooseOverload` rejects it before it looks at the attributes.
-                    if self.report_jsx_type_argument_arity(file, jsx.type_args, &[], out) {
-                        return;
-                    }
-                    // The attributes have to have been read with what they are held against in mind.
+                let apparent = self.apparent_type(component);
+                if !self.is_known(apparent) {
+                    return;
+                }
+                // `resolveErrorCall`
+                if self.is_error_type(apparent) {
+                    return;
+                }
+                let Some((sigs, construct)) =
+                    self.uninstantiated_jsx_signatures_of_type(file, component, e)
+                else {
+                    return;
+                };
+                if self.is_untyped_function_call(component, apparent, sigs.len(), 0) {
+                    return;
+                }
+                if sigs.is_empty() {
+                    out.push(Diagnostic {
+                        start: tag_name,
+                        code: 2604,
+                    });
+                    self.explain_by_tag_name(file, e, 2604);
+                    return;
+                }
+                // `chooseOverload` skips every signature then, so `reportCallResolutionErrors` has no argument error to report.
+                let has_correct_arity = sigs.iter().any(|&sig| {
+                    let type_params = self.sig_type_params(sig);
+                    self.has_correct_type_argument_arity(&type_params, jsx.type_args.len())
+                });
+                if !has_correct_arity {
+                    self.report_type_argument_arity(file, jsx.type_args, &sigs, out);
+                    return;
+                }
+                let candidates = self.reorder_candidates(&sigs);
+                if self.report_jsx_type_argument_constraints(file, jsx.type_args, &candidates, out)
+                {
+                    return;
+                }
+                if sigs.len() == 1 {
                     match self.jsx_props_type(file, e) {
                         Some(props) => vec![props],
                         None => return,
                     }
                 } else {
-                    let apparent = self.apparent_type(component);
-                    if !self.is_known(apparent) {
-                        return;
-                    }
-                    // `resolveErrorCall`
-                    if self.is_error_type(apparent) {
-                        return;
-                    }
-                    let (mut sigs, construct) = self.jsx_signatures(component);
-                    if sigs.is_empty() && self.is_union(apparent) {
-                        // Every alternative is asked, whatever the others have.
-                        let mut said = Vec::new();
-                        let at = (hir[e].pos, hir[j].opening_end);
-                        if self.jsx_tag_has_signatures(file, component, at, &mut said)
-                            != Some(false)
-                        {
-                            match self.jsx_signatures_of_tag(file, component) {
-                                Some((together, _)) => sigs = together.into(),
-                                None => return,
-                            }
-                        }
-                        if sigs.is_empty() {
-                            out.append(&mut said);
-                            out.push(Diagnostic {
-                                start: tag_name,
-                                code: 2604,
-                            });
-                            self.explain_by_tag_name(file, e, 2604);
-                            return;
-                        }
-                    }
-                    if self.is_untyped_function_call(component, apparent, sigs.len(), 0) {
-                        return;
-                    }
-                    if sigs.is_empty() {
-                        out.push(Diagnostic {
-                            start: tag_name,
-                            code: 2604,
-                        });
-                        self.explain_by_tag_name(file, e, 2604);
-                        return;
-                    }
-                    // `chooseOverload` skips every signature then, so `reportCallResolutionErrors` has no argument error to report.
-                    if self.report_jsx_type_argument_arity(file, jsx.type_args, &sigs, out) {
-                        return;
-                    }
-                    let candidates = self.reorder_candidates(&sigs);
-                    if self.report_jsx_type_argument_constraints(
-                        file,
-                        jsx.type_args,
-                        &candidates,
-                        out,
-                    ) {
-                        return;
-                    }
-                    if sigs.len() == 1 {
-                        match self.jsx_props_type(file, e) {
-                            Some(props) => vec![props],
-                            None => return,
-                        }
-                    } else {
-                        last_candidate = candidates.last().copied();
-                        match self.jsx_props_of_each(file, e, &candidates, construct) {
-                            Some(wanted) => wanted,
-                            None => return,
-                        }
+                    last_candidate = candidates.last().copied();
+                    match self.jsx_props_of_each(file, e, &candidates, construct) {
+                        Some(wanted) => wanted,
+                        None => return,
                     }
                 }
             }
@@ -1015,68 +957,6 @@ impl Checker<'_> {
         related
     }
 
-    /// `getTypeArgumentArityError`: reports 2558 or 2743 at `type_args`, the type arguments of an element, unless one of `sigs`, the
-    /// signatures of its tag, has the correct arity (`hasCorrectTypeArgumentArity`). Returns whether it reported.
-    fn report_jsx_type_argument_arity(
-        &mut self,
-        file: FileId,
-        type_args: IdList<TypeNodeId>,
-        sigs: &[SigId],
-        out: &mut Vec<Diagnostic>,
-    ) -> bool {
-        let hir = self.hir(file);
-        let Some(first) = hir.ids(type_args).next() else {
-            return false;
-        };
-        let count = type_args.len();
-        let (mut takes_fewer, mut needs_more) = (false, false);
-        for &sig in sigs {
-            let type_params = self.sig_type_params(sig);
-            if self.has_correct_type_argument_arity(&type_params, count) {
-                return false;
-            }
-            if self.min_type_argument_count(&type_params) > count {
-                needs_more = true;
-            } else {
-                takes_fewer = true;
-            }
-        }
-        let start = hir[first].pos;
-        let code = if takes_fewer && needs_more {
-            2743
-        } else {
-            2558
-        };
-        out.push(Diagnostic { start, code });
-        let end = self.end_of_type_argument_list(file, type_args);
-        self.explain_to(start, end, code, |c| {
-            let mut range = "0".to_owned();
-            let (mut below, mut above) = (None::<usize>, None::<usize>);
-            for &sig in sigs {
-                let type_params = c.sig_type_params(sig);
-                let (least, most) = (c.min_type_argument_count(&type_params), type_params.len());
-                range = if least < most {
-                    format!("{least}-{most}")
-                } else {
-                    least.to_string()
-                };
-                if least > count {
-                    above = Some(above.map_or(least, |above| above.min(least)));
-                } else if most < count {
-                    below = Some(below.map_or(most, |below| below.max(most)));
-                }
-            }
-            match (below, above) {
-                _ if sigs.len() < 2 => vec![range, count.to_string()],
-                (Some(below), Some(above)) => {
-                    vec![count.to_string(), below.to_string(), above.to_string()]
-                }
-                _ => vec![below.or(above).unwrap_or(0).to_string(), count.to_string()],
-            }
-        });
-        true
-    }
-
     /// `chooseOverload` skips a candidate whose constraints the type arguments violate (`checkTypeArguments`). If that leaves none of
     /// `candidates`, reports 2344 for the last one skipped (`candidateForTypeArgumentError`). Returns whether it reported.
     fn report_jsx_type_argument_constraints(
@@ -1147,32 +1027,7 @@ impl Checker<'_> {
         if ways.is_empty() {
             return None;
         }
-        // `getJsxFactoryEntity`: `@jsx` if it parses, else `jsxFactory` if it parses, else `<_jsxNamespace>.createElement`.
-        let (options, atoms) = (&files.options, &files.atoms);
-        let jsx_pragma = hir.jsx_pragmas.factory;
-        let local_factory = if jsx_pragma.is_some() {
-            parse_isolated_entity_name(atoms.bytes(jsx_pragma))
-        } else {
-            None
-        };
-        let names: Vec<Atom> = match local_factory
-            .or_else(|| parse_isolated_entity_name(options.jsx_factory.as_bytes()))
-        {
-            Some(entity) => entity_name_parts(entity)
-                .map(|name| atoms.intern_str(name))
-                .collect(),
-            None => {
-                // `reactNamespace` is read only if no `jsxFactory` is written.
-                let reads_react_namespace =
-                    options.jsx_factory.is_empty() && !options.react_namespace.is_empty();
-                let namespace = if reads_react_namespace {
-                    atoms.intern_str(&options.react_namespace)
-                } else {
-                    known::React
-                };
-                vec![namespace, atoms.intern(b"createElement")]
-            }
-        };
+        let names = jsx_factory_entity(files, hir, true);
         let scope = self
             .bound(file)
             .expr_scope
@@ -1210,50 +1065,6 @@ impl Checker<'_> {
         }
         let factory: Vec<String> = names.iter().map(|&name| self.atom_text(name)).collect();
         Some((least, factory.join("."), most))
-    }
-
-    /// Whether `getUninstantiatedJsxSignaturesOfType` finds any for `ty`. Of each string literal in it that names no element 2339 is
-    /// said, from `at.0` to `at.1`. `None`: it cannot be told.
-    fn jsx_tag_has_signatures(
-        &mut self,
-        file: FileId,
-        ty: TypeId,
-        at: (u32, u32),
-        out: &mut Vec<Diagnostic>,
-    ) -> Option<bool> {
-        if ty == TypeId::STRING {
-            return Some(true);
-        }
-        if let Some(name) = self.string_literal_value(ty) {
-            let names_element = !matches!(self.jsx_attributes_of_literal_tag(file, name), Ok(None));
-            if !names_element {
-                out.push(Diagnostic {
-                    start: at.0,
-                    code: 2339,
-                });
-                self.explain_to(at.0, at.1, 2339, |c| {
-                    vec![c.atom_text(name), "JSX.IntrinsicElements".to_owned()]
-                });
-            }
-            return Some(names_element);
-        }
-        let apparent = self.apparent_type(ty);
-        if !self.is_known(apparent) {
-            return None;
-        }
-        if !self.jsx_signatures(ty).0.is_empty() {
-            return Some(true);
-        }
-        if !self.is_union(apparent) {
-            return Some(false);
-        }
-        // `getUnionSignatures`: none as soon as one member has none. Every member is asked first.
-        let mut all = true;
-        for &part in self.parts(apparent) {
-            all &= self.jsx_tag_has_signatures(file, part, at, out)?;
-        }
-        // Whether what they have goes together is not worked out.
-        if all { None } else { Some(false) }
     }
 
     /// `elaborateJsxComponents`
@@ -1602,12 +1413,7 @@ impl Checker<'_> {
     }
 
     /// `checkSpreadPropOverrides`: 2783, what is written only to be overwritten by what is spread after it.
-    pub(super) fn check_spread_overrides(
-        &mut self,
-        file: FileId,
-        props: Span<PropId>,
-        out: &mut Vec<Diagnostic>,
-    ) {
+    pub(super) fn check_spread_overrides(&mut self, file: FileId, props: Span<PropId>) {
         let hir = self.hir(file);
         if !self.p.files.options.strict_null_checks
             || !props.iter().any(|p| hir[p].kind == PropKind::Spread)
@@ -1654,26 +1460,17 @@ impl Checker<'_> {
                 }
                 if always {
                     let start = hir[overwritten].pos;
-                    // Errors that differ in nothing but what they are related to are made one: `compactAndMergeRelatedInfos`.
-                    let is_said = out.iter().any(|d| d.start == start && d.code == 2783);
-                    out.push(Diagnostic { start, code: 2783 });
                     // `GetErrorRangeForNode`: a method is pointed at by its name, anything else as a whole.
                     let end = if hir[overwritten].kind == PropKind::Method {
                         self.end_of_prop_name(file, overwritten)
                     } else {
                         self.end_of_prop(file, overwritten)
                     };
-                    if !is_said {
-                        self.explain_to(start, end, 2783, |c| vec![c.atom_text(name)]);
-                    }
-                    self.relate(start, 2783, |c| {
-                        // The spread starts at its `...`, that of an attribute at the `{`.
-                        vec![super::explain::Related {
-                            at: Some((file, prop.start, c.end_of_prop(file, p))),
-                            code: 2785,
-                            args: Vec::new(),
-                        }]
-                    });
+                    // The spread starts at its `...`, that of an attribute at the `{`.
+                    let spread = (file, prop.start, self.end_of_prop(file, p));
+                    let spread = self.new_diagnostic(spread, 2785, &[]);
+                    self.error((file, start, end), 2783, &[Arg::Atom(name)])
+                        .add_related_info(spread);
                 }
             }
         }
@@ -1867,52 +1664,53 @@ impl Checker<'_> {
     }
 }
 
-/// `getJsxNamespace`: the identifier that an element of the file `hir` needs in scope, and the one that a fragment needs.
-pub(super) fn jsx_factory_names(files: &Files, hir: &hir::File) -> (Atom, Atom) {
+/// `getJsxNamespace`
+pub(super) fn jsx_namespace(files: &Files, hir: &hir::File, is_opening_fragment: bool) -> Atom {
+    if is_opening_fragment {
+        // `getJsxFragmentFactoryEntity`: a `@jsxFrag` pragma hides `jsxFragmentFactory` even if the pragma does not parse.
+        let pragma = hir.jsx_pragmas.fragment_factory;
+        let text = if pragma.is_some() {
+            files.atoms.bytes(pragma)
+        } else {
+            files.options.jsx_fragment_factory.as_bytes()
+        };
+        if let Some(entity) = parse_isolated_entity_name(&files.atoms, text) {
+            return entity[0];
+        }
+    }
+    jsx_factory_entity(files, hir, !is_opening_fragment)[0]
+}
+
+/// `getJsxFactoryEntity`, as its identifiers from left to right. `is_local`: `localJsxFactory` counts, which is `@jsx` if it parses.
+fn jsx_factory_entity(files: &Files, hir: &hir::File, is_local: bool) -> Vec<Atom> {
     let (options, atoms) = (&files.options, &files.atoms);
-    // `GetFirstIdentifier` of `parseIsolatedEntityName(text)`
-    let first_identifier = |text: &[u8]| -> Option<Atom> {
-        let name = entity_name_parts(parse_isolated_entity_name(text)?).next()?;
-        Some(atoms.intern_str(name))
-    };
-    // `_jsxNamespace`: a `jsxFactory` that does not parse leaves `React`. `reactNamespace` is read only if no `jsxFactory` is written,
-    // and is used whole.
-    let global_factory = if !options.jsx_factory.is_empty() {
-        first_identifier(options.jsx_factory.as_bytes()).unwrap_or(known::React)
-    } else if !options.react_namespace.is_empty() {
-        atoms.intern_str(&options.react_namespace)
-    } else {
-        known::React
-    };
-    let (jsx_pragma, jsx_frag_pragma) = (hir.jsx_pragmas.factory, hir.jsx_pragmas.fragment_factory);
-    // `getLocalJsxNamespace`: `@jsx` applies to elements only, and is ignored if it does not parse.
-    let local_factory = if jsx_pragma.is_some() {
-        first_identifier(atoms.bytes(jsx_pragma))
-    } else {
-        None
-    };
-    // `getJsxFragmentFactoryEntity`: a `@jsxFrag` pragma hides `jsxFragmentFactory` even if the pragma does not parse.
-    let fragment_entity = if jsx_frag_pragma.is_some() {
-        atoms.bytes(jsx_frag_pragma)
-    } else {
-        options.jsx_fragment_factory.as_bytes()
-    };
-    (
-        local_factory.unwrap_or(global_factory),
-        first_identifier(fragment_entity).unwrap_or(global_factory),
-    )
+    let pragma = hir.jsx_pragmas.factory;
+    if is_local
+        && pragma.is_some()
+        && let Some(entity) = parse_isolated_entity_name(atoms, atoms.bytes(pragma))
+    {
+        return entity;
+    }
+    // `_jsxFactoryEntity`: `reactNamespace` is read only if no `jsxFactory` is written, and is used whole.
+    parse_isolated_entity_name(atoms, options.jsx_factory.as_bytes()).unwrap_or_else(|| {
+        let namespace = if options.jsx_factory.is_empty() && !options.react_namespace.is_empty() {
+            atoms.intern(options.react_namespace.as_bytes())
+        } else {
+            known::React
+        };
+        vec![namespace, atoms.intern(b"createElement")]
+    })
 }
 
-/// `parseIsolatedEntityName`: `text` if it is an identifier or a qualified name. The empty text is neither.
-fn parse_isolated_entity_name(text: &[u8]) -> Option<&str> {
+/// `parseIsolatedEntityName`, as the identifiers of the name. The empty text is no name.
+fn parse_isolated_entity_name(atoms: &crate::atom::Interner, text: &[u8]) -> Option<Vec<Atom>> {
     std::str::from_utf8(text)
-        .ok()
-        .filter(|entity| crate::verify::is_entity_name(entity))
-}
-
-/// The identifiers of a parsed entity name, from left to right.
-fn entity_name_parts(entity: &str) -> impl Iterator<Item = &str> {
-    entity.split('.').map(str::trim)
+        .is_ok_and(crate::verify::is_entity_name)
+        .then(|| {
+            text.split(|&c| c == b'.')
+                .map(|name| atoms.intern(name.trim_ascii()))
+                .collect()
+        })
 }
 
 /// Where the name in the opening tag of the element `e` starts.

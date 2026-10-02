@@ -154,6 +154,7 @@ impl Checker<'_> {
             return self.checked(syntactic, None, Vec::new(), false);
         }
         self.checking = Some(file);
+        self.emit_resolver_links = Default::default();
         if self.p.files.options.emits_first {
             self.inline_const_enums(file);
         }
@@ -198,7 +199,6 @@ impl Checker<'_> {
         pass!(check_implicit_any);
         pass!(check_overloads);
         pass!(check_use_before_declaration);
-        pass!(check_miscellaneous);
         pass!(check_iteration);
         pass!(check_names_and_exports);
         pass!(check_control_flow);
@@ -4676,30 +4676,6 @@ impl Checker<'_> {
         }
     }
 
-    /// `BUN_SEMA_TRACE_ERRORS=1`: the two types an error is about.
-    pub(super) fn trace_pair(&mut self, code: u32, start: u32, a: TypeId, b: TypeId) {
-        if self.trace_relations || std::env::var_os("BUN_SEMA_TRACE_ERRORS").is_some() {
-            let mut describer = crate::describe::Describer::new(self);
-            let (a, b) = (describer.describe(a), describer.describe(b));
-            eprintln!("ERROR {code} at {start}: {a}  ~  {b}");
-            return;
-        }
-        if std::env::var_os("BUN_SEMA_TRACE_ERRORS_RAW").is_some() {
-            let parts = |c: &Self, t: TypeId| {
-                c.parts(t)
-                    .iter()
-                    .map(|&p| format!("{:?}", c.data(p)))
-                    .collect::<Vec<_>>()
-                    .join(" | ")
-            };
-            eprintln!(
-                "RAW {code} at {start}: {}  ~  {}",
-                parts(self, a),
-                parts(self, b)
-            );
-        }
-    }
-
     /// The types of the two operands of an operator whose result does not go by them, looked at left to right, and whether both
     /// were found out: if not, nothing is said of the two.
     pub(super) fn check_operands(
@@ -5090,6 +5066,7 @@ impl Checker<'_> {
             wanted,
             Some(at),
             Some((file, right)),
+            false,
             head_message,
             None,
         );
@@ -5601,7 +5578,7 @@ impl Checker<'_> {
         if flags.intersects(SymFlags::VARIABLE) {
             return flags.contains(SymFlags::CONST).then_some(2588);
         }
-        Some(if flags.contains(SymFlags::ENUM) {
+        Some(if flags.intersects(SymFlags::ENUM) {
             2628
         } else if flags.contains(SymFlags::CLASS) {
             2629

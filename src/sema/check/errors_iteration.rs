@@ -6,6 +6,7 @@
 //! generator says it returns, of TypeScript 7.0.2's checker.go.
 
 use super::errors::Diagnostic;
+use super::symbols::IterationUse;
 use super::*;
 use crate::bind::{FnOwner, MemberOwner, Parent, PatParent, ScopeKind};
 use smallvec::SmallVec;
@@ -37,14 +38,14 @@ impl Checker<'_> {
                         let given = self.check_not_nullish(file, expr, given, out);
                         // Where `null` and `undefined` are not told apart nothing has been said of them, or taken out.
                         if !self.is_nothing_but_nullish(given) {
-                            let at = self.error_start_of(file, expr);
-                            iterated = self.check_iterated(
-                                given,
-                                is_await,
-                                at,
-                                |c| c.error_end_of(file, expr),
-                                out,
-                            );
+                            let usage = if is_await {
+                                IterationUse::ForAwaitOf
+                            } else {
+                                IterationUse::ForOf
+                            };
+                            let error_node = self.place_of_written_expr(file, expr);
+                            iterated =
+                                self.check_iterated(usage, given, TypeId::UNDEFINED, error_node);
                         }
                     }
                     let StmtKind::Expr(target) = hir[left].kind else {
@@ -133,11 +134,12 @@ impl Checker<'_> {
                 looked_at.push(e);
             }
         }
-        if has_iterable {
-            for &e in index.of(ExprTag::Yield) {
-                if !bound.is_unchecked(e.idx()) {
-                    looked_at.push(e);
-                }
+        for &e in index.of(ExprTag::Yield) {
+            // Without `Iterable` only what `yield*` goes through is looked at.
+            if !bound.is_unchecked(e.idx())
+                && (has_iterable || matches!(hir[e].kind, ExprKind::Yield { star: true, .. }))
+            {
+                looked_at.push(e);
             }
         }
         // In the order they have in the file, whatever their kind.
@@ -150,8 +152,13 @@ impl Checker<'_> {
                         && !self.is_nothing_but_nullish(given)
                         && !self.is_spread_taken_whole(file, e, given, &out[..])
                     {
-                        let at = self.error_start_of(file, inner);
-                        self.check_iterated(given, false, at, |c| c.error_end_of(file, inner), out);
+                        let error_node = self.place_of_written_expr(file, inner);
+                        self.check_iterated(
+                            IterationUse::Spread,
+                            given,
+                            TypeId::UNDEFINED,
+                            error_node,
+                        );
                     }
                 }
                 ExprKind::Assign { target, value, .. } => {
@@ -293,17 +300,18 @@ impl Checker<'_> {
             if !self.is_known(given) || self.is_any(given) {
                 continue;
             }
-            // `getIteratedTypeOrElementType`: without `Iterable` a list is taken apart as it is. `getBindingElementTypeFromParentType`
-            // asks for the sake of an element: of `[]` nothing is asked.
-            if has_iterable
-                && elems
-                    .iter()
-                    .any(|elem| !matches!(hir[hir[elem].pat].kind, PatKind::Missing))
-                && self
-                    .check_iterated(given, false, hir[pat].pos, |c| c.end_of_pat(file, pat), out)
-                    .is_none()
+            // `getBindingElementTypeFromParentType` asks for the sake of an element: of `[]` nothing is asked. Without `Iterable` a list
+            // is taken apart as it is.
+            if elems
+                .iter()
+                .any(|elem| !matches!(hir[hir[elem].pat].kind, PatKind::Missing))
             {
-                continue;
+                let error_node = (file, hir[pat].pos, self.end_of_pat(file, pat));
+                let usage = IterationUse::Destructuring;
+                let iterated = self.check_iterated(usage, given, TypeId::UNDEFINED, error_node);
+                if has_iterable && iterated.is_none() {
+                    continue;
+                }
             }
             // `getBindingElementTypeFromParentType`: the elements of a list are looked up by number, 2339 where it has none.
             if !self.every_type(given, |c, m| c.is_tuple(m)) {
@@ -386,117 +394,6 @@ impl Checker<'_> {
         ) && !is_parenthesized(self.hir(file), e)
     }
 
-    /// Whether `getIterationTypesOfIterable` finds any types for `ty`, going by `[Symbol.iterator]()`, and by
-    /// `[Symbol.asyncIterator]()` first where that will do. What cannot be found out counts as found.
-    fn is_iterable(&mut self, ty: TypeId, allows_async: bool) -> bool {
-        // An intersection nothing can be is not there.
-        let ty = self.reduced(ty);
-        if self.is_any(ty) {
-            return true;
-        }
-        if self.is_union(ty) {
-            return self
-                .parts(ty)
-                .iter()
-                .all(|&part| self.is_iterable(part, allows_async));
-        }
-        // What the library that has `Iterable` says of arrays and tuples, as in `iterable_types`.
-        if self.is_array_or_tuple(ty) {
-            return true;
-        }
-        // `getIterationTypesOfIterableFast`
-        let is_ref_to = |c: &Self, names: [Atom; 4]| {
-            names.iter().any(|&name| c.is_reference_to_global(ty, name))
-        };
-        if is_ref_to(
-            self,
-            [
-                known::Iterable,
-                known::IteratorObject,
-                known::IterableIterator,
-                known::Generator,
-            ],
-        ) || allows_async
-            && is_ref_to(
-                self,
-                [
-                    known::AsyncIterable,
-                    known::AsyncIteratorObject,
-                    known::AsyncIterableIterator,
-                    known::AsyncGenerator,
-                ],
-            )
-        {
-            return true;
-        }
-        // `getPropertyOfType` looks in the reduced apparent type.
-        let apparent = self.apparent_type(ty);
-        let apparent = self.reduced(apparent);
-        if !self.is_known(apparent) {
-            return true;
-        }
-        // What a type parameter extends: each of the alternatives.
-        if self.is_union(apparent) {
-            return self.is_iterable(apparent, allows_async);
-        }
-        allows_async && self.gives_an_iterator(apparent, known::sym_async_iterator)
-            || self.gives_an_iterator(apparent, known::sym_iterator)
-    }
-
-    /// `getIterationTypesOfIterableSlow`: the method `name` of `ty` is there for sure, can be called with nothing, and what it gives
-    /// is an iterator: it has a `next`, a `return` or a `throw` that can be called (`getIterationTypesOfIteratorSlow`).
-    fn gives_an_iterator(&mut self, ty: TypeId, name: Atom) -> bool {
-        let Some((method, mapper)) = self.prop_ref(ty, name) else {
-            return false;
-        };
-        if method.flags.contains(PropFlags::OPTIONAL) {
-            return false;
-        }
-        let method = self.type_of_prop(method, mapper);
-        if !self.is_known(method) || self.is_any(method) {
-            return true;
-        }
-        let mut iterators: SmallVec<[TypeId; 2]> = SmallVec::new();
-        for sig in self.signatures(method, false) {
-            let params = self.sig_params(sig);
-            if self.min_argument_count(&params) == 0 {
-                iterators.push(self.sig_return(sig));
-            }
-        }
-        if iterators.is_empty() {
-            return false;
-        }
-        let iterator = self.intersection(&iterators);
-        let iterator = self.apparent_type(iterator);
-        // What the members of a union have in common is not looked into.
-        if !self.is_known(iterator) || self.is_any(iterator) || self.is_union(iterator) {
-            return true;
-        }
-        // `getIterationTypesOfMethod`. Only `next` has to be there for sure.
-        (0..3).any(|method| {
-            let name = match method {
-                0 => known::next,
-                1 => self.files().atoms.intern(b"return"),
-                _ => self.files().atoms.intern(b"throw"),
-            };
-            let Some((method, mapper)) = self.prop_ref(iterator, name) else {
-                return false;
-            };
-            if name == known::next && method.flags.contains(PropFlags::OPTIONAL) {
-                return false;
-            }
-            let method = self.type_of_prop(method, mapper);
-            let method = if name == known::next {
-                method
-            } else {
-                self.non_nullable(method)
-            };
-            !self.is_known(method)
-                || self.is_any(method)
-                || !self.signatures(method, false).is_empty()
-        })
-    }
-
     /// `checkGeneratorInstantiationAssignabilityToReturnType`: the generator that yields, returns and takes what `declared`, which a
     /// generator function says it returns, does.
     fn generator_instantiation(&mut self, declared: TypeId, is_async: bool) -> TypeId {
@@ -564,14 +461,13 @@ impl Checker<'_> {
         !said.iter().any(|d| (start..end).contains(&d.start))
     }
 
-    /// `checkIteratedTypeOrElementType`. `None`: it cannot be gone through, or it cannot be told. `at`, `end`: the range of `errorNode`.
+    /// `checkIteratedTypeOrElementType`. `None`: it cannot be gone through, or it cannot be told.
     fn check_iterated(
         &mut self,
+        usage: IterationUse,
         given: TypeId,
-        allows_async: bool,
-        at: u32,
-        end: impl FnOnce(&Self) -> u32,
-        out: &mut Vec<Diagnostic>,
+        sent: TypeId,
+        error_node: (FileId, u32, u32),
     ) -> Option<TypeId> {
         if !self.is_known(given) {
             return None;
@@ -579,63 +475,10 @@ impl Checker<'_> {
         if self.is_any(given) {
             return Some(given);
         }
-        // Without `Iterable` other things are said, in other words.
-        if self.global_type_of_arity(known::Iterable, 3).is_none() {
-            return None;
-        }
-        // `getIterationTypesOfIterable`
-        let given = self.reduced(given);
-        if !self.is_iterable(given, allows_async) {
-            let code = if allows_async { 2504 } else { 2488 };
-            out.push(Diagnostic { start: at, code });
-            let end = end(&*self);
-            self.explain_to(at, end, code, |c| vec![c.type_to_string(given)]);
-            self.relate(at, code, |c| {
-                c.hint_to_await_what_is_gone_through(given, allows_async, at, end)
-            });
-            return None;
-        }
-        let iterated = self.iterated_type(given, allows_async);
-        self.is_known(iterated).then_some(iterated)
-    }
-
-    /// The end of `reportTypeNotIterableError`: 2773 at the node from `at` to `end` of the file that is checked, whose type `given`
-    /// cannot be gone through, if an `await` may be what is missing.
-    pub(super) fn hint_to_await_what_is_gone_through(
-        &mut self,
-        given: TypeId,
-        allows_async: bool,
-        at: u32,
-        end: u32,
-    ) -> Vec<super::explain::Related> {
-        let Some(file) = self.checking else {
-            return Vec::new();
-        };
-        // `getAwaitedTypeOfPromise`
-        let mut suggests_await = self
-            .thenable_value(given)
-            .and_then(|promised| self.awaited_or_none(promised))
-            .is_some_and(|awaited| self.is_known(awaited));
-        if !suggests_await && !allows_async {
-            // `errorNode.Parent.Expression() == errorNode`
-            let is_what_a_loop_goes_through = self.hir(file).stmts.iter().any(|s| {
-                matches!(s.kind, StmtKind::ForOf { expr, .. } if self.error_start_of(file, expr) == at)
-            });
-            if is_what_a_loop_goes_through
-                && self.global_type_of_arity(known::AsyncIterable, 3).is_some()
-            {
-                let any_async_iterable = self.global_ref(known::AsyncIterable, &[TypeId::ANY; 3]);
-                suggests_await = self.is_assignable(given, any_async_iterable);
-            }
-        }
-        if !suggests_await {
-            return Vec::new();
-        }
-        vec![super::explain::Related {
-            at: Some((file, at, end)),
-            code: 2773,
-            args: Vec::new(),
-        }]
+        let iterated = self.iterated_type_or_element_type(usage, given, sent, Some(error_node))?;
+        // Without `Iterable` what comes out is not looked into.
+        (self.is_known(iterated) && self.global_type_of_arity(known::Iterable, 3).is_some())
+            .then_some(iterated)
     }
 
     /// `checkDestructuringAssignment`: `source` is taken apart into `target`, or assigned to it.
@@ -835,13 +678,9 @@ impl Checker<'_> {
             }
             ExprKind::Array(items) => {
                 // `checkArrayLiteralAssignment`. `None`: it cannot be gone through (2488), or is not known: on with the error type.
-                let iterated = self.check_iterated(
-                    source,
-                    false,
-                    hir[target].pos,
-                    |c| c.end_of_expr(file, target),
-                    out,
-                );
+                let error_node = (file, hir[target].pos, self.end_of_expr(file, target));
+                let usage = IterationUse::Destructuring;
+                let iterated = self.check_iterated(usage, source, TypeId::UNDEFINED, error_node);
                 let is_tuples = iterated.is_some() && self.every_type(source, |c, m| c.is_tuple(m));
                 let has_default = |c: &Self, e: ExprId| {
                     matches!(hir[e].kind, ExprKind::Assign { op: None, .. })
@@ -1176,7 +1015,9 @@ impl Checker<'_> {
         }
         match hir[pat].kind {
             PatKind::Array(_) => {
-                self.check_iterated(widened, false, at, end, out);
+                let error_node = (file, at, end(&*self));
+                let usage = IterationUse::Destructuring;
+                self.check_iterated(usage, widened, TypeId::UNDEFINED, error_node);
             }
             _ if strict => self.check_not_null_nor_void(widened, at, end, out),
             _ => {}
@@ -1261,43 +1102,12 @@ impl Checker<'_> {
                 ScopeKind::Module(m) => is_ambient |= hir[m].flags.contains(Flags::AMBIENT),
                 ScopeKind::Fn(f) => is_ambient |= hir[f].flags.contains(Flags::AMBIENT),
                 ScopeKind::Class(c) => is_ambient |= hir[c].flags.contains(Flags::AMBIENT),
-                ScopeKind::Interface(_) => is_in_type = true,
-                ScopeKind::TypeParams => is_in_type |= bound.alias_scope.contains(&scope),
+                ScopeKind::Interface(_) | ScopeKind::TypeAlias(_) => is_in_type = true,
                 _ => {}
             }
             scope = s.parent;
         }
         (is_ambient, is_in_type)
-    }
-
-    /// `GetContainingFunction`: the function the `yield` `e` is written in, be it in a default of a pattern, after `extends` or in a
-    /// decorator of a class. `None`: there is none, or it is not looked into. In a static block or the initializer of a property,
-    /// where there is no yielding, whether `yield` is the keyword at all depends on what follows it.
-    fn containing_function(&self, file: FileId, e: ExprId) -> Option<FnId> {
-        let bound = self.bound(file);
-        let mut parent = bound.expr_parent[e.idx()];
-        loop {
-            match parent {
-                Parent::FnBody(f) => return Some(f),
-                Parent::ParamDefault(p) => return Some(bound.param_fn[p.idx()]),
-                // The computed name of a property of an object literal is where the literal is.
-                Parent::PropKey(literal, _) if literal.is_some() => parent = Parent::Expr(literal),
-                // The decorators and the computed name of a method are part of the method.
-                Parent::None
-                | Parent::File
-                | Parent::Module(_)
-                | Parent::MemberInit(_)
-                | Parent::EnumInit(_)
-                | Parent::PropKey(..)
-                | Parent::PatKey(_)
-                | Parent::MemberKey(_)
-                | Parent::MethodKey(_)
-                | Parent::Decorator(_, DecoratorOwner::Member(_) | DecoratorOwner::Param(_)) => {
-                    return None;
-                }
-                _ => parent = self.outward(file, parent),
-            }
-        }
     }
 
     /// `checkYieldExpression`: what is yielded against what the generator says it yields.
@@ -1310,13 +1120,10 @@ impl Checker<'_> {
         out: &mut Vec<Diagnostic>,
     ) {
         let hir = self.hir(file);
-        let Some(func) = self.containing_function(file, e) else {
+        let Some(func) = self.containing_generator(file, e) else {
             return;
         };
         let f = &hir[func];
-        if !f.flags.contains(Flags::GENERATOR) {
-            return;
-        }
         let is_async = f.flags.contains(Flags::ASYNC);
         let mut yielded = if value.is_some() {
             self.type_of_expr(file, value)
@@ -1340,7 +1147,25 @@ impl Checker<'_> {
             }
         };
         if star {
-            match self.check_iterated(yielded, is_async, at, end, out) {
+            // What the generator says it is sent. Which member of a union it goes by is not looked into.
+            let mut sent = TypeId::ANY;
+            if f.ret.is_some() {
+                let declared = self.type_from_node(file, f.ret);
+                if !self.is_known(declared) {
+                    return;
+                }
+                if !self.is_union(declared)
+                    && let Some(types) = self.iteration_types(declared, is_async)
+                {
+                    sent = types.next;
+                }
+            }
+            let usage = if is_async {
+                IterationUse::AsyncYieldStar
+            } else {
+                IterationUse::YieldStar
+            };
+            match self.check_iterated(usage, yielded, sent, (file, at, end(&*self))) {
                 Some(iterated) => yielded = iterated,
                 None => return,
             }

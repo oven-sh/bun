@@ -377,6 +377,7 @@ fn is_this_type_available(
             ScopeKind::Module(_) | ScopeKind::Enum(_) | ScopeKind::File => return false,
             // Those after the first two only say which part of something a name is written in: what they lie in is come to next.
             ScopeKind::Block
+            | ScopeKind::TypeAlias(_)
             | ScopeKind::TypeParams
             | ScopeKind::TypeParamList(_)
             | ScopeKind::Param(_)
@@ -477,15 +478,6 @@ impl Checker<'_> {
         if has(TYPEOF) {
             self.check_instantiated_type_queries(file, out);
         }
-    }
-
-    /// What `ask` answers. `None`: a comparison was cut short or time ran out on the way, and the answer is not to be told anybody.
-    fn answer_if_sure(&mut self, ask: impl FnOnce(&mut Self) -> bool) -> Option<bool> {
-        let gave_up_before = std::mem::replace(&mut self.relation_gave_up, false);
-        let answer = ask(self);
-        let is_sure = !self.relation_gave_up && !self.timed_out();
-        self.relation_gave_up |= gave_up_before;
-        is_sure.then_some(answer)
     }
 
     // ───────────────────────────── tuple types ─────────────────────────────

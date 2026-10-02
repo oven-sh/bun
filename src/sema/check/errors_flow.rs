@@ -180,9 +180,6 @@ impl Checker<'_> {
         loop {
             match bound.flow[flow.idx()] {
                 Flow::Unreachable => return false,
-                Flow::StartInvoked {
-                    outer, plain: true, ..
-                } => flow = outer,
                 Flow::Start { .. } | Flow::StartInvoked { .. } => return true,
                 Flow::Assign { before, .. }
                 | Flow::Cond { before, .. }
@@ -563,7 +560,7 @@ impl Checker<'_> {
             // `getIterationTypesOfGeneratorFunctionReturnType`
             let mut found = self.iterable_types(declared, !is_async, is_async, false, None);
             if !found.has_types() {
-                found = self.iterator_types(declared, is_async, None);
+                found = self.iterator_types(declared, is_async, None, None);
             }
             types = [found.y, found.r, found.n];
         }
@@ -607,10 +604,6 @@ impl Checker<'_> {
             match bound.flow[flow.idx()] {
                 // What cannot be reached is let be.
                 Flow::Unreachable => return true,
-                // `bindContainer` starts nothing where a function is called where it is written: it is part of the flow around it.
-                Flow::StartInvoked {
-                    outer, plain: true, ..
-                } => flow = outer,
                 Flow::Start { .. } | Flow::StartInvoked { .. } => return false,
                 Flow::Assign { before, .. }
                 | Flow::Cond { before, .. }

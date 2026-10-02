@@ -130,7 +130,7 @@ impl<'p> Printer<'_, 'p> {
         if !self.reuses_nodes_of(file) {
             return None;
         }
-        let tx = Emit::without_reports(file);
+        let tx = Emit::new(file);
         let pt = self.c.iso_pseudo_of_return(&tx, func);
         // `getReturnTypeOfSignature`: an annotation that comes back to itself is given up for `anyType`, which is not what it says.
         if self.c.p.circular_returns.get(&(file, func)).is_some() {
@@ -244,10 +244,9 @@ impl<'p> Printer<'_, 'p> {
         // `requiresAddingImplicitUndefined`
         let requires_undefined = match node {
             SyntaxNode::Param(p) => {
-                let in_function = self
-                    .enclosing_declaration
-                    .is_some_and(|at| self.c.is_function_like_declaration(at));
-                self.c.iso_requires_implicit_undefined(file, p, in_function)
+                let enclosing_declaration = self.enclosing_declaration;
+                self.c
+                    .requires_adding_implicit_undefined(file, p, enclosing_declaration)
             }
             SyntaxNode::Member(m) => {
                 is_optional_reverse_mapped
@@ -319,7 +318,7 @@ impl<'p> Printer<'_, 'p> {
         if accessor.is_none() && (requires_widening || !self.c.iso_has_inferred_type(file, node)) {
             return self.type_to_node(ty);
         }
-        let tx = Emit::without_reports(file);
+        let tx = Emit::new(file);
         let pt = match accessor {
             Some(func) => self.c.iso_pseudo_of_accessor(&tx, func),
             None => self.c.iso_pseudo_of_declaration(&tx, node),
@@ -382,7 +381,7 @@ impl<'p> Printer<'_, 'p> {
         is_optional_annotated: bool,
         report_errors: bool,
     ) -> bool {
-        let mut tx = Emit::without_reports(file);
+        let mut tx = Emit::new(file);
         let is_equivalent =
             self.c
                 .iso_is_equivalent(&mut tx, pt, ty, is_optional_annotated, report_errors);
@@ -432,7 +431,7 @@ impl<'p> Printer<'_, 'p> {
         let is_strict = self.c.files().options.strict_null_checks;
         match pt {
             Pseudo::Inferred { of, errors, .. } if self.tracker.is_some() => {
-                let tx = Emit::without_reports(file);
+                let tx = Emit::new(file);
                 for node in self.c.iso_error_nodes_of_inferred(&tx, *of, errors) {
                     self.report_inference_fallback(file, node);
                 }
@@ -588,7 +587,7 @@ impl<'p> Printer<'_, 'p> {
         let (SyntaxNode::Expr(e) | SyntaxNode::Written(e)) = of else {
             return Node::simple("any");
         };
-        let tx = Emit::without_reports(file);
+        let tx = Emit::new(file);
         let (parent, declaration) = self.c.iso_parent_of_inferred(&tx, of);
         let (hir, bound) = (self.c.hir(file), self.c.bound(file));
         let returned_by = match parent {
@@ -921,16 +920,19 @@ impl<'p> Printer<'_, 'p> {
             Some(symbol) if self.c.is_symbol_accessible_at(symbol, meaning, false, at) => {
                 self.track_symbol(symbol, meaning);
                 let (starts_with_global_this, chain) =
-                    self.c.lookup_symbol_chain_at(symbol, is_typeof, true, at);
+                    self.c
+                        .lookup_symbol_chain_at(symbol, is_typeof, true, at, Vec::new());
                 (!starts_with_global_this).then(|| chain[0])
             }
             _ => None,
         };
         // Otherwise `getExternalModuleFileFromDeclaration`.
         let module = parent
-            .filter(|&parent| self.is_external_module(parent))
+            .filter(|&parent| self.c.is_external_module_symbol(parent))
             .unwrap_or(target);
-        let name = self.c.specifier_for_module_symbol_at(module, at);
+        let name = self
+            .c
+            .specifier_for_module_symbol(module, at.file, ResolutionMode::None);
         if name.contains("/node_modules/") {
             self.encountered_error = true;
             self.report(Report::LikelyUnsafeImportRequired(

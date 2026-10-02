@@ -322,39 +322,18 @@ impl Checker<'_> {
                 .flags
                 .intersects(SymFlags::CLASS | SymFlags::INTERFACE)
             {
-                let together = Self::declarations_put_together(&decls);
-                if together.len() > 1 {
-                    self.check_type_parameter_lists_identical(file, sym, &together, out);
-                    self.check_merged_index_signatures(file, &together, out);
+                // `getClassOrInterfaceDeclarationsOfSymbol`
+                let is_one =
+                    |d: &&(FileId, Decl)| matches!(d.1, Decl::Class(_) | Decl::Interface(_));
+                if decls.iter().filter(is_one).count() > 1 {
+                    self.check_type_parameter_lists_identical(file, sym, &decls, out);
+                    self.check_merged_index_signatures(file, &decls, out);
                 }
             }
             if symbol.flags.contains(SymFlags::ALIAS) {
                 self.check_alias_conflicts(file, sym, &decls, out);
             }
         }
-    }
-
-    /// `declareSymbolEx`, `mergeSymbol`: the classes and interfaces among `decls`, all that is declared by one name, that are one
-    /// symbol. What does not go together is not put together: nothing that is a type goes with an enum, a type alias or a type
-    /// parameter, nor a class with a variable, nor with a class that came before it.
-    fn declarations_put_together(decls: &[(FileId, Decl)]) -> Vec<(FileId, Decl)> {
-        let is_type_refused = decls
-            .iter()
-            .any(|(_, d)| matches!(d, Decl::Enum(_) | Decl::Alias(_) | Decl::TypeParam(_)));
-        let is_class_refused = is_type_refused
-            || decls
-                .iter()
-                .any(|(_, d)| matches!(d, Decl::Var(_) | Decl::Param(_)));
-        let mut has_class = false;
-        decls
-            .iter()
-            .copied()
-            .filter(|&(_, d)| match d {
-                Decl::Class(_) => !std::mem::replace(&mut has_class, true) && !is_class_refused,
-                Decl::Interface(_) => !is_type_refused,
-                _ => false,
-            })
-            .collect()
     }
 
     /// `checkTypeParameterListsIdentical`, of the declarations `decls` that `sym` is put together from.

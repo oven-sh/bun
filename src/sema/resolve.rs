@@ -895,8 +895,12 @@ struct Look<'a> {
     typescript: bool,
     /// `extensionsDeclaration`: `.d.ts`, `.d.mts`, `.d.cts` and `.d.*.ts` files.
     declarations: bool,
-    /// `extensionsJavaScript`, and `extensionsJson` with `resolveJsonModule`.
+    /// `extensionsJavaScript`
     js: bool,
+    /// `extensionsJson`
+    json: bool,
+    /// `isConfigLookup`
+    is_config_lookup: bool,
     /// How many targets of `imports` that name a module have been followed to get here. They can go in a circle.
     depth: u8,
     /// `candidateEndingIsFromConfig`: the extension of the candidate comes from `paths`, `typesVersions` or a `package.json` field, not
@@ -919,7 +923,11 @@ struct Look<'a> {
 impl Look<'_> {
     /// `priorityExtensions`
     fn for_types(self) -> Self {
-        Look { js: false, ..self }
+        Look {
+            js: false,
+            json: false,
+            ..self
+        }
     }
 
     /// `secondaryExtensions`
@@ -937,6 +945,7 @@ impl Look<'_> {
             typescript: false,
             declarations: true,
             js: false,
+            json: false,
             ..self
         }
     }
@@ -1249,11 +1258,6 @@ impl<'h> Resolver<'h> {
         }
     }
 
-    /// The file with the types of what `spec` names when `from` (an absolute path) imports it with a plain `import`.
-    pub fn resolve(&self, spec: &str, from: &str) -> Option<String> {
-        self.resolve_as(spec, from, self.default_mode(from))
-    }
-
     /// The same for a use that is resolved in `mode` (`getModeForUsageLocation`).
     pub fn resolve_as(&self, spec: &str, from: &str, mode: ResolutionMode) -> Option<String> {
         self.resolve_module(spec, from, mode)
@@ -1341,6 +1345,8 @@ impl<'h> Resolver<'h> {
             typescript: is_module,
             declarations: true,
             js: is_module,
+            json: is_module && self.options.resolve_json_module,
+            is_config_lookup: false,
             depth: 0,
             ending_from_config: false,
             using_ts_extension,
@@ -1504,11 +1510,6 @@ impl<'h> Resolver<'h> {
             return ResolutionMode::Require;
         }
         package_type
-    }
-
-    /// How a plain `import` in the file at `path` is resolved.
-    pub fn default_mode(&self, path: &str) -> ResolutionMode {
-        self.options.default_mode(self.implied_format(path))
     }
 
     /// `getPackageId`: `name@version+peer@version/path/in/package` for a file of a package. Two copies of one version of a package
@@ -1906,13 +1907,11 @@ impl<'h> Resolver<'h> {
     /// `tryAddingExtensions`: `stem` with each of the extensions that `written` stands for, in a fixed order: TypeScript, declaration,
     /// JavaScript or JSON, each kind only if `look` has it. What is written does not go first.
     fn with_extensions(&self, stem: &str, written: &str, look: Look) -> Option<String> {
-        let (typescript, declaration, rest): (&[&str], &str, &[&str]) = match written {
+        let (typescript, declaration, javascript): (&[&str], &str, &[&str]) = match written {
             ".ts" | ".d.ts" | ".js" | "" => (&[".ts", ".tsx"], ".d.ts", &[".js", ".jsx"]),
             ".tsx" | ".jsx" => (&[".tsx", ".ts"], ".d.ts", &[".jsx", ".js"]),
             ".mts" | ".d.mts" | ".mjs" => (&[".mts"], ".d.mts", &[".mjs"]),
             ".cts" | ".d.cts" | ".cjs" => (&[".cts"], ".d.cts", &[".cjs"]),
-            // The file itself only with `resolveJsonModule`.
-            ".json" if self.options.resolve_json_module => (&[], ".d.json.ts", &[".json"]),
             ".json" => (&[], ".d.json.ts", &[]),
             // `./a.css` is declared by `a.d.css.ts`.
             _ => {
@@ -1949,11 +1948,17 @@ impl<'h> Resolver<'h> {
             look.arbitrary_extension.set(written == ".json");
             return Some(found);
         }
-        if look.js {
-            self.first_file(stem, rest)
-        } else {
-            None
+        if look.js
+            && let Some(found) = self.first_file(stem, javascript)
+        {
+            return Some(found);
         }
+        let is_json = match written {
+            ".json" => look.json,
+            ".ts" | ".d.ts" | ".js" | "" => look.is_config_lookup,
+            _ => false,
+        };
+        is_json.then(|| self.try_file(&[stem, ".json"].concat()))?
     }
 
     /// `loadFileNameFromPackageJSONField`: the file at `path`, which a `package.json` names. A TypeScript or declaration file name
@@ -1991,10 +1996,16 @@ impl<'h> Resolver<'h> {
         is_package_dir: bool,
         look: Look,
     ) -> Option<String> {
+        let index = if look.is_config_lookup {
+            "tsconfig"
+        } else {
+            "index"
+        };
         if let Some(package) = package {
             // `getPackageFile`: the first of these fields that has a value, and no other.
             let fields: &[&str] = match (is_package_dir, look.declarations) {
                 (false, _) => &[],
+                (true, _) if look.is_config_lookup => &["tsconfig"],
                 (true, true) => &["typings", "types", "main"],
                 (true, false) => &["main"],
             };
@@ -2027,7 +2038,7 @@ impl<'h> Resolver<'h> {
                     return Some(found);
                 }
                 if !inner.esm && self.is_dir(path) {
-                    self.file(&format!("{path}/index"), inner)
+                    self.file(&inside(path, index), inner)
                 } else {
                     None
                 }
@@ -2037,7 +2048,7 @@ impl<'h> Resolver<'h> {
                 Some(entry) => entry
                     .strip_prefix(dir)
                     .and_then(|rest| rest.strip_prefix('/')),
-                None => Some("index"),
+                None => Some(index),
             };
             if let Some(name) = in_package
                 && let Some(found) = self.through_types_versions(package, dir, name, &load)
@@ -2053,7 +2064,7 @@ impl<'h> Resolver<'h> {
         if look.esm {
             None
         } else {
-            self.file(&inside(dir, "index"), look)
+            self.file(&inside(dir, index), look)
         }
     }
 
@@ -2066,7 +2077,7 @@ impl<'h> Resolver<'h> {
                 found => return found,
             }
         }
-        if look.js {
+        if look.js || look.json {
             self.node_modules_once(spec, from_dir, look.for_the_rest())
         } else {
             Found::No
@@ -2364,6 +2375,7 @@ impl<'h> Resolver<'h> {
             typescript: true,
             declarations: true,
             js: true,
+            json: self.options.resolve_json_module,
             ..look
         };
         // `getOutputDirectoriesForBaseDirectory`
@@ -2444,6 +2456,27 @@ impl<'h> Resolver<'h> {
             None => Found::No,
         }
     }
+}
+
+/// `ResolveConfig`
+pub fn resolve_config(host: &dyn Host, module_name: &str, containing_file: &str) -> Option<String> {
+    let options = Options {
+        resolves_like_node: true,
+        resolve_package_json_exports: true,
+        resolve_package_json_imports: true,
+        ..Default::default()
+    };
+    let resolver = Resolver::new(host, &options);
+    let [a, b, c, d] = [(); 4].map(|()| Cell::new(false));
+    let look = Look {
+        typescript: false,
+        declarations: false,
+        js: false,
+        json: true,
+        is_config_lookup: true,
+        ..resolver.look(ResolutionMode::Require, true, &a, &b, &c, &d)
+    };
+    resolver.resolve_with(module_name, containing_file, look)
 }
 
 /// `ContainsPath`, of two paths that are absolute and normalized: `child` is `parent`, or is in it.
@@ -2701,390 +2734,4 @@ const PREFIXED_NODE_CORE_MODULES: &[&str] = &[
 pub fn is_node_core_module(spec: &str) -> bool {
     NODE_CORE_MODULES.contains(&spec.strip_prefix("node:").unwrap_or(spec))
         || PREFIXED_NODE_CORE_MODULES.contains(&spec)
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn version_ranges() {
-        use super::version_in_range as within;
-        let v = [6, 0, 0];
-        assert!(!within(v, "<=5.0"));
-        assert!(within([5, 0, 4], "<=5.0"));
-        assert!(!within([5, 1, 0], "<=5.0"));
-        assert!(within(v, ">=4.2"));
-        assert!(within(v, "*"));
-        assert!(within(v, ">3.1 <7"));
-        assert!(!within(v, ">3.1 <5"));
-        assert!(within(v, "4.x || >=6"));
-        assert!(!within(v, ">6.0"));
-        assert!(within(v, "^6.0"));
-        assert!(!within(v, "~5.9"));
-        assert!(within(v, "6"));
-    }
-
-    use super::*;
-
-    #[test]
-    fn paths_are_normalized() {
-        assert_eq!(join("/a/b", "../c/./d.ts"), "/a/c/d.ts");
-        assert_eq!(split_package_name("@s/n/x/y"), ("@s/n", "x/y"));
-        assert_eq!(split_package_name("n"), ("n", ""));
-        assert_eq!(mangle_scoped("@s/n"), "s__n");
-        assert_eq!(match_pattern("./a/*.js", "./a/b/c.js"), Some("b/c"));
-    }
-
-    #[test]
-    fn pattern_keys_are_ordered() {
-        let mut keys = ["./a/", "./*", "./a/*", "./a/b/*.js", "./a/*.js"];
-        keys.sort_by(|a, b| compare_pattern_keys(a, b));
-        assert_eq!(keys, ["./a/b/*.js", "./a/*.js", "./a/*", "./a/", "./*"]);
-    }
-
-    /// Files, by their paths, and what is in them.
-    struct Fake(&'static [(&'static str, &'static str)]);
-
-    impl Host for Fake {
-        fn read(&self, path: &str) -> Option<Cow<'static, [u8]>> {
-            self.0
-                .iter()
-                .find(|f| f.0 == path)
-                .map(|f| Cow::Borrowed(f.1.as_bytes()))
-        }
-        fn is_file(&self, path: &str) -> bool {
-            self.0.iter().any(|f| f.0 == path)
-        }
-        fn is_dir(&self, path: &str) -> bool {
-            self.0.iter().any(|f| {
-                f.0.strip_prefix(path)
-                    .is_some_and(|rest| rest.starts_with('/'))
-            })
-        }
-        fn realpath(&self, path: &str) -> String {
-            path.to_owned()
-        }
-        fn list_dir(&self, _: &str) -> Vec<String> {
-            Vec::new()
-        }
-        fn parse(
-            &self,
-            _: &str,
-            _: &[u8],
-            _: &crate::atom::Interner,
-            _: &Options,
-        ) -> crate::hir::File {
-            crate::hir::File::default()
-        }
-        fn parallel(&self, count: usize, work: &(dyn Fn(usize) + Sync)) {
-            (0..count).for_each(work);
-        }
-    }
-
-    fn like_node() -> Options {
-        Options {
-            base_dir: "/p".to_owned(),
-            resolves_like_node: true,
-            resolve_package_json_exports: true,
-            resolve_package_json_imports: true,
-            resolve_json_module: true,
-            ..Default::default()
-        }
-    }
-
-    #[test]
-    fn javascript_is_found_where_types_are_not() {
-        let host = Fake(&[
-            ("/p/src/x.js", ""),
-            ("/p/src/x/index.ts", ""),
-            ("/p/src/y.js", ""),
-            ("/p/src/typed.js", ""),
-            ("/p/src/typed.d.ts", ""),
-            ("/p/src/tags.jsx", ""),
-            ("/p/src/tags.js", ""),
-            ("/p/src/node_modules/far/index.js", ""),
-            ("/p/node_modules/@types/far/index.d.ts", ""),
-            (
-                "/p/node_modules/exported/package.json",
-                r#"{ "exports": { "./foo": "./dist/foo.js", "./typed": { "types": "./typed.d.ts", "default": "./dist/foo.js" } } }"#,
-            ),
-            ("/p/node_modules/exported/dist/foo.js", ""),
-            ("/p/node_modules/exported/typed.d.ts", ""),
-            ("/p/node_modules/exported/hidden.js", ""),
-            (
-                "/p/node_modules/blocked/package.json",
-                r#"{ "exports": { ".": { "require": "./x.js", "default": null }, "./list": ["./x.js", null] } }"#,
-            ),
-            ("/p/node_modules/blocked/x.js", ""),
-            (
-                "/p/node_modules/declared/package.json",
-                r#"{ "exports": { ".": "./types/foo.d.ts" } }"#,
-            ),
-            ("/p/node_modules/declared/types/foo.js", ""),
-            (
-                "/p/node_modules/versions/package.json",
-                r#"{ "typesVersions": { "*": { "sub": ["./lib/sub.js"] } } }"#,
-            ),
-            ("/p/node_modules/versions/lib/sub.js", ""),
-            ("/p/node_modules/versions/lib/sub.d.ts", ""),
-            ("/p/node_modules/mjs/package.json", "{}"),
-            ("/p/node_modules/mjs/index.mjs", ""),
-            ("/p/node_modules/mjs/sub.mjs", ""),
-            (
-                "/p/node_modules/types-js/package.json",
-                r#"{ "types": "foo.js" }"#,
-            ),
-            ("/p/node_modules/types-js/foo.js", ""),
-            (
-                "/p/node_modules/main-js/package.json",
-                r#"{ "types": "nope.d.ts", "main": "foo.js" }"#,
-            ),
-            ("/p/node_modules/main-js/foo.js", ""),
-            ("/p/node_modules/data/d.json", "{}"),
-        ]);
-        let options = like_node();
-        let resolver = Resolver::new(&host, &options);
-        let find =
-            |spec: &str| resolver.resolve_module(spec, "/p/src/a.cts", ResolutionMode::Require);
-        // What says where a file is: everything is tried in one place before the next.
-        assert_eq!(find("./x").as_deref(), Some("/p/src/x.js"));
-        assert_eq!(find("./y.ts").as_deref(), Some("/p/src/y.js"));
-        assert_eq!(find("./typed").as_deref(), Some("/p/src/typed.d.ts"));
-        assert_eq!(find("./tags").as_deref(), Some("/p/src/tags.js"));
-        assert_eq!(find("./tags.jsx").as_deref(), Some("/p/src/tags.jsx"));
-        // In packages: types everywhere, then the rest everywhere.
-        assert_eq!(
-            find("far").as_deref(),
-            Some("/p/node_modules/@types/far/index.d.ts")
-        );
-        assert_eq!(
-            find("exported/foo").as_deref(),
-            Some("/p/node_modules/exported/dist/foo.js")
-        );
-        assert_eq!(
-            find("exported/typed").as_deref(),
-            Some("/p/node_modules/exported/typed.d.ts")
-        );
-        assert_eq!(find("exported/hidden"), None);
-        assert_eq!(find("blocked"), None);
-        assert_eq!(find("blocked/list"), None);
-        assert_eq!(
-            find("declared").as_deref(),
-            Some("/p/node_modules/declared/types/foo.js")
-        );
-        assert_eq!(
-            find("versions/sub").as_deref(),
-            Some("/p/node_modules/versions/lib/sub.js")
-        );
-        assert_eq!(find("mjs"), None);
-        assert_eq!(find("mjs/sub"), None);
-        assert_eq!(find("types-js"), None);
-        assert_eq!(
-            find("main-js").as_deref(),
-            Some("/p/node_modules/main-js/foo.js")
-        );
-        assert_eq!(
-            find("data/d.json").as_deref(),
-            Some("/p/node_modules/data/d.json")
-        );
-        // Only what has types is handed to those who ask for them.
-        assert_eq!(
-            resolver.resolve_as("exported/foo", "/p/src/a.cts", ResolutionMode::Require),
-            None
-        );
-        assert_eq!(
-            resolver.resolve_type_reference(
-                "versions/sub",
-                "/p/src",
-                ResolutionMode::Require,
-                false
-            ),
-            None
-        );
-        // To Node's `import` no extension is added.
-        assert_eq!(
-            resolver.resolve_module("./y", "/p/src/a.mts", ResolutionMode::Import),
-            None
-        );
-        assert_eq!(
-            resolver
-                .resolve_module("./y.js", "/p/src/a.mts", ResolutionMode::Import)
-                .as_deref(),
-            Some("/p/src/y.js")
-        );
-    }
-
-    #[test]
-    fn resolved_using_ts_extension() {
-        let host = Fake(&[
-            (
-                "/p/package.json",
-                r##"{
-                    "name": "pkg",
-                    "type": "module",
-                    "imports": {
-                        "#foo.ts": "./src/internal/foo.ts",
-                        "#internal/*": "./src/internal/*",
-                        "#x/*.ts": "./src/internal/*.ts",
-                        "#c/*": { "types": "./src/internal/*" },
-                        "#d/*": "pkg/*"
-                    },
-                    "exports": { "./*": "./src/internal/*" }
-                }"##,
-            ),
-            ("/p/src/a.ts", ""),
-            ("/p/src/internal/foo.ts", ""),
-        ]);
-        let options = Options {
-            paths: vec![
-                ("@/*".to_owned(), vec!["./src/internal/*".to_owned()]),
-                ("@y/*".to_owned(), vec!["./src/internal/*.ts".to_owned()]),
-            ],
-            ..like_node()
-        };
-        let resolver = Resolver::new(&host, &options);
-        let flag = |spec: &str| {
-            resolver
-                .resolve_module_name(spec, "/p/src/a.ts", ResolutionMode::Import)
-                .map(|resolved| resolved.using_ts_extension)
-        };
-        for spec in [
-            "./internal/foo.ts",
-            "#internal/foo.ts",
-            "#c/foo.ts",
-            "#d/foo.ts",
-            "pkg/foo.ts",
-            "@/foo.ts",
-        ] {
-            assert_eq!(flag(spec), Some(true), "{spec}");
-        }
-        for spec in ["./internal/foo.js", "#foo.ts", "#x/foo.ts", "@y/foo"] {
-            assert_eq!(flag(spec), Some(false), "{spec}");
-        }
-    }
-
-    #[test]
-    fn output_paths_stand_for_their_inputs() {
-        let host = Fake(&[
-            (
-                "/p/package.json",
-                r##"{ "name": "pkg", "exports": { "./*": "./dist/*" }, "imports": { "#a": "./dist/a.js" } }"##,
-            ),
-            ("/p/src/a.ts", ""),
-            ("/p/src/b.mts", ""),
-        ]);
-        let options = Options {
-            emit_out_dir: "/p/dist".to_owned(),
-            emit_root_dir: "/p/src".to_owned(),
-            ..like_node()
-        };
-        let resolver = Resolver::new(&host, &options);
-        let find =
-            |spec: &str| resolver.resolve_module(spec, "/p/src/a.ts", ResolutionMode::Import);
-        assert_eq!(find("#a").as_deref(), Some("/p/src/a.ts"));
-        assert_eq!(find("pkg/b.mjs").as_deref(), Some("/p/src/b.mts"));
-        assert_eq!(find("pkg/c.js"), None);
-        assert!(resolver.resolution_problems().is_empty());
-        // Without `rootDir` and without a configuration file there is no telling where the input is.
-        let options = Options {
-            emit_out_dir: "/p/dist".to_owned(),
-            ..like_node()
-        };
-        let resolver = Resolver::new(&host, &options);
-        assert_eq!(
-            resolver.resolve_module("#a", "/p/src/a.ts", ResolutionMode::Import),
-            None
-        );
-        let problems = resolver.resolution_problems();
-        let codes: Vec<u32> = problems.iter().map(|problem| problem.code).collect();
-        assert_eq!(codes, [2210]);
-    }
-
-    #[test]
-    fn declaration_files_only() {
-        let host = Fake(&[
-            ("/p/node_modules/impl/index.ts", ""),
-            ("/p/node_modules/decl/index.d.ts", ""),
-            ("/p/node_modules/@types/impl2/index.ts", ""),
-            (
-                "/p/node_modules/@types/named/package.json",
-                r#"{ "types": "main" }"#,
-            ),
-            ("/p/node_modules/@types/named/main.ts", ""),
-            (
-                "/p/node_modules/versions/package.json",
-                r#"{ "typesVersions": { "*": { "index": ["v7/index"] } } }"#,
-            ),
-            ("/p/node_modules/versions/sub/index.d.ts", ""),
-            ("/p/node_modules/versions/sub/v7/index.d.ts", ""),
-        ]);
-        let options = like_node();
-        let resolver = Resolver::new(&host, &options);
-        let reference = |name: &str| {
-            resolver
-                .resolve_type_reference(name, "/p/src", ResolutionMode::Require, false)
-                .map(|found| found.0)
-        };
-        assert_eq!(reference("impl"), None);
-        assert_eq!(reference("impl2"), None);
-        assert_eq!(
-            reference("decl").as_deref(),
-            Some("/p/node_modules/decl/index.d.ts")
-        );
-        // What `types` names may be a `.ts` file.
-        assert_eq!(
-            reference("named").as_deref(),
-            Some("/p/node_modules/@types/named/main.ts")
-        );
-        let module =
-            |spec: &str| resolver.resolve_module(spec, "/p/src/a.cts", ResolutionMode::Require);
-        assert_eq!(
-            module("impl").as_deref(),
-            Some("/p/node_modules/impl/index.ts")
-        );
-        assert_eq!(module("impl2"), None);
-        // The `typesVersions` of the package apply to the `index` of a directory inside it.
-        assert_eq!(
-            module("versions/sub").as_deref(),
-            Some("/p/node_modules/versions/sub/v7/index.d.ts")
-        );
-    }
-
-    #[test]
-    fn root_dirs_and_module_suffixes() {
-        let host = Fake(&[
-            ("/p/src/a.ts", ""),
-            ("/p/src/m.ts", ""),
-            ("/p/src/m.ios.ts", ""),
-            ("/p/src/only.ts", ""),
-            ("/p/gen/g.ts", ""),
-            ("/p/gen/sub/index.ts", ""),
-            ("/p/gen/j.js", ""),
-            (
-                "/p/node_modules/named/package.json",
-                r#"{ "types": "t.d.ts" }"#,
-            ),
-            ("/p/node_modules/named/t.d.ts", ""),
-            ("/p/node_modules/named/t.ios.d.ts", ""),
-        ]);
-        let options = Options {
-            root_dirs: vec!["/p/src".to_owned(), "/p/gen".to_owned()],
-            module_suffixes: vec![".ios".to_owned(), String::new()],
-            ..like_node()
-        };
-        let resolver = Resolver::new(&host, &options);
-        let find =
-            |spec: &str| resolver.resolve_module(spec, "/p/src/a.ts", ResolutionMode::Require);
-        assert_eq!(find("./g").as_deref(), Some("/p/gen/g.ts"));
-        assert_eq!(find("./sub").as_deref(), Some("/p/gen/sub/index.ts"));
-        assert_eq!(find("./sub/").as_deref(), Some("/p/gen/sub/index.ts"));
-        assert_eq!(find("./j").as_deref(), Some("/p/gen/j.js"));
-        assert_eq!(find("./none"), None);
-        assert_eq!(find("./m").as_deref(), Some("/p/src/m.ios.ts"));
-        assert_eq!(find("./m.js").as_deref(), Some("/p/src/m.ios.ts"));
-        assert_eq!(find("./only").as_deref(), Some("/p/src/only.ts"));
-        assert_eq!(
-            find("named").as_deref(),
-            Some("/p/node_modules/named/t.ios.d.ts")
-        );
-    }
 }

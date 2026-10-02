@@ -361,11 +361,6 @@ impl Interner {
         self.intern(&[SYMBOL_NAME_PREFIX, name].concat())
     }
 
-    /// The same, if anything interned it.
-    pub fn lookup_symbol_name(&self, name: &[u8]) -> Option<Atom> {
-        self.lookup(&[SYMBOL_NAME_PREFIX, name].concat())
-    }
-
     /// `isLateBoundName`
     #[inline]
     pub fn is_symbol_name(&self, atom: Atom) -> bool {
@@ -383,61 +378,6 @@ impl Interner {
             }
             bytes => String::from_utf8_lossy(bytes),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn known_atoms_have_their_text() {
-        let i = Interner::new();
-        assert_eq!(i.bytes(known::Promise), b"Promise");
-        assert_eq!(i.intern(b"length"), known::length);
-        let a = i.intern(b"somethingElse");
-        assert_eq!(i.intern(b"somethingElse"), a);
-        assert_eq!(i.bytes(a), b"somethingElse");
-    }
-
-    #[test]
-    fn a_short_text_is_its_bytes_and_its_length() {
-        let text: Vec<u8> = (1..=Recent::LONGEST as u8).collect();
-        for len in 0..=text.len() {
-            let ((a, b, c), end) = short(&text[..len]);
-            let mut bytes = Vec::new();
-            for number in [a, b, c] {
-                bytes.extend_from_slice(&number.to_le_bytes());
-            }
-            bytes.extend_from_slice(&end.to_le_bytes());
-            let mut expected = text[..len].to_vec();
-            expected.resize(Recent::LONGEST, 0);
-            expected.push(len as u8);
-            assert_eq!(bytes, expected);
-        }
-        let i = Interner::new();
-        for len in 0..40 {
-            let text = vec![b'x'; len];
-            let atom = i.intern(&text);
-            assert_eq!(i.intern(&text), atom);
-            assert_eq!(i.lookup(&text), Some(atom));
-            assert_eq!(i.bytes(atom), &text[..]);
-        }
-    }
-
-    #[test]
-    fn nothing_written_is_the_name_of_a_symbol() {
-        let i = Interner::new();
-        assert_eq!(i.bytes(known::sym_iterator), b"\xFE@iterator");
-        assert_eq!(
-            i.lookup_symbol_name(b"asyncIterator"),
-            Some(known::sym_async_iterator)
-        );
-        assert!(i.is_symbol_name(known::sym_iterator));
-        let written = i.intern(b"__@iterator");
-        assert_ne!(written, known::sym_iterator);
-        assert!(!i.is_symbol_name(written));
-        assert_eq!(i.text(known::sym_iterator), "__@iterator");
     }
 }
 

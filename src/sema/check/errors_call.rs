@@ -1209,7 +1209,7 @@ impl Checker<'_> {
             if !fitting.is_empty() {
                 self.report_argument_arity(s, &fitting, head, out);
             } else if let CallLike::Call(c) = node {
-                self.report_type_argument_arity(file, c, sigs, type_args.len(), out);
+                self.report_type_argument_arity(file, hir[c].type_args, sigs, out);
             }
         }
     }
@@ -1568,17 +1568,6 @@ impl Checker<'_> {
             } else {
                 given
             };
-            if self.trace_relations {
-                let (a, b) = (
-                    crate::describe::Describer::new(self).describe(given),
-                    crate::describe::Describer::new(self).describe(wanted),
-                );
-                eprintln!(
-                    "ARGUMENT {i} at {}: {a} for {b}: {}",
-                    hir[node].pos,
-                    self.related(given, wanted, relation)
-                );
-            }
             if self.related(given, wanted, relation) {
                 continue;
             }
@@ -1967,18 +1956,18 @@ impl Checker<'_> {
     }
 
     /// `getTypeArgumentArityError`: 2558 2743
-    fn report_type_argument_arity(
+    pub(super) fn report_type_argument_arity(
         &mut self,
         file: FileId,
-        c: CallId,
+        type_args: IdList<TypeNodeId>,
         sigs: &[SigId],
-        given: usize,
         out: &mut Vec<Diagnostic>,
     ) {
         let hir = self.hir(file);
-        let Some(first) = hir.ids(hir[c].type_args).next() else {
+        let Some(first) = hir.ids(type_args).next() else {
             return;
         };
+        let given = type_args.len();
         let mut code = 2558;
         let mut counts = Vec::new();
         if sigs.len() > 1 {
@@ -2023,7 +2012,7 @@ impl Checker<'_> {
             start: hir[first].pos,
             code,
         });
-        let end = self.end_of_type_argument_list(file, hir[c].type_args);
+        let end = self.end_of_type_argument_list(file, type_args);
         self.note(hir[first].pos, end, code, counts);
     }
 }

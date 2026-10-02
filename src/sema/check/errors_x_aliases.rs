@@ -276,8 +276,7 @@ impl Checker<'_> {
     /// `ConstEnumInliningTransformer`, the last transformer of `emitJSFile`: `GetConstantValue` asks `checkExpressionCached` of every
     /// property and element access that is written out, a node before its children. tsgo's test harness writes `.types` and
     /// `.symbols` from a program that has emitted BEFORE it is checked (`compileFilesWithHost`, `Options::emits_first`), so there each
-    /// access is asked first, outside the function it is in. It shows where the error of an access prints a return type: under way
-    /// in a check (7023, `any`), not begun here. JavaScript files are left out: whether one is written goes by `outDir`. tsgo emits
+    /// access is asked first, outside the function it is in, and a circle is come into at another place. JavaScript files are left out: whether one is written goes by `outDir`. tsgo emits
     /// all the files and then checks them: here it is file by file.
     pub(super) fn inline_const_enums(&mut self, file: FileId) {
         let (files, hir, bound) = (self.files(), self.hir(file), self.bound(file));
@@ -853,7 +852,7 @@ impl Checker<'_> {
     /// A `const enum` whose first declaration is only declared.
     fn xa_is_ambient_const_enum(&self, sym: Sym) -> bool {
         let files = self.files();
-        files.flags(sym).contains(SymFlags::ENUM)
+        files.flags(sym).intersects(SymFlags::ENUM)
             && files
                 .decls(sym)
                 .iter()

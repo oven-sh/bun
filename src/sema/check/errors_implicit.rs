@@ -3,12 +3,11 @@
 //!
 //! Follows `reportImplicitAny` of TypeScript 7.0.2's checker.go and those who call it: `widenTypeForVariableLikeDeclaration`,
 //! `getTypeFromBindingElement`, `checkFunctionOrMethodDeclaration`, `checkSignatureDeclaration`, `checkMappedType`,
-//! `getWidenedTypeForAssignmentDeclaration`, `getAssignmentDeclarationInitializerType`, `reportErrorsFromWidening` as far as the
-//! names in patterns go; and `getTypeOfAccessors`.
+//! `getWidenedTypeForAssignmentDeclaration`, `getAssignmentDeclarationInitializerType`; and `getTypeOfAccessors`.
 
 use super::errors::Diagnostic;
 use super::*;
-use crate::bind::{Decl, FnOwner, MemberOwner, Parent, SymbolId, UNREACHABLE};
+use crate::bind::{Decl, FnOwner, MemberOwner, Parent, SymbolId};
 
 /// `isEmptyArrayLiteralType`, decided by syntax because there is no `implicitNeverType`: `e` is written `[]`.
 fn is_empty_array_literal(hir: &hir::File, e: ExprId) -> bool {
@@ -17,7 +16,7 @@ fn is_empty_array_literal(hir: &hir::File, e: ExprId) -> bool {
 
 /// `DeclarationNameToString(GetNameOfDeclaration(e))`, of `a.name = value`, `a["name"] = value` or
 /// `Object.defineProperty(a, "name", descriptor)`.
-fn name_of_assignment_declaration(c: &Checker<'_>, file: FileId, e: ExprId) -> String {
+pub(super) fn name_of_assignment_declaration(c: &Checker<'_>, file: FileId, e: ExprId) -> String {
     let hir = c.hir(file);
     let written = |x: ExprId| c.source_text(file, c.start_of(file, x), c.end_of_expr(file, x));
     match hir[e].kind {
@@ -178,71 +177,7 @@ impl Checker<'_> {
                 _ => {}
             }
         }
-        // Members that say nothing.
         let is_checked_js = hir.is_js && self.is_check_js(file);
-        for m in 0..hir.members.len() {
-            let member = &hir.members[m];
-            if member.kind != MemberKind::Property || member.ty.is_some() {
-                continue;
-            }
-            if member.init.is_some() {
-                // `widenTypeInferredFromInitializer`: in a JavaScript file a property initialized with `[]` is an implicit `any[]`.
-                if is_checked_js
-                    && is_empty_array_literal(hir, member.init)
-                    && !matches!(bound.member_owner[m], MemberOwner::None)
-                {
-                    out.push(Diagnostic {
-                        start: member.pos,
-                        code: 7008,
-                    });
-                    let end = self.end_of_member_name(file, MemberId(m as u32));
-                    self.explain_to(member.pos, end, 7008, |c| {
-                        vec![c.source_text(file, member.pos, end), "any[]".to_owned()]
-                    });
-                }
-                continue;
-            }
-            match bound.member_owner[m] {
-                MemberOwner::None => continue,
-                MemberOwner::Class(c) => {
-                    // `bindClassLikeDeclaration`: it is one symbol with the `prototype` of the class (`SymbolFlagsPrototype`), whose
-                    // type is `getTypeOfPrototypeProperty`.
-                    if member.flags.contains(Flags::STATIC)
-                        && member.key == PropKey::Name(known::prototype)
-                    {
-                        continue;
-                    }
-                    // `isPrivateWithinAmbient`. A property that says `declare` is ambient by itself.
-                    let is_ambient = hir[c].flags.contains(Flags::AMBIENT)
-                        || member.flags.contains(Flags::AMBIENT)
-                        || hir.kind == FileKind::Declaration;
-                    if is_ambient
-                        && (member.flags.contains(Flags::PRIVATE)
-                            || matches!(member.key, PropKey::Private(_)))
-                    {
-                        continue;
-                    }
-                    // What a constructor or a static block assigns says what it is, be that `any`.
-                    let id = MemberId(m as u32);
-                    if !{
-                        let ty = self.type_of_member_declaration(file, id);
-                        self.has_any_flag(ty)
-                    } || self.is_found_to_be_any(file, c, id)
-                    {
-                        continue;
-                    }
-                }
-                _ => {}
-            }
-            out.push(Diagnostic {
-                start: member.pos,
-                code: 7008,
-            });
-            let end = self.end_of_member_name(file, MemberId(m as u32));
-            self.explain_to(member.pos, end, 7008, |c| {
-                vec![c.source_text(file, member.pos, end), "any".to_owned()]
-            });
-        }
         self.check_assignment_declarations_implicit_any(file, out);
         if is_checked_js {
             self.check_binding_element_defaults_implicit_any(file, out);
@@ -273,8 +208,6 @@ impl Checker<'_> {
             if decl.init.is_none() {
                 // `getTypeForVariableLikeDeclaration`: a pattern that is given nothing is what it implies.
                 self.check_pattern_implicitly_any(file, decl.pat, out);
-            } else if !self.p.files.options.strict_null_checks {
-                self.check_widening_of_element(file, decl.pat, ExprId::NONE, decl.init, out);
             }
         }
         if hir.mapped.iter().all(|m| m.ty.is_some()) {
@@ -379,9 +312,9 @@ impl Checker<'_> {
         }
     }
 
-    /// `getWidenedTypeForAssignmentDeclaration`, `getAssignmentDeclarationInitializerType`: implicit `any` of the exports and
-    /// properties that assignments declare. 7008 at each assignment of `[]`, in TypeScript files too. In a JavaScript file also at
-    /// `symbol.ValueDeclaration` if every assigned type is `null` or `undefined`.
+    /// `getWidenedTypeForAssignmentDeclaration`, `getAssignmentDeclarationInitializerType`: implicit `any` of the exports of a
+    /// CommonJS module that assignments declare. 7008 at each assignment of `[]`, and at `symbol.ValueDeclaration` if every assigned
+    /// type is `null` or `undefined`. `type_of_assigned_prop` reports those of properties.
     fn check_assignment_declarations_implicit_any(
         &mut self,
         file: FileId,
@@ -450,138 +383,6 @@ impl Checker<'_> {
                 }
             }
         }
-        // The symbols that assignments add to.
-        let parent = |&e: &ExprId| bound.symbols[bound.expr_symbol[e.idx()].idx()].parent;
-        let mut owners: Vec<SymbolId> = bound.expando_declarations.iter().map(parent).collect();
-        owners.sort_unstable();
-        owners.dedup();
-        for owner in owners {
-            // Each run of equal names is one property.
-            for of_name in self.expandos_of(file, owner).chunk_by(|a, b| a.0 == b.0) {
-                let (name, first) = of_name[0];
-                self.check_assigned_property_implicit_any(file, name, first, None, out);
-            }
-        }
-        // The list is sorted: each run of equal (class, is_static, name) is one property.
-        let properties = &bound.this_properties;
-        let mut i = 0;
-        while i < properties.len() {
-            let (class, is_static, name, first) = properties[i];
-            i += properties[i..]
-                .iter()
-                .take_while(|x| (x.0, x.1, x.2) == (class, is_static, name))
-                .count();
-            self.check_assigned_property_implicit_any(file, name, first, Some(class), out);
-        }
-    }
-
-    /// Checks the property `name` whose first declaration (`symbol.ValueDeclaration`) is `first`: `f.name = value`,
-    /// `this.name = value` or `Object.defineProperty(f, "name", descriptor)`. `class`: the class of a `this.name = value` property.
-    fn check_assigned_property_implicit_any(
-        &mut self,
-        file: FileId,
-        name: Atom,
-        first: ExprId,
-        class: Option<ClassId>,
-        out: &mut Vec<Diagnostic>,
-    ) {
-        let hir = self.hir(file);
-        // `reportImplicitAny` has a case for a binary expression. A call expression takes the default case.
-        let (object, code) = match hir[first].kind {
-            ExprKind::Assign { target, .. } => match hir[target].kind {
-                ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => (obj, 7008),
-                _ => return,
-            },
-            _ => match crate::bind::define_property_call(hir, first) {
-                Some((object, _)) => (object, 7005),
-                None => return,
-            },
-        };
-        // Another declaration of the name, or a type annotation on the owner, takes precedence over the assignments.
-        let owner = self.type_of_expr(file, object);
-        let owner = self.apparent_type(owner);
-        let Some((prop, _)) = self.prop_of(owner, name) else {
-            return;
-        };
-        let PropSource::Assigned(declared_in, declarations) = &prop.source else {
-            return;
-        };
-        if *declared_in != file || declarations.first() != Some(&first) {
-            return;
-        }
-        // Whether tsgo takes the type from the declarations, which is where it reports an assignment of `[]`.
-        let mut reads_declarations = true;
-        let is_annotated = |e: ExprId| hir.jsdoc_type(JsDocTypeOwner::Assign(e)).is_some();
-        if class.is_some() && declarations.iter().any(|&e| is_annotated(e)) {
-            // `thisAssignmentDeclarationTyped`: the annotation is all that is read.
-            reads_declarations = false;
-        } else if let Some(class) = class {
-            let is_in_constructor = |e: &&ExprId| matches!(self.this_container(file, **e), Some(Ok(func)) if hir[func].kind == FnKind::Constructor);
-            let in_constructor = declarations.iter().filter(is_in_constructor).count();
-            if in_constructor == declarations.len() {
-                // `thisAssignmentDeclarationConstructor`: an access in the declaring constructor has `autoType`
-                // (`isThisPropertyAccessInConstructor`), so tsgo resolves the type of the property, and reports, only if another
-                // access needs it. Only the left side of an assignment outside the constructor is known to be such an access.
-                return;
-            }
-            reads_declarations = if in_constructor != 0 {
-                // Only if `getFlowTypeInConstructor` finds no type, which is not known here.
-                false
-            } else {
-                // `thisAssignmentDeclarationMethod`: only if `getTypeOfPropertyInBaseClass` finds no property.
-                let base = self
-                    .base_types(self.class_sym(file, class))
-                    .first()
-                    .copied();
-                !base.is_some_and(|base| {
-                    let base = self.apparent_type(base);
-                    self.prop_of(base, name).is_some()
-                })
-            };
-        }
-        if reads_declarations {
-            for &declaration in declarations.iter() {
-                // The declarations are read up to the first that says what it is.
-                if is_annotated(declaration) {
-                    break;
-                }
-                let ExprKind::Assign { target, value, .. } = hir[declaration].kind else {
-                    continue;
-                };
-                // The type of `a = []` is the type of `[]`.
-                let mut rightmost = value;
-                while let ExprKind::Assign {
-                    op: None,
-                    value: next,
-                    ..
-                } = hir[rightmost].kind
-                {
-                    rightmost = next;
-                }
-                // `hasParentWithTypeAnnotation`
-                if is_empty_array_literal(hir, rightmost)
-                    && !self.is_property_of_annotated_variable(file, target)
-                {
-                    out.push(Diagnostic {
-                        start: self.start_inside_parentheses(file, declaration),
-                        code: 7008,
-                    });
-                    explain_assignment_declaration(self, file, declaration, 7008, true, "any[]");
-                }
-            }
-        }
-        if !hir.is_js {
-            return;
-        }
-        let ty = self.widened_type_of_assignments(file, name, declarations);
-        let is_uncertain = declarations.iter().any(|&e| matches!(hir[e].kind, ExprKind::Assign { value, .. } if self.is_uncertain(file, value)));
-        if self.is_known(ty) && !is_uncertain && self.is_all_null_or_undefined(ty) {
-            out.push(Diagnostic {
-                start: self.start_inside_parentheses(file, first),
-                code,
-            });
-            explain_assignment_declaration(self, file, first, code, true, "any");
-        }
     }
 
     /// `isPrivateWithinAmbient`, of the member `func` is.
@@ -638,63 +439,6 @@ impl Checker<'_> {
             _ => {}
         }
         Some(pos)
-    }
-
-    /// `getTypeForVariableLikeDeclaration`, of the property `m` of the class `c`, which says nothing and has come to be `any`: whether
-    /// that was found for it, in what the constructor or a static block assigns or, for one that says `declare` where there is
-    /// neither, in the class extended. Where a static block is left is not always kept: it counts as found then.
-    fn is_found_to_be_any(&mut self, file: FileId, c: ClassId, m: MemberId) -> bool {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let member = &hir[m];
-        let Some(name) = self.member_name(file, member.key) else {
-            // Nothing is assigned to a name that is worked out and could be anything. Whether it could has to be known.
-            let PropKey::Computed(k) = member.key else {
-                return false;
-            };
-            let ty = self.type_of_expr(file, k);
-            return !self.is_known(ty);
-        };
-        let is_static = member.flags.contains(Flags::STATIC);
-        let mut is_looked_for = false;
-        for other in hir[c].members.iter() {
-            let func = hir[other].func;
-            let is_where_to_look = if is_static {
-                hir[other].kind == MemberKind::StaticBlock
-            } else {
-                // `FindConstructorDeclaration`: the first that has a body.
-                !is_looked_for
-                    && hir[other].kind == MemberKind::Constructor
-                    && !matches!(hir[func].body, FnBody::None)
-            };
-            if !is_where_to_look {
-                continue;
-            }
-            is_looked_for = true;
-            if func.is_none() {
-                return true;
-            }
-            // `getTypeAtFlowNode`: where control cannot get to, it is `any` and no more is asked.
-            let exit = bound.fns[func.idx()].exit;
-            if exit.is_none()
-                || exit == UNREACHABLE
-                || self.flow_type_in_constructor(file, func, name).is_some()
-            {
-                return true;
-            }
-        }
-        if is_looked_for
-            || !member.flags.contains(Flags::AMBIENT)
-            || hir[c].flags.contains(Flags::AMBIENT)
-        {
-            return false;
-        }
-        // `getTypeOfPropertyInBaseClass`
-        let class = self.class_sym(file, c);
-        let base = self.base_types(class).first().copied();
-        base.is_some_and(|base| {
-            let base = self.apparent_type(base);
-            self.prop_of(base, name).is_some()
-        })
     }
 
     /// Where an error about `func` as a whole goes: its name if it has one.
@@ -768,25 +512,9 @@ impl Checker<'_> {
                     };
                     self.check_padded_defaults(file, param.pat, own, out);
                 }
-                // Of a function expression something may be expected, which comes before the default.
-                if param.ty.is_none()
-                    && param.default.is_some()
-                    && !self.p.files.options.strict_null_checks
-                    && !matches!(bound.fns[func.idx()].owner, FnOwner::Expr(_))
-                {
-                    self.check_widening_of_element(
-                        file,
-                        param.pat,
-                        ExprId::NONE,
-                        param.default,
-                        out,
-                    );
-                }
             }
             // `widenTypeInferredFromInitializer`: in a JavaScript file a parameter that defaults to `[]` is an implicit `any[]`.
-            // Without `strictNullChecks` the widening of `undefined[]` says so.
             if hir.is_js
-                && self.p.files.options.strict_null_checks
                 && decl.kind != FnKind::Setter
                 && param.ty.is_none()
                 && param.default.is_some()
@@ -984,156 +712,6 @@ impl Checker<'_> {
                 _ => {}
             }
         }
-    }
-
-    /// `reportErrorsFromWidening`, of the names in a pattern that takes a literal apart, where `null` and `undefined` are not told
-    /// apart: 7031. One that is written becomes `any`, one that is declared does not, so this goes by what is written. `pat` is given
-    /// `value`, or `default` if there is one and `value` is `undefined`.
-    fn check_widening_of_element(
-        &self,
-        file: FileId,
-        pat: PatId,
-        default: ExprId,
-        value: ExprId,
-        out: &mut Vec<Diagnostic>,
-    ) {
-        let hir = self.hir(file);
-        match (hir[pat].kind, hir[value].kind) {
-            (PatKind::Ident(_), _) => {
-                // `null` and `undefined` go from a union with anything else.
-                if self.is_widening_literal(file, value)
-                    && (default.is_none() || self.is_widening_literal(file, default))
-                    && self.is_first_declaration(file, pat)
-                {
-                    out.push(Diagnostic {
-                        start: hir[pat].pos,
-                        code: 7031,
-                    });
-                }
-            }
-            // What comes of a default and a value that are both taken apart is not looked into.
-            _ if default.is_some() => {}
-            (PatKind::Array(elems), ExprKind::Array(items)) => {
-                // `getTypeFromArrayBindingPattern`: `[...rest]` alone expects something to go through, no tuple, so the literal is an
-                // array of what it holds.
-                if elems.len() == 1 && hir[elems.at(0)].is_rest {
-                    let rest = hir[elems.at(0)].pat;
-                    if matches!(hir[rest].kind, PatKind::Ident(_)) {
-                        self.check_widening_of_element(file, rest, ExprId::NONE, value, out);
-                    }
-                    return;
-                }
-                self.check_widening_of_elements(file, elems, items, 0, out);
-            }
-            (PatKind::Object(props), ExprKind::Object(given)) => {
-                // What a spread or a name that is worked out puts in the literal is not looked into.
-                if given.iter().any(|g| {
-                    hir[g].kind == PropKind::Spread || matches!(hir[g].key, PropKey::Computed(_))
-                }) {
-                    return;
-                }
-                for p in props.iter() {
-                    let prop = &hir[p];
-                    // `getRestType`: what is left over is put in an object of its own, of which nothing is said.
-                    if prop.is_rest || !matches!(prop.key, PropKey::Name(_)) {
-                        continue;
-                    }
-                    // The last of a name is the one that counts.
-                    if let Some(g) = given.iter().rev().find(|&g| hir[g].key == prop.key)
-                        && hir[g].kind == PropKind::Init
-                        && hir[g].value.is_some()
-                    {
-                        self.check_widening_of_element(
-                            file,
-                            prop.value,
-                            prop.default,
-                            hir[g].value,
-                            out,
-                        );
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    /// The same, of the array pattern `elems`, which takes apart the tuple of `items` from the one at `from` on.
-    fn check_widening_of_elements(
-        &self,
-        file: FileId,
-        elems: Span<PatElemId>,
-        items: IdList<ExprId>,
-        from: usize,
-        out: &mut Vec<Diagnostic>,
-    ) {
-        let hir = self.hir(file);
-        let mut left = hir.ids(items).skip(from);
-        for (i, e) in elems.iter().enumerate() {
-            let elem = &hir[e];
-            if elem.is_rest {
-                // `sliceTupleType`: a tuple of what is left. In an object literal there are properties to point at instead: 7018.
-                match hir[elem.pat].kind {
-                    PatKind::Ident(_) => {
-                        if !left.clone().any(|x| {
-                            matches!(hir[x].kind, ExprKind::Spread(_) | ExprKind::Object(_))
-                        }) && left.any(|x| self.is_widening_literal(file, x))
-                            && self.is_first_declaration(file, elem.pat)
-                        {
-                            out.push(Diagnostic {
-                                start: hir[elem.pat].pos,
-                                code: 7031,
-                            });
-                        }
-                    }
-                    PatKind::Array(inner) => {
-                        self.check_widening_of_elements(file, inner, items, from + i, out)
-                    }
-                    _ => {}
-                }
-                return;
-            }
-            // From a spread on, what goes where is not looked into.
-            let Some(item) = left.next() else { return };
-            if matches!(hir[item].kind, ExprKind::Spread(_)) {
-                return;
-            }
-            self.check_widening_of_element(file, elem.pat, elem.default, item, out);
-        }
-    }
-
-    /// Whether the type of `e` is made of nothing but the `null` and `undefined` that widen (`nullWideningType`,
-    /// `undefinedWideningType`): `null`, `undefined`, `void x`, a hole, or an array of nothing else, which `[]` is too.
-    fn is_widening_literal(&self, file: FileId, e: ExprId) -> bool {
-        let hir = self.hir(file);
-        match hir[e].kind {
-            ExprKind::Null | ExprKind::Missing | ExprKind::Unary { op: UnOp::Void, .. } => true,
-            ExprKind::Ident(name) => {
-                name == known::undefined && self.bound(file).expr_symbol[e.idx()].is_none()
-            }
-            ExprKind::NonNull(x) => self.is_widening_literal(file, x),
-            ExprKind::Array(items) => hir
-                .ids(items)
-                .all(|item| self.is_widening_literal(file, item)),
-            _ => false,
-        }
-    }
-
-    /// Whether `pat` is the first declaration of the variable or parameter it names, which is the one the type is taken from
-    /// (`symbol.ValueDeclaration`) and the only one to be told.
-    fn is_first_declaration(&self, file: FileId, pat: PatId) -> bool {
-        let bound = self.bound(file);
-        let symbol = bound.pat_symbol[pat.idx()];
-        if symbol.is_none() {
-            return false;
-        }
-        let s = &bound.symbols[symbol.idx()];
-        let Some(&first @ (Decl::Var(p) | Decl::Param(p))) = s.decls.first() else {
-            return false;
-        };
-        p == pat
-            && (!s.flags.contains(SymFlags::MERGED)
-                || self.files().decls(self.files().sym(file, symbol)).first()
-                    == Some(&(file, first)))
     }
 
     /// `padTupleType`: where the default of an array pattern in a parameter is a tuple too short for the pattern, what is past its end

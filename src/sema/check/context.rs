@@ -1504,7 +1504,7 @@ impl<'p> Checker<'p> {
             }
             // `getContextualTypeForYieldOperand`
             ExprKind::Yield { star: false, .. } => {
-                let func = self.enclosing_fn_of_expr(file, parent)?;
+                let func = self.get_containing_function(file, parent).flatten()?;
                 let declared = self.declared_or_contextual_return_type(file, func)?;
                 let is_async = hir[func].flags.contains(Flags::ASYNC);
                 let declared = self.alternatives_to_go_through(declared, is_async);
@@ -1513,7 +1513,7 @@ impl<'p> Checker<'p> {
             // Something to go through that yields what is to be yielded. Where nothing is said there is a hole, which nothing is
             // inferred from (`silentNeverType`).
             ExprKind::Yield { star: true, .. } => {
-                let func = self.enclosing_fn_of_expr(file, parent)?;
+                let func = self.get_containing_function(file, parent).flatten()?;
                 let declared = self.declared_or_contextual_return_type(file, func)?;
                 let is_async = hir[func].flags.contains(Flags::ASYNC);
                 let types = self.iteration_types(declared, is_async);
@@ -2043,7 +2043,16 @@ impl<'p> Checker<'p> {
             };
             // The members of a union have to agree on everything but `this` and what they return.
             if let Some(&first) = found.first()
-                && !self.compare_signatures_identical(first, sig, false, true, true)
+                && !self
+                    .compare_signatures_identical(
+                        first,
+                        sig,
+                        false,
+                        true,
+                        true,
+                        &mut Self::compare_types_identical,
+                    )
+                    .holds()
             {
                 // What could not be found out is not known to differ.
                 let mut is_known = true;

@@ -16,7 +16,7 @@
 use super::decl::{Evaluated, Evaluator};
 use super::errors::Diagnostic;
 use super::*;
-use crate::bind::{Decl, Parent, PatParent, ScopeId, ScopeKind, SymbolId};
+use crate::bind::{Decl, Parent, ScopeId, ScopeKind, SymbolId};
 use crate::util::FxHashSet;
 
 impl Checker<'_> {
@@ -225,26 +225,29 @@ impl Checker<'_> {
     /// `initializeChecker`, `addUndefinedToGlobalsOrErrorOnRedeclaration`: 2397
     fn check_x_built_in_global_names(&self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (bound, files) = (self.bound(file), self.files());
+        let mut report = |decl: Decl| {
+            let range = self.error_range_of_declaration(file, decl);
+            out.extend(range.map(|(start, _)| Diagnostic { start, code: 2397 }));
+        };
         // A script has no `globalThis` of its own, of whatever kind.
         if !files.module(file).is_module()
             && let Some(symbol) = bound.lookup(bound.scopes[0].locals, known::globalThis)
         {
-            let decls: Vec<(FileId, Decl)> = bound.symbols[symbol.idx()]
-                .decls
-                .iter()
-                .map(|&d| (file, d))
-                .collect();
-            report_conflicts_with_built_in(self, file, &decls, true, out);
+            for &decl in bound.symbols[symbol.idx()].decls.iter() {
+                report(decl);
+            }
         }
-        // Nothing but a type goes by the name of `undefined` for everybody.
         if let Some(&symbol) = files.globals.get(&known::undefined) {
-            report_conflicts_with_built_in(
-                self,
-                file,
-                &files.decls(files.canonical(symbol)),
-                false,
-                out,
-            );
+            for &(of, decl) in files.decls_of(files.canonical(symbol)).iter() {
+                // `IsTypeDeclaration`
+                let is_type = matches!(
+                    decl,
+                    Decl::Class(_) | Decl::Interface(_) | Decl::Alias(_) | Decl::Enum(_)
+                );
+                if of == file && !is_type {
+                    report(decl);
+                }
+            }
         }
     }
 
@@ -558,27 +561,10 @@ impl Checker<'_> {
         {
             return;
         }
-        let first_name = |text: &[u8]| {
-            files
-                .atoms
-                .intern(text.split(|&c| c == b'.').next().unwrap_or(text))
-        };
-        let factory = if hir.jsx_pragmas.factory.is_some() {
-            first_name(files.atoms.bytes(hir.jsx_pragmas.factory))
-        } else if !options.jsx_factory.is_empty() {
-            first_name(options.jsx_factory.as_bytes())
-        } else if !options.react_namespace.is_empty() {
-            first_name(options.react_namespace.as_bytes())
-        } else {
-            known::React
-        };
-        let fragment_factory = if hir.jsx_pragmas.fragment_factory.is_some() {
-            first_name(files.atoms.bytes(hir.jsx_pragmas.fragment_factory))
-        } else if !options.jsx_fragment_factory.is_empty() {
-            first_name(options.jsx_fragment_factory.as_bytes())
-        } else {
-            factory
-        };
+        let (factory, fragment_factory) = (
+            super::errors_jsx::jsx_namespace(files, hir, false),
+            super::errors_jsx::jsx_namespace(files, hir, true),
+        );
         // The scope a tag is written in is not kept: whatever the file declares by the name, wherever, may be what is meant.
         let is_umd_global = |name: Atom| {
             means_umd_global(name, ScopeId(0), SymFlags::VALUE)
@@ -1306,128 +1292,6 @@ fn is_name_not_found(code: u32) -> bool {
             | 2863
             | 2868
     )
-}
-
-const FUNCTION_SCOPED_VARIABLE: u16 = 1 << 0;
-const BLOCK_SCOPED_VARIABLE: u16 = 1 << 1;
-const FUNCTION: u16 = 1 << 2;
-const CLASS: u16 = 1 << 3;
-const INTERFACE: u16 = 1 << 4;
-const CONST_ENUM: u16 = 1 << 5;
-const REGULAR_ENUM: u16 = 1 << 6;
-const VALUE_MODULE: u16 = 1 << 7;
-const NAMESPACE_MODULE: u16 = 1 << 8;
-const TYPE_ALIAS: u16 = 1 << 9;
-const ALIAS: u16 = 1 << 10;
-const VALUE: u16 = FUNCTION_SCOPED_VARIABLE
-    | BLOCK_SCOPED_VARIABLE
-    | FUNCTION
-    | CLASS
-    | CONST_ENUM
-    | REGULAR_ENUM
-    | VALUE_MODULE;
-const TYPE: u16 = CLASS | INTERFACE | CONST_ENUM | REGULAR_ENUM | TYPE_ALIAS;
-
-/// 2397 for the declarations among `decls` that are in `file`. They are gone through as they would have been put in one table
-/// (`declareSymbolEx`, `mergeSymbol`): what is refused there does not declare the name that is built in.
-fn report_conflicts_with_built_in(
-    c: &Checker<'_>,
-    file: FileId,
-    decls: &[(FileId, Decl)],
-    types_too: bool,
-    out: &mut Vec<Diagnostic>,
-) {
-    let mut flags = 0;
-    for &(of, decl) in decls {
-        let Some((includes, excludes, start, is_type)) = what_is_declared(c, of, decl) else {
-            continue;
-        };
-        if flags & excludes != 0 {
-            continue;
-        }
-        flags |= includes;
-        if of == file && (types_too || !is_type) {
-            out.push(Diagnostic { start, code: 2397 });
-        }
-    }
-}
-
-/// What a declaration at the top of a file makes of its name, what that does not go with, where an error about the declaration
-/// starts, and `IsTypeDeclaration`.
-fn what_is_declared(c: &Checker<'_>, file: FileId, decl: Decl) -> Option<(u16, u16, u32, bool)> {
-    let (hir, bound) = (c.hir(file), c.bound(file));
-    Some(match decl {
-        Decl::Var(pat) => {
-            let mut root = pat;
-            let d = loop {
-                match bound.pat_parent[root.idx()] {
-                    PatParent::Prop(outer, _) | PatParent::Elem(outer, _) => root = outer,
-                    PatParent::Var(d) => break d,
-                    _ => return None,
-                }
-            };
-            if hir[d].kind == VarKind::Var {
-                (
-                    FUNCTION_SCOPED_VARIABLE,
-                    VALUE & !FUNCTION_SCOPED_VARIABLE,
-                    hir[pat].pos,
-                    false,
-                )
-            } else {
-                (BLOCK_SCOPED_VARIABLE, VALUE, hir[pat].pos, false)
-            }
-        }
-        Decl::Fn(f) => (
-            FUNCTION,
-            VALUE & !(FUNCTION | VALUE_MODULE | CLASS),
-            hir[f].name_pos,
-            false,
-        ),
-        Decl::Class(k) => (
-            CLASS,
-            (VALUE | TYPE) & !(VALUE_MODULE | INTERFACE | FUNCTION),
-            hir[k].name_pos,
-            true,
-        ),
-        Decl::Interface(i) => (
-            INTERFACE,
-            TYPE & !(INTERFACE | CLASS),
-            hir[i].name_pos,
-            true,
-        ),
-        Decl::Alias(a) => (TYPE_ALIAS, TYPE, hir[a].name_pos, true),
-        Decl::Enum(en) if hir[en].flags.contains(Flags::CONST) => (
-            CONST_ENUM,
-            (VALUE | TYPE) & !CONST_ENUM,
-            hir[en].name_pos,
-            true,
-        ),
-        Decl::Enum(en) => (
-            REGULAR_ENUM,
-            (VALUE | TYPE) & !(REGULAR_ENUM | VALUE_MODULE),
-            hir[en].name_pos,
-            true,
-        ),
-        Decl::Module(m)
-            if bound.module_instance_state[m.idx()] != ModuleInstanceState::NonInstantiated =>
-        {
-            (
-                VALUE_MODULE,
-                VALUE & !(FUNCTION | CLASS | REGULAR_ENUM | VALUE_MODULE),
-                hir[m].name_pos,
-                false,
-            )
-        }
-        Decl::Module(m) => (NAMESPACE_MODULE, 0, hir[m].name_pos, false),
-        // An error about `import a = b` is about all of it.
-        Decl::ImportEquals(i) => {
-            let statement = (0..hir.stmts.len() as u32)
-                .map(StmtId)
-                .find(|&s| matches!(hir[s].kind, StmtKind::ImportEquals(x) if x == i))?;
-            (ALIAS, ALIAS, hir[statement].pos, false)
-        }
-        _ => return None,
-    })
 }
 
 // ───────────────────────────── where things are written ─────────────────────────────

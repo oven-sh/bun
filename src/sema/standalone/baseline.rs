@@ -1260,10 +1260,10 @@ fn run_one(
             write_unit(checker, file, &copy, host.read(&copy).as_deref());
         }
     };
-    let printing_closed_a_circle = AtomicBool::new(false);
+    let closed_a_circle = AtomicBool::new(false);
     let note_circle = |program: &bun_sema::check::Program| {
-        let closed = program.printing_closed_a_circle.load(Ordering::Relaxed);
-        printing_closed_a_circle.store(closed, Ordering::Relaxed);
+        let closed = program.closed_a_circle.load(Ordering::Relaxed);
+        closed_a_circle.store(closed, Ordering::Relaxed);
     };
     let request = Request {
         compiler_options: &[],
@@ -1297,8 +1297,8 @@ fn run_one(
         std::time::Instant::now(),
     );
     // `compileFilesWithHost`: the diagnostics compared are those of a program that is only checked. The types and the symbols are read
-    // from another, which has emitted first. The two differ only where the order of asking shows, so the other is made only there.
-    if printing_closed_a_circle.load(Ordering::Relaxed) {
+    // from another, which has emitted first. The order of asking shows only where a circle closes, so the other is made only there.
+    if closed_a_circle.load(Ordering::Relaxed) {
         for written in [types, symbols].into_iter().flatten() {
             written.lock().unwrap().clear();
         }

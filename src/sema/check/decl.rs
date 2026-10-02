@@ -235,7 +235,7 @@ pub(super) trait Evaluator<'p> {
                 return Evaluated::default();
             }
             if let Some(root) = self.resolve_entity_name(file, obj, location)
-                && files.flags(root).contains(SymFlags::ENUM)
+                && files.flags(root).intersects(SymFlags::ENUM)
                 && let Some(member) = files.export(root, name)
                 && files.flags(member).contains(SymFlags::ENUM_MEMBER)
             {
@@ -453,6 +453,7 @@ impl<'p> Checker<'p> {
             ScopeKind::Fn(_)
                 | ScopeKind::Class(_)
                 | ScopeKind::Interface(_)
+                | ScopeKind::TypeAlias(_)
                 | ScopeKind::TypeParams
         ) {
             for &(_, symbol) in bound.table(s.locals) {
@@ -622,12 +623,12 @@ impl<'p> Checker<'p> {
         node: TypeNodeId,
     ) -> Option<AliasId> {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        if !bound.type_by_alias[node.idx()]
-            || bound.scopes[scope.idx()].kind != ScopeKind::TypeParams
-        {
+        if !bound.type_by_alias[node.idx()] {
             return None;
         }
-        let alias = AliasId(bound.alias_scope.iter().position(|&s| s == scope)? as u32);
+        let ScopeKind::TypeAlias(alias) = bound.scopes[scope.idx()].kind else {
+            return None;
+        };
         let mut body = hir[alias].ty;
         while body.is_some()
             && let TypeNodeKind::Readonly(operand) = hir[body].kind
@@ -652,10 +653,9 @@ impl<'p> Checker<'p> {
         node: TypeNodeId,
     ) -> Option<TypeNodeId> {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        if bound.scopes[scope.idx()].kind != ScopeKind::TypeParams {
+        let ScopeKind::TypeAlias(alias) = bound.scopes[scope.idx()].kind else {
             return None;
-        }
-        let alias = AliasId(bound.alias_scope.iter().position(|&s| s == scope)? as u32);
+        };
         let body = hir[alias].ty;
         if body.is_none() {
             return None;
@@ -1015,9 +1015,9 @@ impl<'p> Checker<'p> {
         Some((sym.file, params))
     }
 
-    /// The type parameter lists of the declarations of a class, an interface or an alias, those that have the name.
+    /// The type parameter lists of the declarations of a class, an interface or an alias.
     fn type_param_lists(&self, sym: Sym) -> SmallVec<[(FileId, Span<TypeParamId>); 16]> {
-        let flags = self.type_flags_of_symbol(sym);
+        let flags = self.files().flags(sym);
         declarations_of(self.files(), sym)
             .filter_map(|(file, decl)| {
                 let hir = self.hir(file);
@@ -1351,7 +1351,7 @@ impl<'p> Checker<'p> {
             if self.bound(file).infer_positions.is_empty() {
                 return None;
             }
-            return self.inferred_type_param_constraint(param, file, tp);
+            return self.inferred_type_param_constraint(param, file, tp, false);
         }
         let mut constraint = self.type_from_node(of, node);
         // To extend `any` is to extend nothing in particular. What a mapped type ranges over are keys all the same.
@@ -1522,11 +1522,12 @@ impl<'p> Checker<'p> {
 
     /// `getInferredTypeParameterConstraint`: what follows for `infer T` from where it is written.
     #[inline(never)]
-    fn inferred_type_param_constraint(
+    pub(super) fn inferred_type_param_constraint(
         &mut self,
         param: TypeId,
         file: FileId,
         tp: TypeParamId,
+        omit_type_references: bool,
     ) -> Option<TypeId> {
         use crate::bind::InferPosition;
         let bound = self.bound(file);
@@ -1548,17 +1549,19 @@ impl<'p> Checker<'p> {
         {
             return None;
         }
-        if let Some(known) = self.p.inferred_constraints.get(&param) {
-            return known;
-        }
-        if !self.enter(Query::InferredConstraint(param)) {
-            return None;
+        if !omit_type_references {
+            if let Some(known) = self.p.inferred_constraints.get(&param) {
+                return known;
+            }
+            if !self.enter(Query::InferredConstraint(param)) {
+                return None;
+            }
         }
         let mut inferences = Vec::new();
         for &decl in decls {
             let Decl::TypeParam(p) = decl else { continue };
             match position_of(p) {
-                Some(InferPosition::TypeArgument(node, index)) => {
+                Some(InferPosition::TypeArgument(node, index)) if !omit_type_references => {
                     let hir = self.hir(file);
                     let TypeNodeKind::Ref { name, args } = hir[node].kind else {
                         continue;
@@ -1618,10 +1621,10 @@ impl<'p> Checker<'p> {
                     let mapper = self.mapper_from(&[key], &[over]);
                     inferences.push(self.instantiate(template, mapper));
                 }
-                None => {}
+                Some(InferPosition::TypeArgument(..)) | None => {}
             }
         }
-        let holds = self.leave();
+        let holds = !omit_type_references && self.leave();
         let constraint = if inferences.is_empty() {
             None
         } else {
@@ -1797,136 +1800,13 @@ impl<'p> Checker<'p> {
         ty
     }
 
-    /// Of declarations that cannot be one symbol, the class or the interface among them has this to itself, whichever has the name.
+    /// `tryGetDeclaredTypeOfSymbol`
     fn declared_type_uncached(&mut self, sym: Sym) -> TypeId {
         let flags = self.files().flags(sym);
-        self.declared_type_as(sym, flags)
-    }
-
-    /// `declareSymbolEx`, `mergeSymbol`: a declaration that is excluded by what the name already is stays out of the symbol, and so
-    /// does all that another file declares under the name if any of it is. Here they are one symbol all the same: the flags of
-    /// `sym` without the kinds of type that stayed out.
-    pub(super) fn type_flags_of_symbol(&self, sym: Sym) -> SymFlags {
-        let flags = self.files().flags(sym);
-        let object = SymFlags::CLASS | SymFlags::INTERFACE;
-        let kinds = u8::from(flags.intersects(object))
-            + u8::from(flags.contains(SymFlags::TYPE_ALIAS))
-            + u8::from(flags.contains(SymFlags::ENUM))
-            + u8::from(flags.contains(SymFlags::TYPE_PARAMETER));
-        if kinds < 2 {
-            return flags;
-        }
-        let has = self.flags_that_have_the_name(sym);
-        flags.difference(
-            (object | SymFlags::TYPE_ALIAS | SymFlags::ENUM | SymFlags::TYPE_PARAMETER)
-                .difference(has),
-        )
-    }
-
-    /// `declareSymbolEx`, `mergeSymbol`: the flags of the declarations of `sym` that no earlier declaration excludes.
-    pub(super) fn flags_that_have_the_name(&self, sym: Sym) -> SymFlags {
-        let object = SymFlags::CLASS | SymFlags::INTERFACE;
-        let (value, ty) = (SymFlags::VALUE, SymFlags::TYPE);
-        let mut has = SymFlags::empty();
-        for part in self.files().parts(sym) {
-            let (hir, bound) = (self.hir(part.file), self.bound(part.file));
-            // What one file makes of the name, and what cannot be one with that (`getExcludedSymbolFlags`).
-            let (mut makes, mut refuses) = (SymFlags::empty(), SymFlags::empty());
-            for &decl in &self.files().symbol(part).decls {
-                // What it makes the name, and its `SymbolFlags..Excludes`.
-                let (adds, excludes) = match decl {
-                    Decl::Var(mut pat) => {
-                        while let PatParent::Prop(outer, _) | PatParent::Elem(outer, _) =
-                            bound.pat_parent[pat.idx()]
-                        {
-                            pat = outer;
-                        }
-                        match bound.pat_parent[pat.idx()] {
-                            PatParent::Var(d) if matches!(hir[d].kind, VarKind::Var) => (
-                                SymFlags::FUNCTION_SCOPED_VARIABLE,
-                                value.difference(SymFlags::FUNCTION_SCOPED_VARIABLE),
-                            ),
-                            _ => (SymFlags::BLOCK_SCOPED_VARIABLE, value),
-                        }
-                    }
-                    Decl::Param(_) => (SymFlags::FUNCTION_SCOPED_VARIABLE, value),
-                    Decl::Fn(_) => (
-                        SymFlags::FUNCTION,
-                        value.difference(
-                            SymFlags::FUNCTION | SymFlags::VALUE_MODULE | SymFlags::CLASS,
-                        ),
-                    ),
-                    Decl::Class(_) => (
-                        SymFlags::CLASS,
-                        (value | ty).difference(
-                            SymFlags::VALUE_MODULE | SymFlags::INTERFACE | SymFlags::FUNCTION,
-                        ),
-                    ),
-                    Decl::Interface(_) => (SymFlags::INTERFACE, ty.difference(object)),
-                    Decl::Alias(_) => (SymFlags::TYPE_ALIAS, ty),
-                    // There is one flag for both kinds of enum: that the one excludes the other is not seen.
-                    Decl::Enum(e) if hir[e].flags.contains(Flags::CONST) => {
-                        (SymFlags::ENUM, (value | ty).difference(SymFlags::ENUM))
-                    }
-                    Decl::Enum(_) => (
-                        SymFlags::ENUM,
-                        (value | ty).difference(SymFlags::ENUM | SymFlags::VALUE_MODULE),
-                    ),
-                    Decl::Module(m)
-                        if bound.module_instance_state[m.idx()]
-                            != ModuleInstanceState::NonInstantiated =>
-                    {
-                        (
-                            SymFlags::VALUE_MODULE,
-                            value.difference(
-                                SymFlags::FUNCTION
-                                    | SymFlags::CLASS
-                                    | SymFlags::ENUM
-                                    | SymFlags::VALUE_MODULE,
-                            ),
-                        )
-                    }
-                    Decl::TypeParam(_) => (
-                        SymFlags::TYPE_PARAMETER,
-                        ty.difference(SymFlags::TYPE_PARAMETER),
-                    ),
-                    _ => continue,
-                };
-                if !makes.intersects(excludes) {
-                    makes |= adds;
-                    refuses |= excludes;
-                }
-            }
-            if !has.intersects(refuses) {
-                has |= makes;
-            }
-        }
-        has
-    }
-
-    /// What the name `sym` means where a type is expected. `flags`: its `type_flags_of_symbol`.
-    fn declared_type_by_name(&mut self, sym: Sym, flags: SymFlags) -> TypeId {
-        if flags == self.files().flags(sym) {
-            self.declared_type(sym)
-        } else {
-            self.declared_type_as(sym, flags)
-        }
-    }
-
-    /// `getDeclaredTypeOfSymbol`, of `sym` taken for what `flags` say it is.
-    fn declared_type_as(&mut self, sym: Sym, flags: SymFlags) -> TypeId {
         if flags.intersects(SymFlags::CLASS | SymFlags::INTERFACE) {
             // `getDeclaredTypeOfClassOrInterface`: a reference to itself, with the type parameters around it and its own for arguments.
             let outer = self.outer_type_params_of_symbol(sym);
-            // Those of a class or an interface that does not have the name stand for themselves.
-            let has_the_name = self
-                .type_flags_of_symbol(sym)
-                .intersects(SymFlags::CLASS | SymFlags::INTERFACE);
-            let local = if has_the_name {
-                self.local_type_params_of_symbol(sym)
-            } else {
-                SmallVec::new()
-            };
+            let local = self.local_type_params_of_symbol(sym);
             let args: Box<[TypeId]> = outer.iter().chain(local.iter()).copied().collect();
             return self.intern(TypeData::Ref {
                 target: sym,
@@ -1940,7 +1820,7 @@ impl<'p> Checker<'p> {
                 }
             }
         }
-        if flags.contains(SymFlags::ENUM) {
+        if flags.intersects(SymFlags::ENUM) {
             return self.enum_type(sym);
         }
         if flags.contains(SymFlags::ENUM_MEMBER) {
@@ -2708,22 +2588,20 @@ impl<'p> Checker<'p> {
                 }
                 // `getDeclaredTypeOfAlias`: `resolveSymbol` does not follow an `export =` that is a namespace as well as an alias.
                 if self.files().flags(sym).contains(SymFlags::ALIAS)
-                    && !self.type_flags_of_symbol(sym).intersects(SymFlags::TYPE)
+                    && !self.files().flags(sym).intersects(SymFlags::TYPE)
                 {
                     let Some(target) = self.files().resolve_alias(sym) else {
                         return TypeId::ERROR;
                     };
                     // `checkNoTypeArguments`
-                    if !args.is_empty()
-                        || !self.type_flags_of_symbol(target).intersects(SymFlags::TYPE)
-                    {
+                    if !args.is_empty() || !self.files().flags(target).intersects(SymFlags::TYPE) {
                         return TypeId::ERROR;
                     }
                     let ty = self.declared_type(target);
                     return self.regular(ty);
                 }
                 // `getTypeReferenceType`
-                let flags = self.type_flags_of_symbol(sym);
+                let flags = self.files().flags(sym);
                 if !flags.intersects(SymFlags::TYPE) {
                     return TypeId::ERROR;
                 }
@@ -2775,7 +2653,7 @@ impl<'p> Checker<'p> {
                     return self.unresolved_name_type(&names, &args);
                 };
                 // `getSymbol`: what is no type is not found where one is looked for.
-                let flags = self.type_flags_of_symbol(sym);
+                let flags = self.files().flags(sym);
                 if !flags.intersects(SymFlags::TYPE) {
                     let args = self.types_from_nodes(file, args);
                     return self.unresolved_name_type(&names, &args);
@@ -3026,7 +2904,8 @@ impl<'p> Checker<'p> {
     /// `type_reference`, for a reference that is written out.
     fn written_type_reference(&mut self, sym: Sym, args: &[TypeId]) -> TypeId {
         if !self
-            .type_flags_of_symbol(sym)
+            .files()
+            .flags(sym)
             .intersects(SymFlags::CLASS | SymFlags::INTERFACE)
         {
             return self.type_reference(sym, args);
@@ -3095,10 +2974,7 @@ impl<'p> Checker<'p> {
                     .resolve_entity(file, scope, &names, SymFlags::TYPE);
                 found
                     .and_then(|found| self.files().resolve_alias_as(found, SymFlags::TYPE))
-                    .is_some_and(|sym| {
-                        self.type_flags_of_symbol(sym)
-                            .contains(SymFlags::TYPE_ALIAS)
-                    })
+                    .is_some_and(|sym| self.files().flags(sym).contains(SymFlags::TYPE_ALIAS))
             }
             TypeNodeKind::Typeof { .. } => true,
             TypeNodeKind::Keyof(operand) | TypeNodeKind::Readonly(operand) => {
@@ -3183,7 +3059,7 @@ impl<'p> Checker<'p> {
         args: &[TypeId],
         alias: Option<(Sym, &[TypeId])>,
     ) -> TypeId {
-        let flags = self.type_flags_of_symbol(sym);
+        let flags = self.files().flags(sym);
         if flags.intersects(SymFlags::CLASS | SymFlags::INTERFACE) {
             let declared = self.declared_type(sym);
             let params = self.local_type_params_of_symbol(sym);
@@ -3218,7 +3094,7 @@ impl<'p> Checker<'p> {
                         TypeId::ANY
                     };
                 }
-                return self.declared_type_by_name(sym, flags);
+                return self.declared_type(sym);
             }
             let args = self.fill_type_args(&params, args);
             if let Some(kind) = self.intrinsic_alias(sym) {
@@ -3227,7 +3103,7 @@ impl<'p> Checker<'p> {
                     Err(()) => self.no_infer(args[0]),
                 };
             }
-            let declared = self.declared_type_by_name(sym, flags);
+            let declared = self.declared_type(sym);
             let mapper = self.mapper_from(&params, &args);
             return match alias {
                 Some(alias) => self.instantiate_with_alias(declared, mapper, alias),
@@ -3235,7 +3111,7 @@ impl<'p> Checker<'p> {
             };
         }
         if flags.intersects(SymFlags::TYPE) {
-            return self.declared_type_by_name(sym, flags);
+            return self.declared_type(sym);
         }
         TypeId::UNRESOLVED
     }

@@ -569,14 +569,6 @@ impl<'p> Checker<'p> {
         candidate: TypeId,
         target: TypeId,
     ) {
-        if self.trace_relations {
-            eprintln!(
-                "CANDIDATE for {index}: {:?} priority {} fixed {:?}",
-                self.data(candidate),
-                n.priority,
-                n.candidates[index].fixed
-            );
-        }
         if n.candidates[index].fixed.is_none() {
             let (priority, contra, depth) = (n.priority, n.contra && !n.bivariant, n.depth);
             let c = &mut n.candidates[index];
@@ -913,18 +905,7 @@ impl<'p> Checker<'p> {
         texts: &[Atom],
         types: &[TypeId],
     ) {
-        let matches = match self.data(source) {
-            TypeData::StringLit { value, .. }
-            | TypeData::EnumLit {
-                value: EnumValue::String(value),
-                ..
-            } => self.template_pieces(&[*value], &[], texts, types),
-            TypeData::Template {
-                texts: st,
-                types: sy,
-            } => self.template_pieces(st, sy, texts, types),
-            _ => None,
-        };
+        let matches = self.infer_types_from_template_literal_type(source, texts, types);
         // Nothing but placeholders, and no match: `never` for each, so that what comes of it fits nothing. What they extend,
         // `string`, would fit.
         if matches.is_none()
@@ -977,7 +958,7 @@ impl<'p> Checker<'p> {
         let rank = |c: &mut Self, t: TypeId| -> Option<(u32, TypeId)> {
             match c.data(t) {
                 TypeData::Template { texts, types } => c
-                    .is_matched_by_template(source, texts, types)
+                    .is_type_matched_by_template_literal_type(source, texts, types)
                     .then_some((1, source)),
                 TypeData::StringMapping { kind, .. } => {
                     (c.string_mapping(*kind, source) == source).then_some((2, source))
@@ -1459,16 +1440,6 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getTypeOfSymbol` of a property: what stands for its being left out is in it.
-    fn type_of_prop_or_missing(&mut self, prop: &Prop, mapper: MapperId) -> TypeId {
-        let ty = self.type_of_prop(prop, mapper);
-        if prop.flags.contains(PropFlags::OPTIONAL) {
-            self.optional_property(ty)
-        } else {
-            ty
-        }
-    }
-
     /// `inferFromSignatures`
     fn infer_from_signatures_of(
         &mut self,
@@ -1840,7 +1811,7 @@ impl<'p> Checker<'p> {
                     .shape()
                     .props
                     .iter()
-                    .map(|p| self.type_of_prop_or_missing(p, sm.mapper))
+                    .map(|p| self.type_of_prop_with_missing(p, sm.mapper))
                     .collect();
                 // `enumNumberIndexInfo`, the only index signature of an enum object, contributes nothing.
                 if !matches!(
@@ -2037,7 +2008,7 @@ impl<'p> Checker<'p> {
             {
                 continue;
             }
-            let ty = self.type_of_prop_or_missing(prop, members.mapper);
+            let ty = self.type_of_prop_with_missing(prop, members.mapper);
             let ty = self
                 .infer_reverse_mapped_type(ty, for_props.0, for_props.1)
                 .unwrap_or(TypeId::UNKNOWN);

@@ -479,13 +479,6 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
             ExprKind::Dot {
                 obj, name, chain, ..
             } => {
-                if self.is_commonjs_module_exports(e, obj) {
-                    return Some(Found::Anonymous {
-                        name: "exports".to_owned(),
-                        file,
-                        declaration: Declaration::Bound(Decl::File),
-                    });
-                }
                 let ty = self
                     .c
                     .left_type_of_property_access(file, obj, chain)
@@ -767,17 +760,6 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
             file,
             declaration: Declaration::ThisParameter(function),
         })
-    }
-
-    /// `module.exports`, where `module` is the variable of a CommonJS module.
-    fn is_commonjs_module_exports(&self, e: ExprId, module: ExprId) -> bool {
-        let (hir, bound) = (self.c.hir(self.file), self.c.bound(self.file));
-        let symbol = bound.expr_symbol[module.idx()];
-        crate::bind::is_module_exports(hir, e)
-            && symbol.is_some()
-            && bound.symbols[symbol.idx()]
-                .flags
-                .contains(SymFlags::MODULE_EXPORTS)
     }
 
     // ───────────────────────────── `getSymbolAtLocation` ─────────────────────────────
@@ -1453,7 +1435,10 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
             _ => {}
         }
         let declarations = self.declarations_of_property(prop, 0);
-        if let Some(alias) = self.c.accessible_alias_of_property_at(prop, self.file, at) {
+        if let Some(alias) = self
+            .c
+            .accessible_alias_of_property(prop, Enclosing::at_scope(self.file, at))
+        {
             return (
                 self.symbol_chain_to_string(false, &[alias], at),
                 declarations,
@@ -1598,34 +1583,16 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
         }
         let name = self.c.symbol_to_string(symbol);
         // `startsWithSingleOrDoubleQuote`: a function that `declare module "m" {}` adds to goes by its own name.
-        if name.starts_with(['"', '\'']) && self.is_external_module(symbol) {
-            let specifier = self
-                .c
-                .specifier_for_module_symbol_at(symbol, Enclosing::at_scope(self.file, at));
+        if name.starts_with(['"', '\'']) && self.c.is_external_module_symbol(symbol) {
+            let specifier =
+                self.c
+                    .specifier_for_module_symbol(symbol, self.file, ResolutionMode::None);
             // `getSpecifierForModuleSymbol`: without a file, `StripQuotes(symbol.Name)` (`isAmbientModuleSymbolName`).
             if !specifier.is_empty() {
                 return super::print::quoted(&specifier, '"', true);
             }
         }
         name
-    }
-
-    /// `core.Some(symbol.Declarations, hasNonGlobalAugmentationExternalModuleSymbol)`
-    fn is_external_module(&self, symbol: Sym) -> bool {
-        let files = self.c.files();
-        files
-            .decls(symbol)
-            .into_iter()
-            .any(|(file, decl)| match decl {
-                // `IsExternalOrCommonJSModule`, which a JSON file is not.
-                Decl::File => {
-                    files.module(file).is_module() && self.c.hir(file).kind != FileKind::Json
-                }
-                Decl::Module(module) => {
-                    matches!(self.c.hir(file)[module].name, ModuleName::String(_))
-                }
-                _ => false,
-            })
     }
 }
 

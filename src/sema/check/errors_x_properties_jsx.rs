@@ -967,8 +967,8 @@ impl Checker<'_> {
             options.jsx,
             JsxEmit::React | JsxEmit::ReactJsx | JsxEmit::ReactJsxDev
         ) || !options.jsx_fragment_factory.is_empty()
-            || options.jsx_factory.is_empty() && !has_pragma(&hir.text, b"jsx")
-            || has_pragma(&hir.text, b"jsxfrag")
+            || options.jsx_factory.is_empty() && hir.jsx_pragmas.factory.is_none()
+            || hir.jsx_pragmas.fragment_factory.is_some()
         {
             return;
         }
@@ -1170,7 +1170,7 @@ impl Checker<'_> {
         user: FileId,
         container: Atom,
     ) -> Option<u32> {
-        let namespace = self.jsx_namespace(user)?;
+        let namespace = self.jsx_namespace_at(user, false)?;
         let symbol = self.files().namespace_member(namespace, container)?;
         if !self.files().flags(symbol).intersects(SymFlags::TYPE) {
             return None;
@@ -1395,52 +1395,6 @@ fn has_empty_type_parameter_list(hir: &File, func: &Func) -> bool {
 
 fn upto(text: &[u8], pos: u32) -> &[u8] {
     &text[..(pos as usize).min(text.len())]
-}
-
-/// `extractPragmas`, whether it finds the pragma `name`, which is given in lower case. Only the `/* */` comments before the first token
-/// count, of each line only the first `@word`, and something has to follow it on the line.
-fn has_pragma(text: &[u8], name: &[u8]) -> bool {
-    let end_of_line = |text: &[u8]| text.iter().position(|&c| c == b'\n').unwrap_or(text.len());
-    let mut rest = if text.starts_with(b"#!") {
-        &text[end_of_line(text)..]
-    } else {
-        text
-    };
-    loop {
-        rest = rest.trim_ascii_start();
-        if rest.starts_with(b"//") {
-            rest = &rest[end_of_line(rest)..];
-            continue;
-        }
-        if !rest.starts_with(b"/*") {
-            return false;
-        }
-        let Some(length) = rest[2..].windows(2).position(|w| w == b"*/") else {
-            return false;
-        };
-        for line in rest[2..2 + length].split(|&c| c == b'\n' || c == b'\r') {
-            let mut from = 0;
-            while let Some(found) = line[from..].iter().position(|&c| c == b'@') {
-                let at = from + found + 1;
-                let word = line[at..]
-                    .split(|&c| c == b' ' || c == b'\t')
-                    .next()
-                    .unwrap_or_default();
-                // An `@` on its own is passed over.
-                if word.is_empty() {
-                    from = at;
-                    continue;
-                }
-                if word.eq_ignore_ascii_case(name)
-                    && !line[at + word.len()..].trim_ascii().is_empty()
-                {
-                    return true;
-                }
-                break;
-            }
-        }
-        rest = &rest[length + 4..];
-    }
 }
 
 /// Whether `text` ends with a decorator: `@a.b`, `@a.b(..)`, `@(..)`.

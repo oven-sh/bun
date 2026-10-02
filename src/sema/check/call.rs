@@ -3467,33 +3467,12 @@ impl<'p> Checker<'p> {
                 if by_subtype {
                     // What is not known is a subtype of nothing in particular: the choice is left to the second round.
                     if !self.is_known(ty) || !self.is_known(param) || !self.is_subtype(ty, param) {
-                        if self.trace_relations {
-                            self.trace_relations = false;
-                            let (from, to) = (
-                                crate::describe::Describer::new(self).describe(ty),
-                                crate::describe::Describer::new(self).describe(param),
-                            );
-                            self.trace_relations = true;
-                            eprintln!(
-                                "candidate rejected at argument {i}: {from} is no subtype of {to}"
-                            );
-                        }
                         applicable = false;
                         break;
                     }
                     continue;
                 }
                 if !self.is_assignable(ty, param) {
-                    if self.trace_relations {
-                        // Describing asks questions of its own.
-                        self.trace_relations = false;
-                        let (from, to) = (
-                            crate::describe::Describer::new(self).describe(ty),
-                            crate::describe::Describer::new(self).describe(param),
-                        );
-                        self.trace_relations = true;
-                        eprintln!("candidate rejected at argument {i}: {from} to {to}");
-                    }
                     applicable = false;
                     break;
                 }
@@ -6007,7 +5986,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `getOrCreateTypeFromSignature`
-    fn type_of_signature(&self, sig: SigId, construct: bool) -> TypeId {
+    pub(super) fn type_of_signature(&self, sig: SigId, construct: bool) -> TypeId {
         self.synth(if construct {
             Shape {
                 construct: vec![sig],

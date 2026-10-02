@@ -314,19 +314,6 @@ impl Module {
     pub fn is_untyped_import(&self, spec: Atom) -> bool {
         self.untyped_imports.iter().any(|untyped| untyped.0 == spec)
     }
-
-    /// `ResolvedUsingTsExtension` of `spec`, in the mode `imported_file` finds it in.
-    pub fn is_resolved_using_ts_extension(&self, spec: Atom) -> bool {
-        [
-            self.default_mode,
-            ResolutionMode::Import,
-            ResolutionMode::Require,
-            ResolutionMode::None,
-        ]
-        .into_iter()
-        .find(|&mode| self.imports.contains_key(&(spec, mode)))
-        .is_some_and(|mode| self.ts_extension_imports.contains(&(spec, mode)))
-    }
 }
 
 /// `ast.SymbolTable`. It is gone through in the order the names were put in, which is the same in every run.
@@ -1582,50 +1569,32 @@ const MODULE_MEMBER: SymFlags = SymFlags::VARIABLE
     .union(SymFlags::TYPE_ALIAS)
     .union(SymFlags::ALIAS);
 
-/// `getExcludedSymbolFlags`: what a symbol with `flags` cannot be one with.
-fn excluded_flags(flags: SymFlags) -> SymFlags {
-    let value = SymFlags::VALUE;
-    let both = SymFlags::VALUE | SymFlags::TYPE;
-    let mut out = SymFlags::empty();
-    if flags.contains(SymFlags::BLOCK_SCOPED_VARIABLE) {
-        out |= value;
-    }
-    if flags.contains(SymFlags::FUNCTION_SCOPED_VARIABLE) {
-        out |= value.difference(SymFlags::FUNCTION_SCOPED_VARIABLE);
-    }
-    if flags.contains(SymFlags::PROPERTY) {
-        out |= value.difference(SymFlags::PROPERTY);
-    }
-    if flags.contains(SymFlags::ENUM_MEMBER) {
-        out |= both;
-    }
-    if flags.contains(SymFlags::FUNCTION) {
-        out |= value.difference(SymFlags::FUNCTION | SymFlags::VALUE_MODULE | SymFlags::CLASS);
-    }
-    if flags.contains(SymFlags::CLASS) {
-        out |= both.difference(SymFlags::VALUE_MODULE | SymFlags::INTERFACE | SymFlags::FUNCTION);
-    }
-    if flags.contains(SymFlags::INTERFACE) {
-        out |= SymFlags::TYPE.difference(SymFlags::INTERFACE | SymFlags::CLASS);
-    }
-    if flags.contains(SymFlags::ENUM) {
-        out |= both.difference(SymFlags::ENUM | SymFlags::VALUE_MODULE);
-    }
-    if flags.contains(SymFlags::VALUE_MODULE) {
-        out |= value.difference(
-            SymFlags::FUNCTION | SymFlags::CLASS | SymFlags::ENUM | SymFlags::VALUE_MODULE,
-        );
-    }
-    if flags.contains(SymFlags::TYPE_PARAMETER) {
-        out |= SymFlags::TYPE.difference(SymFlags::TYPE_PARAMETER);
-    }
-    if flags.contains(SymFlags::TYPE_ALIAS) {
-        out |= SymFlags::TYPE;
-    }
-    if flags.contains(SymFlags::ALIAS) {
-        out |= SymFlags::ALIAS;
-    }
-    out
+/// `getExcludedSymbolFlags`
+fn get_excluded_symbol_flags(flags: SymFlags) -> SymFlags {
+    [
+        (
+            SymFlags::BLOCK_SCOPED_VARIABLE,
+            SymFlags::BLOCK_SCOPED_VARIABLE_EXCLUDES,
+        ),
+        (
+            SymFlags::FUNCTION_SCOPED_VARIABLE,
+            SymFlags::FUNCTION_SCOPED_VARIABLE_EXCLUDES,
+        ),
+        (SymFlags::PROPERTY, SymFlags::PROPERTY_EXCLUDES),
+        (SymFlags::ENUM_MEMBER, SymFlags::ENUM_MEMBER_EXCLUDES),
+        (SymFlags::FUNCTION, SymFlags::FUNCTION_EXCLUDES),
+        (SymFlags::CLASS, SymFlags::CLASS_EXCLUDES),
+        (SymFlags::INTERFACE, SymFlags::INTERFACE_EXCLUDES),
+        (SymFlags::REGULAR_ENUM, SymFlags::REGULAR_ENUM_EXCLUDES),
+        (SymFlags::CONST_ENUM, SymFlags::CONST_ENUM_EXCLUDES),
+        (SymFlags::VALUE_MODULE, SymFlags::VALUE_MODULE_EXCLUDES),
+        (SymFlags::TYPE_PARAMETER, SymFlags::TYPE_PARAMETER_EXCLUDES),
+        (SymFlags::TYPE_ALIAS, SymFlags::TYPE_ALIAS_EXCLUDES),
+        (SymFlags::ALIAS, SymFlags::ALIAS_EXCLUDES),
+    ]
+    .iter()
+    .filter(|kind| flags.contains(kind.0))
+    .fold(SymFlags::empty(), |excluded, kind| excluded | kind.1)
 }
 
 impl Files {
@@ -2182,7 +2151,7 @@ impl Files {
         let is_before =
             |target: ScriptTarget| options.target != ScriptTarget::None && options.target < target;
         let _binding = Spent::on(host, Phase::Bind);
-        let bound = bind::bind_with_atoms(
+        let bound = bind::bind(
             &hir,
             bind::BindOptions {
                 emit_standard_class_fields: options.emit_standard_class_fields,
@@ -2683,7 +2652,7 @@ impl Files {
                 // `mergeSymbol`: "Do not report an error when merging `var globalThis` with the built-in `globalThis`". Nothing else is
                 // done either.
                 if name == known::globalThis
-                    && SymFlags::MODULE.intersects(excluded_flags(self.flags(sym)))
+                    && SymFlags::MODULE.intersects(get_excluded_symbol_flags(self.flags(sym)))
                 {
                     continue;
                 }
@@ -2766,7 +2735,7 @@ impl Files {
                             // `mergeSymbol`: what cannot be one symbol stays two, and the module has the addition under the name.
                             if self
                                 .flags(resolved)
-                                .intersects(excluded_flags(self.flags(addition)))
+                                .intersects(get_excluded_symbol_flags(self.flags(addition)))
                             {
                                 let resolved = self.canonical(resolved);
                                 self.refused_merges.push((resolved, addition));
@@ -3196,7 +3165,7 @@ impl Files {
         let meanings = SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE;
         let is_alias = target_flags.contains(SymFlags::ALIAS) && !target_flags.intersects(meanings);
         // `reportMergeSymbolError`. "Assignment declarations are allowed to merge with variables, no matter what other flags they have."
-        if target_flags.intersects(excluded_flags(source_flags))
+        if target_flags.intersects(get_excluded_symbol_flags(source_flags))
             && !(source_flags | target_flags).contains(SymFlags::ASSIGNMENT)
         {
             // Two aliases are never one: the first keeps the name.
@@ -3227,7 +3196,11 @@ impl Files {
                 match self.resolve_alias_as(target, meanings) {
                     Some(found) if found == source => return source,
                     // Where the two cannot be one, the addition has the name.
-                    Some(found) if self.flags(found).intersects(excluded_flags(source_flags)) => {
+                    Some(found)
+                        if self
+                            .flags(found)
+                            .intersects(get_excluded_symbol_flags(source_flags)) =>
+                    {
                         self.refused_merges.push((target, source));
                         return source;
                     }

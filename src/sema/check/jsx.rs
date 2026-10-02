@@ -20,7 +20,7 @@ pub(super) enum JsxName {
 
 impl<'p> Checker<'p> {
     fn jsx_symbol(&mut self, file: FileId, name: Atom) -> Option<Sym> {
-        let ns = self.jsx_namespace(file)?;
+        let ns = self.jsx_namespace_at(file, false)?;
         let member = self.files().namespace_member(ns, name)?;
         let member = self.files().resolve_alias_if_needed(member)?;
         self.files()
@@ -85,7 +85,7 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getUninstantiatedJsxSignaturesOfType`, and whether they are for `new`.
+    /// "Resolve the signatures, preferring constructor", and whether they are for `new`.
     pub(super) fn jsx_signatures(&mut self, component: TypeId) -> (List<'p, SigId>, bool) {
         let apparent = self.apparent_type(component);
         let construct = self.signatures(apparent, true);
@@ -95,16 +95,15 @@ impl<'p> Checker<'p> {
         (self.signatures(apparent, false), false)
     }
 
-    /// All of `getUninstantiatedJsxSignaturesOfType`, and whether what it finds is for `new` (`getJsxReferenceKind`): where the
-    /// alternatives of a union have no signatures in common, what each of them has, to construct or else to call, is put
-    /// together. `None`: it is not worked out.
-    pub(super) fn jsx_signatures_of_tag(
+    /// `getUninstantiatedJsxSignaturesOfType`, and whether they are for `new` (`getJsxReferenceKind`). `None`: it is not worked out.
+    pub(super) fn uninstantiated_jsx_signatures_of_type(
         &mut self,
         file: FileId,
-        component: TypeId,
+        element_type: TypeId,
+        caller: ExprId,
     ) -> Option<(Vec<SigId>, bool)> {
         // `anySignature`
-        if component == TypeId::STRING {
+        if element_type == TypeId::STRING {
             let takes_nothing = self.p.types.intern_sig(SigData::Synth {
                 type_params: Box::new([]),
                 params: Box::new([]),
@@ -114,37 +113,49 @@ impl<'p> Checker<'p> {
             });
             return Some((vec![takes_nothing], false));
         }
-        if let Some(name) = self.string_literal_value(component) {
+        if let Some(name) = self.string_literal_value(element_type) {
             let attributes = match self.jsx_attributes_of_literal_tag(file, name) {
                 Ok(Some(attributes)) => attributes,
-                Ok(None) => return Some((Vec::new(), false)),
+                Ok(None) => {
+                    let hir = self.hir(file);
+                    let ExprKind::Jsx(j) = hir[caller].kind else {
+                        return None;
+                    };
+                    let at = (file, hir[caller].pos, hir[j].opening_end);
+                    let container = Arg::Text("JSX.IntrinsicElements");
+                    self.error(at, 2339, &[Arg::Atom(name), container]);
+                    return Some((Vec::new(), false));
+                }
                 Err(()) => TypeId::ANY,
             };
             return Some((vec![self.jsx_intrinsic_signature(file, attributes)], false));
         }
-        let apparent = self.apparent_type(component);
+        let apparent = self.apparent_type(element_type);
         if !self.is_known(apparent) {
             return None;
         }
-        let (sigs, construct) = self.jsx_signatures(component);
+        let (sigs, construct) = self.jsx_signatures(element_type);
         if !sigs.is_empty() || !self.is_union(apparent) {
             return Some((sigs.into_vec(), construct));
         }
         let parts = self.parts(apparent);
         let mut lists = Vec::with_capacity(parts.len());
         for &part in parts {
-            let (of_part, _) = self.jsx_signatures_of_tag(file, part)?;
-            if of_part.is_empty() {
-                return Some((Vec::new(), false));
-            }
-            lists.push(of_part);
+            lists.push(
+                self.uninstantiated_jsx_signatures_of_type(file, part, caller)?
+                    .0,
+            );
+        }
+        // `getUnionSignatures`: none as soon as one member has none.
+        if lists.iter().any(Vec::is_empty) {
+            return Some((Vec::new(), false));
         }
         Some((self.union_signatures(&lists), false))
     }
 
     /// `createSignatureForJSXIntrinsic`: `(props: attributes) => JSX.Element`, which is what a tag that is not a component comes to.
-    fn jsx_intrinsic_signature(&mut self, file: FileId, attributes: TypeId) -> SigId {
-        let ret = self.jsx_type(file, known::Element).unwrap_or(TypeId::ERROR);
+    pub(super) fn jsx_intrinsic_signature(&mut self, file: FileId, attributes: TypeId) -> SigId {
+        let ret = self.jsx_element_type(file);
         let params = vec![SigParam {
             name: known::props,
             ty: attributes,
@@ -164,10 +175,7 @@ impl<'p> Checker<'p> {
     /// `getOrCreateTypeFromSignature` of that.
     fn jsx_intrinsic_function_type(&mut self, file: FileId, attributes: TypeId) -> TypeId {
         let sig = self.jsx_intrinsic_signature(file, attributes);
-        self.synth(Shape {
-            call: vec![sig],
-            ..Shape::default()
-        })
+        self.type_of_signature(sig, false)
     }
 
     /// `getIntrinsicAttributesTypeFromJsxOpeningLikeElement`: what `JSX.IntrinsicElements` says of the tag `name`.
@@ -226,7 +234,7 @@ impl<'p> Checker<'p> {
     pub(super) fn jsx_fragment_type(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
         let (hir, files) = (self.hir(file), self.files());
         let (options, atoms) = (&files.options, &files.atoms);
-        let name = super::errors_jsx::jsx_factory_names(files, hir).1;
+        let name = super::errors_jsx::jsx_namespace(files, hir, true);
         if options.jsx != JsxEmit::React && options.jsx_fragment_factory.is_empty()
             || atoms.bytes(name) == b"null"
         {

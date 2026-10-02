@@ -7,7 +7,6 @@
 use super::errors::Diagnostic;
 use super::*;
 use crate::bind::{FnOwner, MemberOwner};
-use smallvec::SmallVec;
 
 /// `plainJSErrors` (compiler/program.go): what is said of JavaScript nobody asked to have checked. In order.
 pub(super) const PLAIN_JS_ERRORS: [u32; 91] = [
@@ -125,71 +124,26 @@ fn name_end(text: &[u8], start: usize) -> Option<usize> {
     }
 }
 
-/// The modifier a word is, if it is one that only TypeScript has.
-fn typescript_modifier(word: &[u8]) -> Option<Flags> {
-    Some(match word {
-        b"public" => Flags::PUBLIC,
-        b"private" => Flags::PRIVATE,
-        b"protected" => Flags::PROTECTED,
-        b"readonly" => Flags::READONLY,
-        b"abstract" => Flags::ABSTRACT,
-        b"declare" => Flags::AMBIENT,
-        b"override" => Flags::OVERRIDE,
-        b"const" => Flags::CONST,
-        _ => return None,
+/// The modifiers of `list` that are written and are not of `ModifierFlagsJavaScript`: where each is, and `TokenToString` of it.
+fn typescript_modifiers(
+    hir: &hir::File,
+    list: Span<ModifierId>,
+) -> impl Iterator<Item = (u32, &'static str)> {
+    // What a tag of a comment makes is `REPARSED` besides.
+    const JAVASCRIPT: Flags = Flags::EXPORT
+        .union(Flags::STATIC)
+        .union(Flags::ACCESSOR)
+        .union(Flags::ASYNC)
+        .union(Flags::DEFAULT)
+        .union(Flags::REPARSED);
+    let list = hir.modifier_list(list).iter();
+    list.filter_map(|modifier| match modifier.kind {
+        ModifierKind::Keyword(flag) if !JAVASCRIPT.intersects(flag) => Some((
+            modifier.pos,
+            super::errors_grammar_modifiers::modifier_text(flag),
+        )),
+        _ => None,
     })
-}
-
-/// The words before `at` that go with what is declared there, the first one first: where each is, and whether only TypeScript has
-/// it. `at` is the name of a member, or the keyword of a declaration, or anywhere among its modifiers.
-fn modifiers_around(text: &[u8], at: u32, flags: Flags) -> SmallVec<[(u32, bool); 4]> {
-    let is_modifier = |word: &[u8]| match typescript_modifier(word) {
-        Some(flag) => flags.contains(flag).then_some(true),
-        None => matches!(
-            word,
-            b"export" | b"default" | b"static" | b"async" | b"accessor" | b"get" | b"set"
-        )
-        .then_some(false),
-    };
-    let mut found: SmallVec<[(u32, bool); 4]> = SmallVec::new();
-    let mut i = at as usize;
-    loop {
-        let mut end = skip_trivia_back(text, i);
-        if end > 0 && text[end - 1] == b'*' {
-            end = skip_trivia_back(text, end - 1);
-        }
-        let word = word_before(text, end);
-        let Some(only_typescript) = is_modifier(word) else {
-            break;
-        };
-        // `tryParseModifier`: no flag is kept for `const`, which is a name unless what it modifies is on its line.
-        if word == b"const" && text[end..i].contains(&b'\n') {
-            break;
-        }
-        i = end - word.len();
-        found.push((i as u32, only_typescript));
-    }
-    found.reverse();
-    let mut i = at as usize;
-    loop {
-        let word = word_at(text, i);
-        let Some(only_typescript) = is_modifier(word) else {
-            break;
-        };
-        let next = skip_trivia(text, i + word.len());
-        // A member can be called by any of these words.
-        if !text.get(next).is_some_and(|&b| {
-            is_identifier_part(b) || matches!(b, b'[' | b'"' | b'\'' | b'#' | b'*' | b'{')
-        }) {
-            break;
-        }
-        if word == b"const" && text[i + word.len()..next].contains(&b'\n') {
-            break;
-        }
-        found.push((i as u32, only_typescript));
-        i = next;
-    }
-    found
 }
 
 /// `IsModifier`, of the word before the name of a parameter (`name`) or before its `...`. `start`: where the parameter starts.
@@ -320,8 +274,7 @@ impl Checker<'_> {
             }
         };
         let ends = |start: u32, end: u32, code: u32| self.note(start, end, code, Vec::new());
-        let is_modifier =
-            |at: u32| self.note(at, 0, 8009, vec![text_of(word_at(text, at as usize))]);
+        let is_modifier = |at: u32, token: &str| self.note(at, 0, 8009, vec![token.to_owned()]);
         let is_question_token = |at: u32| self.note(at, 0, 8009, vec!["?".to_owned()]);
         let declares =
             |start: u32, end: u32, what: &str| self.note(start, end, 8006, vec![what.to_owned()]);
@@ -395,31 +348,26 @@ impl Checker<'_> {
             }
         }
         for (index, func) in hir.fns.iter().enumerate() {
-            // Where it starts, and the modifiers that count as its own.
-            let (at, flags) = match (func.kind, bound.fns[index].owner) {
+            // `node.ModifierNodes()`
+            let modifiers = match (func.kind, bound.fns[index].owner) {
                 // `parseClassElement`: the one signature that is asked about.
                 (FnKind::IndexSignature, FnOwner::Member(m))
                     if matches!(bound.member_owner[m.idx()], MemberOwner::Class(_)) =>
                 {
-                    let start = modifiers_around(text, hir[m].pos, hir[m].flags)
-                        .first()
-                        .map_or(hir[m].pos, |m| m.0);
-                    say(start, 8017);
-                    ends(start, hir[m].loc.end, 8017);
+                    say(hir[m].start, 8017);
+                    ends(hir[m].start, hir[m].loc.end, 8017);
                     continue;
                 }
                 _ if is_part_of_a_type(FnId(index as u32)) || func.kind == FnKind::StaticBlock => {
                     continue;
                 }
-                (FnKind::Decl, FnOwner::Stmt(s)) => (hir[s].pos, func.flags),
-                (_, FnOwner::Member(m)) => (hir[m].pos, hir[m].flags | Flags::CONST),
-                _ => (func.pos, Flags::empty()),
+                (FnKind::Decl, FnOwner::Stmt(s)) => hir[s].modifiers,
+                (_, FnOwner::Member(m)) => hir[m].modifiers,
+                _ => Span::default(),
             };
-            let modifiers = modifiers_around(text, at, flags);
-            let start = modifiers.first().map_or(at, |m| m.0);
             if matches!(func.body, FnBody::None) {
-                say(start, 8017);
-                ends(start, self.end_of_fn(file, FnId(index as u32)), 8017);
+                say(func.start, 8017);
+                ends(func.start, self.end_of_fn(file, FnId(index as u32)), 8017);
             } else if func.ret.is_some() {
                 say(hir[func.ret].pos, 8010);
                 ends(
@@ -436,11 +384,9 @@ impl Checker<'_> {
                     8004,
                 );
             }
-            for &(at, only_typescript) in &modifiers {
-                if only_typescript {
-                    say(at, 8009);
-                    is_modifier(at);
-                }
+            for (at, token) in typescript_modifiers(hir, modifiers) {
+                say(at, 8009);
+                is_modifier(at, token);
             }
         }
         for (index, member) in hir.members.iter().enumerate() {
@@ -463,13 +409,9 @@ impl Checker<'_> {
                         8010,
                     );
                 }
-                for (at, only_typescript) in
-                    modifiers_around(text, member.pos, member.flags | Flags::CONST)
-                {
-                    if only_typescript {
-                        say(at, 8009);
-                        is_modifier(at);
-                    }
+                for (at, token) in typescript_modifiers(hir, member.modifiers) {
+                    say(at, 8009);
+                    is_modifier(at, token);
                 }
             }
         }
@@ -528,11 +470,9 @@ impl Checker<'_> {
                     8004,
                 );
             }
-            for (at, only_typescript) in modifiers_around(text, class.pos, class.flags) {
-                if only_typescript {
-                    say(at, 8009);
-                    is_modifier(at);
-                }
+            for (at, token) in typescript_modifiers(hir, class.modifiers) {
+                say(at, 8009);
+                is_modifier(at, token);
             }
             if !class.implements.is_empty() {
                 let first = hir[hir.id_at(class.implements, 0)].pos as usize;
@@ -555,14 +495,10 @@ impl Checker<'_> {
         for (index, stmt) in hir.stmts.iter().enumerate() {
             let s = StmtId(index as u32);
             match stmt.kind {
-                StmtKind::Var(decls) if !decls.is_empty() => {
-                    for (at, only_typescript) in
-                        modifiers_around(text, stmt.pos, hir[decls.at(0)].flags)
-                    {
-                        if only_typescript {
-                            say(at, 8009);
-                            is_modifier(at);
-                        }
+                StmtKind::Var(_) => {
+                    for (at, token) in typescript_modifiers(hir, stmt.modifiers) {
+                        say(at, 8009);
+                        is_modifier(at, token);
                     }
                 }
                 StmtKind::Import(i) if hir[i].type_only => {
@@ -583,12 +519,9 @@ impl Checker<'_> {
                     say(stmt.pos, 8006);
                     declares(stmt.pos, self.end_of_stmt(file, s), "export type");
                 }
-                StmtKind::ImportEquals(i) => {
-                    let start = modifiers_around(text, stmt.pos, hir[i].flags)
-                        .first()
-                        .map_or(stmt.pos, |m| m.0);
-                    say(start, 8002);
-                    ends(start, self.end_of_stmt(file, s), 8002);
+                StmtKind::ImportEquals(_) => {
+                    say(stmt.start, 8002);
+                    ends(stmt.start, self.end_of_stmt(file, s), 8002);
                 }
                 StmtKind::ExportAssign(_) => {
                     say(stmt.pos, 8003);

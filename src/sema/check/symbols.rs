@@ -1,6 +1,7 @@
 //! The types of values that have names: variables, parameters, functions, classes, imports; and what functions return.
 
 use super::decl::declarations_of;
+use super::related::Place;
 use super::*;
 use crate::bind::{Decl, FnOwner, Parent, PatParent, ScopeId, ScopeKind, UNREACHABLE};
 use smallvec::SmallVec;
@@ -40,6 +41,42 @@ impl Iter3 {
             y: Some(ty),
             r: Some(ty),
             n: Some(ty),
+        }
+    }
+}
+
+/// `IterationUse`
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(super) enum IterationUse {
+    ForOf,
+    ForAwaitOf,
+    Spread,
+    Destructuring,
+    YieldStar,
+    AsyncYieldStar,
+}
+
+impl IterationUse {
+    /// `IterationUseAllowsAsyncIterablesFlag`
+    pub(super) fn allows_async(self) -> bool {
+        matches!(
+            self,
+            IterationUse::ForAwaitOf | IterationUse::AsyncYieldStar
+        )
+    }
+
+    /// `IterationUseForOfFlag`, with which `IterationUseAllowsStringInputFlag` goes.
+    fn is_for_of(self) -> bool {
+        matches!(self, IterationUse::ForOf | IterationUse::ForAwaitOf)
+    }
+
+    /// What is said when `next` does not take what it will be sent.
+    fn code_for_what_is_sent(self) -> u32 {
+        match self {
+            IterationUse::ForOf | IterationUse::ForAwaitOf => 2763,
+            IterationUse::Spread => 2764,
+            IterationUse::Destructuring => 2765,
+            IterationUse::YieldStar | IterationUse::AsyncYieldStar => 2766,
         }
     }
 }
@@ -204,19 +241,7 @@ impl<'p> Checker<'p> {
         {
             return ty;
         }
-        let mut flags = self.files().flags(sym);
-        // `mergeSymbol` keeps a declaration from another file out of the symbol when the flags conflict. `Files::merge_symbols`
-        // merges it anyway, so drop the value kinds that lost the name.
-        let value_kinds = SymFlags::VARIABLE
-            | SymFlags::CLASS
-            | SymFlags::FUNCTION
-            | SymFlags::ENUM
-            | SymFlags::VALUE_MODULE;
-        if flags.contains(SymFlags::MERGED)
-            && flags.intersection(value_kinds).bits().count_ones() > 1
-        {
-            flags = flags.difference(value_kinds.difference(self.flags_that_have_the_name(sym)));
-        }
+        let flags = self.files().flags(sym);
         // `getTypeOfSymbol`: what a name stands for is asked last, so what it is declared as where it stands goes first.
         if flags.contains(SymFlags::ALIAS) && !flags.intersects(SymFlags::VALUE) {
             return self.type_of_alias(sym);
@@ -276,7 +301,7 @@ impl<'p> Checker<'p> {
                 mapper,
             });
         }
-        if flags.contains(SymFlags::ENUM) {
+        if flags.intersects(SymFlags::ENUM) {
             return self.intern(TypeData::Anon {
                 origin: Origin::EnumObject(sym),
                 mapper: MapperId::IDENTITY,
@@ -318,7 +343,7 @@ impl<'p> Checker<'p> {
                     return if self.hir(file).kind == FileKind::Json {
                         self.widened(ty)
                     } else {
-                        self.widened_for_declaration(ty)
+                        self.widened_for_declaration(ty, None)
                     };
                 }
             }
@@ -1037,14 +1062,170 @@ impl<'p> Checker<'p> {
     }
 
     /// `widenTypeForVariableLikeDeclaration`: what something that has a name is, given what it gets its type from. A `unique symbol`
-    /// belongs to the declaration it was made for, which does not come here: to any other it is a `symbol`.
-    fn widened_for_declaration(&mut self, ty: TypeId) -> TypeId {
+    /// belongs to the declaration it was made for, which does not come here: to any other it is a `symbol`. `name`: what it is the
+    /// type of. `None`: `reportErrors` is false.
+    fn widened_for_declaration(&mut self, ty: TypeId, name: Option<(FileId, PatId)>) -> TypeId {
         let ty = if matches!(self.data(ty), TypeData::UniqueSymbol { .. }) {
             TypeId::SYMBOL
         } else {
             ty
         };
-        self.regular_object(ty)
+        let widened = self.regular_object(ty);
+        // `getTypeOfVariableOrParameterOrPropertyWorker` goes by `symbol.ValueDeclaration`.
+        if let Some((file, pat)) = name
+            && self.contains_widening_type(ty, 0)
+            && self.value_declaration_of_variable_name(file, pat) == (file, pat)
+            && self.report_errors_from_widening(ty)
+        {
+            self.report_implicit_any_of_name(file, pat, widened);
+        }
+        widened
+    }
+
+    /// `t.objectFlags&ObjectFlagsContainsWideningType != 0`. Nothing has it under strictNullChecks.
+    pub(super) fn contains_widening_type(&self, ty: TypeId, depth: u32) -> bool {
+        if self.p.files.options.strict_null_checks || depth > 8 {
+            return false;
+        }
+        match self.data(ty) {
+            // `createWideningType`
+            _ if ty == TypeId::NULL || ty == TypeId::UNDEFINED => true,
+            // `getPropagatingFlagsOfTypes`
+            TypeData::Union(list)
+            | TypeData::Intersection(list)
+            | TypeData::Tuple {
+                elems: TypeArguments::Given(list),
+                ..
+            }
+            | TypeData::Ref {
+                args: TypeArguments::Given(list),
+                ..
+            } => list
+                .iter()
+                .any(|&t| self.contains_widening_type(t, depth + 1)),
+            &TypeData::Anon {
+                origin: Origin::ObjectLiteral(file, e, ..),
+                ..
+            } => self.has_member_with_widening_type(file, e, depth),
+            TypeData::Synth(shape) => shape.contains_widening_type,
+            _ => false,
+        }
+    }
+
+    /// `checkObjectLiteral`: `objectFlags |= t.objectFlags & ObjectFlagsPropagatingFlags`, of each member of `literal` but what is
+    /// spread and the accessors. They were looked at with the literal.
+    pub(super) fn has_member_with_widening_type(
+        &self,
+        file: FileId,
+        literal: ExprId,
+        depth: u32,
+    ) -> bool {
+        let hir = self.hir(file);
+        let ExprKind::Object(props) = hir[literal].kind else {
+            return false;
+        };
+        !self.p.files.options.strict_null_checks
+            && props.iter().any(|p| {
+                matches!(
+                    hir[p].kind,
+                    PropKind::Init | PropKind::Shorthand | PropKind::Method
+                ) && self
+                    .p
+                    .literal_prop_types
+                    .get(file, p.idx())
+                    .is_some_and(|member| self.contains_widening_type(member, depth + 1))
+            })
+    }
+
+    /// `reportErrorsFromWidening`. Whether `reportImplicitAny` is left to do, which is for whoever knows the declaration.
+    pub(super) fn report_errors_from_widening(&mut self, ty: TypeId) -> bool {
+        self.p.files.options.no_implicit_any
+            && self.contains_widening_type(ty, 0)
+            && !self.report_widening_errors_in_type(ty)
+    }
+
+    /// `reportWideningErrorsInType`: 7018
+    fn report_widening_errors_in_type(&mut self, ty: TypeId) -> bool {
+        if !self.contains_widening_type(ty, 0) {
+            return false;
+        }
+        let mut error_reported = false;
+        match self.data(ty) {
+            TypeData::Union(members) => {
+                if members.iter().any(|&m| self.is_empty_object_type(m)) {
+                    return true;
+                }
+                for &m in members.iter() {
+                    error_reported = error_reported || self.report_widening_errors_in_type(m);
+                }
+            }
+            TypeData::Tuple { .. } | TypeData::Ref { .. } if self.is_array_or_tuple(ty) => {
+                for &argument in self.type_arguments(ty) {
+                    error_reported =
+                        error_reported || self.report_widening_errors_in_type(argument);
+                }
+            }
+            _ if self.is_object_literal_type(ty) => {
+                let Some(members) = self.members(ty) else {
+                    return false;
+                };
+                let literal = self.symbol_declaration_of_object_type(ty);
+                for prop in &members.shape().props {
+                    let of_prop = self.type_of_prop(prop, members.mapper);
+                    if !self.contains_widening_type(of_prop, 0) {
+                        continue;
+                    }
+                    error_reported = self.report_widening_errors_in_type(of_prop);
+                    if error_reported {
+                        continue;
+                    }
+                    // "we need to account for property types coming from object literal type normalization in unions"
+                    let written = Self::declared_properties(&[prop])
+                        .iter()
+                        .find_map(|declared| {
+                            let PropSource::Literal(file, p) = declared.source else {
+                                return None;
+                            };
+                            let owner = self.bound(file).prop_owner[p.idx()];
+                            (owner.is_some() && literal == Some((file, self.hir(file)[owner].pos)))
+                                .then_some((file, p))
+                        });
+                    if let Some((file, p)) = written {
+                        let start = self.hir(file)[p].pos;
+                        let name = self.declaration_name_at(file, start);
+                        let widened = self.regular_object(of_prop);
+                        self.error(
+                            (file, start, self.end_of_prop(file, p)),
+                            7018,
+                            &[Arg::Text(&name), Arg::Type(widened)],
+                        );
+                        error_reported = true;
+                    }
+                }
+            }
+            _ => {}
+        }
+        error_reported
+    }
+
+    /// `reportImplicitAny`, of the name `pat` of a variable, a parameter or a binding element that comes to be `ty`: 7005, 7006 7019,
+    /// 7031.
+    fn report_implicit_any_of_name(&mut self, file: FileId, pat: PatId, ty: TypeId) {
+        let hir = self.hir(file);
+        if !self.p.files.options.no_implicit_any || hir.is_js && !self.is_check_js(file) {
+            return;
+        }
+        let name = (file, hir[pat].pos, self.end_of_name_at(file, hir[pat].pos));
+        let (at, code) = match self.bound(file).pat_parent[pat.idx()] {
+            PatParent::Param(p) if hir[p].flags.contains(Flags::REST) => {
+                ((file, hir[p].pos, self.end_of_param(file, p)), 7019)
+            }
+            PatParent::Param(p) => ((file, hir[p].pos, self.end_of_param(file, p)), 7006),
+            PatParent::Prop(..) | PatParent::Elem(..) => (name, 7031),
+            _ => (name, 7005),
+        };
+        let name = self.source_text(file, name.1, name.2);
+        self.error(at, code, &[Arg::Text(&name), Arg::Type(ty)]);
     }
 
     /// `isObjectLiteralType`: whether `ty` is the type of an object literal expression, fresh or not, as opposed to that of something
@@ -1333,6 +1514,7 @@ impl<'p> Checker<'p> {
                 TypeData::Synth(shape) => {
                     let mut shape = Shape::clone(shape);
                     (shape.literal, shape.is_regular) = (Literalness::No, false);
+                    shape.contains_widening_type = false;
                     for prop in &mut shape.props {
                         prop.flags.remove(PropFlags::REGULAR);
                         if !prop.flags.intersects(as_they_are) {
@@ -1737,7 +1919,7 @@ impl<'p> Checker<'p> {
                 {
                     return self.undefined_as_declared();
                 }
-                self.widened_for_declaration(ty)
+                self.widened_for_declaration(ty, Some((file, pat)))
             }
         }
     }
@@ -2253,7 +2435,7 @@ impl<'p> Checker<'p> {
                     let iterable = self.non_null_type(iterable);
                     let element = self.iterated_type(iterable, is_await);
                     return if is_name {
-                        self.widened_for_declaration(element)
+                        self.widened_for_declaration(element, Some((file, decl.pat)))
                     } else {
                         element
                     };
@@ -2358,10 +2540,12 @@ impl<'p> Checker<'p> {
         };
         // `widenTypeInferredFromInitializer`
         if hir.is_js && self.is_empty_array_literal_type(file, decl.init, ty) {
-            return self.array_of(TypeId::ANY);
+            let any_array = self.array_of(TypeId::ANY);
+            self.report_implicit_any_of_name(file, decl.pat, any_array);
+            return any_array;
         }
         if is_name {
-            self.widened_for_declaration(ty)
+            self.widened_for_declaration(ty, Some((file, decl.pat)))
         } else {
             ty
         }
@@ -2390,7 +2574,7 @@ impl<'p> Checker<'p> {
             && let Some(getter) = self.sibling_accessor(file, func, FnKind::Getter)
         {
             let ty = self.return_type_of_fn(file, getter);
-            return self.widened_for_declaration(ty);
+            return self.widened_for_declaration(ty, Some((file, param.pat)));
         }
         if let Some(ty) = self.param_type_of_full_signature(file, func, index) {
             return ty;
@@ -2431,7 +2615,11 @@ impl<'p> Checker<'p> {
         }
         if param.default.is_some() {
             let ty = self.type_from_param_default(file, p);
-            let ty = self.widened_for_declaration(ty);
+            // `checkVariableLikeDeclaration` asks for the type of a name, `assignParameterType` for that of any parameter of a function
+            // expression. That of a pattern in a declaration is asked for only by who compares the signature.
+            let is_asked_for = matches!(hir[param.pat].kind, PatKind::Ident(_))
+                || matches!(self.bound(file).fns[func.idx()].owner, FnOwner::Expr(_));
+            let ty = self.widened_for_declaration(ty, is_asked_for.then_some((file, param.pat)));
             // `addOptionalityEx`
             return if param.flags.contains(Flags::OPTIONAL) {
                 self.optional(ty)
@@ -2503,6 +2691,8 @@ impl<'p> Checker<'p> {
                 let mut shape = Shape {
                     literal,
                     is_regular: !self.is_fresh_object_literal_type(ty),
+                    contains_widening_type: self.contains_widening_type(ty, 0),
+                    symbol_declared_at: self.symbol_declaration_of_object_type(ty),
                     ..Shape::default()
                 };
                 for prop in &members.shape().props {
@@ -2687,6 +2877,17 @@ impl<'p> Checker<'p> {
 
     /// `getReturnTypeFromAnnotation`, then `getReturnTypeFromBody`. It pushes no resolution and caches nothing.
     pub(super) fn return_type_of_fn_uncached(&mut self, file: FileId, func: FnId) -> TypeId {
+        self.return_type_from_body(file, func, &mut [None; 3])
+    }
+
+    /// The same. `unwidened`: `yieldType`, `returnType` and `nextType`, as `getReturnTypeFromBody` hands them to
+    /// `reportErrorsFromWidening`.
+    pub(super) fn return_type_from_body(
+        &mut self,
+        file: FileId,
+        func: FnId,
+        unwidened: &mut [Option<TypeId>; 3],
+    ) -> TypeId {
         let hir = self.hir(file);
         let f = &hir[func];
         if f.ret.is_some() {
@@ -2727,7 +2928,11 @@ impl<'p> Checker<'p> {
             FnBody::Expr(e) => {
                 let ty = self.type_of_expr(file, e);
                 let ty = self.regular_in_const_context(file, e, ty);
-                if is_async { self.awaited(ty) } else { ty }
+                if is_async {
+                    self.check_awaited_type(ty, true, self.place_of_function(file, func), 1058)
+                } else {
+                    ty
+                }
             }
             // `checkAndAggregateReturnExpressionTypes`
             FnBody::Block(_) => {
@@ -2743,13 +2948,19 @@ impl<'p> Checker<'p> {
                         without_expression = true;
                         continue;
                     }
+                    // "`return await` is also safe to unwrap here"
+                    let e = match hir[e].kind {
+                        ExprKind::Await(operand) if is_async => operand,
+                        _ => e,
+                    };
                     if self.is_call_of_the_function_itself(file, func, e, is_async) {
                         returns_never = true;
                         continue;
                     }
                     let mut ty = self.type_of_expr(file, e);
                     if is_async {
-                        ty = self.awaited(ty);
+                        let error_node = self.place_of_function(file, func);
+                        ty = self.check_awaited_type(ty, true, error_node, 1058);
                     }
                     if ty.is_never() {
                         returns_never = true;
@@ -2785,6 +2996,7 @@ impl<'p> Checker<'p> {
             }
         };
         if !is_generator {
+            unwidened[1] = Some(ret);
             // `getWidenedLiteralLikeTypeForContextualReturnTypeIfNeeded`
             if self.is_unit(ret) {
                 let mut contextual = if self.is_own_contextual_signature(file, func) {
@@ -2851,6 +3063,7 @@ impl<'p> Checker<'p> {
         } else {
             Some(self.intersection(&nexts))
         };
+        *unwidened = [Some(yielded), Some(ret), next];
         // `getWidenedLiteralLikeTypeForContextualIterationTypeIfNeeded`: only a type with one value is widened, and only where no
         // literal is expected. A union of literals stays.
         if self.is_unit(ret) || self.is_unit(yielded) || next.is_some_and(|t| self.is_unit(t)) {
@@ -3154,14 +3367,37 @@ impl<'p> Checker<'p> {
         Some(self.instantiate(param, mapper))
     }
 
-    /// `checkAwaitedType`: what `await` gives for a value of type `ty`.
+    /// `checkAwaitedType`: what `await` gives for a value of type `ty`. `message`: what is said at `error_node` of what has a `then`
+    /// to call and is no promise.
+    pub(super) fn check_awaited_type(
+        &mut self,
+        ty: TypeId,
+        with_alias: bool,
+        error_node: Place,
+        message: u32,
+    ) -> TypeId {
+        let error = Some((error_node, message));
+        let awaited = if with_alias {
+            self.awaited_type_ex(ty, error)
+        } else {
+            self.awaited_no_alias_ex(ty, error)
+        };
+        awaited.unwrap_or(TypeId::ERROR)
+    }
+
+    /// The same, and nothing is said.
     pub fn awaited(&mut self, ty: TypeId) -> TypeId {
         self.awaited_or_none(ty).unwrap_or(TypeId::ERROR)
     }
 
     /// `getAwaitedType`. `None`: to await a `ty` is an error.
     pub(super) fn awaited_or_none(&mut self, ty: TypeId) -> Option<TypeId> {
-        let awaited = self.awaited_no_alias(ty)?;
+        self.awaited_type_ex(ty, None)
+    }
+
+    /// `getAwaitedTypeEx`. `error`: `errorNode` and `diagnosticMessage`.
+    fn awaited_type_ex(&mut self, ty: TypeId, error: Option<(Place, u32)>) -> Option<TypeId> {
+        let awaited = self.awaited_no_alias_ex(ty, error)?;
         // `createAwaitedTypeIfNeeded`, of the whole: `T | U` is `Awaited<T | U>` if either may turn out to be a promise.
         if self.is_awaited_type_needed(awaited) {
             // `getGlobalAwaitedSymbol`
@@ -3178,19 +3414,28 @@ impl<'p> Checker<'p> {
 
     /// `getAwaitedTypeNoAlias`: the same, but what may turn out to be a promise stands for itself, not wrapped in `Awaited`.
     pub(super) fn awaited_no_alias(&mut self, ty: TypeId) -> Option<TypeId> {
+        self.awaited_no_alias_ex(ty, None)
+    }
+
+    /// `getAwaitedTypeNoAliasEx`
+    fn awaited_no_alias_ex(&mut self, ty: TypeId, error: Option<(Place, u32)>) -> Option<TypeId> {
         self.guard("awaited");
         if self.is_any(ty) || self.is_primitive(ty) || self.awaited_argument(ty).is_some() {
             return Some(ty);
         }
-        // `awaitedTypeOfType`
-        if self.has_type_variables(ty) || !self.is_nothing_about_types_under_way() {
-            return self.awaited_no_alias_uncached(ty);
+        // `awaitedTypeOfType`. With a node to report on nothing kept is gone by: what is found wrong on the way to an answer is not
+        // kept with it. tsgo keeps the answer in each checker and says it the first time only, which is a matter of who asks first.
+        if error.is_some()
+            || self.has_type_variables(ty)
+            || !self.is_nothing_about_types_under_way()
+        {
+            return self.awaited_no_alias_uncached(ty, error);
         }
         if let Some(kept) = self.p.awaited_types.get(&ty) {
             return kept;
         }
         let before = self.what_only_holds_for_now();
-        let awaited = self.awaited_no_alias_uncached(ty);
+        let awaited = self.awaited_no_alias_uncached(ty, None);
         if self.what_only_holds_for_now() == before
             // What goes by one of these is not kept, and `what_only_holds_for_now` does not always say so.
             && self.resolving.is_empty()
@@ -3236,17 +3481,24 @@ impl<'p> Checker<'p> {
     }
 
     /// Of a `ty` that is not `any`, no primitive, and no `Awaited<T>` that waits.
-    fn awaited_no_alias_uncached(&mut self, ty: TypeId) -> Option<TypeId> {
+    fn awaited_no_alias_uncached(
+        &mut self,
+        ty: TypeId,
+        error: Option<(Place, u32)>,
+    ) -> Option<TypeId> {
         if self.is_union(ty) {
             // `type S = string | Promise<S>` never comes to an end.
             if self.awaiting.contains(&ty) {
+                if let Some((error_node, _)) = error {
+                    self.error(error_node, 1062, &[]);
+                }
                 return None;
             }
             self.awaiting.push(ty);
             let parts = self.parts(ty);
             let mut mapped: SmallVec<[TypeId; 8]> = SmallVec::new();
             for &part in parts {
-                mapped.extend(self.awaited_no_alias(part));
+                mapped.extend(self.awaited_no_alias_ex(part, error));
             }
             self.awaiting.pop();
             // `mapType`: a member for which there is nothing is left out, and nothing left is nothing.
@@ -3262,9 +3514,13 @@ impl<'p> Checker<'p> {
         if self.is_awaited_type_needed(ty) {
             return Some(ty);
         }
-        if let Some(promised) = self.thenable_value(ty) {
+        let mut this_type_for_error = None;
+        if let Some(promised) = self.thenable_value_ex(ty, &mut this_type_for_error) {
             // A promise of itself, or of a promise of itself, is never settled.
             if promised == ty || self.awaiting.contains(&promised) {
+                if let Some((error_node, _)) = error {
+                    self.error(error_node, 1062, &[]);
+                }
                 return None;
             }
             if self.depth > 40 {
@@ -3272,13 +3528,23 @@ impl<'p> Checker<'p> {
             }
             self.depth += 1;
             self.awaiting.push(ty);
-            let awaited = self.awaited_no_alias(promised);
+            let awaited = self.awaited_no_alias_ex(promised, error);
             self.awaiting.pop();
             self.depth -= 1;
             return awaited;
         }
         // What has a `then` to call and is no promise would never be settled either.
-        if self.is_thenable(ty) { None } else { Some(ty) }
+        if !self.is_thenable(ty) {
+            return Some(ty);
+        }
+        if let Some((error_node, message)) = error {
+            let chain = this_type_for_error.map(|this| {
+                self.new_diagnostic(error_node, 2684, &[Arg::Type(ty), Arg::Type(this)])
+            });
+            let diagnostic = self.new_diagnostic_chain(chain, error_node, message, &[]);
+            self.add_diagnostic(diagnostic);
+        }
+        None
     }
 
     /// `isAwaitedTypeNeeded`: whether `ty` waits for a type parameter that may turn out to be a promise.
@@ -3372,6 +3638,16 @@ impl<'p> Checker<'p> {
 
     /// `getPromisedTypeOfPromise`: what the callback given to `ty.then` is called with. `None`: a `ty` is no promise.
     pub(super) fn thenable_value(&mut self, ty: TypeId) -> Option<TypeId> {
+        self.thenable_value_ex(ty, &mut None)
+    }
+
+    /// `getPromisedTypeOfPromiseEx`. `this_type_for_error_out`: the `this` that a `then` asks for, if no `then` takes a `ty` for `this`.
+    /// (Nobody gives it an `errorNode`.)
+    fn thenable_value_ex(
+        &mut self,
+        ty: TypeId,
+        this_type_for_error_out: &mut Option<TypeId>,
+    ) -> Option<TypeId> {
         if self.is_any(ty) {
             return None;
         }
@@ -3396,16 +3672,19 @@ impl<'p> Checker<'p> {
         }
         // The ways to call `then` on a `ty`.
         let mut callbacks: SmallVec<[TypeId; 4]> = SmallVec::new();
+        let mut this_type_for_error = None;
         for sig in self.signatures(then, false) {
             if let Some(this) = self.sig_this_type(sig)
                 && this != TypeId::VOID
                 && !self.is_subtype(ty, this)
             {
+                this_type_for_error = Some(this);
                 continue;
             }
             callbacks.push(self.type_of_first_parameter(sig));
         }
         if callbacks.is_empty() {
+            *this_type_for_error_out = this_type_for_error;
             return None;
         }
         let on_fulfilled = self.union(&callbacks);
@@ -3443,29 +3722,83 @@ impl<'p> Checker<'p> {
         self.iterated_type(ty, is_async)
     }
 
-    /// `getIteratedTypeOrElementType`. `None`: a `ty` cannot be gone through.
+    /// `getIteratedTypeOrElementType`, and nothing is said. `None`: a `ty` cannot be gone through. Strings are for `for..of` alone
+    /// (`IterationUseAllowsStringInputFlag`), but who asks is not told apart here.
     pub(super) fn iterated_type_if_any(&mut self, ty: TypeId, is_async: bool) -> Option<TypeId> {
+        let usage = if is_async {
+            IterationUse::ForAwaitOf
+        } else {
+            IterationUse::ForOf
+        };
+        self.iterated_type_or_element_type(usage, ty, TypeId::UNDEFINED, None)
+    }
+
+    /// `getIteratedTypeOrElementType`. `sent`: what `next` will be sent. With an `error_node` it is `checkAssignability` too.
+    pub(super) fn iterated_type_or_element_type(
+        &mut self,
+        usage: IterationUse,
+        ty: TypeId,
+        sent: TypeId,
+        error_node: Option<Place>,
+    ) -> Option<TypeId> {
         if self.is_any(ty) {
             return Some(ty);
         }
+        let allows_async = usage.allows_async();
         if ty.is_never() {
+            if let Some(error_node) = error_node {
+                let is_for_of = usage.is_for_of();
+                let diagnostic =
+                    self.type_not_iterable_error(error_node, ty, allows_async, is_for_of);
+                self.add_diagnostic(diagnostic);
+            }
             return None;
         }
         let iterable_exists = self.global_type_of_arity(known::Iterable, 3).is_some();
-        if iterable_exists || is_async {
-            let yielded = self.iterable_types(ty, true, is_async, true, None).y;
-            if yielded.is_some() || iterable_exists {
-                return yielded;
+        if iterable_exists || allows_async {
+            let types = self.iterable_types(
+                ty,
+                true,
+                allows_async,
+                usage.is_for_of(),
+                error_node.filter(|_| iterable_exists),
+            );
+            if error_node.is_some()
+                && let Some(next) = types.n
+            {
+                let head_message = Some(usage.code_for_what_is_sent());
+                self.check_type_assignable_to(sent, next, error_node, head_message);
+            }
+            if types.y.is_some() || iterable_exists {
+                return types.y;
             }
         }
-        // Without `Iterable` there are strings, and what is like an array. Strings are for `for..of` alone
-        // (`IterationUseAllowsStringInputFlag`), but who asks is not told apart here.
-        let arrays = self.filter(ty, |c, m| !c.is_string_like(m));
-        if arrays.is_never() {
-            return Some(TypeId::STRING);
+        // Without `Iterable` there are strings, where they will do, and what is like an array.
+        let mut arrays = ty;
+        if usage.is_for_of() {
+            arrays = self.filter(ty, |c, m| !c.is_string_like(m));
+            if arrays.is_never() {
+                return Some(TypeId::STRING);
+            }
         }
         let has_string = arrays != ty;
         if !self.is_array_like(arrays) {
+            if let Some(error_node) = error_node {
+                // `getIterationDiagnosticDetails`
+                let yielded = self.iterable_types(ty, true, allows_async, usage.is_for_of(), None);
+                let is_later_iterable = matches!(self.data(ty), TypeData::Ref { target, .. } if matches!(
+                    self.files().atoms.bytes(self.files().symbol(*target).name),
+                    b"Float32Array" | b"Float64Array" | b"Int16Array" | b"Int32Array" | b"Int8Array" | b"NodeList" | b"Uint16Array" | b"Uint32Array" | b"Uint8Array" | b"Uint8ClampedArray"
+                ));
+                let code = if yielded.y.is_some() || is_later_iterable {
+                    2802
+                } else if usage.is_for_of() && !has_string {
+                    2495
+                } else {
+                    2461
+                };
+                self.error(error_node, code, &[Arg::Type(arrays)]);
+            }
             return has_string.then_some(TypeId::STRING);
         }
         let element = self.number_index_type(arrays)?;
@@ -3474,6 +3807,35 @@ impl<'p> Checker<'p> {
         } else {
             element
         })
+    }
+
+    /// `reportTypeNotIterableError`, not added yet. `is_of_for_of`: `error_node` is what a `for..of` goes through.
+    fn type_not_iterable_error(
+        &mut self,
+        error_node: Place,
+        ty: TypeId,
+        allows_async: bool,
+        is_of_for_of: bool,
+    ) -> Reported {
+        // `getAwaitedTypeOfPromise`
+        let mut suggests_await = self
+            .thenable_value(ty)
+            .and_then(|promised| self.awaited_or_none(promised))
+            .is_some_and(|awaited| self.is_known(awaited));
+        if !suggests_await
+            && !allows_async
+            && is_of_for_of
+            && self.global_type_of_arity(known::AsyncIterable, 3).is_some()
+        {
+            let any_async_iterable = self.global_ref(known::AsyncIterable, &[TypeId::ANY; 3]);
+            suggests_await = self.is_assignable(ty, any_async_iterable);
+        }
+        let code = if allows_async { 2504 } else { 2488 };
+        let mut diagnostic = self.new_diagnostic(error_node, code, &[Arg::Type(ty)]);
+        if suggests_await {
+            diagnostic.add_related_info(Reported::new(error_node, 2773, Vec::new()));
+        }
+        diagnostic
     }
 
     /// `getIndexTypeOfType(ty, numberType)`
@@ -3532,7 +3894,8 @@ impl<'p> Checker<'p> {
 
     /// The generator that `e`, a `yield`, is written in. Where there is none `checkYieldExpression` returns `any` at once.
     pub(super) fn containing_generator(&self, file: FileId, e: ExprId) -> Option<FnId> {
-        self.enclosing_fn_of_expr(file, e)
+        self.get_containing_function(file, e)
+            .flatten()
             .filter(|&func| self.hir(file)[func].flags.contains(Flags::GENERATOR))
     }
 
@@ -3574,20 +3937,21 @@ impl<'p> Checker<'p> {
         if types.has_types() {
             types
         } else {
-            self.iterator_types(ty, is_async, None)
+            self.iterator_types(ty, is_async, None, None)
         }
     }
 
     /// `getIterationTypesOfIterable`: what comes of going through a `ty`, by its `[Symbol.asyncIterator]` if `asynchronous`, failing
-    /// that by its `[Symbol.iterator]` if `sync`. `for_of`: with `for..of`, awaited or not (`IterationUseForOfFlag`).
-    /// `said`: the codes of what is found wrong on the way (`diagnosticOutput`). They are errors only if there are types in the end.
+    /// that by its `[Symbol.iterator]` if `sync`. `for_of`: with `for..of`, awaited or not (`IterationUseForOfFlag`). tsgo keeps the
+    /// answer in each checker, and what is found wrong on the way to one is said the first time only, which is a matter of who asks
+    /// first: here it is said of every `error_node`.
     pub(super) fn iterable_types(
         &mut self,
         ty: TypeId,
         sync: bool,
         asynchronous: bool,
         for_of: bool,
-        mut said: Option<&mut Vec<u32>>,
+        error_node: Option<Place>,
     ) -> Iter3 {
         self.guard("iterable_types");
         let ty = self.reduced(ty);
@@ -3601,20 +3965,25 @@ impl<'p> Checker<'p> {
             for &part in parts {
                 let types = self.iterable_types(part, sync, asynchronous, for_of, None);
                 if !types.has_types() {
+                    self.report_type_not_iterable(error_node, ty, asynchronous, for_of, Vec::new());
                     return Iter3::default();
                 }
                 all.push(types);
             }
             return self.combine_iteration_types(&all);
         }
-        // A type parameter has what it extends has.
+        // A type parameter has what it extends has, and goes by its own name.
         if self.is_deferred(ty) {
             let apparent = self.apparent_type(ty);
-            return if apparent == ty {
+            let types = if apparent == ty {
                 Iter3::default()
             } else {
-                self.iterable_types(apparent, sync, asynchronous, for_of, said)
+                self.iterable_types(apparent, sync, asynchronous, for_of, None)
             };
+            if !types.has_types() {
+                self.report_type_not_iterable(error_node, ty, asynchronous, for_of, Vec::new());
+            }
+            return types;
         }
         // What the library that has `Iterable` says of arrays, tuples and strings comes to this.
         if sync && self.global_type_of_arity(known::Iterable, 3).is_some() {
@@ -3639,6 +4008,7 @@ impl<'p> Checker<'p> {
                 };
             }
         }
+        let mut diags = Vec::new();
         if asynchronous {
             let names = [
                 known::AsyncIterable,
@@ -3654,8 +4024,9 @@ impl<'p> Checker<'p> {
                     types
                 };
             }
-            let types = self.iterable_types_slow(ty, true, said.as_deref_mut());
+            let types = self.iterable_types_slow(ty, true, error_node, &mut diags);
             if types.has_types() {
+                self.reported.append(&mut diags);
                 return types;
             }
         }
@@ -3668,7 +4039,10 @@ impl<'p> Checker<'p> {
             ];
             let mut types = self.iteration_types_of_global_reference(ty, names, false);
             if !types.has_types() {
-                types = self.iterable_types_slow(ty, false, said.as_deref_mut());
+                types = self.iterable_types_slow(ty, false, error_node, &mut diags);
+                if types.has_types() {
+                    self.reported.append(&mut diags);
+                }
             }
             if types.has_types() {
                 return if asynchronous {
@@ -3678,7 +4052,25 @@ impl<'p> Checker<'p> {
                 };
             }
         }
+        self.report_type_not_iterable(error_node, ty, asynchronous, for_of, diags);
         Iter3::default()
+    }
+
+    /// The end of `getIterationTypesOfIterableWorker`: a `ty` cannot be gone through, and `diags` goes to explain that. tsgo puts it
+    /// off (`addDeferredDiagnostic`) so that printing closes no circle.
+    fn report_type_not_iterable(
+        &mut self,
+        error_node: Option<Place>,
+        ty: TypeId,
+        allows_async: bool,
+        for_of: bool,
+        diags: Vec<Reported>,
+    ) {
+        if let Some(error_node) = error_node {
+            let mut diagnostic = self.type_not_iterable_error(error_node, ty, allows_async, for_of);
+            diagnostic.related_information.extend(diags);
+            self.add_diagnostic(diagnostic);
+        }
     }
 
     /// `getBuiltinIteratorReturnType`
@@ -3792,7 +4184,8 @@ impl<'p> Checker<'p> {
         &mut self,
         ty: TypeId,
         is_async: bool,
-        said: Option<&mut Vec<u32>>,
+        error_node: Option<Place>,
+        diagnostic_output: &mut Vec<Reported>,
     ) -> Iter3 {
         let name = if is_async {
             known::sym_async_iterator
@@ -3807,25 +4200,41 @@ impl<'p> Checker<'p> {
         }
         // What the ways to call it without an argument give, all at once.
         let mut iterators = Vec::new();
-        for sig in self.signatures(method, false) {
+        let all_signatures = self.signatures(method, false);
+        for &sig in &all_signatures {
             let params = self.sig_params(sig);
             if self.min_argument_count(&params) == 0 {
                 iterators.push(self.sig_return(sig));
             }
         }
         if iterators.is_empty() {
+            let iterable = if is_async {
+                known::AsyncIterable
+            } else {
+                known::Iterable
+            };
+            // `getGlobalIterableTypeChecked`
+            if error_node.is_some()
+                && !all_signatures.is_empty()
+                && let Some(iterable) = self.global_type_of_arity(iterable, 3)
+            {
+                let iterable = self.declared_type(iterable);
+                let output = Some(diagnostic_output);
+                self.check_type_assignable_to_ex(ty, iterable, error_node, None, output);
+            }
             return Iter3::default();
         }
         let iterator = self.intersection(&iterators);
-        self.iterator_types(iterator, is_async, said)
+        self.iterator_types(iterator, is_async, error_node, Some(diagnostic_output))
     }
 
-    /// `getIterationTypesOfIterator`. `said`: as for `iterable_types`.
+    /// `getIterationTypesOfIterator`
     pub(super) fn iterator_types(
         &mut self,
         ty: TypeId,
         is_async: bool,
-        mut said: Option<&mut Vec<u32>>,
+        error_node: Option<Place>,
+        mut diagnostic_output: Option<&mut Vec<Reported>>,
     ) -> Iter3 {
         if self.is_any(ty) {
             return Iter3::all(ty);
@@ -3851,20 +4260,14 @@ impl<'p> Checker<'p> {
         }
         // `getIterationTypesOfIteratorSlow`
         let all = [
-            self.iteration_types_of_method(ty, is_async, IteratorMethod::Next, said.as_deref_mut()),
-            self.iteration_types_of_method(
-                ty,
-                is_async,
-                IteratorMethod::Return,
-                said.as_deref_mut(),
-            ),
-            self.iteration_types_of_method(
-                ty,
-                is_async,
-                IteratorMethod::Throw,
-                said.as_deref_mut(),
-            ),
-        ];
+            IteratorMethod::Next,
+            IteratorMethod::Return,
+            IteratorMethod::Throw,
+        ]
+        .map(|which| {
+            let output = diagnostic_output.as_deref_mut();
+            self.iteration_types_of_method(ty, is_async, which, error_node, output)
+        });
         self.combine_iteration_types(&all)
     }
 
@@ -3874,7 +4277,8 @@ impl<'p> Checker<'p> {
         ty: TypeId,
         is_async: bool,
         which: IteratorMethod,
-        said: Option<&mut Vec<u32>>,
+        error_node: Option<Place>,
+        diagnostic_output: Option<&mut Vec<Reported>>,
     ) -> Iter3 {
         let is_next = which == IteratorMethod::Next;
         let name = match which {
@@ -3903,13 +4307,15 @@ impl<'p> Checker<'p> {
         }
         let signatures = self.signatures(method, false);
         if signatures.is_empty() {
-            if let Some(said) = said {
-                said.push(match (is_next, is_async) {
+            if let Some(error_node) = error_node {
+                let code = match (is_next, is_async) {
                     (true, false) => 2489,
                     (true, true) => 2519,
                     (false, false) => 2767,
                     (false, true) => 2768,
-                });
+                };
+                let diagnostic = self.new_diagnostic(error_node, code, &[Arg::Atom(name)]);
+                self.report_diagnostic(diagnostic, diagnostic_output);
             }
             return Iter3::default();
         }
@@ -3962,6 +4368,8 @@ impl<'p> Checker<'p> {
             }
             results.push(self.sig_return(sig));
         }
+        // `resolveIterationType`
+        let awaiting = error_node.map(|error_node| (error_node, 1320));
         let mut returned = Vec::new();
         let mut next = None;
         if which != IteratorMethod::Throw {
@@ -3975,7 +4383,8 @@ impl<'p> Checker<'p> {
                 next = Some(parameter);
             } else {
                 returned.push(if is_async {
-                    self.awaited_or_none(parameter).unwrap_or(TypeId::ANY)
+                    self.awaited_type_ex(parameter, awaiting)
+                        .unwrap_or(TypeId::ANY)
                 } else {
                     parameter
                 });
@@ -3983,7 +4392,8 @@ impl<'p> Checker<'p> {
         }
         let result = self.intersection(&results);
         let result = if is_async {
-            self.awaited_or_none(result).unwrap_or(TypeId::ANY)
+            self.awaited_type_ex(result, awaiting)
+                .unwrap_or(TypeId::ANY)
         } else {
             result
         };
@@ -3992,8 +4402,10 @@ impl<'p> Checker<'p> {
         if types.has_types() {
             returned.extend(types.r);
         } else {
-            if let Some(said) = said {
-                said.push(if is_async { 2547 } else { 2490 });
+            if let Some(error_node) = error_node {
+                let code = if is_async { 2547 } else { 2490 };
+                let diagnostic = self.new_diagnostic(error_node, code, &[Arg::Atom(name)]);
+                self.report_diagnostic(diagnostic, diagnostic_output);
             }
             yielded = Some(TypeId::ANY);
             returned.push(TypeId::ANY);

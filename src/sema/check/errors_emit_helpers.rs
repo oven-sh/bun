@@ -386,11 +386,10 @@ impl Checker<'_> {
             });
         }
         for &e in index.of(ExprTag::Yield) {
-            // `GetContainingFunction`
             if matches!(hir[e].kind, ExprKind::Yield { star: true, .. })
                 && self
-                    .enclosing_fn_of_expr(file, e)
-                    .is_some_and(|f| hir[f].flags.contains(Flags::ASYNC | Flags::GENERATOR))
+                    .containing_generator(file, e)
+                    .is_some_and(|f| hir[f].flags.contains(Flags::ASYNC))
                 && let Some(put_off) = self.eh_place(file, bound.expr_parent[e.idx()])
             {
                 let start = self.error_start_inside_parentheses(file, e);

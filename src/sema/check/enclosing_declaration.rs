@@ -102,17 +102,13 @@ impl Checker<'_> {
         if let Some(&computed_name) = self.bound(file).expr_scope.get(&e) {
             return computed_name;
         }
-        let hir = self.hir(file);
-        let key = PropKey::Computed(e);
-        if let Some(m) = hir.members.iter().position(|member| member.key == key) {
-            return self.enclosing_scope_of_member(file, MemberId(m as u32));
-        }
-        if let Some(p) = hir.props.iter().position(|prop| prop.key == key) {
-            return self.enclosing_scope_of_property(file, PropId(p as u32));
-        }
-        match hir.pat_props.iter().find(|prop| prop.key == key) {
-            Some(prop) => self.enclosing_scope_of_pat(file, prop.value),
-            None => ScopeId(0),
+        match self.bound(file).expr_parent[e.idx()] {
+            Parent::MemberKey(m) => self.enclosing_scope_of_member(file, m),
+            Parent::PropKey(_, p) | Parent::MethodKey(p) => {
+                self.enclosing_scope_of_property(file, p)
+            }
+            Parent::PatKey(p) => self.enclosing_scope_of_pat(file, self.hir(file)[p].value),
+            _ => ScopeId(0),
         }
     }
 

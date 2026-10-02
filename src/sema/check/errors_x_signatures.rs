@@ -1221,7 +1221,6 @@ impl Checker<'_> {
         self.check_abstract_members_and_accessor_pairs(file, out);
         self.check_type_predicates(file, out);
         self.check_generator_return_types(file, out);
-        self.check_async_functions_and_awaits(file, out);
         self.check_promise_constructor_is_there(file, out);
         self.check_member_overloads_agree(file, out);
         self.check_declarations_of_blocks(file, out);
@@ -2125,6 +2124,15 @@ impl Checker<'_> {
         }
     }
 
+    /// `GetErrorRangeForNode` of the function `f`.
+    pub(super) fn place_of_function(&self, file: FileId, f: FnId) -> (FileId, u32, u32) {
+        (
+            file,
+            self.start_of_function_error(file, f),
+            end_of_function_error(self, file, f),
+        )
+    }
+
     /// Where an error about the function `f` as a whole goes: `GetErrorRangeForNode`.
     fn start_of_function_error(&self, file: FileId, f: FnId) -> u32 {
         let (hir, bound) = (self.hir(file), self.bound(file));
@@ -2141,260 +2149,33 @@ impl Checker<'_> {
         }
     }
 
-    /// `getPromisedTypeOfPromiseEx`, of what is neither a union nor generic.
-    fn promised_type_of_promise_like(&mut self, t: TypeId) -> Option<TypeId> {
-        if self.is_any(t) {
-            return None;
-        }
-        if let Some(args) = self.is_global_ref(t, known::Promise) {
-            return args.first().copied();
-        }
-        // What is not an object is not taken for a promise, whatever it has.
-        if t.is_never() || self.is_primitive(t) {
-            return None;
-        }
-        let then = self.type_of_then(t)?;
-        // What is not known is passed on as such.
-        if !self.is_known(then) {
-            return Some(TypeId::UNRESOLVED);
-        }
-        if self.is_any(then) {
-            return None;
-        }
-        let mut first_parameters = Vec::new();
-        for sig in self.signatures(then, false) {
-            if let Some(this) = self.sig_this_type(sig)
-                && this != TypeId::VOID
-                && !self.is_subtype(t, this)
-            {
-                continue;
-            }
-            let params = self.sig_params(sig);
-            first_parameters.push(self.param_type_at(&params, 0).unwrap_or(TypeId::NEVER));
-        }
-        if first_parameters.is_empty() {
-            return None;
-        }
-        let on_fulfilled = self.union(&first_parameters);
-        let on_fulfilled = self.non_nullable(on_fulfilled);
-        if !self.is_known(on_fulfilled) {
-            return Some(TypeId::UNRESOLVED);
-        }
-        if self.is_any(on_fulfilled) {
-            return None;
-        }
-        let callbacks = self.signatures(on_fulfilled, false);
-        if callbacks.is_empty() {
-            return None;
-        }
-        let mut values = Vec::with_capacity(callbacks.len());
-        for callback in callbacks {
-            let params = self.sig_params(callback);
-            values.push(self.param_type_at(&params, 0).unwrap_or(TypeId::NEVER));
-        }
-        Some(self.union_reduced(&values))
-    }
-
-    /// `getTypeOfPropertyOfType(t, "then")`
-    fn type_of_then(&mut self, t: TypeId) -> Option<TypeId> {
-        let apparent = self.apparent_type(t);
-        let (prop, mapper) = self.prop_ref(apparent, known::then)?;
-        Some(self.type_of_prop_as_read(prop, mapper))
-    }
-
-    /// `getAwaitedTypeNoAliasEx`, for what it reports. `false`: there is no awaited type.
-    fn look_for_awaited_type(&mut self, t: TypeId, state: &mut Awaiting) -> bool {
-        if !self.is_known(t) || state.stack.len() > 64 {
-            state.found |= Awaiting::UNKNOWN;
-            return true;
-        }
-        if self.is_any(t) || self.awaited_argument(t).is_some() || state.settled.contains(&t) {
-            return true;
-        }
-        if self.is_union(t) {
-            if state.stack.contains(&t) {
-                state.found |= Awaiting::CIRCULAR;
-                return false;
-            }
-            state.stack.push(t);
-            let mut is_there = false;
-            for &member in self.parts(t) {
-                is_there |= self.look_for_awaited_type(member, state);
-            }
-            state.stack.pop();
-            // `mapType` leaves out the members that have none. What is left is remembered, whatever was said on the way.
-            if is_there {
-                state.settled.push(t);
-            }
-            return is_there;
-        }
-        // `isAwaitedTypeNeeded`. What is generic and does not need `Awaited` extends nothing that has a `then`: it is what it is either way.
-        if self.is_deferred(t) || self.is_generic_object_type(t) {
-            return true;
-        }
-        if let Some(promised) = self.promised_type_of_promise_like(t) {
-            if t == promised || state.stack.contains(&promised) {
-                state.found |= Awaiting::CIRCULAR;
-                return false;
-            }
-            state.stack.push(t);
-            let is_there = self.look_for_awaited_type(promised, state);
-            state.stack.pop();
-            if is_there {
-                state.settled.push(t);
-            }
-            return is_there;
-        }
-        // `isThenableType`
-        if !t.is_never()
-            && !self.is_primitive(t)
-            && let Some(then) = self.type_of_then(t)
-        {
-            if !self.is_known(then) {
-                state.found |= Awaiting::UNKNOWN;
-                return true;
-            }
-            let then = self.non_nullable(then);
-            if !self.signatures(then, false).is_empty() {
-                state.found |= Awaiting::THENABLE;
-                return false;
-            }
-        }
-        state.settled.push(t);
-        true
-    }
-
-    /// `checkAsyncFunctionReturnType`: 1064. `checkAwaitedType`, where an `await`, the return type of an asynchronous function or what such a
-    /// function returns is looked at: 1062, 1058. (1320, which is what is said of the operand of `await`, is not said here.)
-    fn check_async_functions_and_awaits(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    /// `checkAsyncFunctionReturnType`: 1064, or 1058 1062.
+    pub(super) fn check_async_function_return_type(&mut self, file: FileId, f: FnId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let has_promise_type = self.global_type_symbol(known::Promise).is_some();
-        // Where it is written, what is awaited, where an error goes and on what (nowhere, if none is asked for), and what is said of
-        // what has a `then` but is no promise.
-        let mut sites: Vec<(u32, Result<ExprId, TypeId>, Option<(u32, Reported)>, u32)> =
-            Vec::new();
-        let by_kind = self.exprs_by_kind(file);
-        for &e in by_kind.of(ExprTag::Await) {
-            if let ExprKind::Await(operand) = hir[e].kind
-                && !bound.is_unchecked(e.idx())
-            {
-                let pos = hir[e].pos;
-                sites.push((pos, Ok(operand), Some((pos, Reported::Expr(e))), 0));
-            }
-        }
-        let mut branches = Vec::new();
-        for i in 0..hir.fns.len() {
-            let (f, func) = (FnId(i as u32), &hir.fns[i]);
-            if !func.flags.contains(Flags::ASYNC) || matches!(bound.fns[i].owner, FnOwner::None) {
-                continue;
-            }
-            if !(matches!(func.kind, FnKind::Decl | FnKind::Expr | FnKind::Arrow)
+        let func = &hir[f];
+        if func.ret.is_none()
+            || !func.flags.contains(Flags::ASYNC)
+            || func.flags.contains(Flags::GENERATOR)
+            || matches!(bound.fns[f.idx()].owner, FnOwner::None)
+            || !(matches!(func.kind, FnKind::Decl | FnKind::Expr | FnKind::Arrow)
                 || func.kind == FnKind::Method && self.is_member_with_room_for_a_body(file, f))
-            {
-                continue;
-            }
-            let whole = (self.start_of_function_error(file, f), Reported::Function(f));
-            let is_annotated = func.ret.is_some();
-            if is_annotated && !func.flags.contains(Flags::GENERATOR) {
-                let ret = self.type_from_node(file, func.ret);
-                let start = start_of_written_type(&hir.text, hir[func.ret].pos);
-                if self.is_known(ret) && !self.is_error_type(ret) {
-                    if has_promise_type && !self.is_reference_to_global(ret, known::Promise) {
-                        out.push(Diagnostic { start, code: 1064 });
-                        let end = self.end_of_type_node_from(file, func.ret, start);
-                        self.explain_to(start, end, 1064, |c| {
-                            let awaited = c.awaited_no_alias(ret).unwrap_or(TypeId::VOID);
-                            vec![c.type_to_string(awaited)]
-                        });
-                        // What could have been meant is part of the message: it is awaited for that, and no more is said.
-                        sites.push((start, Err(ret), None, 0));
-                    } else {
-                        sites.push((start, Err(ret), Some(whole), 1058));
-                    }
-                }
-            }
-            // `checkReturnExpression` where it says what it returns, `checkAndAggregateReturnExpressionTypes` and `getReturnTypeFromBody`
-            // where it does not.
-            let is_block = matches!(func.body, FnBody::Block(_));
-            let mut returned: Vec<(ExprId, (u32, Reported))> = Vec::new();
-            match func.body {
-                FnBody::Expr(e) => {
-                    returned.push((e, (self.start_of(file, e), Reported::Written(e))))
-                }
-                FnBody::Block(_) => {
-                    for s in bound.ids(bound.fns[i].returns) {
-                        if let StmtKind::Return(e) = hir[s].kind
-                            && e.is_some()
-                        {
-                            // `GetErrorRangeForNode`: the keyword.
-                            returned.push((e, (hir[s].pos, Reported::Token)));
-                        }
-                    }
-                }
-                FnBody::None => {}
-            }
-            for (e, statement) in returned {
-                if is_annotated {
-                    branches.clear();
-                    branches.push(e);
-                    while let Some(e) = branches.pop() {
-                        match hir[e].kind {
-                            ExprKind::Cond { yes, no, .. } => branches.extend([no, yes]),
-                            // What `await` gives has been awaited, or is in error and can be anything.
-                            ExprKind::Await(_) => {}
-                            _ => sites.push((hir[e].pos, Ok(e), Some(statement), 1058)),
-                        }
-                    }
-                    continue;
-                }
-                // Only after `return` is the operand of an `await` looked at in its stead, and a call of the function itself passed over.
-                let e = match hir[e].kind {
-                    ExprKind::Await(operand) if is_block => operand,
-                    ExprKind::Await(_) => continue,
-                    _ => e,
-                };
-                if is_block && is_call_of_itself(hir, bound, f, e) {
-                    continue;
-                }
-                sites.push((hir[e].pos, Ok(e), Some(whole), 1058));
-            }
+        {
+            return;
         }
-        // What awaiting a type came to is remembered, whatever was said on the way: that is said the first time only.
-        sites.sort_by_key(|s| s.0);
-        let mut state = Awaiting {
-            stack: Vec::new(),
-            settled: Vec::new(),
-            found: 0,
-        };
-        for (_, what, start, code) in sites {
-            let ty = match what {
-                Ok(e) => {
-                    let ty = self.type_of_expr(file, e);
-                    if self.is_uncertain(file, e) {
-                        continue;
-                    }
-                    ty
-                }
-                Err(ty) => ty,
-            };
-            state.found = 0;
-            state.stack.clear();
-            self.look_for_awaited_type(ty, &mut state);
-            let Some((start, node)) = start else { continue };
-            if state.found & Awaiting::UNKNOWN != 0 {
-                continue;
-            }
-            if state.found & Awaiting::CIRCULAR != 0 {
-                out.push(Diagnostic { start, code: 1062 });
-                let end = end_of_reported(self, file, node);
-                self.explain_to(start, end, 1062, |_| vec![]);
-            }
-            if state.found & Awaiting::THENABLE != 0 && code != 0 {
-                out.push(Diagnostic { start, code });
-                let end = end_of_reported(self, file, node);
-                self.explain_to(start, end, code, |_| vec![]);
-            }
+        let ret = self.type_from_node(file, func.ret);
+        if !self.is_known(ret) || self.is_error_type(ret) {
+            return;
         }
+        if self.global_type_symbol(known::Promise).is_some()
+            && self.is_global_ref(ret, known::Promise).is_none()
+        {
+            let start = start_of_written_type(&hir.text, hir[func.ret].pos);
+            let end = self.end_of_type_node_from(file, func.ret, start);
+            let awaited = self.awaited_no_alias(ret).unwrap_or(TypeId::VOID);
+            self.error((file, start, end), 1064, &[Arg::Type(awaited)]);
+            return;
+        }
+        self.check_awaited_type(ret, false, self.place_of_function(file, f), 1058);
     }
 
     /// `createPromiseReturnType`, where there is a `Promise` to name as a type but none to make one with: 2712, 2705.
@@ -3004,19 +2785,6 @@ struct DefaultResolution {
     done: FxHashSet<(FileId, TypeNodeId)>,
 }
 
-/// What an error is reported on, which says where it ends.
-#[derive(Copy, Clone)]
-enum Reported {
-    /// One token.
-    Token,
-    /// An expression, without the parentheses around it.
-    Expr(ExprId),
-    /// An expression as it is written.
-    Written(ExprId),
-    /// `GetErrorRangeForNode` of a function.
-    Function(FnId),
-}
-
 /// Where the error that starts at `start_of_function_error` ends.
 fn end_of_function_error(c: &Checker<'_>, file: FileId, f: FnId) -> u32 {
     let (hir, bound) = (c.hir(file), c.bound(file));
@@ -3030,32 +2798,4 @@ fn end_of_function_error(c: &Checker<'_>, file: FileId, f: FnId) -> u32 {
         _ if func.name.is_some() => c.end_of_name_at(file, func.name_pos),
         _ => c.end_of_token_at(file, func.pos),
     }
-}
-
-/// Where an error reported on `node` ends.
-fn end_of_reported(c: &Checker<'_>, file: FileId, node: Reported) -> u32 {
-    match node {
-        Reported::Token => 0,
-        Reported::Expr(e) => c.end_inside_parentheses(file, e),
-        Reported::Written(e) => c.end_of_expr(file, e),
-        Reported::Function(f) => end_of_function_error(c, file, f),
-    }
-}
-
-/// What `look_for_awaited_type` keeps track of.
-struct Awaiting {
-    /// `awaitedTypeStack`
-    stack: Vec<TypeId>,
-    /// The types whose awaited type has been worked out: `cachedTypes`.
-    settled: Vec<TypeId>,
-    found: u8,
-}
-
-impl Awaiting {
-    /// 1062
-    const CIRCULAR: u8 = 1;
-    /// It has a `then` that can be called, and is no promise.
-    const THENABLE: u8 = 2;
-    /// It rests on something that is not known.
-    const UNKNOWN: u8 = 4;
 }

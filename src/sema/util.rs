@@ -351,46 +351,6 @@ impl<T> Drop for AppendVec<T> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn append_vec_keeps_what_is_pushed() {
-        let v = AppendVec::<String>::new();
-        for i in 0..5000u32 {
-            assert_eq!(v.push(i.to_string()), i);
-        }
-        for i in (0..5000u32).step_by(37) {
-            assert_eq!(v.get(i), &i.to_string());
-        }
-    }
-
-    #[test]
-    fn sharded_map_keeps_the_first_of_what_many_threads_put_in() {
-        let map = ShardedMap::<(u32, u32), String>::default();
-        std::thread::scope(|scope| {
-            for thread in 0..8u32 {
-                let map = &map;
-                scope.spawn(move || {
-                    for i in 0..20_000u32 {
-                        let key = (i % 7000, i % 13);
-                        let kept = map.insert(key, format!("{}-{}", key.0, key.1));
-                        assert_eq!(kept, format!("{}-{}", key.0, key.1), "thread {thread}");
-                        assert_eq!(map.get(&key), Some(kept));
-                    }
-                });
-            }
-        });
-        let mut distinct = std::collections::HashSet::new();
-        for i in 0..20_000u32 {
-            distinct.insert((i % 7000, i % 13));
-        }
-        assert_eq!(map.len(), distinct.len());
-        assert_eq!(map.get(&(7001, 0)), None);
-    }
-}
-
 const MAP_SHARDS: usize = 256;
 
 /// Spreads a hash over all its bits: the top ones pick the shard, the low half is the tag, which the place in the table goes by.

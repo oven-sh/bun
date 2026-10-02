@@ -4,6 +4,7 @@ use super::decl::Predicate;
 use super::errors::Container;
 use super::expr::TargetKind;
 use super::related::Place;
+use super::shape::UntypedProperty;
 use super::*;
 use crate::bind::{
     Decl, Flow, FlowId, FlowTarget, FnOwner, MemberOwner, Parent, PatParent, SymbolId, UNREACHABLE,
@@ -4575,26 +4576,17 @@ impl<'p> Checker<'p> {
         !self.contains_undefined(ty)
     }
 
-    /// `getFlowTypeInConstructor`: what the property `name`, of which nothing is said, has been assigned by the time the
-    /// constructor `func` is left. `None` if that is nothing to go by.
-    pub(super) fn flow_type_in_constructor(
-        &mut self,
-        file: FileId,
-        func: FnId,
-        name: Atom,
-    ) -> Option<TypeId> {
-        let initial = self.undefined_as_declared();
-        self.flow_type_in_constructor_from(file, func, name, initial)
-    }
-
-    /// `getFlowTypeInConstructor`, with the initial type `getFlowTypeOfProperty` starts from: the type of the property in the base
-    /// class, else `undefined`.
+    /// `getFlowTypeInConstructor`, and one turn of the loop of `getFlowTypeInStaticBlocks`: what the property `name`, of which nothing
+    /// is said, has been assigned by the time the constructor or the static block `func` is left. `None` if that is nothing to go
+    /// by. `initial`: what `getFlowTypeOfProperty` starts from, the type of the property in the base class, else `undefined`.
+    /// `value_declaration`: `symbol.ValueDeclaration`.
     pub(super) fn flow_type_in_constructor_from(
         &mut self,
         file: FileId,
         func: FnId,
         name: Atom,
         initial: TypeId,
+        value_declaration: UntypedProperty,
     ) -> Option<TypeId> {
         let exit = self.bound(file).fns[func.idx()].exit;
         if exit.is_none() {
@@ -4609,6 +4601,15 @@ impl<'p> Checker<'p> {
         };
         let walk = Walk::new(reference, TypeId::AUTO, initial, false);
         let ty = self.get_flow_type_of_reference(walk, exit);
+        if self.p.files.options.no_implicit_any && self.is_automatic_type(ty) {
+            let at = self.place_of_untyped_property(file, value_declaration);
+            // `symbolToString`
+            let written = match value_declaration {
+                UntypedProperty::Member(_) => self.source_text(file, at.1, at.2),
+                UntypedProperty::Assignment(_) => self.atom_text(name),
+            };
+            self.error(at, 7008, &[Arg::Text(&written), Arg::Type(ty)]);
+        }
         if self.is_every_type_nullable(ty) {
             return None;
         }
@@ -5078,11 +5079,7 @@ impl<'p> Checker<'p> {
                     }
                     break self.initial_of(walk);
                 }
-                Flow::StartInvoked {
-                    outer,
-                    plain,
-                    arrow,
-                } => {
+                Flow::StartInvoked { outer, arrow } => {
                     let goes_on = walk.reference.path.is_empty()
                         && match walk.reference.root {
                             Root::Symbol(_) | Root::Global(_) => true,
@@ -5094,7 +5091,7 @@ impl<'p> Checker<'p> {
                             | Root::Pattern(_)
                             | Root::Params(_) => false,
                         };
-                    if plain || goes_on || self.settle_crossing(walk) {
+                    if goes_on || self.settle_crossing(walk) {
                         flow = outer;
                         continue;
                     }

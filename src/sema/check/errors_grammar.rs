@@ -907,12 +907,7 @@ impl Checker<'_> {
                 }
                 ScopeKind::Interface(i) => hir[i].flags,
                 ScopeKind::Enum(e) => hir[e].flags,
-                // That of a type alias, if it is one.
-                ScopeKind::TypeParams => bound
-                    .alias_scope
-                    .iter()
-                    .position(|&a| a == scope)
-                    .map_or(Flags::empty(), |a| hir.aliases[a].flags),
+                ScopeKind::TypeAlias(a) => hir[a].flags,
                 _ => Flags::empty(),
             };
             scope = s.parent;

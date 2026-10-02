@@ -15,7 +15,7 @@ pub(super) struct GrammarError {
 const ACCESSIBILITY: Flags = Flags::PUBLIC.union(Flags::PRIVATE).union(Flags::PROTECTED);
 
 /// `scanner.TokenToString(modifier.Kind)`
-fn modifier_text(modifier: Flags) -> &'static str {
+pub(super) fn modifier_text(modifier: Flags) -> &'static str {
     const TEXTS: [(Flags, &str); 15] = [
         (Flags::ABSTRACT, "abstract"),
         (Flags::ACCESSOR, "accessor"),

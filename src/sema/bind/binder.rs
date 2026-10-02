@@ -3,15 +3,6 @@ use super::*;
 use crate::atom::known;
 use crate::util::{group_by_key, number_repeated};
 
-/// `exportKind` of `declareModuleMember`
-fn export_kind(flags: SymFlags) -> SymFlags {
-    if flags.intersects(SymFlags::VALUE) {
-        SymFlags::EXPORT_VALUE
-    } else {
-        SymFlags::empty()
-    }
-}
-
 /// A label while the file is bound.
 struct Label {
     /// What leads to it.
@@ -27,8 +18,7 @@ const PENDING: u32 = 1 << 31;
 pub(super) struct Binder<'f> {
     f: &'f File,
     options: BindOptions,
-    /// What spells a number as a name, if the caller has it.
-    atoms: Option<&'f Interner>,
+    atoms: &'f Interner,
     b: Bound,
     tables: Vec<FxHashMap<Atom, SymbolId>>,
     scope: ScopeId,
@@ -91,7 +81,7 @@ pub(super) struct Binder<'f> {
 }
 
 impl<'f> Binder<'f> {
-    pub(super) fn run(f: &'f File, options: BindOptions, atoms: Option<&'f Interner>) -> Bound {
+    pub(super) fn run(f: &'f File, options: BindOptions, atoms: &'f Interner) -> Bound {
         let mut b = Bound::default();
         b.expr_symbol = vec![SymbolId::NONE; f.exprs.len()];
         b.expr_parent = vec![Parent::None; f.exprs.len()];
@@ -198,120 +188,190 @@ impl<'f> Binder<'f> {
         TableId(self.tables.len() as u32 - 1)
     }
 
-    fn new_symbol(
-        &mut self,
-        name: Atom,
-        flags: SymFlags,
-        decl: Decl,
-        parent: SymbolId,
-    ) -> SymbolId {
+    /// `GetExports`
+    fn get_exports(&mut self, symbol: SymbolId) -> TableId {
+        if self.b.symbols[symbol.idx()].exports.is_none() {
+            self.b.symbols[symbol.idx()].exports = self.new_table();
+        }
+        self.b.symbols[symbol.idx()].exports
+    }
+
+    /// `newSymbol`
+    fn new_symbol(&mut self, flags: SymFlags, name: Atom) -> SymbolId {
         self.b.symbols.push(Symbol {
             name,
             flags,
-            decls: Decls::One(decl),
-            parent,
+            decls: Decls::Many(Box::default()),
+            parent: SymbolId::NONE,
             exports: TableId::NONE,
             export_symbol: SymbolId::NONE,
         });
         SymbolId(self.b.symbols.len() as u32 - 1)
     }
 
-    /// `symbol.Flags&excludes != 0` of `declareSymbolEx`: whether what goes by a name, which is `there`, refuses a declaration of it.
-    fn is_refused(there: SymFlags, flags: SymFlags, decl: Decl) -> bool {
-        let value = SymFlags::VALUE;
-        let both = SymFlags::VALUE | SymFlags::TYPE;
-        // The `SymbolFlags..Excludes`.
-        let excludes = match decl {
-            Decl::Var(_) if flags.contains(SymFlags::FUNCTION_SCOPED_VARIABLE) => {
-                value.difference(SymFlags::FUNCTION_SCOPED_VARIABLE)
-            }
-            Decl::Var(_) | Decl::Param(_) => value,
-            Decl::Fn(_) => {
-                value.difference(SymFlags::FUNCTION | SymFlags::VALUE_MODULE | SymFlags::CLASS)
-            }
-            Decl::Class(_) => {
-                both.difference(SymFlags::VALUE_MODULE | SymFlags::INTERFACE | SymFlags::FUNCTION)
-            }
-            Decl::Interface(_) => SymFlags::TYPE.difference(SymFlags::INTERFACE | SymFlags::CLASS),
-            Decl::Alias(_) => SymFlags::TYPE,
-            Decl::Enum(_) if flags.contains(SymFlags::CONST_ENUM) => {
-                both.difference(SymFlags::ENUM)
-            }
-            Decl::Enum(_) => both.difference(SymFlags::ENUM | SymFlags::VALUE_MODULE),
-            Decl::EnumMember(_) => both,
-            Decl::Module(_) if flags.contains(SymFlags::VALUE_MODULE) => value.difference(
-                SymFlags::FUNCTION | SymFlags::CLASS | SymFlags::ENUM | SymFlags::VALUE_MODULE,
-            ),
-            Decl::TypeParam(_) => SymFlags::TYPE.difference(SymFlags::TYPE_PARAMETER),
-            Decl::ImportDefault(_)
-            | Decl::ImportNamespace(_)
-            | Decl::ImportSpec(_)
-            | Decl::ImportEquals(_)
-            | Decl::ExportSpec(_)
-            | Decl::ExportStarAs(_) => SymFlags::ALIAS,
-            // `bindExportAssignment`: `SymbolFlagsAll`
-            Decl::ExportExpr(_) => SymFlags::all(),
-            _ => SymFlags::empty(),
-        };
-        if there.intersects(excludes) {
-            return true;
+    /// `addDeclarationToSymbol`
+    fn add_declaration_to_symbol(&mut self, symbol: SymbolId, decl: Decl, includes: SymFlags) {
+        let b = &mut self.b;
+        b.symbols[symbol.idx()].flags |= includes;
+        b.symbols[symbol.idx()].decls.push(decl);
+        match decl {
+            Decl::Var(it) | Decl::Param(it) | Decl::Require(it) => b.pat_symbol[it.idx()] = symbol,
+            Decl::Fn(it) => b.fn_symbol[it.idx()] = symbol,
+            Decl::Class(it) => b.class_symbol[it.idx()] = symbol,
+            Decl::Interface(it) => b.interface_symbol[it.idx()] = symbol,
+            Decl::Alias(it) => b.alias_symbol[it.idx()] = symbol,
+            Decl::Enum(it) => b.enum_symbol[it.idx()] = symbol,
+            Decl::EnumMember(it) => b.enum_member_symbol[it.idx()] = symbol,
+            Decl::Module(it) => b.module_symbol[it.idx()] = symbol,
+            Decl::TypeParam(it) => b.type_param_symbol[it.idx()] = symbol,
+            Decl::Expando(it) | Decl::ObjectLiteral(it) => b.expr_symbol[it.idx()] = symbol,
+            _ => {}
         }
-        // One flag stands for both kinds of enum.
-        there.contains(SymFlags::ENUM)
-            && match decl {
-                Decl::Enum(_) => {
-                    there.contains(SymFlags::CONST_ENUM) != flags.contains(SymFlags::CONST_ENUM)
-                }
-                Decl::Module(_) => {
-                    flags.contains(SymFlags::VALUE_MODULE) && there.contains(SymFlags::CONST_ENUM)
-                }
-                _ => false,
-            }
     }
 
-    fn declare_in(
-        &mut self,
-        table: TableId,
-        name: Atom,
-        flags: SymFlags,
-        decl: Decl,
-        parent: SymbolId,
-    ) -> SymbolId {
-        self.declare_symbol(table, name, flags, flags, decl, parent)
+    /// `bindAnonymousDeclaration`
+    fn bind_anonymous_declaration(&mut self, decl: Decl, flags: SymFlags, name: Atom) -> SymbolId {
+        let symbol = self.new_symbol(flags, name);
+        self.add_declaration_to_symbol(symbol, decl, flags);
+        symbol
+    }
+
+    /// `GetCombinedModifierFlags`
+    fn modifier_flags(&self, decl: Decl) -> Flags {
+        let f = self.f;
+        match decl {
+            Decl::Var(mut pat) => loop {
+                match self.b.pat_parent[pat.idx()] {
+                    PatParent::Prop(outer, _) | PatParent::Elem(outer, _) => pat = outer,
+                    PatParent::Var(d) => break f[d].flags,
+                    _ => break Flags::empty(),
+                }
+            },
+            Decl::Fn(it) => f[it].flags,
+            Decl::Class(it) => f[it].flags,
+            Decl::Interface(it) => f[it].flags,
+            Decl::Alias(it) => f[it].flags,
+            Decl::Enum(it) => f[it].flags,
+            Decl::Module(it) => f[it].flags,
+            Decl::ImportEquals(it) => f[it].flags,
+            _ => Flags::empty(),
+        }
+    }
+
+    /// `getDeclarationName`. `NONE`: `HasDynamicName`.
+    fn get_declaration_name(&self, decl: Decl) -> Atom {
+        let f = self.f;
+        let name = match decl {
+            Decl::Var(it) | Decl::Param(it) | Decl::Require(it) => match f[it].kind {
+                PatKind::Ident(name) => name,
+                _ => Atom::NONE,
+            },
+            // `parseFunctionDeclaration`: the name that is missing is an identifier without text, unless it may be left out.
+            Decl::Fn(it) if f[it].name.is_none() && !f[it].flags.contains(Flags::DEFAULT) => {
+                known::empty
+            }
+            Decl::Fn(it) => f[it].name,
+            Decl::Class(it) => f[it].name,
+            Decl::Interface(it) => f[it].name,
+            Decl::Alias(it) => f[it].name,
+            Decl::Enum(it) => f[it].name,
+            // Neither `#a` nor `1n` is a name.
+            Decl::EnumMember(it)
+                if is_private_name_at(f, f[it].pos) || is_bigint_literal_at(f, f[it].pos) =>
+            {
+                known::missing
+            }
+            Decl::EnumMember(it) => return f[it].name,
+            Decl::Module(it) => match f[it].name {
+                ModuleName::Ident(name) | ModuleName::String(name) => name,
+                ModuleName::Global => known::global_augmentation,
+            },
+            Decl::TypeParam(it) => f[it].name,
+            Decl::ImportDefault(it) => f[it].default,
+            Decl::ImportNamespace(it) => f[it].namespace,
+            Decl::ImportSpec(it) => f[it].local,
+            Decl::ImportEquals(it) => f[it].name,
+            Decl::ExportSpec(it) => f[it].exported,
+            Decl::ExportStarAs(it) | Decl::ExportExpr(it) | Decl::UmdGlobal(it) => match f[it].kind
+            {
+                StmtKind::ExportStar { alias, .. } => alias,
+                StmtKind::ExportAsNamespace(name) => name,
+                StmtKind::ExportDefault(_) => known::default,
+                _ => known::export_equals,
+            },
+            Decl::ModuleExports(_) => known::export_equals,
+            // `GetElementOrPropertyAccessName`
+            Decl::ExportsProperty(e) | Decl::Expando(e) => {
+                return match (f[e].kind, define_property_call(f, e)) {
+                    (ExprKind::Assign { target, .. }, _) => match f[target].kind {
+                        ExprKind::Dot { name, .. } => name,
+                        ExprKind::Index { index, .. } => self.literal_name(index),
+                        _ => Atom::NONE,
+                    },
+                    (_, Some((_, key))) => self.literal_name(key),
+                    _ => Atom::NONE,
+                };
+            }
+            Decl::File | Decl::ObjectLiteral(_) | Decl::CommonJsVariable => Atom::NONE,
+        };
+        if name.is_some() { name } else { known::missing }
     }
 
     /// `declareSymbolEx`: the declarations of one name in one table are one symbol if they go together. One that is refused gets a
-    /// symbol of its own, which no name leads to. `flags`: what `decl` declares, which `excludes` goes by.
+    /// symbol of its own, which no name leads to.
     fn declare_symbol(
         &mut self,
         table: TableId,
-        name: Atom,
-        includes: SymFlags,
-        flags: SymFlags,
-        decl: Decl,
         parent: SymbolId,
+        decl: Decl,
+        includes: SymFlags,
+        excludes: SymFlags,
     ) -> SymbolId {
-        if let Some(&existing) = self.tables[table.idx()].get(&name) {
+        // "The exported symbol for an export default function/class node is always named "default""
+        let name = if parent.is_some() && self.modifier_flags(decl).contains(Flags::DEFAULT) {
+            known::default
+        } else {
+            self.get_declaration_name(decl)
+        };
+        let existing = self.tables[table.idx()].get(&name).copied();
+        let is_refused = existing.is_some_and(|existing| {
             let there = &self.b.symbols[existing.idx()];
             // `Resolve`: the name of a class expression comes after what is declared in the class, and refuses none of it.
             let is_own_name = matches!(there.decls[0], Decl::Class(c) if matches!(self.b.class_owner[c.idx()], ClassOwner::Expr(_)));
-            let is_refused = !is_own_name && Self::is_refused(there.flags, flags, decl);
-            if is_refused {
-                self.report_redeclaration(existing, includes, decl);
-                return self.new_symbol(name, includes, decl, parent);
+            // "Assignment declarations are allowed to merge with variables, no matter what other flags they have."
+            let (variable, assignment) = (SymFlags::VARIABLE, SymFlags::ASSIGNMENT);
+            let is_assignment = includes.intersects(variable) && there.flags.contains(assignment)
+                || includes.contains(assignment) && there.flags.intersects(variable);
+            there.flags.intersects(excludes) && !is_own_name && !is_assignment
+        });
+        let symbol = match existing {
+            // `InternalSymbolNameMissing`, `HasDynamicName`: in no table. A function or a class is kept as `default`.
+            _ if name == known::missing && matches!(decl, Decl::Fn(_) | Decl::Class(_)) => {
+                self.new_symbol(SymFlags::empty(), known::default)
             }
-            let symbol = &mut self.b.symbols[existing.idx()];
-            symbol.decls.push(decl);
-            symbol.flags |= includes;
-            // What is more than `export { a as b }` is in scope.
-            symbol.flags.remove(SymFlags::EXPORT_ONLY);
-            if symbol.parent.is_none() {
-                symbol.parent = parent;
+            _ if name == known::missing || name.is_none() => {
+                self.new_symbol(SymFlags::empty(), name)
             }
-            return existing;
+            Some(existing) if !is_refused => existing,
+            _ => {
+                let symbol = self.new_symbol(SymFlags::empty(), name);
+                if let Some(existing) = existing {
+                    self.report_redeclaration(existing, includes, decl);
+                } else {
+                    self.tables[table.idx()].insert(name, symbol);
+                }
+                symbol
+            }
+        };
+        self.add_declaration_to_symbol(symbol, decl, includes);
+        let there = &mut self.b.symbols[symbol.idx()];
+        // What is more than `export { a as b }` is in scope.
+        if existing == Some(symbol) {
+            there.flags.remove(SymFlags::EXPORT_ONLY);
         }
-        let symbol = self.new_symbol(name, includes, decl, parent);
-        self.tables[table.idx()].insert(name, symbol);
+        if there.parent.is_none() {
+            there.parent = parent;
+        }
         symbol
     }
 
@@ -321,17 +381,15 @@ impl<'f> Binder<'f> {
         let there = &self.b.symbols[symbol.idx()];
         let f = self.f;
         // `isDefaultExport`, or an `ExportAssignment` that is no `export =`
-        let is_default_export = match decl {
-            Decl::Fn(it) => f[it].flags.contains(Flags::DEFAULT),
-            Decl::Class(it) => f[it].flags.contains(Flags::DEFAULT),
-            Decl::Interface(it) => f[it].flags.contains(Flags::DEFAULT),
-            Decl::ExportSpec(it) => f[it].exported == known::default,
-            Decl::ExportExpr(it) => matches!(f[it].kind, StmtKind::ExportDefault(_)),
-            _ => false,
-        };
+        let is_default_export = self.modifier_flags(decl).contains(Flags::DEFAULT)
+            || match decl {
+                Decl::ExportSpec(it) => f[it].exported == known::default,
+                Decl::ExportExpr(it) => matches!(f[it].kind, StmtKind::ExportDefault(_)),
+                _ => false,
+            };
         let code = if is_default_export {
             2528
-        } else if there.flags.contains(SymFlags::ENUM) || includes.contains(SymFlags::ENUM) {
+        } else if (there.flags | includes).intersects(SymFlags::ENUM) {
             2567
         } else if there.flags.contains(SymFlags::BLOCK_SCOPED_VARIABLE) {
             2451
@@ -354,6 +412,7 @@ impl<'f> Binder<'f> {
             kind,
             locals,
             symbol,
+            is_export_context: false,
         });
         self.scope = ScopeId(self.b.scopes.len() as u32 - 1);
         self.scope
@@ -363,98 +422,86 @@ impl<'f> Binder<'f> {
         self.scope = self.b.scopes[self.scope.idx()].parent;
     }
 
-    /// The nearest scope `var` and hoisted functions belong to.
-    fn var_scope(&self) -> ScopeId {
-        let mut scope = self.scope;
-        loop {
-            let s = &self.b.scopes[scope.idx()];
-            if matches!(
-                s.kind,
-                ScopeKind::File | ScopeKind::Module(_) | ScopeKind::Fn(_)
-            ) || s.parent.is_none()
-            {
-                return scope;
-            }
-            scope = s.parent;
-        }
-    }
-
     /// `declareModuleMember`: "Exported module members are given 2 symbols: A local symbol that is classified with an ExportValue
     /// flag, and an associated export symbol with all the correct flags set on it." The answer is `node.Symbol`, the second.
-    fn declare(
+    fn declare_module_member(
         &mut self,
-        scope: ScopeId,
-        name: Atom,
-        flags: SymFlags,
+        container: ScopeId,
         decl: Decl,
-        exported: bool,
+        includes: SymFlags,
+        excludes: SymFlags,
     ) -> SymbolId {
-        let s = &self.b.scopes[scope.idx()];
-        let (locals, container) = (s.locals, s.symbol);
-        if container.is_none() || !matches!(s.kind, ScopeKind::File | ScopeKind::Module(_)) {
-            return self.declare_in(locals, name, flags, decl, SymbolId::NONE);
+        let s = &self.b.scopes[container.idx()];
+        let (locals, symbol, flags) = (s.locals, s.symbol, self.modifier_flags(decl));
+        // `IsImplicitlyExportedJSDocDeclaration`
+        let has_export_modifier = flags.contains(Flags::EXPORT)
+            || flags.contains(Flags::REPARSED)
+                && matches!(s.kind, ScopeKind::File)
+                && matches!(decl, Decl::Alias(_) | Decl::Module(_));
+        let is_alias = includes.contains(SymFlags::ALIAS);
+        let is_exported = match decl {
+            Decl::ExportSpec(_) => true,
+            Decl::ImportEquals(_) => has_export_modifier,
+            // `IsAmbientModule`
+            Decl::Module(m) if !matches!(self.f[m].name, ModuleName::Ident(_)) => false,
+            _ => !is_alias && (has_export_modifier || s.is_export_context),
+        };
+        if !is_exported {
+            return self.declare_symbol(locals, SymbolId::NONE, decl, includes, excludes);
         }
-        let exports = self.b.symbols[container.idx()].exports;
-        if flags.contains(SymFlags::ALIAS) {
-            // Of the imports only `export import a = b` is exported, and it is among the exports alone.
-            return match decl {
-                Decl::ImportEquals(_) if exported => {
-                    self.declare_in(exports, name, flags, decl, container)
-                }
-                _ => self.declare_in(locals, name, flags, decl, SymbolId::NONE),
-            };
-        }
-        if !exported {
-            return self.declare_in(locals, name, flags, decl, SymbolId::NONE);
-        }
-        let none = SymbolId::NONE;
-        let local = self.declare_symbol(locals, name, export_kind(flags), flags, decl, none);
-        let symbol = self.declare_in(exports, name, flags, decl, container);
-        self.b.symbols[local.idx()].export_symbol = symbol;
-        symbol
-    }
-
-    /// `export { a as b }` and `export * as b` go by `b.container`. `declareModuleMember`, `bindExportDeclaration`: among the exports
-    /// of a module or a namespace. `AliasExcludes`: one symbol with what else has the name, unless that is an alias.
-    fn export_as(&mut self, name: Atom, flags: SymFlags, decl: Decl) {
-        let s = &self.b.scopes[self.container_scope(self.scope).idx()];
-        let (locals, container) = (s.locals, s.symbol);
-        if container.is_some() {
-            let exports = self.b.symbols[container.idx()].exports;
-            self.declare_in(exports, name, flags, decl, container);
-        } else if matches!(decl, Decl::ExportSpec(_)) {
-            // `declareSymbolAndAddToSymbolTable`: in a function or a script it is a local.
-            self.declare_in(locals, name, flags, decl, SymbolId::NONE);
-        } else {
-            // "Export * in some sort of block construct"
-            self.new_symbol(name, flags, decl, SymbolId::NONE);
-        }
-    }
-
-    /// `declareModuleMember` for `export default` on a declaration. `declareSymbolEx`: `if isDefaultExport && parent != nil`, which
-    /// is among the exports, its name is `default`. Without a name (`NONE`) nothing here can refer to it.
-    fn declare_default(&mut self, name: Atom, flags: SymFlags, decl: Decl) -> SymbolId {
-        let s = &self.b.scopes[self.scope.idx()];
-        let (locals, container) = (s.locals, s.symbol);
-        // Where there are no exports, what has no name goes in no table.
-        if container.is_none() {
-            return if name.is_some() {
-                self.declare(self.scope, name, flags, decl, false)
-            } else {
-                self.new_symbol(known::default, flags, decl, SymbolId::NONE)
-            };
-        }
-        let exports = self.b.symbols[container.idx()].exports;
+        let exports = self.b.symbols[symbol.idx()].exports;
         // "No local symbol for an unnamed default!"
-        let none = SymbolId::NONE;
-        let local = name
-            .is_some()
-            .then(|| self.declare_symbol(locals, name, export_kind(flags), flags, decl, none));
-        let symbol = self.declare_in(exports, known::default, flags, decl, container);
-        if let Some(local) = local {
-            self.b.symbols[local.idx()].export_symbol = symbol;
+        let is_unnamed_default =
+            flags.contains(Flags::DEFAULT) && self.get_declaration_name(decl) == known::missing;
+        if is_alias || is_unnamed_default {
+            return self.declare_symbol(exports, symbol, decl, includes, excludes);
         }
-        symbol
+        let export_kind = if includes.intersects(SymFlags::VALUE) {
+            SymFlags::EXPORT_VALUE
+        } else {
+            SymFlags::empty()
+        };
+        let local = self.declare_symbol(locals, SymbolId::NONE, decl, export_kind, excludes);
+        let exported = self.declare_symbol(exports, symbol, decl, includes, excludes);
+        self.b.symbols[local.idx()].export_symbol = exported;
+        exported
+    }
+
+    /// `declareSymbolAndAddToSymbolTable`
+    fn declare_symbol_and_add_to_symbol_table(
+        &mut self,
+        decl: Decl,
+        includes: SymFlags,
+        excludes: SymFlags,
+    ) -> SymbolId {
+        let container = self.container_scope(self.scope);
+        let s = &self.b.scopes[container.idx()];
+        // `declareSourceFileMember` asks `IsExternalModule`, which a CommonJS module is not.
+        let is_module = match s.kind {
+            ScopeKind::Module(_) => true,
+            ScopeKind::File => self.f.has_module_syntax,
+            _ => false,
+        };
+        if is_module {
+            return self.declare_module_member(container, decl, includes, excludes);
+        }
+        let locals = s.locals;
+        self.declare_symbol(locals, SymbolId::NONE, decl, includes, excludes)
+    }
+
+    /// `bindBlockScopedDeclaration`
+    fn bind_block_scoped_declaration(
+        &mut self,
+        decl: Decl,
+        includes: SymFlags,
+        excludes: SymFlags,
+    ) -> SymbolId {
+        let s = &self.b.scopes[self.scope.idx()];
+        if s.symbol.is_some() && matches!(s.kind, ScopeKind::File | ScopeKind::Module(_)) {
+            return self.declare_module_member(self.scope, decl, includes, excludes);
+        }
+        let locals = s.locals;
+        self.declare_symbol(locals, SymbolId::NONE, decl, includes, excludes)
     }
 
     fn specifier(&mut self, spec: Atom) {
@@ -858,15 +905,11 @@ impl<'f> Binder<'f> {
             });
         }
         let is_module = self.f.has_module_syntax || self.b.commonjs_indicator.is_some();
-        let symbol = self.new_symbol(
-            Atom::NONE,
-            SymFlags::VALUE_MODULE,
-            Decl::File,
-            SymbolId::NONE,
-        );
+        // `bindSourceFileAsExternalModule`
+        let symbol =
+            self.bind_anonymous_declaration(Decl::File, SymFlags::VALUE_MODULE, Atom::NONE);
         self.b.file_symbol = symbol;
-        let exports = self.new_table();
-        self.b.symbols[symbol.idx()].exports = exports;
+        self.get_exports(symbol);
         self.push_scope(
             ScopeKind::File,
             if is_module { symbol } else { SymbolId::NONE },
@@ -876,25 +919,20 @@ impl<'f> Binder<'f> {
             arrow: false,
         });
         // `setExportContextFlag`: in a declaration file that exports nothing explicitly, everything is exported.
-        let all_exported = is_module
-            && self.f.kind == FileKind::Declaration
-            && !self.has_export_statements(self.f.body);
-        self.stmts(self.f.body, Parent::File, all_exported);
+        self.b.scopes[self.scope.idx()].is_export_context =
+            self.f.kind == FileKind::Declaration && !has_export_declarations(self.f, self.f.body);
+        self.stmts(self.f.body, Parent::File);
         // `bindContainer`: the aliases tags declare at the top of the file are declared once all its statements are bound.
         if self.f.is_js {
             for s in self.f.ids(self.f.body) {
                 if let StmtKind::TypeAlias(alias) = self.f[s].kind
                     && self.f[alias].flags.contains(Flags::REPARSED)
                 {
-                    let name = self.f[alias].name;
-                    let symbol = self.declare(
-                        self.scope,
-                        name,
-                        SymFlags::TYPE_ALIAS,
+                    self.bind_block_scoped_declaration(
                         Decl::Alias(alias),
-                        true,
+                        SymFlags::TYPE_ALIAS,
+                        SymFlags::TYPE_ALIAS_EXCLUDES,
                     );
-                    self.b.alias_symbol[alias.idx()] = symbol;
                 }
             }
         }
@@ -925,16 +963,15 @@ impl<'f> Binder<'f> {
             let locals = self.b.scopes[self.scope.idx()].locals;
             for name in [known::module, known::exports] {
                 if !self.tables[locals.idx()].contains_key(&name) {
-                    let flags = SymFlags::FUNCTION_SCOPED_VARIABLE | SymFlags::MODULE_EXPORTS;
-                    self.declare_in(locals, name, flags, Decl::CommonJsVariable, SymbolId::NONE);
+                    let (flags, decl) = (SymFlags::MODULE_EXPORTS, Decl::CommonJsVariable);
+                    let variable = flags | SymFlags::FUNCTION_SCOPED_VARIABLE;
+                    let symbol = self.bind_anonymous_declaration(decl, variable, name);
+                    self.tables[locals.idx()].insert(name, symbol);
                     // Its parent is `module`, which `getSymbolChain` never writes: the declaration of that is the file.
                     if name == known::module {
-                        self.b.module_exports_property = self.new_symbol(
-                            known::exports,
-                            SymFlags::MODULE_EXPORTS | SymFlags::PROPERTY,
-                            Decl::CommonJsVariable,
-                            SymbolId::NONE,
-                        );
+                        let property = flags | SymFlags::PROPERTY;
+                        self.b.module_exports_property =
+                            self.bind_anonymous_declaration(decl, property, known::exports);
                     }
                 }
             }
@@ -965,26 +1002,9 @@ impl<'f> Binder<'f> {
         if promoted.is_empty() {
             return;
         }
-        if self.b.symbols[equals.idx()].exports.is_none() {
-            let table = self.new_table();
-            self.b.symbols[equals.idx()].exports = table;
-        }
-        let table = self.b.symbols[equals.idx()].exports;
+        let table = self.get_exports(equals);
         self.tables[table.idx()].extend(promoted);
         self.b.symbols[equals.idx()].flags |= SymFlags::NAMESPACE_MODULE;
-    }
-
-    /// `hasExportDeclarations`
-    fn has_export_statements(&self, list: IdList<StmtId>) -> bool {
-        self.f.ids(list).any(|s| {
-            matches!(
-                self.f[s].kind,
-                StmtKind::ExportNamed(_)
-                    | StmtKind::ExportAssign(_)
-                    | StmtKind::ExportDefault(_)
-                    | StmtKind::ExportStar { .. }
-            )
-        })
     }
 
     /// The nearest scope that is more than a block: `container`, where `scope` is `blockScopeContainer`.
@@ -1104,24 +1124,16 @@ impl<'f> Binder<'f> {
         match self.f[init].kind {
             ExprKind::Fn(func) => {
                 if self.b.fn_symbol[func.idx()].is_none() {
-                    self.b.fn_symbol[func.idx()] = self.new_symbol(
-                        known::anonymous_function,
-                        SymFlags::FUNCTION,
-                        Decl::Fn(func),
-                        SymbolId::NONE,
-                    );
+                    let name = known::anonymous_function;
+                    self.bind_anonymous_declaration(Decl::Fn(func), SymFlags::FUNCTION, name);
                 }
                 Some(self.b.fn_symbol[func.idx()])
             }
             ExprKind::Class(c) if self.f.is_js => Some(self.b.class_symbol[c.idx()]),
             ExprKind::Object(props) if self.f.is_js && props.is_empty() && !is_annotated => {
                 if self.b.expr_symbol[init.idx()].is_none() {
-                    self.b.expr_symbol[init.idx()] = self.new_symbol(
-                        known::object_literal,
-                        SymFlags::OBJECT_LITERAL,
-                        Decl::ObjectLiteral(init),
-                        SymbolId::NONE,
-                    );
+                    let (decl, flags) = (Decl::ObjectLiteral(init), SymFlags::OBJECT_LITERAL);
+                    self.bind_anonymous_declaration(decl, flags, known::object_literal);
                 }
                 Some(self.b.expr_symbol[init.idx()])
             }
@@ -1219,24 +1231,27 @@ impl<'f> Binder<'f> {
             if name.is_some() && self.has_export(owner, name) {
                 continue;
             }
-            // `GetExports`
-            if self.b.symbols[owner.idx()].exports.is_none() {
-                let exports = self.new_table();
-                self.b.symbols[owner.idx()].exports = exports;
-            }
-            let exports = self.b.symbols[owner.idx()].exports;
+            let exports = self.get_exports(owner);
             let (flags, decl) = (SymFlags::PROPERTY | SymFlags::ASSIGNMENT, Decl::Expando(e));
-            self.b.expr_symbol[e.idx()] = if name.is_some() {
-                self.declare_in(exports, name, flags, decl, owner)
+            if name.is_some() {
+                self.declare_symbol(exports, owner, decl, flags, SymFlags::PROPERTY_EXCLUDES);
             } else {
                 // `addLateBoundAssignmentDeclarationToSymbol`. `isLateBindableAST`: a key such as `a + b` or `-1` names no property.
                 if is_entity_name_expression(self.f, key) {
                     let name = known::assignment_declaration;
-                    self.declare_in(exports, name, SymFlags::empty(), decl, SymbolId::NONE);
+                    match self.tables[exports.idx()].get(&name) {
+                        Some(&all) => self.add_declaration_to_symbol(all, decl, SymFlags::empty()),
+                        None => {
+                            let all =
+                                self.bind_anonymous_declaration(decl, SymFlags::empty(), name);
+                            self.tables[exports.idx()].insert(name, all);
+                        }
+                    }
                 }
-                // `bindAnonymousDeclaration`. The parent is the one `lateBindMember` gives the symbol it makes.
-                self.new_symbol(known::computed, flags, decl, owner)
-            };
+                // The parent is the one `lateBindMember` gives the symbol it makes.
+                let symbol = self.bind_anonymous_declaration(decl, flags, known::computed);
+                self.b.symbols[symbol.idx()].parent = owner;
+            }
             self.b.expando_declarations.push(e);
         }
         self.b.expando_declarations.as_mut_slice().sort_unstable();
@@ -1462,23 +1477,23 @@ impl<'f> Binder<'f> {
     // ───────────────────────────── statements ─────────────────────────────
 
     /// Function declarations first: they are there from the top of the block.
-    fn stmts(&mut self, list: IdList<StmtId>, parent: Parent, all_exported: bool) {
+    fn stmts(&mut self, list: IdList<StmtId>, parent: Parent) {
         self.statement_lists.push(list);
         for s in self.f.ids(list) {
             if matches!(self.f[s].kind, StmtKind::Fn(_)) {
-                self.stmt(s, parent, all_exported);
+                self.stmt(s, parent);
             }
         }
         for s in self.f.ids(list) {
             if !matches!(self.f[s].kind, StmtKind::Fn(_)) {
-                self.stmt(s, parent, all_exported);
+                self.stmt(s, parent);
             }
         }
         self.statement_lists.pop();
     }
 
     /// `IsImplicitlyExportedJSDocDeclaration`: what a `@typedef` or a `@callback` declares at the top of a module. Whether the file
-    /// is one `declare` knows.
+    /// is one `bind_block_scoped_declaration` knows.
     fn is_implicitly_exported(&self, flags: Flags) -> bool {
         flags.contains(Flags::REPARSED)
             && matches!(self.b.scopes[self.scope.idx()].kind, ScopeKind::File)
@@ -1494,15 +1509,11 @@ impl<'f> Binder<'f> {
 
     fn optional_stmt(&mut self, s: StmtId, parent: Parent) {
         if s.is_some() {
-            self.stmt(s, parent, false);
+            self.stmt(s, parent);
         }
     }
 
-    fn block_scoped(&mut self, s: StmtId, parent: Parent) {
-        self.stmt(s, parent, false);
-    }
-
-    fn stmt(&mut self, id: StmtId, parent: Parent, all_exported: bool) {
+    fn stmt(&mut self, id: StmtId, parent: Parent) {
         self.b.stmt_parent[id.idx()] = parent;
         self.b.stmt_scope[id.idx()] = self.scope;
         self.b.stmt_flow[id.idx()] = self.flow;
@@ -1516,7 +1527,6 @@ impl<'f> Binder<'f> {
                 self.unchecked_expr(decorator, me);
             }
         }
-        let is_exported = |flags: Flags| all_exported || flags.contains(Flags::EXPORT);
         match self.f[id].kind {
             StmtKind::Empty | StmtKind::Debugger => {}
             StmtKind::Expr(e) => {
@@ -1526,69 +1536,32 @@ impl<'f> Binder<'f> {
             StmtKind::Var(decls) => {
                 for d in decls.iter() {
                     self.b.var_stmt[d.idx()] = id;
-                    self.var_decl(d, is_exported(self.f[d].flags), false);
+                    self.var_decl(d, false);
                 }
             }
             StmtKind::Fn(func) => {
-                let f = &self.f[func];
-                let symbol = if f.flags.contains(Flags::DEFAULT) {
-                    self.declare_default(f.name, SymFlags::FUNCTION, Decl::Fn(func))
-                } else {
-                    // `parseFunctionDeclaration`: the name that is missing is an identifier without text.
-                    let name = if f.name.is_some() {
-                        f.name
-                    } else {
-                        known::empty
-                    };
-                    self.declare(
-                        self.scope,
-                        name,
-                        SymFlags::FUNCTION,
-                        Decl::Fn(func),
-                        is_exported(f.flags),
-                    )
-                };
-                self.b.fn_symbol[func.idx()] = symbol;
+                self.bind_block_scoped_declaration(
+                    Decl::Fn(func),
+                    SymFlags::FUNCTION,
+                    SymFlags::FUNCTION_EXCLUDES,
+                );
                 self.func(func, FnOwner::Stmt(id));
             }
             StmtKind::Class(class) => {
-                let c = &self.f[class];
-                let symbol = if c.flags.contains(Flags::DEFAULT) {
-                    self.declare_default(c.name, SymFlags::CLASS, Decl::Class(class))
-                } else if c.name.is_none() {
-                    // `declareSymbolEx`: what has no name goes in no table, exported or not.
-                    self.new_symbol(
-                        known::default,
-                        SymFlags::CLASS,
-                        Decl::Class(class),
-                        SymbolId::NONE,
-                    )
-                } else {
-                    self.declare(
-                        self.scope,
-                        c.name,
-                        SymFlags::CLASS,
-                        Decl::Class(class),
-                        is_exported(c.flags),
-                    )
-                };
-                self.b.class_symbol[class.idx()] = symbol;
+                self.bind_block_scoped_declaration(
+                    Decl::Class(class),
+                    SymFlags::CLASS,
+                    SymFlags::CLASS_EXCLUDES,
+                );
                 self.class(class, ClassOwner::Stmt(id));
             }
             StmtKind::Interface(interface) => {
                 let i = &self.f[interface];
-                let symbol = if i.flags.contains(Flags::DEFAULT) {
-                    self.declare_default(i.name, SymFlags::INTERFACE, Decl::Interface(interface))
-                } else {
-                    self.declare(
-                        self.scope,
-                        i.name,
-                        SymFlags::INTERFACE,
-                        Decl::Interface(interface),
-                        is_exported(i.flags),
-                    )
-                };
-                self.b.interface_symbol[interface.idx()] = symbol;
+                self.bind_block_scoped_declaration(
+                    Decl::Interface(interface),
+                    SymFlags::INTERFACE,
+                    SymFlags::INTERFACE_EXCLUDES,
+                );
                 // `ContainerFlagsIsInterface`: a `this` in it says nothing of what is around.
                 let seen_this = self.seen_this;
                 self.b.interface_scope[interface.idx()] =
@@ -1608,17 +1581,14 @@ impl<'f> Binder<'f> {
                 let a = &self.f[alias];
                 // What a tag declares at the top of the file is declared by `file`, after everything else.
                 if !self.is_implicitly_exported(a.flags) {
-                    let symbol = self.declare(
-                        self.scope,
-                        a.name,
-                        SymFlags::TYPE_ALIAS,
+                    self.bind_block_scoped_declaration(
                         Decl::Alias(alias),
-                        is_exported(a.flags),
+                        SymFlags::TYPE_ALIAS,
+                        SymFlags::TYPE_ALIAS_EXCLUDES,
                     );
-                    self.b.alias_symbol[alias.idx()] = symbol;
                 }
                 self.b.alias_scope[alias.idx()] =
-                    self.push_scope(ScopeKind::TypeParams, SymbolId::NONE);
+                    self.push_scope(ScopeKind::TypeAlias(alias), SymbolId::NONE);
                 self.type_params(a.type_params, FnId::NONE);
                 self.by_alias = true;
                 self.ty(a.ty);
@@ -1627,56 +1597,26 @@ impl<'f> Binder<'f> {
             }
             StmtKind::Enum(e) => {
                 let decl = &self.f[e];
-                let flags = if decl.flags.contains(Flags::CONST) {
-                    SymFlags::ENUM | SymFlags::CONST_ENUM
+                // `bindEnumDeclaration`
+                let (flags, excludes) = if decl.flags.contains(Flags::CONST) {
+                    (SymFlags::CONST_ENUM, SymFlags::CONST_ENUM_EXCLUDES)
                 } else {
-                    SymFlags::ENUM
+                    (SymFlags::REGULAR_ENUM, SymFlags::REGULAR_ENUM_EXCLUDES)
                 };
-                let symbol = self.declare(
-                    self.scope,
-                    decl.name,
-                    flags,
-                    Decl::Enum(e),
-                    is_exported(decl.flags),
-                );
-                self.b.enum_symbol[e.idx()] = symbol;
-                if self.b.symbols[symbol.idx()].exports.is_none() {
-                    let exports = self.new_table();
-                    self.b.symbols[symbol.idx()].exports = exports;
-                }
-                let exports = self.b.symbols[symbol.idx()].exports;
+                let symbol = self.bind_block_scoped_declaration(Decl::Enum(e), flags, excludes);
+                let exports = self.get_exports(symbol);
                 self.b.enum_scope[e.idx()] = self.push_scope(ScopeKind::Enum(e), symbol);
                 // `forEachYieldExpression` does not look into an enum.
                 let counted = self.yields.len();
                 for m in decl.members.iter() {
-                    // `bindPropertyOrMethodOrAccessor`: a member with a computed name gets a symbol that is in no table.
-                    let member = if self.f[m].name.is_none() {
-                        self.new_symbol(
-                            Atom::NONE,
-                            SymFlags::ENUM_MEMBER,
-                            Decl::EnumMember(m),
-                            symbol,
-                        )
-                    } else if is_private_name_at(self.f, self.f[m].pos)
-                        || is_bigint_literal_at(self.f, self.f[m].pos)
-                    {
-                        // `getDeclarationName`: neither is a name. `declareSymbolEx` puts what has none in no table.
-                        self.new_symbol(
-                            known::missing,
-                            SymFlags::ENUM_MEMBER,
-                            Decl::EnumMember(m),
-                            symbol,
-                        )
-                    } else {
-                        self.declare_in(
-                            exports,
-                            self.f[m].name,
-                            SymFlags::ENUM_MEMBER,
-                            Decl::EnumMember(m),
-                            symbol,
-                        )
-                    };
-                    self.b.enum_member_symbol[m.idx()] = member;
+                    // `bindPropertyOrMethodOrAccessor`
+                    self.declare_symbol(
+                        exports,
+                        symbol,
+                        Decl::EnumMember(m),
+                        SymFlags::ENUM_MEMBER,
+                        SymFlags::ENUM_MEMBER_EXCLUDES,
+                    );
                     self.b.enum_member_owner[m.idx()] = e;
                     if self.f[m].computed_name.is_some() {
                         self.unchecked_expr(self.f[m].computed_name, Parent::EnumInit(m));
@@ -1688,7 +1628,7 @@ impl<'f> Binder<'f> {
                 self.yields.truncate(counted);
                 self.pop_scope();
             }
-            StmtKind::Module(m) => self.module(m, id, all_exported),
+            StmtKind::Module(m) => self.module(m),
             StmtKind::Return(e) => {
                 self.returns.push(id.0);
                 let is_reached = self.flow != UNREACHABLE;
@@ -1715,7 +1655,7 @@ impl<'f> Binder<'f> {
                 );
                 self.condition(test, me, then_label, else_label);
                 self.flow = self.finish_label(then_label);
-                self.block_scoped(yes, me);
+                self.stmt(yes, me);
                 self.add_edge(post, self.flow);
                 self.flow = self.finish_label(else_label);
                 self.optional_stmt(no, me);
@@ -1792,7 +1732,7 @@ impl<'f> Binder<'f> {
                     StmtKind::Var(decls) => {
                         for d in decls.iter() {
                             self.b.var_stmt[d.idx()] = left;
-                            self.var_decl(d, false, true);
+                            self.var_decl(d, true);
                         }
                     }
                     StmtKind::Expr(target) => {
@@ -1808,7 +1748,7 @@ impl<'f> Binder<'f> {
             }
             StmtKind::Block(list) => {
                 self.push_scope(ScopeKind::Block, SymbolId::NONE);
-                self.stmts(list, me, false);
+                self.stmts(list, me);
                 self.pop_scope();
             }
             StmtKind::Switch { expr, cases } => self.switch(id, expr, cases),
@@ -1825,7 +1765,7 @@ impl<'f> Binder<'f> {
                 let is_reached = self.flow != UNREACHABLE;
                 let post = self.branch_label();
                 self.labels.push((label, post, FlowId::NONE, false));
-                self.stmt(body, me, false);
+                self.stmt(body, me);
                 if self.labels.pop().is_some_and(|l| !l.3) && is_reached {
                     self.b.unused_labels.push(id);
                 }
@@ -1836,43 +1776,15 @@ impl<'f> Binder<'f> {
                 let i = &self.f[import];
                 self.b.import_scope[import.idx()] = self.scope;
                 self.statement_specifier(i.spec);
-                let type_only = if i.type_only {
-                    SymFlags::TYPE_ONLY
-                } else {
-                    SymFlags::empty()
-                };
-                if i.default.is_some() {
-                    self.declare(
-                        self.scope,
-                        i.default,
-                        SymFlags::ALIAS | type_only,
-                        Decl::ImportDefault(import),
-                        false,
-                    );
-                }
-                if i.namespace.is_some() {
-                    self.declare(
-                        self.scope,
-                        i.namespace,
-                        SymFlags::ALIAS | type_only,
-                        Decl::ImportNamespace(import),
-                        false,
-                    );
-                }
-                for spec in i.named.iter() {
-                    // `IsTypeOnlyImportDeclaration`: `import { type a }`
-                    let type_only = if self.f[spec].type_only {
-                        SymFlags::TYPE_ONLY
-                    } else {
-                        type_only
-                    };
-                    self.declare(
-                        self.scope,
-                        self.f[spec].local,
-                        SymFlags::ALIAS | type_only,
-                        Decl::ImportSpec(spec),
-                        false,
-                    );
+                let (alias, excludes) = (SymFlags::ALIAS, SymFlags::ALIAS_EXCLUDES);
+                let default = i.default.is_some().then_some(Decl::ImportDefault(import));
+                let namespace = i
+                    .namespace
+                    .is_some()
+                    .then_some(Decl::ImportNamespace(import));
+                let named = i.named.iter().map(Decl::ImportSpec);
+                for decl in default.into_iter().chain(namespace).chain(named) {
+                    self.declare_symbol_and_add_to_symbol_table(decl, alias, excludes);
                 }
             }
             StmtKind::ImportEquals(import) => {
@@ -1884,19 +1796,10 @@ impl<'f> Binder<'f> {
                 if i.expression.is_some() {
                     self.unchecked_expr(i.expression, me);
                 }
-                let type_only = if i.flags.contains(Flags::TYPE_ONLY) {
-                    SymFlags::TYPE_ONLY
-                } else {
-                    SymFlags::empty()
-                };
-                // `declareModuleMember`: an alias is exported only if it says so itself.
-                let exported = i.flags.contains(Flags::EXPORT);
-                self.declare(
-                    self.scope,
-                    i.name,
-                    SymFlags::ALIAS | type_only,
+                self.declare_symbol_and_add_to_symbol_table(
                     Decl::ImportEquals(import),
-                    exported,
+                    SymFlags::ALIAS,
+                    SymFlags::ALIAS_EXCLUDES,
                 );
                 self.b.import_equals_scope[import.idx()] = self.scope;
             }
@@ -1905,31 +1808,27 @@ impl<'f> Binder<'f> {
                 self.statement_specifier(e.spec);
                 self.b.export_scope[export.idx()] = self.scope;
                 for spec in e.items.iter() {
-                    self.export_as(
-                        self.f[spec].exported,
-                        SymFlags::ALIAS | SymFlags::EXPORT_ONLY,
+                    self.declare_symbol_and_add_to_symbol_table(
                         Decl::ExportSpec(spec),
+                        SymFlags::ALIAS | SymFlags::EXPORT_ONLY,
+                        SymFlags::ALIAS_EXCLUDES,
                     );
                 }
             }
-            StmtKind::ExportStar {
-                spec,
-                alias,
-                type_only,
-                ..
-            } => {
+            // `bindExportDeclaration`
+            StmtKind::ExportStar { spec, alias, .. } => {
                 self.statement_specifier(spec);
-                if alias.is_some() {
-                    let type_only = if type_only {
-                        SymFlags::TYPE_ONLY
-                    } else {
-                        SymFlags::empty()
-                    };
-                    self.export_as(
-                        alias,
-                        SymFlags::ALIAS | SymFlags::EXPORT_ONLY | type_only,
-                        Decl::ExportStarAs(id),
-                    );
+                let (decl, flags) = (
+                    Decl::ExportStarAs(id),
+                    SymFlags::ALIAS | SymFlags::EXPORT_ONLY,
+                );
+                let container = self.b.scopes[self.container_scope(self.scope).idx()].symbol;
+                if alias.is_some() && container.is_none() {
+                    // "Export * in some sort of block construct"
+                    self.bind_anonymous_declaration(decl, flags, alias);
+                } else if alias.is_some() {
+                    let exports = self.b.symbols[container.idx()].exports;
+                    self.declare_symbol(exports, container, decl, flags, SymFlags::ALIAS_EXCLUDES);
                 } else {
                     let container = self.b.scopes[self.scope.idx()].symbol;
                     if container.is_some() {
@@ -1940,11 +1839,6 @@ impl<'f> Binder<'f> {
             StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e) => {
                 self.jsdoc_type(JsDocTypeOwner::Export(id));
                 self.expr(e, me);
-                let name = if matches!(self.f[id].kind, StmtKind::ExportDefault(_)) {
-                    known::default
-                } else {
-                    known::export_equals
-                };
                 // `ExpressionIsAlias`: `export default name` stands for everything `name` means, and a class expression for the class.
                 let flags = if expression_is_alias(self.f, e) {
                     SymFlags::ALIAS
@@ -1957,16 +1851,12 @@ impl<'f> Binder<'f> {
                     ScopeKind::Fn(f) => self.b.fn_symbol[f.idx()],
                     _ => container.symbol,
                 };
+                let decl = Decl::ExportExpr(id);
                 if container.is_some() {
-                    // `GetExports`
-                    if self.b.symbols[container.idx()].exports.is_none() {
-                        let exports = self.new_table();
-                        self.b.symbols[container.idx()].exports = exports;
-                    }
-                    let exports = self.b.symbols[container.idx()].exports;
-                    self.declare_in(exports, name, flags, Decl::ExportExpr(id), container);
+                    let exports = self.get_exports(container);
+                    self.declare_symbol(exports, container, decl, flags, SymFlags::all());
                 } else {
-                    self.new_symbol(name, flags, Decl::ExportExpr(id), SymbolId::NONE);
+                    self.bind_anonymous_declaration(decl, flags, self.get_declaration_name(decl));
                 }
                 self.b.expr_scope.insert(e, self.scope);
             }
@@ -1976,12 +1866,8 @@ impl<'f> Binder<'f> {
                     && self.f.has_module_syntax
                     && matches!(self.b.scopes[self.scope.idx()].kind, ScopeKind::File)
                 {
-                    let symbol = self.new_symbol(
-                        name,
-                        SymFlags::ALIAS | SymFlags::EXPORT_ONLY,
-                        Decl::UmdGlobal(id),
-                        SymbolId::NONE,
-                    );
+                    let flags = SymFlags::ALIAS | SymFlags::EXPORT_ONLY;
+                    let symbol = self.bind_anonymous_declaration(Decl::UmdGlobal(id), flags, name);
                     self.b.umd_globals.push((name, symbol));
                 }
             }
@@ -2042,7 +1928,7 @@ impl<'f> Binder<'f> {
                 at = p;
             }
         }
-        self.stmt(body, parent, false);
+        self.stmt(body, parent);
         (self.break_target, self.continue_target) = saved;
     }
 
@@ -2135,7 +2021,7 @@ impl<'f> Binder<'f> {
         }
         // `bindCaseOrDefaultClause`: as they are written, function declarations too.
         for s in self.f.ids(c.body) {
-            self.stmt(s, Parent::Stmt(stmt), false);
+            self.stmt(s, Parent::Stmt(stmt));
         }
     }
 
@@ -2157,7 +2043,7 @@ impl<'f> Binder<'f> {
         }
         self.add_edge(exception_label, self.flow);
         self.exception_target = exception_label;
-        self.stmt(block, me, false);
+        self.stmt(block, me);
         self.add_edge(normal_exit, self.flow);
         if handler.is_some() {
             self.flow = self.finish_label(exception_label);
@@ -2167,9 +2053,9 @@ impl<'f> Binder<'f> {
             self.push_scope(ScopeKind::Block, SymbolId::NONE);
             if param.is_some() {
                 self.b.var_stmt[param.idx()] = id;
-                self.var_decl(param, false, false);
+                self.var_decl(param, false);
             }
-            self.stmt(handler, me, false);
+            self.stmt(handler, me);
             self.pop_scope();
             self.add_edge(normal_exit, self.flow);
         }
@@ -2186,7 +2072,7 @@ impl<'f> Binder<'f> {
             } else {
                 UNREACHABLE
             };
-            self.stmt(finalizer, me, false);
+            self.stmt(finalizer, me);
             if self.flow != UNREACHABLE {
                 // Whoever comes out of the block goes on the way they came in: by returning, by throwing, or normally.
                 let (before, label) = (self.flow, self.node_of(finally_label));
@@ -2224,7 +2110,7 @@ impl<'f> Binder<'f> {
         }
     }
 
-    fn module(&mut self, m: ModuleId, stmt: StmtId, all_exported: bool) {
+    fn module(&mut self, m: ModuleId) {
         let decl = &self.f[m];
         let ambient = decl.flags.contains(Flags::AMBIENT) || self.f.kind == FileKind::Declaration;
         // `GetModuleInstanceState`
@@ -2240,11 +2126,11 @@ impl<'f> Binder<'f> {
             self.ambient_module_around().is_some()
         };
         // `bindModuleDeclaration`: a module that is declared here is a value whatever is in it.
-        let flags =
+        let (flags, excludes) =
             if instantiated || !matches!(decl.name, ModuleName::Ident(_)) && !is_augmentation {
-                SymFlags::VALUE_MODULE
+                (SymFlags::VALUE_MODULE, SymFlags::VALUE_MODULE_EXCLUDES)
             } else {
-                SymFlags::NAMESPACE_MODULE
+                (SymFlags::NAMESPACE_MODULE, SymFlags::empty())
             };
         // `declareSymbolAndAddToSymbolTable`: what a script declares, be it in a block, is global.
         let is_global = !self.f.has_module_syntax
@@ -2253,19 +2139,9 @@ impl<'f> Binder<'f> {
                 ScopeKind::File
             );
         let symbol = match decl.name {
-            ModuleName::Ident(name) => self.declare(
-                self.scope,
-                name,
-                flags,
-                Decl::Module(m),
-                // `declareSourceFileMember` asks `IsExternalModule`, which a CommonJS module is not.
-                all_exported
-                    || decl.flags.contains(Flags::EXPORT)
-                    || self.is_implicitly_exported(decl.flags) && self.f.has_module_syntax,
-            ),
             // `declareModuleMember`: a local of what it is written in, under a name nothing can refer to. 2435
             ModuleName::String(name) if !is_global && !is_augmentation => {
-                self.new_symbol(name, flags, Decl::Module(m), SymbolId::NONE)
+                self.bind_anonymous_declaration(Decl::Module(m), flags, name)
             }
             ModuleName::String(name) => {
                 // `collectModuleReferences`: what adds to a module has to find it, like one that is imported. At the top of a script
@@ -2283,39 +2159,33 @@ impl<'f> Binder<'f> {
                     .map(|a| a.1);
                 match existing {
                     Some(symbol) => {
-                        let there = &mut self.b.symbols[symbol.idx()];
-                        there.flags |= flags;
-                        there.decls.push(Decl::Module(m));
+                        self.add_declaration_to_symbol(symbol, Decl::Module(m), flags);
                         symbol
                     }
                     None => {
-                        let symbol = self.new_symbol(name, flags, Decl::Module(m), SymbolId::NONE);
+                        let symbol = self.bind_anonymous_declaration(Decl::Module(m), flags, name);
                         let module = (name, symbol, is_augmentation);
                         self.b.ambient_modules.push(module);
                         symbol
                     }
                 }
             }
-            ModuleName::Global => {
-                // `declareModuleMember`: `IsAmbientModule`, so it is among the locals, where all of them are one symbol (`InternalSymbolNameGlobal`).
-                let locals = self.b.scopes[self.scope.idx()].locals;
-                let name = known::global_augmentation;
-                let symbol = self.declare_in(locals, name, flags, Decl::Module(m), SymbolId::NONE);
-                // `collectModuleReferences`: anywhere else it adds to nothing. 2669
-                if is_augmentation && !self.b.global_augmentations.contains(&symbol) {
-                    self.b.global_augmentations.push(symbol);
-                }
-                symbol
+            ModuleName::Ident(_) | ModuleName::Global => {
+                self.declare_symbol_and_add_to_symbol_table(Decl::Module(m), flags, excludes)
             }
         };
-        self.b.module_symbol[m.idx()] = symbol;
-        if self.b.symbols[symbol.idx()].exports.is_none() {
-            let exports = self.new_table();
-            self.b.symbols[symbol.idx()].exports = exports;
+        // `collectModuleReferences`: anywhere else it adds to nothing. 2669
+        if decl.name == ModuleName::Global
+            && is_augmentation
+            && !self.b.global_augmentations.contains(&symbol)
+        {
+            self.b.global_augmentations.push(symbol);
         }
-        // `setExportContextFlag`: in an ambient module that exports nothing explicitly, everything is exported.
-        let everything = ambient && !self.has_export_statements(decl.body);
+        self.get_exports(symbol);
         self.b.module_scope[m.idx()] = self.push_scope(ScopeKind::Module(m), symbol);
+        // `setExportContextFlag`: in an ambient module that exports nothing explicitly, everything is exported.
+        self.b.scopes[self.scope.idx()].is_export_context =
+            ambient && !has_export_declarations(self.f, decl.body);
         // `GetContainerFlags`: in the body the flow of control starts afresh, and nothing known outside holds.
         let saved = (
             self.flow,
@@ -2336,7 +2206,7 @@ impl<'f> Binder<'f> {
         let seen_this = self.seen_this;
         // `forEachYieldExpression` does not look into a namespace.
         let counted = self.yields.len();
-        self.stmts(decl.body, Parent::Module(m), everything);
+        self.stmts(decl.body, Parent::Module(m));
         self.yields.truncate(counted);
         self.seen_this = seen_this;
         (
@@ -2352,7 +2222,6 @@ impl<'f> Binder<'f> {
         if !matches!(decl.name, ModuleName::Ident(_)) {
             self.bind_commonjs_type_exports(symbol);
         }
-        let _ = stmt;
     }
 
     /// `getModuleInstanceState`, and `getModuleInstanceStateCached` of the body. `outer`: the lists of statements `m` is in, innermost
@@ -2494,11 +2363,11 @@ impl<'f> Binder<'f> {
         }
     }
 
-    fn var_decl(&mut self, d: VarDeclId, exported: bool, always_assigned: bool) {
+    fn var_decl(&mut self, d: VarDeclId, always_assigned: bool) {
         let decl = &self.f[d];
-        let (scope, mut flags) = match decl.kind {
-            VarKind::Var => (self.var_scope(), SymFlags::FUNCTION_SCOPED_VARIABLE),
-            _ => (self.scope, SymFlags::BLOCK_SCOPED_VARIABLE),
+        let mut flags = match decl.kind {
+            VarKind::Var => SymFlags::FUNCTION_SCOPED_VARIABLE,
+            _ => SymFlags::BLOCK_SCOPED_VARIABLE,
         };
         if matches!(
             decl.kind,
@@ -2508,7 +2377,7 @@ impl<'f> Binder<'f> {
         }
         let around_reached = std::mem::replace(&mut self.is_reached, self.flow != UNREACHABLE);
         // `bindVariableDeclarationFlow`: as they are written.
-        self.pat(decl.pat, PatParent::Var(d), scope, flags, exported, false);
+        self.pat(decl.pat, PatParent::Var(d), flags);
         if decl.ty.is_some() {
             self.ty(decl.ty);
         }
@@ -2547,34 +2416,38 @@ impl<'f> Binder<'f> {
         }
     }
 
-    fn pat(
-        &mut self,
-        pat: PatId,
-        parent: PatParent,
-        scope: ScopeId,
-        flags: SymFlags,
-        exported: bool,
-        is_param: bool,
-    ) {
+    fn pat(&mut self, pat: PatId, parent: PatParent, flags: SymFlags) {
         self.b.pat_parent[pat.idx()] = parent;
         match self.f[pat].kind {
             PatKind::Missing => {}
-            PatKind::Ident(name) => {
-                // `bindVariableDeclarationOrBindingElement`: what is required is an alias of it.
-                let (flags, decl) = match () {
-                    _ if is_param => (flags, Decl::Param(pat)),
-                    _ if self.b.required_by(self.f, pat).is_some() => {
-                        (SymFlags::ALIAS, Decl::Require(pat))
+            // `bindVariableDeclarationOrBindingElement`, `bindParameter`
+            PatKind::Ident(_)
+                if flags.contains(SymFlags::BLOCK_SCOPED_VARIABLE)
+                    && self.b.required_by(self.f, pat).is_none() =>
+            {
+                let excludes = SymFlags::BLOCK_SCOPED_VARIABLE_EXCLUDES;
+                self.bind_block_scoped_declaration(Decl::Var(pat), flags, excludes);
+            }
+            PatKind::Ident(_) => {
+                let (decl, flags, excludes) = if flags.contains(SymFlags::PARAMETER) {
+                    (Decl::Param(pat), flags, SymFlags::PARAMETER_EXCLUDES)
+                } else if self.b.required_by(self.f, pat).is_some() {
+                    (
+                        Decl::Require(pat),
+                        SymFlags::ALIAS,
+                        SymFlags::ALIAS_EXCLUDES,
+                    )
+                } else {
+                    if self.container_scope(self.scope) != self.scope {
+                        self.b.hoisted_vars.push((pat, self.scope));
                     }
-                    _ => (flags, Decl::Var(pat)),
+                    (
+                        Decl::Var(pat),
+                        flags,
+                        SymFlags::FUNCTION_SCOPED_VARIABLE_EXCLUDES,
+                    )
                 };
-                self.b.pat_symbol[pat.idx()] = self.declare(scope, name, flags, decl, exported);
-                if !is_param
-                    && scope != self.scope
-                    && flags.contains(SymFlags::FUNCTION_SCOPED_VARIABLE)
-                {
-                    self.b.hoisted_vars.push((pat, self.scope));
-                }
+                self.declare_symbol_and_add_to_symbol_table(decl, flags, excludes);
             }
             PatKind::Object(props) => {
                 for p in props.iter() {
@@ -2592,14 +2465,7 @@ impl<'f> Binder<'f> {
                     if prop.default.is_some() {
                         self.conditional_default(prop.default, Parent::PatPropDefault(p));
                     }
-                    self.pat(
-                        prop.value,
-                        PatParent::Prop(pat, p),
-                        scope,
-                        flags,
-                        exported,
-                        is_param,
-                    );
+                    self.pat(prop.value, PatParent::Prop(pat, p), flags);
                     self.scope_change_of = scope_change_of;
                 }
             }
@@ -2609,14 +2475,7 @@ impl<'f> Binder<'f> {
                     if elem.default.is_some() {
                         self.conditional_default(elem.default, Parent::PatElemDefault(e));
                     }
-                    self.pat(
-                        elem.pat,
-                        PatParent::Elem(pat, e),
-                        scope,
-                        flags,
-                        exported,
-                        is_param,
-                    );
+                    self.pat(elem.pat, PatParent::Elem(pat, e), flags);
                 }
             }
         }
@@ -2633,18 +2492,22 @@ impl<'f> Binder<'f> {
 
     // ───────────────────────────── functions and classes ─────────────────────────────
 
+    /// `bindTypeParameter`: among the locals of `scope`.
+    fn bind_type_parameter(&mut self, p: TypeParamId, scope: ScopeId) -> SymbolId {
+        self.b.type_param_scope[p.idx()] = scope;
+        self.declare_symbol(
+            self.b.scopes[scope.idx()].locals,
+            SymbolId::NONE,
+            Decl::TypeParam(p),
+            SymFlags::TYPE_PARAMETER,
+            SymFlags::TYPE_PARAMETER_EXCLUDES,
+        )
+    }
+
     /// `list_of`: the function they are the type parameters of, if it is one.
     fn type_params(&mut self, params: Span<TypeParamId>, list_of: FnId) {
         for p in params.iter() {
-            let symbol = self.declare(
-                self.scope,
-                self.f[p].name,
-                SymFlags::TYPE_PARAMETER,
-                Decl::TypeParam(p),
-                false,
-            );
-            self.b.type_param_symbol[p.idx()] = symbol;
-            self.b.type_param_scope[p.idx()] = self.scope;
+            self.bind_type_parameter(p, self.scope);
         }
         let has_list = list_of.is_some()
             && params
@@ -2693,9 +2556,9 @@ impl<'f> Binder<'f> {
         // `Resolve`: the name of a function expression comes after all that is in the function, `arguments` too.
         let has_own_name = f.kind == FnKind::Expr && f.name.is_some();
         if has_own_name {
-            let around = self.push_scope(ScopeKind::Block, SymbolId::NONE);
-            self.b.fn_symbol[id.idx()] =
-                self.declare(around, f.name, SymFlags::FUNCTION, Decl::Fn(id), false);
+            self.push_scope(ScopeKind::Block, SymbolId::NONE);
+            let (flags, excludes) = (SymFlags::FUNCTION, SymFlags::FUNCTION_EXCLUDES);
+            self.bind_block_scoped_declaration(Decl::Fn(id), flags, excludes);
         }
         let scope = self.push_scope(ScopeKind::Fn(id), SymbolId::NONE);
         let saved_this =
@@ -2753,7 +2616,6 @@ impl<'f> Binder<'f> {
             self.flow = self.new_flow(if is_invoked {
                 Flow::StartInvoked {
                     outer: saved.0,
-                    plain: false,
                     arrow,
                 }
             } else {
@@ -2806,14 +2668,8 @@ impl<'f> Binder<'f> {
             if param.default.is_some() {
                 self.conditional_default(param.default, Parent::ParamDefault(p));
             }
-            self.pat(
-                param.pat,
-                PatParent::Param(p),
-                scope,
-                SymFlags::FUNCTION_SCOPED_VARIABLE | SymFlags::PARAMETER,
-                false,
-                true,
-            );
+            let flags = SymFlags::FUNCTION_SCOPED_VARIABLE | SymFlags::PARAMETER;
+            self.pat(param.pat, PatParent::Param(p), flags);
             self.scope_change_of = FnId::NONE;
         }
         if has_param_scope {
@@ -2840,7 +2696,7 @@ impl<'f> Binder<'f> {
         }
         match f.body {
             FnBody::None => {}
-            FnBody::Block(stmts) => self.stmts(stmts, Parent::FnBody(id), false),
+            FnBody::Block(stmts) => self.stmts(stmts, Parent::FnBody(id)),
             FnBody::Expr(e) => self.expr(e, Parent::FnBody(id)),
         }
         let end = if matches!(f.body, FnBody::Block(_)) {
@@ -2931,13 +2787,12 @@ impl<'f> Binder<'f> {
         let scope = self.push_scope(ScopeKind::Class(id), SymbolId::NONE);
         self.b.class_scope[id.idx()] = scope;
         if let ClassOwner::Expr(_) = owner {
-            let name = if c.name.is_some() { c.name } else { Atom::NONE };
-            let symbol = if name.is_some() {
-                self.declare(scope, name, SymFlags::CLASS, Decl::Class(id), false)
+            let (decl, flags) = (Decl::Class(id), SymFlags::CLASS);
+            if c.name.is_some() {
+                self.bind_block_scoped_declaration(decl, flags, SymFlags::CLASS_EXCLUDES);
             } else {
-                self.new_symbol(Atom::NONE, SymFlags::CLASS, Decl::Class(id), SymbolId::NONE)
-            };
-            self.b.class_symbol[id.idx()] = symbol;
+                self.bind_anonymous_declaration(decl, flags, Atom::NONE);
+            }
         }
         self.type_params(c.type_params, FnId::NONE);
         if c.extends.is_some() {
@@ -3394,15 +3249,7 @@ impl<'f> Binder<'f> {
                 let TypeParam {
                     name, constraint, ..
                 } = self.f[param];
-                let symbol = self.declare(
-                    scope,
-                    name,
-                    SymFlags::TYPE_PARAMETER,
-                    Decl::TypeParam(param),
-                    false,
-                );
-                self.b.type_param_symbol[param.idx()] = symbol;
-                self.b.type_param_scope[param.idx()] = scope;
+                let symbol = self.bind_type_parameter(param, scope);
                 if constraint.is_some() {
                     // `Resolve`, at an `infer`: what it extends can name it, though not the others of the conditional type.
                     if !is_stray {
@@ -3490,8 +3337,8 @@ impl<'f> Binder<'f> {
 
     /// `isJsxIntrinsicTagName`, of a tag name that is an identifier.
     fn is_intrinsic_jsx_identifier(&self, tag: ExprId) -> bool {
-        matches!((self.f[tag].kind, self.atoms), (ExprKind::Ident(name), Some(atoms))
-            if crate::hir::is_intrinsic_jsx_name(atoms.bytes(name)))
+        matches!(self.f[tag].kind, ExprKind::Ident(name)
+            if crate::hir::is_intrinsic_jsx_name(self.atoms.bytes(name)))
     }
 
     /// `checkJsxOpeningLikeElementOrOpeningFragment`, `checkJsxElementDeferred`: an intrinsic name is looked up in
@@ -3776,39 +3623,26 @@ impl<'f> Binder<'f> {
                 // `bindModuleExportsAssignment`, `bindExportsOrObjectDefineProperty`: wherever it is written, it is the file that exports.
                 if self.b.commonjs_indicator.is_some() {
                     let is_alias = expression_is_alias(self.f, value);
+                    let variable = SymFlags::FUNCTION_SCOPED_VARIABLE;
                     let declared = match assignment_declaration_kind(self.f, id) {
                         JsDeclarationKind::ModuleExports => Some((
-                            known::export_equals,
-                            if is_alias {
-                                SymFlags::ALIAS
-                            } else {
-                                SymFlags::PROPERTY
-                            },
                             Decl::ModuleExports(id),
+                            SymFlags::PROPERTY,
+                            SymFlags::empty(),
                         )),
-                        JsDeclarationKind::ExportsProperty(name) => {
-                            let name = match self.f[target].kind {
-                                ExprKind::Index { index, .. } if name.is_none() => {
-                                    self.literal_name(index)
-                                }
-                                _ => name,
-                            };
-                            name.is_some().then_some((
-                                name,
-                                if is_alias {
-                                    SymFlags::ALIAS
-                                } else {
-                                    SymFlags::FUNCTION_SCOPED_VARIABLE
-                                },
-                                Decl::ExportsProperty(id),
-                            ))
-                        }
+                        JsDeclarationKind::ExportsProperty(_) => Some((
+                            Decl::ExportsProperty(id),
+                            variable,
+                            SymFlags::FUNCTION_SCOPED_VARIABLE_EXCLUDES,
+                        )),
                         _ => None,
                     };
-                    if let Some((name, flags, decl)) = declared {
+                    if let Some((decl, flags, excludes)) = declared {
+                        let flags =
+                            if is_alias { SymFlags::ALIAS } else { flags } | SymFlags::EXPORT_ONLY;
                         let file = self.b.file_symbol;
                         let exports = self.b.symbols[file.idx()].exports;
-                        self.declare_in(exports, name, flags | SymFlags::EXPORT_ONLY, decl, file);
+                        self.declare_symbol(exports, file, decl, flags, excludes);
                         self.b.expr_scope.insert(value, self.scope);
                     }
                 }
@@ -3908,25 +3742,22 @@ impl<'f> Binder<'f> {
         if self.b.commonjs_indicator.is_none() {
             return;
         }
-        let Some((_, key)) = define_property_call(self.f, call) else {
-            return;
-        };
-        let name = self.literal_name(key);
-        if name.is_none() {
-            return;
-        }
         let file = self.b.file_symbol;
-        let exports = self.b.symbols[file.idx()].exports;
-        let flags = SymFlags::FUNCTION_SCOPED_VARIABLE | SymFlags::EXPORT_ONLY;
-        self.declare_in(exports, name, flags, Decl::ExportsProperty(call), file);
+        self.declare_symbol(
+            self.b.symbols[file.idx()].exports,
+            file,
+            Decl::ExportsProperty(call),
+            SymFlags::FUNCTION_SCOPED_VARIABLE | SymFlags::EXPORT_ONLY,
+            SymFlags::FUNCTION_SCOPED_VARIABLE_EXCLUDES,
+        );
     }
 
-    /// `getDeclarationName`: the text of the string or numeric literal `key`. `NONE` for a number without an interner to spell it.
+    /// `getDeclarationName`: the text of the string or numeric literal `key`.
     fn literal_name(&self, key: ExprId) -> Atom {
-        match (self.f[key].kind, self.atoms) {
-            (ExprKind::Number(number), Some(atoms)) => atoms.intern_str(
-                &crate::atom::number_to_string(self.f.numbers[number as usize]),
-            ),
+        match self.f[key].kind {
+            ExprKind::Number(number) => self.atoms.intern_str(&crate::atom::number_to_string(
+                self.f.numbers[number as usize],
+            )),
             _ => string_literal_text(self.f, key),
         }
     }

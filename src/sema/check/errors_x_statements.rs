@@ -1526,9 +1526,9 @@ impl Checker<'_> {
 
     /// `GetContainingFunction`: the nearest function-like node around `e`. Static blocks and properties are not function-like.
     /// `Some(None)`: there is none. `None`: the parent chain is not tracked.
-    fn xs_containing_function(&self, file: FileId, e: ExprId) -> Option<Option<FnId>> {
+    pub(super) fn get_containing_function(&self, file: FileId, e: ExprId) -> Option<Option<FnId>> {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let (mut at, mut below) = (bound.expr_parent[e.idx()], e);
+        let mut at = bound.expr_parent[e.idx()];
         loop {
             at = match at {
                 Parent::FnBody(f) if hir[f].kind != FnKind::StaticBlock => return Some(Some(f)),
@@ -1540,40 +1540,19 @@ impl Checker<'_> {
                 Parent::None => return None,
                 Parent::Expr(x) if x.is_none() => return None,
                 Parent::Stmt(s) if s.is_none() => return None,
-                Parent::Expr(x) => {
-                    below = x;
-                    bound.expr_parent[x.idx()]
-                }
-                Parent::PropKey(object, _) if object.is_some() => Parent::Expr(object),
-                // A computed name in a binding pattern.
-                Parent::PropKey(..) | Parent::PatKey(_) => match hir
-                    .pat_props
-                    .iter()
-                    .position(|p| p.key == PropKey::Computed(below))
-                {
-                    Some(p) => Parent::PatPropDefault(PatPropId(p as u32)),
-                    None => return None,
-                },
+                Parent::PropKey(object, _) => Parent::Expr(object),
+                Parent::PatKey(p) => Parent::PatPropDefault(p),
                 // The computed name and the decorators of a method or an accessor are inside it.
-                Parent::MemberKey(_) | Parent::MethodKey(_) => {
-                    let key = PropKey::Computed(below);
-                    if let Some(m) = hir.members.iter().position(|m| m.key == key) {
-                        match hir.members[m].func.some() {
-                            Some(f) => return Some(Some(f)),
-                            None => Parent::MemberInit(MemberId(m as u32)),
-                        }
-                    } else if let Some(p) = hir.props.iter().position(|p| p.key == key)
-                        && hir.props[p].value.is_some()
-                        && let ExprKind::Fn(f) = hir[hir.props[p].value].kind
-                    {
-                        return Some(Some(f));
-                    } else {
-                        return None;
-                    }
-                }
-                Parent::Decorator(_, DecoratorOwner::Member(m)) if hir[m].func.is_some() => {
+                Parent::MemberKey(m) | Parent::Decorator(_, DecoratorOwner::Member(m))
+                    if hir[m].func.is_some() =>
+                {
                     return Some(Some(hir[m].func));
                 }
+                Parent::MemberKey(m) => Parent::MemberInit(m),
+                Parent::MethodKey(p) => match hir[p].value.some().map(|value| hir[value].kind) {
+                    Some(ExprKind::Fn(f)) => return Some(Some(f)),
+                    _ => return None,
+                },
                 other => self.outward(file, other),
             };
         }
@@ -1638,7 +1617,7 @@ impl Checker<'_> {
             if value.is_none() || bound.is_unchecked(yield_expr.idx()) {
                 continue;
             }
-            let is_operand_checked = match self.xs_containing_function(file, yield_expr) {
+            let is_operand_checked = match self.get_containing_function(file, yield_expr) {
                 Some(Some(f)) => hir[f].flags.contains(Flags::GENERATOR),
                 Some(None) => false,
                 None => true,

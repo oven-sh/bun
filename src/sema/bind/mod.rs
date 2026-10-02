@@ -24,6 +24,7 @@ macro_rules! define_id {
 define_id!(SymbolId, ScopeId, TableId, FlowId);
 
 bitflags::bitflags! {
+    /// `ast.SymbolFlags`
     #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
     pub struct SymFlags: u32 {
         const FUNCTION_SCOPED_VARIABLE = 1 << 0;
@@ -31,7 +32,7 @@ bitflags::bitflags! {
         const FUNCTION = 1 << 2;
         const CLASS = 1 << 3;
         const INTERFACE = 1 << 4;
-        const ENUM = 1 << 5;
+        const REGULAR_ENUM = 1 << 5;
         const VALUE_MODULE = 1 << 6;
         const NAMESPACE_MODULE = 1 << 7;
         const TYPE_PARAMETER = 1 << 8;
@@ -46,10 +47,8 @@ bitflags::bitflags! {
         const PARAMETER = 1 << 15;
         /// `mergedSymbols` has it, or it is transient: see `Files::canonical`.
         const MERGED = 1 << 16;
-        const TYPE_ONLY = 1 << 17;
         /// A name others import by, which nothing in the file can refer to: `export { a as b }`, `export default e`.
         const EXPORT_ONLY = 1 << 18;
-        /// Together with `ENUM`: a `const enum`, which is one symbol with other `const enum`s alone.
         const CONST_ENUM = 1 << 19;
         /// `module` and `exports` in a CommonJS module.
         const MODULE_EXPORTS = 1 << 20;
@@ -61,6 +60,7 @@ bitflags::bitflags! {
         const ASSIGNMENT = 1 << 23;
         const OBJECT_LITERAL = 1 << 24;
 
+        const ENUM = Self::REGULAR_ENUM.bits() | Self::CONST_ENUM.bits();
         const VARIABLE = Self::FUNCTION_SCOPED_VARIABLE.bits() | Self::BLOCK_SCOPED_VARIABLE.bits();
         const VALUE = Self::VARIABLE.bits() | Self::FUNCTION.bits() | Self::CLASS.bits() | Self::ENUM.bits()
             | Self::VALUE_MODULE.bits() | Self::ENUM_MEMBER.bits() | Self::PROPERTY.bits() | Self::OBJECT_LITERAL.bits();
@@ -71,6 +71,23 @@ bitflags::bitflags! {
         /// `SymbolFlagsModuleMember`: what is in scope in a module or a namespace for being exported from it.
         const MODULE_MEMBER = Self::VARIABLE.bits() | Self::FUNCTION.bits() | Self::CLASS.bits() | Self::INTERFACE.bits()
             | Self::ENUM.bits() | Self::MODULE.bits() | Self::TYPE_ALIAS.bits() | Self::ALIAS.bits();
+
+        const FUNCTION_SCOPED_VARIABLE_EXCLUDES = Self::VALUE.bits() & !Self::FUNCTION_SCOPED_VARIABLE.bits();
+        const BLOCK_SCOPED_VARIABLE_EXCLUDES = Self::VALUE.bits();
+        const PARAMETER_EXCLUDES = Self::VALUE.bits();
+        const PROPERTY_EXCLUDES = Self::VALUE.bits() & !Self::PROPERTY.bits();
+        const ENUM_MEMBER_EXCLUDES = Self::VALUE.bits() | Self::TYPE.bits();
+        const FUNCTION_EXCLUDES = Self::VALUE.bits() & !(Self::FUNCTION.bits() | Self::VALUE_MODULE.bits() | Self::CLASS.bits());
+        const CLASS_EXCLUDES = (Self::VALUE.bits() | Self::TYPE.bits())
+            & !(Self::VALUE_MODULE.bits() | Self::INTERFACE.bits() | Self::FUNCTION.bits());
+        const INTERFACE_EXCLUDES = Self::TYPE.bits() & !(Self::INTERFACE.bits() | Self::CLASS.bits());
+        const REGULAR_ENUM_EXCLUDES = (Self::VALUE.bits() | Self::TYPE.bits()) & !(Self::REGULAR_ENUM.bits() | Self::VALUE_MODULE.bits());
+        const CONST_ENUM_EXCLUDES = (Self::VALUE.bits() | Self::TYPE.bits()) & !Self::CONST_ENUM.bits();
+        const VALUE_MODULE_EXCLUDES = Self::VALUE.bits()
+            & !(Self::FUNCTION.bits() | Self::CLASS.bits() | Self::REGULAR_ENUM.bits() | Self::VALUE_MODULE.bits());
+        const TYPE_PARAMETER_EXCLUDES = Self::TYPE.bits() & !Self::TYPE_PARAMETER.bits();
+        const TYPE_ALIAS_EXCLUDES = Self::TYPE.bits();
+        const ALIAS_EXCLUDES = Self::ALIAS.bits();
     }
 }
 
@@ -312,23 +329,9 @@ impl Decls {
     }
 
     fn push(&mut self, decl: Decl) {
-        let mut all = Vec::with_capacity(self.len() + 1);
-        all.extend_from_slice(self.as_slice());
-        all.push(decl);
-        *self = Decls::Many(all.into_boxed_slice());
-    }
-
-    fn retain(&mut self, keep: impl FnMut(&Decl) -> bool) {
-        let mut all = self.to_vec();
-        all.retain(keep);
-        let only = if let [decl] = all[..] {
-            Some(decl)
-        } else {
-            None
-        };
-        *self = match only {
-            Some(decl) => Decls::One(decl),
-            None => Decls::Many(all.into_boxed_slice()),
+        *self = match self.as_slice() {
+            [] => Decls::One(decl),
+            all => Decls::Many(all.iter().copied().chain([decl]).collect()),
         };
     }
 }
@@ -358,7 +361,9 @@ pub enum ScopeKind {
     Block,
     Class(ClassId),
     Interface(InterfaceId),
-    /// Type parameters of an alias, a mapped type, or the `infer`s of a conditional type.
+    /// The type parameters of a type alias.
+    TypeAlias(AliasId),
+    /// The key of a mapped type, or the `infer`s of a conditional type.
     TypeParams,
     Enum(EnumId),
     /// Where the constraints and defaults of the type parameters of a function are written. It declares nothing: it lies in the
@@ -394,6 +399,8 @@ pub struct Scope {
     pub locals: TableId,
     /// For a module, namespace or enum: its symbol, whose exports are in scope wherever they were declared.
     pub symbol: SymbolId,
+    /// `NodeFlagsExportContext`
+    pub is_export_context: bool,
 }
 
 /// What `GetAssignmentTarget` finds.
@@ -628,11 +635,10 @@ pub enum Flow {
         arrow: bool,
     },
     /// Where an `async` function or a generator that is called where it is written starts: what is known of names outside holds,
-    /// as `getControlFlowContainer` has it. `plain` is never set: a function called where it is written that is neither, like a
-    /// static block, starts nothing. The flow of control around goes on through it (`bindContainer`).
+    /// as `getControlFlowContainer` has it. A function called where it is written that is neither, like a static block, starts
+    /// nothing. The flow of control around goes on through it (`bindContainer`).
     StartInvoked {
         outer: FlowId,
-        plain: bool,
         arrow: bool,
     },
     /// Where several paths meet. A run of `Bound::flow_edges`.
@@ -1505,11 +1511,7 @@ pub struct BindOptions {
     pub before_es2017: bool,
 }
 
-pub fn bind(file: &File, options: BindOptions) -> Bound {
-    binder::Binder::run(file, options, None)
-}
-
-/// The same, with the interner that spells the numeric names of CommonJS exports: `exports[0] = e`.
-pub fn bind_with_atoms(file: &File, options: BindOptions, atoms: &Interner) -> Bound {
-    binder::Binder::run(file, options, Some(atoms))
+/// `bindSourceFile`
+pub fn bind(file: &File, options: BindOptions, atoms: &Interner) -> Bound {
+    binder::Binder::run(file, options, atoms)
 }

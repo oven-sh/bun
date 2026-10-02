@@ -446,21 +446,28 @@ const IS_UV_FS_COPYFILE_DISABLED =
     );
 
     it.skipIf(isWindows)("a source fd that is not open rejects and leaves the destination as it was", async () => {
-      using dir = tempDir("bun-write-bad-source-fd", { "dest.txt": content });
+      using dir = tempDir("bun-write-bad-source-fd", { "dest.txt": content, "open.txt": content });
       const dest = join(String(dir), "dest.txt");
+      const open = join(String(dir), "open.txt");
       const missing = join(String(dir), "missing.txt");
       fs.chmodSync(dest, 0o644);
+      fs.chmodSync(open, 0o644);
 
-      for (const destination of [dest, missing]) {
-        await expect(Bun.write(destination, Bun.file(987_654), { mode: 0o600 })).rejects.toThrow(
-          expect.objectContaining({ code: "EBADF" }),
-        );
+      const fd = fs.openSync(open, "r+");
+      try {
+        for (const destination of [dest, missing, Bun.file(fd)]) {
+          await expect(Bun.write(destination, Bun.file(987_654), { mode: 0o600 })).rejects.toThrow(
+            expect.objectContaining({ code: "EBADF" }),
+          );
+        }
+      } finally {
+        fs.closeSync(fd);
       }
       expect({
-        mode: fs.statSync(dest).mode & 0o777,
-        intact: fs.readFileSync(dest, "utf8") === content,
+        modes: [dest, open].map(file => fs.statSync(file).mode & 0o777),
+        intact: [dest, open].every(file => fs.readFileSync(file, "utf8") === content),
         created: fs.existsSync(missing),
-      }).toEqual({ mode: 0o644, intact: true, created: false });
+      }).toEqual({ modes: [0o644, 0o644], intact: true, created: false });
     });
   });
 
@@ -479,6 +486,26 @@ const IS_UV_FS_COPYFILE_DISABLED =
       expect(fs.statSync("/dev/null").isCharacterDevice()).toBe(true);
       using dir = tempDir("bun-write-dev-null", { "src.txt": "short" });
       expect(await Bun.write("/dev/null", Bun.file(join(String(dir), "src.txt")))).toBe(5);
+    });
+
+    it.skipIf(!isLinux)("a destination that cannot be opened does not leave the source open", async () => {
+      using dir = tempDir("bun-write-dest-open-fails", { "src.txt": "short", "file.txt": "not a directory" });
+      const src = fs.realpathSync(join(String(dir), "src.txt"));
+      const openSources = () =>
+        fs.readdirSync("/proc/self/fd").filter(fd => {
+          try {
+            return fs.readlinkSync(`/proc/self/fd/${fd}`) === src;
+          } catch {
+            return false;
+          }
+        }).length;
+
+      for (let i = 0; i < 20; i++) {
+        await expect(Bun.write(join(String(dir), "file.txt", "below-a-file"), Bun.file(src))).rejects.toThrow(
+          expect.objectContaining({ code: "ENOTDIR" }),
+        );
+      }
+      expect(openSources()).toBe(0);
     });
   });
 

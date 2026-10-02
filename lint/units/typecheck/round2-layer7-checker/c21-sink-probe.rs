@@ -1,6 +1,7 @@
 //! Probe of checker/c21_resolved_symbols_diagnostics.rs: the file of the tree, by #[path], beside stand-ins for what it names.
-//! Real files by #[path]: diagnostics/, core/{arena,golang,linkstore,text,tristate}.rs, ast/{diagnostic,ids}.rs. Stand-ins: the rest of `ast`, `core` and `checker` with the shapes of the tree of f49ea57437, and `SourceFiles`, `Diagnostics`, `DiagnosticsCollection` with the signatures of checker-data-model-contract/bottom-up/crate/src/ast_diagnostic.rs.
+//! Real files by #[path]: diagnostics/, core/{arena,golang,linkstore,text,tristate,tristate_stringer_generated}.rs, ast/{diagnostic,ids}.rs. Stand-ins: the rest of `ast`, `core` and `checker` with the shapes of the tree of f49ea57437, and `SourceFiles`, `Diagnostics`, `DiagnosticsCollection` with the signatures of checker-data-model-contract/bottom-up/crate/src/ast_diagnostic.rs.
 //! Run: rustc --edition 2024 --crate-type lib --emit=metadata -o /tmp/c21-sink-probe.rmeta c21-sink-probe.rs
+//! The test of the end runs the deferred callbacks and the serialization limit of the real file over the stand-ins: rustc --edition 2024 --test -o /tmp/c21-sink-probe-test c21-sink-probe.rs && /tmp/c21-sink-probe-test
 #![allow(dead_code)]
 #![deny(warnings)]
 #![deny(unused_imports, unused_variables, unused_mut, unreachable_pub, unused_assignments)]
@@ -19,6 +20,8 @@ pub mod core {
     pub mod text;
     #[path = "/workspace/wt/typecheck/src/typecheck/core/tristate.rs"]
     pub mod tristate;
+    #[path = "/workspace/wt/typecheck/src/typecheck/core/tristate_stringer_generated.rs"]
+    pub mod tristate_stringer_generated;
     pub use golang::*;
     pub use linkstore::*;
     pub use text::*;
@@ -395,5 +398,98 @@ pub mod checker {
             let _ = self.get_referenced_value_or_alias_symbol(node);
             compare_diagnostics(self, diag, awaited)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::ast::{Arg, Ast, DiagnosticId, DiagnosticStore, DiagnosticsCollection, NodeFlags, NodeId, SymbolId};
+    use crate::checker::{Checker, MAX_SERIALIZATION_LEVEL};
+    use crate::core::{CompilerOptions, LinkStore};
+    use crate::diagnostics;
+
+    fn codes(c: &Checker<'_>, ids: &[DiagnosticId]) -> Vec<i32> {
+        ids.iter().map(|d| c.diagnostic_store[*d].code()).collect()
+    }
+
+    // checker-data-model-contract/bottom-up/crate/src/tests.rs 985, without what needs the collection of the contract (the same diagnostic twice is kept once).
+    #[test]
+    fn deferred_diagnostics_run_once_in_order() {
+        let options = CompilerOptions::default();
+        let mut c = Checker {
+            ast: Ast { files: &[] },
+            compiler_options: &options,
+            diagnostic_store: DiagnosticStore::default(),
+            diagnostics: DiagnosticsCollection::default(),
+            suggestion_diagnostics: DiagnosticsCollection::default(),
+            serialization_level: 0,
+            was_canceled: false,
+            unknown_symbol: SymbolId::NIL,
+            symbol_node_links: LinkStore::default(),
+            deferred_diagnostic_callbacks: Vec::new(),
+            last_get_combined_node_flags_node: NodeId::NIL,
+            last_get_combined_node_flags_result: NodeFlags::default(),
+        };
+        let (n1, n2, n3) = (NodeId(1), NodeId(2), NodeId(3));
+        c.add_deferred_diagnostic(Box::new(move |c| {
+            c.error(
+                n1,
+                diagnostics::X_0_IS_DECLARED_BUT_ITS_VALUE_IS_NEVER_READ,
+                &[Arg::Str(b"x")],
+            );
+            c.add_deferred_diagnostic(Box::new(move |c| {
+                c.error(n3, diagnostics::X_0_IS_DEPRECATED, &[]);
+            }));
+        }));
+        c.add_deferred_diagnostic(Box::new(move |c| {
+            c.error(n2, diagnostics::X_0_IS_DEPRECATED, &[Arg::Str(b"y")]);
+        }));
+        c.produce_deferred_diagnostics();
+        // The two callbacks ran in the order they were added; the one that the first added did not run and is dropped.
+        let kept = c.get_global_diagnostics();
+        assert_eq!(codes(&c, &kept), [6133, 6385]);
+        assert!(c.deferred_diagnostic_callbacks.is_empty());
+        c.produce_deferred_diagnostics();
+        assert_eq!(c.get_global_diagnostics().len(), 2);
+        // A diagnostic made at the serialization limit is not added, and error answers its id.
+        c.serialization_level = MAX_SERIALIZATION_LEVEL;
+        let dropped = c.error(n1, diagnostics::X_0_IS_DEPRECATED, &[]);
+        assert!(!dropped.is_nil());
+        assert_eq!(c.get_global_diagnostics().len(), 2);
+        let dropped = c.add_suggestion_diagnostic(dropped);
+        assert!(!dropped.is_nil());
+        c.serialization_level = 0;
+        // A suggestion is a copy with the category of a suggestion, in the other collection; the error keeps its category.
+        let unused = c.error(n2, diagnostics::UNUSED_LABEL, &[]);
+        c.add_error_or_suggestion(false, unused);
+        assert_eq!(c.get_global_diagnostics().len(), 3);
+        let suggestions = c.get_suggestion_diagnostics(NodeId::NIL);
+        assert_eq!(codes(&c, &suggestions), [7028]);
+        let suggestion = suggestions.first().copied().unwrap_or_default();
+        assert_ne!(suggestion, unused);
+        assert_eq!(
+            c.diagnostic_store[suggestion].category(),
+            diagnostics::Category::Suggestion
+        );
+        assert_eq!(
+            c.diagnostic_store[unused].category(),
+            diagnostics::UNUSED_LABEL.category()
+        );
+        // errorAndMaybeSuggestAwait adds one related diagnostic, errorSkippedOnNoEmit sets the flag.
+        let awaited = c.error_and_maybe_suggest_await(n1, true, diagnostics::CANNOT_FIND_NAME_0, &[Arg::Str(b"a")]);
+        let related = c.diagnostic_store[awaited].related_information().to_vec();
+        assert_eq!(codes(&c, &related), [diagnostics::DID_YOU_FORGET_TO_USE_AWAIT.code()]);
+        let plain = c.error_and_maybe_suggest_await(n1, false, diagnostics::CANNOT_FIND_NAME_0, &[Arg::Str(b"b")]);
+        assert!(c.diagnostic_store[plain].related_information().is_empty());
+        let skipped = c.error_skipped_on_no_emit(n1, diagnostics::CANNOT_FIND_NAME_0, &[Arg::Str(b"c")]);
+        assert!(c.diagnostic_store[skipped].skipped_on_no_emit());
+        assert!(!c.diagnostic_store[plain].skipped_on_no_emit());
+        // A deprecation suggestion goes to the suggestions with the name as its argument.
+        let deprecated = c.add_deprecated_suggestion(n1, crate::core::List::from_slice(&[n2]), b"old");
+        assert_eq!(c.diagnostic_store[deprecated].code(), 6385);
+        assert_eq!(c.diagnostic_store[deprecated].message_args(), [b"old".to_vec().into_boxed_slice()]);
+        assert_eq!(c.get_suggestion_diagnostics(NodeId::NIL).len(), 2);
+        // The nil symbol and a symbol without declarations are not deprecated.
+        assert!(!c.is_deprecated_symbol(SymbolId::NIL));
     }
 }

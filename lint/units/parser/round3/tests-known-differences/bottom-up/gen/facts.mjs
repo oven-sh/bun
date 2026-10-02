@@ -3,7 +3,9 @@
 //   kept       the tags of the statements that the file keeps, in order (Stmt::data.tag())
 //   erased     the records of the dropped statements and class members, in the lines of parse/erased_tests.rs
 //   wrappers   the records of as, satisfies, !, <T>x and parentheses, in the lines of the tests of parse/wrappers.rs
-//   nodes      e_if, e_arrow and e_call of the kept tree and auto_accessor members, each with the offset Bun gives the node, sorted
+//   nodes      e_if, e_arrow, e_call, e_import and e_import_meta of the statements that stay, and the auto_accessor members that stay,
+//              each with the offset Bun gives the node, sorted by offset and then by name
+//   enums      "E=x,y" for each enum that stays: its name and the names of its members
 //   returns    how many functions outside a type have a return type (attached.return_types)
 // usage: node facts.mjs     (reads ../rows.classified.json, writes ../rows.facts.json)
 import { readFileSync, writeFileSync } from "node:fs";
@@ -39,30 +41,43 @@ function cut(line) {
     .replace(/ (members|kind|params|kept-members|stmts|ref|key|open|body|decorators|attributes)=.*$/, "");
 }
 const WRAPPER = new Set([K.ParenthesizedExpression, K.AsExpression, K.SatisfiesExpression, K.NonNullExpression, K.TypeAssertionExpression]);
-function nodesOf(sf) {
+function nodesOf(sf, keptNodes) {
   const out = [];
+  const enums = [];
   // Where Bun puts the node: a node that begins with its left operand starts where that operand does, inside its parentheses.
   const start = n => {
     while (WRAPPER.has(n.kind)) n = n.expression;
     if (n.kind === K.BinaryExpression) return start(n.left);
-    if (n.kind === K.PropertyAccessExpression || n.kind === K.ElementAccessExpression || n.kind === K.CallExpression || n.kind === K.TaggedTemplateExpression) return start(n.kind === K.TaggedTemplateExpression ? n.tag : n.expression);
+    if (n.kind === K.PropertyAccessExpression || n.kind === K.ElementAccessExpression || n.kind === K.CallExpression) return start(n.expression);
+    if (n.kind === K.TaggedTemplateExpression) return start(n.tag);
     if (n.kind === K.PostfixUnaryExpression) return start(n.operand);
     if (n.kind === K.ConditionalExpression) return start(n.condition);
     return n.getStart(sf);
   };
-  let returns = 0;
-  const insideType = n => { for (let p = n.parent; p; p = p.parent) if (ts.isTypeNode(p) && p.kind !== K.ExpressionWithTypeArguments) return true; return false; };
+  const has = (n, k) => (n.modifiers ?? []).some(m => m.kind === k);
   const visit = n => {
+    // What the parse pass drops has no node in the statements that stay.
+    if (ts.isTypeNode(n) || n.kind === K.InterfaceDeclaration || n.kind === K.TypeAliasDeclaration) return;
+    if ((ts.isClassElement(n) || ts.isStatement(n)) && (has(n, K.DeclareKeyword) || has(n, K.AbstractKeyword)) && n.kind !== K.ClassDeclaration) return;
+    if (n.kind === K.ClassDeclaration && has(n, K.DeclareKeyword)) return;
     if (n.kind === K.ConditionalExpression) out.push([start(n), "e_if"]);
     else if (n.kind === K.ArrowFunction) out.push([n.getStart(sf), "e_arrow"]);
-    else if (n.kind === K.CallExpression && n.expression.kind !== K.ImportKeyword) out.push([start(n), "e_call"]);
-    else if (n.kind === K.PropertyDeclaration && (n.modifiers ?? []).some(m => m.kind === K.AccessorKeyword)) out.push([n.name.getStart(sf), "auto_accessor"]);
-    if ((ts.isFunctionLike(n) && !ts.isTypeNode(n) && !ts.isTypeElement(n)) && n.type && !insideType(n)) returns++;
+    else if (n.kind === K.CallExpression) out.push([start(n), n.expression.kind === K.ImportKeyword ? "e_import" : "e_call"]);
+    else if (n.kind === K.MetaProperty && n.keywordToken === K.ImportKeyword) out.push([n.getStart(sf), "e_import_meta"]);
+    else if (n.kind === K.PropertyDeclaration && has(n, K.AccessorKeyword)) out.push([n.name.getStart(sf), "auto_accessor"]);
+    else if (n.kind === K.EnumDeclaration) enums.push(`${n.name.text}=${n.members.map(m => (m.name.kind === K.ComputedPropertyName ? m.name.expression.text : m.name.text)).join(",")}`);
     ts.forEachChild(n, visit);
   };
-  visit(sf);
+  for (const stmt of keptNodes) visit(stmt);
   out.sort((a, b) => a[0] - b[0] || (a[1] < b[1] ? -1 : 1));
-  return { nodes: out.map(([at, tag]) => `${tag}@${at}`).join(" "), returns };
+  let returns = 0;
+  const insideType = n => { for (let p = n.parent; p; p = p.parent) if (ts.isTypeNode(p) && p.kind !== K.ExpressionWithTypeArguments) return true; return false; };
+  const count = n => {
+    if (ts.isFunctionLike(n) && !ts.isTypeNode(n) && !ts.isTypeElement(n) && n.type && !insideType(n)) returns++;
+    ts.forEachChild(n, count);
+  };
+  count(sf);
+  return { nodes: out.map(([at, tag]) => `${tag}@${at}`).join(" "), enums, returns };
 }
 let n = 0;
 for (const r of rows) {
@@ -77,8 +92,8 @@ for (const r of rows) {
     continue;
   }
   const e = erased.run(r.src, file);
-  const { nodes, returns } = nodesOf(parse(r.src, loader));
-  r.facts = { kept: e.keptNodes.map(tagOf), erased: e.lines.map(cut), wrappers: wrappers.lines(file, r.src).out, nodes, returns };
+  const { nodes, enums, returns } = nodesOf(e.keptNodes[0]?.getSourceFile() ?? parse(r.src, loader), e.keptNodes);
+  r.facts = { kept: e.keptNodes.map(tagOf), erased: e.lines.map(cut), wrappers: wrappers.lines(file, r.src).out, nodes, enums, returns };
   n++;
 }
 writeFileSync(here + "rows.facts.json", JSON.stringify(rows));

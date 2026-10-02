@@ -73,6 +73,7 @@
 #include <errno.h>
 #include <dlfcn.h>
 #include <sys/ioctl.h>
+#include <sys/socket.h>
 #include <termios.h>
 #include <netdb.h>
 #include <unistd.h>
@@ -2986,6 +2987,37 @@ static JSValue constructNodeWorkerStdioStream(JSC::JSGlobalObject* globalObject,
     return result;
 }
 
+static void runStdioShutdown(WebCore::ScriptExecutionContext& context, int fd, JSC::JSValue callback)
+{
+#if OS(WINDOWS)
+    UNUSED_PARAM(fd);
+#else
+    // Node's afterShutdown ignores completion errors, including ENOTSOCK for pipes.
+    // https://github.com/nodejs/node/blob/v24.21.0/lib/net.js
+    (void)::shutdown(fd, SHUT_WR);
+#endif
+    auto* globalObject = context.globalObject();
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    AsyncContextFrame::call(globalObject, callback, jsUndefined(), {});
+    RETURN_IF_EXCEPTION(scope, );
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionShutdownStdio, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    int fd = callFrame->argument(0).asInt32();
+    ASSERT(fd == 1 || fd == 2);
+    auto callback = AsyncContextFrame::withAsyncContextIfNeeded(globalObject, callFrame->argument(1));
+    RETURN_IF_EXCEPTION(scope, {});
+    // uv_shutdown runs after microtasks, before the check-phase immediates.
+    globalObject->scriptExecutionContext()->postTask([fd, callback = Strong<Unknown>(vm, callback)](WebCore::ScriptExecutionContext& context) {
+        runStdioShutdown(context, fd, callback.get());
+    });
+    return JSValue::encode(jsUndefined());
+}
+
 static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC::JSObject* processObject, int fd)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -3027,8 +3059,8 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC:
     // Note: files are always sync anyway.
     // forceSync = fdType == BunProcessStdinFdType::file || bun_stdio_tty[fd];
 
-    // TODO: once console.* is wired up to write/read through the same buffering mechanism as FileSink for process.stdout, process.stderr, we can make this non-blocking for sockets on POSIX.
-    // Until then, we have to force it to be sync EVEN for sockets or else console.log() may flush at a different time than process.stdout.write.
+    // Flush immediately to preserve ordering with console output. Pollable POSIX
+    // descriptors remain nonblocking so full pipes can yield to their readers.
     forceSync = true;
 #endif
     if (forceSync) {

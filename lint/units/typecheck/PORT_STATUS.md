@@ -595,6 +595,56 @@ The lines that the tests of the scratch run: `c04` 23 of 23, `c21` 36 of 72, `c2
 `c04` and `c21` are also the place of rows of step 5, which this commit does not contain: `c04` 1505-2180 (N-DIAG),
 `c21` 14052-14168 (D-SINK).
 
+The sink of `c21`. The D-SINK row is of round 2 (layer 7), not of the two commits of this section: `f49ea57437` holds
+its 18 functions, `ProgramFiles` and `DiagnosticsCollectionKind` (362 lines with the four functions of N-RESOLVE,
+which did not change). Cargo has not compiled `checker/`, so the state is `translated`, and the 36 of 72 lines above
+are of the file before that commit. What was checked when the 18 were written:
+
+- Read side by side with `checker.go` 14052-14168: each function is at its upstream place in the file and calls what
+  upstream's body calls, in upstream's order.
+- By reading the tree, each name they use that the tree has, at its definition: `DiagnosticStore` with `Index`,
+  `IndexMut`, `add_related_info`, `clone_diagnostic`, and `Diagnostic::{set_category, set_skipped_on_no_emit}`
+  (`ast/diagnostic.rs`); `Ast::{file_of, as_source_file, sym}` (`ast/reader.rs` 829, 526, `ast/symbol.rs`),
+  `SourceFile::diagnostics`, `File::source_text` and the fields `file_name`, `path`, `root` (`ast/file.rs`);
+  `get_jsdoc_deprecated_tag` and `is_deprecated_declaration_with_cached_flags` (`ast/utilities.rs` 1399, 1423);
+  `get_combined_node_flags_cached` (`c31`), `get_parent_of_symbol` and `create_diagnostic_for_node` (`c22`),
+  `check_source_file` (`c05` 17), `DeferredDiagnosticCallback` and the fields of `Checker` (`c02`),
+  `MAX_SERIALIZATION_LEVEL` (`c01`), `Category::Suggestion` and the three messages (`diagnostics/`).
+- `python3 round2-layer7-checker/c21-callsites.py`, run in `src/typecheck`, splits the arguments of every call
+  `self.NAME(` and `c.NAME(` of the 18 names in `checker/`. On the tree of `f49ea57437`: `error` 268 sites with three
+  arguments, `add_diagnostic` 23 with one, `error_or_suggestion` 7 and `error_and_maybe_suggest_await` 3 with four,
+  `add_error_or_suggestion` 4 with two, `add_deprecated_suggestion` 3 with three, `is_deprecated_symbol` 3,
+  `add_deferred_diagnostic` 2 (a boxed closure over `&mut Checker<'a>`). The counts include the calls of `c21` itself,
+  and outside `c21` the message arguments of the 18 names are written `&[...]` at every site. The sites of the
+  names other than `error` were read for the types of their arguments: a `DiagnosticId`, a flag with a node and a
+  message, and for `add_deprecated_suggestion` the declarations of a symbol (`List<'a, NodeId>`) with its name. The
+  first two arguments of every `error` site were sorted by their spelling with a script that is not kept: a variable,
+  a field or an accessor call for the node, and a constant of `diagnostics`, a variable, an `if` of constants or a
+  call that returns a message for the message.
+- `round2-layer7-checker/c21-sink-probe.rs`: one crate root that takes the file of the tree by `#[path]`, beside the
+  real `diagnostics/`, `core/{arena,golang,linkstore,text,tristate}.rs` and `ast/{diagnostic,ids}.rs`, and stand-ins
+  for the rest with the shapes read from the tree and, for `SourceFiles`, `Diagnostics` and `DiagnosticsCollection`,
+  from the contract. It also holds the shapes of the callers (the `error` hook of the name resolver as a function
+  pointer, the closure of `c06` 582, the deferred closure of `c12` 496, `compare_diagnostics` of `c22` 13). `rustc`
+  alone with `#![deny(warnings)]` and `unused_imports`, `unused_variables`, `unused_mut`, `unreachable_pub` denied:
+  exit 0, no warning. `clippy-driver` alone with the clippy table of the workspace on the command line and
+  `CLIPPY_CONF_DIR` at the worktree: exit 0. The stand-ins are the assumptions: the probe says nothing about the
+  modules they replace.
+- `rustfmt --check --edition 2024 --config skip_children=true` on the file: exit 0. No `unsafe`, `unwrap`, `expect`,
+  `panic!`, `todo!`, `unimplemented!`, `unreachable!`, no `allow(`, no run of two comment lines.
+
+What the 18 functions name and the tree of `f49ea57437` does not have, so what they assume:
+
+- `crate::ast::{SourceFiles, Diagnostics}` and the methods `add`, `get_diagnostics_for_file` and
+  `get_global_diagnostics` of `DiagnosticsCollection`, as the contract has them (`ast_diagnostic.rs` 11-16, 363-366
+  and 633-723 of `checker-data-model-contract/bottom-up/crate/src/`): the view is `Diagnostics { store, files }`, each
+  method takes it first, and the two getters return `Vec<DiagnosticId>`. `ProgramFiles` implements the four methods
+  of that `SourceFiles` (`file_name`, `path`, `text`, `ecma_line_map -> &[i32]`). If the trait comes into the tree
+  with other methods or another line map type, the impl of `ProgramFiles` follows it.
+- The methods `new_diagnostic_for_node(node, message, args) -> DiagnosticId` and `check_not_canceled()` of
+  `utilities.go` 22 and 1663: `checker/utilities.rs` is one of the 15 modules without a file. `c21` does not define
+  `new_diagnostic_for_node`, which the scratch crate of the contract had in this module.
+
 ## Node builder types (`nodebuilder`)
 
 `nodebuilder/mod.rs` (4 lines) and `nodebuilder/types.rs` (124) came in with `5b2df1d046`; `2936f8152a` added line 79
@@ -960,7 +1010,7 @@ function, is section B of `round2-layer7-checker/lookahead-r8.txt`.
 | `checker/checker.go` 8407-10131 | `checker/c15_calls.rs` | 52 of 59 (`checkCallExpression` 8412 to `checkTaggedTemplateExpression` 10124) | 9 names called at 24 sites |
 | `checker/checker.go` 10707-11130 | `checker/c17_unary_meta_yield.rs` | 22 of 23 (`checkTypeOfExpression` 10707 to `checkSyntheticExpression` 11124) | 2 names called at 5 sites |
 | `checker/checker.go` 13235-13989 | `checker/c20_object_literals_spread.rs` | 23 of 25 (`checkObjectLiteral` 13235 to `checkExpressionForMutableLocation` 13979) | 13 names called at 25 sites |
-| `checker/checker.go` 13991-14168 | `checker/c21_resolved_symbols_diagnostics.rs` | 18 of 22 (`GetDiagnostics` 14052 to `hasParseDiagnostics` 14166: the sink) | 12 names called at 312 sites (`error` 266, `add_diagnostic` 21); `c22_symbols_merge.rs` 8 imports `crate::checker::ProgramFiles`, which no file defines (the contract has it in this module) |
+| `checker/checker.go` 13991-14168 | `checker/c21_resolved_symbols_diagnostics.rs` | 18 of 22 (`GetDiagnostics` 14052 to `hasParseDiagnostics` 14166: the sink) at `c73680fe1d`; none since `f49ea57437`, which brings the 18 (`translated`: the D-SINK row and the paragraph "The sink of `c21`" under "Checker: symbol merging, name resolution, aliases and modules") | 12 names called at 312 sites (`error` 266, `add_diagnostic` 21); `c22_symbols_merge.rs` 8 imports `crate::checker::ProgramFiles`, which no file defined at `c73680fe1d` (the contract has it in this module) and `f49ea57437` defines here |
 | `checker/checker.go` 20115-20727 | `checker/c34_return_types.rs` | 15 of 28 (`getReturnTypeFromBody` 20240 to `checkIfExpressionRefinesParameter` 20699) | 5 names called at 9 sites |
 | `checker/checker.go` 20729-21511 | `checker/c35_resolve_members.rs` | 3 of 29 (`resolveMappedTypeMembers` 21008, `getTypeOfMappedSymbol` 21098, `getLowerBoundOfKeyType` 21135) | 2 names called at 2 sites |
 | `checker/checker.go` 22214-22911 | `checker/c37_instantiation.rs` | 16 of 36 (`getConditionalTypeInstantiation` 22599 to `forEachMappedTypePropertyKeyTypeAndIndexSignatureKeyType` 22841) | 9 names called at 52 sites |
@@ -978,3 +1028,20 @@ define: `crate::core::{Map, LiveList, Memo}` (12, 3 and 1 files of `checker/`; t
 `set_repopulate_info` (`c02_program_checker.rs`, `c24_external_modules.rs`, `c22_symbols_merge.rs`; upstream
 `ast/diagnostic.go` 234, 25 and 16, and `Diagnostics` is the view of the port that compares two diagnostics through
 their files). Two calls `intersects(` name a method that no file of `checker/` has and no upstream function owns.
+
+### Module specifiers (`modulespecifiers`)
+
+The four files (70 lines: `mod.rs` 8, `compare.rs` 12, `specifiers.rs` 16, `types.rs` 34) are unchanged in
+`f49ea57437`, which declares the directory. `mod.rs` declares the three files and re-exports each; each has a `pub`
+item. One file of the tree imports the package: `checker/nodebuilderimpl.rs` 43-46 names
+`ImportModuleSpecifierEndingPreference`, `ImportModuleSpecifierPreference`, `ModuleSpecifierOptions`,
+`UserPreferences`, `count_path_components` and `get_module_specifiers`, and the three files define the six. Read side
+by side with upstream for this row: `compare.go` and `types.go` 65-93. No compiler has seen the four files.
+
+| upstream file, lines | Rust module under `src/typecheck/` | state | not ported |
+| --- | --- | --- | --- |
+| `modulespecifiers/compare.go` 7-13 (`CountPathComponents`) | `modulespecifiers/compare.rs` | translated | |
+| `modulespecifiers/types.go` 65-93 (`ImportModuleSpecifierPreference`, `ImportModuleSpecifierEndingPreference`, `UserPreferences`, `ModuleSpecifierOptions`) | `modulespecifiers/types.rs` | translated | a preference is an enum with upstream's five values, where upstream has a string |
+| `modulespecifiers/types.go` 13-63, 95-119 | | not started | the interfaces of the file, the checker and the host, `ResultKind`, `ModulePath`, `RelativePreferenceKind`, `ModuleSpecifierEnding`, `MatchingMode` |
+| `modulespecifiers/specifiers.go` 19-40 (`GetModuleSpecifiers`) | `modulespecifiers/specifiers.rs` (`get_module_specifiers(c, module_symbol, importing_source_file, user_preferences, options, for_auto_imports)`: the checker stands for upstream's `checker`, `compilerOptions` and `host`) | stand-in: it records `modulespecifiers.GetModuleSpecifiers` in the stand-in log and answers no specifier | the body, and the other 23 functions of the file |
+| `modulespecifiers/preferences.go` (7 functions), `modulespecifiers/util.go` (21 functions) | | not started | |

@@ -85,12 +85,17 @@ fn lint_parse<R>(
     {
         return Ok(found);
     }
-    let first = log.msgs.iter().position(|msg| msg.kind == bun_ast::Kind::Err);
+    let first = log
+        .msgs
+        .iter()
+        .position(|msg| msg.kind == bun_ast::Kind::Err);
     let entry = first.and_then(|first| errors.get(first));
     let message = first.and_then(|first| log.msgs.get(first));
     Err(Failure {
         entry: entry.map_or((0, 0, 0), |entry| (entry.code, entry.start, entry.end)),
-        text: message.map_or_else(String::new, |msg| bstr::BStr::new(&*msg.data.text).to_string()),
+        text: message.map_or_else(String::new, |msg| {
+            bstr::BStr::new(&*msg.data.text).to_string()
+        }),
         offset: message
             .and_then(|msg| msg.data.location.as_ref())
             .map_or(0, |location| location.offset),
@@ -142,7 +147,11 @@ impl<'ast> Visitor<'ast> for Nodes<'_, '_, '_> {
         let tag = expr.data.tag();
         if matches!(
             tag,
-            ExprTag::EIf | ExprTag::EArrow | ExprTag::ECall | ExprTag::EImport | ExprTag::EImportMeta
+            ExprTag::EIf
+                | ExprTag::EArrow
+                | ExprTag::ECall
+                | ExprTag::EImport
+                | ExprTag::EImportMeta
         ) {
             self.found.push((expr.loc.start, tag.into()));
         }
@@ -191,7 +200,11 @@ fn rendered(
 
 /// The tag of each statement that the file keeps.
 fn kept(parsed: &ParsedForLint<'_, '_>) -> Vec<&'static str> {
-    parsed.stmts.iter().map(|stmt| stmt.data.tag().into()).collect()
+    parsed
+        .stmts
+        .iter()
+        .map(|stmt| stmt.data.tag().into())
+        .collect()
 }
 
 /// What the lint parse shows of the source: the conditionals, arrow functions, calls, `import()`, `import.meta` and auto-accessors are the nodes.
@@ -210,7 +223,13 @@ fn facts(parsed: &ParsedForLint<'_, '_>) -> String {
         .iter()
         .map(|(start, tag)| format!("{tag}@{start}"))
         .collect();
-    let wrappers: Vec<String> = parsed.sidecar.wrappers.records.iter().map(wrapper_line).collect();
+    let wrappers: Vec<String> = parsed
+        .sidecar
+        .wrappers
+        .records
+        .iter()
+        .map(wrapper_line)
+        .collect();
     let line = rendered(
         &kept(parsed),
         &erased_tests::describe(parsed),
@@ -253,7 +272,10 @@ fn records(parsed: &ParsedForLint<'_, '_>) -> String {
         .iter()
         .map(|record| {
             let list = record.list;
-            let mut line = format!("<{},{}>{{{},{}}}", record.lt, record.end, list.start, list.end);
+            let mut line = format!(
+                "<{},{}>{{{},{}}}",
+                record.lt, record.end, list.start, list.end
+            );
             for parameter in list.iter() {
                 let name = bstr::BStr::new(parameter.name.text.slice());
                 line.push_str(&format!(" {name}[{},{})", parameter.start, parameter.end));
@@ -344,6 +366,7 @@ fn a_lint_parse_reads_a_row_as_tsc_does() {
 }
 
 /// Each text starts with a type of a row and goes on to the end of its source: the outline of the type, and where the token after it starts.
+#[rustfmt::skip]
 const TYPES: &[(&[u8], &str, usize)] = &[
     (b"if;", "TypeReference[0,2)", 2),
     (b"class;", "TypeReference[0,5)", 5),
@@ -449,6 +472,7 @@ const TYPES: &[(&[u8], &str, usize)] = &[
 ];
 
 /// The same for what follows the `:` after a parameter list.
+#[rustfmt::skip]
 const RETURN_TYPES: &[(&[u8], &str, usize)] = &[
     (b"(a) => asserts a\nis B => 0;", "FunctionType[0,21) TypePredicate[7,21) TypeReference[20,21)", 22),
     (b"asserts a\nis B => 0;", "TypePredicate[0,14) TypeReference[13,14)", 15),
@@ -472,6 +496,7 @@ const RETURN_TYPES: &[(&[u8], &str, usize)] = &[
 ];
 
 /// The type parameter lists of the rows: the range of the list, the name and the range of each type parameter, and the offset after the `>`.
+#[rustfmt::skip]
 const TYPE_PARAMETERS: &[(&[u8], &str, u32)] = &[
     (b"<out>", "{1,4} out[1,4)", 5),
     (b"<out = A>", "{1,8} out[1,8)", 9),
@@ -480,6 +505,7 @@ const TYPE_PARAMETERS: &[(&[u8], &str, u32)] = &[
 ];
 
 /// Every source of the rows, once for each way it was read.
+#[rustfmt::skip]
 const ROWS: &[Row] = &[
     Row { family: "reserved-type-name", dialect: Dialect::Ts, text: b"let x: if;", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[] enums[] returns[0] types[TypeReference[7,9)] return_types[] type_parameters[] heritage[]") },
     Row { family: "reserved-type-name", dialect: Dialect::Ts, text: b"let x: class;", want: Want::Reads("kept[s_local] erased[] wrappers[] nodes[] enums[] returns[0] types[TypeReference[7,12)] return_types[] type_parameters[] heritage[]") },

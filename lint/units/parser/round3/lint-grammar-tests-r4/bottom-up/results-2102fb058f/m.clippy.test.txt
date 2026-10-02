@@ -1,4 +1,0 @@
-/tmp/r4bu/m/src/js_parser/p.rs:7996:22: warning: this argument is passed by value, but not consumed in the function body
-/tmp/r4bu/m/src/js_parser/parse/erased_tests.rs:147:22: warning: this argument (8 byte) is passed by reference, but would be more efficient if passed by value (limit: 8 byte): help: consider passing by value instead: `ErasedMemberData`
-/tmp/r4bu/m/src/js_parser/parse/generics.rs:719:13: warning: use of a disallowed method `alloc::string::String::from_utf8_lossy`
-warning: 3 warnings emitted

@@ -2,17 +2,24 @@
 // src/js_parser/parse/grammar_rows_tests.rs. Every expectation is read from tsc 6.0.2 (../rows.facts2.json, made by facts2.mjs
 // from rows.facts.json of tests-known-differences/bottom-up). Run rustfmt --edition 2024 on the output: the tables are under
 // #[rustfmt::skip], one row on a line.
-// usage: OUT=<file> node rust4.mjs [index of a row | family] ...
-// The rows named are those a lint parse does not read as tsc does: they go into the table NOT_READ with what a parse without
-// lint makes of them (None where main fails, else the tag of each statement it keeps), a fifth test reads that table, and the
-// test of ROWS passes them by. Without an argument the file has four tests and no such table.
+// usage: OUT=<file> node rust4.mjs [index of a row | family | index=tag,tag,...] ...
+// The rows named are those a lint parse does not read as tsc does: they go into the table KNOWN_DIFFERENCES with what the lint
+// parse makes of them, a fifth test reads that table, and the test of ROWS passes them by. A bare index or a family says that
+// the lint parse does what a parse without lint does (None where main fails, else the tag of each statement that main keeps);
+// index=tag,tag says that the lint parse accepts the source and keeps statements with these tags (index= for none).
+// Without an argument the file has four tests and no such table.
 import { readFileSync, writeFileSync } from "node:fs";
 import { ts } from "/workspace/notes/lint/units/parser/round3/tests-known-differences/bottom-up/gen/roots.mjs";
 import { FAMILIES, familyOf } from "/workspace/notes/lint/units/parser/round3/tests-known-differences/bottom-up/gen/families.mjs";
 const here = new URL("..", import.meta.url).pathname;
 const rows = JSON.parse(readFileSync(here + "rows.facts2.json", "utf8"));
 const notRead = process.argv.slice(2);
-for (const f of notRead) if (!FAMILIES[f] && !/^\d+$/.test(f)) throw new Error("no family " + f);
+const kept_ = new Map();
+for (const f of notRead) {
+  const m = /^(\d+)=(.*)$/.exec(f);
+  if (m) kept_.set(m[1], m[2] ? m[2].split(",") : []);
+  else if (!FAMILIES[f] && !/^\d+$/.test(f)) throw new Error("no family " + f);
+}
 
 const bytes = text => 'b"' + text.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n") + '"';
 const str = text => '"' + text.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n") + '"';
@@ -66,7 +73,8 @@ for (const r of rows) {
   else if (r.class === "M") without = `Some(${list(r.facts.kept)})`;
   else without = `Some(${list(keptOfOutput(r.main[1]))})`;
   const group = `${r.file.replace(".test.ts", "")}: ${r.describe}: ${r.group.replace(/: %s( %j)?$/, "").replace(/: %j passes design:%s$/, "")}`;
-  const isNotRead = notRead.includes(String(r.i)) || notRead.includes(family);
+  const isNotRead = notRead.includes(String(r.i)) || notRead.includes(family) || kept_.has(String(r.i));
+  if (kept_.has(String(r.i))) without = `Some(${list(kept_.get(String(r.i)))})`;
   if (isNotRead) notReadKeys.add(r.loader + "\0" + r.src);
   entries.push({ i: r.i, group: group === lastGroup ? null : group, family, dialect: DIALECT[r.loader], text: r.src, want, without, key: r.loader + "\0" + r.src });
   lastGroup = group;
@@ -348,7 +356,7 @@ fn the_type_parameters_of_a_row_end_at_their_closer() {
 #[test]
 fn a_lint_parse_reads_a_row_as_tsc_does() {
     let mut failed = Vec::new();
-    for row in ROWS.iter().filter(|row| !is_not_read(row)) {
+    for row in ROWS.iter().filter(|row| !is_known_difference(row)) {
         let found = lint_parse(row.dialect, row.text, facts);
         let passed = match (&row.want, &found) {
             (Want::Reads(want), Ok(found)) => found == want,
@@ -362,19 +370,19 @@ fn a_lint_parse_reads_a_row_as_tsc_does() {
     assert!(failed.is_empty(), "{}", failed.join("\\n"));
 }
 
-/// Whether a lint parse reads the source of \`row\` as a parse without lint does.
-fn is_not_read(row: &Row) -> bool {
-    NOT_READ
+/// Whether \`row\` is a source that a lint parse does not read as tsc does.
+fn is_known_difference(row: &Row) -> bool {
+    KNOWN_DIFFERENCES
         .iter()
         .any(|&(dialect, text, _)| dialect == row.dialect && text == row.text)
 }
 
 #[test]
-fn a_lint_parse_reads_a_source_without_a_route_as_a_parse_without_lint_does() {
+fn a_lint_parse_makes_this_of_a_source_that_it_does_not_read_as_tsc_does() {
     let mut failed = Vec::new();
-    for &(dialect, text, without_lint) in NOT_READ {
+    for &(dialect, text, made) in KNOWN_DIFFERENCES {
         let found = lint_parse(dialect, text, kept).ok();
-        if found.as_deref() != without_lint {
+        if found.as_deref() != made {
             failed.push(format!("{dialect:?} {}: {found:?}", bstr::BStr::new(text)));
         }
     }
@@ -397,9 +405,9 @@ emit(`const TYPE_PARAMETERS: &[(&[u8], &str, u32)] = &[`);
 for (const [text, e] of typeTables["type-parameters"]) emit(`    (${bytes(text)}, ${str(e.outline)}, ${e.closeEnd}),`);
 emit(`];\n`);
 const notReadRows = [...seen.values()].filter(e => notReadKeys.has(e.key));
-emit(`/// The sources that a lint parse reads as a parse without lint does: \`None\` where that parse fails, else the tag of each statement it keeps.`);
+emit(`/// The sources that a lint parse does not read as tsc does, with what it makes of each: \`None\` where it fails, else the tag of each statement it keeps.`);
 emit(`#[rustfmt::skip]`);
-emit(`const NOT_READ: &[(Dialect, &[u8], Option<&[&str]>)] = &[`);
+emit(`const KNOWN_DIFFERENCES: &[(Dialect, &[u8], Option<&[&str]>)] = &[`);
 for (const e of notReadRows) emit(`    (Dialect::${e.dialect}, ${bytes(e.text)}, ${e.without}),`);
 emit(`];\n`);
 emit(`/// Every case of the four test files, in their order.`);
@@ -415,11 +423,11 @@ let text = out.join("\n") + "\n";
 if (notReadRows.length === 0) {
   // Every source is read: no table, no predicate, no fifth test.
   const drop = (from, to) => { const a = text.indexOf(from); const b = text.indexOf(to, a); if (a < 0 || b < 0) throw new Error("no " + from); text = text.slice(0, a) + text.slice(b); };
-  drop("/// Whether a lint parse reads the source of `row`", "/// Each text starts with a type of a row");
-  drop("/// The sources that a lint parse reads as a parse without lint does", "/// Every case of the four test files");
-  text = text.replace("    for row in ROWS.iter().filter(|row| !is_not_read(row)) {", "    for row in ROWS {");
+  drop("/// Whether `row` is a source that a lint parse does not read as tsc does.", "/// Each text starts with a type of a row");
+  drop("/// The sources that a lint parse does not read as tsc does", "/// Every case of the four test files");
+  text = text.replace("    for row in ROWS.iter().filter(|row| !is_known_difference(row)) {", "    for row in ROWS {");
 }
-const outPath = process.env.OUT ?? here + "grammar_rows_tests.rs.gen4";
+const outPath = process.env.OUT ?? here + "grammar_rows_tests.rs.out";
 writeFileSync(outPath, text);
 const wants = { Reads: 0, Fails: 0 };
 for (const e of entries) wants[/^Want::(\w+)/.exec(e.want)[1]]++;

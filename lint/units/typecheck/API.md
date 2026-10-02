@@ -3532,3 +3532,114 @@ Cargo has not compiled the file, and nothing ran a function of it. What was chec
   `mark_property_as_referenced(prop, node_for_check_write_only, is_self_type_access)` (27829, `c45`),
   `is_context_sensitive_function_or_object_literal_method(func) -> bool` (29619, `c48`) and
   `get_contextual_signature(node) -> SignatureId` (10354, `c16`).
+
+## Checker: contextual types (`checker/c48_contextual_types.rs`)
+
+Commits `cff856f6be`, `c309ab8088` and `80bc4c9a4f` (written by the job that commits the worktree). The file holds
+`checker.go` 29449-30162 whole and in upstream order: the 27 methods from `getContextualType` to
+`getContextualImportAttributeType`, 26 of layer E-CTX and `getContextualTypeForDecorator` of E-DECOR, which the file
+had since round 1. No function is a stand-in. PORT_STATUS.md has the row.
+
+NOT compiled: cargo does not reach the checker while the layer does not compile, and no other compiler has seen the
+file. "Verified" below says what was checked instead.
+
+### How a caller writes the calls
+
+- `get_contextual_type(node, context_flags) -> TypeId` and `get_contextual_type_for_object_literal_method(node,
+  context_flags) -> TypeId`: the nil id for no contextual type.
+- By the kind of the parent, each with `context_flags` as the second argument and a `TypeId` as the answer:
+  `get_contextual_type_for_initializer_expression(node, ..)`, `.._for_variable_like_declaration(declaration, ..)`,
+  `.._for_binding_element(declaration, ..)`, `.._for_static_property_declaration(declaration, ..)`,
+  `.._for_return_expression(node, ..)`, `.._for_yield_operand(node, ..)` and `.._for_await_operand(node, ..)` (the
+  yield and the await expression), `.._for_binary_operand(node, ..)`, `.._for_object_literal_element(element, ..)`,
+  `.._for_conditional_operand(node, ..)`, and `get_contextual_return_type(function_decl, context_flags)`.
+- Without flags: `get_contextual_type_for_decorator(decorator)`, `get_contextual_import_attribute_type(node)`,
+  `get_contextual_type_for_argument(call_target, arg)`,
+  `get_contextual_type_for_substitution_expression(template, substitution_expression)`,
+  `get_contextually_typed_parameter_type(parameter)`, `get_mutable_array_or_tuple_type(t)`,
+  `get_contextual_iteration_type(kind: IterationTypeKind, function_decl)` and
+  `get_contextual_type_for_assignment_expression(binary)`, which takes the node of the binary expression where
+  upstream takes `*ast.BinaryExpression`.
+- `get_contextual_type_for_argument_at_index(call_target, arg_index: isize)`.
+- `get_contextual_type_for_element_expression(t, index, length, first_spread_index, last_spread_index)`: four `isize`,
+  -1 as upstream passes it; a nil `t` answers nil.
+- `get_spread_argument_type(args: List<'_, NodeId>, index: isize, arg_count: isize, rest_type, context:
+  InferenceContextId, check_mode) -> TypeId`. A caller that holds the `Vec` of `get_effective_call_arguments` passes
+  `List::from_slice(&args)`.
+- `get_contextual_signature_for_function_like_declaration(node) -> SignatureId`, nil for none.
+- `check_generator_instantiation_assignability_to_return_type(return_type, function_flags: FunctionFlags, error_node)
+  -> bool`.
+- `is_context_sensitive_function_or_object_literal_method(func) -> bool` takes `&self`. Every other method takes
+  `&mut self`.
+
+### Differences from upstream
+
+- Stack test, the first statement, at the four entries of the range in
+  `checker-expressions-calls-flow/top-down/data/tested_entries.tsv`: `get_contextual_type`,
+  `get_contextual_type_for_variable_like_declaration`, `get_contextual_type_for_object_literal_element` and
+  `get_mutable_array_or_tuple_type` record `StackLimit` and answer the error type.
+- `c.contextualInfos[index]` (29475) is `Vec::get`: nil for an index outside the list, which `find_contextual_node`
+  does not give.
+- `getContextuallyTypedParameterType`: `args` is the `Vec` of `get_effective_call_arguments` seen as a `List`, and
+  `args[indexOfParameter]` is `List::at`. The `switch` over `true` (29597) is an `if` chain in upstream's order. The
+  saved `resolvedSignature` of the link is put back on the one path after the override (`state.tsv`).
+- `getSpreadArgumentType`: `arg.AsSyntheticExpression().Type.(*Type)` (29632, 29654) is the `TypeId` in the `Type` word
+  of the node; a nil id is a `Panic` fault and the function answers the error type (`bottom-up/data/fallbacks.tsv`).
+  `args[argCount-1]` and `args[i]` are `List::at` (`fallbacks_additions.tsv`). `var t` and `var info` (29649-29650) are
+  the value of the `if` and a `TupleElementInfo` made at the push: a local that starts as zero and is always assigned
+  is an unused assignment for rustc. `types` is a `Vec` that is copied into the arena once (`list`: nil when nothing
+  was appended), and `infos` is passed as a `List` over the `Vec`, which `create_tuple_target_type` copies.
+- `getMutableArrayOrTupleType` and `getContextualTypeForArgumentAtIndex`: the `switch` over `true` (29695, 29897) is
+  an `if` chain in upstream's order; the operand of `||` that needs the checker mutably (29698) is a block;
+  `signature.parameters[restIndex]` (29919) is `List::at`.
+- `getContextualTypeForBinaryOperand`: `binary.AsNode()` is the parent node, and `c.patternForType[t]` is `Map::get`.
+- `getContextualTypeForAssignmentExpression`: the two equal results of 30031-30036 (`!!!` at 30034) are an `if`
+  without `else` and a `return`, because two equal arms are an error of the clippy table of the workspace; the name
+  of the access is computed as upstream computes it. A nil symbol or type reads as the zero record where upstream
+  dies.
+- `getContextualTypeForElementExpression`: `c.getTypeArguments(t)[i]` and `elementInfos[index]` are `List::at`, and
+  `strconv.Itoa(index)` is `index.to_string()`.
+- A method that upstream passes as a value (`c.getMutableArrayOrTupleType`, `c.getAwaitedTypeNoAlias`,
+  `c.isMutableArrayLikeType`) is a closure that gets the checker, as `map_type`, `filter_type` and `some_type` take it.
+- Comments: a comment of several lines is one line.
+
+### Verified
+
+No compiler has seen the file, and nothing ran a function of it. What was checked, on the tree of `80af3c3df9`:
+
+- `rustfmt --check --edition 2024`: exit 0.
+- `python3 round2-layer7-checker/ranges.py c48_contextual_types`: 27 of the 27 functions of the range have a `fn` of
+  their name in the file.
+- `python3 round2-layer7-checker/c48-callseq.py`: each of the 27 functions calls the same methods of the checker as
+  upstream's body, the same number of times (`stack_limit`, `fail`, `list`, `list_of`, `type_target_tuple_type` and
+  `value_symbol_links_get` stand for the stack test, a panic, a slice that is kept, `t.TargetTupleType()` and
+  `valueSymbolLinks.Get`, and are not counted), and the order of the range is kept. The same comparison of the free
+  functions (`ast.`, `core.`, `binder.`, `slices.Index` as `find_index`, and the package's own) agrees for each of the
+  27.
+- Scripts over the file and the tree: each of the 348 calls of a method of the checker, an accessor of `Ast` or a
+  free function has as many arguments as the one definition of its name takes; no argument of a method call calls a
+  method of the same receiver; each of the 66 imports is used, and each imported function has one definition in the
+  package that its path names; every field of the checker that the file reads is a field of
+  `c02_program_checker.rs`; no two comment lines are adjacent; no `unwrap`, `expect`, `panic`, `todo`,
+  `unimplemented`, `unreachable`, `unsafe` or `allow(`, and every `[...]` indexes a store of records or a link store
+  of the checker.
+- Read at their definitions in the tree, name, receiver, parameter order and types, and result: the 78 methods of
+  the checker that the file calls and 29 other files define (`c02`, `c03`, `c12`, `c14`, `c15`, `c16`, `c18`, `c20`,
+  `c21`, `c22`, `c28`, `c31`, `c33`, `c34`, `c36`, `c38`, `c40`, `c42`, `c43`, `c44`, `c45`, `c47`, `c49`, `c50`, `c51`,
+  `jsx.rs`, `links.rs`, `relater.rs`, `types.rs`), the 44 free functions (31 of `ast/`, 8 of `checker/`, 4 of
+  `core/core.rs`, `get_symbol_name_for_private_identifier` of `binder/`), the 18 accessors of `Ast`, and the fields,
+  records, flags and stores of the data model (`c01_data.rs`, `c02_program_checker.rs`, `types.rs`,
+  `core/linkstore.rs`, and `List` and `Map` of `core/golang.rs`).
+- The 31 calls that 13 other files make into 10 of these functions (`c06`, `c14`, `c15`, `c17`, `c18`, `c20`, `c28`,
+  `c33`, `c34`, `c50`, `flow.rs`, `inference.rs`, `jsx.rs`) have as many arguments as the definitions take; the kinds of
+  the arguments and what the caller does with the result were read at each site.
+- Not checked: types, borrows and lints by a compiler (no rustc, no clippy), and any result against upstream's
+  baselines.
+
+### What this file expects and the tree does not have
+
+Nothing at `80af3c3df9`. When the file was written, three callees had no definition and were called by their
+upstream names with upstream's parameter order: `create_promise_like_type(promised_type)` (20474) and
+`create_generator_type(yield_type, return_type, next_type, is_async_generator)` (20548) of `c34`, and the method
+`get_this_container(node, include_arrow_functions, include_class_computed_property_name)` (12279) of `c18`. The three
+came with their files, with these parameters.

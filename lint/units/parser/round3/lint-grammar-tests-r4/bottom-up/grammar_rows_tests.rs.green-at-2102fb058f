@@ -290,7 +290,7 @@ fn the_type_parameters_of_a_row_end_at_their_closer() {
 #[test]
 fn a_lint_parse_reads_a_row_as_tsc_does() {
     let mut failed = Vec::new();
-    for row in ROWS.iter().filter(|row| !is_not_read(row)) {
+    for row in ROWS.iter().filter(|row| !is_known_difference(row)) {
         let found = lint_parse(row.dialect, row.text, facts);
         let passed = match (&row.want, &found) {
             (Want::Reads(want), Ok(found)) => found == want,
@@ -309,19 +309,19 @@ fn a_lint_parse_reads_a_row_as_tsc_does() {
     assert!(failed.is_empty(), "{}", failed.join("\n"));
 }
 
-/// Whether a lint parse reads the source of `row` as a parse without lint does.
-fn is_not_read(row: &Row) -> bool {
-    NOT_READ
+/// Whether `row` is a source that a lint parse does not read as tsc does.
+fn is_known_difference(row: &Row) -> bool {
+    KNOWN_DIFFERENCES
         .iter()
         .any(|&(dialect, text, _)| dialect == row.dialect && text == row.text)
 }
 
 #[test]
-fn a_lint_parse_reads_a_source_without_a_route_as_a_parse_without_lint_does() {
+fn a_lint_parse_makes_this_of_a_source_that_it_does_not_read_as_tsc_does() {
     let mut failed = Vec::new();
-    for &(dialect, text, without_lint) in NOT_READ {
+    for &(dialect, text, made) in KNOWN_DIFFERENCES {
         let found = lint_parse(dialect, text, kept).ok();
-        if found.as_deref() != without_lint {
+        if found.as_deref() != made {
             failed.push(format!("{dialect:?} {}: {found:?}", bstr::BStr::new(text)));
         }
     }
@@ -467,14 +467,12 @@ const TYPE_PARAMETERS: &[(&[u8], &str, u32)] = &[
     (b"<out, T>", "{1,7} out[1,4) T[6,7)", 8),
 ];
 
-/// The sources that a lint parse reads as a parse without lint does: `None` where that parse fails, else the tag of each statement it keeps.
+/// The sources that a lint parse does not read as tsc does, with what it makes of each: `None` where it fails, else the tag of each statement it keeps.
 #[rustfmt::skip]
-const NOT_READ: &[(Dialect, &[u8], Option<&[&str]>)] = &[
-    (Dialect::Ts, b"import A from \"x\"\nwith { type: \"json\" };", None),
-    (Dialect::Ts, b"import \"x\"\nwith { type: \"json\" };", None),
-    (Dialect::Ts, b"import type A from \"x\"\nwith { type: \"json\" };", None),
-    (Dialect::Js, b"import A from \"x\"\nwith { type: \"json\" }; A;", None),
-    (Dialect::Js, b"import A from \"x\"\nwith { type: \"json\" };\nimport B from \"y\"\nwith (A) {}", None),
+const KNOWN_DIFFERENCES: &[(Dialect, &[u8], Option<&[&str]>)] = &[
+    (Dialect::Ts, b"export { a } from \"x\"\nwith { type: \"json\" };", Some(&["s_export_from"])),
+    (Dialect::Ts, b"export * from \"x\"\nwith { type: \"json\" };", Some(&["s_export_star"])),
+    (Dialect::Js, b"export * from \"x\"\nwith { type: \"json\" };", Some(&["s_export_star"])),
 ];
 
 /// Every case of the four test files, in their order.

@@ -458,18 +458,22 @@ fn a_lint_parse_reads_a_row_of_a_site_without_a_route_as_a_parse_without_lint_do
 }
 `);
 emit(`/// Each text starts with a type of a row and goes on to the end of its source: the outline of the type, and where the token after it starts.`);
+emit(`#[rustfmt::skip]`);
 emit(`const TYPES: &[(&[u8], &str, usize)] = &[`);
 for (const [rest, e] of typeTables.type) emit(`    (${bytes(rest)}, ${str(e.outline)}, ${e.next}),`);
 emit(`];\n`);
 emit(`/// The same for what follows the \`:\` after a parameter list.`);
+emit(`#[rustfmt::skip]`);
 emit(`const RETURN_TYPES: &[(&[u8], &str, usize)] = &[`);
 for (const [rest, e] of typeTables.return) emit(`    (${bytes(rest)}, ${str(e.outline)}, ${e.next}),`);
 emit(`];\n`);
 emit(`/// The type parameter lists of the rows: the range of the list, the name and the range of each type parameter, and the offset after the \`>\`.`);
+emit(`#[rustfmt::skip]`);
 emit(`const TYPE_PARAMETERS: &[(&[u8], &str, u32)] = &[`);
 for (const [text, e] of typeTables["type-parameters"]) emit(`    (${bytes(text)}, ${str(e.outline)}, ${e.closeEnd}),`);
 emit(`];\n`);
 emit(`/// Every source of the rows, once for each way it was read.`);
+emit(`#[rustfmt::skip]`);
 emit(`const ROWS: &[Row] = &[`);
 for (const row of seen.values()) emit(`    Row { family: ${str(row.family)}, dialect: Dialect::${row.dialect}, text: ${bytes(row.text)}, want: ${row.want}, without_lint: ${row.without} },`);
 emit(`];`);

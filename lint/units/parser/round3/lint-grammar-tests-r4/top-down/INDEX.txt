@@ -1,0 +1,52 @@
+lint-grammar-tests-r4, top-down. Round 3, R4 (research, 2026-10-02, 14:20 to 17:00 UTC). Nothing here is in the worktree, nothing was
+committed, and the notes were not saved with save-notes (the phase had no git). Every build was a scratch copy of src/js_parser under
+/tmp/r4td, compiled with the arguments that cargo gives rustc for the test target of the crate (data/rustc-js-parser-test.args, taken
+from the rustc of `cargo test -p bun_js_parser --lib` at 2102fb058f), so the lint levels of the workspace applied.
+This pass stands on ../../tests-known-differences/bottom-up (rows.json, the oracles, gen/rust.mjs, lists.mjs) and
+../../tests-known-differences/top-down (data/routes.txt, data/rows.table.tsv). It checked them after the restart and went on from them.
+Worktree: /workspace/wt/parser is /workspace/bun, HEAD 2102fb058f; src/js_parser and src/ast are those of 23a20afa7e.
+main: /workspace/base/bun.f4d755a9c is bc7a813b10; `git diff f4d755a9cf bc7a813b10 -- src/js_parser src/ast` is empty.
+
+run.sh                   makes the scratch, every file of data/ and generated/ again, and prints the build commands
+gen/facts2.mjs           rows.facts2.json: the facts of the bottom-up pass and four more of tsc (types, returnTypes, typeParameters, heritage)
+gen/rust3.mjs            THE GENERATOR of src/js_parser/parse/grammar_rows_tests.rs. --facts=all: the line of facts for every source that tsc
+                         parses (no bare "parses"). --records: the line also holds the types of the side table. --as-without-lint=<cases>:
+                         these cases get what main makes of them (text and offset of its first error, or the tags of its statements).
+                         The variant Want::AsWithoutLint and its arms are left out when no case has it. The four tables are #[rustfmt::skip].
+gen/rust2.mjs            the step before it (variants A, B, C): kept for the results that name them
+gen/lists2.mjs           lists.mjs of the bottom-up pass with --as-without-lint=<cases>: the section of API.md, with "Known differences of the
+                         lint grammar" made from the same cases; names the revision of main that ran
+tools/build-variant.sh   rustc on the scratch with cargo's arguments; CAP=1 caps the lints (for the seam variants, which have dead code)
+tools/clippy-variant.sh  clippy-driver the same way, CLIPPY_CONF_DIR the repository
+tools/cases.mjs          data/cases.tsv: the 366 cases, each with its row of ROWS, its entries of the type tables, its list of API.md, its routes
+tools/groups.mjs         data/groups.txt: the 37 describe groups with rows, classes, families and type roots
+tools/failed-cases.mjs   the cases that a run of the test names as failed, by family and route: the input of --as-without-lint
+tools/meta-check.mjs     the 99 metadata expectations are the values tsc emits (84 as text, 15 after two rewrites of notation); main gives none
+data/main.bc7a813b1.json main of today on the 366 rows: 0 rows differ from runs/main.f4d755a9c.json of the bottom-up pass
+data/import-type-rest.p1.diff   ../bottom-up/results/import-type-rest.diff with paths for patch -p1
+generated/               the two files of gen/rust3.mjs after rustfmt, and the two of gen/lists2.mjs
+
+Results (results/): the test binary of the crate with one file added, 74 tests (70 of the crate and 4).
+A  draft of the bottom-up pass as generated, at HEAD: 72 pass. 7 sources fail: 4 import types with type arguments (the Build path drops
+   what follows the ")"), 3 exports with `with` on the next line (round 1 takes them, tsc and main do not).
+B  the line of facts for T and M rows too (303 Reads, 10 Fails): the same 7 sources fail and no other.
+C  B and the records of the side table (annotations, return types, type parameters, heritage clauses of classes), first rule: the 7 and the 4
+   sources with an index signature in a class, whose parameter type tsc has and the side table has not. gen/facts2.mjs now leaves the
+   parameters of index signatures and of signature members out.
+C with the fix of the import type (data/import-type-rest.p1.diff): 73 pass, only the 3 exports fail. Same for D0, the file of gen/rust3.mjs.
+clippy over D0 and over E: no finding in grammar_rows_tests.rs. Three findings in files of the crate as they are at HEAD:
+   p.rs:7996 needless_pass_by_value (serialize_metadata takes ts::Metadata by value and no longer consumes it, since be1ebe5295),
+   parse/erased_tests.rs:147 trivially_copy_pass_by_ref, parse/generics.rs:719 disallowed String::from_utf8_lossy (in its tests).
+seam k0 (../../seam-expressions/top-down/variants/k0.diff: main's text at the expression sites, no hook): 108 cases, 91 sources fail.
+   By route: AS 13, D1 17, D1+TWIN 5, TSX-ARROW 5, TWIN+P1 4, E-LT 13, E-LT+body flags 8, E-ASYNC 11, E-ASYNC+body flags 5,
+   P1+body flags 9, E-IDENT-ARROW 14, S-AS+G1 1 (case 248, the record of `1 as as`), and the 3 exports. The routes of routes.txt hold.
+seam z (variants/z.diff, the proposal): cases 209 and 212 fail (E-IDENT-ARROW: the name of the arrow function is not right after the `?`),
+   and the 3 exports. Two tests of the crate fail under z as well (annotation_tests: the text of the twin; wrappers: parentheses of a .js file).
+E  z and main's `if !p.lexer.has_newline_before` in parse_path, file made with --as-without-lint=209,212,124,296,297,300,308: the four
+   tests of the file pass. The 3 exports are TS1005 at the `{` as in tsc; the 7 cases are the text and the offset of main's first error.
+   The same file on the tree that still reads the 7 (HEAD with the fix): those 7 fail, as they must.
+
+Not done: no variant for the statement, member and parameter sites (S-AS, S-ABS, S-ENUM, S-NSIMPORT, P-MOD, P-REST, M-ACC, G1, G2, G3):
+they are R1's to write. What a lint parse does there without a branch is what main does (runs/main.*.json), which is what
+--as-without-lint writes. The arm Want::AsWithoutLint(Ok(tags)) (main accepts and reads another program) was compiled and not run.
+`cargo clippy` itself was not run: clippy-driver with cargo's arguments was.

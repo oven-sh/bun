@@ -1,0 +1,16 @@
+lint-grammar-tests-r4, bottom-up. Round 3, R4 (research, 2026-10-02). Nothing here is in the worktree and nothing was committed.
+HEAD of the worktree was 2102fb058f (round 1 merged with main bc7a813b10). Base binary: /workspace/base/bun.f4d755a9c -> bun.bc7a813b1.
+The rows, their classes and the facts of tsc are those of ../../tests-known-differences/bottom-up (rows.json, rows.facts.json, gen/).
+
+gen/facts2.mjs     rows.facts2.json: rows.facts.json with the types that the side table keeps (annotations, return types, type parameters, heritage of classes)
+gen/rust4.mjs      the generator of src/js_parser/parse/grammar_rows_tests.rs: 366 rows in the order of the four files, three type tables, four tests;
+                   arguments name the rows that a lint parse does not read as tsc does (table KNOWN_DIFFERENCES and a fifth test)
+variants.sh, build-scratch.sh, clippy-scratch.sh   a scratch copy of src/js_parser with the generated file, its test binary and clippy (no cargo, nothing in the worktree)
+grammar_rows_tests.rs.every-row-read               node gen/rust4.mjs                      (fails at 2102fb058f for the three export rows only)
+grammar_rows_tests.rs.green-at-2102fb058f          node gen/rust4.mjs 298=s_export_from 299=s_export_star 301=s_export_star     (75 of 75 pass with results/import-type-rest.diff)
+grammar_rows_tests.rs.example-main-parse-path      node gen/rust4.mjs import-attributes-next-line type-import-attributes-next-line   (75 of 75 pass in the variant m)
+results/                     the runs of the first research pass at 23a20afa7e, and import-type-rest.diff (the 18 lines that the Build path of an import type lacks)
+results-2102fb058f/          the runs of this pass: cargo test at HEAD (70 tests), the variants a, z, m, k0, clippy of a, m.parse_path.diff
+
+Every output is `rustfmt --edition 2024` of what the generator writes. Run rustfmt outside the worktree or without --config-path: with the
+rustfmt.toml of the repository and a file outside it, rustfmt panics and writes rustc-ice-*.txt into the current directory.

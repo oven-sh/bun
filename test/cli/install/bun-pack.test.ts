@@ -2,7 +2,7 @@ import { write } from "bun";
 import { readTarball } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { randomBytes } from "crypto";
-import { readdir, rm } from "fs/promises";
+import { readdir, rm, writeFile } from "fs/promises";
 import { bunEnv, bunExe, isLinux, isWindows, normalizeBunSnapshot, runBunInstall, tempDir } from "harness";
 import { join } from "path";
 
@@ -2106,6 +2106,69 @@ test.concurrent("unicode", async () => {
   expect(exitCode).toBe(0);
 
   expect(tarballEntries(join(dir, "pack-unicode-1.1.1.tgz"))).toEqual(["package/package.json", "package/äöüščří.js"]);
+});
+
+// Reads the members of a .tgz without decoding their names: `readTarball` turns
+// names into JS strings, which maps the bytes this test is about onto U+FFFD.
+// Names are returned latin1-decoded (one char per stored byte) and collected
+// from every place the archive spells a name: the ustar header `name` field
+// and, when libarchive emits one, the `path` record of the pax header.
+function rawTarballMembers(tgz: Uint8Array) {
+  const tar = Buffer.from(Bun.gunzipSync(tgz));
+  const members: { names: Set<string>; contents: string }[] = [];
+  let paxPath: string | undefined;
+  for (let offset = 0; offset + 512 <= tar.length; ) {
+    const header = tar.subarray(offset, offset + 512);
+    if (header.every(byte => byte === 0)) break;
+    const nameField = header.subarray(0, 100);
+    const nameLength = nameField.indexOf(0) === -1 ? 100 : nameField.indexOf(0);
+    const name = nameField.toString("latin1", 0, nameLength);
+    const size = parseInt(header.toString("latin1", 124, 136), 8);
+    const typeflag = header.toString("latin1", 156, 157);
+    const data = tar.subarray(offset + 512, offset + 512 + size);
+    offset += 512 + Math.ceil(size / 512) * 512;
+
+    if (typeflag === "x") {
+      // pax extended header data is a sequence of "<record length> <key>=<value>\n"
+      for (let pos = 0; pos < data.length; ) {
+        const space = data.indexOf(" ", pos);
+        const recordLength = parseInt(data.toString("latin1", pos, space), 10);
+        const record = data.toString("latin1", space + 1, pos + recordLength - 1);
+        if (record.startsWith("path=")) paxPath = record.slice("path=".length);
+        pos += recordLength;
+      }
+      continue;
+    }
+
+    const names = new Set([name]);
+    if (paxPath !== undefined) names.add(paxPath);
+    paxPath = undefined;
+    members.push({ names, contents: data.toString("latin1") });
+  }
+  return members.sort((a, b) => (a.contents < b.contents ? -1 : 1));
+}
+
+// Only Linux lets a filename carry bytes that are not valid UTF-8 (APFS rejects
+// them and Windows filenames are UTF-16).
+test.concurrent.skipIf(!isLinux)("filenames that are not valid UTF-8 are stored byte for byte", async () => {
+  using dir = tempDir("pack-invalid-utf8", {
+    "package.json": JSON.stringify({ name: "pack-invalid-utf8", version: "1.0.0" }),
+  });
+  const rawPath = (byte: number) => Buffer.concat([Buffer.from(`${dir}/x_`), Buffer.from([byte])]);
+  // latin-1 "é", and a byte that is invalid in UTF-8 at any position
+  await Promise.all([writeFile(rawPath(0xe9), "ONE"), writeFile(rawPath(0xff), "TWO")]);
+
+  const { out, err, exitCode } = await runPack(dir);
+  expect(err).toBe("");
+  expect(out).toContain("Total files: 3");
+  expect(exitCode).toBe(0);
+
+  const members = rawTarballMembers(await Bun.file(join(dir, "pack-invalid-utf8-1.0.0.tgz")).bytes());
+  expect(members).toEqual([
+    { names: new Set(["package/x_\xe9"]), contents: "ONE" },
+    { names: new Set(["package/x_\xff"]), contents: "TWO" },
+    { names: new Set(["package/package.json"]), contents: expect.stringContaining(`"pack-invalid-utf8"`) },
+  ]);
 });
 
 test.concurrent("$npm_command is accurate", async () => {

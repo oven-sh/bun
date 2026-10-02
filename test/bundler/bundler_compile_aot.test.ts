@@ -1253,9 +1253,19 @@ describe.skipIf(!supported)("--compile-aot optimizations", () => {
     out.push(omitsOptional(4), passesOptional(4), forwardsOptional(4), forwardsOptional(4, 5), countsArguments(1), takesRest(1, 2, 3));
     out.push(passesLiteralToOptionalThatEscapes(7), keptOptional[0]!.v);
 
+    const arrowInConst = (x: number) => x * 2;
+    var expressionInVar = function (x: number) { return x + 1; };
+    let arrowGivenTwice = (x: number) => x + 1;
+    function callsArrowInConst(n: number) { let s = 0; for (let i = 0; i < n; i++) s += arrowInConst(i); return s; }
+    function callsExpressionInVar(n: number) { let s = 0; for (let i = 0; i < n; i++) s += expressionInVar(i); return s; }
+    function callsArrowGivenTwice(n: number) { let s = 0; for (let i = 0; i < n; i++) s += arrowGivenTwice(i); return s; }
+    out.push(callsArrowInConst(4), callsExpressionInVar(4), callsArrowGivenTwice(4));
+    arrowGivenTwice = (x: number) => x + 2;
+    out.push(callsArrowGivenTwice(4));
+
     console.log(out.join());
   `;
-  const expectedOutput = "2,55,2,2,3,4,6,3,2,2,3,3,8,12,function1,6,0,6,3,2,2,1,2,1,1.5,true,6,3,6,3,2,6,10,6,10,20000,12,18,12,30,4,3,7,7\n";
+  const expectedOutput = "2,55,2,2,3,4,6,3,2,2,3,3,8,12,function1,6,0,6,3,2,2,1,2,1,1.5,true,6,3,6,3,2,6,10,6,10,20000,12,18,12,30,4,3,7,7,12,10,10,14\n";
   const loopOptions = "useAOTLoopSplitting=1,useAOTInlineFastPathsInLoops=1";
 
   const builds = new Map<string, Promise<Map<string, string[]>>>();
@@ -1290,6 +1300,9 @@ describe.skipIf(!supported)("--compile-aot optimizations", () => {
   const cases: [remark: string, appliesTo: string[], doesNotApplyTo: string[], options?: string][] = [
     ["inlined-call:small", ["inlinesSmall"], []],
     ["inlined-call", [], ["recursive", "callsRecursive", "callsReassigned", "callsEither", "callsLargeOnce", "callsLargeTwice"]],
+    ["inlined-call:arrowInConst", ["callsArrowInConst"], []],
+    ["inlined-call:expressionInVar", ["callsExpressionInVar"], []],
+    ["inlined-call", [], ["callsArrowGivenTwice"]],
     ["direct-call:recursive", ["recursive", "callsRecursive"], []],
     ["direct-call:large", ["callsLargeOnce", "callsLargeTwice"], []],
     ["direct-call", [], ["inlinesSmall", "callsReassigned", "callsEither"]],

@@ -114,6 +114,30 @@ pub struct EntryCache {
     /// don't make it bun.invalid_fd
     pub fd: Fd,
     pub(crate) kind: EntryKind,
+    /// The entry is itself a link (a POSIX symlink, a Windows reparse point).
+    /// `symlink` alone does not say so: the resolver also fills it for real directories.
+    pub(crate) is_link: bool,
+}
+
+// `is_link` sits in what was padding after `kind`.
+const _: () = {
+    #[allow(dead_code)]
+    struct EntryCacheWithoutLinkBit {
+        symlink: Interned,
+        fd: Fd,
+        kind: EntryKind,
+    }
+    assert!(core::mem::size_of::<EntryCache>() == core::mem::size_of::<EntryCacheWithoutLinkBit>());
+};
+
+/// What a directory walker needs to know about an entry, from one read of its stat cache.
+#[derive(Clone, Copy)]
+pub struct EntryLink {
+    pub kind: EntryKind,
+    pub is_link: bool,
+    /// Where the link leads, with every link on the way resolved. Empty when
+    /// the entry is not a link or its target could not be named.
+    pub real_path: &'static [u8],
 }
 
 // `cache` / `need_stat` are lazily populated by `Entry::kind` /
@@ -232,6 +256,25 @@ impl Entry {
             }
         }
         self.cache().kind
+    }
+
+    /// [`Entry::kind`], plus whether the entry is a link and where it leads.
+    ///
+    /// # Safety
+    /// Same contract as [`Entry::kind`].
+    pub unsafe fn link<R: EntryKindResolver>(&self, fs: *mut R, store_fd: bool) -> EntryLink {
+        // SAFETY: forwarded; `kind` runs the stat-on-first-use protocol.
+        let _ = unsafe { self.kind(fs, store_fd) };
+        let cache = self.cache();
+        EntryLink {
+            kind: cache.kind,
+            is_link: cache.is_link,
+            real_path: if cache.is_link {
+                cache.symlink.as_bytes()
+            } else {
+                b""
+            },
+        }
     }
 
     ///
@@ -537,6 +580,7 @@ impl DirEntry {
                     // store an arbitrary kind
                     kind: found_kind.unwrap_or(EntryKind::File),
                     fd: Fd::INVALID,
+                    is_link: false,
                 }));
                 addr_of_mut!((*p).abs_path).write(Interned::EMPTY);
                 p

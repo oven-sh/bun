@@ -34,7 +34,17 @@ pub(crate) struct Scanner<'a> {
     pub(crate) search_count: usize,
     /// The directory being iterated; its fd closes once every child `ScanEntry` has been opened.
     current_dir: Option<Rc<Dir>>,
+    /// The scan root as the resolver names it.
+    root_dir: &'static [u8],
+    /// Real path of `root_dir`, resolved when the first directory link is met. Empty: unknown.
+    root_real: Option<&'static [u8]>,
+    /// Real paths of the directories the walk entered through a link.
+    followed: FollowedDirs,
+    /// The directory being iterated is in `followed`.
+    current_followed: bool,
 }
+
+type FollowedDirs = bun_collections::hashbrown::HashSet<&'static [u8], bun_wyhash::BuildHasher>;
 
 // FIFO queue of scan entries (pop_front / push_back).
 pub(crate) type Fifo = VecDeque<ScanEntry>;
@@ -47,6 +57,8 @@ pub(crate) struct ScanEntry {
     pub(crate) dir_path: &'static [u8],
     pub name: StringOrTinyString,
 }
+
+const _: () = assert!(core::mem::size_of::<ScanEntry>() == 56);
 
 #[derive(thiserror::Error, Debug)]
 pub(crate) enum ScanError {
@@ -89,6 +101,10 @@ impl<'a> Scanner<'a> {
             has_iterated: false,
             search_count: 0,
             current_dir: None,
+            root_dir: b"",
+            root_real: None,
+            followed: FollowedDirs::default(),
+            current_followed: false,
         })
     }
 
@@ -133,6 +149,8 @@ impl<'a> Scanner<'a> {
             return Err(ScanError::DoesNotExist);
         };
 
+        self.root_dir = b"";
+        self.root_real = None;
         let root = self
             .read_dir_with_name(path, None)
             .map_err(|_| ScanError::OutOfMemory)?;
@@ -161,31 +179,11 @@ impl<'a> Scanner<'a> {
             }
         }
 
-        // you typed "." and we already scanned it
-        if !self.has_iterated {
-            if let EntriesOption::Entries(entries) = root {
-                // Collect first so `self.next(…)` doesn't overlap the
-                // `entries.data` borrow.
-                // this branch is taken when the resolver already has
-                // `path` cached (e.g. `run_env_loader`/`read_dir_info` read the
-                // cwd before the scanner runs), so `read_directory_with_iterator`
-                // returned the cached `EntryMap` without invoking `iterator.next`.
-                // Hash-map iteration order is not stable. Sort by (lowercased)
-                // base name so test-file discovery order is deterministic —
-                // regression/issue/26851 relies on `a_*.test` running before
-                // `b_*.test` under `--bail`.
-                let mut entry_ptrs: Vec<*mut fs::Entry> = entries.data.values().copied().collect();
-                index_sort::sort_slice_by(&mut entry_ptrs, |a, b| {
-                    // SAFETY: `EntryMap` stores `*mut Entry` into the
-                    // process-static `EntryStore`; valid for `'static`.
-                    let (an, bn) = unsafe { ((**a).base_lowercase(), (**b).base_lowercase()) };
-                    an.cmp(bn)
-                });
-                for entry_ptr in entry_ptrs {
-                    // SAFETY: `EntryMap` stores `*mut Entry` into the
-                    // process-static `EntryStore`; valid for `'static`.
-                    self.next(unsafe { &mut *entry_ptr });
-                }
+        if let EntriesOption::Entries(entries) = root {
+            self.root_dir = entries.dir;
+            // you typed "." and we already scanned it
+            if !self.has_iterated {
+                self.replay_cached(entries);
             }
         }
 
@@ -194,6 +192,7 @@ impl<'a> Scanner<'a> {
             let Some(path2) = self.fs().abs_buf_checked(&parts2, &mut scan_dir_buf) else {
                 continue;
             };
+            let followed = !self.followed.is_empty() && self.followed.contains(path2);
             let (parent, rel_path): (Fd, &[u8]) = match &entry.relative_dir {
                 Some(parent) => (parent.fd, entry.name.slice()),
                 None => (Fd::cwd(), path2),
@@ -214,12 +213,52 @@ impl<'a> Scanner<'a> {
                 .append_slice(path2)
                 .map_err(|_| ScanError::OutOfMemory)?;
             self.current_dir = Some(Rc::clone(&child_dir));
+            if !followed {
+                let result = self.read_dir_with_name(path2, Some(child_dir.fd));
+                self.current_dir = None;
+                result.map_err(|_| ScanError::OutOfMemory)?;
+                continue;
+            }
+            // A directory outside the walk's own tree can be one the resolver
+            // listed before discovery (a parent of the cwd). The read then
+            // returns that listing and calls nothing.
+            self.current_followed = true;
+            let had_iterated = core::mem::replace(&mut self.has_iterated, false);
             let result = self.read_dir_with_name(path2, Some(child_dir.fd));
+            if !self.has_iterated {
+                if let Ok(EntriesOption::Entries(entries)) = &result {
+                    self.replay_cached(entries);
+                }
+            }
+            self.has_iterated = had_iterated;
+            self.current_followed = false;
             self.current_dir = None;
             result.map_err(|_| ScanError::OutOfMemory)?;
         }
 
         Ok(())
+    }
+
+    /// Runs `next` over a listing the resolver returned from its cache without
+    /// calling the iterator (`run_env_loader`/`read_dir_info` read the cwd
+    /// before the scanner runs).
+    fn replay_cached(&mut self, entries: &fs::DirEntry) {
+        // Hash-map iteration order is not stable. Sort by (lowercased)
+        // base name so test-file discovery order is deterministic —
+        // regression/issue/26851 relies on `a_*.test` running before
+        // `b_*.test` under `--bail`.
+        let mut entry_ptrs: Vec<*mut fs::Entry> = entries.data.values().copied().collect();
+        index_sort::sort_slice_by(&mut entry_ptrs, |a, b| {
+            // SAFETY: `EntryMap` stores `*mut Entry` into the
+            // process-static `EntryStore`; valid for `'static`.
+            let (an, bn) = unsafe { ((**a).base_lowercase(), (**b).base_lowercase()) };
+            an.cmp(bn)
+        });
+        for entry_ptr in entry_ptrs {
+            // SAFETY: `EntryMap` stores `*mut Entry` into the
+            // process-static `EntryStore`; valid for `'static`.
+            self.next(unsafe { &mut *entry_ptr });
+        }
     }
 
     /// `handle` stays owned by the caller; the resolver caches the listing but not the fd.
@@ -328,44 +367,191 @@ impl<'a> Scanner<'a> {
             && !self.matches_path_ignore_pattern(name)
     }
 
+    /// A directory the walk does not enter: a dot-directory, `node_modules`,
+    /// an excluded name, or a path that an ignore pattern matches. `path`
+    /// joins to the directory's path and `name_lowercase` is its last part.
+    #[inline]
+    fn prunes_dir(&mut self, path: &[&[u8]], name_lowercase: &[u8]) -> bool {
+        if (!name_lowercase.is_empty() && name_lowercase[0] == b'.')
+            || name_lowercase == b"node_modules"
+        {
+            return true;
+        }
+
+        debug_assert!(strings::index_of(name_lowercase, bun_paths::NODE_MODULES_NEEDLE).is_none());
+
+        for exclude_name in self.exclusion_names {
+            if strings::eql(exclude_name, name_lowercase) {
+                return true;
+            }
+        }
+
+        // Prune ignored directory trees early so we never traverse them.
+        if !self.path_ignore_patterns.is_empty() {
+            // reshaped for borrowck — drop the &mut borrow from
+            // abs_buf and reborrow open_dir_buf immutably so &self methods
+            // can be called with the slice.
+            let Some(dir_path_len) =
+                Self::abs_buf_projected(self.top_level_dir(), path, &mut self.open_dir_buf)
+                    .map(<[u8]>::len)
+            else {
+                return true;
+            };
+            let dir_path = &self.open_dir_buf[..dir_path_len];
+            if self.matches_path_ignore_pattern(dir_path) {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Decides a directory entry that is a link, or that sits in a directory
+    /// the walk entered through a link, so that each directory is listed once.
+    /// A link to a directory the walk reaches by itself is not followed. Any
+    /// other directory is entered the first time only, under its real path.
+    /// Returns `true` when the caller queues the entry as a plain child.
+    #[cold]
+    #[inline(never)]
+    fn enters_linked_dir(&mut self, entry: &fs::Entry, link: fs::EntryLink) -> bool {
+        if self.root_dir.is_empty() {
+            // The root is being read: its entries arrive before any other.
+            self.root_dir = entry.dir;
+        }
+
+        let mut lexical_buf = bun_paths::path_buffer_pool::get();
+        let parts: [&[u8]; 2] = [entry.dir, entry.base()];
+        let Some(lexical) = Self::abs_buf_projected(self.top_level_dir(), &parts, &mut lexical_buf)
+        else {
+            return true;
+        };
+
+        let (real, plain): (&[u8], bool) = if link.is_link {
+            let real = if link.real_path.is_empty() {
+                self.real_path_of(lexical)
+            } else {
+                self.spell_real(link.real_path)
+            };
+            let Some(real) = real else {
+                return false;
+            };
+            // A link that names its own place is a plain child, not an alias.
+            let same_place = if self.current_followed {
+                real == lexical
+            } else {
+                let root_real = self.root_real();
+                !root_real.is_empty()
+                    && path_below(lexical, self.root_dir)
+                        .is_some_and(|below| path_below(real, root_real) == Some(below))
+            };
+            if same_place && !self.current_followed {
+                return true;
+            }
+            (real, same_place)
+        } else {
+            // A child of a followed directory: the walk names it by its real path.
+            (lexical, true)
+        };
+
+        if self.walk_owns(real) || self.followed.contains(real) {
+            return false;
+        }
+        let Ok(real) = self.filename_store().append_slice(real) else {
+            bun_core::out_of_memory();
+        };
+        self.followed.insert(real);
+        if plain {
+            return true;
+        }
+
+        self.search_count += 1;
+        let name = bun_paths::basename(real);
+        self.dirs_to_scan.push_back(ScanEntry {
+            relative_dir: None,
+            dir_path: &real[..real.len() - name.len()],
+            name: StringOrTinyString::init(name),
+        });
+        false
+    }
+
+    /// The walk lists `real` by itself: it is the scan root, or it sits below
+    /// the root and no directory on the way is pruned.
+    fn walk_owns(&mut self, real: &[u8]) -> bool {
+        let root_real = self.root_real();
+        if root_real.is_empty() {
+            return false;
+        }
+        let Some(below) = path_below(real, root_real) else {
+            return false;
+        };
+
+        let root_dir = self.root_dir;
+        let mut lowercase_buf = [0u8; 256];
+        let mut start = 0;
+        while start < below.len() {
+            let end = strings::index_of_any(&below[start..], SEPARATORS)
+                .map_or(below.len(), |at| start + at);
+            let name = &below[start..end];
+            if name.len() > lowercase_buf.len() {
+                return false;
+            }
+            let name_lowercase = strings::copy_lowercase_if_needed(name, &mut lowercase_buf);
+            if self.prunes_dir(&[root_dir, &below[..end]], name_lowercase) {
+                return false;
+            }
+            start = end + 1;
+        }
+        true
+    }
+
+    fn root_real(&mut self) -> &'static [u8] {
+        if let Some(real) = self.root_real {
+            return real;
+        }
+        let real = self.real_path_of(self.root_dir).unwrap_or(b"");
+        self.root_real = Some(real);
+        real
+    }
+
+    /// Where `path` leads, from the same call `RealFS::kind` names a link target with.
+    fn real_path_of(&self, path: &[u8]) -> Option<&'static [u8]> {
+        #[cfg(not(windows))]
+        let fd = bun_sys::open_dir_at(Fd::cwd(), path).ok()?;
+        #[cfg(windows)]
+        let fd = bun_sys::open_dir_no_renaming_or_deleting_windows(Fd::cwd(), path).ok()?;
+        let dir = Dir::from_fd(fd);
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let real = bun_sys::get_fd_path(dir.fd, &mut buf).ok()?;
+        let mut spelled = bun_paths::path_buffer_pool::get();
+        let real = Self::abs_buf_projected(self.top_level_dir(), &[&*real], &mut spelled)?;
+        self.filename_store().append_slice(real).ok()
+    }
+
+    /// `real` as the walk spells paths.
+    fn spell_real(&self, real: &'static [u8]) -> Option<&'static [u8]> {
+        let mut spelled = bun_paths::path_buffer_pool::get();
+        let spelled = Self::abs_buf_projected(self.top_level_dir(), &[real], &mut spelled)?;
+        if spelled == real {
+            return Some(real);
+        }
+        self.filename_store().append_slice(spelled).ok()
+    }
+
     pub(crate) fn next(&mut self, entry: &mut fs::Entry) {
         let name = entry.base_lowercase();
         self.has_iterated = true;
         // SAFETY: `self.fs` is the process singleton.
         let real_fs = unsafe { &raw mut (*self.fs).fs };
         // SAFETY: caller holds `entries_mutex`; the direct path is single-threaded.
-        match unsafe { entry.kind(real_fs, false) } {
+        let link = unsafe { entry.link(real_fs, false) };
+        match link.kind {
             fs::EntryKind::Dir => {
-                if (!name.is_empty() && name[0] == b'.') || name == b"node_modules" {
+                if self.prunes_dir(&[entry.dir, entry.base()], name) {
                     return;
                 }
 
-                debug_assert!(strings::index_of(name, bun_paths::NODE_MODULES_NEEDLE).is_none());
-
-                for exclude_name in self.exclusion_names {
-                    if strings::eql(exclude_name, name) {
-                        return;
-                    }
-                }
-
-                // Prune ignored directory trees early so we never traverse them.
-                if !self.path_ignore_patterns.is_empty() {
-                    let parts: [&[u8]; 2] = [entry.dir, entry.base()];
-                    // reshaped for borrowck — drop the &mut borrow from
-                    // abs_buf and reborrow open_dir_buf immutably so &self methods
-                    // can be called with the slice.
-                    let Some(dir_path_len) = Self::abs_buf_projected(
-                        self.top_level_dir(),
-                        &parts,
-                        &mut self.open_dir_buf,
-                    )
-                    .map(<[u8]>::len) else {
-                        return;
-                    };
-                    let dir_path = &self.open_dir_buf[..dir_path_len];
-                    if self.matches_path_ignore_pattern(dir_path) {
-                        return;
-                    }
+                if (link.is_link || self.current_followed) && !self.enters_linked_dir(entry, link) {
+                    return;
                 }
 
                 self.search_count += 1;
@@ -420,6 +606,31 @@ impl<'a> Scanner<'a> {
                 self.test_files.push(entry.abs_path);
             }
         }
+    }
+}
+
+const SEPARATORS: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
+
+/// `path` without its trailing separators.
+fn trim_sep(path: &[u8]) -> &[u8] {
+    let mut end = path.len();
+    while end > 1 && bun_paths::is_sep_native(path[end - 1]) {
+        end -= 1;
+    }
+    &path[..end]
+}
+
+/// The part of `path` below `root`, without a leading separator. Empty when
+/// both name the same place.
+fn path_below<'p>(path: &'p [u8], root: &[u8]) -> Option<&'p [u8]> {
+    let root = trim_sep(root);
+    let rest = path.strip_prefix(root)?;
+    match rest {
+        [] => Some(rest),
+        [first, below @ ..] if bun_paths::is_sep_native(*first) => Some(below),
+        // A filesystem root keeps its separator.
+        _ if root.last().is_some_and(|c| bun_paths::is_sep_native(*c)) => Some(rest),
+        _ => None,
     }
 }
 

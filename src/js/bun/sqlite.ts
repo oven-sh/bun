@@ -102,6 +102,9 @@ interface CppSQLStatement {
   get: (...args: TODO[]) => TODO;
   all: (...args: TODO[]) => TODO;
   iterate: (...args: TODO[]) => TODO;
+  // One row object, or null once the cursor is exhausted.
+  iterateNext: () => unknown;
+  iterateEnd: () => void;
   as: (...args: TODO[]) => TODO;
   values: (...args: TODO[]) => TODO;
   raw: (...args: TODO[]) => TODO;
@@ -212,10 +215,20 @@ class Statement<ReturnType = unknown, ParamsType extends SqliteTypes.SQLQueryBin
     return this.#raw.all();
   }
 
-  *#iterateNoArgs() {
-    for (let res = this.#raw.iterate(); res; res = this.#raw.iterate()) {
-      yield res;
+  // `firstRow` is the result of the native iterate() call that opened the cursor.
+  *#drainIterator(firstRow) {
+    const raw = this.#raw;
+    try {
+      for (let res = firstRow; res; res = raw.iterateNext()) {
+        yield res;
+      }
+    } finally {
+      raw.iterateEnd();
     }
+  }
+
+  *#iterateNoArgs() {
+    yield* this.#drainIterator(this.#raw.iterate());
   }
 
   #valuesNoArgs() {
@@ -279,13 +292,11 @@ class Statement<ReturnType = unknown, ParamsType extends SqliteTypes.SQLQueryBin
     // ("foo") => ["foo"]
     // (Uint8Array(1024)) => [Uint8Array]
     // (123) => [123]
-    let res =
+    yield* this.#drainIterator(
       !isArray(arg0) && (!arg0 || typeof arg0 !== "object" || isTypedArray(arg0))
         ? this.#raw.iterate(args)
-        : this.#raw.iterate(...args);
-    for (; res; res = this.#raw.iterate()) {
-      yield res;
-    }
+        : this.#raw.iterate(...args),
+    );
   }
 
   #values(...args) {

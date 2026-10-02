@@ -7116,7 +7116,16 @@ declare module "bun" {
     getSession(): void;
 
     /**
-     * Sets the session of the socket.
+     * Sets the TLS session to offer for resumption.
+     *
+     * The call has an effect only before the TLS handshake starts. Bun ignores
+     * a later one.
+     *
+     * To reach that window: call it inside `open`, before the first `await`
+     * and before any `write()`, on a socket that also has a `handshake`
+     * handler. The handshake starts when `open` returns, and does not wait for
+     * a promise `open` returned. `isSessionReused()` is the only way to tell
+     * whether the session was offered and accepted.
      *
      * @param session The session to set.
      */

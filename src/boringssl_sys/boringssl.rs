@@ -1151,6 +1151,7 @@ unsafe extern "C" {
     /// Returns a BORROWED reference to the local certificate, or null.
     pub fn SSL_get_certificate(ssl: *const SSL) -> *mut X509;
 
+    /// Returns 0 and changes nothing once the handshake has begun.
     pub fn SSL_set_session(ssl: *mut SSL, session: *mut SSL_SESSION) -> c_int;
     pub fn SSL_SESSION_free(session: *mut SSL_SESSION);
 }

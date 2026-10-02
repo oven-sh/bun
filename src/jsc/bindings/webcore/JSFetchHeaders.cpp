@@ -24,6 +24,7 @@
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "IDLTypes.h"
+#include "JSDOMAttribute.h"
 #include "JSDOMBinding.h"
 #include "JSDOMConstructor.h"
 #include "JSDOMConvertBase.h"
@@ -179,26 +180,20 @@ template<> void JSFetchHeadersDOMConstructor::initializeProperties(VM& vm, JSDOM
 /**
  * Non standard function.
  **/
-JSC_DEFINE_CUSTOM_GETTER(jsFetchHeadersGetterCount, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+static inline JSC::JSValue jsFetchHeaders_countGetter(JSC::JSGlobalObject&, JSFetchHeaders& thisObject)
 {
-    JSFetchHeaders* castedThis = dynamicDowncast<JSFetchHeaders>(JSValue::decode(thisValue));
-    if (!castedThis) [[unlikely]] {
-        return JSValue::encode(jsUndefined());
-    }
-
-    auto& impl = castedThis->wrapped();
-    auto count = impl.size();
-    return JSValue::encode(jsNumber(count));
+    return jsNumber(thisObject.wrapped().size());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_getAll, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_CUSTOM_GETTER(jsFetchHeadersGetterCount, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName attributeName))
+{
+    return IDLAttribute<JSFetchHeaders>::get<jsFetchHeaders_countGetter>(*lexicalGlobalObject, thisValue, attributeName);
+}
+
+static inline JSC::EncodedJSValue jsFetchHeadersPrototypeFunction_getAllBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSFetchHeaders>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSFetchHeaders* castedThis = dynamicDowncast<JSFetchHeaders>(callFrame->thisValue());
-    if (!castedThis) [[unlikely]] {
-        return JSValue::encode(jsUndefined());
-    }
 
     if (!callFrame->argumentCount()) [[unlikely]] {
         throwTypeError(lexicalGlobalObject, scope, "Missing argument"_s);
@@ -257,6 +252,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_getAll, (JSGlobalObject
     return JSValue::encode(array);
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_getAll, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSFetchHeaders>::call<jsFetchHeadersPrototypeFunction_getAllBody>(*lexicalGlobalObject, *callFrame, "getAll");
+}
+
 JSC::EncodedJSValue fetchHeadersGetSetCookie(JSC::JSGlobalObject* lexicalGlobalObject, VM& vm, WebCore::FetchHeaders* impl)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -283,15 +283,15 @@ JSC::EncodedJSValue fetchHeadersGetSetCookie(JSC::JSGlobalObject* lexicalGlobalO
     return JSValue::encode(array);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_getSetCookie, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+static inline JSC::EncodedJSValue jsFetchHeadersPrototypeFunction_getSetCookieBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame*, typename IDLOperation<JSFetchHeaders>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
-    JSFetchHeaders* castedThis = dynamicDowncast<JSFetchHeaders>(callFrame->thisValue());
-    if (!castedThis) [[unlikely]] {
-        return JSValue::encode(jsUndefined());
-    }
-    auto& impl = castedThis->wrapped();
-    return fetchHeadersGetSetCookie(lexicalGlobalObject, vm, &impl);
+    return fetchHeadersGetSetCookie(lexicalGlobalObject, vm, &castedThis->wrapped());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_getSetCookie, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSFetchHeaders>::call<jsFetchHeadersPrototypeFunction_getSetCookieBody>(*lexicalGlobalObject, *callFrame, "getSetCookie");
 }
 
 /* Hash table for prototype */

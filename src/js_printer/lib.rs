@@ -7563,11 +7563,11 @@ impl BufferWriter {
     /// builds string literal values with, so verbatim text comes out exactly as
     /// a string literal written with the same bytes would (#38262 changes that
     /// shared decode to U+FFFD replacement and this path follows it). A UTF-8
-    /// writer copies the bytes instead, and whoever later reads that file
-    /// decodes them with replacement, so a WTF-8 encoded lone surrogate
-    /// survives only in this path.
+    /// writer stores that decode as UTF-8, so whoever reads the file gets the
+    /// same text. A WTF-8 encoded lone surrogate is the exception: UTF-8 has
+    /// no form for it, so it survives only in the other two encodings.
     pub fn write_verbatim_utf8(&mut self, text: &[u8]) {
-        if self.encoding == OutputEncoding::Utf8 {
+        if self.encoding == OutputEncoding::Utf8 && strings::is_valid_utf8(text) {
             return self.write_all(text);
         }
         // Start of the pending run of ASCII bytes, copied in one go.
@@ -7584,7 +7584,11 @@ impl BufferWriter {
                 self.write_all(&text[run_start..start]);
             }
             run_start = start + cursor.width as usize;
-            if c <= 0xFF {
+            if self.encoding == OutputEncoding::Utf8 {
+                let mut utf8 = [0u8; 4];
+                let len = bun_core::encode_wtf8_rune(&mut utf8, c);
+                self.buffer.list.extend_from_slice(&utf8[..len]);
+            } else if c <= 0xFF {
                 self.write_latin1_char(c as u8);
             } else {
                 self.write_wide_char(c);

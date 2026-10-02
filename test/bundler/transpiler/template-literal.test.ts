@@ -161,17 +161,27 @@ describe.concurrent("tagged template .raw preserves non-ASCII", () => {
 // sequence (#38262 is making it U+FFFD per maximal subpart, like node), the
 // regex source and the raw text built from the same bytes must come out equal
 // to a string literal built from them. This pins the two paths to each other
-// rather than to a particular policy. (Files written by `bun build` keep the
-// bytes and are decoded with replacement by whoever loads them, which only
-// differs for WTF-8 encoded surrogates; that path is not covered here.)
+// rather than to a particular policy. A file written by `bun build` stores the
+// same decode as UTF-8, so the bundle has to agree too. A WTF-8 encoded
+// surrogate has no UTF-8 form, so it is only run directly.
 describe.concurrent("ill-formed bytes in verbatim text decode like a string literal", () => {
-  test.each([
+  const sequences: [string, number[]][] = [
     ["stray continuation byte", [0xa9]],
     ["truncated sequence followed by ASCII", [0xe4, 0xb8, 0x78]],
     ["overlong encoding", [0xc0, 0x80]],
     ["encoded surrogate", [0xed, 0xa0, 0x80]],
     ["byte that cannot start a sequence", [0xff]],
-  ])("%s", async (_name, bytes) => {
+  ];
+  test.each(
+    sequences.flatMap(([name, bytes]): [string, "run" | "bundled", number[]][] =>
+      name === "encoded surrogate"
+        ? [[name, "run", bytes]]
+        : [
+            [name, "run", bytes],
+            [name, "bundled", bytes],
+          ],
+    ),
+  )("%s (%s)", async (_name, mode, bytes) => {
     const bad = Buffer.from(bytes);
     const wrap = (before: string, after: string) => Buffer.concat([Buffer.from(before), bad, Buffer.from(after)]);
     using dir = tempDir("ill-formed-verbatim", {
@@ -185,7 +195,19 @@ describe.concurrent("ill-formed bytes in verbatim text decode like a string lite
         ),
       ]),
     });
-    const { stdout, stderr, exitCode } = await runIn(String(dir), ["entry.js"]);
+    if (mode === "bundled") {
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "--target=bun", "--outfile", join(String(dir), "out.js"), "./entry.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, buildErr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+      expect(buildErr).not.toContain("error");
+      expect(buildExit).toBe(0);
+    }
+    const { stdout, stderr, exitCode } = await runIn(String(dir), [mode === "bundled" ? "out.js" : "entry.js"]);
     expect(stderr).toBe("");
     const [literal, sourceMatches, rawMatches] = JSON.parse(stdout);
     // The literal itself is the lexer's reading of the bytes; only its shape

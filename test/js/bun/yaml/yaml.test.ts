@@ -778,6 +778,11 @@ root: &root
           ],
           ["an anchor written there anew", "s: &s [{a: &x 1}]\np: *x\nq: *x\nm: {<<: *s}\ny: *x", 3],
           ["the anchor of an item of that sequence as before", "s: &s [&x {a: 1}]\np: *x\nm: {<<: *s}\ny: *x", 3],
+          [
+            "that sequence alone where it is merged, not its items",
+            "a: &a {k: 1}\ns: &s [*a]\nn: &n {<<: *s}\nb: *a\nc: *a\nd: *a\ne: *a\nz: *n",
+            8,
+          ],
           ["a merge key as a scalar", "a: &x {<<: {}}\nb: *x", 2],
           ["a merge source written in place once more at its first alias", "a: &x 1\nb: {<<: &m {k: *x}}\nc: *m", 6],
           ["one written in a list of merge sources likewise", "a: &x 1\nb: {<<: [&m {k: *x}, *m]}", 6],

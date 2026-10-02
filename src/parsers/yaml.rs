@@ -3349,37 +3349,14 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             }
         }
         counter.events.push(AliasEvent::MergeKey);
-        if let Some(site) = aliased
-            && is_map(value)
-        {
-            counter.events[site.event] = AliasEvent::MergeAlias(site.anchor);
-        }
-        if let ast::ExprData::EArray(sources) = &value.data {
-            let sources = sources.items.slice();
-            if let Some(sequence) = aliased {
-                self.alias_expansion_budget = self
-                    .alias_expansion_budget
-                    .checked_sub(sources.len())
-                    .ok_or(ParseError::ExcessiveAliasing)?;
-                // Its items are converted once more for the merge, what is written between its aliases included.
-                let AnchorCount { mut start, end, .. } = counter.anchors[sequence.anchor];
-                let items = |start, end| AliasEvent::MergeItems(sequence.anchor, start, end);
-                for source in sources {
-                    let Some(site) = counter.alias_site(source) else {
-                        continue;
-                    };
-                    counter.events.push(items(start, site.event));
-                    start = site.event + 1;
-                    if is_map(source) {
-                        counter.events.push(AliasEvent::MergeAlias(site.anchor));
-                    }
-                }
-                counter.events.push(items(start, end));
-            } else {
-                for source in sources.iter().filter(|source| is_map(source)) {
-                    if let Some(site) = counter.alias_site(source) {
-                        counter.events[site.event] = AliasEvent::MergeAlias(site.anchor);
-                    }
+        if let Some(site) = aliased {
+            if collection_id(value).is_some() {
+                counter.events[site.event] = AliasEvent::MergeAlias(site.anchor);
+            }
+        } else if let ast::ExprData::EArray(sources) = &value.data {
+            for source in sources.items.slice().iter().filter(|source| is_map(source)) {
+                if let Some(site) = counter.alias_site(source) {
+                    counter.events[site.event] = AliasEvent::MergeAlias(site.anchor);
                 }
             }
         }
@@ -3569,8 +3546,6 @@ enum AliasEvent {
     Alias(usize),
     /// The source of a `<<`, which converts its contents once more.
     MergeAlias(usize),
-    /// These `events` of a sequence that is the source of a `<<`, once more.
-    MergeItems(usize, usize, usize),
     /// A `<<`, which is a scalar written in the node but not kept in it.
     MergeKey,
     /// Where the anchor of a source of a `<<` is written in place.
@@ -3852,12 +3827,35 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     return Err(ParseError::ExcessiveAliasCount);
                 }
                 if matches!(event, AliasEvent::MergeAlias(_)) {
-                    let (start, end) = (anchor.start, anchor.end);
+                    let AnchorCount {
+                        node,
+                        mut start,
+                        end,
+                        ..
+                    } = *anchor;
+                    // Each alias in a sequence is a source in turn, between what is written there.
+                    if let ast::ExprData::EArray(sources) = &node.data {
+                        let sources = sources.items.slice();
+                        self.alias_expansion_budget = self
+                            .alias_expansion_budget
+                            .checked_sub(sources.len())
+                            .ok_or(ParseError::ExcessiveAliasing)?;
+                        for source in sources {
+                            let AliasCheck::Count(counter) = &self.alias_check else {
+                                break;
+                            };
+                            let Some(site) = counter.alias_site(source) else {
+                                continue;
+                            };
+                            self.replay_alias_events(start, site.event, Some(id))?;
+                            start = site.event + 1;
+                            if matches!(source.data, ast::ExprData::EObject(_)) {
+                                self.apply_alias_event(AliasEvent::MergeAlias(site.anchor), None)?;
+                            }
+                        }
+                    }
                     self.replay_alias_events(start, end, Some(id))?;
                 }
-            }
-            AliasEvent::MergeItems(sequence, start, end) => {
-                self.replay_alias_events(start, end, Some(sequence))?;
             }
             AliasEvent::MergeKey | AliasEvent::Source => {}
         }

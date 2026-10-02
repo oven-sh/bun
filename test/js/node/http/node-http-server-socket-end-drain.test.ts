@@ -729,7 +729,7 @@ describe.each(["http", "https"] as const)("%s: the connection reads behind the F
 
   describe.each(endings)("an Upgrade request with a body, ended %s", (_when, end) => {
     describe.each(bodies)("%s", (_name, framing, encodedBody) => {
-      test.each([
+      test.concurrent.each([
         ["in the read of the head", true],
         ["in later reads", false],
       ])("gets a body that arrives %s, and the socket gets the bytes behind it", async (_arrival, withHead) => {
@@ -780,7 +780,7 @@ describe.each(["http", "https"] as const)("%s: the connection reads behind the F
       (socket: Duplex) => (socket.once("finish", socket.destroy), socket.end(badRequest)),
     ],
   ])("a listener that closes the socket with %s", (_name, close) => {
-    test.each([
+    test.concurrent.each([
       ["an Upgrade request", upgradeHead],
       ["a request", requestHead],
     ])("gets the body of %s that arrived with the head", async (_kind, head) => {
@@ -806,7 +806,7 @@ describe.each(["http", "https"] as const)("%s: the connection reads behind the F
     });
   });
 
-  test("a parse error in the body of an Upgrade request behind the FIN emits no 'clientError'", async () => {
+  test.concurrent("a parse error in the body of an Upgrade request behind the FIN emits no 'clientError'", async () => {
     await using server = createServer();
     const clientErrors: string[] = [];
     server.on("clientError", (err: NodeJS.ErrnoException, socket) => {
@@ -854,7 +854,7 @@ describe.each(["http", "https"] as const)("%s: the connection reads behind the F
         },
       ],
     ];
-    test.each(readers)("leaves the body to %s (%d bytes)", async (_name, size, read) => {
+    test.concurrent.each(readers)("leaves the body to %s (%d bytes)", async (_name, size, read) => {
       const { promise, resolve } = Promise.withResolvers<{ received: number; complete: boolean }>();
       await using server = createServer(req => {
         let received = 0;
@@ -877,7 +877,7 @@ describe.each(["http", "https"] as const)("%s: the connection reads behind the F
       }
     });
 
-    test("dispatches the request that arrives behind the FIN", async () => {
+    test.concurrent("dispatches the request that arrives behind the FIN", async () => {
       const urls: string[] = [];
       const { promise, resolve } = Promise.withResolvers<string>();
       await using server = createServer((req, res) => {
@@ -900,7 +900,7 @@ describe.each(["http", "https"] as const)("%s: the connection reads behind the F
       }
     });
 
-    test("reports a body that the client cuts short behind the FIN", async () => {
+    test.concurrent("reports a body that the client cuts short behind the FIN", async () => {
       const clientErrors: string[] = [];
       const { promise, resolve } = Promise.withResolvers<{ received: number; events: string[] }>();
       await using server = createServer(req => {
@@ -938,7 +938,7 @@ describe.each(["http", "https"] as const)("%s: the connection reads behind the F
 
   // Node.js stops reading when the buffer of the request is full, and the connection stays open. Bun stops filling
   // the buffer there, reads the connection to its end and drops the bytes. One read is at most 512 KB.
-  test.each([
+  test.concurrent.each([
     ["a request", requestHead],
     ["an Upgrade request", upgradeHead],
   ])(
@@ -972,7 +972,7 @@ describe.each(["http", "https"] as const)("%s: the connection reads behind the F
   );
 
   // The FIN waits for response bytes that the client does not read. Until it leaves, the body is buffered as before.
-  test("a reader that comes late gets the whole body that arrived while the FIN waited", async () => {
+  test.concurrent("a reader that comes late gets the whole body that arrived while the FIN waited", async () => {
     const size = 300_000;
     const { promise: dispatched, resolve: onRequest } = Promise.withResolvers<{ req: IncomingMessage; held: number }>();
     await using server = createServer((req, res) => {
@@ -1005,7 +1005,7 @@ describe.each(["http", "https"] as const)("%s: the connection reads behind the F
 
   // The responses to such requests stay in the queue. Node.js stops reading when they hold the high water mark, and
   // the connection stays open for ever. Bun drops the rest there, so that the client's FIN closes the connection.
-  test.each([
+  test.concurrent.each([
     ["at once", false],
     ["after response bytes that the transport held", true],
   ])("requests pipelined behind a FIN that leaves %s do not keep the connection open", async (_when, waits) => {
@@ -1047,61 +1047,35 @@ describe.each(["http", "https"] as const)("%s: the connection reads behind the F
     }
   });
 
-  // Node.js leaves such a connection open and exits, because a socket that neither reads nor writes is not active.
-  // Bun closes it: after server.close() no requestTimeout is left to end the wait.
-  test.each([
-    ["before the body arrives", "first"],
-    ["while the request waits", "later"],
-  ])(
-    "a request that stopped reading does not keep the process alive when server.close() runs %s",
-    async (_when, order) => {
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          /* js */ `
-          const { PROTOCOL, CLOSE, CERT, KEY } = process.env;
-          const events = [];
-          const server = PROTOCOL === "https" ? require("node:https").createServer({ cert: CERT, key: KEY }) : require("node:http").createServer();
-          let client;
-          server.on("request", req => {
-            req.on("data", () => {});
-            req.pause();
-            req.on("error", () => {});
-            req.socket.on("error", () => {});
-            req.socket.on("close", () => events.push("socket close"));
-            req.socket.end("HTTP/1.1 400 Bad Request\\r\\nConnection: close\\r\\nContent-Length: 0\\r\\n\\r\\n");
-            if (CLOSE === "first") server.close(() => events.push("server close"));
-            (function untilReadsStop() {
-              if (req.readableLength < req.readableHighWaterMark) return setImmediate(untilReadsStop);
-              if (CLOSE === "later") server.close(() => events.push("server close"));
-              client.end();
-            })();
-          });
-          server.listen(0, "127.0.0.1", () => {
-            const to = { port: server.address().port, host: "127.0.0.1", allowHalfOpen: true, rejectUnauthorized: false };
-            client = PROTOCOL === "https" ? require("node:tls").connect(to) : require("node:net").connect(to);
-            client.on("error", () => {});
-            client.resume();
-            client.once(PROTOCOL === "https" ? "secureConnect" : "connect", () =>
-              client.write("POST / HTTP/1.1\\r\\nHost: a\\r\\nContent-Length: 2097152\\r\\n\\r\\n"),
-            );
-            // The server's FIN: the listener has run.
-            client.once("end", () => client.write(Buffer.alloc(2097152, "x")));
-          });
-          process.on("exit", () => console.log(JSON.stringify(events)));
-        `,
-        ],
-        env: { ...bunEnv, PROTOCOL: protocol, CLOSE: order, CERT: tlsCert.cert, KEY: tlsCert.key },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-        stdout: JSON.stringify(["socket close", "server close"]),
-        stderr: "",
-        exitCode: 0,
-      });
-    },
-  );
+  // server.close() stops the listener. A request in flight keeps its body, as in Node.js.
+  test.concurrent("a reader that is slower than the client gets the whole body after server.close()", async () => {
+    const size = 300_000;
+    const { promise, resolve } = Promise.withResolvers<{ received: number; complete: boolean }>();
+    const server = createServer(async req => {
+      req.on("error", () => {});
+      req.socket.end(badRequest);
+      let received = 0;
+      try {
+        for await (const chunk of req) {
+          received += chunk.length;
+          await new Promise(resolve => setImmediate(resolve));
+        }
+      } catch {}
+      resolve({ received, complete: req.complete });
+    });
+
+    const client = await connectTo(server);
+    try {
+      const serverEnded = once(client, "end");
+      client.write(requestHead(`Content-Length: ${size}`));
+      await serverEnded;
+      server.close();
+      // No FIN: the close of a socket destroys a request that has no response, with what it has not read.
+      client.write(Buffer.alloc(size, "x"));
+      expect(await promise).toEqual({ received: size, complete: true });
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+    }
+  });
 });

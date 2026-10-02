@@ -553,12 +553,6 @@ Server.prototype.close = function (optionalCallback?) {
   if (generation) generation.drainedAtClose = open === swept;
   // stop() queues the task that emits 'close', which holds the loop one more turn, as node's uv_close() does.
   server.stop();
-  // requestTimeout ended with the interval. A request that stopped the reads behind the FIN of its socket reads again,
-  // and onDataIncomingMessage drops what it does not take.
-  for (const socket of this[kTrackedConnections]) {
-    const handle = socket[kHandle];
-    if (handle?.finSent) handle.response?.resume();
-  }
   return this;
 };
 

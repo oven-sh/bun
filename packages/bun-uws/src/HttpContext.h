@@ -471,6 +471,8 @@ private:
              * the parser there); abandon the rest of the buffer. */
             if constexpr (IsNodeHttp) {
                 if (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_PARSING_STOPPED) {
+                    /* The socket stays open: balance the ref of onData, as its end does for a read that is parsed to the end. */
+                    us_socket_unref((us_socket_t *) s);
                     return nullptr;
                 }
             }

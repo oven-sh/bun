@@ -457,6 +457,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.lexer.next()?;
                 default_value = Some(p.parse_expr(Level::Comma)?);
             }
+            p.mark_end(arg.loc, Mark::VariableLikeEnd);
 
             args.push(G::Arg {
                 ts_decorators,
@@ -714,6 +715,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.mark_type_syntax(loc, Mark::Annotation, p.lexer.loc());
             p.skip_type_script_type(Level::Lowest)?;
         }
+        p.mark_end(loc, Mark::VariableLikeEnd);
         if let Some(start) = first_modifier {
             // Neither decorators nor modifiers may be applied to "this" parameters.
             p.lexer

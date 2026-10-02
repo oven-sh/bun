@@ -34,8 +34,8 @@ pub(crate) struct Lower<'p, 'a> {
     casts: HashMap<ExprKey, SmallVec<[(CastKind, i32); 2]>>,
     /// A bit for each place in the source, set where an expression in `casts` starts. Hardly any expression is in there.
     cast_starts: Vec<u64>,
-    /// From the `<` of a JSX element, to the name in its closing tag. The `tag` of such an element is the name in its opening tag.
-    closing_tags: HashMap<i32, Expr>,
+    /// `hir::File::expr_ends`
+    expr_ends: HashMap<ExprKey, i32>,
     kept_expressions: HashMap<i32, Vec<Expr>>,
     pub(super) source: &'a [u8],
     stack_check: bun_core::StackCheck,
@@ -149,10 +149,10 @@ impl<'p, 'a> Lower<'p, 'a> {
                 list.push((kind, ty));
             }
         }
-        // Of an element that was parsed more than once, the last attempt counts.
-        let mut closing_tags: HashMap<i32, Expr> = HashMap::default();
-        for (element, tag) in syntax.closing_tags {
-            closing_tags.insert(element, tag);
+        // Of what was parsed more than once, the last attempt counts.
+        let mut expr_ends: HashMap<ExprKey, i32> = HashMap::default();
+        for (key, end) in syntax.expr_ends {
+            expr_ends.insert(key, end);
         }
         let mut b = Builder::new(lexer, atoms);
         b.comments = p.lexer.all_comments.clone();
@@ -175,7 +175,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             list_props: Vec::new(),
             casts,
             cast_starts,
-            closing_tags,
+            expr_ends,
             kept_expressions: syntax.kept_expressions,
             source: p.source.contents(),
             stack_check: bun_core::StackCheck::init(),
@@ -1419,12 +1419,20 @@ impl<'p, 'a> Lower<'p, 'a> {
             if let Some(code) = parameter_property_error {
                 self.b.file.early_errors.push((pos, code));
             }
+            // Of two at one place the first is the one that took nothing.
+            let ends = self.marks_from(arg.binding.loc, Mark::VariableLikeEnd);
+            let end = if took_nothing {
+                ends.first()
+            } else {
+                ends.last()
+            };
             self.list_params.push(Param {
                 pat,
                 ty,
                 default,
                 flags,
                 pos,
+                end: end.copied().unwrap_or(0),
             });
             for decorator in arg.ts_decorators.iter() {
                 decorators.push((i, self.expr(decorator)));
@@ -1471,6 +1479,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                     default: ExprId::NONE,
                     flags: Flags::empty(),
                     pos: self.declaration_start(name),
+                    end: self.mark(name, Mark::VariableLikeEnd).unwrap_or(0),
                 };
                 self.b.file.add_param(this)
             }
@@ -1939,6 +1948,11 @@ impl<'p, 'a> Lower<'p, 'a> {
             return self.b.file.expr(ExprKind::Missing, pos);
         }
         let mut id = self.expr_without_casts(expr);
+        if !self.expr_ends.is_empty()
+            && let Some(&end) = self.expr_ends.get(&ExprKey::of(expr))
+        {
+            self.b.file.set_expr_end(id, end as u32);
+        }
         if self.may_have_casts(expr)
             && let Some(casts) = self.casts.get(&ExprKey::of(expr))
         {
@@ -2080,41 +2094,6 @@ impl<'p, 'a> Lower<'p, 'a> {
         }
     }
 
-    /// The name in the opening tag whose `<` is right before `from`, as an expression of its own. It is spelled like `closing`,
-    /// the name in the closing tag. `parseJsxElementName`: every access in it starts where the first name does.
-    fn jsx_opening_tag(&mut self, closing: ExprId, from: u32) -> ExprId {
-        let mut names = Vec::new();
-        let mut root = closing;
-        while let ExprKind::Dot { obj, name, .. } = self.b.file[root].kind {
-            names.push(name);
-            root = obj;
-        }
-        let root_kind = self.b.file[root].kind;
-        let text = self.source;
-        let is_in_name =
-            |c: &u8| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'$') || *c >= 0x80;
-        let mut at = skip_trivia(text, from as usize);
-        let start = at as u32;
-        let mut tag = self.b.file.expr(root_kind, start);
-        for &name in names.iter().rev() {
-            while text.get(at).is_some_and(is_in_name) {
-                at += 1;
-            }
-            // The `.`, then the name.
-            at = skip_trivia(text, skip_trivia(text, at) + 1);
-            tag = self.b.file.expr(
-                ExprKind::Dot {
-                    obj: tag,
-                    name,
-                    name_pos: at as u32,
-                    chain: Chain::No,
-                },
-                start,
-            );
-        }
-        tag
-    }
-
     /// `parseJsxTagName`: `this` at the head of a tag name is the keyword. `tag` may be `NONE`.
     fn jsx_this_keyword(&mut self, tag: ExprId) {
         let mut root = tag;
@@ -2129,20 +2108,6 @@ impl<'p, 'a> Lower<'p, 'a> {
         {
             self.b.file[root].kind = ExprKind::This;
         }
-    }
-
-    /// The name in a closing tag that the parser noted apart from `opening`. `NONE` for the same intrinsic name
-    /// (`isJsxIntrinsicTagName`): such a name is looked up, not evaluated, so one will do.
-    fn jsx_closing_tag(&mut self, opening: ExprId, closing: &Expr) -> ExprId {
-        if let (ExprKind::String(name), Data::EString(text)) =
-            (self.b.file[opening].kind, &closing.data)
-            && name == self.string(text)
-        {
-            return ExprId::NONE;
-        }
-        let closing = self.expr(closing);
-        self.jsx_this_keyword(closing);
-        closing
     }
 
     fn expr_without_casts(&mut self, expr: &Expr) -> ExprId {
@@ -2323,9 +2288,8 @@ impl<'p, 'a> Lower<'p, 'a> {
                 ExprKind::ImportCall(spec, self.exprs(options.into_iter().chain(&kept)))
             }
             Data::EJsxElement(e) => {
-                // Of the two names of an element that has a closing tag, the parser keeps one. The other is in `closing_tags` or read again.
-                let kept = self.optional_expr(e.tag.as_ref());
-                self.jsx_this_keyword(kept);
+                let tag = self.optional_expr(e.tag.as_ref());
+                self.jsx_this_keyword(tag);
                 let attrs = self.props(e.properties.as_slice(), false);
                 let children = self.exprs(e.children.iter());
                 let type_args = match self.mark(expr.loc, Mark::TypeArguments) {
@@ -2337,24 +2301,8 @@ impl<'p, 'a> Lower<'p, 'a> {
                 } else {
                     pos_of(e.closing_start)
                 };
-                let (tag, close_tag) = if close_pos == u32::MAX || kept.is_none() {
-                    (kept, ExprId::NONE)
-                } else if e.closing_start == e.end {
-                    // `parseJsxClosingElement` consumed nothing: the name is a missing identifier.
-                    (kept, self.b.file.expr(ExprKind::Missing, close_pos))
-                } else if self.b.file[kept].pos < close_pos {
-                    // The parser kept the opening name, and noted the closing one unless it is missing.
-                    match self.closing_tags.get(&expr.loc.start).copied() {
-                        Some(closing) => (kept, self.jsx_closing_tag(kept, &closing)),
-                        None => (kept, ExprId::NONE),
-                    }
-                } else if matches!(self.b.file[kept].kind, ExprKind::String(_)) {
-                    // `isJsxIntrinsicTagName`: such a name is looked up, not evaluated, so one will do.
-                    self.b.file[kept].pos = skip_trivia(self.source, pos as usize + 1) as u32;
-                    (kept, ExprId::NONE)
-                } else {
-                    (self.jsx_opening_tag(kept, pos + 1), kept)
-                };
+                let close_tag = self.optional_expr(e.closing_tag.as_ref());
+                self.jsx_this_keyword(close_tag);
                 ExprKind::Jsx(self.b.file.add_jsx(Jsx {
                     tag,
                     close_tag,

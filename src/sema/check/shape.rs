@@ -1129,15 +1129,11 @@ impl<'p> Checker<'p> {
 
     /// `GetContainingClass(node) != nil` for the member `m` of an interface or a type literal.
     pub(super) fn is_signature_inside_a_class(&self, file: FileId, m: MemberId) -> bool {
-        use crate::bind::{ScopeId, ScopeKind};
+        use crate::bind::ScopeKind;
         let bound = self.bound(file);
         let mut scope = match bound.member_owner[m.idx()] {
             MemberOwner::TypeLiteral(node) => bound.type_scope[node.idx()],
-            MemberOwner::Interface(i) => bound
-                .scopes
-                .iter()
-                .position(|s| s.kind == ScopeKind::Interface(i))
-                .map_or(ScopeId::NONE, |at| ScopeId(at as u32)),
+            MemberOwner::Interface(i) => bound.interface_scope[i.idx()],
             _ => return true,
         };
         while scope.is_some() {
@@ -3069,10 +3065,10 @@ impl<'p> Checker<'p> {
         if left == TypeId::UNKNOWN || right == TypeId::UNKNOWN {
             return TypeId::UNKNOWN;
         }
-        if left == TypeId::NEVER {
+        if left.is_never() {
             return right;
         }
-        if right == TypeId::NEVER {
+        if right.is_never() {
             return left;
         }
         // `checkCrossProductUnion`: a union too big to write out is an error.
@@ -3455,8 +3451,34 @@ impl<'p> Checker<'p> {
         let is_cacheable = self.leave();
         // `reportCircularityError`
         if self.left_a_circle {
-            self.p.circular_assignments.insert(key, ());
-            return self.p.assigned_prop_types.insert(key, in_a_circle);
+            let kept = self.p.assigned_prop_types.insert(key, in_a_circle);
+            let hir = self.hir(file);
+            let declaration = assignments[0];
+            let at = (
+                file,
+                self.start_inside_parentheses(file, declaration),
+                self.end_inside_parentheses(file, declaration),
+            );
+            // `GetNonAssignedNameOfDeclaration`: of `f["a"] = e` and `Object.defineProperty(f, "a", d)` the `"a"`, as it is written.
+            let named = match hir[declaration].kind {
+                ExprKind::Assign { target, .. } => match hir[target].kind {
+                    ExprKind::Index { index, .. } => Some(index),
+                    _ => None,
+                },
+                ExprKind::Call(call) => hir.ids(hir[call].args).nth(1),
+                _ => None,
+            };
+            if let Some(named) = named {
+                let written = self.source_text(
+                    file,
+                    self.start_inside_parentheses(file, named),
+                    self.end_inside_parentheses(file, named),
+                );
+                self.report_circularity_error(at, Arg::Text(&written), in_a_circle, false);
+            } else {
+                self.report_circularity_error(at, Arg::Atom(name), in_a_circle, false);
+            }
+            return kept;
         }
         if is_cacheable {
             self.p.assigned_prop_types.insert(key, ty);
@@ -3467,8 +3489,7 @@ impl<'p> Checker<'p> {
     /// `filterType(ty, flags &^ TypeFlagsNullable != 0) == neverType`: `ty` is `never`, or a union of `null` and `undefined` only.
     /// `void` is not nullable, and `any` is kept by the filter.
     pub(super) fn is_all_null_or_undefined(&self, ty: TypeId) -> bool {
-        ty == TypeId::NEVER
-            || self.every_type(ty, |_, member| member.is_undefined() || member.is_null())
+        ty.is_never() || self.every_type(ty, |_, member| member.is_undefined() || member.is_null())
     }
 
     /// `getWidenedTypeForAssignmentDeclaration` without its last step, which replaces an all-nullable type by `any` in a
@@ -3929,7 +3950,13 @@ impl<'p> Checker<'p> {
             } else {
                 super::symbols::circularity_error_type(member.ty)
             };
-            return self.p.member_types.insert((file, first), ty);
+            let kept = self.p.member_types.insert((file, first), ty);
+            if !is_accessor {
+                let end = self.end_of_member_name(file, first);
+                let name = self.source_text(file, member.pos, end);
+                self.report_circularity_error((file, member.pos, end), Arg::Text(&name), ty, false);
+            }
+            return kept;
         }
         if holds {
             self.p.member_types.insert((file, first), ty);
@@ -4712,7 +4739,7 @@ impl<'p> Checker<'p> {
                 }
                 // `isDiscriminantWithNeverType`: `{ ok: true } & { ok: false }`. What may be left out tells nothing apart.
                 if prop.flags.contains(PropFlags::OPTIONAL)
-                    || self.type_of_prop(prop, members.mapper) != TypeId::NEVER
+                    || !self.type_of_prop(prop, members.mapper).is_never()
                 {
                     continue;
                 }
@@ -4720,7 +4747,7 @@ impl<'p> Checker<'p> {
                 for part in parts.iter() {
                     list.push(self.type_of_prop(part, MapperId::IDENTITY));
                 }
-                if !list.contains(&TypeId::NEVER)
+                if !list.iter().any(|t| t.is_never())
                     && list.iter().any(|&t| t != list[0])
                     && list.iter().any(|&t| {
                         t == TypeId::BOOLEAN
@@ -4841,7 +4868,7 @@ impl<'p> Checker<'p> {
                         stand_ins.push(TypeId::UNDEFINED)
                     }
                     // What nothing can be has no say.
-                    None if self.apparent_type(part) == TypeId::NEVER => {}
+                    None if self.apparent_type(part).is_never() => {}
                     None => return None,
                 }
             }
@@ -5009,7 +5036,7 @@ impl<'p> Checker<'p> {
         let mut found: SmallVec<[(&'p Prop, MapperId); 8]> = SmallVec::new();
         for &part in parts {
             let part = self.apparent_type(part);
-            if part == TypeId::NEVER || !self.is_known(part) {
+            if part.is_never() || !self.is_known(part) {
                 continue;
             }
             // What a type parameter that extends a union has is not looked into.
@@ -5111,7 +5138,7 @@ impl<'p> Checker<'p> {
         let mut several = Vec::new();
         for info in &members.shape().index {
             // `isApplicableIndexType`. What can be anything, and what nothing can be, is a key of every kind.
-            let applies = if self.is_any(key) || key == TypeId::NEVER {
+            let applies = if self.is_any(key) || key.is_never() {
                 true
             } else if info.key == TypeId::STRING {
                 self.is_string_like(plain) || self.is_number_like(plain)

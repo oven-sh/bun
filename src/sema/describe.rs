@@ -129,7 +129,7 @@ impl<'c, 'p> Describer<'c, 'p> {
                 Intrinsic::Any => "any",
                 Intrinsic::Error | Intrinsic::Auto => "any",
                 Intrinsic::Unknown => "unknown",
-                Intrinsic::Never => "never",
+                Intrinsic::Never | Intrinsic::SilentNever | Intrinsic::UnreachableNever => "never",
                 Intrinsic::Void => "void",
                 Intrinsic::Undefined | Intrinsic::Missing | Intrinsic::UndefinedDeclared => {
                     "undefined"

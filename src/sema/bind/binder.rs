@@ -137,6 +137,9 @@ impl<'f> Binder<'f> {
         b.class_owner = vec![ClassOwner::Stmt(StmtId::NONE); f.classes.len()];
         b.class_scope = vec![ScopeId::NONE; f.classes.len()];
         b.interface_symbol = vec![SymbolId::NONE; f.interfaces.len()];
+        b.interface_scope = vec![ScopeId::NONE; f.interfaces.len()];
+        b.enum_scope = vec![ScopeId::NONE; f.enums.len()].into();
+        b.module_scope = vec![ScopeId::NONE; f.modules.len()].into();
         b.alias_symbol = vec![SymbolId::NONE; f.aliases.len()];
         b.alias_scope = vec![ScopeId::NONE; f.aliases.len()];
         b.enum_symbol = vec![SymbolId::NONE; f.enums.len()].into();
@@ -1671,7 +1674,8 @@ impl<'f> Binder<'f> {
                 self.b.interface_symbol[interface.idx()] = symbol;
                 // `ContainerFlagsIsInterface`: a `this` in it says nothing of what is around.
                 let seen_this = self.seen_this;
-                self.push_scope(ScopeKind::Interface(interface), SymbolId::NONE);
+                self.b.interface_scope[interface.idx()] =
+                    self.push_scope(ScopeKind::Interface(interface), SymbolId::NONE);
                 self.type_params(i.type_params, FnId::NONE);
                 for t in self.f.ids(i.extends) {
                     self.ty(t);
@@ -1724,7 +1728,7 @@ impl<'f> Binder<'f> {
                     self.b.symbols[symbol.idx()].exports = exports;
                 }
                 let exports = self.b.symbols[symbol.idx()].exports;
-                self.push_scope(ScopeKind::Enum(e), symbol);
+                self.b.enum_scope[e.idx()] = self.push_scope(ScopeKind::Enum(e), symbol);
                 // `forEachYieldExpression` does not look into an enum.
                 let counted = self.yields.len();
                 for m in decl.members.iter() {
@@ -2367,7 +2371,7 @@ impl<'f> Binder<'f> {
         }
         // `setExportContextFlag`: in an ambient module that exports nothing explicitly, everything is exported.
         let everything = ambient && !self.has_export_statements(decl.body);
-        self.push_scope(ScopeKind::Module(m), symbol);
+        self.b.module_scope[m.idx()] = self.push_scope(ScopeKind::Module(m), symbol);
         // `GetContainerFlags`: in the body the flow of control starts afresh, and nothing known outside holds.
         let saved = (
             self.flow,
@@ -3141,12 +3145,13 @@ impl<'f> Binder<'f> {
                 });
                 self.exception_target = FlowId::NONE;
             }
-            if let PropKey::Computed(key) = member.key
-                // `checkComputedPropertyName`: `[P in K]` outside a mapped type is an error of its own and is not looked at.
-                && !(matches!(self.f[key].kind, ExprKind::Binary { op: BinOp::In, .. })
-                    && !is_parenthesized(self.f, key)
-                    && !matches!(member.kind, MemberKind::Getter | MemberKind::Setter))
-            {
+            if let PropKey::Computed(key) = member.key {
+                // `checkComputedPropertyName`: `[P in K]` outside a mapped type is an error of its own and is not checked.
+                let around = self.is_unchecked;
+                self.is_unchecked |=
+                    matches!(self.f[key].kind, ExprKind::Binary { op: BinOp::In, .. })
+                        && !is_parenthesized(self.f, key)
+                        && !matches!(member.kind, MemberKind::Getter | MemberKind::Setter);
                 let is_of_class_or_interface =
                     matches!(owner, MemberOwner::Class(_) | MemberOwner::Interface(_));
                 if is_of_class_or_interface {
@@ -3168,6 +3173,7 @@ impl<'f> Binder<'f> {
                 if is_of_class_or_interface {
                     self.pop_scope();
                 }
+                self.is_unchecked = around;
             }
             let of_class = if matches!(owner, MemberOwner::Class(_)) {
                 m
@@ -3466,6 +3472,11 @@ impl<'f> Binder<'f> {
                 }
                 if mapped.ty.is_some() {
                     self.ty(mapped.ty);
+                }
+                if !mapped.members.is_empty() {
+                    let around = std::mem::replace(&mut self.is_unchecked, true);
+                    self.members(mapped.members, MemberOwner::TypeLiteral(id));
+                    self.is_unchecked = around;
                 }
                 self.pop_scope();
             }

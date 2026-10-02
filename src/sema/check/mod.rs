@@ -175,12 +175,6 @@ pub struct Program {
     circular_pats: NodeSet<(FileId, PatId)>,
     circular_returns: NodeSet<(FileId, FnId)>,
     circular_members: NodeSet<(FileId, MemberId)>,
-    /// Properties declared by assignment declarations whose type depends on itself, keyed by the first declaration
-    /// (`symbol.ValueDeclaration`). `reportCircularityError` reports 7022 there.
-    circular_assignments: NodeSet<(FileId, ExprId)>,
-    /// Symbols whose `Query::Symbol` was part of a resolution cycle. `reportCircularityError` reports 7022 for `export default e`,
-    /// `export = e` and CommonJS exports.
-    circular_symbols: NodeSet<Sym>,
     /// References whose control flow walk reached depth 2000 (2563). `getTypeAtFlowNode`
     flows_too_deep: NodeSet<(FileId, ExprId)>,
     /// The classes and interfaces whose base types depend on themselves, the aliases that do, and the mapped types whose keys do.
@@ -406,8 +400,6 @@ impl Program {
             circular_pats: NodeSet::new(&pats),
             circular_returns: NodeSet::new(&fns),
             circular_members: NodeSet::new(&members),
-            circular_assignments: NodeSet::new(&exprs),
-            circular_symbols: NodeSet::new(&symbols),
             flows_too_deep: NodeSet::new(&exprs),
             circular_bases: NodeSet::new(&symbols),
             base_constructor_types: ByNode::new(&symbols),
@@ -609,13 +601,11 @@ impl Program {
             recent_sig_params: Box::new([(SigId(u32::MAX), &[] as &[SigParam]); RECENT_SIGS]),
             recent_sig_type_params: Box::new([(SigId(u32::MAX), &[] as &[TypeId]); RECENT_SIGS]),
             awaiting: Vec::new(),
-            reachability_crosses_functions: false,
-            reachability_past_exhaustive_switches: false,
+            last_flow_node: (FileId(u32::MAX), crate::bind::FlowId::NONE, false),
             iife_resolving: Vec::new(),
             starts_unassigned: false,
             inferential: None,
             flow_loops: Vec::new(),
-            met_loop_under_way: false,
             reverse_mapped_source_stack: Vec::new(),
             reverse_mapped_target_stack: Vec::new(),
             reverse_expanding: 0,
@@ -922,11 +912,8 @@ pub struct Checker<'p> {
     recent_sig_type_params: Box<[(SigId, &'p [TypeId]); RECENT_SIGS]>,
     /// The unions whose members are being awaited.
     awaiting: Vec<TypeId>,
-    /// Whether a function that is written where control cannot get to counts as unreachable itself.
-    reachability_crosses_functions: bool,
-    /// Whether a `switch` that leaves nothing out can be got past, as far as `is_reachable` goes. That there is nothing left a
-    /// variable can be there is something known of it: only where control cannot get at all is nothing known.
-    reachability_past_exhaustive_switches: bool,
+    /// `lastFlowNode`, `lastFlowNodeReachable`
+    last_flow_node: (FileId, crate::bind::FlowId, bool),
     /// The calls of functions written on the spot whose arguments are being looked at to type the parameters.
     iife_resolving: Vec<(FileId, ExprId)>,
     /// The reference whose flow is being walked holds `undefined` until something is assigned to it.
@@ -943,9 +930,6 @@ pub struct Checker<'p> {
         TypeId,
         usize,
     )>,
-    /// Set when a reference evaluates to `silentNeverType`: a `never` narrowed from the incomplete type of a loop under analysis
-    /// (`newFlowType`).
-    met_loop_under_way: bool,
     /// What mapped types were made from is being worked out from what they came to, for these.
     reverse_mapped_source_stack: Vec<TypeId>,
     reverse_mapped_target_stack: Vec<TypeId>,

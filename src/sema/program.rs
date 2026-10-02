@@ -1028,10 +1028,18 @@ fn reference_locations(
         }
     }
     let call_mode = options.import_call_mode(module.default_mode);
-    for e in hir.exprs.iter() {
-        if let ExprKind::ImportCall(argument, _) = e.kind
-            && let ExprKind::String(spec) = hir[argument].kind
-            && let Some(&target) = module.imports.get(&(spec, call_mode))
+    for (i, e) in hir.exprs.iter().enumerate() {
+        let found = match e.kind {
+            ExprKind::ImportCall(argument, _) => match hir[argument].kind {
+                ExprKind::String(spec) => Some((argument, spec, call_mode)),
+                _ => None,
+            },
+            ExprKind::Call(_) if hir.is_js => bind::require_call_argument(hir, ExprId(i as u32))
+                .map(|(argument, spec)| (argument, spec, ResolutionMode::Require)),
+            _ => None,
+        };
+        if let Some((argument, spec, mode)) = found
+            && let Some(&target) = module.imports.get(&(spec, mode))
         {
             let pos = hir[argument].pos;
             dynamic.push((target, 1393, pos, end_of_string_literal(text, pos)));

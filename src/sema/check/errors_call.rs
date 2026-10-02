@@ -729,7 +729,7 @@ impl Checker<'_> {
             || calls == 0
                 && constructs == 0
                 && !self.is_union(apparent)
-                && self.reduced(apparent) != TypeId::NEVER
+                && !self.reduced(apparent).is_never()
                 && {
                     let function = self.global_ref(known::Function, &[]);
                     self.is_assignable(called, function)

@@ -632,6 +632,10 @@ pub struct JSXElement {
 
     pub close_tag_loc: crate::Loc,
 
+    /// For the type checker, which looks at both names: the name in `</tag>`, missing or not. `tag` is then the name in the opening
+    /// tag. `None` for `<tag />`, for a fragment, and for everybody else.
+    pub closing_tag: Option<ExprNodeIndex>,
+
     /// Where `<tag attributes>`, `<>` or all of `<tag attributes />` ends.
     pub opening_end: crate::Loc,
 
@@ -650,6 +654,7 @@ impl Default for JSXElement {
             key_prop_index: -1,
             flags: crate::flags::JSXElementBitset::default(),
             close_tag_loc: crate::Loc::EMPTY,
+            closing_tag: None,
             opening_end: crate::Loc::EMPTY,
             closing_start: crate::Loc::EMPTY,
             end: crate::Loc::EMPTY,

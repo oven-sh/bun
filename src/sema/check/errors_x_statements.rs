@@ -654,7 +654,7 @@ impl Checker<'_> {
             let strings = self.filter(all, |c, m| c.is_string_like(m) || c.is_deferred(m));
             if !self.is_known(strings) {
                 is_sure = false;
-            } else if strings != TypeId::NEVER {
+            } else if !strings.is_never() {
                 keys = strings;
             }
         }

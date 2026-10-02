@@ -552,7 +552,7 @@ impl Checker<'_> {
         }
         let returned = self.return_type_of_fn(file, func);
         // What returns `never` is told that `undefined` is not that.
-        if !self.is_known(returned) || returned == TypeId::NEVER {
+        if !self.is_known(returned) || returned.is_never() {
             return;
         }
         // `isUnwrappedReturnTypeUndefinedVoidOrAny`

@@ -622,12 +622,10 @@ impl Checker<'_> {
                 _ => None,
             };
             let opening_name = intrinsic_name(element.tag);
-            let closing_name = if element.close_pos == u32::MAX {
-                None
-            } else if element.close_tag.is_some() {
+            let closing_name = if element.close_tag.is_some() {
                 intrinsic_name(element.close_tag)
             } else {
-                opening_name
+                None
             };
             for (name, start, is_closing) in [
                 (opening_name, start, false),
@@ -1341,7 +1339,7 @@ impl Checker<'_> {
         };
         let (tag_name, tag_end) = (tag_name_start(hir, e), tag_name_end(hir, e));
         if children.len() > 1 {
-            if lists != TypeId::NEVER {
+            if !lists.is_never() {
                 reported |=
                     self.elaborate_jsx_children(file, e, &children, lists, (name, wanted), out);
             } else if !is_related(self) {
@@ -1354,7 +1352,7 @@ impl Checker<'_> {
                 });
                 reported = true;
             }
-        } else if others != TypeId::NEVER {
+        } else if !others.is_never() {
             // `getElaborationElementForJsxChild`
             let (child, _) = children[0];
             let Some(at) = self.jsx_child_start(file, e, &children, 0) else {
@@ -1437,7 +1435,7 @@ impl Checker<'_> {
         // `isArrayOrTupleLikeType`
         let arrays = self.filter(target, |c, m| c.is_array_like(m) || c.is_tuple_like(m));
         let iterables = self.filter(target, |c, m| !(c.is_array_like(m) || c.is_tuple_like(m)));
-        let yielded = if iterables != TypeId::NEVER {
+        let yielded = if !iterables.is_never() {
             // A reference to an alias that was under way where it is written is what the alias stands for.
             let yielded = self.iterated_type(iterables, false);
             let members: Vec<TypeId> = self
@@ -1456,7 +1454,7 @@ impl Checker<'_> {
             let key = self.number_literal(i as f64, false);
             // `getBestMatchIndexedAccessTypeOrUndefined`
             let mut indexed = None;
-            if arrays != TypeId::NEVER {
+            if !arrays.is_never() {
                 indexed = self.indexed_access_if_any(arrays, key, false);
                 if indexed.is_none()
                     && self.is_union(arrays)

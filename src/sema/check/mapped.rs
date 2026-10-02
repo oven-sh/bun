@@ -102,7 +102,7 @@ impl<'p> Checker<'p> {
         }
         // `getReducedType`: an intersection nothing can be is not there.
         let ty = self.reduced(ty);
-        if self.has_any_flag(ty) || ty == TypeId::NEVER {
+        if self.has_any_flag(ty) || ty.is_never() {
             return self.union(&[TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL]);
         }
         if ty == TypeId::UNKNOWN {
@@ -699,7 +699,7 @@ impl<'p> Checker<'p> {
                             self.data(t),
                             TypeData::TypeParam(..) | TypeData::ThisParam(_) | TypeData::Marker(_)
                         )
-                    }) && !list.contains(&TypeId::NEVER)
+                    }) && !list.iter().any(|t| t.is_never())
                         && list.iter().any(|&t| {
                             t == TypeId::BOOLEAN
                                 || self.every_type(t, |c, m| c.is_unit(m))
@@ -814,7 +814,7 @@ impl<'p> Checker<'p> {
         let apparent = self.apparent_type(obj);
         let apparent = self.reduced(apparent);
         // `any` and `never` have whatever can be a key at all.
-        if self.is_any(apparent) || apparent == TypeId::NEVER {
+        if self.is_any(apparent) || apparent.is_never() {
             let has = apparent == TypeId::UNRESOLVED || self.is_key_like(index);
             return has.then_some(apparent);
         }
@@ -865,7 +865,7 @@ impl<'p> Checker<'p> {
             apparent
         };
         let Some(members) = self.members(holder) else {
-            return (index == TypeId::NEVER).then_some(TypeId::NEVER);
+            return (index.is_never()).then_some(TypeId::NEVER);
         };
         // `getPropertyOfType`: what every function and every object has counts, and comes before any index signature.
         if let Some(name) = name
@@ -977,7 +977,7 @@ impl<'p> Checker<'p> {
             );
             return Some(self.or_missing(value, include_undefined && !is_own_member));
         }
-        (index == TypeId::NEVER).then_some(index)
+        (index.is_never()).then_some(index)
     }
 
     // ───────────────────────────── conditional types ─────────────────────────────
@@ -1065,7 +1065,7 @@ impl<'p> Checker<'p> {
             let value = self.force(value);
             // `getConditionalTypeInstantiation`: an intersection nothing can be is not there to be gone through.
             let value = self.reduced(value);
-            if (value == TypeId::NEVER || self.is_union(value))
+            if (value.is_never() || self.is_union(value))
                 && self.is_distributive_conditional(file, node)
             {
                 return self.map_type(value, |c, part| {
@@ -1209,7 +1209,7 @@ impl<'p> Checker<'p> {
                 // `any` may pass. So may what extends `check_ty`, if something that passes is one of the things `check_ty` can be.
                 let with_true = self.has_any_flag(check_ty)
                     || for_constraint
-                        && extends_ty != TypeId::NEVER
+                        && !extends_ty.is_never()
                         && self
                             .parts(extends_ty)
                             .iter()
@@ -1317,7 +1317,7 @@ impl<'p> Checker<'p> {
         }
         if is_distributive && let Some(value) = self.p.types.map(root_mapper, root_check) {
             let value = self.force(value);
-            if self.is_union(value) || value == TypeId::NEVER {
+            if self.is_union(value) || value.is_never() {
                 return Err(declared);
             }
         }
@@ -1489,7 +1489,7 @@ impl<'p> Checker<'p> {
             c.is_array_or_tuple(t)
                 || matches!(c.data(t), TypeData::Intersection(parts) if parts.iter().all(|&p| c.is_array_or_tuple(p)))
         };
-        if base == modifiers || base == TypeId::NEVER || !self.every_type(base, is_array_like) {
+        if base == modifiers || base.is_never() || !self.every_type(base, is_array_like) {
             return ty;
         }
         let mut pairs = self.p.types.mapping(mapper).to_vec();
@@ -2407,7 +2407,7 @@ impl<'p> Checker<'p> {
         } else {
             types
         };
-        if types.contains(&TypeId::NEVER) {
+        if types.iter().any(|t| t.is_never()) {
             return TypeId::NEVER;
         }
         if types.contains(&TypeId::UNRESOLVED) {
@@ -2553,7 +2553,12 @@ impl<'p> Checker<'p> {
         let ty = self.force(ty);
         match self.data(ty) {
             TypeData::Union(_) => self.map_type(ty, |c, m| c.string_mapping(kind, m)),
-            TypeData::Intrinsic(Intrinsic::Never | Intrinsic::Unresolved) => ty,
+            TypeData::Intrinsic(
+                Intrinsic::Never
+                | Intrinsic::SilentNever
+                | Intrinsic::UnreachableNever
+                | Intrinsic::Unresolved,
+            ) => ty,
             // `TypeFlagsStringLiteral`, which a member of an enum that is a string has too: what comes of it is a plain string.
             TypeData::StringLit { value, .. }
             | TypeData::EnumLit {

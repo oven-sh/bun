@@ -1057,6 +1057,11 @@ impl<'a> Spans<'a> {
         let Some(&Expr { kind, pos }) = self.hir.exprs.get(e.idx()) else {
             return 0;
         };
+        if let Some(&end) = self.hir.expr_ends.get(e.idx())
+            && end != 0
+        {
+            return end as usize;
+        }
         let pos = pos as usize;
         let end = match kind {
             ExprKind::Missing | ExprKind::Ident(known::empty) => {
@@ -1568,7 +1573,9 @@ impl<'a> Spans<'a> {
         let Some(tp) = self.hir.type_params.get(tp.idx()) else {
             return 0;
         };
-        if tp.default.is_some() {
+        if tp.end != 0 {
+            tp.end as usize
+        } else if tp.default.is_some() {
             self.ty_in(tp.default, 0)
         } else if tp.constraint.is_some() {
             self.ty_in(tp.constraint, 0)
@@ -1678,6 +1685,9 @@ impl<'a> Spans<'a> {
         let Some(param) = self.hir.params.get(param.idx()) else {
             return 0;
         };
+        if param.end != 0 {
+            return param.end as usize;
+        }
         let pos = param.pos as usize;
         // `reparseJSDocSignature`: one that is made from a `@param` tag is as long as the tag.
         if self.byte(pos) == b'@' && self.hir.is_in_jsdoc(param.pos) {
@@ -2242,7 +2252,8 @@ impl Checker<'_> {
         ranges
     }
 
-    /// Where what `import x = a.b.c` or `import x = require("m")` refers to starts.
+    /// Where what `import x = a.b.c` or `import x = require("m")` refers to starts. `parseExpected`: an `=` that is left out takes no
+    /// room.
     pub(super) fn start_of_import_equals_reference(
         &self,
         file: FileId,
@@ -2252,7 +2263,7 @@ impl Checker<'_> {
         let name_pos = spans.hir.import_equals.get(import.idx())?.name_pos;
         let name_end = spans.token(name_pos as usize);
         let equals = spans.eat(name_end, b"=");
-        (equals != name_end).then(|| spans.skip_trivia(equals) as u32)
+        (!spans.text.is_empty()).then(|| spans.skip_trivia(equals) as u32)
     }
 
     /// Where the token before `pos` ends: back over blanks and comments. Where a missing node is, and `node.Pos()` of what starts at

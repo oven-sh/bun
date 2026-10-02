@@ -3388,22 +3388,6 @@ impl<'p> DeclarationEmit<'_, 'p> {
             && !self.c.contains_undefined(declared)
     }
 
-    /// The type of the property the member `m` of `file` declares.
-    fn type_of_member(&mut self, file: FileId, m: MemberId) -> TypeId {
-        let member = self.c.hir(file)[m];
-        let mut flags = PropFlags::empty();
-        if member.flags.contains(Flags::OPTIONAL) {
-            flags |= PropFlags::OPTIONAL;
-        }
-        let prop = Prop {
-            name: member.key.name().unwrap_or(Atom::NONE),
-            flags,
-            source: PropSource::Members(MemberList::One((file, m))),
-            mapper: MapperId::IDENTITY,
-        };
-        self.c.type_of_prop(&prop, MapperId::IDENTITY)
-    }
-
     /// `shouldPrintWithInitializer`: the literal type of a constant that is written with its value.
     fn literal_const_type(&mut self, node: Typed) -> Option<TypeId> {
         let hir = self.c.hir(self.file());
@@ -3414,7 +3398,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
             Typed::Property(m)
                 if hir[m].flags.contains(Flags::READONLY) && hir[m].init.is_some() =>
             {
-                self.type_of_member(self.file(), m)
+                self.c.iso_type_of_member(self.file(), m)
             }
             _ => return None,
         };
@@ -3533,7 +3517,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 self.create_type_of_declaration(None, ty, flags);
             }
             Typed::Property(m) => {
-                let ty = self.type_of_member(file, m);
+                let ty = self.c.iso_type_of_member(file, m);
                 self.create_type_of_declaration(Some(SyntaxNode::Member(m)), ty, flags);
             }
             Typed::Parameter(p) => {

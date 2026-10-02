@@ -1040,14 +1040,12 @@ impl Checker<'_> {
                     // Of an interface or a type literal.
                     None => {
                         let container = match bound.member_owner[md.idx()] {
-                            MemberOwner::Interface(i) => match bound
-                                .scopes
-                                .iter()
-                                .find(|s| s.kind == ScopeKind::Interface(i))
-                            {
-                                Some(s) => self.block_scope_around_type_in(file, s.parent),
-                                None => None,
-                            },
+                            MemberOwner::Interface(i) => {
+                                match bound.scopes.get(bound.interface_scope[i.idx()].idx()) {
+                                    Some(s) => self.block_scope_around_type_in(file, s.parent),
+                                    None => None,
+                                }
+                            }
                             MemberOwner::TypeLiteral(t) => {
                                 self.block_scope_around_type_in(file, bound.type_scope[t.idx()])
                             }

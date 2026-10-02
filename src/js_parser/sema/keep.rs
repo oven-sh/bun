@@ -522,6 +522,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             name,
             loc: loc(name_pos),
             start: loc(name_pos),
+            end: self.lexer.full_start(),
             constraint,
             default: TypeId::NONE,
             flags: Flags::empty(),
@@ -860,6 +861,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         loc(member.start)
                     }
                 });
+                kept.members.push(extra);
             }
             (Some(Ok(member)), None) => kept.members.push(member),
             (Some(Err(mapped)), None) if kept.members.is_empty() => kept.mapped = Some(mapped),
@@ -975,7 +977,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             let name_loc = loc(member.bracket_name.pos);
             match member.bracket_kind {
-                BracketKind::Mapped(constraint, name_type) => {
+                BracketKind::Mapped(constraint, name_type, end) => {
                     // Only `readonly` may precede the `[` of a mapped type.
                     if constraint.is_none() || !(flags.is_empty() || has_readonly) {
                         return None;
@@ -994,6 +996,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         name,
                         loc: name_loc,
                         start: name_loc,
+                        end,
                         constraint,
                         default: TypeId::NONE,
                         flags: Flags::empty(),
@@ -1006,6 +1009,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         readonly,
                         optional,
                         extra_member_loc: None,
+                        members: Span::EMPTY,
                     }));
                 }
                 BracketKind::Index(key_type) => {
@@ -1023,12 +1027,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let params = ast.add_params(&[Param {
                         pattern,
                         ty: key_type,
-                        default: None,
-                        flags: Flags::empty(),
-                        modifiers: Span::EMPTY,
-                        rest_loc: Loc::EMPTY,
-                        question_loc: Loc::EMPTY,
-                        loc: name_loc,
+                        ..Param::at(name_loc)
                     }]);
                     made.kind = MemberKind::IndexSignature;
                     made.signature = ast.add_signature(Signature {
@@ -1142,9 +1141,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 is_complete: false, ..
             } => None,
             ObjectTypeBuilder {
-                mapped: Some(mapped),
+                mapped: Some(mut mapped),
+                members,
                 ..
-            } => Some(ObjectTypeBody::Mapped(syntax.ast.add_mapped_type(mapped))),
+            } => {
+                mapped.members = syntax.ast.add_members(&members);
+                Some(ObjectTypeBody::Mapped(syntax.ast.add_mapped_type(mapped)))
+            }
             ObjectTypeBuilder { members, .. } => {
                 Some(ObjectTypeBody::Members(syntax.ast.add_members(&members)))
             }
@@ -1373,8 +1376,8 @@ pub(crate) enum BracketKind {
     Index(TypeId),
     /// Tolerant mode: the parameter list of an index signature, well formed or not. It is in `TypeMemberParts::parameters`.
     IndexParameters,
-    /// `[name in Constraint as NameType]`. The name type is `None` if it is unusable.
-    Mapped(TypeId, Option<TypeId>),
+    /// `[name in Constraint as NameType]`. The name type is `None` if it is unusable. Where the constraint ends.
+    Mapped(TypeId, Option<TypeId>, Loc),
 }
 
 /// The pieces of one object type member, collected while the skipper walks over it.

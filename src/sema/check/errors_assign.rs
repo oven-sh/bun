@@ -525,9 +525,7 @@ impl Checker<'_> {
                         };
                         if e.is_some() {
                             self.check_returned(file, e, wanted, is_async, Some(hir[s].pos), out);
-                        } else if self.p.files.options.strict_null_checks
-                            || declared == TypeId::NEVER
-                        {
+                        } else if self.p.files.options.strict_null_checks || declared.is_never() {
                             // `checkReturnStatement`: `undefined`, which without strictNullChecks nothing refuses but `never`.
                             self.check_assignable(
                                 file,
@@ -1575,7 +1573,7 @@ impl Checker<'_> {
         let source = self.actual_type_variable(source);
         let constraint = self.constraint_of_type_param(source)?;
         // `everyType` applies the predicate to `never` itself, which has no parts.
-        if constraint == TypeId::NEVER
+        if constraint.is_never()
             || !self
                 .parts(constraint)
                 .iter()
@@ -2540,7 +2538,7 @@ impl Checker<'_> {
             for sig in self.signatures(source, construct) {
                 let returned = self.sig_return(sig);
                 if !self.is_any(returned)
-                    && returned != TypeId::NEVER
+                    && !returned.is_never()
                     && self.is_known(returned)
                     && self.is_assignable(returned, target)
                 {
@@ -2598,7 +2596,7 @@ impl Checker<'_> {
     }
 
     fn is_primitive_or_never(&self, ty: TypeId) -> bool {
-        ty == TypeId::NEVER || self.is_primitive(ty)
+        ty.is_never() || self.is_primitive(ty)
     }
 
     /// `elaborateObjectLiteral`
@@ -3387,7 +3385,7 @@ impl Checker<'_> {
     fn relation_error_names(&mut self, source: TypeId, target: TypeId) -> (String, String) {
         let (source_name, target_name) = self.type_names_for_error_display(source, target);
         // `isLiteralType`
-        if target != TypeId::NEVER
+        if !target.is_never()
             && self.every_type(source, |c, member| c.is_unit(member))
             && !self.could_have_top_level_singleton_types(target, 0)
         {
@@ -4083,14 +4081,11 @@ impl Checker<'_> {
             if !hir[i].type_params.is_empty() {
                 return true;
             }
-            let Some(own) = bound
-                .scopes
-                .iter()
-                .position(|s| s.kind == ScopeKind::Interface(i))
-            else {
+            let own = bound.interface_scope[i.idx()];
+            if own.is_none() {
                 continue;
-            };
-            let around = self.outer_type_params(file, bound.scopes[own].parent);
+            }
+            let around = self.outer_type_params(file, bound.scopes[own.idx()].parent);
             if around
                 .iter()
                 .any(|&p| matches!(self.data(p), TypeData::TypeParam(..)))
@@ -4106,7 +4101,7 @@ impl Checker<'_> {
                 };
                 let mut scope = bound.type_scope[t];
                 while is_this && scope.is_some() {
-                    if scope.idx() == own {
+                    if scope == own {
                         return true;
                     }
                     scope = bound.scopes[scope.idx()].parent;

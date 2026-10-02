@@ -787,6 +787,10 @@ pub struct Bound {
     pub class_owner: Vec<ClassOwner>,
     pub class_scope: Vec<ScopeId>,
     pub interface_symbol: Vec<SymbolId>,
+    /// The scope an interface, an enum, a module or a namespace makes. What it is written in is the parent of that.
+    pub interface_scope: Vec<ScopeId>,
+    pub enum_scope: Few<ScopeId>,
+    pub module_scope: Few<ScopeId>,
     pub alias_symbol: Vec<SymbolId>,
     pub alias_scope: Vec<ScopeId>,
     pub enum_symbol: Few<SymbolId>,

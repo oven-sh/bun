@@ -286,6 +286,8 @@ fn is_primitive_kind(data: &TypeData) -> bool {
                 | Intrinsic::Auto
                 | Intrinsic::Unknown
                 | Intrinsic::Never
+                | Intrinsic::SilentNever
+                | Intrinsic::UnreachableNever
                 | Intrinsic::Object
         ),
         TypeData::StringLit { .. }
@@ -547,6 +549,10 @@ impl<'p> Checker<'p> {
             // `TypeFlagsAny`
             TypeData::Intrinsic(Intrinsic::Error | Intrinsic::Auto)
             | TypeData::UnresolvedName { .. } => Intrinsic::Any as u32,
+            // `TypeFlagsNever`
+            TypeData::Intrinsic(Intrinsic::SilentNever | Intrinsic::UnreachableNever) => {
+                Intrinsic::Never as u32
+            }
             TypeData::Intrinsic(i) => *i as u32,
             TypeData::StringLit { .. } => 32,
             TypeData::NumberLit { .. } => 33,
@@ -888,7 +894,7 @@ impl<'p> Checker<'p> {
         }
         if relation != Relation::Identity {
             if relation == Relation::Comparable
-                && target != TypeId::NEVER
+                && !target.is_never()
                 && self.is_simple_type_related_to(target, td, source, sd, relation)
                 || self.is_simple_type_related_to(source, sd, target, td, relation)
             {
@@ -1042,7 +1048,7 @@ impl<'p> Checker<'p> {
     ) -> bool {
         // It goes by the flags, which the kinds of `undefined` and of `null` share.
         let ((s, sd), (t, td)) = (self.plain_as(s, sd), self.plain_as(t, td));
-        if self.is_any(t) || s == TypeId::NEVER || s == TypeId::UNRESOLVED {
+        if self.is_any(t) || s.is_never() || s == TypeId::UNRESOLVED {
             return true;
         }
         // The wildcard the permissive instantiation puts for type parameters, and for what is worked out from one.
@@ -1054,7 +1060,7 @@ impl<'p> Checker<'p> {
         if t == TypeId::UNKNOWN && !(relation == Relation::StrictSubtype && self.has_any_flag(s)) {
             return true;
         }
-        if t == TypeId::NEVER {
+        if t.is_never() {
             return false;
         }
         // `TypeFlagsStringLike` and so on.
@@ -1636,18 +1642,18 @@ impl<'p> Checker<'p> {
         let (check, extends) = (self.cond_check(t), self.cond_extends(t));
         let (yes, no) = (self.cond_true(t), self.cond_false(t));
         let checked = self.actual_type_variable(check);
-        if no == TypeId::NEVER && self.actual_type_variable(yes) == checked {
+        if no.is_never() && self.actual_type_variable(yes) == checked {
             if self.has_any_flag(check) || self.related(check, extends, Relation::Restrictive) {
                 return self.simplified(yes, writing);
             }
-            if self.intersection(&[check, extends]) == TypeId::NEVER {
+            if self.intersection(&[check, extends]).is_never() {
                 return TypeId::NEVER;
             }
-        } else if yes == TypeId::NEVER && self.actual_type_variable(no) == checked {
+        } else if yes.is_never() && self.actual_type_variable(no) == checked {
             if !self.has_any_flag(check) && self.related(check, extends, Relation::Restrictive) {
                 return TypeId::NEVER;
             }
-            if self.has_any_flag(check) || self.intersection(&[check, extends]) == TypeId::NEVER {
+            if self.has_any_flag(check) || self.intersection(&[check, extends]).is_never() {
                 return self.simplified(no, writing);
             }
         }
@@ -2109,7 +2115,7 @@ impl<'p> Checker<'p> {
         pairs.push((param, constraint));
         let with_constraint = self.p.types.mapper(pairs);
         let instantiated = self.conditional_type_uncached(file, node, with_constraint, true);
-        (instantiated != TypeId::NEVER).then_some(instantiated)
+        (!instantiated.is_never()).then_some(instantiated)
     }
 
     /// `isDistributionDependent`
@@ -2739,7 +2745,7 @@ impl<'p> Checker<'p> {
         {
             return Ternary::of(
                 relation == Relation::Comparable
-                    && original_target != TypeId::NEVER
+                    && !original_target.is_never()
                     && self.is_simple_type_related_to(
                         original_target,
                         original_td,
@@ -2804,7 +2810,7 @@ impl<'p> Checker<'p> {
         }
         if !(is_from_related && source == original_source && target == original_target)
             && (relation == Relation::Comparable
-                && target != TypeId::NEVER
+                && !target.is_never()
                 && self.is_simple_type_related_to(target, td, source, sd, relation)
                 || self.is_simple_type_related_to(source, sd, target, td, relation))
         {
@@ -3157,7 +3163,7 @@ impl<'p> Checker<'p> {
     pub(super) fn filter_primitives_if_contains_non_primitive(&mut self, union: TypeId) -> TypeId {
         if self.some_type(union, |_, m| m == TypeId::OBJECT) {
             let result = self.filter(union, |c, m| !c.has_primitive_flag(m));
-            if result != TypeId::NEVER {
+            if !result.is_never() {
                 return result;
             }
         }
@@ -3189,7 +3195,7 @@ impl<'p> Checker<'p> {
         let types = self.parts(target);
         let mut include: SmallVec<[Ternary; 16]> = types
             .iter()
-            .map(|&t| Ternary::of(!self.has_primitive_flag(t) && self.reduced(t) != TypeId::NEVER))
+            .map(|&t| Ternary::of(!self.has_primitive_flag(t) && !self.reduced(t).is_never()))
             .collect();
         for prop in telling {
             let given = self.type_of_prop(prop, sm.mapper);
@@ -3228,7 +3234,7 @@ impl<'p> Checker<'p> {
             .map(|(&t, _)| t)
             .collect();
         let filtered = self.union(&kept);
-        (filtered != TypeId::NEVER).then_some(filtered)
+        (!filtered.is_never()).then_some(filtered)
     }
 
     /// `getTypeOfPropertyOrIndexSignatureOfType`
@@ -3321,7 +3327,7 @@ impl<'p> Checker<'p> {
                 .collect();
             if constraints[..] != types[..] {
                 source = self.intersection(&constraints);
-                if source == TypeId::NEVER {
+                if source.is_never() {
                     return Ternary::FALSE;
                 }
                 if !self.is_intersection(source) {
@@ -4237,7 +4243,7 @@ impl<'p> Checker<'p> {
             .map(|&member| self.apparent_type(member))
             .collect();
         // `!c.isErrorType(t) && t.flags&TypeFlagsNever == 0`
-        members.retain(|member| !self.is_error_type(*member) && *member != TypeId::NEVER);
+        members.retain(|member| !self.is_error_type(*member) && !member.is_never());
         if members.len() < 2 {
             let source = members.first().copied().unwrap_or(source);
             return self.properties_related_to(r, source, target, &[], optionals_only, state);
@@ -4779,7 +4785,7 @@ impl<'p> Checker<'p> {
                             None
                         };
                         let keys_do = match filtered {
-                            Some(filtered) => filtered != TypeId::NEVER,
+                            Some(filtered) => !filtered.is_never(),
                             None => self
                                 .is_related_to(r, target_keys, source_keys, REC_BOTH)
                                 .holds(),
@@ -5295,11 +5301,11 @@ impl<'p> Checker<'p> {
                 return Some(self.union(&of_each));
             }
         }
-        if self.is_any(object) || object == TypeId::NEVER {
+        if self.is_any(object) || object.is_never() {
             return Some(object);
         }
         // `any` and `never` are assignable to the key type of every index signature. Where there is none they index to themselves.
-        let fits_every_key = self.has_any_flag(key) || key == TypeId::NEVER;
+        let fits_every_key = self.has_any_flag(key) || key.is_never();
         let members = match objects {
             [one] => {
                 let apparent = self.apparent_type(*one);
@@ -5340,7 +5346,7 @@ impl<'p> Checker<'p> {
         if value.is_none() && self.is_symbol_like(key) {
             value = self.applicable_index_info(&members, TypeId::STRING, None);
         }
-        value.or_else(|| (key == TypeId::NEVER || self.has_any_flag(key)).then_some(key))
+        value.or_else(|| (key.is_never() || self.has_any_flag(key)).then_some(key))
     }
 
     /// `typeArgumentsRelatedTo`
@@ -6295,7 +6301,7 @@ impl<'p> Checker<'p> {
             return false;
         }
         let rest = self.array_element(only.ty).unwrap_or(only.ty);
-        if !self.has_any_flag(rest) && rest != TypeId::NEVER {
+        if !self.has_any_flag(rest) && !rest.is_never() {
             return false;
         }
         let ret = self.sig_return(sig);

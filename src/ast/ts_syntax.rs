@@ -346,8 +346,10 @@ pub struct MappedType {
     pub ty: TypeId,
     pub readonly: MappedModifier,
     pub optional: MappedModifier,
-    /// Where the first member after `[K in T]: X` is reported. Such members are not kept.
+    /// Where the first member after `[K in T]: X` is reported.
     pub extra_member_loc: Option<Loc>,
+    /// The members after `[K in T]: X`, which are an error.
+    pub members: Span<Member>,
 }
 
 #[derive(Copy, Clone)]
@@ -356,6 +358,8 @@ pub struct TypeParam {
     pub loc: Loc,
     /// Of its first token: a modifier, or the name.
     pub start: Loc,
+    /// `node.End()`
+    pub end: Loc,
     pub constraint: TypeId,
     pub default: TypeId,
     /// `const`, `in`, `out`
@@ -464,6 +468,25 @@ pub struct Param {
     pub rest_loc: Loc,
     pub question_loc: Loc,
     pub loc: Loc,
+    /// `node.End()`
+    pub end: Loc,
+}
+
+impl Param {
+    /// The parameter whose first token is at `loc`, before anything of it is read.
+    pub fn at(loc: Loc) -> Param {
+        Param {
+            pattern: PatternId::NONE,
+            ty: TypeId::NONE,
+            default: None,
+            flags: Flags::empty(),
+            modifiers: Span::EMPTY,
+            rest_loc: Loc::EMPTY,
+            question_loc: Loc::EMPTY,
+            loc,
+            end: Loc::EMPTY,
+        }
+    }
 }
 
 /// A binding in the parameter list of a signature. It declares nothing, so it is not a `Binding`.

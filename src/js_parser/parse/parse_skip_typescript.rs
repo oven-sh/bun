@@ -314,16 +314,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut is_usable = true;
 
         while self.lexer.token != T::TCloseParen {
-            let mut parameter = Param {
-                pattern: PatternId::NONE,
-                ty: TypeId::NONE,
-                default: None,
-                flags: Flags::empty(),
-                modifiers: Default::default(),
-                rest_loc: bun_ast::Loc::EMPTY,
-                question_loc: bun_ast::Loc::EMPTY,
-                loc: self.lexer.loc(),
-            };
+            let mut parameter = Param::at(self.lexer.loc());
             // "(public a)": `parseParameterEx` takes modifiers on every parameter, and the checker reports them (2369).
             if self.lexer.tolerant && self.lexer.token == T::TIdentifier {
                 self.skip_parameter_modifiers(&mut parameter)?;
@@ -362,6 +353,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 parameter.default = Some(self.skip_initializer_in_signature()?);
             }
             if keeps {
+                parameter.end = self.lexer.full_start();
                 if is_complete && parameter.pattern.is_some() {
                     parameters.push(parameter);
                 } else {
@@ -456,16 +448,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             trailing_comma = None;
             let parameter_start = self.lexer.loc();
-            let mut parameter = Param {
-                pattern: PatternId::NONE,
-                ty: TypeId::NONE,
-                default: None,
-                flags: Flags::empty(),
-                modifiers: Default::default(),
-                rest_loc: bun_ast::Loc::EMPTY,
-                question_loc: bun_ast::Loc::EMPTY,
-                loc: parameter_start,
-            };
+            let mut parameter = Param::at(parameter_start);
             if self.lexer.token == T::TIdentifier {
                 self.skip_parameter_modifiers(&mut parameter)?;
             }
@@ -508,6 +491,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 parameter.default = Some(self.skip_initializer_in_signature()?);
             }
             if keeps {
+                parameter.end = self.lexer.full_start();
                 if is_complete && parameter.pattern.is_some() {
                     parameters.push(parameter);
                 } else {
@@ -752,16 +736,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         // `skipParameterStart`
         if self.lexer.token == T::TIdentifier {
-            let mut parameter = Param {
-                pattern: PatternId::NONE,
-                ty: TypeId::NONE,
-                default: None,
-                flags: Flags::empty(),
-                modifiers: Default::default(),
-                rest_loc: bun_ast::Loc::EMPTY,
-                question_loc: bun_ast::Loc::EMPTY,
-                loc: self.lexer.loc(),
-            };
+            let mut parameter = Param::at(self.lexer.loc());
             self.skip_parameter_modifiers(&mut parameter)?;
         }
         if self.lexer.token == T::TDotDotDot {
@@ -2753,10 +2728,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         is_indexer = true;
                         self.lexer.next()?;
                         self.skip_type_script_type(Level::Lowest)?;
-                        let constraint = if keeps {
-                            self.last_type()
+                        // `parseMappedTypeParameter`: it ends with its constraint.
+                        let (constraint, parameter_end) = if keeps {
+                            (self.last_type(), self.lexer.full_start())
                         } else {
-                            TypeId::NONE
+                            (TypeId::NONE, bun_ast::Loc::EMPTY)
                         };
                         let mut name_type = Some(TypeId::NONE);
                         if self.lexer.is_contextual_keyword(b"as") {
@@ -2767,7 +2743,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 name_type = Some(self.last_type()).filter(|ty| ty.is_some());
                             }
                         }
-                        member.bracket_kind = BracketKind::Mapped(constraint, name_type);
+                        member.bracket_kind =
+                            BracketKind::Mapped(constraint, name_type, parameter_end);
                     }
                     _ => {
                         takes_initializer = true;
@@ -3162,6 +3139,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 name: StoreStr::EMPTY,
                 loc: bun_ast::Loc::EMPTY,
                 start: self.lexer.loc(),
+                end: bun_ast::Loc::EMPTY,
                 constraint: TypeId::NONE,
                 default: TypeId::NONE,
                 flags: Flags::empty(),
@@ -3457,6 +3435,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             name: StoreStr::EMPTY,
             loc: bun_ast::Loc::EMPTY,
             start: self.lexer.loc(),
+            end: bun_ast::Loc::EMPTY,
             constraint: TypeId::NONE,
             default: TypeId::NONE,
             flags: Flags::empty(),
@@ -3563,6 +3542,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 is_complete &= parameter.default.is_some();
             }
         }
+        parameter.end = self.lexer.full_start();
         Ok(is_complete.then_some(parameter))
     }
 

@@ -461,7 +461,7 @@ fn is_undefined(_: &Checker<'_>, ty: TypeId) -> bool {
 
 /// `allTypesAssignableToKind(t, TypeFlagsPrimitive | TypeFlagsNever)`
 fn is_all_primitive_or_never(c: &Checker<'_>, ty: TypeId) -> bool {
-    ty == TypeId::NEVER
+    ty.is_never()
         || c.every_type(ty, |c, m| match c.data(m) {
             // `string & { brand: 1 }` is a string.
             TypeData::Intersection(parts) => parts.iter().any(|&p| c.is_primitive(p)),
@@ -1144,7 +1144,7 @@ fn check_tagged_template(
         || !has_call_signatures
             && c.signatures(apparent, true).is_empty()
             && !c.is_union(apparent)
-            && apparent != TypeId::NEVER
+            && !apparent.is_never()
             && {
                 let function = c.global_ref(known::Function, &[]);
                 c.is_assignable(tag, function)
@@ -1734,7 +1734,7 @@ fn check_iterated_type(
     if !c.is_known(input)
         || c.is_any(input)
         || c.every_type(input, |_, m| {
-            m == TypeId::NEVER || m.is_null() || m.is_undefined()
+            m.is_never() || m.is_null() || m.is_undefined()
         })
     {
         return;
@@ -1796,7 +1796,7 @@ fn check_iterated_type(
     let mut array_type = input;
     if usage.is_for_of() {
         array_type = c.filter(input, |c, m| !c.is_string_like(m));
-        if array_type == TypeId::NEVER {
+        if array_type.is_never() {
             return;
         }
     }
@@ -2336,7 +2336,7 @@ fn iteration_types_of_iterator_result(
     }
     let mut value_of = |is_done: bool| {
         let results = c.filter(t, |c, m| is_iterator_result(c, m, is_done));
-        if results == TypeId::NEVER {
+        if results.is_never() {
             None
         } else {
             type_of_property_of_type(c, results, known::value)

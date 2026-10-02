@@ -2313,9 +2313,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let specifier = p.parse_expr(Level::Lowest)?;
         if !matches!(specifier.data, js_ast::ExprData::EMissing(_)) {
             p.ts_checker_error(specifier.loc, 1141);
-            if let Some(syntax) = &mut p.type_syntax {
-                syntax.specifier_expressions.push(specifier);
-            }
+        }
+        if let Some(syntax) = &mut p.type_syntax {
+            syntax.specifier_expressions.push(specifier);
         }
         p.lexer.expect_or_insert_semicolon()?;
         // Read again from the source, which only finds that the file is a module.

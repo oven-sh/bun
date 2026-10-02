@@ -1198,14 +1198,11 @@ impl Checker<'_> {
                 let bound = files.bound(of);
                 let scope = match decl {
                     Decl::File => 0,
-                    Decl::Module(m) => bound
-                        .scopes
-                        .iter()
-                        .position(|s| s.kind == ScopeKind::Module(m))?,
+                    Decl::Module(m) => bound.module_scope[m.idx()].idx(),
                     _ => return None,
                 };
                 bound
-                    .lookup(bound.scopes[scope].locals, name)
+                    .lookup(bound.scopes.get(scope)?.locals, name)
                     .map(|id| files.sym(of, id))
             });
             let Some(local) = local else {
@@ -1285,14 +1282,11 @@ impl Checker<'_> {
             let bound = files.bound(of);
             let scope = match decl {
                 Decl::File => 0,
-                Decl::Module(m) => bound
-                    .scopes
-                    .iter()
-                    .position(|s| s.kind == ScopeKind::Module(m))?,
+                Decl::Module(m) => bound.module_scope[m.idx()].idx(),
                 _ => return None,
             };
             bound
-                .lookup(bound.scopes[scope].locals, name)
+                .lookup(bound.scopes.get(scope)?.locals, name)
                 .map(|id| files.sym(of, id))
         });
         let Some(local) = local else {
@@ -2258,6 +2252,10 @@ impl Checker<'_> {
                 continue;
             }
             let names: Vec<Atom> = hir.ids(list).collect();
+            // `resolveEntityName`: `NodeIsMissing(name)`
+            if names[0] == known::empty {
+                continue;
+            }
             // Where the first name is written: past the name of the alias and the `=`. There is no text of a declaration file.
             let equals = skip_trivia(
                 &hir.text,
@@ -2279,18 +2277,6 @@ impl Checker<'_> {
                 continue;
             }
             let start = start as u32;
-            // `resolveEntityName`, `NodeIsMissing`: `parseIdentifier` takes no reserved word (1359), and the name is left out.
-            if hir.early_errors.contains(&(start, 1359))
-                && is_syntactic_early_error(hir, start, 1359)
-            {
-                continue;
-            }
-            // After an `=` that is left out, the 1005 there is the one error at that place.
-            if start as usize == equals
-                && crate::json::is_reserved_word(&self.files().atoms.text(names[0]))
-            {
-                continue;
-            }
             let before = out.len();
             self.check_entity_name(
                 file,
@@ -3417,6 +3403,8 @@ pub(super) fn is_close(name: &[u8], candidate: &[u8]) -> bool {
     if name.len().abs_diff(candidate.len()) > allowed_difference
         || candidate == name
         || candidate.first() == Some(&b'"')
+        // `InternalSymbolNamePrefix`: ours end in `=`.
+        || candidate.last() == Some(&b'=')
     {
         return false;
     }
@@ -4288,7 +4276,7 @@ fn explain_jsdoc_nullable_type(c: &mut Checker<'_>, file: FileId, start: u32, co
             return vec!["!".to_owned(), c.type_to_string(ty)];
         }
         // `getNullableType`
-        if ty != TypeId::NEVER && ty != TypeId::VOID {
+        if !ty.is_never() && ty != TypeId::VOID {
             ty = if is_postfix {
                 c.union(&[ty, TypeId::UNDEFINED])
             } else {
@@ -5008,8 +4996,8 @@ impl Checker<'_> {
                 if matches!(op, BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor)
                     && self.every_type(l, Self::is_boolean_like)
                     && self.every_type(r, Self::is_boolean_like)
-                    && l != TypeId::NEVER
-                    && r != TypeId::NEVER
+                    && !l.is_never()
+                    && !r.is_never()
                 {
                     // It is said of the operator, which is the token before the right operand: the tree does not keep where it is.
                     let hir = self.hir(file);
@@ -5822,7 +5810,7 @@ impl Checker<'_> {
         for &part in parts {
             let part = self.apparent_type(part);
             // What nothing can be has no say.
-            if part == TypeId::NEVER {
+            if part.is_never() {
                 continue;
             }
             // What a type parameter extends.

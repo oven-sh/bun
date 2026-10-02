@@ -955,13 +955,8 @@ impl<'p> Checker<'p> {
         if self.is_error_type(receiver) {
             return (Err(TypeId::ERROR), false);
         }
-        if self.is_any(receiver) {
+        if self.is_any(receiver) || receiver == TypeId::SILENT_NEVER {
             return (Err(receiver), false);
-        }
-        // `apparentType == c.silentNeverType`: the `never` a reference comes to while a loop around it is under way (`newFlowType`).
-        // `assigned_type` takes such an access for one in error.
-        if receiver == TypeId::NEVER && self.met_loop_under_way && !self.flow_loops.is_empty() {
-            return (Err(TypeId::ERROR), stops);
         }
         let left = self.check_non_null_type(file, obj, receiver);
         if self.is_error_type(left) {
@@ -1011,17 +1006,16 @@ impl<'p> Checker<'p> {
         }
         let left = match left {
             Ok(left) => left,
-            // `isAnyLike`
+            // `isAnyLike`. A `#b` that no class around declares is looked for all the same.
             Err(any) => {
-                if is_private
-                    && lexical.is_none()
-                    && self.is_known(any)
-                    && self.classes_around_private_name(file, e).is_empty()
-                {
+                if !is_private || lexical.is_some() || !self.is_known(any) {
+                    return (any, stops);
+                }
+                if self.classes_around_private_name(file, e).is_empty() {
                     self.grammar_error_on_node(self.place_of_token(file, name_pos), 18016, &[]);
                     return (TypeId::ANY, stops);
                 }
-                return (any, stops);
+                any
             }
         };
         // `getWidenedType(leftType)`: what is written to or called is looked up in what a variable holding the object would be.
@@ -1322,7 +1316,12 @@ impl<'p> Checker<'p> {
     /// object type, the parameter and return types of its signatures and the types of its properties, recursively. That can close
     /// a circularity. tsgo truncates the text after about 160 characters, which the limit on `depth` approximates. `visited` holds
     /// the object types expanded so far, each with the depth it was expanded at.
-    fn resolve_as_printed(&mut self, ty: TypeId, depth: u32, visited: &mut Vec<(TypeId, u32)>) {
+    pub(super) fn resolve_as_printed(
+        &mut self,
+        ty: TypeId,
+        depth: u32,
+        visited: &mut Vec<(TypeId, u32)>,
+    ) {
         if depth > 3 {
             return;
         }
@@ -1431,8 +1430,8 @@ impl<'p> Checker<'p> {
             receiver
         };
         let key = self.type_of_expr(file, index);
-        // `isErrorType(objectType)`: it is the result, not looked into nor narrowed.
-        if self.is_error_type(receiver) {
+        // `isErrorType(objectType) || objectType == silentNeverType`: it is the result, not looked into nor narrowed.
+        if self.is_error_type(receiver) || receiver == TypeId::SILENT_NEVER {
             return (receiver, stops);
         }
         // A `const` enum is only looked into by a name that is written out (2476).
@@ -4047,6 +4046,9 @@ impl<'p> Checker<'p> {
             }
             UnOp::Not => {
                 let ty = self.type_of_expr(file, operand);
+                if ty == TypeId::SILENT_NEVER {
+                    return ty;
+                }
                 // `getTypeFacts(operandType, TypeFactsTruthy | TypeFactsFalsy)`
                 match (self.can_be_truthy(ty), self.can_be_falsy(ty)) {
                     (true, false) => TypeId::FRESH_FALSE,
@@ -4056,6 +4058,9 @@ impl<'p> Checker<'p> {
             }
             UnOp::Minus | UnOp::Plus | UnOp::BitNot => {
                 let ty = self.type_of_expr(file, operand);
+                if ty == TypeId::SILENT_NEVER {
+                    return ty;
+                }
                 let hir = self.hir(file);
                 // `checkPrefixUnaryExpression`: it takes a literal written right after the sign to make a literal type.
                 let is_bare = !is_parenthesized(hir, operand);
@@ -4082,6 +4087,9 @@ impl<'p> Checker<'p> {
             }
             UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec => {
                 let ty = self.type_of_expr(file, operand);
+                if ty == TypeId::SILENT_NEVER {
+                    return ty;
+                }
                 self.unary_result_type(ty)
             }
         }
@@ -4109,12 +4117,24 @@ impl<'p> Checker<'p> {
             | BinOp::EqEq
             | BinOp::NotEq
             | BinOp::EqEqEq
-            | BinOp::NotEqEq
-            | BinOp::In
-            | BinOp::Instanceof => {
+            | BinOp::NotEqEq => {
                 self.look_at(file, left);
                 self.look_at(file, right);
                 TypeId::BOOLEAN
+            }
+            // `checkInExpression`, `checkInstanceOfExpression`
+            BinOp::In | BinOp::Instanceof => {
+                let uncertain = self.uncertain;
+                let (l, r) = (
+                    self.type_of_expr(file, left),
+                    self.type_of_expr(file, right),
+                );
+                self.uncertain = uncertain;
+                if l == TypeId::SILENT_NEVER || r == TypeId::SILENT_NEVER {
+                    TypeId::SILENT_NEVER
+                } else {
+                    TypeId::BOOLEAN
+                }
             }
             BinOp::Comma => {
                 self.look_at(file, left);
@@ -4163,6 +4183,9 @@ impl<'p> Checker<'p> {
                     self.type_of_expr(file, left),
                     self.type_of_expr(file, right),
                 );
+                if l == TypeId::SILENT_NEVER || r == TypeId::SILENT_NEVER {
+                    return TypeId::SILENT_NEVER;
+                }
                 // What a type parameter extends is only looked at to see whether it is known.
                 let (lb, rb) = (
                     self.constraint_for_operator(l),
@@ -4176,7 +4199,7 @@ impl<'p> Checker<'p> {
                         (l, lb)
                     };
                     let is_string = by != TypeId::UNRESOLVED
-                        && by != TypeId::NEVER
+                        && !by.is_never()
                         && self.is_assignable_to_kind(
                             known,
                             Self::is_string_like,
@@ -4219,6 +4242,9 @@ impl<'p> Checker<'p> {
                     self.type_of_expr(file, left),
                     self.type_of_expr(file, right),
                 );
+                if l == TypeId::SILENT_NEVER || r == TypeId::SILENT_NEVER {
+                    return TypeId::SILENT_NEVER;
+                }
                 let (l, r) = (self.non_null_type(l), self.non_null_type(r));
                 let any_or_unknown = |c: &Self, t: TypeId| c.is_any(t) || t == TypeId::UNKNOWN;
                 if any_or_unknown(self, l) && any_or_unknown(self, r)

@@ -55,6 +55,9 @@ pub(crate) enum Mark {
     MemberStart,
     /// From the same place, to where the last token of the member ends.
     MemberEnd,
+    /// From the name or the pattern of a parameter of a function that has a body, to where the last token of the parameter ends
+    /// (`VariableLikeDeclaration`).
+    VariableLikeEnd,
     /// From where a statement or a class expression is said to be, to its first token: a decorator or a modifier. From the dot before
     /// the `B` of `namespace A.B`, to `B`.
     DeclarationStart,
@@ -526,12 +529,12 @@ pub(crate) struct TypeSyntax {
     pub(crate) marks: Vec<(i32, Mark, i32)>,
     /// In the order they apply, parentheses among them: `(e) as T` is not `(e as T)`. `to` is where the type starts.
     pub(crate) casts: Vec<(ExprKey, CastKind, i32)>,
+    /// `hir::File::expr_ends`
+    pub(crate) expr_ends: Vec<(ExprKey, i32)>,
     /// `with { .. }` after a module specifier: where `with` is, and the attributes as an object literal.
     pub(crate) import_attributes: Vec<(i32, Expr)>,
     /// The module specifiers that are no string literals (`parseModuleSpecifier`).
     pub(crate) specifier_expressions: Vec<Expr>,
-    /// The `<` of a JSX element, and the name in its closing tag. The element's `tag` is then the name in its opening tag.
-    pub(crate) closing_tags: Vec<(i32, Expr)>,
     /// The expressions of a node that `bun_ast` has no place for, by where the node starts (`keep_expressions`).
     pub(crate) kept_expressions: bun_collections::HashMap<i32, Vec<Expr>>,
     /// `f<T>` was just parsed: where the `<` is, and where the next token starts.
@@ -581,9 +584,9 @@ impl TypeSyntax {
         TypeSyntax {
             marks: Vec::new(),
             casts: Vec::new(),
+            expr_ends: Vec::new(),
             import_attributes: Vec::new(),
             specifier_expressions: Vec::new(),
-            closing_tags: Vec::new(),
             kept_expressions: Default::default(),
             pending_type_arguments: (0, 0),
             keep_types: true,
@@ -730,23 +733,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> crate::P<'a, TYPESCRIPT,
         self.mark_cast(inside, CastKind::Paren, open);
     }
 
-    /// Notes the name in the closing tag of the JSX element whose `<` is at `element`. The caller keeps the opening name as its `tag`.
-    #[inline]
-    pub(crate) fn mark_closing_tag(&mut self, element: bun_ast::Loc, tag: Option<Expr>) {
-        if TYPESCRIPT
-            && let Some(syntax) = &mut self.type_syntax
-            && let Some(tag) = tag
-        {
-            syntax.closing_tags.push((element.start, tag));
-        }
-    }
-
     /// Keeps `expressions` for the node that starts at `of`. Parsed again, it keeps the same.
     pub(crate) fn keep_expressions(&mut self, of: bun_ast::Loc, expressions: &[Expr]) {
         if TYPESCRIPT && let Some(syntax) = &mut self.type_syntax {
             syntax
                 .kept_expressions
                 .insert(of.start, expressions.to_vec());
+        }
+    }
+
+    /// `finishNode`, of an expression that is made after something has been reported: it ends where the token before the current one
+    /// does. Not one that is made before its token is taken, which is a literal: where a token ends needs no telling. One that is
+    /// missing takes no room (`createMissingNode`).
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn note_expr_end(&mut self, expr: &Expr) {
+        let end = self.lexer.full_start().start;
+        if (end > expr.loc.start || matches!(expr.data, ExprData::EMissing(_)))
+            && let Some(syntax) = &mut self.type_syntax
+        {
+            syntax.expr_ends.push((ExprKey::of(expr), end));
         }
     }
 

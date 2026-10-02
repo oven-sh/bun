@@ -113,6 +113,14 @@ impl Checker<'_> {
             }
             self.check_declarations_of(file, sym, &mut last_body, out);
         }
+        self.check_locals_of_bodies(file, out);
+        self.check_refused_merges(file, out);
+        self.check_duplicate_umd_globals(file, out);
+        self.check_duplicate_members(file, out);
+        self.check_static_property_name_conflicts(file, out);
+        self.check_exported_twice(file, out);
+        self.check_redeclared_exports(file, out);
+        self.check_redeclared_namespace_exports(file, out);
         // "Report errors every position with duplicate declaration. Report errors on previous encountered declarations".
         for refusal in bound.redeclarations.iter() {
             let (symbol, code) = (refusal.symbol, refusal.code);
@@ -125,14 +133,6 @@ impl Checker<'_> {
                 }
             }
         }
-        self.check_locals_of_bodies(file, out);
-        self.check_refused_merges(file, out);
-        self.check_duplicate_umd_globals(file, out);
-        self.check_duplicate_members(file, out);
-        self.check_static_property_name_conflicts(file, out);
-        self.check_exported_twice(file, out);
-        self.check_redeclared_exports(file, out);
-        self.check_redeclared_namespace_exports(file, out);
         let hir = self.hir(file);
         let lists = hir
             .fns

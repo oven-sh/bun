@@ -254,28 +254,6 @@ impl Checker<'_> {
             {
                 self.type_of_expr(file, hir[p].default);
             }
-            if self.p.circular_pats.get(&(file, pat)).is_none() {
-                continue;
-            }
-            // `GetErrorRangeForNode`: a parameter is not pointed at by its name, but starts where it starts, modifiers and `...` included.
-            let is_annotated = self.type_annotation_of_pat(file, pat).is_some();
-            let (is_bare_parameter, start) = match bound.pat_parent[i] {
-                PatParent::Param(p) => (hir[p].default.is_none(), hir[p].pos),
-                _ => (false, hir[pat].pos),
-            };
-            let code = if is_annotated { 2502 } else { 7022 };
-            if is_annotated {
-                out.push(Diagnostic { start, code: 2502 });
-            } else if no_implicit_any && !is_bare_parameter {
-                out.push(Diagnostic { start, code: 7022 });
-            }
-            if let PatKind::Ident(name) = hir[pat].kind {
-                let end = match bound.pat_parent[i] {
-                    PatParent::Param(p) => self.end_of_param(file, p),
-                    _ => 0,
-                };
-                self.note(start, end, code, vec![self.atom_text(name)]);
-            }
         }
         for i in 0..hir.members.len() {
             let member = MemberId(i as u32);
@@ -287,30 +265,14 @@ impl Checker<'_> {
             }
             if hir[member].kind == MemberKind::Property {
                 self.type_of_member_declaration(file, member);
-                if self.p.circular_members.get(&(file, member)).is_none() {
-                    continue;
-                }
                 // `getTypeOfAccessors`, of an auto-accessor: 2502 goes to the set accessor, which is nil.
-                if hir[member].flags.contains(Flags::ACCESSOR) {
-                    if hir[member].ty.is_some() {
-                        let end = self.end_of_member_name(file, member);
-                        let name = self.source_text(file, hir[member].pos, end);
-                        self.report_global_error(2502, vec![name]);
-                    }
-                    continue;
-                }
-                if hir[member].ty.is_some() {
-                    out.push(Diagnostic {
-                        start: hir[member].pos,
-                        code: 2502,
-                    });
-                    self.note_at_member_name(file, member, member, 2502);
-                } else if no_implicit_any {
-                    out.push(Diagnostic {
-                        start: hir[member].pos,
-                        code: 7022,
-                    });
-                    self.note_at_member_name(file, member, member, 7022);
+                if hir[member].flags.contains(Flags::ACCESSOR)
+                    && hir[member].ty.is_some()
+                    && self.p.circular_members.get(&(file, member)).is_some()
+                {
+                    let end = self.end_of_member_name(file, member);
+                    let name = self.source_text(file, hir[member].pos, end);
+                    self.report_global_error(2502, vec![name]);
                 }
                 continue;
             }
@@ -445,8 +407,8 @@ impl Checker<'_> {
                 self.report_implicit_any_return(file, func, out);
             }
         }
-        self.check_circular_exports(file, out);
-        self.check_circular_assignment_declarations(file, out);
+        self.check_circular_exports(file);
+        self.check_circular_assignment_declarations(file);
     }
 
     /// What is noted of the error `code` on the name of `member`: `symbolToString` of its symbol, which `first` declares first.
@@ -482,95 +444,38 @@ impl Checker<'_> {
         })
     }
 
-    /// `reportCircularityError` for `export default e`, `export = e`, `module.exports = e` and `exports.a = e`: 2502 or 7022 at
-    /// `symbol.ValueDeclaration`. None of these declarations has a name, so the error starts where the declaration starts.
-    fn check_circular_exports(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        for (i, symbol) in bound.symbols.iter().enumerate() {
-            // `getTypeOfAlias` reports a cycle through a symbol that is only an alias at the target of the alias.
-            if !symbol
+    /// `checkExportAssignment`, `checkBinaryLikeExpression`: the types of `export default e`, `export = e`, `module.exports = e` and
+    /// `exports.a = e` are asked for.
+    fn check_circular_exports(&mut self, file: FileId) {
+        for (i, symbol) in self.bound(file).symbols.iter().enumerate() {
+            if symbol
                 .flags
                 .intersects(SymFlags::VARIABLE | SymFlags::PROPERTY)
+                && matches!(
+                    symbol.decls.first(),
+                    Some(Decl::ExportExpr(_) | Decl::ModuleExports(_) | Decl::ExportsProperty(_))
+                )
             {
-                continue;
-            }
-            let start = match symbol.decls.first() {
-                Some(&Decl::ExportExpr(stmt)) => hir[stmt].pos,
-                Some(&(Decl::ModuleExports(_) | Decl::ExportsProperty(_))) => {
-                    match self.commonjs_value_declaration(file, symbol) {
-                        Some(assignment) => self.start_inside_parentheses(file, assignment),
-                        None => continue,
-                    }
-                }
-                _ => continue,
-            };
-            let sym = self.files().sym(file, SymbolId(i as u32));
-            let ty = self.type_of_symbol(sym);
-            // It returns the error type where it reports 2502.
-            let code = if ty == TypeId::ERROR { 2502 } else { 7022 };
-            if self.p.circular_symbols.get(&sym).is_some()
-                && (code == 2502 || self.p.files.options.no_implicit_any)
-            {
-                out.push(Diagnostic { start, code });
-                let end = match symbol.decls.first() {
-                    Some(&Decl::ExportExpr(stmt)) => self.end_of_stmt(file, stmt),
-                    _ => match self.commonjs_value_declaration(file, symbol) {
-                        Some(assignment) => self.end_inside_parentheses(file, assignment),
-                        None => 0,
-                    },
-                };
-                self.explain_to(start, end, code, |c| vec![c.symbol_to_string(sym)]);
+                let sym = self.files().sym(file, SymbolId(i as u32));
+                self.type_of_symbol(sym);
             }
         }
     }
 
-    /// `reportCircularityError` for a property declared by `f.a = e`, `this.a = e` or `Object.defineProperty(f, "a", descriptor)`:
-    /// 2502 or 7022 at `symbol.ValueDeclaration`, the first declaration. `circular_assignments` is keyed by that declaration.
-    fn check_circular_assignment_declarations(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    /// `checkPropertyAccessExpression` resolves the type of a property declared by `f.a = e` or `this.a = e` when it checks the left
+    /// side. `Object.defineProperty(f, "a", descriptor)` resolves it only if the descriptor reads the property.
+    fn check_circular_assignment_declarations(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         for &declaration in bound
             .expando_declarations
             .iter()
             .chain(bound.this_properties.iter().map(|property| &property.3))
         {
-            // `checkPropertyAccessExpression` resolves the type of the property when it checks the left side. A call resolves it
-            // only if the descriptor reads the property.
             let checked = match hir[declaration].kind {
                 ExprKind::Assign { target, .. } => target,
                 _ => declaration,
             };
             self.type_of_expr(file, checked);
-            if self
-                .p
-                .circular_assignments
-                .get(&(file, declaration))
-                .is_some()
-            {
-                // It returns the error type where it reports 2502.
-                let kept = self.p.assigned_prop_types.get(&(file, declaration));
-                let code = if kept == Some(TypeId::ERROR) {
-                    2502
-                } else {
-                    7022
-                };
-                if code == 7022 && !self.p.files.options.no_implicit_any {
-                    continue;
-                }
-                let start = self.start_inside_parentheses(file, declaration);
-                out.push(Diagnostic { start, code });
-                // `GetNameOfDeclaration`
-                let name = match hir[checked].kind {
-                    ExprKind::Dot { name, .. } => self.atom_text(name),
-                    ExprKind::Index { index, .. } => self.source_text(
-                        file,
-                        self.start_inside_parentheses(file, index),
-                        self.end_inside_parentheses(file, index),
-                    ),
-                    _ => continue,
-                };
-                let end = self.end_inside_parentheses(file, declaration);
-                self.note(start, end, code, vec![name]);
-            }
         }
     }
 

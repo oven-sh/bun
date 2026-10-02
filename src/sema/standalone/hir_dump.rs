@@ -84,6 +84,7 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         source_len,
         text: _,
         unclosed_literals: _,
+        expr_ends: _,
         body,
         references,
         suppressed,
@@ -485,7 +486,10 @@ impl Dump<'_> {
 
     fn expr(&mut self, depth: usize, label: &str, id: ExprId) {
         let Expr { kind, pos } = node!(self, depth, label, exprs, id);
-        let head = format!("Expr {} pos={pos}", expr_kind_name(kind));
+        let mut head = format!("Expr {} pos={pos}", expr_kind_name(kind));
+        if let Some(end) = self.file.expr_ends.get(id.idx()).filter(|&&end| end != 0) {
+            head += &format!(" end={end}");
+        }
         let d = depth + 1;
         match kind {
             ExprKind::Missing
@@ -972,8 +976,14 @@ impl Dump<'_> {
             default,
             flags,
             pos,
+            end,
         } = node!(self, depth, label, params, id);
-        put!(self, depth, label, "Param flags={flags:?} pos={pos}");
+        put!(
+            self,
+            depth,
+            label,
+            "Param flags={flags:?} pos={pos} end={end}"
+        );
         let d = depth + 1;
         self.pat(d, "pat", pat);
         self.ty(d, "ty", ty);
@@ -985,6 +995,7 @@ impl Dump<'_> {
             name,
             pos,
             start,
+            end,
             constraint,
             default,
             flags,
@@ -993,7 +1004,7 @@ impl Dump<'_> {
             self,
             depth,
             label,
-            "TypeParam name={} pos={pos} start={start} flags={flags:?}",
+            "TypeParam name={} pos={pos} start={start} end={end} flags={flags:?}",
             self.q(name)
         );
         let d = depth + 1;
@@ -1389,6 +1400,7 @@ impl Dump<'_> {
             ty,
             readonly,
             optional,
+            members,
         } = node!(self, depth, label, mapped, id);
         put!(
             self,
@@ -1400,6 +1412,7 @@ impl Dump<'_> {
         self.type_param(d, "param", param);
         self.ty(d, "name_ty", name_ty);
         self.ty(d, "ty", ty);
+        self.span(d, "members", members, Self::member);
     }
 
     fn tuple_elem(&mut self, depth: usize, label: &str, id: TupleElemId) {

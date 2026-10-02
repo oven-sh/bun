@@ -420,7 +420,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             {
                                 // The child was not closed, and met the closing tag of this element.
                                 p.lexer.list_contexts = saved_contexts;
-                                p.mark_closing_tag(loc, end_tag.data.as_expr());
                                 return Ok(p.new_expr(
                                     E::JSXElement {
                                         tag: start_tag,
@@ -429,6 +428,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         key_prop_index: key_prop_i,
                                         flags,
                                         close_tag_loc: end_tag.range.loc,
+                                        closing_tag: end_tag.data.as_expr(),
                                         opening_end,
                                         closing_start,
                                         end,
@@ -471,6 +471,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 key_prop_index: key_prop_i,
                                 flags,
                                 close_tag_loc: range.loc,
+                                closing_tag: None,
                                 opening_end,
                                 closing_start: less_than_loc,
                                 end: after_slash,
@@ -492,13 +493,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         )?;
                         let mut end = Self::end_of_jsx_tag(p);
                         let close_tag_loc = end_tag.range.loc;
-                        if belongs_to_parent {
+                        let closing_tag = if belongs_to_parent {
                             // The closing tag of this one is missed where that of the parent starts.
                             p.jsx_adopted_close = Some((end_tag, less_than_loc, end));
                             end = less_than_loc;
+                            p.new_expr(E::Missing {}, less_than_loc)
                         } else {
-                            p.mark_closing_tag(loc, end_tag.data.as_expr());
-                        }
+                            // `</>` has a missing name.
+                            end_tag
+                                .data
+                                .as_expr()
+                                .unwrap_or_else(|| p.new_expr(E::Missing {}, after_slash))
+                        };
                         p.lexer.list_contexts = saved_contexts;
                         return Ok(p.new_expr(
                             E::JSXElement {
@@ -508,6 +514,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 key_prop_index: key_prop_i,
                                 flags,
                                 close_tag_loc,
+                                closing_tag: Some(closing_tag),
                                 opening_end,
                                 closing_start: less_than_loc,
                                 end,
@@ -537,11 +544,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     p.lexer.list_contexts = saved_contexts;
                     // The type checker looks at both names (`checkJsxElementDeferred`).
-                    let kept_tag = if p.keeps_type_syntax() {
-                        p.mark_closing_tag(loc, end_tag.data.as_expr());
-                        start_tag
+                    let (kept_tag, closing_tag) = if p.keeps_type_syntax() {
+                        (start_tag, end_tag.data.as_expr())
                     } else {
-                        end_tag.data.as_expr()
+                        (end_tag.data.as_expr(), None)
                     };
                     return Ok(p.new_expr(
                         E::JSXElement {
@@ -551,6 +557,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             key_prop_index: key_prop_i,
                             flags,
                             close_tag_loc: end_tag.range.loc,
+                            closing_tag,
                             opening_end,
                             closing_start: less_than_loc,
                             end,
@@ -565,6 +572,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     {
                         Self::report_unclosed_jsx_element(p, loc, &tag, parent_tag.is_some());
                         let at = p.lexer.loc();
+                        let closing_tag = start_tag.map(|_| p.new_expr(E::Missing {}, at));
                         p.lexer.list_contexts = saved_contexts;
                         return Ok(p.new_expr(
                             E::JSXElement {
@@ -574,6 +582,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 key_prop_index: key_prop_i,
                                 flags,
                                 close_tag_loc: loc,
+                                closing_tag,
                                 opening_end,
                                 closing_start: at,
                                 end: at,
@@ -591,6 +600,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let at = p.lexer.loc();
                         let marker = p.lexer.range();
                         p.lexer.ts_expected(marker, "</");
+                        let closing_tag = start_tag.map(|_| p.new_expr(E::Missing {}, at));
                         p.lexer.list_contexts = saved_contexts;
                         return Ok(p.new_expr(
                             E::JSXElement {
@@ -600,6 +610,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 key_prop_index: key_prop_i,
                                 flags,
                                 close_tag_loc: at,
+                                closing_tag,
                                 opening_end,
                                 closing_start: at,
                                 end: at,

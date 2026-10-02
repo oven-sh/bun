@@ -24,7 +24,7 @@
 
 use super::errors::Diagnostic;
 use super::*;
-use crate::bind::{Decl, MemberOwner, Parent, ScopeId, ScopeKind};
+use crate::bind::{Decl, MemberOwner, Parent, ScopeId};
 use crate::resolve::ModuleKind;
 
 /// What is the same all over a file.
@@ -1170,7 +1170,7 @@ impl Checker<'_> {
         let scope = if m.is_none() {
             bound.scopes.first()
         } else {
-            bound.scopes.iter().find(|s| s.kind == ScopeKind::Module(m))
+            bound.scopes.get(bound.module_scope[m.idx()].idx())
         };
         let Some(symbol) = scope.and_then(|s| bound.lookup(s.locals, alias)) else {
             return false;

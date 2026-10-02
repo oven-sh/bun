@@ -1226,7 +1226,19 @@ fn run_one(
             );
             copies.sort();
         }
-        write_unit(checker, file, &path, None);
+        // A later unit of the same name replaces the file. The harness walks what `GetSourceFile` gives it once for each of them, next
+        // to the text of that unit.
+        let units = roots.iter().chain(&others);
+        let of_this_name: Vec<_> = units
+            .filter(|unit| absolute(&unit.name, &cwd) == path)
+            .collect();
+        if of_this_name.len() > 1 {
+            for unit in of_this_name {
+                write_unit(checker, file, &path, Some(&unit.content[..]));
+            }
+        } else {
+            write_unit(checker, file, &path, None);
+        }
         for copy in copies {
             write_unit(checker, file, &copy, host.read(&copy).as_deref());
         }

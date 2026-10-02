@@ -1977,6 +1977,7 @@ impl<'a> Builder<'a> {
                 default: ExprId::NONE,
                 flags: Flags::empty(),
                 pos: start,
+                end: self.full_start(),
             });
             return Ok(());
         }
@@ -2036,6 +2037,7 @@ impl<'a> Builder<'a> {
             default,
             flags,
             pos,
+            end: self.full_start(),
         });
         Ok(())
     }
@@ -3966,6 +3968,9 @@ impl<'a> Builder<'a> {
             self.next()?;
             self.expect(T::TCloseParen)?;
             ImportEqualsTarget::Require(spec)
+        } else if self.tolerant && self.tok() != T::TIdentifier {
+            // `parseEntityName(false)`: `parseIdentifier` takes no reserved word. The name is missing, and the token stays.
+            ImportEqualsTarget::Entity(self.file.list(&[known::empty]))
         } else {
             ImportEqualsTarget::Entity(self.parse_entity_name(false)?)
         };

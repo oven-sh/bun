@@ -428,6 +428,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 needs_async_loc: loc,
                 ..Default::default()
             };
+            p.mark_end(loc, crate::sema::Mark::VariableLikeEnd);
             let arrow_result = p.parse_arrow_body_with_flags(args, &mut fn_or_arrow_data, flags);
             p.pop_scope();
             return Ok(p.new_expr(arrow_result?, loc));

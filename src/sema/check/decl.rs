@@ -1060,11 +1060,7 @@ impl<'p> Checker<'p> {
         if scope.is_some() {
             return scope;
         }
-        bound
-            .scopes
-            .iter()
-            .position(|s| s.kind == ScopeKind::Interface(i))
-            .map_or(ScopeId::NONE, |at| ScopeId(at as u32))
+        bound.interface_scope[i.idx()]
     }
 
     /// `getOuterTypeParametersOfClassOrInterface`: the type parameters of what `sym` is declared inside of, outermost first, without
@@ -2403,7 +2399,7 @@ impl<'p> Checker<'p> {
                 // Without one, in an instantiation, it is `unknown`.
                 if self.is_known(obj)
                     && self.is_known(index)
-                    && index != TypeId::NEVER
+                    && !index.is_never()
                     && !self.is_generic(obj)
                     && !self.is_generic(index)
                     && self.parts(index).iter().any(|&key| {

@@ -90,16 +90,38 @@ enum Crossing {
     PastLastAssignment(SymbolId, ExprId),
 }
 
+/// `FlowType`
+#[derive(Copy, Clone)]
+struct FlowType {
+    ty: TypeId,
+    /// It rests on the types a loop that is still being analysed has collected so far.
+    incomplete: bool,
+}
+
+impl FlowType {
+    /// `newFlowType`
+    fn new(ty: TypeId, incomplete: bool) -> FlowType {
+        FlowType {
+            ty: if incomplete && ty.is_never() {
+                TypeId::SILENT_NEVER
+            } else {
+                ty
+            },
+            incomplete,
+        }
+    }
+}
+
 /// What was found at labels.
 #[derive(Default)]
 struct Labels {
-    few: SmallVec<[(FlowId, TypeId); 8]>,
+    few: SmallVec<[(FlowId, FlowType); 8]>,
     /// Those that came when `few` was full.
-    many: FxHashMap<FlowId, TypeId>,
+    many: FxHashMap<FlowId, FlowType>,
 }
 
 impl Labels {
-    fn get(&self, label: FlowId) -> Option<TypeId> {
+    fn get(&self, label: FlowId) -> Option<FlowType> {
         match self.few.iter().find(|known| known.0 == label) {
             Some(known) => Some(known.1),
             None if self.many.is_empty() => None,
@@ -107,7 +129,7 @@ impl Labels {
         }
     }
 
-    fn insert(&mut self, label: FlowId, ty: TypeId) {
+    fn insert(&mut self, label: FlowId, ty: FlowType) {
         if let Some(known) = self.few.iter_mut().find(|known| known.0 == label) {
             known.1 = ty;
         } else if self.few.len() < self.few.inline_size() {
@@ -148,9 +170,6 @@ struct Walk {
     depth: u32,
     /// There were `MAX_FLOW_DEPTH` of them (`flowAnalysisDisabled`): the answer is errorType.
     too_deep: bool,
-    /// `FlowType.incomplete`: the walk used the type of a loop that another walk is still analysing, or passed an assignment of
-    /// `silentNeverType`. It is kept per walk, not per flow type, and only tells a `never` result from `silentNeverType`.
-    incomplete: bool,
 }
 
 const MAX_STEPS: u32 = 2_000_000;
@@ -340,11 +359,10 @@ impl Walk {
             steps: 0,
             depth: 0,
             too_deep: false,
-            incomplete: false,
         }
     }
 
-    fn known_at(&self, label: FlowId) -> Option<TypeId> {
+    fn known_at(&self, label: FlowId) -> Option<FlowType> {
         if !self.reduced.is_empty() {
             return None;
         }
@@ -355,7 +373,7 @@ impl Walk {
             .or_else(|| self.labels.get(label))
     }
 
-    fn remember(&mut self, label: FlowId, ty: TypeId) {
+    fn remember(&mut self, label: FlowId, ty: FlowType) {
         if self.reduced.is_empty() {
             self.round_labels
                 .last_mut()
@@ -575,7 +593,9 @@ impl<'p> Checker<'p> {
             TypeData::Intrinsic(Intrinsic::Object) | TypeData::EvolvingArray(_) => {
                 of(OF_OBJECT, true, false)
             }
-            TypeData::Intrinsic(Intrinsic::Never) => 0,
+            TypeData::Intrinsic(
+                Intrinsic::Never | Intrinsic::SilentNever | Intrinsic::UnreachableNever,
+            ) => 0,
             TypeData::Union(parts) => parts
                 .iter()
                 .fold(0, |all, &p| all | self.type_facts_worker(p, mask)),
@@ -1130,7 +1150,7 @@ impl<'p> Checker<'p> {
                 .intersects(PropFlags::PRIVATE | PropFlags::PROTECTED);
             let t = self.type_of_prop(prop, mapper);
             literal |= t == TypeId::BOOLEAN
-                || t != TypeId::NEVER && self.every_type(t, |c, p| c.is_unit(p))
+                || !t.is_never() && self.every_type(t, |c, p| c.is_unit(p))
                 || self.is_pattern_literal(t);
             types.push(t);
         }
@@ -1516,22 +1536,10 @@ impl<'p> Checker<'p> {
             at: ExprId::NONE,
             has_key: true,
         };
-        let mut walk = Walk::new(reference, parent_ty, parent_ty, true);
-        self.flow_depth += 1;
-        let outer = std::mem::replace(&mut self.walk_declared, parent_ty);
-        let narrowed = self.flow_type(&mut walk, flow);
-        self.walk_declared = outer;
-        self.flow_depth -= 1;
-        if walk.steps >= MAX_STEPS {
-            return declared;
-        }
-        if narrowed == TypeId::NEVER {
-            // Nothing is known of what cannot be reached.
-            return if self.is_reachable_by_walk(&walk, flow) {
-                TypeId::NEVER
-            } else {
-                declared
-            };
+        let walk = Walk::new(reference, parent_ty, parent_ty, true);
+        let narrowed = self.get_flow_type_of_reference(walk, flow);
+        if narrowed.is_never() {
+            return TypeId::NEVER;
         }
         self.type_of_binding_element(file, pat, narrowed)
     }
@@ -1596,39 +1604,22 @@ impl<'p> Checker<'p> {
             at: ExprId::NONE,
             has_key: true,
         };
-        let mut walk = Walk::new(reference, rest_ty, rest_ty, true);
-        self.flow_depth += 1;
-        let outer = std::mem::replace(&mut self.walk_declared, rest_ty);
-        let narrowed = self.flow_type(&mut walk, flow);
-        self.walk_declared = outer;
-        self.flow_depth -= 1;
-        if walk.steps >= MAX_STEPS {
-            return declared;
-        }
-        // Nothing is known of what cannot be reached.
-        let narrowed = if narrowed == TypeId::NEVER && !self.is_reachable_by_walk(&walk, flow) {
-            rest_ty
-        } else {
-            narrowed
-        };
+        let walk = Walk::new(reference, rest_ty, rest_ty, true);
+        let narrowed = self.get_flow_type_of_reference(walk, flow);
         // It is this whether or not anything was found out: a parameter written `x?` is not `undefined` for that.
         let index = self.number_literal((p.0 - params.start) as f64, false);
         self.indexed_access(narrowed, index)
     }
 
-    fn crosses_functions(&mut self, walk: &Walk) -> bool {
-        match walk.crossing {
+    /// Whether tests made outside a function still hold inside it, found out once for the walk.
+    fn settle_crossing(&mut self, walk: &mut Walk) -> bool {
+        let crosses = match walk.crossing {
             Crossing::No => false,
             Crossing::Yes => true,
             Crossing::PastLastAssignment(symbol, e) => {
                 self.is_past_last_assignment(walk.reference.file, symbol, e)
             }
-        }
-    }
-
-    /// `crosses_functions`, found out once for the walk.
-    fn settle_crossing(&mut self, walk: &mut Walk) -> bool {
-        let crosses = self.crosses_functions(walk);
+        };
         walk.crossing = if crosses { Crossing::Yes } else { Crossing::No };
         crosses
     }
@@ -1678,25 +1669,6 @@ impl<'p> Checker<'p> {
             self.settle_start(walk);
         }
         walk.start == Start::Known && walk.initial == walk.declared
-    }
-
-    /// Whether control gets to `flow`, where `walk` found nothing that its reference can be. It goes out of the functions the walk
-    /// goes out of.
-    fn is_reachable_by_walk(&mut self, walk: &Walk, flow: FlowId) -> bool {
-        let crosses_functions = self.crosses_functions(walk);
-        let outer = std::mem::replace(&mut self.reachability_crosses_functions, crosses_functions);
-        let past = std::mem::replace(&mut self.reachability_past_exhaustive_switches, true);
-        let is_this = walk.reference.root == Root::This && walk.reference.path.is_empty();
-        let reachable = self.is_reachable_inner(
-            walk.reference.file,
-            flow,
-            is_this,
-            &mut Vec::new(),
-            &mut Vec::new(),
-        );
-        self.reachability_crosses_functions = outer;
-        self.reachability_past_exhaustive_switches = past;
-        reachable
     }
 
     /// `narrowTypeByDiscriminant`
@@ -1774,7 +1746,7 @@ impl<'p> Checker<'p> {
             match self.type_of_property(m, name) {
                 Some(t) => {
                     is_declared = is_declared || self.finds_property(m, name);
-                    has_never |= t == TypeId::NEVER;
+                    has_never |= t.is_never();
                     prop_types.push(t);
                 }
                 // An object literal that does not mention it does not have it; of anything else nothing is known.
@@ -1807,8 +1779,8 @@ impl<'p> Checker<'p> {
                 let discriminant = c
                     .type_of_property_or_index_signature(m, name)
                     .unwrap_or(TypeId::UNKNOWN);
-                discriminant != TypeId::NEVER
-                    && narrowed != TypeId::NEVER
+                !discriminant.is_never()
+                    && !narrowed.is_never()
                     && c.are_comparable(narrowed, discriminant)
             })
         });
@@ -3005,7 +2977,7 @@ impl<'p> Checker<'p> {
                     TypeId::NEVER
                 }
             });
-            if directly_related != TypeId::NEVER {
+            if !directly_related.is_never() {
                 return directly_related;
             }
             // Failing that, what waits for type parameters and may turn out to be one.
@@ -3029,7 +3001,7 @@ impl<'p> Checker<'p> {
                 TypeId::NEVER
             })
         });
-        if narrowed != TypeId::NEVER {
+        if !narrowed.is_never() {
             narrowed
         } else if self.is_subtype(candidate, ty) {
             candidate
@@ -3157,7 +3129,7 @@ impl<'p> Checker<'p> {
         let (mut is_write_partial, mut is_read_partial) = (false, false);
         for &part in parts {
             let part = self.apparent_type(part);
-            if part == TypeId::NEVER {
+            if part.is_never() {
                 continue;
             }
             let Some(members) = self.members(part) else {
@@ -3351,7 +3323,7 @@ impl<'p> Checker<'p> {
     /// `narrowTypeByAssertion`: `e` is asserted. Control does not get past `assert(false)`.
     fn narrow_by_asserted(&mut self, reference: &Reference, ty: TypeId, e: ExprId) -> TypeId {
         match self.hir(reference.file)[e].kind {
-            ExprKind::False => TypeId::NEVER,
+            ExprKind::False => TypeId::UNREACHABLE_NEVER,
             ExprKind::Binary {
                 op: BinOp::And,
                 left,
@@ -3371,6 +3343,7 @@ impl<'p> Checker<'p> {
                 );
                 self.union(&[a, b])
             }
+            _ if ty.is_never() => ty,
             _ => self.narrow(reference, ty, e, true),
         }
     }
@@ -3396,7 +3369,7 @@ impl<'p> Checker<'p> {
     /// `everyType(ty, IsNullableType)`
     fn is_every_type_nullable(&mut self, ty: TypeId) -> bool {
         let ty = self.force(ty);
-        ty != TypeId::NEVER
+        !ty.is_never()
             && self
                 .parts(ty)
                 .iter()
@@ -3445,7 +3418,7 @@ impl<'p> Checker<'p> {
                         *c.data(t),
                         TypeData::StringLit { value, .. } | TypeData::EnumLit { value: EnumValue::String(value), .. } if value == known::undefined
                     );
-                    t != TypeId::NEVER && !is_undefined
+                    !t.is_never() && !is_undefined
                 });
             }
             return ty;
@@ -3461,7 +3434,7 @@ impl<'p> Checker<'p> {
                 cases,
                 from,
                 to,
-                |_, t| !t.is_undefined() && t != TypeId::NEVER,
+                |_, t| !t.is_undefined() && !t.is_never(),
             );
         }
         if let Some(access) = self.discriminant_access(reference, subject, ty) {
@@ -3611,7 +3584,7 @@ impl<'p> Checker<'p> {
             return self.union(&ground);
         }
         let discriminant = self.union(&clause_types);
-        let case_type = if discriminant == TypeId::NEVER {
+        let case_type = if discriminant.is_never() {
             TypeId::NEVER
         } else {
             let kept = self.filter(ty, |c, m| c.are_comparable(discriminant, m));
@@ -3637,7 +3610,7 @@ impl<'p> Checker<'p> {
                     .iter()
                     .any(|&t| c.is_unit(t) && c.are_comparable(t, unit)))
         });
-        if case_type == TypeId::NEVER {
+        if case_type.is_never() {
             return default_type;
         }
         self.union(&[case_type, default_type])
@@ -3937,7 +3910,7 @@ impl<'p> Checker<'p> {
 
     pub(super) fn narrow_reference(&mut self, file: FileId, e: ExprId, declared: TypeId) -> TypeId {
         // Of `string` it can be found out that it is `"a"`, and of `"a"` that it is not even that.
-        if declared == TypeId::UNRESOLVED || declared == TypeId::NEVER {
+        if declared == TypeId::UNRESOLVED || declared.is_never() {
             return declared;
         }
         let declared = self.narrowable_type(file, e, declared);
@@ -3959,7 +3932,7 @@ impl<'p> Checker<'p> {
 
     /// `getFlowTypeOfReference` of a `this` expression (`tryGetThisTypeAtEx`).
     pub(super) fn narrow_this(&mut self, file: FileId, e: ExprId, declared: TypeId) -> TypeId {
-        if declared == TypeId::UNRESOLVED || declared == TypeId::NEVER {
+        if declared == TypeId::UNRESOLVED || declared.is_never() {
             return declared;
         }
         self.flow_type_of(file, e, declared, false)
@@ -3967,7 +3940,7 @@ impl<'p> Checker<'p> {
 
     /// The type of the property or element access `e`, which is no assignment target and whose property is declared as `declared`.
     pub(super) fn narrow_access(&mut self, file: FileId, e: ExprId, declared: TypeId) -> TypeId {
-        if declared == TypeId::UNRESOLVED || declared == TypeId::NEVER {
+        if declared == TypeId::UNRESOLVED || declared.is_never() {
             return declared;
         }
         let declared = self.narrowable_type(file, e, declared);
@@ -4066,6 +4039,7 @@ impl<'p> Checker<'p> {
         let is_cacheable = self.leave();
         if self.left_a_circle {
             self.p.circular_pats.insert((file, pat), ());
+            self.report_circularity_error_of_pat(file, pat);
             return true;
         }
         if is_cacheable {
@@ -4143,9 +4117,6 @@ impl<'p> Checker<'p> {
         let Some(reference) = self.reference_of(file, e) else {
             return declared;
         };
-        if self.flow_depth > 12 {
-            return declared;
-        }
         let is_automatic = self.is_automatic_type(declared);
         // Nothing but `[]` was ever assigned to it: where it is being filled it is an array of anything, whatever is in it
         // by then. Not looking spares asking what is being put in it while working out what that is expected to be.
@@ -4214,49 +4185,60 @@ impl<'p> Checker<'p> {
         } else if is_variable {
             walk.start = Start::Unsettled;
         }
-        self.flow_depth += 1;
-        let outer = std::mem::replace(&mut self.walk_declared, declared);
-        let ty = self.flow_type(&mut walk, flow);
-        self.walk_declared = outer;
-        self.flow_depth -= 1;
-        // errorType, and `reportFlowControlError`
-        if walk.too_deep {
-            self.disable_flow_analysis(file);
-            self.p.flows_too_deep.insert((file, e), ());
-            return TypeId::ERROR;
-        }
-        if walk.steps >= MAX_STEPS {
-            return declared;
-        }
-        // Nothing is known of what cannot be reached, which is not the same as knowing there is nothing it can be.
-        if ty == TypeId::NEVER
-            && declared != TypeId::NEVER
-            && !self.is_reachable_by_walk(&walk, flow)
-        {
-            return declared;
-        }
-        // `newFlowType`: an incomplete `never` is `silentNeverType`.
-        self.met_loop_under_way |= ty == TypeId::NEVER && walk.incomplete;
-        if let TypeData::EvolvingArray(_) = self.data(ty) {
-            // `getFlowTypeOfReference`: what is done to fill it is done to `autoArrayType`, whatever the variable is declared as.
-            return if self.is_evolving_array_operation_target(file, e) {
-                self.auto_array_type
-            } else {
-                self.finalize_evolving_array(ty)
-            };
-        }
-        // `x!` where all that is left of `x` is what `!` takes away: back to the declared type.
-        if ty != TypeId::NEVER
-            && self.is_operand_of_non_null(file, e)
-            && self.type_with_facts(ty, facts::NE_UNDEFINED_OR_NULL) == TypeId::NEVER
-        {
-            return declared;
-        }
+        let ty = self.get_flow_type_of_reference(walk, flow);
         // `checkIdentifier`, `isAutomaticTypeInNonNull`
         if is_automatic && self.is_operand_of_non_null(file, e) {
             return self.non_nullable(ty);
         }
         ty
+    }
+
+    /// `getFlowTypeOfReferenceEx`, once the `FlowState` is set up.
+    fn get_flow_type_of_reference(&mut self, mut walk: Walk, flow: FlowId) -> TypeId {
+        let (file, e, declared) = (walk.reference.file, walk.reference.at, walk.declared);
+        if self.is_flow_analysis_disabled(file) {
+            return TypeId::ERROR;
+        }
+        if self.flow_depth > 12 {
+            return declared;
+        }
+        self.flow_depth += 1;
+        let outer = std::mem::replace(&mut self.walk_declared, declared);
+        let evolved = self.flow_type(&mut walk, flow).ty;
+        self.walk_declared = outer;
+        self.flow_depth -= 1;
+        // errorType, and `reportFlowControlError`
+        if walk.too_deep {
+            self.disable_flow_analysis(file);
+            if e.is_some() {
+                self.p.flows_too_deep.insert((file, e), ());
+            }
+            return TypeId::ERROR;
+        }
+        if walk.steps >= MAX_STEPS {
+            return declared;
+        }
+        // What is done to fill an array is done to `autoArrayType`, whatever is in it by then.
+        let result = if matches!(self.data(evolved), TypeData::EvolvingArray(_))
+            && e.is_some()
+            && self.is_evolving_array_operation_target(file, e)
+        {
+            self.auto_array_type
+        } else {
+            self.finalize_evolving_array(evolved)
+        };
+        // `x!` where all that is left of `x` is what `!` takes away.
+        if result == TypeId::UNREACHABLE_NEVER
+            || e.is_some()
+                && !result.is_never()
+                && self.is_operand_of_non_null(file, e)
+                && self
+                    .type_with_facts(result, facts::NE_UNDEFINED_OR_NULL)
+                    .is_never()
+        {
+            return declared;
+        }
+        result
     }
 
     /// `getFlowTypeOfDestructuring` of what a pattern binds. `const { a } = o.p`: `a` is whatever `o.p.a` is known to be there.
@@ -4267,7 +4249,7 @@ impl<'p> Checker<'p> {
         declared: TypeId,
     ) -> TypeId {
         if declared == TypeId::UNRESOLVED
-            || declared == TypeId::NEVER
+            || declared.is_never()
             || declared == TypeId::VOID
             || declared == TypeId::SYMBOL
         {
@@ -4326,7 +4308,7 @@ impl<'p> Checker<'p> {
         declared: TypeId,
     ) -> TypeId {
         if declared == TypeId::UNRESOLVED
-            || declared == TypeId::NEVER
+            || declared.is_never()
             || declared == TypeId::VOID
             || declared == TypeId::SYMBOL
         {
@@ -4390,7 +4372,7 @@ impl<'p> Checker<'p> {
             return declared;
         }
         let flow = self.bound(file).expr_flow[init.idx()];
-        if flow == UNREACHABLE || flow.is_none() || self.flow_depth > 12 {
+        if flow.is_none() {
             return declared;
         }
         let Some(mut reference) = self.reference_of(file, init) else {
@@ -4399,18 +4381,8 @@ impl<'p> Checker<'p> {
         reference.path.extend(names.iter().rev().copied());
         // Nowhere is it written.
         reference.at = ExprId::NONE;
-        let mut walk = Walk::new(reference, declared, declared, false);
-        self.flow_depth += 1;
-        let outer = std::mem::replace(&mut self.walk_declared, declared);
-        let ty = self.flow_type(&mut walk, flow);
-        self.walk_declared = outer;
-        self.flow_depth -= 1;
-        // Nothing is known of what cannot be reached.
-        if walk.steps >= MAX_STEPS || ty == TypeId::NEVER && !self.is_reachable_by_walk(&walk, flow)
-        {
-            return declared;
-        }
-        ty
+        let walk = Walk::new(reference, declared, declared, false);
+        self.get_flow_type_of_reference(walk, flow)
     }
 
     /// Whether `this.name`, declared as `declared`, has been given a value by the time the constructor `func` is left.
@@ -4436,13 +4408,9 @@ impl<'p> Checker<'p> {
             at: ExprId::NONE,
             has_key: true,
         };
-        let mut walk = Walk::new(reference, declared, initial, false);
-        self.flow_depth += 1;
-        let outer = std::mem::replace(&mut self.walk_declared, declared);
-        let ty = self.flow_type(&mut walk, exit);
-        self.walk_declared = outer;
-        self.flow_depth -= 1;
-        walk.steps >= MAX_STEPS || !self.contains_undefined(ty)
+        let walk = Walk::new(reference, declared, initial, false);
+        let ty = self.get_flow_type_of_reference(walk, exit);
+        !self.contains_undefined(ty)
     }
 
     /// `getFlowTypeInConstructor`: what the property `name`, of which nothing is said, has been assigned by the time the
@@ -4467,12 +4435,8 @@ impl<'p> Checker<'p> {
         initial: TypeId,
     ) -> Option<TypeId> {
         let exit = self.bound(file).fns[func.idx()].exit;
-        if exit.is_none() || self.flow_depth > 12 {
+        if exit.is_none() {
             return None;
-        }
-        // `getTypeAtFlowNode`: an unreachable flow node has `convertAutoToAny(declaredType)`.
-        if exit == UNREACHABLE {
-            return Some(TypeId::ANY);
         }
         let reference = Reference {
             file,
@@ -4481,24 +4445,8 @@ impl<'p> Checker<'p> {
             at: ExprId::NONE,
             has_key: true,
         };
-        let mut walk = Walk::new(reference, TypeId::AUTO, initial, false);
-        self.flow_depth += 1;
-        let outer = std::mem::replace(&mut self.walk_declared, TypeId::AUTO);
-        let ty = self.flow_type(&mut walk, exit);
-        self.walk_declared = outer;
-        self.flow_depth -= 1;
-        if walk.steps >= MAX_STEPS {
-            return None;
-        }
-        // `unreachableNeverType` gives the declared type.
-        if ty == TypeId::NEVER && !self.is_reachable_by_walk(&walk, exit) {
-            return Some(TypeId::ANY);
-        }
-        let ty = if let TypeData::EvolvingArray(_) = self.data(ty) {
-            self.finalize_evolving_array(ty)
-        } else {
-            ty
-        };
+        let walk = Walk::new(reference, TypeId::AUTO, initial, false);
+        let ty = self.get_flow_type_of_reference(walk, exit);
         if self.is_every_type_nullable(ty) {
             return None;
         }
@@ -4513,54 +4461,12 @@ impl<'p> Checker<'p> {
         e: ExprId,
         initial: TypeId,
     ) -> TypeId {
-        if self.is_flow_analysis_disabled(file) {
-            return TypeId::ERROR;
-        }
         let flow = self.bound(file).expr_flow[e.idx()];
-        // `getTypeAtFlowNode`: an unreachable flow node has `convertAutoToAny(declaredType)`.
-        if flow == UNREACHABLE || self.flow_depth > 12 {
-            return TypeId::ANY;
-        }
         let Some(reference) = self.reference_of(file, e) else {
-            return TypeId::ANY;
+            return TypeId::AUTO;
         };
-        let mut walk = Walk::new(reference, TypeId::AUTO, initial, false);
-        self.flow_depth += 1;
-        let outer = std::mem::replace(&mut self.walk_declared, TypeId::AUTO);
-        let ty = self.flow_type(&mut walk, flow);
-        self.walk_declared = outer;
-        self.flow_depth -= 1;
-        // errorType, and `reportFlowControlError`
-        if walk.too_deep {
-            self.disable_flow_analysis(file);
-            self.p.flows_too_deep.insert((file, e), ());
-            return TypeId::ERROR;
-        }
-        if walk.steps >= MAX_STEPS {
-            return TypeId::ANY;
-        }
-        // `unreachableNeverType` gives the declared type.
-        if ty == TypeId::NEVER && !self.is_reachable_by_walk(&walk, flow) {
-            return TypeId::AUTO;
-        }
-        // `newFlowType`: an incomplete `never` is `silentNeverType`.
-        self.met_loop_under_way |= ty == TypeId::NEVER && walk.incomplete;
-        if let TypeData::EvolvingArray(_) = self.data(ty) {
-            // The target of `push`, `unshift`, `length` and `x[n] = v`.
-            return if self.is_evolving_array_operation_target(file, e) {
-                self.auto_array_type
-            } else {
-                self.finalize_evolving_array(ty)
-            };
-        }
-        // `x!` where only `null` or `undefined` is left gives the declared type.
-        if ty != TypeId::NEVER
-            && self.is_operand_of_non_null(file, e)
-            && self.type_with_facts(ty, facts::NE_UNDEFINED_OR_NULL) == TypeId::NEVER
-        {
-            return TypeId::AUTO;
-        }
-        ty
+        let walk = Walk::new(reference, TypeId::AUTO, initial, false);
+        self.get_flow_type_of_reference(walk, flow)
     }
 
     pub(super) fn may_be_unassigned(&mut self, file: FileId, e: ExprId, declared: TypeId) -> bool {
@@ -4781,7 +4687,7 @@ impl<'p> Checker<'p> {
         let TypeData::EvolvingArray(element) = *self.data(ty) else {
             return ty;
         };
-        if element == TypeId::NEVER {
+        if element.is_never() {
             return self.auto_array_type;
         }
         // An object literal is no subtype of one that lacks a property it has (`propertiesRelatedTo`): as alternatives to one another
@@ -4806,7 +4712,7 @@ impl<'p> Checker<'p> {
         let initial = self.initial_of(walk);
         let is_subset = |c: &Self, t: TypeId| {
             t == initial
-                || t == TypeId::NEVER
+                || t.is_never()
                 || c.is_union(initial) && c.parts(t).iter().all(|p| c.parts(initial).contains(p))
         };
         let subtype_reduction = !types.iter().all(|&t| is_subset(self, t));
@@ -4878,7 +4784,7 @@ impl<'p> Checker<'p> {
         for &t in types {
             match *self.data(t) {
                 TypeData::EvolvingArray(element) => elements.push(element),
-                _ if t == TypeId::NEVER => {}
+                _ if t.is_never() => {}
                 // Not `isEvolvingArrayTypeList`: the union of the finalized types.
                 _ => {
                     let types: Vec<TypeId> = types
@@ -4974,9 +4880,9 @@ impl<'p> Checker<'p> {
     }
 
     /// `getTypeAtFlowNode`
-    fn flow_type(&mut self, walk: &mut Walk, start: FlowId) -> TypeId {
+    fn flow_type(&mut self, walk: &mut Walk, start: FlowId) -> FlowType {
         if walk.too_deep {
-            return TypeId::ERROR;
+            return FlowType::new(TypeId::ERROR, false);
         }
         let file = walk.reference.file;
         let bound = self.bound(file);
@@ -4997,6 +4903,7 @@ impl<'p> Checker<'p> {
         let mut passed = 0;
         let mut flow = start;
         let depth = walk.depth;
+        let mut incomplete = false;
         let mut ty = loop {
             walk.steps += 1;
             if walk.steps >= MAX_STEPS {
@@ -5009,7 +4916,8 @@ impl<'p> Checker<'p> {
                 break TypeId::ERROR;
             }
             match bound.flow[flow.idx()] {
-                Flow::Unreachable => break TypeId::NEVER,
+                // "Simply return the non-auto declared type to reduce follow-on errors."
+                Flow::Unreachable => break self.convert_auto_to_any(walk.declared),
                 Flow::Start { outer, arrow } => {
                     // An arrow function has no `this` of its own.
                     let is_this = arrow
@@ -5044,10 +4952,6 @@ impl<'p> Checker<'p> {
                     break self.initial_of(walk);
                 }
                 Flow::Assign { before, target } => {
-                    // `getTypeAtFlowAssignment`: an assignment control does not get to leaves nothing behind.
-                    if before == UNREACHABLE {
-                        break TypeId::NEVER;
-                    }
                     if let FlowTarget::Expr(e) = target
                         && self
                             .bound(file)
@@ -5055,11 +4959,14 @@ impl<'p> Checker<'p> {
                             == AssignmentKind::Compound
                         && self.matches(&walk.reference, e)
                     {
+                        if !self.is_reachable(file, flow) {
+                            break TypeId::UNREACHABLE_NEVER;
+                        }
                         pending.push(Pending::Compound);
                         flow = before;
                         continue;
                     }
-                    match self.type_at_assignment(walk, target) {
+                    match self.type_at_assignment(walk, flow, target) {
                         Some(t) => break t,
                         None => {
                             if self.is_for_in_over(&walk.reference, target) {
@@ -5104,11 +5011,16 @@ impl<'p> Checker<'p> {
                 }
                 Flow::Call { before, call } => {
                     if !self.flow_memo.is_idle_call(file, flow) {
-                        let (sig, is_kept) = self.effects_signature_and_is_kept(file, call);
-                        if sig.is_some() {
-                            pending.push(Pending::Assert(call));
-                        } else if is_kept {
-                            self.note_idle_call(file, flow);
+                        // `getTypeAtFlowCall`
+                        match self.effects_signature_and_is_kept(file, call) {
+                            (Some(sig), _) => match self.sig_predicate(sig) {
+                                Some(predicate) if predicate.asserts => {
+                                    pending.push(Pending::Assert(call));
+                                }
+                                _ => break TypeId::UNREACHABLE_NEVER,
+                            },
+                            (None, true) => self.note_idle_call(file, flow),
+                            (None, false) => {}
                         }
                     }
                     flow = before;
@@ -5121,7 +5033,8 @@ impl<'p> Checker<'p> {
                     walk.reduced.push((label, instead));
                     let t = self.flow_type(walk, before);
                     walk.reduced.pop();
-                    break t;
+                    incomplete = t.incomplete;
+                    break t.ty;
                 }
                 Flow::Label { start, len } => {
                     // Where a `finally` block that is being gone back through starts: on with the ways in that count. Nothing
@@ -5130,10 +5043,12 @@ impl<'p> Checker<'p> {
                         let entry = walk.reduced.remove(at);
                         let t = self.flow_type(walk, entry.1);
                         walk.reduced.insert(at, entry);
-                        break t;
+                        incomplete = t.incomplete;
+                        break t.ty;
                     }
                     if let Some(known) = walk.known_at(flow) {
-                        break known;
+                        incomplete = known.incomplete;
+                        break known.ty;
                     }
                     let mut types: SmallVec<[TypeId; 4]> = SmallVec::new();
                     // The way past a `switch` none of whose cases matched. There is no such way if the cases cover everything,
@@ -5149,31 +5064,35 @@ impl<'p> Checker<'p> {
                             continue;
                         }
                         let t = self.flow_type(walk, edge);
-                        if t == walk.declared && self.starts_as_declared(walk) {
+                        if t.ty == walk.declared && self.starts_as_declared(walk) {
                             types.clear();
-                            types.push(t);
+                            types.push(t.ty);
+                            incomplete = false;
                             settled = true;
                             break;
                         }
-                        if !types.contains(&t) {
-                            types.push(t);
+                        if !types.contains(&t.ty) {
+                            types.push(t.ty);
                         }
+                        incomplete |= t.incomplete;
                     }
                     if !settled && let Some((edge, stmt)) = bypass {
                         let t = self.flow_type(walk, edge);
-                        if t != TypeId::NEVER
-                            && !types.contains(&t)
+                        if !t.ty.is_never()
+                            && !types.contains(&t.ty)
                             && !self.is_exhaustive_switch(file, stmt)
                         {
-                            if t == walk.declared && self.starts_as_declared(walk) {
+                            incomplete |= t.incomplete;
+                            if t.ty == walk.declared && self.starts_as_declared(walk) {
                                 types.clear();
+                                incomplete = false;
                             }
-                            types.push(t);
+                            types.push(t.ty);
                         }
                     }
-                    let t = self.union_or_evolving(&types, walk);
+                    let t = FlowType::new(self.union_or_evolving(&types, walk), incomplete);
                     walk.remember(flow, t);
-                    break t;
+                    break t.ty;
                 }
                 Flow::Loop { start, len } => {
                     // `getTypeAtFlowLoopLabel`: what has no key is what it is declared as where a loop comes round.
@@ -5181,7 +5100,8 @@ impl<'p> Checker<'p> {
                         break walk.declared;
                     }
                     if let Some(&(_, so_far)) = walk.loops.iter().find(|l| l.0 == flow) {
-                        break so_far;
+                        incomplete = true;
+                        break FlowType::new(so_far, true).ty;
                     }
                     let initial = if self.flow_loops.is_empty() {
                         walk.initial
@@ -5200,26 +5120,28 @@ impl<'p> Checker<'p> {
                         if self.is_flow_loop_visible(depth) {
                             // Nothing computed from an incomplete type is cached.
                             self.taint_from(depth);
-                            walk.incomplete = true;
-                            break so_far;
+                            incomplete = true;
+                            break FlowType::new(so_far, true).ty;
                         }
                     }
                     if let Some(known) = walk.known_at(flow) {
-                        break known;
+                        incomplete = known.incomplete;
+                        break known.ty;
                     }
                     let edges = bound.edges(start, len);
                     // A loop nothing leads to: `while (true) {}` came before.
                     if edges.is_empty() {
-                        break TypeId::NEVER;
+                        break self.convert_auto_to_any(walk.declared);
                     }
                     // `getTypeAtFlowLoopLabel`: what is the declared type can only be added subtypes to. Unlike where branches meet, what
                     // it was to begin with is not looked at.
                     let entry = self.flow_type(walk, edges[0]);
+                    // The result is incomplete only if the first antecedent is.
+                    incomplete = entry.incomplete;
+                    let entry = entry.ty;
                     if entry == walk.declared {
                         break entry;
                     }
-                    // The result is incomplete only if the first antecedent is.
-                    let incomplete = walk.incomplete;
                     // One pass: each back edge sees the types of the antecedents before it.
                     let mut types: SmallVec<[TypeId; 4]> = smallvec![entry];
                     walk.loops.push((flow, entry));
@@ -5234,7 +5156,7 @@ impl<'p> Checker<'p> {
                         self.stack.len(),
                     ));
                     for &edge in &edges[1..] {
-                        let t = self.flow_type(walk, edge);
+                        let t = self.flow_type(walk, edge).ty;
                         if t == walk.declared {
                             types.push(t);
                             break;
@@ -5253,20 +5175,19 @@ impl<'p> Checker<'p> {
                     self.flow_loops.pop();
                     walk.round_labels.pop();
                     walk.loops.pop();
-                    walk.incomplete = incomplete;
-                    let result = self.union_or_evolving(&types, walk);
+                    let result = FlowType::new(self.union_or_evolving(&types, walk), incomplete);
                     walk.remember(flow, result);
-                    break result;
+                    break result.ty;
                 }
             }
         };
         walk.depth = depth;
         if walk.too_deep {
-            return TypeId::ERROR;
+            return FlowType::new(TypeId::ERROR, false);
         }
         let reference = &walk.reference;
         while let Some(p) = pending.pop() {
-            if ty == TypeId::NEVER {
+            if ty.is_never() {
                 break;
             }
             // A test sees the array as it would be read; if it says nothing, the array goes on being filled.
@@ -5285,14 +5206,15 @@ impl<'p> Checker<'p> {
                 // Of the array as it would be read: it is not filled any further.
                 Pending::NonNull => {
                     ty = self.non_nullable_type_if_needed(seen);
+                    incomplete = false;
                     continue;
                 }
             };
             if narrowed != seen {
-                ty = narrowed;
+                ty = FlowType::new(narrowed, incomplete).ty;
             }
         }
-        ty
+        FlowType { ty, incomplete }
     }
 
     /// `checkNonNullTypeWithReporter`: `ty` without `null` and `undefined`, where it has to be neither. `report` is told what is wrong
@@ -5334,7 +5256,7 @@ impl<'p> Checker<'p> {
         } else {
             ty
         };
-        if non_nullable == TypeId::NEVER || non_nullable.is_null() || non_nullable.is_undefined() {
+        if non_nullable.is_never() || non_nullable.is_null() || non_nullable.is_undefined() {
             TypeId::ERROR
         } else {
             non_nullable
@@ -5361,92 +5283,6 @@ impl<'p> Checker<'p> {
             self.adjusted_type_with_facts(ty, facts::NE_UNDEFINED_OR_NULL)
         } else {
             ty
-        }
-    }
-
-    /// `getTypeOfExpression` of `value`, which is assigned to the reference of `walk`. While a loop is being analysed the reference can
-    /// be `silentNeverType`. There is no such type here: NEVER is returned where TypeScript has it.
-    fn assigned_type(&mut self, walk: &mut Walk, value: ExprId) -> TypeId {
-        let file = walk.reference.file;
-        if self.flow_loops.is_empty() || value.is_none() {
-            return self.type_of_declaration_initializer(file, value);
-        }
-        let outer = std::mem::replace(&mut self.met_loop_under_way, false);
-        let ty = self.type_of_declaration_initializer(file, value);
-        let met_silent_never = std::mem::replace(&mut self.met_loop_under_way, outer);
-        if !met_silent_never {
-            return ty;
-        }
-        // `checkConditionalExpression`: the union drops a branch that is `silentNeverType`.
-        if let ExprKind::Cond { yes, no, .. } = self.hir(file)[value].kind {
-            let (yes, no) = (self.assigned_type(walk, yes), self.assigned_type(walk, no));
-            return self.union_reduced(&[yes, no]);
-        }
-        if self.propagates_silent_never(&walk.reference, value) {
-            // It stays `silentNeverType` by identity wherever the walk carries it.
-            walk.incomplete = true;
-            return TypeId::NEVER;
-        }
-        // Any other expression was typed from a plain `never`, where a property access is an error of type `any`. Such an `any` says
-        // nothing: `value` is typed again from a separate analysis of the loop.
-        if self.is_any(ty) {
-            self.type_of_expr_outside_loops(file, value)
-        } else {
-            ty
-        }
-    }
-
-    /// Whether `e` is `silentNeverType` when `reference` is: `e` is the reference, or an operation that returns an operand that is
-    /// `silentNeverType`. `checkPropertyAccessExpressionOrQualifiedName`, `checkElementAccessExpression`, `resolveCallExpression`,
-    /// `resolveNewExpression`, `getInstantiationExpressionType`, `checkPrefixUnaryExpression`, `checkPostfixUnaryExpression`,
-    /// `checkBinaryLikeExpression`, `checkInstanceOfExpression`, `checkInExpression`
-    fn propagates_silent_never(&mut self, reference: &Reference, e: ExprId) -> bool {
-        if e.is_none() {
-            return false;
-        }
-        let hir = self.hir(reference.file);
-        match hir[e].kind {
-            // The type of an assignment is the type of its right operand.
-            ExprKind::Assign {
-                op: None, value, ..
-            } => self.propagates_silent_never(reference, value),
-            _ if self.matches(reference, e) => true,
-            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => {
-                self.propagates_silent_never(reference, obj)
-            }
-            ExprKind::Call(c) | ExprKind::New(c) => {
-                self.propagates_silent_never(reference, hir[c].callee)
-            }
-            ExprKind::NonNull(x)
-            | ExprKind::AsConst(x)
-            | ExprKind::Await(x)
-            | ExprKind::Satisfies { expr: x, .. }
-            | ExprKind::Instantiation { expr: x, .. } => self.propagates_silent_never(reference, x),
-            ExprKind::Unary { op, operand } => {
-                !matches!(op, UnOp::Typeof | UnOp::Void | UnOp::Delete)
-                    && self.propagates_silent_never(reference, operand)
-            }
-            ExprKind::Binary { op, left, right } => match op {
-                BinOp::Lt
-                | BinOp::Le
-                | BinOp::Gt
-                | BinOp::Ge
-                | BinOp::EqEq
-                | BinOp::NotEq
-                | BinOp::EqEqEq
-                | BinOp::NotEqEq => false,
-                // `never` has no type facts, so `&&`, `||` and `??` return their left operand.
-                BinOp::And | BinOp::Or | BinOp::Nullish => {
-                    self.propagates_silent_never(reference, left)
-                }
-                BinOp::Comma => self.propagates_silent_never(reference, right),
-                // The arithmetic operators, `+`, `in` and `instanceof`.
-                _ => {
-                    self.propagates_silent_never(reference, left)
-                        || self.propagates_silent_never(reference, right)
-                }
-            },
-            _ => false,
         }
     }
 
@@ -5484,7 +5320,12 @@ impl<'p> Checker<'p> {
     }
 
     /// What the reference is right after `target` was assigned. `None`: the assignment is to something else.
-    fn type_at_assignment(&mut self, walk: &mut Walk, target: FlowTarget) -> Option<TypeId> {
+    fn type_at_assignment(
+        &mut self,
+        walk: &Walk,
+        flow: FlowId,
+        target: FlowTarget,
+    ) -> Option<TypeId> {
         let file = walk.reference.file;
         let hir = self.hir(file);
         let bound = self.bound(file);
@@ -5510,7 +5351,7 @@ impl<'p> Checker<'p> {
             if c.is_any(assigned) {
                 return declared;
             }
-            if assigned == TypeId::NEVER {
+            if assigned.is_never() {
                 return assigned;
             }
             c.assignment_reduced_type(declared, assigned)
@@ -5526,7 +5367,7 @@ impl<'p> Checker<'p> {
                 c.array_of(TypeId::ANY)
             }
         };
-        let assigned_to_auto = |c: &mut Self, walk: &mut Walk, value: ExprId| -> TypeId {
+        let assigned_to_auto = |c: &mut Self, declared: TypeId, value: ExprId| -> TypeId {
             // `isEmptyArrayAssignment`
             if matches!(hir[value].kind, ExprKind::Array(items) if items.is_empty())
                 && !is_parenthesized(hir, value)
@@ -5534,15 +5375,18 @@ impl<'p> Checker<'p> {
                 return c.evolving_array(TypeId::NEVER);
             }
             c.eager.push(c.stack.len());
-            let assigned = c.assigned_type(walk, value);
+            let assigned = c.type_of_declaration_initializer(file, value);
             c.eager.pop();
-            widened_for_auto(c, walk.declared, assigned)
+            widened_for_auto(c, declared, assigned)
         };
         match target {
             FlowTarget::Var(d) => {
                 let symbol = bound.pat_symbol[hir[d].pat.idx()];
                 if walk.reference.root != Root::Symbol(symbol) {
                     return None;
+                }
+                if !self.is_reachable(file, flow) {
+                    return Some(TypeId::UNREACHABLE_NEVER);
                 }
                 let init = hir[d].init;
                 if !walk.reference.path.is_empty() {
@@ -5562,7 +5406,7 @@ impl<'p> Checker<'p> {
                     return Some(walk.declared);
                 }
                 if is_automatic && init.is_some() {
-                    return Some(assigned_to_auto(self, walk, init));
+                    return Some(assigned_to_auto(self, walk.declared, init));
                 }
                 if init.is_none() {
                     return Some(walk.declared);
@@ -5572,12 +5416,15 @@ impl<'p> Checker<'p> {
                 if !self.is_union(walk.declared) {
                     return Some(walk.declared);
                 }
-                let assigned = self.assigned_type(walk, init);
+                let assigned = self.type_of_declaration_initializer(file, init);
                 Some(reduce(self, walk.declared, assigned))
             }
             FlowTarget::Pat(p) => {
                 if walk.reference.root != Root::Symbol(bound.pat_symbol[p.idx()]) {
                     return None;
+                }
+                if !self.is_reachable(file, flow) {
+                    return Some(TypeId::UNREACHABLE_NEVER);
                 }
                 if !walk.reference.path.is_empty() || !is_automatic && !self.is_union(walk.declared)
                 {
@@ -5616,6 +5463,9 @@ impl<'p> Checker<'p> {
                     return None;
                 }
                 if self.matches(&walk.reference, e) {
+                    if !self.is_reachable(file, flow) {
+                        return Some(TypeId::UNREACHABLE_NEVER);
+                    }
                     // `x = v`, and `x ??= v` on the path where it assigns
                     if let crate::bind::Parent::Expr(parent) = bound.expr_parent[e.idx()]
                         && let ExprKind::Assign { op: None | Some(BinOp::And | BinOp::Or | BinOp::Nullish), target, value } = hir[parent].kind
@@ -5624,7 +5474,7 @@ impl<'p> Checker<'p> {
                         && !self.is_assignment_target(file, parent)
                     {
                         if is_automatic {
-                            return Some(assigned_to_auto(self, walk, value));
+                            return Some(assigned_to_auto(self, walk.declared, value));
                         }
                         let declared = if self.is_in_compound_like_assignment(file, e) {
                             self.base_type_of_literal_type(walk.declared)
@@ -5642,7 +5492,7 @@ impl<'p> Checker<'p> {
                             self.eager.push(self.stack.len());
                             self.loop_values.push(self.stack.len());
                         }
-                        let assigned = self.assigned_type(walk, value);
+                        let assigned = self.type_of_declaration_initializer(file, value);
                         if in_loop {
                             self.loop_values.pop();
                             self.eager.pop();
@@ -5672,7 +5522,11 @@ impl<'p> Checker<'p> {
                     });
                 }
                 if self.is_proper_prefix(&walk.reference, e) {
-                    return Some(walk.declared);
+                    return Some(if self.is_reachable(file, flow) {
+                        walk.declared
+                    } else {
+                        TypeId::UNREACHABLE_NEVER
+                    });
                 }
                 None
             }
@@ -6176,7 +6030,7 @@ impl<'p> Checker<'p> {
             // `getReturnTypeFromAnnotation`: `never` by another name.
             _ => {
                 let returned = self.type_from_node(file, ret);
-                self.force(returned) == TypeId::NEVER
+                self.force(returned).is_never()
             }
         }
     }
@@ -6211,42 +6065,33 @@ impl<'p> Checker<'p> {
                 };
                 self.apply_predicate(reference, ty, predicate, hir[c].args, receiver, true)
             }
-            _ => TypeId::NEVER,
+            _ => ty,
         }
     }
 
-    /// Whether control can get to `flow`.
+    /// `isReachableFlowNode`
     pub(super) fn is_reachable(&mut self, file: FileId, flow: FlowId) -> bool {
         let mut seen: Vec<FlowId> = Vec::new();
-        self.is_reachable_inner(file, flow, false, &mut seen, &mut Vec::new())
+        let reachable = self.is_reachable_inner(file, flow, &mut seen, &mut Vec::new());
+        self.last_flow_node = (file, flow, reachable);
+        reachable
     }
 
-    /// `out_of_arrows`: it is asked for a `this`, which an arrow function has from where it is written.
+    /// `isReachableFlowNodeWorker`
     fn is_reachable_inner(
         &mut self,
         file: FileId,
         mut flow: FlowId,
-        out_of_arrows: bool,
         seen: &mut Vec<FlowId>,
         reduced: &mut Vec<(FlowId, FlowId)>,
     ) -> bool {
         let bound = self.bound(file);
         loop {
+            if (file, flow) == (self.last_flow_node.0, self.last_flow_node.1) {
+                return self.last_flow_node.2;
+            }
             match bound.flow[flow.idx()] {
                 Flow::Unreachable => return false,
-                Flow::Start { outer, arrow }
-                    if outer.is_some()
-                        && (self.reachability_crosses_functions || arrow && out_of_arrows) =>
-                {
-                    flow = outer
-                }
-                Flow::StartInvoked {
-                    outer,
-                    plain,
-                    arrow,
-                } if plain || self.reachability_crosses_functions || arrow && out_of_arrows => {
-                    flow = outer
-                }
                 Flow::Start { .. } | Flow::StartInvoked { .. } => return true,
                 Flow::Assign { before, .. }
                 | Flow::Cond { before, .. }
@@ -6283,10 +6128,7 @@ impl<'p> Checker<'p> {
                     from,
                     to,
                 } => {
-                    if from == to
-                        && !self.reachability_past_exhaustive_switches
-                        && self.is_exhaustive_switch(file, stmt)
-                    {
+                    if from == to && self.is_exhaustive_switch(file, stmt) {
                         return false;
                     }
                     flow = before;
@@ -6296,14 +6138,10 @@ impl<'p> Checker<'p> {
                     label,
                     instead,
                 } => {
+                    // "Cache is unreliable once we start adjusting labels"
+                    self.last_flow_node.1 = FlowId::NONE;
                     reduced.push((label, instead));
-                    let reachable = self.is_reachable_inner(
-                        file,
-                        before,
-                        out_of_arrows,
-                        &mut Vec::new(),
-                        reduced,
-                    );
+                    let reachable = self.is_reachable_inner(file, before, &mut Vec::new(), reduced);
                     reduced.pop();
                     return reachable;
                 }
@@ -6319,9 +6157,10 @@ impl<'p> Checker<'p> {
                         },
                         None => (start, len),
                     };
-                    return bound.edges(start, len).iter().any(|&edge| {
-                        self.is_reachable_inner(file, edge, out_of_arrows, seen, reduced)
-                    });
+                    return bound
+                        .edges(start, len)
+                        .iter()
+                        .any(|&edge| self.is_reachable_inner(file, edge, seen, reduced));
                 }
                 Flow::Loop { start, len } => match bound.edges(start, len).first() {
                     Some(&entry) if !seen.contains(&flow) => {
@@ -6338,9 +6177,7 @@ impl<'p> Checker<'p> {
     /// analyses started for it met.
     fn type_of_expr_outside_loops(&mut self, file: FileId, e: ExprId) -> TypeId {
         let loops = std::mem::take(&mut self.flow_loops);
-        let met_silent_never = self.met_loop_under_way;
         let ty = self.type_of_expr(file, e);
-        self.met_loop_under_way = met_silent_never;
         self.flow_loops = loops;
         ty
     }
@@ -6372,7 +6209,7 @@ impl<'p> Checker<'p> {
                 return facts::ALL_TYPEOF_NE & not_equal == facts::ALL_TYPEOF_NE;
             }
             // `someType` asks `never` itself, which has no facts: it has all of none.
-            if ty == TypeId::NEVER {
+            if ty.is_never() {
                 return not_equal != 0;
             }
             return !self
@@ -6396,7 +6233,7 @@ impl<'p> Checker<'p> {
             let t = self.type_of_expr(file, test);
             let t = self.regular(t);
             // `isNeitherUnitTypeNorNever`
-            if !self.is_unit(t) && t != TypeId::NEVER {
+            if !self.is_unit(t) && !t.is_never() {
                 return false;
             }
             tested.push(t);
@@ -6674,16 +6511,8 @@ impl<'p> Checker<'p> {
             return None;
         }
         // `functionHasImplicitReturn`
-        if info.end.is_some() && info.end != UNREACHABLE {
-            let crosses_functions =
-                std::mem::replace(&mut self.reachability_crosses_functions, false);
-            let past = std::mem::replace(&mut self.reachability_past_exhaustive_switches, false);
-            let falls_off_the_end = self.is_reachable(file, info.end);
-            self.reachability_crosses_functions = crosses_functions;
-            self.reachability_past_exhaustive_switches = past;
-            if falls_off_the_end {
-                return None;
-            }
+        if info.end.is_some() && info.end != UNREACHABLE && self.is_reachable(file, info.end) {
+            return None;
         }
         let returned = self.type_of_expr(file, body);
         if returned != TypeId::BOOLEAN {
@@ -6732,8 +6561,8 @@ impl<'p> Checker<'p> {
             self.walk_declared = outer;
             // `x is never` is a type guard like any other, unless that nothing is left rests on something unknown.
             if when_true == declared
-                || leftover != TypeId::NEVER
-                || when_true == TypeId::NEVER && self.uncertain
+                || !leftover.is_never()
+                || when_true.is_never() && self.uncertain
             {
                 continue;
             }
@@ -6759,24 +6588,19 @@ impl<'p> Checker<'p> {
     ) -> TypeId {
         let start = if before.is_none() {
             initial
-        } else if before == UNREACHABLE {
-            // `getTypeAtFlowNode`: of what control does not get to, the declared type is said.
-            declared
         } else {
             let mut walk = Walk::new(reference.clone(), declared, initial, false);
-            let ty = self.flow_type(&mut walk, before);
-            // Nothing is known of what comes after a call that never returns.
-            if ty == TypeId::NEVER && !self.is_reachable_by_walk(&walk, before) {
-                return declared;
-            }
+            let ty = self.flow_type(&mut walk, before).ty;
             if walk.steps >= MAX_STEPS {
                 declared
             } else {
                 ty
             }
         };
-        // `getTypeAtFlowCondition`
-        if start == TypeId::NEVER {
+        // `getTypeAtFlowCondition`, and the end of `getFlowTypeOfReferenceEx`
+        if start == TypeId::UNREACHABLE_NEVER {
+            declared
+        } else if start.is_never() {
             start
         } else {
             self.narrow(reference, start, test, sense)

@@ -978,8 +978,9 @@ impl<'p> Checker<'p> {
         Some(self.type_of_pat(file, pat))
     }
 
-    /// `getTypeOfSymbol`, of what the member `m` of a class, an interface or a type literal declares.
-    fn iso_type_of_member(&mut self, file: FileId, m: MemberId) -> TypeId {
+    /// `getTypeOfSymbol`, of what the member `m` of a class, an interface or a type literal declares: of the symbol itself, which is
+    /// not instantiated. A generic signature that is has type parameters of its own.
+    pub(super) fn iso_type_of_member(&mut self, file: FileId, m: MemberId) -> TypeId {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let holder = match bound.member_owner[m.idx()] {
             MemberOwner::Class(c) => {
@@ -1002,7 +1003,7 @@ impl<'p> Checker<'p> {
                 if let PropSource::Members(list) = &prop.source
                     && list.contains(&(file, m))
                 {
-                    return self.type_of_prop(prop, members.mapper);
+                    return self.type_of_prop(prop, MapperId::IDENTITY);
                 }
             }
         }

@@ -1056,11 +1056,7 @@ impl Unused<'_> {
             let found = match around {
                 Around::Fn(f) => Some(bound.fns[f.idx()].scope),
                 Around::Class(class) => Some(bound.class_scope[class.idx()]),
-                Around::Module(m) => bound
-                    .scopes
-                    .iter()
-                    .position(|s| s.kind == ScopeKind::Module(m))
-                    .map(|i| ScopeId(i as u32)),
+                Around::Module(m) => Some(bound.module_scope[m.idx()]).filter(|it| it.is_some()),
                 Around::Enum(_) | Around::Return(_) => None,
             };
             scope = found.unwrap_or(scope);
@@ -1145,7 +1141,11 @@ impl Unused<'_> {
                 return self.scope_of_member(MemberId(m as u32));
             }
             if let Some(m) = hir.enum_members.iter().position(|m| is_host(m.pos)) {
-                return self.scope_of_kind(ScopeKind::Enum(bound.enum_member_owner[m]));
+                let owner = bound.enum_member_owner[m];
+                return bound
+                    .enum_scope
+                    .get(owner.idx())
+                    .map_or(ScopeId::NONE, |&it| it);
             }
         }
         match hir.params.iter().position(|p| is_host(p.pos)) {
@@ -1154,21 +1154,16 @@ impl Unused<'_> {
         }
     }
 
-    fn scope_of_kind(&self, kind: ScopeKind) -> ScopeId {
-        let found = self.bound.scopes.iter().position(|s| s.kind == kind);
-        found.map_or(ScopeId::NONE, |i| ScopeId(i as u32))
-    }
-
     /// The scope of the declaration `s` is. Of another statement, that of the innermost function or namespace around it.
     fn scope_of_statement(&self, mut s: StmtId) -> ScopeId {
         let (hir, bound) = (self.hir, self.bound);
         match hir[s].kind {
             StmtKind::Fn(f) => return bound.fns[f.idx()].scope,
             StmtKind::Class(class) => return bound.class_scope[class.idx()],
-            StmtKind::Interface(id) => return self.scope_of_kind(ScopeKind::Interface(id)),
+            StmtKind::Interface(id) => return bound.interface_scope[id.idx()],
             StmtKind::TypeAlias(alias) => return bound.alias_scope[alias.idx()],
-            StmtKind::Enum(e) => return self.scope_of_kind(ScopeKind::Enum(e)),
-            StmtKind::Module(m) => return self.scope_of_kind(ScopeKind::Module(m)),
+            StmtKind::Enum(e) => return bound.enum_scope[e.idx()],
+            StmtKind::Module(m) => return bound.module_scope[m.idx()],
             _ => {}
         }
         loop {
@@ -1178,7 +1173,7 @@ impl Unused<'_> {
                     s = bound.case_stmt[case.idx()]
                 }
                 Parent::FnBody(f) => return bound.fns[f.idx()].scope,
-                Parent::Module(m) => return self.scope_of_kind(ScopeKind::Module(m)),
+                Parent::Module(m) => return bound.module_scope[m.idx()],
                 Parent::File => return ScopeId(0),
                 _ => return ScopeId::NONE,
             }
@@ -1201,7 +1196,7 @@ impl Unused<'_> {
         }
         match owner {
             MemberOwner::Class(class) => bound.class_scope[class.idx()],
-            MemberOwner::Interface(id) => self.scope_of_kind(ScopeKind::Interface(id)),
+            MemberOwner::Interface(id) => bound.interface_scope[id.idx()],
             MemberOwner::TypeLiteral(t) => bound.type_scope[t.idx()],
             MemberOwner::None => ScopeId::NONE,
         }

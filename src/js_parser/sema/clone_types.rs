@@ -197,6 +197,7 @@ impl Builder<'_> {
                     readonly,
                     optional,
                     extra_member_loc,
+                    members,
                 } = self.ts[mapped];
                 if let Some(loc) = extra_member_loc {
                     // `checkGrammarMappedType`: A mapped type may not declare properties or methods.
@@ -209,6 +210,7 @@ impl Builder<'_> {
                     ty: self.clone_type(ty),
                     readonly: mapped_modifier(readonly),
                     optional: mapped_modifier(optional),
+                    members: self.clone_members(members),
                 };
                 TypeNodeKind::Mapped(self.file.add_mapped(mapped))
             }
@@ -465,6 +467,7 @@ impl Builder<'_> {
             name,
             loc,
             start,
+            end,
             constraint,
             default,
             flags: param_flags,
@@ -473,6 +476,7 @@ impl Builder<'_> {
             name: self.atom(&name),
             pos: pos(loc),
             start: pos(start),
+            end: pos(end),
             constraint: self.clone_type(constraint),
             default: self.clone_type(default),
             flags: flags(param_flags),
@@ -506,6 +510,7 @@ impl Builder<'_> {
                     flags: param_flags,
                     modifiers,
                     loc,
+                    end,
                     ..
                 } = self.ts[param];
                 let mut param_flags = flags(param_flags);
@@ -546,6 +551,7 @@ impl Builder<'_> {
                     default: ExprId::NONE,
                     flags: param_flags,
                     pos: pos(loc),
+                    end: pos(end),
                 }
             })
             .collect();

@@ -101,7 +101,7 @@ impl Checker<'_> {
                         || self.is_deferred(given)
                             && !matches!(self.data(given), TypeData::Keyof(_))
                         || self.is_assignable(given, TypeId::OBJECT);
-                    if given == TypeId::NEVER || !is_object {
+                    if given.is_never() || !is_object {
                         let start = self.error_start_of(file, expr);
                         out.push(Diagnostic { start, code: 2407 });
                         let end = self.error_end_of(file, expr);
@@ -353,7 +353,7 @@ impl Checker<'_> {
     }
 
     fn is_nothing_but_nullish(&self, ty: TypeId) -> bool {
-        ty != TypeId::NEVER && self.every_type(ty, |_, m| m.is_null() || m.is_undefined())
+        !ty.is_never() && self.every_type(ty, |_, m| m.is_null() || m.is_undefined())
     }
 
     /// `getIndexTypeOrString`: the string keys of `ty`, or `string` if it has none.
@@ -371,7 +371,7 @@ impl Checker<'_> {
         } else {
             self.filter(keys, |c, m| c.is_string_like(m))
         };
-        if strings == TypeId::NEVER {
+        if strings.is_never() {
             TypeId::STRING
         } else {
             strings

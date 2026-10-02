@@ -106,7 +106,7 @@ impl Checker<'_> {
             let mut found: Option<Option<Place>> = None;
             for &part in self.parts(ty) {
                 let part = self.apparent_type(part);
-                if part == TypeId::NEVER || !self.is_known(part) {
+                if part.is_never() || !self.is_known(part) {
                     continue;
                 }
                 if let Some(place) = self.first_declaration_of_property(part, name, depth + 1) {

@@ -449,7 +449,7 @@ impl Checker<'_> {
                 let is_literal_key =
                     self.is_literal(key) && (self.is_string_like(key) || self.is_number_like(key));
                 // `objectType.flags&(TypeFlagsAny|TypeFlagsNever) != 0`: they have every key that is string-, number- or symbol-like.
-                if is_key_like && (apparent == TypeId::NEVER || apparent.is_any()) {
+                if is_key_like && (apparent.is_never() || apparent.is_any()) {
                     continue;
                 }
                 if is_key_like
@@ -1564,7 +1564,7 @@ impl Checker<'_> {
         }
         if self.is_key_like(key) {
             // `any` and `never` have whatever can be a key at all.
-            if self.is_any(object) || object == TypeId::NEVER {
+            if self.is_any(object) || object.is_never() {
                 return None;
             }
             let infos = self.index_signatures_of(object);
@@ -1615,6 +1615,8 @@ impl Checker<'_> {
         self.reporting_nonexistent.push((file, e, self.stack.len()));
         // How sure what is printed is says nothing about what is in error.
         let uncertain = self.uncertain;
+        // Printing is behind a barrier that no circle passes (`with_printer`). In tsgo it closes them.
+        self.resolve_as_printed(containing, 0, &mut Vec::new());
         let at = self.place_of_token(file, start);
         let missing = self.declaration_name_at(file, start);
         // The static side and what is promised are asked for a `#x` by its text, which is the name of no property.
@@ -1797,7 +1799,7 @@ impl Checker<'_> {
             }
             // `isDiscriminantWithNeverType`
             if prop.flags.contains(PropFlags::OPTIONAL)
-                || self.type_of_prop(prop, members.mapper) != TypeId::NEVER
+                || !self.type_of_prop(prop, members.mapper).is_never()
             {
                 continue;
             }
@@ -1805,7 +1807,7 @@ impl Checker<'_> {
             for part in of.iter() {
                 types.push(self.type_of_prop(part, MapperId::IDENTITY));
             }
-            if !types.contains(&TypeId::NEVER)
+            if !types.iter().any(|t| t.is_never())
                 && types.iter().any(|&t| t != types[0])
                 && types.iter().any(|&t| {
                     t == TypeId::BOOLEAN

@@ -12,9 +12,6 @@ use smallvec::{SmallVec, smallvec};
 /// The members of a union or an intersection while they are gone through.
 pub(super) type Parts = SmallVec<[TypeId; 8]>;
 
-/// The `in_progress` of `get_inferred_type`.
-type InProgress = SmallVec<[(usize, TypeId); 4]>;
-
 /// From this many pairs on `Inference::visited` is looked up by `Inference::visited_index`.
 const VISITED_INDEX_FROM: usize = 16;
 
@@ -53,6 +50,9 @@ pub(super) struct Candidate {
     pub fixed: Option<TypeId>,
     /// `...args: T`: how many arguments there are for it.
     pub implied_arity: Option<usize>,
+    /// `inferredType`: what `getInferredType` came to, until something changes that it rests on (`clearCachedInferences`). While it
+    /// is worked out: what it is before what the parameter extends is looked at.
+    inferred: std::cell::Cell<Option<TypeId>>,
 }
 
 /// `InferenceContext` and `InferenceState` in one.
@@ -150,6 +150,13 @@ impl Inference {
             own_of_source: SmallVec::new(),
             propagated: None,
             skip_intra_expression_sites: false,
+        }
+    }
+
+    /// `clearCachedInferences`
+    pub(super) fn clear_cached_inferences(&self) {
+        for c in &self.candidates {
+            c.inferred.set(None);
         }
     }
 
@@ -263,7 +270,7 @@ impl<'p> Checker<'p> {
         match self.data(target) {
             TypeData::Union(_) => {
                 // `never` is a source like any other, not a union of nothing.
-                let mut sources: Parts = if source == TypeId::NEVER {
+                let mut sources: Parts = if source.is_never() {
                     smallvec![source]
                 } else {
                     self.sorted_parts(source)
@@ -437,7 +444,7 @@ impl<'p> Checker<'p> {
             (_, TypeData::Keyof(t))
                 if source == TypeId::STRING
                     || source == TypeId::BOOLEAN
-                    || source != TypeId::NEVER && self.every_type(source, |c, m| c.is_unit(m)) =>
+                    || !source.is_never() && self.every_type(source, |c, m| c.is_unit(m)) =>
             {
                 let empty = self.empty_object_type_from_string_literal(source);
                 let saved = n.priority;
@@ -713,6 +720,7 @@ impl<'p> Checker<'p> {
             {
                 n.candidates[index].top_level = false;
             }
+            n.clear_cached_inferences();
         }
         n.inference_priority = n.inference_priority.min(n.priority as i32);
     }
@@ -2021,15 +2029,15 @@ impl<'p> Checker<'p> {
         }))
     }
 
-    /// `ObjectFlagsNonInferrableType`: `ty` is, or holds, `autoType` or a literal looked at without the functions in it that wait
-    /// for their context.
+    /// `ObjectFlagsNonInferrableType`: `ty` is, or holds, `autoType`, `silentNeverType` or a literal looked at without the functions
+    /// in it that wait for their context.
     fn is_non_inferrable(&self, ty: TypeId, depth: u32) -> bool {
         if depth > 8 {
             return false;
         }
         match self.data(ty) {
             TypeData::Synth(shape) => shape.literal == Literalness::Partial,
-            TypeData::Intrinsic(Intrinsic::Auto) => true,
+            TypeData::Intrinsic(Intrinsic::Auto | Intrinsic::SilentNever) => true,
             TypeData::Tuple { elems: list, .. }
             | TypeData::Ref { args: list, .. }
             | TypeData::Union(list)
@@ -2148,7 +2156,7 @@ impl<'p> Checker<'p> {
             limits.push(self.intersection(&others));
         }
         let limited = self.union(&limits);
-        (limited != TypeId::NEVER).then_some(limited)
+        (!limited.is_never()).then_some(limited)
     }
 
     /// `inferReverseMappedType`
@@ -2447,7 +2455,7 @@ impl<'p> Checker<'p> {
     fn literal_types_with_same_base_type(&mut self, types: &[TypeId]) -> bool {
         let mut common = None;
         for &t in types {
-            if t == TypeId::NEVER {
+            if t.is_never() {
                 continue;
             }
             let base = self.base_of_literal(t);
@@ -2615,25 +2623,25 @@ impl<'p> Checker<'p> {
 
     /// What parameter `index` is, going by what has been seen so far. Does not settle it.
     pub(super) fn inferred_type(&mut self, n: &Inference, index: usize) -> TypeId {
-        self.get_inferred_type(n, index, false, &mut InProgress::new())
+        self.get_inferred_type(n, index, false)
     }
 
     /// `getInferredType`. `is_fixed`: it is being settled, because something has to know it before everything has been seen.
-    /// `in_progress`: the parameters being worked out further out, and what they are before what they extend is looked at.
-    fn get_inferred_type(
-        &mut self,
-        n: &Inference,
-        index: usize,
-        is_fixed: bool,
-        in_progress: &mut InProgress,
-    ) -> TypeId {
+    fn get_inferred_type(&mut self, n: &Inference, index: usize, is_fixed: bool) -> TypeId {
         let c = &n.candidates[index];
         if let Some(fixed) = c.fixed {
             return fixed;
         }
-        if let Some(&(_, provisional)) = in_progress.iter().find(|p| p.0 == index) {
-            return provisional;
+        if let Some(inferred) = c.inferred.get() {
+            return inferred;
         }
+        let inferred = self.get_inferred_type_anew(n, index, is_fixed);
+        n.candidates[index].inferred.set(Some(inferred));
+        inferred
+    }
+
+    fn get_inferred_type_anew(&mut self, n: &Inference, index: usize, is_fixed: bool) -> TypeId {
+        let c = &n.candidates[index];
         let param = n.params[index];
         // What the signature was found in has been filled in. A clone knows.
         let outer = if self.is_cloned_type_param(param) {
@@ -2672,7 +2680,7 @@ impl<'p> Checker<'p> {
                     (Some(_), None) => true,
                     (None, _) => false,
                     (Some(co), Some(_)) => {
-                        co != TypeId::NEVER
+                        !co.is_never()
                             && !self.is_any(co)
                             && c.contravariant
                                 .iter()
@@ -2700,9 +2708,7 @@ impl<'p> Checker<'p> {
                         smallvec![TypeId::UNKNOWN; n.params.len() - index];
                     let backreference = self.mapper_from(&n.params[index..], &unknowns);
                     default = self.instantiate(default, backreference);
-                    in_progress.push((index, TypeId::UNKNOWN));
-                    let so_far = self.non_fixing_mapper(n, default, in_progress);
-                    in_progress.pop();
+                    let so_far = self.non_fixing_mapper(n, default);
                     default = self.instantiate(default, so_far);
                 }
                 inferred = Some(default);
@@ -2723,9 +2729,9 @@ impl<'p> Checker<'p> {
             return provisional;
         };
         let constraint = self.instantiate(constraint, outer);
-        in_progress.push((index, provisional));
-        let so_far = self.non_fixing_mapper(n, constraint, in_progress);
-        in_progress.pop();
+        // What it extends may lead back to it.
+        c.inferred.set(Some(provisional));
+        let so_far = self.non_fixing_mapper(n, constraint);
         let constraint = self.instantiate(constraint, so_far);
         if let Some(ty) = inferred
             && !self.is_inferred_assignable(n, ty, constraint)
@@ -2737,7 +2743,7 @@ impl<'p> Checker<'p> {
             } else {
                 TypeId::NEVER
             };
-            inferred = (filtered != TypeId::NEVER).then_some(filtered);
+            inferred = (!filtered.is_never()).then_some(filtered);
         }
         match inferred {
             Some(ty) => ty,
@@ -2772,22 +2778,15 @@ impl<'p> Checker<'p> {
     }
 
     /// `nonFixingMapper`, for the parameters `ty` mentions.
-    fn non_fixing_mapper(
-        &mut self,
-        n: &Inference,
-        ty: TypeId,
-        in_progress: &mut InProgress,
-    ) -> MapperId {
+    fn non_fixing_mapper(&mut self, n: &Inference, ty: TypeId) -> MapperId {
         if !self.has_type_variables(ty) {
             return MapperId::IDENTITY;
         }
         let mut pairs = Vec::new();
+        let mentioned = self.params_mentioned_in(ty, &n.params);
         for i in 0..n.params.len() {
-            if self.mentions(ty, n.params[i], 0) {
-                pairs.push((
-                    n.params[i],
-                    self.get_inferred_type(n, i, false, in_progress),
-                ));
+            if mentioned[i] {
+                pairs.push((n.params[i], self.get_inferred_type(n, i, false)));
             }
         }
         if pairs.is_empty() {
@@ -2806,79 +2805,98 @@ impl<'p> Checker<'p> {
 
     /// What `fix_params_in` settles parameter `index` on, or has settled it on.
     pub(super) fn settled_type(&mut self, n: &Inference, index: usize) -> TypeId {
-        self.get_inferred_type(n, index, true, &mut InProgress::new())
+        // Nothing is settled: what is found on the way holds only if it were.
+        n.clear_cached_inferences();
+        let settled = self.get_inferred_type(n, index, true);
+        n.clear_cached_inferences();
+        settled
     }
 
     /// Settles the parameters `ty` mentions: whatever is inferred later does not change them.
     pub(super) fn fix_params_in(&mut self, inference: &mut Inference, ty: TypeId) {
+        let mentioned = self.params_mentioned_in(ty, &inference.params);
         for i in 0..inference.params.len() {
-            if inference.candidates[i].fixed.is_none() && self.mentions(ty, inference.params[i], 0)
-            {
-                let fixed = self.get_inferred_type(inference, i, true, &mut InProgress::new());
+            if inference.candidates[i].fixed.is_none() && mentioned[i] {
+                inference.clear_cached_inferences();
+                let fixed = self.get_inferred_type(inference, i, true);
                 inference.candidates[i].fixed = Some(fixed);
             }
         }
     }
 
     /// Whether `param` occurs in `ty`, as far as can be told without resolving members.
-    pub fn mentions(&mut self, ty: TypeId, param: TypeId, depth: u32) -> bool {
-        if ty == param {
-            return true;
+    pub fn mentions(&self, ty: TypeId, param: TypeId) -> bool {
+        self.any_type_in(ty, |t| t == param)
+    }
+
+    /// `mentions`, for each of `params`, going through `ty` once.
+    fn params_mentioned_in(&self, ty: TypeId, params: &[TypeId]) -> SmallVec<[bool; 4]> {
+        let mut mentioned: SmallVec<[bool; 4]> = smallvec![false; params.len()];
+        let may_be_any = self.any_type_in(ty, |t| {
+            if let Some(i) = params.iter().position(|&p| p == t) {
+                mentioned[i] = true;
+            }
+            false
+        });
+        if may_be_any {
+            mentioned.fill(true);
         }
-        if !self.has_type_variables(ty) || depth > 8 {
-            return false;
-        }
-        match self.data(ty) {
-            TypeData::Union(l) | TypeData::Intersection(l) => {
-                l.iter().any(|&t| self.mentions(t, param, depth + 1))
+        mentioned
+    }
+
+    /// Whether `found` says yes to `ty` or to something `ty` is made of, as far as can be told without resolving members. Yes also
+    /// where that cannot be told. A type refers only to types made before it, and each is looked at once, however deep it lies.
+    fn any_type_in(&self, ty: TypeId, mut found: impl FnMut(TypeId) -> bool) -> bool {
+        let mut left: SmallVec<[TypeId; 16]> = smallvec![ty];
+        // The first few are looked up as they come.
+        let mut seen: SmallVec<[TypeId; 16]> = SmallVec::new();
+        let mut seen_later = crate::util::FxHashSet::default();
+        while let Some(ty) = left.pop() {
+            if found(ty) {
+                return true;
             }
-            TypeData::Ref { args, .. } | TypeData::LazyAlias { args, .. } => {
-                args.iter().any(|&t| self.mentions(t, param, depth + 1))
+            if !self.has_type_variables(ty) || seen.contains(&ty) {
+                continue;
             }
-            TypeData::Tuple { elems, .. } => {
-                elems.iter().any(|&t| self.mentions(t, param, depth + 1))
+            if seen.len() < seen.inline_size() {
+                seen.push(ty);
+            } else if !seen_later.insert(ty) {
+                continue;
             }
-            TypeData::Anon { mapper, .. }
-            | TypeData::Fns { mapper, .. }
-            | TypeData::Cond { mapper, .. } => self
-                .p
-                .types
-                .mapping(*mapper)
-                .iter()
-                .any(|&(_, v)| self.mentions(v, param, depth + 1)),
-            TypeData::Synth(shape) => {
-                shape.props.iter().any(|p| match p.source {
-                    PropSource::Type(t) | PropSource::Copy(t, ..) => {
-                        self.mentions(t, param, depth + 1)
+            let values = |mapper: MapperId| self.p.types.mapping(mapper).iter().map(|pair| pair.1);
+            match self.data(ty) {
+                TypeData::Union(types) | TypeData::Intersection(types) => {
+                    left.extend_from_slice(types);
+                }
+                TypeData::Ref { args, .. } | TypeData::LazyAlias { args, .. } => {
+                    left.extend_from_slice(args);
+                }
+                TypeData::Tuple { elems, .. } => left.extend_from_slice(elems),
+                TypeData::Template { types, .. } => left.extend_from_slice(types),
+                TypeData::Anon { mapper, .. }
+                | TypeData::Fns { mapper, .. }
+                | TypeData::Cond { mapper, .. } => left.extend(values(*mapper)),
+                TypeData::Synth(shape) => {
+                    if !shape.call.is_empty() {
+                        return true;
                     }
-                    _ => self
-                        .p
-                        .types
-                        .mapping(p.mapper)
-                        .iter()
-                        .any(|&(_, v)| self.mentions(v, param, depth + 1)),
-                }) || shape
-                    .index
-                    .iter()
-                    .any(|i| self.mentions(i.value, param, depth + 1))
-                    || !shape.call.is_empty()
+                    for p in &shape.props {
+                        match p.source {
+                            PropSource::Type(t) | PropSource::Copy(t, ..) => left.push(t),
+                            _ => left.extend(values(p.mapper)),
+                        }
+                    }
+                    left.extend(shape.index.iter().map(|i| i.value));
+                }
+                TypeData::IndexedAccess { obj, index, .. } => left.extend([*obj, *index]),
+                TypeData::Substitution { base, constraint } => left.extend([*base, *constraint]),
+                TypeData::ReverseMapped { source: t, .. }
+                | TypeData::Keyof(t)
+                | TypeData::StringMapping { ty: t, .. } => left.push(*t),
+                _ => {}
             }
-            TypeData::ReverseMapped { source, .. } => self.mentions(*source, param, depth + 1),
-            TypeData::IndexedAccess { obj, index, .. } => {
-                let (obj, index) = (*obj, *index);
-                self.mentions(obj, param, depth + 1) || self.mentions(index, param, depth + 1)
-            }
-            &TypeData::Substitution { base, constraint } => {
-                self.mentions(base, param, depth + 1) || self.mentions(constraint, param, depth + 1)
-            }
-            TypeData::Keyof(t) | TypeData::StringMapping { ty: t, .. } => {
-                self.mentions(*t, param, depth + 1)
-            }
-            TypeData::Template { types, .. } => {
-                types.iter().any(|&t| self.mentions(t, param, depth + 1))
-            }
-            _ => false,
         }
+        false
     }
 }
 

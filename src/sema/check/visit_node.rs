@@ -80,7 +80,7 @@ pub enum VisitedKind {
 }
 
 impl Checker<'_> {
-    /// `typeWriterWalker.visitNode` over `forEachASTNode`, in no particular order.
+    /// `typeWriterWalker.visitNode` over `forEachASTNode`.
     pub(super) fn visited_nodes(&self, file: FileId) -> Vec<VisitedNode> {
         let hir = self.hir(file);
         let mut visitor = Visitor {
@@ -96,6 +96,14 @@ impl Checker<'_> {
         visitor.type_nodes();
         // `forEachASTNode` leaves out what is reparsed from a JSDoc comment, and a comment is no child of a node.
         visitor.nodes.retain(|node| !hir.is_in_jsdoc(node.start));
+        // It goes down from the file. Of two expressions of one extent the one around the other was made later.
+        visitor.nodes.sort_by_key(|node| {
+            let made = match node.kind {
+                VisitedKind::Expression(e) => e.0,
+                _ => 0,
+            };
+            (node.start, std::cmp::Reverse((node.end, made)))
+        });
         visitor.nodes
     }
 
@@ -197,7 +205,11 @@ impl Visitor<'_, '_> {
         let namespace_end = self.c.end_of_token_before(self.file, colon);
         self.node(start, namespace_end, VisitedKind::JsxNamespacedNamePart);
         let name = self.skip_trivia(colon + 1);
-        self.node(name, end, VisitedKind::JsxNamespacedNamePart);
+        if name < end {
+            self.node(name, end, VisitedKind::JsxNamespacedNamePart);
+        } else {
+            self.missing_identifier(colon + 1, VisitedKind::JsxNamespacedNamePart);
+        }
         true
     }
 
@@ -223,12 +235,21 @@ impl Visitor<'_, '_> {
 
     /// Takes the identifiers of the entity name `names`, which is written at `start`.
     fn entity_name(&mut self, start: u32, names: IdList<Atom>, kind: impl Fn(u32) -> VisitedKind) {
+        let (mut start, mut names, mut first) = (start, names, 0);
+        // `parseEntityName`: a first name that is missing is where the dot is.
+        if names.len() > 1 && self.hir.id_at(names, 0) == known::empty {
+            self.missing_identifier(start, kind(0));
+            start = self.skip_trivia(self.skip_trivia(start) + 1);
+            names = IdList::new(names.start + 1, names.len - 1);
+            first = 1;
+        }
         let ranges = self.c.entity_name_ranges(self.file, start, names);
         // `parseRightSideOfDot`
         if let Some(&(_, end)) = ranges.last().filter(|_| ranges.len() < names.len()) {
-            self.missing_identifier(self.skip_trivia(end) + 1, kind(ranges.len() as u32));
+            let position = first + ranges.len() as u32;
+            self.missing_identifier(self.skip_trivia(end) + 1, kind(position));
         }
-        for (position, (start, end)) in (0..).zip(ranges) {
+        for (position, (start, end)) in (first..).zip(ranges) {
             self.node(start, end, kind(position));
         }
     }
@@ -302,7 +323,7 @@ impl Visitor<'_, '_> {
                     }
                 }
                 ExprKind::AsConst(operand) => {
-                    let start = if expr.pos < hir[operand].pos {
+                    let start = if expr.pos < self.c.start_of(file, operand) {
                         self.skip_trivia(expr.pos + 1)
                     } else {
                         self.token_after(self.skip_trivia(self.c.end_of_expr(file, operand)))
@@ -313,22 +334,11 @@ impl Visitor<'_, '_> {
                 }
                 ExprKind::Jsx(jsx) if bound.expr_scope.contains_key(&e) => {
                     let jsx = hir[jsx];
-                    let is_intrinsic =
-                        |tag: ExprId| tag.is_some() && matches!(hir[tag].kind, ExprKind::String(_));
-                    let mut names: Vec<(ExprId, u32)> = [jsx.tag, jsx.close_tag]
-                        .into_iter()
-                        .filter(|&tag| is_intrinsic(tag))
-                        .map(|tag| (tag, hir[tag].pos))
-                        .collect();
-                    // `</name>` that repeats the opening name is not kept in the lowered tree.
-                    if jsx.close_tag.is_none() && jsx.close_pos != u32::MAX && is_intrinsic(jsx.tag)
-                    {
-                        let slash = self.skip_trivia(jsx.close_pos + 1);
-                        if hir.text.get(slash as usize) == Some(&b'/') {
-                            names.push((jsx.tag, self.skip_trivia(slash + 1)));
+                    for tag in [jsx.tag, jsx.close_tag] {
+                        if tag.is_none() || !matches!(hir[tag].kind, ExprKind::String(_)) {
+                            continue;
                         }
-                    }
-                    for (tag, start) in names {
+                        let start = hir[tag].pos;
                         let end = jsx_tag_name_end(&hir.text, start as usize) as u32;
                         if !self.jsx_namespaced_name(start, end) {
                             self.node(start, end, VisitedKind::JsxIntrinsicTagName(e, tag));
@@ -691,7 +701,11 @@ impl Visitor<'_, '_> {
             if let ImportEqualsTarget::Entity(entity) = import.target
                 && let Some(start) = self.c.start_of_import_equals_reference(file, id)
             {
-                self.entity_name(start, entity, |at| VisitedKind::ImportEqualsName(id, at));
+                if hir.ids(entity).eq([known::empty]) {
+                    self.missing_identifier(start, VisitedKind::ImportEqualsName(id, 0));
+                } else {
+                    self.entity_name(start, entity, |at| VisitedKind::ImportEqualsName(id, at));
+                }
             }
         }
     }

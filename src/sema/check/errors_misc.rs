@@ -688,7 +688,7 @@ impl Checker<'_> {
             || !self.is_known(ty)
             || self.is_any(ty)
             || ty == TypeId::UNKNOWN
-            || ty == TypeId::NEVER
+            || ty.is_never()
         {
             return;
         }

@@ -362,8 +362,13 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                         Some(Found::Undeclared("unknown".to_owned()))
                     }
                     None => {
-                        let path: Vec<_> =
-                            names.iter().map(|&part| files.atoms.text(part)).collect();
+                        let path: Vec<_> = names
+                            .iter()
+                            .map(|&part| match part {
+                                known::empty => "unknown".into(),
+                                _ => files.atoms.text(part),
+                            })
+                            .collect();
                         Some(Found::Undeclared(path.join(".")))
                     }
                 }
@@ -885,7 +890,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
         let mut prop_set: Vec<(Prop, MapperId)> = Vec::new();
         for &part in self.c.parts(ty) {
             let part = self.c.apparent_type(part);
-            if part == TypeId::NEVER {
+            if part.is_never() {
                 continue;
             }
             let members = self.c.members(part)?;

@@ -844,7 +844,7 @@ impl<'p> Checker<'p> {
                 continue;
             };
             if prop.flags.contains(PropFlags::OPTIONAL)
-                || self.type_of_prop(prop, members.mapper) != TypeId::NEVER
+                || !self.type_of_prop(prop, members.mapper).is_never()
             {
                 continue;
             }
@@ -852,7 +852,7 @@ impl<'p> Checker<'p> {
             for part in parts.iter() {
                 list.push(self.type_of_prop(part, MapperId::IDENTITY));
             }
-            if !list.contains(&TypeId::NEVER)
+            if !list.iter().any(|t| t.is_never())
                 && list.iter().any(|&t| t != list[0])
                 && list.iter().any(|&t| {
                     t == TypeId::BOOLEAN
@@ -912,7 +912,7 @@ impl<'p> Checker<'p> {
         let mut generalized_source = source;
         let mut generalized_source_type = source_type.clone();
         // `isLiteralType`
-        if target != TypeId::NEVER
+        if !target.is_never()
             && self.every_type(source, |c, m| c.is_unit(m))
             && !self.may_have_top_level_singleton_types(target, 0)
         {
@@ -1860,7 +1860,7 @@ impl<'p> Checker<'p> {
                         None
                     };
                     let keys_do = match filtered {
-                        Some(filtered) => filtered != TypeId::NEVER,
+                        Some(filtered) => !filtered.is_never(),
                         None => self
                             .is_related_to(&mut x.r, target_keys, source_keys, REC_BOTH)
                             .holds(),

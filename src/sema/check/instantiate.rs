@@ -421,7 +421,7 @@ impl<'p> Checker<'p> {
         let is_spread = |i: usize| flags[i].contains(ElemFlags::VARIADIC);
         // `[A, ...(X | Y)]` is `[A, ...X] | [A, ...Y]`, and `[A, ...never]` is `never`.
         if let Some(i) = (0..elems.len())
-            .find(|&i| is_spread(i) && (elems[i] == TypeId::NEVER || self.is_union(elems[i])))
+            .find(|&i| is_spread(i) && (elems[i].is_never() || self.is_union(elems[i])))
         {
             // `checkCrossProductUnion`: from 100,000 on it is too complex to represent (2590), and what is spread is taken for an array.
             let size = (0..elems.len())
@@ -819,7 +819,7 @@ impl<'p> Checker<'p> {
         let own = self.hir(file)[func].type_params;
         let may_differ = !own.is_empty()
             && self.p.types.mapping(mapper).iter().any(|pair| {
-                (self.has_any_flag(pair.1) || pair.1 == TypeId::NEVER)
+                (self.has_any_flag(pair.1) || pair.1.is_never())
                     && self.is_declared_among(pair.0, file, own)
             });
         if !may_differ {

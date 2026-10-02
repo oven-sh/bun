@@ -793,7 +793,7 @@ impl Checker<'_> {
                     self.explain_to(start, end, 17019, |c| {
                         // `getNullableType`
                         let mut meant = c.type_from_node(file, ty);
-                        if meant != TypeId::NEVER && meant != TypeId::VOID {
+                        if !meant.is_never() && meant != TypeId::VOID {
                             meant = c.union(&[meant, TypeId::UNDEFINED]);
                         }
                         vec!["?".to_owned(), c.type_to_string(meant)]

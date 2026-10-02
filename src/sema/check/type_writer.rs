@@ -39,14 +39,6 @@ impl Checker<'_> {
         }
         self.rechecked_exprs.clear();
         self.rechecked_members.clear();
-        // `forEachASTNode` goes down from the file. Of two expressions of one extent the one around the other was made later.
-        results.sort_by_key(|written| {
-            let made = match written.kind {
-                VisitedKind::Expression(e) => e.0,
-                _ => 0,
-            };
-            (written.start, std::cmp::Reverse((written.end, made)))
-        });
         results
     }
 

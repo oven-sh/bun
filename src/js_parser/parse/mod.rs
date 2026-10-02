@@ -792,6 +792,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<Expr, Error> {
         let p = self;
         let mut items_list = BumpVec::<Expr>::new_in(p.arena);
+        // Where each item ends, its type and its initializer included. Only filled in when parsing for the type checker.
+        let mut item_ends: Vec<bun_ast::Loc> = Vec::new();
         let mut errors = DeferredErrors::default();
         let mut arrow_arg_errors = DeferredArrowArgErrors::default();
         let mut spread_range = bun_ast::Range::default();
@@ -999,6 +1001,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             items_list.push(item);
+            if p.keeps_type_syntax() {
+                item_ends.push(p.lexer.full_start());
+            }
 
             if p.lexer.token != T::TComma {
                 if Self::IS_TYPESCRIPT_ENABLED
@@ -1011,6 +1016,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 {
                     // `parseParameterEx`: the word was a modifier of the parameter that starts here, so this is an arrow function.
                     let _ = items_list.pop();
+                    let _ = item_ends.pop();
                     with_modifiers |= 1u32 << items_list.len().min(31);
                     opts.force_arrow_fn = true;
                     continue;
@@ -1107,6 +1113,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     &mut invalid_log,
                     is_spread,
                 );
+                if let Some(&end) = item_ends.get(i) {
+                    p.mark_type_syntax(item.loc, Mark::VariableLikeEnd, end);
+                }
                 if tuple.binding.is_none()
                     && i == 0
                     && !is_spread
@@ -2533,9 +2542,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if !value.is_missing() && p.current_scope().kind == js_ast::scope::Kind::Entry {
                 p.ts_checker_error(path.loc, 1141);
             }
-            if !value.is_missing()
-                && let Some(syntax) = &mut p.type_syntax
-            {
+            if let Some(syntax) = &mut p.type_syntax {
                 syntax.specifier_expressions.push(value);
             }
         }
@@ -3147,6 +3154,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             needs_async_loc: async_range.loc,
                             ..Default::default()
                         };
+                        p.mark_end(async_range.loc, Mark::VariableLikeEnd);
                         let arrow_body = p.parse_arrow_body_with_flags(args, &mut data, flags)?;
                         p.pop_scope();
                         return Ok(p.new_expr(arrow_body, async_range.loc));
@@ -3173,6 +3181,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     ..Default::default()
                                 });
                             p.lexer.next()?;
+                            p.mark_end(arg_loc, Mark::VariableLikeEnd);
 
                             let _ = p.push_scope_for_parse_pass(
                                 js_ast::scope::Kind::FunctionArgs,

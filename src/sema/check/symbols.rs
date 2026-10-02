@@ -74,14 +74,86 @@ impl<'p> Checker<'p> {
         let ty = self.force(ty);
         let holds = self.leave();
         if self.left_a_circle {
-            self.p.circular_symbols.insert(sym, ());
             let ty = self.type_of_circular_symbol(sym, Some(ty));
-            return self.p.symbol_types.insert(sym, ty);
+            let kept = self.p.symbol_types.insert(sym, ty);
+            // `getTypeOfAlias` reports a circle through a symbol that is only an alias at the target of the alias.
+            if self
+                .files()
+                .flags(sym)
+                .intersects(SymFlags::VARIABLE | SymFlags::PROPERTY)
+                && let Some(at) = self.place_of_export_value_declaration(sym)
+            {
+                self.report_circularity_error(at, Arg::Sym(sym), ty, false);
+            }
+            return kept;
         }
         if holds {
             self.p.symbol_types.insert(sym, ty);
         }
         ty
+    }
+
+    /// `reportCircularityError`, where `popTypeResolution` finds the circle. `at`: `symbol.ValueDeclaration`. `ty`: what
+    /// `circularity_error_type` says of it. `is_bare_parameter`: it is a parameter without an initializer.
+    pub(super) fn report_circularity_error(
+        &mut self,
+        at: (FileId, u32, u32),
+        name: Arg<'_>,
+        ty: TypeId,
+        is_bare_parameter: bool,
+    ) {
+        let code = if ty == TypeId::ERROR {
+            2502
+        } else if self.p.files.options.no_implicit_any && !is_bare_parameter {
+            7022
+        } else {
+            return;
+        };
+        let err = self.new_diagnostic(at, code, &[name]);
+        self.commit(err);
+    }
+
+    /// `report_circularity_error`, of the variable, parameter or binding element whose name is `pat`.
+    pub(super) fn report_circularity_error_of_pat(&mut self, file: FileId, pat: PatId) {
+        let hir = self.hir(file);
+        let PatKind::Ident(name) = hir[pat].kind else {
+            return;
+        };
+        // `GetErrorRangeForNode`: a parameter is not pointed at by its name, but from where it starts, modifiers and `...` included.
+        let (is_bare_parameter, start, end) = match self.bound(file).pat_parent[pat.idx()] {
+            PatParent::Param(p) => (
+                hir[p].default.is_none(),
+                hir[p].pos,
+                self.end_of_param(file, p),
+            ),
+            _ => (
+                false,
+                hir[pat].pos,
+                self.end_of_token_at(file, hir[pat].pos),
+            ),
+        };
+        let ty = circularity_error_type(self.type_annotation_of_pat(file, pat));
+        self.report_circularity_error((file, start, end), Arg::Atom(name), ty, is_bare_parameter);
+    }
+
+    /// `symbol.ValueDeclaration` of `export default e`, `export = e`, `module.exports = e` and `exports.a = e`. None of them has a
+    /// name, so an error starts where the declaration starts.
+    fn place_of_export_value_declaration(&self, sym: Sym) -> Option<(FileId, u32, u32)> {
+        let (file, symbol) = (sym.file, self.files().symbol(sym));
+        match symbol.decls.first() {
+            Some(&Decl::ExportExpr(stmt)) => {
+                Some((file, self.hir(file)[stmt].pos, self.end_of_stmt(file, stmt)))
+            }
+            Some(&(Decl::ModuleExports(_) | Decl::ExportsProperty(_))) => {
+                let assignment = self.commonjs_value_declaration(file, symbol)?;
+                Some((
+                    file,
+                    self.start_inside_parentheses(file, assignment),
+                    self.end_inside_parentheses(file, assignment),
+                ))
+            }
+            _ => None,
+        }
     }
 
     /// The type of `sym` when the resolution of its type depends on itself. `resolved`: what it came to, if `popTypeResolution` found
@@ -1220,6 +1292,7 @@ impl<'p> Checker<'p> {
             self.p.circular_pats.insert((file, pat), ());
             let ty = circularity_error_type(self.type_annotation_of_pat(file, pat));
             self.p.pat_types.set(file, pat.idx(), ty);
+            self.report_circularity_error_of_pat(file, pat);
             return ty;
         }
         // `getTypeOfVariableOrParameterOrProperty`: what was settled meanwhile stands. Whoever asked is told what this came to.
@@ -1799,7 +1872,7 @@ impl<'p> Checker<'p> {
             ty
         };
         // `never` cannot be gone through, which is an error: anything. Yet it passes for a list, and `never[0]` is `never`.
-        if apparent == TypeId::NEVER {
+        if apparent.is_never() {
             return if rest {
                 self.array_of(TypeId::ANY)
             } else {
@@ -1876,7 +1949,7 @@ impl<'p> Checker<'p> {
             return TypeId::UNRESOLVED;
         }
         let ty = self.filter(ty, |_, m| !m.is_null() && !m.is_undefined());
-        if ty == TypeId::NEVER {
+        if ty.is_never() {
             return TypeId::EMPTY_OBJECT;
         }
         if self.is_union(ty) {
@@ -1901,7 +1974,7 @@ impl<'p> Checker<'p> {
                     continue;
                 };
                 let is_omitted = omitted.contains(&prop.name)
-                    || omitted_keys != TypeId::NEVER && self.is_assignable(key, omitted_keys);
+                    || !omitted_keys.is_never() && self.is_assignable(key, omitted_keys);
                 if !is_omitted && self.is_spreadable_property(prop) {
                     kept.push(i);
                 } else {
@@ -1923,7 +1996,7 @@ impl<'p> Checker<'p> {
             keys.push(omitted_keys);
             keys.extend(left_out);
             let keys = self.union(&keys);
-            if keys == TypeId::NEVER {
+            if keys.is_never() {
                 return ty;
             }
             let Some(omit) = self.global_type_symbol(known::Omit) else {
@@ -2513,7 +2586,7 @@ impl<'p> Checker<'p> {
                     if is_async {
                         ty = self.awaited(ty);
                     }
-                    if ty == TypeId::NEVER {
+                    if ty.is_never() {
                         returns_never = true;
                     }
                     ty = self.regular_in_const_context(file, e, ty);
@@ -2966,8 +3039,7 @@ impl<'p> Checker<'p> {
                 || self.relation_gave_up
                 || self.relation_too_complex
                 || self.relation_too_deep
-                || self.union_too_complex
-                || self.met_loop_under_way)
+                || self.union_too_complex)
             && self.reliability == 0
             && awaited.is_none_or(|awaited| self.is_known(awaited))
         {
@@ -3069,7 +3141,7 @@ impl<'p> Checker<'p> {
     /// `allTypesAssignableToKind(getBaseConstraintOrType(ty), TypeFlagsPrimitive | TypeFlagsNever)`
     fn is_all_primitive_or_never(&mut self, ty: TypeId) -> bool {
         let base = self.base_constraint_of(ty).unwrap_or(ty);
-        base == TypeId::NEVER
+        base.is_never()
             || self.every_type(base, |c, m| match c.data(m) {
                 // `string & { tag: 1 }` is a string.
                 TypeData::Intersection(parts) => parts.iter().any(|&p| c.is_primitive(p)),
@@ -3216,7 +3288,7 @@ impl<'p> Checker<'p> {
         if self.is_any(ty) {
             return Some(ty);
         }
-        if ty == TypeId::NEVER {
+        if ty.is_never() {
             return None;
         }
         let iterable_exists = self.global_type_of_arity(known::Iterable, 3).is_some();
@@ -3229,7 +3301,7 @@ impl<'p> Checker<'p> {
         // Without `Iterable` there are strings, and what is like an array. Strings are for `for..of` alone
         // (`IterationUseAllowsStringInputFlag`), but who asks is not told apart here.
         let arrays = self.filter(ty, |c, m| !c.is_string_like(m));
-        if arrays == TypeId::NEVER {
+        if arrays.is_never() {
             return Some(TypeId::STRING);
         }
         let has_string = arrays != ty;
@@ -3822,7 +3894,7 @@ impl<'p> Checker<'p> {
                 .map_or(TypeId::FALSE, |found| found.0);
             c.is_assignable(done, declared)
         });
-        if results == TypeId::NEVER {
+        if results.is_never() {
             None
         } else {
             self.declared_property(results, known::value)

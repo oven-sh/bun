@@ -783,6 +783,13 @@ impl<'p> Checker<'p> {
             callee = self.non_nullable(callee);
         }
         callee = self.non_null_type(callee);
+        // `silentNeverSignature`
+        if callee == TypeId::SILENT_NEVER {
+            return ResolvedCall {
+                sig: None,
+                ret: callee,
+            };
+        }
         let apparent = self.apparent_type(callee);
         if self.is_error_type(apparent) {
             return self.resolve_error_call(file, data.args);
@@ -1103,13 +1110,16 @@ impl<'p> Checker<'p> {
         let mut taken: List<'p, SigParam> = List::default();
         let mut is_const_left_out = false;
         for &sig in &sigs {
+            // `chooseOverload` goes on to the next candidate on all three before it has looked at an argument.
             let takes_type_args = type_args.is_empty() || {
                 let type_params = self.sig_type_params(sig);
                 self.has_correct_type_argument_arity(&type_params, type_args.len())
             };
             if takes_type_args {
                 let params = self.sig_params(sig);
-                if self.has_correct_arity(s, &params) {
+                if self.has_correct_arity(s, &params)
+                    && (type_args.is_empty() || self.do_type_arguments_fit(sig, type_args))
+                {
                     candidates.push(sig);
                     taken = params;
                     continue;
@@ -1177,16 +1187,14 @@ impl<'p> Checker<'p> {
             sig: Some(sig),
             ret,
         };
-        // `chooseOverload` rejects a candidate before it holds the arguments against it: `checkTypeArguments`, and `hasCorrectArity`
-        // once more where a generic rest parameter has been instantiated. `choose_overload_among` has seen to both.
-        if !is_tested
-            && (!type_args.is_empty() && !self.do_type_arguments_fit(first, type_args) || {
-                let (declared_params, instantiated_params) =
-                    (self.sig_params(first), self.sig_params(sig));
-                self.non_array_rest_type(&declared_params).is_some()
-                    && !self.has_correct_arity(s, &instantiated_params)
-            })
-        {
+        // `chooseOverload` rejects a candidate before it holds the arguments against it: `hasCorrectArity` once more where a generic
+        // rest parameter has been instantiated. `choose_overload_among` has seen to it.
+        if !is_tested && {
+            let (declared_params, instantiated_params) =
+                (self.sig_params(first), self.sig_params(sig));
+            self.non_array_rest_type(&declared_params).is_some()
+                && !self.has_correct_arity(s, &instantiated_params)
+        } {
             self.pending_failed_call = Some(sig);
         }
         // For a single signature, `getCandidateForOverloadFailure` returns a different signature only if the type arguments are
@@ -2005,7 +2013,7 @@ impl<'p> Checker<'p> {
         node: InstantiationExpression,
     ) -> TypeId {
         let ty = self.force(ty);
-        if self.is_any(ty) {
+        if self.is_any(ty) || ty == TypeId::SILENT_NEVER {
             return ty;
         }
         match self.data(ty).clone() {
@@ -2659,7 +2667,7 @@ impl<'p> Checker<'p> {
         if target == type_param {
             return true;
         }
-        if depth > 4 || !self.mentions(target, type_param, 0) {
+        if depth > 4 || !self.mentions(target, type_param) {
             return false;
         }
         if let TypeData::Union(parts)
@@ -3984,7 +3992,7 @@ impl<'p> Checker<'p> {
             {
                 return true;
             }
-            if self.is_primitive(part) || part == TypeId::NEVER {
+            if self.is_primitive(part) || part.is_never() {
                 return false;
             }
             if !is_function {
@@ -4584,6 +4592,7 @@ impl<'p> Checker<'p> {
                 && inference.candidates[i].fixed.is_none()
             {
                 inference.candidates[i].fixed = Some(ty);
+                inference.clear_cached_inferences();
             }
         }
     }
@@ -4620,6 +4629,7 @@ impl<'p> Checker<'p> {
                 c.covariant.retain(|t| !self.has_any_flag(*t));
                 c.contravariant.retain(|t| !self.has_any_flag(*t));
             }
+            from_result.clear_cached_inferences();
         }
         self.mapper_of_result_inference(type_params, &from_result)
     }
@@ -4926,6 +4936,7 @@ impl<'p> Checker<'p> {
                 }
             }
             let any_default = std::mem::replace(&mut inference.any_default, false);
+            inference.clear_cached_inferences();
             from_result = self.return_mapper(
                 file,
                 call,
@@ -4938,6 +4949,7 @@ impl<'p> Checker<'p> {
                 inferred_from.map(|source| (source, &inference)),
             );
             inference.any_default = any_default;
+            inference.clear_cached_inferences();
         }
         self.candidate_holes.extend(own_holes);
         // `getNonArrayRestType`: what a rest parameter that is no plain array collects is inferred from all together.
@@ -5356,7 +5368,7 @@ impl<'p> Checker<'p> {
                                         let bound = self.instantiate(constraint, so_far);
                                         // `isLiteralOfContextualType` reads the base constraint of a type parameter, so a primitive
                                         // bound adds nothing, and substituting it would widen the literals in the argument.
-                                        if !type_params.iter().any(|&q| self.mentions(bound, q, 0))
+                                        if !type_params.iter().any(|&q| self.mentions(bound, q))
                                             && !self.every_type(bound, |c, t| c.is_primitive(t))
                                         {
                                             bounds.push((p, bound));
@@ -7442,10 +7454,10 @@ impl<'p> Checker<'p> {
                 let returned = self.sig_return(expected);
                 let (mut says_something, mut overlaps) = (false, false);
                 for &(param, known) in self.p.types.mapping(so_far) {
-                    let is_taken = wanted.iter().any(|p| self.mentions(p.ty, param, 0));
+                    let is_taken = wanted.iter().any(|p| self.mentions(p.ty, param));
                     says_something |= is_taken;
-                    overlaps |= known != TypeId::UNRESOLVED
-                        && (is_taken || self.mentions(returned, param, 0));
+                    overlaps |=
+                        known != TypeId::UNRESOLVED && (is_taken || self.mentions(returned, param));
                 }
                 if says_something && !overlaps {
                     return ty;
@@ -7467,7 +7479,7 @@ impl<'p> Checker<'p> {
         let failing_that = self.resolving[at].outer_return_mapper;
         let mut settled: Vec<(TypeId, TypeId)> = Vec::new();
         for &(param, known) in self.p.types.mapping(so_far) {
-            if !looked_at.iter().any(|&part| self.mentions(part, param, 0)) {
+            if !looked_at.iter().any(|&part| self.mentions(part, param)) {
                 continue;
             }
             let known = if known != TypeId::UNRESOLVED {
@@ -9217,7 +9229,7 @@ impl<'p> Checker<'p> {
                 && other.fixed.is_none()
                 && other.covariant.is_empty()
                 && other.contravariant.is_empty()
-                && self.mentions(constraint, inference.params[j], 0)
+                && self.mentions(constraint, inference.params[j])
         })
     }
 
@@ -9382,11 +9394,12 @@ impl<'p> Checker<'p> {
                     // `InferencePriorityReturnType`: the literal as a whole may have a better candidate, and `returnMapper` fixes nothing.
                     && c.priority & PRIORITY_RETURN == 0
                     && !self.parts(param).contains(&inference.params[i])
-                    && self.mentions(param, inference.params[i], 0)
+                    && self.mentions(param, inference.params[i])
                     && !self.has_open_constraint(inference, i)
                 {
                     let fixed = self.inferred_type(inference, i);
                     inference.candidates[i].fixed = Some(fixed);
+                    inference.clear_cached_inferences();
                 }
             }
         } else {
@@ -9444,7 +9457,7 @@ impl<'p> Checker<'p> {
             let p = inference.params[i];
             if let Some(fixed) = inference.candidates[i].fixed {
                 pairs.push((p, fixed));
-            } else if open.iter().any(|&ty| self.mentions(ty, p, 0)) {
+            } else if open.iter().any(|&ty| self.mentions(ty, p)) {
                 // `nonFixingMapper`, for what is taken. What only the result mentions stays as it is.
                 pairs.push((p, self.inferred_type(inference, i)));
             }

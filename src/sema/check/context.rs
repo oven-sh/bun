@@ -1002,7 +1002,7 @@ impl<'p> Checker<'p> {
                     self.cond_piece(t, 2),
                     self.cond_piece(t, 3),
                 );
-                if self.reduced(yes) != TypeId::NEVER
+                if !self.reduced(yes).is_never()
                     || self.actual_type_variable(no) != self.actual_type_variable(check)
                 {
                     return false;
@@ -1235,8 +1235,7 @@ impl<'p> Checker<'p> {
             && !(self.uncertain
                 || self.relation_gave_up
                 || self.relation_too_complex
-                || self.union_too_complex
-                || self.met_loop_under_way)
+                || self.union_too_complex)
             && self.reliability == 0
             // What is under way is passed over in silence, or taken for what it is so far, by whoever comes upon it meanwhile.
             && self.instantiation_depth == 0
@@ -1427,13 +1426,11 @@ impl<'p> Checker<'p> {
         let types = self.parts(context);
         let mut include: SmallVec<[u8; 16]> = SmallVec::with_capacity(types.len());
         for &t in types {
-            include.push(
-                if !self.is_primitive(t) && self.reduced(t) != TypeId::NEVER {
-                    IN
-                } else {
-                    OUT
-                },
-            );
+            include.push(if !self.is_primitive(t) && !self.reduced(t).is_never() {
+                IN
+            } else {
+                OUT
+            });
         }
         for &(name, given) in items {
             // Those that do not match go only if some do: a discriminant that is wrong rules nothing out.
@@ -1445,7 +1442,7 @@ impl<'p> Checker<'p> {
                 let Some(wanted) = self.discriminant_type_in(t, name) else {
                     continue;
                 };
-                if given == TypeId::NEVER
+                if given.is_never()
                     || self
                         .parts(given)
                         .iter()
@@ -2212,7 +2209,7 @@ impl<'p> Checker<'p> {
         for (index, p) in hir[func].params.iter().enumerate() {
             if hir[p].ty.is_none()
                 && let Some(ty) = self.contextual_param_type(file, func, index)
-                && self.mentions(ty, param, 0)
+                && self.mentions(ty, param)
             {
                 return true;
             }

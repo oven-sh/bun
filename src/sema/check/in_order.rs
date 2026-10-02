@@ -207,6 +207,11 @@ impl Checker<'_> {
     /// `checkTypeAliasDeclaration`
     fn check_type_alias_declaration(&mut self, file: FileId, alias: AliasId) {
         let decl = &self.hir(file)[alias];
+        // `getTypeFromTypeAliasReference`: a reference to the alias in its own declaration starts with `getDeclaredTypeOfTypeAlias`.
+        let symbol = self.bound(file).alias_symbol[alias.idx()];
+        if symbol.is_some() {
+            self.declared_type(self.files().sym(file, symbol));
+        }
         self.check_type_parameters(file, decl.type_params);
         self.check_type_node(file, decl.ty);
     }
@@ -274,6 +279,7 @@ impl Checker<'_> {
             }
             // `checkTupleType`, `checkNamedTupleMember`
             TypeNodeKind::Tuple(elems) => {
+                self.check_tuple_type(file, node, elems);
                 for elem in elems.iter() {
                     self.check_type_node(file, hir[elem].ty);
                 }
@@ -312,7 +318,7 @@ impl Checker<'_> {
             TypeNodeKind::IndexedAccess { obj, index } => {
                 self.check_type_node(file, obj);
                 self.check_type_node(file, index);
-                self.type_from_node(file, node);
+                self.check_indexed_access_type(file, node, obj, index);
             }
             // `checkMappedType`
             TypeNodeKind::Mapped(mapped) => {
@@ -524,8 +530,14 @@ impl Checker<'_> {
             | ExprKind::Spread(x)
             | ExprKind::Await(x)
             | ExprKind::AsConst(x)
-            | ExprKind::NonNull(x)
-            | ExprKind::ImportCall(x, _) => self.check_expression(file, x),
+            | ExprKind::NonNull(x) => self.check_expression(file, x),
+            // `checkImportCallExpression`
+            ExprKind::ImportCall(specifier, others) => {
+                self.check_expression(file, specifier);
+                for x in hir.ids(others) {
+                    self.check_expression(file, x);
+                }
+            }
             // `checkAssertion`
             ExprKind::As { expr, ty } => {
                 self.check_expression(file, expr);

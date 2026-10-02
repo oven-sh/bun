@@ -630,8 +630,8 @@ pub struct Prop {
 pub struct Jsx {
     /// The name in the opening tag. `NONE` for a fragment. An intrinsic element's is a `String`.
     pub tag: ExprId,
-    /// The name in `</tag>`, an expression of its own. `NONE` for `<tag />`, a fragment, and an intrinsic name that repeats the
-    /// opening one. A missing expression where the closing tag is missed. After a syntax error the two names may differ.
+    /// `TagName` of the `JsxClosingElement`. `NONE` for `<tag />` and for a fragment. A missing expression where the name or the
+    /// whole tag is missed. After a syntax error the two names may differ.
     pub close_tag: ExprId,
     pub attrs: Span<PropId>,
     pub children: IdList<ExprId>,
@@ -877,6 +877,8 @@ pub struct Param {
     pub flags: Flags,
     /// Where it starts, modifiers and `...` included.
     pub pos: u32,
+    /// `node.End()`. 0 where the parser did not say.
+    pub end: u32,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -885,6 +887,8 @@ pub struct TypeParam {
     pub pos: u32,
     /// Where its first token is: a modifier, or `pos`.
     pub start: u32,
+    /// `node.End()`
+    pub end: u32,
     pub constraint: TypeNodeId,
     pub default: TypeNodeId,
     pub flags: Flags,
@@ -1156,6 +1160,8 @@ pub struct Mapped {
     pub ty: TypeNodeId,
     pub readonly: MappedModifier,
     pub optional: MappedModifier,
+    /// The members after `[K in T]: X`, which are an error and which the checker never looks at.
+    pub members: Span<MemberId>,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -1395,6 +1401,12 @@ pub struct File {
     pub with_bodies: Few<(u32, u32)>,
     /// The start of each token that follows a token the parser skipped in a list (`abortParsingListOrMoveToNextToken`). Sorted.
     pub after_skipped: Few<u32>,
+    /// `node.End()` of an expression, by `ExprId`, where the parser said it: of those it finished after the first syntax error of the
+    /// file. 0, or past the end of the list: it did not, and the end is worked out from the parts of the expression (check/spans.rs),
+    /// which is exact where nothing was recovered from. Empty in a file that parses.
+    /// This is NOT tsgo's data model, where every node has an `end`, and that is on purpose: an `end` on every expression is paid by
+    /// every program, and only recovery needs it.
+    pub expr_ends: Vec<u32>,
     /// The array and object literals whose closing bracket the parser missed: where they open, and where they end, which is where the
     /// last token they took does (`finishNode`). Sorted.
     pub unclosed_literals: Few<(u32, u32)>,
@@ -1533,6 +1545,13 @@ arenas! {
 }
 
 impl File {
+    #[inline]
+    pub fn set_expr_end(&mut self, e: ExprId, end: u32) {
+        if self.expr_ends.len() <= e.idx() {
+            self.expr_ends.resize(e.idx() + 1, 0);
+        }
+        self.expr_ends[e.idx()] = end;
+    }
     #[inline]
     pub fn expr(&mut self, kind: ExprKind, pos: u32) -> ExprId {
         self.add_expr_node(Expr { kind, pos })

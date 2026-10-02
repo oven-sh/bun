@@ -34,6 +34,12 @@ pub enum Intrinsic {
     Auto,
     Unknown,
     Never,
+    /// `silentNeverType`: the `never` that a reference is narrowed to from the incomplete type of a loop that is being analysed.
+    /// It has `TypeFlagsNever`, and what is done to it is `silentNeverType` again and reports nothing.
+    SilentNever,
+    /// `unreachableNeverType`: what control flow analysis has for a reference past an assignment control does not get to, or past
+    /// a call that never returns. It has `TypeFlagsNever`. `getFlowTypeOfReference` turns it into the declared type.
+    UnreachableNever,
     Void,
     Undefined,
     /// The `undefined` of a property or an element that is not there. `missingType`
@@ -1083,6 +1089,8 @@ well_known! {
     // `markerSuperTypeForCheck`, `markerSubTypeForCheck`: `checkTypeParameterDeferred` verifies an `in` / `out` annotation with these.
     MARKER_SUPER_FOR_CHECK = TypeData::Marker(3),
     MARKER_SUB_FOR_CHECK = TypeData::Marker(4),
+    SILENT_NEVER = TypeData::Intrinsic(Intrinsic::SilentNever),
+    UNREACHABLE_NEVER = TypeData::Intrinsic(Intrinsic::UnreachableNever),
     AUTO = TypeData::Intrinsic(Intrinsic::Auto),
     ERROR = TypeData::Intrinsic(Intrinsic::Error),
 }
@@ -1109,6 +1117,15 @@ impl TypeId {
     #[inline]
     pub fn is_any(self) -> bool {
         self == TypeId::ANY || self == TypeId::ERROR || self == TypeId::AUTO
+    }
+
+    /// `TypeFlagsNever`: `neverType`, `silentNeverType` or `unreachableNeverType`.
+    #[inline]
+    pub fn is_never(self) -> bool {
+        matches!(
+            self,
+            TypeId::NEVER | TypeId::SILENT_NEVER | TypeId::UNREACHABLE_NEVER
+        )
     }
 
     /// `TypeFlagsUndefined`
@@ -1266,7 +1283,9 @@ impl TypeStore {
         let record = self.record(id);
         match &record.made.0 {
             TypeData::Union(members) => members,
-            TypeData::Intrinsic(Intrinsic::Never) => &[],
+            TypeData::Intrinsic(
+                Intrinsic::Never | Intrinsic::SilentNever | Intrinsic::UnreachableNever,
+            ) => &[],
             _ => std::slice::from_ref(&record.id),
         }
     }

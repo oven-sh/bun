@@ -549,9 +549,6 @@ impl Checker<'_> {
         } else {
             Vec::new()
         };
-        if has(TUPLE) {
-            self.check_tuple_type_nodes(file, out);
-        }
         self.check_instantiated_tuple_sizes(file, out);
         if has(TEMPLATE | TUPLE | INTERSECTION) {
             self.check_size_of_cross_products(file, out);
@@ -571,9 +568,6 @@ impl Checker<'_> {
         }
         self.check_intrinsic_aliases(file, out);
         self.check_keys_of_index_signatures(file, out);
-        if has(INDEXED_ACCESS) {
-            self.check_indexed_access_type_nodes(file, out);
-        }
         if has(TYPEOF) {
             self.check_instantiated_type_queries(file, out);
         }
@@ -592,79 +586,68 @@ impl Checker<'_> {
     // ───────────────────────────── tuple types ─────────────────────────────
 
     /// `checkTupleType`: 2574, 1265 1266 1257. And 2799, which `TupleNormalizer.normalize` says when the type is made.
-    fn check_tuple_type_nodes(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let is_silent = has_parse_diagnostics(hir);
-        for t in 0..hir.types.len() {
-            let TypeNodeKind::Tuple(elems) = hir.types[t].kind else {
+    pub(super) fn check_tuple_type(
+        &mut self,
+        file: FileId,
+        node: TypeNodeId,
+        elems: Span<TupleElemId>,
+    ) {
+        let hir = self.hir(file);
+        // The text of the default library is not kept.
+        if hir.text.is_empty() {
+            return;
+        }
+        let (mut seen_optional, mut seen_rest) = (false, false);
+        for e in elems.iter() {
+            let elem = &hir[e];
+            let mut flags = tuple_element_flags(hir, elem);
+            if flags.contains(ElemFlags::VARIADIC) {
+                let ty = self.type_from_node(file, elem.ty);
+                let mut ty = self.force(ty);
+                // `...T?`: `T?` is `T` or null.
+                if elem.optional && self.p.files.options.strict_null_checks {
+                    ty = self.union(&[ty, TypeId::NULL]);
+                }
+                // What a type parameter can be spread as goes by what it extends.
+                let apparent = self.apparent_type(ty);
+                if !self.is_known(ty) || !self.is_known(apparent) {
+                    break;
+                }
+                let fits = self.answer_if_sure(|c| c.can_be_spread_in_a_tuple(ty));
+                if fits != Some(true) {
+                    if fits == Some(false) {
+                        let start = start_of_tuple_element(hir, elem);
+                        self.error((file, start, self.end_of_tuple_elem(file, e)), 2574, &[]);
+                    }
+                    break;
+                }
+                if self.is_array(ty)
+                    || matches!(self.data(ty), TypeData::Tuple { flags, .. } if flags.iter().any(|f| f.contains(ElemFlags::REST)))
+                {
+                    flags |= ElemFlags::REST;
+                }
+            }
+            let code = if flags.contains(ElemFlags::REST) {
+                if !std::mem::replace(&mut seen_rest, true) {
+                    continue;
+                }
+                1265
+            } else if flags.contains(ElemFlags::OPTIONAL) {
+                seen_optional = true;
+                if !seen_rest {
+                    continue;
+                }
+                1266
+            } else if flags.contains(ElemFlags::REQUIRED) && seen_optional {
+                1257
+            } else {
                 continue;
             };
-            if bound.is_unchecked_type(t) {
-                continue;
-            }
-            let (mut seen_optional, mut seen_rest) = (false, false);
-            for e in elems.iter() {
-                let elem = &hir[e];
-                let start = || start_of_tuple_element(hir, elem);
-                let mut flags = tuple_element_flags(hir, elem);
-                if flags.contains(ElemFlags::VARIADIC) {
-                    let ty = self.type_from_node(file, elem.ty);
-                    let mut ty = self.force(ty);
-                    // `...T?`: `T?` is `T` or null.
-                    if elem.optional && self.p.files.options.strict_null_checks {
-                        ty = self.union(&[ty, TypeId::NULL]);
-                    }
-                    // What a type parameter can be spread as goes by what it extends.
-                    let apparent = self.apparent_type(ty);
-                    if !self.is_known(ty) || !self.is_known(apparent) {
-                        break;
-                    }
-                    let fits = self.answer_if_sure(|c| c.can_be_spread_in_a_tuple(ty));
-                    if fits != Some(true) {
-                        if fits == Some(false) {
-                            out.push(Diagnostic {
-                                start: start(),
-                                code: 2574,
-                            });
-                            let end = self.end_of_tuple_elem(file, e);
-                            self.explain_to(start(), end, 2574, |_| vec![]);
-                        }
-                        break;
-                    }
-                    if self.is_array(ty)
-                        || matches!(self.data(ty), TypeData::Tuple { flags, .. } if flags.iter().any(|f| f.contains(ElemFlags::REST)))
-                    {
-                        flags |= ElemFlags::REST;
-                    }
-                }
-                let code = if flags.contains(ElemFlags::REST) {
-                    if !std::mem::replace(&mut seen_rest, true) {
-                        continue;
-                    }
-                    1265
-                } else if flags.contains(ElemFlags::OPTIONAL) {
-                    seen_optional = true;
-                    if !seen_rest {
-                        continue;
-                    }
-                    1266
-                } else if flags.contains(ElemFlags::REQUIRED) && seen_optional {
-                    1257
-                } else {
-                    continue;
-                };
-                if !is_silent {
-                    out.push(Diagnostic {
-                        start: start(),
-                        code,
-                    });
-                    let end = self.end_of_tuple_elem(file, e);
-                    self.explain_to(start(), end, code, |_| vec![]);
-                }
-                break;
-            }
-            self.check_size_of_tuple_type(file, TypeNodeId(t as u32), elems, out);
+            let start = start_of_tuple_element(hir, elem);
+            self.grammar_error_on_node((file, start, self.end_of_tuple_elem(file, e)), code, &[]);
+            break;
         }
+        self.check_size_of_tuple_type(file, node, elems);
     }
 
     /// `isArrayLikeType`
@@ -682,7 +665,6 @@ impl Checker<'_> {
         file: FileId,
         node: TypeNodeId,
         elems: Span<TupleElemId>,
-        out: &mut Vec<Diagnostic>,
     ) {
         let hir = self.hir(file);
         if !elems.iter().any(|e| is_variadic_element(hir, &hir[e])) {
@@ -703,12 +685,8 @@ impl Checker<'_> {
                 {
                     spread = elems.len();
                     if spread + count >= 10_000 {
-                        out.push(Diagnostic {
-                            start: hir[node].pos,
-                            code: 2799,
-                        });
                         let end = self.end_of_type_node(file, node);
-                        self.explain_to(hir[node].pos, end, 2799, |_| vec![]);
+                        self.error((file, hir[node].pos, end), 2799, &[]);
                         return;
                     }
                 }
@@ -920,7 +898,7 @@ impl Checker<'_> {
         for node in nodes {
             let ty = self.type_from_node(file, node);
             let ty = self.force(ty);
-            if !self.is_known(ty) || ty == TypeId::NEVER {
+            if !self.is_known(ty) || ty.is_never() {
                 return 0;
             }
             // `addTypeToIntersection` adds a repeated type once.
@@ -1551,7 +1529,7 @@ impl Checker<'_> {
                 .parts(keys)
                 .iter()
                 .all(|&t| self.can_be_the_key_of_an_index_signature(t))
-                || keys == TypeId::NEVER
+                || keys.is_never()
             {
                 out.push(Diagnostic {
                     start: name,
@@ -2227,53 +2205,45 @@ impl Checker<'_> {
     // ───────────────────────────── `T[K]`, `a[k]` ─────────────────────────────
 
     /// `checkIndexedAccessType`: 2536 4105. And 2514, which `getPropertyTypeForIndexType` says.
-    fn check_indexed_access_type_nodes(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        for t in 0..hir.types.len() {
-            let TypeNodeKind::IndexedAccess { obj, index } = hir.types[t].kind else {
-                continue;
-            };
-            if bound.is_unchecked_type(t) {
-                continue;
-            }
-            let (object, keys) = (
-                self.type_from_node(file, obj),
-                self.type_from_node(file, index),
-            );
-            // `shouldDeferIndexedAccessType`: written as a type, what waits for its type parameters is not looked into.
-            if !self.is_generic_object_type(object)
-                && self.is_negative_index_of_a_tuple(object, keys)
-            {
-                let start = start_of_type(hir, index);
-                out.push(Diagnostic { start, code: 2514 });
-                let end = self.end_of_type_node_from(file, index, start);
-                self.explain_to(start, end, 2514, |_| vec![]);
-            }
-            // `getTypeFromIndexedAccessTypeNode`, which comes before `getConditionalFlowTypeOfType`.
-            let whole = self.type_from_node(file, TypeNodeId(t as u32));
-            let whole = match *self.data(whole) {
-                TypeData::Substitution { base, .. } => base,
-                _ => whole,
-            };
-            let TypeData::IndexedAccess {
-                obj: waiting,
-                index: key,
-                ..
-            } = *self.data(whole)
-            else {
-                continue;
-            };
-            let Some(code) = self.why_not_a_key_of(waiting, key) else {
-                continue;
-            };
-            out.push(Diagnostic {
-                start: hir.types[t].pos,
-                code,
-            });
-            let end = self.end_of_type_node(file, TypeNodeId(t as u32));
-            self.explain_to(hir.types[t].pos, end, code, |c| {
-                arguments_of_refused_key(c, code, waiting, key)
-            });
+    pub(super) fn check_indexed_access_type(
+        &mut self,
+        file: FileId,
+        node: TypeNodeId,
+        obj: TypeNodeId,
+        index: TypeNodeId,
+    ) {
+        let hir = self.hir(file);
+        // The text of the default library is not kept.
+        if hir.text.is_empty() {
+            return;
+        }
+        let (object, keys) = (
+            self.type_from_node(file, obj),
+            self.type_from_node(file, index),
+        );
+        // `shouldDeferIndexedAccessType`: written as a type, what waits for its type parameters is not looked into.
+        if !self.is_generic_object_type(object) && self.is_negative_index_of_a_tuple(object, keys) {
+            let start = start_of_type(hir, index);
+            let end = self.end_of_type_node_from(file, index, start);
+            self.error((file, start, end), 2514, &[]);
+        }
+        // `getTypeFromIndexedAccessTypeNode`, which comes before `getConditionalFlowTypeOfType`.
+        let whole = self.type_from_node(file, node);
+        let whole = match *self.data(whole) {
+            TypeData::Substitution { base, .. } => base,
+            _ => whole,
+        };
+        if let TypeData::IndexedAccess {
+            obj: waiting,
+            index: key,
+            ..
+        } = *self.data(whole)
+            && let Some(code) = self.why_not_a_key_of(waiting, key)
+        {
+            let args = arguments_of_refused_key(self, code, waiting, key);
+            let args: Vec<Arg> = args.iter().map(|arg| Arg::Text(arg)).collect();
+            let end = self.end_of_type_node(file, node);
+            self.error((file, hir[node].pos, end), code, &args);
         }
     }
 
@@ -2471,7 +2441,7 @@ impl Checker<'_> {
             let object = self.non_null_type(object);
             if !self.is_known(object)
                 || self.is_any(object)
-                || object == TypeId::NEVER
+                || object.is_never()
                 || object == TypeId::UNKNOWN
             {
                 continue;
@@ -2558,7 +2528,7 @@ impl Checker<'_> {
         }
         let apparent = self.apparent_type(object);
         let apparent = self.reduced(apparent);
-        if !self.is_known(apparent) || self.is_any(apparent) || apparent == TypeId::NEVER {
+        if !self.is_known(apparent) || self.is_any(apparent) || apparent.is_never() {
             return false;
         }
         let Some(members) = self.members(apparent) else {

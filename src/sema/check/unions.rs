@@ -141,7 +141,9 @@ impl<'p> Checker<'p> {
                 Intrinsic::BigInt => tf::BIGINT,
                 Intrinsic::Symbol => tf::ES_SYMBOL,
                 Intrinsic::Object => tf::NON_PRIMITIVE,
-                Intrinsic::Never => tf::NEVER,
+                Intrinsic::Never | Intrinsic::SilentNever | Intrinsic::UnreachableNever => {
+                    tf::NEVER
+                }
             },
             TypeData::StringLit { .. } => tf::STRING_LITERAL,
             TypeData::NumberLit { .. } => tf::NUMBER_LITERAL,
@@ -180,7 +182,9 @@ impl<'p> Checker<'p> {
     fn add_to_union(&self, out: &mut Flat, ty: TypeId) {
         match self.data(ty) {
             TypeData::Union(members) => out.extend_from_slice(members),
-            TypeData::Intrinsic(Intrinsic::Never) => {}
+            TypeData::Intrinsic(
+                Intrinsic::Never | Intrinsic::SilentNever | Intrinsic::UnreachableNever,
+            ) => {}
             // `TypeFlagsAny`: the union is `anyType`.
             TypeData::Intrinsic(Intrinsic::Auto) => out.push(TypeId::ANY),
             _ => out.push(ty),
@@ -200,7 +204,16 @@ impl<'p> Checker<'p> {
             [] => return TypeId::NEVER,
             [one] => return one,
             // `addTypeToUnion` sets `TypeFlagsIncludesError`: only a list of one type is returned as it is.
-            [a, b] if a == b && !self.is_error_type(a) && a != TypeId::AUTO => return a,
+            [a, b]
+                if a == b
+                    && !self.is_error_type(a)
+                    && !matches!(
+                        a,
+                        TypeId::AUTO | TypeId::SILENT_NEVER | TypeId::UNREACHABLE_NEVER
+                    ) =>
+            {
+                return a;
+            }
             [a, b] if merge_constrained => Some(if a < b { (a, b) } else { (b, a) }),
             _ => None,
         };
@@ -796,7 +809,9 @@ impl<'p> Checker<'p> {
                     }
                 }
             }
-            TypeData::Intrinsic(Intrinsic::Never) => ty,
+            TypeData::Intrinsic(
+                Intrinsic::Never | Intrinsic::SilentNever | Intrinsic::UnreachableNever,
+            ) => ty,
             _ => {
                 if keep(self, ty) {
                     ty
@@ -854,7 +869,9 @@ impl<'p> Checker<'p> {
                     self.union(&mapped)
                 }
             }
-            TypeData::Intrinsic(Intrinsic::Never) => ty,
+            TypeData::Intrinsic(
+                Intrinsic::Never | Intrinsic::SilentNever | Intrinsic::UnreachableNever,
+            ) => ty,
             _ => f(self, ty),
         }
     }
@@ -1023,7 +1040,12 @@ impl<'p> Checker<'p> {
         let mut set: Vec<TypeId> = Vec::with_capacity(types.len());
         let includes = self.add_types_to_intersection(&mut set, 0, types);
         if includes & tf::NEVER != 0 {
-            return (TypeId::NEVER, false);
+            let never = if set.contains(&TypeId::SILENT_NEVER) {
+                TypeId::SILENT_NEVER
+            } else {
+                TypeId::NEVER
+            };
+            return (never, false);
         }
         if includes & tf::INCLUDES_UNRESOLVED != 0 {
             return (TypeId::UNRESOLVED, false);
@@ -1213,7 +1235,7 @@ impl<'p> Checker<'p> {
                 }
             }
             let one = self.intersection_ex(&constituents, no_constraint_reduction);
-            if one != TypeId::NEVER {
+            if !one.is_never() {
                 intersections.push(one);
             }
         }

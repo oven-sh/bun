@@ -1022,7 +1022,9 @@ impl<'p> Printer<'_, 'p> {
                         ("any", 3)
                     }
                     Intrinsic::Unknown => ("unknown", 0),
-                    Intrinsic::Never => ("never", 5),
+                    Intrinsic::Never | Intrinsic::SilentNever | Intrinsic::UnreachableNever => {
+                        ("never", 5)
+                    }
                     Intrinsic::Void => ("void", 4),
                     Intrinsic::Undefined | Intrinsic::Missing | Intrinsic::UndefinedDeclared => {
                         ("undefined", 9)

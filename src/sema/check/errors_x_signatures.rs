@@ -21,7 +21,7 @@
 
 use super::errors::Diagnostic;
 use super::*;
-use crate::bind::{Decl, FnOwner, MemberDeclaration, MemberOwner, Parent, ScopeKind, SymbolId};
+use crate::bind::{Decl, FnOwner, MemberDeclaration, MemberOwner, Parent, SymbolId};
 use crate::resolve::ScriptTarget;
 use crate::util::FxHashSet;
 use smallvec::SmallVec;
@@ -2300,7 +2300,7 @@ impl Checker<'_> {
             return args.first().copied();
         }
         // What is not an object is not taken for a promise, whatever it has.
-        if t == TypeId::NEVER || self.is_primitive(t) {
+        if t.is_never() || self.is_primitive(t) {
             return None;
         }
         let then = self.type_of_then(t)?;
@@ -2398,7 +2398,7 @@ impl Checker<'_> {
             return is_there;
         }
         // `isThenableType`
-        if t != TypeId::NEVER
+        if !t.is_never()
             && !self.is_primitive(t)
             && let Some(then) = self.type_of_then(t)
         {
@@ -2973,10 +2973,7 @@ impl Checker<'_> {
         let scope = if block.module.is_none() {
             0
         } else {
-            bound
-                .scopes
-                .iter()
-                .position(|s| s.kind == ScopeKind::Module(block.module))?
+            bound.module_scope[block.module.idx()].idx()
         };
         let symbol = bound.lookup(bound.scopes.get(scope)?.locals, name)?;
         let target = self

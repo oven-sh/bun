@@ -89,6 +89,8 @@ pub(crate) struct TypeParameter {
     pub(crate) modifiers: Vec<(Flags, u32)>,
     /// `[T=Default]`
     pub(crate) default: Option<TypeExpr>,
+    /// `node.End()`
+    pub(crate) end: u32,
 }
 
 /// `JSDocTemplateTag`
@@ -1850,6 +1852,7 @@ impl<'p, 'a> Reader<'p, 'a> {
             name,
             modifiers,
             default,
+            end: self.full_start() as u32,
         })
     }
 

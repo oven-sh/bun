@@ -959,7 +959,7 @@ impl Pass<'_, '_> {
         let mut ty = finalize(self.type_at(&mut walk, flow, 0));
         if is_in_non_null {
             let is_nothing_but_nullish = match ty {
-                Abs::Is(t) => t != TypeId::NEVER && self.c.every_type(t, |c, m| c.is_nullish(m)),
+                Abs::Is(t) => !t.is_never() && self.c.every_type(t, |c, m| c.is_nullish(m)),
                 Abs::Other | Abs::Unknown => return,
                 _ => false,
             };
@@ -1156,7 +1156,7 @@ impl Pass<'_, '_> {
                             Some(predicate) if predicate.asserts => {
                                 pending.push(Pending::Assert(call))
                             }
-                            _ if self.c.sig_return(sig) == TypeId::NEVER => {
+                            _ if self.c.sig_return(sig).is_never() => {
                                 break Abs::UnreachableNever;
                             }
                             _ => {}
@@ -1300,7 +1300,7 @@ impl Pass<'_, '_> {
             return Abs::Other;
         }
         let assigned = self.c.widen_literal(assigned);
-        if assigned == TypeId::NEVER {
+        if assigned.is_never() {
             return Abs::Never;
         }
         if w.declared == Abs::AutoArray {
@@ -1369,7 +1369,7 @@ impl Pass<'_, '_> {
             if !self.c.is_known(element) {
                 return Abs::Unknown;
             }
-            if element != TypeId::NEVER {
+            if !element.is_never() {
                 ty = Abs::Evolving;
             }
         }
@@ -1625,7 +1625,7 @@ impl Pass<'_, '_> {
         }
         match self.c.sig_decl(sig) {
             Some((file, func, _)) if self.c.hir(file)[func].ret.is_some() => {
-                self.c.sig_return(sig) == TypeId::NEVER
+                self.c.sig_return(sig).is_never()
             }
             _ => false,
         }
@@ -2289,7 +2289,7 @@ impl Pass<'_, '_> {
         }
         if ty == Abs::Auto {
             return match sense {
-                true if candidate == TypeId::NEVER => Abs::Never,
+                true if candidate.is_never() => Abs::Never,
                 true => Abs::Is(candidate),
                 false => ty,
             };
@@ -3487,7 +3487,7 @@ impl Pass<'_, '_> {
         }
         // What may be left out is put together with what was there.
         let ty = self.c.type_of_prop(&prop, mapper);
-        self.c.remove_missing_or_undefined_type(ty) != TypeId::NEVER
+        !self.c.remove_missing_or_undefined_type(ty).is_never()
     }
 
     fn widening_of_object(&mut self, props: Span<PropId>) -> Widening {
@@ -3513,7 +3513,7 @@ impl Pass<'_, '_> {
                 }
                 // Nothing that could be spread: an error, and what is in error has nothing to widen.
                 let truthy = self.c.remove_definitely_falsy(ty);
-                if truthy == TypeId::NEVER {
+                if truthy.is_never() {
                     return Widening::No;
                 }
                 let mut parts = self.c.parts(truthy).to_vec();

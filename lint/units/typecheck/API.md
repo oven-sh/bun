@@ -1641,3 +1641,145 @@ At `f1f0123b19`, 61 callees, called by their upstream names with upstream's para
   `add_intra_expression_inference_site(context, node, t)`, `is_skip_direct_inference_node(node)`, and the free
   functions `new_inference_info(c, type_parameter)`, `has_inference_candidates(c, info)`,
   `has_overlapping_inferences(c, a, b)`.
+
+## Checker: utilities (`checker/utilities.rs`)
+
+Commit `6349fc8157` (written by the job that commits the worktree). `checker/utilities.go` whole (layer UTIL): its
+150 functions in upstream order, the types it declares (`AssignmentKind`, `AssignmentTarget`, `orderedSet`,
+`FeatureMapEntry`, `DiagnosticDetails`) and the feature map. PORT_STATUS.md has the row.
+
+NOT compiled by cargo: `checker/mod.rs` still names modules without a file. "Verified" below says what was checked
+instead.
+
+### How a caller writes the calls
+
+- A function that reads the tree takes the tree context first and then upstream's parameters in upstream's order:
+  `has_dot_dot_dot_token(a, node)`, `get_assignment_target_kind(a, node) -> AssignmentKind`,
+  `get_super_container(a, node, stop_on_functions)`, `get_selected_modifier_flags(a, node, flags)`,
+  `range_of_type_parameters(a, source_file, type_parameters: NodeListId) -> TextRange`. A symbol is read through the
+  same context: `is_known_symbol(a, symbol)`, `is_private_identifier_symbol(a, symbol)`,
+  `get_declaration_modifier_flags_from_symbol(a, s)` and `get_declaration_modifier_flags_from_symbol_ex(a, s,
+  is_write)`, `has_export_assignment_symbol(a, module_symbol)`, `all_declarations_in_same_source_file(a, symbol)`,
+  `is_external_module_symbol(a, module_symbol)`.
+- A function that reads a type takes the checker as `&Checker<'_>`, so the `self` of a `&mut self` method fits:
+  `is_type_any(c, t)`, `is_object_literal_type(c, t)`, `is_object_or_array_literal_type(c, t)`,
+  `is_this_type_parameter(c, t)`, `is_type_usable_as_property_name(c, t)`, `get_property_name_from_type(c, t)`,
+  `contains_non_missing_undefined_type(c, t)`, `get_non_rest_parameter_count(c, sig)`. The order of types is
+  `compare_types(c, t1, t2) -> isize`, with `compare_type_lists(c, &[TypeId], &[TypeId])`,
+  `compare_type_mappers(c, m1, m2)`, `compare_type_names(c, t1, t2)`, `get_sort_order_flags(c, t)`,
+  `get_type_name_symbol(c, t)`, `get_object_type_name(c, t)` and `compare_tuple_types(c, t1, t2)`, whose two types
+  are the tuple targets that hold the `TupleType` data; `compare_element_labels(a, n1, n2)` reads two nodes.
+- A function of a name or of a token takes it alone: `is_late_bound_name(name)`, `is_reserved_member_name(name)`,
+  `is_numeric_literal_name(name)`, `is_infinity_or_nan_string(name)`, `is_valid_number_string(s, round_trip_only)`,
+  `is_valid_big_int_string(s, round_trip_only)`, the 16 operator classes (`is_binary_operator(kind)`),
+  `token_is_identifier_or_keyword(token)`.
+- Methods of the checker, as upstream has them. `&mut self`: `is_optional_parameter(node)`,
+  `is_constant_variable(symbol)`, `get_packages_map()`, `types_package_exists(name)`, `package_bundles_types(name)`,
+  `is_js_literal_type(t)`. `&self`: `sort_symbols(&mut [SymbolId])`, `compare_symbols_worker(s1, s2) -> isize`,
+  `compare_nodes(n1, n2) -> isize`, `is_parameter_or_mutable_local_variable(symbol)`,
+  `is_mutable_local_variable_declaration(declaration)`, `call_like_expression_may_have_type_arguments(node)`,
+  `is_canceled()`, `check_not_canceled()`, `is_unchecked_js_suggestion(node, suggestion, exclude_classes)`.
+- `NewDiagnosticForNode` and `NewDiagnosticChainForNode` are methods too, because a diagnostic is made in the store of
+  the checker: `new_diagnostic_for_node(node, message, args: &[Arg<'_>]) -> DiagnosticId` and
+  `new_diagnostic_chain_for_node(chain: DiagnosticId, node, message, args)`.
+- A text result is a new text, `Vec<u8>`: `entity_name_to_string(a, name)`, `get_property_name_from_type(c, t)`,
+  `try_get_property_access_or_identifier_to_string(a, expr)` (empty for upstream's `""`),
+  `value_to_string(&LiteralValue)`, `pseudo_big_int_to_string(value)`. The last takes the value or a reference to it.
+- Lists: `get_members_of_declaration(a, node) -> List<'a, NodeId>` (the list of the node, nil for another kind),
+  `get_declarations_of_kind(a, symbol, kind) -> Vec<NodeId>`, `symbols_to_array(a, table) -> Vec<SymbolId>`,
+  `create_symbol_table(a, &[SymbolId]) -> SymbolTableId` (nil for no symbol),
+  `get_index_symbol_from_symbol_table(a, table) -> SymbolId`.
+- A callback is `impl FnMut`, so a closure and a `&mut` closure both fit: `find_in_map(a, table, |symbol| ..)` (the
+  one map that upstream searches this way is a symbol table), `for_each_yield_expression(a, body, |expr| ..) -> bool`,
+  `min_and_max(slice: &[T], |value| ..) -> (isize, isize)`.
+- `AssignmentKind::{NONE, DEFINITE, COMPOUND}`, and `AssignmentTarget` is `NodeId`.
+- `get_feature_map().get(name) -> Option<&'static [FeatureMapEntry]>` is `getFeatureMap()[name]` with its ok. An
+  entry has `lib: &'static [u8]` and `props: &'static [&'static [u8]]`.
+- `create_module_not_found_chain(program, file, module_reference, mode, package_name)` and
+  `create_mode_mismatch_details(a, program, file)` answer `DiagnosticDetails { message, args: Vec<Vec<u8>> }`.
+- `OrderedSet<T>` is upstream's `orderedSet`: the fields `values` and `values_by_key`, the methods `contains(value)`
+  and `add(value)`, and `OrderedSet::default()` for the zero value. It is `crate::checker::OrderedSet`;
+  `crate::collections::OrderedSet` is the type of `internal/collections`, and a file names the one it imports.
+- `skip_alias(symbol, checker)` keeps upstream's parameter order.
+
+### Differences from upstream
+
+- `sort_symbols` runs Go's `slices.SortFunc`: the pattern-defeating quicksort of `slices/zsortanyfunc.go`, statement
+  for statement, in the private module `slices` at the end of the file. A symbol gets its id at the first call of
+  `ast.GetSymbolId`, and the last resort of `compare_symbols_worker` asks for the id of its first argument first, so
+  the sequence of the comparisons decides the order of two symbols without declaration that have one name. The
+  module is the text of `importer/javascript/tree.rs` 537-873 (`mod tree` is private to the importer), with
+  `pub(super)` on `sort_func`.
+- `compare_types`: the test of 425-427 for types of two checkers has no counterpart, because a type id belongs to
+  one checker.
+- Stack tests. `compare_types`, as its first statement: the fault is recorded and the answer is the order of the type
+  ids, which is upstream's last resort. `compare_type_mappers` (0) and `is_js_literal_type` (false). Three walks of
+  the tree test through the context, as `ast/utilities.rs` does: `get_alias_declaration_from_name` (the nil node),
+  `for_each_yield_expression` (false for the subtree), `try_get_property_access_or_identifier_to_string` (the empty
+  text).
+- Panics are faults with a fallback where the function has a sink: 107 (`a.unhandled` with the kind, `NONE`), 895
+  (`c.fail`, the empty text), 1665 (`c.fail`). The type assertions of 516, 521, 525 and 889-891 are the three value
+  functions of `c42_literal_types.rs` (`get_string_literal_value` and its two neighbours), which record a value of
+  another kind. Two places have no sink, because the function gets neither the tree context nor the checker: 1707
+  (`value_to_string` of the nil value answers the empty text) and the panic of `jsnum.ParsePseudoBigInt` inside 958
+  (`is_valid_big_int_string` then answers false for the round trip). `debug.Assert` of 314 is `assert`.
+- `is_canceled` answers false: the checker has no `ctx` (`c02_program_checker.rs`: "a check is not canceled").
+- `cmp.Compare` of two numbers and `slices.Compare` of two lists of strings are the private `compare_numbers` and
+  `compare_texts`. The targets of an array mapper are read into a vector for `compare_type_lists`: a mapper can hold
+  a list that is still written (`Targets::Live`).
+- `findInMap` and `symbolsToArray` visit a symbol table in insertion order, where the order of a Go map is random.
+- `getPackagesMap` fills the map through `Program::for_each_resolved_module`, and `CreateModuleNotFoundChain` asks
+  `Program::get_packages_map_entry` twice where upstream reads the map of the program once.
+- `is_jsdoc_optional_parameter(_node)` answers false, which is upstream's whole body (292).
+- The feature map is a constant table in upstream's order of writing, and `FeatureMap::get` walks it; upstream builds
+  a Go map once.
+- `is_optional_parameter` reads `get_effective_call_arguments(iife).as_slice().len()`, which fits a `Vec` and a
+  `List`.
+- The two comments of upstream that name work to do (292, 304) are not carried over.
+
+### Verified
+
+No compiler has seen the file, and nothing ran a function of it. What was checked:
+
+- `rustfmt --check --edition 2024`: exit 0 (the file parses and is formatted; the table of the feature map is under
+  `#[rustfmt::skip]`, one entry a line as upstream writes it).
+- `python3 round2-layer7-checker/utilities-check.py`, which reads the file beside `utilities.go` and beside the tree
+  (exit 0 on the tree of `bb8a0745fd`, where the file is the one of `6349fc8157`): the 150 functions have
+  upstream's names in upstream's order; each of the 166 imported names is used and no free function is called
+  without an import; no two comment lines are adjacent; no `unwrap`, `expect`, `panic`, `todo`, `unimplemented`,
+  `unreachable` or `unsafe`; the 423 strings of the feature map are those of `utilities.go` 1294-1552 in order (the
+  table was written by a script from that text); the 359 calls that `checker/`, `evaluator/` and `modulespecifiers/`
+  make into the `pub` functions of the file have their number of arguments; 711 calls that the file makes have the
+  number of arguments of a definition of the tree.
+- The 63 names that the look-ahead of round 8 lists as imported from `crate::checker` are `pub` items at column 0,
+  and the 6 methods it lists as called are methods of the checker. `round2-layer7-checker/globs.py --names` prints
+  none of them under G, and no name of the file under C (a `pub` name of two globbed modules).
+- Read at their definitions, name, parameter order and result: the accessors and predicates of `ast/` that the file
+  calls (`reader.rs`, `node_methods.rs`, `symbol.rs`, `utilities.rs`, the generated casts), `DiagnosticStore`,
+  `get_error_range_for_node`, `get_text_of_node`, `skip_trivia`, `is_intrinsic_jsx_name` and the `Scanner`,
+  `get_container_flags`, `escape_string`, the functions of `jsnum/`, `module/util.rs`, `tspath/`, `core/core.rs` and
+  `stringutil`, and of `checker/`: the fields of `Checker`, `Records`, the casts and the type records (`types.rs`),
+  `TypeMapper` and `Targets` (`mapper.rs`), `Program` (`c02`), `get_signature_from_declaration` (`c33`),
+  `get_min_argument_count_ex` (`relater.rs`), `get_declaration_node_flags_from_symbol` (`c31`),
+  `get_resolved_base_constraint` (`c45`), `signature_has_rest_parameter` (`c28`), the value functions of `c42`.
+- The places where the consumers use a result were read for its type: the nine of `get_property_name_from_type`,
+  `get_declarations_of_kind` (`.is_empty()` and `.as_slice()`), `get_members_of_declaration` (`.as_slice()`),
+  `compare_types` as the comparer of `binary_search_func`, `sort_stable_func` and the spelling suggestion (`isize`),
+  `details.message` and `details.args.iter()` of `c24`.
+- Not checked: types and borrows (no compiler), clippy, and any result against upstream's code. The module `slices`
+  has no test here; its text is tested in the importer (`sort_func_leaves_the_order_of_go`).
+
+### What this file expects and the tree does not have
+
+At `bb8a0745fd`:
+
+- Two methods of the checker, called by their upstream names: `get_aliased_symbol(symbol) -> SymbolId` (32294, the
+  range of `c52`, which has no file) and `get_effective_call_arguments(node)` (30165, the range of `c49`, whose file
+  does not have it). The third that the file of `6349fc8157` waited for is there: `compare_symbols(s1, s2) -> isize`
+  on `&self` (the closure field of checker.go 918) is `c03_init.rs` 372 and calls `compare_symbols_worker`.
+- `crate::core::Map` as the contract has it (`make`, `is_nil`, `get`, `get_ok`, `set` with its `bool`), and
+  covariant in its key: `types_package_exists` looks a local text up in the `Map<Text<'a>, bool>` of the checker, as
+  `c33` 282 does in `string_literal_types`.
+
+What waits in other files: `c43_unions_intersections.rs` keeps the type set of an intersection in a `Vec<TypeId>`
+where checker.go 26180 has an `orderedSet`.

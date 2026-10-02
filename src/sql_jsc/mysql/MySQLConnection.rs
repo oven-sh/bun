@@ -86,6 +86,8 @@ pub struct MySQLConnection {
     ssl_mode: SSLMode,
     allow_public_key_retrieval: bool,
     flags: ConnectionFlags,
+    /// Request `CLIENT_FOUND_ROWS` during handshake (mysql2 / mariadb default).
+    found_rows: bool,
 }
 
 impl Default for MySQLConnection {
@@ -118,6 +120,7 @@ impl Default for MySQLConnection {
             ssl_mode: SSLMode::Disable,
             allow_public_key_retrieval: false,
             flags: ConnectionFlags::default(),
+            found_rows: true,
         }
     }
 }
@@ -135,6 +138,7 @@ impl MySQLConnection {
         secure: Option<OwnedSslCtx>,
         ssl_mode: SSLMode,
         allow_public_key_retrieval: bool,
+        found_rows: bool,
     ) -> Self {
         Self {
             database,
@@ -153,6 +157,7 @@ impl MySQLConnection {
                 TLSStatus::None
             },
             character_set: CharacterSet::default(),
+            found_rows,
             ..Default::default()
         }
     }
@@ -621,11 +626,12 @@ impl MySQLConnection {
         // server's advertised capabilities. This ensures features like CLIENT_DEPRECATE_EOF
         // are only used when the server actually supports them (critical for MySQL-compatible
         // databases like StarRocks, TiDB, SingleStore, etc.).
-        self.capabilities = Capabilities::get_default_capabilities(
+        let mut requested = Capabilities::get_default_capabilities(
             self.ssl_mode != SSLMode::Disable,
             !self.database.is_empty(),
-        )
-        .intersect(handshake.capability_flags);
+        );
+        requested.CLIENT_FOUND_ROWS = self.found_rows;
+        self.capabilities = requested.intersect(handshake.capability_flags);
         self.mariadb_capabilities = MariaDBCapabilities::get_default_capabilities()
             .intersect(handshake.mariadb_capability_flags);
 

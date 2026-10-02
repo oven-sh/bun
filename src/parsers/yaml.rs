@@ -3421,25 +3421,27 @@ pub(crate) enum AliasCheck {
     Budget,
     Unlimited,
     RejectAll,
-    Count(AliasCounter),
+    Count(Box<AliasCounter>),
 }
 
 impl AliasCheck {
     fn new(max_alias_count: Option<f64>) -> Self {
         match max_alias_count {
             None => AliasCheck::Budget,
-            Some(limit) if limit == 0.0 => AliasCheck::RejectAll,
-            Some(limit) if limit > 0.0 && limit.is_finite() => AliasCheck::Count(AliasCounter {
-                limit,
-                anchors: Vec::new(),
-                events: Vec::new(),
-                alias_at: bun_collections::HashMap::default(),
-                starts: Vec::new(),
-                closed_start: 0,
-                deferred: false,
-                holds: 0,
-                held_from: 0,
-            }),
+            Some(0.0) => AliasCheck::RejectAll,
+            Some(limit) if limit > 0.0 && limit.is_finite() => {
+                AliasCheck::Count(Box::new(AliasCounter {
+                    limit,
+                    anchors: Vec::new(),
+                    events: Vec::new(),
+                    alias_at: bun_collections::HashMap::default(),
+                    starts: Vec::new(),
+                    closed_start: 0,
+                    deferred: false,
+                    holds: 0,
+                    held_from: 0,
+                }))
+            }
             // Negative or NaN turns the check off there; Infinity is never exceeded.
             Some(_) => AliasCheck::Unlimited,
         }

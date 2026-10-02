@@ -4784,6 +4784,141 @@ it("a paused socket with a backpressured write still closes when its peer resets
   expect(error?.code).toBe("ECONNRESET");
 });
 
+// A graceful close of a TLS socket (end(), Symbol.dispose) sends close_notify and keeps the fd
+// until it has read the peer's reply (the peer's own close_notify, or its FIN). end() also
+// detaches the socket, so a resume() after it does nothing. A socket that was paused at that point
+// kept its reads off for good: it never saw the reply, never reported `close`, and held its fd for
+// the life of the process.
+describe.concurrent("tls socket that is paused when its graceful close starts", () => {
+  const ENDINGS = {
+    "end()": (socket: Socket) => void socket.end(),
+    "[Symbol.dispose]()": (socket: Socket) => socket[Symbol.dispose](),
+  };
+
+  describe.each([
+    ["end()", "end"],
+    ["end()", "close"],
+    ["[Symbol.dispose]()", "end"],
+  ] as const)("pause() then %s, peer answers with %s()", (ending, answer) => {
+    it("reads the peer's reply and closes", async () => {
+      const closed = Promise.withResolvers<void>();
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls,
+        socket: {
+          data(socket) {
+            socket.write("pong");
+            socket.pause();
+            ENDINGS[ending](socket);
+          },
+          close() {
+            closed.resolve();
+          },
+        },
+      });
+
+      const peerClosed = Promise.withResolvers<void>();
+      await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        tls: { ca: tls.cert },
+        socket: {
+          handshake(socket, success, authorizationError) {
+            if (success) socket.write("ping");
+            else peerClosed.reject(authorizationError ?? new Error("client handshake failed"));
+          },
+          // end() replies with close_notify and a FIN, close() with the FIN alone.
+          data: socket => void socket[answer](),
+          error: (_socket, error) => peerClosed.reject(error),
+          connectError: (_socket, error) => peerClosed.reject(error),
+          close: () => peerClosed.resolve(),
+        },
+      });
+      await peerClosed.promise;
+      await closed.promise;
+    });
+  });
+
+  it("pause() then end() on the connecting side closes", async () => {
+    const closed = Promise.withResolvers<void>();
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls,
+      socket: {
+        data: socket => void socket.write("pong"),
+      },
+    });
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      tls: { ca: tls.cert },
+      socket: {
+        handshake(socket, success, authorizationError) {
+          if (success) socket.write("ping");
+          else closed.reject(authorizationError ?? new Error("client handshake failed"));
+        },
+        data(socket) {
+          socket.pause();
+          socket.end();
+        },
+        error: (_socket, error) => closed.reject(error),
+        connectError: (_socket, error) => closed.reject(error),
+        close: () => closed.resolve(),
+      },
+    });
+    await closed.promise;
+  });
+
+  // The close first waits for ciphertext that the kernel did not take. The peer reads all of it,
+  // then answers the close_notify behind it.
+  it("pause() then end() behind unsent ciphertext closes, and the peer gets every byte", async () => {
+    const chunk = Buffer.alloc(64 * 1024, "x");
+    let sent = 0;
+    const closed = Promise.withResolvers<void>();
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls,
+      socket: {
+        data(socket) {
+          socket.pause();
+          // The peer cannot read before this callback returns, so the writes end in a short one.
+          for (let wrote = chunk.length; wrote === chunk.length; sent += wrote) wrote = socket.write(chunk);
+          socket.end();
+        },
+        close() {
+          closed.resolve();
+        },
+      },
+    });
+
+    let received = 0;
+    const peerClosed = Promise.withResolvers<void>();
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      tls: { ca: tls.cert },
+      socket: {
+        handshake(socket, success, authorizationError) {
+          if (success) socket.write("ping");
+          else peerClosed.reject(authorizationError ?? new Error("client handshake failed"));
+        },
+        data(_socket, data) {
+          received += data.length;
+        },
+        error: (_socket, error) => peerClosed.reject(error),
+        connectError: (_socket, error) => peerClosed.reject(error),
+        close: () => peerClosed.resolve(),
+      },
+    });
+    await Promise.all([closed.promise, peerClosed.promise]);
+    expect(sent).toBeGreaterThan(chunk.length);
+    expect(received).toBe(sent);
+  });
+});
+
 // A close that the event loop initiated passes the read error to close(). usockets
 // reports that error in the platform's own numbering (an errno on POSIX, a WSA code
 // such as WSAECONNRESET = 10054 on Windows) and on_close has to map it: unmapped, a

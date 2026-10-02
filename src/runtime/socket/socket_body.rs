@@ -1369,6 +1369,11 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         self.socket.set(SocketHandler::<SSL>::DETACHED);
         self.detach_native_callback();
+        // usockets lifts the pause of a TLS socket that it keeps open to
+        // finish a graceful close. The close below can free `self`.
+        if code == uws::CloseCode::Normal {
+            self.update_flags(|f| f.remove(Flags::IS_PAUSED));
+        }
 
         socket.close(code);
     }

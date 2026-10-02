@@ -1,0 +1,33 @@
+base 1.4.3 f4d755a9cf5fc732511bdab354a103b4a7833356 (1080 sources)
+next 1.4.3 23a20afa7ee95996f0d044f5df67bbca179d7667 (1080 sources)
+7560 records compared, 1457 differ, in 500 sources
+!!       18  A>A          unexplained  
+              t.ts.min.ids     "interface as {}\nfoo();"
+                base ["o","interface;\nfoo();\n"]
+                next ["o","foo();\n"]
+              t.tsx.min.ids    "interface as {}\nfoo();"
+                base ["o","interface;\nfoo();\n"]
+                next ["o","foo();\n"]
+              t.ts.min.all     "interface as {}\nfoo();"
+                base ["o","interface;foo();"]
+                next ["o","foo();"]
+!!     1238  R>A          unexplained  
+              t.ts.min.ids     "function f(public a) {}"
+                base ["e",[["Expected \")\" but found \"a\"",1,19,1,18,"error",[]],["Expected \";\" but found \")\"",1,20,1,19,"error",[]]]]
+                next ["o","function f(c) {}\n"]
+              t.tsx.min.ids    "function f(public a) {}"
+                base ["e",[["Expected \")\" but found \"a\"",1,19,1,18,"error",[]],["Expected \";\" but found \")\"",1,20,1,19,"error",[]]]]
+                next ["o","function f(c) {}\n"]
+              t.ts.min.all     "function f(public a) {}"
+                base ["e",[["Expected \")\" but found \"a\"",1,19,1,18,"error",[]],["Expected \";\" but found \")\"",1,20,1,19,"error",[]]]]
+                next ["o","function f(c){}"]
+!!      201  R>R          unexplained  
+              t.ts.min.ids     "class C { get v(public a) { return 1; } }"
+                base ["e",[["Expected \")\" but found \"a\"",1,24,1,23,"error",[]],["Expected \";\" but found \")\"",1,25,1,24,"error",[]],["Expected identifier but found \"{\"",1,27,1,26,"error",[]],["Expected \";\" but 
+                next ["e",[["Getter v must have zero arguments",1,24,1,23,"error",[]]]]
+              t.tsx.min.ids    "class C { get v(public a) { return 1; } }"
+                base ["e",[["Expected \")\" but found \"a\"",1,24,1,23,"error",[]],["Expected \";\" but found \")\"",1,25,1,24,"error",[]],["Expected identifier but found \"{\"",1,27,1,26,"error",[]],["Expected \";\" but 
+                next ["e",[["Getter v must have zero arguments",1,24,1,23,"error",[]]]]
+              t.ts.min.all     "class C { get v(public a) { return 1; } }"
+                base ["e",[["Expected \")\" but found \"a\"",1,24,1,23,"error",[]],["Expected \";\" but found \")\"",1,25,1,24,"error",[]],["Expected identifier but found \"{\"",1,27,1,26,"error",[]],["Expected \";\" but 
+                next ["e",[["Getter v must have zero arguments",1,24,1,23,"error",[]]]]

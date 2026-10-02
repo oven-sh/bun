@@ -1,0 +1,16 @@
+        s107.ts      not parsed  | formatting only   "type as // zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\n = 1; export function g(){ let longName = 1; r
+        s107.tsx     not parsed  | formatting only   "type as // zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\n = 1; export function g(){ let longName = 1; r
+        s108.ts      not parsed  | formatting only   "interface as // zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\n { a: 1 } export function g(){ let longNa
+        s108.tsx     not parsed  | formatting only   "interface as // zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\n { a: 1 } export function g(){ let longNa
+        s110.js      not parsed  | formatting only   "class Ac { accessor x // zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\n = 1; } export function g(){ let
+        s110.ts      not parsed  | formatting only   "class Ac { accessor x // zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\n = 1; } export function g(){ let
+        s110.tsx     not parsed  | formatting only   "class Ac { accessor x // zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\n = 1; } export function g(){ let
+        s115.ts      not parsed  | formatting only   "function as1(x: any): asserts x // zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\n is string {} export f
+        s115.tsx     not parsed  | formatting only   "function as1(x: any): asserts x // zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\n is string {} export f
+        s16.ts       not parsed  | formatting only   "let g1: (a = 1 /* zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz */) => void; export function g(){ let lo
+        s16.tsx      not parsed  | formatting only   "let g1: (a = 1 /* zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz */) => void; export function g(){ let lo
+        s22.ts       not parsed  | formatting only   "type G2 = { get x(): number { return 1 /* zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz */; } }; export 
+        js   R>A     2
+        ts   R>A     18
+        tsx  R>A     18
+366 files compared, 38 differ

@@ -2477,3 +2477,110 @@ At `a582ea9efb`:
   (10889).
 - `emitresolver.rs`: `EmitResolver`, a value without fields.
 - `crate::core::Map` with `get_ok(&key) -> Option<V>` and `set(key, value) -> bool` (section C of the look-ahead).
+
+## Checker: inference (`checker/inference.rs`)
+
+Commit `e9755c9f92` (written by the job that commits the worktree). `checker/inference.go` whole (layers I-INFER and
+I-REVMAP): its 77 functions in upstream order, 2,807 lines. `InferenceKey` and `InferenceState` of 11-30 are the
+records of `c01_data.rs`. PORT_STATUS.md has the row.
+
+NOT compiled by cargo: at that commit modules of `checker/mod.rs` still have no file and `crate::core` has no `Map`
+and no `LiveList`. "Verified" below says what was checked instead.
+
+### How a caller writes the calls
+
+- An `*InferenceState`, `*InferenceContext` or `*InferenceInfo` is the id of its record: `n: InferenceStateId`,
+  `n: InferenceContextId`, `inference: InferenceInfoId`. `[]*InferenceInfo` is `LiveList<'a, InferenceInfoId>`.
+- `infer_types(inferences, original_source, original_target, priority, contravariant)`,
+  `new_inference_context(type_parameters: List<'a, TypeId>, signature, flags, compare_types) -> InferenceContextId`
+  (`TypeComparer::Nil` is upstream's nil comparer and becomes `Assignable`), `clone_inference_context(n, extra_flags)`
+  and `clone_inferred_part_of_context(n)` (nil for a nil context or for no inferred part),
+  `get_inferred_type(n, index: isize) -> TypeId`, `get_inferred_types(n) -> List<'a, TypeId>` (never nil),
+  `get_mapper_from_context(n) -> TypeMapperId` (nil for nil, `&self`), `create_outer_return_mapper(context)`,
+  `add_intra_expression_inference_site(n, node, t)`, `infer_from_intra_expression_sites(n)`,
+  `merge_inferences(target, source)`.
+- `apply_to_parameter_types(source, target, callback)` and `apply_to_return_types` take
+  `&mut dyn FnMut(&mut Checker<'a>, TypeId, TypeId)`.
+- `invoke_once(n, source, target, action)`: the action is `fn(&mut Checker<'a>, InferenceStateId, TypeId, TypeId)`, a
+  method is passed where upstream passes a method expression (`Self::infer_from_object_types`).
+  `infer_from_matching_types(n, sources: &[TypeId], targets: &[TypeId], matches, sort)` takes
+  `fn(&mut Checker<'a>, TypeId, TypeId) -> bool` and answers `(Cow<[TypeId]>, Cow<[TypeId]>)`: a list comes back
+  borrowed when nothing was removed, as `core.Filter` answers its argument. `find_leftmost_type(types, f)` takes the
+  same kind of function.
+- `infer_to_template_literal_type(n, source, target)`: `target` is the `TypeId` of the template literal type.
+- `get_common_supertype`, `get_single_common_supertype`, `get_common_subtype`, `literal_types_with_same_base_type`,
+  `get_combined_type_flags` (`&self`) and `infer_to_multiple_types` take `List<'_, TypeId>`, so
+  `List::from_slice(&local)` fits. `union_object_and_array_literal_candidates(&[TypeId]) -> Cow<[TypeId]>`.
+- `infer_type_for_homomorphic_mapped_type`, `create_reverse_mapped_type` and `infer_reverse_mapped_type` answer
+  `TypeId::NIL` for upstream's nil. `get_limited_constraint(t)` too.
+- Free functions, `pub` at column 0 (`mod.rs` has the glob), the checker first because a type is an id:
+  `compare_types_and_depth(c, t1, t2) -> isize`, `get_type_depth(c, t, max_depth)`, `get_type_list_depth(c, types,
+  max_depth)` (these three take `&mut Checker`: `getTypeArguments` resolves), `get_inference_info_for_type(c, n, t)
+  -> InferenceInfoId`, `get_single_type_variable_from_intersection_types(c, n, types)`,
+  `tuple_types_definitely_unrelated(c, source, target)`, `new_inference_info(c, type_parameter)`,
+  `clone_inference_info(c, info)`, `clear_cached_inferences(c, inferences)`, `has_inference_candidates(c, info)`,
+  `has_inference_candidates_or_default(c, info)`, `has_type_parameter_default(c, tp)`,
+  `has_overlapping_inferences(c, a, b)`. The five `has_*` and `get_*_for_type` ones take `&Checker`.
+- These only read and take `&self`: `is_tuple_type_structure_matching`, `is_type_closely_matched_by`,
+  `get_combined_type_flags`, `is_from_inference_blocked_source`, `is_skip_direct_inference_node`,
+  `get_mapper_from_context`. Every other method takes `&mut self`.
+
+### Differences from upstream
+
+- Stack tests, each the first statement of its function: `infer_from_types`, `infer_to_mapped_type` (false),
+  `is_partially_inferable_type` (false), `get_combined_type_flags` (no flag), which
+  `checker-relations-and-inference/data/recursion.txt` names, and two more whose recursion follows the structure of
+  a type: `is_type_parameter_at_top_level` (false) and `get_type_depth` (0).
+- `get_inferred_type`: an index outside `n.inferences`, where Go panics, is a fault and the error type.
+- `put_inference_state` sets `inferences` to the nil list where upstream keeps `n.inferences[:0]`: nothing reads the
+  list of a pooled state. The map and the two stacks keep their storage, as upstream's do.
+- `invoke_once` and `infer_reverse_mapped_type` take the stack out of its record with `std::mem::take` for the call of
+  `is_deeply_nested_type` and put it back, as `relater.rs` does.
+- `infer_from_intra_expression_sites` ranges over a copy of the sites: upstream's `range` keeps the slice that the
+  context had when the loop started, also when a nested call (the fixing mapper) sets the field to nil.
+- `get_inferred_type`: `core.Some` and `core.Every` over candidate lists run over a copy of the list, and
+  `core.Every(n.inferences, ...)` over the live list, which shows a write of `merge_inferences` as Go's `range` does.
+  `n.compareTypes` is read once.
+- `slices.SortFunc` of 391 is `sort_func` of `checker/utilities.rs` (Go's pattern-defeating quicksort, so the
+  sequence of comparisons is upstream's): `mod slices` and `sort_func` are `pub(crate)` there since `657189599b`.
+- The `choose` closure of `inferToTemplateLiteralType` takes the checker as its first parameter. Its `switch` is a
+  run of `if` statements that return, in upstream's order. `constraint.Distributed()` is called once for both loops.
+- `inferFromTypes`: `!(source.node != nil && target.node != nil)` of 232 is written `source.node == nil ||
+  target.node == nil`. `n.priority` is read once in the block of 183-211, where nothing writes it.
+- `isPartiallyInferableType` and `isTypeParameterAtTopLevel` are written with early returns in the order of
+  upstream's `||` and `&&`.
+- `hasTypeParameterDefault` of 1658 is the free function `has_type_parameter_default(c, tp)`; the method of the same
+  name in `c36_properties_apparent_types.rs` is checker.go 22062. Both exist upstream.
+- `inference.candidates = nil` is a new empty `Vec` (nil and empty are one value).
+
+### Verified
+
+No compiler has seen the file, and nothing ran a function of it. What was checked:
+
+- `rustfmt --check --edition 2024 --config skip_children=true` on `inference.rs` and `utilities.rs`: exit 0.
+- Scripts over the file: the 77 functions have upstream's names in upstream's order; each of the 75 imported names is
+  used and no free name is used without an import; no two comment lines are adjacent; no `unwrap`, `expect`, `panic`,
+  `unsafe` or index into a slice (the indexed stores are `Records` and `LinkStore`).
+- Read against the definitions of the tree at `657189599b`, name, parameter order, receiver and result: every callee
+  that the tree defines (`c20`, `c22`, `c28`, `c29`, `c31`, `c33`, `c34`, `c36`, `c37`, `c38`, `c40`, `c41`, `c42`,
+  `c43`, `c44`, `c45`, `c47`, `c51`, `links.rs`, `mapper.rs`, `relater.rs`, `utilities.rs`, `types.rs`, the accessors
+  of `ast/`, `core/core.rs`, `core/linkstore.rs`, `jsnum/`), and the fields and records of `c01_data.rs` and
+  `c02_program_checker.rs`. `Map` and `LiveList` are used as the contract has them
+  (`checker-data-model-contract/bottom-up/crate/src/tscore/golang.rs`).
+- The calls that other files make into these functions (`c14`, `c20`, `c28`, `c33`, `c37`, `c50`, `jsx.rs`,
+  `mapper.rs`, `relater.rs`) match the signatures by name, number and kind of arguments.
+- Not checked: types and borrows (no compiler), clippy, and any result against upstream's baselines.
+
+### What this file expects and the tree does not have
+
+At `e9755c9f92`, called by their upstream names with upstream's parameter order:
+
+- `c40`: `get_true_type_from_conditional_type(t)`, `get_false_type_from_conditional_type(t)`.
+- `c45`: `distribute_index_over_object_type(object_type, index_type, writing) -> TypeId` (nil for upstream's nil).
+- `c47`: the free functions `get_mapped_type_modifiers(c, t) -> MappedTypeModifiers` and
+  `apply_string_mapping(a: Ast, symbol: SymbolId, str: &[u8])`, whose result is compared as `*str == *result`, so a
+  `Vec<u8>`, a `Cow<[u8]>` or a `Text` fits.
+- `c48`: `get_contextual_type(node, context_flags)`, `get_contextual_type_for_object_literal_method(node,
+  context_flags)`.
+- `crate::core::Map` (`make`, `is_nil`, `get`, `get_ok`, `set -> bool`, `clear`) and `crate::core::LiveList` (`NIL`,
+  `is_nil`, `len`, `at`, `set -> bool`, `iter`), section C of the look-ahead.

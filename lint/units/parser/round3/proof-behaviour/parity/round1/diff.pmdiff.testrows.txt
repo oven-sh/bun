@@ -1,0 +1,18 @@
+        s0.ts        not parsed  | formatting only   "let x: if;"
+        s0.tsx       not parsed  | formatting only   "let x: if;"
+        s1.ts        not parsed  | formatting only   "let x: class;"
+        s1.tsx       not parsed  | formatting only   "let x: class;"
+        s10.ts       not parsed  | formatting only   "let x: A | if;"
+        s10.tsx      not parsed  | formatting only   "let x: A | if;"
+        s100.ts      not parsed  | formatting only   "const v = x satisfies T <= y;"
+        s100.tsx     not parsed  | formatting only   "const v = x satisfies T <= y;"
+        s101.ts      not parsed  | formatting only   "f(x as T <= y);"
+        s101.tsx     not parsed  | formatting only   "f(x as T <= y);"
+        s102.ts      not parsed  | formatting only   "const v = [x as T <= y];"
+        s102.tsx     not parsed  | formatting only   "const v = [x as T <= y];"
+        js   R>A     8
+        ts   A>A     2
+        ts   R>A     228
+        tsx  A>A     2
+        tsx  R>A     192
+903 files compared, 432 differ

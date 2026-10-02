@@ -3,7 +3,18 @@ import { describe, expect, it, jest } from "bun:test";
 import { bunEnv, bunExe, bunRun, isGlibcVersionAtLeast, isMacOS, tempDir, tmpdirSync } from "harness";
 import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { compose, Duplex, duplexPair, finished, PassThrough, Readable, Stream, Transform, Writable } from "node:stream";
+import {
+  compose,
+  Duplex,
+  duplexPair,
+  finished,
+  PassThrough,
+  pipeline,
+  Readable,
+  Stream,
+  Transform,
+  Writable,
+} from "node:stream";
 import { finished as finishedP } from "node:stream/promises";
 import { join } from "path";
 
@@ -1746,6 +1757,17 @@ describe("node v26 stream semantics", () => {
     expect(await waitFor(() => composed.readableLength === second.length)).toBe(true);
     expect(tail.isPaused()).toBe(false);
     expect(composed.read()).toEqual(second);
+  });
+
+  // 'finish' waits for the tail to end. A tail that nothing reads ends only after compose drains it.
+  it("pipeline into a compose() that nothing reads calls back", async () => {
+    const composed = compose(new PassThrough(), new PassThrough());
+    const callback = jest.fn();
+    pipeline(Readable.from(["a", "b", "c"]), composed, callback);
+    expect(await waitFor(() => callback.mock.calls.length > 0)).toBe(true);
+    expect(callback.mock.calls).toEqual([[undefined]]);
+    expect(composed.writableFinished).toBe(true);
+    expect(composed.readableLength).toBe(3);
   });
 
   // Upstream: nodejs/node#63699. With a web stream tail, compose runs one

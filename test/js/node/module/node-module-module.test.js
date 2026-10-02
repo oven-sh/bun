@@ -997,6 +997,40 @@ console.log("survived", require("./late.js"));`,
     expect(stdout.trim()).toBe("pass");
     expect(await proc.exited).toBe(0);
   });
+  describe.concurrent("Module.runMain resolves its argument from the working directory", () => {
+    test.each([
+      ["a relative path", "./server.js", "server.js"],
+      ["no extension", "./server", "server.js"],
+      ["a directory", "./dir", "dir/index.js"],
+      ["a . segment", "./dir/./index.js", "dir/index.js"],
+      ["a symlink", "./link.js", "server.js"],
+      ["a file that is missing", "./missing", "ResolveMessage"],
+    ])("%s", async (_, argument, expected) => {
+      const file = `console.log(require("node:path").relative(process.cwd(), __filename).replaceAll("\\\\", "/"));`;
+      using dir = tempDir("run-main-argument", {
+        "server.js": file,
+        "dir/index.js": file,
+        "main.cjs": `
+          try {
+            require("node:module").runMain(${JSON.stringify(argument)});
+          } catch (error) {
+            console.log(error.name);
+          }
+        `,
+      });
+      fs.symlinkSync("server.js", path.join(String(dir), "link.js"), "file");
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.cjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected + "\n", stderr: "", exitCode: 0 });
+    });
+  });
+
   describe.concurrent("Module.runMain set by a preload", () => {
     const handlers = `
       process.on("uncaughtException", error => console.log("uncaughtException: " + error.message));

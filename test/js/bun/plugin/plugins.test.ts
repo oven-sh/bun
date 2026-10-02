@@ -1117,34 +1117,54 @@ it.concurrent("build.module() of a module whose import() is still loading its de
 // The loader asked for a path that these had resolved to be resolved again, so onResolve was fed its own results.
 describe.concurrent("onResolve is asked once about", () => {
   it.each([
-    ["import()", `console.log((await import("./a.mjs")).from);`],
-    ["import.meta.require()", `console.log(import.meta.require("./a.mjs").from);`],
-  ])("%s", async (_, source) => {
+    ["import()", ["--preload", "./plugin.ts", "entry.ts"], `console.log((await import("./a.mjs")).from);`],
+    [
+      "import.meta.require()",
+      ["--preload", "./plugin.ts", "entry.ts"],
+      `console.log(import.meta.require("./a.mjs").from);`,
+    ],
+    // What Bun loads itself has no importer.
+    ["a later preload", ["--preload", "./plugin.ts", "--preload", "./a.mjs", "entry.ts"], ""],
+    ["Module.runMain()", ["--preload", "./plugin.ts", "entry.ts"], `require("node:module").runMain("./a.mjs");`],
+    ["a test file", ["test", "--preload", "./plugin.ts", "./a.test.mjs"], ""],
+  ])("%s", async (_, args, source) => {
+    const file = (name: string) => `export const from = "${name}"; console.log("loaded", from);`;
+    const aTest = `import { test } from "bun:test"; test("passes", () => {});`;
     using dir = tempDir("plugin-onresolve-once", {
-      "a.mjs": `export const from = "a.mjs";`,
-      "b.mjs": `export const from = "b.mjs";`,
-      "c.mjs": `export const from = "c.mjs";`,
-      "d.mjs": `export const from = "d.mjs";`,
+      "a.mjs": file("a.mjs"),
+      "b.mjs": file("b.mjs"),
+      "c.mjs": file("c.mjs"),
+      "d.mjs": file("d.mjs"),
+      "a.test.mjs": file("a.test.mjs") + aTest,
+      "b.test.mjs": file("b.test.mjs") + aTest,
+      "c.test.mjs": file("c.test.mjs") + aTest,
       "plugin.ts": `
         import { basename, join } from "node:path";
-        const next = { "a.mjs": "b.mjs", "b.mjs": "c.mjs", "c.mjs": "d.mjs" };
+        const next = { a: "b", b: "c", c: "d" };
         Bun.plugin({
           name: "redirect",
           setup(build) {
-            build.onResolve({ filter: /[abc]\\.mjs$/ }, ({ path }) => ({ path: join(import.meta.dir, next[basename(path)]) }));
+            build.onResolve({ filter: /[\\\\/][abc](\\.test)?\\.mjs$/ }, ({ path }) => {
+              const name = basename(path);
+              console.log("onResolve", name);
+              return { path: join(import.meta.dir, next[name[0]] + name.slice(1)) };
+            });
           },
         });
       `,
       "entry.ts": source,
     });
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "--preload", "./plugin.ts", "entry.ts"],
+      cmd: [bunExe(), ...args],
       cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "b.mjs\n", stderr: "", exitCode: 0 });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const asked = args[0] === "test" ? "a.test.mjs" : "a.mjs";
+    const lines = stdout.split("\n").filter(line => line.startsWith("onResolve") || line.startsWith("loaded"));
+    expect(lines).toEqual(["onResolve " + asked, "loaded b" + asked.slice(1)]);
+    expect(exitCode).toBe(0);
   });
 });

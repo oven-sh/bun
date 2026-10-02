@@ -3502,18 +3502,21 @@ extern "C" bool Bun__standaloneModuleHasModuleInfo(const Latin1Character*, size_
 extern "C" bool Bun__hasStandaloneModuleGraph();
 extern "C" int ModuleLoader__builtinAliasIndex(const Latin1Character*, size_t);
 extern "C" bool Bun__hasPluginRunner(void*);
-JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject,
-    JSModuleLoader* loader, JSValue key,
+JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject,
+    JSModuleLoader*, JSValue key,
     JSValue referrer, RefPtr<JSC::ScriptFetcher>, bool)
 {
-    Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(jsGlobalObject);
-    auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
     // Without a referrer the loader asks about a key it was handed: the name of a top-level load, or what import()
     // or require() resolved. Resolving a key again can give another one: a symlink, a plugin's onResolve.
     if (!referrer || referrer.isUndefined())
-        RELEASE_AND_RETURN(scope, key.toPropertyKey(globalObject));
+        return key.toPropertyKey(globalObject);
+    return resolveModule(static_cast<Zig::GlobalObject*>(globalObject), key, referrer);
+}
+
+JSC::Identifier GlobalObject::resolveModule(Zig::GlobalObject* globalObject, JSValue key, JSValue referrer)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     WTF::String keyString;
     if (key.isString()) {

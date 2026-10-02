@@ -656,9 +656,7 @@ static void closeDirectSinkForError(JSC::VM& vm, JSDirectStreamController* contr
         closingPromise->rejectAsHandled(vm, error);
 }
 
-// Errors the stream with `error`: rejects the pending read, errors the stream, tears the sink down,
-// then runs the user's close(error) hook. The stream is fully errored before the hook, which is the one
-// step that can throw, runs, so a throw from it propagates with the stream consistent.
+// Errors the stream with `error`, releases the sink, then runs the user's close(error) hook, the one step that can throw.
 bool JSDirectStreamController::handleError(JSGlobalObject* globalObject, JSValue error)
 {
     auto& vm = getVM(globalObject);

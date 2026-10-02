@@ -1702,17 +1702,19 @@ impl QuicSession {
         let ephemeral = tls::ephemeral_key_info(ssl);
         let early_data = tls::early_data_info(ssl);
         let max_datagram_size = peer_datagram_budget(conn).unwrap_or(0);
-        self.hsk_snapshot.set(Some(HskSnapshot {
-            sni,
-            cipher,
-            alpn,
-            validation,
-            peer_cert_der,
-            local_cert_ctx,
-            ephemeral,
-            early_data,
-            max_datagram_size,
-        }));
+        self.hsk_snapshot.with_mut(|s| {
+            *s = Some(HskSnapshot {
+                sni,
+                cipher,
+                alpn,
+                validation,
+                peer_cert_der,
+                local_cert_ctx,
+                ephemeral,
+                early_data,
+                max_datagram_size,
+            });
+        });
     }
 
     /// Deliver one qlog chunk (RFC 7464 JSON-SEQ records) via

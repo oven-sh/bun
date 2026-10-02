@@ -807,33 +807,20 @@ describe("conversions between color spaces", () => {
 // The CSS parser and printer take an arena. Bun.color reuses one mimalloc heap
 // per VM for it; creating and destroying a heap costs more than the conversion.
 describe.concurrent("mimalloc heaps", () => {
-  // Heaps are numbered in creation order, and a live Bun.Transpiler owns one,
-  // so a new Transpiler shows how many heaps the process has created so far.
-  const probe = `
+  const prelude = `
     import { heapStats } from "bun:jsc";
-    const seqs = () => heapStats({ dump: true }).mimallocDump.heaps.map(h => h.seq);
-    const keep = [];
-    const newestHeap = () => {
-      const before = new Set(seqs());
-      const transpiler = new Bun.Transpiler();
-      transpiler.transformSync("1");
-      keep.push(transpiler);
-      return Math.max(...seqs().filter(seq => !before.has(seq)));
-    };
-    // Nothing runs between the first two probes, so their difference is what a probe creates.
+    // heaps.total counts every mimalloc heap the process has created.
     const heapsCreatedBy = fn => {
-      const a = newestHeap();
-      const b = newestHeap();
-      if (!(b > a)) throw new Error("the probe did not see its own heap");
+      const before = heapStats().mimalloc.heaps.total;
       fn();
-      return newestHeap() - b - (b - a);
+      return heapStats().mimalloc.heaps.total - before;
     };
+    // The first call creates the arena that the later calls reuse.
     Bun.color("red", "css");
-    newestHeap();
   `;
 
   async function run(program: string) {
-    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", probe + program], env: bunEnv, stderr: "pipe" });
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", prelude + program], env: bunEnv, stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { stderr, stdout: stdout.trim(), exitCode };
   }

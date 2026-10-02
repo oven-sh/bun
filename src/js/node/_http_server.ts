@@ -1456,10 +1456,9 @@ function emitUpgrade(server, req, socket, head) {
 
 // Node.js emits 'upgrade' from onParserExecuteCommon, when it has parsed the read that carried the request. This
 // is that emit for a read that holds more than the head. It sits in the socket's ondata until native calls it, once
-// and outside a task, with what follows the body in that read. A socket that closes before that, or whose read does
-// not parse, runs it with no head.
-function emitPendingUpgrade(server, req, socket, promise, ondata, asyncContextFrame, head?: Buffer, last?: boolean) {
-  if (socket[kPendingUpgrade] === undefined) return ondata(head, last);
+// and outside a task, with what follows the body in that read. A socket that ends or closes before that, or whose
+// read does not parse, runs it with no head.
+function emitPendingUpgrade(server, req, socket, promise, ondata, asyncContextFrame, head: Buffer = kEmptyBuffer) {
   socket[kPendingUpgrade] = undefined;
   const handle = socket[kHandle];
   // destroy() took ondata away: the socket reads no more.
@@ -1471,13 +1470,12 @@ function emitPendingUpgrade(server, req, socket, promise, ondata, asyncContextFr
   $putInternalField($asyncContext, 0, asyncContextFrame);
   let handled;
   try {
-    handled = emitUpgrade(server, req, socket, head ?? kEmptyBuffer);
+    handled = emitUpgrade(server, req, socket, head);
   } finally {
     $putInternalField($asyncContext, 0, restore);
   }
   socket.once("close", resolveHandoffPromise.bind(undefined, promise));
   if (!handled) socket.destroy();
-  if (last) ondata(undefined, true);
 }
 
 // Like Node.js's net.Socket onReadableStreamEnd: every socket carries one 'end'
@@ -2007,6 +2005,8 @@ function getNodeHTTPServerSocket() {
     }
 
     _final(callback) {
+      // uWS parses no more of a read once the socket has ended: an 'upgrade' emit that waited for that read.
+      this[kPendingUpgrade]?.();
       const handle = this[kHandle];
       if (!handle) {
         callback();
@@ -2014,8 +2014,6 @@ function getNodeHTTPServerSocket() {
       }
       handle.end(this[kDestroySoon]);
       callback();
-      // uWS parses no more of a read once the socket has ended: an 'upgrade' emit that waited for that read.
-      this[kPendingUpgrade]?.();
     }
 
     // Not destroy() on 'finish' like net.Socket: 'finish' does not wait for bytes uWS still queues.

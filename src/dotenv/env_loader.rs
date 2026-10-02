@@ -322,6 +322,7 @@ impl Loader {
         result
     }
 
+    /// The returned URL borrows the map entry, which `Map::put` frees.
     pub fn get_http_proxy_for(&self, url: &URL<'_>) -> Option<URL<'_>> {
         // `http://DOMAIN\user:pass@proxy:8080` is a domain login, as curl reads it.
         let proxy = URL::parse_single_reader(self.proxy_env_for_scheme(url.is_http())?);
@@ -1369,6 +1370,7 @@ impl Map {
         }
     }
 
+    /// Frees the old value; JS hits this via `Bun__setEnvValue`, so don't hold borrows across JS.
     #[inline]
     pub fn put(&mut self, key: &[u8], value: &[u8]) -> Result<(), AllocError> {
         #[cfg(all(windows, debug_assertions))]

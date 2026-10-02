@@ -479,8 +479,7 @@ impl ProxyEnvSnapshot {
 // RefCountedEnvValue
 // ──────────────────────────────────────────────────────────────────────────
 
-/// A ref-counted heap-allocated byte slice. The env map stores borrowed
-/// `.bytes` slices; as long as any VM holds a ref, the bytes stay valid.
+/// Last JS-assigned proxy value, shared with later Workers; the env map keeps its own copy.
 ///
 /// Holders are `Arc<RefCountedEnvValue>` (per LIFETIMES.tsv): the refcount
 /// lives in the `Arc` header, so ref/deref are `Arc::clone`/`drop`.

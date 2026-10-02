@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import zlib from "node:zlib";
 
 // Tests for bounds checking on native zlib handle write/writeSync methods.
 // These verify that user-controlled offset/length parameters are validated
@@ -7,7 +8,6 @@ import { bunEnv, bunExe } from "harness";
 
 describe("zlib native handle bounds checking", () => {
   function createHandle() {
-    const zlib = require("zlib");
     const deflate = zlib.createDeflateRaw();
     return deflate._handle;
   }
@@ -89,9 +89,240 @@ describe("zlib native handle bounds checking", () => {
   });
 });
 
+describe("zlib native handle constructor/init/write argument errors", () => {
+  function constructorOf(stream: any) {
+    const ctor = stream._handle.constructor;
+    stream.close();
+    return ctor;
+  }
+  const NativeZlib = constructorOf(zlib.createDeflate());
+  const NativeBrotli = constructorOf(zlib.createBrotliCompress());
+  const NativeZstd = constructorOf(zlib.createZstdCompress());
+
+  function caught(fn: () => void) {
+    try {
+      fn();
+    } catch (e: any) {
+      return { name: e.constructor.name, code: e.code, message: e.message };
+    }
+    throw new Error("expected an error");
+  }
+
+  const modeCases: [string, any, number, number][] = [
+    ["NativeZlib", NativeZlib, 1, 7],
+    ["NativeBrotli", NativeBrotli, 8, 9],
+    ["NativeZstd", NativeZstd, 10, 11],
+  ];
+
+  test.each(modeCases)("%s constructor validates mode", (_label, Class, min, max) => {
+    const notANumber = (received: string) => ({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: `The "mode" argument must be of type number. Received ${received}`,
+    });
+    const notAnInteger = (value: number) => ({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: `The "mode" argument must be of type integer. Received type number (${value})`,
+    });
+    const outOfRange = (value: number) => ({
+      name: "RangeError",
+      code: "ERR_OUT_OF_RANGE",
+      message: `The value of "mode" is out of range. It must be >= ${min} and <= ${max}. Received ${value}`,
+    });
+
+    expect(caught(() => new Class())).toEqual(notANumber("undefined"));
+    expect(caught(() => new Class("x"))).toEqual(notANumber("type string ('x')"));
+    expect(caught(() => new Class(min + 0.5))).toEqual(notAnInteger(min + 0.5));
+    expect(caught(() => new Class(NaN))).toEqual(notAnInteger(NaN));
+    expect(caught(() => new Class(Infinity))).toEqual(notAnInteger(Infinity));
+    expect(caught(() => new Class(-Infinity))).toEqual(notAnInteger(-Infinity));
+    expect(caught(() => new Class(0))).toEqual(outOfRange(0));
+    expect(caught(() => new Class(min - 1))).toEqual(outOfRange(min - 1));
+    expect(caught(() => new Class(max + 1))).toEqual(outOfRange(max + 1));
+  });
+
+  const cb = () => {};
+
+  test("NativeZlib.init validates the writeResult array", () => {
+    expect(caught(() => new NativeZlib(1).init(15, 6, 8, 0, "nope", cb, undefined))).toEqual({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: `The "writeResult" argument must be of type Uint32Array. Received type string ('nope')`,
+    });
+    expect(caught(() => new NativeZlib(1).init(15, 6, 8, 0, new Uint16Array(4), cb, undefined))).toEqual({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: `The "writeResult" argument must be of type Uint32Array. Received an instance of Uint16Array`,
+    });
+    expect(caught(() => new NativeZlib(1).init(15, 6, 8, 0, new Uint32Array(1), cb, undefined))).toEqual({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_VALUE",
+      message: "writeResult must be a Uint32Array with at least 2 elements",
+    });
+  });
+
+  test("NativeBrotli.init validates the writeResult and params arrays", () => {
+    expect(caught(() => new NativeBrotli(8).init(new Uint32Array(0), new Uint32Array(1), cb))).toEqual({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_VALUE",
+      message: "writeResult must be a Uint32Array with at least 2 elements",
+    });
+    expect(caught(() => new NativeBrotli(8).init(new Float64Array(2), new Uint32Array(2), cb))).toEqual({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: `The "params" argument must be of type Uint32Array. Received an instance of Float64Array`,
+    });
+  });
+
+  test("NativeZstd.init validates the writeState and initParamsArray arrays", () => {
+    expect(caught(() => new NativeZstd(10).init(new Uint32Array(0), 0, new Uint32Array(1), cb))).toEqual({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_VALUE",
+      message: "writeState must be a Uint32Array with at least 2 elements",
+    });
+    expect(caught(() => new NativeZstd(10).init(new Float64Array(2), 0, new Uint32Array(2), cb))).toEqual({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: `The "initParamsArray" argument must be of type Uint32Array. Received an instance of Float64Array`,
+    });
+  });
+
+  test("a rejected initParamsArray leaves the zstd handle un-initialized", () => {
+    const handle = new NativeZstd(10);
+    const writeState = new Uint32Array(2);
+    expect(caught(() => handle.init(new Float64Array(2), 0, writeState, cb))).toEqual({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: `The "initParamsArray" argument must be of type Uint32Array. Received an instance of Float64Array`,
+    });
+    // initParamsArray is validated before the ZSTD context is allocated, so a
+    // throwing init() must not leave a usable encoder configured with default
+    // parameters: a write on this handle moves no bytes, exactly like a write
+    // on a handle whose init() was never called.
+    const input = Buffer.from("hello hello hello hello hello hello");
+    const out = Buffer.alloc(256);
+    handle.writeSync(2 /* ZSTD_e_end */, input, 0, input.length, out, 0, out.length);
+    expect({ availOut: writeState[0], availIn: writeState[1] }).toEqual({
+      availOut: out.length,
+      availIn: input.length,
+    });
+    handle.close();
+  });
+
+  test.each(["write", "writeSync"] as const)("%s validates its 7 arguments", method => {
+    const inBuf = new Uint8Array(4);
+    const outBuf = new Uint8Array(16);
+
+    function withHandle(fn: (h: any) => any) {
+      const deflate = zlib.createDeflate();
+      const h = deflate._handle;
+      try {
+        return fn(h);
+      } finally {
+        deflate.close();
+      }
+    }
+
+    expect(withHandle(h => caught(() => h[method]()))).toEqual({
+      name: "TypeError",
+      code: "ERR_MISSING_ARGS",
+      message: `${method}(flush, in, in_off, in_len, out, out_off, out_len)`,
+    });
+    expect(withHandle(h => caught(() => h[method](undefined, inBuf, 0, 4, outBuf, 0, 16)))).toEqual({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_VALUE",
+      message: "flush value is required",
+    });
+    expect(withHandle(h => caught(() => h[method](99, inBuf, 0, 4, outBuf, 0, 16)))).toEqual({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_VALUE",
+      message: "Invalid flush value",
+    });
+    expect(withHandle(h => caught(() => h[method](2, "zzz", 0, 4, outBuf, 0, 16)))).toEqual({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: `The "in" argument must be a TypedArray or DataView`,
+    });
+    expect(withHandle(h => caught(() => h[method](2, inBuf, 0, 4, "bad", 0, 16)))).toEqual({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: `The "out" argument must be a TypedArray or DataView`,
+    });
+    expect(withHandle(h => caught(() => h[method](2, inBuf, 2, 10, outBuf, 0, 16)))).toEqual({
+      name: "RangeError",
+      code: "ERR_OUT_OF_RANGE",
+      message: "in_off + in_len (12) exceeds input buffer length (4)",
+    });
+    expect(withHandle(h => caught(() => h[method](2, inBuf, 0, 4, outBuf, 8, 16)))).toEqual({
+      name: "RangeError",
+      code: "ERR_OUT_OF_RANGE",
+      message: "out_off + out_len (24) exceeds output buffer length (16)",
+    });
+  });
+});
+
+describe("zlib native handle lifecycle", () => {
+  test("finalizing or closing a never-initialized handle does not crash", async () => {
+    // Constructing a handle and never running init() (or having init() fail
+    // argument validation) must not crash close() or the GC finalizer: the
+    // native compression state is only allocated by a successful init().
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const zlib = require("zlib");
+          function constructorOf(stream) {
+            const ctor = stream._handle.constructor;
+            stream.close();
+            return ctor;
+          }
+          const NativeZlib = constructorOf(zlib.createDeflate());
+          const NativeBrotli = constructorOf(zlib.createBrotliCompress());
+          const NativeZstd = constructorOf(zlib.createZstdCompress());
+          const cb = () => {};
+
+          // Constructed, init never called.
+          new NativeZlib(1);
+          new NativeBrotli(8);
+          new NativeBrotli(9);
+          new NativeZstd(10);
+          new NativeZstd(11);
+
+          // Constructed, init failed argument validation. Each init() must
+          // actually throw, otherwise this would be finalizing healthy handles.
+          function rejected(init) {
+            try { init(); } catch (e) { return e.code; }
+            throw new Error("init() unexpectedly succeeded");
+          }
+          const codes = [
+            rejected(() => new NativeZlib(1).init(15, 6, 8, 0, new Uint32Array(1), cb, undefined)),
+            rejected(() => new NativeBrotli(8).init(new Uint32Array(0), new Uint32Array(1), cb)),
+            rejected(() => new NativeZstd(10).init(new Uint32Array(0), 0, new Uint32Array(1), cb)),
+          ];
+          if (codes.some(c => c !== "ERR_INVALID_ARG_VALUE")) throw new Error("unexpected codes: " + codes);
+
+          // Explicit close() on a never-initialized handle.
+          new NativeZlib(1).close();
+          new NativeBrotli(8).close();
+          new NativeZstd(10).close();
+
+          Bun.gc(true);
+          console.log("survived");
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "survived", stderr: "", exitCode: 0 });
+  });
+});
+
 describe("zlib native handle writeState", () => {
   test("writeSync updates the writeState array", () => {
-    const zlib = require("zlib");
     const deflate = zlib.createDeflateRaw();
     const handle = deflate._handle;
     const ws = deflate._writeState;

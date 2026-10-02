@@ -40,7 +40,7 @@ const {
 import type { Socket, SocketHandler, SocketListener } from "bun";
 import type { Server as NetServer, Socket as NetSocket, ServerOpts } from "node:net";
 const { kTimeout, getTimerDuration } = require("internal/timers");
-const { validateFunction, validateNumber, validateAbortSignal, validatePort, validateBoolean, validateInt32, validateString } = require("internal/validators"); // prettier-ignore
+const { validateFunction, validateNumber, validatePort, validateBoolean, validateInt32, validateString } = require("internal/validators"); // prettier-ignore
 const { isIPv4, isIPv6, isIP } = require("internal/net/isIP");
 const {
   kArmHandshakeTimeout,
@@ -49,6 +49,7 @@ const {
   kSecureConnectDone,
   kVerifyError,
 } = require("internal/net/symbols");
+const { addServerAbortSignalOption } = require("internal/net/server_abort_signal");
 
 type SocketHandle = Socket<SocketInstance | ConnectData> & {
   setTypeOfService?(tos: number): number | undefined;
@@ -496,16 +497,7 @@ function onClientHandshake(self, socket, success, verifyError) {
     self.secureConnecting = false;
     return;
   }
-  // The second argument is "authorized" (handshake + verification +
-  // hostname), matching the public Bun.connect handshake callback. node:tls
-  // decides what to do with verification results in JS via the
-  // rejectUnauthorized / checkServerIdentity handling below, so a
-  // verification-class result (an X509 code such as
-  // UNABLE_TO_VERIFY_LEAF_SIGNATURE, or the native hostname verdict) still
-  // means the TLS session itself was established. Only a fatal TLS protocol
-  // failure tears the socket down here: those arrive as EPROTO carrying the
-  // OpenSSL "error:...:SSL routines:..." reason (or an already decomposed
-  // ERR_SSL_* / ERR_OSSL_* code).
+  // `success` says whether the handshake completed. The chain's verdict and the name check are applied below.
   const isProtocolFailure =
     !success &&
     verifyError?.code != null &&
@@ -1627,7 +1619,11 @@ const SocketHandlers2 = {
       req.errno = error.errno || uv().UV_ECANCELED;
       return;
     }
-    req.oncomplete(error.errno, self._handle, req, true, true);
+    // Closing the handle cancels the request (ECANCELED). libuv completes it on a later loop turn,
+    // after destroy(err)'s 'error'. Not deferred here: it would land on a connect() made right
+    // after destroy() and fail that one.
+    // An attempt that timed out was closed with its `oncomplete` cleared.
+    req.oncomplete?.(error.errno, self._handle, req, true, true);
   },
 } satisfies InternalSocketHandler<ConnectData>;
 
@@ -3548,8 +3544,7 @@ function internalConnectMultipleTimeout(context, req, handle) {
   context.socket.emit("connectionAttemptTimeout", req.address, req.port, req.addressType);
 
   req.oncomplete = undefined;
-  // close() on a still-connecting handle runs no terminal callback and never
-  // rejects doConnect's promise (see socket_body.rs), so end the span here.
+  // `oncomplete` is what would have ended the span.
   traceConnectEnd(req);
   ArrayPrototypePush.$call(context.errors, createConnectionError(req, uv().UV_ETIMEDOUT));
   handle.close();
@@ -4227,20 +4222,6 @@ function emitErrorNextTick(self, error) {
 function emitErrorAndCloseNextTick(self, error) {
   self.emit("error", error);
   self.emit("close", true);
-}
-
-function addServerAbortSignalOption(self, options) {
-  if (options?.signal === undefined) {
-    return;
-  }
-  validateAbortSignal(options.signal, "options.signal");
-  const { signal } = options;
-  const onAborted = () => self.close();
-  if (signal.aborted) {
-    process.nextTick(onAborted);
-  } else {
-    signal.addEventListener("abort", onAborted);
-  }
 }
 
 function emitListeningNextTick(self) {

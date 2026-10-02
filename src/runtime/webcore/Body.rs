@@ -597,9 +597,6 @@ pub enum Tag {
     Null,
 }
 
-// Constructed/matched across several modules; boxing `SystemError` would
-// ripple through those callers.
-#[allow(clippy::large_enum_variant)]
 pub enum ValueError {
     AbortReason(CommonAbortReason),
     SystemError(SystemError),
@@ -1926,7 +1923,6 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                     return Ok(handle_body_already_used(global_object));
                 }
                 // reshaped for borrowck
-                let _ = locked;
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
                 if let Value::Locked(locked) = value {
@@ -1982,7 +1978,6 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 {
                     return Ok(handle_body_already_used(global_object));
                 }
-                let _ = locked;
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
                 if let Value::Locked(locked) = value {
@@ -2034,7 +2029,6 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 {
                     return Ok(handle_body_already_used(global_object));
                 }
-                let _ = locked;
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
                 if let Value::Locked(locked) = value {
@@ -2074,7 +2068,6 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 }
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
-                let _ = readable; // not consumed in this branch
             }
             let value = self.get_body_value();
             if let Value::Locked(locked) = value {
@@ -2083,7 +2076,6 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 {
                     return Ok(handle_body_already_used(global_object));
                 }
-                let _ = locked;
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
             }
@@ -2189,7 +2181,6 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 {
                     return Ok(handle_body_already_used(global_object));
                 }
-                let _ = locked;
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
                 if let Value::Locked(locked) = value {

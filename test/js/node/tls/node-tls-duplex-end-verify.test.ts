@@ -41,8 +41,13 @@ async function inPieces(deliver, flight, pieces) {
 }
 
 // A client wraps a Duplex in TLS and calls end() right after its first flight left, so the handshake is still running.
-// The server's certificate is not trusted, unless `trusted`. Returns the ordered events of the client.
-async function endMidHandshake(rejectUnauthorized, { pieces = 1, trusted = false } = {}) {
+// The server's certificate is not trusted, unless `trusted`. It is for "agent1". With `resumed` the client offers the
+// session of an earlier connection that asked for "agent1", and its name check records whether the handshake resumed
+// that session. Returns the ordered events of the client.
+async function endMidHandshake(
+  rejectUnauthorized,
+  { pieces = 1, trusted = false, servername = "agent1", checkServerIdentity, resumed = false } = {},
+) {
   const events = [];
   const { promise, resolve } = Promise.withResolvers();
   const server = tls.createServer({ key, cert }, socket => {
@@ -51,6 +56,17 @@ async function endMidHandshake(rejectUnauthorized, { pieces = 1, trusted = false
   });
   server.on("tlsClientError", () => {});
   await new Promise(listening => server.listen(0, "127.0.0.1", listening));
+  let session;
+  if (resumed) {
+    const first = tls.connect({ port: server.address().port, host: "127.0.0.1", servername: "agent1", ca: serverCA });
+    first.resume();
+    session = await new Promise((offered, failed) => {
+      first.once("session", offered);
+      first.once("error", failed);
+      first.once("close", () => failed(new Error("the first connection closed before it offered a session")));
+    });
+    first.destroy();
+  }
   const raw = net.connect(server.address().port, "127.0.0.1");
   raw.on("error", () => {});
   let firstWrite = true;
@@ -77,16 +93,28 @@ async function endMidHandshake(rejectUnauthorized, { pieces = 1, trusted = false
   raw.on("close", () => delivered.then(() => duplex.destroy()));
   const client = tls.connect({
     socket: duplex,
-    servername: "agent1",
+    servername,
     rejectUnauthorized,
+    session,
     ...(trusted && { ca: serverCA }),
+    ...(resumed && {
+      checkServerIdentity(name, peerCertificate) {
+        events.push(`session reused=${client.isSessionReused()}`);
+        return tls.checkServerIdentity(name, peerCertificate);
+      },
+    }),
+    ...(checkServerIdentity && { checkServerIdentity }),
   });
   client.on("secureConnect", () => {
     events.push(`secureConnect authorized=${client.authorized} authError=${client.authorizationError}`);
     // A connection that was let through must not keep this test waiting.
     setImmediate(() => client.destroy());
   });
-  client.on("data", data => events.push(`data ${data}`));
+  client.on("data", data => {
+    events.push(`data ${data}`);
+    // Data with no report of the handshake: this client must not keep the test waiting either.
+    if (!events.some(event => event.startsWith("secureConnect"))) client.destroy();
+  });
   client.on("error", err => events.push(`error ${err.code}`));
   client.on("close", () => {
     events.push("close");
@@ -187,7 +215,11 @@ async function behindProxy(server, wire, proxyOptions = {}, overDuplex = false) 
 // the server's final flight until the client's FIN arrived, so the handshake completes on a socket that is already
 // shut down. The proxy never forwards the FIN, so the server keeps writing. The server's certificate is not trusted,
 // unless `trusted`. Returns the ordered events of the client.
-async function endMidHandshakeOverTcp(maxVersion, rejectUnauthorized, { pieces = 1, trusted = false } = {}) {
+async function endMidHandshakeOverTcp(
+  maxVersion,
+  rejectUnauthorized,
+  { pieces = 1, trusted = false, servername = "agent1", checkServerIdentity } = {},
+) {
   const events = [];
   const { promise, resolve } = Promise.withResolvers();
   const server = tls.createServer({ key, cert, maxVersion }, socket => {
@@ -231,16 +263,21 @@ async function endMidHandshakeOverTcp(maxVersion, rejectUnauthorized, { pieces =
   client = tls.connect({
     port,
     host: "127.0.0.1",
-    servername: "agent1",
+    servername,
     rejectUnauthorized,
     maxVersion,
     ...(trusted && { ca: serverCA }),
+    ...(checkServerIdentity && { checkServerIdentity }),
   });
   client.on("secureConnect", () => {
     events.push(`secureConnect authorized=${client.authorized} authError=${client.authorizationError}`);
     setImmediate(() => client.destroy());
   });
-  client.on("data", data => events.push(`data ${data}`));
+  client.on("data", data => {
+    events.push(`data ${data}`);
+    // Data with no report of the handshake: this client must not keep the test waiting either.
+    if (!events.some(event => event.startsWith("secureConnect"))) client.destroy();
+  });
   client.on("error", err => events.push(`error ${err.code}`));
   client.on("close", () => {
     events.push("close");
@@ -416,6 +453,186 @@ test("a TLSv1.3 client that end()s finishes its handshake while a TLSv1.2 client
     close();
   }
 });
+
+// The same shape on a net.Socket that is already connected: tls.connect({ socket }) starts the handshake on it, and
+// the client calls end() in the same turn. TLS 1.3 needs no proxy here: the server's one flight completes the
+// handshake after the client's FIN. Returns the ordered events of the client.
+async function endMidHandshakeOnConnectedSocket(
+  rejectUnauthorized,
+  { trusted = false, servername = "agent1", checkServerIdentity } = {},
+) {
+  const events = [];
+  const { promise, resolve } = Promise.withResolvers();
+  const server = tls.createServer({ key, cert, minVersion: "TLSv1.3" }, socket => {
+    socket.on("error", () => {});
+    socket.write("secret-banner");
+  });
+  server.on("tlsClientError", () => {});
+  await new Promise(listening => server.listen(0, "127.0.0.1", listening));
+  const raw = net.connect(server.address().port, "127.0.0.1");
+  raw.on("error", () => {});
+  await new Promise(connected => raw.once("connect", connected));
+  const client = tls.connect({
+    socket: raw,
+    servername,
+    rejectUnauthorized,
+    ...(trusted && { ca: serverCA }),
+    ...(checkServerIdentity && { checkServerIdentity }),
+  });
+  client.on("secureConnect", () => {
+    events.push(`secureConnect authorized=${client.authorized} authError=${client.authorizationError}`);
+    setImmediate(() => client.destroy());
+  });
+  client.on("data", data => {
+    events.push(`data ${data}`);
+    // Data with no report of the handshake: this client must not keep the test waiting either.
+    if (!events.some(event => event.startsWith("secureConnect"))) client.destroy();
+  });
+  client.on("error", err => events.push(`error ${err.code}`));
+  client.on("close", () => {
+    events.push("close");
+    resolve();
+  });
+  client.end();
+  await promise;
+  raw.destroy();
+  server.close();
+  return events;
+}
+
+// The server's chain is trusted, but its certificate is for "agent1" and the client asked for another name. The name
+// check is the client's own, in JS. It also runs for a handshake that completes after end().
+for (const [transport, endWithWrongName] of [
+  ["over a Duplex", options => endMidHandshake(options.rejectUnauthorized, options)],
+  ["TLSv1.2 on a TCP socket", options => endMidHandshakeOverTcp("TLSv1.2", options.rejectUnauthorized, options)],
+  ["TLSv1.3 on a TCP socket", options => endMidHandshakeOverTcp("TLSv1.3", options.rejectUnauthorized, options)],
+  ["on a connected socket", options => endMidHandshakeOnConnectedSocket(options.rejectUnauthorized, options)],
+]) {
+  const wrongName = { trusted: true, servername: "another.name" };
+
+  test(`${transport}: end() while the handshake runs does not accept a certificate for another name`, async () => {
+    const events = await endWithWrongName({ ...wrongName, rejectUnauthorized: true });
+    assert.deepStrictEqual(events, ["error ERR_TLS_CERT_ALTNAME_INVALID", "close"]);
+  });
+
+  test(`${transport}: end() while the handshake runs still reports a certificate for another name on the socket`, async () => {
+    const events = await endWithWrongName({ ...wrongName, rejectUnauthorized: false });
+    assert.strictEqual(
+      events[0],
+      "secureConnect authorized=false authError=ERR_TLS_CERT_ALTNAME_INVALID",
+      events.join(", "),
+    );
+  });
+
+  test(`${transport}: end() while the handshake runs asks the client's own checkServerIdentity`, async () => {
+    const asked = [];
+    const events = await endWithWrongName({
+      ...wrongName,
+      rejectUnauthorized: true,
+      checkServerIdentity: name => void asked.push(name),
+    });
+    assert.deepStrictEqual(
+      { asked, first: events[0] },
+      { asked: ["another.name"], first: "secureConnect authorized=true authError=null" },
+    );
+  });
+}
+
+// A resumed handshake sends no certificate. Bun checks the name against the certificate that the session stored.
+test(
+  "over a Duplex: end() while a resumed handshake runs does not accept the stored certificate for another name",
+  { skip: !isBun && "Node does not check the name of a resumed session" },
+  async () => {
+    const events = await endMidHandshake(true, { trusted: true, servername: "another.name", resumed: true });
+    assert.deepStrictEqual(events, ["session reused=true", "error ERR_TLS_CERT_ALTNAME_INVALID", "close"]);
+  },
+);
+
+// end(...endArgs) in the turn of tls.connect(). The handshake has not started: the socket that carries it is still
+// connecting, or the engine over the Duplex does not exist yet. The server's chain is trusted, and its certificate
+// is for "agent1". Returns the ordered events of the client and the names that checkServerIdentity was asked for.
+async function endBeforeHandshakeStarts(overDuplex, rejectUnauthorized, ...endArgs) {
+  const events = [];
+  const asked = [];
+  const { promise, resolve } = Promise.withResolvers();
+  const server = tls.createServer({ key, cert }, socket => {
+    socket.on("error", () => {});
+    socket.write("secret-banner");
+  });
+  server.on("tlsClientError", () => {});
+  await new Promise(listening => server.listen(0, "127.0.0.1", listening));
+  const raw = net.connect(server.address().port, "127.0.0.1");
+  raw.on("error", () => {});
+  let transport = raw;
+  if (overDuplex) {
+    transport = new Duplex({
+      read() {},
+      write(chunk, encoding, callback) {
+        raw.write(chunk, callback);
+      },
+      final(callback) {
+        raw.end();
+        callback();
+      },
+    });
+    transport.on("error", () => {});
+    raw.on("data", data => transport.push(data));
+    raw.on("end", () => transport.push(null));
+    raw.on("close", () => transport.destroy());
+  }
+  const client = tls.connect({
+    socket: transport,
+    servername: "another.name",
+    ca: serverCA,
+    rejectUnauthorized,
+    checkServerIdentity(name, peerCertificate) {
+      asked.push(name);
+      return tls.checkServerIdentity(name, peerCertificate);
+    },
+  });
+  client.on("secureConnect", () => {
+    events.push(`secureConnect authorized=${client.authorized} authError=${client.authorizationError}`);
+    setImmediate(() => client.destroy());
+  });
+  client.on("data", data => {
+    events.push(`data ${data}`);
+    // Data with no report of the handshake: this client must not keep the test waiting either.
+    if (!events.some(event => event.startsWith("secureConnect"))) client.destroy();
+  });
+  client.on("error", err => events.push(`error ${err.code}`));
+  client.on("close", () => {
+    events.push("close");
+    resolve();
+  });
+  client.end(...endArgs);
+  await promise;
+  raw.destroy();
+  server.close();
+  return { events, asked };
+}
+
+for (const overDuplex of [false, true]) {
+  const transport = overDuplex ? "over a Duplex" : "over a socket that is still connecting";
+
+  for (const endArgs of [[], [""]]) {
+    const call = `end(${endArgs.map(arg => JSON.stringify(arg))})`;
+
+    test(`${transport}: ${call} in the turn of tls.connect() does not accept a certificate for another name`, async () => {
+      assert.deepStrictEqual(await endBeforeHandshakeStarts(overDuplex, true, ...endArgs), {
+        events: ["error ERR_TLS_CERT_ALTNAME_INVALID", "close"],
+        asked: ["another.name"],
+      });
+    });
+  }
+
+  test(`${transport}: end() in the turn of tls.connect() still reports a certificate for another name on the socket`, async () => {
+    const { events, asked } = await endBeforeHandshakeStarts(overDuplex, false);
+    assert.deepStrictEqual(
+      { asked, first: events[0] },
+      { asked: ["another.name"], first: "secureConnect authorized=false authError=ERR_TLS_CERT_ALTNAME_INVALID" },
+    );
+  });
+}
 
 // The server side of the same shape. A server that asks for a client certificate calls end() on its socket while the
 // handshake runs. The proxy holds the client's Certificate..Finished flight until the server's FIN arrived, so the

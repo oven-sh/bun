@@ -192,7 +192,6 @@ impl BodyMixin for Request {
 impl Request {
     /// Inherent shim; `impl BodyMixin for Request` supplies the real trait method.
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     pub(crate) fn get_body_value(&self) -> &mut BodyValue {
         self.body_value_mut()
     }
@@ -295,7 +294,6 @@ impl Request {
         Ok(self.headers_mut().as_mut().unwrap())
     }
 
-    #[allow(clippy::mut_from_ref)]
     pub(crate) fn get_fetch_headers_unless_empty(&self) -> Option<&mut HeadersRef> {
         if self.headers.get().is_none() {
             if let Some(req) = self.request_context.get_request() {

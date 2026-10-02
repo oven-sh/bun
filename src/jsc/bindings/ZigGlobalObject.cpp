@@ -3561,24 +3561,6 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         ASSERT(!globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup);
     }
 
-    // The transpiler has put a static import through onResolve already (Linker::link) and printed what that gave, so
-    // a key in a namespace that has an onLoad handler is final. The filesystem resolver would not find it.
-    //
-    // FIXME(module-loader): this ignores the plugin's filter, and bypasses any onResolve handler for an import that
-    // is written as "ns:..." in the source.
-    if (!globalObject->onLoadPlugins.namespaces.isEmpty()) {
-        if (auto colon = keyString.find(':'); colon != WTF::notFound && !(colon == 1 && isASCIIAlpha(keyString[0]))) {
-            // colon == 1 with a leading ASCII letter is a Windows drive
-            // ("C:\\..."), never a plugin namespace.
-            auto ns = keyString.left(colon);
-            for (const auto& registered : globalObject->onLoadPlugins.namespaces) {
-                if (registered == ns) {
-                    return Identifier::fromString(vm, keyString);
-                }
-            }
-        }
-    }
-
     ErrorableString res;
     BunString keyZ = Bun::toString(keyString);
     BunString referrerZ = Bun::toString(referrerString);
@@ -3691,39 +3673,11 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         }
     }
 
-    {
-        if (moduleName.startsWith("file://"_s)) {
-            auto url = WTF::URL(moduleName);
-            if (url.isValid() && !url.isEmpty()) {
-                moduleName = url.fileSystemPath();
-            }
-        }
-
-        ErrorableString res;
-        BunString moduleNameZ = Bun::toString(moduleName);
-        BunString sourceOriginZ = Bun::toString(sourceOriginStringHolder);
-        BunString queryZ = BunStringEmpty;
-        Zig__GlobalObject__resolve(&res, globalObject, &moduleNameZ, &sourceOriginZ, &queryZ);
-        RETURN_IF_EXCEPTION(scope, JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope));
-        if (!res.success) [[unlikely]] {
-            throwException(scope, res.result.err, globalObject);
-            return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
-        }
-        auto resolved = res.result.value.transferToWTFString();
-        auto query = queryZ.transferToWTFString();
-
-        if (query.isEmpty()) {
-            resolvedIdentifier = JSC::Identifier::fromString(vm, resolved);
-        } else {
-            resolvedIdentifier = JSC::Identifier::fromString(vm, makeString(resolved, query));
-        }
-    }
-
     // The C++ module loader now extracts `with.type` into a
     // ScriptFetchParameters before calling this hook, so `parameters` is
     // already the parsed RefPtr (or null). Just forward it.
-    auto result = loader->requestImportModule(globalObject, resolvedIdentifier,
-        JSC::Identifier(), WTF::move(parameters), nullptr, /* deferred */ false, referrerAsyncOrder);
+    auto result = loader->requestImportModule(globalObject, JSC::Identifier::fromString(vm, moduleName),
+        JSC::Identifier::fromString(vm, sourceOriginStringHolder), WTF::move(parameters), nullptr, /* deferred */ false, referrerAsyncOrder);
     if (scope.exception()) [[unlikely]] {
         return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
     }

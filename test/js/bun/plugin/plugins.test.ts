@@ -1164,45 +1164,51 @@ describe.concurrent("what onResolve answers without a namespace is resolved from
   });
 });
 
-// The loader asked for a path that these had resolved to be resolved again, so onResolve was fed its own results.
-describe.concurrent("onResolve is asked once about", () => {
-  it.each([
-    [
-      "import.meta.require()",
-      ["--preload", "./plugin.ts", "entry.ts"],
-      `console.log(import.meta.require("./a.mjs").from);`,
-    ],
-    // What Bun loads itself has no importer.
-    ["a later preload", ["--preload", "./plugin.ts", "--preload", "./a.mjs", "entry.ts"], ""],
-    ["Module.runMain()", ["--preload", "./plugin.ts", "entry.ts"], `require("node:module").runMain("./a.mjs");`],
-    ["a test file", ["test", "--preload", "./plugin.ts", "./a.test.mjs"], ""],
-  ])("%s", async (_, args, source) => {
-    const file = (name: string) => `export const from = "${name}"; console.log("loaded", from);`;
-    const aTest = `import { test } from "bun:test"; test("passes", () => {});`;
-    using dir = tempDir("plugin-onresolve-once", {
-      "a.mjs": file("a.mjs"),
-      "b.mjs": file("b.mjs"),
-      "c.mjs": file("c.mjs"),
-      "d.mjs": file("d.mjs"),
-      "a.test.mjs": file("a.test.mjs") + aTest,
-      "b.test.mjs": file("b.test.mjs") + aTest,
-      "c.test.mjs": file("c.test.mjs") + aTest,
-      "plugin.ts": `
-        import { basename, join } from "node:path";
-        const next = { a: "b", b: "c", c: "d" };
-        Bun.plugin({
-          name: "redirect",
-          setup(build) {
-            build.onResolve({ filter: /[\\\\/][abc](\\.test)?\\.mjs$/ }, ({ path }) => {
-              const name = basename(path);
-              console.log("onResolve", name);
-              return { path: join(import.meta.dir, next[name[0]] + name.slice(1)) };
-            });
-          },
-        });
-      `,
-      "entry.ts": source,
-    });
+// The loader asked for a path that import() or require() had resolved to be resolved again, and the transpiler put every
+// specifier it could read through onResolve before the code ran. Either way onResolve was fed its own results.
+describe.concurrent("onResolve", () => {
+  const files = {
+    "a.mjs": `export const from = "a.mjs";`,
+    "b.mjs": `export const from = "b.mjs";`,
+    "c.mjs": `export const from = "c.mjs";`,
+    "d.mjs": `export const from = "d.mjs";`,
+    "a.cjs": `exports.from = "a.cjs";`,
+    "b.cjs": `exports.from = "b.cjs";`,
+    "c.cjs": `exports.from = "c.cjs";`,
+    "a.js": `console.log("a.js");`,
+    "b.js": `console.log("b.js");`,
+    "c.js": `console.log("c.js");`,
+    "a.test.js": `console.log("a.test.js"); require("bun:test").test("passes", () => {});`,
+    "b.test.js": `console.log("b.test.js"); require("bun:test").test("passes", () => {});`,
+    "c.test.js": `console.log("c.test.js"); require("bun:test").test("passes", () => {});`,
+    "plugin.ts": `
+      import { basename, join } from "node:path";
+      const next = { a: "b", b: "c", c: "d" };
+      Bun.plugin({
+        name: "redirect",
+        setup(build) {
+          build.onResolve({ filter: /[\\\\/][abc](\\.test)?\\.[cm]?js$/ }, ({ path }) => {
+            const name = basename(path);
+            console.log("onResolve", name);
+            return { path: join(import.meta.dir, next[name[0]] + name.slice(1)) };
+          });
+          build.onResolve({ filter: /\\.virtual$/ }, ({ path }) => {
+            console.log("onResolve", basename(path));
+            return { path: "from " + basename(path), namespace: "virtual" };
+          });
+          build.onResolve({ filter: /\\.throws$/ }, () => {
+            throw new Error("from onResolve");
+          });
+          build.onLoad({ filter: /.*/, namespace: "virtual" }, ({ path }) => ({
+            contents: "export const from = " + JSON.stringify(path) + ";",
+            loader: "js",
+          }));
+        },
+      });
+    `,
+  };
+  async function run(name: string, source: string, args = ["--preload", "./plugin.ts", name]) {
+    using dir = tempDir("plugin-onresolve-once", { ...files, [name]: source });
     await using proc = Bun.spawn({
       cmd: [bunExe(), ...args],
       cwd: String(dir),
@@ -1211,11 +1217,74 @@ describe.concurrent("onResolve is asked once about", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // (bun test reports there.)
-    if (args[0] !== "test") expect(stderr).toBe("");
-    const asked = args[0] === "test" ? "a.test.mjs" : "a.mjs";
-    const lines = stdout.split("\n").filter(line => line.startsWith("onResolve") || line.startsWith("loaded"));
-    expect(lines).toEqual(["onResolve " + asked, "loaded b" + asked.slice(1)]);
-    expect(exitCode).toBe(0);
+    return { stdout: stdout.trim().split("\n"), stderr, exitCode };
+  }
+
+  it.each([
+    ["import()", "entry.mjs", `console.log((await import("./a.mjs")).from);`, "a.mjs", "b.mjs"],
+    ["an import statement", "entry.mjs", `import { from } from "./a.mjs"; console.log(from);`, "a.mjs", "b.mjs"],
+    [
+      "export from",
+      "entry.mjs",
+      `export { from } from "./a.mjs"; import * as self from "./entry.mjs"; console.log(self.from);`,
+      "a.mjs",
+      "b.mjs",
+    ],
+    ["import.meta.require()", "entry.mjs", `console.log(import.meta.require("./a.mjs").from);`, "a.mjs", "b.mjs"],
+    ["require() of an ES module", "entry.cjs", `console.log(require("./a.mjs").from);`, "a.mjs", "b.mjs"],
+    ["require() of a CommonJS module", "entry.cjs", `console.log(require("./a.cjs").from);`, "a.cjs", "b.cjs"],
+    ["module.require()", "entry.cjs", `console.log(module.require("./a.cjs").from);`, "a.cjs", "b.cjs"],
+    [
+      "require.resolve()",
+      "entry.cjs",
+      `console.log(require("node:path").basename(require.resolve("./a.cjs")));`,
+      "a.cjs",
+      "b.cjs",
+    ],
+  ])("is asked once by %s", async (_, name, source, asked, loaded) => {
+    expect(await run(name, source)).toEqual({ stdout: ["onResolve " + asked, loaded], stderr: "", exitCode: 0 });
+  });
+
+  // What Bun loads itself has no importer.
+  it.each([
+    ["a later preload", "", ["--preload", "./plugin.ts", "--preload", "./a.js", "entry.cjs"], "a.js", "b.js"],
+    ["Module.runMain()", `require("node:module").runMain("./a.js");`, undefined, "a.js", "b.js"],
+    ["a test file", "", ["test", "--preload", "./plugin.ts", "./a.test.js"], "a.test.js", "b.test.js"],
+  ])("is asked once about %s", async (_, source, args, asked, loaded) => {
+    const { stdout, stderr, exitCode } = await run("entry.cjs", source, args);
+    // (bun test prints its version first, and reports on stderr.)
+    if (args?.[0] !== "test") expect(stderr).toBe("");
+    expect({ stdout: stdout.slice(-2), exitCode }).toEqual({ stdout: ["onResolve " + asked, loaded], exitCode: 0 });
+  });
+
+  it.each([
+    ["an import statement", "entry.mjs", `import { from } from "./x.virtual"; console.log(from);`, "from x.virtual"],
+    ["import()", "entry.mjs", `console.log((await import("./x.virtual")).from);`, "from x.virtual"],
+    ["require()", "entry.cjs", `console.log(require("./x.virtual").from);`, "from x.virtual"],
+    ["module.require()", "entry.cjs", `console.log(module.require("./x.virtual").from);`, "from x.virtual"],
+    ["require.resolve()", "entry.cjs", `console.log(require.resolve("./x.virtual"));`, "virtual:from x.virtual"],
+  ])("can move what %s asks for into a namespace", async (_, name, source, expected) => {
+    expect(await run(name, source)).toEqual({ stdout: ["onResolve x.virtual", expected], stderr: "", exitCode: 0 });
+  });
+
+  it("is not asked about a require() that does not run", async () => {
+    const source = `
+      if (process.env.NOT_SET) require("./a.cjs");
+      function notCalled() { return require.resolve("./b.cjs"); }
+      console.log("done");
+    `;
+    expect(await run("entry.cjs", source)).toEqual({ stdout: ["done"], stderr: "", exitCode: 0 });
+  });
+
+  it("throws where the require() is", async () => {
+    const source = `
+      console.log("before");
+      try { require("./x.throws"); } catch (error) { console.log("caught", error.message); }
+    `;
+    expect(await run("entry.cjs", source)).toEqual({
+      stdout: ["before", "caught from onResolve"],
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });

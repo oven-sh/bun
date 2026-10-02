@@ -36,8 +36,8 @@
 
 namespace Zig {
 
-extern "C" void Bun__onDidAppendPlugin(void* bunVM, JSGlobalObject* globalObject);
-using OnAppendPluginCallback = void (*)(void*, JSGlobalObject* globalObject);
+extern "C" void Bun__onDidAppendPlugin(void* bunVM);
+using OnAppendPluginCallback = void (*)(void*);
 
 static bool isValidNamespaceString(String& namespaceString)
 {
@@ -95,7 +95,7 @@ static JSC::EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject*
     }
 
     plugin.append(vm, filter->regExp(), func.getObject(), namespaceString);
-    callback(ctx, globalObject);
+    callback(ctx);
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(callframe->thisValue());
@@ -212,7 +212,7 @@ static JSC::EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObje
     }
 
     plugin.append(vm, filter->regExp(), uncheckedDowncast<JSObject>(func), namespaceString);
-    callback(ctx, globalObject);
+    callback(ctx);
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(callframe->thisValue());

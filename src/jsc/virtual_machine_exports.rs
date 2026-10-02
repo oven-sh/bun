@@ -1,11 +1,9 @@
 use core::ffi::c_void;
 
-use crate::plugin_runner::PluginRunner;
 use crate::{
     CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, Strong, Task,
     VirtualMachineRef as VirtualMachine,
 };
-use bun_bundler::transpiler::PluginResolver;
 use bun_core::String as BunString;
 use bun_sourcemap::SourceProviderMap;
 use bun_sourcemap::parsed_source_map::AnySourceProvider;
@@ -180,19 +178,8 @@ pub fn handle_handled_promise(global: &JSGlobalObject, promise: &JSPromise) {
 }
 
 // HOST_EXPORT(Bun__onDidAppendPlugin, c)
-pub fn on_did_append_plugin(jsc_vm: &mut VirtualMachine, global: &JSGlobalObject) {
-    if jsc_vm.plugin_runner.is_some() {
-        return;
-    }
-
-    // `Option::insert` returns `&mut PluginRunner` into the VM-owned slot;
-    // `plugin_runner` and `transpiler` are disjoint fields so the split borrow
-    // is fine. The slot is embedded in `*jsc_vm` and stable for the VM's
-    // lifetime, so taking a raw pointer into it for the linker BACKREF is sound.
-    let runner = jsc_vm.plugin_runner.insert(PluginRunner {
-        global_object: bun_ptr::BackRef::new(global),
-    });
-    jsc_vm.transpiler.linker.plugin_runner = Some(std::ptr::from_mut::<dyn PluginResolver>(runner));
+pub fn on_did_append_plugin(jsc_vm: &mut VirtualMachine) {
+    jsc_vm.has_plugins = true;
 }
 
 #[cfg(windows)]

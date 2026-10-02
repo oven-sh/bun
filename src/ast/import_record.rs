@@ -80,12 +80,6 @@ bitflags::bitflags! {
         /// If true, this import can be removed if it's unused
         const IS_EXTERNAL_WITHOUT_SIDE_EFFECTS = 1 << 11;
 
-        /// Tell the printer to print the record as "foo:my-path" instead of "path"
-        /// where "foo" is the namespace
-        ///
-        /// Used to prevent running resolve plugins multiple times for the same path
-        const PRINT_NAMESPACE_IN_PATH = 1 << 12;
-
         const WRAP_WITH_TO_ESM = 1 << 13;
         const WRAP_WITH_TO_COMMONJS = 1 << 14;
 

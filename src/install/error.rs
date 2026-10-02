@@ -48,6 +48,8 @@ pub enum Error {
     DanglingSymlink,
     #[error("UnsupportedYarnLockfileVersion")]
     UnsupportedYarnLockfileVersion,
+    #[error("InvalidYarnBerryLockfile")]
+    InvalidYarnBerryLockfile,
     #[error("InvalidPackageJSON")]
     InvalidPackageJSON,
     #[error("LockfileResolveFailed")]
@@ -265,6 +267,7 @@ impl Error {
             Self::BufferTooSmall => "BufferTooSmall",
             Self::DanglingSymlink => "DanglingSymlink",
             Self::UnsupportedYarnLockfileVersion => "UnsupportedYarnLockfileVersion",
+            Self::InvalidYarnBerryLockfile => "InvalidYarnBerryLockfile",
             Self::InvalidPackageJSON => "InvalidPackageJSON",
             Self::LockfileResolveFailed => "LockfileResolveFailed",
             Self::DistTagNotFound => "DistTagNotFound",

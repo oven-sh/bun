@@ -1,0 +1,13 @@
+{
+  "name": "berry-workspaces",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "dependencies": {
+    "pkg-a": "workspace:*"
+  },
+  "devDependencies": {
+    "two-range-deps": "^1.0.0"
+  }
+}

@@ -736,6 +736,13 @@ impl ProxyTunnel {
         // _guard derefs here.
     }
 
+    /// Whether ciphertext is still queued for the outer socket (`write_encrypted` queues what it did not take).
+    #[cfg(unix)]
+    #[inline]
+    pub(crate) fn has_pending_writes(&self) -> bool {
+        self.write_buffer.is_not_empty()
+    }
+
     pub(crate) fn write(&mut self, buf: &[u8]) -> Result<usize, Error> {
         if let Some(wrapper) = &self.wrapper {
             return wrapper.write_data(buf).map_err(|e| match e {

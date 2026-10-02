@@ -129,6 +129,17 @@ impl<'a> HTTPRequestBody<'a> {
         matches!(self, HTTPRequestBody::Stream(_))
     }
 
+    /// The body to send again on a redirect or a retry. A `Stream` is consumed as it is written, so it has none.
+    pub(crate) fn replay(&self) -> Option<HTTPRequestBody<'a>> {
+        match self {
+            HTTPRequestBody::Bytes(bytes) => Some(HTTPRequestBody::Bytes(bytes)),
+            HTTPRequestBody::Sendfile(sendfile) => {
+                Some(HTTPRequestBody::Sendfile(sendfile.rewound()))
+            }
+            HTTPRequestBody::Stream(_) => None,
+        }
+    }
+
     /// Borrow the in-memory byte payload, if any. `Sendfile` / `Stream` have no
     /// contiguous slice and return `b""` (callers branch on the variant before
     /// reaching for this).

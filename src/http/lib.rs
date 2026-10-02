@@ -832,8 +832,6 @@ pub struct HTTPClient<'a> {
     /// the body hasn't been compressed yet.
     pub(crate) compressed_body_len: usize,
     pub(crate) pool: PoolOptions,
-    /// A `Sendfile` body read into memory for a TLS hop, borrowed by `state.original_request_body`.
-    pub(crate) buffered_sendfile_body: Vec<u8>,
 }
 
 impl<'a> HTTPClient<'a> {
@@ -1085,6 +1083,16 @@ mod scratch {
     pub(crate) fn temp_hostname() -> &'static mut [u8; 8192] {
         // SAFETY: see module-level INVARIANT.
         unsafe { &mut *TEMP_HOSTNAME.get() }
+    }
+    #[cfg(unix)]
+    pub(crate) const FILE_BODY_COPY_BUFFER_SIZE: usize = 256 * 1024;
+    /// Scratch for `SendFile::write_copy`, drained before the next `pread`. Zero-initialised so it stays in .bss.
+    #[cfg(unix)]
+    pub(crate) fn file_body_copy_buffer() -> &'static mut [u8; FILE_BODY_COPY_BUFFER_SIZE] {
+        static FILE_BODY_COPY_BUFFER: bun_core::RacyCell<[u8; FILE_BODY_COPY_BUFFER_SIZE]> =
+            bun_core::RacyCell::new([0; FILE_BODY_COPY_BUFFER_SIZE]);
+        // SAFETY: see module-level INVARIANT.
+        unsafe { &mut *FILE_BODY_COPY_BUFFER.get() }
     }
 }
 pub(crate) use scratch::temp_hostname;
@@ -1569,6 +1577,9 @@ impl<'a> HTTPClient<'a> {
         if self.flags.is_streaming_request_body {
             // More body chunks may still be produced by JS.
             return true;
+        }
+        if let HTTPRequestBody::Sendfile(sendfile) = &self.state.original_request_body {
+            return sendfile.remain > 0;
         }
         !self.request_body().is_empty()
     }
@@ -2180,28 +2191,32 @@ impl<'a> HTTPClient<'a> {
         // delivered (stage Done/Fail) from restarting; the AsyncHTTP clone
         // that embeds it is freed once that result is dispatched, so a late
         // close event must not re-enter `start()`.
-        if in_progress
-            && self.allow_retry
-            && self.method.is_idempotent()
-            // Only an in-memory body is retried; a Stream body is consumed as it is written.
-            && matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
-            && self.state.response_stage != ResponseStage::Body
-            && self.state.response_stage != ResponseStage::BodyChunk
-        {
-            self.allow_retry = false;
-            // we need to retry the request, clean up the response message buffer and start again
-            self.state.response_message_buffer = MutableString::default();
-            let body = core::mem::replace(
-                &mut self.state.original_request_body,
-                HTTPRequestBody::Bytes(b""),
-            );
-            self.start(body);
+        if in_progress && self.retry_on_closed_socket() {
             return;
         }
 
         if in_progress {
             self.fail(crate::Error::ConnectionClosed);
         }
+    }
+
+    /// A reused keep-alive socket was closed by the peer before any response body: start the
+    /// request again on a fresh connection, once. Returns false when the request cannot be replayed.
+    fn retry_on_closed_socket(&mut self) -> bool {
+        if !self.allow_retry
+            || !self.method.is_idempotent()
+            || self.state.response_stage == ResponseStage::Body
+            || self.state.response_stage == ResponseStage::BodyChunk
+        {
+            return false;
+        }
+        let Some(body) = self.state.original_request_body.replay() else {
+            return false;
+        };
+        self.allow_retry = false;
+        self.state.response_message_buffer = MutableString::default();
+        self.start(body);
+        true
     }
 
     pub(crate) fn on_timeout<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
@@ -2708,11 +2723,10 @@ impl<'a> HTTPClient<'a> {
         if !self.state.flags.resend_request_body_on_redirect {
             return HTTPRequestBody::Bytes(b"");
         }
-        match self.state.original_request_body {
-            HTTPRequestBody::Bytes(bytes) => HTTPRequestBody::Bytes(bytes),
-            HTTPRequestBody::Sendfile(sendfile) => HTTPRequestBody::Sendfile(sendfile),
-            HTTPRequestBody::Stream(_) => HTTPRequestBody::Bytes(b""),
-        }
+        self.state
+            .original_request_body
+            .replay()
+            .unwrap_or(HTTPRequestBody::Bytes(b""))
     }
 
     /// Re-resolve `http_proxy` against the post-redirect `self.url`. The
@@ -2786,12 +2800,6 @@ impl<'a> HTTPClient<'a> {
         // Aborted before connecting
         if self.signals.get(signals::Field::Aborted) {
             self.fail(crate::Error::AbortedBeforeConnecting);
-            self.complete_connecting_process();
-            return;
-        }
-
-        if let Err(err) = self.buffer_sendfile_body_for_tls::<IS_SSL>() {
-            self.fail(err);
             self.complete_connecting_process();
             return;
         }
@@ -2932,25 +2940,6 @@ impl<'a> HTTPClient<'a> {
             self.register_abort_tracker::<IS_SSL>(socket);
         }
         self.complete_connecting_process();
-    }
-
-    /// A redirect or env `https://` proxy can put a `Sendfile` body on TLS; send it as `Bytes` there.
-    fn buffer_sendfile_body_for_tls<const IS_SSL: bool>(&mut self) -> crate::Result<()> {
-        let HTTPRequestBody::Sendfile(sendfile) = self.state.original_request_body else {
-            return Ok(());
-        };
-        let tunnels_through_proxy = self.http_proxy.is_some() && self.url.is_https();
-        if !IS_SSL && !tunnels_through_proxy {
-            return Ok(());
-        }
-        debug_assert!(self.buffered_sendfile_body.is_empty());
-        self.buffered_sendfile_body = sendfile.read_to_vec()?;
-        // SAFETY: the Vec is assigned only here, once per request (the body is
-        // `Bytes` from now on), and lives on `self`, which outlives every
-        // `InternalState` that borrows it.
-        let bytes: &'a [u8] = unsafe { bun_ptr::detach_lifetime(&self.buffered_sendfile_body) };
-        self.state = InternalState::init(HTTPRequestBody::Bytes(bytes));
-        Ok(())
     }
 
     /// Body length for `Content-Length` — the compressed length once
@@ -3476,20 +3465,19 @@ impl<'a> HTTPClient<'a> {
                         // flush without adding any new data
                         self.flush_stream::<IS_SSL>(socket);
                     }
-                    HTTPRequestBody::Sendfile(_) => {
-                        if IS_SSL {
-                            panic!(
-                                "sendfile is only supported without SSL. This code should never have been reached!"
-                            );
-                        }
-
-                        let sendfile = self
-                            .state
-                            .sendfile
-                            .as_mut()
-                            .expect("InternalState::init seats the cursor for a Sendfile body");
-                        // sendfile.write() takes the raw fd, not the socket handle.
-                        match sendfile.write(socket.fd()) {
+                    HTTPRequestBody::Sendfile(mut sendfile) => {
+                        // `sendfile(2)` needs the plaintext socket fd; a TLS socket gets the file
+                        // through its own write, like a `Bytes` body.
+                        #[cfg(unix)]
+                        let status = if IS_SSL {
+                            sendfile.write_copy(|chunk| write_to_socket::<IS_SSL>(socket, chunk))
+                        } else {
+                            sendfile.write(socket.fd())
+                        };
+                        #[cfg(not(unix))]
+                        let status = sendfile.write(socket.fd());
+                        self.state.original_request_body = HTTPRequestBody::Sendfile(sendfile);
+                        match status {
                             #[cfg(not(windows))]
                             crate::send_file::Status::Done => {
                                 self.state.request_stage = RequestStage::Done;
@@ -3501,10 +3489,9 @@ impl<'a> HTTPClient<'a> {
                                 return;
                             }
                             crate::send_file::Status::Again => {
-                                // mark_needs_more_for_sendfile is `const SSL=false`-only;
-                                // this arm is unreachable for SSL (panic above).
-                                uws::SocketTCP::from_any(socket.socket)
-                                    .mark_needs_more_for_sendfile();
+                                // Neither `sendfile(2)` nor a `write_copy` pass that ended on a
+                                // full write leaves the socket polling for writable.
+                                socket.request_writable_event();
                             }
                         }
                     }
@@ -3539,10 +3526,59 @@ impl<'a> HTTPClient<'a> {
                         HTTPRequestBody::Stream(_) => {
                             self.flush_stream::<IS_SSL>(socket);
                         }
+                        #[cfg(unix)]
+                        HTTPRequestBody::Sendfile(sendfile) => {
+                            let mut sendfile = *sendfile;
+                            self.set_timeout(&socket);
+
+                            let mut tunnel_closed = false;
+                            // Set when the tunnel itself brings the next `on_writable`.
+                            let mut tunnel_blocked = false;
+                            let status = sendfile.write_copy(|chunk| {
+                                // The tunnel queues the ciphertext its outer socket did not
+                                // take, without bound. Send more only once that has drained.
+                                if proxy.has_pending_writes() {
+                                    tunnel_blocked = true;
+                                    return Ok(0);
+                                }
+                                match ProxyTunnel::write(proxy, chunk) {
+                                    Ok(sent) => Ok(sent),
+                                    Err(crate::Error::WantRead | crate::Error::WantWrite) => {
+                                        tunnel_blocked = true;
+                                        Ok(0)
+                                    }
+                                    Err(err) => {
+                                        tunnel_closed = true;
+                                        Err(err)
+                                    }
+                                }
+                            });
+                            // if closed internally will call proxy.onClose, which can free `*self`
+                            if tunnel_closed {
+                                return;
+                            }
+                            self.state.original_request_body = HTTPRequestBody::Sendfile(sendfile);
+                            match status {
+                                crate::send_file::Status::Done => {
+                                    self.state.request_stage = RequestStage::Done;
+                                    return;
+                                }
+                                crate::send_file::Status::Err(err) => {
+                                    self.close_and_fail::<IS_SSL>(err, socket);
+                                    return;
+                                }
+                                crate::send_file::Status::Again => {
+                                    // A pass that wrote everything it read has no writable
+                                    // event coming for the outer socket.
+                                    if !tunnel_blocked {
+                                        socket.request_writable_event();
+                                    }
+                                }
+                            }
+                        }
+                        #[cfg(not(unix))]
                         HTTPRequestBody::Sendfile(_) => {
-                            panic!(
-                                "sendfile is only supported without SSL. This code should never have been reached!"
-                            );
+                            unreachable!("SendFile::is_eligible is false on this platform");
                         }
                     }
                 }

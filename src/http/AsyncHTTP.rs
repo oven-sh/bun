@@ -196,7 +196,6 @@ fn make_client<'a>(
         compressed_request_body: Vec::new(),
         compressed_body_len: 0,
         pool: crate::PoolOptions::default(),
-        buffered_sendfile_body: Vec::new(),
     }
 }
 
@@ -757,8 +756,6 @@ impl<'a> AsyncHTTP<'a> {
                     // populated by the clone (`on_start` → `client.start`); it
                     // owns the decompressor / compressed_body buffers.
                     drop(core::mem::take(&mut client.state));
-                    // After `state`: its `original_request_body` borrows this.
-                    drop(core::mem::take(&mut client.buffered_sendfile_body));
                 }
                 let elapsed = (*this).elapsed;
                 bun_core::scoped_log!(AsyncHTTP, "onAsyncHTTPCallback: {:?}", elapsed);

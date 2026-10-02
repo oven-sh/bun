@@ -1902,3 +1902,133 @@ At `a2dd5ba96a`, each called by its upstream name:
   `get_modifiers_type_from_mapped_type(t) -> TypeId` (28250). `c35`: `get_lower_bound_of_key_type(t) -> TypeId`
   (21135). `c04`: `get_spelling_suggestion_for_name(name: &[u8], symbols: &[SymbolId], meaning) -> SymbolId` (1806).
 - `crate::core::Map` as the contract has it (`get`, `get_ok`, `set` with its `bool`).
+
+## Checker: initialisation and globals (`checker/c03_init.rs`)
+
+Commits `aae9f74be7`, `bb8a0745fd` and `0f2dab7801` (written by the job that commits the worktree). The functions of
+`checker.go` 908-1503 (layer C-INIT), in upstream order, and the closure fields of upstream's Checker that `NewChecker`
+and `initializeClosures` assign, as the methods that the other files call. PORT_STATUS.md has the row.
+
+NOT compiled by cargo: at `0f2dab7801` the crate does not compile (see "What this file expects" below). "Verified"
+says what was compiled instead.
+
+### How a caller writes the calls
+
+- `new_checker(ast: Ast<'a>, lists: &'a CheckerArena<'a>, program: &'a dyn Program<'a>) -> Checker<'a>` is
+  `NewChecker`. The caller makes the tree context and the arena of the lists, as for `Checker::zero`; the options are
+  `program.options()`. The files are bound BEFORE the context is made: a `Frozen` holds the bind results that exist
+  when it is made, so the `program.bind_source_files()` of the first line binds nothing new.
+- `resolve_name(location, name: &[u8], meaning, name_not_found_message: MessageId, is_use, exclude_globals) ->
+  SymbolId`, and `resolve_name_for_symbol_suggestion` with the same parameters. The nil message is `MessageId::NIL`.
+- `get_global_symbol(name: &[u8], meaning, diagnostic: MessageId) -> SymbolId`,
+  `get_global_type(name: &[u8], arity: isize, report_errors) -> TypeId`,
+  `get_global_type_alias_symbol(name, arity, report_errors) -> SymbolId`, and
+  `get_type_alias_type_parameters(symbol) -> List<'a, TypeId>` (`GetTypeAliasTypeParameters` has no lower case twin).
+- The 50 memoized getters of checker.go 1068-1117 are methods without a parameter, on `&mut self`, with the names of
+  their fields of the Checker (`get_global_es_symbol_type()`, `get_global_awaited_symbol_or_nil()`, ...).
+  `getGlobalNaNSymbolOrNil` is `get_global_nan_symbol_or_nil`, as the field of `c02_program_checker.rs` is.
+- `evaluate(expr, location) -> evaluator::Result<'a>`.
+- `compare_symbols(s1, s2) -> isize` and `compare_symbol_chains(&[SymbolId], &[SymbolId]) -> isize` take `&self`: sort
+  callbacks and `compare_types` call them through `&Checker`. `contains_missing_type(t)` takes `&self` too.
+  `is_primitive_or_object_or_empty_type(t)` takes `&mut self` (`is_empty_anonymous_object_type` does).
+- `report_unreliable_worker(t)`, `report_unmeasurable_worker(t)`, `initialize_checker()`, `merge_global_symbol(symbol)`,
+  `merge_module_augmentation(module_name)`, `add_undefined_to_globals_or_error_on_redeclaration()`: `&mut self`.
+- `create_name_resolver()` and `create_name_resolver_for_suggestion()` take `&self` and give a
+  `NameResolver<'a, Checker<'a>>` whose hooks are the methods of the checker as function pointers.
+- The five resolvers take the place of the memoized answer first: `get_global_type_resolver(memo, name, arity,
+  report_errors) -> TypeId`, `get_global_type_alias_resolver(memo, name, arity, report_errors) -> SymbolId`,
+  `get_global_value_symbol_resolver(memo, name, report_errors)` and `get_global_type_symbol_resolver(memo, name,
+  report_errors) -> SymbolId`, `get_global_types_resolver(memo, names: &[&[u8]], arity, report_errors) ->
+  List<'a, TypeId>`. `memo` is a `MemoField<'a, T>`, which is `for<'r> fn(&'r mut Checker<'a>) -> &'r mut Memo<T>`: a
+  getter passes `|c| &mut c.<the field of its name>`.
+- Free functions, `pub` at column 0 (`mod.rs` has the glob): `create_file_index_map(files: List<'_, NodeId>) ->
+  Map<NodeId, isize>`, `count_global_symbols(a, files) -> isize`, `get_global_type_declaration(a, symbol) -> NodeId`.
+
+### Differences from upstream
+
+- Two of the 23 functions have no function of their name, because what they assign is no field here.
+  `initializeClosures`: its two closures are the methods `is_primitive_or_object_or_empty_type` and
+  `contains_missing_type`, at the place of the function; `couldContainTypeVariables`, `isStringIndexSignatureOnlyType`
+  and `markNodeAssignments` are the methods beside their workers (`c37`, `c44`, `flow.rs`), and
+  `compareTypesAssignable` is `TypeComparer::Assignable`. `initializeIterationResolvers`: the two resolvers are the
+  two values of `IterationTypesResolverKind`, whose methods are in `c12_iteration_types.rs` since round 1.
+  `new_checker` says so where upstream calls the two.
+- The closure fields that `NewChecker` assigns are methods, placed after `new_checker` in the order of the
+  assignments: `compare_symbols` (918) and `compare_symbol_chains` (919) call their workers; `evaluate` (937) makes
+  the evaluator at each call and passes `evaluate_entity` of the checker; `resolve_name` (971) and
+  `resolve_name_for_symbol_suggestion` (972) make the resolver at each call (it holds ids and function pointers, and
+  the globals, `arguments` and `require` that it copies never change after 970) and pass the checker as its host; the
+  50 getters (1068-1117) each call the resolver that upstream makes them with.
+- `core.Memoize` is in the four resolvers: the lookup runs while `done` of the field is false, and `done` is set
+  after the lookup has returned, so a lookup that comes back into its own getter runs again, as upstream's does.
+- `getGlobalTypesResolver` is translated, and nothing calls it: the Checker has no field for such a list, and
+  `IterationTypesResolverKind::get_global_builtin_iterator_types` (`c12`) makes its list at each call ("Checker:
+  iteration and await" above). With two `Memo<List<'a, TypeId>>` fields, `c12` would call it.
+- `countGlobalSymbols` is translated and not called: `Ast::new_table()` takes no size hint. The size hint of
+  `createFileIndexMap` has no counterpart either (`Map::make()`).
+- `nextCheckerID` (checker.go 583, the range of `c02`) is the private static `NEXT_CHECKER_ID` of this file. The id
+  wraps as Go's `atomic.Uint32` does.
+- A range over a Go map runs in the order of the table: `file.Locals` and `file.GlobalExports` in
+  `initialize_checker`, the exports of the augmentation in `merge_module_augmentation`.
+- `_, ok := c.globals[name]` is `table_get(globals, name).is_nil()`: a table has no entry with a nil symbol.
+- `c.patternAmbientModules = append(..., file.PatternAmbientModules...)`: the list of the checker owns its elements,
+  so each pattern is cloned (`PatternAmbientModule` has no `Clone`: the record is made field by field).
+- Go evaluates the place of `c.valueSymbolLinks.Get(s).resolvedType = f()` before `f()`: the links are asked for
+  first (which gives the symbol its id), then the type is made, then it is stored. The same for `globalThis`.
+- `&Relation{}` is `Relation::default()` (the five relations are values). `&TypePredicate{...}` and the two
+  `&IndexInfo{...}` are records of `type_predicates` and `index_infos`, where upstream allocates outside its arenas.
+- Panics: 1210 is a fault and the nil list. `moduleAugmentation.Symbol.Declarations[0]` (1406) of a symbol without
+  a declaration reads the nil node, which is not the module node: the augmentation is not merged.
+- Not ported: the tracer and the mutex (`new_checker` returns the checker alone), and the two comments `Closure
+  optimization` of 918-919.
+
+### Verified
+
+Cargo has not compiled the file, and nothing ran a function of it. What was compiled and checked:
+
+- `sh round2-layer7-checker/c03-probe.sh` (rustc and clippy-driver alone, a few seconds; last run on the tree of
+  `0f2dab7801`): a small crate that mounts the real `c03_init.rs` beside the real `core/{arena,golang,linkstore,
+  tristate}.rs`, `ast/{flags,ids,symbolflags,checkflags,nodeflags}.rs` and `diagnostics/`. Everything else is a
+  stand-in: the tree context, `NameResolver`, the evaluator, the data model and 51 methods of the checker, and the
+  Checker itself with the 212 fields that the file names, each with its type of `c02_program_checker.rs` (a script
+  reads them). `#![deny(warnings)]` with `dead_code` allowed: no error, no warning. clippy-driver with the table of
+  the workspace and the repository's `clippy.toml`: no finding. So types, borrows, lifetimes, imports and lints of
+  the file are checked against those signatures, not against the bodies of the tree.
+- The stand-in signatures were compared with the tree by a script (name, receiver, parameter types, result): the 38
+  methods that the tree defines in plain text and `new_function_type_mapper` are equal. Read by hand instead: `fail`
+  and `list_of` (generic in the tree), the four casts (made by the macros of `types.rs`), `Checker::zero`, and the
+  stand-ins of `ast/`, `binder/nameresolver.rs` and `evaluator/evaluator.rs`. The seven functions of `c04` that the
+  tree does not have are assumptions.
+- The probe found one error that reading had not: `fn(&mut Checker<'a>) -> &mut Memo<T>` does not elide (one
+  parameter, two lifetimes). `MemoField` names the lifetime.
+- A script over upstream 1068-1117 and the 50 getters: same name, resolver, global name, arity, `reportErrors` and
+  result type for all 50, in upstream's order, and each field of `c02` has the type that its getter answers.
+- `rustfmt --check --edition 2024`: exit 0. No two comment lines are adjacent. No `unwrap`, `expect`, `panic`,
+  `unsafe`, `todo!` or index into a slice.
+- The calls that other files make into this file (the 76 sites of the look-ahead, and the later `c14` 984 and 1503,
+  `c44` 93 and 656, `utilities.rs` 504, 610, 706 and 738) were read against the signatures: all fit but three of
+  `nodebuilderimpl.rs` (below).
+- Upstream's own numbers for a later test (`oracle-toolchain-and-goldens/bottom-up/state/golden/init.nolib.state.txt`,
+  strict, one empty file): 62 types, 6 symbols, 4 signatures and 1 global after line 1117; 64 types, 2 globals and 10
+  diagnostics at the end of `initializeChecker`. Counted by hand over `new_checker` and `initialize_checker`: the same
+  62 and 64 types, 6 symbols, 4 signatures, and the ten `Cannot find global type` errors.
+
+### What this file expects and the tree does not have
+
+At `0f2dab7801`:
+
+- `crate::core::{Map, Memo}` as the contract has them: `Map::make()`, `set` with its `bool`; `Memo { value, done }`
+  with public fields. `bigint_literal_types` needs a `Map` whose key is not `Copy` (`PseudoBigInt`), as `c42` does.
+- `crate::evaluator` as a module: `evaluator/` has `evaluator.rs` and no `mod.rs`.
+- Seven functions of `c04` (checker.go 1505-1806), passed to the name resolver as function pointers, so receiver,
+  parameters and result must be those of `binder/nameresolver.rs` 14-27, all on `&mut self`:
+  `symbol_referenced(symbol, meaning: SymbolFlags)`, `get_requires_scope_change_cache(node) -> Tristate`,
+  `set_requires_scope_change_cache(node, value: Tristate)`,
+  `check_and_report_error_for_invalid_initializer(error_location, name: &[u8], property_with_invalid_initializer:
+  NodeId, result: SymbolId) -> bool`, `on_failed_to_resolve_symbol(error_location, name: &[u8], meaning,
+  name_not_found_message: MessageId)`, `on_successfully_resolved_symbol(error_location, result: SymbolId, meaning,
+  last_location: NodeId, associated_declaration_for_containing_initializer_or_binding_name: NodeId,
+  within_deferred_context: bool)`, `get_suggestion_for_symbol_name_lookup(symbols: SymbolTableId, name: &[u8],
+  meaning) -> SymbolId`. A name that is `Text<'a>` or a receiver that is `&self` does not coerce.
+- A consumer that does not fit: `nodebuilderimpl.rs` 2059, 3601 and 3613 pass `None` as the message of
+  `resolve_name`; it is `MessageId::NIL`.

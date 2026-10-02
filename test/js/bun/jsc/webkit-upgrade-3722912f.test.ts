@@ -30,6 +30,109 @@ describe.concurrent("WebKit 3722912ff800 upgrade", () => {
     expect(`${a}`).toBe("1,,2");
   });
 
+  test("JSON.stringify fast path honors a non-enumerable own toJSON (8b9071b24ead, 9f9370cc729f)", () => {
+    // SerializeJSONProperty looks toJSON up with GetV, so enumerability is
+    // irrelevant. FastStringifier used to skip DontEnum entries before looking
+    // for it and serialized the object's own properties instead.
+    function withToJSON<T extends object>(object: T, toJSON: unknown): T {
+      Object.defineProperty(object, "toJSON", {
+        value: toJSON,
+        enumerable: false,
+        writable: false,
+        configurable: false,
+      });
+      return object;
+    }
+    const frozen = Object.freeze(
+      withToJSON({ uri: "u", cid: "c", text: "t" }, function (this: { uri: string; cid: string }) {
+        return { uri: this.uri, cid: this.cid };
+      }),
+    );
+    const plain = withToJSON({ a: 1, b: 2 }, () => "via toJSON");
+
+    expect({
+      frozen: JSON.stringify(frozen),
+      frozenNested: JSON.stringify({ record: frozen }),
+      frozenInArray: JSON.stringify([frozen]),
+      frozenWithGap: JSON.stringify(frozen, null, 2),
+      plain: JSON.stringify(plain),
+      plainNested: JSON.stringify({ plain }),
+      plainWithGap: JSON.stringify({ plain }, null, 1),
+      receivesKey: JSON.stringify({ key: withToJSON({ a: 1 }, (key: string) => key) }),
+      returnsUndefined: JSON.stringify(withToJSON({ a: 1 }, () => undefined)),
+      notCallable: JSON.stringify(withToJSON({ a: 1 }, 42)),
+      enumerable: JSON.stringify({ a: 1, toJSON: () => "enumerable" }),
+      enumerableNotCallable: JSON.stringify({ a: 1, toJSON: 42 }),
+    }).toEqual({
+      frozen: '{"uri":"u","cid":"c"}',
+      frozenNested: '{"record":{"uri":"u","cid":"c"}}',
+      frozenInArray: '[{"uri":"u","cid":"c"}]',
+      frozenWithGap: '{\n  "uri": "u",\n  "cid": "c"\n}',
+      plain: '"via toJSON"',
+      plainNested: '{"plain":"via toJSON"}',
+      plainWithGap: '{\n "plain": "via toJSON"\n}',
+      receivesKey: '{"key":"key"}',
+      returnsUndefined: undefined,
+      notCallable: '{"a":1}',
+      enumerable: '"enumerable"',
+      enumerableNotCallable: '{"a":1,"toJSON":42}',
+    });
+
+    // Big enough to leave FastStringifier's static buffer for the dynamic one.
+    const many = Array.from({ length: 2000 }, (_, i) => withToJSON({ index: i, name: "name" + i }, () => i));
+    expect(JSON.stringify(many)).toBe("[" + many.map((_, i) => i).join(",") + "]");
+  });
+
+  test("JSON.stringify fast path honors toJSON on a replaced array prototype (8b9071b24ead)", () => {
+    // FastStringifier only checked the global Array.prototype for toJSON.
+    // Object.setPrototypeOf keeps the array on the fast path, so a toJSON on
+    // the replaced prototype was ignored.
+    const proto = { __proto__: Array.prototype, toJSON: () => "via prototype" };
+    const array = Object.setPrototypeOf([1, 2, 3], proto);
+    const nonEnumerableProto = Object.create(Array.prototype);
+    Object.defineProperty(nonEnumerableProto, "toJSON", {
+      value(this: unknown[]) {
+        return this.length;
+      },
+      enumerable: false,
+    });
+    const ownWins = Object.setPrototypeOf([1], proto);
+    Object.defineProperty(ownWins, "toJSON", { value: () => "own", enumerable: false });
+    const extra: number[] & { extra?: number } = [1];
+    extra.extra = 2;
+
+    expect({
+      replaced: JSON.stringify(array),
+      replacedNested: JSON.stringify({ array }),
+      replacedInArray: JSON.stringify([array]),
+      replacedWithGap: JSON.stringify(array, null, 2),
+      nonEnumerableOnProto: JSON.stringify(Object.setPrototypeOf([1, 2], nonEnumerableProto)),
+      ownWins: JSON.stringify(ownWins),
+      untouched: JSON.stringify([1, 2, 3]),
+      resetToOriginal: JSON.stringify(Object.setPrototypeOf([1, 2, 3], Array.prototype)),
+      nullPrototype: JSON.stringify(Object.setPrototypeOf([1, 2], null)),
+      namedProperty: JSON.stringify(extra),
+    }).toEqual({
+      replaced: '"via prototype"',
+      replacedNested: '{"array":"via prototype"}',
+      replacedInArray: '["via prototype"]',
+      replacedWithGap: '"via prototype"',
+      nonEnumerableOnProto: "2",
+      ownWins: '"own"',
+      untouched: "[1,2,3]",
+      resetToOriginal: "[1,2,3]",
+      nullPrototype: "[1,2]",
+      namedProperty: "[1]",
+    });
+  });
+
+  test("JSON.stringify reaches toJSON held in a non-reified static table (8b9071b24ead)", () => {
+    // Date.prototype.toJSON sits in a static hash table until first touched, and
+    // is non-enumerable once reified. Either way the fast path used to return
+    // "{}" for it instead of calling it (which throws, since it is not a Date).
+    expect(() => JSON.stringify(Date.prototype)).toThrow(TypeError);
+  });
+
   test("WebAssembly.Exception gains options.traceStack and stack getter (bf6512f84f7d)", () => {
     expect(WebAssembly.Exception.length).toBe(2);
     const desc = Object.getOwnPropertyDescriptor(WebAssembly.Exception.prototype, "stack");

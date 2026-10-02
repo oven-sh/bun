@@ -106,6 +106,25 @@ describe("Web Crypto", () => {
     expect(isSigValid).toBe(true);
   });
 
+  it("digest with non-buffer data rejects with Node's ERR_INVALID_ARG_TYPE", async () => {
+    // Same webidl-style message node's BufferSource converter produces (and that
+    // importKey already uses below for its buffer formats).
+    for (const data of [123, {}, "abc", null]) {
+      let err: any;
+      try {
+        await crypto.subtle.digest("SHA-256", data as any);
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(TypeError);
+      expect({ code: err.code, message: err.message }).toEqual({
+        code: "ERR_INVALID_ARG_TYPE",
+        message:
+          "Failed to execute 'digest' on 'SubtleCrypto': 2nd argument is not instance of ArrayBuffer, Buffer, TypedArray, or DataView.",
+      });
+    }
+  });
+
   describe("unwrapKey JWK error handling", () => {
     // Setup: AES-GCM key that can encrypt arbitrary bytes and also unwrap keys.
     // We encrypt payloads that decrypt to invalid JWK data so the JWK parse path

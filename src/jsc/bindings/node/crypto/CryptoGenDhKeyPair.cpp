@@ -156,7 +156,7 @@ std::optional<DhKeyPairJobCtx> DhKeyPairJobCtx::fromJS(JSGlobalObject* globalObj
                 return std::nullopt;
             }
         } else {
-            ERR::INVALID_ARG_TYPE(scope, globalObject, "options.prime"_s, "Buffer, TypedArray, or DataView"_s, primeValue);
+            ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.prime"_s, "Buffer, TypedArray, or DataView"_s, primeValue);
             return std::nullopt;
         }
     } else if (!primeLengthValue.isUndefinedOrNull()) {

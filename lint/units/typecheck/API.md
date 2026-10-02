@@ -1179,7 +1179,8 @@ The shapes that the scratch assumes are in `scratch/stubs/other_steps.rs`, `ast_
 - Of steps 4 and 5: `push_type_resolution(TypeSystemEntity::Symbol(s), TypeSystemPropertyName::AliasTarget)`,
   `pop_type_resolution`, `find_resolution_cycle_start_index`; `error`, `add_diagnostic`, `add_error_or_suggestion`,
   `is_deprecated_symbol`, `add_deprecated_suggestion(node, declarations, name)`, `ProgramFiles { ast }` (the files
-  behind the diagnostics view, which `add_duplicate_declaration_error` compares through); `resolve_name(location,
+  behind the diagnostics view, which `add_duplicate_declaration_error` compares through; these six are in
+  `c21_resolved_symbols_diagnostics.rs` since `f49ea57437`); `resolve_name(location,
   name, meaning, message, is_use, exclude_globals)`, `get_immediate_aliased_symbol`,
   `get_type_only_alias_declaration`, `get_spelling_suggestion_for_name(name, &[SymbolId], meaning)`.
 - Callees of later steps that the tree does not have yet: `check_expression_cached`, `check_computed_property_name`,

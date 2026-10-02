@@ -510,21 +510,13 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// The enum all the members of the union `ty` are members of, computed ones included (`getDeclaredTypeOfEnum`).
+    /// `t.symbol` of a union that has `TypeFlagsEnumLiteral`: the enum it is the declared type of (`getDeclaredTypeOfEnum`).
     pub(super) fn union_enum_symbol(&self, ty: TypeId) -> Option<Sym> {
-        let TypeData::Union(parts) = self.data(ty) else {
-            return None;
-        };
-        let owner_of = |p: TypeId| match self.data(p) {
-            TypeData::EnumLit { member, .. } => Some(self.enum_of(*member)),
-            TypeData::Enum { symbol, .. } => Some(self.enum_of(*symbol)),
-            _ => None,
-        };
-        let owner = owner_of(parts[0])?;
-        parts[1..]
-            .iter()
-            .all(|&p| owner_of(p) == Some(owner))
-            .then_some(owner)
+        let (alias, _) = self.stored_alias(ty)?;
+        self.files()
+            .flags(*alias)
+            .contains(SymFlags::ENUM)
+            .then_some(*alias)
     }
 
     /// `TypeFlagsDefinitelyNonNullable`
@@ -1138,8 +1130,6 @@ impl<'p> Checker<'p> {
             }
             (TypeData::Union(_), TypeData::Union(_)) => {
                 if let (Some(a), Some(b)) = (self.union_enum_symbol(s), self.union_enum_symbol(t))
-                    && self.enum_type(a) == s
-                    && self.enum_type(b) == t
                     && self.is_enum_type_related_to(a, b)
                 {
                     return true;
@@ -1733,14 +1723,15 @@ impl<'p> Checker<'p> {
                 }
                 if let Some(constraint) = self.restrictive_simplified_or_constraint(index)
                     && constraint != index
-                    && let Some(access) = self.indexed_access_flagged(obj, constraint, undefined)
+                    && let Some(access) =
+                        self.indexed_access_flagged(obj, constraint, undefined, None)
                 {
                     return Some(access);
                 }
                 if let Some(constraint) = self.restrictive_simplified_or_constraint(obj)
                     && constraint != obj
                 {
-                    return self.indexed_access_flagged(constraint, index, undefined);
+                    return self.indexed_access_flagged(constraint, index, undefined, None);
                 }
                 None
             }
@@ -1795,14 +1786,14 @@ impl<'p> Checker<'p> {
         }
         if let Some(constraint) = self.simplified_or_constraint(index)
             && constraint != index
-            && let Some(access) = self.indexed_access_flagged(obj, constraint, undefined)
+            && let Some(access) = self.indexed_access_flagged(obj, constraint, undefined, None)
         {
             return Some(access);
         }
         if let Some(constraint) = self.simplified_or_constraint(obj)
             && constraint != obj
         {
-            return self.indexed_access_flagged(constraint, index, undefined);
+            return self.indexed_access_flagged(constraint, index, undefined, None);
         }
         None
     }
@@ -4657,21 +4648,8 @@ impl<'p> Checker<'p> {
                     flags, readonly, ..
                 } = self.data(of)
                 {
-                    // Only with variadic elements. The keys that are known.
-                    let fixed = flags
-                        .iter()
-                        .position(|f| f.intersects(ElemFlags::REST | ElemFlags::VARIADIC))
-                        .unwrap_or(flags.len());
-                    let mut keys: Vec<TypeId> = (0..fixed)
-                        .map(|i| self.string_literal(self.number_name(i as f64), false))
-                        .collect();
-                    let array = if *readonly {
-                        self.readonly_array_of(TypeId::ANY)
-                    } else {
-                        self.array_of(TypeId::ANY)
-                    };
-                    keys.push(self.keyof(array));
-                    let known = self.union(&keys);
+                    // Only with variadic elements.
+                    let known = self.known_keys_of_tuple_type(flags, *readonly);
                     let result = self.is_related_to(r, source, known, REC_TARGET);
                     if result.holds() {
                         return result;
@@ -5242,7 +5220,7 @@ impl<'p> Checker<'p> {
             return self.property_type_for_writing(object, index, no_index_signatures);
         }
         // `indexType.Types()`: in the order of `CompareTypes`. An intersection keeps the order it is given.
-        let keys = self.parts_in_order(index);
+        let keys = self.parts(index);
         let mut types = Vec::with_capacity(keys.len());
         for &key in keys.iter() {
             types.push(self.property_type_for_writing(object, key, no_index_signatures)?);

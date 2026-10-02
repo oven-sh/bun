@@ -48,7 +48,7 @@ pub(crate) enum Mark {
     ExtendsArguments,
     /// From the `class` keyword, to an element of an `extends` clause that is not the first. As many as there are.
     OtherExtends,
-    /// From the `class` keyword, to what follows `implements`.
+    /// From the `class` keyword, to what follows `implements`. As many as there are clauses.
     Implements,
     /// From the name of a member of a class (the `{` of a static block) or of an object literal, to its first token: a decorator, a
     /// modifier, `get`, `set`, `*`, `[`.

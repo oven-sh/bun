@@ -3151,9 +3151,7 @@ impl Pass<'_, '_> {
     /// Whether an assignment in this file declares a property: `f.x = v`, or `this.x = v`, `o.x = v` and `exports.x = v` in JavaScript.
     fn has_assignment_declarations(&self) -> bool {
         let bound = self.bound;
-        !bound.declared_fn_expandos.is_empty()
-            || !bound.fn_expr_expandos.is_empty()
-            || !bound.object_expandos.is_empty()
+        !bound.expando_declarations.is_empty()
             || !bound.this_properties.is_empty()
             || bound.commonjs_indicator.is_some()
     }

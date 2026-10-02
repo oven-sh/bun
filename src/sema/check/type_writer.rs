@@ -25,7 +25,7 @@ struct TypeWalk {
 }
 
 impl Checker<'_> {
-    /// `typeWriterWalker.getTypes`, in no particular order. The file must have been checked, as in the harness.
+    /// `typeWriterWalker.getTypes`. The file must have been checked, as in the harness.
     pub fn types_at_locations(&mut self, file: FileId) -> Vec<TypeAtLocation> {
         self.flow_analysis_disabled_in = self.is_flow_analysis_left_disabled(file).then_some(file);
         let hir = self.hir(file);
@@ -39,6 +39,14 @@ impl Checker<'_> {
         }
         self.rechecked_exprs.clear();
         self.rechecked_members.clear();
+        // `forEachASTNode` goes down from the file. Of two expressions of one extent the one around the other was made later.
+        results.sort_by_key(|written| {
+            let made = match written.kind {
+                VisitedKind::Expression(e) => e.0,
+                _ => 0,
+            };
+            (written.start, std::cmp::Reverse((written.end, made)))
+        });
         results
     }
 

@@ -223,7 +223,7 @@ impl Checker<'_> {
         pass!(check_type_arguments_of_jsdoc_primitives);
         pass!(check_external_emit_helpers);
         // It takes back what has been said of decorators that are out of place.
-        pass!(check_decorators);
+        pass!(report_decorators);
         // `checkWithStatement`, `checkReturnStatement`, `checkExportAssignment`: what they never look at is taken back, whoever said it.
         pass!(check_x_statements);
         pass!(take_back_export_assignments_in_namespaces);
@@ -5511,7 +5511,9 @@ impl Files {
                 StmtKind::ExportStar { star_pos, .. } => star_pos,
                 _ => hir[statement].start,
             },
-            Decl::ModuleExports(e) | Decl::ExportsProperty(e) => start_inside_parentheses(hir, e),
+            Decl::ModuleExports(e) | Decl::ExportsProperty(e) | Decl::Expando(e) => {
+                start_inside_parentheses(hir, e)
+            }
             Decl::File | Decl::CommonJsVariable => 0,
         }
     }

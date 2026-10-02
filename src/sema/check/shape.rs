@@ -2185,8 +2185,8 @@ impl<'p> Checker<'p> {
                     self.add_members(&mut b, file, members, true, MapperId::IDENTITY, false);
                     self.add_this_properties(&mut b, file, c, true);
                     if hir.is_js && file == sym.file {
-                        let list = &self.bound(file).declared_fn_expandos;
-                        Self::add_expandos(&mut b, file, Bound::expandos_of(list, sym.id));
+                        let named = self.bound(file).expandos_among_exports(sym.id);
+                        Self::add_expandos(&mut b, file, &named);
                     }
                     // `symbol.Members[InternalSymbolNameConstructor]`: `declareClassMember` puts a static one in the exports.
                     let constructors: Vec<MemberId> = hir[c]
@@ -2320,9 +2320,9 @@ impl<'p> Checker<'p> {
                 // What is assigned to a name declares it only if nothing else does. `mergeSymbolTable`: every part brings its own.
                 for part in self.files().parts(sym) {
                     let bound = self.bound(part.file);
-                    let named = Bound::expandos_of(&bound.declared_fn_expandos, part.id);
+                    let named = bound.expandos_among_exports(part.id);
                     let keyed = Bound::expandos_of(&bound.declared_fn_keyed_expandos, part.id);
-                    self.add_all_expandos(&mut b, part.file, named, keyed);
+                    self.add_all_expandos(&mut b, part.file, &named, keyed);
                 }
             }
             Origin::EnumObject(sym) => {
@@ -2579,7 +2579,12 @@ impl<'p> Checker<'p> {
             return;
         }
         for (name, export) in self.exports_in_order(sym) {
-            if self.symbol_is_value(export) && !b.has(name) {
+            // What assignments alone declare is left to `add_expandos`.
+            let is_expando = |d: &(FileId, Decl)| matches!(d.1, Decl::Expando(_));
+            if self.symbol_is_value(export)
+                && !b.has(name)
+                && !self.files().decls_of(export).iter().all(is_expando)
+            {
                 b.add(Prop {
                     name,
                     flags: self.export_flags(export),
@@ -3077,8 +3082,9 @@ impl<'p> Checker<'p> {
             }
             // `mapType`: in the order of `CompareTypes`. What is made here is ordered by when it was made.
             let spread: Vec<TypeId> = self
-                .parts_in_order(left)
-                .into_iter()
+                .parts(left)
+                .iter()
+                .copied()
                 .map(|p| self.spread(p, right))
                 .collect();
             return self.union(&spread);
@@ -3089,8 +3095,9 @@ impl<'p> Checker<'p> {
                 return TypeId::ERROR;
             }
             let spread: Vec<TypeId> = self
-                .parts_in_order(right)
-                .into_iter()
+                .parts(right)
+                .iter()
+                .copied()
                 .map(|p| self.spread(left, p))
                 .collect();
             return self.union(&spread);
@@ -3397,7 +3404,7 @@ impl<'p> Checker<'p> {
     /// `getTypeOfVariableOrParameterOrPropertyWorker`, `case KindBinaryExpression, KindCallExpression`: the type of the property
     /// `name` declared by `assignments` (`f.name = value`, `this.name = value`, `Object.defineProperty(f, "name", descriptor)`).
     /// It is a type resolution, identified by the first declaration (`symbol.ValueDeclaration`).
-    fn type_of_assigned_prop(
+    pub(super) fn type_of_assigned_prop(
         &mut self,
         file: FileId,
         name: Atom,
@@ -4471,7 +4478,7 @@ impl<'p> Checker<'p> {
                         } else {
                             // `t.accessFlags`: read under noUncheckedIndexedAccess, what an index signature gives may be missing.
                             let found = self
-                                .indexed_access_flagged(obj, index, undefined)
+                                .indexed_access_flagged(obj, index, undefined, None)
                                 .unwrap_or(TypeId::UNKNOWN);
                             // `getNextBaseConstraint`: what is found there is looked into in its turn. Only `ty` is being resolved: a
                             // `t` that `getSimplifiedType` made of it has a constraint of its own.
@@ -5213,10 +5220,10 @@ impl<'p> Checker<'p> {
         if self.is_union(ty) {
             let resolved = self.shape_memo(ty, |c| {
                 // `t.Types()` are in the order of `CompareTypes`.
-                let parts = c.parts_in_order(ty);
+                let parts = c.parts(ty);
                 Shape {
-                    call: c.signatures_of_union(&parts, false),
-                    construct: c.signatures_of_union(&parts, true),
+                    call: c.signatures_of_union(parts, false),
+                    construct: c.signatures_of_union(parts, true),
                     ..Shape::default()
                 }
             });

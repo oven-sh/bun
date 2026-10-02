@@ -883,7 +883,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
             return None;
         }
         let mut prop_set: Vec<(Prop, MapperId)> = Vec::new();
-        for part in self.c.parts_in_order(ty) {
+        for &part in self.c.parts(ty) {
             let part = self.c.apparent_type(part);
             if part == TypeId::NEVER {
                 continue;
@@ -1266,12 +1266,10 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                 // `bindExpandoPropertyAssignment`
                 let first = *assignments.first()?;
                 let (bound, files) = (self.c.bound(*file), self.c.files());
-                if let Some(expando) = bound
-                    .declared_fn_expandos
-                    .iter()
-                    .find(|expando| expando.2 == first)
-                {
-                    return Some(PropertyParent::Symbol(files.sym(*file, expando.0)));
+                let declared = bound.expr_symbol[first.idx()];
+                if declared.is_some() {
+                    let parent = bound.symbols[declared.idx()].parent;
+                    return Some(PropertyParent::Symbol(files.sym(*file, parent)));
                 }
                 let function = bound
                     .fn_expr_expandos

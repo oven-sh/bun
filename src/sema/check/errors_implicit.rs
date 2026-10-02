@@ -450,12 +450,20 @@ impl Checker<'_> {
                 }
             }
         }
-        self.check_expandos_implicit_any(
-            file,
-            &bound.declared_fn_expandos,
-            &bound.declared_fn_keyed_expandos,
-            out,
-        );
+        // What `cloneSymbol` makes repeats the declarations of another.
+        let mut declared: Vec<(SymbolId, Atom, ExprId)> = Vec::new();
+        for symbol in &bound.symbols {
+            if symbol.flags.contains(SymFlags::ASSIGNMENT)
+                && !symbol.flags.contains(SymFlags::TRANSIENT)
+            {
+                for &decl in &symbol.decls {
+                    if let Decl::Expando(e) = decl {
+                        declared.push((symbol.parent, symbol.name, e));
+                    }
+                }
+            }
+        }
+        self.check_expandos_implicit_any(file, &declared, &bound.declared_fn_keyed_expandos, out);
         self.check_expandos_implicit_any(
             file,
             &bound.fn_expr_expandos,

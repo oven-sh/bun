@@ -3244,6 +3244,7 @@ impl<'a> Builder<'a> {
         let mut extends_args = IdList::EMPTY;
         let mut other_extends = Vec::new();
         let mut implements = Vec::new();
+        let mut other_implements = Vec::new();
         // `parseHeritageClauses`: any number of clauses, in any order. Only the first of each kind counts.
         let (mut seen_extends, mut seen_implements) = (false, false);
         // `checkGrammarClassDeclarationHeritageClauses`: the clauses are not looked at after an error in the modifiers.
@@ -3280,6 +3281,8 @@ impl<'a> Builder<'a> {
                     }
                 } else if !is_extends && !seen_implements {
                     implements.push(self.parse_implemented()?);
+                } else if !is_extends {
+                    other_implements.push(self.parse_implemented()?);
                 } else {
                     // The checker never looks at it.
                     if is_extends {
@@ -3319,6 +3322,7 @@ impl<'a> Builder<'a> {
             }
         }
         let implements = self.file.list(&implements);
+        let other_implements = self.file.list(&other_implements);
         let other_extends = self.file.list(&other_extends);
         let outer = std::mem::replace(&mut self.in_abstract_class, flags.contains(Flags::ABSTRACT));
         // `parseClassDeclarationOrExpression`: without the `{` there are no members, and no `}` is looked for.
@@ -3339,6 +3343,7 @@ impl<'a> Builder<'a> {
             extends_args,
             other_extends,
             implements,
+            other_implements,
             members,
             pos,
             start: self.statement_start,
@@ -3453,8 +3458,9 @@ impl<'a> Builder<'a> {
         } else {
             Span::EMPTY
         };
-        let extends = self.parse_interface_heritage()?;
+        let (extends, other_heritage) = self.parse_interface_heritage()?;
         let extends = self.file.list(&extends);
+        let other_heritage = self.file.list(&other_heritage);
         let members = self.interface_members()?;
         let interface = self.file.add_interface(Interface {
             name,
@@ -3462,16 +3468,18 @@ impl<'a> Builder<'a> {
             flags,
             type_params,
             extends,
+            other_heritage,
             members,
             stmt: StmtId::NONE,
         });
         Ok(self.file.stmt(StmtKind::Interface(interface), pos))
     }
 
-    /// `parseHeritageClauses` of an interface. Returns the elements of the first `extends` clause (`GetHeritageElements`).
+    /// `parseHeritageClauses` of an interface. Returns the elements of the first `extends` clause (`GetHeritageElements`),
+    /// and those of the other clauses.
     /// Reports what `checkGrammarInterfaceDeclaration` reports, except 1176, which the checker finds in the text.
-    fn parse_interface_heritage(&mut self) -> R<Vec<TypeNodeId>> {
-        let mut extends = Vec::new();
+    fn parse_interface_heritage(&mut self) -> R<(Vec<TypeNodeId>, Vec<TypeNodeId>)> {
+        let (mut extends, mut others) = (Vec::new(), Vec::new());
         let mut seen_extends = false;
         // `checkInterfaceDeclaration`: the clauses are not looked at after an error in the modifiers.
         let mut done_reporting = self.modifiers_in_error;
@@ -3479,7 +3487,7 @@ impl<'a> Builder<'a> {
             let keyword = self.pos();
             let is_extends = self.tok() == T::TExtends;
             if !is_extends && !self.is_kw(b"implements") {
-                return Ok(extends);
+                return Ok((extends, others));
             }
             let is_first_extends = is_extends && !seen_extends;
             seen_extends |= is_extends;
@@ -3497,6 +3505,8 @@ impl<'a> Builder<'a> {
                 let base = self.parse_heritage_element()?;
                 if is_first_extends {
                     extends.push(base);
+                } else {
+                    others.push(base);
                 }
                 is_empty = false;
                 trailing_comma = (self.tok() == T::TComma).then(|| self.pos());

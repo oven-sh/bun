@@ -112,10 +112,6 @@ pub struct Inference {
 }
 
 impl Inference {
-    pub(super) fn new(params: Vec<TypeId>, sig: Option<SigId>) -> Inference {
-        Inference::for_params(&params, sig)
-    }
-
     pub(super) fn for_params(params: &[TypeId], sig: Option<SigId>) -> Inference {
         let candidates = params
             .iter()

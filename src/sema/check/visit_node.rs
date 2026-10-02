@@ -80,7 +80,7 @@ pub enum VisitedKind {
 }
 
 impl Checker<'_> {
-    /// `typeWriterWalker.visitNode` over `forEachASTNode`.
+    /// `typeWriterWalker.visitNode` over `forEachASTNode`, in no particular order.
     pub(super) fn visited_nodes(&self, file: FileId) -> Vec<VisitedNode> {
         let hir = self.hir(file);
         let mut visitor = Visitor {
@@ -96,14 +96,6 @@ impl Checker<'_> {
         visitor.type_nodes();
         // `forEachASTNode` leaves out what is reparsed from a JSDoc comment, and a comment is no child of a node.
         visitor.nodes.retain(|node| !hir.is_in_jsdoc(node.start));
-        // It goes down from the file. Of two expressions of one extent the one around the other was made later.
-        visitor.nodes.sort_by_key(|node| {
-            let made = match node.kind {
-                VisitedKind::Expression(e) => e.0,
-                _ => 0,
-            };
-            (node.start, std::cmp::Reverse((node.end, made)))
-        });
         visitor.nodes
     }
 
@@ -745,8 +737,10 @@ impl Visitor<'_, '_> {
     /// The identifiers of entity names in types, and the expression nodes under a `LiteralType`.
     fn type_nodes(&mut self) {
         let (hir, file) = (self.hir, self.file);
-        let implemented = hir.classes.iter().map(|class| class.implements);
-        let extended = hir.interfaces.iter().map(|interface| interface.extends);
+        let classes = hir.classes.iter();
+        let implemented = classes.flat_map(|class| [class.implements, class.other_implements]);
+        let interfaces = hir.interfaces.iter();
+        let extended = interfaces.flat_map(|i| [i.extends, i.other_heritage]);
         let mut heritage: Vec<TypeNodeId> = implemented
             .chain(extended)
             .flat_map(|clause| hir.ids(clause))

@@ -8,8 +8,12 @@
 
 use super::enclosing_declaration::Enclosing;
 use super::errors::Diagnostic;
+use super::errors_isolated_declarations::Node as SyntaxNode;
 use super::explain::Related;
-use super::print::Report;
+use super::print::{
+    DECLARATION_EMIT_NODE_BUILDER_FLAGS, Report, SymbolTracker,
+    WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL,
+};
 use super::*;
 use crate::bind::{
     ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind, SymbolId,
@@ -27,22 +31,12 @@ use std::rc::Rc;
 const MODULE_CLONE: u32 = 1 << 31;
 
 /// What `resolveESModuleSymbol` gives for `originating_import`, the alias of an `import * as ns` that is not the module as it stands.
-fn module_clone(originating_import: Sym) -> Sym {
+pub(super) fn module_clone(originating_import: Sym) -> Sym {
     Sym {
         file: originating_import.file,
         id: SymbolId(originating_import.id.0 | MODULE_CLONE),
     }
 }
-
-/// `nodebuilder.Flags`, those that are not the same all the way through a file.
-const WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL: u32 = 1 << 0;
-const IN_OBJECT_TYPE_LITERAL: u32 = 1 << 1;
-const ALLOW_UNIQUE_ES_SYMBOL_TYPE: u32 = 1 << 2;
-
-/// `noTruncationMaximumTruncationLength`
-const MAXIMUM_LENGTH: usize = 1_000_000;
-/// Deeper than this nothing is looked at.
-const MAXIMUM_DEPTH: u32 = 150;
 
 /// What a name is wanted as.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
@@ -195,27 +189,6 @@ enum Typed {
     Export(StmtId, ExprId),
 }
 
-/// The declaration `serializeTypeForDeclaration` goes by.
-#[derive(Copy, Clone)]
-enum Declared {
-    None,
-    Variable(FileId, VarDeclId),
-    Member(FileId, MemberId),
-    Parameter(FileId, ParamId),
-    /// A property of an object literal.
-    Literal(FileId, PropId),
-    Export(FileId, ExprId),
-}
-
-/// `CompositeSymbolIdentity`
-#[derive(Copy, Clone, PartialEq, Eq)]
-enum Identity {
-    Origin(Origin),
-    Instance(Sym),
-    Function(FileId, FnId),
-    Conditional(FileId, TypeNodeId),
-}
-
 /// An error.
 struct Found {
     start: u32,
@@ -223,87 +196,6 @@ struct Found {
     code: u32,
     args: Vec<String>,
     related: Vec<Related>,
-}
-
-/// `TrackedSymbolArgs`
-#[derive(Copy, Clone)]
-struct Tracked {
-    symbol: Sym,
-    at: Enclosing,
-    meaning: Meaning,
-    /// It is the local symbol of what a module or a namespace exports (`ExportSymbol`), which nothing outside can name.
-    as_local: bool,
-}
-
-/// `recoveryBoundary`
-struct Boundary {
-    had_error: bool,
-    deferred: Vec<Report>,
-    tracked: Vec<Tracked>,
-    old_tracked: Vec<Tracked>,
-    old_encountered_error: bool,
-    old_length: usize,
-}
-
-/// `SerializedTypeEntry`
-struct Serialized {
-    truncating: bool,
-    added_length: usize,
-    tracked: Vec<Tracked>,
-}
-
-/// The links of a property of a reverse mapped type.
-#[derive(Copy, Clone)]
-struct ReverseMappedProperty {
-    owner: TypeId,
-    name: Atom,
-    property_type: TypeId,
-    mapped: Option<(FileId, TypeNodeId)>,
-}
-
-/// `NodeBuilderContext`
-struct Builder {
-    enclosing: Enclosing,
-    flags: u32,
-    approximate_length: usize,
-    truncating: bool,
-    encountered_error: bool,
-    reported_diagnostic: bool,
-    visited_types: Vec<TypeId>,
-    symbol_depth: Vec<(Identity, u32)>,
-    infer_type_parameters: Vec<TypeId>,
-    reverse_mapped_stack: Vec<ReverseMappedProperty>,
-    mapper: MapperId,
-    depth: u32,
-    /// How many of the types that are being written out may go by a name in TypeScript, which keeps `t.alias`: here the alias is found
-    /// again from the syntax, and not always. What is named inside such a type may never be named there, so nothing is said of it.
-    may_be_named: u32,
-    tracked: Vec<Tracked>,
-    boundaries: Vec<Boundary>,
-    serialized: FxHashMap<(TypeId, u32, Enclosing), Serialized>,
-}
-
-impl Builder {
-    fn new(enclosing: Enclosing, flags: u32) -> Builder {
-        Builder {
-            enclosing,
-            flags,
-            approximate_length: 0,
-            truncating: false,
-            encountered_error: false,
-            reported_diagnostic: false,
-            visited_types: Vec::new(),
-            symbol_depth: Vec::new(),
-            infer_type_parameters: Vec::new(),
-            reverse_mapped_stack: Vec::new(),
-            mapper: MapperId::IDENTITY,
-            depth: 0,
-            may_be_named: 0,
-            tracked: Vec::new(),
-            boundaries: Vec::new(),
-            serialized: FxHashMap::default(),
-        }
-    }
 }
 
 /// Which statement of a file declares what.
@@ -339,8 +231,6 @@ struct DeclarationEmit<'c, 'p> {
     written: FxHashSet<StmtId>,
     interface_scopes: Vec<ScopeId>,
     module_scopes: Vec<ScopeId>,
-
-    b: Builder,
 }
 
 impl<'p> Checker<'p> {
@@ -427,7 +317,6 @@ impl<'c, 'p> DeclarationEmit<'c, 'p> {
             written: FxHashSet::default(),
             interface_scopes,
             module_scopes,
-            b: Builder::new(top, 0),
         }
     }
 
@@ -665,7 +554,7 @@ impl<'p> Checker<'p> {
             .unwrap_or(originating_import)
     }
 
-    fn flags_of(&self, symbol: Sym) -> SymFlags {
+    pub(super) fn flags_of(&self, symbol: Sym) -> SymFlags {
         self.files().flags(self.target_of_module_clone(symbol))
     }
 
@@ -688,28 +577,10 @@ impl<'p> Checker<'p> {
         self.symbol_to_string(symbol)
     }
 
-    /// `symbol.Parent`. The binder notes what a declaration is written in whether or not it is exported: only what is declared
-    /// among the exports has a parent, be it refused there (`declareSymbolEx`).
+    /// `getParentOfSymbol`
     fn parent_of_symbol(&self, symbol: Sym) -> Option<Sym> {
-        let symbol = self.target_of_module_clone(symbol);
-        let files = self.files();
-        let declared = files.symbol(symbol);
-        if declared.parent.is_none() {
-            return None;
-        }
-        let parent = files.sym(symbol.file, declared.parent);
-        let bound = self.bound(symbol.file);
-        let is_exported = files.export(parent, declared.name) == Some(symbol)
-            || files.export(parent, known::default) == Some(symbol)
-            || bound
-                .lookup(bound.symbols[declared.parent.idx()].exports, declared.name)
-                .is_some_and(|there| {
-                    declared
-                        .decls
-                        .iter()
-                        .any(|&decl| bound.refused_declarations.contains(&(there, decl)))
-                });
-        is_exported.then_some(parent)
+        self.files()
+            .parent_of_symbol(self.target_of_module_clone(symbol))
     }
 
     /// `core.Some(symbol.Declarations, hasNonGlobalAugmentationExternalModuleSymbol)`
@@ -2311,9 +2182,40 @@ impl SymbolTrackerImpl {
             _ => "(Missing)".to_owned(),
         }
     }
+}
+
+impl<'p> SymbolTracker<'p> for SymbolTrackerImpl {
+    /// `TrackSymbol`
+    fn track_symbol(
+        &mut self,
+        c: &mut Checker<'p>,
+        symbol: Sym,
+        enclosing_declaration: Option<Enclosing>,
+        meaning: SymFlags,
+    ) -> bool {
+        let Some(at) = enclosing_declaration else {
+            return false;
+        };
+        if c.flags_of(symbol).contains(SymFlags::TYPE_PARAMETER) {
+            return false;
+        }
+        let is_declared_in_javascript = c
+            .decls_of(symbol)
+            .iter()
+            .any(|declaration| c.hir(declaration.0).is_js);
+        // How JavaScript exports what it declares is not followed: nothing is said of it.
+        if is_declared_in_javascript && !c.is_symbol_accessible_at(symbol, meaning, false, at) {
+            return true;
+        }
+        let meaning = Meaning::of(meaning, false);
+        let access = c.with_emit_resolver(self.current_source_file, |resolver| {
+            resolver.is_symbol_accessible(symbol, at, meaning, true)
+        });
+        self.handle_symbol_accessibility_error(c, access)
+    }
 
     /// The six that `Report` stands for.
-    fn report(&mut self, c: &Checker<'_>, report: Report) {
+    fn report(&mut self, c: &mut Checker<'p>, report: Report) {
         let Some(location) = self.error_location() else {
             return;
         };
@@ -2348,89 +2250,14 @@ impl SymbolTrackerImpl {
     }
 
     /// `ReportTruncationError`, which does not wait.
-    fn report_truncation_error(&mut self) {
+    fn report_truncation_error(&mut self, _: &mut Checker<'p>) {
         if let Some(location) = self.error_location() {
             self.add_diagnostic(location, 7056, Vec::new());
         }
     }
-}
 
-impl<'p> DeclarationEmit<'_, 'p> {
-    /// `SymbolTrackerImpl` of the node builder, and the `wrappingTracker` of a node that may be written again as it is: there
-    /// a report waits until it is known what becomes of the node, and is an error of it.
-    fn report(&mut self, report: Report) {
-        self.b.reported_diagnostic = true;
-        match self.b.boundaries.last_mut() {
-            Some(boundary) => {
-                boundary.had_error = true;
-                boundary.deferred.push(report);
-            }
-            None => self.tracker.report(self.c, report),
-        }
-    }
-
-    fn is_declared_in_javascript(&self, symbol: Sym) -> bool {
-        self.c
-            .decls_of(symbol)
-            .iter()
-            .any(|declaration| self.c.hir(declaration.0).is_js)
-    }
-
-    /// `TrackSymbol`
-    fn track_symbol(&mut self, symbol: Sym, at: Enclosing, meaning: Meaning) {
-        self.track(Tracked {
-            symbol,
-            at,
-            meaning,
-            as_local: false,
-        });
-    }
-
-    fn track(&mut self, tracked: Tracked) {
-        if self
-            .c
-            .flags_of(tracked.symbol)
-            .contains(SymFlags::TYPE_PARAMETER)
-        {
-            return;
-        }
-        // See `Builder::may_be_named`. And how JavaScript exports what it declares is not followed.
-        if !tracked.as_local
-            && (self.b.may_be_named > 0 || self.is_declared_in_javascript(tracked.symbol))
-            && !self
-                .with_resolver(|resolver| {
-                    resolver.is_symbol_accessible(
-                        tracked.symbol,
-                        tracked.at,
-                        tracked.meaning,
-                        false,
-                    )
-                })
-                .is_accessible()
-        {
-            self.b.reported_diagnostic = true;
-            return;
-        }
-        if let Some(boundary) = self.b.boundaries.last_mut() {
-            boundary.tracked.push(tracked);
-        } else {
-            let access = if tracked.as_local {
-                self.with_resolver(|resolver| resolver.inaccessible(tracked.symbol, tracked.at))
-            } else {
-                self.with_resolver(|resolver| {
-                    resolver.is_symbol_accessible(tracked.symbol, tracked.at, tracked.meaning, true)
-                })
-            };
-            if self
-                .tracker
-                .handle_symbol_accessibility_error(self.c, access)
-            {
-                self.b.reported_diagnostic = true;
-                return;
-            }
-        }
-        self.b.tracked.push(tracked);
-    }
+    /// `ReportInferenceFallback`: `if !s.state.isolatedDeclarations { return }`, and errors_isolated_declarations.rs has that case.
+    fn report_inference_fallback(&mut self, _: &mut Checker<'p>, _: FileId, _: SyntaxNode) {}
 }
 
 // ───────────────────────────── `DeclarationTransformer` ─────────────────────────────
@@ -2533,9 +2360,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 let function = self.c.type_of_symbol(host);
                 if let Some(ty) = self.c.type_of_property(function, name) {
                     self.tracker.error_name_node = None;
-                    self.b = Builder::new(self.enclosing, WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL);
-                    self.serialize_declared_type(Declared::None, ty);
-                    self.exit_context();
+                    self.create_type_of_declaration(None, ty, DECLARATION_EMIT_NODE_BUILDER_FLAGS);
                 }
             }
             (
@@ -2636,10 +2461,8 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 self.tracker.error_name_node,
                 self.tracker.get_symbol_accessibility_diagnostic,
             ) = (None, Context::DefinedExport(e));
-            self.b = Builder::new(self.enclosing, WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL);
             let ty = self.c.type_of_symbol(symbol);
-            self.serialize_declared_type(Declared::None, ty);
-            self.exit_context();
+            self.create_type_of_declaration(None, ty, DECLARATION_EMIT_NODE_BUILDER_FLAGS);
             (
                 self.tracker.error_name_node,
                 self.tracker.get_symbol_accessibility_diagnostic,
@@ -3619,8 +3442,8 @@ impl<'p> DeclarationEmit<'_, 'p> {
             if let TypeData::EnumLit { member, .. } | TypeData::Enum { symbol: member, .. } =
                 *self.c.data(literal)
             {
-                self.b = Builder::new(self.enclosing, 0);
-                self.track_symbol(member, self.enclosing, Meaning::Value);
+                self.tracker
+                    .track_symbol(self.c, member, Some(self.enclosing), SymFlags::VALUE);
             }
             return;
         }
@@ -3684,39 +3507,43 @@ impl<'p> DeclarationEmit<'_, 'p> {
             };
         }
         let flags = if self.in_class_expression {
-            0
+            DECLARATION_EMIT_NODE_BUILDER_FLAGS & !WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL
         } else {
-            WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL
+            DECLARATION_EMIT_NODE_BUILDER_FLAGS
         };
-        self.b = Builder::new(self.enclosing, flags);
         let file = self.file();
         match node {
+            // `CreateReturnTypeOfSignatureDeclaration`
             Typed::Signature(f) => {
-                let signature = self.c.sig_of_declaration(file, f);
-                self.serialize_return_type_for_signature(signature);
+                self.c.serialize_return_type_for_signature(
+                    file,
+                    f,
+                    self.enclosing,
+                    flags,
+                    &mut self.tracker,
+                );
             }
             Typed::Variable(d) => {
                 let ty = self.c.type_of_pat(file, hir[d].pat);
-                self.serialize_declared_type(Declared::Variable(file, d), ty);
+                self.create_type_of_declaration(Some(SyntaxNode::Var(d)), ty, flags);
             }
             Typed::Element(pat) => {
                 let ty = self.c.type_of_pat(file, pat);
-                self.serialize_declared_type(Declared::None, ty);
+                self.create_type_of_declaration(None, ty, flags);
             }
             Typed::Property(m) => {
                 let ty = self.type_of_member(file, m);
-                self.serialize_declared_type(Declared::Member(file, m), ty);
+                self.create_type_of_declaration(Some(SyntaxNode::Member(m)), ty, flags);
             }
             Typed::Parameter(p) => {
                 let ty = self.c.type_of_param(file, p);
-                self.serialize_declared_type(Declared::Parameter(file, p), ty);
+                self.create_type_of_declaration(Some(SyntaxNode::Param(p)), ty, flags);
             }
             Typed::Export(s, e) => {
                 let ty = self.type_of_export_assignment(s, e);
-                self.serialize_declared_type(Declared::Export(file, e), ty);
+                self.create_type_of_declaration(Some(SyntaxNode::Stmt(s)), ty, flags);
             }
         }
-        self.exit_context();
         self.tracker.error_name_node = saved.0;
         if !self.suppresses_new_contexts {
             self.tracker.get_symbol_accessibility_diagnostic = saved.1;
@@ -3749,1743 +3576,34 @@ impl<'p> DeclarationEmit<'_, 'p> {
         self.c.widened(ty)
     }
 
+    /// `CreateTypeOfDeclaration`, of a declaration of this file whose symbol has the type `ty`.
+    fn create_type_of_declaration(
+        &mut self,
+        declaration: Option<SyntaxNode>,
+        ty: TypeId,
+        flags: u32,
+    ) {
+        let file = self.file();
+        self.c.serialize_type_for_declaration(
+            file,
+            declaration,
+            ty,
+            self.enclosing,
+            flags,
+            &mut self.tracker,
+        );
+    }
+
     /// `CreateTypeOfExpression`, of what the class around extends.
     fn create_type_of_expression(&mut self, e: ExprId) {
-        self.b = Builder::new(self.enclosing, WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL);
-        // `serializeTypeForExpression`
-        let ty = self.c.type_of_expr(self.file(), e);
-        let ty = self.c.regular(ty);
-        let ty = self.c.widened(ty);
-        self.type_to_node(ty);
-        self.exit_context();
-    }
-
-    /// `exitContext`
-    fn exit_context(&mut self) {
-        if self.b.truncating {
-            self.tracker.report_truncation_error();
-        }
-    }
-}
-
-// ───────────────────────────── `NodeBuilderImpl` ─────────────────────────────
-
-impl<'p> DeclarationEmit<'_, 'p> {
-    /// `checkTruncationLength`
-    fn check_truncation_length(&mut self) -> bool {
-        if !self.b.truncating {
-            self.b.truncating = self.b.approximate_length > MAXIMUM_LENGTH;
-        }
-        self.b.truncating
-    }
-
-    /// `createElidedInformationPlaceholder`
-    fn elided(&mut self) {
-        self.b.approximate_length += 3;
-    }
-
-    fn length_of(&self, name: Atom) -> usize {
-        if name.is_none() {
-            return 0;
-        }
-        self.c.written_name(name).len()
-    }
-
-    /// `IsSymbolAccessible(symbol, b.ctx.enclosingDeclaration, meaning, false)`
-    fn is_symbol_accessible(&mut self, symbol: Sym, meaning: Meaning) -> bool {
-        let at = self.b.enclosing;
-        self.with_resolver(|resolver| resolver.is_symbol_accessible(symbol, at, meaning, false))
-            .is_accessible()
-    }
-
-    fn is_value_symbol_accessible(&mut self, symbol: Sym) -> bool {
-        self.is_symbol_accessible(symbol, Meaning::Value)
-    }
-
-    /// `getTypeFromTypeNode` of the node builder: under the mapper of the signature that is being written.
-    fn type_from_type_node(&mut self, file: FileId, node: TypeNodeId) -> TypeId {
-        let declared = self.c.type_from_node(file, node);
-        self.c.instantiate(declared, self.b.mapper)
-    }
-
-    /// `symbolToTypeNode`
-    fn symbol_to_type_node(&mut self, symbol: Sym, meaning: Meaning) {
-        // `lookupSymbolChain`
-        self.track_symbol(symbol, self.b.enclosing, meaning);
-        let chain = if self.c.flags_of(symbol).contains(SymFlags::TYPE_PARAMETER) {
-            vec![symbol]
-        } else {
-            let at = self.b.enclosing;
-            self.with_resolver(|resolver| resolver.symbol_chain(symbol, at, meaning, 0))
-        };
-        for &part in &chain[1..] {
-            self.b.approximate_length += self.length_of(self.c.name_of(part)) + 1;
-        }
-        if self.c.is_external_module_symbol(chain[0]) {
-            let specifier = self.import_type_specifier(chain[0], symbol);
-            self.b.approximate_length += specifier.len() + 10;
-        } else {
-            self.b.approximate_length += 2 * (self.length_of(self.c.name_of(chain[0])) + 1);
-        }
-    }
-
-    /// `typeToTypeNode`
-    fn type_to_node(&mut self, ty: TypeId) {
-        if self.b.depth >= MAXIMUM_DEPTH || self.c.is_stack_low() {
-            return self.elided();
-        }
-        self.b.depth += 1;
-        self.type_to_node_worker(ty);
-        self.b.depth -= 1;
-    }
-
-    fn type_to_node_worker(&mut self, ty: TypeId) {
-        let ty = self.c.reduced(ty);
-        match self.c.data(ty) {
-            TypeData::Intrinsic(intrinsic) => {
-                self.b.approximate_length += match intrinsic {
-                    Intrinsic::Unresolved | Intrinsic::Any | Intrinsic::Error | Intrinsic::Auto => {
-                        3
-                    }
-                    Intrinsic::Unknown => 0,
-                    Intrinsic::Never => 5,
-                    Intrinsic::Void | Intrinsic::Null | Intrinsic::NullDeclared => 4,
-                    Intrinsic::Undefined | Intrinsic::Missing | Intrinsic::UndefinedDeclared => 9,
-                    Intrinsic::String
-                    | Intrinsic::Number
-                    | Intrinsic::BigInt
-                    | Intrinsic::Symbol
-                    | Intrinsic::Object => 6,
-                };
-                return;
-            }
-            TypeData::Union(_) if ty == TypeId::BOOLEAN => {
-                self.b.approximate_length += 7;
-                return;
-            }
-            TypeData::Union(members) => {
-                if let Some(enumeration) = self.enum_of_members(ty, members) {
-                    return self.symbol_to_type_node(enumeration, Meaning::Type);
-                }
-            }
-            TypeData::EnumLit { member, .. } => return self.enum_member_to_node(*member),
-            TypeData::Enum { symbol, .. } => {
-                let symbol = *symbol;
-                if self.c.flags_of(symbol).contains(SymFlags::ENUM_MEMBER) {
-                    return self.enum_member_to_node(symbol);
-                }
-                return self.symbol_to_type_node(symbol, Meaning::Type);
-            }
-            TypeData::StringLit { value, .. } => {
-                self.b.approximate_length += self.length_of(*value) + 2;
-                return;
-            }
-            TypeData::NumberLit { bits, .. } => {
-                self.b.approximate_length +=
-                    crate::atom::number_to_string(f64::from_bits(*bits)).len();
-                return;
-            }
-            TypeData::BigIntLit { text, .. } => {
-                self.b.approximate_length += self.length_of(*text) + 1;
-                return;
-            }
-            TypeData::BoolLit { value, .. } => {
-                self.b.approximate_length += if *value { 4 } else { 5 };
-                return;
-            }
-            TypeData::UniqueSymbol { symbol, .. } => {
-                return self.unique_symbol_to_node(*symbol);
-            }
-            TypeData::ThisParam(_) => {
-                if self.b.flags & IN_OBJECT_TYPE_LITERAL != 0 {
-                    self.b.encountered_error = true;
-                    self.report(Report::InaccessibleThis);
-                }
-                self.b.approximate_length += 4;
-                return;
-            }
-            _ => {}
-        }
-        let alias = self.c.alias_with_arguments_for_declaration_emit(ty);
-        if let Some((alias, arguments)) = &alias
-            && self.is_symbol_accessible(*alias, Meaning::Type)
-        {
-            self.map_to_type_nodes(arguments, false);
-            return self.symbol_to_type_node(*alias, Meaning::Type);
-        }
-        // `getTypeFromTypeAliasReference`: an alias that is written `= A<X>` takes the place of `A`, which is the one the syntax leads to.
-        // And nothing tells what a computed type is made from.
-        let saved = self.b.may_be_named;
-        if alias.is_some_and(|found| !found.1.is_empty())
-            || matches!(
-                self.c.data(ty),
-                TypeData::Synth(_) | TypeData::ReverseMapped { .. }
-            )
-        {
-            self.b.may_be_named += 1;
-        }
-        self.type_without_alias_to_node(ty);
-        self.b.may_be_named = saved;
-    }
-
-    /// The rest of `typeToTypeNode`, of a type that goes by no alias.
-    fn type_without_alias_to_node(&mut self, ty: TypeId) {
-        match self.c.data(ty) {
-            TypeData::Ref { target, args } => self.type_reference_to_node(ty, *target, args),
-            TypeData::Tuple { elems, flags, .. } => {
-                let mut types = Vec::with_capacity(elems.len());
-                for (&elem, flag) in elems.iter().zip(flags.iter()) {
-                    types.push(
-                        self.c
-                            .remove_missing_type(elem, flag.contains(ElemFlags::OPTIONAL)),
-                    );
-                }
-                self.map_to_type_nodes(&types, false);
-            }
-            TypeData::TypeParam(..) => self.type_parameter_to_node(ty),
-            TypeData::Union(_) => {
-                // `UnionType.origin`
-                if let UnionOrigin::Intersection(origin) = self.c.origin(ty) {
-                    return self.list_to_node(origin);
-                }
-                let types = self.format_union_types(ty);
-                self.list_to_node(&types);
-            }
-            TypeData::Intersection(members) => self.list_to_node(members),
-            TypeData::Anon { .. }
-            | TypeData::Fns { .. }
-            | TypeData::Synth(_)
-            | TypeData::ReverseMapped { .. } => self.anonymous_type_to_node(ty),
-            // `getFinalArrayType`
-            TypeData::EvolvingArray(element) => {
-                let element = match *element {
-                    TypeId::NEVER => TypeId::ANY,
-                    element => element,
-                };
-                self.type_to_node(element);
-            }
-            TypeData::Keyof(of) => {
-                self.b.approximate_length += 6;
-                self.type_to_node(*of);
-            }
-            TypeData::Template { types, .. } => {
-                for &part in types.iter() {
-                    self.type_to_node(part);
-                }
-                self.b.approximate_length += 2;
-            }
-            // `Uppercase<T>`, `NoInfer<T>`
-            TypeData::StringMapping { ty: of, .. }
-            | TypeData::Substitution {
-                base: of,
-                constraint: TypeId::UNKNOWN,
-            } => {
-                self.type_to_node(*of);
-                self.b.approximate_length += 20;
-            }
-            TypeData::Substitution { base, .. } => self.type_to_node(*base),
-            TypeData::IndexedAccess { obj, index, .. } => {
-                self.type_to_node(*obj);
-                self.type_to_node(*index);
-                self.b.approximate_length += 2;
-            }
-            TypeData::Cond { file, node, .. } => self.visit_and_transform_type(
-                ty,
-                Some(Identity::Conditional(*file, *node)),
-                Self::conditional_type_to_node,
-            ),
-            // An alias that cannot be named is written out.
-            TypeData::LazyAlias { .. } => {
-                let forced = self.c.force(ty);
-                if forced == ty {
-                    return self.elided();
-                }
-                self.type_to_node(forced);
-            }
-            _ => {}
-        }
-    }
-
-    /// The enum whose declared type is the union `ty` of `members`.
-    fn enum_of_members(&mut self, ty: TypeId, members: &[TypeId]) -> Option<Sym> {
-        let member = match *self.c.data(*members.first()?) {
-            TypeData::EnumLit { member, .. } => member,
-            TypeData::Enum { symbol, .. } => symbol,
-            _ => return None,
-        };
-        let parent = self.c.parent_of_symbol(member)?;
-        (self.c.enum_type_of_member(member) == ty).then_some(parent)
-    }
-
-    /// `E.A`: the enum is what is named.
-    fn enum_member_to_node(&mut self, member: Sym) {
-        let named = self.c.parent_of_symbol(member).unwrap_or(member);
-        self.symbol_to_type_node(named, Meaning::Type);
-    }
-
-    /// What `typeof` names a `unique symbol` through: the variable that is declared as one, the class it is a static property of, the
-    /// variable whose type is written as the type literal it is a property of. `Some(None)`: nothing. `None`: it cannot be told,
-    /// or it is a property of the global `Symbol`.
-    fn owner_of_unique_symbol(&self, symbol: UniqueSymbolDeclaration) -> Option<Option<Sym>> {
-        let (file, m) = match symbol {
-            UniqueSymbolDeclaration::Variable(variable) => return Some(Some(variable)),
-            UniqueSymbolDeclaration::Member(file, m) => (file, m),
-            UniqueSymbolDeclaration::SymbolConstructor => return None,
-        };
-        let files = self.c.files();
-        let (hir, bound) = (self.c.hir(file), self.c.bound(file));
-        let symbol_of = |pat: PatId| {
-            let symbol = bound.pat_symbol[pat.idx()];
-            symbol.is_some().then(|| files.sym(file, symbol))
-        };
-        match bound.member_owner[m.idx()] {
-            MemberOwner::Class(c) => {
-                let symbol = bound.class_symbol[c.idx()];
-                symbol.is_some().then(|| Some(files.sym(file, symbol)))
-            }
-            // `getVariableDeclarationOfObjectLiteral`
-            MemberOwner::TypeLiteral(node) => Some(
-                hir.var_decls
-                    .iter()
-                    .find(|d| d.ty == node)
-                    .and_then(|d| symbol_of(d.pat)),
-            ),
-            _ => None,
-        }
-    }
-
-    fn unique_symbol_to_node(&mut self, symbol: UniqueSymbolDeclaration) {
-        if self.b.flags & ALLOW_UNIQUE_ES_SYMBOL_TYPE == 0 {
-            match self.owner_of_unique_symbol(symbol) {
-                None => {}
-                Some(Some(owner)) if self.is_value_symbol_accessible(owner) => {
-                    self.b.approximate_length += 6;
-                    return self.symbol_to_type_node(owner, Meaning::Value);
-                }
-                Some(_) => self.report(Report::InaccessibleUniqueSymbol),
-            }
-        }
-        self.b.approximate_length += 13;
-    }
-
-    /// `mapToTypeNodes`
-    fn map_to_type_nodes(&mut self, list: &[TypeId], is_bare_list: bool) {
-        if list.is_empty() {
-            return;
-        }
-        if self.check_truncation_length() {
-            if !is_bare_list {
-                return;
-            }
-            if list.len() > 2 {
-                self.type_to_node(list[0]);
-                return self.type_to_node(list[list.len() - 1]);
-            }
-        }
-        for (i, &ty) in list.iter().enumerate() {
-            if self.check_truncation_length() && i + 3 < list.len() - 1 {
-                self.type_to_node(list[list.len() - 1]);
-                break;
-            }
-            self.b.approximate_length += 2;
-            self.type_to_node(ty);
-        }
-    }
-
-    /// The members of a union or an intersection.
-    fn list_to_node(&mut self, members: &[TypeId]) {
-        if let [only] = members[..] {
-            return self.type_to_node(only);
-        }
-        self.b.may_be_named += 1;
-        self.map_to_type_nodes(members, true);
-        self.b.may_be_named -= 1;
-    }
-
-    /// `formatUnionTypes`, as far as it matters which symbols are named.
-    fn format_union_types(&mut self, ty: TypeId) -> Vec<TypeId> {
-        let mut types = self.c.parts(ty).to_vec();
-        // `UnionType.origin`: `T | undefined`, of a `T` that is a union with a name.
-        let rest = self
-            .c
-            .filter(ty, |_, member| !member.is_undefined() && !member.is_null());
-        if rest != ty
-            && rest != TypeId::BOOLEAN
-            && self.c.is_union(rest)
-            && self
-                .c
-                .alias_with_arguments_for_declaration_emit(rest)
-                .is_some()
-        {
-            types.retain(|member| member.is_undefined() || member.is_null());
-            types.insert(0, rest);
-        }
-        types
-    }
-
-    /// `getParentSymbolOfTypeParameter`: the scope that declares it stands for the symbol.
-    fn container_of_type_parameter(&self, parameter: TypeId) -> Option<(FileId, ScopeId)> {
-        match *self.c.data(parameter) {
-            TypeData::TypeParam(file, tp, _) => {
-                Some((file, self.c.bound(file).type_param_scope[tp.idx()]))
-            }
-            _ => None,
-        }
-    }
-
-    /// `typeReferenceToTypeNode`, of a reference to a class or an interface.
-    fn type_reference_to_node(&mut self, ty: TypeId, target: Sym, args: &[TypeId]) {
-        if let Some(element) = self.c.array_element(ty) {
-            return self.type_to_node(element);
-        }
-        if self.b.flags & WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL != 0
-            && self.c.flags_of(target).contains(SymFlags::CLASS)
-            && !self.is_value_symbol_accessible(target)
-        {
-            // `createAnonymousTypeNode`, of the instance side.
-            if self.should_emit_type_of_symbol(target, Meaning::Type) {
-                return self.symbol_to_type_node(target, Meaning::Type);
-            }
-            if self.b.visited_types.contains(&ty) {
-                return self.elided();
-            }
-            return self.visit_and_transform_type(
-                ty,
-                Some(Identity::Instance(target)),
-                Self::object_type_to_node,
-            );
-        }
-        let outer = self.c.outer_type_params_of_symbol(target);
-        let all = self.c.all_type_params_of_symbol(target);
-        // The groups of type arguments for the type parameters of what the declaration is inside of.
-        let mut i = 0;
-        while i < outer.len() && i < args.len() {
-            let start = i;
-            let container = self.container_of_type_parameter(outer[i]);
-            i += 1;
-            while i < outer.len() && self.container_of_type_parameter(outer[i]) == container {
-                i += 1;
-            }
-            let end = i.min(args.len());
-            if outer[start..end] != args[start..end] {
-                self.map_to_type_nodes(&args[start..end], false);
-            }
-        }
-        if !args.is_empty() {
-            let mut count = all.len().min(args.len());
-            // Those of iterables that are what they default to are left out.
-            let is_iterable = [
-                known::Iterable,
-                known::IterableIterator,
-                known::AsyncIterable,
-                known::AsyncIterableIterator,
-            ]
-            .into_iter()
-            .any(|name| self.c.global_type_symbol(name) == Some(target));
-            while is_iterable && count > 0 {
-                let Some(default) = self.c.default_of_type_param(all[count - 1]) else {
-                    break;
-                };
-                if !self.c.is_identical(args[count - 1], default) {
-                    break;
-                }
-                count -= 1;
-            }
-            if i < count {
-                self.map_to_type_nodes(&args[i..count], false);
-            }
-        }
-        self.symbol_to_type_node(target, Meaning::Type);
-    }
-
-    /// A type parameter where it is used: its name, or `infer T` in the `extends` type that declares it.
-    fn type_parameter_to_node(&mut self, ty: TypeId) {
-        let length = self
-            .c
-            .type_param_name(ty)
-            .map_or(1, |name| self.length_of(name));
-        if !self.b.infer_type_parameters.contains(&ty) {
-            self.b.approximate_length += length;
-            return;
-        }
-        self.b.approximate_length += length + 6;
-        if let Some(constraint) = self.c.constraint_of_type_param(ty) {
-            self.b.approximate_length += 9;
-            self.type_to_node(constraint);
-        }
-    }
-
-    /// `typeParameterToDeclaration`
-    fn type_parameter_declaration(&mut self, parameter: TypeId) {
-        if let Some(constraint) = self.c.constraint_of_type_param(parameter) {
-            // `typeToTypeNodeHelperWithPossibleReusableTypeNode`
-            let mut is_written = false;
-            if let TypeData::TypeParam(file, tp, _) = *self.c.data(parameter) {
-                let written = self.c.hir(file)[tp].constraint;
-                if written.is_some() && self.type_from_type_node(file, written) == constraint {
-                    is_written = self.try_reuse_existing_node(file, written);
-                }
-            }
-            if !is_written {
-                self.type_to_node(constraint);
-            }
-        }
-        if let Some(default) = self.c.default_of_type_param(parameter) {
-            self.type_to_node(default);
-        }
-    }
-
-    // ───────────────────────────── anonymous object types ─────────────────────────────
-
-    /// `shouldEmitTypeOfSymbol`, but for functions: whether the type of a class, an enum or a namespace is written as its name.
-    fn should_emit_type_of_symbol(&mut self, symbol: Sym, meaning: Meaning) -> bool {
-        let flags = self.c.flags_of(symbol);
-        if flags.intersects(SymFlags::ENUM | SymFlags::VALUE_MODULE) {
-            return true;
-        }
-        if !flags.contains(SymFlags::CLASS) || self.c.base_type_variable_of_class(symbol).is_some()
-        {
-            return false;
-        }
-        if self.b.flags & WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL == 0 {
-            return true;
-        }
-        let is_declaration = self.c.decls_of(symbol).into_iter().any(|(file, decl)| {
-            matches!(decl, Decl::Class(c)
-                if matches!(self.c.bound(file).class_owner[c.idx()], ClassOwner::Stmt(_)))
-        });
-        is_declaration && self.is_symbol_accessible(symbol, meaning)
-    }
-
-    /// `shouldWriteTypeOfFunctionSymbol`: the symbol `typeof` names the type of a function by.
-    fn symbol_to_query_function(&mut self, ty: TypeId) -> Option<Sym> {
-        let files = self.c.files();
-        let is_at_top = |bound: &Bound, statement: StmtId| {
-            statement.is_some()
-                && matches!(
-                    bound.stmt_parent[statement.idx()],
-                    Parent::File | Parent::Module(_)
-                )
-        };
-        let symbol = match self.c.data(ty) {
-            TypeData::Anon {
-                origin: Origin::Function(symbol),
-                ..
-            } => {
-                let symbol = *symbol;
-                // `isNonLocalFunctionSymbol`
-                let is_non_local = self.c.parent_of_symbol(symbol).is_some()
-                    || self.c.decls_of(symbol).into_iter().any(|(file, decl)| {
-                        let bound = self.c.bound(file);
-                        matches!(decl, Decl::Fn(f)
-                            if matches!(bound.fns[f.idx()].owner, FnOwner::Stmt(s) if is_at_top(bound, s)))
-                    });
-                if !is_non_local {
-                    return None;
-                }
-                symbol
-            }
-            TypeData::Fns { decls, .. } => {
-                let &(file, func) = decls.first()?;
-                let (hir, bound) = (self.c.hir(file), self.c.bound(file));
-                match bound.fns[func.idx()].owner {
-                    // A function expression that initializes a variable at the top of a file or a namespace: the variable, unless its
-                    // own type is being written.
-                    FnOwner::Expr(e) if matches!(hir[func].kind, FnKind::Expr | FnKind::Arrow) => {
-                        let Parent::VarInit(d) = bound.expr_parent[e.idx()] else {
-                            return None;
-                        };
-                        let at = self.b.enclosing;
-                        if !is_at_top(bound, bound.var_stmt[d.idx()])
-                            || (at.file, at.variable) == (file, d)
-                        {
-                            return None;
-                        }
-                        let symbol = bound.pat_symbol[hir[d].pat.idx()];
-                        if symbol.is_none() {
-                            return None;
-                        }
-                        files.sym(file, symbol)
-                    }
-                    // A static method is named through its class.
-                    FnOwner::Member(m) if hir[m].flags.contains(Flags::STATIC) => {
-                        let MemberOwner::Class(c) = bound.member_owner[m.idx()] else {
-                            return None;
-                        };
-                        let symbol = bound.class_symbol[c.idx()];
-                        if symbol.is_none() {
-                            return None;
-                        }
-                        files.sym(file, symbol)
-                    }
-                    _ => return None,
-                }
-            }
-            _ => return None,
-        };
-        self.is_value_symbol_accessible(symbol).then_some(symbol)
-    }
-
-    /// `createAnonymousTypeNode`
-    fn anonymous_type_to_node(&mut self, ty: TypeId) {
-        let identity = match self.c.data(ty) {
-            TypeData::Anon { origin, .. } => {
-                let origin = *origin;
-                match origin {
-                    Origin::GlobalThis => {
-                        let global_this = self.c.files().global_this_symbol;
-                        return self.symbol_to_type_node(global_this, Meaning::Value);
-                    }
-                    Origin::ClassStatic(symbol)
-                    | Origin::EnumObject(symbol)
-                    | Origin::Module(symbol)
-                    | Origin::Function(symbol) => {
-                        if self.should_emit_type_of_symbol(symbol, Meaning::Value) {
-                            return self.symbol_to_type_node(symbol, Meaning::Value);
-                        }
-                    }
-                    Origin::Namespace {
-                        originating_import, ..
-                    } => {
-                        let symbol = module_clone(originating_import);
-                        if self.should_emit_type_of_symbol(symbol, Meaning::Value) {
-                            return self.symbol_to_type_node(symbol, Meaning::Value);
-                        }
-                    }
-                    _ => {}
-                }
-                Some(Identity::Origin(origin))
-            }
-            TypeData::Fns { decls, .. } => decls
-                .first()
-                .map(|&(file, func)| Identity::Function(file, func)),
-            _ => None,
-        };
-        if let Some(symbol) = self.symbol_to_query_function(ty) {
-            return self.symbol_to_type_node(symbol, Meaning::Value);
-        }
-        if self.b.visited_types.contains(&ty) {
-            // `getTypeAliasForTypeLiteral`
-            if matches!(identity, Some(Identity::Origin(Origin::TypeLiteral(..))))
-                && let Some((alias, _)) = self.c.alias_with_arguments_for_declaration_emit(ty)
-            {
-                return self.symbol_to_type_node(alias, Meaning::Type);
-            }
-            return self.elided();
-        }
-        self.visit_and_transform_type(ty, identity, Self::object_type_to_node);
-    }
-
-    /// `visitAndTransformType`
-    fn visit_and_transform_type(
-        &mut self,
-        ty: TypeId,
-        identity: Option<Identity>,
-        transform: fn(&mut Self, TypeId),
-    ) {
-        let key = (ty, self.b.flags, self.b.enclosing.ignoring_fake_scope());
-        if let Some(cached) = self.b.serialized.get(&key) {
-            let (truncating, added_length) = (cached.truncating, cached.added_length);
-            for tracked in cached.tracked.clone() {
-                self.track(tracked);
-            }
-            self.b.truncating |= truncating;
-            self.b.approximate_length += added_length;
-            return;
-        }
-        let mut depth = 0;
-        if let Some(identity) = identity {
-            match self
-                .b
-                .symbol_depth
-                .iter_mut()
-                .find(|entry| entry.0 == identity)
-            {
-                Some(entry) => {
-                    depth = entry.1;
-                    if depth <= 10 {
-                        entry.1 = depth + 1;
-                    }
-                }
-                None => self.b.symbol_depth.push((identity, 1)),
-            }
-            if depth > 10 {
-                return self.elided();
-            }
-        }
-        self.b.visited_types.push(ty);
-        let around = std::mem::take(&mut self.b.tracked);
-        let start = self.b.approximate_length;
-        transform(self, ty);
-        let added_length = self.b.approximate_length.saturating_sub(start);
-        let tracked = std::mem::replace(&mut self.b.tracked, around);
-        if !self.b.reported_diagnostic && !self.b.encountered_error {
-            self.b.serialized.insert(
-                key,
-                Serialized {
-                    truncating: self.b.truncating,
-                    added_length,
-                    tracked,
-                },
-            );
-        }
-        if let Some(at) = self
-            .b
-            .visited_types
-            .iter()
-            .rposition(|&visited| visited == ty)
-        {
-            self.b.visited_types.remove(at);
-        }
-        if let Some(identity) = identity
-            && let Some(entry) = self
-                .b
-                .symbol_depth
-                .iter_mut()
-                .find(|entry| entry.0 == identity)
-        {
-            entry.1 = depth;
-        }
-    }
-
-    /// `createTypeNodeFromObjectType`
-    fn object_type_to_node(&mut self, ty: TypeId) {
-        if self.c.mapped_origin(ty).is_some() && self.c.is_generic(ty) {
-            return self.mapped_type_to_node(ty);
-        }
-        let Some(members) = self.c.members(ty) else {
-            self.b.approximate_length += 2;
-            return;
-        };
-        let (shape, mapper) = (members.shape(), members.mapper);
-        let mut call = Vec::with_capacity(shape.call.len());
-        for &signature in &shape.call {
-            call.push(self.c.instantiate_sig(signature, mapper));
-        }
-        let mut construct = Vec::with_capacity(shape.construct.len());
-        for &signature in &shape.construct {
-            construct.push(self.c.instantiate_sig(signature, mapper));
-        }
-        if shape.props.is_empty() && shape.index.is_empty() {
-            match (&call[..], &construct[..]) {
-                ([], []) => {
-                    self.b.approximate_length += 2;
-                    return;
-                }
-                ([only], []) | ([], [only]) => return self.signature_to_declaration(*only),
-                _ => {}
-            }
-        }
-        // `abstract new () => T` cannot be written in a type literal: it is intersected with the rest.
-        let (abstract_signatures, construct): (Vec<SigId>, Vec<SigId>) = construct
-            .into_iter()
-            .partition(|&signature| self.c.is_abstract_signature(signature));
-        let has_abstract_signatures = !abstract_signatures.is_empty();
-        for signature in abstract_signatures {
-            self.b.approximate_length += 2;
-            self.signature_to_declaration(signature);
-        }
-        let is_static_side = matches!(
-            self.c.data(ty),
-            TypeData::Anon {
-                origin: Origin::ClassStatic(_),
-                ..
-            }
+        let file = self.file();
+        self.c.serialize_type_for_expression(
+            file,
+            e,
+            self.enclosing,
+            DECLARATION_EMIT_NODE_BUILDER_FLAGS,
+            &mut self.tracker,
         );
-        // `SymbolFlagsPrototype`
-        let is_prototype = |prop: &Prop| {
-            is_static_side
-                && prop.name == known::prototype
-                && matches!(prop.source, PropSource::Type(_))
-        };
-        let writes_classes = self.b.flags & WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL != 0;
-        if has_abstract_signatures
-            && call.is_empty()
-            && construct.is_empty()
-            && shape.index.is_empty()
-            && shape
-                .props
-                .iter()
-                .all(|prop| writes_classes && is_prototype(prop))
-        {
-            return;
-        }
-        let saved_flags = self.b.flags;
-        self.b.flags |= IN_OBJECT_TYPE_LITERAL;
-        // `createTypeNodesFromResolvedType`
-        if !self.check_truncation_length() {
-            for &signature in call.iter().chain(&construct) {
-                self.signature_to_declaration(signature);
-            }
-            let is_reverse_mapped = matches!(self.c.data(ty), TypeData::ReverseMapped { .. });
-            for info in &shape.index {
-                // The placeholder is made whether or not it is used.
-                self.elided();
-                let key = self.c.instantiate(info.key, mapper);
-                self.type_to_node(key);
-                if !is_reverse_mapped {
-                    let value = self.c.instantiate(info.value, mapper);
-                    self.type_to_node(value);
-                }
-                self.b.approximate_length += if info.readonly { 14 } else { 5 };
-            }
-            let count = shape.props.len();
-            for (i, prop) in shape.props.iter().enumerate() {
-                if writes_classes {
-                    if is_prototype(prop) {
-                        continue;
-                    }
-                    if self.c.is_private_name(prop.name) {
-                        let name = String::from_utf8_lossy(self.c.written_name(prop.name));
-                        self.report(Report::PrivateInBaseOfClassExpression(name.into_owned()));
-                    } else if prop
-                        .flags
-                        .intersects(PropFlags::PRIVATE | PropFlags::PROTECTED)
-                    {
-                        let name = self.c.atom_text(prop.name);
-                        self.report(Report::PrivateInBaseOfClassExpression(name));
-                    }
-                }
-                if self.check_truncation_length() && i + 3 < count - 1 {
-                    self.add_property_to_element_list(ty, &shape.props[count - 1], mapper);
-                    break;
-                }
-                self.add_property_to_element_list(ty, prop, mapper);
-            }
-        }
-        self.b.flags = saved_flags;
-        self.b.approximate_length += 2;
-    }
-
-    // ───────────────────────────── properties ─────────────────────────────
-
-    /// The start of `addPropertyToElementList`, of a property that a `unique symbol` names.
-    fn track_late_bound_name(&mut self, prop: &Prop, depth: u32) {
-        let (file, key) = match &prop.source {
-            PropSource::Members(list) => match list.first() {
-                Some(&(file, m)) => (file, self.c.hir(file)[m].key),
-                None => return,
-            },
-            PropSource::Literal(file, p) => (*file, self.c.hir(*file)[*p].key),
-            PropSource::Intersected(_, parts) | PropSource::Copy(_, parts, _) => {
-                if let Some(first) = parts.first()
-                    && depth < 8
-                {
-                    self.track_late_bound_name(first, depth + 1);
-                }
-                return;
-            }
-            PropSource::Mapped(of, _) => {
-                match self.c.synthetic_origin_of_mapped_property(*of, prop.name) {
-                    Some(origin) if depth < 8 => self.track_late_bound_name(&origin, depth + 1),
-                    Some(_) => {}
-                    // It has no declaration.
-                    None => {
-                        let name = self.c.prop_to_string(prop);
-                        self.report(Report::NonSerializableProperty(name));
-                    }
-                }
-                return;
-            }
-            // It has no declaration.
-            PropSource::Type(_) => {
-                let name = self.c.prop_to_string(prop);
-                return self.report(Report::NonSerializableProperty(name));
-            }
-            _ => return,
-        };
-        // `hasLateBindableName`
-        if let PropKey::Computed(e) = key
-            && is_entity_name_expression(self.c.hir(file), e)
-        {
-            self.track_computed_name(file, e);
-        }
-    }
-
-    /// `trackComputedName`
-    fn track_computed_name(&mut self, file: FileId, e: ExprId) {
-        let files = self.c.files();
-        let hir = self.c.hir(file);
-        let first = first_identifier(hir, e);
-        let ExprKind::Ident(name) = hir[first].kind else {
-            return;
-        };
-        let at = self.b.enclosing;
-        if let Some(symbol) = files.resolve_name(at.file, at.scope, name, SymFlags::VALUE) {
-            return self.track_symbol(symbol, at, Meaning::Value);
-        }
-        // The name means nothing where the type is written. What it means where the property is declared is a local of that place.
-        let symbol = self.c.bound(file).expr_symbol[first.idx()];
-        if symbol.is_some() && !self.c.hir(at.file).is_js {
-            self.track(Tracked {
-                symbol: files.sym(file, symbol),
-                at,
-                meaning: Meaning::Value,
-                as_local: true,
-            });
-        }
-    }
-
-    /// `ObjectFlagsAnonymous`
-    fn is_anonymous_object_type(&self, ty: TypeId) -> bool {
-        match self.c.data(ty) {
-            TypeData::Anon { origin, .. } => !matches!(origin, Origin::Mapped(..)),
-            TypeData::Fns { .. } | TypeData::Synth(_) => true,
-            _ => false,
-        }
-    }
-
-    /// `shouldUsePlaceholderForProperty`
-    fn should_use_placeholder_for_property(&self, property: &ReverseMappedProperty) -> bool {
-        let stack = &self.b.reverse_mapped_stack;
-        if stack
-            .iter()
-            .any(|on| on.owner == property.owner && on.name == property.name)
-        {
-            return true;
-        }
-        if let Some(last) = stack.last()
-            && !self.is_anonymous_object_type(last.property_type)
-        {
-            return true;
-        }
-        stack.len() >= 3
-            && property.mapped.is_some()
-            && stack
-                .iter()
-                .rev()
-                .take(4)
-                .any(|on| on.mapped == property.mapped)
-    }
-
-    /// `addPropertyToElementList`
-    fn add_property_to_element_list(&mut self, owner: TypeId, prop: &Prop, mapper: MapperId) {
-        let reverse_mapped = match *self.c.data(owner) {
-            TypeData::ReverseMapped { source, mapped, .. } => Some(ReverseMappedProperty {
-                owner,
-                name: prop.name,
-                property_type: self
-                    .c
-                    .type_of_property(source, prop.name)
-                    .unwrap_or(TypeId::ANY),
-                mapped: self
-                    .c
-                    .mapped_origin(mapped)
-                    .map(|origin| (origin.0, origin.1)),
-            }),
-            _ => None,
-        };
-        let uses_placeholder = reverse_mapped
-            .as_ref()
-            .is_some_and(|property| self.should_use_placeholder_for_property(property));
-        let is_optional = prop.flags.contains(PropFlags::OPTIONAL);
-        let is_readonly = prop.flags.contains(PropFlags::READONLY);
-        // `getNonMissingTypeOfSymbol`
-        let property_type = if uses_placeholder {
-            TypeId::ANY
-        } else {
-            let ty = self.c.type_of_prop(prop, mapper);
-            self.c.remove_missing_type(ty, is_optional)
-        };
-        if self.c.files().atoms.is_symbol_name(prop.name) {
-            self.track_late_bound_name(prop, 0);
-        }
-        self.b.approximate_length += self.length_of(prop.name) + 1;
-        if prop.flags.contains(PropFlags::ACCESSOR) && self.c.is_known(property_type) {
-            let write_type = self.c.write_type_of_prop(prop, mapper);
-            let (is_in_class, is_field) = match &prop.source {
-                PropSource::Members(list) => match list.first() {
-                    Some(&(file, member)) => (
-                        matches!(
-                            self.c.bound(file).member_owner[member.idx()],
-                            MemberOwner::Class(_)
-                        ),
-                        self.c.hir(file)[member].kind == MemberKind::Property,
-                    ),
-                    None => (false, false),
-                },
-                _ => (false, false),
-            };
-            if self.c.is_known(write_type)
-                && !self.c.is_error_type(property_type)
-                && !self.c.is_error_type(write_type)
-                && (property_type != write_type || is_in_class)
-            {
-                if is_field || !prop.flags.contains(PropFlags::WRITE_ONLY) {
-                    self.b.approximate_length += 3;
-                    self.type_to_node(property_type);
-                }
-                if is_field || !is_readonly {
-                    self.b.approximate_length += 11;
-                    self.type_to_node(write_type);
-                }
-                return;
-            }
-        }
-        let is_function = prop.flags.contains(PropFlags::METHOD)
-            || matches!(prop.source, PropSource::Symbol(symbol)
-                if self.c.flags_of(symbol).contains(SymFlags::FUNCTION));
-        if is_function && !is_readonly {
-            let has_properties = self.c.is_object_type(property_type)
-                && self
-                    .c
-                    .members(property_type)
-                    .is_some_and(|members| !members.shape().props.is_empty());
-            if !has_properties {
-                let callable = self
-                    .c
-                    .filter(property_type, |_, member| !member.is_undefined());
-                let signatures = self.c.signatures(callable, false);
-                for &signature in signatures.iter() {
-                    self.signature_to_declaration(signature);
-                }
-                if !signatures.is_empty() || !is_optional {
-                    return;
-                }
-            }
-        }
-        if uses_placeholder {
-            self.elided();
-        } else {
-            if let Some(property) = reverse_mapped {
-                self.b.reverse_mapped_stack.push(property);
-            }
-            // `symbol.ValueDeclaration`
-            let declared = match &prop.source {
-                PropSource::Members(list) => match list.first() {
-                    Some(&(file, m)) if self.c.hir(file)[m].kind == MemberKind::Property => {
-                        Declared::Member(file, m)
-                    }
-                    _ => Declared::None,
-                },
-                PropSource::Parameter(file, p) => Declared::Parameter(*file, *p),
-                PropSource::Literal(file, p) => Declared::Literal(*file, *p),
-                _ => Declared::None,
-            };
-            self.serialize_type_for_declaration(declared, property_type);
-            if reverse_mapped.is_some() {
-                self.b.reverse_mapped_stack.pop();
-            }
-        }
-        if is_readonly {
-            self.b.approximate_length += 9;
-        }
-    }
-
-    // ───────────────────────────── signatures ─────────────────────────────
-
-    /// `signatureToSignatureDeclarationHelper`
-    fn signature_to_declaration(&mut self, signature: SigId) {
-        // `enterSignatureScope`
-        let saved_mapper = self.b.mapper;
-        let saved_scope = self.b.enclosing.fake_scope;
-        let declaration = self.c.sig_decl(signature);
-        if declaration.is_some()
-            && (!self.c.sig_params(signature).is_empty()
-                || !self.c.sig_type_params(signature).is_empty())
-        {
-            self.b.enclosing.fake_scope = 1;
-        }
-        if let Some((_, _, mapper)) = declaration
-            && self
-                .c
-                .p
-                .types
-                .mapping(mapper)
-                .iter()
-                .any(|pair| pair.0 != pair.1)
-        {
-            self.b.mapper = mapper;
-        }
-        self.b.approximate_length += 3;
-        for parameter in self.c.sig_type_params(signature) {
-            self.type_parameter_declaration(parameter);
-        }
-        let parameters = self.c.sig_params(signature);
-        for (i, parameter) in parameters.iter().enumerate() {
-            // `getExpandedParameters`: a rest parameter that is a tuple is written as a parameter for each element, unless one that
-            // is not the last stands for any number.
-            if parameter.rest
-                && i + 1 == parameters.len()
-                && let TypeData::Tuple { elems, flags, .. } = self.c.data(parameter.ty)
-                && !flags.split_last().is_some_and(|(_, before)| {
-                    before
-                        .iter()
-                        .any(|flag| flag.intersects(ElemFlags::REST | ElemFlags::VARIADIC))
-                })
-            {
-                for (&elem, flag) in elems.iter().zip(flags.iter()) {
-                    let elem = if flag.contains(ElemFlags::REST) {
-                        self.c.array_of(elem)
-                    } else {
-                        elem
-                    };
-                    self.type_to_node(elem);
-                    self.b.approximate_length += self.length_of(parameter.name) + 5;
-                }
-                continue;
-            }
-            let declared = match declaration {
-                Some((file, func, _)) if i < self.c.hir(file)[func].params.len() => {
-                    Declared::Parameter(file, self.c.hir(file)[func].params.at(i))
-                }
-                _ => Declared::None,
-            };
-            self.serialize_type_for_declaration(declared, parameter.ty);
-            self.b.approximate_length += self.length_of(parameter.name) + 3;
-        }
-        if let Some(this) = self.c.sig_this_type(signature) {
-            self.type_to_node(this);
-            self.b.approximate_length += 7;
-        }
-        self.serialize_return_type_for_signature(signature);
-        self.b.mapper = saved_mapper;
-        self.b.enclosing.fake_scope = saved_scope;
-    }
-
-    /// `createReturnFromSignature`: the type node that says what `func` returns.
-    fn direct_return_type_node(&self, file: FileId, func: FnId) -> Option<TypeNodeId> {
-        let (hir, bound) = (self.c.hir(file), self.c.bound(file));
-        let function = hir[func];
-        if function.ret.is_some() {
-            return Some(function.ret);
-        }
-        // `typeFromSingleReturnExpression`
-        if function.flags.intersects(Flags::ASYNC | Flags::GENERATOR) {
-            return None;
-        }
-        let returned = match function.body {
-            FnBody::None => return None,
-            FnBody::Expr(e) => e,
-            FnBody::Block(_) => {
-                let returns = bound.fns[func.idx()].returns;
-                if returns.len() != 1 {
-                    return None;
-                }
-                let statement: StmtId = bound.ids(returns).next()?;
-                if bound.stmt_parent[statement.idx()] != Parent::FnBody(func) {
-                    return None;
-                }
-                match hir[statement].kind {
-                    StmtKind::Return(e) if e.is_some() => e,
-                    _ => return None,
-                }
-            }
-        };
-        match hir[returned].kind {
-            ExprKind::As { ty, .. } => Some(ty),
-            _ => None,
-        }
-    }
-
-    /// `serializeReturnTypeForSignature`
-    fn serialize_return_type_for_signature(&mut self, signature: SigId) {
-        let returned = self.c.sig_return(signature);
-        let predicate = self.c.sig_predicate(signature);
-        if let Some((file, func, _)) = self.c.sig_decl(signature)
-            && let Some(node) = self.direct_return_type_node(file, func)
-        {
-            match (self.c.hir(file)[node].kind, predicate) {
-                // `pseudoReturnTypeMatchesPredicate`
-                (TypeNodeKind::Predicate { ty, .. }, Some(predicate)) => {
-                    let is_the_same = match predicate.ty {
-                        Some(narrowed) => {
-                            ty.is_some() && self.c.type_from_node(file, ty) == narrowed
-                        }
-                        None => ty.is_none(),
-                    };
-                    if is_the_same {
-                        if !self.try_reuse_existing_node(file, node) {
-                            self.b.approximate_length += 7;
-                        }
-                        return;
-                    }
-                }
-                (TypeNodeKind::Predicate { .. }, None) | (_, Some(_)) => {}
-                (_, None) => {
-                    if self.is_type_node_equivalent_to_type(file, node, returned, false) {
-                        return self.reuse_type_node(file, node);
-                    }
-                }
-            }
-        }
-        // `serializeInferredReturnTypeForSignature`
-        match predicate {
-            Some(predicate) => {
-                if let Some(narrowed) = predicate.ty {
-                    self.type_to_node(narrowed);
-                }
-            }
-            None => self.type_to_node(returned),
-        }
-    }
-
-    // ───────────────────────────── declarations ─────────────────────────────
-
-    /// `PseudoTypeKindDirect`: the type node a declaration has its type from, its own or that of `e as T`.
-    fn direct_type_node(&self, declared: Declared) -> Option<(FileId, TypeNodeId)> {
-        let (file, annotation, initializer) = match declared {
-            Declared::None => return None,
-            Declared::Variable(file, d) => {
-                let d = self.c.hir(file)[d];
-                (file, d.ty, d.init)
-            }
-            Declared::Member(file, m) => {
-                let m = self.c.hir(file)[m];
-                (file, m.ty, m.init)
-            }
-            Declared::Parameter(file, p) => {
-                let p = self.c.hir(file)[p];
-                (file, p.ty, p.default)
-            }
-            Declared::Literal(file, p) => {
-                let p = self.c.hir(file)[p];
-                if p.kind != PropKind::Init {
-                    return None;
-                }
-                (file, TypeNodeId::NONE, p.value)
-            }
-            Declared::Export(file, e) => (file, TypeNodeId::NONE, e),
-        };
-        if annotation.is_some() {
-            return Some((file, annotation));
-        }
-        // `typeFromTypeAssertion`
-        if initializer.is_some()
-            && let ExprKind::As { ty, .. } = self.c.hir(file)[initializer].kind
-        {
-            return Some((file, ty));
-        }
-        None
-    }
-
-    /// `pseudoTypeEquivalentToType`, of a type node.
-    fn is_type_node_equivalent_to_type(
-        &mut self,
-        file: FileId,
-        node: TypeNodeId,
-        ty: TypeId,
-        is_optional: bool,
-    ) -> bool {
-        if ty == TypeId::UNRESOLVED || self.c.is_error_type(ty) {
-            return true;
-        }
-        let written = self.c.type_from_node(file, node);
-        if written == ty {
-            return true;
-        }
-        if is_optional && self.c.filter(ty, |_, member| !member.is_undefined()) == written {
-            return true;
-        }
-        self.c.regular(written) == self.c.regular(ty)
-    }
-
-    /// Whether `ty` is the `unique symbol` that `declared` declares.
-    fn is_own_unique_symbol(&self, declared: Declared, ty: TypeId) -> bool {
-        let TypeData::UniqueSymbol { symbol, .. } = *self.c.data(ty) else {
-            return false;
-        };
-        let (of, own) = match declared {
-            Declared::Variable(of, d) => {
-                let variable = self.c.bound(of).pat_symbol[self.c.hir(of)[d].pat.idx()];
-                if variable.is_none() {
-                    return false;
-                }
-                let variable = self.c.files().sym(of, variable);
-                (of, UniqueSymbolDeclaration::Variable(variable))
-            }
-            Declared::Member(of, m) => (of, UniqueSymbolDeclaration::Member(of, m)),
-            _ => return false,
-        };
-        own == symbol && of == self.b.enclosing.file
-    }
-
-    /// `serializeTypeForDeclaration`, of a declaration whose type is `getTypeOfSymbol`.
-    fn serialize_declared_type(&mut self, declared: Declared, ty: TypeId) {
-        let ty = self.c.widen_literal(ty);
-        self.serialize_type_for_declaration(declared, ty);
-    }
-
-    /// `serializeTypeForDeclaration`
-    fn serialize_type_for_declaration(&mut self, declared: Declared, ty: TypeId) {
-        let at = self.b.enclosing;
-        let requires_undefined = matches!(declared, Declared::Parameter(file, p)
-            if self.requires_adding_implicit_undefined(file, p, at));
-        let ty = if requires_undefined {
-            self.c.optional(ty)
-        } else {
-            ty
-        };
-        let saved_flags = self.b.flags;
-        if self.is_own_unique_symbol(declared, ty) {
-            self.b.flags |= ALLOW_UNIQUE_ES_SYMBOL_TYPE;
-        }
-        let mut is_written = false;
-        if let Some((file, node)) = self.direct_type_node(declared) {
-            // `isOptionalDeclaration`
-            let is_optional = !requires_undefined
-                && match declared {
-                    Declared::Member(file, m) => {
-                        self.c.hir(file)[m].flags.contains(Flags::OPTIONAL)
-                    }
-                    Declared::Parameter(file, p) => {
-                        self.c.hir(file)[p].flags.contains(Flags::OPTIONAL)
-                    }
-                    _ => false,
-                };
-            is_written = self.is_type_node_equivalent_to_type(file, node, ty, is_optional);
-            // With `| undefined` added to what is written.
-            if !is_written && requires_undefined {
-                let written = self.c.type_from_node(file, node);
-                is_written = self.c.optional(written) == ty;
-            }
-            if is_written {
-                self.reuse_type_node(file, node);
-            }
-        }
-        if !is_written {
-            self.type_to_node(ty);
-        }
-        self.b.flags = saved_flags;
-    }
-
-    // ───────────────────────────── mapped and conditional types ─────────────────────────────
-
-    /// `createMappedTypeNodeFromType`
-    fn mapped_type_to_node(&mut self, ty: TypeId) {
-        let Some((file, node, mapper)) = self.c.mapped_origin(ty) else {
-            return self.elided();
-        };
-        let mapped = self.c.mapped_decl(file, node);
-        let over_keyof = if self.c.hir(file)[mapped.param].constraint.is_some() {
-            self.c.mapped_modifiers_source(file, node)
-        } else {
-            None
-        };
-        match over_keyof {
-            // `isMappedTypeWithKeyofConstraintDeclaration`: `keyof` stays, whatever it comes to.
-            Some((declared, true)) => {
-                let of = self.c.instantiate(declared, mapper);
-                self.type_to_node(of);
-            }
-            _ => {
-                let keys = self.c.mapped_keys(ty);
-                self.type_to_node(keys);
-            }
-        }
-        if let Some(name_type) = self.c.mapped_name_type(ty) {
-            self.type_to_node(name_type);
-        }
-        let template = self.c.mapped_template(ty);
-        let template = self
-            .c
-            .remove_missing_type(template, mapped.optional == MappedModifier::Add);
-        self.type_to_node(template);
-        self.b.approximate_length += 10;
-    }
-
-    /// `typeToTypeNodeOrCircularityElision`. `is_new`: `ty` stands for a type that is made for the occasion, which is not being written.
-    fn type_to_node_or_circularity_elision(&mut self, ty: TypeId, is_new: bool) {
-        if !self.c.is_union(ty) {
-            return self.type_to_node(ty);
-        }
-        if self.b.visited_types.contains(&ty) {
-            if !is_new {
-                self.b.encountered_error = true;
-                self.report(Report::CyclicStructure);
-            }
-            return self.elided();
-        }
-        self.visit_and_transform_type(ty, None, Self::type_to_node);
-    }
-
-    /// `conditionalTypeToTypeNode`
-    fn conditional_type_to_node(&mut self, ty: TypeId) {
-        let TypeData::Cond { file, node, .. } = *self.c.data(ty) else {
-            return self.elided();
-        };
-        let TypeNodeKind::Cond {
-            check: written,
-            extends,
-            ..
-        } = self.c.hir(file)[node].kind
-        else {
-            return self.elided();
-        };
-        if self.check_truncation_length() {
-            return self.elided();
-        }
-        let check = self.c.cond_piece(ty, 0);
-        self.type_to_node(check);
-        self.b.approximate_length += 15;
-        // `FlagsGenerateNamesForShadowedTypeParams`: what goes member by member and is no type parameter any more is written
-        // `C extends infer T ? T extends C ? .. : never : never`, and the branches are instantiated with that `T`.
-        let as_declared = self.c.type_from_node(file, written);
-        let has_new_parameter = matches!(
-            self.c.data(as_declared),
-            TypeData::TypeParam(..) | TypeData::ThisParam(_)
-        ) && !matches!(
-            self.c.data(check),
-            TypeData::TypeParam(..) | TypeData::ThisParam(_)
-        );
-        if has_new_parameter {
-            self.b.approximate_length += 37;
-        }
-        let mut declared = Vec::new();
-        self.c.collect_infer_params(file, extends, &mut declared);
-        let infer_type_parameters = declared
-            .into_iter()
-            .map(|parameter| self.c.type_param(file, parameter))
-            .collect();
-        let saved = std::mem::replace(&mut self.b.infer_type_parameters, infer_type_parameters);
-        let extends = self.c.cond_piece(ty, 1);
-        self.type_to_node(extends);
-        self.b.infer_type_parameters = saved;
-        let when_true = self.c.cond_piece(ty, 2);
-        self.type_to_node_or_circularity_elision(when_true, has_new_parameter);
-        let when_false = self.c.cond_piece(ty, 3);
-        self.type_to_node_or_circularity_elision(when_false, has_new_parameter);
-    }
-}
-
-// ───────────────────────────── type nodes that are written again (`nodecopy.go`) ─────────────────────────────
-
-impl<'p> DeclarationEmit<'_, 'p> {
-    fn had_error(&self) -> bool {
-        self.b
-            .boundaries
-            .last()
-            .is_some_and(|boundary| boundary.had_error)
-    }
-
-    /// `bound.markError(nil)`
-    fn mark_error(&mut self) {
-        if let Some(boundary) = self.b.boundaries.last_mut() {
-            boundary.had_error = true;
-        }
-    }
-
-    /// `reuseTypeNode`
-    fn reuse_type_node(&mut self, file: FileId, node: TypeNodeId) {
-        if !self.try_reuse_existing_node(file, node) {
-            let ty = self.type_from_type_node(file, node);
-            self.type_to_node(ty);
-        }
-    }
-
-    /// `tryReuseExistingNodeHelper`. Whether the node can be written where the type is wanted.
-    fn try_reuse_existing_node(&mut self, file: FileId, node: TypeNodeId) -> bool {
-        // `createRecoveryBoundary`
-        let boundary = Boundary {
-            had_error: false,
-            deferred: Vec::new(),
-            tracked: Vec::new(),
-            old_tracked: std::mem::take(&mut self.b.tracked),
-            old_encountered_error: self.b.encountered_error,
-            old_length: self.b.approximate_length,
-        };
-        self.b.boundaries.push(boundary);
-        self.reuse_type(file, node);
-        // `finalizeBoundary`
-        let Some(boundary) = self.b.boundaries.pop() else {
-            return false;
-        };
-        self.b.tracked = boundary.old_tracked;
-        self.b.encountered_error = boundary.old_encountered_error;
-        self.b.approximate_length = boundary.old_length;
-        for report in boundary.deferred {
-            self.report(report);
-        }
-        if boundary.had_error {
-            return false;
-        }
-        for tracked in boundary.tracked {
-            self.track(tracked);
-        }
-        // As long as it is in the source, which is not kept of the default library.
-        let hir = self.c.hir(file);
-        if !hir.text.is_empty() {
-            let end = self.c.end_of_type_node(file, node);
-            self.b.approximate_length += end.saturating_sub(hir[node].pos) as usize + 1;
-        }
-        true
-    }
-
-    /// The visitor of `getExistingNodeTreeVisitor`, at a type node: what cannot be written again is written from its type.
-    fn reuse_type(&mut self, file: FileId, node: TypeNodeId) {
-        if node.is_none() || self.had_error() {
-            return;
-        }
-        if self.b.depth >= MAXIMUM_DEPTH || self.c.is_stack_low() {
-            return self.mark_error();
-        }
-        // `startRecoveryScope`
-        let tracked_top = self.b.tracked.len();
-        let deferred_top = self
-            .b
-            .boundaries
-            .last()
-            .map_or(0, |boundary| boundary.deferred.len());
-        self.b.depth += 1;
-        self.reuse_type_worker(file, node);
-        self.b.depth -= 1;
-        if self.had_error()
-            && !matches!(self.c.hir(file)[node].kind, TypeNodeKind::Predicate { .. })
-        {
-            // `endRecoveryScope`
-            self.b.tracked.truncate(tracked_top);
-            if let Some(boundary) = self.b.boundaries.last_mut() {
-                boundary.had_error = false;
-                boundary.deferred.truncate(deferred_top);
-            }
-            let ty = self.type_from_type_node(file, node);
-            self.type_to_node(ty);
-        }
-    }
-
-    /// `visitExistingNodeTreeSymbolsWorker`
-    fn reuse_type_worker(&mut self, file: FileId, node: TypeNodeId) {
-        let (hir, bound) = (self.c.hir(file), self.c.bound(file));
-        match hir[node].kind {
-            TypeNodeKind::Ref { .. }
-            | TypeNodeKind::Typeof { .. }
-            | TypeNodeKind::IndexedAccess { .. }
-            | TypeNodeKind::Keyof(_) => {
-                if !self.try_visit_simple_type_node(file, node) {
-                    self.mark_error();
-                }
-            }
-            TypeNodeKind::UniqueSymbol => {
-                // It belongs to the declaration it is written in.
-                let at = self.b.enclosing;
-                let mut scope = bound.type_scope[node.idx()];
-                while scope.is_some() && scope != at.scope {
-                    scope = bound.scopes[scope.idx()].parent;
-                }
-                if file != at.file || scope.is_none() {
-                    self.mark_error();
-                }
-            }
-            TypeNodeKind::Import { args, .. } => {
-                let declared = self.c.type_from_node(file, node);
-                if self.c.instantiate(declared, self.b.mapper) != declared {
-                    return self.mark_error();
-                }
-                for argument in hir.ids(args) {
-                    self.reuse_type(file, argument);
-                }
-            }
-            TypeNodeKind::Array(of) | TypeNodeKind::Readonly(of) => self.reuse_type(file, of),
-            TypeNodeKind::Tuple(elems) => {
-                for elem in elems.iter() {
-                    self.reuse_type(file, hir[elem].ty);
-                }
-            }
-            TypeNodeKind::Template { types, .. }
-            | TypeNodeKind::Union(types)
-            | TypeNodeKind::Intersection(types) => {
-                for ty in hir.ids(types) {
-                    self.reuse_type(file, ty);
-                }
-            }
-            TypeNodeKind::Fn(f) => self.reuse_signature(file, f),
-            TypeNodeKind::Object(members) => {
-                let scope = bound.type_scope[node.idx()];
-                for m in members.iter() {
-                    self.reuse_member(file, m, scope);
-                }
-            }
-            TypeNodeKind::Cond {
-                check,
-                extends,
-                yes,
-                no,
-            } => {
-                for part in [check, extends, yes, no] {
-                    self.reuse_type(file, part);
-                }
-            }
-            TypeNodeKind::Infer(tp) => {
-                self.reuse_type(file, hir[tp].constraint);
-            }
-            TypeNodeKind::Mapped(m) => {
-                let mapped = hir[m];
-                self.reuse_type(file, hir[mapped.param].constraint);
-                self.reuse_type(file, mapped.name_ty);
-                self.reuse_type(file, mapped.ty);
-            }
-            TypeNodeKind::Predicate { ty, .. } => self.reuse_type(file, ty),
-            TypeNodeKind::Error => self.mark_error(),
-            TypeNodeKind::Keyword(_)
-            | TypeNodeKind::StringLit(_)
-            | TypeNodeKind::NumberLit(_)
-            | TypeNodeKind::BigIntLit { .. }
-            | TypeNodeKind::BoolLit(_) => {}
-        }
-    }
-
-    /// What has parameters, in a type that is written again.
-    fn reuse_signature(&mut self, file: FileId, f: FnId) {
-        let hir = self.c.hir(file);
-        let function = hir[f];
-        for tp in function.type_params.iter() {
-            self.reuse_type(file, hir[tp].constraint);
-            self.reuse_type(file, hir[tp].default);
-        }
-        self.reuse_type(file, function.this_ty(hir));
-        for p in function.params.iter() {
-            self.reuse_type(file, hir[p].ty);
-        }
-        self.reuse_type(file, function.ret);
-    }
-
-    /// A member of a type literal that is written in `scope`.
-    fn reuse_member(&mut self, file: FileId, m: MemberId, scope: ScopeId) {
-        let member = self.c.hir(file)[m];
-        if let PropKey::Computed(key) = member.key {
-            // What has no name that can be told is left out.
-            if !is_entity_name_expression(self.c.hir(file), key)
-                || self.c.member_name(file, member.key).is_none()
-            {
-                return;
-            }
-            if let Some((first, _)) = self.c.first_identifier(file, key)
-                && self.track_existing_entity_name(file, scope, first, Meaning::ValueOfName)
-            {
-                self.mark_error();
-            }
-        }
-        if member.kind != MemberKind::IndexSignature {
-            self.reuse_type(file, member.ty);
-        }
-        if member.func.is_some() {
-            self.reuse_signature(file, member.func);
-        }
-    }
-
-    /// `tryVisitSimpleTypeNode`. `false`: it cannot be written again, and neither can what it is the operand of.
-    fn try_visit_simple_type_node(&mut self, file: FileId, node: TypeNodeId) -> bool {
-        let (hir, bound) = (self.c.hir(file), self.c.bound(file));
-        let scope = bound.type_scope[node.idx()];
-        match hir[node].kind {
-            // `tryVisitTypeReference`
-            TypeNodeKind::Ref { name, args } => {
-                let names: Vec<Atom> = hir.ids(name).collect();
-                let Some(&first) = names.first() else {
-                    return false;
-                };
-                // `tryGetResolvedSymbolFromTypeNode`
-                let Some(resolved) =
-                    self.c
-                        .files()
-                        .resolve_entity(file, scope, &names, SymFlags::TYPE)
-                else {
-                    return false;
-                };
-                // A type parameter that stands for something else where the type is wanted.
-                if self.c.flags_of(resolved).contains(SymFlags::TYPE_PARAMETER) {
-                    let declared = self.c.type_from_node(file, node);
-                    if self.c.instantiate(declared, self.b.mapper) != declared {
-                        return false;
-                    }
-                }
-                let meaning = if names.len() == 1 {
-                    Meaning::Type
-                } else {
-                    Meaning::Namespace
-                };
-                let introduces_error = self.track_existing_entity_name(file, scope, first, meaning);
-                for argument in hir.ids(args) {
-                    self.reuse_type(file, argument);
-                }
-                !introduces_error || self.serialize_type_name(file, scope, &names, Meaning::Type)
-            }
-            // `tryVisitTypeQuery`
-            TypeNodeKind::Typeof { name, args, .. } => {
-                let names: Vec<Atom> = hir.ids(name).collect();
-                let Some(&first) = names.first() else {
-                    return false;
-                };
-                if first == known::this {
-                    return false;
-                }
-                let introduces_error =
-                    self.track_existing_entity_name(file, scope, first, Meaning::ValueOfName);
-                for argument in hir.ids(args) {
-                    self.reuse_type(file, argument);
-                }
-                !introduces_error || self.serialize_type_name(file, scope, &names, Meaning::Value)
-            }
-            // `tryVisitIndexedAccess`
-            TypeNodeKind::IndexedAccess { obj, index } => {
-                if !self.try_visit_simple_type_node(file, obj) {
-                    return false;
-                }
-                self.reuse_type(file, index);
-                true
-            }
-            // `tryVisitKeyOf`
-            TypeNodeKind::Keyof(of) => self.try_visit_simple_type_node(file, of),
-            _ => {
-                self.reuse_type(file, node);
-                true
-            }
-        }
-    }
-
-    /// `trackExistingEntityName`, of a name that starts with `first` and is written in `scope` of `file`. Whether the name does not
-    /// mean the same, or cannot be used, where the type is wanted.
-    fn track_existing_entity_name(
-        &mut self,
-        file: FileId,
-        scope: ScopeId,
-        first: Atom,
-        meaning: Meaning,
-    ) -> bool {
-        let files = self.c.files();
-        let at = self.b.enclosing;
-        let here = files.resolve_name(file, scope, first, meaning.flags());
-        let flags = here.map_or(SymFlags::empty(), |symbol| files.flags(symbol));
-        // A type parameter can be named wherever it is still itself, a parameter in the signature that declares it.
-        if flags.intersects(SymFlags::TYPE_PARAMETER | SymFlags::PARAMETER) {
-            return false;
-        }
-        let there = files.resolve_name(at.file, at.scope, first, meaning.flags());
-        let symbol = match (there, here) {
-            (None, Some(_)) => return true,
-            (None, None) => return false,
-            (Some(there), Some(here)) if !self.c.is_same_reference(there, here) => return true,
-            (Some(there), _) => there,
-        };
-        if !self.is_symbol_accessible(symbol, meaning) {
-            return true;
-        }
-        self.track_symbol(symbol, at, meaning);
-        false
-    }
-
-    /// `serializeTypeName`. Whether what `names` means where it is written can be named where the type is wanted.
-    fn serialize_type_name(
-        &mut self,
-        file: FileId,
-        scope: ScopeId,
-        names: &[Atom],
-        meaning: Meaning,
-    ) -> bool {
-        let files = self.c.files();
-        let Some(found) = files.resolve_entity(file, scope, names, meaning.flags()) else {
-            return false;
-        };
-        // `resolveEntityName`: an alias that has not the meaning itself is followed.
-        let symbol = files
-            .resolve_alias_as(found, meaning.flags())
-            .unwrap_or(found);
-        if !self.is_symbol_accessible(symbol, meaning) {
-            return false;
-        }
-        let resolved = files.resolve_alias(symbol).unwrap_or(symbol);
-        self.symbol_to_type_node(resolved, meaning);
-        true
     }
 }
 
@@ -6362,30 +4480,5 @@ impl<'p> EmitResolver<'_, 'p> {
             }
         }
         (specifier, mode)
-    }
-}
-
-impl<'p> DeclarationEmit<'_, 'p> {
-    /// `import_type_specifier_and_mode` with its error. `module` is what the chain of names for `symbol` starts with.
-    fn import_type_specifier(&mut self, module: Sym, symbol: Sym) -> String {
-        let importing = self.b.enclosing.file;
-        let (specifier, mode) = self.with_resolver(|resolver| {
-            resolver.import_type_specifier_and_mode(module, importing, false)
-        });
-        if specifier.contains("/node_modules/") && mode.is_none() {
-            self.b.encountered_error = true;
-            let files = self.c.files();
-            let name = if self
-                .c
-                .parent_of_symbol(symbol)
-                .is_some_and(|parent| files.export(parent, known::default) == Some(symbol))
-            {
-                "default".to_owned()
-            } else {
-                self.c.atom_text(self.c.name_of(symbol))
-            };
-            self.report(Report::LikelyUnsafeImportRequired(specifier.clone(), name));
-        }
-        specifier
     }
 }

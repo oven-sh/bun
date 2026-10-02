@@ -1941,7 +1941,7 @@ impl Checker<'_> {
                 _ => false,
             };
             if !is_private && containing != TypeId::BOOLEAN && !is_enum && c.is_union(containing) {
-                for member in c.parts_in_order(containing) {
+                for &member in c.parts(containing) {
                     let apparent = c.apparent_type(member);
                     if c.type_of_property(apparent, name).is_none() {
                         return vec![Line {

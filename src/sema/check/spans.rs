@@ -1449,9 +1449,12 @@ impl<'a> Spans<'a> {
 
     /// `node` itself, whatever parentheses it is in.
     fn ty(self, node: TypeNodeId) -> usize {
-        let Some(&TypeNode { kind, pos }) = self.hir.types.get(node.idx()) else {
+        let Some(&TypeNode { kind, pos, end }) = self.hir.types.get(node.idx()) else {
             return 0;
         };
+        if end != 0 {
+            return end as usize;
+        }
         let pos = pos as usize;
         let end = match kind {
             TypeNodeKind::Error | TypeNodeKind::BoolLit(_) => self.token(pos),
@@ -1596,6 +1599,7 @@ impl<'a> Spans<'a> {
             Some(&TypeNode {
                 kind: TypeNodeKind::Keyword(keyword),
                 pos,
+                ..
             }) => self.word_at(pos as usize) == keyword_text(keyword),
             _ => true,
         }
@@ -2283,6 +2287,7 @@ impl Checker<'_> {
         let &TypeNode {
             kind: TypeNodeKind::Import { is_typeof, .. },
             pos,
+            ..
         } = spans.hir.types.get(node.idx())?
         else {
             return None;

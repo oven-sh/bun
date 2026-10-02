@@ -2694,6 +2694,13 @@ impl<'p> Checker<'p> {
     /// `getTypeOfSymbol` of a member of an object literal or a JSX attribute, of which `p` is `symbol.ValueDeclaration`:
     /// `checkPropertyAssignment`, `checkJsxAttribute` and the like, the first time it is asked. `checkObjectLiteral` does not ask.
     pub(super) fn get_type_of_literal_member(&mut self, file: FileId, p: PropId) -> TypeId {
+        // `checkShorthandPropertyAssignment(declaration, true)`: of `{ a = 1 }` it is the name that is checked.
+        let hir = self.hir(file);
+        if hir[p].kind == PropKind::Shorthand
+            && let ExprKind::Assign { target, .. } = hir[hir[p].value].kind
+        {
+            return self.type_of_expr(file, target);
+        }
         self.type_of_literal_prop(file, p);
         let outer = self.begin_recheck();
         let ty = self.check_literal_member(file, p);
@@ -4335,9 +4342,11 @@ impl<'p> Checker<'p> {
         }
         // `inferJsxTypeArguments`: the attributes and the children are one argument, an object.
         let param = self.jsx_effective_first_argument(file, e, sig, construct);
-        let mut inference = super::infer::Inference::new(type_params.into_vec(), Some(sig));
+        let mut inference = super::infer::Inference::for_params(&type_params, Some(sig));
         // `chooseOverload`: `InferenceFlagsAnyDefault`
         inference.any_default = hir.is_js;
+        inference.calls_itself = self.is_inside_declaration_of(file, e, &type_params);
+        inference.call_site = Some((file, e));
         let children: Vec<ExprId> = hir.ids(jsx.children).collect();
         let children_param = match self.jsx_children_property_name(file) {
             super::jsx::JsxName::Name(name) => self

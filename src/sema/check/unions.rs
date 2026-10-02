@@ -122,8 +122,7 @@ fn some_first<T: Ord>(a: Option<T>, b: Option<T>) -> std::cmp::Ordering {
 }
 
 impl<'p> Checker<'p> {
-    /// `Type.flags`. An enum that is the union of its members has `TypeFlagsEnumLiteral` too, which is not told here. What an
-    /// alias that is still being worked out stands for is not known: no flags.
+    /// `Type.flags`. What an alias that is still being worked out stands for is not known: no flags.
     fn type_flags(&self, ty: TypeId) -> u32 {
         match self.data(ty) {
             TypeData::UnresolvedName { .. } => tf::ANY,
@@ -168,6 +167,9 @@ impl<'p> Checker<'p> {
             TypeData::IndexedAccess { .. } => tf::INDEXED_ACCESS,
             TypeData::Cond { .. } => tf::CONDITIONAL,
             TypeData::Union(_) if ty == TypeId::BOOLEAN => tf::UNION | tf::BOOLEAN,
+            TypeData::Union(_) if self.union_enum_symbol(ty).is_some() => {
+                tf::UNION | tf::ENUM_LITERAL
+            }
             TypeData::Union(_) => tf::UNION,
             TypeData::Intersection(_) => tf::INTERSECTION,
             TypeData::LazyAlias { .. } => 0,
@@ -1757,10 +1759,5 @@ impl<'p> Checker<'p> {
         types
             .binary_search_by(|&member| self.compare_types(member, t))
             .is_ok()
-    }
-
-    /// `parts`, to keep.
-    pub fn parts_in_order(&self, ty: TypeId) -> Vec<TypeId> {
-        self.parts(ty).to_vec()
     }
 }

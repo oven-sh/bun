@@ -26,14 +26,6 @@ impl Enclosing {
             fake_scope: 0,
         }
     }
-
-    /// `getEnclosingDeclarationIgnoringFakeScope`
-    pub(super) fn ignoring_fake_scope(self) -> Enclosing {
-        Enclosing {
-            fake_scope: 0,
-            ..self
-        }
-    }
 }
 
 /// The scope of the file stands in for a scope the binder did not record.

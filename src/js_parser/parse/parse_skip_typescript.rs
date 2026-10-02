@@ -1232,12 +1232,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.type_syntax_mut().last_type = ty;
                 }
             }
+            self.finish_last_type();
             element.ty = self.last_type();
         }
         Ok(element)
     }
 
+    #[inline(always)]
     fn skip_type_script_type_impl<const GET_METADATA: bool, const KEEP: bool>(
+        &mut self,
+        level: Level,
+        opts: SkipTypeOptionsBitset,
+        result: Option<&mut Metadata>,
+    ) -> Result<(), Error> {
+        let skipped = self.skip_unfinished_type::<GET_METADATA, KEEP>(level, opts, result);
+        if KEEP {
+            self.finish_last_type();
+        }
+        skipped
+    }
+
+    /// In keep mode a type is emitted when it is known what it is, which may be before its last token is taken. It is finished
+    /// (`finish_last_type`) where no token after its last has been taken yet: before each postfix or operator, and on return.
+    fn skip_unfinished_type<const GET_METADATA: bool, const KEEP: bool>(
         &mut self,
         level: Level,
         opts: SkipTypeOptionsBitset,
@@ -2221,18 +2238,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         loop {
+            if KEEP {
+                self.finish_last_type();
+            }
             match self.lexer.token {
                 T::TBar => {
                     if level.gte(Level::BitwiseOr) {
                         finish!();
                     }
 
+                    if KEEP {
+                        self.finish_intersection(&mut intersection_base, intersection_start);
+                    }
                     self.lexer.next()?;
                     if self.lexer.tolerant {
                         fn_type_error = self.fn_type_after_operator_error(true);
                     }
                     if KEEP {
-                        self.finish_intersection(&mut intersection_base, intersection_start);
                         self.begin_type_list(&mut union_base);
                     }
 
@@ -2502,8 +2524,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         finish!();
                     }
 
-                    self.lexer.next()?;
-
                     if KEEP {
                         self.finish_union_and_intersection(
                             &mut intersection_base,
@@ -2511,6 +2531,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             &mut union_base,
                             start,
                         );
+                    }
+                    self.lexer.next()?;
+
+                    if KEEP {
                         let check = self.last_type();
                         self.skip_nested_type::<true>(
                             Level::Lowest,
@@ -3644,10 +3668,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             None
         };
         let mut extends: Vec<TypeId> = Vec::new();
+        let mut other_heritage: Vec<TypeId> = Vec::new();
         let mut heritage_errors = [None; 2];
         // It takes every clause, which leaves nothing for the two blocks below.
         let has_tolerated_implements_clause = self.lexer.tolerant
-            && self.skip_interface_heritage_clauses(&mut extends, &mut heritage_errors)?;
+            && self.skip_interface_heritage_clauses(
+                &mut extends,
+                &mut other_heritage,
+                &mut heritage_errors,
+            )?;
 
         if self.lexer.token == T::TExtends {
             self.lexer.next()?;
@@ -3669,6 +3698,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.lexer.next()?;
             loop {
                 self.skip_type_script_type(Level::Lowest)?;
+                if keeps {
+                    other_heritage.push(self.last_type());
+                }
                 if self.lexer.token != T::TComma {
                     break;
                 }
@@ -3690,6 +3722,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 name,
                 type_parameters,
                 &extends,
+                &other_heritage,
                 has_implements_clause,
                 heritage_errors,
                 keyword_loc,
@@ -3701,11 +3734,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// `parseHeritageClauses` of an interface in tolerant mode: any number of clauses, in any order. `extends` gets the types of the
     /// first "extends" clause (`GetHeritageElements`). `errors` gets what `checkGrammarInterfaceDeclaration` reports, except 1176,
     /// which the checker finds in the text. Returns whether there is an "implements" clause.
+    /// `others` gets the types of the other clauses.
     #[cold]
     #[inline(never)]
     fn skip_interface_heritage_clauses(
         &mut self,
         extends: &mut Vec<TypeId>,
+        others: &mut Vec<TypeId>,
         errors: &mut [Option<(bun_ast::Loc, u32)>; 2],
     ) -> Result<bool, Error> {
         // `parseHeritageClauses`: no list unless a clause starts here.
@@ -3757,8 +3792,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 let element_start = self.lexer.loc();
                 self.skip_interface_heritage_element()?;
-                if keeps && is_first_extends {
-                    extends.push(self.last_type());
+                if keeps {
+                    let clause = if is_first_extends {
+                        &mut *extends
+                    } else {
+                        &mut *others
+                    };
+                    clause.push(self.last_type());
                 }
                 is_empty = false;
                 trailing_comma = None;
@@ -3799,6 +3839,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let _ = self.skip_type_script_type_arguments::<false, false>()?;
             if keeps {
                 self.emit_type(TypeData::HeritageExpression, pos);
+                self.finish_last_type();
             }
             return Ok(());
         }
@@ -3822,6 +3863,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let has_arguments = self.skip_type_script_type_arguments::<false, false>()?;
         if keeps {
             self.attach_type_args(reference, has_arguments);
+            self.finish_last_type();
             // `type_syntax::Builder` looks it up by offset.
             let ty = self.last_type();
             if ty.is_some() {

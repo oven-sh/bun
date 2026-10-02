@@ -467,7 +467,7 @@ impl Checker<'_> {
         let mut has_signatures = false;
         // The first constituent without signatures.
         let mut without = None;
-        for part in self.parts_in_order(apparent) {
+        for &part in self.parts(apparent) {
             let reduced = self.apparent_type(part);
             let reduced = self.reduced(reduced);
             if !self.signatures(reduced, construct).is_empty() {

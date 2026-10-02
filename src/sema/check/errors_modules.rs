@@ -453,8 +453,12 @@ impl Checker<'_> {
                         .files()
                         .resolve_name(file, bound.export_scope[x], name, all)
                     {
-                        Some(found) => self.is_first_declared_in_global_source_file(found),
-                        None => matches!(name, known::undefined | known::globalThis),
+                        Some(found) => {
+                            found == self.files().global_this_symbol
+                                || self.is_first_declared_in_global_source_file(found)
+                        }
+                        // `undefinedSymbol`
+                        None => name == known::undefined,
                     };
                 let text = self.files().atoms.bytes(name);
                 let is_primitive = matches!(
@@ -1192,18 +1196,11 @@ fn report_default_export_conflicts<'a>(
 
 /// `getFullyQualifiedName`
 pub(super) fn fully_qualified_name(c: &mut Checker<'_>, sym: Sym) -> String {
-    let files = c.files();
-    let symbol = files.symbol(sym);
     let name = c.symbol_to_string(sym);
-    if symbol.parent.is_none() {
-        return name;
+    match c.files().parent_of_symbol(sym) {
+        Some(parent) => format!("{}.{name}", fully_qualified_name(c, parent)),
+        None => name,
     }
-    let parent = files.sym(sym.file, symbol.parent);
-    // What is not exported has no parent (`declareModuleMember`).
-    if files.export(parent, symbol.name) != Some(sym) {
-        return name;
-    }
-    format!("{}.{name}", fully_qualified_name(c, parent))
 }
 
 /// `GetRootDeclaration`: the variable or the parameter whose binding pattern contains `pat`.

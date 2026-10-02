@@ -104,7 +104,7 @@ impl Builder<'_> {
         if id.is_none() {
             return TypeNodeId::NONE;
         }
-        let ts::Type { data, loc } = self.ts[id];
+        let ts::Type { data, loc, end } = self.ts[id];
         let kind = match data {
             ts::TypeData::Keyword(k) => TypeNodeKind::Keyword(keyword(k)),
             ts::TypeData::Reference { name, args } => match self.jsdoc_intended_type(name, args) {
@@ -239,7 +239,10 @@ impl Builder<'_> {
                     assert_keyword_loc,
                 } = self.ts[import];
                 if argument.is_some() {
-                    return self.clone_import_type_without_specifier(argument, is_typeof, pos(loc));
+                    let node =
+                        self.clone_import_type_without_specifier(argument, is_typeof, pos(loc));
+                    self.file[node].end = pos(end);
+                    return node;
                 }
                 let spec = self.atoms.intern(&specifier);
                 let mode = match mode {
@@ -305,7 +308,9 @@ impl Builder<'_> {
             // The end of `checkInterfaceDeclaration` reports 2499 for it.
             ts::TypeData::HeritageExpression => TypeNodeKind::Error,
         };
-        self.file.ty(kind, pos(loc))
+        let node = self.file.ty(kind, pos(loc));
+        self.file[node].end = pos(end);
+        node
     }
 
     /// `checkJSDocTypeIsInJsFile`
@@ -724,6 +729,7 @@ impl Builder<'_> {
             name,
             type_params,
             extends,
+            other_heritage,
             heritage_errors,
             members,
             ..
@@ -748,12 +754,18 @@ impl Builder<'_> {
             .into_iter()
             .map(|ty| self.clone_heritage_type(ty))
             .collect();
+        let others: smallvec::SmallVec<[ts::TypeId; 4]> = self.ts.id_list(other_heritage).collect();
+        let others: smallvec::SmallVec<[TypeNodeId; 4]> = others
+            .into_iter()
+            .map(|ty| self.clone_heritage_type(ty))
+            .collect();
         let interface = Interface {
             name: self.atoms.intern(&name.text),
             name_pos: self::pos(name.loc),
             flags,
             type_params,
             extends: self.file.list(&heritage),
+            other_heritage: self.file.list(&others),
             members: self.clone_members(members),
             stmt: StmtId::NONE,
         };
@@ -763,19 +775,21 @@ impl Builder<'_> {
 
     /// In a heritage clause `string` is an entity name, not the keyword type.
     pub(crate) fn clone_heritage_type(&mut self, id: ts::TypeId) -> TypeNodeId {
-        let ts::Type { data, loc } = self.ts[id];
+        let ts::Type { data, loc, end } = self.ts[id];
         let ts::TypeData::Keyword(keyword) = data else {
             return self.clone_type(id);
         };
         let name = self.atoms.intern(super::keep::keyword_text(keyword));
         let name = self.file.list(&[name]);
-        self.file.ty(
+        let node = self.file.ty(
             TypeNodeKind::Ref {
                 name,
                 args: IdList::EMPTY,
             },
             pos(loc),
-        )
+        );
+        self.file[node].end = pos(end);
+        node
     }
 
     pub(crate) fn clone_type_alias(

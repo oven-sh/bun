@@ -217,6 +217,8 @@ pub struct Name {
 pub struct Type {
     pub data: TypeData,
     pub loc: Loc,
+    /// `node.End()`. `EMPTY` until the type is finished.
+    pub end: Loc,
 }
 
 #[derive(Copy, Clone)]
@@ -521,6 +523,8 @@ pub struct Interface {
     pub type_params: Span<TypeParam>,
     /// The types of the first `extends` clause.
     pub extends: IdList<Type>,
+    /// The types of its other heritage clauses.
+    pub other_heritage: IdList<Type>,
     /// `interface A implements B`, which is an error.
     pub has_implements_clause: bool,
     /// Where the heritage clauses break a grammar rule, and TypeScript's error code: an empty list or a trailing comma in the first
@@ -623,7 +627,11 @@ impl Default for Syntax {
 impl Syntax {
     #[inline]
     pub fn add_type(&mut self, data: TypeData, loc: Loc) -> TypeId {
-        self.add_type_node(Type { data, loc })
+        self.add_type_node(Type {
+            data,
+            loc,
+            end: Loc::EMPTY,
+        })
     }
 
     #[inline]

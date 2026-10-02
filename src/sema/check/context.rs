@@ -1848,7 +1848,7 @@ impl<'p> Checker<'p> {
     /// Whether the binder took `assignment` for the declaration of a property of a function (`binary.Symbol != nil`).
     fn is_expando_assignment(&self, file: FileId, assignment: ExprId) -> bool {
         let bound = self.bound(file);
-        bound.declared_fn_expandos.iter().any(|x| x.2 == assignment)
+        bound.expr_symbol[assignment.idx()].is_some()
             || bound.fn_expr_expandos.iter().any(|x| x.2 == assignment)
             || bound
                 .declared_fn_keyed_expandos

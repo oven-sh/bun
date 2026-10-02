@@ -2929,8 +2929,10 @@ impl Files {
         // `IsNonLocalAlias`
         let meanings = SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE;
         let is_alias = target_flags.contains(SymFlags::ALIAS) && !target_flags.intersects(meanings);
-        // `reportMergeSymbolError`
-        if target_flags.intersects(excluded_flags(source_flags)) {
+        // `reportMergeSymbolError`. "Assignment declarations are allowed to merge with variables, no matter what other flags they have."
+        if target_flags.intersects(excluded_flags(source_flags))
+            && !(source_flags | target_flags).contains(SymFlags::ASSIGNMENT)
+        {
             // Two aliases are never one: the first keeps the name.
             if is_alias || unidirectional {
                 self.refused_merges.push((target, source));
@@ -3305,6 +3307,28 @@ impl Files {
             symbol = target;
         }
         flags
+    }
+
+    /// `getParentOfSymbol`. `Symbol::parent` is what a declaration is written in, exported or not. `declareSymbolEx` gives a `Parent`
+    /// to what is declared among the exports, be it refused there, and `bindAnonymousDeclaration` to a member of an enum.
+    pub fn parent_of_symbol(&self, sym: Sym) -> Option<Sym> {
+        let declared = self.symbol(sym);
+        if declared.parent.is_none() {
+            return None;
+        }
+        let parent = self.sym(sym.file, declared.parent);
+        let bound = self.bound(sym.file);
+        let has_parent = declared.flags.contains(SymFlags::ENUM_MEMBER)
+            || self.export(parent, declared.name) == Some(sym)
+            || bound
+                .lookup(bound.symbols[declared.parent.idx()].exports, declared.name)
+                .is_some_and(|there| {
+                    declared
+                        .decls
+                        .iter()
+                        .any(|&decl| bound.refused_declarations.contains(&(there, decl)))
+                });
+        has_parent.then_some(parent)
     }
 
     /// `getExportSymbolOfValueSymbolIfExported`

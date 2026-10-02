@@ -381,7 +381,7 @@ impl<'p> Checker<'p> {
         }
     }
 
-    pub(super) fn check_decorators(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    pub(super) fn report_decorators(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         // Those of a missing declaration or of a `this` parameter: `checkDecorators` never looks at them.
         for &(start, end) in &hir.stray_decorators {

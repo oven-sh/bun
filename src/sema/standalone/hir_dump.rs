@@ -1028,6 +1028,7 @@ impl Dump<'_> {
             extends_args,
             other_extends,
             implements,
+            other_implements,
             members,
             pos,
             start,
@@ -1045,6 +1046,7 @@ impl Dump<'_> {
         self.list(d, "extends_args", extends_args, Self::ty);
         self.list(d, "other_extends", other_extends, Self::expr);
         self.list(d, "implements", implements, Self::ty);
+        self.list(d, "other_implements", other_implements, Self::ty);
         self.span(d, "members", members, Self::member);
     }
 
@@ -1055,6 +1057,7 @@ impl Dump<'_> {
             flags,
             type_params,
             extends,
+            other_heritage,
             members,
             stmt: _,
         } = node!(self, depth, label, interfaces, id);
@@ -1068,6 +1071,7 @@ impl Dump<'_> {
         let d = depth + 1;
         self.span(d, "type_params", type_params, Self::type_param);
         self.list(d, "extends", extends, Self::ty);
+        self.list(d, "other_heritage", other_heritage, Self::ty);
         self.span(d, "members", members, Self::member);
     }
 
@@ -1255,8 +1259,8 @@ impl Dump<'_> {
     }
 
     fn ty(&mut self, depth: usize, label: &str, id: TypeNodeId) {
-        let TypeNode { kind, pos } = node!(self, depth, label, types, id);
-        let head = format!("TypeNode {} pos={pos}", type_kind_name(kind));
+        let TypeNode { kind, pos, end } = node!(self, depth, label, types, id);
+        let head = format!("TypeNode {} pos={pos} end={end}", type_kind_name(kind));
         let d = depth + 1;
         match kind {
             TypeNodeKind::Error | TypeNodeKind::UniqueSymbol => self.line(depth, label, &head),

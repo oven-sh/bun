@@ -1574,6 +1574,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                 Span::EMPTY
             };
         let params = self.params(arrow.args.slice(), arrow.has_rest_arg);
+        let (this_param, params) = self.b.file.split_this_parameter(params);
         let ret = match arrow_token
             .and_then(|at| self.mark(ast::Loc { start: at as i32 }, Mark::ReturnType))
         {
@@ -1611,7 +1612,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             name_pos: pos,
             type_params,
             params,
-            this_param: ParamId::NONE,
+            this_param,
             ret,
             body,
             anchor,
@@ -1659,10 +1660,17 @@ impl<'p, 'a> Lower<'p, 'a> {
             .filter_map(|at| self.b.member_expr_at(at))
             .collect();
         let other_extends = self.b.file.list(&other_extends);
-        let implements = match self.mark(keyword, Mark::Implements) {
+        let mut clauses = self.marks_from(keyword, Mark::Implements).into_iter();
+        let implements = match clauses.next() {
             Some(at) => self.b.type_list_at(at),
             None => IdList::EMPTY,
         };
+        let mut other_implements: Vec<TypeNodeId> = Vec::new();
+        for at in clauses {
+            let clause = self.b.type_list_at(at);
+            other_implements.extend(self.b.file.ids(clause));
+        }
+        let other_implements = self.b.file.list(&other_implements);
         let of_class: Vec<ExprId> = class.ts_decorators.iter().map(|d| self.expr(d)).collect();
         let outer_is_abstract = std::mem::replace(
             &mut self.b.in_abstract_class,
@@ -1729,6 +1737,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             extends_args,
             other_extends,
             implements,
+            other_implements,
             members,
             pos,
             start,

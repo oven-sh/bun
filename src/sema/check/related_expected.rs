@@ -104,7 +104,7 @@ impl Checker<'_> {
             // `createUnionOrIntersectionProperty`: the declarations of what the members have, one member after the other.
             let is_late_bound = self.files().atoms.is_symbol_name(name);
             let mut found: Option<Option<Place>> = None;
-            for part in self.parts_in_order(ty) {
+            for &part in self.parts(ty) {
                 let part = self.apparent_type(part);
                 if part == TypeId::NEVER || !self.is_known(part) {
                     continue;

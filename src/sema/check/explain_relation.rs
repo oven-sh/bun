@@ -456,7 +456,7 @@ impl<'p> Checker<'p> {
     /// `getPropertiesOfType`, for `getSpellingSuggestionForName`: of a union, the properties that all its members have.
     fn properties_for_suggestion(&mut self, ty: TypeId) -> Vec<Prop> {
         let mut found = Vec::new();
-        for part in self.parts_in_order(ty) {
+        for &part in self.parts(ty) {
             let Some(members) = self.members(part) else {
                 break;
             };
@@ -496,7 +496,7 @@ impl<'p> Checker<'p> {
         };
         let mut types = Vec::new();
         let mut names = Vec::new();
-        for part in self.parts_in_order(target) {
+        for &part in self.parts(target) {
             if let TypeData::StringLit { value, .. } = *self.data(part) {
                 types.push(part);
                 names.push(self.atom_text(value));
@@ -1072,12 +1072,7 @@ impl<'p> Checker<'p> {
                 },
             ) if av == bv => Some((self.enum_of(*a), self.enum_of(*b))),
             (TypeData::Union(_), TypeData::Union(_)) => {
-                match (self.union_enum_symbol(s), self.union_enum_symbol(t)) {
-                    (Some(a), Some(b)) if self.enum_type(a) == s && self.enum_type(b) == t => {
-                        Some((a, b))
-                    }
-                    _ => None,
-                }
+                self.union_enum_symbol(s).zip(self.union_enum_symbol(t))
             }
             _ => None,
         };
@@ -1318,10 +1313,7 @@ impl<'p> Checker<'p> {
     ) -> Ternary {
         if self.is_union(source) {
             // `TypeFlagsPrimitive`: `boolean` and an enum have it, some of the members of an enum have not.
-            let is_whole_enum = self
-                .union_enum_symbol(source)
-                .is_some_and(|owner| self.enum_type(owner) == source);
-            if source == TypeId::BOOLEAN || is_whole_enum {
+            if source == TypeId::BOOLEAN || self.union_enum_symbol(source).is_some() {
                 return self.union_or_intersection_related_to(&mut x.r, source, target, state);
             }
             return if x.r.relation == Relation::Comparable {
@@ -1372,7 +1364,7 @@ impl<'p> Checker<'p> {
         target: TypeId,
         state: u8,
     ) -> Ternary {
-        let types = self.parts_in_order(source);
+        let types = self.parts(source);
         if types.contains(&target) {
             return Ternary::TRUE;
         }
@@ -1398,10 +1390,10 @@ impl<'p> Checker<'p> {
         state: u8,
     ) -> Ternary {
         let mut result = Ternary::TRUE;
-        let sources = self.parts_in_order(source);
+        let sources = self.parts(source);
         // `getUndefinedStrippedTargetIfNeeded`
         let mut stripped = if self.is_union(target) {
-            self.parts_in_order(target)
+            self.parts(target).to_vec()
         } else {
             Vec::new()
         };
@@ -1808,21 +1800,7 @@ impl<'p> Checker<'p> {
                     flags, readonly, ..
                 } = self.data(of)
                 {
-                    // `getKnownKeysOfTupleType`
-                    let fixed = flags
-                        .iter()
-                        .position(|f| f.intersects(ElemFlags::REST | ElemFlags::VARIADIC))
-                        .unwrap_or(flags.len());
-                    let mut keys: Vec<TypeId> = (0..fixed)
-                        .map(|i| self.string_literal(self.number_name(i as f64), false))
-                        .collect();
-                    let array = if *readonly {
-                        self.readonly_array_of(TypeId::ANY)
-                    } else {
-                        self.array_of(TypeId::ANY)
-                    };
-                    keys.push(self.keyof(array));
-                    let known_keys = self.union(&keys);
+                    let known_keys = self.known_keys_of_tuple_type(flags, *readonly);
                     let result = self.is_related_to_reporting(x, source, known_keys, REC_TARGET);
                     if result.holds() {
                         return result;

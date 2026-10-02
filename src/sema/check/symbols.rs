@@ -259,6 +259,18 @@ impl<'p> Checker<'p> {
 
     /// `getWidenedTypeForAssignmentDeclaration` for a CommonJS export declared by assignments.
     fn type_of_assignment_declarations(&mut self, sym: Sym) -> Option<TypeId> {
+        let expandos: Vec<ExprId> = declarations_of(self.files(), sym)
+            .filter_map(|(file, decl)| match decl {
+                Decl::Expando(e) if file == sym.file => Some(e),
+                _ => None,
+            })
+            .collect();
+        // `SetValueDeclaration`: an assignment gives way to any other declaration of a value.
+        let others = SymFlags::VALUE.difference(SymFlags::PROPERTY);
+        if !expandos.is_empty() && !self.files().flags(sym).intersects(others) {
+            let name = self.files().symbol(sym).name;
+            return Some(self.type_of_assigned_prop(sym.file, name, &expandos));
+        }
         let ty = self.widened_assigned_type(sym)?;
         Some(if self.is_all_nullable(ty) {
             TypeId::ANY

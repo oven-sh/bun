@@ -122,8 +122,8 @@ impl<'p> Checker<'p> {
         Some((alias, self.local_type_params_of_symbol(alias)))
     }
 
-    /// What `getTypeFromUnionTypeNode`, `getTypeFromIndexedAccessTypeNode` and `createDeferredTypeReference` of an array or a tuple
-    /// type do with `getAliasForTypeNode(node)`. `ty`: what `node` comes to.
+    /// What `getTypeFromUnionTypeNode` and `createDeferredTypeReference` of an array or a tuple type do with
+    /// `getAliasForTypeNode(node)`. `ty`: what `node` comes to.
     pub(super) fn with_alias_for_type_node(
         &mut self,
         file: FileId,
@@ -135,14 +135,7 @@ impl<'p> Checker<'p> {
         }
         let hir = self.hir(file);
         let (keeps_alias, is_reference) = match (hir[node].kind, self.data(ty)) {
-            (TypeNodeKind::Union(_), TypeData::Union(_))
-            | (TypeNodeKind::IndexedAccess { .. }, TypeData::IndexedAccess { .. }) => (true, false),
-            // `getIndexedAccessTypeOrUndefined`: what a union of keys finds is a union made with the alias.
-            (TypeNodeKind::IndexedAccess { index, .. }, TypeData::Union(_)) => {
-                let index = self.type_from_node(file, index);
-                let index = self.force(index);
-                (index != TypeId::BOOLEAN && self.is_union(index), false)
-            }
+            (TypeNodeKind::Union(_), TypeData::Union(_)) => (true, false),
             (TypeNodeKind::Array(_), TypeData::Ref { .. }) => (true, true),
             // `[]` is its target, and a tuple type with a variadic element is never deferred. `getTupleTargetType`: `[...X[]]` is an
             // array.
@@ -182,12 +175,8 @@ impl<'p> Checker<'p> {
             return result;
         };
         let takes_alias = match (self.data(ty), self.data(result)) {
-            // `getIndexedAccessTypeOrUndefined`: what a union of keys finds is a union made with the alias.
-            (TypeData::IndexedAccess { index, .. }, TypeData::Union(_)) => {
-                let index = self.instantiate(*index, mapper);
-                let index = self.force(index);
-                index != TypeId::BOOLEAN && self.is_union(index)
-            }
+            // `getIndexedAccessTypeEx` is handed it.
+            (TypeData::IndexedAccess { .. }, _) => false,
             // `getConditionalType` gives what is handed no alias `root.alias`: the alias whose body the node is.
             (TypeData::Cond { .. }, _) => false,
             _ => self.takes_alias_of(ty, result),

@@ -1909,8 +1909,9 @@ impl Checker<'_> {
                 if named_otherwise.0 && self.is_whole_enum(source) {
                     let (gave_up, too_complex) = (self.relation_gave_up, self.relation_too_complex);
                     let unfit = self
-                        .parts_in_order(source)
-                        .into_iter()
+                        .parts(source)
+                        .iter()
+                        .copied()
                         .find(|&member| !self.is_assignable(member, target));
                     self.relation_gave_up = gave_up;
                     self.relation_too_complex = too_complex;
@@ -2940,7 +2941,7 @@ impl Checker<'_> {
             return Some(found);
         }
         // In the order `CompareTypes` keeps them in: which comes first, or last, decides.
-        let parts = self.parts_in_order(target);
+        let parts = self.parts(target);
         // `findMatchingTypeReferenceOrTypeAliasReference`
         if let TypeData::Ref { target: declared, .. } = *self.data(source)
             && let Some(&same) = parts.iter().find(|&&t| matches!(*self.data(t), TypeData::Ref { target: other, .. } if other == declared))
@@ -2979,7 +2980,7 @@ impl Checker<'_> {
         }
         let source_keys = self.keyof(source);
         let (mut best, mut matching) = (None, 0);
-        for &t in &parts {
+        for &t in parts {
             if is_primitive(self, t) {
                 continue;
             }
@@ -3448,8 +3449,9 @@ impl Checker<'_> {
         };
         let text = self.files().atoms.bytes(value);
         // In the order `CompareTypes` keeps them in: of those that are as close, the first.
-        self.parts_in_order(target)
-            .into_iter()
+        self.parts(target)
+            .iter()
+            .copied()
             .filter_map(|part| match *self.data(part) {
                 TypeData::StringLit { value: other, .. } => {
                     let other = self.files().atoms.bytes(other);
@@ -3503,12 +3505,13 @@ impl Checker<'_> {
         }
         // `someTypeRelatedToType` reports on the last of the alternatives, `eachTypeRelatedToType` on the first that is not related.
         if self.is_union(source) {
-            let parts = self.parts_in_order(source);
+            let parts = self.parts(source);
             let part = if relation == Relation::Comparable {
                 parts.last().copied()?
             } else {
                 parts
-                    .into_iter()
+                    .iter()
+                    .copied()
                     .find(|&part| !self.related(part, target, relation))?
             };
             return self.excess_within(part, target, relation, at, end, head, depth + 1);
@@ -3803,7 +3806,7 @@ impl Checker<'_> {
             // `getSuggestionForNonexistentProperty`, among the properties of `errorTarget`: of a union, those all its members have.
             let text = self.files().atoms.bytes(prop.name);
             let error_target = self.filter(in_type, |c, m| c.is_excess_property_check_target(m));
-            for part in self.parts_in_order(error_target) {
+            for &part in self.parts(error_target) {
                 let Some(members) = self.members(part) else {
                     break;
                 };
@@ -4155,14 +4158,9 @@ impl Checker<'_> {
                 return Some((names, Some(sym.file)));
             }
             names.push(symbol.name);
-            if symbol.parent.is_none() {
+            let Some(parent) = files.parent_of_symbol(sym) else {
                 return Some((names, None));
-            }
-            let parent = files.sym(sym.file, symbol.parent);
-            // What is not exported has no parent (`declareModuleMember`).
-            if files.export(parent, symbol.name) != Some(sym) {
-                return Some((names, None));
-            }
+            };
             sym = parent;
         }
     }

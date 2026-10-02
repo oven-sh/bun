@@ -117,9 +117,9 @@ impl<'p> Checker<'p> {
         if !sigs.is_empty() || !self.is_union(apparent) {
             return Some((sigs.into_vec(), construct));
         }
-        let parts = self.parts_in_order(apparent);
+        let parts = self.parts(apparent);
         let mut lists = Vec::with_capacity(parts.len());
-        for part in parts {
+        for &part in parts {
             let (of_part, _) = self.jsx_signatures_of_tag(file, part)?;
             if of_part.is_empty() {
                 return Some((Vec::new(), false));

@@ -226,11 +226,17 @@ impl<'p> Checker<'p> {
                 if no_index_signatures && !self.is_key_type_included_no_index_signatures(info.key) {
                     continue;
                 }
-                keys.push(info.key);
-                if info.key == TypeId::STRING {
-                    keys.push(TypeId::NUMBER);
-                }
+                // `stringOrNumberType`, one type
+                keys.push(if info.key == TypeId::STRING {
+                    self.union(&[TypeId::STRING, TypeId::NUMBER])
+                } else {
+                    info.key
+                });
             }
+        }
+        // `getUnionTypeEx`: a list of one type is that type, whatever origin is given.
+        if let [only] = keys[..] {
+            return only;
         }
         let keys = self.union(&keys);
         // `includeOrigin`: `indexFlags == IndexFlagsNone`
@@ -467,8 +473,19 @@ impl<'p> Checker<'p> {
         obj: TypeId,
         index: TypeId,
         undefined: bool,
+        alias: Option<(Sym, &[TypeId])>,
     ) -> Option<TypeId> {
-        self.indexed_access_worker(obj, index, AccessNode::None, undefined)
+        self.indexed_access_worker(obj, index, AccessNode::None, undefined, alias)
+    }
+
+    /// `getTypeFromIndexedAccessTypeNode`. `None`: `obj[index]`, written as a type, finds nothing.
+    pub(super) fn indexed_access_of_type_node(
+        &mut self,
+        obj: TypeId,
+        index: TypeId,
+        alias: Option<(Sym, &[TypeId])>,
+    ) -> Option<TypeId> {
+        self.indexed_access_worker(obj, index, AccessNode::IndexedAccessType, false, alias)
     }
 
     /// `None`: the expression `obj[index]` finds nothing. `is_read`: `AccessFlagsExpressionPosition`.
@@ -479,7 +496,13 @@ impl<'p> Checker<'p> {
         is_read: bool,
     ) -> Option<TypeId> {
         let include_undefined = is_read && self.p.files.options.no_unchecked_indexed_access;
-        self.indexed_access_worker(obj, index, AccessNode::ElementAccess, include_undefined)
+        self.indexed_access_worker(
+            obj,
+            index,
+            AccessNode::ElementAccess,
+            include_undefined,
+            None,
+        )
     }
 
     /// `None`: `obj` has nothing under `index`, or under a member of the union that is.
@@ -496,7 +519,7 @@ impl<'p> Checker<'p> {
         } else {
             AccessNode::IndexedAccessType
         };
-        self.indexed_access_worker(obj, index, access_node, include_undefined)
+        self.indexed_access_worker(obj, index, access_node, include_undefined, None)
     }
 
     /// `getIndexedAccessTypeOrUndefined`. `include_undefined`: what an index signature gives may be missing.
@@ -506,6 +529,7 @@ impl<'p> Checker<'p> {
         index: TypeId,
         access_node: AccessNode,
         include_undefined: bool,
+        alias: Option<(Sym, &[TypeId])>,
     ) -> Option<TypeId> {
         let (obj, index) = (self.force(obj), self.force(index));
         if obj == TypeId::UNRESOLVED || index == TypeId::UNRESOLVED {
@@ -520,11 +544,15 @@ impl<'p> Checker<'p> {
             if self.has_any_flag(obj) || obj == TypeId::UNKNOWN {
                 return Some(obj);
             }
-            return Some(self.intern(TypeData::IndexedAccess {
+            let deferred = self.intern(TypeData::IndexedAccess {
                 obj,
                 index,
                 undefined: include_undefined,
-            }));
+            });
+            return Some(match alias {
+                Some((alias, type_arguments)) => self.with_alias(deferred, alias, type_arguments),
+                None => deferred,
+            });
         }
         if let TypeData::Union(keys) = self.data(index) {
             let mut types: SmallVec<[TypeId; 8]> = SmallVec::with_capacity(keys.len());
@@ -536,7 +564,8 @@ impl<'p> Checker<'p> {
                     access_node,
                 )?);
             }
-            return Some(self.union(&types));
+            // `boolean` is no union of keys there.
+            return Some(self.union_with_alias(&types, alias.filter(|_| index != TypeId::BOOLEAN)));
         }
         self.property_type_for_index(obj, index, include_undefined, access_node)
     }
@@ -1676,6 +1705,31 @@ impl<'p> Checker<'p> {
         })
     }
 
+    /// `getKnownKeysOfTupleType`: the places before the first element that stands for any number of them, and the keys of
+    /// `globalArrayType` or `globalReadonlyArrayType`.
+    pub(super) fn known_keys_of_tuple_type(
+        &mut self,
+        flags: &[ElemFlags],
+        readonly: bool,
+    ) -> TypeId {
+        let fixed = flags
+            .iter()
+            .position(|f| f.intersects(ElemFlags::REST | ElemFlags::VARIADIC))
+            .unwrap_or(flags.len());
+        let mut keys: Vec<TypeId> = (0..fixed)
+            .map(|i| self.string_literal(self.number_name(i as f64), false))
+            .collect();
+        let read_only = Some(known::ReadonlyArray).filter(|_| readonly);
+        let array = read_only
+            .and_then(|name| self.global_type_of_arity(name, 1))
+            .or_else(|| self.global_type_of_arity(known::Array, 1));
+        if let Some(array) = array {
+            let array = self.declared_type(array);
+            keys.push(self.keyof(array));
+        }
+        self.union(&keys)
+    }
+
     /// `getLowerBoundOfKeyType`: of keys that are not known yet, those that are there whatever they turn out to be.
     fn lower_bound_of_key_type(&mut self, ty: TypeId) -> TypeId {
         match *self.data(ty) {
@@ -1687,27 +1741,12 @@ impl<'p> Checker<'p> {
                 } else {
                     apparent
                 };
-                // `getKnownKeysOfTupleType`: the places before the first element that stands for any number of them, and what
-                // every array has.
                 if let TypeData::Tuple {
                     flags, readonly, ..
                 } = self.data(apparent)
                     && flags.iter().any(|f| f.contains(ElemFlags::VARIADIC))
                 {
-                    let fixed = flags
-                        .iter()
-                        .position(|f| f.intersects(ElemFlags::REST | ElemFlags::VARIADIC))
-                        .unwrap_or(flags.len());
-                    let mut keys: Vec<TypeId> = (0..fixed)
-                        .map(|i| self.string_literal(self.number_name(i as f64), false))
-                        .collect();
-                    let array = if *readonly {
-                        self.readonly_array_of(TypeId::ANY)
-                    } else {
-                        self.array_of(TypeId::ANY)
-                    };
-                    keys.push(self.keyof(array));
-                    return self.union(&keys);
+                    return self.known_keys_of_tuple_type(flags, *readonly);
                 }
                 if apparent == of {
                     ty

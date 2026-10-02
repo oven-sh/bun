@@ -423,8 +423,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     }
                 } else {
-                    // Only the first `implements` clause counts. The lowering reads its types from the first one on.
-                    if count == 0 && !seen_implements {
+                    // The lowering reads the types of a clause from the first one on.
+                    if count == 0 {
                         p.mark_type_syntax(class_keyword.loc, Mark::Implements, start.loc);
                     }
                     // `extends` after the type starts the next clause.
@@ -1113,9 +1113,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && p.lexer.tolerant
                     && matches!(item.data, js_ast::expr::Data::EThis(_))
                 {
-                    // `parseParameterEx` takes `this` for a parameter of any function. It is none of the signature's.
+                    // `parseParameterEx` takes `this` for a parameter of any function.
                     let _ = invalid_log.pop();
                     this_parameter = item.loc;
+                    let r#ref = p.store_name_in_ref(b"this");
+                    args.push(G::Arg {
+                        binding: p.b(B::Identifier { r#ref }, item.loc),
+                        ..Default::default()
+                    });
                     continue;
                 }
                 // double allocations

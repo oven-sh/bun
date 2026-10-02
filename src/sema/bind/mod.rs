@@ -57,6 +57,8 @@ bitflags::bitflags! {
         const TRANSIENT = 1 << 21;
         /// `SymbolFlagsExportValue`: the local symbol of an exported value (`declareModuleMember`). It is no value itself.
         const EXPORT_VALUE = 1 << 22;
+        /// `SymbolFlagsAssignment`: what `bindDeferredExpandoAssignment` declares.
+        const ASSIGNMENT = 1 << 23;
 
         const VARIABLE = Self::FUNCTION_SCOPED_VARIABLE.bits() | Self::BLOCK_SCOPED_VARIABLE.bits();
         const VALUE = Self::VARIABLE.bits() | Self::FUNCTION.bits() | Self::CLASS.bits() | Self::ENUM.bits()
@@ -104,6 +106,9 @@ pub enum Decl {
     ModuleExports(ExprId),
     /// `exports.a = e`, `module.exports.a = e` in JavaScript: the assignment. `Object.defineProperty(exports, "a", descriptor)`: the call.
     ExportsProperty(ExprId),
+    /// `f.a = e`, `f["a"] = e` next to `function f() {}`, which may be written `a.f`: the assignment. In JavaScript next to a class
+    /// too, and `Object.defineProperty(f, "a", descriptor)`: the call.
+    Expando(ExprId),
     /// `module` and `exports` in a CommonJS module.
     CommonJsVariable,
 }
@@ -730,7 +735,7 @@ pub struct Bound {
     /// `CommonJSModuleIndicator`: what shows that the file is a CommonJS module.
     pub commonjs_indicator: Option<ExprId>,
 
-    /// What an identifier means as a value. `NONE`: nothing in this file declares it.
+    /// What an identifier means as a value. `NONE`: nothing in this file declares it. Of a `Decl::Expando`: `node.Symbol`.
     pub expr_symbol: Vec<SymbolId>,
     pub expr_parent: Vec<Parent>,
     /// Where control is at a name, a `this`, a `super`, and an `a.b` or `a[b]` that can be narrowed (`isNarrowableReference`).
@@ -791,11 +796,9 @@ pub struct Bound {
     pub unchecked_types: Few<TypeNodeId>,
     /// Where each `infer T` that is written somewhere that says something about `T` is written. In order of the parameters.
     pub infer_positions: Few<(TypeParamId, InferPosition)>,
-    /// `f.name = value` and `f["name"] = value` next to `function f() {}`: properties of `f`, which may be written `a.f`. By the
-    /// symbol of the function, then by name. The last field is the declaration: the assignment or, in JavaScript, the call
-    /// `Object.defineProperty(f, "name", descriptor)`.
-    pub declared_fn_expandos: Few<(SymbolId, Atom, ExprId)>,
-    /// The same next to `const f = function () {}` or `const f = () => {}`, by the function.
+    /// `f.name = value` and `f["name"] = value` next to `const f = function () {}` or `const f = () => {}`: properties of `f`. By
+    /// the function, then by name. The last field is the declaration: the assignment or, in JavaScript, the call
+    /// `Object.defineProperty(f, "name", descriptor)`. Next to `function f() {}` it is a `Decl::Expando`.
     pub fn_expr_expandos: Few<(FnId, Atom, ExprId)>,
     /// `f[0] = value`, `f[key] = value`: the same under a numeric or late-bound key, which the checker names.
     /// (function, key, declaration), by function, then by declaration.
@@ -1242,6 +1245,19 @@ impl Bound {
         &list[start..end]
     }
 
+    /// Every `Decl::Expando` among the exports of `owner`: (owner, name, declaration), by name.
+    pub fn expandos_among_exports(&self, owner: SymbolId) -> Vec<(SymbolId, Atom, ExprId)> {
+        let mut all = Vec::new();
+        for &(name, symbol) in self.table(self.symbols[owner.idx()].exports) {
+            for &decl in &self.symbols[symbol.idx()].decls {
+                if let Decl::Expando(e) = decl {
+                    all.push((owner, name, e));
+                }
+            }
+        }
+        all
+    }
+
     /// `node.Symbol`. `NONE`: it is not kept for a declaration of that kind, none of which has a local symbol.
     pub fn symbol_of_declaration(&self, decl: Decl) -> SymbolId {
         match decl {
@@ -1254,6 +1270,7 @@ impl Bound {
             Decl::EnumMember(it) => self.enum_member_symbol[it.idx()],
             Decl::Module(it) => self.module_symbol[it.idx()],
             Decl::TypeParam(it) => self.type_param_symbol[it.idx()],
+            Decl::Expando(it) => self.expr_symbol[it.idx()],
             _ => SymbolId::NONE,
         }
     }

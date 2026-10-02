@@ -4059,7 +4059,12 @@ impl<'p> Checker<'p> {
     /// Whether one of `own`, the type parameters of a signature, is in scope where `call` is written: in the function that declares
     /// it, or, for a construct signature, in the class. What is written there may really mean it, and `inferFromTypes` takes it for
     /// a candidate like any other.
-    fn is_inside_declaration_of(&mut self, file: FileId, call: ExprId, own: &[TypeId]) -> bool {
+    pub(super) fn is_inside_declaration_of(
+        &mut self,
+        file: FileId,
+        call: ExprId,
+        own: &[TypeId],
+    ) -> bool {
         // Only what the file of the call declares can be in scope there.
         if own
             .iter()
@@ -4364,7 +4369,7 @@ impl<'p> Checker<'p> {
                 if key == *index {
                     ty
                 } else {
-                    self.indexed_access_flagged(*obj, key, *undefined)
+                    self.indexed_access_flagged(*obj, key, *undefined, None)
                         .unwrap_or(TypeId::UNKNOWN)
                 }
             }

@@ -231,7 +231,7 @@ impl<'p> Printer<'_, 'p> {
     /// `serializeTypeForDeclaration` with `tryReuse`, of the declaration `node` of `file`, whose type is `ty` here. `is_unwidened`: if
     /// `ty` is the type of an array literal it still says so (`ObjectFlagsArrayLiteral`), which types do not keep.
     /// `is_optional_reverse_mapped`: the symbol is an optional property of a reverse mapped type.
-    fn serialize_type_for_declaration(
+    pub(super) fn serialize_type_for_declaration(
         &mut self,
         file: FileId,
         node: SyntaxNode,
@@ -242,8 +242,12 @@ impl<'p> Printer<'_, 'p> {
         let hir = self.c.hir(file);
         // `requiresAddingImplicitUndefined`
         let requires_undefined = match node {
-            // The enclosing declaration is the scope made up for the signature, which is not function-like.
-            SyntaxNode::Param(p) => self.c.iso_requires_implicit_undefined(file, p, false),
+            SyntaxNode::Param(p) => {
+                let in_function = self
+                    .enclosing_declaration
+                    .is_some_and(|at| self.c.is_function_like_declaration(at));
+                self.c.iso_requires_implicit_undefined(file, p, in_function)
+            }
             SyntaxNode::Member(m) => {
                 is_optional_reverse_mapped
                     && hir[m].kind == MemberKind::Property
@@ -258,6 +262,50 @@ impl<'p> Printer<'_, 'p> {
         } else {
             ty
         };
+        let saved_flags = self.flags;
+        if self.is_unique_symbol_of_declaration(file, node, ty) {
+            self.flags |= ALLOW_UNIQUE_ES_SYMBOL_TYPE;
+        }
+        let result = self.serialize_type_for_declaration_worker(
+            file,
+            node,
+            ty,
+            is_unwidened,
+            requires_undefined,
+        );
+        self.flags = saved_flags;
+        result
+    }
+
+    /// `t.flags&TypeFlagsUniqueESSymbol != 0 && t.symbol == symbol`, and the symbol is declared in the enclosing file.
+    fn is_unique_symbol_of_declaration(&self, file: FileId, node: SyntaxNode, ty: TypeId) -> bool {
+        let TypeData::UniqueSymbol { symbol, .. } = *self.c.data(ty) else {
+            return false;
+        };
+        let own = match node {
+            SyntaxNode::Var(d) => {
+                let variable = self.c.bound(file).pat_symbol[self.c.hir(file)[d].pat.idx()];
+                if variable.is_none() {
+                    return false;
+                }
+                UniqueSymbolDeclaration::Variable(self.c.files().sym(file, variable))
+            }
+            SyntaxNode::Member(m) => UniqueSymbolDeclaration::Member(file, m),
+            _ => return false,
+        };
+        own == symbol && self.enclosing_declaration.is_none_or(|at| at.file == file)
+    }
+
+    /// The rest of `serializeTypeForDeclaration`.
+    fn serialize_type_for_declaration_worker(
+        &mut self,
+        file: FileId,
+        node: SyntaxNode,
+        ty: TypeId,
+        is_unwidened: bool,
+        requires_undefined: bool,
+    ) -> Node {
+        let hir = self.c.hir(file);
         let accessor = self
             .c
             .iso_fn_of_node(file, node)

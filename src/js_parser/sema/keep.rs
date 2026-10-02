@@ -69,6 +69,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         syntax.last_type = syntax.ast.add_type(data, loc(pos));
     }
 
+    /// `finishNode`, of the type parsed last, unless it is finished: it ends where the token before the current one does.
+    pub(crate) fn finish_last_type(&mut self) {
+        let ty = self.last_type();
+        if ty.is_some() && self.type_syntax_mut().ast[ty].end == Loc::EMPTY {
+            self.type_syntax_mut().ast[ty].end = self.lexer.full_start();
+        }
+    }
+
     /// Emits a reference to the type called `name`.
     pub(crate) fn emit_type_ref(&mut self, name: StoreStr, pos: u32) {
         let name = self.type_syntax_mut().ast.add_names(&[Name {
@@ -242,6 +250,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 Some(members) => self.emit_type(TypeData::Intersection(members), pos),
                 None => self.clear_last_type(),
             }
+            self.finish_last_type();
         }
     }
 
@@ -259,6 +268,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 Some(members) => self.emit_type(TypeData::Union(members), pos),
                 None => self.clear_last_type(),
             }
+            self.finish_last_type();
         }
     }
 
@@ -317,7 +327,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         }
         let ast = &mut self.type_syntax_mut().ast;
-        let Type { data, loc } = ast[reference];
+        let Type { data, loc, .. } = ast[reference];
         let mut names: smallvec::SmallVec<[Name; 4]> = match data {
             TypeData::Reference { name, args } if args.is_empty() => ast[name].into(),
             TypeData::Import(import) if ast[import].args.is_empty() => ast[ast[import].name].into(),
@@ -332,6 +342,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
         names.push(name);
         let name = ast.add_names(&names);
+        ast[reference].end = Loc::EMPTY;
         match data {
             TypeData::Import(import) => ast[import].name = name,
             _ => {
@@ -350,6 +361,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if !has_arguments || reference.is_none() {
             return;
         }
+        syntax.ast[reference].end = Loc::EMPTY;
         match (syntax.ast[reference].data, syntax.last_type_args.take()) {
             (TypeData::Reference { name, .. }, Some(args)) => {
                 syntax.ast[reference].data = TypeData::Reference { name, args }
@@ -540,6 +552,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         is_postfix: true,
                     },
                 loc,
+                ..
             } if loc == start => Some(operand),
             _ => None,
         }
@@ -1214,6 +1227,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         name: Name,
         type_params: Option<Span<TypeParam>>,
         extends: &[TypeId],
+        other_heritage: &[TypeId],
         has_implements_clause: bool,
         heritage_errors: [Option<(Loc, u32)>; 2],
         keyword_loc: Loc,
@@ -1226,10 +1240,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
         let ast = &mut self.type_syntax_mut().ast;
         let extends = ast.add_id_list(extends);
+        let others: smallvec::SmallVec<[TypeId; 4]> = other_heritage
+            .iter()
+            .copied()
+            .filter(|ty| ty.is_some())
+            .collect();
+        let other_heritage = ast.add_id_list(&others);
         let interface = ast.add_interface(Interface {
             name,
             type_params,
             extends,
+            other_heritage,
             has_implements_clause,
             heritage_errors,
             members,
@@ -1254,6 +1275,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if let Type {
             data: TypeData::Reference { name, args },
             loc,
+            ..
         } = ast[ty]
             && loc == type_loc
             && args.is_empty()

@@ -919,7 +919,8 @@ impl Checker<'_> {
                 }
                 let base_object = self.base_constraint_if_any(obj, depth + 1)?;
                 let base_index = self.base_constraint_if_any(index, depth + 1)?;
-                let access = self.indexed_access_flagged(base_object, base_index, undefined)?;
+                let access =
+                    self.indexed_access_flagged(base_object, base_index, undefined, None)?;
                 self.base_constraint_if_any(access, depth + 1)
             }
             _ => Some(ty),

@@ -933,6 +933,8 @@ pub struct Class {
     /// `extends A extends B`.
     pub other_extends: IdList<ExprId>,
     pub implements: IdList<TypeNodeId>,
+    /// The elements of `implements` clauses after the first, which are an error and which the checker never looks at.
+    pub other_implements: IdList<TypeNodeId>,
     pub members: Span<MemberId>,
     pub pos: u32,
     /// Where its first token is, decorators and modifiers included.
@@ -946,6 +948,9 @@ pub struct Interface {
     pub flags: Flags,
     pub type_params: Span<TypeParamId>,
     pub extends: IdList<TypeNodeId>,
+    /// The elements of its other heritage clauses, which are an error and which the checker never looks at: `extends` after the
+    /// first, and `implements`.
+    pub other_heritage: IdList<TypeNodeId>,
     pub members: Span<MemberId>,
     /// The statement it is.
     pub stmt: StmtId,
@@ -1125,6 +1130,8 @@ pub enum Keyword {
 pub struct TypeNode {
     pub kind: TypeNodeKind,
     pub pos: u32,
+    /// `node.End()`, not counting parentheses around it. 0: the parser did not make it.
+    pub end: u32,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -1560,7 +1567,7 @@ impl File {
     }
     #[inline]
     pub fn ty(&mut self, kind: TypeNodeKind, pos: u32) -> TypeNodeId {
-        self.add_type_node(TypeNode { kind, pos })
+        self.add_type_node(TypeNode { kind, pos, end: 0 })
     }
     #[inline]
     pub fn pat(&mut self, kind: PatKind, pos: u32) -> PatId {
@@ -1912,4 +1919,4 @@ pub fn names_bound_by(hir: &File, pat: PatId, into: &mut Vec<(Atom, PatId)>) {
 }
 
 const _: () = assert!(std::mem::size_of::<Expr>() <= 24);
-const _: () = assert!(std::mem::size_of::<TypeNode>() <= 28);
+const _: () = assert!(std::mem::size_of::<TypeNode>() <= 32);

@@ -1920,7 +1920,12 @@ impl<'p> Checker<'p> {
                 fresh: false,
             });
         }
-        self.union(&members)
+        let union = self.union(&members);
+        if self.is_union(union) {
+            self.with_alias(union, sym, &[])
+        } else {
+            union
+        }
     }
 
     /// `getBaseTypeOfEnumLikeType`: the enum `member` is a member of.
@@ -2403,7 +2408,13 @@ impl<'p> Checker<'p> {
                 {
                     return TypeId::ERROR;
                 }
-                let ty = self.indexed_access(obj, index);
+                let alias = self.alias_for_type_node(file, scope, node);
+                let alias = alias
+                    .as_ref()
+                    .map(|(alias, type_arguments)| (*alias, &type_arguments[..]));
+                let ty = self
+                    .indexed_access_of_type_node(obj, index, alias)
+                    .unwrap_or(TypeId::UNKNOWN);
                 // `getPropertyTypeForIndexType`: written as `T["p"]`, what may be missing reads as `undefined`.
                 if self.contains_missing_type(ty) {
                     self.union(&[ty, TypeId::UNDEFINED])

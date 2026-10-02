@@ -5,6 +5,7 @@
 //! precedence the printer parenthesizes it by.
 
 use super::enclosing_declaration::Enclosing;
+use super::errors_declaration_emit::module_clone;
 use super::errors_isolated_declarations::Node as SyntaxNode;
 use super::*;
 use crate::bind::{
@@ -25,6 +26,15 @@ const IN_OBJECT_TYPE_LITERAL: u32 = 1 << 6;
 const ALLOW_ANONYMOUS_IDENTIFIER: u32 = 1 << 7;
 const ALLOW_NODE_MODULES_RELATIVE_PATHS: u32 = 1 << 8;
 const ALLOW_THIS_IN_OBJECT_LITERAL: u32 = 1 << 9;
+pub(super) const WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL: u32 = 1 << 10;
+const USE_TYPE_OF_FUNCTION: u32 = 1 << 11;
+const USE_STRUCTURAL_FALLBACK: u32 = 1 << 12;
+/// `declarationEmitNodeBuilderFlags`
+pub(super) const DECLARATION_EMIT_NODE_BUILDER_FLAGS: u32 = WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL
+    | USE_TYPE_OF_FUNCTION
+    | USE_STRUCTURAL_FALLBACK
+    | GENERATE_NAMES_FOR_SHADOWED_TYPE_PARAMS
+    | NO_TRUNCATION;
 /// `FlagsIgnoreErrors`, which `typeToStringEx`, `symbolToStringEx` and `signatureToStringEx` add.
 const IGNORE_ERRORS: u32 =
     ALLOW_ANONYMOUS_IDENTIFIER | ALLOW_NODE_MODULES_RELATIVE_PATHS | ALLOW_THIS_IN_OBJECT_LITERAL;
@@ -263,6 +273,85 @@ impl Checker<'_> {
     }
 }
 
+impl<'p> Checker<'p> {
+    /// `NodeBuilder.SerializeTypeForDeclaration`, of a declaration of `file`. `ty`: `getTypeOfSymbol(symbol)`. `declaration`: none
+    /// if nothing is read off its syntax.
+    pub(super) fn serialize_type_for_declaration(
+        &mut self,
+        file: FileId,
+        declaration: Option<SyntaxNode>,
+        ty: TypeId,
+        enclosing_declaration: Enclosing,
+        flags: u32,
+        tracker: &mut dyn SymbolTracker<'p>,
+    ) -> String {
+        let enclosing_declaration = Some(enclosing_declaration);
+        with_printer(
+            self,
+            enclosing_declaration,
+            Some(tracker),
+            flags,
+            |printer| {
+                let ty = printer.c.widen_literal(ty);
+                match declaration {
+                    Some(declaration) => {
+                        printer.serialize_type_for_declaration(file, declaration, ty, false, false)
+                    }
+                    None => printer.type_to_node(ty),
+                }
+                .text
+            },
+        )
+    }
+
+    /// `NodeBuilder.SerializeReturnTypeForSignature`
+    pub(super) fn serialize_return_type_for_signature(
+        &mut self,
+        file: FileId,
+        signature_declaration: FnId,
+        enclosing_declaration: Enclosing,
+        flags: u32,
+        tracker: &mut dyn SymbolTracker<'p>,
+    ) -> String {
+        let signature = self.sig_of_declaration(file, signature_declaration);
+        let enclosing_declaration = Some(enclosing_declaration);
+        with_printer(
+            self,
+            enclosing_declaration,
+            Some(tracker),
+            flags,
+            |printer| {
+                let (declared, _, outer_scope) = printer.enter_signature_scope(signature);
+                let text = printer.return_type_text(signature, &declared);
+                printer.leave_scope(outer_scope);
+                text
+            },
+        )
+    }
+
+    /// `NodeBuilder.SerializeTypeForExpression`
+    pub(super) fn serialize_type_for_expression(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        enclosing_declaration: Enclosing,
+        flags: u32,
+        tracker: &mut dyn SymbolTracker<'p>,
+    ) -> String {
+        let ty = self.type_of_expr(file, e);
+        let ty = self.regular(ty);
+        let ty = self.widened(ty);
+        let enclosing_declaration = Some(enclosing_declaration);
+        with_printer(
+            self,
+            enclosing_declaration,
+            Some(tracker),
+            flags,
+            |printer| printer.type_to_node(ty).text,
+        )
+    }
+}
+
 /// `typeToStringEx`
 fn type_to_string_with(
     checker: &mut Checker<'_>,
@@ -411,6 +500,7 @@ enum SignatureKind {
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Identity {
     Origin(Origin),
+    Instance(Sym),
     Function(FileId, FnId),
     Conditional(FileId, TypeNodeId),
     Type(TypeId),
@@ -522,6 +612,7 @@ struct OuterScope {
     fake_scope_parameters: usize,
     enclosing_declaration: Option<Enclosing>,
     has_fake_scope: [bool; 2],
+    mapper: MapperId,
 }
 
 struct Printer<'c, 'p> {
@@ -668,6 +759,42 @@ fn string_mapping_name(kind: StringMappingKind) -> &'static str {
     }
 }
 
+impl Checker<'_> {
+    /// What `typeof` names a `unique symbol` through: the variable that is declared as one, the class it is a static property of, the
+    /// variable whose type is written as the type literal it is a property of. `Some(None)`: nothing. `None`: it cannot be told,
+    /// or it is a property of the global `Symbol`.
+    pub(super) fn owner_of_unique_symbol(
+        &self,
+        symbol: UniqueSymbolDeclaration,
+    ) -> Option<Option<Sym>> {
+        let (file, m) = match symbol {
+            UniqueSymbolDeclaration::Variable(variable) => return Some(Some(variable)),
+            UniqueSymbolDeclaration::Member(file, m) => (file, m),
+            UniqueSymbolDeclaration::SymbolConstructor => return None,
+        };
+        let files = self.files();
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let symbol_of = |pat: PatId| {
+            let symbol = bound.pat_symbol[pat.idx()];
+            symbol.is_some().then(|| files.sym(file, symbol))
+        };
+        match bound.member_owner[m.idx()] {
+            MemberOwner::Class(c) => {
+                let symbol = bound.class_symbol[c.idx()];
+                symbol.is_some().then(|| Some(files.sym(file, symbol)))
+            }
+            // `getVariableDeclarationOfObjectLiteral`
+            MemberOwner::TypeLiteral(node) => Some(
+                hir.var_decls
+                    .iter()
+                    .find(|d| d.ty == node)
+                    .and_then(|d| symbol_of(d.pat)),
+            ),
+            _ => None,
+        }
+    }
+}
+
 impl<'p> Printer<'_, 'p> {
     fn text(&self, name: Atom) -> String {
         if name.is_none() {
@@ -709,8 +836,7 @@ impl<'p> Printer<'_, 'p> {
         // Type parameters have no part in what is painted late.
         if !self
             .c
-            .files()
-            .flags(tracked.symbol)
+            .flags_of(tracked.symbol)
             .contains(SymFlags::TYPE_PARAMETER)
         {
             self.tracked_symbols.push(tracked);
@@ -943,17 +1069,15 @@ impl<'p> Printer<'_, 'p> {
                 return Node::simple(if *value { "true" } else { "false" });
             }
             TypeData::UniqueSymbol { symbol, name } => {
-                if self.flags & ALLOW_UNIQUE_ES_SYMBOL_TYPE != 0 {
-                    self.approximate_length += 13;
-                    return Node::new("unique symbol", TYPE_OPERATOR);
+                let (symbol, name) = (*symbol, *name);
+                if self.flags & ALLOW_UNIQUE_ES_SYMBOL_TYPE == 0 {
+                    if let Some(node) = self.unique_symbol_to_type_query(symbol, name) {
+                        return node;
+                    }
+                    self.report(Report::InaccessibleUniqueSymbol);
                 }
-                let name = self.text(*name);
-                if *symbol == UniqueSymbolDeclaration::SymbolConstructor {
-                    self.approximate_length += 6 + 2 * ("Symbol".len() + 1) + 2 * (name.len() + 1);
-                    return Node::new(format!("typeof Symbol.{name}"), TYPE_OPERATOR);
-                }
-                self.approximate_length += 6 + 2 * (name.len() + 1);
-                return Node::new(format!("typeof {name}"), TYPE_OPERATOR);
+                self.approximate_length += 13;
+                return Node::new("unique symbol", TYPE_OPERATOR);
             }
             TypeData::ThisParam(_) => {
                 if self.flags & IN_OBJECT_TYPE_LITERAL != 0 {
@@ -974,7 +1098,10 @@ impl<'p> Printer<'_, 'p> {
             _ => {}
         }
         let ty = match self.c.data(ty) {
-            TypeData::LazyAlias { .. } if self.c.stored_alias(ty).is_some() => self.c.force(ty),
+            TypeData::LazyAlias { .. } => match self.c.force(ty) {
+                forced if self.c.is_known(forced) => forced,
+                _ => ty,
+            },
             _ => ty,
         };
         let is_written_out = self.flags & WRITTEN_OUT != 0 && self.depth == 1;
@@ -1051,6 +1178,47 @@ impl<'p> Printer<'_, 'p> {
             }
             // Written above.
             _ => Node::simple("any"),
+        }
+    }
+
+    /// `symbolToTypeNode(t.symbol, SymbolFlagsValue)` of a `unique symbol`. `None`: `IsValueSymbolAccessible` says no.
+    fn unique_symbol_to_type_query(
+        &mut self,
+        symbol: UniqueSymbolDeclaration,
+        name: Atom,
+    ) -> Option<Node> {
+        let name = self.text(name);
+        if symbol == UniqueSymbolDeclaration::SymbolConstructor {
+            self.approximate_length += 6 + 2 * ("Symbol".len() + 1) + 2 * (name.len() + 1);
+            return Some(Node::new(format!("typeof Symbol.{name}"), TYPE_OPERATOR));
+        }
+        // A member has no symbol: it is as accessible as what it is a member of, and is reached through that.
+        let owner = match self.c.owner_of_unique_symbol(symbol) {
+            Some(owner) if self.enclosing_declaration.is_some() => owner?,
+            _ => {
+                self.approximate_length += 6 + 2 * (name.len() + 1);
+                return Some(Node::new(format!("typeof {name}"), TYPE_OPERATOR));
+            }
+        };
+        if !self.is_value_symbol_accessible(owner) {
+            return None;
+        }
+        self.approximate_length += 6;
+        let node = self.symbol_to_type_node(owner, true, Vec::new());
+        if matches!(symbol, UniqueSymbolDeclaration::Variable(_)) {
+            return Some(node);
+        }
+        self.approximate_length += name.len() + 1;
+        Some(Node::new(format!("{}.{name}", node.text), TYPE_OPERATOR))
+    }
+
+    /// `IsValueSymbolAccessible(symbol, enclosingDeclaration)`
+    fn is_value_symbol_accessible(&mut self, symbol: Sym) -> bool {
+        match self.enclosing_declaration {
+            Some(at) => self
+                .c
+                .is_symbol_accessible_at(symbol, SymFlags::VALUE, false, at),
+            None => true,
         }
     }
 
@@ -1190,13 +1358,13 @@ impl<'p> Printer<'_, 'p> {
             TypeData::Enum { symbol, .. } => symbol,
             _ => return None,
         };
-        let parent = self.parent_of_symbol(member)?;
+        let parent = self.c.files().parent_of_symbol(member)?;
         (self.c.enum_type_of_member(member) == ty).then_some(parent)
     }
 
     /// `E.A`, or `E` if the member is all there is to the enum.
     fn enum_member_to_node(&mut self, ty: TypeId, member: Sym) -> Node {
-        let Some(parent) = self.parent_of_symbol(member) else {
+        let Some(parent) = self.c.files().parent_of_symbol(member) else {
             return self.symbol_to_type_node(member, false, Vec::new());
         };
         let parent_name = self.symbol_to_type_node(parent, false, Vec::new());
@@ -1216,13 +1384,6 @@ impl<'p> Printer<'_, 'p> {
     }
 
     // ───────────────────────────── symbols ─────────────────────────────
-
-    /// `getParentOfSymbol`
-    fn parent_of_symbol(&self, symbol: Sym) -> Option<Sym> {
-        let files = self.c.files();
-        let parent = files.symbol(symbol).parent;
-        parent.is_some().then(|| files.sym(symbol.file, parent))
-    }
 
     /// `core.Some(symbol.Declarations, hasNonGlobalAugmentationExternalModuleSymbol)`
     fn is_external_module(&self, symbol: Sym) -> bool {
@@ -1407,7 +1568,9 @@ impl<'p> Printer<'_, 'p> {
                 },
                 _ => Atom::NONE,
             },
-            Decl::ExportsProperty(e) => return self.name_of_assignment_declaration(file, e),
+            Decl::ExportsProperty(e) | Decl::Expando(e) => {
+                return self.name_of_assignment_declaration(file, e);
+            }
             _ => Atom::NONE,
         };
         if name.is_none() {
@@ -1597,7 +1760,7 @@ impl<'p> Printer<'_, 'p> {
             return Some(vec![symbol]);
         }
         if depth < 32
-            && let Some(parent) = self.parent_of_symbol(symbol)
+            && let Some(parent) = files.parent_of_symbol(symbol)
             && let Some(mut chain) = self.symbol_chain(parent, false, yields_module, depth + 1)
         {
             chain.push(symbol);
@@ -1688,6 +1851,7 @@ impl<'p> Printer<'_, 'p> {
         let Some(at) = self.enclosing_declaration else {
             return self.symbol_to_type_node(module, true, Vec::new());
         };
+        self.track_symbol(module_clone(originating_import), SymFlags::VALUE);
         let yields_module = self.flags & USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE == 0;
         let (starts_with_global_this, chain) =
             self.c
@@ -1830,7 +1994,7 @@ impl<'p> Printer<'_, 'p> {
         match self.c.data(ty) {
             TypeData::Ref { target, .. } => Some(*target),
             TypeData::Union(members) => self.enum_of_members(ty, members),
-            TypeData::EnumLit { member, .. } => self.parent_of_symbol(*member),
+            TypeData::EnumLit { member, .. } => self.c.files().parent_of_symbol(*member),
             TypeData::Enum { symbol, .. } => Some(*symbol),
             _ => None,
         }
@@ -1916,6 +2080,12 @@ impl<'p> Printer<'_, 'p> {
             } else {
                 Node::new(array, POSTFIX)
             };
+        }
+        if self.flags & WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL != 0
+            && self.c.files().flags(target).contains(SymFlags::CLASS)
+            && !self.is_value_symbol_accessible(target)
+        {
+            return self.anonymous_type_to_node(ty);
         }
         let outer = self.c.outer_type_params_of_symbol(target);
         let all = self.c.all_type_params_of_symbol(target);
@@ -2150,6 +2320,7 @@ impl<'p> Printer<'_, 'p> {
             fake_scope_parameters: self.fake_scope_parameters.len(),
             enclosing_declaration: self.enclosing_declaration,
             has_fake_scope: self.has_fake_scope,
+            mapper: self.mapper,
         };
         // `pushFakeScope("params", ..)`, which lies around that of the type parameters.
         if expanded_parameters.iter().any(Option::is_some) {
@@ -2237,6 +2408,7 @@ impl<'p> Printer<'_, 'p> {
             .truncate(outer.fake_scope_parameters);
         self.enclosing_declaration = outer.enclosing_declaration;
         self.has_fake_scope = outer.has_fake_scope;
+        self.mapper = outer.mapper;
     }
 
     /// `getInferredTypeParameterConstraint(t, omitTypeReferences = true)`
@@ -2396,8 +2568,8 @@ impl<'p> Printer<'_, 'p> {
     /// `formatUnionTypes`, of the members of `ty` in the order TypeScript keeps them in.
     fn format_union_types(&mut self, ty: TypeId) -> Vec<TypeId> {
         let types = match self.c.origin(ty) {
-            UnionOrigin::Union(origin) => origin.to_vec(),
-            _ => self.c.parts_in_order(ty),
+            UnionOrigin::Union(origin) => &origin[..],
+            _ => self.c.parts(ty),
         };
         let mut result = Vec::with_capacity(types.len());
         let (mut has_null, mut has_undefined) = (false, false);
@@ -2422,7 +2594,7 @@ impl<'p> Printer<'_, 'p> {
             };
             // All the members of `boolean` or of an enum, which are next to each other, are written as one.
             if let Some(base) = base.filter(|&base| self.c.is_union(base)) {
-                let all = self.c.parts_in_order(base);
+                let all = self.c.parts(base);
                 let last = i - 1 + all.len() - 1;
                 if last < types.len()
                     && self.c.regular(types[last]) == self.c.regular(all[all.len() - 1])
@@ -2477,21 +2649,46 @@ impl<'p> Printer<'_, 'p> {
             | Origin::Namespace { module: symbol, .. } => symbol,
             _ => return None,
         };
-        let flags = self.c.files().flags(symbol);
-        if flags.contains(SymFlags::CLASS) && self.c.base_type_variable_of_class(symbol).is_none()
-            || flags.intersects(SymFlags::ENUM | SymFlags::VALUE_MODULE)
-        {
+        if self.should_emit_type_of_symbol(symbol, SymFlags::VALUE) {
             return Some(symbol);
         }
-        // `shouldWriteTypeOfFunctionSymbol`: a function whose type refers to itself.
-        (flags.contains(SymFlags::FUNCTION)
-            && self.visited_types.contains(&ty)
-            && self.is_non_local_function(symbol))
+        // `shouldWriteTypeOfFunctionSymbol`
+        (self.c.files().flags(symbol).contains(SymFlags::FUNCTION)
+            && self.is_non_local_function(symbol)
+            && (self.flags & USE_TYPE_OF_FUNCTION != 0 || self.visited_types.contains(&ty))
+            && (self.flags & USE_STRUCTURAL_FALLBACK == 0
+                || self.is_value_symbol_accessible(symbol)))
         .then_some(symbol)
     }
 
-    /// The same for a function expression that initializes a variable at the top of a file or a namespace: the name of the variable.
-    fn variable_of_function_expression(&self, ty: TypeId) -> Option<String> {
+    /// `shouldEmitTypeOfSymbol`, up to where it asks `shouldWriteTypeOfFunctionSymbol`. `meaning`: `isInstanceType`.
+    fn should_emit_type_of_symbol(&mut self, symbol: Sym, meaning: SymFlags) -> bool {
+        let flags = self.c.files().flags(symbol);
+        if flags.intersects(SymFlags::ENUM | SymFlags::VALUE_MODULE) {
+            return true;
+        }
+        if !flags.contains(SymFlags::CLASS) || self.c.base_type_variable_of_class(symbol).is_some()
+        {
+            return false;
+        }
+        if self.flags & WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL == 0 {
+            return true;
+        }
+        // `ast.IsClassDeclaration(symbol.ValueDeclaration)`
+        let is_class_declaration = self.c.files().decls(symbol).iter().any(|&(file, decl)| {
+            matches!(decl, Decl::Class(c)
+                if matches!(self.c.bound(file).class_owner[c.idx()], ClassOwner::Stmt(_)))
+        });
+        is_class_declaration
+            && match self.enclosing_declaration {
+                Some(at) => self.c.is_symbol_accessible_at(symbol, meaning, false, at),
+                None => true,
+            }
+    }
+
+    /// The same for a function expression that initializes a variable at the top of a file or a namespace: the variable, unless that
+    /// is the enclosing declaration.
+    fn variable_of_function_expression(&self, ty: TypeId) -> Option<Sym> {
         let TypeData::Fns { decls, .. } = self.c.data(ty) else {
             return None;
         };
@@ -2512,10 +2709,15 @@ impl<'p> Printer<'_, 'p> {
         {
             return None;
         }
-        match hir[hir[declaration].pat].kind {
-            PatKind::Ident(name) => Some(self.text(name)),
-            _ => None,
+        // `symbol.ValueDeclaration.Parent != b.ctx.enclosingDeclaration`
+        if self
+            .enclosing_declaration
+            .is_some_and(|at| (at.file, at.variable) == (file, declaration))
+        {
+            return None;
         }
+        let symbol = bound.pat_symbol[hir[declaration].pat.idx()];
+        symbol.is_some().then(|| self.c.files().sym(file, symbol))
     }
 
     /// `isStaticMethodSymbol`: the name of the static method `ty` is the type of.
@@ -2599,24 +2801,39 @@ impl<'p> Printer<'_, 'p> {
                 Some(&(file, func)) => Identity::Function(file, func),
                 None => Identity::Type(ty),
             },
+            // The instance side of a class.
+            TypeData::Ref { target, .. } => {
+                let target = *target;
+                if self.should_emit_type_of_symbol(target, SymFlags::TYPE) {
+                    return self.symbol_to_type_node(target, false, Vec::new());
+                }
+                Identity::Instance(target)
+            }
             _ => Identity::Type(ty),
         };
-        if self.visited_types.contains(&ty) {
+        // `shouldWriteTypeOfFunctionSymbol`, of a static method and of a function expression.
+        if self.flags & USE_TYPE_OF_FUNCTION != 0 || self.visited_types.contains(&ty) {
+            let has_structural_fallback = self.flags & USE_STRUCTURAL_FALLBACK != 0;
             // `getSymbolChain`: a method is reached through its class.
             if self.enclosing_declaration.is_some()
                 && let Some(name) = self.name_of_static_method(ty)
                 && let Some(class) = self.class_of_method(ty)
+                && (!has_structural_fallback || self.is_value_symbol_accessible(class))
             {
                 let class = self.symbol_to_type_node(class, true, Vec::new());
                 return Node::new(format!("{}.{name}", class.text), TYPE_OPERATOR);
             }
-            if let Some(name) = self
-                .variable_of_function_expression(ty)
-                .or_else(|| self.name_of_static_method(ty))
+            if let Some(variable) = self.variable_of_function_expression(ty)
+                && (!has_structural_fallback || self.is_value_symbol_accessible(variable))
             {
+                return self.symbol_to_type_node(variable, true, Vec::new());
+            }
+            if !has_structural_fallback && let Some(name) = self.name_of_static_method(ty) {
                 self.approximate_length += 2 * (name.len() + 1);
                 return Node::new(format!("typeof {name}"), TYPE_OPERATOR);
             }
+        }
+        if self.visited_types.contains(&ty) {
             if self.enclosing_declaration.is_some()
                 && let Some(alias) = self.type_alias_for_type_literal(ty)
             {
@@ -2680,7 +2897,15 @@ impl<'p> Printer<'_, 'p> {
             self.approximate_length += 2;
             nodes.push(self.signature_to_node(signature, SignatureKind::ConstructorType));
         }
-        if call.len() + construct.len() + shape.index.len() + properties.len() != 0 {
+        let property_count = if self.flags & WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL != 0 {
+            properties
+                .iter()
+                .filter(|property| !self.is_prototype_property(ty, property))
+                .count()
+        } else {
+            properties.len()
+        };
+        if call.len() + construct.len() + shape.index.len() + property_count != 0 {
             self.approximate_length += 2;
             nodes.push(self.type_literal_to_node(
                 ty,
@@ -2697,6 +2922,19 @@ impl<'p> Printer<'_, 'p> {
             return only;
         }
         Node::new(join_nodes(nodes, " & ", TYPE_OPERATOR), INTERSECTION)
+    }
+
+    /// `propertySymbol.Flags&SymbolFlagsPrototype != 0`, of a property of `owner`.
+    fn is_prototype_property(&self, owner: TypeId, property: &Prop) -> bool {
+        property.name == known::prototype
+            && matches!(property.source, PropSource::Type(_))
+            && matches!(
+                self.c.data(owner),
+                TypeData::Anon {
+                    origin: Origin::ClassStatic(_),
+                    ..
+                }
+            )
     }
 
     fn type_literal_to_node(
@@ -2776,6 +3014,22 @@ impl<'p> Printer<'_, 'p> {
             elements.push(format!("{modifier}[{name}: {}]: {};", key.text, value.text));
         }
         for (i, property) in properties.iter().enumerate() {
+            if self.flags & WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL != 0 {
+                if self.is_prototype_property(ty, property) {
+                    continue;
+                }
+                if property
+                    .flags
+                    .intersects(PropFlags::PRIVATE | PropFlags::PROTECTED)
+                {
+                    let name = self.c.atom_text(property.name);
+                    self.report(Report::PrivateInBaseOfClassExpression(name));
+                }
+                if self.c.is_private_name(property.name) {
+                    let name = String::from_utf8_lossy(self.c.written_name(property.name));
+                    self.report(Report::PrivateInBaseOfClassExpression(name.into_owned()));
+                }
+            }
             if self.check_truncation_length() && i + 1 + 2 < properties.len() - 1 {
                 if !no_truncation {
                     elements.push(format!("... {} more ...;", properties.len() - (i + 1)));
@@ -3304,6 +3558,74 @@ impl<'p> Printer<'_, 'p> {
         "value".to_owned()
     }
 
+    /// The start of `addPropertyToElementList`, of a property that a `unique symbol` names.
+    fn track_late_bound_name(&mut self, prop: &Prop, depth: u32) {
+        let (file, key) = match &prop.source {
+            PropSource::Members(list) => match list.first() {
+                Some(&(file, m)) => (file, self.c.hir(file)[m].key),
+                None => return,
+            },
+            PropSource::Literal(file, p) => (*file, self.c.hir(*file)[*p].key),
+            PropSource::Intersected(_, parts) | PropSource::Copy(_, parts, _) => {
+                if let Some(first) = parts.first()
+                    && depth < 8
+                {
+                    self.track_late_bound_name(first, depth + 1);
+                }
+                return;
+            }
+            PropSource::Mapped(of, _) => {
+                match self.c.synthetic_origin_of_mapped_property(*of, prop.name) {
+                    Some(origin) if depth < 8 => self.track_late_bound_name(&origin, depth + 1),
+                    Some(_) => {}
+                    // It has no declaration.
+                    None => {
+                        let name = self.c.prop_to_string(prop);
+                        self.report(Report::NonSerializableProperty(name));
+                    }
+                }
+                return;
+            }
+            // It has no declaration.
+            PropSource::Type(_) => {
+                let name = self.c.prop_to_string(prop);
+                return self.report(Report::NonSerializableProperty(name));
+            }
+            _ => return,
+        };
+        // `hasLateBindableName`
+        if let PropKey::Computed(e) = key
+            && is_entity_name_expression(self.c.hir(file), e)
+        {
+            self.track_computed_name(file, e);
+        }
+    }
+
+    /// `trackComputedName(accessExpression, b.ctx.enclosingDeclaration)`
+    fn track_computed_name(&mut self, file: FileId, access_expression: ExprId) {
+        let Some(at) = self.enclosing_declaration else {
+            return;
+        };
+        let files = self.c.files();
+        let hir = self.c.hir(file);
+        let first_identifier = first_identifier(hir, access_expression);
+        let ExprKind::Ident(name) = hir[first_identifier].kind else {
+            return;
+        };
+        let meaning = SymFlags::VALUE | SymFlags::EXPORT_VALUE;
+        // A name that means nothing where the type is written is tracked as what it means where it is written, which should be
+        // inaccessible.
+        let symbol = files
+            .resolve_name(at.file, at.scope, name, meaning)
+            .or_else(|| {
+                let scope = self.c.enclosing_scope_of_expr(file, first_identifier);
+                files.resolve_name(file, scope, name, meaning)
+            });
+        if let Some(symbol) = symbol {
+            self.track_symbol(symbol, SymFlags::VALUE);
+        }
+    }
+
     /// `addPropertyToElementList`
     fn add_property_to_element_list(
         &mut self,
@@ -3331,6 +3653,10 @@ impl<'p> Printer<'_, 'p> {
             let ty = self.c.type_of_prop(prop, mapper);
             self.c.remove_missing_type(ty, is_optional)
         };
+        // `isLateBoundName`
+        if self.c.files().atoms.is_symbol_name(prop.name) {
+            self.track_late_bound_name(prop, 0);
+        }
         let declared = if reverse_mapped.is_some() {
             self.property_with_declarations(owner, prop.name)
         } else {
@@ -3805,35 +4131,7 @@ impl<'p> Printer<'_, 'p> {
         name: &str,
         is_optional: bool,
     ) -> String {
-        // `enterSignatureScope`
-        let saved_mapper = self.mapper;
-        if let Some((_, _, mapper)) = self.c.sig_decl(signature)
-            && self
-                .c
-                .p
-                .types
-                .mapping(mapper)
-                .iter()
-                .any(|pair| pair.0 != pair.1)
-        {
-            self.mapper = mapper;
-        }
-        let declared = self.signature_parameters(signature);
-        let expanded = self.expanded_parameters(&declared);
-        let own_type_parameters = self.c.sig_type_params(signature).into_vec();
-        let is_instantiated = self.c.sig_decl(signature).is_some_and(|declared| {
-            let mapping = self.c.p.types.mapping(declared.2);
-            mapping.iter().any(|pair| pair.0 != pair.1)
-        });
-        let declarations_of = |parameters: &[Parameter]| -> Vec<Option<(FileId, ParamId)>> {
-            parameters.iter().map(|p| p.declaration).collect()
-        };
-        let outer_scope = self.enter_new_scope(
-            &declarations_of(&expanded),
-            &own_type_parameters,
-            Some(&declarations_of(&declared)),
-            is_instantiated,
-        );
+        let (declared, expanded, outer_scope) = self.enter_signature_scope(signature);
         self.approximate_length += 3;
         let mut type_parameters = Vec::new();
         let mut own_type_parameters = self.c.sig_type_params(signature).into_vec();
@@ -3857,7 +4155,6 @@ impl<'p> Printer<'_, 'p> {
             parameters.insert(0, format!("this: {}", node.text));
         }
         let returned = self.return_type_text(signature, &declared);
-        self.mapper = saved_mapper;
         self.leave_scope(outer_scope);
         let type_parameters = if type_parameters.is_empty() {
             String::new()
@@ -3882,6 +4179,43 @@ impl<'p> Printer<'_, 'p> {
                 format!("{modifier}new {type_parameters}({parameters}) => {returned}")
             }
         }
+    }
+
+    /// `enterSignatureScope`: the parameters `signature` declares, `getExpandedParameters`, and what the scope is left by.
+    fn enter_signature_scope(
+        &mut self,
+        signature: SigId,
+    ) -> (Vec<Parameter>, Vec<Parameter>, OuterScope) {
+        let saved_mapper = self.mapper;
+        if let Some((_, _, mapper)) = self.c.sig_decl(signature)
+            && self
+                .c
+                .p
+                .types
+                .mapping(mapper)
+                .iter()
+                .any(|pair| pair.0 != pair.1)
+        {
+            self.mapper = mapper;
+        }
+        let declared = self.signature_parameters(signature);
+        let expanded = self.expanded_parameters(&declared);
+        let own_type_parameters = self.c.sig_type_params(signature).into_vec();
+        let is_instantiated = self.c.sig_decl(signature).is_some_and(|declared| {
+            let mapping = self.c.p.types.mapping(declared.2);
+            mapping.iter().any(|pair| pair.0 != pair.1)
+        });
+        let declarations_of = |parameters: &[Parameter]| -> Vec<Option<(FileId, ParamId)>> {
+            parameters.iter().map(|p| p.declaration).collect()
+        };
+        let mut outer_scope = self.enter_new_scope(
+            &declarations_of(&expanded),
+            &own_type_parameters,
+            Some(&declarations_of(&declared)),
+            is_instantiated,
+        );
+        outer_scope.mapper = saved_mapper;
+        (declared, expanded, outer_scope)
     }
 
     /// `assignContextualParameterTypes`: `sig.typeParameters = context.typeParameters`

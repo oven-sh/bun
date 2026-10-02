@@ -1035,6 +1035,7 @@ impl<'f> Binder<'f> {
                 }
                 // In JavaScript a class can be added to as well.
                 Decl::Class(_) if self.f.is_js => return Some(ExpandoFunction::Declared(symbol)),
+                Decl::Expando(first) => return self.initializer_of_assignment(first),
                 // The value declaration decides: the first that is no namespace.
                 Decl::Class(_) | Decl::Enum(_) | Decl::Param(_) => return None,
                 _ => {}
@@ -1043,11 +1044,35 @@ impl<'f> Binder<'f> {
         None
     }
 
+    /// `getInitializerSymbol` has a case for a binary expression in JavaScript and none for a call. It takes the right side as
+    /// written: `({})` is not an expando initializer.
+    fn initializer_of_assignment(&self, first: ExprId) -> Option<ExpandoFunction> {
+        let ExprKind::Assign { value, .. } = self.f[first].kind else {
+            return None;
+        };
+        if !self.f.is_js || is_parenthesized(self.f, value) {
+            return None;
+        }
+        let is_annotated = self.f.jsdoc_type(JsDocTypeOwner::Assign(first)).is_some();
+        self.expando_initializer(value, is_annotated)
+    }
+
+    /// `symbol.Exports[name]`
+    fn export_of(&self, symbol: SymbolId, name: Atom) -> Option<&Symbol> {
+        let exports = self.b.symbols[symbol.idx()].exports;
+        if exports.is_none() {
+            return None;
+        }
+        let &export = self.tables[exports.idx()].get(&name)?;
+        Some(&self.b.symbols[export.idx()])
+    }
+
     /// Whether something that is no assignment declares `name` among the exports of the function `symbol`: a namespace that is one
     /// with it, or a class, whose static members and `prototype` are there.
     fn has_export(&self, symbol: SymbolId, name: Atom) -> bool {
         let s = &self.b.symbols[symbol.idx()];
-        s.exports.is_some() && self.tables[s.exports.idx()].contains_key(&name)
+        self.export_of(symbol, name)
+            .is_some_and(|existing| !existing.flags.contains(SymFlags::ASSIGNMENT))
             || s.decls.iter().any(|&d| {
                 matches!(d, Decl::Class(c) if name == known::prototype
                     || self.f[c].members.iter().any(|m| self.f[m].flags.contains(Flags::STATIC) && self.f[m].key == PropKey::Name(name)))
@@ -1135,13 +1160,15 @@ impl<'f> Binder<'f> {
         // `symbol.ValueDeclaration` is the first declaration. The lists are still in binding order here.
         let b = &self.b;
         let first = match self.expando_owner(obj, scope)? {
-            ExpandoFunction::Declared(s) => self.first_expando_declaration(
-                &b.declared_fn_expandos,
-                &b.declared_fn_keyed_expandos,
-                s,
-                name,
-                key,
-            ),
+            ExpandoFunction::Declared(s) if name.is_some() => {
+                match self.export_of(s, name)?.decls[0] {
+                    Decl::Expando(first) => Some(first),
+                    _ => None,
+                }
+            }
+            ExpandoFunction::Declared(s) => {
+                self.first_expando_declaration(&[], &b.declared_fn_keyed_expandos, s, name, key)
+            }
             ExpandoFunction::Expr(f) => self.first_expando_declaration(
                 &b.fn_expr_expandos,
                 &b.fn_expr_keyed_expandos,
@@ -1157,16 +1184,7 @@ impl<'f> Binder<'f> {
                 key,
             ),
         }?;
-        // `getInitializerSymbol` has a case for a binary expression in JavaScript and none for a call. It takes the right side as
-        // written: `({})` is not an expando initializer.
-        let ExprKind::Assign { value, .. } = self.f[first].kind else {
-            return None;
-        };
-        if is_parenthesized(self.f, value) {
-            return None;
-        }
-        let is_annotated = self.f.jsdoc_type(JsDocTypeOwner::Assign(first)).is_some();
-        self.expando_initializer(value, is_annotated)
+        self.initializer_of_assignment(first)
     }
 
     /// `GetContainerFlags`: an object literal and the attributes of a JSX element are containers without locals, so `lookupName`
@@ -1238,7 +1256,15 @@ impl<'f> Binder<'f> {
                 }
                 // `getDeclarationName`: the text of a literal key.
                 ExpandoFunction::Declared(symbol) if name.is_some() => {
-                    self.b.declared_fn_expandos.push((symbol, name, e))
+                    // `GetExports`
+                    if self.b.symbols[symbol.idx()].exports.is_none() {
+                        let exports = self.new_table();
+                        self.b.symbols[symbol.idx()].exports = exports;
+                    }
+                    let exports = self.b.symbols[symbol.idx()].exports;
+                    let flags = SymFlags::PROPERTY | SymFlags::ASSIGNMENT;
+                    self.b.expr_symbol[e.idx()] =
+                        self.declare_in(exports, name, flags, Decl::Expando(e), symbol);
                 }
                 ExpandoFunction::Expr(func) if name.is_some() => {
                     self.b.fn_expr_expandos.push((func, name, e))
@@ -1263,10 +1289,6 @@ impl<'f> Binder<'f> {
             }
             self.b.expando_declarations.push(e);
         }
-        self.b
-            .declared_fn_expandos
-            .as_mut_slice()
-            .sort_unstable_by_key(|x| (x.0, x.1, x.2));
         self.b
             .fn_expr_expandos
             .as_mut_slice()
@@ -1611,6 +1633,9 @@ impl<'f> Binder<'f> {
                 for t in self.f.ids(i.extends) {
                     self.ty(t);
                 }
+                let around = std::mem::replace(&mut self.is_unchecked, true);
+                self.tys(i.other_heritage);
+                self.is_unchecked = around;
                 self.members(i.members, MemberOwner::Interface(interface));
                 self.pop_scope();
                 self.seen_this = seen_this;
@@ -2923,6 +2948,9 @@ impl<'f> Binder<'f> {
         for t in self.f.ids(c.implements) {
             self.ty(t);
         }
+        let around = std::mem::replace(&mut self.is_unchecked, true);
+        self.tys(c.other_implements);
+        self.is_unchecked = around;
         // Those of members and parameters see what the class sees, not what is in the method. Of a member
         // `requiresScopeChangeWorker` looks at the name alone.
         let scope_change_of = std::mem::replace(&mut self.scope_change_of, FnId::NONE);

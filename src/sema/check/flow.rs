@@ -55,6 +55,9 @@ impl Eq for Reference {}
 pub(super) struct FlowMemo {
     /// `getEffectsSignature`, by call.
     effects_signatures: FxHashMap<(FileId, ExprId), Option<SigId>>,
+    /// `flowNodeReachable`, `flowNodePostSuper`
+    flow_node_reachable: FxHashMap<(FileId, FlowId), bool>,
+    flow_node_post_super: FxHashMap<(FileId, FlowId), bool>,
     /// The `Flow::Call` nodes of the file `idle_calls_of` for whose calls `effects_signatures` has `None`: a bit for each flow node.
     idle_calls: Vec<u64>,
     idle_calls_of: Option<FileId>,
@@ -350,7 +353,7 @@ fn not_equal_facts_from_typeof_switch(witnesses: &[Atom], from: usize, to: usize
 }
 
 /// `getBranchLabelAntecedents`
-pub(super) fn branch_label_antecedents<'b>(
+fn branch_label_antecedents<'b>(
     bound: &'b Bound,
     flow: FlowId,
     reduced: &[(FlowId, FlowId)],
@@ -5521,9 +5524,9 @@ impl<'p> Checker<'p> {
                     ExprKind::Unary {
                         op: UnOp::Delete, ..
                     } => Some(TypeId::UNDEFINED),
-                    _ => self.destructured_type(file, e),
+                    _ => self.assigned_type(file, e),
                 },
-                _ => self.destructured_type(file, e),
+                _ => self.assigned_type(file, e),
             },
         };
         let ty = ty.unwrap_or(TypeId::ERROR);
@@ -5568,32 +5571,7 @@ impl<'p> Checker<'p> {
                 return Some(self.type_of_declaration_initializer(file, hir[d].init));
             }
             // `getInitialTypeOfVariableDeclaration`
-            PatParent::Var(d) => {
-                let head = bound.var_stmt[d.idx()];
-                if head.is_none() {
-                    return None;
-                }
-                let Parent::Stmt(owner) = bound.stmt_parent[head.idx()] else {
-                    return None;
-                };
-                if owner.is_none() {
-                    return None;
-                }
-                return match hir[owner].kind {
-                    StmtKind::ForIn { left, .. } if left == head => Some(TypeId::STRING),
-                    StmtKind::ForOf {
-                        left,
-                        expr,
-                        is_await,
-                        ..
-                    } if left == head => {
-                        let iterable = self.type_of_expr(file, expr);
-                        let iterable = self.non_nullable_type_if_needed(iterable);
-                        Some(self.checked_iterated_type(iterable, is_await))
-                    }
-                    _ => None,
-                };
-            }
+            PatParent::Var(d) => return self.type_given_in_for_head(file, bound.var_stmt[d.idx()]),
             PatParent::Param(_) | PatParent::None => return None,
             PatParent::Prop(parent, prop) => {
                 let parent_ty = self.initial_type_of_pat(file, parent)?;
@@ -5627,46 +5605,29 @@ impl<'p> Checker<'p> {
         Some(self.union(&[ty, default]))
     }
 
-    /// `getAssignedType`, of what is inside the pattern of a destructuring assignment or stands in the head of `for (x in o)` or
-    /// `for (x of xs)`. `None` for anything else.
-    fn destructured_type(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
-        use crate::bind::Parent;
+    /// `getAssignedType`. `None` where TypeScript has its error type.
+    fn assigned_type(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        // What the pattern `p` as a whole is given.
-        let given = |c: &mut Self, p: ExprId| -> Option<TypeId> {
-            match bound.expr_parent[p.idx()] {
-                Parent::Expr(outer) if matches!(hir[outer].kind, ExprKind::Assign { op: None, target, .. } if target == p) =>
-                {
-                    let ExprKind::Assign { value, .. } = hir[outer].kind else {
-                        unreachable!()
-                    };
-                    // `[[a] = d] = v`: what is there, or else the default.
-                    if c.is_assignment_target(file, outer) {
-                        let ty = c.destructured_type(file, outer)?;
-                        let (ty, default) = (c.without_undefined(ty), c.type_of_expr(file, value));
-                        return Some(c.union(&[ty, default]));
-                    }
-                    Some(c.type_of_expr(file, value))
-                }
-                _ => c.destructured_type(file, p),
-            }
-        };
         match bound.expr_parent[e.idx()] {
             Parent::Expr(p) => match hir[p].kind {
-                // `x = d` as an element: `x` is given what the element is, or else the default.
+                // `getAssignedTypeOfBinaryExpression`
                 ExprKind::Assign {
                     op: None,
                     target,
                     value,
-                } if target == e && self.is_assignment_target(file, p) => {
-                    let ty = self.destructured_type(file, p)?;
+                } if target == e => {
+                    if !self.is_assignment_target(file, p) {
+                        return Some(self.type_of_expr(file, value));
+                    }
+                    // `x = d` as an element: `x` is given what the element is, or else the default.
+                    let ty = self.assigned_type(file, p)?;
                     let (ty, default) =
                         (self.without_undefined(ty), self.type_of_expr(file, value));
                     Some(self.union(&[ty, default]))
                 }
                 ExprKind::Array(items) if self.is_assignment_target(file, p) => {
                     let index = hir.ids(items).position(|i| i == e)?;
-                    let ty = given(self, p)?;
+                    let ty = self.assigned_type(file, p)?;
                     if self.every_type(ty, |c, m| c.is_tuple(m)) {
                         let key = self.number_literal(index as f64, false);
                         if let Some(element) = self.indexed_access_if_any(ty, key, false) {
@@ -5690,7 +5651,7 @@ impl<'p> Checker<'p> {
                     {
                         return None;
                     }
-                    let ty = given(self, list)?;
+                    let ty = self.assigned_type(file, list)?;
                     let element = self.iterated_type(ty, false);
                     Some(self.array_of(element))
                 }
@@ -5702,7 +5663,7 @@ impl<'p> Checker<'p> {
                     return None;
                 }
                 let name = self.member_name(file, hir[prop].key)?;
-                let ty = given(self, owner)?;
+                let ty = self.assigned_type(file, owner)?;
                 if let Some(found) = self.type_of_property(ty, name) {
                     return Some(found);
                 }
@@ -5712,25 +5673,29 @@ impl<'p> Checker<'p> {
                         .unwrap_or(TypeId::ERROR),
                 )
             }
-            Parent::Stmt(left) => {
-                let Parent::Stmt(owner) = bound.stmt_parent[left.idx()] else {
-                    return None;
-                };
-                match hir[owner].kind {
-                    StmtKind::ForIn { left: head, .. } if head == left => Some(TypeId::STRING),
-                    // `checkRightHandSideOfForOf`: what is gone through is taken to be there (`checkNonNullExpression`).
-                    StmtKind::ForOf {
-                        left: head,
-                        expr,
-                        is_await,
-                        ..
-                    } if head == left => {
-                        let iterable = self.type_of_expr(file, expr);
-                        let iterable = self.non_nullable_type_if_needed(iterable);
-                        Some(self.checked_iterated_type(iterable, is_await))
-                    }
-                    _ => None,
-                }
+            Parent::Stmt(left) => self.type_given_in_for_head(file, left),
+            _ => None,
+        }
+    }
+
+    /// `getInitialTypeOfVariableDeclaration`, `getAssignedType`: what `left`, the head of `for (x in o)` or `for (x of xs)`, is given.
+    fn type_given_in_for_head(&mut self, file: FileId, left: StmtId) -> Option<TypeId> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let Parent::Stmt(owner) = bound.stmt_parent[left.some()?.idx()] else {
+            return None;
+        };
+        match hir[owner.some()?].kind {
+            StmtKind::ForIn { left: head, .. } if head == left => Some(TypeId::STRING),
+            // `checkRightHandSideOfForOf`: what is gone through is taken to be there (`checkNonNullExpression`).
+            StmtKind::ForOf {
+                left: head,
+                expr,
+                is_await,
+                ..
+            } if head == left => {
+                let iterable = self.type_of_expr(file, expr);
+                let iterable = self.non_nullable_type_if_needed(iterable);
+                Some(self.checked_iterated_type(iterable, is_await))
             }
             _ => None,
         }
@@ -6107,24 +6072,38 @@ impl<'p> Checker<'p> {
 
     /// `isReachableFlowNode`
     pub(super) fn is_reachable(&mut self, file: FileId, flow: FlowId) -> bool {
-        let mut seen: Vec<FlowId> = Vec::new();
-        let reachable = self.is_reachable_inner(file, flow, &mut seen, &mut Vec::new());
+        let reachable = self.is_reachable_worker(file, flow, false, &mut Vec::new());
         self.last_flow_node = (file, flow, reachable);
         reachable
     }
 
     /// `isReachableFlowNodeWorker`
-    fn is_reachable_inner(
+    fn is_reachable_worker(
         &mut self,
         file: FileId,
         mut flow: FlowId,
-        seen: &mut Vec<FlowId>,
+        mut no_cache_check: bool,
         reduced: &mut Vec<(FlowId, FlowId)>,
     ) -> bool {
         let bound = self.bound(file);
         loop {
             if (file, flow) == (self.last_flow_node.0, self.last_flow_node.1) {
                 return self.last_flow_node.2;
+            }
+            if bound.is_shared(flow) {
+                if !no_cache_check {
+                    if let Some(&kept) = self.flow_memo.flow_node_reachable.get(&(file, flow)) {
+                        return kept;
+                    }
+                    let (reachable, is_memoizable) =
+                        self.run_memoizable(|c| c.is_reachable_worker(file, flow, true, reduced));
+                    if is_memoizable && !self.uncertain {
+                        let kept = &mut self.flow_memo.flow_node_reachable;
+                        kept.insert((file, flow), reachable);
+                    }
+                    return reachable;
+                }
+                no_cache_check = false;
             }
             match bound.flow[flow.idx()] {
                 Flow::Unreachable => return false,
@@ -6177,25 +6156,80 @@ impl<'p> Checker<'p> {
                     // "Cache is unreliable once we start adjusting labels"
                     self.last_flow_node.1 = FlowId::NONE;
                     reduced.push((label, instead));
-                    let reachable = self.is_reachable_inner(file, before, &mut Vec::new(), reduced);
+                    let reachable = self.is_reachable_worker(file, before, false, reduced);
                     reduced.pop();
                     return reachable;
                 }
                 Flow::Label { .. } => {
-                    if seen.contains(&flow) {
-                        return false;
-                    }
-                    seen.push(flow);
                     return branch_label_antecedents(bound, flow, reduced)
                         .iter()
-                        .any(|&edge| self.is_reachable_inner(file, edge, seen, reduced));
+                        .any(|&edge| self.is_reachable_worker(file, edge, false, reduced));
                 }
                 Flow::Loop { start, len } => match bound.edges(start, len).first() {
-                    Some(&entry) if !seen.contains(&flow) => {
-                        seen.push(flow);
-                        flow = entry;
+                    Some(&entry) => flow = entry,
+                    None => return false,
+                },
+            }
+        }
+    }
+
+    /// `isPostSuperFlowNode`
+    pub(super) fn is_post_super(
+        &mut self,
+        file: FileId,
+        mut flow: FlowId,
+        mut no_cache_check: bool,
+        reduced: &mut Vec<(FlowId, FlowId)>,
+    ) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        loop {
+            if bound.is_shared(flow) {
+                if !no_cache_check {
+                    if let Some(&kept) = self.flow_memo.flow_node_post_super.get(&(file, flow)) {
+                        return kept;
                     }
-                    _ => return false,
+                    let is_post_super = self.is_post_super(file, flow, true, reduced);
+                    let kept = &mut self.flow_memo.flow_node_post_super;
+                    kept.insert((file, flow), is_post_super);
+                    return is_post_super;
+                }
+                no_cache_check = false;
+            }
+            match bound.flow[flow.idx()] {
+                // What cannot be reached is let be.
+                Flow::Unreachable => return true,
+                Flow::Start { .. } | Flow::StartInvoked { .. } => return false,
+                Flow::Assign { before, .. }
+                | Flow::Cond { before, .. }
+                | Flow::ArrayMutation { before, .. }
+                | Flow::Switch { before, .. } => {
+                    flow = before;
+                }
+                Flow::Call { before, call } => {
+                    if matches!(hir[call].kind, ExprKind::Call(c) if matches!(hir[hir[c].callee].kind, ExprKind::Super))
+                    {
+                        return true;
+                    }
+                    flow = before;
+                }
+                Flow::Reduce {
+                    before,
+                    label,
+                    instead,
+                } => {
+                    reduced.push((label, instead));
+                    let is_post_super = self.is_post_super(file, before, false, reduced);
+                    reduced.pop();
+                    return is_post_super;
+                }
+                Flow::Label { .. } => {
+                    return branch_label_antecedents(bound, flow, reduced)
+                        .iter()
+                        .all(|&edge| self.is_post_super(file, edge, false, reduced));
+                }
+                Flow::Loop { start, len } => match bound.edges(start, len).first() {
+                    Some(&entry) => flow = entry,
+                    None => return true,
                 },
             }
         }

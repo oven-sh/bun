@@ -547,6 +547,8 @@ impl Program {
             trace_cycles: std::env::var_os("BUN_SEMA_TRACE_CYCLES").is_some(),
             looked_at: Default::default(),
             deferred_nodes: Default::default(),
+            within_unreachable_code: false,
+            reported_unreachable_nodes: Vec::new(),
             resolving: Vec::new(),
             pending_failed_call: None,
             own_of_compared_sigs: Vec::new(),
@@ -891,6 +893,10 @@ pub struct Checker<'p> {
     looked_at: crate::util::FxHashSet<(FileId, ExprId)>,
     /// `deferredNodes` of the file being checked.
     deferred_nodes: std::collections::VecDeque<in_order::DeferredNode>,
+    /// `withinUnreachableCode`
+    within_unreachable_code: bool,
+    /// `reportedUnreachableNodes`, of the file being checked.
+    reported_unreachable_nodes: Vec<StmtId>,
     /// Asking what is expected regardless of what patterns imply.
     skip_binding_patterns: u32,
     /// `inferTypeArguments` is reading the contextual type of a call: see `arg_context_keeping_boolean`.

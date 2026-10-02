@@ -1691,6 +1691,19 @@ impl<'p> Checker<'p> {
 
     /// `getSimplifiedConditionalType`: `T extends U ? T : never` and `T extends U ? never : T`.
     fn simplified_conditional(&mut self, t: TypeId, writing: bool) -> TypeId {
+        if let Some(&known) = self.simplified.get(&(t, writing)) {
+            return known;
+        }
+        let (cycles_before, gave_up_before) = (self.cycles, self.relation_gave_up);
+        let result = self.simplified_conditional_worker(t, writing);
+        // What is found out while the resolver runs into itself holds for nobody else.
+        if self.cycles == cycles_before && self.relation_gave_up == gave_up_before {
+            self.simplified.insert((t, writing), result);
+        }
+        result
+    }
+
+    fn simplified_conditional_worker(&mut self, t: TypeId, writing: bool) -> TypeId {
         let (check, extends) = (self.cond_check(t), self.cond_extends(t));
         let (yes, no) = (self.cond_true(t), self.cond_false(t));
         let checked = self.actual_type_variable(check);

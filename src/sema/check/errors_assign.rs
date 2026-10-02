@@ -1409,6 +1409,19 @@ impl Checker<'_> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         // `GetErrorRangeForNode`: the keyword.
         let node = self.place_of_token(file, hir[s].pos);
+        if e.is_none() && !self.p.files.options.strict_null_checks {
+            let returned = self.return_type_of_fn(file, container);
+            if !returned.is_never() {
+                if hir[container].kind != FnKind::Constructor
+                    && self.p.files.options.no_implicit_returns
+                    && !self
+                        .is_unwrapped_return_type_undefined_void_or_any(file, container, returned)
+                {
+                    self.error(node, 7030, &[]);
+                }
+                return;
+            }
+        }
         match hir[container].kind {
             FnKind::Setter => {
                 if e.is_some() {
@@ -1480,7 +1493,7 @@ impl Checker<'_> {
 
     /// `unwrapReturnType`, of what `f` is declared to return. Where there is nothing to unwrap it is in error, and anything goes
     /// into that.
-    fn unwrap_return_type(&mut self, file: FileId, f: FnId, declared: TypeId) -> TypeId {
+    pub(super) fn unwrap_return_type(&mut self, file: FileId, f: FnId, declared: TypeId) -> TypeId {
         let flags = self.hir(file)[f].flags;
         let is_async = flags.contains(Flags::ASYNC);
         if !flags.contains(Flags::GENERATOR) {

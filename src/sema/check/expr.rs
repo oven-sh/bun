@@ -2463,7 +2463,7 @@ impl<'p> Checker<'p> {
             && hir[class].extends.is_some()
             && !self.class_declaration_extends_null(self.class_sym(file, class))
             && flow.is_some()
-            && !self.is_post_super(file, flow, &mut Vec::new(), &mut Vec::new())
+            && !self.is_post_super(file, flow, false, &mut Vec::new())
         {
             self.error(self.place_of_token(file, hir[e].pos), code, &[]);
         }
@@ -2672,12 +2672,30 @@ impl<'p> Checker<'p> {
         if declared.is_some() {
             return self.type_from_node(file, declared);
         }
-        match self.bound(file).fns[func.idx()].owner {
-            FnOwner::Expr(owner) => self
-                .contextual_this_parameter_type(file, func, owner)
-                .unwrap_or(TypeId::ANY),
-            _ => TypeId::ANY,
+        if let FnOwner::Expr(owner) = self.bound(file).fns[func.idx()].owner
+            && let Some(this) = self.contextual_this_parameter_type(file, func, owner)
+        {
+            return this;
         }
+        // `reportImplicitAny`. The binder does not bind the name, so it is not `report_implicit_any_of_name`'s.
+        let hir = self.hir(file);
+        let this = &hir[f.this_param];
+        if self.p.files.options.no_implicit_any
+            && !this.flags.contains(Flags::REPARSED)
+            && !matches!(f.kind, FnKind::Getter | FnKind::Setter)
+            && !(hir.is_js && !self.is_check_js(file))
+            && !self.is_private_within_ambient(file, func)
+            && self.full_signature(file, func).is_none()
+            && match self.bound(file).fns[func.idx()].owner {
+                FnOwner::Expr(owner) => self.is_context_known(file, owner),
+                _ => true,
+            }
+        {
+            let start = hir[this.pat].pos;
+            let args = [Arg::Text("this"), Arg::Type(TypeId::ANY)];
+            self.error((file, start, start + 4), 7006, &args);
+        }
+        TypeId::ANY
     }
 
     /// `checkNewTargetMetaProperty`

@@ -21,6 +21,7 @@ impl Checker<'_> {
         let uncertain = self.uncertain;
         self.check_source_elements(file, self.hir(file).body);
         self.check_deferred_nodes(file);
+        self.reported_unreachable_nodes.clear();
         self.uncertain = uncertain;
         if self.trace_cycles {
             self.report_what_was_not_looked_at(file);
@@ -76,6 +77,7 @@ impl Checker<'_> {
                     if hir[func].ret.is_none() {
                         self.return_type_of_fn(file, func);
                     }
+                    self.check_all_code_paths_in_non_void_function_return_or_throw(file, func);
                     self.check_function_body(file, func);
                 }
                 // `checkClassExpressionDeferred`
@@ -132,12 +134,16 @@ impl Checker<'_> {
         let hir = self.hir(file);
         self.check_type_parameters(file, hir[func].type_params);
         self.check_type_node(file, hir[func].this_ty(hir));
+        if hir[func].this_param.is_some() {
+            self.type_of_this_parameter(file, func);
+        }
         for p in hir[func].params.iter() {
             let param = &hir[p];
             self.check_type_node(file, param.ty);
             self.check_binding_name(file, param.pat);
             self.check_expression(file, param.default);
         }
+        self.check_signature_implicitly_any(file, func);
         let ret = hir[func].ret;
         match ret.some().map(|ret| hir[ret].kind) {
             // `checkTypePredicate`
@@ -145,6 +151,8 @@ impl Checker<'_> {
             _ => self.check_type_node(file, ret),
         }
         self.check_async_function_return_type(file, func);
+        self.check_generator_return_annotation(file, func);
+        self.check_full_signature(file, func);
     }
 
     /// `checkFunctionOrMethodDeclaration`: the body is not put off.
@@ -155,6 +163,7 @@ impl Checker<'_> {
         let hir = self.hir(file);
         self.check_signature_declaration(file, func);
         self.check_function_body(file, func);
+        self.check_all_code_paths_in_non_void_function_return_or_throw(file, func);
         if hir[func].ret.is_none()
             && hir[func].flags.contains(Flags::GENERATOR)
             && !matches!(hir[func].body, FnBody::None)
@@ -332,6 +341,7 @@ impl Checker<'_> {
             }
             if member.func.is_some() {
                 self.check_function_body(file, member.func);
+                self.check_all_code_paths_in_non_void_function_return_or_throw(file, member.func);
             }
             self.check_expression(file, member.init);
         }
@@ -423,6 +433,10 @@ impl Checker<'_> {
                 self.check_type_parameter(file, hir[mapped].param);
                 self.check_type_node(file, hir[mapped].name_ty);
                 self.check_type_node(file, hir[mapped].ty);
+                if hir[mapped].ty.is_none() && self.p.files.options.no_implicit_any {
+                    let end = self.end_of_type_node(file, node);
+                    self.error((file, hir[node].pos, end), 7039, &[]);
+                }
                 self.type_from_node(file, node);
             }
             // `checkTypePredicate` returns at once where it is not what a function returns. The rest has no `check` function.
@@ -432,6 +446,20 @@ impl Checker<'_> {
 
     /// `checkSourceElement`, of a statement.
     fn check_source_element(&mut self, file: FileId, s: StmtId) {
+        let within_unreachable_code = self.within_unreachable_code;
+        if s.is_some()
+            && !within_unreachable_code
+            && self.p.files.options.reports_unreachable_code
+            && self.check_source_element_unreachable(file, s)
+        {
+            self.within_unreachable_code = true;
+        }
+        self.check_source_element_worker(file, s);
+        self.within_unreachable_code = within_unreachable_code;
+    }
+
+    /// `checkSourceElementWorker`. The head of a `for` and the object of a `with` are kept as statements and are none.
+    fn check_source_element_worker(&mut self, file: FileId, s: StmtId) {
         if s.is_none() || self.timed_out() {
             return;
         }
@@ -481,7 +509,7 @@ impl Checker<'_> {
                 update,
                 body,
             } => {
-                self.check_source_element(file, init);
+                self.check_source_element_worker(file, init);
                 self.check_truthiness_expression(file, test);
                 self.check_expression(file, update);
                 self.check_source_element(file, body);
@@ -489,7 +517,7 @@ impl Checker<'_> {
             // `checkForInStatement`: the object first.
             StmtKind::ForIn { left, expr, body } => {
                 self.check_expression(file, expr);
-                self.check_source_element(file, left);
+                self.check_source_element_worker(file, left);
                 self.check_source_element(file, body);
             }
             // `checkForOfStatement`: what is iterated is looked at for the variable (`checkRightHandSideOfForOf`), so not at all
@@ -500,12 +528,12 @@ impl Checker<'_> {
                 match hir[left].kind {
                     StmtKind::Var(decls) if decls.is_empty() => {}
                     StmtKind::Var(_) => {
-                        self.check_source_element(file, left);
+                        self.check_source_element_worker(file, left);
                         self.check_expression(file, expr);
                     }
                     _ => {
                         self.check_expression(file, expr);
-                        self.check_source_element(file, left);
+                        self.check_source_element_worker(file, left);
                     }
                 }
                 self.check_source_element(file, body);
@@ -520,7 +548,7 @@ impl Checker<'_> {
             }
             // `checkWithStatement`: the object, and not the body.
             StmtKind::Block(list) if is_with_statement(hir, s) => {
-                self.check_source_element(file, hir.id_at(list, 0));
+                self.check_source_element_worker(file, hir.id_at(list, 0));
             }
             StmtKind::Block(list) => self.check_source_elements(file, list),
             StmtKind::Switch { expr, cases } => {
@@ -531,6 +559,14 @@ impl Checker<'_> {
                         self.check_case_clause(file, expr, hir[c].test);
                     }
                     self.check_source_elements(file, hir[c].body);
+                    let fallthrough = bound.case_fallthrough[c.idx()];
+                    if self.p.files.options.no_fallthrough_cases_in_switch
+                        && fallthrough.is_some()
+                        && self.is_reachable(file, fallthrough)
+                    {
+                        let (start, end) = self.error_range_of_case(file, c);
+                        self.error((file, start, end), 7029, &[]);
+                    }
                 }
             }
             // `checkTryStatement`, `checkCatchClause`
@@ -547,7 +583,12 @@ impl Checker<'_> {
                 self.check_source_element(file, handler);
                 self.check_source_element(file, finalizer);
             }
-            StmtKind::Labeled { body, .. } => self.check_source_element(file, body),
+            StmtKind::Labeled { body, .. } => {
+                if self.p.files.options.reports_unused_labels && bound.unused_labels.contains(&s) {
+                    self.error(self.place_of_token(file, hir[s].pos), 7028, &[]);
+                }
+                self.check_source_element(file, body);
+            }
             StmtKind::Module(module) => self.check_source_elements(file, hir[module].body),
             StmtKind::Enum(e) => {
                 for m in hir[e].members.iter() {

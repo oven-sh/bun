@@ -174,12 +174,11 @@ impl Checker<'_> {
         self.check_duplicates(file, &mut out);
         self.check_heritage(file, &mut out);
         self.check_jsx(file, &mut out);
-        self.check_implicit_any(file, &mut out);
         self.check_overloads(file, &mut out);
         self.check_use_before_declaration(file, &mut out);
         self.check_iteration(file, &mut out);
         self.check_names_and_exports(file, &mut out);
-        self.check_control_flow(file, &mut out);
+        self.check_jumps_and_labels(file, &mut out);
         self.check_declarations(file, &mut out);
         self.check_small_things(file, &mut out);
         self.check_circularities(file, &mut out);

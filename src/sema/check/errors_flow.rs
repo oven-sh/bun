@@ -8,14 +8,7 @@
 
 use super::errors::Diagnostic;
 use super::*;
-use crate::bind::{ClassOwner, Flow, FlowId, FnOwner, MemberOwner, Parent, UNREACHABLE};
-
-/// Whether the statement `s` starts with `word`.
-fn starts_with_word(hir: &hir::File, s: StmtId, word: &[u8]) -> bool {
-    hir.text
-        .get(hir[s].pos as usize..)
-        .is_some_and(|text| text.starts_with(word))
-}
+use crate::bind::{FnOwner, Parent, UNREACHABLE};
 
 /// Where the return type `node` starts as it is written. Neither the parentheses around a type are kept nor a `|` or a `&` before
 /// its only member, nor the `!` of a JSDocNonNullableType; what comes before a return type is a `:`, which none of these can be
@@ -33,82 +26,6 @@ fn start_of_return_type(hir: &hir::File, node: TypeNodeId) -> u32 {
 }
 
 impl Checker<'_> {
-    pub(super) fn check_control_flow(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        // `checkSignatureDeclaration` runs in declaration files too.
-        for f in 0..hir.fns.len() {
-            if hir.fns[f].flags.contains(Flags::GENERATOR)
-                && !matches!(bound.fns[f].owner, FnOwner::None)
-            {
-                self.check_generator_return_annotation(file, FnId(f as u32), out);
-            }
-        }
-        if hir.kind == FileKind::Declaration {
-            // `checkBreakOrContinueStatement`, `checkLabeledStatement`: a statement is checked wherever it is written.
-            if !hir.has_errors {
-                self.check_jumps_and_labels(file, out);
-            }
-            return;
-        }
-        let options = &self.p.files.options;
-        if options.reports_unreachable_code {
-            self.check_unreachable_in(file, hir.body, out);
-            // `checkDeferredNodes`: function expressions, arrow functions, the methods and accessors of object literals and the
-            // members of class expressions are gone through after the statements, whatever they are written in.
-            for f in 0..hir.fns.len() {
-                let FnBody::Block(list) = hir.fns[f].body else {
-                    continue;
-                };
-                let is_deferred = match bound.fns[f].owner {
-                    FnOwner::Expr(_) => true,
-                    FnOwner::Member(m) => {
-                        matches!(bound.member_owner[m.idx()], MemberOwner::Class(c) if matches!(bound.class_owner[c.idx()], ClassOwner::Expr(_)))
-                    }
-                    _ => false,
-                };
-                // `checkWithStatement` does not look at the statement.
-                if is_deferred && !hir.is_in_with(hir.fns[f].start) {
-                    self.prepare_fn(file, FnId(f as u32));
-                    self.check_unreachable_in(file, list, out);
-                }
-            }
-        }
-        if options.reports_unused_labels {
-            let looked_at = bound
-                .unused_labels
-                .iter()
-                .filter(|&&s| !hir.is_in_with(hir[s].pos));
-            out.extend(looked_at.map(|&s| Diagnostic {
-                start: hir[s].pos,
-                code: 7028,
-            }));
-        }
-        if options.no_fallthrough_cases_in_switch {
-            for c in 0..hir.cases.len() {
-                let flow = bound.case_fallthrough[c];
-                if flow.is_some() && self.is_reachable(file, flow) {
-                    out.push(Diagnostic {
-                        start: hir.cases[c].pos,
-                        code: 7029,
-                    });
-                    let end = self.error_range_of_case(file, CaseId(c as u32)).1;
-                    self.explain_to(hir.cases[c].pos, end, 7029, |_| vec![]);
-                }
-            }
-        }
-        for f in 0..hir.fns.len() {
-            if !matches!(bound.fns[f].owner, FnOwner::None) {
-                let func = FnId(f as u32);
-                self.check_all_code_paths_return(file, func, out);
-                self.check_bare_returns(file, func, out);
-            }
-        }
-        self.check_full_signatures(file, out);
-        if !hir.has_errors {
-            self.check_jumps_and_labels(file, out);
-        }
-    }
-
     /// `IsPotentiallyExecutableNode`
     fn is_potentially_executable(&self, file: FileId, s: StmtId) -> bool {
         let hir = self.hir(file);
@@ -116,10 +33,10 @@ impl Checker<'_> {
             StmtKind::Var(decls) => decls
                 .iter()
                 .any(|d| hir[d].kind != VarKind::Var || hir[d].init.is_some()),
-            // Neither a block nor `;` is. But `with (e) s` is kept as a block and `debugger` as `;`, each put where its keyword is.
-            StmtKind::Block(_) => starts_with_word(hir, s, b"with"),
-            StmtKind::Empty => starts_with_word(hir, s, b"debugger"),
-            StmtKind::Fn(_)
+            // Neither a block nor `;` is. But `with (e) s` is kept as a block.
+            StmtKind::Block(_) => super::errors_x_statements::is_with_statement(hir, s),
+            StmtKind::Empty
+            | StmtKind::Fn(_)
             | StmtKind::Interface(_)
             | StmtKind::TypeAlias(_)
             | StmtKind::Import(_)
@@ -157,127 +74,50 @@ impl Checker<'_> {
         }
     }
 
-    /// `checkSourceElementUnreachable`: the first of each run of statements that control does not get to, and nothing inside them.
-    fn check_unreachable_in(
-        &mut self,
-        file: FileId,
-        list: IdList<StmtId>,
-        out: &mut Vec<Diagnostic>,
-    ) {
-        let hir = self.hir(file);
-        let mut in_run = false;
-        // The error goes from the first statement of a run to the last.
-        let (mut run_start, mut run_last) = (0, StmtId::NONE);
-        for s in hir.ids(list) {
-            if self.is_potentially_executable(file, s)
-                && self.is_source_element_unreachable(file, s)
-            {
-                if !std::mem::replace(&mut in_run, true) {
-                    run_start = hir[s].start;
-                    out.push(Diagnostic {
-                        start: run_start,
-                        code: 7027,
-                    });
+    /// `checkSourceElementUnreachable`
+    pub(super) fn check_source_element_unreachable(&mut self, file: FileId, s: StmtId) -> bool {
+        if !self.is_potentially_executable(file, s) {
+            return false;
+        }
+        if self.reported_unreachable_nodes.contains(&s) {
+            return true;
+        }
+        if !self.is_source_element_unreachable(file, s) {
+            return false;
+        }
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        // `parent.Statements()`
+        let statements = match bound.stmt_parent[s.idx()] {
+            Parent::File => Some(hir.body),
+            Parent::Module(m) => Some(hir[m].body),
+            Parent::FnBody(f) => match hir[f].body {
+                FnBody::Block(list) => Some(list),
+                _ => None,
+            },
+            Parent::Stmt(parent) => match hir[parent].kind {
+                StmtKind::Block(list) => Some(list),
+                StmtKind::Switch { cases, .. } => {
+                    let mut clauses = cases.iter().map(|c| hir[c].body);
+                    clauses.find(|&clause| hir.ids(clause).any(|other| other == s))
                 }
-                run_last = s;
-                continue;
-            }
-            if in_run {
-                let end = self.end_of_stmt(file, run_last);
-                self.explain_to(run_start, end, 7027, |_| vec![]);
-            }
-            in_run = false;
-            self.check_unreachable_within(file, s, out);
-        }
-        if in_run {
-            let end = self.end_of_stmt(file, run_last);
-            self.explain_to(run_start, end, 7027, |_| vec![]);
-        }
-    }
-
-    fn check_unreachable_within(&mut self, file: FileId, s: StmtId, out: &mut Vec<Diagnostic>) {
-        let hir = self.hir(file);
-        let one = |c: &mut Self, inner: StmtId, out: &mut Vec<Diagnostic>| {
-            if inner.is_none() {
-                return;
-            }
-            if c.is_potentially_executable(file, inner)
-                && c.is_source_element_unreachable(file, inner)
-            {
-                let start = c.hir(file)[inner].start;
-                out.push(Diagnostic { start, code: 7027 });
-                let end = c.end_of_stmt(file, inner);
-                c.explain_to(start, end, 7027, |_| vec![]);
-            } else {
-                c.check_unreachable_within(file, inner, out);
-            }
+                _ => None,
+            },
+            _ => None,
         };
-        match hir[s].kind {
-            // `checkWithStatement` does not look at the statement.
-            StmtKind::Block(_) if starts_with_word(hir, s, b"with") => {}
-            StmtKind::Block(list) => self.check_unreachable_in(file, list, out),
-            StmtKind::If { yes, no, .. } => {
-                one(self, yes, out);
-                one(self, no, out);
+        let mut last = s;
+        let after = statements.into_iter().flat_map(|list| hir.ids(list));
+        for next in after.skip_while(|&next| next != s).skip(1) {
+            if !self.is_potentially_executable(file, next)
+                || !self.is_source_element_unreachable(file, next)
+            {
+                break;
             }
-            StmtKind::While { body, .. }
-            | StmtKind::DoWhile { body, .. }
-            | StmtKind::For { body, .. }
-            | StmtKind::ForIn { body, .. }
-            | StmtKind::ForOf { body, .. }
-            | StmtKind::Labeled { body, .. } => one(self, body, out),
-            StmtKind::Switch { cases, .. } => {
-                for c in cases.iter() {
-                    self.check_unreachable_in(file, hir[c].body, out);
-                }
-            }
-            StmtKind::Try {
-                block,
-                handler,
-                finalizer,
-                ..
-            } => {
-                one(self, block, out);
-                one(self, handler, out);
-                one(self, finalizer, out);
-            }
-            StmtKind::Fn(f) => {
-                if let FnBody::Block(list) = hir[f].body {
-                    self.check_unreachable_in(file, list, out);
-                }
-            }
-            // The members of a class declaration are gone through with it.
-            StmtKind::Class(c) => {
-                for m in hir[c].members.iter() {
-                    let func = hir[m].func;
-                    if func.is_some()
-                        && let FnBody::Block(list) = hir[func].body
-                    {
-                        self.check_unreachable_in(file, list, out);
-                    }
-                }
-            }
-            StmtKind::Module(m) => self.check_unreachable_in(file, hir[m].body, out),
-            _ => {}
+            last = next;
+            self.reported_unreachable_nodes.push(next);
         }
-    }
-
-    /// `unwrapReturnType`. `None` where it gives the error type, of which nothing is said.
-    fn unwrapped_return_type(&mut self, flags: Flags, ty: TypeId) -> Option<TypeId> {
-        let is_async = flags.contains(Flags::ASYNC);
-        if !flags.contains(Flags::GENERATOR) {
-            return Some(if is_async { self.awaited(ty) } else { ty });
-        }
-        let types = self.iteration_types(ty, is_async)?;
-        // `getIterationTypesOfMethod`: where what `next` gives has no `value`, all of them are `any`.
-        if !self.is_known(types.yielded) {
-            return None;
-        }
-        Some(if is_async {
-            self.awaited(types.returned)
-        } else {
-            types.returned
-        })
+        let end = self.end_of_stmt(file, last);
+        self.error((file, hir[s].start, end), 7027, &[]);
+        true
     }
 
     /// `maybeTypeOfKind(t, TypeFlagsVoid)`
@@ -286,33 +126,43 @@ impl Checker<'_> {
     }
 
     /// `checkFunctionOrMethodDeclaration`, `checkFunctionExpressionOrObjectLiteralMethod`: 8030, of a `@type` tag on a function.
-    fn check_full_signatures(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        for &(owner, node) in &hir.jsdoc_types {
-            let JsDocTypeOwner::Fn(func) = owner else {
-                continue;
-            };
-            if bound.is_unchecked_type(node.idx())
-                || !matches!(
-                    hir[func].kind,
-                    FnKind::Decl | FnKind::Method | FnKind::Expr | FnKind::Arrow
-                )
-            {
-                continue;
-            }
-            let ty = self.type_from_node(file, node);
-            if !self.is_known(ty) || self.contextual_call_signature(file, func, ty).is_some() {
-                continue;
-            }
+    pub(super) fn check_full_signature(&mut self, file: FileId, func: FnId) {
+        let hir = self.hir(file);
+        let node = hir.jsdoc_type(JsDocTypeOwner::Fn(func));
+        if node.is_none()
+            || self.bound(file).is_unchecked_type(node.idx())
+            || !matches!(
+                hir[func].kind,
+                FnKind::Decl | FnKind::Method | FnKind::Expr | FnKind::Arrow
+            )
+        {
+            return;
+        }
+        let ty = self.type_from_node(file, node);
+        if self.is_known(ty) && self.contextual_call_signature(file, func, ty).is_none() {
             let start = start_of_return_type(hir, node);
-            out.push(Diagnostic { start, code: 8030 });
             let end = self.end_of_type_node_from(file, node, start);
-            self.explain_to(start, end, 8030, |_| vec![]);
+            self.error((file, start, end), 8030, &[]);
         }
     }
 
+    /// `isUnwrappedReturnTypeUndefinedVoidOrAny`
+    pub(super) fn is_unwrapped_return_type_undefined_void_or_any(
+        &mut self,
+        file: FileId,
+        func: FnId,
+        returned: TypeId,
+    ) -> bool {
+        let t = self.unwrap_return_type(file, func, returned);
+        !self.is_known(t) || self.maybe_void(t) || self.is_any(t) || t.is_undefined()
+    }
+
     /// `checkAllCodePathsInNonVoidFunctionReturnOrThrow`
-    fn check_all_code_paths_return(&mut self, file: FileId, func: FnId, out: &mut Vec<Diagnostic>) {
+    pub(super) fn check_all_code_paths_in_non_void_function_return_or_throw(
+        &mut self,
+        file: FileId,
+        func: FnId,
+    ) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let f = &hir[func];
         if !matches!(f.body, FnBody::Block(_))
@@ -339,10 +189,7 @@ impl Checker<'_> {
             if !self.is_known(declared) {
                 return;
             }
-            let Some(unwrapped) = self.unwrapped_return_type(f.flags, declared) else {
-                return;
-            };
-            Some(unwrapped)
+            Some(self.unwrap_return_type(file, func, declared))
         } else if f.kind == FnKind::Getter {
             // `checkAccessorDeclaration` hands over `getTypeOfAccessors`: what the setter says it takes, or else what the body gives.
             Some(self.return_type_of_fn(file, func))
@@ -383,16 +230,8 @@ impl Checker<'_> {
                     if !has_explicit_return {
                         return;
                     }
-                    // `isUnwrappedReturnTypeUndefinedVoidOrAny`
                     let inferred = self.return_type_of_fn(file, func);
-                    let Some(inferred) = self.unwrapped_return_type(f.flags, inferred) else {
-                        return;
-                    };
-                    if !self.is_known(inferred)
-                        || self.maybe_void(inferred)
-                        || self.is_any(inferred)
-                        || inferred.is_undefined()
-                    {
+                    if self.is_unwrapped_return_type_undefined_void_or_any(file, func, inferred) {
                         return;
                     }
                 }
@@ -400,7 +239,6 @@ impl Checker<'_> {
             }
             _ => return,
         };
-        out.push(Diagnostic { start, code });
         let end = if error_node.is_some() {
             self.end_of_type_node_from(file, error_node, start)
         } else {
@@ -411,55 +249,12 @@ impl Checker<'_> {
                 _ => self.end_of_name_at(file, start),
             }
         };
-        self.explain_to(start, end, code, |_| vec![]);
-    }
-
-    /// `checkReturnStatement`, where `undefined` is not told apart: `return;` where something is to be returned.
-    fn check_bare_returns(&mut self, file: FileId, func: FnId, out: &mut Vec<Diagnostic>) {
-        let options = &self.p.files.options;
-        if options.strict_null_checks || !options.no_implicit_returns {
-            return;
-        }
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let f = &hir[func];
-        if matches!(f.kind, FnKind::Constructor | FnKind::StaticBlock) {
-            return;
-        }
-        // `checkWithStatement` does not look at the statement.
-        let is_bare = |s: &StmtId| {
-            matches!(hir[*s].kind, StmtKind::Return(e) if e.is_none())
-                && !hir.is_in_with(hir[*s].pos)
-        };
-        let returns = bound.ids(bound.fns[func.idx()].returns);
-        if !returns.clone().any(|s| is_bare(&s)) {
-            return;
-        }
-        let returned = self.return_type_of_fn(file, func);
-        // What returns `never` is told that `undefined` is not that.
-        if !self.is_known(returned) || returned.is_never() {
-            return;
-        }
-        // `isUnwrappedReturnTypeUndefinedVoidOrAny`
-        let Some(t) = self.unwrapped_return_type(f.flags, returned) else {
-            return;
-        };
-        if !self.is_known(t) || self.maybe_void(t) || self.is_any(t) || t.is_undefined() {
-            return;
-        }
-        out.extend(returns.filter(is_bare).map(|s| Diagnostic {
-            start: hir[s].pos,
-            code: 7030,
-        }));
+        self.error((file, start, end), code, &[]);
     }
 
     /// `checkSignatureDeclaration`, `checkGeneratorInstantiationAssignabilityToReturnType`: the generator type built from the iteration
     /// types of a generator function's return type annotation must be assignable to that annotation.
-    fn check_generator_return_annotation(
-        &mut self,
-        file: FileId,
-        func: FnId,
-        out: &mut Vec<Diagnostic>,
-    ) {
+    pub(super) fn check_generator_return_annotation(&mut self, file: FileId, func: FnId) {
         let hir = self.hir(file);
         let f = &hir[func];
         let has_body = has_body(&f);
@@ -497,78 +292,15 @@ impl Checker<'_> {
         );
         let start = start_of_return_type(hir, f.ret);
         let end = self.end_of_type_node_from(file, f.ret, start);
-        self.check_assignable_with_end(
-            file,
-            generator,
-            declared,
-            start,
-            end,
-            ExprId::NONE,
-            2322,
-            out,
-        );
-    }
-
-    /// `isPostSuperFlowNode`
-    pub(super) fn is_post_super(
-        &self,
-        file: FileId,
-        mut flow: FlowId,
-        seen: &mut Vec<FlowId>,
-        reduced: &mut Vec<(FlowId, FlowId)>,
-    ) -> bool {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        loop {
-            match bound.flow[flow.idx()] {
-                // What cannot be reached is let be.
-                Flow::Unreachable => return true,
-                Flow::Start { .. } | Flow::StartInvoked { .. } => return false,
-                Flow::Assign { before, .. }
-                | Flow::Cond { before, .. }
-                | Flow::ArrayMutation { before, .. }
-                | Flow::Switch { before, .. } => {
-                    flow = before;
-                }
-                Flow::Call { before, call } => {
-                    if matches!(hir[call].kind, ExprKind::Call(c) if matches!(hir[hir[c].callee].kind, ExprKind::Super))
-                    {
-                        return true;
-                    }
-                    flow = before;
-                }
-                Flow::Reduce {
-                    before,
-                    label,
-                    instead,
-                } => {
-                    reduced.push((label, instead));
-                    let is_post_super = self.is_post_super(file, before, &mut Vec::new(), reduced);
-                    reduced.pop();
-                    return is_post_super;
-                }
-                Flow::Label { .. } => {
-                    if seen.contains(&flow) {
-                        return true;
-                    }
-                    seen.push(flow);
-                    return super::flow::branch_label_antecedents(bound, flow, reduced)
-                        .iter()
-                        .all(|&edge| self.is_post_super(file, edge, seen, reduced));
-                }
-                Flow::Loop { start, len } => match bound.edges(start, len).first() {
-                    Some(&entry) if !seen.contains(&flow) => {
-                        seen.push(flow);
-                        flow = entry;
-                    }
-                    _ => return true,
-                },
-            }
-        }
+        self.check_type_assignable_to(generator, declared, Some((file, start, end)), None);
     }
 
     /// `checkGrammarBreakOrContinueStatement`, and one label inside another of the same name.
-    fn check_jumps_and_labels(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    pub(super) fn check_jumps_and_labels(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
+        if hir.has_errors {
+            return;
+        }
         let is_iteration = |mut s: StmtId, through_labels: bool| loop {
             match hir[s].kind {
                 StmtKind::While { .. }

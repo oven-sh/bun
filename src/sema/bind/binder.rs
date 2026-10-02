@@ -40,6 +40,8 @@ pub(super) struct Binder<'f> {
     is_unchecked: bool,
     /// Until the file is done, `start` of the node of a label says which of these it is.
     label_edges: Vec<Label>,
+    /// `FlowFlagsReferenced`, a bit for each flow node.
+    referenced: Vec<u64>,
     /// Where the functions without a body start that nothing known outside holds in.
     start_of_signatures: FlowId,
     /// How many places in the flow of control were not made because one does for all of those.
@@ -154,6 +156,7 @@ impl<'f> Binder<'f> {
             is_reached: false,
             is_unchecked: false,
             label_edges: Vec::new(),
+            referenced: Vec::new(),
 
             start_of_signatures: FlowId::NONE,
             spared: 0,
@@ -687,6 +690,17 @@ impl<'f> Binder<'f> {
         }
     }
 
+    /// `setFlowNodeReferenced`
+    fn set_flow_node_referenced(&mut self, flow: FlowId) {
+        let (word, bit) = (flow.idx() / 64, 1 << (flow.idx() % 64));
+        if word >= self.referenced.len() {
+            self.referenced.resize(word + 1, 0);
+            self.b.flow_shared.resize(word + 1, 0);
+        }
+        self.b.flow_shared[word] |= self.referenced[word] & bit;
+        self.referenced[word] |= bit;
+    }
+
     fn add_edge(&mut self, label: FlowId, from: FlowId) {
         if from == UNREACHABLE || label.is_none() {
             return;
@@ -695,6 +709,7 @@ impl<'f> Binder<'f> {
         let edges = &mut self.label_edges[at].edges;
         if !edges.contains(&from) {
             edges.push(from);
+            self.set_flow_node_referenced(from);
         }
     }
 
@@ -850,6 +865,7 @@ impl<'f> Binder<'f> {
         if !self.is_narrowing_expression(expr) {
             return before;
         }
+        self.set_flow_node_referenced(before);
         self.new_flow(Flow::Cond {
             before,
             expr,
@@ -862,6 +878,7 @@ impl<'f> Binder<'f> {
         if !self.is_reached {
             return;
         }
+        self.set_flow_node_referenced(self.flow);
         self.has_flow_effects = true;
         self.flow = self.new_flow(node);
         if self.exception_target.is_some() {
@@ -874,6 +891,7 @@ impl<'f> Binder<'f> {
         if !self.is_reached {
             return;
         }
+        self.set_flow_node_referenced(self.flow);
         self.has_flow_effects = true;
         self.flow = self.new_flow(Flow::Call {
             before: self.flow,
@@ -2050,6 +2068,7 @@ impl<'f> Binder<'f> {
             }
             let pre_case = self.branch_label();
             let entered = if is_narrowing && self.pre_switch != UNREACHABLE {
+                self.set_flow_node_referenced(self.pre_switch);
                 self.new_flow(Flow::Switch {
                     before: self.pre_switch,
                     stmt: id,
@@ -2074,6 +2093,7 @@ impl<'f> Binder<'f> {
         let has_default = cases.iter().any(|c| self.f[c].test.is_none());
         if !has_default {
             let none = if self.pre_switch != UNREACHABLE {
+                self.set_flow_node_referenced(self.pre_switch);
                 self.new_flow(Flow::Switch {
                     before: self.pre_switch,
                     stmt: id,
@@ -2141,9 +2161,13 @@ impl<'f> Binder<'f> {
         (self.return_target, self.exception_target) = saved;
         if finalizer.is_some() {
             let finally_label = self.branch_label();
+            // `combineFlowLists`: nothing is referenced once more.
+            let combined = self.edges_of(finally_label);
             for from in [normal_exit, exception_label, return_label] {
                 for edge in self.label_edges[self.edges_of(from)].edges.clone() {
-                    self.add_edge(finally_label, edge);
+                    if !self.label_edges[combined].edges.contains(&edge) {
+                        self.label_edges[combined].edges.push(edge);
+                    }
                 }
             }
             self.flow = if self.has_edges(finally_label) {
@@ -2562,9 +2586,13 @@ impl<'f> Binder<'f> {
 
     /// `bindInitializer`: a default may or may not be evaluated.
     fn conditional_default(&mut self, e: ExprId, parent: Parent) {
-        let post = self.branch_label();
-        self.add_edge(post, self.flow);
+        let entry = self.flow;
         self.expr(e, parent);
+        if entry == UNREACHABLE || entry == self.flow {
+            return;
+        }
+        let post = self.branch_label();
+        self.add_edge(post, entry);
         self.add_edge(post, self.flow);
         self.flow = self.finish_label(post);
     }

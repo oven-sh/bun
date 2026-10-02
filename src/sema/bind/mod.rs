@@ -804,6 +804,8 @@ pub struct Bound {
 
     pub flow: Vec<Flow>,
     pub flow_edges: Vec<FlowId>,
+    /// `FlowFlagsShared`, a bit for each of `flow`: it is the antecedent of more than one.
+    pub flow_shared: Vec<u64>,
     /// How many places in the flow of control the binder came to. `flow` leaves out the labels nothing comes after, and has one start for
     /// all the functions without a body.
     pub flow_places: u32,
@@ -1224,6 +1226,11 @@ impl Bound {
         list: IdList<T>,
     ) -> impl ExactSizeIterator<Item = T> + Clone + '_ {
         self.ids[list.range()].iter().map(|&i| T::from(i))
+    }
+
+    pub fn is_shared(&self, flow: FlowId) -> bool {
+        let word = self.flow_shared.get(flow.idx() / 64);
+        word.is_some_and(|word| word >> (flow.idx() % 64) & 1 != 0)
     }
 
     pub fn edges(&self, start: u32, len: u32) -> &[FlowId] {

@@ -1144,24 +1144,72 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `reportImplicitAny`, of the name `pat` of a variable, a parameter or a binding element that comes to be `ty`: 7005, 7006 7019,
-    /// 7031.
-    fn report_implicit_any_of_name(&mut self, file: FileId, pat: PatId, ty: TypeId) {
-        let hir = self.hir(file);
+    /// `reportImplicitAny`, of the variable, the parameter or the binding element whose name is `pat` and that comes to be `ty`: 7005,
+    /// 7006 7019 7051, 7031. Not where `declarationBelongsToPrivateAmbientMember`.
+    pub(super) fn report_implicit_any_of_name(&mut self, file: FileId, pat: PatId, ty: TypeId) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
         if !self.p.files.options.no_implicit_any || hir.is_js && !self.is_check_js(file) {
             return;
         }
-        let name = (file, hir[pat].pos, self.end_of_name_at(file, hir[pat].pos));
-        let (at, code) = match self.bound(file).pat_parent[pat.idx()] {
-            PatParent::Param(p) if hir[p].flags.contains(Flags::REST) => {
-                ((file, hir[p].pos, self.end_of_param(file, p)), 7019)
+        if let PatParent::Param(root) = root_declaration(bound, pat) {
+            let func = bound.param_fn[root.idx()];
+            if self.is_private_within_ambient(file, func) {
+                return;
             }
-            PatParent::Param(p) => ((file, hir[p].pos, self.end_of_param(file, p)), 7006),
-            PatParent::Prop(..) | PatParent::Elem(..) => (name, 7031),
-            _ => (name, 7005),
+            // Nothing is expected of it, as far as can be told.
+            if let FnOwner::Expr(e) = bound.fns[func.idx()].owner
+                && !self.is_context_known(file, e)
+            {
+                return;
+            }
+        }
+        let start = hir[pat].pos;
+        let is_missing = matches!(
+            hir[pat].kind,
+            PatKind::Missing | PatKind::Ident(known::empty)
+        );
+        let (name_end, name) = match hir[pat].kind {
+            _ if is_missing => (start, Arg::Text("(Missing)")),
+            PatKind::Ident(name) => (self.end_of_name_at(file, start), Arg::Atom(name)),
+            _ => {
+                let end = self.end_of_pat(file, pat);
+                (end, Arg::Bytes(&hir.text[start as usize..end as usize]))
+            }
         };
-        let name = self.source_text(file, name.1, name.2);
-        self.error(at, code, &[Arg::Text(&name), Arg::Type(ty)]);
+        let PatParent::Param(p) = bound.pat_parent[pat.idx()] else {
+            let is_element = matches!(
+                bound.pat_parent[pat.idx()],
+                PatParent::Prop(..) | PatParent::Elem(..)
+            );
+            let code = if is_element { 7031 } else { 7005 };
+            self.error((file, start, name_end), code, &[name, Arg::Type(ty)]);
+            return;
+        };
+        // A parameter of which nothing is written takes no room.
+        let node = (file, hir[p].pos, self.end_of_param(file, p).max(hir[p].pos));
+        let (func, is_rest) = (bound.param_fn[p.idx()], hir[p].flags.contains(Flags::REST));
+        let is_signature = matches!(hir[func].kind, FnKind::CallSignature | FnKind::FunctionType)
+            || hir[func].kind == FnKind::Method
+                && matches!(bound.fns[func.idx()].owner, FnOwner::Member(m) if !matches!(bound.member_owner[m.idx()], crate::bind::MemberOwner::Class(_)));
+        if let PatKind::Ident(written) = hir[pat].kind
+            && is_signature
+            && self.is_name_of_a_type(file, func, written)
+        {
+            // A leading `this` parameter is counted, and is not among `params`.
+            let position = p.0 - hir[func].params.start + hir[func].this_ty(hir).is_some() as u32;
+            let atoms = &self.files().atoms;
+            let new_name = [b"arg", atoms.bytes(self.number_name(position as f64))].concat();
+            let array_name = [atoms.bytes(written), b"[]"].concat();
+            let type_name = if is_rest && !is_missing {
+                Arg::Bytes(&array_name)
+            } else {
+                name
+            };
+            self.error(node, 7051, &[Arg::Bytes(&new_name), type_name]);
+            return;
+        }
+        let code = if is_rest { 7019 } else { 7006 };
+        self.error(node, code, &[name, Arg::Type(ty)]);
     }
 
     /// `isObjectLiteralType`: whether `ty` is the type of an object literal expression, fresh or not, as opposed to that of something
@@ -1638,7 +1686,9 @@ impl<'p> Checker<'p> {
         let present = self.non_undefined_type(ty);
         let whole = self.union_reduced(&[present, default_ty]);
         if hir.is_js && self.is_empty_array_literal_type(file, default, whole) {
-            return self.array_of(TypeId::ANY);
+            let any_array = self.array_of(TypeId::ANY);
+            self.report_implicit_any_of_name(file, pat, any_array);
+            return any_array;
         }
         if matches!(root, PatParent::Var(d) if matches!(hir[d].kind, VarKind::Const | VarKind::Using | VarKind::AwaitUsing))
         {
@@ -2294,7 +2344,7 @@ impl<'p> Checker<'p> {
             // `getTypeFromBindingPattern`: what the pattern itself implies.
             if !is_name {
                 return self
-                    .implied_by_pattern(file, decl.pat, false)
+                    .implied_by_pattern(file, decl.pat, false, true)
                     .unwrap_or(TypeId::ANY);
             }
             // `widenTypeForVariableLikeDeclaration`, of nothing. `getTypeOfVariableOrParameterOrPropertyWorker` goes by
@@ -2380,7 +2430,7 @@ impl<'p> Checker<'p> {
             // `assignParameterType`: if `unknown` is all that is expected, the pattern says what it is.
             if ty == TypeId::UNKNOWN && !matches!(hir[param.pat].kind, PatKind::Ident(_)) {
                 return self
-                    .implied_by_pattern(file, param.pat, false)
+                    .implied_by_pattern(file, param.pat, false, false)
                     .unwrap_or(ty);
             }
             if param.default.is_none() {
@@ -2424,11 +2474,19 @@ impl<'p> Checker<'p> {
             };
         }
         // `getTypeFromBindingPattern`, of a rest parameter too: `any[]` is for one of which nothing at all is known.
-        if let Some(implied) = self.implied_by_pattern(file, param.pat, false) {
+        let report_errors = !self.is_type_of_parameter_never_asked_for(file, func, p);
+        if let Some(implied) = self.implied_by_pattern(file, param.pat, false, report_errors) {
             return implied;
         }
+        // `widenTypeForVariableLikeDeclaration`, of nothing. `hasBindableName`: which property a setter is may not be known.
+        let reports = !matches!(hir[param.pat].kind, PatKind::Missing)
+            && (hir[func].kind != FnKind::Setter
+                || self.start_of_accessor_name(file, func).is_some());
         if param.flags.contains(Flags::REST) {
             let ty = self.array_of(TypeId::ANY);
+            if reports {
+                self.report_implicit_any_of_name(file, param.pat, ty);
+            }
             // `assignNonContextualParameterTypes`, `assignParameterType`: only a context sensitive function adds the `?`.
             let function = &hir[func];
             return if param.flags.contains(Flags::OPTIONAL)
@@ -2441,6 +2499,9 @@ impl<'p> Checker<'p> {
                 ty
             };
         }
+        if reports {
+            self.report_implicit_any_of_name(file, param.pat, TypeId::ANY);
+        }
         TypeId::ANY
     }
 
@@ -2451,7 +2512,12 @@ impl<'p> Checker<'p> {
         let ty = self.type_of_declaration_initializer(file, param.default);
         let ty = self.padded_for_pattern(file, param.pat, ty);
         if self.hir(file).is_js && self.is_empty_array_literal_type(file, param.default, ty) {
-            return self.array_of(TypeId::ANY);
+            let any_array = self.array_of(TypeId::ANY);
+            let func = self.bound(file).param_fn[p.idx()];
+            if self.hir(file)[func].kind != FnKind::Setter {
+                self.report_implicit_any_of_name(file, param.pat, any_array);
+            }
+            return any_array;
         }
         self.widen_literal(ty)
     }
@@ -2539,6 +2605,8 @@ impl<'p> Checker<'p> {
                     types.push(if elem.default.is_some() {
                         self.type_from_defaulted_element(file, elem.pat, elem.default)
                     } else {
+                        // A hole is an element without a name, and is told off like the rest.
+                        self.report_implicit_any_of_name(file, elem.pat, TypeId::ANY);
                         TypeId::ANY
                     });
                     flags.push(ElemFlags::OPTIONAL);

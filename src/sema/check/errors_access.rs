@@ -1362,7 +1362,7 @@ impl Checker<'_> {
         }
         // `getTypeForBindingElementParent`
         let given = if is_implied && pattern == root {
-            self.implied_by_pattern(file, pattern, false)
+            self.implied_by_pattern(file, pattern, false, false)
                 .unwrap_or(TypeId::ANY)
         } else {
             self.type_for_binding_element_parent(file, first, pattern)

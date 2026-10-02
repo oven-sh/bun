@@ -4953,11 +4953,17 @@ impl<'p> Checker<'p> {
 
     /// `is_never_intersection`, of an intersection.
     fn is_empty_intersection(&mut self, ty: TypeId) -> bool {
-        if self.has_type_variables(ty) && self.is_generic(ty) {
-            return false;
-        }
         if let Some(known) = self.p.never_intersections.get(&ty) {
             return known;
+        }
+        if self.has_type_variables(ty) {
+            let cycles_before = self.cycles;
+            if self.is_generic(ty) {
+                if self.cycles == cycles_before {
+                    self.p.never_intersections.insert(ty, false);
+                }
+                return false;
+            }
         }
         // Finding out takes looking at its properties, which can come back to asking. It is something until it turns out not to be.
         if self.never_in_progress.contains(&ty) {

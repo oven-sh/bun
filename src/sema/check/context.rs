@@ -165,14 +165,16 @@ impl<'p> Checker<'p> {
         file: FileId,
         pat: PatId,
     ) -> Option<TypeId> {
-        self.implied_by_pattern(file, pat, true)
+        self.implied_by_pattern(file, pat, true, false)
     }
 
+    /// `getTypeFromBindingPattern(pat, includePatternInType, reportErrors)`. `None` for a plain name.
     pub(super) fn implied_by_pattern(
         &mut self,
         file: FileId,
         pat: PatId,
         for_context: bool,
+        report_errors: bool,
     ) -> Option<TypeId> {
         if !for_context
             || matches!(
@@ -180,11 +182,11 @@ impl<'p> Checker<'p> {
                 PatKind::Missing | PatKind::Ident(_)
             )
         {
-            return self.implied_by_pattern_inner(file, pat, for_context);
+            return self.implied_by_pattern_inner(file, pat, for_context, report_errors);
         }
         self.contextual_binding_patterns
             .push((file, pat, self.stack.len()));
-        let ty = self.implied_by_pattern_inner(file, pat, for_context);
+        let ty = self.implied_by_pattern_inner(file, pat, for_context, report_errors);
         self.contextual_binding_patterns.pop();
         ty
     }
@@ -287,13 +289,14 @@ impl<'p> Checker<'p> {
         file: FileId,
         pat: PatId,
         for_context: bool,
+        report_errors: bool,
     ) -> Option<TypeId> {
         let hir = self.hir(file);
         // `getTypeFromBindingElement`
         let of_element = |c: &mut Self, pat: PatId, default: ExprId| -> TypeId {
             if default.is_some() {
                 let implied = if for_context {
-                    c.implied_by_pattern(file, pat, true)
+                    c.implied_by_pattern(file, pat, true, false)
                 } else {
                     None
                 };
@@ -322,8 +325,11 @@ impl<'p> Checker<'p> {
                 };
                 return c.optional(ty);
             }
-            c.implied_by_pattern(file, pat, for_context)
-                .unwrap_or(TypeId::ANY)
+            let implied = c.implied_by_pattern(file, pat, for_context, report_errors);
+            if implied.is_none() && report_errors {
+                c.report_implicit_any_of_name(file, pat, TypeId::ANY);
+            }
+            implied.unwrap_or(TypeId::ANY)
         };
         match hir[pat].kind {
             PatKind::Missing | PatKind::Ident(_) => None,

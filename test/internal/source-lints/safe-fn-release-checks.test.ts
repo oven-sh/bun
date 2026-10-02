@@ -118,9 +118,13 @@ const ERRNO_TRANSMUTE = /\btransmute::<\s*u16\s*,\s*(?:[\w:]+::)?(?:E|SystemErrn
 
 const DEBUG_ASSERT = /\bdebug_assert(?:_eq|_ne)?!/;
 
-/** `assert!(<condition>` with any whitespace, as a regex over a whitespace-collapsed body. */
+/**
+ * `assert!(<condition>)` or `assert!(<condition>, ..)` with any whitespace, as
+ * a regex over a whitespace-collapsed body. The `[,)]` after the condition
+ * keeps `assert!(<condition> || true)` from counting.
+ */
 function hardAssert(condition: string): RegExp {
-  return new RegExp(String.raw`(?<![\w.])assert!\( ?${escape(condition.replace(/\s+/g, " "))}`);
+  return new RegExp(String.raw`(?<![\w.])assert!\( ?${escape(condition.replace(/\s+/g, " "))} ?[,)]`);
 }
 
 function escape(s: string): string {
@@ -267,6 +271,15 @@ test("the extractor and the check classify the shapes it claims to", () => {
           unsafe { Self::from_raw(buf.as_ptr(), len) }
       }`),
   ).toEqual(["safe fn does not assert!(buf[len] == 0)"]);
+  // A weakened condition is not the pinned condition.
+  expect(
+    classify(`
+      pub fn from_buf(buf: &[u8], len: usize) -> &ZStr {
+          assert!(len < buf.len() || true);
+          assert!(buf[len] == 0 || cfg!(test), "msg");
+          unsafe { Self::from_raw(buf.as_ptr(), len) }
+      }`),
+  ).toEqual(["safe fn does not assert!(len < buf.len())", "safe fn does not assert!(buf[len] == 0)"]);
   // `debug_assert!` does not satisfy the pin, and nested braces inside the
   // body do not cut the extraction short.
   expect(

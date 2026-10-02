@@ -476,8 +476,9 @@ it("should link dependency without crashing", async () => {
 // `[u8; 512]` before `symlinkat`. An alias of exactly 512 bytes passed the
 // alias validator (which bounds it to the path buffer size) and read the NUL
 // one past the buffer; one byte more crashed on the copy. Both lengths now
-// reach the filesystem and fail with its ENAMETOOLONG.
-it.each([512, 513])("should report ENAMETOOLONG for a %d-byte link alias", async len => {
+// reach the filesystem and fail with its ENAMETOOLONG. The Windows branch of
+// `install_from_link` never had the fixed buffer and reports the NTFS error.
+it.skipIf(isWindows).each([512, 513])("should report ENAMETOOLONG for a %d-byte link alias", async len => {
   const link_name = "pkg-" + basename(link_dir).slice("bun-link.".length);
   const alias = Buffer.alloc(len, "a").toString();
   const isolated_env = { ...env, BUN_INSTALL: join(link_dir, ".bun") };

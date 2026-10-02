@@ -71,8 +71,7 @@ pub fn install_with_manager(
         }
     }
 
-    // An error from the options or the environment fails the install before anything is read or written.
-    // It is printed at every log level, as it is after resolving.
+    // An error from the options or the environment is printed at every log level and fails the install first.
     if manager.log_mut().has_errors() {
         manager
             .log_mut()

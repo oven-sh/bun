@@ -352,6 +352,357 @@ test("a package reached through a dependency cycle dedupes into one store entry"
   );
 });
 
+// The members of a dependency cycle cannot wait for each other to finish. They wait until each
+// member has its files and dependency links on disk, then link bins and run scripts.
+describe.concurrent("members of a dependency cycle", () => {
+  type Packages = Record<string, { files?: Record<string, string>; [field: string]: unknown }>;
+  type Late = { late?: string; early?: string; link?: string; missing?: string };
+  type Project = { globalStore?: boolean; files?: Record<string, string> };
+
+  const cli = "#!/usr/bin/env node\n";
+
+  // Serves version 1.0.0 of each package. Verdaccio cannot delay one tarball.
+  async function serveRegistry(
+    packages: Packages,
+    { missing, hold }: { missing?: string; hold?: (name: string) => Promise<void> } = {},
+  ) {
+    const tarballs: Record<string, Uint8Array> = {};
+    for (const [name, { files = {}, ...manifest }] of Object.entries(packages)) {
+      const archive: Record<string, string> = {
+        "package/package.json": JSON.stringify({ name, version: "1.0.0", ...manifest }),
+      };
+      for (const [path, content] of Object.entries(files)) archive[`package/${path}`] = content;
+      tarballs[name] = await new Bun.Archive(archive, { compress: "gzip" }).bytes();
+    }
+    return Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      async fetch(req) {
+        const { origin, pathname } = new URL(req.url);
+        const [name, dash] = pathname.slice(1).split("/");
+        if (!Object.hasOwn(packages, name)) return new Response("not found", { status: 404 });
+        if (dash === "-") {
+          if (name === missing) return new Response("not found", { status: 404 });
+          await hold?.(name);
+          return new Response(tarballs[name]);
+        }
+        const { files, ...manifest } = packages[name];
+        const integrity = "sha512-" + new Bun.CryptoHasher("sha512").update(tarballs[name]).digest("base64");
+        return Response.json({
+          name,
+          "dist-tags": { latest: "1.0.0" },
+          versions: {
+            "1.0.0": {
+              name,
+              version: "1.0.0",
+              ...manifest,
+              dist: { tarball: `${origin}/${name}/-/${name}-1.0.0.tgz`, integrity },
+            },
+          },
+        });
+      },
+    });
+  }
+
+  function projectDir(port: number, manifest: object, { globalStore = false, files = {} }: Project = {}) {
+    return tempDir("cycle-", {
+      "package.json": JSON.stringify({ name: "root", ...manifest }),
+      "bunfig.toml": `[install]\nregistry = "http://localhost:${port}/"\nlinker = "isolated"\nglobalStore = ${globalStore}\n`,
+      ...files,
+    });
+  }
+
+  async function install(
+    cwd: string,
+    cache: string,
+    args: string[] = [],
+    whileRunning?: (exited: () => boolean) => Promise<void>,
+  ) {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", ...args],
+      cwd,
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: cache },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+      whileRunning?.(() => proc.exitCode !== null),
+    ]);
+    return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+  }
+
+  // True when a store entry of `name` in `store` has its link to the dependency `link`.
+  async function entryHasLink(store: string, name: string, link: string) {
+    for (const entry of await readdirSorted(store).catch(() => [])) {
+      if (!entry.startsWith(`${name}@1.0.0`)) continue;
+      try {
+        lstatSync(join(store, entry, "node_modules", link));
+        return true;
+      } catch {}
+    }
+    return false;
+  }
+
+  // Installs from a lockfile with an empty cache, so that each package installs when its own
+  // tarball arrives. The registry holds the tarball of `late` until the entry of `early` has its
+  // link to `link`: an installer that lets `early` go on alone is then past its bin and script
+  // steps before the files of `late` exist.
+  async function installFromLockfile(
+    packages: Packages,
+    manifest: object,
+    { late, early, link = late, missing, ...project }: Late & Project = {},
+  ) {
+    const held = Promise.withResolvers<void>();
+    const server = await serveRegistry(packages, {
+      missing,
+      hold: async name => {
+        if (name === late) await held.promise;
+      },
+    });
+    const dir = projectDir(server.port, manifest, project);
+    const cwd = String(dir);
+    const cache = join(cwd, ".bun-cache");
+    const dispose = () => {
+      held.resolve();
+      server.stop(true);
+      dir[Symbol.dispose]();
+    };
+
+    async function earlyHasLink() {
+      if (!project.globalStore) return entryHasLink(join(cwd, "node_modules", ".bun"), early!, link!);
+      // An entry of the global store is built in `links/<entry>.tmp-<suffix>`, a cycle in `links/scc-<hash>.tmp-<suffix>/<entry>`.
+      const links = join(cache, "links");
+      if (await entryHasLink(links, early!, link!)) return true;
+      for (const unit of await readdirSorted(links).catch(() => [])) {
+        if (await entryHasLink(join(links, unit), early!, link!)) return true;
+      }
+      return false;
+    }
+
+    try {
+      expect(await install(cwd, join(cwd, ".lockfile-cache"), ["--lockfile-only"])).toMatchObject({ exitCode: 0 });
+      const result = await install(cwd, cache, [], async exited => {
+        while (late && !exited() && !(await earlyHasLink())) await Bun.sleep(1);
+        held.resolve();
+      });
+      return { ...result, cwd, cache, port: server.port, [Symbol.dispose]: dispose };
+    } catch (error) {
+      dispose();
+      throw error;
+    }
+  }
+
+  // The commands in the `.bin` directory of the store entry of `name`. Windows has two files for a command.
+  async function binsOf(cwd: string, name: string) {
+    const store = join(cwd, "node_modules", ".bun");
+    const entry = (await readdirSorted(store)).find(entry => entry.startsWith(`${name}@1.0.0`));
+    if (!entry) throw new Error(`no store entry for ${name}`);
+    const files = await readdirSorted(join(store, entry, "node_modules", ".bin")).catch(() => []);
+    return [...new Set(files.map(file => file.replace(/\.(exe|bunx)$/, "")))];
+  }
+
+  const peer = {
+    host: { bin: "cli.js", dependencies: { plugin: "1.0.0" }, files: { "cli.js": cli } },
+    plugin: { bin: "cli.js", peerDependencies: { host: "1.0.0" }, files: { "cli.js": cli } },
+  };
+  const plain = {
+    host: { bin: { host: "bin/cli.js" }, dependencies: { plugin: "1.0.0" }, files: { "bin/cli.js": cli } },
+    plugin: {
+      directories: { bin: "tools" },
+      dependencies: { host: "1.0.0" },
+      files: { "tools/plugin-a": cli, "tools/plugin-b": cli },
+    },
+  };
+  const plainBins = ["host", "plugin-a", "plugin-b"];
+  const dependsOnHost = { dependencies: { host: "1.0.0" } };
+  const other = (member: string) => (member === "host" ? "plugin" : "host");
+
+  // Each member has its own commands and the commands of the other member in its `.bin`.
+  describe.each([
+    { through: "a peer dependency", packages: peer, bins: ["host", "plugin"] },
+    { through: "a plain dependency", packages: plain, bins: plainBins },
+  ])("through $through", ({ packages, bins }) => {
+    test.each(["host", "plugin"])("link each other's bins when the tarball of %s arrives last", async late => {
+      using run = await installFromLockfile(packages, dependsOnHost, { late, early: other(late) });
+
+      expect({ host: await binsOf(run.cwd, "host"), plugin: await binsOf(run.cwd, "plugin") }).toEqual({
+        host: bins,
+        plugin: bins,
+      });
+      expect(run.exitCode).toBe(0);
+    });
+  });
+
+  test("the members that are left link each other's bins when one member fails to download", async () => {
+    const packages = {
+      a: { bin: "cli.js", dependencies: { b: "1.0.0" }, files: { "cli.js": cli } },
+      b: { bin: "cli.js", dependencies: { a: "1.0.0", c: "1.0.0" }, files: { "cli.js": cli } },
+      c: { bin: "cli.js", dependencies: { a: "1.0.0" }, files: { "cli.js": cli } },
+    };
+    using run = await installFromLockfile(
+      packages,
+      { dependencies: { a: "1.0.0" } },
+      { late: "a", early: "b", missing: "c" },
+    );
+
+    expect({ a: await binsOf(run.cwd, "a"), b: await binsOf(run.cwd, "b") }).toEqual({ a: ["a", "b"], b: ["a", "b"] });
+    expect({ exitCode: run.exitCode, signalCode: run.signalCode }).toEqual({ exitCode: 1, signalCode: null });
+  });
+
+  describe("in the global store", () => {
+    // The directories of `<cache>/links`, each without its hash.
+    const links = async (cache: string) => await readdirSorted(join(cache, "links")).catch(() => []);
+    const withoutHash = (names: string[]) => names.map(name => name.replace(/-[0-9a-f]{16}$/, ""));
+
+    test.each(["host", "plugin"])("are published together when the tarball of %s arrives last", async late => {
+      using run = await installFromLockfile(plain, dependsOnHost, { late, early: other(late), globalStore: true });
+
+      expect({ host: await binsOf(run.cwd, "host"), plugin: await binsOf(run.cwd, "plugin") }).toEqual({
+        host: plainBins,
+        plugin: plainBins,
+      });
+      // One directory holds the cycle. No staging directory is left.
+      const published = await links(run.cache);
+      expect(withoutHash(published)).toEqual(["scc"]);
+      expect(run.exitCode).toBe(0);
+
+      using second = projectDir(run.port, dependsOnHost, {
+        globalStore: true,
+        files: { "bun.lock": await file(join(run.cwd, "bun.lock")).text() },
+      });
+      expect(await install(String(second), run.cache, ["--frozen-lockfile"])).toMatchObject({ exitCode: 0 });
+      expect({ host: await binsOf(String(second), "host"), plugin: await binsOf(String(second), "plugin") }).toEqual({
+        host: plainBins,
+        plugin: plainBins,
+      });
+      expect(await links(run.cache)).toEqual(published);
+    });
+
+    test("two installs at once publish one complete cycle", async () => {
+      using server = await serveRegistry(plain);
+      using first = projectDir(server.port, dependsOnHost, { globalStore: true });
+      using second = projectDir(server.port, dependsOnHost, { globalStore: true });
+      const cache = join(String(first), ".bun-cache");
+
+      // Download the tarballs first: the two installs then race only for the store.
+      expect(await install(String(first), cache)).toMatchObject({ exitCode: 0 });
+      await rm(join(cache, "links"), { recursive: true, force: true });
+      await rm(join(String(first), "node_modules"), { recursive: true, force: true });
+
+      const results = await Promise.all([install(String(first), cache), install(String(second), cache)]);
+
+      for (const cwd of [String(first), String(second)]) {
+        expect({ host: await binsOf(cwd, "host"), plugin: await binsOf(cwd, "plugin") }).toEqual({
+          host: plainBins,
+          plugin: plainBins,
+        });
+      }
+      expect(withoutHash(await links(cache))).toEqual(["scc"]);
+      expect(results.map(result => result.exitCode)).toEqual([0, 0]);
+    });
+
+    test("--force replaces a published cycle", async () => {
+      using run = await installFromLockfile(plain, dependsOnHost, { globalStore: true });
+      const published = await links(run.cache);
+      expect(withoutHash(published)).toEqual(["scc"]);
+
+      const hostCli = join(run.cwd, "node_modules", ".bun", "host@1.0.0", "node_modules", "host", "bin", "cli.js");
+      await rm(hostCli);
+      expect(await install(run.cwd, run.cache, ["--force"])).toMatchObject({ exitCode: 0 });
+
+      expect(await file(hostCli).text()).toBe(cli);
+      expect({ host: await binsOf(run.cwd, "host"), plugin: await binsOf(run.cwd, "plugin") }).toEqual({
+        host: plainBins,
+        plugin: plainBins,
+      });
+      // The new directory has the name of the old one. The old one is deleted.
+      expect(await links(run.cache)).toEqual(published);
+    });
+
+    test("a cycle with a member that fails to download is not published", async () => {
+      using run = await installFromLockfile(plain, dependsOnHost, { missing: "plugin", globalStore: true });
+
+      expect(await links(run.cache)).toEqual([]);
+      expect({ exitCode: run.exitCode, signalCode: run.signalCode }).toEqual({ exitCode: 1, signalCode: null });
+    });
+  });
+
+  // A script that lists `directory` into found.txt. The shell starts faster than a second `bun`.
+  const list = (directory: string) => `ls ${directory} > found.txt`;
+  const listed = async (...path: string[]) =>
+    (await file(join(...path, "found.txt")).text()).split("\n").filter(Boolean);
+  // Enough files that the package is not on disk yet when a script that did not wait for it starts.
+  const manyFiles = Object.fromEntries(Array.from({ length: 3000 }, (_, i) => [`files/${i}`, ""]));
+  const storePackage = (cwd: string, name: string) =>
+    join(cwd, "node_modules", ".bun", `${name}@1.0.0`, "node_modules", name);
+
+  test("a lifecycle script runs after the files of the other member are on disk", async () => {
+    const packages = {
+      early: { scripts: { postinstall: list("../late/files") }, dependencies: { late: "1.0.0" } },
+      late: { dependencies: { early: "1.0.0" }, files: manyFiles },
+    };
+    using run = await installFromLockfile(
+      packages,
+      { dependencies: { early: "1.0.0" }, trustedDependencies: ["early"] },
+      { late: "late", early: "early" },
+    );
+
+    expect(await listed(storePackage(run.cwd, "early"))).toBeArrayOfSize(3000);
+    expect(run.exitCode).toBe(0);
+  });
+
+  test("a lifecycle script runs after the dependencies of the other member are on disk", async () => {
+    const packages = {
+      // From its own folder in the store to the folder of leaf.
+      early: {
+        scripts: { postinstall: list("../../../leaf@1.0.0/node_modules/leaf/files") },
+        dependencies: { late: "1.0.0" },
+      },
+      late: { dependencies: { early: "1.0.0", leaf: "1.0.0" } },
+      leaf: { files: manyFiles },
+    };
+    using run = await installFromLockfile(
+      packages,
+      { dependencies: { early: "1.0.0" }, trustedDependencies: ["early"] },
+      { late: "leaf", early: "early", link: "late" },
+    );
+
+    expect(await listed(storePackage(run.cwd, "early"))).toBeArrayOfSize(3000);
+    expect(run.exitCode).toBe(0);
+  });
+
+  test("a script of a workspace that depends on a cycle runs after the dependencies of each member are on disk", async () => {
+    const packages = {
+      early: { dependencies: { late: "1.0.0" } },
+      late: { dependencies: { early: "1.0.0", leaf: "1.0.0" } },
+      leaf: { files: manyFiles },
+    };
+    using run = await installFromLockfile(
+      packages,
+      { workspaces: ["packages/*"] },
+      {
+        late: "leaf",
+        early: "early",
+        link: "late",
+        files: {
+          "packages/app/package.json": JSON.stringify({
+            name: "app",
+            version: "1.0.0",
+            scripts: { postinstall: list("../../node_modules/.bun/leaf@1.0.0/node_modules/leaf/files") },
+            dependencies: { early: "1.0.0" },
+          }),
+        },
+      },
+    );
+
+    expect(await listed(run.cwd, "packages", "app")).toBeArrayOfSize(3000);
+    expect(run.exitCode).toBe(0);
+  });
+});
+
 test("early dedupe keeps declarer-specific resolutions of an unprovided peer", async () => {
   // `dedupe-divergent-peers` pulls in two declarers of the peer name
   // `no-deps` with divergent ranges: `dedupe-cycle-peer` wants 1.0.0 and

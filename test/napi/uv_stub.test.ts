@@ -1,104 +1,151 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, makeTree, tempDirWithFiles } from "harness";
+import { beforeAll, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDirWithFiles } from "harness";
 import path from "node:path";
 import { symbols, test_skipped } from "../../src/jsc/bindings/libuv/generate_uv_posix_stubs_constants";
-import goodSource from "./uv-stub-stuff/good_plugin.c";
-import source from "./uv-stub-stuff/plugin.c";
 
-const all_symbols_to_test = symbols.filter(s => !test_skipped.includes(s));
-// Each per-symbol test spawns a fresh bun subprocess that aborts in the stub.
-// Under asan, process startup is ~2.3s and the CI agent exposes 2 vCPUs, so
-// the full ~294-symbol set is ~11 minutes of CPU-bound work regardless of
-// concurrency and overruns the file timeout. All stubs route through the
-// same CrashHandler__unsupportedUVFunction formatter, so a strided sample
-// exercises the mechanism on asan while every non-asan lane still runs the
-// full set.
-const symbols_to_test = isASAN ? all_symbols_to_test.filter((_, i) => i % 6 === 0) : all_symbols_to_test;
+// On POSIX, bun exports a stub for every unsupported libuv symbol so that a
+// NAPI addon referencing it loads, and calling it aborts with a message naming
+// the function. Coverage here comes in three layers:
+//
+// 1. plugin.c (generated) contains a typed call to every symbol in the list;
+//    compiling it in beforeAll type-checks all of them against the libuv
+//    headers on every run.
+// 2. symbol_check.c resolves every symbol through the dynamic linker
+//    (dlsym/dladdr) in-process and asserts each one lands in the same binary
+//    that provides N-API, i.e. bun itself. This is the all-symbols guarantee
+//    that every stub is exported and reachable, and it costs no subprocesses.
+//    It covers the full list, including the test_skipped symbols: those are
+//    exported stubs too, they just have no generated typed call in plugin.c,
+//    so only layers 1 and 3 exempt them.
+// 3. The abort path (stub -> CrashHandler__unsupportedUVFunction -> crash
+//    message naming the symbol) costs one aborted bun process per symbol, so
+//    it runs for a fixed sample: the first symbol of every 8th API family
+//    (uv_fs_*, uv_tcp_*, ...) plus the last symbol in the list. The formatter
+//    is shared by all stubs, so the sample exercises the mechanism while
+//    layers 1 and 2 keep per-symbol coverage.
+const callable_symbols = symbols.filter(s => !test_skipped.includes(s));
+
+const family_reps: string[] = [];
+{
+  const seen = new Set<string>();
+  for (const s of callable_symbols) {
+    const family = /^uv_[a-z0-9]+/.exec(s)![0];
+    if (!seen.has(family)) {
+      seen.add(family);
+      family_reps.push(s);
+    }
+  }
+}
+const abort_sample = [
+  ...new Set([...family_reps.filter((_, i) => i % 8 === 0), callable_symbols[callable_symbols.length - 1]]),
+];
+
+const fixtures = path.join(import.meta.dir, "uv-stub-stuff");
+const napiInclude = path.join(import.meta.dir, "../../src/runtime/napi");
+const libuvInclude = path.join(import.meta.dir, "../../src/jsc/bindings/libuv");
 
 // We use libuv on Windows
 describe.if(!isWindows)("uv stubs", () => {
-  const cwd = process.cwd();
   let tempdir: string = "";
-  let outdir: string = "";
+  const addon = (name: string) => path.join(tempdir, `${name}.node`);
 
   beforeAll(async () => {
-    const files = {
-      "plugin.c": await Bun.file(source).text(),
-      "good_plugin.c": await Bun.file(goodSource).text(),
-      "package.json": JSON.stringify({
-        "name": "fake-plugin",
-        "module": "index.ts",
-        "type": "module",
-        "devDependencies": {
-          "@types/bun": "latest",
-        },
-        "peerDependencies": {
-          "typescript": "^5.0.0",
-        },
-        "scripts": {
-          "build:napi": "node-gyp configure && node-gyp build",
-        },
-        "dependencies": {
-          "node-gyp": "10.2.0",
-        },
-      }),
-      "index.ts": `const symbol = process.argv[2]; const foo = require("./build/Release/xXx123_foo_counter_321xXx.node"); foo.callUVFunc(symbol)`,
-      "nocrash.ts": `const foo = require("./build/Release/good_plugin.node");console.log('HI!')`,
-      "binding.gyp": `{
-  "targets": [
-    {
-      "target_name": "xXx123_foo_counter_321xXx",
-      "sources": [ "plugin.c" ],
-      "include_dirs": [ ".", "./libuv" ],
-      "cflags": ["-fPIC"],
-      "ldflags": ["-Wl,--export-dynamic"]
-    },
-    {
-      "target_name": "good_plugin",
-      "sources": [ "good_plugin.c" ],
-      "include_dirs": [ ".", "./libuv" ],
-      "cflags": ["-fPIC"],
-      "ldflags": ["-Wl,--export-dynamic"]
+    tempdir = tempDirWithFiles("uv-stubs", {});
+    const cc = Bun.which("cc") || Bun.which("clang") || Bun.which("gcc");
+    if (!cc) throw new Error("uv_stub.test.ts: no C compiler (cc/clang/gcc) found in $PATH");
+
+    // The addons are plain C using only stable napi v1 declarations, so they
+    // compile against bun's own copy of the node headers: no node-gyp, no
+    // package install, no header download.
+    async function compile(source: string, name: string) {
+      const cmd = [
+        cc,
+        "-shared",
+        "-fPIC",
+        `-DNODE_GYP_MODULE_NAME=${name}`,
+        "-I",
+        napiInclude,
+        "-I",
+        libuvInclude,
+        source,
+        "-o",
+        addon(name),
+      ];
+      // The uv_* and napi_* references stay undefined until bun loads the
+      // addon; macOS's linker rejects that without dynamic_lookup.
+      if (isMacOS) cmd.push("-undefined", "dynamic_lookup");
+      // dlsym/dladdr live in libdl on pre-2.34 glibc.
+      if (isLinux) cmd.push("-ldl");
+      await using proc = Bun.spawn({ cmd, env: bunEnv, stdout: "ignore", stderr: "pipe" });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      if (exitCode !== 0) throw new Error(`cc failed for ${source}:\n${stderr}`);
     }
-  ]
-}
-`,
-    };
 
-    tempdir = tempDirWithFiles("native-plugins", files);
+    await Promise.all([
+      compile(path.join(fixtures, "plugin.c"), "plugin"),
+      compile(path.join(fixtures, "good_plugin.c"), "good_plugin"),
+      compile(path.join(fixtures, "symbol_check.c"), "symbol_check"),
+    ]);
+  }, 60_000);
 
-    await makeTree(tempdir, files);
-    outdir = path.join(tempdir, "dist");
-
-    process.chdir(tempdir);
-
-    const libuvDir = path.join(__dirname, "../../src/jsc/bindings/libuv");
-    await Bun.$`cp -R ${libuvDir} ${path.join(tempdir, "libuv")}`;
-    await Bun.$`${bunExe()} i && ${bunExe()} build:napi`.env(bunEnv).cwd(tempdir);
-    console.log("tempdir:", tempdir);
+  test("every stub symbol resolves into the bun binary", () => {
+    const { checkSymbols } = require(addon("symbol_check"));
+    const { missing, modules, napiModule } = checkSymbols(symbols);
+    expect(missing).toEqual([]);
+    expect([...new Set(modules)]).toEqual([napiModule]);
+    expect(modules).toHaveLength(symbols.length);
   });
 
-  afterAll(() => {
-    process.chdir(cwd);
-  });
-
-  // The bodies share no mutable state (tempdir is read-only after
-  // beforeAll), so run them concurrently.
-  for (const symbol of symbols_to_test) {
-    test.concurrent(`unsupported: ${symbol}`, async () => {
-      const { stderr } = await Bun.$`BUN_INTERNAL_SUPPRESS_CRASH_ON_UV_STUB=1 ${bunExe()} run index.ts ${symbol}`
-        .cwd(tempdir)
-        .throws(false)
-        .quiet();
-      const stderrStr = stderr.toString();
-      expect(stderrStr).toContain("Bun encountered a crash when running a NAPI module that tried to call");
-      expect(stderrStr).toContain(symbol);
-    });
+  // The bodies share no mutable state (tempdir is read-only after beforeAll),
+  // so run them concurrently.
+  // An aborting debug/ASAN bun takes several seconds (startup + crash-handler
+  // symbolication), and these run concurrently on a shared CPU budget, so the
+  // local 5s default timeout is not enough.
+  for (const symbol of abort_sample) {
+    test.concurrent(
+      `unsupported: ${symbol}`,
+      async () => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", `require(${JSON.stringify(addon("plugin"))}).callUVFunc(${JSON.stringify(symbol)})`],
+          env: { ...bunEnv, BUN_INTERNAL_SUPPRESS_CRASH_ON_UV_STUB: "1" },
+          stdout: "ignore",
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        // The crash banner colors the symbol name even when piped.
+        const plain = Bun.stripANSI(stderr);
+        expect(plain).toContain(
+          `Bun encountered a crash when running a NAPI module that tried to call\nthe ${symbol} libuv function.`,
+        );
+        expect(plain).toContain(`unsupported uv function: ${symbol}`);
+        expect(exitCode).not.toBe(0);
+      },
+      90_000,
+    );
   }
 
-  test("should not crash when calling supported uv functions", async () => {
-    const { stdout, exitCode } = await Bun.$`${bunExe()} run nocrash.ts`.cwd(tempdir).throws(false).quiet();
-    expect(exitCode).toBe(0);
-    expect(stdout.toString()).toContain("HI!");
-  });
+  test.concurrent(
+    "should not crash when calling supported uv functions",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", `require(${JSON.stringify(addon("good_plugin"))}); console.log("HI!")`],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // good_plugin's init calls uv_os_getpid (a real implementation, not a
+      // stub) and prints the pid, which is proc.pid since Bun.spawn execs the
+      // child directly. C stdio may flush it after console.log's output, so
+      // don't assert ordering. stderr is part of the assertion so a crash
+      // banner shows up in the failure diff, but debug builds may print
+      // benign noise there, so its contents aren't pinned.
+      expect({ exitCode, lines: stdout.split("\n"), stderr }).toEqual({
+        exitCode: 0,
+        lines: expect.arrayContaining([String(proc.pid), "HI!"]),
+        stderr: expect.any(String),
+      });
+    },
+    90_000,
+  );
 });

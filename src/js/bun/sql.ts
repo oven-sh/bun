@@ -244,7 +244,7 @@ const SQL = function SQL(
       if ((values?.length ?? 0) === 0) {
         flags |= SQLQueryFlags.simple;
       }
-      const query = new Query(
+      const query = new Query<import("internal/sql/shared.ts").SQLResultArray<any>, any>(
         strings,
         values,
         flags,
@@ -883,7 +883,17 @@ const SQL = function SQL(
       if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
         await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
       }
-      await run_internal_transaction_sql(COMMIT_COMMAND);
+      const commit_result = await run_internal_transaction_sql(COMMIT_COMMAND);
+      // PostgreSQL answers COMMIT on an aborted transaction with a
+      // CommandComplete tag of "ROLLBACK" (the session is already in the
+      // failed-transaction state, so nothing was committed). Surfacing that
+      // as a resolved begin() would report a rolled-back transaction as
+      // success.
+      if (commit_result?.command === "ROLLBACK") {
+        throw new PostgresError("COMMIT was rolled back by the server because the transaction was already aborted", {
+          code: "ERR_POSTGRES_COMMIT_ROLLED_BACK",
+        });
+      }
       return resolve(transaction_result);
     } catch (err) {
       try {

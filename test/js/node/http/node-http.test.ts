@@ -4914,10 +4914,7 @@ it.each([
 });
 
 it("a non-200 CONNECT through a proxy that holds the connection open is destroyed client-side", async () => {
-  // cleanupAndPropagate deliberately defers destroy to req.onSocket for
-  // status-code tunnel failures; oncreate must forward the socket so
-  // onSocketNT actually destroys it - otherwise the proxy connection leaks
-  // until the proxy closes its side.
+  // Node leaves this connection open. https.Agent#createConnection() closes it: the request gets only the error.
   const proxySockets: import("node:net").Socket[] = [];
   const proxy = createNetServer(socket => {
     proxySockets.push(socket);

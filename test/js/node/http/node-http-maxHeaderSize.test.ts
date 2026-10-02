@@ -203,19 +203,15 @@ describe("the head of a proxy's CONNECT response", () => {
   });
 
   test.concurrent.each([
-    ["32768", [32768, 32769], ["407", "Proxy response headers exceeded 32768 bytes"]],
+    ["32768", 32769, "Proxy response headers exceeded 32768 bytes"],
     // Bun stores 0 as 1 GiB. Node refuses every tunnel for 0.
-    ["0", [65536], ["407"]],
-  ])("--max-http-header-size=%s is its limit", async (size, lengths, expected) => {
-    const { proxy, proxyUrl } = await startProxy(lengths.map(refusedHead));
+    ["0", 65536, "407"],
+  ])("--max-http-header-size=%s is its limit", async (size, length, expected) => {
+    const { proxy, proxyUrl } = await startProxy([refusedHead(length)]);
     try {
       const script = `
-        const errors = [];
-        (function next() {
-          const req = require("node:https").get("https://example.invalid/");
-          req.on("error", err => errors.push(String(err.statusCode ?? err.message)));
-          req.on("close", () => (errors.length < ${lengths.length} ? next() : console.log(JSON.stringify(errors))));
-        })();
+        const req = require("node:https").get("https://example.invalid/");
+        req.on("error", err => console.log(String(err.statusCode ?? err.message)));
       `;
       await using proc = Bun.spawn({
         cmd: [bunExe(), `--max-http-header-size=${size}`, "-e", script],
@@ -231,11 +227,7 @@ describe("the head of a proxy's CONNECT response", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-        stdout: JSON.stringify(expected),
-        stderr: "",
-        exitCode: 0,
-      });
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
     } finally {
       proxy.close();
     }

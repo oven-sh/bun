@@ -34,12 +34,14 @@ type Row = {
   env?: Record<string, string>;
   files?: Record<string, string>;
   skip?: boolean;
-} & (Ticketed | Weak);
+} & (Ticketed | Weak | Either);
 // Ticketed work: substring of the site (file) the ticket was taken at, as
 // logged by "[vm] late completion from <file>:<line>".
 type Ticketed = { ticket: string; weak?: never };
 // Weak posters: the task tag logged by "[vm] late post: <tag> (...)".
 type Weak = { weak: string; ticket?: never };
+// Work that comes back one way or the other, depending on whether it had started.
+type Either = { ticket: string; weak: string };
 
 const ROWS: Row[] = [
   // ── thread pool: bun_jsc::Job ────────────────────────────────────────────
@@ -92,10 +94,13 @@ const ROWS: Row[] = [
     // ticket) by ConcurrentCppTask; its *result* comes back by context id —
     // WebCore's postTaskTo(), a weak post — and because the ticket kept the
     // worker draining rather than closed, that post is delivered and its
-    // promise/callback refs are released on the worker's thread.
+    // promise/callback refs are released on the worker's thread. A closure
+    // the pool had not started when the worker stopped is not run: it comes
+    // back through its ticket and is released on the worker's thread too.
     name: "crypto.subtle.digest",
     worker: `crypto.subtle.digest("SHA-256", Buffer.alloc(65536));`,
     weak: "CppTask",
+    ticket: "CppTask.rs",
   },
   {
     name: "Bun.password.hash",
@@ -254,10 +259,10 @@ describe.skipIf(!isDebug && !isASAN)("work that comes back after its worker bega
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       const lines = stderr.split("\n").filter(l => l.startsWith("[vm] "));
+      const { ticket, weak } = row;
       const seen =
-        "ticket" in row && row.ticket
-          ? lines.some(l => l.startsWith("[vm] late completion from ") && l.includes(row.ticket))
-          : lines.some(l => l.startsWith(`[vm] late post: ${row.weak} (`));
+        (!!ticket && lines.some(l => l.startsWith("[vm] late completion from ") && l.includes(ticket))) ||
+        (!!weak && lines.some(l => l.startsWith(`[vm] late post: ${weak} (`)));
       expect({
         exitCode,
         seen,
@@ -413,5 +418,75 @@ describe.skipIf(isWindows)("terminate() waits for work that cannot be cancelled"
     ]);
     expect(stdout).toBe("terminating\nexit code: 1\n");
     expect(await proc.exited).toBe(0);
+  });
+});
+
+// crypto.subtle work waits in the pool's queue behind both pool threads, which
+// are parked in open() on FIFOs that have no writer yet. The worker is then
+// terminated and the pool released. Work that had not started is not run for a
+// stopping VM, so the CPU spent until the worker's exit stays far below the K
+// queued operations. One operation is measured first, so nothing here is a
+// wall-clock threshold.
+describe.skipIf(isWindows)("terminate() does not run queued crypto.subtle work", () => {
+  test("PBKDF2 deriveBits queued behind a parked pool", async () => {
+    using dir = tempDir("worker-terminate-skips", {});
+    const fifos = [path.join(String(dir), "a"), path.join(String(dir), "b")];
+    const K = 32;
+    const derive = (iterations: number) =>
+      `crypto.subtle.deriveBits({ name: "PBKDF2", salt: new Uint8Array(16), iterations: ${iterations}, hash: "SHA-256" }, key, 256)`;
+    const importKey = `crypto.subtle.importKey("raw", new Uint8Array(16), "PBKDF2", false, ["deriveBits"])`;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const { execFileSync } = require("node:child_process");
+        const fs = require("node:fs");
+        const fifos = ${JSON.stringify(fifos)};
+        execFileSync("mkfifo", fifos);
+        const w = new Worker(
+          'const { parentPort } = require("node:worker_threads");' +
+          'parentPort.once("message", async () => {' +
+          '  const key = await ${importKey};' +
+          '  for (let i = 0; i < ${K}; i++) ${derive(400000)};' +
+          '  parentPort.postMessage("queued");' +
+          '});' +
+          'parentPort.postMessage("ready");',
+          { eval: true },
+        );
+        w.on("error", e => { console.error("worker error:", e); process.exitCode = 1; });
+        w.once("message", async () => {
+          const key = await ${importKey};
+          // A quarter of one queued operation, measured while the pool is free.
+          let cpu = process.cpuUsage();
+          await ${derive(100000)};
+          cpu = process.cpuUsage(cpu);
+          const one = 4 * (cpu.user + cpu.system);
+          for (const fifo of fifos) fs.readFile(fifo, () => {});
+          w.once("message", () => {
+            const before = process.cpuUsage();
+            w.terminate();
+            for (const fifo of fifos) fs.closeSync(fs.openSync(fifo, "w"));
+            w.once("exit", () => {
+              const after = process.cpuUsage(before);
+              console.log(JSON.stringify({ operations: (after.user + after.system) / one }));
+            });
+          });
+          w.postMessage("go");
+        });
+      `,
+      ],
+      env: { ...bunEnv, UV_THREADPOOL_SIZE: "2" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { operations } = JSON.parse(stdout || `{"operations": null}`);
+    expect({ ranFewerThanAQuarter: operations !== null && operations < K / 4, exitCode }).toEqual({
+      ranFewerThanAQuarter: true,
+      exitCode: 0,
+    });
+    if (operations === null) expect(stderr).toBe("");
   });
 });

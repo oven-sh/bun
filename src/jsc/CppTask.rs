@@ -1,9 +1,13 @@
 use crate::{JSGlobalObject, JsResult};
+use bun_event_loop::ConcurrentTask::ConcurrentTask;
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 
 unsafe extern "C" {
     fn Bun__EventLoopTaskNoContext__performTask(task: *mut EventLoopTaskNoContext);
+    fn Bun__EventLoopTaskNoContext__intoUnrunTask(
+        task: *mut EventLoopTaskNoContext,
+    ) -> *mut CppTask;
 }
 
 bun_opaque::opaque_ffi! {
@@ -53,6 +57,13 @@ impl EventLoopTaskNoContext {
         // SAFETY: caller guarantees `this` is a valid C++ EventLoopTaskNoContext; performTask consumes/frees it.
         unsafe { Bun__EventLoopTaskNoContext__performTask(this) }
     }
+
+    /// Deallocates `this` without running it. The returned task destroys the
+    /// closure when the JS thread runs or releases it.
+    pub unsafe fn into_unrun(this: *mut EventLoopTaskNoContext) -> *mut CppTask {
+        // SAFETY: caller guarantees `this` is a valid C++ EventLoopTaskNoContext; intoUnrunTask consumes/frees it.
+        unsafe { Bun__EventLoopTaskNoContext__intoUnrunTask(this) }
+    }
 }
 
 /// A task created from C++ code that runs inside the workpool (WebCrypto's
@@ -73,9 +84,18 @@ impl ConcurrentCppTask {
         let ConcurrentCppTask {
             cpp_task, ticket, ..
         } = *self;
-        // SAFETY: `cpp_task` is the valid C++ handle stored by `ConcurrentCppTask__createAndRun`;
-        // `run` consumes it here.
-        unsafe { EventLoopTaskNoContext::run(cpp_task) };
+        if ticket.script_allowed() {
+            // SAFETY: `cpp_task` is the valid C++ handle stored by `ConcurrentCppTask__createAndRun`;
+            // `run` consumes it here.
+            unsafe { EventLoopTaskNoContext::run(cpp_task) };
+        } else {
+            // A VM that is already stopping does not start queued work: no
+            // script is left to take the result. The closure goes back to the
+            // JS thread unrun, and what it captured is released there.
+            // SAFETY: as above; `into_unrun` consumes the handle.
+            let unrun = unsafe { EventLoopTaskNoContext::into_unrun(cpp_task) };
+            ticket.post(ConcurrentTask::create_from(unrun));
+        }
         ticket.unref_keep_alive();
     }
 }

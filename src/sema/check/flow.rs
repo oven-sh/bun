@@ -318,11 +318,6 @@ fn not_equal_facts_from_typeof_switch(witnesses: &[Atom], from: usize, to: usize
         .fold(0, |all, (_, &name)| all | typeof_ne_facts(name))
 }
 
-/// Whether `e` is written in parentheses of its own.
-fn is_parenthesized(hir: &File, e: ExprId) -> bool {
-    hir.parens.binary_search_by_key(&e.0, |p| p.0.0).is_ok()
-}
-
 impl Walk {
     fn new(
         reference: Reference,
@@ -464,7 +459,8 @@ impl<'p> Checker<'p> {
             }
             TypeData::Intrinsic(
                 Intrinsic::Any | Intrinsic::Error | Intrinsic::Unknown | Intrinsic::Unresolved,
-            ) => m,
+            )
+            | TypeData::UnresolvedName { .. } => m,
             _ if c.is_definitely_falsy(m) => m,
             _ => TypeId::NEVER,
         })
@@ -639,7 +635,17 @@ impl<'p> Checker<'p> {
     fn adjusted_type_with_facts(&mut self, ty: TypeId, include: u32) -> TypeId {
         use facts::*;
         if self.is_any(ty) {
-            return ty;
+            // It has every fact. What is intersected with `{}` below is `errorType` if it is an error type.
+            let is_intersected = self.p.files.options.strict_null_checks
+                && matches!(
+                    include,
+                    NE_UNDEFINED | NE_NULL | NE_UNDEFINED_OR_NULL | TRUTHY
+                );
+            return if is_intersected && self.is_error_type(ty) {
+                TypeId::ERROR
+            } else {
+                ty
+            };
         }
         let strict = self.p.files.options.strict_null_checks;
         let reduced = if strict && ty == TypeId::UNKNOWN {
@@ -800,33 +806,9 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `resolveEntityName` of `a` or `a.b.c` as a value: what stands before a dot is a namespace, a module or an enum.
-    fn symbol_of_entity_name_expression(&self, file: FileId, e: ExprId) -> Option<Sym> {
-        let hir = self.hir(file);
-        if is_parenthesized(hir, e) {
-            return None;
-        }
-        let found = match hir[e].kind {
-            ExprKind::Ident(name) => self.symbol_of_identifier(file, e, name)?,
-            ExprKind::Dot { obj, name, .. } => {
-                let container = self.symbol_of_entity_name_expression(file, obj)?;
-                if !self
-                    .files()
-                    .flags(container)
-                    .intersects(SymFlags::NAMESPACE)
-                {
-                    return None;
-                }
-                self.files().namespace_member(container, name)?
-            }
-            _ => return None,
-        };
-        self.files().resolve_alias_if_needed(found)
-    }
-
     /// `tryGetNameFromEntityNameExpression`
     fn name_from_entity_name_expression(&mut self, file: FileId, node: ExprId) -> Option<Atom> {
-        let sym = self.symbol_of_entity_name_expression(file, node)?;
+        let sym = self.resolve_entity_name_expression(file, node, SymFlags::VALUE)?;
         let files = self.files();
         let flags = files.flags(sym);
         if !flags.intersects(SymFlags::CONST | SymFlags::ENUM_MEMBER) {
@@ -3070,7 +3052,7 @@ impl<'p> Checker<'p> {
         let right = self.reference_candidate(file, right);
         // `narrowTypeByPrivateIdentifierInInExpression`: `#x in v` says whether `v` is of the class that declares `#x`.
         if let ExprKind::String(name) = hir[left].kind
-            && hir.text.get(hir[left].pos as usize) == Some(&b'#')
+            && is_private_name_at(hir, hir[left].pos)
         {
             let Some(&class) = self.bound(file).private_class.get(&left) else {
                 return ty;
@@ -3119,7 +3101,13 @@ impl<'p> Checker<'p> {
             return ty;
         };
         if self.is_any(ty) {
-            return ty;
+            // Nothing is declared in it: the intersection with `Record<K, unknown>` below, which is `errorType` of an error type.
+            let is_intersected = sense && self.global_type_symbol(known::Record).is_some();
+            return if is_intersected && self.is_error_type(ty) {
+                TypeId::ERROR
+            } else {
+                ty
+            };
         }
         // `isTypePresencePossible`. What every object and every function has is a property like any other.
         let may_be = |c: &mut Self, m: TypeId, present: bool| {
@@ -3297,31 +3285,7 @@ impl<'p> Checker<'p> {
         if predicate.asserts {
             return None;
         }
-        // `getNarrowedTypeWorker`: `any` is not the error type, so it is neither `t == candidate` nor a subset of it.
-        if !sense
-            && self.has_any_flag(ty)
-            && predicate.ty.is_some_and(|ty| self.has_any_flag(ty))
-            && self.is_predicate_type_in_error(sig)
-        {
-            return Some(ty);
-        }
         Some(self.apply_predicate(reference, ty, predicate, data.args, receiver, sense))
-    }
-
-    /// `isErrorType` of the type of the type predicate that `sig` is declared with.
-    fn is_predicate_type_in_error(&mut self, sig: SigId) -> bool {
-        let SigData::Decl { file, func, .. } = *self.p.types.sig(sig) else {
-            return false;
-        };
-        let hir = self.hir(file);
-        let ret = hir[func].ret;
-        if ret.is_none() {
-            return false;
-        }
-        let TypeNodeKind::Predicate { ty, .. } = hir[ret].kind else {
-            return false;
-        };
-        ty.is_some() && self.is_error_type_as_written(file, ty, 0)
     }
 
     fn apply_predicate(
@@ -4135,7 +4099,7 @@ impl<'p> Checker<'p> {
             if self.is_flow_too_deep(&reference, flow) {
                 // `reportFlowControlError`
                 self.p.flows_too_deep.insert((file, e), ());
-                return TypeId::ANY;
+                return TypeId::ERROR;
             }
             return declared;
         }
@@ -4213,7 +4177,7 @@ impl<'p> Checker<'p> {
         // errorType, and `reportFlowControlError`
         if walk.too_deep {
             self.p.flows_too_deep.insert((file, e), ());
-            return TypeId::ANY;
+            return TypeId::ERROR;
         }
         if walk.steps >= MAX_STEPS {
             return declared;
@@ -4529,7 +4493,7 @@ impl<'p> Checker<'p> {
         // errorType, and `reportFlowControlError`
         if walk.too_deep {
             self.p.flows_too_deep.insert((file, e), ());
-            return TypeId::ANY;
+            return TypeId::ERROR;
         }
         if walk.steps >= MAX_STEPS {
             return TypeId::ANY;
@@ -4700,11 +4664,7 @@ impl<'p> Checker<'p> {
             Parent::File if !self.files().modules[file.idx()].is_module() => return false,
             _ => {}
         }
-        let from = bound.assignments.partition_point(|a| a.0.0 < symbol.0);
-        !bound.assignments[from..].iter().take_while(|a| a.0 == symbol).any(|&(_, target)| {
-            let is_deleted = matches!(bound.expr_parent[target.idx()], Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Unary { op: UnOp::Delete, .. }));
-            !is_deleted && !self.is_compound_assignment_target(file, target)
-        })
+        !bound.is_symbol_assigned_definitely(hir, symbol)
     }
 
     /// `markNodeAssignmentsWorker`: what `export { x }` names may be assigned to at any time, for all that can be seen from here.
@@ -5070,7 +5030,7 @@ impl<'p> Checker<'p> {
     /// `getTypeAtFlowNode`
     fn flow_type(&mut self, walk: &mut Walk, start: FlowId) -> TypeId {
         if walk.too_deep {
-            return TypeId::ANY;
+            return TypeId::ERROR;
         }
         let file = walk.reference.file;
         let bound = self.bound(file);
@@ -5100,7 +5060,7 @@ impl<'p> Checker<'p> {
             walk.depth = depth + 1 + pending.len() as u32 + passed;
             if walk.depth > MAX_FLOW_DEPTH {
                 walk.too_deep = true;
-                break TypeId::ANY;
+                break TypeId::ERROR;
             }
             match bound.flow[flow.idx()] {
                 Flow::Unreachable => break TypeId::NEVER,
@@ -5143,7 +5103,10 @@ impl<'p> Checker<'p> {
                         break TypeId::NEVER;
                     }
                     if let FlowTarget::Expr(e) = target
-                        && self.is_compound_assignment_target(file, e)
+                        && self
+                            .bound(file)
+                            .get_assignment_target_kind(self.hir(file), e)
+                            == AssignmentKind::Compound
                         && self.matches(&walk.reference, e)
                     {
                         pending.push(Pending::Compound);
@@ -5349,7 +5312,7 @@ impl<'p> Checker<'p> {
         };
         walk.depth = depth;
         if walk.too_deep {
-            return TypeId::ANY;
+            return TypeId::ERROR;
         }
         let reference = &walk.reference;
         while let Some(p) = pending.pop() {
@@ -5862,7 +5825,7 @@ impl<'p> Checker<'p> {
                 let key = self.string_literal(name, false);
                 Some(
                     self.indexed_access_if_any(ty, key, true)
-                        .unwrap_or(TypeId::ANY),
+                        .unwrap_or(TypeId::ERROR),
                 )
             }
             Parent::Stmt(left) => {
@@ -5886,30 +5849,6 @@ impl<'p> Checker<'p> {
                 }
             }
             _ => None,
-        }
-    }
-
-    /// `x` in `x += 1`, `x++`.
-    fn is_compound_assignment_target(&self, file: FileId, e: ExprId) -> bool {
-        let hir = self.hir(file);
-        let crate::bind::Parent::Expr(parent) = self.bound(file).expr_parent[e.idx()] else {
-            return false;
-        };
-        match hir[parent].kind {
-            ExprKind::Assign {
-                op: Some(BinOp::And | BinOp::Or | BinOp::Nullish),
-                ..
-            } => false,
-            ExprKind::Assign {
-                op: Some(_),
-                target,
-                ..
-            } => target == e,
-            ExprKind::Unary {
-                op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
-                ..
-            } => true,
-            _ => false,
         }
     }
 
@@ -6146,7 +6085,7 @@ impl<'p> Checker<'p> {
 
     /// `getEffectsSignature`, of a call that is a statement: the signature called, if it says that it asserts something or that it
     /// never returns.
-    fn effects_signature(&mut self, file: FileId, call: ExprId) -> Option<SigId> {
+    pub(super) fn effects_signature(&mut self, file: FileId, call: ExprId) -> Option<SigId> {
         self.effects_signature_and_is_kept(file, call).0
     }
 

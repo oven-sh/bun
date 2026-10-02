@@ -195,20 +195,6 @@ impl Checker<'_> {
         }
     }
 
-    /// `GetErrorRangeForNode` of whatever `func` is.
-    fn place_of_fn(&self, file: FileId, func: FnId) -> Place {
-        self.place_in_file(file, self.hir(file)[func].pos, |c| {
-            match c.bound(file).fns[func.idx()].owner {
-                // By its name, or else by the name of what it is given to.
-                FnOwner::Expr(e) if c.hir(file)[func].kind == FnKind::Expr => (
-                    c.error_start_inside_parentheses(file, e),
-                    c.error_end_inside_parentheses(file, e),
-                ),
-                _ => c.error_range_of_fn(file, func),
-            }
-        })
-    }
-
     /// `GetErrorRangeForNode` of `ty.symbol.Declarations[0]`
     pub(super) fn first_declaration_of_type_symbol(&mut self, ty: TypeId) -> Option<Place> {
         let ty = self.force(ty);
@@ -216,7 +202,7 @@ impl Checker<'_> {
             TypeData::Ref { target, .. } => *target,
             TypeData::Fns { decls, .. } => {
                 let &(file, func) = decls.first()?;
-                return Some(self.place_of_fn(file, func));
+                return Some(self.place_of_signature_declaration(file, func));
             }
             TypeData::Anon { origin, .. } => match *origin {
                 Origin::TypeLiteral(file, node) | Origin::Mapped(file, node) => {
@@ -231,8 +217,9 @@ impl Checker<'_> {
                 Origin::ClassStatic(sym)
                 | Origin::Function(sym)
                 | Origin::EnumObject(sym)
-                | Origin::Module(sym) => sym,
-                Origin::Namespace { .. } | Origin::GlobalThis => return None,
+                | Origin::Module(sym)
+                | Origin::Namespace { module: sym, .. } => sym,
+                Origin::GlobalThis => return None,
             },
             _ => return None,
         };
@@ -247,7 +234,7 @@ impl Checker<'_> {
                 };
                 Some(self.place_of_token(file, start))
             }
-            Decl::Fn(func) => Some(self.place_of_fn(file, func)),
+            Decl::Fn(func) => Some(self.place_of_signature_declaration(file, func)),
             _ => self.place_of_declaration(file, decl),
         }
     }

@@ -546,7 +546,6 @@ impl Checker<'_> {
         };
         let is_reserved = |name: Atom| parses && name.is_some() && reserved_words.contains(&name);
         // What is in parentheses is no identifier, whatever is in them.
-        let is_parenthesized = |e: ExprId| hir.parens.binary_search_by_key(&e.0, |p| p.0.0).is_ok();
         let index = self.exprs_by_kind(file);
         if parses {
             for &id in index.of(ExprTag::Ident) {
@@ -584,7 +583,7 @@ impl Checker<'_> {
                 } => {
                     if let ExprKind::Ident(name) = hir[operand].kind
                         && is_eval_or_arguments(name)
-                        && !is_parenthesized(operand)
+                        && !is_parenthesized(hir, operand)
                     {
                         out.push(Diagnostic {
                             start: hir[operand].pos,
@@ -597,7 +596,7 @@ impl Checker<'_> {
                     op: UnOp::Delete,
                     operand,
                 } if matches!(hir[operand].kind, ExprKind::Ident(_))
-                    && !is_parenthesized(operand) =>
+                    && !is_parenthesized(hir, operand) =>
                 {
                     out.push(Diagnostic {
                         start: hir[operand].pos,
@@ -729,10 +728,7 @@ impl Checker<'_> {
                     in_scope(self, hir.id_at(name, 0), t.pos, scope, out)
                 }
                 TypeNodeKind::Typeof { expr, .. } if expr.is_some() => {
-                    let mut leftmost = expr;
-                    while let ExprKind::Dot { obj, .. } = hir[leftmost].kind {
-                        leftmost = obj;
-                    }
+                    let leftmost = first_identifier(hir, expr);
                     if let ExprKind::Ident(name) = hir[leftmost].kind {
                         in_scope(self, name, hir[leftmost].pos, scope, out);
                     }
@@ -1014,35 +1010,6 @@ impl Checker<'_> {
 }
 
 // ───────────────────────────── the text ─────────────────────────────
-
-/// `hasParseDiagnostics`. What the parser objected to and went on from is kept with what tsgo's binder and checker say of syntax.
-/// They are told apart by the code: these are the ones only parser.go and scanner.go give, and 1003, 1005, 1453 and 2880, which are
-/// only ever noted for what the parser objected to. Where type syntax was given up on it cannot be told.
-/// The codes only decide for declaration files. Elsewhere `parse_for_sema` sets the flag by the origin of each error.
-fn has_parse_diagnostics(hir: &hir::File) -> bool {
-    hir.has_parse_diagnostics
-        || hir.has_errors
-        || hir.syntax_errors > 0
-        || hir.kind == FileKind::Declaration && hir.early_errors.iter().any(|&(_, code)| {
-            matches!(
-                code,
-                1002 | 1003 | 1005 | 1007 | 1010..=1012 | 1034 | 1068 | 1084 | 1109 | 1121 | 1124..=1132 | 1134 | 1135 | 1137..=1140
-                    | 1144..=1146 | 1160 | 1161 | 1177..=1181 | 1185 | 1198 | 1199 | 1209 | 1260 | 1351..=1353 | 1357 | 1381 | 1382
-                    | 1385..=1390 | 1434..=1443 | 1453 | 1472 | 1477 | 1478 | 1487..=1490 | 2754 | 2809 | 2819 | 2880 | 6188 | 6189
-                    | 17002 | 17006..=17008 | 17014 | 17015 | 17021 | 18009 | 18026 | 18029 | 18030
-            )
-        })
-}
-
-/// Whether `word` is written at `at`, and ends there.
-fn is_word_at(text: &[u8], at: usize, word: &[u8]) -> bool {
-    text.get(at..).is_some_and(|rest| {
-        rest.starts_with(word)
-            && !rest.get(word.len()).is_some_and(|&b| {
-                b.is_ascii_alphanumeric() || matches!(b, b'_' | b'$' | b'\\') || b >= 0x80
-            })
-    })
-}
 
 /// `nextTokenIsIdentifierOrKeywordOrLiteralOnSameLine`, of the token that ends at `at`.
 fn operand_follows_on_the_line(text: &[u8], mut at: usize) -> bool {

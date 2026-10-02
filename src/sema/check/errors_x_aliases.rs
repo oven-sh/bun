@@ -884,8 +884,11 @@ impl Checker<'_> {
         {
             return false;
         }
-        self.xa_resolve_alias(candidate, links)
-            .is_some_and(|target| files.flags(target).intersects(meaning))
+        match self.xa_resolve_alias(candidate, links) {
+            Some(target) => files.flags(target).intersects(meaning),
+            // `unknownSymbol` is made with `SymbolFlagsProperty`.
+            None => meaning.contains(SymFlags::VALUE),
+        }
     }
 
     // ───────────────────────────── what a module exports ─────────────────────────────
@@ -2066,7 +2069,7 @@ impl Checker<'_> {
                 .types
                 .iter()
                 .filter(|t| matches!(t.kind, TypeNodeKind::Import { .. }))
-                .filter_map(|t| import_type_specifier(text, t.pos))
+                .filter_map(|t| start_of_import_type_specifier(text, t.pos))
                 .collect();
             for &SpecifierUse {
                 spec,
@@ -2584,10 +2587,7 @@ impl Checker<'_> {
         // Under `verbatimModuleSyntax` alone an import is where it is said, and what is misused has been told so.
         if !self.p.files.options.isolated_modules_said {
             let is_accessed = matches!(bound.expr_parent[e.idx()], Parent::Expr(p) if p.is_some() && matches!(hir[p].kind, ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if obj == e));
-            let mut first = e;
-            while let ExprKind::Dot { obj, .. } = hir[first].kind {
-                first = obj;
-            }
+            let first = first_identifier(hir, e);
             let local = bound.expr_symbol[first.idx()];
             if !is_accessed
                 || local.is_some() && bound.symbols[local.idx()].flags.contains(SymFlags::ALIAS)
@@ -2630,7 +2630,7 @@ impl Checker<'_> {
                         hir[s].kind,
                         StmtKind::ExportDefault(_) | StmtKind::ExportAssign(_)
                     )
-                    && hir.parens.binary_search_by_key(&e.0, |p| p.0.0).is_err() =>
+                    && !is_parenthesized(hir, e) =>
             {
                 return;
             }
@@ -2647,9 +2647,8 @@ impl Checker<'_> {
         );
         // Parentheses around it are an expression of the same type.
         if self.p.files.options.isolated_modules_said
-            && let Ok(at) = hir.parens.binary_search_by_key(&e.0, |p| p.0.0)
+            && let Some(start) = open_parenthesis(hir, e)
         {
-            let start = hir.parens[at].1;
             out.push(Diagnostic { start, code: 2748 });
             self.note(
                 start,
@@ -2903,25 +2902,6 @@ fn namespace_export_start(text: &[u8], pos: u32) -> u32 {
     eat_word(text, at, b"type").map_or(at, |end| skip_trivia(text, end)) as u32
 }
 
-/// Where `a as b` in braces starts, `a` being at `name_pos`: at the `type` before it if it has one.
-fn specifier_start(text: &[u8], name_pos: u32, type_only: bool) -> u32 {
-    if !type_only {
-        return name_pos;
-    }
-    let mut before = text[..(name_pos as usize).min(text.len())].trim_ascii_end();
-    while before.ends_with(b"*/") {
-        let Some(open) = before.windows(2).rposition(|w| w == b"/*") else {
-            break;
-        };
-        before = before[..open].trim_ascii_end();
-    }
-    if before.ends_with(b"type") {
-        before.len() as u32 - 4
-    } else {
-        name_pos
-    }
-}
-
 /// The start of `GetErrorRangeForNode` of the declaration `decl` of an alias, which is in the statement at `pos`: the name of
 /// `* as ns` in an import, and where each of the others starts.
 fn alias_node_start(hir: &hir::File, decl: Decl, pos: u32) -> u32 {
@@ -2930,15 +2910,15 @@ fn alias_node_start(hir: &hir::File, decl: Decl, pos: u32) -> u32 {
         Decl::ImportDefault(x) => eat_word(text, pos as usize, b"import")
             .map_or(hir[x].default_pos, |end| skip_trivia(text, end) as u32),
         Decl::ImportNamespace(x) => hir[x].namespace_pos,
-        Decl::ImportSpec(s) => specifier_start(text, hir[s].imported_pos, hir[s].type_only),
-        Decl::ExportSpec(s) => specifier_start(text, hir[s].local_pos, hir[s].type_only),
+        Decl::ImportSpec(s) => start_with_type(text, hir[s].imported_pos, hir[s].type_only),
+        Decl::ExportSpec(s) => start_with_type(text, hir[s].local_pos, hir[s].type_only),
         Decl::ExportStarAs(_) => namespace_export_start(text, pos),
         _ => pos,
     }
 }
 
 /// Where the specifier of `import("m")` or `typeof import("m")`, the type at `pos`, is.
-fn import_type_specifier(text: &[u8], pos: u32) -> Option<u32> {
+fn start_of_import_type_specifier(text: &[u8], pos: u32) -> Option<u32> {
     let mut at = pos as usize;
     if let Some(end) = eat_word(text, at, b"typeof") {
         at = skip_trivia(text, end);
@@ -3105,8 +3085,8 @@ fn require_call_argument(hir: &hir::File, call: ExprId) -> Option<(ExprId, Atom)
     let (ExprKind::Call(c), ExprKind::String(spec)) = (hir[call].kind, hir[argument].kind) else {
         return None;
     };
-    let is_parenthesized = |e: ExprId| hir.parens.binary_search_by_key(&e.0, |p| p.0.0).is_ok();
-    (!is_parenthesized(hir[c].callee) && !is_parenthesized(argument)).then_some((argument, spec))
+    (!is_parenthesized(hir, hir[c].callee) && !is_parenthesized(hir, argument))
+        .then_some((argument, spec))
 }
 
 /// `isCommentOrBlankLine`

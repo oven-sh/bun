@@ -120,26 +120,6 @@ pub enum JsDeclarationKind {
     ObjectDefinePropertyExports,
 }
 
-/// Whether `e` is written in parentheses. The HIR has no node for them.
-fn is_in_parens(hir: &File, e: ExprId) -> bool {
-    hir.parens.binary_search_by_key(&e.0, |p| p.0.0).is_ok()
-}
-
-/// Whether the name at `pos` is a `#name`.
-fn is_private_name_at(hir: &File, pos: u32) -> bool {
-    hir.text.get(pos as usize) == Some(&b'#')
-}
-
-/// `IsStringOrNumericLiteralLike`. `("a")` is not one.
-fn is_string_or_numeric_literal_like(hir: &File, e: ExprId) -> bool {
-    !is_in_parens(hir, e)
-        && match hir[e].kind {
-            ExprKind::String(_) | ExprKind::Number(_) => true,
-            ExprKind::Template { exprs, .. } => exprs.is_empty(),
-            _ => false,
-        }
-}
-
 /// The text of a string literal or of a template without substitutions, in parentheses or not. `NONE` for anything else,
 /// including a numeric literal, which takes an interner to spell.
 fn string_literal_text(hir: &File, e: ExprId) -> Atom {
@@ -154,7 +134,7 @@ fn string_literal_text(hir: &File, e: ExprId) -> Atom {
 
 /// `IsExportsIdentifier`
 fn is_exports_identifier(hir: &File, e: ExprId) -> bool {
-    matches!(hir[e].kind, ExprKind::Ident(known::exports)) && !is_in_parens(hir, e)
+    matches!(hir[e].kind, ExprKind::Ident(known::exports)) && !is_parenthesized(hir, e)
 }
 
 /// `IsModuleExportsAccessExpression`
@@ -166,8 +146,8 @@ pub fn is_module_exports(hir: &File, e: ExprId) -> bool {
     };
     name == known::exports
         && matches!(hir[obj].kind, ExprKind::Ident(known::module))
-        && !is_in_parens(hir, obj)
-        && !is_in_parens(hir, e)
+        && !is_parenthesized(hir, obj)
+        && !is_parenthesized(hir, e)
 }
 
 /// `GetAssignmentDeclarationKind`, for the kinds that only JavaScript has.
@@ -180,7 +160,7 @@ pub fn assignment_declaration_kind(hir: &File, e: ExprId) -> JsDeclarationKind {
             op: None,
             target,
             value,
-        } if !is_in_parens(hir, target) => (target, value),
+        } if !is_parenthesized(hir, target) => (target, value),
         ExprKind::Call(_) => {
             return match define_property_call(hir, e) {
                 Some((object, _))
@@ -219,7 +199,7 @@ pub fn assignment_declaration_kind(hir: &File, e: ExprId) -> JsDeclarationKind {
     {
         return JsDeclarationKind::ExportsProperty(name);
     }
-    if matches!(hir[obj].kind, ExprKind::This) && !is_in_parens(hir, obj) {
+    if matches!(hir[obj].kind, ExprKind::This) && !is_parenthesized(hir, obj) {
         JsDeclarationKind::ThisProperty
     } else {
         JsDeclarationKind::None
@@ -228,7 +208,7 @@ pub fn assignment_declaration_kind(hir: &File, e: ExprId) -> JsDeclarationKind {
 
 /// `IsBindableStaticNameExpression` with `excludeThisKeyword`: `a`, `a.b`, `a["b"]`, `a[0]`.
 fn is_bindable_static_name(hir: &File, e: ExprId) -> bool {
-    !is_in_parens(hir, e)
+    !is_parenthesized(hir, e)
         && match hir[e].kind {
             ExprKind::Ident(_) => true,
             ExprKind::Dot { obj, name_pos, .. } => {
@@ -248,7 +228,7 @@ pub fn define_property_call(hir: &File, e: ExprId) -> Option<(ExprId, ExprId)> {
         return None;
     };
     let call = &hir[c];
-    if call.args.len() != 3 || is_in_parens(hir, call.callee) {
+    if call.args.len() != 3 || is_parenthesized(hir, call.callee) {
         return None;
     }
     let ExprKind::Dot {
@@ -261,7 +241,7 @@ pub fn define_property_call(hir: &File, e: ExprId) -> Option<(ExprId, ExprId)> {
     };
     let (object, key) = (hir.id_at(call.args, 0), hir.id_at(call.args, 1));
     (matches!(hir[obj].kind, ExprKind::Ident(known::Object))
-        && !is_in_parens(hir, obj)
+        && !is_parenthesized(hir, obj)
         && is_string_or_numeric_literal_like(hir, key)
         && is_bindable_static_name(hir, object))
     .then_some((object, key))
@@ -391,6 +371,25 @@ pub struct Scope {
     pub symbol: SymbolId,
 }
 
+/// What `GetAssignmentTarget` finds.
+#[derive(Copy, Clone)]
+pub enum AssignmentTarget {
+    /// The left of `=`, or of the operator and `=`.
+    Assign(Option<BinOp>),
+    /// The operand of `++` or `--`.
+    Unary,
+    /// What the head of a `for`-`in` or a `for`-`of` gives a value to.
+    ForInOrOf,
+}
+
+/// `AssignmentKind`
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum AssignmentKind {
+    None,
+    Definite,
+    Compound,
+}
+
 /// What an expression or a statement is directly part of.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Parent {
@@ -436,6 +435,123 @@ pub enum MemberOwner {
     Class(ClassId),
     Interface(InterfaceId),
     TypeLiteral(TypeNodeId),
+}
+
+/// What `declareSymbolEx` enters in `symbol.Members` or `symbol.Exports` of a class or an interface, or in `symbol.Members` of a type
+/// literal, an object literal or the attributes of a JSX element.
+#[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
+pub enum MemberDeclaration {
+    /// Of a class or an interface: it is in `symbol.Members`, next to the properties.
+    TypeParameter(TypeParamId),
+    /// A property, a method or an accessor.
+    Member(MemberId),
+    /// `IsParameterPropertyDeclaration`
+    Parameter(ParamId),
+    /// `this.name = value` in a member of a class, in JavaScript: the assignment.
+    Assignment(ExprId),
+    /// A member of an object literal or an attribute of a JSX element.
+    Property(PropId),
+}
+
+/// `SymbolFlags`, as far as the symbols of members have them.
+pub mod member_flags {
+    pub const PROPERTY: u8 = 1;
+    pub const METHOD: u8 = 2;
+    pub const GET_ACCESSOR: u8 = 4;
+    pub const SET_ACCESSOR: u8 = 8;
+    pub const ACCESSOR: u8 = GET_ACCESSOR | SET_ACCESSOR;
+    pub const VALUE: u8 = PROPERTY | METHOD | ACCESSOR;
+    pub const TYPE_PARAMETER: u8 = 16;
+    pub const REPLACEABLE_BY_METHOD: u8 = 32;
+    pub const PROPERTY_EXCLUDES: u8 = VALUE & !(PROPERTY | ACCESSOR);
+    pub const METHOD_EXCLUDES: u8 = VALUE & !METHOD;
+    pub const GET_ACCESSOR_EXCLUDES: u8 = VALUE & !(SET_ACCESSOR | PROPERTY);
+    pub const SET_ACCESSOR_EXCLUDES: u8 = VALUE & !(GET_ACCESSOR | PROPERTY);
+    pub const ACCESSOR_EXCLUDES: u8 = VALUE & !PROPERTY;
+
+    /// `getExcludedSymbolFlags`
+    pub fn excluded(flags: u8) -> u8 {
+        [
+            (PROPERTY, PROPERTY_EXCLUDES),
+            (METHOD, METHOD_EXCLUDES),
+            (GET_ACCESSOR, GET_ACCESSOR_EXCLUDES),
+            (SET_ACCESSOR, SET_ACCESSOR_EXCLUDES),
+        ]
+        .iter()
+        .filter(|kind| flags & kind.0 != 0)
+        .fold(0, |excluded, kind| excluded | kind.1)
+    }
+}
+
+/// The name a member is declared under, and in which table of its container.
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct MemberKey {
+    pub name: Atom,
+    /// `GetSymbolNameForPrivateIdentifier`: `#a` is not `"#a"`.
+    pub is_private: bool,
+    /// `symbol.Exports`, not `symbol.Members`.
+    pub is_static: bool,
+}
+
+/// A call of `declareSymbolEx`: the name, the node, `includes` and `excludes`. No node: `prototype`, which
+/// `bindClassLikeDeclaration` makes without a declaration.
+pub type DeclaredMember = (MemberKey, Option<MemberDeclaration>, u8, u8);
+
+/// `includes` and `excludes` of a member of an object literal or an attribute of a JSX element.
+pub fn flags_of_property(kind: PropKind) -> Option<(u8, u8)> {
+    use member_flags::*;
+    Some(match kind {
+        PropKind::Init | PropKind::Shorthand => (PROPERTY, PROPERTY_EXCLUDES),
+        // `IsObjectLiteralMethod`
+        PropKind::Method => (METHOD, VALUE),
+        PropKind::Getter => (GET_ACCESSOR, GET_ACCESSOR_EXCLUDES),
+        PropKind::Setter => (SET_ACCESSOR, SET_ACCESSOR_EXCLUDES),
+        PropKind::Spread => return None,
+    })
+}
+
+/// `bindPropertyWorker`, `bindPropertyOrMethodOrAccessor`: `includes` and `excludes` of a property, a method or an accessor of a
+/// class, an interface or a type literal.
+pub fn flags_of_member(member: &Member) -> Option<(u8, u8)> {
+    use member_flags::*;
+    Some(match member.kind {
+        MemberKind::Property if member.flags.contains(Flags::ACCESSOR) => {
+            (ACCESSOR, ACCESSOR_EXCLUDES)
+        }
+        MemberKind::Property => (PROPERTY, PROPERTY_EXCLUDES),
+        MemberKind::Method => (METHOD, METHOD_EXCLUDES),
+        MemberKind::Getter => (GET_ACCESSOR, GET_ACCESSOR_EXCLUDES),
+        MemberKind::Setter => (SET_ACCESSOR, SET_ACCESSOR_EXCLUDES),
+        _ => return None,
+    })
+}
+
+/// `bindPropertyOrMethodOrAccessor`: what the members `props` of an object literal, or the attributes of a JSX element, declare.
+/// `HasDynamicName`: a computed name is in no table (`bindAnonymousDeclaration`).
+pub fn for_each_declared_property(
+    f: &File,
+    props: Span<PropId>,
+    mut declare: impl FnMut(DeclaredMember),
+) {
+    for p in props.iter() {
+        let PropKey::Name(name) = f[p].key else {
+            continue;
+        };
+        let Some((includes, excludes)) = flags_of_property(f[p].kind) else {
+            continue;
+        };
+        let key = MemberKey {
+            name,
+            is_private: false,
+            is_static: false,
+        };
+        declare((
+            key,
+            Some(MemberDeclaration::Property(p)),
+            includes,
+            excludes,
+        ));
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -615,9 +731,14 @@ pub struct Bound {
     pub pat_parent: Vec<PatParent>,
     pub pat_symbol: Vec<SymbolId>,
     pub prop_owner: Vec<ExprId>,
-    /// `symbol.Declarations` of the members of object literals and the JSX attributes whose symbol has more than one declaration, by
-    /// each of them. See `declarations_of_literal_member`.
-    pub literal_member_declarations: FxHashMap<PropId, SmallVec<[PropId; 2]>>,
+    /// `symbol.Declarations` of the symbols of members that have more than one declaration, one symbol after the other. See
+    /// `declarations_of_member`.
+    pub member_declarations: Few<MemberDeclaration>,
+    /// By each of those declarations: the run of `member_declarations` that is its symbol. An empty run: it has no symbol.
+    pub member_symbol: FxHashMap<MemberDeclaration, (u32, u32)>,
+    /// The declarations whose symbol is in no table though they have a name: what the symbol of that name excludes, and the
+    /// assignments of JavaScript that a method replaces. Sorted.
+    pub members_in_no_table: Few<MemberDeclaration>,
     pub member_owner: Vec<MemberOwner>,
     /// The scope the type, the function and the initializer of a member are written in.
     pub member_scope: Vec<ScopeId>,
@@ -677,6 +798,7 @@ pub struct Bound {
     pub refused_decorators: Few<ExprId>,
     /// The labeled statements no `break` or `continue` names.
     pub unused_labels: Few<StmtId>,
+    pub import_scope: Vec<ScopeId>,
     pub import_equals_scope: Few<ScopeId>,
     pub export_scope: Vec<ScopeId>,
     /// The scope an expression that opens none is in, for the few that need it.
@@ -707,10 +829,189 @@ pub const UNREACHABLE: FlowId = FlowId(0);
 impl Bound {
     /// `symbol.Declarations` of the symbol of `p`, a member of an object literal or a JSX attribute.
     pub fn declarations_of_literal_member(&self, p: PropId) -> SmallVec<[PropId; 2]> {
-        match self.literal_member_declarations.get(&p) {
-            Some(declarations) => declarations.clone(),
-            None => smallvec::smallvec![p],
+        self.declarations_of_member(&MemberDeclaration::Property(p))
+            .iter()
+            .filter_map(|declaration| match *declaration {
+                MemberDeclaration::Property(p) => Some(p),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// `symbol.Declarations` of `declaration.Symbol`, in this file. None: a `this.name = value` that declares nothing, because a
+    /// member of the class declares `name`.
+    pub fn declarations_of_member<'a>(
+        &'a self,
+        declaration: &'a MemberDeclaration,
+    ) -> &'a [MemberDeclaration] {
+        match self.member_symbol.get(declaration) {
+            Some(&(start, len)) => &self.member_declarations[start as usize..][..len as usize],
+            None => std::slice::from_ref(declaration),
         }
+    }
+
+    /// Whether `declaration`, which has a name, has a symbol that is not the one its container has under that name.
+    pub fn is_member_in_no_table(&self, declaration: MemberDeclaration) -> bool {
+        self.members_in_no_table.binary_search(&declaration).is_ok()
+    }
+
+    /// What is declared in the tables of a class, an interface or a type literal while its declaration `owner` is bound, in that
+    /// order. `HasDynamicName`: a computed name is in no table (`bindAnonymousDeclaration`). Call, construct and index signatures
+    /// and constructors exclude nothing and nothing excludes them.
+    pub fn for_each_declared_member(
+        &self,
+        f: &File,
+        owner: MemberOwner,
+        mut declare: impl FnMut(DeclaredMember),
+    ) {
+        use member_flags::*;
+        let (type_params, members, class) = match owner {
+            MemberOwner::Class(class) => (f[class].type_params, f[class].members, Some(class)),
+            MemberOwner::Interface(interface) => {
+                (f[interface].type_params, f[interface].members, None)
+            }
+            MemberOwner::TypeLiteral(node) => match f[node].kind {
+                TypeNodeKind::Object(members) => (Span::EMPTY, members, None),
+                _ => return,
+            },
+            MemberOwner::None => return,
+        };
+        let key = |name: Atom, is_static: bool| MemberKey {
+            name,
+            is_private: false,
+            is_static,
+        };
+        // `bindClassLikeDeclaration`
+        if class.is_some() {
+            declare((key(known::prototype, true), None, PROPERTY, 0));
+        }
+        // `bindTypeParameter`. `SymbolFlagsTypeParameterExcludes` has nothing a member is.
+        for parameter in type_params.iter() {
+            let declaration = MemberDeclaration::TypeParameter(parameter);
+            declare((
+                key(f[parameter].name, false),
+                Some(declaration),
+                TYPE_PARAMETER,
+                0,
+            ));
+        }
+        // `bindThisPropertyAssignment`: where each is written.
+        let mut assignments: SmallVec<[(u32, bool, Atom, ExprId); 8]> = SmallVec::new();
+        if let Some(class) = class
+            && !self.this_properties.is_empty()
+        {
+            for is_static in [false, true] {
+                for &(_, _, name, e) in self.this_properties_of(class, is_static) {
+                    assignments.push((f[e].pos, is_static, name, e));
+                }
+            }
+            assignments.sort_unstable();
+        }
+        let mut assignments = assignments.into_iter().peekable();
+        let mut declare_assignments_before = |pos: u32, declare: &mut dyn FnMut(DeclaredMember)| {
+            while let Some((_, is_static, name, e)) = assignments.next_if(|next| next.0 < pos) {
+                let declaration = MemberDeclaration::Assignment(e);
+                let includes = PROPERTY | REPLACEABLE_BY_METHOD;
+                declare((key(name, is_static), Some(declaration), includes, 0));
+            }
+        };
+        for m in members.iter() {
+            let member = &f[m];
+            declare_assignments_before(member.pos, &mut declare);
+            // `bindParameter`
+            if member.kind == MemberKind::Constructor && class.is_some() && member.func.is_some() {
+                for parameter in f[member.func].params.iter() {
+                    if f[parameter].flags.contains(Flags::PARAMETER_PROPERTY)
+                        && let PatKind::Ident(name) = f[f[parameter].pat].kind
+                    {
+                        let declaration = MemberDeclaration::Parameter(parameter);
+                        declare((
+                            key(name, false),
+                            Some(declaration),
+                            PROPERTY,
+                            PROPERTY_EXCLUDES,
+                        ));
+                    }
+                }
+                continue;
+            }
+            let (name, is_private) = match member.key {
+                PropKey::Name(name) => (name, false),
+                PropKey::Private(name) => (name, true),
+                PropKey::Computed(_) | PropKey::None => continue,
+            };
+            let Some((includes, excludes)) = flags_of_member(member) else {
+                continue;
+            };
+            let key = MemberKey {
+                name,
+                is_private,
+                // `declareClassMember`: only a class has a static side.
+                is_static: class.is_some() && member.flags.contains(Flags::STATIC),
+            };
+            declare((key, Some(MemberDeclaration::Member(m)), includes, excludes));
+        }
+        declare_assignments_before(u32::MAX, &mut declare);
+    }
+
+    /// `GetAssignmentTarget`: what gives `e` a value, if `e` is what it is given to or part of a pattern that is.
+    pub fn get_assignment_target(&self, hir: &File, mut e: ExprId) -> Option<AssignmentTarget> {
+        loop {
+            match self.expr_parent[e.idx()] {
+                Parent::Expr(parent) if parent.is_some() => match hir[parent].kind {
+                    ExprKind::Assign { op, target, .. } => {
+                        return (target == e).then_some(AssignmentTarget::Assign(op));
+                    }
+                    ExprKind::Unary {
+                        op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
+                        ..
+                    } => return Some(AssignmentTarget::Unary),
+                    ExprKind::Array(_) | ExprKind::Spread(_) | ExprKind::NonNull(_) => e = parent,
+                    _ => return None,
+                },
+                // The value of `name: value` and of `...value`, and the assignment `{ name = value }` is kept as.
+                Parent::Prop(p) => {
+                    let owner = self.prop_owner[p.idx()];
+                    if owner.is_none()
+                        || !matches!(hir[owner].kind, ExprKind::Object(_))
+                        || !matches!(
+                            hir[p].kind,
+                            PropKind::Init | PropKind::Shorthand | PropKind::Spread
+                        )
+                    {
+                        return None;
+                    }
+                    e = owner;
+                }
+                Parent::Stmt(s) if s.is_some() => {
+                    return matches!(self.stmt_parent[s.idx()], Parent::Stmt(l) if l.is_some()
+                        && matches!(hir[l].kind, StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } if left == s))
+                    .then_some(AssignmentTarget::ForInOrOf);
+                }
+                _ => return None,
+            }
+        }
+    }
+
+    /// `getAssignmentTargetKind`
+    pub fn get_assignment_target_kind(&self, hir: &File, e: ExprId) -> AssignmentKind {
+        match self.get_assignment_target(hir, e) {
+            None => AssignmentKind::None,
+            Some(
+                AssignmentTarget::Assign(None | Some(BinOp::And | BinOp::Or | BinOp::Nullish))
+                | AssignmentTarget::ForInOrOf,
+            ) => AssignmentKind::Definite,
+            Some(_) => AssignmentKind::Compound,
+        }
+    }
+
+    /// `isSymbolAssignedDefinitely`: `+=` and `++` change a value, they do not give one.
+    pub fn is_symbol_assigned_definitely(&self, hir: &File, symbol: SymbolId) -> bool {
+        let from = self.assignments.partition_point(|a| a.0.0 < symbol.0);
+        self.assignments[from..]
+            .iter()
+            .take_while(|a| a.0 == symbol)
+            .any(|a| self.get_assignment_target_kind(hir, a.1) == AssignmentKind::Definite)
     }
 
     /// `IsInTypeQuery`: it is asked what `e` is, but `e` is not read.

@@ -523,7 +523,7 @@ impl<'p> Checker<'p> {
 
     /// `callIsIncomplete`: the tagged template is unterminated, or the `)` of the call is missing. `close_pos` is where the parser
     /// expected the `)`. The default library has no text.
-    fn is_call_incomplete(&self, file: FileId, call: ExprId, id: CallId) -> bool {
+    pub(super) fn is_call_incomplete(&self, file: FileId, call: ExprId, id: CallId) -> bool {
         let hir = self.hir(file);
         let close_pos = hir[id].close_pos;
         if matches!(hir[call].kind, ExprKind::TaggedTemplate(_)) {
@@ -1583,7 +1583,7 @@ impl<'p> Checker<'p> {
 
     /// The arguments of `call` the way `is_signature_applicable` takes them: each with the argument it is written as (part of),
     /// after the pieces of text if it is a tagged template.
-    fn args_with_nodes(
+    pub(super) fn args_with_nodes(
         &mut self,
         file: FileId,
         call: ExprId,
@@ -1731,11 +1731,7 @@ impl<'p> Checker<'p> {
             } else {
                 ty
             };
-            if !(if by_subtype {
-                self.is_subtype(ty, param)
-            } else {
-                self.is_assignable(ty, param)
-            }) {
+            if !self.is_related_in_pass(ty, param, by_subtype) {
                 return Some(false);
             }
         }
@@ -1842,6 +1838,26 @@ impl<'p> Checker<'p> {
         }
     }
 
+    /// `getLongestCandidateIndex`
+    pub(super) fn longest_candidate_index(
+        &mut self,
+        candidates: &[SigId],
+        args_count: usize,
+    ) -> usize {
+        let (mut best, mut most): (usize, Option<usize>) = (0, None);
+        for (i, &candidate) in candidates.iter().enumerate() {
+            let params = self.sig_params(candidate);
+            let count = self.parameter_count(&params);
+            if self.has_effective_rest_parameter(&params) || count >= args_count {
+                return i;
+            }
+            if most.is_none_or(|most| count > most) {
+                (best, most) = (i, Some(count));
+            }
+        }
+        best
+    }
+
     /// `pickLongestCandidateSignature`
     fn pick_longest_candidate_signature(
         &mut self,
@@ -1853,20 +1869,7 @@ impl<'p> Checker<'p> {
         this_arg: Option<ExprId>,
         settled: bool,
     ) -> SigId {
-        // `getLongestCandidateIndex`: the first that takes as many arguments as there are, or else the one that takes most.
-        let (mut best, mut most): (usize, Option<usize>) = (0, None);
-        for (i, &sig) in sigs.iter().enumerate() {
-            let params = self.sig_params(sig);
-            let count = self.parameter_count(&params);
-            if self.has_effective_rest_parameter(&params) || count >= args.len() {
-                best = i;
-                break;
-            }
-            if most.is_none_or(|most| count > most) {
-                (best, most) = (i, Some(count));
-            }
-        }
-        let candidate = sigs[best];
+        let candidate = sigs[self.longest_candidate_index(sigs, args.len())];
         let type_params = self.sig_type_params(candidate);
         if type_params.is_empty() {
             return candidate;
@@ -1900,7 +1903,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `createUnionOfSignaturesForOverloadFailure`: it takes what any of `sigs` takes, and returns what all of them return.
-    fn union_of_signatures_for_overload_failure(&mut self, sigs: &[SigId]) -> SigId {
+    pub(super) fn union_of_signatures_for_overload_failure(&mut self, sigs: &[SigId]) -> SigId {
         let lists: Vec<List<'p, SigParam>> = sigs.iter().map(|&sig| self.sig_params(sig)).collect();
         // `getNonRestParameterCount`
         let plain =
@@ -2310,7 +2313,7 @@ impl<'p> Checker<'p> {
                         // `hasPrimitiveContextualType`. A literal there is room for stays one as well: `checkExpressionWithContextualType`
                         // makes it regular, and only a fresh one is widened.
                         let stays = is_const
-                            || may_be_primitive_or_key(self, contextual)
+                            || self.may_be_primitive_or_key(contextual)
                             || self.some_type(ty, |c, m| c.is_literal(m)) && {
                                 let room =
                                     self.instantiate_with_expected_result(contextual, from_result);
@@ -2981,19 +2984,7 @@ impl<'p> Checker<'p> {
     /// is assignable to whichever it makes, so if `param` does not take that tuple `isSignatureApplicable` rejects `candidate`. A type
     /// parameter comes to no more than what it extends (`getInferredType`). In doubt `param` takes one.
     fn takes_no_array_literal(&mut self, candidate: SigId, param: TypeId, count: usize) -> bool {
-        let bound = if matches!(self.data(param), TypeData::TypeParam(..)) {
-            // The type parameters that what it extends mentions are at their widest.
-            let own = self.sig_type_params(candidate);
-            let mut widest: Vec<(TypeId, TypeId)> = Vec::with_capacity(own.len());
-            for &p in own.iter() {
-                widest.push((p, self.base_constraint(p)));
-            }
-            let widest = self.p.types.mapper(widest);
-            let bound = self.instantiate(param, widest);
-            self.instantiate(bound, widest)
-        } else {
-            param
-        };
+        let bound = self.widest_parameter_type(candidate, param);
         if self.has_type_variables(bound) || !self.is_known(bound) {
             return false;
         }
@@ -3496,11 +3487,7 @@ impl<'p> Checker<'p> {
                     && let Some(wants_construct) =
                         self.wants_plain_signature(param, MapperId::IDENTITY)
                     && self.single_generic_signature(ty, wants_construct).is_some()
-                    && !(if by_subtype {
-                        self.is_subtype(ty, param)
-                    } else {
-                        self.is_assignable(ty, param)
-                    })
+                    && !self.is_related_in_pass(ty, param, by_subtype)
                 {
                     is_generic_function_deferred = true;
                     continue;
@@ -3739,7 +3726,12 @@ impl<'p> Checker<'p> {
 
     /// `ty`, which the type parameter `param` extends or defaults to, with what has been filled in around the signature `param`
     /// belongs to (`outer`) filled in. A clone (`cloneTypeParameter`) comes with that done.
-    fn filled_in_around(&mut self, param: TypeId, ty: TypeId, outer: MapperId) -> TypeId {
+    pub(super) fn filled_in_around(
+        &mut self,
+        param: TypeId,
+        ty: TypeId,
+        outer: MapperId,
+    ) -> TypeId {
         match *self.data(param) {
             TypeData::TypeParam(_, _, around) if around != MapperId::IDENTITY => ty,
             _ => self.instantiate(ty, outer),
@@ -3750,25 +3742,10 @@ impl<'p> Checker<'p> {
     /// extends. In doubt it is.
     fn do_type_arguments_fit(&mut self, sig: SigId, type_args: &[TypeId]) -> bool {
         let type_params = self.sig_type_params(sig);
-        let filled = self.fill_sig_type_args(sig, &type_params, type_args);
-        let mapper = self.mapper_from(&type_params, &filled);
-        let outer = self
-            .sig_decl(sig)
-            .map_or(MapperId::IDENTITY, |(_, _, mapper)| mapper);
-        for i in 0..type_args.len().min(type_params.len()) {
-            let Some(constraint) = self.constraint_of_type_param(type_params[i]) else {
-                continue;
-            };
-            let constraint = self.filled_in_around(type_params[i], constraint, outer);
-            let constraint = self.instantiate(constraint, mapper);
-            if self.is_known(filled[i])
-                && self.is_known(constraint)
-                && !self.is_assignable(filled[i], constraint)
-            {
-                return false;
-            }
-        }
-        true
+        !matches!(
+            self.failing_type_argument(sig, &type_params, type_args),
+            Ok(Some(_))
+        )
     }
 
     /// Of a function whose type is not known yet, the parameters it types itself are: whether they take what `param` would give them.
@@ -3812,11 +3789,7 @@ impl<'p> Checker<'p> {
             if !self.is_known(from) || !self.is_known(to) || self.has_type_variables(from) {
                 continue;
             }
-            if !(if by_subtype {
-                self.is_subtype(from, to)
-            } else {
-                self.is_assignable(from, to)
-            }) {
+            if !self.is_related_in_pass(from, to, by_subtype) {
                 return false;
             }
         }
@@ -3946,12 +3919,8 @@ impl<'p> Checker<'p> {
         if self.is_any(literal_type) {
             return Some(TypeId::UNRESOLVED);
         }
-        let is_related = if by_subtype {
-            self.is_subtype(literal_type, param)
-        } else {
-            self.is_assignable(literal_type, param)
-        };
-        is_related.then_some(literal_type)
+        self.is_related_in_pass(literal_type, param, by_subtype)
+            .then_some(literal_type)
     }
 
     /// `check_literal_skipping_sensitive`, of the array literal `arg` with the elements `items` (`checkArrayLiteral`). An element that
@@ -4030,12 +3999,8 @@ impl<'p> Checker<'p> {
             };
             self.array_of(element)
         };
-        let is_related = if by_subtype {
-            self.is_subtype(literal_type, param)
-        } else {
-            self.is_assignable(literal_type, param)
-        };
-        is_related.then_some(literal_type)
+        self.is_related_in_pass(literal_type, param, by_subtype)
+            .then_some(literal_type)
     }
 
     /// `isSignatureApplicable` under `CheckModeSkipContextSensitive`: the context sensitive function `arg` is `anyFunctionType`, which
@@ -4058,11 +4023,7 @@ impl<'p> Checker<'p> {
             literal: Literalness::Partial,
             ..Shape::default()
         });
-        if by_subtype {
-            self.is_subtype(any_function_type, param)
-        } else {
-            self.is_assignable(any_function_type, param)
-        }
+        self.is_related_in_pass(any_function_type, param, by_subtype)
     }
 
     /// Whether a function, object or array literal whose type is not known yet could be a `param` at all:
@@ -4188,7 +4149,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `getThisArgumentType`: what the method is found in, once the chain has got that far. `void` if it is found in nothing.
-    fn this_argument_type(&mut self, file: FileId, this_arg: Option<ExprId>) -> TypeId {
+    pub(super) fn this_argument_type(&mut self, file: FileId, this_arg: Option<ExprId>) -> TypeId {
         let Some(this_arg) = this_arg else {
             return TypeId::VOID;
         };
@@ -9738,16 +9699,5 @@ fn is_plain_type_reference(hir: &File, node: TypeNodeId) -> bool {
             hir.ids(types).all(|t| is_plain_type_reference(hir, t))
         }
         _ => false,
-    }
-}
-
-/// `maybeTypeOfKind(ty, Primitive | Index | TemplateLiteral | StringMapping)`
-fn may_be_primitive_or_key(c: &Checker<'_>, ty: TypeId) -> bool {
-    match c.data(ty) {
-        TypeData::Union(parts) | TypeData::Intersection(parts) => {
-            parts.iter().any(|&part| may_be_primitive_or_key(c, part))
-        }
-        TypeData::Keyof(_) => true,
-        _ => c.is_primitive(ty),
     }
 }

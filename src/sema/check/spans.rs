@@ -14,6 +14,7 @@ use crate::hir::{
     ImportSpecId, InterfaceId, JsxId, Keyword, MemberId, MemberKind, ModuleId, ParamId, PatElemId,
     PatId, PatKind, PatPropId, PropId, PropKey, PropKind, Span, Stmt, StmtId, StmtKind,
     TupleElemId, TypeNode, TypeNodeId, TypeNodeKind, TypeParamId, UnOp, VarDeclId,
+    is_parenthesized, open_parenthesis,
 };
 use crate::program::FileId;
 
@@ -195,6 +196,51 @@ fn unicode_escape(text: &[u8], at: usize) -> Option<(usize, u32)> {
     is_whole.then_some((start + len + usize::from(is_braced) - at, ch))
 }
 
+/// Where the token `written` starts that comes right before `at`, trivia aside. `None`: something else is written there.
+pub(super) fn start_of_token_before(text: &[u8], at: u32, written: &[u8]) -> Option<u32> {
+    let before = trim_trivia_end(&text[..(at as usize).min(text.len())]);
+    before
+        .ends_with(written)
+        .then(|| (before.len() - written.len()) as u32)
+}
+
+/// Where an import clause or a specifier starts whose first name is at `name_pos`: at its `type` modifier, if it has one.
+pub(super) fn start_with_type(text: &[u8], name_pos: u32, type_only: bool) -> u32 {
+    match start_of_token_before(text, name_pos, b"type") {
+        Some(start) if type_only => start,
+        _ => name_pos,
+    }
+}
+
+/// The name or keyword that starts at `at`, which may be none.
+pub(super) fn word_at(text: &[u8], at: usize) -> &[u8] {
+    text.get(at..ident_end(text, at)).unwrap_or_default()
+}
+
+/// Whether `word` is written at `at`, and ends there.
+pub(super) fn is_word_at(text: &[u8], at: usize, word: &[u8]) -> bool {
+    word_at(text, at) == word
+}
+
+/// Where the word that ends at `end` starts. White space that is not ASCII, a byte order mark for one, is no part of it.
+pub(super) fn word_start(text: &[u8], end: usize) -> usize {
+    let end = end.min(text.len());
+    let mut start = end;
+    while start > 0 && is_identifier_part(text[start - 1]) {
+        start -= 1;
+    }
+    while ident_end(text, start) < end {
+        let blank = ident_end(text, start);
+        start = (blank + white_space_len(text, blank).max(1)).min(end);
+    }
+    start
+}
+
+/// The word that ends at `end`, which may be none.
+pub(super) fn word_before(text: &[u8], end: usize) -> &[u8] {
+    &text[word_start(text, end)..end.min(text.len())]
+}
+
 fn utf8_len(first: u8) -> usize {
     match first {
         0xC0..=0xDF => 2,
@@ -229,7 +275,7 @@ pub(super) fn identifier_end(text: &[u8], at: usize) -> usize {
 }
 
 /// The same for a name that may be private.
-fn word_end(text: &[u8], at: usize) -> usize {
+pub(super) fn word_end(text: &[u8], at: usize) -> usize {
     if text.get(at) == Some(&b'#') {
         ident_end(text, at + 1)
     } else {
@@ -635,9 +681,25 @@ fn jsx_element_end(text: &[u8], open: usize, jsx_depth: u32) -> Option<usize> {
 /// by token: brackets are matched, and strings, templates, comments, regular expressions and JSX text are not looked into. The end
 /// of the text if they are never closed.
 fn close_from(text: &[u8], start: usize, closer: u8, jsx_depth: u32) -> usize {
+    try_close_from(text, start, closer, jsx_depth).unwrap_or(text.len())
+}
+
+/// Past the bracket that closes the one at `open`, JSX aside. `None`: no bracket is at `open`, or it is never closed.
+pub(super) fn end_of_brackets(text: &[u8], open: usize) -> Option<usize> {
+    let closer = match text.get(open)? {
+        b'(' => b')',
+        b'[' => b']',
+        b'{' => b'}',
+        _ => return None,
+    };
+    try_close_from(text, open + 1, closer, 0)
+}
+
+/// `close_from`. `None`: they are never closed.
+fn try_close_from(text: &[u8], start: usize, closer: u8, jsx_depth: u32) -> Option<usize> {
     let next = skip_trivia(text, start);
     if text.get(next) == Some(&closer) {
-        return next + 1;
+        return Some(next + 1);
     }
     // What is open, outermost first. A `` ` `` stands for the `${` of a template.
     let mut open = vec![closer];
@@ -649,7 +711,7 @@ fn close_from(text: &[u8], start: usize, closer: u8, jsx_depth: u32) -> usize {
     loop {
         at = skip_trivia(text, at);
         let Some(&c) = text.get(at) else {
-            return text.len();
+            return None;
         };
         match c {
             b'(' | b'[' | b'{' => {
@@ -675,7 +737,7 @@ fn close_from(text: &[u8], start: usize, closer: u8, jsx_depth: u32) -> usize {
                 if let Some(depth) = open.iter().rposition(|&o| o == c) {
                     open.truncate(depth);
                     if open.is_empty() {
-                        return at;
+                        return Some(at);
                     }
                 }
                 expression_can_start = c == b'}';
@@ -786,9 +848,7 @@ impl<'a> Spans<'a> {
 
     /// The name or keyword that starts at `at`.
     fn word_at(self, at: usize) -> &'a [u8] {
-        self.text
-            .get(at..ident_end(self.text, at))
-            .unwrap_or_default()
+        word_at(self.text, at)
     }
 
     /// Past `token` if it is the next thing after `at`. Otherwise `at`.
@@ -947,15 +1007,6 @@ impl<'a> Spans<'a> {
 
     // ───────────────────────────── expressions ─────────────────────────────
 
-    /// Where the outermost parenthesis around `e` opens.
-    fn open_paren(self, e: ExprId) -> Option<usize> {
-        self.hir
-            .parens
-            .binary_search_by_key(&e.0, |p| p.0.0)
-            .ok()
-            .map(|at| self.hir.parens[at].1 as usize)
-    }
-
     fn expr_pos(self, e: ExprId) -> usize {
         self.hir.exprs.get(e.idx()).map_or(0, |e| e.pos as usize)
     }
@@ -969,9 +1020,9 @@ impl<'a> Spans<'a> {
         let mut is_outermost = true;
         loop {
             if !std::mem::take(&mut is_outermost)
-                && let Some(open) = self.open_paren(e)
+                && let Some(open) = open_parenthesis(self.hir, e)
             {
-                return open;
+                return open as usize;
             }
             let Some(&Expr { kind, pos }) = self.hir.exprs.get(e.idx()) else {
                 return 0;
@@ -1023,9 +1074,9 @@ impl<'a> Spans<'a> {
     /// `e` with those of the parentheses around it that open at `start` or later.
     fn expr_from(self, e: ExprId, start: usize) -> usize {
         let end = self.expr_inside(e);
-        match self.open_paren(e) {
+        match open_parenthesis(self.hir, e) {
             Some(open) => {
-                let count = self.parens_from(open.max(start), self.start_inside(e));
+                let count = self.parens_from((open as usize).max(start), self.start_inside(e));
                 self.close_parens(end, count)
             }
             None => end,
@@ -2145,7 +2196,7 @@ impl Checker<'_> {
 
     /// The end of `GetErrorRangeForNode` of `e` as it is written. Goes with `error_start_of`.
     pub(super) fn error_end_of(&self, file: FileId, e: ExprId) -> u32 {
-        if self.is_written_in_parentheses(file, e) {
+        if is_parenthesized(self.hir(file), e) {
             self.end_of_expr(file, e)
         } else {
             self.error_end_inside_parentheses(file, e)

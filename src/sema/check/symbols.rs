@@ -94,13 +94,21 @@ impl<'p> Checker<'p> {
                 .filter(|&ty| self.is_known(ty))
                 .unwrap_or(TypeId::ERROR);
         }
-        // `symbol.ValueDeclaration`
-        if flags.intersects(SymFlags::VARIABLE) {
-            for (file, decl) in declarations_of(self.files(), sym) {
-                if let Decl::Var(pat) | Decl::Param(pat) = decl {
-                    return circularity_error_type(self.type_annotation_of_pat(file, pat));
+        // `symbol.ValueDeclaration.Type()`
+        for (file, decl) in declarations_of(self.files(), sym) {
+            let hir = self.hir(file);
+            let annotation = match decl {
+                Decl::Var(pat) | Decl::Param(pat) => self.type_annotation_of_pat(file, pat),
+                Decl::ExportExpr(stmt) => hir.jsdoc_type(JsDocTypeOwner::Export(stmt)),
+                Decl::ModuleExports(_) | Decl::ExportsProperty(_) => {
+                    match self.commonjs_value_declaration(file, self.files().symbol(sym)) {
+                        Some(assignment) => hir.jsdoc_type(JsDocTypeOwner::Assign(assignment)),
+                        None => TypeNodeId::NONE,
+                    }
                 }
-            }
+                _ => continue,
+            };
+            return circularity_error_type(annotation);
         }
         TypeId::ANY
     }
@@ -409,8 +417,13 @@ impl<'p> Checker<'p> {
                 let object = self.type_of_expr(file, obj);
                 // `checkNonNullExpression`
                 let object = self.non_null_type(object);
+                // Of `any` no property is recorded: `unknownSymbol`.
                 if self.is_any(object) {
-                    return Some(object);
+                    return Some(if self.is_known(object) {
+                        TypeId::ERROR
+                    } else {
+                        object
+                    });
                 }
                 if let Some((property, _)) = self.declared_property(object, name) {
                     return Some(property);
@@ -485,8 +498,37 @@ impl<'p> Checker<'p> {
             && self.declared_property(object, name).is_some()
     }
 
-    /// `resolveESModuleSymbol`: what `import * as ns` names has no signatures, and a `default` where one is made up.
-    /// `None`: the module, or what it `export =`s, as it stands.
+    /// `resolveAlias`, where it comes to a symbol `cloneTypeAsModuleType` made: the alias of the `import * as ns` that made it, which
+    /// is `alias` or what `alias` stands for by way of symbols that are aliases and nothing else.
+    pub(super) fn originating_import_of_alias(&mut self, alias: Sym) -> Option<Sym> {
+        let files = self.files();
+        let mut at = alias;
+        for _ in 0..32 {
+            let is_namespace_import = files
+                .symbol(at)
+                .decls
+                .iter()
+                .any(|d| matches!(d, Decl::ImportNamespace(_)));
+            if is_namespace_import {
+                return self.type_of_namespace_import(at).map(|_| at);
+            }
+            let next = files.canonical(files.alias_target(at)?);
+            // `IsNonLocalAlias`
+            let flags = files.flags(next);
+            if next == at
+                || !flags.contains(SymFlags::ALIAS)
+                || flags.intersects(SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE)
+            {
+                return None;
+            }
+            at = next;
+        }
+        None
+    }
+
+    /// `resolveESModuleSymbol`: the type of the symbol `cloneTypeAsModuleType` makes for the `import * as ns` that declares `sym`. It
+    /// has no signatures, and a `default` where one is made up. `None`: `sym` is declared otherwise, or stands for the module, or
+    /// what it `export =`s, itself.
     fn type_of_namespace_import(&mut self, sym: Sym) -> Option<TypeId> {
         let import = self
             .files()
@@ -533,23 +575,26 @@ impl<'p> Checker<'p> {
                 ..Shape::default()
             }));
         }
-        // `canHaveSyntheticDefault`
-        let with_default = files.synthetic_default(file, module).is_some();
-        // With no signatures to drop and no default to make up, the clone has what the module has.
-        if self.signatures(ty, false).is_empty() && self.signatures(ty, true).is_empty() {
-            if !with_default {
-                return None;
-            }
-            if !files.is_commonjs_to_node(file, module)
-                && self.prop_ref(ty, known::default).is_none()
-            {
-                return None;
-            }
+        // `exportModuleDotExportsSymbol`, which `alias_target` gives.
+        if files.is_commonjs_import_of_esm_file(file, module)
+            && files.module_exports_export(value).is_some()
+        {
+            return None;
+        }
+        // `hasSignatures(typ) || getPropertyOfTypeEx(typ, "default", ..) != nil || isEsmCjsRef`
+        if self.signatures(ty, false).is_empty()
+            && self.signatures(ty, true).is_empty()
+            && self.prop_ref(ty, known::default).is_none()
+            && !files.is_commonjs_to_node(file, module)
+        {
+            return None;
         }
         Some(self.intern(TypeData::Anon {
             origin: Origin::Namespace {
                 module: value,
-                with_default,
+                // `canHaveSyntheticDefault`
+                with_default: files.synthetic_default(file, module).is_some(),
+                originating_import: sym,
             },
             mapper: MapperId::IDENTITY,
         }))
@@ -633,25 +678,7 @@ impl<'p> Checker<'p> {
             mapper,
         });
         // `getBaseTypeVariableOfClass`
-        let Some((file, c)) = class else {
-            return statics;
-        };
-        let extends = self.hir(file)[c].extends;
-        if extends.is_none() {
-            return statics;
-        }
-        // Where no type parameter is in scope nothing is of such a type. `getBaseConstructorTypeOfClass` checks the expression all
-        // the same, which only shows if a call is resolved for it.
-        if mapper == MapperId::IDENTITY {
-            if matches!(self.hir(file)[extends].kind, ExprKind::Call(_)) {
-                let uncertain = self.uncertain;
-                self.type_of_expr(file, extends);
-                self.uncertain = uncertain;
-            }
-            return statics;
-        }
-        let base = self.type_of_expr(file, extends);
-        let base = self.force(base);
+        let base = self.base_constructor_type_of_class(sym);
         let variable = match self.data(base) {
             TypeData::Intersection(parts) => {
                 parts.iter().copied().find(|&p| self.is_type_variable(p))
@@ -660,11 +687,8 @@ impl<'p> Checker<'p> {
             _ => None,
         };
         match variable {
-            // `getBaseConstructorTypeOfClass`, `isConstructorType`: what cannot be constructed is an error, and no base at all.
-            Some(variable) if !self.signatures(base, true).is_empty() => {
-                self.intersection(&[statics, variable])
-            }
-            _ => statics,
+            Some(variable) => self.intersection(&[statics, variable]),
+            None => statics,
         }
     }
 
@@ -673,47 +697,14 @@ impl<'p> Checker<'p> {
     /// the type of its property `a`, if it has one. `None` if `sym` is not such an import or export.
     fn property_of_export_equals(&mut self, sym: Sym) -> Option<(TypeId, Option<TypeId>)> {
         let file = sym.file;
-        let hir = self.hir(file);
         let files = self.files();
-        for decl in &files.symbol(sym).decls {
-            let (module, name) = match *decl {
-                Decl::ImportSpec(s) => match hir
-                    .imports
-                    .iter()
-                    .find(|i| i.named.range().contains(&s.idx()))
-                {
-                    Some(import) => (
-                        files.module_of_specifier_as(
-                            file,
-                            import.spec,
-                            files.mode_of_import(file, import.mode),
-                        ),
-                        hir[s].imported,
-                    ),
-                    None => continue,
-                },
-                Decl::ExportSpec(s) => match hir
-                    .exports
-                    .iter()
-                    .find(|x| x.items.range().contains(&s.idx()))
-                {
-                    Some(export) if export.spec.is_some() => (
-                        files.module_of_specifier_as(
-                            file,
-                            export.spec,
-                            files.mode_of_import(file, export.mode),
-                        ),
-                        hir[s].local,
-                    ),
-                    _ => continue,
-                },
-                Decl::Require(pat) => match self.bound(file).required_by(hir, pat) {
-                    Some((spec, Some(name))) => (files.module_of_specifier(file, spec), name),
-                    _ => continue,
-                },
-                _ => continue,
+        for &decl in &files.symbol(sym).decls {
+            let Some((spec, mode, name)) = files.external_module_member_of(file, decl) else {
+                continue;
             };
-            let Some(module) = module else { continue };
+            let Some(module) = files.module_of_specifier_as(file, spec, mode) else {
+                continue;
+            };
             let value = files.module_value(module);
             if value == module {
                 continue;
@@ -792,30 +783,17 @@ impl<'p> Checker<'p> {
                     Atom::NONE,
                     files.mode_of_import(file, hir[i].mode),
                 ),
-                Decl::ImportSpec(s) => match hir
-                    .imports
-                    .iter()
-                    .find(|i| i.named.range().contains(&s.idx()))
-                {
-                    Some(import) => (
-                        import.spec,
-                        hir[s].imported,
-                        files.mode_of_import(file, import.mode),
-                    ),
-                    None => return false,
-                },
-                Decl::ExportSpec(s) => match hir
-                    .exports
-                    .iter()
-                    .find(|x| x.items.range().contains(&s.idx()))
-                {
-                    Some(export) if export.spec.is_some() => (
-                        export.spec,
-                        hir[s].local,
-                        files.mode_of_import(file, export.mode),
-                    ),
-                    _ => return false,
-                },
+                Decl::ImportSpec(_) | Decl::ExportSpec(_) => {
+                    match files.external_module_member_of(file, decl) {
+                        Some((spec, mode, name)) => (spec, name, mode),
+                        // `getTargetOfExportSpecifier` without a module: `resolveEntityName` finds nothing. `undefinedSymbol` and
+                        // `globalThisSymbol` have no `Sym`.
+                        None => {
+                            return matches!(decl, Decl::ExportSpec(s)
+                                if !matches!(hir[s].local, known::undefined | known::globalThis));
+                        }
+                    }
+                }
                 Decl::ImportEquals(i) => match hir[i].target {
                     ImportEqualsTarget::Require(spec) => {
                         (spec, Atom::NONE, ResolutionMode::Require)
@@ -2070,14 +2048,6 @@ impl<'p> Checker<'p> {
         if let Parent::Stmt(parent) = around {
             match hir[parent].kind {
                 StmtKind::ForIn { left, expr, .. } if left == stmt => {
-                    // `for (let v in v)`: what it is depends on what it is.
-                    let own = self.bound(file).pat_symbol[decl.pat.idx()];
-                    if own.is_some()
-                        && matches!(hir[expr].kind, ExprKind::Ident(_))
-                        && self.bound(file).expr_symbol[expr.idx()] == own
-                    {
-                        return TypeId::ANY;
-                    }
                     // The keys of something generic are its own, those that are strings.
                     let object = self.type_of_expr(file, expr);
                     let object = self.non_nullable_type_if_needed(object);
@@ -2144,11 +2114,7 @@ impl<'p> Checker<'p> {
             if matches!(hir[decl.ty].kind, TypeNodeKind::UniqueSymbol)
                 && let Some(name) = unique_symbol_name
             {
-                return self.intern(TypeData::UniqueSymbol {
-                    file,
-                    id: decl.ty.0,
-                    name,
-                });
+                return self.unique_symbol_of_variable(file, decl.pat, name);
             }
             return self.type_from_node(file, decl.ty);
         }
@@ -2177,11 +2143,7 @@ impl<'p> Checker<'p> {
                     .global(known::Symbol, SymFlags::VALUE)
                     .is_some()
             {
-                return self.intern(TypeData::UniqueSymbol {
-                    file,
-                    id: decl.init.0 | 1 << 31,
-                    name,
-                });
+                return self.unique_symbol_of_variable(file, decl.pat, name);
             }
         }
         // Where an implicit `any` is an error, a variable written with `null` or `undefined` is the `any`, and one written with `[]`
@@ -2200,13 +2162,7 @@ impl<'p> Checker<'p> {
                     return TypeId::ANY;
                 }
                 // `isEmptyArrayLiteral`, which does not look into parentheses.
-                ExprKind::Array(items)
-                    if items.is_empty()
-                        && hir
-                            .parens
-                            .binary_search_by_key(&decl.init.0, |p| p.0.0)
-                            .is_err() =>
-                {
+                ExprKind::Array(items) if items.is_empty() && !is_parenthesized(hir, decl.init) => {
                     return self.array_of(TypeId::ANY);
                 }
                 _ => {}
@@ -2439,123 +2395,39 @@ impl<'p> Checker<'p> {
 
     /// `GetDeclarationOfKind(getSymbolOfDeclaration(accessor), kind)`: the getter, or the setter if that is what is `wanted`, that is
     /// one symbol with the accessor `func`, in a class, an interface, a type literal or an object literal.
-    /// `declareSymbolEx`: what declares one name joins the symbol of that name in the order written. What does not go with what
-    /// has joined so far is a symbol of its own.
     pub(super) fn sibling_accessor(
         &mut self,
         file: FileId,
         func: FnId,
         wanted: FnKind,
     ) -> Option<FnId> {
-        use crate::bind::MemberOwner;
-        // What a declaration makes of the name, and what that does not go with (the `*Excludes`).
-        const PROPERTY: u8 = 1;
-        const METHOD: u8 = 2;
-        const GET: u8 = 4;
-        const SET: u8 = 8;
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        // (includes, excludes, function)
-        let mut declared: Vec<(u8, u8, FnId)> = Vec::new();
-        match bound.fns[func.idx()].owner {
-            FnOwner::Member(m) => {
-                let members = match bound.member_owner[m.idx()] {
-                    MemberOwner::Class(c) => hir[c].members,
-                    MemberOwner::Interface(i) => hir[i].members,
-                    MemberOwner::TypeLiteral(t) => match hir[t].kind {
-                        TypeNodeKind::Object(members) => members,
-                        _ => return None,
-                    },
-                    MemberOwner::None => return None,
-                };
-                let name = self.member_name(file, hir[m].key)?;
-                let is_static = hir[m].flags.contains(Flags::STATIC);
-                for o in members.iter() {
-                    let other = &hir[o];
-                    let (includes, excludes) = match other.kind {
-                        MemberKind::Property if other.flags.contains(Flags::ACCESSOR) => {
-                            (GET | SET, METHOD | GET | SET)
-                        }
-                        MemberKind::Property => (PROPERTY, METHOD),
-                        MemberKind::Method => (METHOD, PROPERTY | GET | SET),
-                        MemberKind::Getter => (GET, METHOD | GET),
-                        MemberKind::Setter => (SET, METHOD | SET),
-                        _ => continue,
-                    };
-                    if other.flags.contains(Flags::STATIC) == is_static
-                        && self.member_name(file, other.key) == Some(name)
-                    {
-                        declared.push((includes, excludes, other.func));
-                    }
-                }
-            }
-            FnOwner::Expr(e) => {
-                let Parent::Prop(p) = bound.expr_parent[e.idx()] else {
-                    return None;
-                };
-                let owner = bound.prop_owner[p.idx()];
-                if owner.is_none() {
-                    return None;
-                }
-                let ExprKind::Object(props) = hir[owner].kind else {
-                    return None;
-                };
-                let name = self.member_name(file, hir[p].key)?;
-                for q in props.iter() {
-                    let other = &hir[q];
-                    let (includes, excludes) = match other.kind {
-                        PropKind::Init | PropKind::Shorthand => (PROPERTY, METHOD),
-                        // A method of an object literal goes with nothing.
-                        PropKind::Method => (METHOD, PROPERTY | METHOD | GET | SET),
-                        PropKind::Getter => (GET, METHOD | GET),
-                        PropKind::Setter => (SET, METHOD | SET),
-                        PropKind::Spread => continue,
-                    };
-                    if self.member_name(file, other.key) != Some(name) {
-                        continue;
-                    }
-                    let accessor = match other.kind {
-                        PropKind::Getter | PropKind::Setter if other.value.is_some() => {
-                            match hir[other.value].kind {
-                                ExprKind::Fn(f) => f,
-                                _ => FnId::NONE,
-                            }
-                        }
-                        _ => FnId::NONE,
-                    };
-                    declared.push((includes, excludes, accessor));
-                }
-            }
+        use crate::bind::MemberDeclaration;
+        let bound = self.bound(file);
+        let accessor = match bound.fns[func.idx()].owner {
+            FnOwner::Member(m) => MemberDeclaration::Member(m),
+            FnOwner::Expr(e) => match bound.expr_parent[e.idx()] {
+                Parent::Prop(p) => MemberDeclaration::Property(p),
+                _ => return None,
+            },
             _ => return None,
-        }
-        let wanted = if wanted == FnKind::Getter { GET } else { SET };
-        let (mut flags, mut has_joined, mut found) = (0u8, false, FnId::NONE);
-        for (includes, excludes, accessor) in declared {
-            if flags & excludes != 0 {
-                // An accessor that met anything but its like goes with nothing that follows.
-                if flags & (GET | SET) != 0 && flags & (GET | SET) != includes & (GET | SET) {
-                    flags |= GET | SET;
-                }
-                if accessor == func {
-                    return None;
-                }
-                continue;
-            }
-            flags |= includes;
-            has_joined |= accessor == func;
-            if includes == wanted && found.is_none() {
-                found = accessor;
-            }
-        }
-        if has_joined { found.some() } else { None }
-    }
-
-    /// `getAnnotatedAccessorType` of the setter that is one symbol with the getter `getter`: what that says it takes.
-    pub(super) fn setter_annotation_next_to(
-        &mut self,
-        file: FileId,
-        getter: FnId,
-    ) -> Option<TypeId> {
-        self.annotated_setter_type(file, getter)
+        };
+        let hir = self.hir(file);
+        self.declarations_of_member(file, accessor)
+            .into_iter()
+            .filter(|declaration| declaration.0 == file)
+            .find_map(|(_, declaration)| {
+                let other = match declaration {
+                    MemberDeclaration::Member(m) => hir[m].func,
+                    MemberDeclaration::Property(p) if hir[p].value.is_some() => {
+                        match hir[hir[p].value].kind {
+                            ExprKind::Fn(f) => f,
+                            _ => FnId::NONE,
+                        }
+                    }
+                    _ => FnId::NONE,
+                };
+                (other.is_some() && hir[other].kind == wanted).then_some(other)
+            })
     }
 
     // ───────────────────────────── what functions return ─────────────────────────────
@@ -2642,7 +2514,7 @@ impl<'p> Checker<'p> {
         }
         // `getReturnTypeFromAnnotation`: a getter that says nothing goes by what its setter says it takes.
         if f.kind == FnKind::Getter
-            && let Some(ty) = self.setter_annotation_next_to(file, func)
+            && let Some(ty) = self.annotated_setter_type(file, func)
         {
             return ty;
         }

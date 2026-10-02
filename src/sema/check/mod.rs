@@ -56,6 +56,7 @@ mod in_order;
 mod infer;
 mod instantiate;
 mod jsx;
+mod late_bound;
 mod mapped;
 mod order;
 mod print;
@@ -71,7 +72,7 @@ mod unions;
 mod visit_node;
 
 use crate::atom::{Atom, known};
-use crate::bind::{Bound, SymFlags};
+use crate::bind::{AssignmentKind, AssignmentTarget, Bound, SymFlags};
 use crate::hir::{self, *};
 use crate::local::MaybeLocal;
 use crate::program::{FileId, Files, Sym};
@@ -81,10 +82,14 @@ use crate::types::*;
 use crate::util::{FxHashMap, List};
 use errors::edit_distance;
 use errors_x_regexp_scanner::levenshtein_with_max;
+use errors_x_typenodes::has_parse_diagnostics;
+use spans::end_of_brackets;
 use spans::is_identifier_part;
 use spans::line_break_len;
 use spans::skip_trivia;
+use spans::{is_word_at, word_at, word_before, word_end, word_start};
 use spans::{skip_trivia_back, trim_trivia_end};
+use spans::{start_of_token_before, start_with_type};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
@@ -173,6 +178,9 @@ pub struct Program {
     flows_too_deep: NodeSet<(FileId, ExprId)>,
     /// The classes and interfaces whose base types depend on themselves, the aliases that do, and the mapped types whose keys do.
     circular_bases: NodeSet<Sym>,
+    /// `resolvedBaseConstructorType` of each class, and the classes whose base expression depends on them (2506).
+    base_constructor_types: ByNode<Sym, TypeId>,
+    circular_base_constructors: NodeSet<Sym>,
     circular_aliases: NodeSet<Sym>,
     circular_mapped_keys: NodeSet<(FileId, TypeNodeId)>,
     /// Type nodes at which 2615 is reported: the type of a property of a mapped type depends on itself. See
@@ -432,6 +440,8 @@ impl Program {
             circular_symbols: NodeSet::new(&symbols),
             flows_too_deep: NodeSet::new(&exprs),
             circular_bases: NodeSet::new(&symbols),
+            base_constructor_types: ByNode::new(&symbols),
+            circular_base_constructors: NodeSet::new(&symbols),
             circular_aliases: NodeSet::new(&symbols),
             circular_mapped_keys: NodeSet::new(&type_nodes),
             circular_mapped_props: NodeSet::new(&type_nodes),
@@ -562,6 +572,7 @@ impl Program {
             eager: Vec::new(),
             loop_values: Vec::new(),
             contextual_binding_patterns: Vec::new(),
+            late_bound_members: FxHashMap::default(),
             reporting_nonexistent: Vec::new(),
             came_full_circle: false,
             left_a_circle: false,
@@ -700,6 +711,8 @@ enum Query {
     ReturnAtFirstLook(FileId, FnId),
     Shape(TypeId),
     Bases(Sym),
+    /// `TypeSystemPropertyNameResolvedBaseConstructorType`
+    BaseConstructor(Sym),
     Constraint(TypeId),
     InferredConstraint(TypeId),
     Call(FileId, ExprId),
@@ -781,6 +794,9 @@ pub struct Checker<'p> {
     /// The patterns whose implied type is being worked out to be what their initializer is expected to be, and how deep the
     /// stack was when that began.
     contextual_binding_patterns: Vec<(FileId, PatId, usize)>,
+    /// `membersAndExportsLinks`, by container and side.
+    late_bound_members:
+        FxHashMap<(late_bound::MemberContainer, bool), late_bound::LateBoundMembers>,
     /// `nonExistentProperties`: property accesses whose 2339 message is being printed, with `stack.len()` when printing started.
     reporting_nonexistent: Vec<(FileId, ExprId, usize)>,
     /// How deep the stack was wherever something was asked that TypeScript would not have asked at that point, or not yet.
@@ -1566,6 +1582,7 @@ impl<'p> Checker<'p> {
             | Query::Assigned(..)
             | Query::MappedProp(..)
             | Query::Bases(_)
+            | Query::BaseConstructor(_)
             | Query::Constraint(_)
             | Query::InitializerIsUndefined(..) => true,
             // `getTypeOfSymbol` tests for a variable or a property first. `getTypeOfFuncClassEnumModule` and `getTypeOfEnumMember`
@@ -1611,6 +1628,9 @@ impl<'p> Checker<'p> {
                     }
                     Query::Declared(sym) => self.p.declared_types.get(&sym).is_some(),
                     Query::Bases(sym) => self.p.base_types.get(&sym).is_some(),
+                    Query::BaseConstructor(sym) => {
+                        self.p.base_constructor_types.get(&sym).is_some()
+                    }
                     Query::Constraint(ty) => self.p.constraints.get(&ty).is_some(),
                     Query::InitializerIsUndefined(file, param) => self
                         .p
@@ -1925,6 +1945,10 @@ impl<'p> Checker<'p> {
 
     /// `getUnresolvedSymbolForEntityName`, `getTypeFromTypeAliasReference`
     pub(super) fn unresolved_name_type(&mut self, names: &[Atom], args: &[TypeId]) -> TypeId {
+        // A missing identifier has no text: `unknownSymbol`, of which `getTypeReferenceType` makes `errorType`.
+        if names.last() == Some(&known::empty) {
+            return TypeId::ERROR;
+        }
         let mut path: Vec<u8> = Vec::new();
         for (i, &name) in names.iter().enumerate() {
             if i > 0 {

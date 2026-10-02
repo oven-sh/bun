@@ -210,11 +210,11 @@ impl Checker<'_> {
             }
             _ => false,
         };
-        let is_binary = |x: ExprId| is_binary_kind(x) && !self.is_written_in_parentheses(file, x);
+        let is_binary = |x: ExprId| is_binary_kind(x) && !is_parenthesized(self.hir(file), x);
         if let Parent::Expr(outer) = bound.expr_parent[e.idx()]
             && outer.is_some()
             && is_binary_kind(outer)
-            && !self.is_written_in_parentheses(file, e)
+            && !is_parenthesized(self.hir(file), e)
         {
             return match hir[outer].kind {
                 ExprKind::Binary {
@@ -278,7 +278,7 @@ impl Checker<'_> {
     /// `GetErrorRangeForNode`, for an expression as it is written: where an error about the whole of `e` goes. In parentheses it is
     /// the parentheses that are pointed at.
     pub(super) fn error_start_of(&self, file: FileId, e: ExprId) -> u32 {
-        if self.is_written_in_parentheses(file, e) {
+        if is_parenthesized(self.hir(file), e) {
             self.start_of(file, e)
         } else {
             self.error_start_inside_parentheses(file, e)
@@ -295,15 +295,13 @@ impl Checker<'_> {
             }
             ExprKind::Fn(f) if hir[f].kind == FnKind::Expr => self.assigned_name_start(file, e),
             ExprKind::Class(c) if hir[c].name.is_some() => Some(hir[c].name_pos),
-            // The last word before the type, and before the `(`, `|` or `&` it may be written after, which are not kept.
+            // The last word before the type, and before the `(`, `|` or `&` it may be written after, which are not kept, or the
+            // `{` of `@satisfies {T}` (`findOriginatingJSDocSatisfiesTag`: the name of the tag).
             ExprKind::Satisfies { ty, .. } => {
-                let mut before = hir
-                    .text
-                    .get(..hir[ty].pos as usize)
-                    .unwrap_or_default()
-                    .trim_ascii_end();
-                while let [rest @ .., b'(' | b'|' | b'&'] = before {
-                    before = rest.trim_ascii_end();
+                let mut before =
+                    trim_trivia_end(hir.text.get(..hir[ty].pos as usize).unwrap_or_default());
+                while let [rest @ .., b'(' | b'|' | b'&' | b'{'] = before {
+                    before = trim_trivia_end(rest);
                 }
                 before
                     .ends_with(b"satisfies")
@@ -317,7 +315,7 @@ impl Checker<'_> {
     /// `GetAssignedName`: where the name is of what `e` is directly given to.
     fn assigned_name_start(&self, file: FileId, e: ExprId) -> Option<u32> {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        if self.is_written_in_parentheses(file, e) {
+        if is_parenthesized(self.hir(file), e) {
             return None;
         }
         match bound.expr_parent[e.idx()] {
@@ -338,7 +336,7 @@ impl Checker<'_> {
                     ExprKind::Assign { target, value, .. } if value == e => target,
                     _ => return None,
                 };
-                if self.is_written_in_parentheses(file, left) {
+                if is_parenthesized(self.hir(file), left) {
                     return None;
                 }
                 match hir[left].kind {
@@ -647,14 +645,14 @@ impl Checker<'_> {
         let hir = self.hir(file);
         let start = match hir[operand].kind {
             // `createMissingNode`: a missing operand starts where the token before it ends.
-            ExprKind::Missing if !self.is_written_in_parentheses(file, operand) => {
+            ExprKind::Missing if !is_parenthesized(self.hir(file), operand) => {
                 hir[e].pos + b"delete".len() as u32
             }
             _ => self.start_inside_parentheses(file, operand),
         };
         // A missing node is empty.
         let end = match hir[operand].kind {
-            ExprKind::Missing if !self.is_written_in_parentheses(file, operand) => {
+            ExprKind::Missing if !is_parenthesized(self.hir(file), operand) => {
                 super::explain::NO_LENGTH
             }
             _ => self.error_end_inside_parentheses(file, operand),

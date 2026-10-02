@@ -24,7 +24,7 @@ pub(super) enum Applicable {
 
 /// What `chooseOverload` leaves behind when no candidate will do, and what it held the candidates against.
 struct Failed {
-    args: SmallVec<[(Arg, ExprId); 4]>,
+    args: SmallVec<[(Arg, ExprId); 8]>,
     type_args: Vec<TypeId>,
     this_arg: Option<ExprId>,
     /// `candidatesForArgumentError`
@@ -382,7 +382,7 @@ impl Checker<'_> {
             related.push(here(2734));
         }
         // `invocationErrorRecovery`
-        if let Some((module, import)) = self.originating_import(file, apparent) {
+        if let Some((module, import)) = self.originating_import(apparent) {
             let imported = self.type_of_symbol(module);
             if !self.signatures(imported, construct).is_empty() {
                 related.push(import);
@@ -392,29 +392,35 @@ impl Checker<'_> {
     }
 
     /// `exportTypeLinks.Get(t.symbol)`, of a type `import * as ns` made: its `target`, which is what is imported, and 7038 at its
-    /// `originatingImport`. The type does not say which import made it: the first in `file` that imports the same.
-    fn originating_import(
-        &self,
-        file: FileId,
-        ty: TypeId,
-    ) -> Option<(Sym, super::explain::Related)> {
+    /// `originatingImport`.
+    fn originating_import(&self, ty: TypeId) -> Option<(Sym, super::explain::Related)> {
         let TypeData::Anon {
-            origin: Origin::Namespace { module, .. },
+            origin:
+                Origin::Namespace {
+                    module,
+                    originating_import,
+                    ..
+                },
             ..
         } = *self.data(ty)
         else {
             return None;
         };
-        let (hir, files) = (self.hir(file), self.files());
-        let index = hir.stmts.iter().position(|s| match s.kind {
-            StmtKind::Import(i) if hir[i].namespace.is_some() => {
-                let mode = files.mode_of_import(file, hir[i].mode);
-                files
-                    .module_of_specifier_as(file, hir[i].spec, mode)
-                    .is_some_and(|of| files.module_value(of) == module)
-            }
-            _ => false,
-        })?;
+        let file = originating_import.file;
+        let hir = self.hir(file);
+        let import = self
+            .files()
+            .symbol(originating_import)
+            .decls
+            .iter()
+            .find_map(|d| match *d {
+                Decl::ImportNamespace(i) => Some(i),
+                _ => None,
+            })?;
+        let index = hir
+            .stmts
+            .iter()
+            .position(|s| matches!(s.kind, StmtKind::Import(i) if i == import))?;
         let statement = StmtId(index as u32);
         let import = super::explain::Related {
             at: Some((file, hir[statement].pos, self.end_of_stmt(file, statement))),
@@ -493,7 +499,7 @@ impl Checker<'_> {
         }
         let code = if !is_dotted_name(hir, data.callee) {
             2776
-        } else if !self.has_effects_signature(file, data.callee) {
+        } else if self.effects_signature(file, e).is_none() {
             2775
         } else {
             return;
@@ -563,21 +569,6 @@ impl Checker<'_> {
             return None;
         }
         Some((self.place_of_symbol(sym)?, self.symbol_to_string(sym)))
-    }
-
-    /// `getEffectsSignature`, of a call that is a statement and resolves to a signature that asserts: whether there is one.
-    fn has_effects_signature(&mut self, file: FileId, callee: ExprId) -> bool {
-        let Some(declared) = self.explicit_type(file, callee) else {
-            return false;
-        };
-        let apparent = self.apparent_type(declared);
-        let sigs = self.signatures(apparent, false);
-        sigs.iter().any(|&sig| {
-            // `hasTypePredicateOrNeverReturnType`
-            self.sig_predicate(sig).is_some()
-                || matches!(self.sig_decl(sig), Some((f, func, _)) if self.hir(f)[func].ret.is_some())
-                    && self.sig_return(sig) == TypeId::NEVER
-        })
     }
 
     /// `resolveCallExpression`, where what is called is `super`.
@@ -972,16 +963,7 @@ impl Checker<'_> {
         let hir = self.hir(file);
         let data = hir[c];
         let candidates = self.candidates_in_order(sigs);
-        // `getEffectiveCallArguments`: of a tagged template the pieces of text come first. There is no node for the template:
-        // the whole stands in for it.
-        let mut args: SmallVec<[(Arg, ExprId); 4]> = SmallVec::new();
-        if matches!(hir[e].kind, ExprKind::TaggedTemplate(_)) {
-            let strings = self.global_ref(known::TemplateStringsArray, &[]);
-            args.push((Arg::Type(strings, Atom::NONE), e));
-        }
-        for a in hir.ids(data.args) {
-            self.each_effective_arg(file, a, |arg| args.push((arg, a)));
-        }
+        let args = self.args_with_nodes(file, e, c);
         // A call that is being resolved cannot say what it expects of an argument. The candidate at hand does, in
         // `is_signature_applicable`. The arguments of any other call are what they are, whatever they are held against.
         let is_under_way = self.stack.contains(&Query::Call(file, e));
@@ -1017,14 +999,7 @@ impl Checker<'_> {
                 .signature_applicability(file, e, c, &args, types, sig, this_arg, is_new, None),
             None => checker.is_signature_applicable(file, e, c, &args, sig, this_arg, is_new, None),
         };
-        // `callIsIncomplete`. For a call `close_pos` is where the parser expected the `)`. The default library has no text.
-        let is_incomplete = if matches!(hir[e].kind, ExprKind::TaggedTemplate(_)) {
-            data.close_pos == INCOMPLETE_TEMPLATE
-        } else {
-            data.close_pos != u32::MAX
-                && !hir.text.is_empty()
-                && hir.text.get(data.close_pos as usize) != Some(&b')')
-        };
+        let is_incomplete = self.is_call_incomplete(file, e, c);
         // All that is asked is whether any of them applies, and the call has been resolved to one that most likely does. The ones before it do
         // not, which takes inferring their type arguments to find out.
         if candidates.len() > 1
@@ -1400,16 +1375,7 @@ impl Checker<'_> {
         is_new: bool,
         implementation: SigId,
     ) -> bool {
-        let hir = self.hir(file);
-        let close_pos = hir[c].close_pos;
-        // `callIsIncomplete`
-        let is_incomplete = if matches!(hir[e].kind, ExprKind::TaggedTemplate(_)) {
-            close_pos == INCOMPLETE_TEMPLATE
-        } else {
-            close_pos != u32::MAX
-                && !hir.text.is_empty()
-                && hir.text.get(close_pos as usize) != Some(&b')')
-        };
+        let is_incomplete = self.is_call_incomplete(file, e, c);
         let (type_params, params) = (
             self.sig_type_params(implementation),
             self.sig_params(implementation),
@@ -1559,13 +1525,9 @@ impl Checker<'_> {
             let Some(constraint) = self.constraint_of_type_param(type_params[i]) else {
                 continue;
             };
-            // The constraint of a cloned type parameter (`cloneTypeParameter`) is instantiated with the mapper of the signature already.
-            let constraint = match *self.data(type_params[i]) {
-                TypeData::TypeParam(_, _, around) if around != MapperId::IDENTITY => constraint,
-                _ => self.instantiate(constraint, outer),
-            };
+            let constraint = self.filled_in_around(type_params[i], constraint, outer);
             let constraint = self.instantiate(constraint, mapper);
-            if !self.is_known(constraint) {
+            if !self.is_known(constraint) || !self.is_known(filled[i]) {
                 return Err(());
             }
             if !self.is_assignable(filled[i], constraint) {
@@ -1640,16 +1602,7 @@ impl Checker<'_> {
             && !is_new
             && !is_super_property
         {
-            // `getThisArgumentType`
-            let given = match this_arg {
-                Some(obj) => {
-                    let chain = self
-                        .this_argument_of_call(file, callee)
-                        .map_or(Chain::No, |(_, chain)| chain);
-                    self.chain_receiver(file, obj, chain).0
-                }
-                None => TypeId::VOID,
-            };
+            let given = self.this_argument_type(file, this_arg);
             if !self.is_known(given)
                 || !self.is_known(wanted)
                 || this_arg.is_some_and(|obj| self.is_uncertain(file, obj))
@@ -1732,7 +1685,7 @@ impl Checker<'_> {
                 self.maybe_add_missing_await_info((file, from, to), given, wanted, first);
                 // `checkTypeRelatedToEx`: what `import * as ns` imports would have done.
                 if self.explains
-                    && let Some((module, import)) = self.originating_import(file, given)
+                    && let Some((module, import)) = self.originating_import(given)
                 {
                     let imported = self.type_of_symbol(module);
                     if self.is_assignable(imported, wanted) {
@@ -1746,7 +1699,9 @@ impl Checker<'_> {
             if !self.is_known(rest) {
                 return Applicable::Unknown;
             }
-            let given = spread_argument_type(self, file, args, count, rest);
+            let plain: SmallVec<[Arg; 8]> = args.iter().map(|a| a.0).collect();
+            let given =
+                self.spread_argument_type(file, &plain, count, rest, &[], MapperId::IDENTITY);
             if !self.is_known(given) {
                 return Applicable::Unknown;
             }
@@ -2181,11 +2136,6 @@ fn line_breaks_after(text: &[u8], mut at: usize) -> bool {
     }
 }
 
-/// Whether `e` is written in parentheses of its own.
-fn is_parenthesized(hir: &hir::File, e: ExprId) -> bool {
-    hir.parens.binary_search_by_key(&e.0, |p| p.0.0).is_ok()
-}
-
 /// `IsDottedName`
 fn is_dotted_name(hir: &hir::File, e: ExprId) -> bool {
     match hir[e].kind {
@@ -2196,164 +2146,5 @@ fn is_dotted_name(hir: &hir::File, e: ExprId) -> bool {
         | ExprKind::ImportMeta => true,
         ExprKind::Dot { obj, .. } => is_dotted_name(hir, obj),
         _ => false,
-    }
-}
-
-// ───────────────────────────── what a rest parameter collects ─────────────────────────────
-
-/// `getSpreadArgumentType`: the arguments from `index` on, as the list a rest parameter of type `rest` takes them for.
-fn spread_argument_type(
-    c: &mut Checker<'_>,
-    file: FileId,
-    args: &[(Arg, ExprId)],
-    index: usize,
-    rest: TypeId,
-) -> TypeId {
-    let is_const = c.is_const_type_variable(rest, 0);
-    // `...x` for `...rest`
-    if let Some(&(last @ Arg::Spread(..), _)) = args.last()
-        && index + 1 >= args.len()
-    {
-        return match spread_list(c, file, args, args.len() - 1) {
-            Some(list) => mutable_array_or_tuple(c, list),
-            None => {
-                let element = c.arg_type(file, last);
-                if is_const {
-                    c.readonly_array_of(element)
-                } else {
-                    c.array_of(element)
-                }
-            }
-        };
-    }
-    let length = args.len() - index;
-    let (mut elems, mut flags) = (Vec::with_capacity(length), Vec::with_capacity(length));
-    for i in index..args.len() {
-        let arg = args[i].0;
-        let ty = c.arg_type(file, arg);
-        if !matches!(arg, Arg::Spread(..)) {
-            // A literal stays one where what is expected there, not of the list as a whole, may be primitive. So it does where
-            // that has room for it: `checkExpressionWithContextualType` makes it regular, and only a fresh one is widened.
-            let context = context_of_rest_argument(c, rest, i - index, length);
-            let stays = is_const || may_be_primitive_or_key(c, context);
-            elems.push(if stays {
-                c.regular(ty)
-            } else {
-                c.widen_literal_for_context(ty, Some(context))
-            });
-            flags.push(ElemFlags::REQUIRED);
-        } else if let Some(list) = spread_list(c, file, args, i) {
-            elems.push(list);
-            flags.push(ElemFlags::VARIADIC);
-        } else {
-            elems.push(ty);
-            flags.push(ElemFlags::REST);
-        }
-        // `tupleNameSource`
-        if let Arg::Type(_, label) | Arg::Spread(_, _, label) = arg
-            && let Some(flag) = flags.last_mut()
-        {
-            *flag = flag.with_label(label);
-        }
-    }
-    // For a `const` type variable it is not to be written to, unless `rest` may be a list that is (`isMutableArrayLikeType`).
-    let readonly = is_const && {
-        let any_array = c.array_of(TypeId::ANY);
-        !c.parts(rest).iter().any(|&m| {
-            c.is_mutable_array_or_tuple(m)
-                || !c.is_any(m) && !c.is_nullish(m) && c.is_assignable(m, any_array)
-        })
-    };
-    c.normalized_tuple(&elems, &flags, readonly)
-}
-
-/// The list that argument `i`, which is spread, stands for. `None`: what is spread is no list (`isArrayLikeType`), only something
-/// to go through.
-fn spread_list(
-    c: &mut Checker<'_>,
-    file: FileId,
-    args: &[(Arg, ExprId)],
-    i: usize,
-) -> Option<TypeId> {
-    let node = args[i].1;
-    let ExprKind::Spread(inner) = c.hir(file)[node].kind else {
-        return None;
-    };
-    let spread = c.type_of_expr(file, inner);
-    // `getEffectiveCallArguments` takes a tuple apart: `...T` in it is `T`, `...X[]` is `X[]`.
-    if let TypeData::Tuple { elems, flags, .. } = c.data(spread) {
-        let first = args.iter().position(|a| a.1 == node)?;
-        let (&element, flag) = (elems.get(i - first)?, flags.get(i - first)?);
-        return Some(if flag.contains(ElemFlags::VARIADIC) {
-            element
-        } else {
-            c.array_of(element)
-        });
-    }
-    let any_list = c.readonly_array_of(TypeId::ANY);
-    (!c.is_nullish(spread) && c.is_assignable(spread, any_list)).then_some(spread)
-}
-
-/// `getMutableArrayOrTupleType`
-fn mutable_array_or_tuple(c: &mut Checker<'_>, t: TypeId) -> TypeId {
-    if c.is_union(t) {
-        return c.map_type(t, |c, member| mutable_array_or_tuple(c, member));
-    }
-    let base = c.base_constraint_of(t).unwrap_or(t);
-    if c.is_any(t) || c.is_mutable_array_or_tuple(base) {
-        return t;
-    }
-    if let TypeData::Tuple { elems, flags, .. } = c.data(t) {
-        return c.tuple(elems, flags, false);
-    }
-    c.normalized_tuple(&[t], &[ElemFlags::VARIADIC], false)
-}
-
-/// What argument `i` of the `length` that a rest parameter of type `rest` collects is expected to be.
-fn context_of_rest_argument(c: &mut Checker<'_>, rest: TypeId, i: usize, length: usize) -> TypeId {
-    let TypeData::Tuple { elems, flags, .. } = c.data(rest) else {
-        let at = c.number_literal(i as f64, false);
-        return c.indexed_access(rest, at);
-    };
-    // `getContextualTypeForElementExpression`: counted from the start up to what varies in length, from the end after it.
-    let varies = |f: &ElemFlags| f.intersects(ElemFlags::REST | ElemFlags::VARIADIC);
-    let fixed = flags.iter().position(varies).unwrap_or(flags.len());
-    if i < fixed {
-        return elems[i];
-    }
-    let fixed_end = if fixed < flags.len() {
-        flags.iter().rev().take_while(|f| !varies(*f)).count()
-    } else {
-        0
-    };
-    let offset = length - i;
-    if offset <= fixed_end {
-        return elems[elems.len() - offset];
-    }
-    // `getElementTypeOfSliceOfTupleType`
-    let between: Vec<TypeId> = (fixed..elems.len() - fixed_end)
-        .map(|k| {
-            if flags[k].contains(ElemFlags::VARIADIC) {
-                c.indexed_access(elems[k], TypeId::NUMBER)
-            } else {
-                elems[k]
-            }
-        })
-        .collect();
-    if between.is_empty() {
-        TypeId::UNKNOWN
-    } else {
-        c.union(&between)
-    }
-}
-
-/// `maybeTypeOfKind(ty, Primitive | Index | TemplateLiteral | StringMapping)`
-fn may_be_primitive_or_key(c: &Checker<'_>, ty: TypeId) -> bool {
-    match c.data(ty) {
-        TypeData::Union(parts) | TypeData::Intersection(parts) => {
-            parts.iter().any(|&part| may_be_primitive_or_key(c, part))
-        }
-        TypeData::Keyof(_) => true,
-        _ => c.is_primitive(ty),
     }
 }

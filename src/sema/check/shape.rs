@@ -730,37 +730,10 @@ impl<'p> Checker<'p> {
     }
 
     /// Whether the computed name `[e]` of a member of a class, an interface or a type literal can name anything: it is a literal,
-    /// which the binder goes by (`IsDynamicName`), or written as a name, `a` or `a.b.c` without parentheses or `#x`
-    /// (`isLateBindableAST`).
-    pub(super) fn can_name_a_member(&self, file: FileId, mut e: ExprId) -> bool {
+    /// which the binder goes by (`IsDynamicName`), or written as a name (`isLateBindableAST`).
+    pub(super) fn can_name_a_member(&self, file: FileId, e: ExprId) -> bool {
         let hir = self.hir(file);
-        let in_parentheses = |e: ExprId| hir.parens.binary_search_by_key(&e.0, |p| p.0.0).is_ok();
-        if in_parentheses(e) {
-            return false;
-        }
-        match hir[e].kind {
-            ExprKind::String(_) | ExprKind::Number(_) => return true,
-            ExprKind::Template { exprs, .. } if exprs.is_empty() => return true,
-            ExprKind::Unary {
-                op: UnOp::Plus | UnOp::Minus,
-                operand,
-            } if matches!(hir[operand].kind, ExprKind::Number(_)) && !in_parentheses(operand) => {
-                return true;
-            }
-            _ => {}
-        }
-        loop {
-            match hir[e].kind {
-                ExprKind::Ident(_) => return true,
-                ExprKind::Dot { obj, name, .. }
-                    if self.files().atoms.bytes(name).first() != Some(&b'#')
-                        && !in_parentheses(obj) =>
-                {
-                    e = obj
-                }
-                _ => return false,
-            }
-        }
+        !is_dynamic_name(hir, e) || is_entity_name_expression(hir, e)
     }
 
     /// `e.Name()`, of a component of an index signature, and the file it is written in.
@@ -794,14 +767,18 @@ impl<'p> Checker<'p> {
                 value: EnumValue::Number(bits),
                 ..
             } => Some(self.number_name(f64::from_bits(bits))),
-            TypeData::UniqueSymbol { file, name, .. } if file.0 == u32::MAX => Some(
-                self.files()
-                    .atoms
-                    .symbol_name(self.files().atoms.bytes(name)),
-            ),
-            TypeData::UniqueSymbol { file, id, name } => {
+            TypeData::UniqueSymbol { symbol, name } => {
                 let mut text = self.files().atoms.bytes(name).to_vec();
-                text.extend_from_slice(format!("@{}.{}", file.0, id).as_bytes());
+                match symbol {
+                    UniqueSymbolDeclaration::Variable(variable) => {
+                        let id = format!("@{}.{}", variable.file.0, variable.id.0);
+                        text.extend_from_slice(id.as_bytes());
+                    }
+                    UniqueSymbolDeclaration::Member(file, member) => {
+                        text.extend_from_slice(format!("@{}.m{}", file.0, member.0).as_bytes());
+                    }
+                    UniqueSymbolDeclaration::SymbolConstructor => {}
+                }
                 Some(self.files().atoms.symbol_name(&text))
             }
             _ => None,
@@ -1630,16 +1607,74 @@ impl<'p> Checker<'p> {
             })
     }
 
+    /// `getBaseConstructorTypeOfClass`: the type of the expression that class `class` extends. `undefined` if it extends nothing, the
+    /// error type if the expression depends on the class (2506) or is of a type that cannot be constructed (2507).
+    pub(super) fn base_constructor_type_of_class(&mut self, class: Sym) -> TypeId {
+        if let Some(known) = self.p.base_constructor_types.get(&class) {
+            return known;
+        }
+        let Some((file, c)) = self.extending_declaration(class) else {
+            return self
+                .p
+                .base_constructor_types
+                .insert(class, TypeId::UNDEFINED);
+        };
+        if !self.enter(Query::BaseConstructor(class)) {
+            return if self.came_full_circle {
+                TypeId::ERROR
+            } else {
+                TypeId::UNRESOLVED
+            };
+        }
+        let uncertain = self.uncertain;
+        let constructor = self.type_of_expr(file, self.hir(file)[c].extends);
+        let constructor = self.force(constructor);
+        // `resolveStructuredTypeMembers`: the members of a class take its base constructor type, so a circle shows now.
+        let _ = self.members(constructor);
+        self.uncertain = uncertain;
+        let holds = self.leave();
+        if self.left_a_circle {
+            self.p.circular_base_constructors.insert(class, ());
+            return self.p.base_constructor_types.insert(class, TypeId::ERROR);
+        }
+        let ty = if !self.is_known(constructor)
+            || self.has_any_flag(constructor)
+            || constructor.is_null()
+            || self.is_constructor_type(constructor)
+        {
+            constructor
+        } else {
+            TypeId::ERROR
+        };
+        // What was settled meanwhile stands.
+        if holds {
+            return self.p.base_constructor_types.insert(class, ty);
+        }
+        self.p.base_constructor_types.get(&class).unwrap_or(ty)
+    }
+
+    /// `isConstructorType`
+    fn is_constructor_type(&mut self, ty: TypeId) -> bool {
+        if !self.signatures(ty, true).is_empty() {
+            return true;
+        }
+        if !self.is_type_variable(ty) {
+            return false;
+        }
+        let Some(constraint) = self.base_constraint_of(ty) else {
+            return false;
+        };
+        let sigs = self.signatures(constraint, true);
+        self.is_mixin_constructor_type(&sigs)
+    }
+
     /// `resolveAnonymousTypeMembers`: whether the base constructor type of class `sym` is `any` itself.
     fn extends_any(&mut self, sym: Sym) -> bool {
         let Some((file, c)) = self.extending_declaration(sym) else {
             return false;
         };
-        let extends = self.hir(file)[c].extends;
-        let constructor = self.type_of_expr(file, extends);
-        self.has_any_flag(constructor)
-            && constructor != TypeId::ERROR
-            && !self.is_uncertain(file, extends)
+        self.base_constructor_type_of_class(sym) == TypeId::ANY
+            && !self.is_uncertain(file, self.hir(file)[c].extends)
     }
 
     fn sigs_of_function_declarations(&mut self, sym: Sym) -> Vec<SigId> {
@@ -1742,12 +1777,9 @@ impl<'p> Checker<'p> {
         }
         let mut bases = Vec::new();
         // `resolveBaseTypesOfClass`: what the class extends comes first, wherever it is written.
-        // `getBaseConstructorTypeOfClass`: a base constructor that comes back to itself is the error type, which gives no base type.
-        if !self.extends_itself_as_written(sym)
-            && let Some((file, c)) = self.extending_declaration(sym)
-        {
+        if let Some((file, c)) = self.extending_declaration(sym) {
             let mapper = self.decl_params_mapper(sym, file, self.hir(file)[c].type_params);
-            let base = self.base_instance_type(file, c);
+            let base = self.base_instance_type(sym, file, c);
             let base = self.instantiate(base, mapper);
             if let Some(base) = self.as_base_type(base) {
                 if !self.has_base(base, sym, 0) {
@@ -1755,7 +1787,7 @@ impl<'p> Checker<'p> {
                 } else {
                     // Through classes it is the base constructor that comes back to itself (`getBaseConstructorTypeOfClass`),
                     // and nothing is said of base types.
-                    let constructor = self.type_of_expr(file, self.hir(file)[c].extends);
+                    let constructor = self.base_constructor_type_of_class(sym);
                     if !self.is_constructor_of_class(constructor) {
                         self.p.circular_bases.insert(sym, ());
                     }
@@ -1841,12 +1873,13 @@ impl<'p> Checker<'p> {
             .then_some(base)
     }
 
-    /// `baseType` of `resolveBaseTypesOfClass`: the type of the instances of what class `c` extends.
-    fn base_instance_type(&mut self, file: FileId, c: ClassId) -> TypeId {
+    /// `baseType` of `resolveBaseTypesOfClass`: the type of the instances of what class `sym` extends. `c`: its
+    /// `extending_declaration`.
+    fn base_instance_type(&mut self, sym: Sym, file: FileId, c: ClassId) -> TypeId {
         let hir = self.hir(file);
         let class = &hir[c];
         let args = self.types_from_nodes(file, class.extends_args);
-        let constructor = self.type_of_expr(file, class.extends);
+        let constructor = self.base_constructor_type_of_class(sym);
         // `baseType = baseConstructorType`
         if self.has_any_flag(constructor) {
             return if self.is_uncertain(file, class.extends) {
@@ -1929,7 +1962,7 @@ impl<'p> Checker<'p> {
         };
         let hir = self.hir(file);
         let args = self.types_from_nodes(file, hir[c].extends_args);
-        let constructor = self.type_of_expr(file, hir[c].extends);
+        let constructor = self.base_constructor_type_of_class(class);
         let sigs = self.signatures(constructor, true);
         (
             !sigs.is_empty(),
@@ -2085,32 +2118,20 @@ impl<'p> Checker<'p> {
                 });
                 self.add_namespace_exports(&mut b, sym);
                 // Static members are inherited too.
-                for (file, decl) in self.files().decls(sym) {
-                    if let Decl::Class(c) = decl
-                        && self.hir(file)[c].extends.is_some()
-                        && self.is_declaration_of_symbol(sym, file, decl)
-                        && !self.extends_itself_as_written(sym)
-                    {
-                        let base = self.type_of_expr(file, self.hir(file)[c].extends);
-                        // `getBaseConstructorTypeOfClass`: to extend what nothing can be made with is an error, and gives nothing.
-                        if self.signatures(base, true).is_empty() {
-                            continue;
-                        }
-                        // `getPropertiesOfType`: a type variable answers with what it extends.
-                        let base = if self.is_type_variable(base) {
-                            self.apparent_type(base)
-                        } else {
-                            base
-                        };
-                        if let Some(members) = self.members(base) {
-                            // `addInheritedMembers`
-                            for prop in &members.shape().props {
-                                if !b.has(prop.name) && !self.is_static_private_name(prop) {
-                                    let mut prop = prop.clone();
-                                    prop.mapper = self.compose(prop.mapper, members.mapper);
-                                    b.add(prop);
-                                }
-                            }
+                let base = self.base_constructor_type_of_class(sym);
+                // `getPropertiesOfType`: a type variable answers with what it extends.
+                let base = if self.is_type_variable(base) {
+                    self.apparent_type(base)
+                } else {
+                    base
+                };
+                if let Some(members) = self.members(base) {
+                    // `addInheritedMembers`
+                    for prop in &members.shape().props {
+                        if !b.has(prop.name) && !self.is_static_private_name(prop) {
+                            let mut prop = prop.clone();
+                            prop.mapper = self.compose(prop.mapper, members.mapper);
+                            b.add(prop);
                         }
                     }
                 }
@@ -2222,6 +2243,7 @@ impl<'p> Checker<'p> {
             Origin::Namespace {
                 module,
                 with_default,
+                ..
             } => {
                 let ty = self.type_of_symbol(module);
                 if let Some(members) = self.members(ty) {
@@ -3314,14 +3336,19 @@ impl<'p> Checker<'p> {
         // type of `name`: what `reportNonexistentProperty` prints for an access in the descriptor starts the resolution.
         let in_report = !self.reporting_nonexistent.is_empty()
             && matches!(self.hir(file)[assignments[0]].kind, ExprKind::Call(_));
+        // What `reportCircularityError` returns for `symbol.ValueDeclaration`.
+        let annotation = self
+            .hir(file)
+            .jsdoc_type(JsDocTypeOwner::Assign(assignments[0]));
+        let in_a_circle = super::symbols::circularity_error_type(annotation);
         if in_report
             && self.stack[self.resolution_start..].contains(&Query::Assigned(file, assignments[0]))
         {
-            return TypeId::ANY;
+            return in_a_circle;
         }
         if !self.enter(Query::Assigned(file, assignments[0])) {
             return if self.came_full_circle {
-                TypeId::ANY
+                in_a_circle
             } else {
                 TypeId::UNRESOLVED
             };
@@ -3343,7 +3370,7 @@ impl<'p> Checker<'p> {
         // `reportCircularityError`
         if self.left_a_circle {
             self.p.circular_assignments.insert(key, ());
-            return self.p.assigned_prop_types.insert(key, TypeId::ANY);
+            return self.p.assigned_prop_types.insert(key, in_a_circle);
         }
         if is_cacheable {
             self.p.assigned_prop_types.insert(key, ty);
@@ -3871,14 +3898,13 @@ impl<'p> Checker<'p> {
                             {
                                 // `Symbol.iterator` and the like go by their name alone, so that `known::sym_iterator` is what they name.
                                 return self.intern(TypeData::UniqueSymbol {
-                                    file: FileId(u32::MAX),
-                                    id: 0,
+                                    symbol: UniqueSymbolDeclaration::SymbolConstructor,
                                     name,
                                 });
                             }
                         } else if says_unique {
-                            let (file, id) = self.unique_symbol_declaration(file, first, name);
-                            return self.intern(TypeData::UniqueSymbol { file, id, name });
+                            let symbol = self.unique_symbol_declaration(file, first, name);
+                            return self.intern(TypeData::UniqueSymbol { symbol, name });
                         }
                     }
                     return self.type_from_node(file, member.ty);
@@ -3889,8 +3915,7 @@ impl<'p> Checker<'p> {
                         && self.is_symbol_or_symbol_for_call(file, member.init)
                     {
                         return self.intern(TypeData::UniqueSymbol {
-                            file,
-                            id: member.init.0 | 1 << 31,
+                            symbol: UniqueSymbolDeclaration::Member(file, first),
                             name,
                         });
                     }
@@ -4035,11 +4060,15 @@ impl<'p> Checker<'p> {
     }
 
     /// `getESSymbolLikeTypeForNode` keeps one `unique symbol` for a symbol: of the declarations of the property `name` in the class
-    /// or the interface that the member `m` is written in, the first to say `unique symbol` stands for all. The file it is in,
-    /// and its type node.
-    fn unique_symbol_declaration(&self, file: FileId, m: MemberId, name: Atom) -> (FileId, u32) {
+    /// or the interface that the member `m` is written in, the first to say `unique symbol` stands for all.
+    fn unique_symbol_declaration(
+        &self,
+        file: FileId,
+        m: MemberId,
+        name: Atom,
+    ) -> UniqueSymbolDeclaration {
         let (member, bound) = (&self.hir(file)[m], self.bound(file));
-        let own = (file, member.ty.0);
+        let own = UniqueSymbolDeclaration::Member(file, m);
         let symbol = match bound.member_owner[m.idx()] {
             MemberOwner::Class(c) => bound.class_symbol[c.idx()],
             MemberOwner::Interface(i) => bound.interface_symbol[i.idx()],
@@ -4064,10 +4093,26 @@ impl<'p> Checker<'p> {
                     && matches!(hir[other.ty].kind, TypeNodeKind::UniqueSymbol)
             });
             if let Some(first) = first {
-                return (f, hir[first].ty.0);
+                return UniqueSymbolDeclaration::Member(f, first);
             }
         }
         own
+    }
+
+    /// `links.uniqueESSymbolType` of the `const` that `pat` declares by the name `name`.
+    pub(super) fn unique_symbol_of_variable(
+        &mut self,
+        file: FileId,
+        pat: PatId,
+        name: Atom,
+    ) -> TypeId {
+        let variable = self
+            .files()
+            .sym(file, self.bound(file).pat_symbol[pat.idx()]);
+        self.intern(TypeData::UniqueSymbol {
+            symbol: UniqueSymbolDeclaration::Variable(variable),
+            name,
+        })
     }
 
     /// `getESSymbolLikeTypeForNode` of the declaration `call` initializes: its unique symbol if `isValidESSymbolDeclaration`,
@@ -4092,14 +4137,7 @@ impl<'p> Checker<'p> {
                 {
                     return TypeId::SYMBOL;
                 }
-                let is_annotated_unique =
-                    decl.ty.is_some() && matches!(hir[decl.ty].kind, TypeNodeKind::UniqueSymbol);
-                let id = if is_annotated_unique {
-                    decl.ty.0
-                } else {
-                    call.0 | 1 << 31
-                };
-                self.intern(TypeData::UniqueSymbol { file, id, name })
+                self.unique_symbol_of_variable(file, decl.pat, name)
             }
             Parent::MemberInit(m) if hir[m].init == call => {
                 let member = &hir[m];
@@ -4113,16 +4151,14 @@ impl<'p> Checker<'p> {
                 {
                     return TypeId::SYMBOL;
                 }
-                if member.ty.is_some() && matches!(hir[member.ty].kind, TypeNodeKind::UniqueSymbol)
+                let symbol = if member.ty.is_some()
+                    && matches!(hir[member.ty].kind, TypeNodeKind::UniqueSymbol)
                 {
-                    let (file, id) = self.unique_symbol_declaration(file, m, name);
-                    return self.intern(TypeData::UniqueSymbol { file, id, name });
-                }
-                self.intern(TypeData::UniqueSymbol {
-                    file,
-                    id: call.0 | 1 << 31,
-                    name,
-                })
+                    self.unique_symbol_declaration(file, m, name)
+                } else {
+                    UniqueSymbolDeclaration::Member(file, m)
+                };
+                self.intern(TypeData::UniqueSymbol { symbol, name })
             }
             _ => TypeId::SYMBOL,
         }
@@ -4487,7 +4523,7 @@ impl<'p> Checker<'p> {
     /// among the properties, but it is not there for the asking, and nothing stands in for it.
     #[inline]
     fn is_type_only_member(&self, ty: TypeId, name: Atom) -> bool {
-        matches!(*self.data(ty), TypeData::Anon { origin: Origin::Module(module), .. } if self.files().is_type_only_star_export(module, name))
+        matches!(*self.data(ty), TypeData::Anon { origin: Origin::Module(module) | Origin::Namespace { module, .. }, .. } if self.files().is_type_only_star_export(module, name))
     }
 
     /// `ValueDeclaration`: what says where `prop` is declared. `None`: it is made up, or it stands for properties of the members of

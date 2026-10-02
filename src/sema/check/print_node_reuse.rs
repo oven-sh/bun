@@ -147,6 +147,26 @@ impl<'p> Printer<'_, 'p> {
         )
     }
 
+    /// `addPropertyToElementList`: the `enclosingDeclaration` that the name of `prop` is made with, which is
+    /// `value_declaration_of_property`.
+    pub(super) fn enclosing_declaration_of_property_name(
+        &mut self,
+        prop: &Prop,
+    ) -> Option<(FileId, ScopeId)> {
+        let (file, declaration) = self.value_declaration_of_property(prop, 0)?;
+        let scope = match declaration {
+            SyntaxNode::Member(member) => self.c.enclosing_scope_of_member(file, member),
+            SyntaxNode::Prop(written) => self.c.enclosing_scope_of_property(file, written),
+            SyntaxNode::Param(parameter) => {
+                let pat = self.c.hir(file)[parameter].pat;
+                self.c.enclosing_scope_of_pat(file, pat)
+            }
+            SyntaxNode::Expr(assignment) => self.c.enclosing_scope_of_expr(file, assignment),
+            _ => return None,
+        };
+        Some((file, scope))
+    }
+
     /// `symbol.ValueDeclaration`, or else the first of `symbol.Declarations`.
     fn value_declaration_of_property(
         &mut self,
@@ -447,7 +467,7 @@ impl<'p> Printer<'_, 'p> {
             let declaration = match self.visit_type_parameter_declaration(file, tp) {
                 Some(declaration) => declaration,
                 None => {
-                    let parameter = self.c.type_param(file, tp);
+                    let parameter = self.c.declared_type_of_type_parameter(file, tp);
                     self.type_parameter_to_name(parameter)
                 }
             };
@@ -835,7 +855,7 @@ impl<'p> Printer<'_, 'p> {
                 )
             }
             TypeNodeKind::Infer(tp) => {
-                let parameter = self.c.type_param(file, tp);
+                let parameter = self.c.declared_type_of_type_parameter(file, tp);
                 let name = self.type_parameter_to_name(parameter);
                 if hir[tp].constraint.is_none() {
                     Node::new(format!("infer {name}"), TYPE_OPERATOR)
@@ -916,7 +936,7 @@ impl<'p> Printer<'_, 'p> {
         let type_parameters: Vec<TypeId> = function
             .type_params
             .iter()
-            .map(|tp| self.c.type_param(file, tp))
+            .map(|tp| self.c.declared_type_of_type_parameter(file, tp))
             .collect();
         self.enter_new_scope(&parameters, &type_parameters, None, false)
     }
@@ -938,7 +958,7 @@ impl<'p> Printer<'_, 'p> {
                 text.push_str(modifier);
             }
         }
-        let parameter = self.c.type_param(file, tp);
+        let parameter = self.c.declared_type_of_type_parameter(file, tp);
         text.push_str(&self.type_parameter_to_name(parameter));
         if declaration.constraint.is_some() {
             let constraint = self.visit_existing_type_node(file, declaration.constraint, 0)?;
@@ -1033,10 +1053,7 @@ impl<'p> Printer<'_, 'p> {
             PropKey::None => String::new(),
             PropKey::Computed(e) => {
                 let name = self.entity_name_text(file, e)?;
-                let mut first = e;
-                while let ExprKind::Dot { obj, .. } = hir[first].kind {
-                    first = obj;
-                }
+                let first = first_identifier(hir, e);
                 let ExprKind::Ident(first) = hir[first].kind else {
                     return None;
                 };
@@ -1045,7 +1062,9 @@ impl<'p> Printer<'_, 'p> {
                 }
                 format!("[{name}]")
             }
-            PropKey::Private(_) => return None,
+            PropKey::Private(_) => {
+                self.property_key_text(file, member.key, start_of_member_name(hir, m))
+            }
         };
         let is_named = !name.is_empty();
         if member.func.is_none() && member.kind != MemberKind::Property {
@@ -1230,10 +1249,7 @@ impl<'p> Printer<'_, 'p> {
         name: ExprId,
     ) -> Option<String> {
         let hir = self.c.hir(file);
-        let mut first = name;
-        while let ExprKind::Dot { obj, .. } = hir[first].kind {
-            first = obj;
-        }
+        let first = first_identifier(hir, name);
         let ExprKind::Ident(first) = hir[first].kind else {
             return None;
         };

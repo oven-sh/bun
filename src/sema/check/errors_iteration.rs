@@ -37,7 +37,7 @@ impl Checker<'_> {
                         let given = self.check_not_nullish(file, expr, given, out);
                         // Where `null` and `undefined` are not told apart nothing has been said of them, or taken out.
                         if !self.is_nothing_but_nullish(given) {
-                            let at = self.start_of_error_about(file, expr);
+                            let at = self.error_start_of(file, expr);
                             iterated = self.check_iterated(
                                 given,
                                 is_await,
@@ -64,7 +64,7 @@ impl Checker<'_> {
                     {
                         // Whatever else is written there is held against what comes out, whatever is wrong with it: 2487, 2781.
                         let wanted = self.type_of_assignment_target(file, target);
-                        let at = self.start_of_error_about(file, target);
+                        let at = self.error_start_of(file, target);
                         let end = self.error_end_of(file, target);
                         self.check_assignable_with_end(
                             file, iterated, wanted, at, end, expr, 2322, out,
@@ -88,7 +88,7 @@ impl Checker<'_> {
                             && self.is_known(keys)
                             && !self.is_assignable(keys, wanted)
                         {
-                            let start = self.start_of_error_about(file, target);
+                            let start = self.error_start_of(file, target);
                             out.push(Diagnostic { start, code: 2405 });
                             let end = self.error_end_of(file, target);
                             self.explain_to(start, end, 2405, |_| vec![]);
@@ -102,7 +102,7 @@ impl Checker<'_> {
                             && !matches!(self.data(given), TypeData::Keyof(_))
                         || self.is_assignable(given, TypeId::OBJECT);
                     if given == TypeId::NEVER || !is_object {
-                        let start = self.start_of_error_about(file, expr);
+                        let start = self.error_start_of(file, expr);
                         out.push(Diagnostic { start, code: 2407 });
                         let end = self.error_end_of(file, expr);
                         self.explain_to(start, end, 2407, |c| vec![c.type_to_string(given)]);
@@ -150,7 +150,7 @@ impl Checker<'_> {
                         && !self.is_nothing_but_nullish(given)
                         && !self.is_spread_taken_whole(file, e, given, &out[..])
                     {
-                        let at = self.start_of_error_about(file, inner);
+                        let at = self.error_start_of(file, inner);
                         self.check_iterated(given, false, at, |c| c.error_end_of(file, inner), out);
                     }
                 }
@@ -378,51 +378,13 @@ impl Checker<'_> {
         }
     }
 
-    /// Whether `e` is written in parentheses.
-    fn is_in_parentheses(&self, file: FileId, e: ExprId) -> bool {
-        self.hir(file)
-            .parens
-            .binary_search_by_key(&e.0, |p| p.0.0)
-            .is_ok()
-    }
-
     /// Whether `e`, which is assigned to, is a pattern: an array or object literal as it stands. In parentheses it is an expression
     /// like any other.
     fn is_assignment_pattern(&self, file: FileId, e: ExprId) -> bool {
         matches!(
             self.hir(file)[e].kind,
             ExprKind::Array(_) | ExprKind::Object(_)
-        ) && !self.is_in_parentheses(file, e)
-    }
-
-    /// `GetErrorRangeForNode`, of an expression: where an error about the whole of `e` starts.
-    fn start_of_error_about(&self, file: FileId, e: ExprId) -> u32 {
-        let hir = self.hir(file);
-        if !self.is_in_parentheses(file, e) {
-            match hir[e].kind {
-                // What has a name is pointed at by the name.
-                ExprKind::Fn(f) if hir[f].kind == FnKind::Expr && hir[f].name.is_some() => {
-                    return hir[f].name_pos;
-                }
-                ExprKind::Class(c) if hir[c].name.is_some() => return hir[c].name_pos,
-                // `x satisfies T`, by the keyword.
-                ExprKind::Satisfies { ty, .. } => {
-                    let mut before = hir
-                        .text
-                        .get(..hir[ty].pos as usize)
-                        .unwrap_or_default()
-                        .trim_ascii_end();
-                    while let Some(rest) = before.strip_suffix(b"(") {
-                        before = rest.trim_ascii_end();
-                    }
-                    if before.ends_with(b"satisfies") {
-                        return before.len() as u32 - 9;
-                    }
-                }
-                _ => {}
-            }
-        }
-        self.start_of(file, e)
+        ) && !is_parenthesized(self.hir(file), e)
     }
 
     /// Whether `getIterationTypesOfIterable` finds any types for `ty`, going by `[Symbol.iterator]()`, and by
@@ -474,7 +436,7 @@ impl Checker<'_> {
         // `getPropertyOfType` looks in the reduced apparent type.
         let apparent = self.apparent_type(ty);
         let apparent = self.reduced(apparent);
-        if !self.is_known(apparent) || self.is_any(apparent) {
+        if !self.is_known(apparent) {
             return true;
         }
         // What a type parameter extends: each of the alternatives.
@@ -663,7 +625,7 @@ impl Checker<'_> {
         if !suggests_await && !allows_async {
             // `errorNode.Parent.Expression() == errorNode`
             let is_what_a_loop_goes_through = self.hir(file).stmts.iter().any(|s| {
-                matches!(s.kind, StmtKind::ForOf { expr, .. } if self.start_of_error_about(file, expr) == at)
+                matches!(s.kind, StmtKind::ForOf { expr, .. } if self.error_start_of(file, expr) == at)
             });
             if is_what_a_loop_goes_through
                 && self.global_type_of_arity(known::AsyncIterable, 3).is_some()
@@ -699,7 +661,7 @@ impl Checker<'_> {
             target: inner,
             value,
         } = hir[target].kind
-            && !self.is_in_parentheses(file, target)
+            && !is_parenthesized(self.hir(file), target)
         {
             let default = self.type_of_expr(file, value);
             if self.is_assignment_pattern(file, inner) {
@@ -805,7 +767,7 @@ impl Checker<'_> {
                         // `AccessFlagsAllowMissing`
                         let has_default =
                             matches!(hir[prop.value].kind, ExprKind::Assign { op: None, .. })
-                                && !self.is_in_parentheses(file, prop.value);
+                                && !is_parenthesized(self.hir(file), prop.value);
                         // A number is looked up in a tuple as an element is.
                         let past_the_end =
                             name.and_then(|name| self.past_the_end_of_tuples(object, name));
@@ -889,7 +851,7 @@ impl Checker<'_> {
                 let is_tuples = iterated.is_some() && self.every_type(source, |c, m| c.is_tuple(m));
                 let has_default = |c: &Self, e: ExprId| {
                     matches!(hir[e].kind, ExprKind::Assign { op: None, .. })
-                        && !c.is_in_parentheses(file, e)
+                        && !is_parenthesized(c.hir(file), e)
                 };
                 for (index, item) in hir.ids(items).enumerate() {
                     match hir[item].kind {
@@ -999,7 +961,7 @@ impl Checker<'_> {
             return;
         }
         let wanted = self.type_of_assignment_target(file, target);
-        let at = self.start_of_error_about(file, target);
+        let at = self.error_start_of(file, target);
         let end = self.error_end_of(file, target);
         self.check_assignable_with_end(file, source, wanted, at, end, value, 2322, out);
     }
@@ -1023,51 +985,22 @@ impl Checker<'_> {
         }
     }
 
-    /// `checkExpression`, of what is written where something is assigned to. What cannot be written to is an error (2588, 2540 ..)
-    /// and has the error type, which takes anything.
+    /// `checkExpression`, of what is written where something is assigned to.
     fn type_of_assignment_target(&mut self, file: FileId, target: ExprId) -> TypeId {
-        let hir = self.hir(file);
-        let mut said = Vec::new();
-        match hir[target].kind {
-            // `checkIdentifier`
-            ExprKind::Ident(name) => {
-                let is_written_to =
-                    self.symbol_of_identifier(file, target, name)
-                        .is_some_and(|s| {
-                            let flags = self.files().flags(s);
-                            flags.intersects(SymFlags::VARIABLE) && !flags.contains(SymFlags::CONST)
-                        });
-                if !is_written_to {
-                    return TypeId::UNRESOLVED;
-                }
-            }
-            // `checkPropertyAccessExpressionOrQualifiedName`
-            ExprKind::Dot {
-                obj,
-                name,
-                name_pos,
-                ..
-            } => self.check_property_write(file, target, obj, name, name_pos, &mut said),
-            // `getPropertyTypeForIndexType`
-            ExprKind::Index { obj, index, .. } => {
-                if let ExprKind::String(name) = hir[index].kind {
-                    self.check_property_write(file, target, obj, name, hir[index].pos, &mut said);
-                }
+        let ty = self.type_of_expr(file, target);
+        // What cannot be written to (2588, 2540, 2476 ..) has the error type, which takes anything.
+        if self.is_error_type(ty) {
+            return ty;
+        }
+        match self.hir(file)[target].kind {
+            // `checkIdentifier`: `IArguments`
+            ExprKind::Ident(_) if self.bound(file).is_arguments_object(target) => ty,
+            ExprKind::Ident(_) | ExprKind::Dot { .. } | ExprKind::Index { .. } => {
+                self.declared_type_of_reference(file, target)
             }
             // Whatever else is written there is what it is.
-            _ => {
-                let ty = self.type_of_expr(file, target);
-                return if self.is_uncertain(file, target) {
-                    TypeId::UNRESOLVED
-                } else {
-                    ty
-                };
-            }
-        }
-        if said.is_empty() {
-            self.declared_type_of_reference(file, target)
-        } else {
-            TypeId::UNRESOLVED
+            _ if self.is_uncertain(file, target) => TypeId::UNRESOLVED,
+            _ => ty,
         }
     }
 
@@ -1430,7 +1363,7 @@ impl Checker<'_> {
             return;
         }
         let at = if value.is_some() {
-            self.start_of_error_about(file, value)
+            self.error_start_of(file, value)
         } else {
             hir[e].pos
         };

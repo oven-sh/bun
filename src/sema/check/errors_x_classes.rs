@@ -49,11 +49,6 @@ enum Sought {
     SuperOrThis,
 }
 
-/// Whether `e` is written in parentheses of its own.
-fn is_parenthesized(hir: &hir::File, e: ExprId) -> bool {
-    hir.parens.binary_search_by_key(&e.0, |p| p.0.0).is_ok()
-}
-
 /// The modifier that ends right before `pos`, and its start. Whitespace and `/* .. */` comments in between are skipped.
 fn modifier_before(text: &[u8], pos: u32) -> Option<(u32, &[u8])> {
     let mut before = text.get(..pos as usize)?.trim_ascii_end();
@@ -1014,31 +1009,11 @@ impl Checker<'_> {
     /// `None`: it cannot be told.
     fn is_bindable_computed_name(&mut self, file: FileId, e: ExprId) -> Option<bool> {
         let hir = self.hir(file);
-        if is_parenthesized(hir, e) {
-            return Some(false);
-        }
-        // `IsDynamicName`: a template without substitutions is as good as a string, `IsSignedNumericLiteral` as the number.
-        match hir[e].kind {
-            ExprKind::Template { exprs, .. } if exprs.is_empty() => return Some(true),
-            ExprKind::Unary {
-                op: UnOp::Plus | UnOp::Minus,
-                operand,
-            } if matches!(hir[operand].kind, ExprKind::Number(_))
-                && !is_parenthesized(hir, operand) =>
-            {
-                return Some(true);
-            }
-            _ => {}
+        if !is_dynamic_name(hir, e) {
+            return Some(true);
         }
         // `isLateBindableAST`
-        let mut at = e;
-        while let ExprKind::Dot { obj, name, .. } = hir[at].kind {
-            if self.files().atoms.bytes(name).first() == Some(&b'#') || is_parenthesized(hir, obj) {
-                return Some(false);
-            }
-            at = obj;
-        }
-        if !matches!(hir[at].kind, ExprKind::Ident(_)) {
+        if !is_entity_name_expression(hir, e) {
             return Some(false);
         }
         let ty = self.type_of_expr(file, e);

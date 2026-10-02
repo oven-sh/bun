@@ -1,3 +1,4 @@
+use super::member_flags::*;
 use super::*;
 use crate::atom::known;
 
@@ -132,6 +133,7 @@ impl<'f> Binder<'f> {
         b.module_instantiated = vec![false; f.modules.len()].into();
         b.var_stmt = vec![StmtId::NONE; f.var_decls.len()];
         b.case_stmt = vec![StmtId::NONE; f.cases.len()];
+        b.import_scope = vec![ScopeId::NONE; f.imports.len()];
         b.import_equals_scope = vec![ScopeId::NONE; f.import_equals.len()].into();
         b.export_scope = vec![ScopeId::NONE; f.exports.len()];
         b.flow.push(Flow::Unreachable);
@@ -645,11 +647,6 @@ impl<'f> Binder<'f> {
         !self.label_edges[self.edges_of(label)].edges.is_empty()
     }
 
-    /// `IsStringOrNumericLiteralLike`, of what is written: `("a")` is not.
-    fn is_string_or_numeric_literal_like(&self, e: ExprId) -> bool {
-        is_string_or_numeric_literal_like(self.f, e)
-    }
-
     /// `isNarrowableReference`
     fn is_narrowable_reference(&self, e: ExprId) -> bool {
         match self.f[e].kind {
@@ -662,8 +659,8 @@ impl<'f> Binder<'f> {
             ExprKind::NonNull(x) => self.is_narrowable_reference(x),
             // With a literal for a key the object is not looked at.
             ExprKind::Index { obj, index, .. } => {
-                self.is_string_or_numeric_literal_like(index)
-                    || self.is_entity_name(index) && self.is_narrowable_reference(obj)
+                is_string_or_numeric_literal_like(self.f, index)
+                    || is_entity_name_expression(self.f, index) && self.is_narrowable_reference(obj)
             }
             ExprKind::Assign { target, .. } => self.is_narrowable_reference(target),
             ExprKind::Binary {
@@ -779,7 +776,7 @@ impl<'f> Binder<'f> {
         if matches!(
             (self.f[expr].kind, sense),
             (ExprKind::True, false) | (ExprKind::False, true)
-        ) && !self.is_in_parens(expr)
+        ) && !is_parenthesized(self.f, expr)
             && !matches!(self.b.expr_parent[expr.idx()], Parent::Expr(p)
                 if matches!(self.f[p].kind, ExprKind::Binary { op: BinOp::Nullish, .. })
                     || self.chain_of(p).is_some_and(|(inner, is_root)| is_root && inner == expr))
@@ -902,42 +899,6 @@ impl<'f> Binder<'f> {
                         target: FlowTarget::Expr(e),
                     });
                 }
-            }
-        }
-    }
-
-    /// `IsAssignmentTarget`: `e` is what an assignment, `++`, `--` or the head of a `for`-`in` or `for`-`of` gives a value to, or
-    /// part of a pattern that is. Only for what is being bound: it goes by the parents.
-    fn is_assignment_target(&self, mut e: ExprId) -> bool {
-        loop {
-            match self.b.expr_parent[e.idx()] {
-                Parent::Expr(p) => match self.f[p].kind {
-                    ExprKind::Assign { target, .. } => return target == e,
-                    ExprKind::Unary {
-                        op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
-                        ..
-                    } => return true,
-                    ExprKind::Array(_) | ExprKind::Spread(_) | ExprKind::NonNull(_) => e = p,
-                    _ => return false,
-                },
-                // The value of `name: value` and of `...value`, and the assignment `{ name = value }` is kept as.
-                Parent::Prop(p) => {
-                    let owner = self.b.prop_owner[p.idx()];
-                    if !matches!(self.f[owner].kind, ExprKind::Object(_))
-                        || !matches!(
-                            self.f[p].kind,
-                            PropKind::Init | PropKind::Spread | PropKind::Shorthand
-                        )
-                    {
-                        return false;
-                    }
-                    e = owner;
-                }
-                Parent::Stmt(s) => {
-                    return matches!(self.b.stmt_parent[s.idx()], Parent::Stmt(owner)
-                        if matches!(self.f[owner].kind, StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } if left == s));
-                }
-                _ => return false,
             }
         }
     }
@@ -1121,7 +1082,7 @@ impl<'f> Binder<'f> {
 
     /// `lookupEntity`: `a`, or `a.b` where `a` is a function and a namespace that exports `b`.
     fn lookup_entity(&self, e: ExprId, scope: ScopeId) -> Option<SymbolId> {
-        if self.is_in_parens(e) {
+        if is_parenthesized(self.f, e) {
             return None;
         }
         match self.f[e].kind {
@@ -1131,7 +1092,7 @@ impl<'f> Binder<'f> {
                 name,
                 name_pos,
                 ..
-            } if !self.is_private_name_at(name_pos) => {
+            } if !is_private_name_at(self.f, name_pos) => {
                 let ExpandoFunction::Declared(owner) =
                     self.expando_function(self.lookup_entity(obj, scope)?)?
                 else {
@@ -1161,7 +1122,7 @@ impl<'f> Binder<'f> {
                     let decl = &self.f[d];
                     if (decl.kind == VarKind::Const || self.f.is_js)
                         && decl.init.is_some()
-                        && !self.is_in_parens(decl.init)
+                        && !is_parenthesized(self.f, decl.init)
                     {
                         return self.expando_initializer(decl.init, decl.ty.is_some());
                     }
@@ -1193,7 +1154,7 @@ impl<'f> Binder<'f> {
         match self.f[key].kind {
             ExprKind::String(_) | ExprKind::Number(_) => true,
             ExprKind::Template { exprs, .. } => exprs.is_empty(),
-            _ => self.is_entity_name(key),
+            _ => is_entity_name_expression(self.f, key),
         }
     }
 
@@ -1246,7 +1207,7 @@ impl<'f> Binder<'f> {
         {
             return self.expando_function(symbol);
         }
-        if !self.f.is_js || self.is_in_parens(e) {
+        if !self.f.is_js || is_parenthesized(self.f, e) {
             return None;
         }
         // `IsEntityNameExpressionEx` with `allowJS`: `a.b`, `a["b"]`, `a[0]`.
@@ -1256,8 +1217,12 @@ impl<'f> Binder<'f> {
                 name,
                 name_pos,
                 ..
-            } if name.is_some() && !self.is_private_name_at(name_pos) => (obj, name, ExprId::NONE),
-            ExprKind::Index { obj, index, .. } if self.is_string_or_numeric_literal_like(index) => {
+            } if name.is_some() && !is_private_name_at(self.f, name_pos) => {
+                (obj, name, ExprId::NONE)
+            }
+            ExprKind::Index { obj, index, .. }
+                if is_string_or_numeric_literal_like(self.f, index) =>
+            {
                 (obj, string_literal_text(self.f, index), index)
             }
             _ => return None,
@@ -1292,7 +1257,7 @@ impl<'f> Binder<'f> {
         let ExprKind::Assign { value, .. } = self.f[first].kind else {
             return None;
         };
-        if self.is_in_parens(value) {
+        if is_parenthesized(self.f, value) {
             return None;
         }
         let is_annotated = self.f.jsdoc_type(JsDocTypeOwner::Assign(first)).is_some();
@@ -1327,7 +1292,7 @@ impl<'f> Binder<'f> {
             let (obj, name, key) = match self.f[e].kind {
                 ExprKind::Assign { target, .. } => {
                     // `GetAssignmentDeclarationKind` tests the JavaScript kinds before `JSDeclarationKindProperty`.
-                    if self.is_in_parens(target)
+                    if is_parenthesized(self.f, target)
                         || assignment_declaration_kind(self.f, e) != JsDeclarationKind::None
                     {
                         continue;
@@ -1338,7 +1303,7 @@ impl<'f> Binder<'f> {
                             name,
                             name_pos,
                             ..
-                        } if !self.is_private_name_at(name_pos) => (obj, name, ExprId::NONE),
+                        } if !is_private_name_at(self.f, name_pos) => (obj, name, ExprId::NONE),
                         ExprKind::Index { obj, index, .. } => {
                             (obj, string_literal_text(self.f, index), index)
                         }
@@ -1437,7 +1402,9 @@ impl<'f> Binder<'f> {
             };
             // `getDeclarationName`
             let name = match self.f[target].kind {
-                ExprKind::Dot { name, name_pos, .. } if !self.is_private_name_at(name_pos) => name,
+                ExprKind::Dot { name, name_pos, .. } if !is_private_name_at(self.f, name_pos) => {
+                    name
+                }
                 ExprKind::Index { index, .. } => string_literal_text(self.f, index),
                 _ => continue,
             };
@@ -1599,6 +1566,7 @@ impl<'f> Binder<'f> {
             .sort_unstable_by_key(|p| p.0);
         self.collect_expandos();
         self.collect_this_properties();
+        self.declare_member_symbols();
         // Tables, flat and sorted.
         self.b.tables.reserve_exact(self.tables.len());
         self.b
@@ -1997,6 +1965,7 @@ impl<'f> Binder<'f> {
             }
             StmtKind::Import(import) => {
                 let i = &self.f[import];
+                self.b.import_scope[import.idx()] = self.scope;
                 self.statement_specifier(i.spec);
                 let type_only = if i.type_only {
                     SymFlags::TYPE_ONLY
@@ -2105,9 +2074,7 @@ impl<'f> Binder<'f> {
                     known::export_equals
                 };
                 // `ExpressionIsAlias`: `export default name` stands for everything `name` means, and a class expression for the class.
-                let is_alias = self.is_entity_name(e)
-                    || matches!(self.f[e].kind, ExprKind::Class(_)) && !self.is_in_parens(e);
-                let flags = if is_alias {
+                let flags = if expression_is_alias(self.f, e) {
                     SymFlags::ALIAS
                 } else {
                     SymFlags::EXPORT_VALUE
@@ -2133,30 +2100,6 @@ impl<'f> Binder<'f> {
             }
         }
         self.is_reached = around_reached;
-    }
-
-    fn is_in_parens(&self, e: ExprId) -> bool {
-        is_in_parens(self.f, e)
-    }
-
-    /// Whether the name written at `pos` is a `#name`.
-    fn is_private_name_at(&self, pos: u32) -> bool {
-        is_private_name_at(self.f, pos)
-    }
-
-    /// `IsEntityNameExpression`
-    fn is_entity_name(&self, e: ExprId) -> bool {
-        !self.is_in_parens(e)
-            && match self.f[e].kind {
-                ExprKind::Ident(_) => true,
-                ExprKind::Dot {
-                    obj,
-                    name_pos,
-                    chain: Chain::No,
-                    ..
-                } => !self.is_private_name_at(name_pos) && self.is_entity_name(obj),
-                _ => false,
-            }
     }
 
     /// `bindBreakOrContinueStatement`
@@ -2219,7 +2162,7 @@ impl<'f> Binder<'f> {
     /// `maybeBindExpressionFlowIfCall`: of a call as it is written, which `(f())` is not.
     fn maybe_call_flow(&mut self, e: ExprId) {
         if let ExprKind::Call(c) = self.f[e].kind
-            && !self.is_in_parens(e)
+            && !is_parenthesized(self.f, e)
         {
             let callee = self.f[c].callee;
             // `super(..)` got its own where it was bound.
@@ -2251,7 +2194,8 @@ impl<'f> Binder<'f> {
         self.pre_switch = self.flow;
         self.push_scope(ScopeKind::Block, SymbolId::NONE);
         // `bindCaseBlock`: the keyword as it is written, which `(true)` is not.
-        let is_narrowing = matches!(self.f[expr].kind, ExprKind::True) && !self.is_in_parens(expr)
+        let is_narrowing = matches!(self.f[expr].kind, ExprKind::True)
+            && !is_parenthesized(self.f, expr)
             || self.is_narrowing_expression(expr);
         let mut fallthrough = UNREACHABLE;
         let n = cases.len();
@@ -3235,7 +3179,7 @@ impl<'f> Binder<'f> {
             if let PropKey::Computed(key) = member.key
                 // `checkComputedPropertyName`: `[P in K]` outside a mapped type is an error of its own and is not looked at.
                 && !(matches!(self.f[key].kind, ExprKind::Binary { op: BinOp::In, .. })
-                    && !self.is_in_parens(key)
+                    && !is_parenthesized(self.f, key)
                     && !matches!(member.kind, MemberKind::Getter | MemberKind::Setter))
             {
                 let is_of_class_or_interface =
@@ -3594,7 +3538,7 @@ impl<'f> Binder<'f> {
                 ..
             } => {
                 if let ExprKind::String(name) = self.f[left].kind
-                    && self.is_private_name_at(self.f[left].pos)
+                    && is_private_name_at(self.f, self.f[left].pos)
                 {
                     self.private_name(left, name);
                 }
@@ -3622,7 +3566,7 @@ impl<'f> Binder<'f> {
         }
         // `bindChildren`: only the parts of a pattern hand it on. Parentheses, which the tree does not keep, do not.
         let around_in_pattern = std::mem::replace(&mut self.in_assignment_pattern, false);
-        let in_pattern = around_in_pattern && !self.is_in_parens(id);
+        let in_pattern = around_in_pattern && !is_parenthesized(self.f, id);
         // `requiresScopeChangeWorker`: `??` and an optional chain answer for all that is in them, and `f<T>` counts as a type.
         let scope_change_of = self.scope_change_of;
         if scope_change_of.is_some() {
@@ -3770,7 +3714,7 @@ impl<'f> Binder<'f> {
                 UnOp::Delete => {
                     self.expr(operand, me);
                     if matches!(self.f[operand].kind, ExprKind::Dot { .. })
-                        && !self.is_in_parens(operand)
+                        && !is_parenthesized(self.f, operand)
                     {
                         self.assignment_target(operand);
                     }
@@ -3806,7 +3750,7 @@ impl<'f> Binder<'f> {
             } if matches!(
                 self.f[target].kind,
                 ExprKind::Object(_) | ExprKind::Array(_)
-            ) && !self.is_in_parens(target) =>
+            ) && !is_parenthesized(self.f, target) =>
             {
                 if in_pattern {
                     self.expr(value, me);
@@ -3834,10 +3778,7 @@ impl<'f> Binder<'f> {
                 self.expr(value, me);
                 // `bindModuleExportsAssignment`, `bindExportsOrObjectDefineProperty`: wherever it is written, it is the file that exports.
                 if self.b.commonjs_indicator.is_some() {
-                    // `ExpressionIsAlias`
-                    let is_alias = self.is_entity_name(value)
-                        || matches!(self.f[value].kind, ExprKind::Class(_))
-                            && !self.is_in_parens(value);
+                    let is_alias = expression_is_alias(self.f, value);
                     let declared = match assignment_declaration_kind(self.f, id) {
                         JsDeclarationKind::ModuleExports => Some((
                             known::export_equals,
@@ -3875,7 +3816,7 @@ impl<'f> Binder<'f> {
                     }
                 }
                 // As the default of a part of a pattern it assigns nothing itself: the assignment the pattern is the left side of does.
-                if !self.is_assignment_target(id) {
+                if self.b.get_assignment_target(self.f, id).is_none() {
                     self.assignment_target(target);
                     if op.is_none()
                         && let ExprKind::Index { obj, .. } = self.f[target].kind
@@ -4136,26 +4077,54 @@ impl<'f> Binder<'f> {
         }
     }
 
-    /// `bindPropertyOrMethodOrAccessor`, `declareSymbolEx`: the symbols of the members of an object literal, or of the attributes of a
-    /// JSX element. A member that the symbol in the table excludes gets a symbol of its own, which is in no table.
-    fn declare_literal_members(&mut self, props: Span<PropId>) {
-        const PROPERTY: u8 = 1;
-        const METHOD: u8 = 2;
-        const GET_ACCESSOR: u8 = 4;
-        const SET_ACCESSOR: u8 = 8;
-        const ACCESSOR: u8 = GET_ACCESSOR | SET_ACCESSOR;
-        const VALUE: u8 = PROPERTY | METHOD | ACCESSOR;
-        // `HasDynamicName`: a computed name is in no table (`bindAnonymousDeclaration`).
-        let name_of = |prop: &Prop| match (prop.kind, prop.key) {
-            (PropKind::Spread, _) => None,
-            (_, PropKey::Name(name)) => Some(name),
-            _ => None,
-        };
-        // Nearly always every name is written once.
-        let mut names: SmallVec<[Atom; 16]> =
-            props.iter().filter_map(|p| name_of(&self.f[p])).collect();
-        names.sort_unstable();
-        let mut repeated: SmallVec<[Atom; 4]> = names
+    /// The symbols of the members of classes, interfaces and type literals, once the file is bound: the declarations of one class or
+    /// interface have one pair of tables, and in JavaScript `this.name = value` declares a property.
+    fn declare_member_symbols(&mut self) {
+        let f = self.f;
+        let mut containers: Vec<(SymbolId, u32, MemberOwner)> =
+            Vec::with_capacity(f.classes.len() + f.interfaces.len());
+        for (i, class) in f.classes.iter().enumerate() {
+            let owner = MemberOwner::Class(ClassId(i as u32));
+            containers.push((self.b.class_symbol[i], class.pos, owner));
+        }
+        for (i, interface) in f.interfaces.iter().enumerate() {
+            let owner = MemberOwner::Interface(InterfaceId(i as u32));
+            containers.push((self.b.interface_symbol[i], interface.name_pos, owner));
+        }
+        // The declarations of a symbol, in the order they are bound in.
+        containers.sort_unstable_by_key(|container| (container.0, container.1));
+        let mut rest = &containers[..];
+        while let Some(first) = rest.first() {
+            let len = if first.0.is_some() {
+                rest.iter().take_while(|next| next.0 == first.0).count()
+            } else {
+                1
+            };
+            let (declarations, after) = rest.split_at(len);
+            self.declare_members(|b, declare| {
+                for container in declarations {
+                    b.for_each_declared_member(f, container.2, &mut *declare);
+                }
+            });
+            rest = after;
+        }
+        for (i, node) in f.types.iter().enumerate() {
+            if matches!(node.kind, TypeNodeKind::Object(_)) {
+                let owner = MemberOwner::TypeLiteral(TypeNodeId(i as u32));
+                self.declare_members(|b, declare| b.for_each_declared_member(f, owner, declare));
+            }
+        }
+        self.b.members_in_no_table.as_mut_slice().sort_unstable();
+    }
+
+    /// `declareSymbolEx`, for all that is declared in the tables of one class, interface, type literal, object literal or JSX element,
+    /// which `each` lists. What the symbol in the table excludes gets a symbol of its own, which is in no table.
+    fn declare_members(&mut self, each: impl Fn(&Bound, &mut dyn FnMut(DeclaredMember))) {
+        // Nearly always every name is declared once.
+        let mut keys: SmallVec<[MemberKey; 32]> = SmallVec::new();
+        each(&self.b, &mut |member| keys.push(member.0));
+        keys.sort_unstable();
+        let mut repeated: SmallVec<[MemberKey; 4]> = keys
             .windows(2)
             .filter(|pair| pair[0] == pair[1])
             .map(|pair| pair[0])
@@ -4164,44 +4133,66 @@ impl<'f> Binder<'f> {
             return;
         }
         repeated.dedup();
-        // The symbol table, for the names that are repeated: `symbol.Flags` and `symbol.Declarations`.
-        let mut table: SmallVec<[(u8, SmallVec<[PropId; 2]>); 4]> =
+        // The two symbol tables, for the names that are repeated: `symbol.Flags` and `symbol.Declarations`.
+        let mut table: SmallVec<[(u8, SmallVec<[MemberDeclaration; 4]>); 4]> =
             smallvec::smallvec![(0, SmallVec::new()); repeated.len()];
-        for p in props.iter() {
-            let prop = &self.f[p];
-            let Some(symbol) = name_of(prop).and_then(|name| repeated.binary_search(&name).ok())
-            else {
+        let mut declared: SmallVec<[DeclaredMember; 16]> = SmallVec::new();
+        each(&self.b, &mut |member| {
+            if repeated.binary_search(&member.0).is_ok() {
+                declared.push(member);
+            }
+        });
+        for (key, declaration, includes, excludes) in declared {
+            let Ok(index) = repeated.binary_search(&key) else {
                 continue;
             };
-            let (includes, excludes) = match prop.kind {
-                PropKind::Init | PropKind::Shorthand => (PROPERTY, VALUE & !(PROPERTY | ACCESSOR)),
-                // `IsObjectLiteralMethod`
-                PropKind::Method => (METHOD, VALUE),
-                PropKind::Getter => (GET_ACCESSOR, VALUE & !(SET_ACCESSOR | PROPERTY)),
-                PropKind::Setter => (SET_ACCESSOR, VALUE & !(GET_ACCESSOR | PROPERTY)),
-                PropKind::Spread => continue,
-            };
-            let (flags, declarations) = &mut table[symbol];
-            if *flags & excludes == 0 {
-                *flags |= includes;
-                declarations.push(p);
-            } else if *flags & ACCESSOR != 0 && *flags & ACCESSOR != includes & ACCESSOR {
-                *flags |= ACCESSOR;
+            let (flags, declarations) = &mut table[index];
+            if *flags != 0 && includes & !*flags & REPLACEABLE_BY_METHOD != 0 {
+                // "A symbol already exists, so don't add this as a declaration."
+                self.b
+                    .member_symbol
+                    .extend(declaration.map(|it| (it, (0, 0))));
+                continue;
             }
-        }
-        for (_, declarations) in table {
-            if declarations.len() > 1 {
-                for &p in &declarations {
-                    self.b
-                        .literal_member_declarations
-                        .insert(p, declarations.clone());
+            if *flags & excludes != 0 {
+                if *flags & REPLACEABLE_BY_METHOD == 0 {
+                    if *flags & ACCESSOR != 0 && *flags & ACCESSOR != includes & ACCESSOR {
+                        *flags |= ACCESSOR;
+                    }
+                    self.b.members_in_no_table.extend(declaration);
+                    continue;
                 }
+                // "Javascript constructor-declared symbols can be discarded in favor of prototype symbols like methods."
+                *flags = 0;
+                let discarded = std::mem::take(declarations);
+                self.b.members_in_no_table.extend_from_slice(&discarded);
+                self.note_member_symbol(&discarded);
             }
+            *flags |= includes;
+            declarations.extend(declaration);
+        }
+        for (_, declarations) in &table {
+            self.note_member_symbol(declarations);
+        }
+    }
+
+    fn note_member_symbol(&mut self, declarations: &[MemberDeclaration]) {
+        if declarations.len() < 2 {
+            return;
+        }
+        let run = (
+            self.b.member_declarations.len() as u32,
+            declarations.len() as u32,
+        );
+        self.b.member_declarations.extend_from_slice(declarations);
+        for &declaration in declarations {
+            self.b.member_symbol.insert(declaration, run);
         }
     }
 
     fn props(&mut self, props: Span<PropId>, owner: ExprId) {
-        self.declare_literal_members(props);
+        let f = self.f;
+        self.declare_members(|_, declare| for_each_declared_property(f, props, declare));
         let in_pattern = self.in_assignment_pattern;
         let is_literal = matches!(self.f[owner].kind, ExprKind::Object(_));
         for p in props.iter() {

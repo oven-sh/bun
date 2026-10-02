@@ -567,7 +567,7 @@ impl Checker<'_> {
                 }
                 _ => continue,
             };
-            if is_ambient && e.is_some() && !is_entity_name_expression(self, file, e) {
+            if is_ambient && e.is_some() && !is_entity_name_expression(self.hir(file), e) {
                 let start = self.start_of(file, e);
                 out.push(Diagnostic { start, code: 2714 });
                 self.note(start, self.end_of_expr(file, e), 2714, Vec::new());
@@ -601,7 +601,7 @@ impl Checker<'_> {
             match hir[s].kind {
                 // `bindExportAssignment`: `export default x` excludes every earlier declaration of `default`.
                 StmtKind::ExportDefault(e) => {
-                    let includes = if self.expression_is_alias(file, e) {
+                    let includes = if expression_is_alias(self.hir(file), e) {
                         ALIAS
                     } else {
                         PROPERTY
@@ -683,13 +683,6 @@ impl Checker<'_> {
         defaults
     }
 
-    /// `ExpressionIsAlias`
-    pub(super) fn expression_is_alias(&self, file: FileId, e: ExprId) -> bool {
-        is_entity_name_expression(self, file, e)
-            || matches!(self.hir(file)[e].kind, ExprKind::Class(_))
-                && !self.is_written_in_parentheses(file, e)
-    }
-
     /// Where `declareSymbolEx` reports a conflict of the statement `s`, an `export default e` or `export = e`: the start of
     /// `GetNameOfDeclaration(node)`, or of the node if it has no name.
     pub(super) fn export_assignment_name_start(&self, file: FileId, s: StmtId) -> u32 {
@@ -701,7 +694,7 @@ impl Checker<'_> {
         };
         // `GetNonAssignedNameOfDeclaration`: an Identifier is the name of the declaration. Any other expression leaves it without one.
         match hir[e].kind {
-            _ if self.is_written_in_parentheses(file, e) => hir[s].pos,
+            _ if is_parenthesized(self.hir(file), e) => hir[s].pos,
             ExprKind::Ident(_) => hir[e].pos,
             // `createMissingIdentifier`: an empty Identifier at the end of the previous token. `GetErrorRangeForNode` skips no trivia
             // before a missing node.
@@ -938,7 +931,6 @@ impl Checker<'_> {
         {
             return;
         }
-        let is_in_parens = |e: ExprId| hir.parens.binary_search_by_key(&e.0, |p| p.0.0).is_ok();
         // What is said of each name where it is used as a value. It is looked into once, however often it is used.
         // By symbol, once there is a name to ask about. 0: nothing is said.
         const NOT_LOOKED_INTO: u32 = u32::MAX;
@@ -981,7 +973,7 @@ impl Checker<'_> {
             let root = loop {
                 match bound.expr_parent[top.idx()] {
                     Parent::Expr(p)
-                        if !is_in_parens(top)
+                        if !is_parenthesized(hir, top)
                             && matches!(hir[p].kind, ExprKind::Dot { obj, .. } if obj == top) =>
                     {
                         top = p
@@ -992,7 +984,7 @@ impl Checker<'_> {
             match root {
                 // `isPartOfPossiblyValidTypeOrAbstractComputedPropertyName`
                 Parent::MemberKey
-                    if !is_in_parens(top)
+                    if !is_parenthesized(hir, top)
                         && hir
                             .members
                             .iter()
@@ -1007,7 +999,7 @@ impl Checker<'_> {
                 // `IsInExpressionContext`: a name that is exported as it stands is no expression.
                 Parent::Stmt(s)
                     if top == e
-                        && !is_in_parens(e)
+                        && !is_parenthesized(hir, e)
                         && s.is_some()
                         && matches!(
                             hir[s].kind,
@@ -1251,23 +1243,6 @@ pub(super) fn fully_qualified_name(c: &mut Checker<'_>, sym: Sym) -> String {
         return name;
     }
     format!("{}.{name}", fully_qualified_name(c, parent))
-}
-
-/// `IsEntityNameExpression`. A missing expression is an empty Identifier (`createMissingIdentifier`).
-fn is_entity_name_expression(c: &Checker<'_>, file: FileId, mut e: ExprId) -> bool {
-    let hir = c.hir(file);
-    loop {
-        if c.is_written_in_parentheses(file, e) {
-            return false;
-        }
-        match hir[e].kind {
-            ExprKind::Ident(_) | ExprKind::Missing => return true,
-            ExprKind::Dot { obj, name, .. } if !c.files().atoms.bytes(name).starts_with(b"#") => {
-                e = obj
-            }
-            _ => return false,
-        }
-    }
 }
 
 /// `GetRootDeclaration`: the variable or the parameter whose binding pattern contains `pat`.

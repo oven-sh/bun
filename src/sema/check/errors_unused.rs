@@ -586,14 +586,10 @@ impl Checker<'_> {
         if is_dot {
             return matches!(hir[obj].kind, ExprKind::Ident(_));
         }
-        // `IsEntityNameExpression`, `GetFirstIdentifier`
-        let mut first = obj;
-        while let ExprKind::Dot { obj, name, .. } = hir[first].kind {
-            if is_parenthesized(hir, obj) || self.files().atoms.bytes(name).first() == Some(&b'#') {
-                return false;
-            }
-            first = obj;
+        if !is_entity_name_expression(hir, obj) {
+            return false;
         }
+        let first = first_identifier(hir, obj);
         // Of `a[k]` it is the symbol of the type of `a`: the class.
         let class = match self.data(of) {
             TypeData::Ref { target, .. } => *target,
@@ -746,11 +742,6 @@ fn jsdoc_link_names(comment: &[u8]) -> Vec<Vec<&[u8]>> {
         }
     }
     links
-}
-
-/// Whether `e` is written in parentheses of its own.
-fn is_parenthesized(hir: &hir::File, e: ExprId) -> bool {
-    hir.parens.binary_search_by_key(&e.0, |p| p.0.0).is_ok()
 }
 
 /// The position of the bracket that closes the brackets around `from`, or the end of `text`. Brackets in strings and comments count

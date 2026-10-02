@@ -15,7 +15,6 @@
 //! To be called after `check_assignments`: 2412 takes the place of the 2322 that is said there.
 
 use super::errors::Diagnostic;
-use super::errors_x_signatures::has_parse_diagnostics;
 use super::explain::Line;
 use super::*;
 use crate::bind::{FnOwner, MemberOwner, Parent, PatParent};
@@ -47,7 +46,9 @@ impl Checker<'_> {
                 ExprKind::Unary { op, operand } => check_unary(self, file, op, operand, out),
                 // `checkAssertion`
                 ExprKind::AsConst(operand) => {
-                    if !is_valid_const_assertion_argument(self, file, operand) {
+                    if !matches!(self.hir(file)[operand].kind, ExprKind::Missing)
+                        && !self.is_valid_const_assertion_argument(file, operand)
+                    {
                         let start = start_of_const_asserted(self, file, operand);
                         out.push(Diagnostic { start, code: 1355 });
                         let end = if start < self.start_inside_parentheses(file, operand) {
@@ -58,7 +59,7 @@ impl Checker<'_> {
                         self.note(start, end, 1355, Vec::new());
                     }
                 }
-                ExprKind::Satisfies { expr, ty } => check_satisfies(self, file, expr, ty, out),
+                ExprKind::Satisfies { expr, ty } => check_satisfies(self, file, e, expr, ty, out),
                 ExprKind::Template { exprs, .. } => check_template_spans(self, file, exprs, out),
                 ExprKind::TaggedTemplate(call) => check_tagged_template(self, file, e, call, out),
                 // `checkGrammarBigIntLiteral`. One that is a type is not an expression here.
@@ -95,7 +96,7 @@ impl Checker<'_> {
                 {
                     let input = self.type_of_expr(file, inner);
                     if !self.is_uncertain(file, inner) {
-                        let at = error_start(self, file, inner);
+                        let at = self.error_start_of(file, inner);
                         sites.push(IterationSite {
                             usage: IterationUse::Spread,
                             input,
@@ -137,13 +138,13 @@ impl Checker<'_> {
             if self.is_uncertain(file, expr) {
                 continue;
             }
-            let given = non_null_type(self, given);
+            let given = self.receiver_that_is_there(given);
             let usage = if is_await {
                 IterationUse::ForAwaitOf
             } else {
                 IterationUse::ForOf
             };
-            let at = error_start(self, file, expr);
+            let at = self.error_start_of(file, expr);
             sites.push(IterationSite {
                 usage,
                 input: given,
@@ -279,33 +280,6 @@ fn language_version(c: &Checker<'_>) -> ScriptTarget {
     }
 }
 
-/// Whether `e` is written in parentheses.
-fn is_parenthesized(hir: &File, e: ExprId) -> bool {
-    hir.parens.binary_search_by_key(&e.0, |p| p.0.0).is_ok()
-}
-
-/// `GetErrorRangeForNode`: where an error about `e` starts.
-fn error_start(c: &Checker<'_>, file: FileId, e: ExprId) -> u32 {
-    if is_parenthesized(c.hir(file), e) {
-        c.start_of(file, e)
-    } else {
-        error_start_inside_parentheses(c, file, e)
-    }
-}
-
-/// The same, of `e` less the parentheses around it. A function or a class that has a name is pointed at by the name, `x satisfies T`
-/// by the keyword.
-fn error_start_inside_parentheses(c: &Checker<'_>, file: FileId, e: ExprId) -> u32 {
-    let hir = c.hir(file);
-    let start = c.start_inside_parentheses(file, e);
-    match hir[e].kind {
-        ExprKind::Fn(f) if hir[f].kind == FnKind::Expr && hir[f].name.is_some() => hir[f].name_pos,
-        ExprKind::Class(class) if hir[class].name.is_some() => hir[class].name_pos,
-        ExprKind::Satisfies { ty, .. } => start_of_satisfies(hir, ty).unwrap_or(start),
-        _ => start,
-    }
-}
-
 /// The node an error is about.
 #[derive(Copy, Clone)]
 enum ErrorNode {
@@ -354,27 +328,6 @@ fn start_of_dots_before(c: &Checker<'_>, file: FileId, operand: ExprId) -> Optio
     let start = (c.start_of(file, operand) as usize).min(text.len());
     let end = skip_trivia_back(text, start);
     text[..end].ends_with(b"...").then(|| end as u32 - 3)
-}
-
-/// `GetErrorRangeForNode`, of `x satisfies T`: where the keyword before the type `ty` is.
-fn start_of_satisfies(hir: &File, ty: TypeNodeId) -> Option<u32> {
-    const KEYWORD: &[u8] = b"satisfies";
-    let mut end = (hir[ty].pos as usize).min(hir.text.len());
-    while let Some(at) = hir.text[..end]
-        .windows(KEYWORD.len())
-        .rposition(|w| w == KEYWORD)
-    {
-        let is_word = !(at > 0 && is_identifier_part(hir.text[at - 1]))
-            && !hir
-                .text
-                .get(at + KEYWORD.len())
-                .is_some_and(|&b| is_identifier_part(b));
-        if is_word {
-            return Some(at as u32);
-        }
-        end = at;
-    }
-    None
 }
 
 /// From `from`, right before which `open` parentheses open: how many of them have closed by the time `as const` is written outside
@@ -440,7 +393,7 @@ fn start_of_const_asserted(c: &Checker<'_>, file: FileId, operand: ExprId) -> u3
         open.push(at as u32);
     }
     if open.is_empty() {
-        return error_start_inside_parentheses(c, file, operand);
+        return c.error_start_inside_parentheses(file, operand);
     }
     // The `as const` that are part of the operand.
     let (mut within, mut x) = (0, operand);
@@ -457,7 +410,7 @@ fn start_of_const_asserted(c: &Checker<'_>, file: FileId, operand: ExprId) -> u3
         };
     }
     match closed_before_const_assertion(text, inside as usize, open.len(), within) {
-        0 => error_start_inside_parentheses(c, file, operand),
+        0 => c.error_start_inside_parentheses(file, operand),
         closed => open[closed - 1],
     }
 }
@@ -544,23 +497,6 @@ fn is_all_primitive_or_never(c: &Checker<'_>, ty: TypeId) -> bool {
         })
 }
 
-/// What `checkNonNullType` gives, without what it says.
-fn non_null_type(c: &mut Checker<'_>, ty: TypeId) -> TypeId {
-    if c.p.files.options.strict_null_checks && ty == TypeId::UNKNOWN {
-        return TypeId::ANY;
-    }
-    // `TypeFactsVoidFacts` has neither `IsUndefined` nor `IsNull`.
-    if !c.some_type(ty, |_, m| m.is_undefined() || m.is_null()) {
-        return ty;
-    }
-    let rest = c.non_nullable(ty);
-    if rest == TypeId::NEVER || rest.is_undefined() || rest.is_null() {
-        TypeId::ANY
-    } else {
-        rest
-    }
-}
-
 /// The types of two operands, if both were found out for sure.
 fn operand_types(
     c: &mut Checker<'_>,
@@ -582,11 +518,7 @@ fn is_related_for_sure(
     by_subtype: bool,
 ) -> Option<bool> {
     let gave_up_before = std::mem::replace(&mut c.relation_gave_up, false);
-    let is_related = if by_subtype {
-        c.is_subtype(source, target)
-    } else {
-        c.is_assignable(source, target)
-    };
+    let is_related = c.is_related_in_pass(source, target, by_subtype);
     let is_sure = !c.relation_gave_up && !c.timed_out();
     c.relation_gave_up |= gave_up_before;
     is_sure.then_some(is_related)
@@ -663,7 +595,7 @@ fn check_binary_like(c: &mut Checker<'_>, file: FileId, e: ExprId, out: &mut Vec
             };
             // Two numbers fit, and give a number.
             if !(is_plain_number(c, l) && is_plain_number(c, r)) {
-                let (l, r) = (non_null_type(c, l), non_null_type(c, r));
+                let (l, r) = (c.receiver_that_is_there(l), c.receiver_that_is_there(r));
                 // Of two booleans another operator is suggested, and that is all.
                 let is_boolean =
                     |c: &Checker<'_>, t: TypeId| t == TypeId::BOOLEAN || c.is_boolean_like(t);
@@ -735,8 +667,8 @@ fn check_binary_like(c: &mut Checker<'_>, file: FileId, e: ExprId, out: &mut Vec
                 return check_assignment_operator(c, file, left, ExprId::NONE, out);
             }
             if !c.is_assignable(l, TypeId::STRING) && !c.is_assignable(r, TypeId::STRING) {
-                l = non_null_type(c, l);
-                r = non_null_type(c, r);
+                l = c.receiver_that_is_there(l);
+                r = c.receiver_that_is_there(r);
             }
             // `isTypeAssignableToKindEx(t, kind, strict)`
             let is_strictly = |c: &mut Checker<'_>, t: TypeId, kind: TypeId| {
@@ -806,7 +738,7 @@ fn check_reference_expression(
         ExprKind::Dot { .. } | ExprKind::Index { .. } => optional_chain,
         _ => invalid,
     };
-    let start = error_start(c, file, e);
+    let start = c.error_start_of(file, e);
     out.push(Diagnostic { start, code });
     c.note(start, c.error_end_of(file, e), code, Vec::new());
     false
@@ -915,46 +847,22 @@ fn note_assignment_pattern(
             if !c.is_known(iterated) {
                 return;
             }
-            let tuple = match c.data(source) {
-                TypeData::Tuple { elems, flags, .. } => Some((elems, flags)),
-                _ => None,
-            };
             for (index, item) in hir.ids(items).enumerate() {
                 if !is_pattern(item) {
                     continue;
                 }
-                let ty = match (hir[item].kind, tuple) {
+                let (inner, is_rest) = match hir[item].kind {
                     // A rest that is not the last, or that has a default, is refused as a whole.
-                    (ExprKind::Spread(rest), _)
+                    ExprKind::Spread(rest)
                         if index + 1 < items.len()
                             || matches!(hir[rest].kind, ExprKind::Assign { .. }) =>
                     {
                         continue;
                     }
-                    (ExprKind::Spread(_), Some((elems, flags))) if index <= elems.len() => {
-                        c.tuple(&elems[index..], &flags[index..], false)
-                    }
-                    (ExprKind::Spread(_), _) => c.array_of(iterated),
-                    (_, Some((elems, flags)))
-                        if !flags
-                            .iter()
-                            .any(|f| f.intersects(ElemFlags::REST | ElemFlags::VARIADIC)) =>
-                    {
-                        match elems.get(index) {
-                            Some(&ty) if flags[index].contains(ElemFlags::OPTIONAL) => {
-                                c.optional(ty)
-                            }
-                            Some(&ty) => ty,
-                            None => TypeId::UNDEFINED,
-                        }
-                    }
-                    (_, Some(_)) => continue,
-                    (_, None) => iterated,
+                    ExprKind::Spread(rest) => (rest, true),
+                    _ => (item, false),
                 };
-                let inner = match hir[item].kind {
-                    ExprKind::Spread(rest) => rest,
-                    _ => item,
-                };
+                let ty = c.element_of_destructured(source, index, is_rest);
                 note_assignment_pattern(c, file, inner, ty, sites);
             }
         }
@@ -1060,13 +968,7 @@ fn check_assignment_operator(
     }
     // What may be left out is not for that reason allowed to be `undefined`.
     let hir = c.hir(file);
-    let ExprKind::Dot {
-        obj,
-        name,
-        name_pos,
-        ..
-    } = hir[target].kind
-    else {
+    let ExprKind::Dot { obj, name, .. } = hir[target].kind else {
         return;
     };
     let Some((object, source)) = operand_types(c, file, obj, value) else {
@@ -1075,10 +977,9 @@ fn check_assignment_operator(
     if c.is_any(object) {
         return;
     }
-    // What cannot be written to at all is not held against what is written to it as well.
-    let mut said = Vec::new();
-    c.check_property_write(file, target, obj, name, name_pos, &mut said);
-    if !said.is_empty() {
+    // What cannot be written to has the error type, and anything goes into that.
+    let left = c.type_of_expr(file, target);
+    if c.is_error_type(left) {
         return;
     }
     let there = c.non_nullable(object);
@@ -1162,7 +1063,7 @@ fn check_unary(
     }
     if !matches!(op, UnOp::Plus | UnOp::Minus | UnOp::BitNot) {
         let fits = is_plain_number(c, ty) || {
-            let there = non_null_type(c, ty);
+            let there = c.receiver_that_is_there(ty);
             let numeric = c.union(&[TypeId::NUMBER, TypeId::BIGINT]);
             c.is_assignable(there, numeric)
         };
@@ -1181,7 +1082,7 @@ fn check_unary(
     }
     c.check_not_nullish(file, operand, ty, out);
     if maybe_type_of_kind_considering_base_constraint(c, ty, Checker::is_symbol_like) {
-        let start = error_start(c, file, operand);
+        let start = c.error_start_of(file, operand);
         out.push(Diagnostic { start, code: 2469 });
         let operator = match op {
             UnOp::Plus => "+",
@@ -1194,7 +1095,7 @@ fn check_unary(
     if op == UnOp::Plus
         && maybe_type_of_kind_considering_base_constraint(c, ty, Checker::is_bigint_like)
     {
-        let start = error_start(c, file, operand);
+        let start = c.error_start_of(file, operand);
         out.push(Diagnostic { start, code: 2736 });
         let end = c.error_end_of(file, operand);
         c.explain_to(start, end, 2736, |c| {
@@ -1206,54 +1107,11 @@ fn check_unary(
 
 // ───────────────────────────── assertions ─────────────────────────────
 
-/// `resolveEntityName`, of the expression `e` if it is a name, as a value.
-fn symbol_of_entity_name(c: &Checker<'_>, file: FileId, e: ExprId) -> Option<Sym> {
-    let hir = c.hir(file);
-    let found = match hir[e].kind {
-        ExprKind::Ident(name) => c.symbol_of_identifier(file, e, name)?,
-        ExprKind::Dot { obj, name, .. } if !is_parenthesized(hir, obj) => {
-            let container = symbol_of_entity_name(c, file, obj)?;
-            c.files().namespace_member(container, name)?
-        }
-        _ => return None,
-    };
-    c.files().resolve_alias_if_needed(found)
-}
-
-/// `isValidConstAssertionArgument`
-fn is_valid_const_assertion_argument(c: &Checker<'_>, file: FileId, e: ExprId) -> bool {
-    let hir = c.hir(file);
-    match hir[e].kind {
-        ExprKind::String(_)
-        | ExprKind::Template { .. }
-        | ExprKind::Number(_)
-        | ExprKind::BigInt(_)
-        | ExprKind::True
-        | ExprKind::False
-        | ExprKind::Array(_)
-        | ExprKind::Object(_)
-        | ExprKind::Missing => true,
-        ExprKind::Unary { op, operand } => {
-            !is_parenthesized(hir, operand)
-                && matches!(
-                    (op, hir[operand].kind),
-                    (UnOp::Minus, ExprKind::Number(_) | ExprKind::BigInt(_))
-                        | (UnOp::Plus, ExprKind::Number(_))
-                )
-        }
-        // A member of an enum.
-        ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => {
-            symbol_of_entity_name(c, file, obj)
-                .is_some_and(|sym| c.files().flags(sym).contains(SymFlags::ENUM))
-        }
-        _ => false,
-    }
-}
-
 /// `checkSatisfiesExpression`
 fn check_satisfies(
     c: &mut Checker<'_>,
     file: FileId,
+    node: ExprId,
     expr: ExprId,
     ty: TypeNodeId,
     out: &mut Vec<Diagnostic>,
@@ -1263,9 +1121,8 @@ fn check_satisfies(
     if !c.is_known(source) || !c.is_known(target) || c.is_assignable(source, target) {
         return;
     }
-    if let Some(at) = start_of_satisfies(c.hir(file), ty) {
-        c.check_assignable(file, source, target, at, expr, 1360, out);
-    }
+    let at = c.error_start_inside_parentheses(file, node);
+    c.check_assignable(file, source, target, at, expr, 1360, out);
 }
 
 // ───────────────────────────── templates ─────────────────────────────
@@ -1283,7 +1140,7 @@ fn check_template_spans(
             && !c.is_uncertain(file, span)
             && maybe_type_of_kind_considering_base_constraint(c, ty, Checker::is_symbol_like)
         {
-            let start = error_start(c, file, span);
+            let start = c.error_start_of(file, span);
             out.push(Diagnostic { start, code: 2731 });
             c.note(start, c.error_end_of(file, span), 2731, Vec::new());
         }
@@ -1327,7 +1184,7 @@ fn check_tagged_template(
         if matches!(c.bound(file).expr_parent[e.idx()], Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Array(_)))
             && !is_parenthesized(hir, e)
         {
-            let start = error_start(c, file, data.callee);
+            let start = c.error_start_of(file, data.callee);
             out.push(Diagnostic { start, code: 2796 });
             c.note(start, c.error_end_of(file, data.callee), 2796, Vec::new());
         }
@@ -1379,7 +1236,7 @@ fn is_has_instance_applicable(
         }
         if !is_related_for_sure(c, r, wanted, by_subtype)? {
             if let Some(out) = report {
-                let start = error_start(c, file, right);
+                let start = c.error_start_of(file, right);
                 out.push(Diagnostic { start, code: 2684 });
                 let end = c.error_end_of(file, right);
                 c.explain_to(start, end, 2684, |c| {
@@ -1409,7 +1266,7 @@ fn is_has_instance_applicable(
         while let ExprKind::Satisfies { expr, .. } = hir[node].kind {
             node = expr;
         }
-        let at = error_start_inside_parentheses(c, file, node);
+        let at = c.error_start_inside_parentheses(file, node);
         let end = c.error_end_inside_parentheses(file, node);
         c.check_assignable_with_end(file, l, wanted, at, end, node, 2345, out);
     }
@@ -1439,7 +1296,7 @@ fn check_instanceof(
             && c.signatures(r, true).is_empty()
             && is_related_for_sure(c, r, function, true) == Some(false)
         {
-            let start = error_start(c, file, right);
+            let start = c.error_start_of(file, right);
             out.push(Diagnostic { start, code: 2359 });
             c.note(start, c.error_end_of(file, right), 2359, Vec::new());
         }
@@ -1527,16 +1384,12 @@ fn check_instanceof(
     }
     let returned = match chosen {
         Some(sig) => c.sig_return(sig),
-        // `createUnionOfSignaturesForOverloadFailure`: what all of them give at once.
         None => {
-            let mut returns = Vec::with_capacity(candidates.len());
-            for &sig in &candidates {
-                returns.push(c.sig_return(sig));
-            }
-            c.intersection(&returns)
+            let candidate = c.union_of_signatures_for_overload_failure(&candidates);
+            c.sig_return(candidate)
         }
     };
-    let at = error_start(c, file, right);
+    let at = c.error_start_of(file, right);
     c.check_assignable_with_end_from(
         file,
         returned,
@@ -1607,9 +1460,9 @@ fn check_right_operand_of_in(
     if !c.is_known(ty) || c.is_uncertain(file, right) {
         return;
     }
-    let there = non_null_type(c, ty);
+    let there = c.receiver_that_is_there(ty);
     if c.is_assignable(there, TypeId::OBJECT) && has_empty_object_intersection(c, ty) {
-        let start = error_start(c, file, right);
+        let start = c.error_start_of(file, right);
         out.push(Diagnostic { start, code: 2638 });
         let end = c.error_end_of(file, right);
         c.explain_to(start, end, 2638, |c| vec![c.type_to_string(ty)]);
@@ -1974,7 +1827,7 @@ fn note_yield_star(
         usage,
         input,
         sent,
-        at: error_start(c, file, value),
+        at: c.error_start_of(file, value),
         node: ErrorNode::Written(value),
     });
 }

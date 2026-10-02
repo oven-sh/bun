@@ -57,23 +57,6 @@ impl Checker<'_> {
 /// Of an error: where it starts, where it ends, its code, and the arguments of its message.
 type Noted = (u32, u32, u32, Vec<String>);
 
-/// `hasParseDiagnostics`. What the parser objected to and went on from is kept with what tsgo's binder and checker say of syntax.
-/// They are told apart by the code: these are the ones only parser.go and scanner.go give, and 1003 and 1005, which are only ever
-/// noted for what the parser expected and did not find.
-fn has_parse_diagnostics(hir: &hir::File) -> bool {
-    hir.has_errors
-        || hir.syntax_errors > 0
-        || hir.early_errors.iter().any(|&(_, code)| {
-            matches!(
-                code,
-                1002 | 1003 | 1005 | 1007 | 1010..=1012 | 1034 | 1068 | 1084 | 1109 | 1121 | 1124..=1132 | 1134 | 1135 | 1137..=1140
-                    | 1144..=1146 | 1160 | 1161 | 1177..=1181 | 1185 | 1198 | 1199 | 1209 | 1260 | 1351..=1353 | 1357 | 1381 | 1382
-                    | 1385..=1390 | 1434..=1443 | 1472 | 1477 | 1478 | 1487..=1490 | 2754 | 2809 | 2819 | 6188 | 6189 | 17002
-                    | 17006..=17008 | 17014 | 17015 | 17021 | 18009 | 18026 | 18029 | 18030
-            )
-        })
-}
-
 const HAS_INDICES: u8 = 1 << 0; // d
 const GLOBAL: u8 = 1 << 1; // g
 const IGNORE_CASE: u8 = 1 << 2; // i

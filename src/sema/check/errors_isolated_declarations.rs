@@ -386,7 +386,7 @@ impl<'p> Checker<'p> {
 
     /// The expression as it is written.
     fn iso_written(&self, file: FileId, e: ExprId) -> Node {
-        if self.is_written_in_parentheses(file, e) {
+        if is_parenthesized(self.hir(file), e) {
             Node::Written(e)
         } else {
             Node::Expr(e)
@@ -508,39 +508,6 @@ impl<'p> Checker<'p> {
             .map(Node::Type)
     }
 
-    /// `IsEntityNameExpression`, of `e` itself, whatever parentheses it is in.
-    fn iso_is_entity_name(&self, file: FileId, e: ExprId) -> bool {
-        let hir = self.hir(file);
-        let mut at = e;
-        loop {
-            match hir[at].kind {
-                ExprKind::Ident(_) => return true,
-                ExprKind::Dot { obj, name, .. }
-                    if self.files().atoms.bytes(name).first() != Some(&b'#')
-                        && !self.is_written_in_parentheses(file, obj) =>
-                {
-                    at = obj
-                }
-                _ => return false,
-            }
-        }
-    }
-
-    /// `IsEntityNameExpression`, of `e` as it is written.
-    fn iso_is_written_entity_name(&self, file: FileId, e: ExprId) -> bool {
-        !self.is_written_in_parentheses(file, e) && self.iso_is_entity_name(file, e)
-    }
-
-    /// `GetFirstIdentifier`
-    fn iso_first_identifier(&self, file: FileId, e: ExprId) -> ExprId {
-        let hir = self.hir(file);
-        let mut at = e;
-        while let ExprKind::Dot { obj, .. } = hir[at].kind {
-            at = obj;
-        }
-        at
-    }
-
     /// `IsPrimitiveLiteralValue`, of `e` itself, whatever parentheses it is in.
     fn iso_is_primitive_literal(&self, file: FileId, e: ExprId, with_bigint: bool) -> bool {
         let hir = self.hir(file);
@@ -552,7 +519,7 @@ impl<'p> Checker<'p> {
                 op: op @ (UnOp::Minus | UnOp::Plus),
                 operand,
             } => {
-                !self.is_written_in_parentheses(file, operand)
+                !is_parenthesized(self.hir(file), operand)
                     && match hir[operand].kind {
                         ExprKind::Number(_) => true,
                         ExprKind::BigInt(_) => with_bigint && op == UnOp::Minus,
@@ -565,32 +532,16 @@ impl<'p> Checker<'p> {
 
     /// `HasDynamicName`: the expression in the `[..]` of a name that the binder cannot tell.
     fn iso_dynamic_name(&self, file: FileId, key: PropKey) -> Option<ExprId> {
-        let PropKey::Computed(e) = key else {
-            return None;
-        };
-        let hir = self.hir(file);
-        if !self.is_written_in_parentheses(file, e) {
-            match hir[e].kind {
-                ExprKind::String(_) | ExprKind::Number(_) => return None,
-                ExprKind::Template { exprs, .. } if exprs.is_empty() => return None,
-                ExprKind::Unary {
-                    op: UnOp::Plus | UnOp::Minus,
-                    operand,
-                } if matches!(hir[operand].kind, ExprKind::Number(_))
-                    && !self.is_written_in_parentheses(file, operand) =>
-                {
-                    return None;
-                }
-                _ => {}
-            }
+        match key {
+            PropKey::Computed(e) if is_dynamic_name(self.hir(file), e) => Some(e),
+            _ => None,
         }
-        Some(e)
     }
 
     /// `IsDefinitelyReferenceToGlobalSymbolObject`
     fn iso_is_global_symbol_reference(&self, file: FileId, e: ExprId) -> bool {
         let hir = self.hir(file);
-        if !self.iso_is_written_entity_name(file, e) {
+        if !is_entity_name_expression(self.hir(file), e) {
             return false;
         }
         let ExprKind::Dot { obj, .. } = hir[e].kind else {
@@ -974,7 +925,8 @@ impl<'p> Checker<'p> {
         }
         // `createEntityInTypeNodeError`
         if matches!(node, Node::Type(_) | Node::EntityName(_))
-            || matches!(node, Node::Expr(e) if self.iso_is_entity_name(file, e))
+            || matches!(node, Node::Expr(e) if matches!(hir[e].kind, ExprKind::Ident(_))
+                || is_property_access_entity_name_expression(hir, e))
         {
             let mut said = self.iso_said(file, node, 9039);
             said.args = vec![self.source_text(file, said.start, said.end)];
@@ -1141,8 +1093,7 @@ impl<'p> Checker<'p> {
             ExprKind::Binary { left, .. } => left,
             _ => return false,
         };
-        if !matches!(hir[left].kind, ExprKind::Dot { .. })
-            || self.is_written_in_parentheses(file, left)
+        if !matches!(hir[left].kind, ExprKind::Dot { .. }) || is_parenthesized(self.hir(file), left)
         {
             return false;
         }
@@ -1163,7 +1114,7 @@ impl<'p> Checker<'p> {
                 ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj,
                 _ => break,
             };
-            if self.is_written_in_parentheses(file, next) {
+            if is_parenthesized(self.hir(file), next) {
                 return false;
             }
             at = next;
@@ -1472,7 +1423,7 @@ impl<'p> Checker<'p> {
                     errors.push(Node::Prop(p))
                 }
                 (_, PropKey::Computed(name))
-                    if self.is_written_in_parentheses(file, name)
+                    if is_parenthesized(self.hir(file), name)
                         || !self.iso_is_primitive_literal(file, name, false) =>
                 {
                     errors.push(Node::PropName(p))
@@ -1671,7 +1622,7 @@ impl<'p> Checker<'p> {
             return self.iso_pseudo_of_expr(tx, candidate);
         }
         match hir[candidate].kind {
-            ExprKind::As { ty, .. } if !self.is_written_in_parentheses(file, candidate) => {
+            ExprKind::As { ty, .. } if !is_parenthesized(self.hir(file), candidate) => {
                 Pseudo::Direct(ty)
             }
             _ => of_signature,
@@ -1854,7 +1805,7 @@ impl<'p> Checker<'p> {
     /// `IsTemplateExpression`, of `e` as it is written.
     fn iso_is_template_expression(&self, file: FileId, e: ExprId) -> bool {
         matches!(self.hir(file)[e].kind, ExprKind::Template { exprs, .. } if !exprs.is_empty())
-            && !self.is_written_in_parentheses(file, e)
+            && !is_parenthesized(self.hir(file), e)
     }
 
     // ───────────────────────────── optional parameters ─────────────────────────────
@@ -1945,7 +1896,9 @@ impl<'p> Checker<'p> {
             return true;
         }
         let declared = self.type_from_node(file, param.ty);
-        self.is_known(declared) && !self.contains_undefined(declared)
+        self.is_known(declared)
+            && !self.is_error_type(declared)
+            && !self.contains_undefined(declared)
     }
 
     // ───────────────────────────── held against the checker (`pseudotypenodebuilder.go`) ─────────────────────────────
@@ -2392,7 +2345,7 @@ impl<'p> Checker<'p> {
                 let of = *of;
                 // `node.Parent`, which is a pair of parentheses if there is one.
                 let parent = match of {
-                    Node::Expr(e) if !self.is_written_in_parentheses(file, e) => {
+                    Node::Expr(e) if !is_parenthesized(self.hir(file), e) => {
                         self.iso_parent(tx, of)
                     }
                     _ => None,
@@ -2403,7 +2356,8 @@ impl<'p> Checker<'p> {
                         self.iso_report(tx, node);
                     }
                 } else if let (Node::Expr(e), Some(declaration)) = (of, declaration)
-                    && self.iso_is_entity_name(file, e)
+                    && (matches!(hir[e].kind, ExprKind::Ident(_))
+                        || is_property_access_entity_name_expression(hir, e))
                 {
                     self.iso_report(tx, declaration);
                 } else {
@@ -2876,31 +2830,23 @@ impl<'p> Checker<'p> {
     }
 
     /// `typeof x`, for the `unique symbol` that `x` holds.
-    fn iso_track_unique_symbol(&self, tx: &mut Emit, file: FileId, id: u32) {
-        if file.0 == u32::MAX {
-            return;
-        }
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        const BY_INITIALIZER: u32 = 1 << 31;
-        let is_it = |ty: TypeNodeId, init: ExprId| {
-            if id & BY_INITIALIZER == 0 {
-                ty.0 == id
-            } else {
-                init.is_some() && init.0 == id & !BY_INITIALIZER
+    fn iso_track_unique_symbol(&self, tx: &mut Emit, symbol: UniqueSymbolDeclaration) {
+        let named = match symbol {
+            UniqueSymbolDeclaration::Variable(variable) => variable,
+            UniqueSymbolDeclaration::Member(file, m) => {
+                let bound = self.bound(file);
+                let MemberOwner::Class(c) = bound.member_owner[m.idx()] else {
+                    return;
+                };
+                let class = bound.class_symbol[c.idx()];
+                if class.is_none() {
+                    return;
+                }
+                self.files().sym(file, class)
             }
+            UniqueSymbolDeclaration::SymbolConstructor => return,
         };
-        let symbol = if let Some(decl) = hir.var_decls.iter().find(|d| is_it(d.ty, d.init)) {
-            bound.pat_symbol[decl.pat.idx()]
-        } else if let Some(m) = hir.members.iter().position(|m| is_it(m.ty, m.init))
-            && let MemberOwner::Class(c) = bound.member_owner[m]
-        {
-            bound.class_symbol[c.idx()]
-        } else {
-            return;
-        };
-        if symbol.is_some() {
-            self.iso_track_symbol(tx, self.files().sym(file, symbol), SymFlags::VALUE);
-        }
+        self.iso_track_symbol(tx, named, SymFlags::VALUE);
     }
 
     /// Whether the statement `s` of `file` is directly in the file or in a namespace.
@@ -2935,7 +2881,7 @@ impl<'p> Checker<'p> {
         match self.data(ty) {
             TypeData::EnumLit { member, .. } => self.iso_track_enum(tx, *member),
             TypeData::Enum { symbol, .. } => self.iso_track_enum(tx, *symbol),
-            TypeData::UniqueSymbol { file, id, .. } => self.iso_track_unique_symbol(tx, *file, *id),
+            TypeData::UniqueSymbol { symbol, .. } => self.iso_track_unique_symbol(tx, *symbol),
             TypeData::Union(parts) | TypeData::Intersection(parts) => {
                 for &part in parts.iter() {
                     self.iso_write_type(tx, part);
@@ -3044,7 +2990,7 @@ impl<'p> Checker<'p> {
                 };
                 bound.class_symbol[c.idx()]
             }
-            FnOwner::Expr(e) if !self.is_written_in_parentheses(file, e) => {
+            FnOwner::Expr(e) if !is_parenthesized(self.hir(file), e) => {
                 let Parent::VarInit(d) = bound.expr_parent[e.idx()] else {
                     return None;
                 };
@@ -3098,7 +3044,7 @@ impl<'p> Checker<'p> {
 
     /// `trackComputedName`
     fn iso_track_computed_name(&self, tx: &mut Emit, file: FileId, e: ExprId) {
-        let first = self.iso_first_identifier(file, e);
+        let first = first_identifier(self.hir(file), e);
         let ExprKind::Ident(name) = self.hir(file)[first].kind else {
             return;
         };
@@ -3113,7 +3059,7 @@ impl<'p> Checker<'p> {
 
     /// `isEntityNameVisible(e, enclosingDeclaration, false)`, of the computed name `[e]`.
     fn iso_is_computed_name_visible(&self, tx: &mut Emit, file: FileId, e: ExprId) -> bool {
-        let first = self.iso_first_identifier(file, e);
+        let first = first_identifier(self.hir(file), e);
         let ExprKind::Ident(name) = self.hir(file)[first].kind else {
             return false;
         };
@@ -3135,7 +3081,7 @@ impl<'p> Checker<'p> {
                 return false;
             };
             if file != tx.file
-                || !self.iso_is_written_entity_name(file, k)
+                || !is_entity_name_expression(self.hir(file), k)
                 || !self.iso_is_computed_name_visible(tx, file, k)
             {
                 return false;
@@ -3186,6 +3132,7 @@ impl<'p> Checker<'p> {
         }
         if prop.flags.contains(PropFlags::ACCESSOR) {
             let written = self.write_type_of_prop(prop, mapper);
+            let is_error_type = self.is_error_type(ty) || self.is_error_type(written);
             // The getter and the setter, and whether they are those of a class.
             let (accessors, is_in_class): (Vec<(FileId, FnId)>, bool) =
                 match (&prop.source, declaration) {
@@ -3228,7 +3175,8 @@ impl<'p> Checker<'p> {
                     }
                     _ => (Vec::new(), false),
                 };
-            if self.is_known(ty)
+            if !is_error_type
+                && self.is_known(ty)
                 && self.is_known(written)
                 && !accessors.is_empty()
                 && (ty != written || is_in_class)
@@ -3242,7 +3190,7 @@ impl<'p> Checker<'p> {
                 return;
             }
             // An `accessor` field.
-            if accessors.is_empty() && is_in_class {
+            if !is_error_type && accessors.is_empty() && is_in_class {
                 self.iso_write_type(tx, ty);
                 return self.iso_write_type(tx, written);
             }
@@ -3655,7 +3603,7 @@ impl<'p> Checker<'p> {
 
     /// The same, of `a` or `a.b.c` written as an expression: a computed name, or what a class extends.
     fn iso_check_expression_visibility(&self, tx: &mut Emit, e: ExprId) {
-        let first = self.iso_first_identifier(tx.file, e);
+        let first = first_identifier(self.hir(tx.file), e);
         if let ExprKind::Ident(name) = self.hir(tx.file)[first].kind
             && let Some(sym) = self.symbol_of_identifier(tx.file, first, name)
         {
@@ -3676,7 +3624,7 @@ impl<'p> Checker<'p> {
             match stmt.kind {
                 StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e) => {
                     if let ExprKind::Ident(name) = hir[e].kind
-                        && !self.is_written_in_parentheses(file, e)
+                        && !is_parenthesized(self.hir(file), e)
                     {
                         let scope = self.iso_scope_around(tx, StmtId(i as u32));
                         exported.extend(files.resolve_name(file, scope, name, any));
@@ -3747,7 +3695,7 @@ impl<'p> Checker<'p> {
             // `GetLeftmostAccessExpression`
             let mut root = target;
             while let ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } = hir[root].kind {
-                if self.is_written_in_parentheses(file, root) {
+                if is_parenthesized(self.hir(file), root) {
                     break;
                 }
                 root = obj;
@@ -3755,7 +3703,7 @@ impl<'p> Checker<'p> {
             let ExprKind::Ident(name) = hir[root].kind else {
                 continue;
             };
-            if self.is_written_in_parentheses(file, root) {
+            if is_parenthesized(self.hir(file), root) {
                 continue;
             }
             // `GetReferencedValueDeclaration`
@@ -3790,7 +3738,7 @@ impl<'p> Checker<'p> {
                     let decl = &hir[d];
                     if decl.ty.is_some()
                         || decl.init.is_none()
-                        || self.is_written_in_parentheses(file, decl.init)
+                        || is_parenthesized(self.hir(file), decl.init)
                     {
                         continue;
                     }
@@ -3813,9 +3761,9 @@ impl<'p> Checker<'p> {
                 ExprKind::Index { index, .. } => match hir[index].kind {
                     ExprKind::String(name) => Some(name),
                     // `tryGetNameFromEntityNameExpression`
-                    _ if self.iso_is_written_entity_name(file, index)
+                    _ if is_entity_name_expression(self.hir(file), index)
                         && self
-                            .iso_entity_symbol(file, index, SymFlags::VALUE)
+                            .resolve_entity_name_expression(file, index, SymFlags::VALUE)
                             .is_some_and(|sym| {
                                 self.files()
                                     .flags(sym)
@@ -3862,7 +3810,7 @@ impl<'p> Checker<'p> {
                 self.iso_report_expandos(tx, Node::Var(d));
             }
             if matches!(hir[value].kind, ExprKind::Ident(_))
-                && !self.is_written_in_parentheses(file, value)
+                && !is_parenthesized(self.hir(file), value)
             {
                 // `transformBinaryExpressionToExportDeclaration`
                 self.iso_check_expression_visibility(tx, value);
@@ -3871,20 +3819,6 @@ impl<'p> Checker<'p> {
                 self.iso_write_type_of_declaration(tx, file, Node::Expr(e), None, true);
             }
         }
-    }
-
-    /// `resolveEntityName(e, meaning, ignoreErrors)`, of `a` and of `a.b.c`: namespaces up to the last name.
-    fn iso_entity_symbol(&self, file: FileId, e: ExprId, meaning: SymFlags) -> Option<Sym> {
-        let found = match self.hir(file)[e].kind {
-            ExprKind::Ident(name) => self.symbol_of_identifier(file, e, name)?,
-            ExprKind::Dot { obj, name, .. } => {
-                let container = self.iso_entity_symbol(file, obj, SymFlags::NAMESPACE)?;
-                self.files().namespace_member(container, name)?
-            }
-            _ => return None,
-        };
-        let sym = self.files().resolve_alias_as(found, meaning)?;
-        self.files().flags(sym).intersects(meaning).then_some(sym)
     }
 
     fn iso_visit_statements(&mut self, tx: &mut Emit, list: IdList<StmtId>) {
@@ -4058,7 +3992,7 @@ impl<'p> Checker<'p> {
     fn iso_transform_export_assignment(&mut self, tx: &mut Emit, s: StmtId, e: ExprId) {
         let file = tx.file;
         let hir = self.hir(file);
-        if matches!(hir[e].kind, ExprKind::Ident(_)) && !self.is_written_in_parentheses(file, e) {
+        if matches!(hir[e].kind, ExprKind::Ident(_)) && !is_parenthesized(self.hir(file), e) {
             return;
         }
         // `SkipOuterExpressions(expression, OEKExpressionTypePassthrough)`
@@ -4259,7 +4193,8 @@ impl<'p> Checker<'p> {
             }
             // `evaluateEntity`
             ExprKind::Ident(_) | ExprKind::Dot { .. } => {
-                let Some(sym) = self.iso_entity_symbol(file, e, SymFlags::VALUE) else {
+                let Some(sym) = self.resolve_entity_name_expression(file, e, SymFlags::VALUE)
+                else {
                     return false;
                 };
                 let flags = self.files().flags(sym);
@@ -4289,7 +4224,7 @@ impl<'p> Checker<'p> {
                     _ => return false,
                 };
                 let member = self
-                    .iso_entity_symbol(file, obj, SymFlags::VALUE)
+                    .resolve_entity_name_expression(file, obj, SymFlags::VALUE)
                     .filter(|&root| self.files().flags(root).contains(SymFlags::ENUM))
                     .and_then(|root| self.files().export(root, name));
                 match member {
@@ -4363,9 +4298,9 @@ impl<'p> Checker<'p> {
             self.iso_visit_member(tx, m);
         }
         if class.extends.is_some() {
-            let is_name = self.iso_is_written_entity_name(file, class.extends);
+            let is_name = is_entity_name_expression(self.hir(file), class.extends);
             let is_null = matches!(hir[class.extends].kind, ExprKind::Null)
-                && !self.is_written_in_parentheses(file, class.extends);
+                && !is_parenthesized(self.hir(file), class.extends);
             if is_name {
                 // `transformExpressionWithTypeArguments`
                 self.iso_check_expression_visibility(tx, class.extends);
@@ -4447,7 +4382,7 @@ impl<'p> Checker<'p> {
                     has_literal_names = true;
                     continue;
                 };
-                if !self.iso_is_written_entity_name(file, name) {
+                if !is_entity_name_expression(self.hir(file), name) {
                     continue;
                 }
                 let is_named = self.declared_member_name(file, member.key).is_some();
@@ -4578,7 +4513,7 @@ impl<'p> Checker<'p> {
             PatKind::Object(props) => {
                 for p in props.iter() {
                     if let PropKey::Computed(name) = hir[p].key
-                        && self.iso_is_written_entity_name(tx.file, name)
+                        && is_entity_name_expression(self.hir(tx.file), name)
                     {
                         self.iso_check_expression_visibility(tx, name);
                     }
@@ -4625,7 +4560,7 @@ impl<'p> Checker<'p> {
                     9038
                 }
                 MemberOwner::Interface(_) | MemberOwner::TypeLiteral(_)
-                    if !self.iso_is_written_entity_name(file, name) =>
+                    if !is_entity_name_expression(self.hir(file), name) =>
                 {
                     9014
                 }
@@ -4691,7 +4626,7 @@ impl<'p> Checker<'p> {
         }
         // `checkName`
         if let Some(name) = dynamic
-            && self.iso_is_written_entity_name(file, name)
+            && is_entity_name_expression(self.hir(file), name)
         {
             self.iso_check_expression_visibility(tx, name);
         }

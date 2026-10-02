@@ -1989,8 +1989,7 @@ impl Checker<'_> {
     }
 
     /// What the signature `getResolvedSignature` settles on for the element `e` returns: of `sigs` the first that takes the attributes,
-    /// or what `getCandidateForOverloadFailure` makes up. The round of `chooseOverload` that wants subtypes and
-    /// `hasCorrectTypeArgumentArity` are left out. `None`: it cannot be told.
+    /// or what `getCandidateForOverloadFailure` makes up. `hasCorrectTypeArgumentArity` is left out. `None`: it cannot be told.
     fn jsx_resolved_return_type(
         &mut self,
         file: FileId,
@@ -2027,13 +2026,15 @@ impl Checker<'_> {
             return Some(self.sig_return(only));
         }
         // `chooseOverload`
-        for &sig in &instantiated {
-            let props = self.jsx_effective_first_argument(file, e, sig, construct);
-            if !self.is_known(props) {
-                return None;
-            }
-            if self.is_assignable(given, props) {
-                return Some(self.sig_return(sig));
+        for by_subtype in [true, false] {
+            for &sig in &instantiated {
+                let props = self.jsx_effective_first_argument(file, e, sig, construct);
+                if !self.is_known(props) {
+                    return None;
+                }
+                if self.is_related_in_pass(given, props, by_subtype) {
+                    return Some(self.sig_return(sig));
+                }
             }
         }
         let mut is_generic = false;
@@ -2041,28 +2042,13 @@ impl Checker<'_> {
             is_generic |= !self.sig_type_params(sig).is_empty();
         }
         if is_generic {
-            // `getLongestCandidateIndex`: the attributes and the children are one argument, if there are any.
+            // The attributes and the children are one argument, if there are any.
             let count = usize::from(!hir[j].attrs.is_empty() || !hir[j].children.is_empty());
-            let (mut best, mut most): (usize, Option<usize>) = (0, None);
-            for (i, &sig) in candidates.iter().enumerate() {
-                let params = self.sig_params(sig);
-                let length = self.parameter_count(&params);
-                if self.has_effective_rest_parameter(&params) || length >= count {
-                    best = i;
-                    break;
-                }
-                if most.is_none_or(|most| length > most) {
-                    (best, most) = (i, Some(length));
-                }
-            }
+            let best = self.longest_candidate_index(&candidates, count);
             return Some(self.sig_return(instantiated[best]));
         }
-        // `createUnionOfSignaturesForOverloadFailure`
-        let mut all = Vec::with_capacity(instantiated.len());
-        for &sig in &instantiated {
-            all.push(self.sig_return(sig));
-        }
-        Some(self.intersection(&all))
+        let combined = self.union_of_signatures_for_overload_failure(&instantiated);
+        Some(self.sig_return(combined))
     }
 }
 

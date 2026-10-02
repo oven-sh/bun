@@ -71,9 +71,9 @@ fn start_inside_parentheses(hir: &File, mut e: ExprId) -> u32 {
     let mut whole = true;
     loop {
         if !std::mem::take(&mut whole)
-            && let Ok(at) = hir.parens.binary_search_by_key(&e.0, |p| p.0.0)
+            && let Some(open) = open_parenthesis(hir, e)
         {
-            return hir.parens[at].1;
+            return open;
         }
         // It starts where what it starts with starts.
         e = match hir[e].kind {

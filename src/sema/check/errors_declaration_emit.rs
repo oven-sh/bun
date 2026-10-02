@@ -26,6 +26,18 @@ const GLOBAL_THIS: Sym = Sym {
     id: SymbolId(u32::MAX),
 };
 
+/// Set in the id of the alias an `import * as ns` declares: the symbol `cloneTypeAsModuleType` makes for that import, which no file
+/// declares either.
+const MODULE_CLONE: u32 = 1 << 31;
+
+/// What `resolveESModuleSymbol` gives for `originating_import`, the alias of an `import * as ns` that is not the module as it stands.
+fn module_clone(originating_import: Sym) -> Sym {
+    Sym {
+        file: originating_import.file,
+        id: SymbolId(originating_import.id.0 | MODULE_CLONE),
+    }
+}
+
 /// `nodebuilder.Flags`, those that are not the same all the way through a file.
 const WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL: u32 = 1 << 0;
 const IN_OBJECT_TYPE_LITERAL: u32 = 1 << 1;
@@ -528,6 +540,18 @@ impl<'p> Checker<'p> {
         (starts_with_global_this, chain)
     }
 
+    /// `lookup_symbol_chain_at`, of the symbol `cloneTypeAsModuleType` made for `originating_import`, as a value.
+    pub(super) fn lookup_symbol_chain_of_module_clone_at(
+        &mut self,
+        originating_import: Sym,
+        yields_module: bool,
+        file: FileId,
+        scope: ScopeId,
+    ) -> (bool, Vec<Sym>) {
+        let symbol = module_clone(originating_import);
+        self.lookup_symbol_chain_at(symbol, true, yields_module, file, scope)
+    }
+
     /// `IsTypeSymbolAccessible`
     pub(super) fn is_type_symbol_accessible_at(
         &mut self,
@@ -588,39 +612,7 @@ impl<'p> Checker<'p> {
         scope: ScopeId,
     ) -> (String, Option<&'static str>) {
         self.with_enclosing_declaration(file, scope, |emit| {
-            let files = emit.c.files();
-            let is_node = files.options.resolves_like_node;
-            // `GetEmitModuleFormatOfFile`
-            let context_format = files.module(file).implied_format;
-            let target_format = emit
-                .decls_of(module)
-                .into_iter()
-                .find(|d| d.1 == Decl::File)
-                .map(|d| files.module(d.0).implied_format);
-            let mut specifier = String::new();
-            let mut mode = None;
-            if is_node
-                && target_format == Some(ResolutionMode::Import)
-                && context_format != ResolutionMode::Import
-            {
-                specifier = emit.specifier_for_module_symbol(module, ResolutionMode::Import);
-                mode = Some("import");
-            }
-            if specifier.is_empty() {
-                specifier = emit.specifier_for_module_symbol(module, ResolutionMode::None);
-            }
-            if is_node && specifier.contains("/node_modules/") {
-                let (swapped, swapped_mode) = if context_format == ResolutionMode::Import {
-                    (ResolutionMode::Require, "require")
-                } else {
-                    (ResolutionMode::Import, "import")
-                };
-                let other = emit.specifier_for_module_symbol(module, swapped);
-                if !other.contains("/node_modules/") {
-                    return (other, Some(swapped_mode));
-                }
-            }
-            (specifier, mode)
+            emit.import_type_specifier_and_mode(module)
         })
     }
 }
@@ -664,7 +656,7 @@ impl<'p> Checker<'p> {
         scope: ScopeId,
     ) -> bool {
         self.with_enclosing_declaration(enclosing_file, scope, |emit| {
-            if !emit.is_entity_name_expression(file, name) {
+            if !is_entity_name_expression(emit.c.hir(file), name) {
                 return false;
             }
             let Some((first, _)) = emit.first_identifier(file, name) else {
@@ -678,25 +670,42 @@ impl<'p> Checker<'p> {
 }
 
 impl<'p> DeclarationEmit<'_, 'p> {
+    /// `exportTypeLinks.Get(symbol).target` of a symbol `cloneTypeAsModuleType` made, which has the flags, the name, the declarations,
+    /// the parent and the exports of that. Any other symbol is given back.
+    fn target_of_module_clone(&self, symbol: Sym) -> Sym {
+        if symbol == GLOBAL_THIS || symbol.id.0 & MODULE_CLONE == 0 {
+            return symbol;
+        }
+        let originating_import = Sym {
+            file: symbol.file,
+            id: SymbolId(symbol.id.0 & !MODULE_CLONE),
+        };
+        self.target_of_alias(originating_import)
+            .unwrap_or(originating_import)
+    }
+
     fn flags_of(&self, symbol: Sym) -> SymFlags {
         if symbol == GLOBAL_THIS {
             return SymFlags::VALUE_MODULE;
         }
-        self.c.files().flags(symbol)
+        self.c.files().flags(self.target_of_module_clone(symbol))
     }
 
     fn decls_of(&self, symbol: Sym) -> Vec<(FileId, Decl)> {
         if symbol == GLOBAL_THIS {
             return Vec::new();
         }
-        self.c.files().decls(symbol)
+        self.c.files().decls(self.target_of_module_clone(symbol))
     }
 
     fn name_of(&self, symbol: Sym) -> Atom {
         if symbol == GLOBAL_THIS {
             return known::globalThis;
         }
-        self.c.files().symbol(symbol).name
+        self.c
+            .files()
+            .symbol(self.target_of_module_clone(symbol))
+            .name
     }
 
     /// `symbolToString`
@@ -704,6 +713,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
         if symbol == GLOBAL_THIS {
             return "globalThis".to_owned();
         }
+        let symbol = self.target_of_module_clone(symbol);
         self.c.symbol_to_string(symbol)
     }
 
@@ -717,6 +727,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
         if symbol == GLOBAL_THIS {
             return None;
         }
+        let symbol = self.target_of_module_clone(symbol);
         let files = self.c.files();
         let declared = files.symbol(symbol);
         if declared.parent.is_none() {
@@ -746,7 +757,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
             return None;
         }
         let files = self.c.files();
-        for part in files.parts(symbol) {
+        for part in files.parts(self.target_of_module_clone(symbol)) {
             let (hir, bound) = (self.c.hir(part.file), self.c.bound(part.file));
             let mut at = part.id;
             loop {
@@ -794,8 +805,8 @@ impl<'p> DeclarationEmit<'_, 'p> {
     }
 
     /// `resolveSymbol`
-    fn resolve_symbol(&self, symbol: Sym) -> Sym {
-        if symbol == GLOBAL_THIS {
+    fn resolve_symbol(&mut self, symbol: Sym) -> Sym {
+        if symbol == GLOBAL_THIS || symbol.id.0 & MODULE_CLONE != 0 {
             return symbol;
         }
         let files = self.c.files();
@@ -804,18 +815,22 @@ impl<'p> DeclarationEmit<'_, 'p> {
         if flags.contains(SymFlags::ALIAS)
             && !flags.intersects(SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE)
         {
-            return files.resolve_alias(symbol).unwrap_or(symbol);
+            return match self.c.originating_import_of_alias(symbol) {
+                Some(originating_import) => module_clone(originating_import),
+                None => files.resolve_alias(symbol).unwrap_or(symbol),
+            };
         }
         symbol
     }
 
     /// `getSymbolIfSameReference(a, b) != nil`
-    fn is_same_reference(&self, a: Sym, b: Sym) -> bool {
+    fn is_same_reference(&mut self, a: Sym, b: Sym) -> bool {
         self.resolve_symbol(a) == self.resolve_symbol(b)
     }
 
     /// `getExportsOfSymbol`
     fn exports_of_symbol(&mut self, symbol: Sym) -> Rc<Vec<(Atom, Sym)>> {
+        let symbol = self.target_of_module_clone(symbol);
         if let Some(known) = self.exports.get(&symbol) {
             return Rc::clone(known);
         }
@@ -836,12 +851,11 @@ impl<'p> DeclarationEmit<'_, 'p> {
     /// `compareSymbols`: by where they are first declared.
     fn compare_symbols(&self, a: Sym, b: Sym) -> std::cmp::Ordering {
         let place = |symbol: Sym| match self.decls_of(symbol).first() {
-            Some(&(file, decl)) => (
-                0,
-                file.0,
-                self.c.declaration_name_start(file, decl).unwrap_or(0),
-            ),
-            None => (1, 0, 0),
+            Some(&(file, decl)) => {
+                let start = self.c.declaration_name_start(file, decl).unwrap_or(0);
+                (0, self.c.place_in_program_order(file, start))
+            }
+            None => (1, (false, 0, 0)),
         };
         place(a).cmp(&place(b)).then(a.cmp(&b))
     }
@@ -1479,7 +1493,15 @@ impl<'p> DeclarationEmit<'_, 'p> {
 
     /// `resolveAlias`: what the alias is declared to stand for, and on from there while that is an alias and nothing else
     /// (`resolveSymbol`, `isNonLocalAlias`).
-    fn resolve_alias(&self, alias: Sym) -> Option<Sym> {
+    fn resolve_alias(&mut self, alias: Sym) -> Option<Sym> {
+        match self.c.originating_import_of_alias(alias) {
+            Some(originating_import) => Some(module_clone(originating_import)),
+            None => self.target_of_alias(alias),
+        }
+    }
+
+    /// `resolve_alias`, with its target in place of a symbol `cloneTypeAsModuleType` made.
+    fn target_of_alias(&self, alias: Sym) -> Option<Sym> {
         let files = self.c.files();
         let target = files.canonical(files.alias_target(alias)?);
         files.resolve_alias_as(
@@ -1615,11 +1637,13 @@ impl<'p> DeclarationEmit<'_, 'p> {
         {
             return Some(quick.1);
         }
-        exports
-            .iter()
-            .map(|export| export.1)
-            .filter(|&exported| self.is_same_reference(exported, symbol))
-            .min_by(|&a, &b| self.compare_symbols(a, b))
+        let mut same = Vec::new();
+        for &(_, exported) in exports.iter() {
+            if self.is_same_reference(exported, symbol) {
+                same.push(exported);
+            }
+        }
+        same.into_iter().min_by(|&a, &b| self.compare_symbols(a, b))
     }
 
     /// `getAlternativeContainingModules`
@@ -1708,15 +1732,15 @@ impl<'p> DeclarationEmit<'_, 'p> {
             return None;
         };
         if value != e
-            || self.c.is_written_in_parentheses(file, e)
-            || self.c.is_written_in_parentheses(file, target)
+            || is_parenthesized(self.c.hir(file), e)
+            || is_parenthesized(self.c.hir(file), target)
         {
             return None;
         }
         let (ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }) = hir[target].kind else {
             return None;
         };
-        if !self.is_entity_name_expression(file, obj) {
+        if !is_entity_name_expression(self.c.hir(file), obj) {
             return None;
         }
         // `IsModuleExportsAccessExpression(left) || IsExportsIdentifier(left.Expression())`
@@ -2346,7 +2370,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 let declaration = hir[d];
                 if declaration.ty.is_some()
                     || declaration.init.is_none()
-                    || self.c.is_written_in_parentheses(file, declaration.init)
+                    || is_parenthesized(self.c.hir(file), declaration.init)
                 {
                     continue;
                 }
@@ -2377,7 +2401,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
             let saved = (self.error_name, self.context);
             self.context = Context::Assignment(e);
             if let ExprKind::Ident(right) = hir[value].kind
-                && !self.c.is_written_in_parentheses(file, value)
+                && !is_parenthesized(self.c.hir(file), value)
             {
                 // It is written `export { right as name }`.
                 self.check_entity_name_visibility(right, hir[value].pos, Meaning::ValueOfName);
@@ -2406,7 +2430,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
             match statement.kind {
                 StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e) => {
                     if let ExprKind::Ident(name) = hir[e].kind
-                        && !self.c.is_written_in_parentheses(self.file, e)
+                        && !is_parenthesized(self.c.hir(self.file), e)
                         && let Some(&scope) = bound.expr_scope.get(&e)
                     {
                         self.mark_linked_aliases(files.resolve_name(self.file, scope, name, any));
@@ -2431,7 +2455,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 {
                     if let ExprKind::Assign { value, .. } = hir[e].kind
                         && let ExprKind::Ident(name) = hir[value].kind
-                        && !self.c.is_written_in_parentheses(self.file, value)
+                        && !is_parenthesized(self.c.hir(self.file), value)
                     {
                         let target = files.resolve_name(self.file, ScopeId(0), name, any);
                         self.mark_linked_aliases(target);
@@ -2846,7 +2870,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 self.c.start_of(self.file, class.extends),
                 self.c.end_of_class_extends(self.file, c),
             );
-            if self.is_entity_name_expression(self.file, class.extends) {
+            if is_entity_name_expression(self.c.hir(self.file), class.extends) {
                 let saved = self.context;
                 if !self.suppresses_new_contexts {
                     let code = match (is_declaration, name != (0, 0)) {
@@ -2895,7 +2919,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
     fn transform_export_assignment(&mut self, s: StmtId, e: ExprId, is_export_equals: bool) {
         let (hir, bound) = (self.c.hir(self.file), self.c.bound(self.file));
         if matches!(hir[e].kind, ExprKind::Ident(_))
-            && !self.c.is_written_in_parentheses(self.file, e)
+            && !is_parenthesized(self.c.hir(self.file), e)
             && matches!(bound.stmt_parent[s.idx()], Parent::File | Parent::Module(_))
         {
             return;
@@ -2959,28 +2983,13 @@ impl<'p> DeclarationEmit<'_, 'p> {
 
     // ───────────────────────────── members and signatures ─────────────────────────────
 
-    /// `IsEntityNameExpression`
-    fn is_entity_name_expression(&self, file: FileId, e: ExprId) -> bool {
-        !self.c.is_written_in_parentheses(file, e)
-            && match self.c.hir(file)[e].kind {
-                ExprKind::Ident(_) => true,
-                ExprKind::Dot { obj, name, .. } => {
-                    !self.c.is_private_name(name) && self.is_entity_name_expression(file, obj)
-                }
-                _ => false,
-            }
-    }
-
     /// `GetFirstIdentifier`: the name, and where it is written.
     fn first_identifier(&self, file: FileId, e: ExprId) -> Option<(Atom, u32)> {
         let hir = self.c.hir(file);
-        let mut at = e;
-        loop {
-            match hir[at].kind {
-                ExprKind::Ident(name) => return Some((name, hir[at].pos)),
-                ExprKind::Dot { obj, .. } => at = obj,
-                _ => return None,
-            }
+        let first = &hir[first_identifier(hir, e)];
+        match first.kind {
+            ExprKind::Ident(name) => Some((name, first.pos)),
+            _ => None,
         }
     }
 
@@ -3106,7 +3115,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
             PatKind::Object(props) => {
                 for p in props.iter() {
                     if let PropKey::Computed(key) = hir[p].key
-                        && self.is_entity_name_expression(self.file, key)
+                        && is_entity_name_expression(self.c.hir(self.file), key)
                         && let Some((first, start)) = self.first_identifier(self.file, key)
                     {
                         self.check_entity_name_visibility(first, start, Meaning::ValueOfName);
@@ -3162,7 +3171,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
         };
         // `IsLateBound`
         if let Some(key) = dynamic_name
-            && !(self.is_entity_name_expression(self.file, key)
+            && !(is_entity_name_expression(self.c.hir(self.file), key)
                 && self.c.member_name(self.file, member.key).is_some())
         {
             return;
@@ -3412,7 +3421,9 @@ impl<'p> DeclarationEmit<'_, 'p> {
             return true;
         }
         let declared = self.c.type_from_node(file, parameter.ty);
-        self.c.is_known(declared) && !self.c.contains_undefined(declared)
+        self.c.is_known(declared)
+            && !self.c.is_error_type(declared)
+            && !self.c.contains_undefined(declared)
     }
 
     /// The type of the property the member `m` of `file` declares.
@@ -3730,8 +3741,8 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 self.b.approximate_length += if *value { 4 } else { 5 };
                 return;
             }
-            TypeData::UniqueSymbol { file, id, .. } => {
-                return self.unique_symbol_to_node(*file, *id);
+            TypeData::UniqueSymbol { symbol, .. } => {
+                return self.unique_symbol_to_node(*symbol);
             }
             TypeData::ThisParam(_) => {
                 if self.b.flags & IN_OBJECT_TYPE_LITERAL != 0 {
@@ -4075,24 +4086,19 @@ impl<'p> DeclarationEmit<'_, 'p> {
     /// What `typeof` names a `unique symbol` through: the variable that is declared as one, the class it is a static property of, the
     /// variable whose type is written as the type literal it is a property of. `Some(None)`: nothing. `None`: it cannot be told,
     /// or it is a property of the global `Symbol`.
-    fn owner_of_unique_symbol(&self, file: FileId, id: u32) -> Option<Option<Sym>> {
-        if file.0 == u32::MAX {
-            return None;
-        }
+    fn owner_of_unique_symbol(&self, symbol: UniqueSymbolDeclaration) -> Option<Option<Sym>> {
+        let (file, m) = match symbol {
+            UniqueSymbolDeclaration::Variable(variable) => return Some(Some(variable)),
+            UniqueSymbolDeclaration::Member(file, m) => (file, m),
+            UniqueSymbolDeclaration::SymbolConstructor => return None,
+        };
         let files = self.c.files();
         let (hir, bound) = (self.c.hir(file), self.c.bound(file));
-        let declares = |ty: TypeNodeId, init: ExprId| {
-            ty.is_some() && ty.0 == id || init.is_some() && (init.0 | 1 << 31) == id
-        };
         let symbol_of = |pat: PatId| {
             let symbol = bound.pat_symbol[pat.idx()];
             symbol.is_some().then(|| files.sym(file, symbol))
         };
-        if let Some(d) = hir.var_decls.iter().find(|d| declares(d.ty, d.init)) {
-            return symbol_of(d.pat).map(Some);
-        }
-        let m = hir.members.iter().position(|m| declares(m.ty, m.init))?;
-        match bound.member_owner[m] {
+        match bound.member_owner[m.idx()] {
             MemberOwner::Class(c) => {
                 let symbol = bound.class_symbol[c.idx()];
                 symbol.is_some().then(|| Some(files.sym(file, symbol)))
@@ -4108,9 +4114,9 @@ impl<'p> DeclarationEmit<'_, 'p> {
         }
     }
 
-    fn unique_symbol_to_node(&mut self, file: FileId, id: u32) {
+    fn unique_symbol_to_node(&mut self, symbol: UniqueSymbolDeclaration) {
         if self.b.flags & ALLOW_UNIQUE_ES_SYMBOL_TYPE == 0 {
-            match self.owner_of_unique_symbol(file, id) {
+            match self.owner_of_unique_symbol(symbol) {
                 None => {}
                 Some(Some(owner)) if self.is_value_symbol_accessible(owner) => {
                     self.b.approximate_length += 6;
@@ -4419,8 +4425,15 @@ impl<'p> DeclarationEmit<'_, 'p> {
                     Origin::ClassStatic(symbol)
                     | Origin::EnumObject(symbol)
                     | Origin::Module(symbol)
-                    | Origin::Function(symbol)
-                    | Origin::Namespace { module: symbol, .. } => {
+                    | Origin::Function(symbol) => {
+                        if self.should_emit_type_of_symbol(symbol, Meaning::Value) {
+                            return self.symbol_to_type_node(symbol, Meaning::Value);
+                        }
+                    }
+                    Origin::Namespace {
+                        originating_import, ..
+                    } => {
+                        let symbol = module_clone(originating_import);
                         if self.should_emit_type_of_symbol(symbol, Meaning::Value) {
                             return self.symbol_to_type_node(symbol, Meaning::Value);
                         }
@@ -4686,7 +4699,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
         };
         // `hasLateBindableName`
         if let PropKey::Computed(e) = key
-            && self.is_entity_name_expression(file, e)
+            && is_entity_name_expression(self.c.hir(file), e)
         {
             self.track_computed_name(file, e);
         }
@@ -4696,20 +4709,16 @@ impl<'p> DeclarationEmit<'_, 'p> {
     /// there as the `unique symbol` is declared: `[a]`, or `[N.a]` of one in a namespace or a class.
     fn track_name_of_copy(&mut self, name: Atom) {
         let files = self.c.files();
-        let Some(number) = files
-            .atoms
-            .bytes(name)
-            .strip_prefix(crate::atom::SYMBOL_NAME_PREFIX)
-            .and_then(|text| text.rsplit(|&b| b == b'@').next())
-            .and_then(|number| std::str::from_utf8(number).ok())
-            .and_then(|number| number.split_once('.'))
-        else {
+        if !files.atoms.is_symbol_name(name) {
+            return;
+        }
+        let Some(name_type) = self.c.key_type_of_name(name) else {
             return;
         };
-        let (Ok(file), Ok(id)) = (number.0.parse::<u32>(), number.1.parse::<u32>()) else {
+        let TypeData::UniqueSymbol { symbol, .. } = *self.c.data(name_type) else {
             return;
         };
-        let Some(Some(owner)) = self.owner_of_unique_symbol(FileId(file), id) else {
+        let Some(Some(owner)) = self.owner_of_unique_symbol(symbol) else {
             return;
         };
         let (hir, bound) = (self.c.hir(owner.file), self.c.bound(owner.file));
@@ -4744,10 +4753,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
     fn track_computed_name(&mut self, file: FileId, e: ExprId) {
         let files = self.c.files();
         let hir = self.c.hir(file);
-        let mut first = e;
-        while let ExprKind::Dot { obj, .. } = hir[first].kind {
-            first = obj;
-        }
+        let first = first_identifier(hir, e);
         let ExprKind::Ident(name) = hir[first].kind else {
             return;
         };
@@ -4847,7 +4853,11 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 },
                 _ => (false, false),
             };
-            if self.c.is_known(write_type) && (property_type != write_type || is_in_class) {
+            if self.c.is_known(write_type)
+                && !self.c.is_error_type(property_type)
+                && !self.c.is_error_type(write_type)
+                && (property_type != write_type || is_in_class)
+            {
                 if is_field || !prop.flags.contains(PropFlags::WRITE_ONLY) {
                     self.b.approximate_length += 3;
                     self.type_to_node(property_type);
@@ -5104,7 +5114,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
         ty: TypeId,
         is_optional: bool,
     ) -> bool {
-        if ty == TypeId::UNRESOLVED {
+        if ty == TypeId::UNRESOLVED || self.c.is_error_type(ty) {
             return true;
         }
         let written = self.c.type_from_node(file, node);
@@ -5119,24 +5129,22 @@ impl<'p> DeclarationEmit<'_, 'p> {
 
     /// Whether `ty` is the `unique symbol` that `declared` declares.
     fn is_own_unique_symbol(&self, declared: Declared, ty: TypeId) -> bool {
-        let TypeData::UniqueSymbol { file, id, .. } = *self.c.data(ty) else {
+        let TypeData::UniqueSymbol { symbol, .. } = *self.c.data(ty) else {
             return false;
         };
-        let (of, annotation, initializer) = match declared {
+        let (of, own) = match declared {
             Declared::Variable(of, d) => {
-                let d = self.c.hir(of)[d];
-                (of, d.ty, d.init)
+                let variable = self.c.bound(of).pat_symbol[self.c.hir(of)[d].pat.idx()];
+                if variable.is_none() {
+                    return false;
+                }
+                let variable = self.c.files().sym(of, variable);
+                (of, UniqueSymbolDeclaration::Variable(variable))
             }
-            Declared::Member(of, m) => {
-                let m = self.c.hir(of)[m];
-                (of, m.ty, m.init)
-            }
+            Declared::Member(of, m) => (of, UniqueSymbolDeclaration::Member(of, m)),
             _ => return false,
         };
-        of == file
-            && file == self.b.enclosing.file
-            && (annotation.is_some() && annotation.0 == id
-                || initializer.is_some() && (initializer.0 | 1 << 31) == id)
+        own == symbol && of == self.b.enclosing.file
     }
 
     /// `serializeTypeForDeclaration`, of a declaration whose type is `getTypeOfSymbol`.
@@ -5483,7 +5491,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
         let member = self.c.hir(file)[m];
         if let PropKey::Computed(key) = member.key {
             // What has no name that can be told is left out.
-            if !self.is_entity_name_expression(file, key)
+            if !is_entity_name_expression(self.c.hir(file), key)
                 || self.c.member_name(file, member.key).is_none()
             {
                 return;
@@ -5663,6 +5671,18 @@ fn path_is_relative(path: &str) -> bool {
 /// `RemoveFileExtension`
 fn remove_file_extension(path: &str) -> &str {
     &path[..path.len() - known_extension(path).len()]
+}
+
+/// `TryGetRealFileNameForNonJSDeclarationFileName`
+fn try_get_real_file_name_for_non_js_declaration_file_name(file_name: &str) -> Option<String> {
+    let base_name = file_name.rsplit('/').next().unwrap_or(file_name);
+    let no_extension = file_name.strip_suffix(".ts")?;
+    if !base_name.contains(".d.") || base_name.ends_with(".d.ts") {
+        return None;
+    }
+    let extension = &no_extension[no_extension.rfind('.')?..];
+    let (before, _) = no_extension.split_once(".d.")?;
+    Some([before, extension].concat())
 }
 
 /// `TryGetJSExtensionForFile`
@@ -6016,6 +6036,12 @@ impl<'p> DeclarationEmit<'_, 'p> {
         if matches!(extension, ".d.mts" | ".d.cts" | ".mts" | ".cts") {
             return with_js_extension();
         }
+        if extension == ".ts"
+            && file_name.contains(".d.")
+            && let Some(real) = try_get_real_file_name_for_non_js_declaration_file_name(file_name)
+        {
+            return real;
+        }
         match allowed.first() {
             Some(Ending::Minimal) | None => match no_extension.strip_suffix("/index") {
                 // `index` stays if there is a file of the name of the directory. Of the files there are, those of the program are known.
@@ -6053,28 +6079,22 @@ impl<'p> DeclarationEmit<'_, 'p> {
         }
     }
 
-    /// `tryGetModuleNameAsNodeModule`: what the file at `path`, which is in `node_modules`, is called by `importing`. Empty: its package
-    /// does not let it be named. `None`: a link may lead to it from a `node_modules` that `importing` looks in, which is not known here.
+    /// `tryGetModuleNameAsNodeModule`: what the file at `path`, which is in `node_modules`, is called by `importing`. Empty: it cannot
+    /// be named through `node_modules`.
     fn module_name_as_node_module(
         &self,
         path: &str,
         importing: FileId,
         mode: ResolutionMode,
         prefers_js: bool,
-    ) -> Option<String> {
+    ) -> String {
         let files = self.c.files();
         let options = &files.options;
         let Some((top_level_node_modules, top_level_package_name, package_root)) =
             node_module_path_parts(path)
         else {
-            return Some(String::new());
+            return String::new();
         };
-        if path.contains("/node_modules/.")
-            || !parent_dir(&files.module(importing).path)
-                .starts_with(&path[..top_level_node_modules])
-        {
-            return None;
-        }
         let package_directory = &path[..package_root];
         // `tryDirectoryWithPackageJson`
         let is_package_root = match files.package_jsons.get(package_directory) {
@@ -6118,7 +6138,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
                         String::new()
                     };
                     // What `exports` does not lead to cannot be named through `node_modules`.
-                    return Some(module_name_from_package_exports(
+                    return module_name_from_package_exports(
                         path,
                         &swapped,
                         package_directory,
@@ -6127,7 +6147,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
                         ),
                         exports,
                         &conditions,
-                    ));
+                    );
                 }
                 // The main file goes by the name of the package.
                 let main = ["typings", "types", "main"]
@@ -6151,9 +6171,10 @@ impl<'p> DeclarationEmit<'_, 'p> {
             let allowed = self.allowed_endings(importing, prefers_js, ResolutionMode::None);
             self.process_ending(path, &allowed)
         };
-        Some(package_name_from_types_package_name(
-            &module_specifier[top_level_package_name + 1..],
-        ))
+        if !parent_dir(&files.module(importing).path).starts_with(&path[..top_level_node_modules]) {
+            return String::new();
+        }
+        package_name_from_types_package_name(&module_specifier[top_level_package_name + 1..])
     }
 
     /// `GetEachFileNameOfModule`: the paths that lead to the file at `real` by a link to a directory it is in.
@@ -6216,12 +6237,11 @@ impl<'p> DeclarationEmit<'_, 'p> {
         let mut relative_specifier = None;
         for path in &paths {
             let is_through_node_modules = path.contains("/node_modules/");
-            if is_through_node_modules
-                && let Some(name) =
-                    self.module_name_as_node_module(path, importing, mode, prefers_js)
-                && !name.is_empty()
-            {
-                return name;
+            if is_through_node_modules {
+                let name = self.module_name_as_node_module(path, importing, mode, prefers_js);
+                if !name.is_empty() {
+                    return name;
+                }
             }
             // A relative path to another package is not portable: the one through `node_modules` is taken, which is reported.
             if relative_specifier.is_none() && (is_through_node_modules || !is_in_node_modules) {
@@ -6288,10 +6308,9 @@ impl<'p> DeclarationEmit<'_, 'p> {
             return self.module_specifier_among(paths, importing, mode, target_mode);
         }
         if path.contains("/node_modules/") {
-            match self.module_name_as_node_module(path, importing, mode, prefers_js) {
-                Some(name) if name.is_empty() => {}
-                Some(name) => return name,
-                None => return String::new(),
+            let name = self.module_name_as_node_module(path, importing, mode, prefers_js);
+            if !name.is_empty() {
+                return name;
             }
         }
         // `getLocalModuleSpecifier`
@@ -6405,10 +6424,10 @@ impl<'p> DeclarationEmit<'_, 'p> {
                         .is_some_and(|equals| self.is_same_reference(equals, symbol));
                 if !is_the_module {
                     if chain.is_empty() {
-                        chain.push(
-                            self.alias_for_symbol_in_container(parent, symbol)
-                                .unwrap_or(symbol),
-                        );
+                        let last = self
+                            .alias_for_symbol_in_container(parent, symbol)
+                            .unwrap_or(symbol);
+                        chain.push(self.target_of_module_clone(last));
                     }
                     parent_chain.append(&mut chain);
                 }
@@ -6420,13 +6439,14 @@ impl<'p> DeclarationEmit<'_, 'p> {
         if chain.is_empty()
             && (depth == 0 || yields_module || !self.is_external_module_symbol(symbol))
         {
-            chain.push(symbol);
+            // What `cloneTypeAsModuleType` made is written as its target: it has the name and the declarations of that.
+            chain.push(self.target_of_module_clone(symbol));
         }
         chain
     }
 
-    /// The part of `symbolToTypeNode` that writes `import("specifier")`: `module` is what the chain of names for `symbol` starts with.
-    fn import_type_specifier(&mut self, module: Sym, symbol: Sym) -> String {
+    /// The part of `symbolToTypeNode` that writes `import("specifier")` for `module`: the specifier, and the `resolution-mode` attribute.
+    fn import_type_specifier_and_mode(&mut self, module: Sym) -> (String, Option<&'static str>) {
         let files = self.c.files();
         let is_node = files.options.resolves_like_node;
         // `GetEmitModuleFormatOfFile`
@@ -6437,35 +6457,39 @@ impl<'p> DeclarationEmit<'_, 'p> {
             .find(|d| d.1 == Decl::File)
             .map(|d| files.module(d.0).implied_format);
         let mut specifier = String::new();
-        let mut has_attributes = false;
+        let mut mode = None;
         // An `import` type that leads to an ECMAScript module only resolves as `import` does.
         if is_node
             && target_format == Some(ResolutionMode::Import)
             && context_format != ResolutionMode::Import
         {
             specifier = self.specifier_for_module_symbol(module, ResolutionMode::Import);
-            has_attributes = true;
+            mode = Some("import");
         }
         if specifier.is_empty() {
             specifier = self.specifier_for_module_symbol(module, ResolutionMode::None);
         }
-        if !specifier.contains("/node_modules/") {
-            return specifier;
-        }
-        if is_node {
+        if is_node && specifier.contains("/node_modules/") {
             // Resolved the other way it may be found.
-            let swapped = if context_format == ResolutionMode::Import {
-                ResolutionMode::Require
+            let (swapped, swapped_mode) = if context_format == ResolutionMode::Import {
+                (ResolutionMode::Require, "require")
             } else {
-                ResolutionMode::Import
+                (ResolutionMode::Import, "import")
             };
             let other = self.specifier_for_module_symbol(module, swapped);
             if !other.contains("/node_modules/") {
-                return other;
+                return (other, Some(swapped_mode));
             }
         }
-        if !has_attributes {
+        (specifier, mode)
+    }
+
+    /// The same with its error. `module` is what the chain of names for `symbol` starts with.
+    fn import_type_specifier(&mut self, module: Sym, symbol: Sym) -> String {
+        let (specifier, mode) = self.import_type_specifier_and_mode(module);
+        if specifier.contains("/node_modules/") && mode.is_none() {
             self.b.encountered_error = true;
+            let files = self.c.files();
             let name = if self
                 .parent_of_symbol(symbol)
                 .is_some_and(|parent| files.export(parent, known::default) == Some(symbol))

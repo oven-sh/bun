@@ -9,7 +9,6 @@
 //! is checked. An expression that is checked ahead of its turn, because its type is asked for, is taken in its turn here.
 
 use super::errors::Diagnostic;
-use super::errors_x_signatures::has_parse_diagnostics;
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent};
 use crate::resolve::{ModuleKind, ScriptTarget};
@@ -74,14 +73,6 @@ struct Request {
     start: u32,
     end: u32,
     helpers: u32,
-}
-
-/// `AssignmentKind`
-#[derive(Copy, Clone)]
-enum AssignmentKind {
-    None,
-    Definite,
-    Compound,
 }
 
 impl Checker<'_> {
@@ -655,7 +646,7 @@ impl Checker<'_> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut node = e;
         loop {
-            if self.is_written_in_parentheses(file, node) {
+            if is_parenthesized(self.hir(file), node) {
                 return false;
             }
             match bound.expr_parent[node.idx()] {
@@ -887,7 +878,7 @@ impl Checker<'_> {
                         value,
                     } if value == node
                         && matches!(hir[name].kind, ExprKind::Ident(_))
-                        && !self.is_written_in_parentheses(file, name) =>
+                        && !is_parenthesized(self.hir(file), name) =>
                     {
                         false
                     }
@@ -949,12 +940,11 @@ impl Checker<'_> {
             return;
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let is_private_name_at = |pos: u32| hir.text.get(pos as usize) == Some(&b'#');
         for &e in index.of(ExprTag::Dot) {
             let ExprKind::Dot { name_pos, .. } = hir[e].kind else {
                 continue;
             };
-            if !is_private_name_at(name_pos) {
+            if !is_private_name_at(hir, name_pos) {
                 continue;
             }
             let Some(put_off) = self.eh_place(file, bound.expr_parent[e.idx()]) else {
@@ -965,7 +955,7 @@ impl Checker<'_> {
                 order: (put_off, start),
                 start,
                 end: self.end_inside_parentheses(file, e),
-                helpers: match self.eh_assignment_target_kind(file, e) {
+                helpers: match bound.get_assignment_target_kind(hir, e) {
                     AssignmentKind::None => CLASS_PRIVATE_FIELD_GET,
                     AssignmentKind::Definite => CLASS_PRIVATE_FIELD_SET,
                     AssignmentKind::Compound => CLASS_PRIVATE_FIELD_SET | CLASS_PRIVATE_FIELD_GET,
@@ -983,8 +973,8 @@ impl Checker<'_> {
             };
             let start = hir[left].pos;
             if matches!(hir[left].kind, ExprKind::String(_))
-                && is_private_name_at(start)
-                && !self.is_written_in_parentheses(file, left)
+                && is_private_name_at(hir, start)
+                && !is_parenthesized(self.hir(file), left)
                 && let Some(put_off) = self.eh_place(file, bound.expr_parent[e.idx()])
             {
                 requests.push(Request {
@@ -993,53 +983,6 @@ impl Checker<'_> {
                     end: self.end_of_name_at(file, start),
                     helpers: CLASS_PRIVATE_FIELD_IN,
                 });
-            }
-        }
-    }
-
-    /// `getAssignmentTargetKind`
-    fn eh_assignment_target_kind(&self, file: FileId, e: ExprId) -> AssignmentKind {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let mut node = e;
-        loop {
-            match bound.expr_parent[node.idx()] {
-                Parent::Expr(parent) if parent.is_some() => match hir[parent].kind {
-                    ExprKind::Assign { op, target, .. } => {
-                        return match op {
-                            _ if target != node => AssignmentKind::None,
-                            None | Some(BinOp::And | BinOp::Or | BinOp::Nullish) => {
-                                AssignmentKind::Definite
-                            }
-                            Some(_) => AssignmentKind::Compound,
-                        };
-                    }
-                    ExprKind::Unary {
-                        op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
-                        ..
-                    } => return AssignmentKind::Compound,
-                    ExprKind::Array(_) | ExprKind::Spread(_) | ExprKind::NonNull(_) => {
-                        node = parent;
-                    }
-                    _ => return AssignmentKind::None,
-                },
-                Parent::Prop(p) => {
-                    let owner = bound.prop_owner[p.idx()];
-                    if owner.is_none() || !matches!(hir[owner].kind, ExprKind::Object(_)) {
-                        return AssignmentKind::None;
-                    }
-                    node = owner;
-                }
-                // `for (a.#x of list)`
-                Parent::Stmt(s) if s.is_some() => {
-                    let is_loop_variable = matches!(bound.stmt_parent[s.idx()], Parent::Stmt(l) if l.is_some()
-                        && matches!(hir[l].kind, StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } if left == s));
-                    return if is_loop_variable {
-                        AssignmentKind::Definite
-                    } else {
-                        AssignmentKind::None
-                    };
-                }
-                _ => return AssignmentKind::None,
             }
         }
     }

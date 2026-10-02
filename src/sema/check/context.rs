@@ -728,8 +728,7 @@ impl<'p> Checker<'p> {
             PatParent::Prop(parent, prop) if !hir[prop].is_rest => {
                 // `IsComputedNonLiteralName`: a name that has to be worked out is not looked up.
                 if let PropKey::Computed(k) = hir[prop].key
-                    && !matches!(hir[k].kind, ExprKind::String(_) | ExprKind::Number(_))
-                    && !matches!(hir[k].kind, ExprKind::Template { exprs, .. } if exprs.is_empty())
+                    && !is_string_or_numeric_literal_like(hir, k)
                 {
                     return None;
                 }
@@ -1852,7 +1851,7 @@ impl<'p> Checker<'p> {
         };
         let name = match hir[target].kind {
             // `this.#name = value` declares nothing.
-            ExprKind::Dot { name_pos, .. } if hir.text.get(name_pos as usize) == Some(&b'#') => {
+            ExprKind::Dot { name_pos, .. } if is_private_name_at(hir, name_pos) => {
                 return false;
             }
             ExprKind::Dot { name, .. } => name,
@@ -2041,7 +2040,7 @@ impl<'p> Checker<'p> {
 
     // ───────────────────────────── functions ─────────────────────────────
 
-    fn takes_context(&self, file: FileId, func: FnId) -> Option<ExprId> {
+    pub(super) fn takes_context(&self, file: FileId, func: FnId) -> Option<ExprId> {
         let f = &self.hir(file)[func];
         match (f.kind, self.bound(file).fns[func.idx()].owner) {
             (FnKind::Expr | FnKind::Arrow | FnKind::Method, FnOwner::Expr(owner)) => Some(owner),
@@ -2176,31 +2175,22 @@ impl<'p> Checker<'p> {
     /// `assignContextualParameterTypes`: a context-sensitive function without type parameters adopts those of a generic contextual
     /// signature (`sig.typeParameters = context.typeParameters`). Returns `sig` unchanged if it adopts nothing.
     pub(super) fn with_adopted_type_params(&mut self, sig: SigId) -> SigId {
-        let SigData::Decl { file, func, mapper } = *self.p.types.sig(sig) else {
+        let SigData::Decl { mapper, .. } = *self.p.types.sig(sig) else {
             return sig;
         };
-        // Only the signature as declared qualifies: its mapper may map the type parameters in scope to themselves.
-        if !self.hir(file)[func].type_params.is_empty()
-            || self
-                .p
-                .types
-                .mapping(mapper)
-                .iter()
-                .any(|&(from, to)| from != to)
+        // Only the signature as declared qualifies: its mapper may map the type parameters in scope to themselves. The copy
+        // stores the return type, so none is made while that type is being resolved.
+        if self
+            .p
+            .types
+            .mapping(mapper)
+            .iter()
+            .any(|&(from, to)| from != to)
+            || self.is_resolving_return_type(sig)
         {
             return sig;
         }
-        let Some(owner) = self.takes_context(file, func) else {
-            return sig;
-        };
-        // The copy stores the return type, so none is made while that type is being resolved.
-        if !self.is_context_sensitive(file, owner) || self.is_resolving_return_type(sig) {
-            return sig;
-        }
-        let Some(context) = self.contextual_signature(file, func) else {
-            return sig;
-        };
-        let adopted = self.sig_type_params(context);
+        let adopted = self.adopted_type_params(sig);
         // `SigData::Synth` cannot hold a type predicate.
         if adopted.is_empty() || self.sig_predicate(sig).is_some() {
             return sig;

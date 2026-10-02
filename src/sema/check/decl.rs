@@ -490,10 +490,7 @@ impl<'p> Checker<'p> {
                     out.everything = true;
                     return;
                 }
-                let mut root = expr;
-                while let ExprKind::Dot { obj, .. } = hir[root].kind {
-                    root = obj;
-                }
+                let root = first_identifier(hir, expr);
                 // `typeof this.x`
                 let ExprKind::Ident(name) = hir[root].kind else {
                     out.everything = true;
@@ -530,6 +527,21 @@ impl<'p> Checker<'p> {
                 self.collect_mentions(file, ty, out);
             }
         }
+    }
+
+    /// `getDeclaredTypeOfSymbol(getSymbolOfDeclaration(tp))`: the declarations of one symbol declare one type parameter (`infer T` twice
+    /// in one `extends` type, `<A, A>`).
+    pub(super) fn declared_type_of_type_parameter(
+        &mut self,
+        file: FileId,
+        tp: TypeParamId,
+    ) -> TypeId {
+        let symbol = self.bound(file).type_param_symbol[tp.idx()];
+        if symbol.is_none() {
+            return self.type_param(file, tp);
+        }
+        let sym = self.files().sym(file, symbol);
+        self.declared_type(sym)
     }
 
     /// `core.AppendIfUnique` in `getTypeParametersFromDeclaration` and `appendTypeParameters`: whether `tp` has the name, and so the
@@ -885,13 +897,7 @@ impl<'p> Checker<'p> {
             self.type_param_declaration_with(file, tp, |p: &TypeParam| p.constraint);
         let node = self.hir(of)[written].constraint;
         if node.is_some() {
-            return match self.p.type_node_types.get(of, node.idx()) {
-                // `may_be_error_type` looks into what the `any` comes from, unless it is written.
-                Some(TypeId::ANY | TypeId::ERROR) => {
-                    matches!(self.hir(of)[node].kind, TypeNodeKind::Keyword(_))
-                }
-                kept => kept.is_some(),
-            };
+            return self.p.type_node_types.get(of, node.idx()).is_some();
         }
         constraint.is_none() || self.p.inferred_constraints.get(&param).is_some()
     }
@@ -919,7 +925,7 @@ impl<'p> Checker<'p> {
         }
         let mut constraint = self.type_from_node(of, node);
         // To extend `any` is to extend nothing in particular. What a mapped type ranges over are keys all the same.
-        if self.has_any_flag(constraint) && !self.may_be_error_type(of, node, 0) {
+        if self.has_any_flag(constraint) && !self.is_error_type(constraint) {
             constraint = if self.hir(of).mapped.iter().any(|m| m.param == written) {
                 self.union(&[TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL])
             } else {
@@ -1084,92 +1090,6 @@ impl<'p> Checker<'p> {
         self.p.types.mapper(pairs)
     }
 
-    /// Whether the `any` that comes of `node` may be the error type (`isErrorType`). There is one `any` for both here, so it is
-    /// told by what is written; in doubt it may.
-    fn may_be_error_type(&mut self, file: FileId, node: TypeNodeId, depth: u32) -> bool {
-        if node.is_none() || depth > 8 {
-            return true;
-        }
-        let hir = self.hir(file);
-        match hir[node].kind {
-            TypeNodeKind::Keyword(keyword) => keyword != Keyword::Any,
-            TypeNodeKind::Union(types) | TypeNodeKind::Intersection(types) => {
-                let types: Vec<TypeNodeId> = hir.ids(types).collect();
-                self.any_may_be_error_type(file, &types, depth + 1)
-            }
-            TypeNodeKind::Cond {
-                check,
-                extends,
-                yes,
-                no,
-            } => self.any_may_be_error_type(file, &[check, extends, yes, no], depth + 1),
-            TypeNodeKind::Ref { name, args } => {
-                let names: SmallVec<[Atom; 4]> = hir.ids(name).collect();
-                let scope = self.bound(file).type_scope[node.idx()];
-                let Some(found) = self
-                    .files()
-                    .resolve_entity(file, scope, &names, SymFlags::TYPE)
-                else {
-                    return true;
-                };
-                let Some(sym) = self.files().resolve_alias_as(found, SymFlags::TYPE) else {
-                    return true;
-                };
-                // Nothing but an alias can stand for `any`: of anything else `any` is the sign of an error.
-                if !self
-                    .type_flags_of_symbol(sym)
-                    .contains(SymFlags::TYPE_ALIAS)
-                {
-                    return {
-                        let ty = self.type_from_node(file, node);
-                        self.has_any_flag(ty)
-                    };
-                }
-                let (least, most) = self.type_argument_arity(sym);
-                if args.len() < least || args.len() > most {
-                    return true;
-                }
-                let given: Vec<TypeNodeId> = hir.ids(args).collect();
-                if self.any_may_be_error_type(file, &given, depth + 1) {
-                    return true;
-                }
-                let Some((of, alias)) =
-                    declarations_of(self.files(), sym).find_map(|(f, d)| match d {
-                        Decl::Alias(a) => Some((f, self.hir(f)[a])),
-                        _ => None,
-                    })
-                else {
-                    return true;
-                };
-                // What is not given is what the alias says it is then.
-                let defaults: Vec<TypeNodeId> = alias
-                    .type_params
-                    .iter()
-                    .skip(given.len())
-                    .map(|p| self.hir(of)[p].default)
-                    .collect();
-                self.any_may_be_error_type(of, &defaults, depth + 1)
-                    || self.may_be_error_type(of, alias.ty, depth + 1)
-            }
-            // A value that is there. What is looked up in one may not be.
-            TypeNodeKind::Typeof { expr, .. } => {
-                expr.is_none()
-                    || !matches!(hir[expr].kind, ExprKind::Ident(name) if self.symbol_of_identifier(file, expr, name).is_some())
-            }
-            _ => true,
-        }
-    }
-
-    /// The same of what is made of `nodes`: those that come to `any` themselves are where it has it from.
-    fn any_may_be_error_type(&mut self, file: FileId, nodes: &[TypeNodeId], depth: u32) -> bool {
-        nodes.iter().any(|&t| {
-            ({
-                let ty = self.type_from_node(file, t);
-                self.has_any_flag(ty)
-            }) && self.may_be_error_type(file, t, depth)
-        })
-    }
-
     /// `isErrorType`, of the `any` that comes of `node`, told by what is written like `may_be_error_type`; in doubt it is not.
     pub(super) fn is_error_type_as_written(
         &mut self,
@@ -1268,152 +1188,6 @@ impl<'p> Checker<'p> {
         })
     }
 
-    /// Whether the `any` that comes of `node` is `errorType` itself, which `getConditionalType` compares with. The error type of a
-    /// type name that is not found is another object (`getUnresolvedSymbolForEntityName`, `errorTypes`). Told by what is written,
-    /// like `is_error_type_as_written`; in doubt it is not.
-    fn is_error_type_itself_as_written(
-        &mut self,
-        file: FileId,
-        node: TypeNodeId,
-        depth: u32,
-    ) -> bool {
-        if node.is_none() || depth > 8 {
-            return false;
-        }
-        let hir = self.hir(file);
-        match hir[node].kind {
-            // `TypeFlagsIncludesError`: a union or an intersection with any error type in it is `errorType`.
-            TypeNodeKind::Union(_)
-            | TypeNodeKind::Intersection(_)
-            | TypeNodeKind::Import { .. }
-            | TypeNodeKind::Typeof { .. } => self.is_error_type_as_written(file, node, depth),
-            // `getIndexedAccessTypeOrUndefined`: whatever is looked up in `any` is that `any`.
-            TypeNodeKind::IndexedAccess { obj, .. } => {
-                ({
-                    let ty = self.type_from_node(file, obj);
-                    self.has_any_flag(ty)
-                }) && self.is_error_type_itself_as_written(file, obj, depth + 1)
-            }
-            TypeNodeKind::Ref { name, args } => {
-                if self.intended_type_of_jsdoc_reference(file, node).is_some() {
-                    return false;
-                }
-                let names: SmallVec<[Atom; 4]> = hir.ids(name).collect();
-                let scope = self.bound(file).type_scope[node.idx()];
-                let Some(sym) = self
-                    .files()
-                    .resolve_entity(file, scope, &names, SymFlags::TYPE)
-                    .and_then(|found| self.files().resolve_alias_as(found, SymFlags::TYPE))
-                else {
-                    return false;
-                };
-                if !self
-                    .type_flags_of_symbol(sym)
-                    .contains(SymFlags::TYPE_ALIAS)
-                {
-                    return false;
-                }
-                let (least, most) = self.type_argument_arity(sym);
-                if args.len() < least || args.len() > most {
-                    return true;
-                }
-                // The nodes of its body are being resolved.
-                if self.stack.contains(&Query::Declared(sym)) {
-                    return false;
-                }
-                let Some((of, alias)) = self.alias_declaration(sym) else {
-                    return false;
-                };
-                let alias = &self.hir(of)[alias];
-                let params = self.local_type_params_of_symbol(sym);
-                // What is written for each type parameter: the type argument, or else the default.
-                let given: Vec<(FileId, TypeNodeId)> = hir
-                    .ids(args)
-                    .map(|arg| (file, arg))
-                    .chain(
-                        alias
-                            .type_params
-                            .iter()
-                            .skip(args.len())
-                            .map(|p| (of, self.hir(of)[p].default)),
-                    )
-                    .collect();
-                // The node `n` of the body, or what is written for the type parameter it names.
-                let written_for = |c: &mut Self, n: TypeNodeId| {
-                    let ty = c.type_from_node(of, n);
-                    params
-                        .iter()
-                        .position(|&param| param == ty)
-                        .and_then(|i| given.get(i).copied())
-                        .unwrap_or((of, n))
-                };
-                let is_itself = |c: &mut Self, n: TypeNodeId| {
-                    let (f, n) = written_for(c, n);
-                    let ty = c.type_from_node(f, n);
-                    c.has_any_flag(ty) && c.is_error_type_itself_as_written(f, n, depth + 1)
-                };
-                match self.hir(of)[alias.ty].kind {
-                    TypeNodeKind::Union(types) | TypeNodeKind::Intersection(types) => {
-                        let types: Vec<TypeNodeId> = self.hir(of).ids(types).collect();
-                        types.into_iter().any(|t| {
-                            let (f, n) = written_for(self, t);
-                            ({
-                                let ty = self.type_from_node(f, n);
-                                self.has_any_flag(ty)
-                            }) && self.is_error_type_as_written(f, n, depth + 1)
-                        })
-                    }
-                    // `getConditionalType`
-                    TypeNodeKind::Cond { check, extends, .. } => {
-                        is_itself(self, check) || is_itself(self, extends)
-                    }
-                    TypeNodeKind::IndexedAccess { obj, .. } => is_itself(self, obj),
-                    _ => is_itself(self, alias.ty),
-                }
-            }
-            _ => false,
-        }
-    }
-
-    /// `instantiateMappedType`: a mapped type over the keys of the error type is the error type. Whether the alias `sym` stands for a
-    /// mapped type over the keys of one of its type parameters, and what the reference at `node` gives for that one, of `given`, is
-    /// in error.
-    fn is_mapped_over_error_type(
-        &mut self,
-        file: FileId,
-        node: TypeNodeId,
-        sym: Sym,
-        flags: SymFlags,
-        given: &[TypeId],
-    ) -> bool {
-        if self.stack.contains(&Query::Declared(sym)) {
-            return false;
-        }
-        let declared = self.declared_type_by_name(sym, flags);
-        let TypeData::Anon {
-            origin: Origin::Mapped(of, mapped),
-            mapper,
-        } = *self.data(declared)
-        else {
-            return false;
-        };
-        let Some(source) = self.homomorphic_type_variable(of, mapped) else {
-            return false;
-        };
-        let variable = self.p.types.map(mapper, source).unwrap_or(source);
-        let params = self.local_type_params_of_symbol(sym);
-        let hir = self.hir(file);
-        let TypeNodeKind::Ref { args, .. } = hir[node].kind else {
-            return false;
-        };
-        let Some(i) = params.iter().position(|&param| param == variable) else {
-            return false;
-        };
-        i < args.len()
-            && given.get(i).is_some_and(|&given| self.has_any_flag(given))
-            && self.is_error_type_as_written(file, hir.id_at(args, i), 0)
-    }
-
     /// `getInferredTypeParameterConstraint`: what follows for `infer T` from where it is written.
     #[inline(never)]
     fn inferred_type_param_constraint(
@@ -1469,9 +1243,9 @@ impl<'p> Checker<'p> {
                     let Some(sym) = self.files().resolve_alias_as(sym, SymFlags::TYPE) else {
                         continue;
                     };
-                    // `getTypeParametersForTypeReferenceOrImport`: a reference that is in error says nothing.
-                    let (least, most) = self.type_argument_arity(sym);
-                    if args.len() < least || args.len() > most {
+                    // `getTypeParametersForTypeReferenceOrImport`
+                    let reference = self.type_from_node(file, node);
+                    if self.is_error_type(reference) {
                         continue;
                     }
                     let params = self.local_type_params_of_symbol(sym);
@@ -1630,8 +1404,8 @@ impl<'p> Checker<'p> {
         let given = args.len().min(params.len());
         let mut filled: Vec<TypeId> = Vec::with_capacity(params.len());
         filled.extend_from_slice(&args[..given]);
-        // A default that mentions itself or what comes later is in error there, and what is in error can be anything.
-        filled.resize(params.len(), TypeId::ANY);
+        // Invalid forward references in default types are mapped to the error type.
+        filled.resize(params.len(), TypeId::ERROR);
         for i in given..params.len() {
             filled[i] = match self.default_of_type_param(params[i]) {
                 Some(default)
@@ -1667,17 +1441,17 @@ impl<'p> Checker<'p> {
     fn resolve_declared_type(&mut self, sym: Sym) -> TypeId {
         if !self.enter(Query::Declared(sym)) {
             return if self.came_full_circle {
-                TypeId::ANY
+                TypeId::ERROR
             } else {
                 TypeId::UNRESOLVED
             };
         }
         let ty = self.declared_type_uncached(sym);
         let holds = self.leave();
-        // `getDeclaredTypeOfTypeAlias`: an alias that depends on itself is in error, and what is in error can be anything.
+        // `getDeclaredTypeOfTypeAlias`: `popTypeResolution` fails.
         if self.left_a_circle {
             self.p.circular_aliases.insert(sym, ());
-            return self.p.declared_types.insert(sym, TypeId::ANY);
+            return self.p.declared_types.insert(sym, TypeId::ERROR);
         }
         if holds {
             self.p.declared_types.insert(sym, ty);
@@ -2093,7 +1867,7 @@ impl<'p> Checker<'p> {
             }
             // `evaluateEntity`: by what the names mean, never by the type of the expression.
             ExprKind::Ident(_) | ExprKind::Dot { .. } => {
-                let sym = self.entity_symbol(file, e, SymFlags::VALUE)?;
+                let sym = self.resolve_entity_name_expression(file, e, SymFlags::VALUE)?;
                 // `Infinity` and `NaN`, unless they are somebody's own.
                 if let ExprKind::Ident(name) = hir[e].kind
                     && self.files().global(name, SymFlags::VALUE) == Some(sym)
@@ -2137,13 +1911,16 @@ impl<'p> Checker<'p> {
                 self.constant_depth -= 1;
                 value
             }
-            ExprKind::Index { obj, index, .. } => {
+            // `IsEntityNameExpression(root)`, `IsStringLiteralLike(argument)`: not of what is in parentheses.
+            ExprKind::Index { obj, index, .. }
+                if !is_parenthesized(hir, obj) && !is_parenthesized(hir, index) =>
+            {
                 let name = match hir[index].kind {
                     ExprKind::String(name) => name,
                     ExprKind::Template { exprs, texts } if exprs.is_empty() => hir.id_at(texts, 0),
                     _ => return None,
                 };
-                let root = self.entity_symbol(file, obj, SymFlags::VALUE)?;
+                let root = self.resolve_entity_name_expression(file, obj, SymFlags::VALUE)?;
                 if !self.files().flags(root).contains(SymFlags::ENUM) {
                     return None;
                 }
@@ -2157,13 +1934,21 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `resolveEntityName(e, meaning, ignoreErrors)`, of `a` and of `a.b.c`: namespaces up to the last name.
-    fn entity_symbol(&self, file: FileId, e: ExprId, meaning: SymFlags) -> Option<Sym> {
-        let found = match self.hir(file)[e].kind {
+    /// `resolveEntityName(e, meaning, ignoreErrors)`, of `e` without the parentheses around it: namespaces up to the last name. `None`
+    /// too if that is no `IsEntityNameExpression`, as `(a).b` is none.
+    pub(super) fn resolve_entity_name_expression(
+        &self,
+        file: FileId,
+        e: ExprId,
+        meaning: SymFlags,
+    ) -> Option<Sym> {
+        let hir = self.hir(file);
+        let found = match hir[e].kind {
             ExprKind::Ident(name) => self.symbol_of_identifier(file, e, name)?,
-            ExprKind::Dot { obj, name, .. } => {
-                let container = self.entity_symbol(file, obj, SymFlags::NAMESPACE)?;
-                self.files().namespace_member(container, name)?
+            ExprKind::Dot { obj, name, .. } if !is_parenthesized(hir, obj) => {
+                let namespace =
+                    self.resolve_entity_name_expression(file, obj, SymFlags::NAMESPACE)?;
+                self.files().namespace_member(namespace, name)?
             }
             _ => return None,
         };
@@ -2264,11 +2049,6 @@ impl<'p> Checker<'p> {
     fn type_from_node_uncached(&mut self, file: FileId, node: TypeNodeId) -> TypeId {
         let hir = self.hir(file);
         let scope = self.bound(file).type_scope[node.idx()];
-        if hir.is_js
-            && let Some(ty) = self.jsdoc_primitive_with_type_arguments(file, node)
-        {
-            return ty;
-        }
         match hir[node].kind {
             TypeNodeKind::Error => TypeId::UNRESOLVED,
             TypeNodeKind::Keyword(k) => match k {
@@ -2469,20 +2249,14 @@ impl<'p> Checker<'p> {
                 let mapper = self.identity_mapper_for_node(file, scope, node);
                 self.conditional_type(file, node, mapper)
             }
-            TypeNodeKind::Infer(param) => {
-                // `infer T` written twice is one parameter.
-                let sym = self
-                    .files()
-                    .sym(file, self.bound(file).type_param_symbol[param.idx()]);
-                self.declared_type(sym)
-            }
+            TypeNodeKind::Infer(param) => self.declared_type_of_type_parameter(file, param),
             TypeNodeKind::IndexedAccess { obj, index } => {
                 let (obj, index) = (
                     self.type_from_node(file, obj),
                     self.type_from_node(file, index),
                 );
-                // Written out, looking up what is not there is an error, and what is in error can be anything. Where it
-                // comes about by filling in type parameters it is not, and nothing is known of it.
+                // `getIndexedAccessTypeEx`: with an access node, what `getIndexedAccessTypeOrUndefined` does not find is the error type.
+                // Without one, in an instantiation, it is `unknown`.
                 if self.is_known(obj)
                     && self.is_known(index)
                     && !self.is_any(obj)
@@ -2497,7 +2271,7 @@ impl<'p> Checker<'p> {
                             })
                     })
                 {
-                    return TypeId::ANY;
+                    return TypeId::ERROR;
                 }
                 let ty = self.indexed_access(obj, index);
                 // `getPropertyTypeForIndexType`: written as `T["p"]`, what may be missing reads as `undefined`.
@@ -2548,7 +2322,7 @@ impl<'p> Checker<'p> {
                 // `checkPropertyAccessExpressionOrQualifiedName`: the missing name of `typeof a.` finds no property: the error type.
                 if narrowed == TypeId::UNRESOLVED && hir.ids(name).next_back() == Some(known::empty)
                 {
-                    return TypeId::ANY;
+                    return TypeId::ERROR;
                 }
                 let ty = if narrowed == TypeId::UNRESOLVED {
                     let names: SmallVec<[Atom; 4]> = hir.ids(name).collect();
@@ -2569,14 +2343,14 @@ impl<'p> Checker<'p> {
                 is_typeof,
                 mode,
             } => {
-                // `getTypeFromImportTypeNode`. A module that cannot be found is an error, and what is in error can be anything.
+                // `getTypeFromImportTypeNode`
                 let mode = self.files().mode_of_import(file, mode);
                 let Some(module) = self.files().module_of_specifier_as(file, spec, mode) else {
-                    return TypeId::ANY;
+                    return TypeId::ERROR;
                 };
                 let names: SmallVec<[Atom; 4]> = hir.ids(name).collect();
-                // `resolveExternalModuleSymbol`: the module, or what it says it is with `export =`. Of one that could not be
-                // followed nothing is known.
+                // `resolveExternalModuleSymbol`: the module, or what it says it is with `export =`. One that could not be followed is
+                // `unknownSymbol`.
                 let value = self.files().module_value(module);
                 let is_followed = self
                     .files()
@@ -2588,7 +2362,7 @@ impl<'p> Checker<'p> {
                         && is_followed
                         && !self.files().symbol_flags(value).intersects(SymFlags::VALUE)
                     {
-                        return TypeId::ANY;
+                        return TypeId::ERROR;
                     }
                     // Name by name a property of the type of the value before. Those of a module or a namespace are what it
                     // exports, what it exports as a type only too.
@@ -2615,11 +2389,17 @@ impl<'p> Checker<'p> {
                             Ok(sym) => self.type_of_symbol(sym),
                             Err(ty) => ty,
                         };
-                        match self.type_of_property(ty, n) {
+                        // `getPropertyOfTypeEx`: `any` has no properties.
+                        let property = if self.has_any_flag(ty) {
+                            None
+                        } else {
+                            self.type_of_property(ty, n)
+                        };
+                        match property {
                             Some(next) => at = Err(next),
                             None => {
                                 return if self.is_known(ty) {
-                                    TypeId::ANY
+                                    TypeId::ERROR
                                 } else {
                                     TypeId::UNRESOLVED
                                 };
@@ -2638,13 +2418,9 @@ impl<'p> Checker<'p> {
                     return self.with_type_arguments(ty, &args, node);
                 }
                 if !is_followed {
-                    return if self.is_alias_in_error(value) {
-                        TypeId::ANY
-                    } else {
-                        TypeId::UNRESOLVED
-                    };
+                    return TypeId::ERROR;
                 }
-                // Namespaces up to the last name, which is to be a type. One that is not there is an error.
+                // Namespaces up to the last name, which is to be a type.
                 let mut sym = value;
                 for (i, &n) in names.iter().enumerate() {
                     let wanted = if i + 1 == names.len() {
@@ -2653,17 +2429,13 @@ impl<'p> Checker<'p> {
                         SymFlags::NAMESPACE
                     };
                     let Some(member) = self.files().namespace_member(sym, n) else {
-                        return TypeId::ANY;
+                        return TypeId::ERROR;
                     };
                     let Some(next) = self.files().resolve_alias_as(member, wanted) else {
-                        return if self.is_alias_in_error(member) {
-                            TypeId::ANY
-                        } else {
-                            TypeId::UNRESOLVED
-                        };
+                        return TypeId::ERROR;
                     };
                     if !self.files().flags(next).intersects(wanted) {
-                        return TypeId::ANY;
+                        return TypeId::ERROR;
                     }
                     sym = next;
                 }
@@ -2672,30 +2444,35 @@ impl<'p> Checker<'p> {
                     && !self.type_flags_of_symbol(sym).intersects(SymFlags::TYPE)
                 {
                     let Some(target) = self.files().resolve_alias(sym) else {
-                        return if self.is_alias_in_error(sym) {
-                            TypeId::ANY
-                        } else {
-                            TypeId::UNRESOLVED
-                        };
+                        return TypeId::ERROR;
                     };
                     // `checkNoTypeArguments`
                     if !args.is_empty()
                         || !self.type_flags_of_symbol(target).intersects(SymFlags::TYPE)
                     {
-                        return TypeId::ANY;
+                        return TypeId::ERROR;
                     }
                     let ty = self.declared_type(target);
                     return self.regular(ty);
                 }
-                // The module is no type; too few type arguments or too many.
-                if !self.type_flags_of_symbol(sym).intersects(SymFlags::TYPE) {
-                    return TypeId::ANY;
+                // `getTypeReferenceType`
+                let flags = self.type_flags_of_symbol(sym);
+                if !flags.intersects(SymFlags::TYPE) {
+                    return TypeId::ERROR;
                 }
                 let (least, most) = self.type_argument_arity(sym);
-                if args.len() < least || args.len() > most {
-                    return TypeId::ANY;
+                // `getTypeFromClassOrInterfaceReference`: `isJs`, as for a type reference.
+                let is_js_reference = hir.is_js
+                    && flags.intersects(SymFlags::CLASS | SymFlags::INTERFACE)
+                    && most != 0;
+                if !is_js_reference && (args.len() < least || args.len() > most) {
+                    return TypeId::ERROR;
                 }
-                let args = self.types_from_nodes(file, args);
+                let mut args = self.types_from_nodes(file, args);
+                if is_js_reference {
+                    let params = self.local_type_params_of_symbol(sym);
+                    args = self.fill_type_args_as(&params, &args, true);
+                }
                 self.written_type_reference(sym, &args)
             }
             TypeNodeKind::Ref { name, args } => {
@@ -2734,18 +2511,12 @@ impl<'p> Checker<'p> {
                             return self.unresolved_name_type(&names, &args);
                         };
                         let Some(sym) = self.files().resolve_alias_as(outer, SymFlags::TYPE) else {
-                            if !self.is_alias_in_error(outer) {
-                                return TypeId::UNRESOLVED;
-                            }
                             let args = self.types_from_nodes(file, args);
                             return self.unresolved_name_type(&names, &args);
                         };
                         sym
                     }
                     None => {
-                        if !self.is_alias_in_error(found) {
-                            return TypeId::UNRESOLVED;
-                        }
                         let args = self.types_from_nodes(file, args);
                         return self.unresolved_name_type(&names, &args);
                     }
@@ -2805,22 +2576,6 @@ impl<'p> Checker<'p> {
                 {
                     ty = self.with_hosting_alias(ty, (sym, flags), file, host);
                 }
-                if !is_class_or_interface
-                    && flags.contains(SymFlags::TYPE_ALIAS)
-                    && args.iter().any(|&arg| self.has_any_flag(arg))
-                    && self.is_mapped_over_error_type(file, node, sym, flags, &args)
-                {
-                    return TypeId::ANY;
-                }
-                // `getConditionalType`: `errorType` if the check type or the extends type is `errorType` itself.
-                if !is_class_or_interface
-                    && !self.has_any_flag(ty)
-                    && flags.contains(SymFlags::TYPE_ALIAS)
-                    && args.iter().any(|&arg| self.has_any_flag(arg))
-                    && self.is_error_type_itself_as_written(file, node, 0)
-                {
-                    return TypeId::ANY;
-                }
                 if is_deferred && self.has_type_variables(ty) {
                     self.p.deferred_references.insert(ty, ());
                 }
@@ -2866,13 +2621,15 @@ impl<'p> Checker<'p> {
             .filter(|&outer| outer != skipped)
     }
 
-    /// `getIntendedTypeFromJSDocTypeReference`, as far as it depends on `noImplicitAny`: what `Object`, `array` and `promise` stand for
-    /// in a JSDoc comment. The name is not looked up then.
+    /// `getIntendedTypeFromJSDocTypeReference`, of what the parser has not replaced already. The name is not looked up then.
     pub(super) fn intended_type_of_jsdoc_reference(
         &mut self,
         file: FileId,
         node: TypeNodeId,
     ) -> Option<TypeId> {
+        if let Some(primitive) = self.jsdoc_primitive_with_type_arguments(file, node) {
+            return Some(primitive);
+        }
         if self.p.files.options.no_implicit_any {
             return None;
         }
@@ -3012,13 +2769,13 @@ impl<'p> Checker<'p> {
     }
 
     /// `getThisType`: `this` as a type, written at `node` in `scope`. Where there is no such thing it is in error, and what is in
-    /// error can be anything.
+    /// error has the error type.
     fn this_type_at(&mut self, file: FileId, node: TypeNodeId, mut scope: ScopeId) -> TypeId {
         use crate::bind::{FnOwner, MemberOwner};
         let (hir, bound) = (self.hir(file), self.bound(file));
         // `GetThisContainer`: a member of a type literal is as far as it gets.
         if bound.this_in_type_literal.contains(&node) {
-            return TypeId::ANY;
+            return TypeId::ERROR;
         }
         let pos = hir[node].pos;
         while scope.is_some() {
@@ -3026,11 +2783,11 @@ impl<'p> Checker<'p> {
             match s.kind {
                 ScopeKind::Fn(f) => match hir[f].kind {
                     FnKind::Arrow | FnKind::FunctionType | FnKind::ConstructorType => {}
-                    FnKind::Decl | FnKind::Expr | FnKind::StaticBlock => return TypeId::ANY,
+                    FnKind::Decl | FnKind::Expr | FnKind::StaticBlock => return TypeId::ERROR,
                     kind => {
                         // A method or an accessor of an object literal is no member.
                         let FnOwner::Member(m) = bound.fns[f.idx()].owner else {
-                            return TypeId::ANY;
+                            return TypeId::ERROR;
                         };
                         // Of a constructor only the body will do. Parameters and body share the one scope.
                         let is_in_body = matches!(hir[f].body, FnBody::Block(body) if hir.ids(body).next().is_some_and(|first| hir[first].pos <= pos));
@@ -3041,7 +2798,7 @@ impl<'p> Checker<'p> {
                             )
                             || kind == FnKind::Constructor && !is_in_body
                         {
-                            return TypeId::ANY;
+                            return TypeId::ERROR;
                         }
                         return self.this_type_in_scope(file, s.parent);
                     }
@@ -3052,7 +2809,7 @@ impl<'p> Checker<'p> {
                         && hir[m].kind == MemberKind::Property
                     {
                         return if hir[m].flags.contains(Flags::STATIC) {
-                            TypeId::ANY
+                            TypeId::ERROR
                         } else {
                             self.this_type_in_scope(file, scope)
                         };
@@ -3063,12 +2820,14 @@ impl<'p> Checker<'p> {
                         return self.this_type_in_scope(file, scope);
                     }
                 }
-                ScopeKind::Module(_) | ScopeKind::Enum(_) | ScopeKind::File => return TypeId::ANY,
+                ScopeKind::Module(_) | ScopeKind::Enum(_) | ScopeKind::File => {
+                    return TypeId::ERROR;
+                }
                 _ => {}
             }
             scope = s.parent;
         }
-        TypeId::ANY
+        TypeId::ERROR
     }
 
     /// The `this` type of the class or the interface around `scope`.
@@ -3428,7 +3187,7 @@ impl<'p> Checker<'p> {
                 // `getDeclaredTypeOfTypeAlias`, `pushTypeResolution`: it depends on itself, which is an error.
                 self.mark_tainted_from(i + 1);
                 self.cycles += 1;
-                return TypeId::ANY;
+                return TypeId::ERROR;
             }
             let params = self.local_type_params_of_symbol(sym);
             if params.is_empty() {
@@ -3736,13 +3495,7 @@ impl<'p> Checker<'p> {
                 _ => break,
             };
         }
-        // `getBaseConstructorTypeOfClass`: a circular base constructor type is the error type, which has no signatures. The loop
-        // detects a cycle of classes without constructors. A cycle that contains a declared constructor ends the loop there. The
-        // base of a class in a cycle is in the cycle too, so if any visited class is in one, the last one is.
-        match visited.last() {
-            Some(&class) if self.extends_itself_as_written(class) => None,
-            _ => Some(sig),
-        }
+        Some(sig)
     }
 
     #[inline]

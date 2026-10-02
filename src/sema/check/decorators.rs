@@ -558,7 +558,7 @@ impl<'p> Checker<'p> {
         let (mut node, mut can_have_call, mut found) = (e, true, None);
         loop {
             let whole = (self.start_of(file, node), self.end_of_expr(file, node));
-            if node != e && hir.parens.binary_search_by_key(&node.0, |p| p.0.0).is_ok() {
+            if node != e && is_parenthesized(hir, node) {
                 return Some(whole);
             }
             match hir[node].kind {
@@ -592,7 +592,7 @@ impl<'p> Checker<'p> {
         let (mut node, mut can_have_call) = (e, true);
         loop {
             // A parenthesized expression further in is not an identifier.
-            if node != e && hir.parens.binary_search_by_key(&node.0, |p| p.0.0).is_ok() {
+            if node != e && is_parenthesized(hir, node) {
                 return false;
             }
             match hir[node].kind {
@@ -628,13 +628,6 @@ impl<'p> Checker<'p> {
         by_subtype: bool,
         written: Written,
     ) -> Applicable {
-        let related = |c: &mut Self, source: TypeId, target: TypeId| {
-            if by_subtype {
-                c.is_subtype(source, target)
-            } else {
-                c.is_assignable(source, target)
-            }
-        };
         if let Some(wanted) = self.sig_this_type(sig)
             && wanted != TypeId::VOID
         {
@@ -650,7 +643,7 @@ impl<'p> Checker<'p> {
             if !self.is_known(this) || !self.is_known(wanted) {
                 return Applicable::Unknown;
             }
-            if !related(self, this, wanted) {
+            if !self.is_related_in_pass(this, wanted, by_subtype) {
                 return Applicable::No(Mismatch {
                     at,
                     end,
@@ -675,7 +668,7 @@ impl<'p> Checker<'p> {
             if !self.is_known(wanted) {
                 return Applicable::Unknown;
             }
-            if !related(self, arg.ty, wanted) {
+            if !self.is_related_in_pass(arg.ty, wanted, by_subtype) {
                 return Applicable::No(Mismatch {
                     at: written.start,
                     end: written.end,
@@ -689,16 +682,12 @@ impl<'p> Checker<'p> {
             if !self.is_known(rest) {
                 return Applicable::Unknown;
             }
-            // `getSpreadArgumentType`
-            let mut elems = Vec::with_capacity(given.len() - count);
-            for (i, arg) in given[count..].iter().enumerate() {
-                let context = self.rest_element_type(rest, i);
-                elems.push(self.widen_literal_for_context(arg.ty, Some(context)));
-            }
-            let spread = self.tuple(&elems, &vec![ElemFlags::REQUIRED; elems.len()], false);
-            if !related(self, spread, rest) {
+            let args: Vec<Arg> = given.iter().map(|p| Arg::Type(p.ty, Atom::NONE)).collect();
+            let spread =
+                self.spread_argument_type(file, &args, count, rest, &[], MapperId::IDENTITY);
+            if !self.is_related_in_pass(spread, rest, by_subtype) {
                 return Applicable::No(Mismatch {
-                    at: if elems.is_empty() {
+                    at: if count == given.len() {
                         written.at_sign
                     } else {
                         written.start
@@ -948,19 +937,7 @@ impl<'p> Checker<'p> {
                         .iter()
                         .any(|&sig| !self.sig_type_params(sig).is_empty())
                 {
-                    // `getLongestCandidateIndex`
-                    let best = lists
-                        .iter()
-                        .position(|params| {
-                            self.has_effective_rest_parameter(params)
-                                || self.parameter_count(params) >= given.len()
-                        })
-                        .or_else(|| {
-                            (0..lists.len())
-                                .rev()
-                                .max_by_key(|&k| self.parameter_count(&lists[k]))
-                        })
-                        .unwrap_or(0);
+                    let best = self.longest_candidate_index(&sigs, given.len());
                     let candidate = self.instantiate_for_call(
                         file,
                         e,
@@ -972,10 +949,8 @@ impl<'p> Checker<'p> {
                     );
                     self.sig_return(candidate)
                 } else {
-                    // `createUnionOfSignaturesForOverloadFailure`
-                    let returns: Vec<TypeId> =
-                        sigs.iter().map(|&sig| self.sig_return(sig)).collect();
-                    self.intersection(&returns)
+                    let candidate = self.union_of_signatures_for_overload_failure(&sigs);
+                    self.sig_return(candidate)
                 }
             }
         };

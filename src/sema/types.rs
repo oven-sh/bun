@@ -116,15 +116,38 @@ pub enum Origin {
     EnumObject(Sym),
     /// A module or namespace, as a value.
     Module(Sym),
-    /// What `import * as ns` names when it is not the module as it stands (`resolveESModuleSymbol`, `cloneTypeAsModuleType`):
-    /// the properties and index signatures of `module` (a module, or what it `export =`s), no call or construct signatures,
-    /// and, if `with_default`, over them a `default` that is `module` itself.
+    /// The type of the symbol `cloneTypeAsModuleType` makes for an `import * as ns` that is not the module as it stands
+    /// (`resolveESModuleSymbol`): the properties and index signatures of `module` (a module, or what it `export =`s), no call or
+    /// construct signatures, and, if `with_default`, over them a `default` that is `module` itself. `originating_import`: the
+    /// alias `ns`. Each such import makes a symbol, and so a type, of its own.
     Namespace {
         module: Sym,
         with_default: bool,
+        originating_import: Sym,
     },
     /// `globalThis`
     GlobalThis,
+}
+
+/// `UniqueESSymbolType.symbol`
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+pub enum UniqueSymbolDeclaration {
+    /// A `const`.
+    Variable(Sym),
+    /// A `readonly` property of a class, an interface or a type literal, which has no `Sym`: `symbol.Declarations[0]`.
+    Member(FileId, crate::hir::MemberId),
+    /// A property of the global `SymbolConstructor`, which goes by its name alone.
+    SymbolConstructor,
+}
+
+impl UniqueSymbolDeclaration {
+    fn file(self) -> Option<FileId> {
+        match self {
+            Self::Variable(variable) => Some(variable.file),
+            Self::Member(file, _) => Some(file),
+            Self::SymbolConstructor => None,
+        }
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
@@ -168,10 +191,9 @@ pub enum TypeData {
     /// `let a = []` on the way to a place where it is read: an array of what has been put in it so far.
     /// Only while control flow is followed; what comes out is an ordinary array.
     EvolvingArray(TypeId),
-    /// The symbol one declaration holds. `id` tells declarations of a file apart.
+    /// `UniqueESSymbolType`: the symbol one declaration holds.
     UniqueSymbol {
-        file: FileId,
-        id: u32,
+        symbol: UniqueSymbolDeclaration,
         name: Atom,
     },
     /// With `IDENTITY`, the type parameter as declared. Otherwise that of a signature found in something instantiated
@@ -742,7 +764,7 @@ fn is_type_local(data: &TypeData, file: FileId) -> bool {
         TypeData::EnumLit { member: sym, .. }
         | TypeData::Enum { symbol: sym, .. }
         | TypeData::ThisParam(sym) => sym.file == file,
-        TypeData::UniqueSymbol { file: f, .. } => *f == file,
+        TypeData::UniqueSymbol { symbol, .. } => symbol.file() == Some(file),
         TypeData::TypeParam(f, _, mapper)
         | TypeData::Cond {
             file: f, mapper, ..
@@ -766,8 +788,12 @@ fn is_type_local(data: &TypeData, file: FileId) -> bool {
                     Origin::ClassStatic(sym)
                     | Origin::Function(sym)
                     | Origin::EnumObject(sym)
-                    | Origin::Module(sym)
-                    | Origin::Namespace { module: sym, .. } => sym.file == file,
+                    | Origin::Module(sym) => sym.file == file,
+                    Origin::Namespace {
+                        module,
+                        originating_import,
+                        ..
+                    } => module.file == file || originating_import.file == file,
                     Origin::GlobalThis => false,
                 }
         }

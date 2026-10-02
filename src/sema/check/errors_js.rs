@@ -98,22 +98,6 @@ impl Checker<'_> {
     }
 }
 
-fn word_at(text: &[u8], start: usize) -> &[u8] {
-    let rest = &text[start.min(text.len())..];
-    &rest[..rest
-        .iter()
-        .position(|&b| !is_identifier_part(b))
-        .unwrap_or(rest.len())]
-}
-
-fn word_before(text: &[u8], end: usize) -> &[u8] {
-    let start = text[..end]
-        .iter()
-        .rposition(|&b| !is_identifier_part(b))
-        .map_or(0, |i| i + 1);
-    &text[start..end]
-}
-
 /// The end of the string or template literal that starts at `start`.
 fn quoted_end(text: &[u8], start: usize) -> Option<usize> {
     let quote = *text.get(start)?;
@@ -127,37 +111,11 @@ fn quoted_end(text: &[u8], start: usize) -> Option<usize> {
     }
 }
 
-/// The end of the bracketed group that starts at `open`. Regular expression literals are not recognized.
-fn bracketed_end(text: &[u8], open: usize) -> Option<usize> {
-    let (mut depth, mut i) = (0u32, open);
-    loop {
-        match *text.get(i)? {
-            b'[' | b'(' | b'{' => depth += 1,
-            b']' | b')' | b'}' => {
-                if depth <= 1 {
-                    return Some(i + 1);
-                }
-                depth -= 1;
-            }
-            b'"' | b'\'' | b'`' => {
-                i = quoted_end(text, i)?;
-                continue;
-            }
-            b'/' if matches!(text.get(i + 1), Some(b'/' | b'*')) => {
-                i = skip_trivia(text, i);
-                continue;
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-}
-
 /// The end of the property name or binding pattern that starts at `start`.
 fn name_end(text: &[u8], start: usize) -> Option<usize> {
     match *text.get(start)? {
         b'"' | b'\'' => quoted_end(text, start),
-        b'[' | b'{' => bracketed_end(text, start),
+        b'[' | b'{' => end_of_brackets(text, start),
         b'#' => Some(start + 1 + word_at(text, start + 1).len()),
         _ => Some(start + word_at(text, start).len()),
     }

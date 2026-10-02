@@ -23,7 +23,6 @@ use super::errors::Diagnostic;
 use super::errors_jsx::jsx_name_end;
 use super::errors_small::has_parameter_list_error;
 use super::*;
-use crate::atom::Interner;
 use crate::bind::{ClassOwner, Decl, MemberOwner, Parent};
 use crate::resolve::JsxEmit;
 
@@ -109,7 +108,7 @@ impl Checker<'_> {
         {
             return;
         }
-        let is_dynamic = is_invalid_dynamic_name(hir, &self.files().atoms, member.key, name);
+        let is_dynamic = is_invalid_dynamic_name(hir, member.key, name);
         match owner {
             MemberOwner::Class(_) => {
                 if member.key == PropKey::Name(known::constructor)
@@ -207,7 +206,7 @@ impl Checker<'_> {
             };
             let m = MemberId(i as u32);
             let name = start_of_member_name(hir, m);
-            if !is_invalid_dynamic_name(hir, &self.files().atoms, member.key, name) {
+            if !is_invalid_dynamic_name(hir, member.key, name) {
                 continue;
             }
             // `checkGrammarFunctionLikeDeclaration` comes first, then `checkGrammarForGenerator`: 1221 1222.
@@ -279,13 +278,13 @@ impl Checker<'_> {
             } => Some(
                 !in_parentheses
                     && matches!(hir[operand].kind, ExprKind::Number(_) | ExprKind::BigInt(_))
-                    && !is_leaf_in_parentheses(hir, operand),
+                    && !is_parenthesized(hir, operand),
             ),
             // `isInitializerSimpleLiteralEnumReference`
             ExprKind::Dot { .. } | ExprKind::Index { .. } => {
                 if let ExprKind::Index { obj, index, .. } = hir[e].kind
                     && !(is_string_or_number_literal_expression(hir, index)
-                        && is_entity_name_expression(hir, &self.files().atoms, obj))
+                        && is_entity_name_expression(hir, obj))
                 {
                     return Some(false);
                 }
@@ -434,7 +433,7 @@ impl Checker<'_> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let is_part_of_the_file = |e: ExprId| !matches!(bound.expr_parent[e.idx()], Parent::None);
         for &e in index.of(ExprTag::Object) {
-            if is_part_of_the_file(e) && !is_assignment_target(hir, bound, e) {
+            if is_part_of_the_file(e) && bound.get_assignment_target(hir, e).is_none() {
                 self.check_grammar_of_object_literal(file, e, false, out);
             }
         }
@@ -738,14 +737,14 @@ impl Checker<'_> {
             let (mut at, mut has_export, mut last_declare) = (first, false, None);
             let is_refused = loop {
                 at = skip_trivia(text, at);
-                if starts_with_word(text, at, b"export") {
+                if is_word_at(text, at, b"export") {
                     // 1030, 1029
                     if has_export || last_declare.is_some() {
                         break true;
                     }
                     has_export = true;
                     at += 6;
-                } else if starts_with_word(text, at, b"declare") {
+                } else if is_word_at(text, at, b"declare") {
                     // 1030, 1038
                     if last_declare.is_some() || in_ambient_block {
                         break true;
@@ -1305,24 +1304,6 @@ impl Checker<'_> {
 
 // ───────────────────────────── the syntax tree ─────────────────────────────
 
-/// `hasParseDiagnostics`. What the parser objected to and went on from is kept with what tsgo's binder and checker say of syntax.
-/// They are told apart by the code: these are the ones only parser.go and scanner.go give, and 1003 and 1005, which are only ever
-/// noted for what the parser expected and did not find. Where type syntax was given up on it cannot be told.
-fn has_parse_diagnostics(hir: &File) -> bool {
-    hir.has_parse_diagnostics
-        || hir.has_errors
-        || hir.syntax_errors > 0
-        || hir.early_errors.iter().any(|&(_, code)| {
-            matches!(
-                code,
-                1002 | 1003 | 1005 | 1007 | 1010..=1012 | 1034 | 1068 | 1084 | 1109 | 1121 | 1124..=1132 | 1134 | 1135 | 1137..=1140
-                    | 1144..=1146 | 1160 | 1161 | 1177..=1181 | 1185 | 1198 | 1199 | 1209 | 1260 | 1351..=1353 | 1357 | 1381 | 1382
-                    | 1385..=1390 | 1434..=1443 | 1472 | 1477 | 1478 | 1487..=1490 | 2754 | 2809 | 2819 | 6188 | 6189 | 17002
-                    | 17006..=17008 | 17014 | 17015 | 17021 | 18009 | 18026 | 18029 | 18030
-            )
-        })
-}
-
 /// The JSX elements and fragments that are part of the file.
 fn jsx_elements(hir: &File, bound: &Bound) -> Vec<(ExprId, JsxId)> {
     if hir.jsx.is_empty() {
@@ -1338,56 +1319,16 @@ fn jsx_elements(hir: &File, bound: &Bound) -> Vec<(ExprId, JsxId)> {
         .collect()
 }
 
-/// Whether `e` is written in parentheses, as far as the syntax tree keeps track.
-fn is_parenthesized(hir: &File, e: ExprId) -> bool {
-    hir.parens.binary_search_by_key(&e.0, |p| p.0.0).is_ok()
-}
-
-/// The same of a literal that is the operand of a sign or is written in brackets: a `(` right before it can be nothing but its own.
-fn is_leaf_in_parentheses(hir: &File, e: ExprId) -> bool {
-    is_parenthesized(hir, e) || trim_trivia_end(upto(&hir.text, hir[e].pos)).ends_with(b"(")
-}
-
-/// `IsStringOrNumericLiteralLike`
-fn is_string_or_numeric_literal_like(hir: &File, e: ExprId) -> bool {
-    match hir[e].kind {
-        ExprKind::String(_) | ExprKind::Number(_) => true,
-        ExprKind::Template { exprs, .. } => exprs.is_empty(),
-        _ => false,
-    }
-}
-
-/// `IsSignedNumericLiteral`
-fn is_signed_numeric_literal(hir: &File, e: ExprId) -> bool {
-    matches!(hir[e].kind, ExprKind::Unary { op: UnOp::Plus | UnOp::Minus, operand }
-        if matches!(hir[operand].kind, ExprKind::Number(_)) && !is_leaf_in_parentheses(hir, operand))
-}
-
-/// `isInitializerStringOrNumberLiteralExpression`, of what is written in brackets.
+/// `isInitializerStringOrNumberLiteralExpression`
 fn is_string_or_number_literal_expression(hir: &File, e: ExprId) -> bool {
-    !is_leaf_in_parentheses(hir, e)
-        && (is_string_or_numeric_literal_like(hir, e)
-            || matches!(hir[e].kind, ExprKind::Unary { op: UnOp::Minus, operand }
-                if matches!(hir[operand].kind, ExprKind::Number(_)) && !is_leaf_in_parentheses(hir, operand)))
-}
-
-/// `IsEntityNameExpression`: `a`, `a.b.c`.
-fn is_entity_name_expression(hir: &File, atoms: &Interner, mut e: ExprId) -> bool {
-    loop {
-        if is_parenthesized(hir, e) {
-            return false;
-        }
-        match hir[e].kind {
-            ExprKind::Ident(_) => return true,
-            ExprKind::Dot { obj, name, .. } if !atoms.bytes(name).starts_with(b"#") => e = obj,
-            _ => return false,
-        }
-    }
+    is_string_or_numeric_literal_like(hir, e)
+        || is_signed_numeric_literal(hir, e)
+            && matches!(hir[e].kind, ExprKind::Unary { op, .. } if op == UnOp::Minus)
 }
 
 /// `checkGrammarForInvalidDynamicName`: a computed name that is neither a literal nor `a.b.c`. Whether one that is `a.b.c` can be
 /// bound (`isLateBindableName`) makes no difference to it. `name`: where the name starts.
-fn is_invalid_dynamic_name(hir: &File, atoms: &Interner, key: PropKey, name: u32) -> bool {
+fn is_invalid_dynamic_name(hir: &File, key: PropKey, name: u32) -> bool {
     let text = &hir.text[..];
     if text.get(name as usize) != Some(&b'[') {
         return false;
@@ -1397,13 +1338,7 @@ fn is_invalid_dynamic_name(hir: &File, atoms: &Interner, key: PropKey, name: u32
         return true;
     }
     match key {
-        // Nothing is said of what the syntax tree has nothing for.
-        PropKey::Computed(e) if matches!(hir[e].kind, ExprKind::Missing) => false,
-        PropKey::Computed(e) => {
-            !is_string_or_numeric_literal_like(hir, e)
-                && !is_signed_numeric_literal(hir, e)
-                && !is_entity_name_expression(hir, atoms, e)
-        }
+        PropKey::Computed(e) => is_dynamic_name(hir, e) && !is_entity_name_expression(hir, e),
         // `["a" as T]`, `["a"!]` and `[0 satisfies T]` are kept as the literal, which is not all there is to the name.
         PropKey::Name(_) => {
             let literal = skip_trivia(text, name as usize + 1);
@@ -1415,46 +1350,11 @@ fn is_invalid_dynamic_name(hir: &File, atoms: &Interner, key: PropKey, name: u32
             end_of_name(text, literal).is_some_and(|end| {
                 let after = skip_trivia(text, end);
                 text.get(after) == Some(&b'!')
-                    || starts_with_word(text, after, b"as")
-                    || starts_with_word(text, after, b"satisfies")
+                    || is_word_at(text, after, b"as")
+                    || is_word_at(text, after, b"satisfies")
             })
         }
         PropKey::Private(_) | PropKey::None => false,
-    }
-}
-
-/// `IsAssignmentTarget`
-fn is_assignment_target(hir: &File, bound: &Bound, mut node: ExprId) -> bool {
-    loop {
-        match bound.expr_parent[node.idx()] {
-            Parent::Expr(parent) => match hir[parent].kind {
-                ExprKind::Assign { target, .. } => return target == node,
-                ExprKind::Unary {
-                    op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
-                    ..
-                } => return true,
-                ExprKind::Array(_) | ExprKind::Spread(_) | ExprKind::NonNull(_) => node = parent,
-                _ => return false,
-            },
-            Parent::Prop(p) => {
-                let owner = bound.prop_owner[p.idx()];
-                if owner.is_none()
-                    || !matches!(hir[owner].kind, ExprKind::Object(_))
-                    || !matches!(
-                        hir[p].kind,
-                        PropKind::Init | PropKind::Shorthand | PropKind::Spread
-                    )
-                {
-                    return false;
-                }
-                node = owner;
-            }
-            Parent::Stmt(s) if s.is_some() => {
-                return matches!(bound.stmt_parent[s.idx()], Parent::Stmt(l) if l.is_some()
-                    && matches!(hir[l].kind, StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } if left == s));
-            }
-            _ => return false,
-        }
     }
 }
 
@@ -1661,12 +1561,6 @@ fn ends_with_word(text: &[u8], word: &[u8]) -> bool {
         .is_some_and(|before| !before.last().is_some_and(|&c| is_identifier_part(c)))
 }
 
-fn starts_with_word(text: &[u8], at: usize, word: &[u8]) -> bool {
-    text.get(at..).is_some_and(|rest| {
-        rest.starts_with(word) && !rest.get(word.len()).is_some_and(|&c| is_identifier_part(c))
-    })
-}
-
 /// `pos`, or where the parentheses that open right before it do. For what a `(` before it can be nothing but its own.
 fn before_parentheses(text: &[u8], pos: u32) -> u32 {
     let mut start = pos;
@@ -1758,32 +1652,6 @@ fn end_of_quoted(text: &[u8], start: usize) -> Option<usize> {
             c if c == quote => return Some(i + 1),
             _ => i += 1,
         }
-    }
-}
-
-/// Past the bracket that closes the one at `open`.
-pub(super) fn end_of_brackets(text: &[u8], open: usize) -> Option<usize> {
-    let (mut depth, mut i) = (0u32, open);
-    loop {
-        match *text.get(i)? {
-            b'[' | b'(' | b'{' => depth += 1,
-            b']' | b')' | b'}' => {
-                if depth <= 1 {
-                    return Some(i + 1);
-                }
-                depth -= 1;
-            }
-            b'"' | b'\'' | b'`' => {
-                i = end_of_quoted(text, i)?;
-                continue;
-            }
-            b'/' if matches!(text.get(i + 1), Some(b'/' | b'*')) => {
-                i = skip_trivia(text, i);
-                continue;
-            }
-            _ => {}
-        }
-        i += 1;
     }
 }
 

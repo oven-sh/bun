@@ -1820,7 +1820,7 @@ impl Checker<'_> {
         let ExprKind::Ident(name) = hir[e].kind else {
             return;
         };
-        if hir.parens.binary_search_by_key(&e, |p| p.0).is_ok() {
+        if is_parenthesized(hir, e) {
             return;
         }
         let Some(&scope) = bound.expr_scope.get(&e) else {
@@ -2405,24 +2405,6 @@ impl Checker<'_> {
 
 // ───────────────────────────── whether the file parses ─────────────────────────────
 
-/// `hasParseDiagnostics`. What the parser objected to and went on from is kept with what tsgo's binder and checker say of syntax. They
-/// are told apart by the code: these are the ones only parser.go and scanner.go give a TypeScript file, and those they share with the
-/// checker that are the parser's whenever the summary has them.
-fn has_parse_diagnostics(hir: &hir::File) -> bool {
-    hir.has_parse_diagnostics
-        || hir.has_errors
-        || hir.syntax_errors > 0
-        || hir.early_errors.iter().any(|&(_, code)| {
-            matches!(
-                code,
-                1002 | 1003 | 1005 | 1007 | 1010..=1012 | 1034 | 1068 | 1069 | 1084 | 1109 | 1110 | 1121 | 1124..=1132 | 1134..=1140
-                    | 1144..=1146 | 1160 | 1161 | 1177..=1181 | 1185 | 1198 | 1199 | 1209 | 1223 | 1260 | 1327 | 1328 | 1351..=1353
-                    | 1357 | 1381 | 1382 | 1385..=1390 | 1433..=1443 | 1453 | 1472 | 1477 | 1478 | 1487..=1490 | 2657 | 2754 | 2809
-                    | 2819 | 2880 | 6188 | 6189 | 17002 | 17006..=17008 | 17014 | 17015 | 17021 | 18009 | 18026 | 18029 | 18030
-            )
-        })
-}
-
 /// `tryParseImportAttributes`, `parseExportDeclaration`, `parseImportType`: `assert` where `with` belongs is an error of the parser's.
 fn has_import_assertions(text: &[u8], uses: &[SpecifierUse]) -> bool {
     uses.iter().any(|u| {
@@ -2828,45 +2810,6 @@ fn first_token_start(text: &[u8]) -> u32 {
             .unwrap_or(text.len() - at);
     }
     skip_trivia(text, at) as u32
-}
-
-/// Where the identifier or keyword at `at` ends.
-fn word_end(text: &[u8], mut at: usize) -> usize {
-    while let Some(&c) = text.get(at) {
-        if is_identifier_part(c) {
-            at += 1;
-        } else if c == b'\\' && text.get(at + 1) == Some(&b'u') {
-            // A Unicode escape, with four digits or with braces.
-            at += 2;
-            if text.get(at) == Some(&b'{') {
-                while text.get(at).is_some_and(|&c| c != b'}') {
-                    at += 1;
-                }
-                at = (at + 1).min(text.len());
-            }
-        } else {
-            break;
-        }
-    }
-    at
-}
-
-/// The identifier or keyword at `at`. Empty if there is none.
-fn word_at(text: &[u8], at: usize) -> &[u8] {
-    text.get(at..word_end(text, at)).unwrap_or(&[])
-}
-
-/// Where the word that ends at `end` starts.
-fn word_start(text: &[u8], end: usize) -> usize {
-    let mut start = end;
-    while start > 0 && is_identifier_part(text[start - 1]) {
-        start -= 1;
-    }
-    // A byte order mark is white space.
-    if text[start..end].starts_with(b"\xEF\xBB\xBF") {
-        start += 3;
-    }
-    start
 }
 
 /// Past the string that opens at `at`.

@@ -9,24 +9,6 @@ use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeKind, SymbolId};
 use smallvec::SmallVec;
 
-/// `hasParseDiagnostics`: of the grammar of a file that does not parse nothing is said. What the parser objected to and went on from is
-/// kept with what tsgo's binder and checker say of syntax; these are the codes that parser.go and scanner.go give. 18016 is not listed:
-/// the parser's own sets `hir.has_parse_diagnostics`, any other in `early_errors` is `checkGrammarObjectLiteralExpression`'s.
-pub(super) fn has_parse_diagnostics(hir: &hir::File) -> bool {
-    hir.has_parse_diagnostics
-        || hir.has_errors
-        || hir.syntax_errors > 0
-        || hir.early_errors.iter().any(|e| {
-            matches!(
-                e.1,
-                1002 | 1003 | 1005 | 1007 | 1010..=1012 | 1034 | 1068 | 1084 | 1109 | 1110 | 1121 | 1124..=1132 | 1134..=1140 | 1142
-                    | 1144..=1146 | 1160 | 1161 | 1177..=1181 | 1185 | 1198 | 1199 | 1209 | 1228 | 1260 | 1327 | 1328 | 1351..=1353
-                    | 1357 | 1381 | 1382 | 1385..=1390 | 1433..=1443 | 1453 | 1472 | 1477 | 1478 | 1486..=1490 | 2657 | 2754 | 2809
-                    | 2819 | 2880 | 6188 | 6189 | 17002 | 17006..=17008 | 17014 | 17015 | 17021 | 18009 | 18026 | 18029 | 18030
-            )
-        })
-}
-
 /// The expressions of `lists`, each of which is in the order of the file, all together in that order.
 pub(super) fn in_file_order<const N: usize>(
     mut lists: [&[ExprId]; N],
@@ -259,13 +241,6 @@ impl Checker<'_> {
                 _ => parent = self.outward(file, parent),
             }
         }
-    }
-
-    pub(super) fn is_written_in_parentheses(&self, file: FileId, e: ExprId) -> bool {
-        self.hir(file)
-            .parens
-            .binary_search_by_key(&e.0, |p| p.0.0)
-            .is_ok()
     }
 
     /// `checkVarDeclaredNamesNotShadowed`: 2481, a `var` cannot get past a `let` or a `const` of the same name on its way up.
@@ -855,7 +830,7 @@ impl Checker<'_> {
         let is_used = is_named && {
             let mut used = false;
             // To the right of it in a chain of `&&`, which parentheses end.
-            let mut chain = if self.is_written_in_parentheses(file, test) {
+            let mut chain = if is_parenthesized(self.hir(file), test) {
                 Parent::None
             } else {
                 bound.expr_parent[test.idx()]
@@ -868,7 +843,7 @@ impl Checker<'_> {
                 } = hir[p].kind
             {
                 used |= self.is_mentioned_within(file, location, test, Parent::Expr(right), true);
-                chain = if self.is_written_in_parentheses(file, p) {
+                chain = if is_parenthesized(self.hir(file), p) {
                     Parent::None
                 } else {
                     bound.expr_parent[p.idx()]
@@ -904,7 +879,7 @@ impl Checker<'_> {
     /// `getResolvedSymbolOrNil(e).Flags&SymbolFlagsEnum`: whether the name `e`, or the name after the dot in it, was found to mean an
     /// enum. What is imported was found to mean the import.
     fn is_resolved_to_an_enum(&mut self, file: FileId, e: ExprId) -> bool {
-        if self.is_written_in_parentheses(file, e) {
+        if is_parenthesized(self.hir(file), e) {
             return false;
         }
         match self.hir(file)[e].kind {
@@ -953,7 +928,7 @@ impl Checker<'_> {
             // `ForEachChild`: what is in `container` is gone through, not `container` itself, and there is nothing in a name.
             if container == Parent::Expr(child)
                 && matches!(hir[child].kind, ExprKind::Ident(_))
-                && !self.is_written_in_parentheses(file, child)
+                && !is_parenthesized(self.hir(file), child)
             {
                 continue;
             }
@@ -991,15 +966,13 @@ impl Checker<'_> {
             else {
                 // `IsBinaryExpression(testedNode.Parent)`: a name that is an operand of the test. In parentheses it is not one, and
                 // nothing is like it.
-                if self.is_written_in_parentheses(file, tested) {
+                if is_parenthesized(self.hir(file), tested) {
                     continue;
                 }
                 return true;
             };
             // On the same thing, written the same way.
-            while !self.is_written_in_parentheses(file, a)
-                && !self.is_written_in_parentheses(file, b)
-            {
+            while !is_parenthesized(self.hir(file), a) && !is_parenthesized(self.hir(file), b) {
                 match (hir[a].kind, hir[b].kind) {
                     (ExprKind::Ident(_), ExprKind::Ident(_)) => {
                         if same_variable(a, b) {
@@ -1213,8 +1186,7 @@ impl Checker<'_> {
         // `getPropertyNameForKnownSymbolName`: the name that the type of `Symbol.hasInstance` stands for.
         let name = self.files().atoms.intern(b"hasInstance");
         let symbol = self.intern(TypeData::UniqueSymbol {
-            file: FileId(u32::MAX),
-            id: 0,
+            symbol: UniqueSymbolDeclaration::SymbolConstructor,
             name,
         });
         let Some(name) = self.property_name_of_type(symbol) else {

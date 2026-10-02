@@ -202,6 +202,8 @@ impl Checker<'_> {
             Decl::Class(c) => bound.class_scope[c.idx()],
             Decl::Fn(f) => bound.fns[f.idx()].scope,
             Decl::Alias(a) => bound.alias_scope[a.idx()],
+            Decl::Interface(i) => self.enclosing_scope_of_kind(file, ScopeKind::Interface(i)),
+            Decl::TypeParam(p) => bound.type_param_scope[p.idx()],
             Decl::Enum(e) => self.enclosing_scope_of_kind(file, ScopeKind::Enum(e)),
             Decl::EnumMember(m) => self
                 .enclosing_scope_of_kind(file, ScopeKind::Enum(bound.enum_member_owner[m.idx()])),
@@ -215,18 +217,12 @@ impl Checker<'_> {
             Decl::ExportStarAs(s) | Decl::ExportExpr(s) | Decl::UmdGlobal(s) => {
                 bound.stmt_scope[s.idx()]
             }
-            // An import is a local of the file or of the ambient module it is written in.
-            Decl::ImportDefault(_) | Decl::ImportNamespace(_) | Decl::ImportSpec(_) => bound
-                .scopes
+            Decl::ImportDefault(i) | Decl::ImportNamespace(i) => bound.import_scope[i.idx()],
+            Decl::ImportSpec(spec) => hir
+                .imports
                 .iter()
-                .position(|scope| {
-                    matches!(scope.kind, ScopeKind::File | ScopeKind::Module(_))
-                        && bound
-                            .table(scope.locals)
-                            .iter()
-                            .any(|entry| bound.symbols[entry.1.idx()].decls.contains(&decl))
-                })
-                .map_or(ScopeId::NONE, |index| ScopeId(index as u32)),
+                .position(|import| import.named.range().contains(&spec.idx()))
+                .map_or(ScopeId::NONE, |import| bound.import_scope[import]),
             _ => ScopeId::NONE,
         })
     }

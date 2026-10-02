@@ -219,7 +219,7 @@ impl Checker<'_> {
     fn is_export_assigned(&self, file: FileId, e: ExprId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         matches!(bound.expr_parent[e.idx()], Parent::Stmt(s) if s.is_some() && matches!(hir[s].kind, StmtKind::ExportAssign(_)))
-            && hir.parens.binary_search_by_key(&e.0, |p| p.0.0).is_err()
+            && !is_parenthesized(hir, e)
     }
 
     /// The declaration whose pattern binds `pat`, if it is a variable.
@@ -255,10 +255,7 @@ impl Checker<'_> {
         if self.bound(file).is_in_type_query(e) {
             return true;
         }
-        let mut first = e;
-        while let ExprKind::Dot { obj, .. } = hir[first].kind {
-            first = obj;
-        }
+        let first = first_identifier(hir, e);
         self.is_variable_declared_before_use(file, e, hir[first].pos, pat, decl, true)
     }
 
@@ -994,7 +991,7 @@ impl Checker<'_> {
         // Where the use starts, for `isUsedInFunctionOrInstanceProperty`.
         let use_pos = decorated_class.map_or(name_pos, |c: ClassId| hir[c].pos);
         // In parentheses it is another kind of expression.
-        let is_bare = hir.parens.binary_search_by_key(&obj.0, |p| p.0.0).is_err();
+        let is_bare = !is_parenthesized(hir, obj);
         // Of `a.b.c` only `a.b` is looked at for 2729.
         let is_in_place = is_in_property
             && !(is_bare && matches!(hir[obj].kind, ExprKind::Dot { .. } | ExprKind::Index { .. }));

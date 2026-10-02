@@ -223,8 +223,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// Call where decorators are followed by something other than a class. Ordinary builds report that a class is expected.
-    /// Tolerant mode drops the decorators, which the checker ignores, and reports 1206 at the first one
-    /// (`reportObviousDecoratorErrors`).
+    /// Tolerant mode reports 1206 at the first one (`reportObviousDecoratorErrors`) and keeps them as it keeps those of a missing
+    /// declaration.
     #[cold]
     #[inline(never)]
     fn decorators_without_class(p: &mut Self, opts: &mut ParseStatementOptions<'a>) -> Result<()> {
@@ -244,6 +244,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 },
                 1206,
             );
+            let end = p.lexer.full_start();
+            p.note_stray_decorators(decorators.values, end);
         }
         Ok(())
     }

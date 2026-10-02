@@ -381,6 +381,21 @@ impl<'p> Checker<'p> {
         self.related(source, target, Relation::Subtype)
     }
 
+    /// `is_subtype` in the first pass of `resolveCall`, `is_assignable` in the second.
+    pub(super) fn is_related_in_pass(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        by_subtype: bool,
+    ) -> bool {
+        let relation = if by_subtype {
+            Relation::Subtype
+        } else {
+            Relation::Assignable
+        };
+        self.related(source, target, relation)
+    }
+
     pub fn is_comparable(&mut self, source: TypeId, target: TypeId) -> bool {
         self.related(source, target, Relation::Comparable)
     }
@@ -5412,34 +5427,7 @@ impl<'p> Checker<'p> {
                 self.members(apparent)
             }
             _ => {
-                // `getUnionIndexInfos`: the index signatures of the first member that the others have too, for the same keys. A
-                // member that is no object type has none.
-                let mut all = Vec::with_capacity(objects.len());
-                for &one in objects {
-                    let apparent = self.apparent_type(one);
-                    match self.members(apparent) {
-                        Some(members) => all.push(members),
-                        None => {
-                            all.clear();
-                            break;
-                        }
-                    }
-                }
-                let mut index = Vec::new();
-                'infos: for info in all
-                    .first()
-                    .map_or(&[][..], |first| &first.shape().index[..])
-                {
-                    let mut values = Vec::with_capacity(all.len());
-                    for members in &all {
-                        let Some(same) = members.shape().index.iter().find(|i| i.key == info.key)
-                        else {
-                            continue 'infos;
-                        };
-                        values.push(self.instantiate(same.value, members.mapper));
-                    }
-                    index.push(IndexInfo::new(info.key, self.union(&values), false));
-                }
+                let index = self.union_index_infos(objects);
                 let whole = self.synth(Shape {
                     index,
                     ..Shape::default()

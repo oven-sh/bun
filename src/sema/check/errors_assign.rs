@@ -117,11 +117,7 @@ impl Checker<'_> {
                         && !matches!(bound.stmt_parent[stmt.idx()], Parent::Stmt(p) if p.is_some() && matches!(hir[p].kind, StmtKind::For { init, .. } if init == stmt))
                         && self.is_symbol_or_symbol_for_call(file, decl.init) =>
                 {
-                    self.intern(TypeData::UniqueSymbol {
-                        file,
-                        id: decl.init.0 | 1 << 31,
-                        name,
-                    })
+                    self.unique_symbol_of_variable(file, decl.pat, name)
                 }
                 _ => source,
             };
@@ -381,40 +377,10 @@ impl Checker<'_> {
             }
             // `checkIdentifier`: in a function `arguments` is its arguments object, whatever else goes by the name further out.
             let is_arguments = bound.is_arguments_object(reference);
-            // What is no variable, or is a constant, is in error where it is assigned to, and anything goes into that.
-            if let ExprKind::Ident(name) = hir[reference].kind
-                && !is_arguments
-                && self.is_assignment_target(file, reference)
-                && !self
-                    .symbol_of_identifier(file, reference, name)
-                    .is_some_and(|s| {
-                        let flags = self.files().flags(s);
-                        flags.intersects(SymFlags::VARIABLE) && !flags.contains(SymFlags::CONST)
-                    })
-            {
+            // `checkExpression(left)`: what cannot be written to has the error type, and anything goes into that.
+            let left = self.type_of_expr(file, target);
+            if self.is_error_type(left) {
                 continue;
-            }
-            // So is a property that can only be read: `a.b`, and `a[k]` where `k` names one (`getPropertyNameFromIndex`).
-            let property = match hir[reference].kind {
-                ExprKind::Dot {
-                    obj,
-                    name,
-                    name_pos,
-                    ..
-                } => Some((obj, name, name_pos)),
-                ExprKind::Index { obj, index, .. } => {
-                    let key = self.type_of_expr(file, index);
-                    self.property_name_of_type(key)
-                        .map(|name| (obj, name, hir[index].pos))
-                }
-                _ => None,
-            };
-            if let Some((obj, name, name_pos)) = property {
-                let mut said = Vec::new();
-                self.check_property_write(file, reference, obj, name, name_pos, &mut said);
-                if !said.is_empty() {
-                    continue;
-                }
             }
             let wanted = if reference != target {
                 // What it is asserted to be.
@@ -549,7 +515,7 @@ impl Checker<'_> {
                     None => continue,
                 }
             } else if is_async {
-                self.awaited_no_alias(declared).unwrap_or(TypeId::ANY)
+                self.awaited_no_alias(declared).unwrap_or(TypeId::ERROR)
             } else {
                 declared
             };
@@ -657,106 +623,8 @@ impl Checker<'_> {
 
     /// `getAnnotatedAccessorType` of the setter that is one symbol with the getter `getter`: what that says it takes.
     pub(super) fn annotated_setter_type(&mut self, file: FileId, getter: FnId) -> Option<TypeId> {
-        use crate::bind::MemberOwner;
-        // Property, method, getter, setter: what a declaration makes of the name, and what that does not go with (the `*Excludes`).
-        const P: u8 = 1;
-        const M: u8 = 2;
-        const G: u8 = 4;
-        const S: u8 = 8;
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        // What declares the name of the getter where the getter is written, in order: (includes, excludes, function).
-        let mut named: Vec<(u8, u8, FnId)> = Vec::new();
-        match bound.fns[getter.idx()].owner {
-            FnOwner::Member(m) => {
-                let members = match bound.member_owner[m.idx()] {
-                    MemberOwner::Class(c) => hir[c].members,
-                    MemberOwner::Interface(i) => hir[i].members,
-                    MemberOwner::TypeLiteral(t) => match hir[t].kind {
-                        TypeNodeKind::Object(members) => members,
-                        _ => return None,
-                    },
-                    MemberOwner::None => return None,
-                };
-                let name = self.member_name(file, hir[m].key)?;
-                for other in members.iter() {
-                    let (includes, excludes) = match hir[other].kind {
-                        MemberKind::Property if hir[other].flags.contains(Flags::ACCESSOR) => {
-                            (G | S, M | G | S)
-                        }
-                        MemberKind::Property => (P, M),
-                        MemberKind::Method => (M, P | G | S),
-                        MemberKind::Getter => (G, M | G),
-                        MemberKind::Setter => (S, M | S),
-                        _ => continue,
-                    };
-                    if hir[other].flags.contains(Flags::STATIC)
-                        == hir[m].flags.contains(Flags::STATIC)
-                        && self.member_name(file, hir[other].key) == Some(name)
-                    {
-                        named.push((includes, excludes, hir[other].func));
-                    }
-                }
-            }
-            FnOwner::Expr(e) => {
-                let Parent::Prop(p) = bound.expr_parent[e.idx()] else {
-                    return None;
-                };
-                let owner = bound.prop_owner[p.idx()];
-                if hir[p].kind != PropKind::Getter || owner.is_none() {
-                    return None;
-                }
-                let ExprKind::Object(props) = hir[owner].kind else {
-                    return None;
-                };
-                let name = self.member_name(file, hir[p].key)?;
-                for other in props.iter() {
-                    let (includes, excludes) = match hir[other].kind {
-                        PropKind::Init | PropKind::Shorthand => (P, M),
-                        // A method of an object literal goes with nothing.
-                        PropKind::Method => (M, P | M | G | S),
-                        PropKind::Getter => (G, M | G),
-                        PropKind::Setter => (S, M | S),
-                        PropKind::Spread => continue,
-                    };
-                    if self.member_name(file, hir[other].key) != Some(name) {
-                        continue;
-                    }
-                    let func = match hir[other].kind {
-                        PropKind::Getter | PropKind::Setter if hir[other].value.is_some() => {
-                            match hir[hir[other].value].kind {
-                                ExprKind::Fn(f) => f,
-                                _ => FnId::NONE,
-                            }
-                        }
-                        _ => FnId::NONE,
-                    };
-                    named.push((includes, excludes, func));
-                }
-            }
-            _ => return None,
-        }
-        // `declareSymbolEx`, `lateBindMember`: what does not go with what has the name so far gets a symbol of its own.
-        let (mut flags, mut has_joined, mut setter) = (0u8, false, FnId::NONE);
-        for (includes, excludes, func) in named {
-            if flags & excludes != 0 {
-                // An accessor that met anything but its like goes with nothing that follows.
-                if flags & (G | S) != 0 && flags & (G | S) != includes & (G | S) {
-                    flags |= G | S;
-                }
-                if func == getter {
-                    return None;
-                }
-                continue;
-            }
-            flags |= includes;
-            has_joined |= func == getter;
-            if includes == S && setter.is_none() {
-                setter = func;
-            }
-        }
-        if !has_joined || setter.is_none() {
-            return None;
-        }
+        let setter = self.sibling_accessor(file, getter, FnKind::Setter)?;
+        let hir = self.hir(file);
         let p = hir[setter].params.iter().next()?;
         hir[p]
             .ty
@@ -1126,8 +994,7 @@ impl Checker<'_> {
             PropKey::None => return Err(()),
             PropKey::Name(name) | PropKey::Private(name) => return Ok(Some(name)),
         };
-        let is_parenthesized = |e: ExprId| hir.parens.binary_search_by_key(&e.0, |p| p.0.0).is_ok();
-        if is_parenthesized(k) {
+        if is_parenthesized(hir, k) {
             return Ok(None);
         }
         match hir[k].kind {
@@ -1139,7 +1006,7 @@ impl Checker<'_> {
             ExprKind::Unary {
                 op: op @ (UnOp::Plus | UnOp::Minus),
                 operand,
-            } if !is_parenthesized(operand) => {
+            } if !is_parenthesized(hir, operand) => {
                 let ExprKind::Number(n) = hir[operand].kind else {
                     return Ok(None);
                 };
@@ -1154,18 +1021,8 @@ impl Checker<'_> {
             _ => {}
         }
         // `isLateBindableAST`
-        let mut at = k;
-        loop {
-            match hir[at].kind {
-                ExprKind::Ident(_) => break,
-                ExprKind::Dot { obj, name, .. }
-                    if !is_parenthesized(obj)
-                        && self.files().atoms.bytes(name).first() != Some(&b'#') =>
-                {
-                    at = obj
-                }
-                _ => return Ok(None),
-            }
+        if !is_entity_name_expression(hir, k) {
+            return Ok(None);
         }
         let ty = self.type_of_expr(file, k);
         if !self.is_known(ty) || self.is_uncertain(file, k) {
@@ -1685,6 +1542,12 @@ impl Checker<'_> {
                     .iter()
                     .any(|&p| self.constraint_of_type_param(p).is_some())
             {
+                continue;
+            }
+            // `checkTypeReferenceOrImport`
+            let referenced = self.type_from_node(file, TypeNodeId(i as u32));
+            let referenced = self.force(referenced);
+            if self.is_error_type(referenced) {
                 continue;
             }
             let given = self.types_from_nodes(file, args);
@@ -2397,7 +2260,7 @@ impl Checker<'_> {
         }
         // `checkAwaitedType`, `withAlias` false
         let ty = if is_async {
-            self.awaited_no_alias(ty).unwrap_or(TypeId::ANY)
+            self.awaited_no_alias(ty).unwrap_or(TypeId::ERROR)
         } else {
             ty
         };
@@ -4846,10 +4709,7 @@ impl Checker<'_> {
                         && (!matches!(
                             hir[class.extends].kind,
                             ExprKind::Ident(_) | ExprKind::Dot { .. }
-                        ) || hir
-                            .parens
-                            .binary_search_by_key(&class.extends.0, |p| p.0.0)
-                            .is_ok())
+                        ) || is_parenthesized(hir, class.extends))
                     {
                         return false;
                     }

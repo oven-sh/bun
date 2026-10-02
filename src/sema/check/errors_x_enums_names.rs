@@ -177,16 +177,6 @@ impl Checker<'_> {
             if !is_const_enum_object_type(self, ty) || self.is_uncertain(file, e) {
                 continue;
             }
-            // `checkIdentifier`: a name that cannot be assigned to is in error where it is.
-            if let ExprKind::Ident(name) = hir.exprs[i].kind
-                && is_written_to(self, file, e)
-                && self.symbol_of_identifier(file, e, name).is_none_or(|s| {
-                    let flags = self.files().flags(s);
-                    !flags.intersects(SymFlags::VARIABLE) || flags.contains(SymFlags::CONST)
-                })
-            {
-                continue;
-            }
             // `typeof E.A` is made of names, not of property accesses.
             let in_type_query = bound.is_in_type_query(e);
             let is_object_of_access = !in_type_query
@@ -360,7 +350,7 @@ impl Checker<'_> {
             let Some(said) = out.iter().position(|d| d.start == start && d.code == 2304) else {
                 continue;
             };
-            if open_parenthesis(hir, e).is_some() {
+            if is_parenthesized(hir, e) {
                 continue;
             }
             if self.files().atoms.bytes(name) == b"await"
@@ -400,7 +390,7 @@ impl Checker<'_> {
                 PropKey::Computed(e) if text_before(hir, hir[e].pos).ends_with(b"[") => e,
                 _ => ExprId::NONE,
             };
-            let initializer = if open_parenthesis(hir, member.init).is_none() {
+            let initializer = if !is_parenthesized(hir, member.init) {
                 member.init
             } else {
                 ExprId::NONE
@@ -726,10 +716,7 @@ impl Checker<'_> {
                         TypeNodeKind::Typeof { name, expr, .. }
                             if !name.is_empty() && expr.is_some() =>
                         {
-                            let mut first = expr;
-                            while let ExprKind::Dot { obj, .. } = hir[first].kind {
-                                first = obj;
-                            }
+                            let first = first_identifier(hir, expr);
                             (
                                 hir.id_at(name, 0),
                                 hir[first].pos,
@@ -1128,7 +1115,7 @@ impl EnumValues<'_, '_> {
             }
             ExprKind::Number(n) => Evaluated::number(hir.numbers[n as usize]),
             ExprKind::Ident(_) | ExprKind::Index { .. } => self.evaluate_entity(file, e, location),
-            ExprKind::Dot { .. } if is_entity_name_expression(self.c, file, e) => {
+            ExprKind::Dot { .. } if is_property_access_entity_name_expression(hir, e) => {
                 self.evaluate_entity(file, e, location)
             }
             _ => Evaluated::default(),
@@ -1171,17 +1158,8 @@ impl EnumValues<'_, '_> {
                 ExprKind::Template { exprs, texts } if exprs.is_empty() => hir.id_at(texts, 0),
                 _ => return Evaluated::default(),
             };
-            // Neither `(a)["b"]` nor `a[("b")]`. There is no text to go by where a file only declares.
-            let before = text_before(hir, hir[index].pos);
-            let is_plain = before.is_empty()
-                || before
-                    .strip_suffix(b"[")
-                    .is_some_and(|before| !trim_trivia_end(before).ends_with(b")"));
-            if !is_plain
-                || open_parenthesis(hir, index).is_some()
-                || open_parenthesis(hir, obj).is_some()
-                || !is_entity_name_expression(self.c, file, obj)
-            {
+            // Neither `(a)["b"]` nor `a[("b")]`.
+            if is_parenthesized(hir, index) || !is_entity_name_expression(hir, obj) {
                 return Evaluated::default();
             }
             if let Some(root) = self.resolve_entity_name(file, obj, SymFlags::VALUE, location)
@@ -1436,49 +1414,6 @@ fn is_ambient_enum(hir: &hir::File, en: EnumId) -> bool {
     hir[en].flags.contains(Flags::AMBIENT) || hir.kind == FileKind::Declaration
 }
 
-/// `IsEntityNameExpression`, of `e` less the parentheses around it.
-fn is_entity_name_expression(c: &Checker<'_>, file: FileId, mut e: ExprId) -> bool {
-    let hir = c.hir(file);
-    loop {
-        match hir[e].kind {
-            ExprKind::Ident(_) => return true,
-            ExprKind::Dot {
-                obj,
-                name,
-                name_pos,
-                ..
-            } if open_parenthesis(hir, obj).is_none()
-                && !is_after_parenthesis(hir, name_pos)
-                && !c.files().atoms.bytes(name).starts_with(b"#") =>
-            {
-                e = obj
-            }
-            _ => return false,
-        }
-    }
-}
-
-/// Whether the `.name` whose name is at `name_pos` follows a parenthesis: `(a).name`. Of the parentheses in what is only declared
-/// nothing else is kept than the text.
-fn is_after_parenthesis(hir: &hir::File, name_pos: u32) -> bool {
-    let before = text_before(hir, name_pos);
-    let before = before
-        .strip_suffix(b"?.")
-        .or_else(|| before.strip_suffix(b"."))
-        .unwrap_or(before);
-    trim_trivia_end(before).ends_with(b")")
-}
-
-/// `IsStringLiteralLike`
-fn is_string_literal_like(hir: &hir::File, e: ExprId) -> bool {
-    open_parenthesis(hir, e).is_none()
-        && match hir[e].kind {
-            ExprKind::String(_) => true,
-            ExprKind::Template { exprs, .. } => exprs.is_empty(),
-            _ => false,
-        }
-}
-
 // ───────────────────────────── before and after ─────────────────────────────
 
 /// `isBlockScopedNameDeclaredBeforeUse`, of a member of an enum or of a variable declared by name.
@@ -1504,7 +1439,7 @@ pub(super) fn is_declared_before_use(
         && let Parent::Stmt(s) = c.bound(file).expr_parent[e.idx()]
         && s.is_some()
         && matches!(c.hir(file)[s].kind, StmtKind::ExportAssign(_))
-        && open_parenthesis(c.hir(file), e).is_none()
+        && !is_parenthesized(c.hir(file), e)
     {
         return true;
     }
@@ -1700,25 +1635,6 @@ fn is_const_enum(c: &Checker<'_>, symbol: Sym) -> bool {
         }
     }
     is_enum
-}
-
-/// `getAssignmentTargetKind(e) != AssignmentKindNone`
-fn is_written_to(c: &Checker<'_>, file: FileId, e: ExprId) -> bool {
-    if let Parent::Expr(p) = c.bound(file).expr_parent[e.idx()] {
-        match c.hir(file)[p].kind {
-            ExprKind::Assign {
-                op: Some(_),
-                target,
-                ..
-            } if target == e => return true,
-            ExprKind::Unary {
-                op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
-                ..
-            } => return true,
-            _ => {}
-        }
-    }
-    c.is_assignment_target(file, e)
 }
 
 /// What goes by `name` globally, if that is nothing but `export as namespace name`.
@@ -1974,14 +1890,6 @@ fn for_each_type_in_signature(hir: &hir::File, func: FnId, f: &mut dyn FnMut(Typ
 
 // ───────────────────────────── where things are written ─────────────────────────────
 
-/// Where the outermost parenthesis around `e` opens, if it is in any.
-fn open_parenthesis(hir: &hir::File, e: ExprId) -> Option<u32> {
-    hir.parens
-        .binary_search_by_key(&e.0, |p| p.0.0)
-        .ok()
-        .map(|at| hir.parens[at].1)
-}
-
 /// What is written before `pos`, up to the end of the last token. Nothing where the text is not kept.
 fn text_before(hir: &hir::File, pos: u32) -> &[u8] {
     trim_trivia_end(hir.text.get(..pos as usize).unwrap_or(&[]))
@@ -2071,8 +1979,7 @@ fn start_of_enum_initializer(c: &Checker<'_>, file: FileId, member: EnumMemberId
         return None;
     }
     let start = skip_trivia(text, at + 1);
-    let is_in_parentheses =
-        open_parenthesis(hir, initializer).is_some() && text.get(start) == Some(&b'(');
+    let is_in_parentheses = is_parenthesized(hir, initializer) && text.get(start) == Some(&b'(');
     match hir[initializer].kind {
         // `(a satisfies T)` or `(a) satisfies T`: the parentheses are noted the same way.
         ExprKind::Satisfies { .. } => {

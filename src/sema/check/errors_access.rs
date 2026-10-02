@@ -7,7 +7,6 @@
 
 use super::errors::{Diagnostic, is_close};
 use super::errors_order::Named;
-use super::errors_small::has_parse_diagnostics;
 use super::explain::Line;
 use super::*;
 use crate::bind::{ClassOwner, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind};
@@ -346,7 +345,7 @@ impl Checker<'_> {
     }
 
     /// `getEntityNameForExtendingInterface`: the whole of the dotted name that `e` is, or is the left part of, as it is written.
-    fn entity_name_around(&self, file: FileId, e: ExprId) -> String {
+    pub(super) fn entity_name_around(&self, file: FileId, e: ExprId) -> String {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut top = e;
         while let Parent::Expr(parent) = bound.expr_parent[top.idx()]
@@ -376,32 +375,6 @@ impl Checker<'_> {
         }
     }
 
-    /// `symbolToString` of a property: its name as the first of its declarations writes it (`getNameOfSymbolAsWritten`).
-    pub(super) fn property_to_string(&mut self, prop: &Prop) -> String {
-        let written = match &prop.source {
-            PropSource::Members(declared) => declared
-                .first()
-                .map(|&(file, member)| (file, self.hir(file)[member].pos)),
-            PropSource::Parameter(file, param) => {
-                let hir = self.hir(*file);
-                Some((*file, hir[hir[*param].pat].pos))
-            }
-            PropSource::Literal(file, literal) => Some((*file, self.hir(*file)[*literal].pos)),
-            PropSource::Symbol(symbol) => return self.symbol_to_string(*symbol),
-            PropSource::Intersected(_, parts) if !parts.is_empty() => {
-                return self.property_to_string(&parts[0]);
-            }
-            _ => None,
-        };
-        match written {
-            // There is no text of the default library.
-            Some((file, pos)) if !self.hir(file).text.is_empty() => {
-                self.declaration_name_at(file, pos)
-            }
-            _ => self.name_of_unread_property(prop.name),
-        }
-    }
-
     /// Private names out of place: 18016 1451 (`checkGrammarPrivateIdentifierExpression`), 18016 for `a.#b` on `any` outside every class
     /// (`checkPropertyAccessExpressionOrQualifiedName`), 18012 (`checkPrivateIdentifier` of binder.go), 18024 (`checkEnumMember`).
     /// A bare `#x` is an `ExprKind::String` whose source text starts with `#`.
@@ -409,10 +382,9 @@ impl Checker<'_> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         // Empty for a declaration file.
         let text = &hir.text[..];
-        let is_private = |pos: u32| text.get(pos as usize) == Some(&b'#');
         // `checkEnumMember`: a plain error.
         for (i, member) in hir.enum_members.iter().enumerate() {
-            if bound.enum_member_owner[i].is_some() && is_private(member.pos) {
+            if bound.enum_member_owner[i].is_some() && is_private_name_at(hir, member.pos) {
                 out.push(Diagnostic {
                     start: member.pos,
                     code: 18024,
@@ -444,7 +416,9 @@ impl Checker<'_> {
             else {
                 continue;
             };
-            if !is_private(name_pos) || matches!(bound.expr_parent[e.idx()], Parent::None) {
+            if !is_private_name_at(hir, name_pos)
+                || matches!(bound.expr_parent[e.idx()], Parent::None)
+            {
                 continue;
             }
             if is_private_constructor_name(text, name_pos) {
@@ -470,7 +444,7 @@ impl Checker<'_> {
         }
         for &e in index.of(ExprTag::String) {
             let (parent, pos) = (bound.expr_parent[e.idx()], hir[e].pos);
-            if !is_private(pos) || matches!(parent, Parent::None) {
+            if !is_private_name_at(hir, pos) || matches!(parent, Parent::None) {
                 continue;
             }
             // JSX text may start with `#`.
@@ -492,7 +466,7 @@ impl Checker<'_> {
                 continue;
             }
             // Parentheses are a parent of their own.
-            let is_allowed = !self.is_written_in_parentheses(file, e)
+            let is_allowed = !is_parenthesized(self.hir(file), e)
                 && match parent {
                     // `IsExpressionNode`: only as the left operand of `in`.
                     Parent::Expr(owner) if owner.is_some() => {
@@ -555,7 +529,7 @@ impl Checker<'_> {
             keys = self.key_into_string_index_only(reduced, keys);
             // What is in error is not looked into, which what is nothing but `null` or `undefined` is whatever the options
             // (`checkNonNullType`). A key that waits for its type parameters puts the answer off.
-            if self.is_any(object)
+            if self.is_error_type(object)
                 || object.is_null()
                 || object.is_undefined()
                 || self.is_generic(keys)
@@ -564,7 +538,12 @@ impl Checker<'_> {
             }
             let is_generic_here =
                 !self.has_type_variables(object) || self.is_in_generic_context(file, e);
-            let Some(apparent) = self.type_looked_into(object, is_generic_here) else {
+            let apparent = if object == TypeId::ANY {
+                Some(object)
+            } else {
+                self.type_looked_into(object, is_generic_here)
+            };
+            let Some(apparent) = apparent else {
                 continue;
             };
             if self.is_for_in_variable_for_numeric_names(file, index) {
@@ -573,16 +552,7 @@ impl Checker<'_> {
             // A `const enum` is looked into with a string literal. Anything else is 2476, and in error.
             let is_const_enum = matches!(*self.data(apparent), TypeData::Anon { origin: Origin::EnumObject(sym), .. }
                 if self.files().decls_of(sym).iter().any(|&(f, d)| matches!(d, crate::bind::Decl::Enum(id) if self.hir(f)[id].flags.contains(Flags::CONST))));
-            let is_string_literal_like = hir
-                .parens
-                .binary_search_by_key(&index.0, |p| p.0.0)
-                .is_err()
-                && match hir[index].kind {
-                    ExprKind::String(_) => true,
-                    ExprKind::Template { exprs, .. } => exprs.is_empty(),
-                    _ => false,
-                };
-            if is_const_enum && !is_string_literal_like {
+            if is_const_enum && !is_string_literal_like(hir, index) {
                 continue;
             }
             // `IsAssignmentTarget`
@@ -664,8 +634,8 @@ impl Checker<'_> {
                         }));
                 let is_literal_key =
                     self.is_literal(key) && (self.is_string_like(key) || self.is_number_like(key));
-                // `objectType.flags&TypeFlagsNever != 0`: `never` has every key that is string-, number- or symbol-like.
-                if is_key_like && apparent == TypeId::NEVER {
+                // `objectType.flags&(TypeFlagsAny|TypeFlagsNever) != 0`: they have every key that is string-, number- or symbol-like.
+                if is_key_like && (apparent == TypeId::NEVER || apparent == TypeId::ANY) {
                     continue;
                 }
                 if is_key_like
@@ -826,7 +796,7 @@ impl Checker<'_> {
                 self.explain_to(at_index, end, code, |c| {
                     // `indexNode.Kind == KindBigIntLiteral`
                     if matches!(hir[index].kind, ExprKind::BigInt(_))
-                        && !c.is_written_in_parentheses(file, index)
+                        && !is_parenthesized(c.hir(file), index)
                     {
                         return vec!["bigint".to_owned()];
                     }
@@ -887,7 +857,7 @@ impl Checker<'_> {
 
     /// `tryGetPropertyAccessOrIdentifierToString`
     fn access_to_string(&self, file: FileId, e: ExprId) -> Option<String> {
-        if self.is_written_in_parentheses(file, e) {
+        if is_parenthesized(self.hir(file), e) {
             return None;
         }
         let hir = self.hir(file);
@@ -898,7 +868,7 @@ impl Checker<'_> {
                 Some(format!("{receiver}.{}", self.atom_text(name)))
             }
             // `IsPropertyName`
-            ExprKind::Index { obj, index, .. } if !self.is_written_in_parentheses(file, index) => {
+            ExprKind::Index { obj, index, .. } if !is_parenthesized(self.hir(file), index) => {
                 let receiver = self.access_to_string(file, obj)?;
                 let name = match hir[index].kind {
                     ExprKind::Ident(name) | ExprKind::String(name) => self.atom_text(name),
@@ -2103,6 +2073,7 @@ impl Checker<'_> {
             TypeData::Anon {
                 origin:
                     Origin::Module(s)
+                    | Origin::Namespace { module: s, .. }
                     | Origin::ClassStatic(s)
                     | Origin::Function(s)
                     | Origin::EnumObject(s),
@@ -2276,7 +2247,7 @@ impl Checker<'_> {
         }
         Some(Line {
             code,
-            args: vec![written.join(" & "), self.property_to_string(prop)],
+            args: vec![written.join(" & "), self.prop_to_string(prop)],
             level: 1,
         })
     }
@@ -2549,7 +2520,7 @@ impl Checker<'_> {
         else {
             return Vec::new();
         };
-        let mut names = vec![self.property_to_string(&found.prop)];
+        let mut names = vec![self.prop_to_string(&found.prop)];
         match found.class {
             Some(class) => {
                 let class = self.declared_type(class);

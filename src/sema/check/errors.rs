@@ -13,8 +13,7 @@ use super::errors_x_modules::suggested_import_extension;
 use super::errors_x_statements::{is_said_by_the_binder, is_said_by_the_parser};
 use super::*;
 use crate::bind::{
-    ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind, SymbolId,
-    TableId,
+    ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind, TableId,
 };
 use smallvec::SmallVec;
 
@@ -790,7 +789,7 @@ impl Checker<'_> {
                     (import.default_pos, 1192)
                 } else if import.type_only {
                     (
-                        start_of_type_keyword(&hir.text, import.default_pos)
+                        start_of_token_before(&hir.text, import.default_pos, b"type")
                             .unwrap_or(import.default_pos),
                         2613,
                     )
@@ -1634,39 +1633,6 @@ impl Checker<'_> {
         }
     }
 
-    /// `getAssignmentTargetKind(e) == AssignmentKindDefinite`: `e` is given a value by `=`, `||=`, `&&=`, `??=`, or the head of a loop.
-    fn is_definite_assignment_target(&self, file: FileId, e: ExprId) -> bool {
-        if self.is_assignment_target(file, e) {
-            return true;
-        }
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let mut at = e;
-        loop {
-            let Parent::Expr(parent) = bound.expr_parent[at.idx()] else {
-                return false;
-            };
-            match hir[parent].kind {
-                ExprKind::NonNull(_) => at = parent,
-                ExprKind::Assign {
-                    op: Some(BinOp::And | BinOp::Or | BinOp::Nullish),
-                    target,
-                    ..
-                } => return target == at,
-                _ => return false,
-            }
-        }
-    }
-
-    /// `isSymbolAssignedDefinitely`: `+=` and `++` change a value, they do not give one.
-    fn is_assigned_definitely(&self, file: FileId, symbol: SymbolId) -> bool {
-        let bound = self.bound(file);
-        let from = bound.assignments.partition_point(|a| a.0.0 < symbol.0);
-        bound.assignments[from..]
-            .iter()
-            .take_while(|a| a.0 == symbol)
-            .any(|a| self.is_definite_assignment_target(file, a.1))
-    }
-
     /// `checkIdentifier`: whether the variable the identifier `e` reads, whose type is `declared`, is taken to hold a value where the
     /// flow of control it is followed in starts (`assumeInitialized`).
     pub(super) fn assumes_initialized(&self, file: FileId, e: ExprId, declared: TypeId) -> bool {
@@ -1699,7 +1665,7 @@ impl Checker<'_> {
         // `x!`. Not `(x)!`: what is written right around it is what counts.
         if let Parent::Expr(x) = parent
             && matches!(hir[x].kind, ExprKind::NonNull(_))
-            && hir.parens.binary_search_by_key(&e.0, |p| p.0.0).is_err()
+            && !is_parenthesized(hir, e)
         {
             return true;
         }
@@ -1744,7 +1710,7 @@ impl Checker<'_> {
             && decl.pat == pat
             && decl.init.is_none()
             && !self.declares_loop_variable(file, stmt)
-            && !self.is_assigned_definitely(file, symbol))
+            && !bound.is_symbol_assigned_definitely(hir, symbol))
     }
 
     /// 2454: a variable is read where it may not have been given a value. `checkIdentifier`
@@ -1797,7 +1763,7 @@ impl Checker<'_> {
                     && is_always_passed
                     && hir.exprs[i].pos > hir[pat].pos
                     && !self.is_in_initializer_of(file, e, pat, d))
-                || self.is_definite_assignment_target(file, e)
+                || bound.get_assignment_target_kind(hir, e) == AssignmentKind::Definite
             {
                 continue;
             }
@@ -2346,51 +2312,22 @@ impl Checker<'_> {
                     2702
                 }
             }
-            // `onFailedToResolveSymbol`: a library that is missing comes before a letter that is.
-            _ if !is_name_of_a_library_feature(self.files().atoms.bytes(first))
-                && self.is_something_similar_in_scope(file, scope, first, SymFlags::NAMESPACE) =>
-            {
-                2833
-            }
-            _ => 2503,
+            _ => self.not_found(file, scope, first, SymFlags::NAMESPACE, start),
         };
         out.push(Diagnostic { start, code });
-        match code {
-            // It is said of the `QualifiedName` the first two names make.
-            2713 => {
-                let (text, atoms) = (&self.hir(file).text, &self.files().atoms);
-                let property = names[1];
-                let dot = skip_trivia(text, start as usize + atoms.bytes(first).len());
-                let end = if text.get(dot) == Some(&b'.') {
-                    (skip_trivia(text, dot + 1) + atoms.bytes(property).len()) as u32
-                } else {
-                    0
-                };
-                self.explain_to(start, end, code, |c| {
-                    vec![c.atom_text(first), c.atom_text(property)]
-                });
-            }
-            2833 => {
-                self.explain(start, code, |c| {
-                    let meant = name_meant(c, file, scope, first, SymFlags::NAMESPACE);
-                    vec![c.atom_text(first), meant]
-                });
-                // `suggestion.ValueDeclaration`
-                self.relate(start, code, |c| {
-                    let meant =
-                        what_is_similar_in_scope(c, file, scope, first, SymFlags::NAMESPACE);
-                    let Some(Meant::Symbol(sym)) = meant else {
-                        return Vec::new();
-                    };
-                    if !c.files().flags(sym).intersects(SymFlags::VALUE) {
-                        return Vec::new();
-                    }
-                    let name = c.symbol_to_string(sym);
-                    let at = c.place_of_symbol(sym);
-                    at.map(|at| c.declared_here(at, name)).into_iter().collect()
-                });
-            }
-            _ => {}
+        // It is said of the `QualifiedName` the first two names make.
+        if code == 2713 {
+            let (text, atoms) = (&self.hir(file).text, &self.files().atoms);
+            let property = names[1];
+            let dot = skip_trivia(text, start as usize + atoms.bytes(first).len());
+            let end = if text.get(dot) == Some(&b'.') {
+                (skip_trivia(text, dot + 1) + atoms.bytes(property).len()) as u32
+            } else {
+                0
+            };
+            self.explain_to(start, end, code, |c| {
+                vec![c.atom_text(first), c.atom_text(property)]
+            });
         }
     }
 
@@ -2674,7 +2611,8 @@ impl Checker<'_> {
             // `areAllOuterTypeParametersApplied`: a class declared where type parameters can be mentioned goes by its construct
             // signatures. `getBaseConstructorTypeOfClass`: a class that comes back to itself extends what is in error.
             if !self.outer_type_params_of_symbol(base).is_empty()
-                || self.extends_itself_as_written(self.class_sym(file, ClassId(c as u32)))
+                || self.base_constructor_type_of_class(self.class_sym(file, ClassId(c as u32)))
+                    == TypeId::ERROR
             {
                 continue;
             }
@@ -2835,7 +2773,7 @@ impl Checker<'_> {
             && self.files().atoms.bytes(name) == b"await"
             && let Some(e) = e
             && matches!(self.bound(file).expr_parent[e.idx()], Parent::Expr(p) if matches!(self.hir(file)[p].kind, ExprKind::Call(_) | ExprKind::ImportCall(_)))
-            && !self.is_written_in_parentheses(file, e)
+            && !is_parenthesized(self.hir(file), e)
         {
             return 2311;
         }
@@ -2881,19 +2819,7 @@ impl Checker<'_> {
             && self.is_extending_interface(file, e)
         {
             let start = self.hir(file)[e].pos;
-            self.explain(start, 2689, |c| {
-                // `getEntityNameForExtendingInterface`
-                let (hir, bound) = (c.hir(file), c.bound(file));
-                let mut top = e;
-                while let Parent::Expr(p) = bound.expr_parent[top.idx()]
-                    && p.is_some()
-                    && matches!(hir[p].kind, ExprKind::Dot { .. })
-                {
-                    top = p;
-                }
-                let (from, to) = (c.start_of(file, top), c.end_of_expr(file, top));
-                vec![c.source_text(file, from, to)]
-            });
+            self.explain(start, 2689, |c| vec![c.entity_name_around(file, e)]);
             return Some(2689);
         }
         if self
@@ -2913,7 +2839,7 @@ impl Checker<'_> {
                 matches!(
                     self.bound(file).expr_parent[e.idx()],
                     Parent::ClassExtends(_)
-                ) && !self.is_written_in_parentheses(file, e)
+                ) && !is_parenthesized(self.hir(file), e)
             });
             return Some(if is_extended { 2863 } else { 2693 });
         }
@@ -2956,7 +2882,7 @@ impl Checker<'_> {
         let (mut n, mut at) = (0, top);
         loop {
             // `IsEntityNameExpression`: `(M.I)` is none, nor is `(M).I`.
-            if n == names.len() || self.is_written_in_parentheses(file, at) {
+            if n == names.len() || is_parenthesized(self.hir(file), at) {
                 return false;
             }
             match hir[at].kind {
@@ -3023,6 +2949,24 @@ impl Checker<'_> {
         }
     }
 
+    /// `getCandidateName` of `getSpellingSuggestionForName`. An alias that leads nowhere is `unknownSymbol`, which is made with
+    /// `SymbolFlagsProperty`: a value, and nothing else.
+    fn is_spelling_candidate(&self, sym: Sym, meaning: SymFlags) -> bool {
+        let flags = self.files().flags(sym);
+        if flags.intersects(meaning) {
+            return true;
+        }
+        if !flags.contains(SymFlags::ALIAS) {
+            return false;
+        }
+        let target = self.files().symbol_flags(sym);
+        if target == SymFlags::all() {
+            meaning.contains(SymFlags::VALUE)
+        } else {
+            target.intersects(meaning)
+        }
+    }
+
     /// `start`: where `name` is written, which is where the error goes.
     fn not_found(
         &mut self,
@@ -3036,14 +2980,18 @@ impl Checker<'_> {
         if !is_name_of_a_library_feature(text)
             && self.is_something_similar_in_scope(file, scope, name, meaning)
         {
-            self.explain(start, 2552, |c| {
+            let code = did_you_mean(meaning);
+            self.explain(start, code, |c| {
                 let meant = name_meant(c, file, scope, name, meaning);
                 vec![c.atom_text(name), meant]
             });
             // Who asks for a value and nothing else is `getResolvedSymbol`.
             let is_expression = meaning == SymFlags::VALUE;
             relate_name_meant(self, file, scope, name, meaning, is_expression, start);
-            return 2552;
+            return code;
+        }
+        if meaning == SymFlags::NAMESPACE {
+            return 2503;
         }
         // `getCannotFindNameDiagnosticForName`. `UsesWildcardTypes`: there is nothing to add to `types` then.
         let takes_all_types = self
@@ -3267,11 +3215,7 @@ impl Checker<'_> {
         let files = self.files();
         let bound = self.bound(file);
         let text = files.atoms.bytes(name);
-        let fits = |sym: Sym| {
-            let flags = files.flags(sym);
-            flags.intersects(meaning)
-                || (flags.contains(SymFlags::ALIAS) && self.resolved_flags(sym).intersects(meaning))
-        };
+        let fits = |sym: Sym| self.is_spelling_candidate(sym, meaning);
         while scope.is_some() {
             let s = &bound.scopes[scope.idx()];
             let exports = if s.symbol.is_some() {
@@ -3440,10 +3384,6 @@ fn is_name_of_a_library_feature(name: &[u8]) -> bool {
     )
 }
 
-fn is_parenthesized(hir: &hir::File, e: ExprId) -> bool {
-    hir.parens.binary_search_by_key(&e.0, |p| p.0.0).is_ok()
-}
-
 /// `IsRequireCall` with `requireStringLiteralLikeArgument`: the argument of `require("m")` and its text. Parentheses around `require` or
 /// around the string make it an ordinary call.
 fn require_call_argument(hir: &hir::File, call: ExprId) -> Option<(ExprId, Atom)> {
@@ -3453,42 +3393,6 @@ fn require_call_argument(hir: &hir::File, call: ExprId) -> Option<(ExprId, Atom)
     };
     (!is_parenthesized(hir, hir[c].callee) && !is_parenthesized(hir, argument))
         .then_some((argument, spec))
-}
-
-/// Where the `type` of `import type name` is written. `name`: where the name is.
-fn start_of_type_keyword(text: &[u8], name: u32) -> Option<u32> {
-    let at = text
-        .get(..name as usize)?
-        .windows(4)
-        .rposition(|w| w == b"type")?;
-    (skip_trivia(text, at + 4) == name as usize).then_some(at as u32)
-}
-
-/// Where the token `written` that comes right before `at` starts, blanks and comments aside. `None`: something else is written there.
-fn start_of_token_before(text: &[u8], at: u32, written: &[u8]) -> Option<u32> {
-    let mut end = (at as usize).min(text.len());
-    loop {
-        let from = end;
-        end = text[..end].trim_ascii_end().len();
-        if text[..end].ends_with(b"*/") {
-            end = text[..end - 2].windows(2).rposition(|w| w == b"/*")?;
-            continue;
-        }
-        // A `//` comment ends with its line.
-        if text[end..from].contains(&b'\n') {
-            let line = text[..end]
-                .iter()
-                .rposition(|&b| b == b'\n')
-                .map_or(0, |at| at + 1);
-            if let Some(comment) = text[line..end].windows(2).position(|w| w == b"//") {
-                end = line + comment;
-                continue;
-            }
-        }
-        return text[..end]
-            .ends_with(written)
-            .then(|| (end - written.len()) as u32);
-    }
 }
 
 /// Whether somebody who wrote `name` may have meant `candidate`.
@@ -3767,10 +3671,7 @@ fn similar_in_scope_and_where(
     let (files, bound) = (c.files(), c.bound(file));
     let text = files.atoms.bytes(name);
     let fits = |candidate: Atom, sym: Sym| {
-        let flags = files.flags(sym);
-        is_close(text, files.atoms.bytes(candidate))
-            && (flags.intersects(meaning)
-                || (flags.contains(SymFlags::ALIAS) && c.resolved_flags(sym).intersects(meaning)))
+        is_close(text, files.atoms.bytes(candidate)) && c.is_spelling_candidate(sym, meaning)
     };
     while scope.is_some() {
         let s = &bound.scopes[scope.idx()];
@@ -3847,7 +3748,16 @@ pub(super) fn name_meant(
     }
 }
 
-/// `onFailedToResolveSymbol`: with the 2552 at `start` comes where what `name_meant` names is declared, if it has a `ValueDeclaration`.
+/// `Cannot_find_namespace_0_Did_you_mean_1`, `Cannot_find_name_0_Did_you_mean_1`
+fn did_you_mean(meaning: SymFlags) -> u32 {
+    if meaning == SymFlags::NAMESPACE {
+        2833
+    } else {
+        2552
+    }
+}
+
+/// `onFailedToResolveSymbol`: with the error at `start` comes where what `name_meant` names is declared, if it has a `ValueDeclaration`.
 /// `is_expression`: `SymbolFlagsExportValue` is asked for too, so that what only leads to an export is taken for the suggestion. It
 /// has no such declaration.
 pub(super) fn relate_name_meant(
@@ -3859,7 +3769,7 @@ pub(super) fn relate_name_meant(
     is_expression: bool,
     start: u32,
 ) {
-    c.relate(start, 2552, |c| {
+    c.relate(start, did_you_mean(meaning), |c| {
         let Some((Meant::Symbol(sym), leads_to_export)) =
             similar_in_scope_and_where(c, file, scope, name, meaning)
         else {
@@ -3975,7 +3885,7 @@ fn explain_readonly_element(
     let end = error_end_if_read(c, file, index);
     c.explain_to(at, end, 2540, |c| {
         vec![match prop {
-            Some(prop) => c.property_to_string(prop),
+            Some(prop) => c.prop_to_string(prop),
             None => c.atom_text(name),
         }]
     });
@@ -4928,9 +4838,7 @@ impl Checker<'_> {
                 } => {
                     // `#x in v`: what is on the left is a name, looked up in the classes around, and no value.
                     let private_name = match hir[left].kind {
-                        ExprKind::String(name)
-                            if hir.text.get(hir[left].pos as usize) == Some(&b'#') =>
-                        {
+                        ExprKind::String(name) if is_private_name_at(hir, hir[left].pos) => {
                             Some(name)
                         }
                         _ => None,
@@ -5005,7 +4913,7 @@ impl Checker<'_> {
                     operand,
                 } => {
                     let ty = self.type_of_expr(file, operand);
-                    if self.is_known(ty) && !self.is_refused_target(file, operand) {
+                    if self.is_known(ty) {
                         let ty = self.check_not_nullish(file, operand, ty, out);
                         self.check_arithmetic_operand(file, operand, ty, 2356, &mut numeric, out);
                     }
@@ -5013,48 +4921,6 @@ impl Checker<'_> {
                 _ => {}
             }
         }
-    }
-
-    /// A function, a class, an enum, a constant, `undefined`, a name nothing goes by: assigning to it is the error, and nothing more is
-    /// said about it. `checkIdentifier`, which is done with the arguments object before it asks what is done to it.
-    fn is_name_that_cannot_be_assigned(&self, file: FileId, e: ExprId) -> bool {
-        match self.hir(file)[e].kind {
-            ExprKind::Ident(name) => match self.symbol_of_identifier(file, e, name) {
-                Some(sym) => {
-                    let flags = self.files().flags(sym);
-                    !flags.intersects(SymFlags::VARIABLE) || flags.contains(SymFlags::CONST)
-                }
-                None => !self.bound(file).is_arguments_object(e),
-            },
-            // `getResolvedSymbol`: where an expression is left out there is a name that is not written, which nothing goes by.
-            ExprKind::Missing => true,
-            _ => false,
-        }
-    }
-
-    /// Whether `e`, which `op=`, `++` or `--` writes to, is refused: a name that cannot be assigned to, a property that can only be
-    /// read, or one without a name, which is what `parseSuperExpression` makes of a `super` that nothing follows. It is in error then,
-    /// and so is `e!`. `checkIdentifier`, `checkPropertyAccessExpressionOrQualifiedName`, `getPropertyTypeForIndexType`
-    fn is_refused_target(&mut self, file: FileId, mut e: ExprId) -> bool {
-        let hir = self.hir(file);
-        while let ExprKind::NonNull(x) = hir[e].kind {
-            e = x;
-        }
-        let mut said = Vec::new();
-        match hir[e].kind {
-            ExprKind::Dot {
-                obj,
-                name,
-                name_pos,
-                ..
-            } => self.check_property_write(file, e, obj, name, name_pos, &mut said),
-            ExprKind::Index { obj, index, .. } => {
-                self.check_element_write(file, e, obj, index, &mut said)
-            }
-            ExprKind::Super => return true,
-            _ => return self.is_name_that_cannot_be_assigned(file, e),
-        }
-        !said.is_empty()
     }
 
     /// Whether the resolver worked `ty` out, all of it. Nothing is said about what it did not.
@@ -5103,15 +4969,10 @@ impl Checker<'_> {
             if !self.is_global_nan(file, location) {
                 self.relate(start, 2845, |c| {
                     let hir = c.hir(file);
-                    // `IsEntityNameExpression`, of it less the parentheses around it.
-                    let mut first = location;
-                    while let ExprKind::Dot { obj, name, .. } = hir[first].kind
-                        && c.files().atoms.bytes(name).first() != Some(&b'#')
-                        && !c.is_written_in_parentheses(file, obj)
+                    // `IsEntityNameExpression(SkipParentheses(location))`
+                    let name = if matches!(hir[location].kind, ExprKind::Ident(_))
+                        || is_property_access_entity_name_expression(hir, location)
                     {
-                        first = obj;
-                    }
-                    let name = if matches!(hir[first].kind, ExprKind::Ident(_)) {
                         entity_name_text(c, file, location)
                     } else {
                         "...".to_owned()
@@ -5126,14 +4987,7 @@ impl Checker<'_> {
                 });
             }
         }
-        // What cannot be written to is in error, and can be anything.
-        let is_refused = matches!(self.hir(file)[e].kind, ExprKind::Assign { .. })
-            && self.is_refused_target(file, left);
-        let l = if is_refused {
-            TypeId::ANY
-        } else {
-            self.type_of_expr(file, left)
-        };
+        let l = self.type_of_expr(file, left);
         let r = self.type_of_expr(file, right);
         if !self.is_known(l) || !self.is_known(r) {
             // `checkArithmeticOperandType` checks each operand on its own. `&`, `|` and `^` look at both first (2447).
@@ -5324,16 +5178,8 @@ impl Checker<'_> {
         }
         // The property that is written to, if its name is written out.
         let property = match hir[reference].kind {
-            // `checkIdentifier`: what cannot be assigned to is in error, and anything fits that.
-            ExprKind::Ident(_) | ExprKind::Missing
-                if self.is_written(file, reference)
-                    && self.is_name_that_cannot_be_assigned(file, reference) =>
-            {
-                return;
-            }
-            ExprKind::Ident(_) | ExprKind::Missing => None,
-            // `parseSuperExpression`: `super` that nothing follows is a property without a name, which is in error as well.
-            ExprKind::Super => return,
+            // `parseSuperExpression`: `super` that nothing follows is a property without a name.
+            ExprKind::Ident(_) | ExprKind::Missing | ExprKind::Super => None,
             // Of `a?.b += 1` it is only said that it cannot be.
             ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. } if chain != Chain::No => {
                 return;
@@ -5352,28 +5198,15 @@ impl Checker<'_> {
                 return;
             }
         };
-        // `isAssignmentToReadonlyEntity`: so is what can only be read.
-        let mut said = Vec::new();
-        match hir[reference].kind {
-            ExprKind::Dot {
-                obj,
-                name,
-                name_pos,
-                ..
-            } => self.check_property_write(file, reference, obj, name, name_pos, &mut said),
-            ExprKind::Index { obj, index, .. } => {
-                self.check_element_write(file, reference, obj, index, &mut said)
-            }
-            _ => {}
-        }
-        if !said.is_empty() {
-            return;
-        }
         let (left, right) = (
             self.type_of_expr(file, target),
             self.type_of_expr(file, value),
         );
-        if self.is_uncertain(file, target) || self.is_uncertain(file, value) {
+        // What cannot be written to has the error type, and anything goes into that.
+        if self.is_error_type(left)
+            || self.is_uncertain(file, target)
+            || self.is_uncertain(file, value)
+        {
             return;
         }
         // `&&=`, `||=` and `??=` give a value as `=` does (`AssignmentKindDefinite`): what is on the right, to what the target is
@@ -5664,7 +5497,7 @@ impl Checker<'_> {
         let is_name = self.is_entity_name(file, node);
         let code = match hir[node].kind {
             // `(null)` and `(undefined)` are expressions in parentheses.
-            ExprKind::Null if !self.is_written_in_parentheses(file, node) => 18050,
+            ExprKind::Null if !is_parenthesized(self.hir(file), node) => 18050,
             ExprKind::Ident(known::undefined) if is_name => 18050,
             _ => match (is_name, undefined, null) {
                 (true, true, true) => 18049,
@@ -5688,29 +5521,16 @@ impl Checker<'_> {
         }
     }
 
-    /// `a`, `a.b.c`, none of it in parentheses and none of the names private, if that is short enough to be repeated in what is said:
-    /// `IsEntityNameExpression`, `len(entityNameToString(node)) < 100`. In a type query `a.b` is a qualified name, which is none, and
-    /// `this` a name like any other.
-    fn is_entity_name(&self, file: FileId, mut e: ExprId) -> bool {
-        let (hir, atoms) = (self.hir(file), &self.files().atoms);
-        if matches!(hir[e].kind, ExprKind::Dot { .. }) && self.bound(file).is_in_type_query(e) {
-            return false;
-        }
-        let mut length = 0;
-        loop {
-            if self.is_written_in_parentheses(file, e) {
-                return false;
-            }
-            match hir[e].kind {
-                ExprKind::Ident(name) => return length + atoms.bytes(name).len() < 100,
-                ExprKind::Dot { obj, name, .. } if atoms.bytes(name).first() != Some(&b'#') => {
-                    length += atoms.bytes(name).len() + 1;
-                    e = obj;
-                }
-                ExprKind::This => return self.bound(file).is_in_type_query(e),
-                _ => return false,
-            }
-        }
+    /// A name that is short enough to be repeated in what is said: `IsEntityNameExpression(node)`,
+    /// `len(entityNameToString(node)) < 100`. In a type query `a.b` is a qualified name, which is none, and `this` an Identifier.
+    fn is_entity_name(&self, file: FileId, e: ExprId) -> bool {
+        let hir = self.hir(file);
+        let is_name = if self.bound(file).is_in_type_query(e) {
+            matches!(hir[e].kind, ExprKind::Ident(_) | ExprKind::This) && !is_parenthesized(hir, e)
+        } else {
+            is_entity_name_expression(hir, e)
+        };
+        is_name && entity_name_text(self, file, e).len() < 100
     }
 
     /// Where `e` starts as it is written.
@@ -5727,9 +5547,9 @@ impl Checker<'_> {
         let hir = self.hir(file);
         loop {
             if !std::mem::take(&mut inside)
-                && let Ok(at) = hir.parens.binary_search_by_key(&e.0, |p| p.0.0)
+                && let Some(open) = open_parenthesis(hir, e)
             {
-                return hir.parens[at].1;
+                return open;
             }
             // It starts where what it starts with starts.
             e = match hir[e].kind {
@@ -5758,52 +5578,15 @@ impl Checker<'_> {
 // ───────────────────────────── what is written to ─────────────────────────────
 
 impl Checker<'_> {
-    /// How `e` is written to, if it is: by `=`, by an operator that reads it first, or by `++` and `--`. `GetAssignmentTarget`
+    /// How `e` is written to, if it is: by `=`, by an operator that reads it first, or by `++` and `--`.
     fn write_kind(&self, file: FileId, e: ExprId) -> Option<Write> {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        // Nothing else leads to any of them.
-        match bound.expr_parent[e.idx()] {
-            Parent::Expr(parent) => {
-                if !matches!(
-                    hir[parent].kind,
-                    ExprKind::Assign { .. }
-                        | ExprKind::Unary { .. }
-                        | ExprKind::NonNull(_)
-                        | ExprKind::Array(_)
-                        | ExprKind::Spread(_)
-                ) {
-                    return None;
-                }
-            }
-            Parent::Prop(_) | Parent::Stmt(_) => {}
-            _ => return None,
-        }
-        // `x!` and the literals a pattern is made of are seen through on the way to any of them: `[x]++` writes to `x`.
-        let mut at = e;
-        loop {
-            at = match bound.expr_parent[at.idx()] {
-                Parent::Expr(parent) => match hir[parent].kind {
-                    ExprKind::Assign {
-                        op: Some(_),
-                        target,
-                        ..
-                    } if target == at => return Some(Write::Compound),
-                    ExprKind::Unary {
-                        op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
-                        ..
-                    } => return Some(Write::Step),
-                    ExprKind::NonNull(_) | ExprKind::Array(_) | ExprKind::Spread(_) => parent,
-                    _ => break,
-                },
-                Parent::Prop(p)
-                    if matches!(hir[bound.prop_owner[p.idx()]].kind, ExprKind::Object(_)) =>
-                {
-                    bound.prop_owner[p.idx()]
-                }
-                _ => break,
-            };
-        }
-        self.is_assignment_target(file, e).then_some(Write::Assign)
+        Some(
+            match self.bound(file).get_assignment_target(self.hir(file), e)? {
+                AssignmentTarget::Assign(Some(_)) => Write::Compound,
+                AssignmentTarget::Unary => Write::Step,
+                AssignmentTarget::Assign(None) | AssignmentTarget::ForInOrOf => Write::Assign,
+            },
+        )
     }
 
     /// 2628 to 2632, 2539, 2588: a name that cannot be assigned to. 2540: a property that can only be read.
@@ -6040,13 +5823,7 @@ impl Checker<'_> {
             return;
         }
         // `checkElementAccessExpression`: a `const enum` is looked into with a string literal. Anything else is 2476, and in error.
-        let is_string_literal_like = !self.is_written_in_parentheses(file, index)
-            && match self.hir(file)[index].kind {
-                ExprKind::String(_) => true,
-                ExprKind::Template { exprs, .. } => exprs.is_empty(),
-                _ => false,
-            };
-        if !is_string_literal_like {
+        if !is_string_literal_like(self.hir(file), index) {
             let object = self.type_of_expr(file, obj);
             if self.is_const_enum_object(object) {
                 return;
@@ -6107,7 +5884,7 @@ impl Checker<'_> {
     fn can_be_written_to(&self, file: FileId, mut e: ExprId, patterns_too: bool) -> bool {
         let hir = self.hir(file);
         if patterns_too && matches!(hir[e].kind, ExprKind::Object(_) | ExprKind::Array(_)) {
-            return !self.is_written_in_parentheses(file, e);
+            return !is_parenthesized(self.hir(file), e);
         }
         loop {
             match hir[e].kind {

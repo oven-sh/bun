@@ -1497,10 +1497,13 @@ impl<'p> Checker<'p> {
                 .and_then(|(file, pos)| at(file, pos)),
             TypeData::TypeParam(file, tp, _) => at(file, self.hir(file)[tp].pos),
             TypeData::Cond { file, node, .. } => at(file, self.hir(file)[node].pos),
-            // `id` goes up with the position among those declared the same way. `Symbol.iterator` and the like are of no file.
-            TypeData::UniqueSymbol { file, id, .. } if file.idx() < self.files().modules.len() => {
-                at(file, id)
-            }
+            TypeData::UniqueSymbol { symbol, .. } => match symbol {
+                UniqueSymbolDeclaration::Variable(variable) => self.symbol_place(variable),
+                UniqueSymbolDeclaration::Member(file, member) => {
+                    at(file, self.hir(file)[member].pos)
+                }
+                UniqueSymbolDeclaration::SymbolConstructor => None,
+            },
             _ => None,
         }
     }
@@ -1540,6 +1543,16 @@ impl<'p> Checker<'p> {
         // Of object types with the same symbol, or none, references come first. A tuple is one, and has no symbol.
         let is_no_reference =
             |t: TypeId| !matches!(self.data(t), TypeData::Ref { .. } | TypeData::Tuple { .. });
+        let originating_import = |t: TypeId| match *self.data(t) {
+            TypeData::Anon {
+                origin:
+                    Origin::Namespace {
+                        originating_import, ..
+                    },
+                ..
+            } => Some(originating_import),
+            _ => None,
+        };
         self.sort_order_flags(a)
             .cmp(&self.sort_order_flags(b))
             .then_with(|| if are_of_one_symbol { Equal } else { some_first(self.sort_name(a), self.sort_name(b)) })
@@ -1547,6 +1560,9 @@ impl<'p> Checker<'p> {
                 let place = |t: TypeId| self.sort_place(t).map(|(_, file, pos)| self.place_in_program_order(file, pos));
                 if are_of_one_symbol { Equal } else { some_first(place(a), place(b)) }
             })
+            // `compareSymbols`, of a symbol and what `cloneTypeAsModuleType` makes of it, comes down to the ids of the symbols. Here the symbol
+            // comes first, then the copies in the order of the imports.
+            .then_with(|| originating_import(a).cmp(&originating_import(b)))
             // `compareTypeNames`: a union that a type alias stands for comes before one without a name.
             .then_with(|| (self.is_union(a) && self.p.named_unions.get(&a).is_none()).cmp(&(self.is_union(b) && self.p.named_unions.get(&b).is_none())))
             .then_with(|| is_no_reference(a).cmp(&is_no_reference(b)))

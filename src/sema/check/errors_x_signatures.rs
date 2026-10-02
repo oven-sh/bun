@@ -21,34 +21,12 @@
 
 use super::errors::Diagnostic;
 use super::*;
-use crate::bind::{Decl, FnOwner, MemberOwner, Parent, ScopeKind, SymbolId};
+use crate::bind::{Decl, FnOwner, MemberDeclaration, MemberOwner, Parent, ScopeKind, SymbolId};
 use crate::resolve::ScriptTarget;
 use crate::util::FxHashSet;
 use smallvec::SmallVec;
 
 // ───────────────────────────── the text ─────────────────────────────
-
-fn is_space(b: u8) -> bool {
-    b.is_ascii_whitespace() || b == 0x0b
-}
-
-/// The word that starts at `start`, which may be none.
-fn word_at(text: &[u8], start: usize) -> &[u8] {
-    let rest = text.get(start..).unwrap_or(&[]);
-    &rest[..rest
-        .iter()
-        .position(|&b| !is_identifier_part(b))
-        .unwrap_or(rest.len())]
-}
-
-/// The word that ends at `end`, which may be none.
-fn word_before(text: &[u8], end: usize) -> &[u8] {
-    let before = &text[..end.min(text.len())];
-    &before[before
-        .iter()
-        .rposition(|&b| !is_identifier_part(b))
-        .map_or(0, |i| i + 1)..]
-}
 
 fn has_line_break(text: &[u8], from: usize, to: usize) -> bool {
     text.get(from..to)
@@ -129,73 +107,9 @@ fn skip_template(text: &[u8], start: usize) -> Option<usize> {
         match b {
             b'\\' => i += 2,
             b'`' => return Some(i + 1),
-            b'$' if text.get(i + 1) == Some(&b'{') => i = skip_balanced(text, i + 1)?,
+            b'$' if text.get(i + 1) == Some(&b'{') => i = end_of_brackets(text, i + 1)?,
             _ => i += 1,
         }
-    }
-    None
-}
-
-/// Past the regular expression that starts at `start`, flags aside.
-fn skip_regular_expression(text: &[u8], start: usize) -> Option<usize> {
-    let mut i = start + 1;
-    let mut in_class = false;
-    while let Some(&b) = text.get(i) {
-        match b {
-            b'\\' => i += 1,
-            b'\n' | b'\r' => return None,
-            b'[' => in_class = true,
-            b']' => in_class = false,
-            b'/' if !in_class => return Some(i + 1),
-            _ => {}
-        }
-        i += 1;
-    }
-    None
-}
-
-/// Past the bracket that closes the one at `open`.
-fn skip_balanced(text: &[u8], open: usize) -> Option<usize> {
-    let mut depth = 0u32;
-    let mut i = open;
-    // The last byte that is neither white space nor in a comment: it tells a regular expression from a division.
-    let mut last = 0u8;
-    while let Some(&b) = text.get(i) {
-        match b {
-            b'(' | b'[' | b'{' => depth += 1,
-            b')' | b']' | b'}' => {
-                depth = depth.checked_sub(1)?;
-                if depth == 0 {
-                    return Some(i + 1);
-                }
-            }
-            b'"' | b'\'' => {
-                i = skip_string(text, i)?;
-                last = b;
-                continue;
-            }
-            b'`' => {
-                i = skip_template(text, i)?;
-                last = b;
-                continue;
-            }
-            b'/' if matches!(text.get(i + 1), Some(b'/' | b'*')) => {
-                i = skip_trivia(text, i);
-                continue;
-            }
-            b'/' if !(is_identifier_part(last)
-                || matches!(last, b')' | b']' | b'}' | b'"' | b'\'' | b'`')) =>
-            {
-                i = skip_regular_expression(text, i)?;
-                last = b;
-                continue;
-            }
-            _ => {}
-        }
-        if !is_space(b) {
-            last = b;
-        }
-        i += 1;
     }
     None
 }
@@ -216,7 +130,7 @@ fn skip_angle_brackets(text: &[u8], open: usize) -> Option<usize> {
                 }
             }
             b'(' | b'[' | b'{' => {
-                i = skip_balanced(text, i)?;
+                i = end_of_brackets(text, i)?;
                 continue;
             }
             b'"' | b'\'' => {
@@ -252,7 +166,7 @@ fn skip_type(text: &[u8], mut i: usize) -> Option<usize> {
         if wants_operand {
             match b {
                 b'{' | b'(' | b'[' => {
-                    i = skip_balanced(text, at)?;
+                    i = end_of_brackets(text, at)?;
                     wants_operand = false;
                 }
                 // The type parameters of a function type.
@@ -292,8 +206,8 @@ fn skip_type(text: &[u8], mut i: usize) -> Option<usize> {
                 wants_operand = true;
             }
             b'<' if is_on_the_same_line => i = skip_angle_brackets(text, at)?,
-            b'[' if is_on_the_same_line => i = skip_balanced(text, at)?,
-            b'(' if text[..end].ends_with(b"import") => i = skip_balanced(text, at)?,
+            b'[' if is_on_the_same_line => i = end_of_brackets(text, at)?,
+            b'(' if text[..end].ends_with(b"import") => i = end_of_brackets(text, at)?,
             b'|' | b'&' => {
                 i = at + 1;
                 wants_operand = true;
@@ -332,7 +246,7 @@ fn end_of_signature(hir: &hir::File, f: FnId) -> Option<usize> {
     if func.kind == FnKind::Arrow || text.get(func.anchor as usize) != Some(&b'(') {
         return None;
     }
-    let close = skip_balanced(text, func.anchor as usize)?;
+    let close = end_of_brackets(text, func.anchor as usize)?;
     let next = skip_trivia(text, close);
     if text.get(next) == Some(&b':') {
         skip_type(text, next + 1)
@@ -402,18 +316,13 @@ fn question_token(hir: &hir::File, pat: PatId) -> Option<u32> {
     let start = hir[pat].pos as usize;
     let end = match hir[pat].kind {
         PatKind::Ident(_) => start + word_at(text, start).len(),
-        PatKind::Object(_) | PatKind::Array(_) => skip_balanced(text, start)?,
+        PatKind::Object(_) | PatKind::Array(_) => end_of_brackets(text, start)?,
         PatKind::Missing => return None,
     };
     let at = skip_trivia(text, end);
     (end > start && text.get(at) == Some(&b'?')).then_some(at as u32)
 }
 
-/// `hasParseDiagnostics`. What the parser objected to and went on from is kept with what tsgo's binder and checker say of syntax: told
-/// apart by the code, going by which of them parser.go and scanner.go say of a TypeScript file while it is parsed. Not among them: what
-/// they only say of JavaScript (1206) or of a regular expression, which is scanned for its errors by the checker, and 1359 2427 2457,
-/// which the binder and the checker say more often, and 18016: the parser's own sets `hir.has_parse_diagnostics`, one that is left in
-/// `early_errors` without it is `checkGrammarObjectLiteralExpression`'s.
 /// Where the type alias, class, interface or function declaration that has the type parameter `tp` is named.
 fn name_of_type_parameter_owner(hir: &hir::File, tp: TypeParamId) -> Option<u32> {
     let has = |list: Span<TypeParamId>| list.range().contains(&tp.idx());
@@ -432,21 +341,6 @@ fn name_of_type_parameter_owner(hir: &hir::File, tp: TypeParamId) -> Option<u32>
         .or(class.map(|c| c.name_pos))
         .or(interface.map(|i| i.name_pos))
         .or(function.map(|f| f.name_pos))
-}
-
-pub(super) fn has_parse_diagnostics(hir: &hir::File) -> bool {
-    hir.has_parse_diagnostics
-        || hir.has_errors
-        || hir.syntax_errors > 0
-        || hir.early_errors.iter().any(|e| {
-            matches!(
-                e.1,
-                1002 | 1003 | 1005 | 1007 | 1010..=1012 | 1034 | 1068 | 1084 | 1109 | 1110 | 1121 | 1124..=1132 | 1134..=1140 | 1142
-                    | 1144..=1146 | 1160 | 1161 | 1177..=1181 | 1185 | 1198 | 1199 | 1209 | 1228 | 1260 | 1327 | 1328 | 1351..=1353
-                    | 1357 | 1381 | 1382 | 1385..=1390 | 1433..=1443 | 1453 | 1472 | 1477 | 1478 | 1486..=1490 | 2657 | 2754 | 2809
-                    | 2819 | 2880 | 6188 | 6189 | 17002 | 17006..=17008 | 17014 | 17015 | 17021 | 18009 | 18026 | 18029 | 18030
-            )
-        })
 }
 
 /// Whether `checkGrammarModifiers` objected to a modifier of what is named at `name`: something was said of a word before it, with
@@ -560,7 +454,7 @@ fn check_grammar_parameter_list(
             if !matches!(func.body, FnBody::None)
                 && func.kind != FnKind::Arrow
                 && text.get(func.anchor as usize) == Some(&b'(')
-                && let Some(close) = skip_balanced(text, func.anchor as usize)
+                && let Some(close) = end_of_brackets(text, func.anchor as usize)
             {
                 let comma = skip_trivia_back(text, close - 1);
                 if text[..comma].ends_with(b",") {
@@ -2101,7 +1995,7 @@ impl Checker<'_> {
                         let end = self.end_of_type_node_from(file, func.ret, start);
                         self.explain_to(start, end, 1093, |_| vec![]);
                     } else if text.get(func.anchor as usize) == Some(&b'(')
-                        && let Some(close) = skip_balanced(text, func.anchor as usize)
+                        && let Some(close) = end_of_brackets(text, func.anchor as usize)
                         && text.get(skip_trivia(text, close)) == Some(&b':')
                     {
                         let colon = skip_trivia(text, close);
@@ -2250,60 +2144,24 @@ impl Checker<'_> {
             if !may_disagree {
                 continue;
             }
-            // `hasBindableName`. In the order they are written, what is static apart.
-            let mut named: Vec<(Atom, bool, MemberId)> = Vec::new();
-            for m in members.iter() {
-                if matches!(
-                    hir[m].kind,
-                    MemberKind::Property
-                        | MemberKind::Method
-                        | MemberKind::Getter
-                        | MemberKind::Setter
-                ) && let Some(name) = self.member_name(file, hir[m].key)
-                {
-                    named.push((name, hir[m].flags.contains(Flags::STATIC), m));
-                }
-            }
-            for (i, &(name, is_static, _)) in named.iter().enumerate() {
-                if named[..i].iter().any(|n| n.0 == name && n.1 == is_static) {
+            for getter in members.iter() {
+                if hir[getter].kind != MemberKind::Getter {
                     continue;
                 }
-                // `declareSymbolEx`: the getter and the setter that the table of members takes for one symbol. What it refuses is a
-                // symbol of its own.
-                const PROPERTY: u8 = 1;
-                const METHOD: u8 = 2;
-                const GET: u8 = 4;
-                const SET: u8 = 8;
-                let (mut flags, mut getter, mut setter) = (0, None, None);
-                for &(_, _, m) in named[i..]
-                    .iter()
-                    .filter(|n| n.0 == name && n.1 == is_static)
-                {
-                    let (includes, excludes) = match hir[m].kind {
-                        MemberKind::Getter => (GET, GET | METHOD),
-                        MemberKind::Setter => (SET, SET | METHOD),
-                        MemberKind::Method => (METHOD, PROPERTY | GET | SET),
-                        _ if hir[m].flags.contains(Flags::ACCESSOR) => {
-                            (GET | SET, GET | SET | METHOD)
-                        }
-                        _ => (PROPERTY, METHOD),
-                    };
-                    if flags & excludes != 0 {
-                        // An accessor that something else ran into is both accessors to whatever comes after.
-                        if flags & (GET | SET) != 0 && flags & (GET | SET) != includes & (GET | SET)
+                // `GetDeclarationOfKind(symbol, KindSetAccessor)`
+                let declaration = MemberDeclaration::Member(getter);
+                let setter = self
+                    .declarations_of_member(file, declaration)
+                    .into_iter()
+                    .find_map(|declaration| match declaration {
+                        (of, MemberDeclaration::Member(m))
+                            if of == file && hir[m].kind == MemberKind::Setter =>
                         {
-                            flags |= GET | SET;
+                            Some(m)
                         }
-                        continue;
-                    }
-                    flags |= includes;
-                    match hir[m].kind {
-                        MemberKind::Getter => getter = Some(m),
-                        MemberKind::Setter => setter = Some(m),
-                        _ => {}
-                    }
-                }
-                let (Some(getter), Some(setter)) = (getter, setter) else {
+                        _ => None,
+                    });
+                let Some(setter) = setter else {
                     continue;
                 };
                 let (get, set) = (hir[getter].flags, hir[setter].flags);
@@ -2508,9 +2366,7 @@ impl Checker<'_> {
             (FnKind::Method | FnKind::Getter | FnKind::Setter, _) => func.name_pos,
             _ if func.name.is_some() => func.name_pos,
             // `GetAssignedName`: one without a name goes by what it is given to, if it is written right there.
-            (FnKind::Expr, FnOwner::Expr(e))
-                if hir.parens.binary_search_by_key(&e.0, |p| p.0.0).is_err() =>
-            {
+            (FnKind::Expr, FnOwner::Expr(e)) if !is_parenthesized(hir, e) => {
                 match bound.expr_parent[e.idx()] {
                     Parent::VarInit(d) if matches!(hir[hir[d].pat].kind, PatKind::Ident(_)) => {
                         hir[hir[d].pat].pos
@@ -2957,8 +2813,8 @@ impl Checker<'_> {
         if !says_something {
             return;
         }
-        // By name, what is static apart. Constructors go by no name.
-        let mut entries: Vec<(Atom, bool, Overload)> = Vec::new();
+        // By symbol. The constructors are one.
+        let mut entries: Vec<(Option<(FileId, MemberDeclaration)>, Overload)> = Vec::new();
         for &(of, members, kind, id) in lists {
             let hir = self.hir(of);
             for m in members.iter() {
@@ -2966,18 +2822,18 @@ impl Checker<'_> {
                 if !is_overloadable(member) {
                     continue;
                 }
-                let (name, checked, at) = if member.kind == MemberKind::Constructor {
+                let (symbol, checked, at) = if member.kind == MemberKind::Constructor {
                     (
-                        Atom::NONE,
+                        None,
                         Flags::PRIVATE | Flags::PROTECTED,
                         start_with_modifiers(&hir.text, member.pos, member.flags, MEMBER_MODIFIERS),
                     )
                 } else {
-                    let Some(name) = self.member_name(of, member.key) else {
-                        continue;
-                    };
+                    let declaration = MemberDeclaration::Member(m);
                     (
-                        name,
+                        self.declarations_of_member(of, declaration)
+                            .first()
+                            .copied(),
                         Flags::PRIVATE | Flags::PROTECTED | Flags::ABSTRACT,
                         member.pos,
                     )
@@ -2997,62 +2853,26 @@ impl Checker<'_> {
                     is_function: true,
                     has_body: has_written_body(hir, member.func),
                 };
-                entries.push((name, member.flags.contains(Flags::STATIC), overload));
+                entries.push((symbol, overload));
             }
         }
-        entries.sort_by_key(|e| (e.0, e.1));
+        entries.sort_by_key(|e| e.0);
         let mut group = Vec::new();
         let mut start = 0;
         while start < entries.len() {
-            let key = (entries[start].0, entries[start].1);
+            let symbol = entries[start].0;
             let end = start
                 + entries[start..]
                     .iter()
-                    .take_while(|e| (e.0, e.1) == key)
+                    .take_while(|e| e.0 == symbol)
                     .count();
             if end - start > 1 {
                 group.clear();
-                group.extend(entries[start..end].iter().map(|e| e.2));
-                let said = out.len();
+                group.extend(entries[start..end].iter().map(|e| e.1));
                 check_overloads_agree(self, file, &group, out);
-                // `declareSymbolEx`: a name is what it is first declared as. After a property or an accessor, each method is a symbol of
-                // its own, with nothing to agree with.
-                if out.len() > said
-                    && key.0.is_some()
-                    && !self.is_first_declared_as_a_method(lists, key.0, key.1)
-                {
-                    out.truncate(said);
-                }
             }
             start = end;
         }
-    }
-
-    /// Whether the first of the members in `lists` that go by `name` is a method.
-    fn is_first_declared_as_a_method(
-        &mut self,
-        lists: &[(FileId, Span<MemberId>, u32, u32)],
-        name: Atom,
-        is_static: bool,
-    ) -> bool {
-        for &(of, members, ..) in lists {
-            let hir = self.hir(of);
-            for m in members.iter() {
-                let member = &hir[m];
-                if matches!(
-                    member.kind,
-                    MemberKind::Property
-                        | MemberKind::Method
-                        | MemberKind::Getter
-                        | MemberKind::Setter
-                ) && member.flags.contains(Flags::STATIC) == is_static
-                    && self.member_name(of, member.key) == Some(name)
-                {
-                    return member.kind == MemberKind::Method;
-                }
-            }
-        }
-        true
     }
 
     /// What is declared in each list of statements: 2395 2652, and 2383 2384 for functions.

@@ -2340,13 +2340,10 @@ impl<'p> Checker<'p> {
         let SigData::Decl { file, func, mapper } = *self.p.types.sig(sig) else {
             return Vec::new();
         };
-        let function = &self.hir(file)[func];
-        if !function.type_params.is_empty()
-            || !matches!(function.kind, FnKind::Expr | FnKind::Arrow | FnKind::Method)
-        {
+        if !self.hir(file)[func].type_params.is_empty() {
             return Vec::new();
         }
-        let FnOwner::Expr(owner) = self.bound(file).fns[func.idx()].owner else {
+        let Some(owner) = self.takes_context(file, func) else {
             return Vec::new();
         };
         if !self.is_context_sensitive(file, owner) {
@@ -2384,14 +2381,10 @@ impl<'p> Checker<'p> {
     }
 
     /// `maybeTypeOfKind(t, Primitive | Index | TemplateLiteral | StringMapping)`
-    fn may_be_primitive_or_key(&self, ty: TypeId) -> bool {
-        match self.data(ty) {
-            TypeData::Union(parts) | TypeData::Intersection(parts) => {
-                parts.iter().any(|&p| self.may_be_primitive_or_key(p))
-            }
-            TypeData::Keyof(_) => true,
-            _ => self.is_primitive(ty),
-        }
+    pub(super) fn may_be_primitive_or_key(&self, ty: TypeId) -> bool {
+        self.maybe_type_of_kind(ty, |c, t| {
+            matches!(c.data(t), TypeData::Keyof(_)) || c.is_primitive(t)
+        })
     }
 
     /// `isTypeParameterAtTopLevel`

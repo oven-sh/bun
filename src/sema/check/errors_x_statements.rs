@@ -19,20 +19,11 @@
 //! removes the errors the other passes reported there.
 
 use super::errors::Diagnostic;
-use super::errors_x_properties_jsx::end_of_brackets;
 use super::*;
-use crate::bind::{Decl, MemberOwner, Parent, PatParent};
+use crate::bind::{Decl, MemberDeclaration, MemberOwner, Parent, PatParent};
 use crate::resolve::{ModuleKind, ScriptTarget};
-use smallvec::SmallVec;
 
 // ───────────────────────────── the text ─────────────────────────────
-
-/// Whether the word `word` is written at `at`.
-fn is_word_at(text: &[u8], at: usize, word: &[u8]) -> bool {
-    text.get(at..).is_some_and(|rest| {
-        rest.starts_with(word) && !rest.get(word.len()).is_some_and(|&b| is_identifier_part(b))
-    })
-}
 
 /// Where the next token starts, going from `at` past white space and comments, and whether a line ends on the way.
 fn next_token(text: &[u8], mut at: usize) -> (usize, bool) {
@@ -398,28 +389,6 @@ impl TopLevelAwait<'_> {
 
 // ───────────────────────────── members that share a name ─────────────────────────────
 
-const PROPERTY: u8 = 1 << 0;
-const METHOD: u8 = 1 << 1;
-const GET_ACCESSOR: u8 = 1 << 2;
-const SET_ACCESSOR: u8 = 1 << 3;
-const ACCESSOR: u8 = GET_ACCESSOR | SET_ACCESSOR;
-
-/// A member of a class, an interface or a type literal, or a parameter property, as the binder declares it.
-struct Declared {
-    name: Atom,
-    is_static: bool,
-    /// The how manieth it is.
-    order: u32,
-    includes: u8,
-    excludes: u8,
-    file: FileId,
-    /// Where the name is.
-    pos: u32,
-    /// `IsVariableLike`
-    is_variable_like: bool,
-    modifiers: Flags,
-}
-
 /// What `areDeclarationFlagsIdentical` compares.
 fn compared_modifiers(flags: Flags) -> Flags {
     flags
@@ -430,60 +399,6 @@ fn compared_modifiers(flags: Flags) -> Flags {
             | Flags::ABSTRACT
             | Flags::READONLY
             | Flags::STATIC)
-}
-
-/// 2687, of the members of one class, interface or type literal. What is said about `file` is kept.
-fn say_where_modifiers_differ(file: FileId, declared: &mut [Declared], out: &mut Vec<Diagnostic>) {
-    // Only of what is variable-like is anything said.
-    if declared.len() < 2 || !declared.iter().any(|d| d.is_variable_like) {
-        return;
-    }
-    declared.sort_unstable_by_key(|d| (d.name, d.is_static, d.order));
-    let mut rest: &[Declared] = declared;
-    while let Some(first) = rest.first() {
-        let len = rest
-            .iter()
-            .take_while(|d| d.name == first.name && d.is_static == first.is_static)
-            .count();
-        let (run, after) = rest.split_at(len);
-        rest = after;
-        if len < 2 || !run.iter().any(|d| d.is_variable_like) {
-            continue;
-        }
-        // `declareSymbolEx`: what does not go with what is in the table gets a symbol of its own.
-        let mut flags = 0;
-        let mut merged: SmallVec<[&Declared; 8]> = SmallVec::new();
-        for d in run {
-            if flags & d.excludes == 0 {
-                flags |= d.includes;
-                merged.push(d);
-            } else if flags & ACCESSOR != 0 && flags & ACCESSOR != d.includes & ACCESSOR {
-                flags |= ACCESSOR;
-            }
-        }
-        let Some((value_declaration, others)) = merged.split_first() else {
-            continue;
-        };
-        if value_declaration.is_variable_like
-            && value_declaration.file == file
-            && others
-                .iter()
-                .any(|d| d.is_variable_like && d.modifiers != value_declaration.modifiers)
-        {
-            out.push(Diagnostic {
-                start: value_declaration.pos,
-                code: 2687,
-            });
-        }
-        for d in others {
-            if d.is_variable_like && d.file == file && d.modifiers != value_declaration.modifiers {
-                out.push(Diagnostic {
-                    start: d.pos,
-                    code: 2687,
-                });
-            }
-        }
-    }
 }
 
 impl Checker<'_> {
@@ -674,10 +589,7 @@ impl Checker<'_> {
                     // `checkForInStatement`: a literal is a pattern, unless it is in parentheses.
                     if let StmtKind::Expr(target) = hir[left].kind
                         && (!matches!(hir[target].kind, ExprKind::Array(_) | ExprKind::Object(_))
-                            || hir
-                                .parens
-                                .binary_search_by_key(&target.0, |p| p.0.0)
-                                .is_ok())
+                            || is_parenthesized(hir, target))
                     {
                         self.check_target_of_for_in(file, target, expr, out);
                     }
@@ -690,13 +602,10 @@ impl Checker<'_> {
                     // `checkForOfStatement`: the same.
                     if let StmtKind::Expr(target) = hir[left].kind
                         && (!matches!(hir[target].kind, ExprKind::Array(_) | ExprKind::Object(_))
-                            || hir
-                                .parens
-                                .binary_search_by_key(&target.0, |p| p.0.0)
-                                .is_ok())
+                            || is_parenthesized(hir, target))
                         && let Some(code) = why_no_reference(hir, target, [2487, 2781])
                     {
-                        let start = self.start_of_error_on(file, target, None);
+                        let start = self.error_start_of(file, target);
                         out.push(Diagnostic { start, code });
                         self.note(start, self.error_end_of(file, target), code, Vec::new());
                     }
@@ -731,7 +640,7 @@ impl Checker<'_> {
                         && let StmtKind::Expr(target) = hir[left].kind
                         && let ExprKind::Ident(name) = hir[target].kind
                         && Some(name) == self.files().atoms.lookup(b"async")
-                        && !self.is_written_in_parentheses(file, target)
+                        && !is_parenthesized(self.hir(file), target)
                         && matches!(
                             self.place_of_await_in(file, Parent::Stmt(s), rules),
                             AwaitPlace::TopLevel(_) | AwaitPlace::Elsewhere
@@ -752,41 +661,6 @@ impl Checker<'_> {
         misplaced_returns
     }
 
-    /// `GetErrorRangeForNode`, of an expression: where an error about the whole of `e` starts. `assigned_to`: where the variable
-    /// it is the initializer of is named (`getAssignedName`).
-    fn start_of_error_on(&self, file: FileId, e: ExprId, assigned_to: Option<u32>) -> u32 {
-        let hir = self.hir(file);
-        if hir.parens.binary_search_by_key(&e.0, |p| p.0.0).is_err() {
-            match hir[e].kind {
-                ExprKind::Fn(f) if hir[f].kind == FnKind::Expr && hir[f].name.is_some() => {
-                    return hir[f].name_pos;
-                }
-                ExprKind::Fn(f) if hir[f].kind == FnKind::Expr => {
-                    if let Some(name) = assigned_to {
-                        return name;
-                    }
-                }
-                ExprKind::Class(c) if hir[c].name.is_some() => return hir[c].name_pos,
-                // The keyword.
-                ExprKind::Satisfies { ty, .. } => {
-                    let mut before = hir
-                        .text
-                        .get(..hir[ty].pos as usize)
-                        .unwrap_or_default()
-                        .trim_ascii_end();
-                    while let Some(rest) = before.strip_suffix(b"(") {
-                        before = rest.trim_ascii_end();
-                    }
-                    if before.ends_with(b"satisfies") {
-                        return before.len() as u32 - 9;
-                    }
-                }
-                _ => {}
-            }
-        }
-        self.start_of(file, e)
-    }
-
     /// `checkForInStatement`, of a left-hand side that is not a reference. It is an error for certain: 2405 if a key does not fit
     /// in it, which is asked first, or else 2406 2780. Which of them is only said where it can be told.
     fn check_target_of_for_in(
@@ -801,7 +675,7 @@ impl Checker<'_> {
         };
         let (written, start) = (
             self.start_of(file, target),
-            self.start_of_error_on(file, target, None),
+            self.error_start_of(file, target),
         );
         // One of the two is reported.
         let end = self.error_end_of(file, target);
@@ -1527,7 +1401,7 @@ impl Checker<'_> {
             if !self.is_known(source) || self.is_assignable(source, target) {
                 continue;
             }
-            let at = self.start_of_error_on(file, decl.init, Some(hir[decl.pat].pos));
+            let at = self.error_start_of(file, decl.init);
             // A function without a name of its own goes by the name of the variable.
             let end = if at == hir[decl.pat].pos {
                 0
@@ -1538,127 +1412,56 @@ impl Checker<'_> {
         }
     }
 
-    /// What the members `members` declare, in the order the binder gets to them.
-    fn collect_what_members_declare(
-        &mut self,
-        file: FileId,
-        members: Span<MemberId>,
-        into: &mut Vec<Declared>,
-    ) {
-        let hir = self.hir(file);
-        for m in members.iter() {
-            let member = &hir[m];
-            let (includes, excludes) = match member.kind {
-                MemberKind::Property if member.flags.contains(Flags::ACCESSOR) => {
-                    (ACCESSOR, METHOD | ACCESSOR)
-                }
-                MemberKind::Property => (PROPERTY, METHOD),
-                MemberKind::Method => (METHOD, PROPERTY | ACCESSOR),
-                MemberKind::Getter => (GET_ACCESSOR, METHOD | GET_ACCESSOR),
-                MemberKind::Setter => (SET_ACCESSOR, METHOD | SET_ACCESSOR),
-                // `bindParameter`: a parameter property is a property as well.
-                MemberKind::Constructor if member.func.is_some() => {
-                    for p in hir[member.func].params.iter() {
-                        if hir[p].flags.contains(Flags::PARAMETER_PROPERTY)
-                            && let PatKind::Ident(name) = hir[hir[p].pat].kind
-                        {
-                            into.push(Declared {
-                                name,
-                                is_static: false,
-                                order: into.len() as u32,
-                                includes: PROPERTY,
-                                excludes: METHOD,
-                                file,
-                                pos: hir[hir[p].pat].pos,
-                                is_variable_like: true,
-                                modifiers: compared_modifiers(hir[p].flags),
-                            });
-                        }
-                    }
-                    continue;
-                }
-                _ => continue,
-            };
-            let Some(name) = self.member_name(file, member.key) else {
-                continue;
-            };
-            into.push(Declared {
-                name,
-                is_static: member.flags.contains(Flags::STATIC),
-                order: into.len() as u32,
-                includes,
-                excludes,
-                file,
-                pos: member.pos,
-                is_variable_like: member.kind == MemberKind::Property,
-                modifiers: compared_modifiers(member.flags),
-            });
-        }
-    }
-
     /// From `checkVariableLikeDeclaration`, with `areDeclarationFlagsIdentical`: 2687. The declarations of a property, wherever
     /// they are, agree on whether it can be left out and on `private`, `protected`, `readonly`, `abstract` and `static`.
     fn check_modifiers_of_merged_declarations(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let mut symbols: Vec<Sym> = bound
-            .class_symbol
-            .iter()
-            .chain(&bound.interface_symbol)
-            .filter(|s| s.is_some())
-            .map(|&s| self.files().sym(file, s))
-            .collect();
-        symbols.sort_unstable();
-        symbols.dedup();
-        let mut declared: Vec<Declared> = Vec::new();
-        let files = self.files();
-        for sym in symbols {
-            declared.clear();
-            let parts = files.parts(sym);
-            let decls = || {
-                parts.iter().flat_map(|&part| {
-                    files
-                        .symbol(part)
-                        .decls
-                        .iter()
-                        .map(move |&d| (part.file, d))
-                })
-            };
-            // `declareSymbolEx`, `mergeSymbol`: what does not go together is not put together, and its members are its own. Nothing
-            // that is a type goes with an enum, a type alias or a type parameter, nor a class with a variable. Which of them was
-            // there first is not gone into: where there is one of those, nothing counts as merged.
-            let is_type_refused = decls()
-                .any(|(_, d)| matches!(d, Decl::Enum(_) | Decl::Alias(_) | Decl::TypeParam(_)));
-            let is_class_refused =
-                is_type_refused || decls().any(|(_, d)| matches!(d, Decl::Var(_) | Decl::Param(_)));
-            let mut has_class = false;
-            for (of, decl) in decls() {
-                let (members, is_alone) = match decl {
-                    // A second class by the name is refused by the first.
-                    Decl::Class(c) => (
-                        self.hir(of)[c].members,
-                        is_class_refused || std::mem::replace(&mut has_class, true),
-                    ),
-                    Decl::Interface(i) => (self.hir(of)[i].members, is_type_refused),
-                    _ => continue,
-                };
-                if !is_alone {
-                    self.collect_what_members_declare(of, members, &mut declared);
-                } else if of == file {
-                    let mut alone = Vec::new();
-                    self.collect_what_members_declare(of, members, &mut alone);
-                    say_where_modifiers_differ(file, &mut alone, out);
+        // What is compared, whether it is `IsVariableLike`, and where its name is.
+        let describe = |c: &Checker<'_>, (of, declaration): (FileId, MemberDeclaration)| {
+            let hir = c.hir(of);
+            match declaration {
+                MemberDeclaration::Member(m) => Some((
+                    compared_modifiers(hir[m].flags),
+                    hir[m].kind == MemberKind::Property,
+                    hir[m].pos,
+                )),
+                MemberDeclaration::Parameter(p) => {
+                    Some((compared_modifiers(hir[p].flags), true, hir[hir[p].pat].pos))
                 }
+                _ => None,
             }
-            say_where_modifiers_differ(file, &mut declared, out);
-        }
-        for t in 0..hir.types.len() {
-            if let TypeNodeKind::Object(members) = hir.types[t].kind
-                && members.len() > 1
-                && bound.type_scope[t].is_some()
-            {
-                declared.clear();
-                self.collect_what_members_declare(file, members, &mut declared);
-                say_where_modifiers_differ(file, &mut declared, out);
+        };
+        let properties = (0..hir.members.len() as u32)
+            .map(MemberId)
+            .filter(|&m| {
+                hir[m].kind == MemberKind::Property
+                    && bound.member_owner[m.idx()] != MemberOwner::None
+            })
+            .map(MemberDeclaration::Member);
+        let parameter_properties = (0..hir.params.len() as u32)
+            .map(ParamId)
+            .filter(|&p| hir[p].flags.contains(Flags::PARAMETER_PROPERTY))
+            .map(MemberDeclaration::Parameter);
+        for declaration in properties.chain(parameter_properties) {
+            let declarations = self.declarations_of_member(file, declaration);
+            if declarations.len() < 2 {
+                continue;
+            }
+            let mut described = declarations
+                .iter()
+                .filter_map(|&other| Some((other, describe(self, other)?)));
+            let (Some((value_declaration, (modifiers, ..))), Some((own, _, start))) =
+                (described.next(), describe(self, (file, declaration)))
+            else {
+                continue;
+            };
+            let differs = if value_declaration == (file, declaration) {
+                described.any(|(_, other)| other.1 && other.0 != own)
+            } else {
+                own != modifiers
+            };
+            if differs {
+                out.push(Diagnostic { start, code: 2687 });
             }
         }
         // A parameter and a `var` of the same name may differ. What a pattern in a `var` binds is not let off.

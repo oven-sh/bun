@@ -2,7 +2,10 @@
 //! which declarations in different files are one symbol, what an alias stands for.
 
 use crate::atom::{Atom, Interner, known, number_to_string};
-use crate::bind::{self, Bound, Decl, ScopeId, ScopeKind, SymFlags, Symbol, SymbolId};
+use crate::bind::{
+    self, Bound, Decl, MemberDeclaration, MemberKey, MemberOwner, ScopeId, ScopeKind, SymFlags,
+    Symbol, SymbolId, member_flags,
+};
 use crate::hir::{self, *};
 use crate::json::{Expression, Json, PropertyName};
 use crate::resolve::{
@@ -334,6 +337,10 @@ pub struct Files {
     merged_exports: FxHashMap<Sym, FxHashMap<Atom, Sym>>,
     /// The tables of `merged_exports` sorted by name, once symbols are put together.
     sorted_exports: FxHashMap<Sym, Box<[(Atom, Sym)]>>,
+    /// `symbol.Declarations` of the symbols of members that are declared in more than one part of a class or an interface.
+    merged_members: Vec<Box<[(FileId, MemberDeclaration)]>>,
+    /// Which of `merged_members`, by the first declaration in each part.
+    merged_member: FxHashMap<(FileId, MemberDeclaration), u32>,
     /// The pairs `mergeSymbol` refused to make one symbol of, where what a module passes on with `export *`, what a pattern declares or
     /// a name that only stands for something was added to: what was there, and what was to be added.
     pub refused_merges: Vec<(Sym, Sym)>,
@@ -1804,6 +1811,8 @@ impl Files {
             clones: FxHashMap::default(),
             merged_exports: FxHashMap::default(),
             sorted_exports: FxHashMap::default(),
+            merged_members: Vec::new(),
+            merged_member: FxHashMap::default(),
             refused_merges: Vec::new(),
             circular_at_merge: Vec::new(),
             has_type_only_stars,
@@ -2668,7 +2677,94 @@ impl Files {
                 (sym, all.into_boxed_slice())
             })
             .collect();
+        self.merge_members();
         self.is_merged = true;
+    }
+
+    /// `mergeSymbolTable`, of `Members` and `Exports` of the classes and interfaces that are made of several parts: a member of one
+    /// part is one symbol with the member of that name of the parts before, unless `getExcludedSymbolFlags` says otherwise.
+    fn merge_members(&mut self) {
+        let (mut merged_members, mut merged_member) = (Vec::new(), FxHashMap::default());
+        // What the parts have in their tables: the name, which part, `includes`, and the first declaration of the symbol.
+        let mut declared: Vec<(MemberKey, usize, u8, MemberDeclaration)> = Vec::new();
+        for (&whole, parts) in &self.merged_parts {
+            if !self
+                .flags(whole)
+                .intersects(SymFlags::CLASS | SymFlags::INTERFACE)
+            {
+                continue;
+            }
+            declared.clear();
+            for (index, &part) in parts.iter().enumerate() {
+                let (hir, bound) = (self.hir(part.file), self.bound(part.file));
+                for &decl in &bound.symbols[part.id.idx()].decls {
+                    let owner = match decl {
+                        Decl::Class(class) if bound.class_symbol[class.idx()] == part.id => {
+                            MemberOwner::Class(class)
+                        }
+                        Decl::Interface(interface)
+                            if bound.interface_symbol[interface.idx()] == part.id =>
+                        {
+                            MemberOwner::Interface(interface)
+                        }
+                        _ => continue,
+                    };
+                    bound.for_each_declared_member(
+                        hir,
+                        owner,
+                        |(key, declaration, includes, _)| {
+                            if let Some(declaration) = declaration
+                                && !bound.is_member_in_no_table(declaration)
+                                && let Some(&first) =
+                                    bound.declarations_of_member(&declaration).first()
+                            {
+                                declared.push((key, index, includes, first));
+                            }
+                        },
+                    );
+                }
+            }
+            declared.sort_by_key(|member| (member.0, member.1));
+            for of_name in declared.chunk_by(|a, b| a.0 == b.0) {
+                let (mut flags, mut declarations, mut firsts) = (0, Vec::new(), Vec::new());
+                for of_part in of_name.chunk_by(|a, b| a.1 == b.1) {
+                    let source = of_part.iter().fold(0, |flags, member| flags | member.2);
+                    // `reportMergeSymbolError`: it stays a symbol of its own.
+                    if flags & member_flags::excluded(source) != 0 {
+                        continue;
+                    }
+                    flags |= source;
+                    let (file, first) = (parts[of_part[0].1].file, of_part[0].3);
+                    let own = self.bound(file).declarations_of_member(&first);
+                    declarations.extend(own.iter().map(|&declaration| (file, declaration)));
+                    firsts.push((file, first));
+                }
+                if firsts.len() > 1 {
+                    let index = merged_members.len() as u32;
+                    merged_member.extend(firsts.into_iter().map(|first| (first, index)));
+                    merged_members.push(declarations.into_boxed_slice());
+                }
+            }
+        }
+        (self.merged_members, self.merged_member) = (merged_members, merged_member);
+    }
+
+    /// `symbol.Declarations` of `declaration.Symbol`, which is a member or a type parameter of a class, an interface or a type
+    /// literal in `file`.
+    pub fn declarations_of_member(
+        &self,
+        file: FileId,
+        declaration: MemberDeclaration,
+    ) -> List<'_, (FileId, MemberDeclaration)> {
+        let own = self.bound(file).declarations_of_member(&declaration);
+        match own
+            .first()
+            .and_then(|&first| self.merged_member.get(&(file, first)))
+        {
+            Some(&index) => List::Kept(&self.merged_members[index as usize]),
+            None if own.len() == 1 => List::One((file, declaration)),
+            None => List::Own(own.iter().map(|&declaration| (file, declaration)).collect()),
+        }
     }
 
     fn symbol_mut(&mut self, sym: Sym) -> &mut Symbol {
@@ -3365,36 +3461,47 @@ impl Files {
         false
     }
 
+    /// What `decl` asks of `getExternalModuleMember`, if it is `import { a }`, `export { a } from` or `const { a } = require(..)`: the
+    /// module specifier, how that is resolved (`getModeForUsageLocation`), and the name.
+    pub fn external_module_member_of(
+        &self,
+        file: FileId,
+        decl: Decl,
+    ) -> Option<(Atom, ResolutionMode, Atom)> {
+        let hir = self.hir(file);
+        match decl {
+            Decl::ImportSpec(s) => {
+                let import = hir
+                    .imports
+                    .iter()
+                    .find(|i| i.named.range().contains(&s.idx()))?;
+                let mode = self.mode_of_import(file, import.mode);
+                Some((import.spec, mode, hir[s].imported))
+            }
+            Decl::ExportSpec(s) => {
+                let export = hir
+                    .exports
+                    .iter()
+                    .find(|x| x.spec.is_some() && x.items.range().contains(&s.idx()))?;
+                let mode = self.mode_of_import(file, export.mode);
+                Some((export.spec, mode, hir[s].local))
+            }
+            Decl::Require(pat) => {
+                let (spec, name) = self.bound(file).required_by(hir, pat)?;
+                Some((spec, ResolutionMode::Require, name?))
+            }
+            _ => None,
+        }
+    }
+
     /// Whether `getTargetOfAliasDeclaration` of `sym` goes through `getExternalModuleMember` for a module that has `export =`.
     fn is_named_import_from_export_equals(&self, sym: Sym) -> bool {
-        let Some((file, decl)) = self.declaration_of_alias_symbol(sym) else {
-            return false;
-        };
-        let hir = self.hir(file);
-        let from = match decl {
-            Decl::ImportSpec(s) => hir
-                .imports
-                .iter()
-                .find(|i| i.named.range().contains(&s.idx()))
-                .map(|i| (i.spec, self.mode_of_import(file, i.mode))),
-            Decl::ExportSpec(s) => hir
-                .exports
-                .iter()
-                .find(|x| x.items.range().contains(&s.idx()))
-                .map(|x| (x.spec, self.mode_of_import(file, x.mode))),
-            // `const { a } = require("m")`
-            Decl::Require(pat) => match self.bound(file).required_by(hir, pat) {
-                Some((spec, Some(_))) => Some((spec, ResolutionMode::Require)),
-                _ => None,
-            },
-            _ => None,
-        };
-        from.is_some_and(|(spec, mode)| {
-            spec.is_some()
-                && self
-                    .module_of_specifier_as(file, spec, mode)
-                    .is_some_and(|m| self.export(m, known::export_equals).is_some())
-        })
+        self.declaration_of_alias_symbol(sym)
+            .and_then(|(file, decl)| {
+                let (spec, mode, _) = self.external_module_member_of(file, decl)?;
+                self.module_of_specifier_as(file, spec, mode)
+            })
+            .is_some_and(|m| self.export(m, known::export_equals).is_some())
     }
 
     /// `NameResolver.Resolve`: what `name` means in `scope` of `file`.
@@ -4085,7 +4192,7 @@ impl Files {
     /// `IsAliasSymbolDeclaration`
     fn is_alias_symbol_declaration(&self, file: FileId, decl: Decl) -> bool {
         let hir = self.hir(file);
-        let mut e = match decl {
+        let e = match decl {
             Decl::ImportDefault(_)
             | Decl::ImportNamespace(_)
             | Decl::ImportSpec(_)
@@ -4106,22 +4213,7 @@ impl Files {
             }
             _ => return false,
         };
-        // `ExpressionIsAlias`: a class expression or an entity name expression. Neither is written in parentheses, which have no node
-        // in the HIR.
-        let is_parenthesized = |e: ExprId| hir.parens.binary_search_by_key(&e.0, |p| p.0.0).is_ok();
-        if matches!(hir[e].kind, ExprKind::Class(_)) {
-            return !is_parenthesized(e);
-        }
-        loop {
-            if is_parenthesized(e) {
-                return false;
-            }
-            match hir[e].kind {
-                ExprKind::Ident(_) => return true,
-                ExprKind::Dot { obj, .. } => e = obj,
-                _ => return false,
-            }
-        }
+        expression_is_alias(hir, e)
     }
 
     /// `getDeclarationOfAliasSymbol`: the last alias declaration of `sym`, in whichever file it is. `Symbol::decls` also lists the
@@ -4169,6 +4261,17 @@ impl Files {
         let (file, decl) = self.declaration_of_alias_symbol(sym)?;
         let hir = self.hir(file);
         let bound = self.bound(file);
+        // `getTargetOfImportSpecifier`, `getTargetOfExportSpecifier`: `{ default as d }` is the default import by another spelling, but
+        // not in a binding pattern.
+        if let Some((spec, mode, name)) = self.external_module_member_of(file, decl) {
+            let module = self.module_of_specifier_as(file, spec, mode)?;
+            let found = if name == known::default && !matches!(decl, Decl::Require(_)) {
+                self.default_of_module(file, module)
+            } else {
+                self.module_export(module, name)
+            };
+            return found.or_else(|| self.shorthand_ambient_module_itself(module));
+        }
         match decl {
             Decl::ImportDefault(import) => {
                 let module = self.module_of_specifier_as(
@@ -4194,24 +4297,6 @@ impl Files {
                 }
                 Some(value)
             }
-            Decl::ImportSpec(spec) => {
-                let import = hir
-                    .imports
-                    .iter()
-                    .find(|i| i.named.range().contains(&spec.idx()))?;
-                let module = self.module_of_specifier_as(
-                    file,
-                    import.spec,
-                    self.mode_of_import(file, import.mode),
-                )?;
-                // `getTargetOfImportSpecifier`: `{ default as d }` is the default import by another spelling.
-                let found = if hir[spec].imported == known::default {
-                    self.default_of_module(file, module)
-                } else {
-                    self.module_export(module, hir[spec].imported)
-                };
-                found.or_else(|| self.shorthand_ambient_module_itself(module))
-            }
             Decl::ImportEquals(import) => match hir[import].target {
                 ImportEqualsTarget::Require(spec) => Some(self.required_module_value(
                     self.module_of_specifier_as(file, spec, ResolutionMode::Require)?,
@@ -4232,26 +4317,12 @@ impl Files {
                     )
                 }
             },
+            // Without `from`.
             Decl::ExportSpec(spec) => {
-                let (index, export) = hir
+                let index = hir
                     .exports
                     .iter()
-                    .enumerate()
-                    .find(|(_, e)| e.items.range().contains(&spec.idx()))?;
-                if export.spec.is_some() {
-                    let module = self.module_of_specifier_as(
-                        file,
-                        export.spec,
-                        self.mode_of_import(file, export.mode),
-                    )?;
-                    // `getTargetOfExportSpecifier`: so is `export { default } from`.
-                    let found = if hir[spec].local == known::default {
-                        self.default_of_module(file, module)
-                    } else {
-                        self.module_export(module, hir[spec].local)
-                    };
-                    return found.or_else(|| self.shorthand_ambient_module_itself(module));
-                }
+                    .position(|e| e.items.range().contains(&spec.idx()))?;
                 self.resolve_name(file, bound.export_scope[index], hir[spec].local, all)
             }
             Decl::UmdGlobal(_) => Some(self.module_value(self.file_symbol(file))),
@@ -4265,16 +4336,11 @@ impl Files {
                     self.mode_of_import(file, mode),
                 )?))
             }
-            // `getTargetOfImportEqualsDeclaration` for the whole of what is required, `getTargetOfImportSpecifier` for a part.
+            // `getTargetOfImportEqualsDeclaration`: the whole of what is required.
             Decl::Require(pat) => {
-                let (spec, part) = bound.required_by(hir, pat)?;
+                let (spec, _) = bound.required_by(hir, pat)?;
                 let module = self.module_of_specifier_as(file, spec, ResolutionMode::Require)?;
-                match part {
-                    None => Some(self.required_module_value(module)),
-                    Some(name) => self
-                        .module_export(module, name)
-                        .or_else(|| self.shorthand_ambient_module_itself(module)),
-                }
+                Some(self.required_module_value(module))
             }
             Decl::ExportExpr(_) | Decl::ModuleExports(_) | Decl::ExportsProperty(_) => {
                 let e = match decl {

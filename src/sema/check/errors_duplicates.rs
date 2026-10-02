@@ -919,43 +919,6 @@ impl Checker<'_> {
         })
     }
 
-    /// The name a member of a class, an interface or a type literal is declared under, if any. A computed name counts if the binder can
-    /// read it (`IsDynamicName` says no) or it is written as a name, `a` or `a.b`, without parentheses or `#x` (`isLateBindableAST`).
-    fn name_of_declared_member(&mut self, file: FileId, key: PropKey) -> Option<Atom> {
-        if let PropKey::Computed(mut e) = key {
-            let hir = self.hir(file);
-            let is_in_parens = |e: ExprId| hir.parens.binary_search_by_key(&e.0, |p| p.0.0).is_ok();
-            let is_literal = !is_in_parens(e)
-                && match hir[e].kind {
-                    ExprKind::String(_) | ExprKind::Number(_) => true,
-                    ExprKind::Template { exprs, .. } => exprs.is_empty(),
-                    ExprKind::Unary {
-                        op: UnOp::Plus | UnOp::Minus,
-                        operand,
-                    } => matches!(hir[operand].kind, ExprKind::Number(_)) && !is_in_parens(operand),
-                    _ => false,
-                };
-            if !is_literal {
-                // An entity name expression: `a.b.c`, without parentheses or private names.
-                loop {
-                    if is_in_parens(e) {
-                        return None;
-                    }
-                    match hir[e].kind {
-                        ExprKind::Ident(_) => break,
-                        ExprKind::Dot { obj, name, .. }
-                            if self.files().atoms.bytes(name).first() != Some(&b'#') =>
-                        {
-                            e = obj
-                        }
-                        _ => return None,
-                    }
-                }
-            }
-        }
-        self.member_name(file, key)
-    }
-
     /// The declarations of a class or an interface that are one symbol share one table of members, and what is static in a class shares
     /// one with what a namespace that is one with it exports. What each declaration has by itself: `check_members_of`.
     fn check_merged_members(
@@ -1016,7 +979,7 @@ impl Checker<'_> {
                     let Some((includes, excludes)) = Self::what_a_member_declares(member) else {
                         continue;
                     };
-                    let Some(name) = self.name_of_declared_member(of, member.key) else {
+                    let Some(name) = self.declared_member_name(of, member.key) else {
                         continue;
                     };
                     declared.push((at, of, name, includes, excludes, member.pos));
@@ -1183,7 +1146,7 @@ impl Checker<'_> {
                 let Some((includes, excludes)) = Self::what_a_member_declares(&member) else {
                     continue;
                 };
-                let Some(name) = self.name_of_declared_member(of, member.key) else {
+                let Some(name) = self.declared_member_name(of, member.key) else {
                     continue;
                 };
                 clash(self, name, includes, excludes, (of, member.pos));
@@ -1796,7 +1759,7 @@ impl Checker<'_> {
                 }
                 _ => continue,
             };
-            let Some(name) = self.name_of_declared_member(file, member.key) else {
+            let Some(name) = self.declared_member_name(file, member.key) else {
                 continue;
             };
             if !is_ambient && is_static && name == known::prototype {
@@ -1975,25 +1938,7 @@ fn namespace_export_starts(hir: &File, stmt: StmtId) -> Option<(u32, u32)> {
 /// The start of an export specifier: its `type` modifier if it has one, else its first name.
 fn export_specifier_start(hir: &File, spec: ExportSpecId) -> u32 {
     let spec = &hir[spec];
-    let first_name = spec.local_pos.min(spec.pos);
-    if !spec.type_only {
-        return first_name;
-    }
-    let Some(before) = hir.text.get(..first_name as usize) else {
-        return first_name;
-    };
-    let mut before = before.trim_ascii_end();
-    while before.ends_with(b"*/") {
-        let Some(open) = before.windows(2).rposition(|w| w == b"/*") else {
-            break;
-        };
-        before = before[..open].trim_ascii_end();
-    }
-    if before.ends_with(b"type") {
-        before.len() as u32 - 4
-    } else {
-        first_name
-    }
+    start_with_type(&hir.text, spec.local_pos.min(spec.pos), spec.type_only)
 }
 
 /// `hasExportDeclarations`

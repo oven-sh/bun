@@ -591,34 +591,6 @@ fn without_extension(path: &str) -> &str {
         .unwrap_or(path)
 }
 
-/// Past the bracket that closes the one at `open`.
-fn end_of_brackets(text: &[u8], open: usize) -> usize {
-    let (mut depth, mut i) = (0usize, open);
-    while i < text.len() {
-        match text[i] {
-            b'[' | b'(' | b'{' => depth += 1,
-            b']' | b')' | b'}' => {
-                if depth <= 1 {
-                    return i + 1;
-                }
-                depth -= 1;
-            }
-            quote @ (b'"' | b'\'' | b'`') => {
-                i += 1;
-                while i < text.len() && text[i] != quote {
-                    if text[i] == b'\\' {
-                        i += 1;
-                    }
-                    i += 1;
-                }
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-    text.len()
-}
-
 fn string_mapping_name(kind: StringMappingKind) -> &'static str {
     match kind {
         StringMappingKind::Uppercase => "Uppercase",
@@ -758,14 +730,13 @@ impl<'p> Printer<'_, 'p> {
                 self.approximate_length += if *value { 4 } else { 5 };
                 return Node::simple(if *value { "true" } else { "false" });
             }
-            TypeData::UniqueSymbol { file, name, .. } => {
+            TypeData::UniqueSymbol { symbol, name } => {
                 if self.flags & ALLOW_UNIQUE_ES_SYMBOL_TYPE != 0 {
                     self.approximate_length += 13;
                     return Node::new("unique symbol", TYPE_OPERATOR);
                 }
                 let name = self.text(*name);
-                // A property of the global `SymbolConstructor`.
-                if file.0 == u32::MAX {
+                if *symbol == UniqueSymbolDeclaration::SymbolConstructor {
                     self.approximate_length += 6 + 2 * ("Symbol".len() + 1) + 2 * (name.len() + 1);
                     return Node::new(format!("typeof Symbol.{name}"), TYPE_OPERATOR);
                 }
@@ -1066,7 +1037,7 @@ impl<'p> Printer<'_, 'p> {
             start = before - 1;
         }
         let end = match *text.get(start)? {
-            b'[' => end_of_brackets(text, start),
+            b'[' => end_of_brackets(text, start).unwrap_or(text.len()),
             b'"' | b'\'' | b'0'..=b'9' => super::explain::end_of_token(text, start as u32) as usize,
             _ => return None,
         };
@@ -1196,7 +1167,7 @@ impl<'p> Printer<'_, 'p> {
         let (hir, bound) = (self.c.hir(file), self.c.bound(file));
         let parent = bound.expr_parent[e.idx()];
         // What is in parentheses is given to nothing.
-        if self.c.is_written_in_parentheses(file, e) {
+        if is_parenthesized(self.c.hir(file), e) {
             return None;
         }
         if let Parent::VarInit(declaration) = parent {
@@ -1230,7 +1201,7 @@ impl<'p> Printer<'_, 'p> {
                     ExprKind::Binary { left, right, .. } if right == e => left,
                     _ => return None,
                 };
-                if self.c.is_written_in_parentheses(file, left) {
+                if is_parenthesized(self.c.hir(file), left) {
                     return None;
                 }
                 match hir[left].kind {
@@ -1367,6 +1338,27 @@ impl<'p> Printer<'_, 'p> {
         vec![symbol]
     }
 
+    /// `symbolToExpression(symbol, SymbolFlagsValue)`
+    fn symbol_to_expression(&mut self, symbol: Sym) -> String {
+        let (starts_with_global_this, chain) = match self.enclosing_declaration {
+            Some((file, scope)) => self
+                .c
+                .lookup_symbol_chain_at(symbol, true, false, file, scope),
+            None => (false, self.lookup_symbol_chain(symbol, false)),
+        };
+        // `createExpressionFromSymbolChain`
+        let mut expression = if starts_with_global_this {
+            "globalThis".to_owned()
+        } else {
+            self.symbol_to_text(chain[0])
+        };
+        for &part in &chain[usize::from(!starts_with_global_this)..] {
+            expression.push('.');
+            expression.push_str(&self.export_name(part));
+        }
+        expression
+    }
+
     /// `symbolToTypeNode`. `is_type_of`: the meaning is `SymbolFlagsValue`.
     fn symbol_to_type_node(
         &mut self,
@@ -1387,6 +1379,33 @@ impl<'p> Printer<'_, 'p> {
             }
             _ => (false, self.lookup_symbol_chain(symbol, yields_module)),
         };
+        self.symbol_chain_to_type_node(starts_with_global_this, chain, is_type_of, type_arguments)
+    }
+
+    /// `symbolToTypeNode`, with the meaning `SymbolFlagsValue`, of the symbol `cloneTypeAsModuleType` made of `module` for
+    /// `originating_import`.
+    fn module_clone_to_type_node(&mut self, module: Sym, originating_import: Sym) -> Node {
+        let Some((file, scope)) = self.enclosing_declaration else {
+            return self.symbol_to_type_node(module, true, Vec::new());
+        };
+        let yields_module = self.flags & USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE == 0;
+        let (starts_with_global_this, chain) = self.c.lookup_symbol_chain_of_module_clone_at(
+            originating_import,
+            yields_module,
+            file,
+            scope,
+        );
+        self.symbol_chain_to_type_node(starts_with_global_this, chain, true, Vec::new())
+    }
+
+    /// `symbolToTypeNode`, from where it has the chain of `lookupSymbolChain`.
+    fn symbol_chain_to_type_node(
+        &mut self,
+        starts_with_global_this: bool,
+        chain: Vec<Sym>,
+        is_type_of: bool,
+        type_arguments: Vec<Node>,
+    ) -> Node {
         let mut qualifier = String::new();
         for &part in &chain[usize::from(!starts_with_global_this)..] {
             let name = self.export_name(part);
@@ -2754,6 +2773,12 @@ impl<'p> Printer<'_, 'p> {
                     return Node::new("typeof globalThis", TYPE_OPERATOR);
                 }
                 if let Some(symbol) = self.symbol_to_query(ty, origin) {
+                    if let Origin::Namespace {
+                        originating_import, ..
+                    } = origin
+                    {
+                        return self.module_clone_to_type_node(symbol, originating_import);
+                    }
                     return self.symbol_to_type_node(symbol, true, Vec::new());
                 }
                 Identity::Origin(origin)
@@ -3304,17 +3329,32 @@ impl<'p> Printer<'_, 'p> {
         if bytes.first() == Some(&b'#') {
             return String::from_utf8_lossy(self.c.written_name(prop.name)).into_owned();
         }
-        // The `nameType` is a `unique symbol`: `symbolToExpression`, seen from where the property is declared.
-        if let Some(symbol) = bytes.strip_prefix(crate::atom::SYMBOL_NAME_PREFIX) {
-            let end = symbol
-                .iter()
-                .position(|&b| b == b'@')
-                .unwrap_or(symbol.len());
-            let name = String::from_utf8_lossy(&symbol[..end]);
-            let expression = match self.computed_key_text(prop, 0) {
-                Some(written) => written,
-                None if end == symbol.len() => format!("Symbol.{name}"),
-                None => name.into_owned(),
+        // `getPropertyNameNodeForSymbolFromNameType`: the `nameType` is a `unique symbol`.
+        if bytes.starts_with(crate::atom::SYMBOL_NAME_PREFIX)
+            && let Some(name_type) = self.c.key_type_of_name(prop.name)
+            && let TypeData::UniqueSymbol { symbol, name } = *self.c.data(name_type)
+        {
+            let expression = match symbol {
+                UniqueSymbolDeclaration::Variable(variable) => {
+                    let outer = self.enclosing_declaration;
+                    if let Some(own) = self.enclosing_declaration_of_property_name(prop) {
+                        self.enclosing_declaration = Some(own);
+                    }
+                    let expression = self.symbol_to_expression(variable);
+                    self.enclosing_declaration = outer;
+                    expression
+                }
+                // `getContainersOfSymbol` starts from the symbol of the member, which there is none of.
+                UniqueSymbolDeclaration::Member(..) => match self.computed_key_text(prop, 0) {
+                    Some(written) => written,
+                    None => self.text(name),
+                },
+                UniqueSymbolDeclaration::SymbolConstructor => {
+                    match self.computed_key_text(prop, 0) {
+                        Some(written) => written,
+                        None => format!("Symbol.{}", self.text(name)),
+                    }
+                }
             };
             self.approximate_length += expression.len() + 1;
             return format!("[{expression}]");
@@ -3571,7 +3611,11 @@ impl<'p> Printer<'_, 'p> {
         if prop.flags.contains(PropFlags::ACCESSOR) && self.c.is_known(property_type) {
             let write_type = self.c.write_type_of_prop(prop, mapper);
             let (in_class, is_field) = self.accessor_declaration(prop);
-            if self.c.is_known(write_type) && (property_type != write_type || in_class) {
+            if self.c.is_known(write_type)
+                && !self.c.is_error_type(property_type)
+                && !self.c.is_error_type(write_type)
+                && (property_type != write_type || in_class)
+            {
                 if is_field || !prop.flags.contains(PropFlags::WRITE_ONLY) {
                     self.approximate_length += 3;
                     let node =
@@ -3824,8 +3868,11 @@ impl<'p> Printer<'_, 'p> {
                 && !parameter.flags.contains(Flags::PARAMETER_PROPERTY)
             {
                 let written = self.c.type_from_node(file, parameter.ty);
+                // `declaredParameterTypeContainsUndefined`
                 let says_undefined = parameter.ty.is_some()
-                    && (!self.c.is_known(written) || self.c.contains_undefined(written));
+                    && (!self.c.is_known(written)
+                        || self.c.is_error_type(written)
+                        || self.c.contains_undefined(written));
                 if !says_undefined {
                     ty = self.c.optional(ty);
                 }

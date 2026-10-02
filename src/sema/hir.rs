@@ -1617,5 +1617,79 @@ impl File {
     }
 }
 
+/// `IsParenthesizedExpression`, of what is right around `e`. The tree has no node for parentheses.
+#[inline]
+pub fn is_parenthesized(hir: &File, e: ExprId) -> bool {
+    open_parenthesis(hir, e).is_some()
+}
+
+/// Where the outermost parenthesis around `e` opens, if it is in any.
+#[inline]
+pub fn open_parenthesis(hir: &File, e: ExprId) -> Option<u32> {
+    let at = hir.parens.binary_search_by_key(&e.0, |p| p.0.0).ok()?;
+    Some(hir.parens[at].1)
+}
+
+/// `IsPrivateIdentifier`, of the name written at `pos`.
+#[inline]
+pub fn is_private_name_at(hir: &File, pos: u32) -> bool {
+    hir.text.get(pos as usize) == Some(&b'#')
+}
+
+/// `GetFirstIdentifier`: `a` of `a.b.c`.
+pub fn first_identifier(hir: &File, mut e: ExprId) -> ExprId {
+    while let ExprKind::Dot { obj, .. } = hir[e].kind {
+        e = obj;
+    }
+    e
+}
+
+/// `IsEntityNameExpression`: `a`, `a.b.c`. What is missing is an Identifier without a text (`createMissingIdentifier`).
+pub fn is_entity_name_expression(hir: &File, e: ExprId) -> bool {
+    !is_parenthesized(hir, e)
+        && (matches!(hir[e].kind, ExprKind::Ident(_) | ExprKind::Missing)
+            || is_property_access_entity_name_expression(hir, e))
+}
+
+/// `IsPropertyAccessEntityNameExpression`, of `e` itself, whatever parentheses it is in.
+pub fn is_property_access_entity_name_expression(hir: &File, e: ExprId) -> bool {
+    matches!(hir[e].kind, ExprKind::Dot { obj, name_pos, .. }
+        if !is_private_name_at(hir, name_pos) && is_entity_name_expression(hir, obj))
+}
+
+/// `ExpressionIsAlias`
+pub fn expression_is_alias(hir: &File, e: ExprId) -> bool {
+    is_entity_name_expression(hir, e)
+        || matches!(hir[e].kind, ExprKind::Class(_)) && !is_parenthesized(hir, e)
+}
+
+/// `IsStringLiteralLike`
+pub fn is_string_literal_like(hir: &File, e: ExprId) -> bool {
+    !is_parenthesized(hir, e)
+        && match hir[e].kind {
+            ExprKind::String(_) => true,
+            ExprKind::Template { exprs, .. } => exprs.is_empty(),
+            _ => false,
+        }
+}
+
+/// `IsStringOrNumericLiteralLike`
+pub fn is_string_or_numeric_literal_like(hir: &File, e: ExprId) -> bool {
+    is_string_literal_like(hir, e)
+        || matches!(hir[e].kind, ExprKind::Number(_)) && !is_parenthesized(hir, e)
+}
+
+/// `IsSignedNumericLiteral`
+pub fn is_signed_numeric_literal(hir: &File, e: ExprId) -> bool {
+    !is_parenthesized(hir, e)
+        && matches!(hir[e].kind, ExprKind::Unary { op: UnOp::Plus | UnOp::Minus, operand }
+            if matches!(hir[operand].kind, ExprKind::Number(_)) && !is_parenthesized(hir, operand))
+}
+
+/// `IsDynamicName`, of the name `[e]`.
+pub fn is_dynamic_name(hir: &File, e: ExprId) -> bool {
+    !is_string_or_numeric_literal_like(hir, e) && !is_signed_numeric_literal(hir, e)
+}
+
 const _: () = assert!(std::mem::size_of::<Expr>() <= 24);
 const _: () = assert!(std::mem::size_of::<TypeNode>() <= 28);

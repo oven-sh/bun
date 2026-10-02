@@ -5,7 +5,7 @@
 
 use super::enclosing_declaration::or_file_scope;
 use super::*;
-use crate::bind::{Decl, Parent, ScopeId};
+use crate::bind::{Decl, MemberOwner, Parent, ScopeId, SymbolId};
 
 /// A node `visitNode` takes.
 #[derive(Copy, Clone, Debug)]
@@ -19,7 +19,7 @@ pub(super) struct VisitedNode {
 
 /// What a visited node is in the lowered tree.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub(super) enum VisitedKind {
+pub enum VisitedKind {
     /// An expression of the lowered tree, without the parentheses around it.
     Expression(ExprId),
     /// A `ParenthesizedExpression` around it: which one, counted from the outermost.
@@ -28,6 +28,23 @@ pub(super) enum VisitedKind {
     AccessName(ExprId),
     /// The `defer` of `import.defer("m")`.
     ImportDeferName(ExprId),
+    /// The `const` of `x as const` and of `<const>x`.
+    ConstOfAsConst(ExprId),
+    /// The template of a tagged template, of which the lowered tree keeps the substitutions.
+    TaggedTemplateLiteral(ExprId),
+    /// The name of an intrinsic element in a tag of the JSX element, and the string the lowered tree keeps for it.
+    JsxIntrinsicTagName(ExprId, ExprId),
+    /// One of the two identifiers of a `JsxNamespacedName`.
+    JsxNamespacedNamePart,
+    /// The name of a declaration, and the symbol of the declaration.
+    DeclarationName(Decl, SymbolId),
+    /// The `a` of `import { a as b }` and of `export { a as b }`, with the specifier and its symbol.
+    SpecifierPropertyName(Decl, SymbolId),
+    /// Of a class, an interface or a type literal.
+    MemberName(MemberId),
+    /// The name of a property of an object literal, or of a JSX attribute.
+    PropertyName(PropId),
+    ImportAttributeName(PropId),
     /// The name a variable, a parameter or a binding element declares.
     BindingName(PatId),
     /// The `a` of `{ a: b }` in a binding pattern.
@@ -39,6 +56,8 @@ pub(super) enum VisitedKind {
     LiteralInPropertyName(PropId),
     /// The same in an object binding pattern.
     LiteralInBindingPropertyName(PatPropId),
+    /// The same in an enum.
+    LiteralInEnumMemberName(EnumMemberId),
     /// `true`, `false` or `-1` right under a `LiteralType`.
     LiteralType(TypeNodeId),
     /// The `1` of that `-1`.
@@ -58,32 +77,8 @@ pub(super) enum VisitedKind {
     ImportTypeQualifierName(TypeNodeId, u32),
     /// The identifier at an index in the `a.b` of `import x = a.b`.
     ImportEqualsName(ImportEqualsId, u32),
-}
-
-impl VisitedKind {
-    /// For telling apart where a difference comes from.
-    pub(super) fn name(self) -> &'static str {
-        match self {
-            VisitedKind::Expression(_) => "expression",
-            VisitedKind::Parenthesized(..) => "parenthesized",
-            VisitedKind::AccessName(_) => "access-name",
-            VisitedKind::ImportDeferName(_) => "import-defer-name",
-            VisitedKind::BindingName(_) => "variable",
-            VisitedKind::BindingPropertyName(_) => "binding-property-name",
-            VisitedKind::ThisParameter(_) => "this-parameter",
-            VisitedKind::LiteralInMemberName(_)
-            | VisitedKind::LiteralInPropertyName(_)
-            | VisitedKind::LiteralInBindingPropertyName(_) => "literal-in-computed-name",
-            VisitedKind::LiteralType(_) | VisitedKind::LiteralTypeOperand(_) => "literal-type",
-            VisitedKind::Directive(_) => "directive",
-            VisitedKind::Label(_) => "label",
-            VisitedKind::TypeReferenceName(..) => "type-reference-name",
-            VisitedKind::HeritageClauseName(..) => "heritage-clause-name",
-            VisitedKind::HeritageClausePropertyAccess(..) => "heritage-clause-property-access",
-            VisitedKind::ImportTypeQualifierName(..) => "import-type-qualifier-name",
-            VisitedKind::ImportEqualsName(..) => "import-equals-name",
-        }
-    }
+    /// The `x` of `x is T` and of `asserts x`.
+    TypePredicateParameter(TypeNodeId),
 }
 
 impl Checker<'_> {
@@ -97,6 +92,7 @@ impl Checker<'_> {
             nodes: Vec::with_capacity(hir.exprs.len() * 2),
         };
         visitor.expressions();
+        visitor.declarations();
         visitor.names();
         visitor.statements();
         visitor.type_nodes();
@@ -116,7 +112,13 @@ impl Checker<'_> {
             VisitedKind::Expression(e)
             | VisitedKind::Parenthesized(e, _)
             | VisitedKind::AccessName(e)
-            | VisitedKind::ImportDeferName(e) => self.enclosing_scope_of_expr(file, e),
+            | VisitedKind::ImportDeferName(e)
+            | VisitedKind::ConstOfAsConst(e)
+            | VisitedKind::TaggedTemplateLiteral(e)
+            | VisitedKind::JsxIntrinsicTagName(e, _) => self.enclosing_scope_of_expr(file, e),
+            VisitedKind::DeclarationName(decl, _) | VisitedKind::SpecifierPropertyName(decl, _) => {
+                self.enclosing_scope_of_declaration(file, decl)
+            }
             VisitedKind::BindingName(pat) => self.enclosing_scope_of_pat(file, pat),
             VisitedKind::LiteralInBindingPropertyName(p) | VisitedKind::BindingPropertyName(p)
                 if hir[p].value.is_some() =>
@@ -124,14 +126,22 @@ impl Checker<'_> {
                 self.enclosing_scope_of_pat(file, hir[p].value)
             }
             VisitedKind::ThisParameter(f) => self.enclosing_scope_of_declaration(file, Decl::Fn(f)),
-            VisitedKind::LiteralInMemberName(m) => self.enclosing_scope_of_member(file, m),
-            VisitedKind::LiteralInPropertyName(p) => self.enclosing_scope_of_property(file, p),
+            VisitedKind::LiteralInEnumMemberName(m) => {
+                self.enclosing_scope_of_declaration(file, Decl::EnumMember(m))
+            }
+            VisitedKind::LiteralInMemberName(m) | VisitedKind::MemberName(m) => {
+                self.enclosing_scope_of_member(file, m)
+            }
+            VisitedKind::LiteralInPropertyName(p)
+            | VisitedKind::PropertyName(p)
+            | VisitedKind::ImportAttributeName(p) => self.enclosing_scope_of_property(file, p),
             VisitedKind::LiteralType(node)
             | VisitedKind::LiteralTypeOperand(node)
             | VisitedKind::TypeReferenceName(node, _)
             | VisitedKind::HeritageClauseName(node, _)
             | VisitedKind::HeritageClausePropertyAccess(node, _)
-            | VisitedKind::ImportTypeQualifierName(node, _) => {
+            | VisitedKind::ImportTypeQualifierName(node, _)
+            | VisitedKind::TypePredicateParameter(node) => {
                 or_file_scope(bound.type_scope[node.idx()])
             }
             VisitedKind::ImportEqualsName(import, _) => {
@@ -140,6 +150,7 @@ impl Checker<'_> {
             VisitedKind::Label(s) => or_file_scope(bound.stmt_scope[s.idx()]),
             VisitedKind::LiteralInBindingPropertyName(_)
             | VisitedKind::BindingPropertyName(_)
+            | VisitedKind::JsxNamespacedNamePart
             | VisitedKind::Directive(_) => ScopeId(0),
         }
     }
@@ -165,6 +176,34 @@ impl Visitor<'_, '_> {
         self.node(start, self.c.end_of_token_at(self.file, start), kind);
     }
 
+    /// Takes the name at `start`: an identifier, a private name, a string, a number, `[computed]`.
+    fn name(&mut self, start: u32, kind: VisitedKind) {
+        self.node(start, self.c.end_of_name_at(self.file, start), kind);
+    }
+
+    /// Takes the name of a declaration, which is at `start`.
+    fn name_of(&mut self, is_missing: bool, start: u32, kind: VisitedKind) {
+        if is_missing {
+            self.missing_identifier(start, kind);
+        } else {
+            self.name(start, kind);
+        }
+    }
+
+    /// Takes the two identifiers of the `JsxNamespacedName` from `start` to `end`. Returns whether it is one.
+    fn jsx_namespaced_name(&mut self, start: u32, end: u32) -> bool {
+        let written = self.hir.text.get(start as usize..end as usize);
+        let Some(colon) = written.and_then(|name| name.iter().position(|&b| b == b':')) else {
+            return false;
+        };
+        let colon = start + colon as u32;
+        let namespace_end = self.c.end_of_token_before(self.file, colon);
+        self.node(start, namespace_end, VisitedKind::JsxNamespacedNamePart);
+        let name = self.skip_trivia(colon + 1);
+        self.node(name, end, VisitedKind::JsxNamespacedNamePart);
+        true
+    }
+
     /// `createMissingNode`: an identifier the parser missed at `pos` is a node without text, where the token before it ends. The
     /// harness puts it on the line of the token after it (`SkipTrivia`).
     fn missing_identifier(&mut self, pos: u32, kind: VisitedKind) {
@@ -175,12 +214,23 @@ impl Visitor<'_, '_> {
         }
     }
 
+    /// Whether `name`, which is written at `start`, is an identifier the parser missed. `""` and `[""]` are names.
+    fn is_missing(&self, name: Atom, start: u32) -> bool {
+        let first = self.hir.text.get(start as usize);
+        name == known::empty && !matches!(first, Some(b'"' | b'\'' | b'['))
+    }
+
     /// Takes the identifiers of the entity name `names`, which is written at `start`.
     fn entity_name(&mut self, start: u32, names: IdList<Atom>, kind: impl Fn(u32) -> VisitedKind) {
         let ranges = self.c.entity_name_ranges(self.file, start, names);
         for (position, (start, end)) in (0..).zip(ranges) {
             self.node(start, end, kind(position));
         }
+    }
+
+    fn is_written_at(&self, pos: u32, word: &[u8]) -> bool {
+        let rest = self.hir.text.get(pos as usize..);
+        rest.is_some_and(|rest| rest.starts_with(word))
     }
 
     fn skip_trivia(&self, pos: u32) -> u32 {
@@ -214,11 +264,8 @@ impl Visitor<'_, '_> {
                     continue;
                 }
                 // A `PrivateIdentifier` is an expression node only as the left operand of `in`.
-                ExprKind::String(_) if hir.text.get(expr.pos as usize) == Some(&b'#') => {
-                    let is_left_of_in = hir
-                        .parens
-                        .binary_search_by_key(&e.0, |paren| paren.0.0)
-                        .is_err()
+                ExprKind::String(_) if is_private_name_at(hir, expr.pos) => {
+                    let is_left_of_in = !is_parenthesized(hir, e)
                         && matches!(bound.expr_parent[index], Parent::Expr(parent)
                             if matches!(hir[parent].kind, ExprKind::Binary { op: BinOp::In, left, .. } if left == e));
                     if !is_left_of_in {
@@ -231,9 +278,7 @@ impl Visitor<'_, '_> {
                     ..
                 } => self.missing_identifier(name_pos, VisitedKind::AccessName(e)),
                 // The `#b` of `a.#b` is neither an identifier nor an expression node.
-                ExprKind::Dot { name_pos, .. }
-                    if hir.text.get(name_pos as usize) != Some(&b'#') =>
-                {
+                ExprKind::Dot { name_pos, .. } if !is_private_name_at(hir, name_pos) => {
                     self.token(name_pos, VisitedKind::AccessName(e));
                 }
                 ExprKind::ImportMeta | ExprKind::NewTarget => {
@@ -249,6 +294,52 @@ impl Visitor<'_, '_> {
                 {
                     if let Some(name) = self.meta_property_name(expr.pos) {
                         self.token(name, VisitedKind::ImportDeferName(e));
+                    }
+                }
+                ExprKind::AsConst(operand) => {
+                    let start = if expr.pos < hir[operand].pos {
+                        self.skip_trivia(expr.pos + 1)
+                    } else {
+                        self.token_after(self.skip_trivia(self.c.end_of_expr(file, operand)))
+                    };
+                    if self.is_written_at(start, b"const") {
+                        self.node(start, start + 5, VisitedKind::ConstOfAsConst(e));
+                    }
+                }
+                ExprKind::TaggedTemplate(c) => {
+                    let end = self.c.end_inside_parentheses(file, e);
+                    // The cooked text is not kept. It is the raw text if nothing in that is escaped.
+                    if let Some(start) = self.c.start_of_tagged_template_literal(file, c)
+                        && let Some(raw) = hir.text.get(start as usize + 1..end as usize)
+                        && (!hir[c].args.is_empty()
+                            || raw.ends_with(b"`")
+                                && !raw.iter().any(|b| matches!(b, b'\\' | b'\r')))
+                    {
+                        self.node(start, end, VisitedKind::TaggedTemplateLiteral(e));
+                    }
+                }
+                ExprKind::Jsx(jsx) if bound.expr_scope.contains_key(&e) => {
+                    let jsx = hir[jsx];
+                    let is_intrinsic =
+                        |tag: ExprId| tag.is_some() && matches!(hir[tag].kind, ExprKind::String(_));
+                    let mut names: Vec<(ExprId, u32)> = [jsx.tag, jsx.close_tag]
+                        .into_iter()
+                        .filter(|&tag| is_intrinsic(tag))
+                        .map(|tag| (tag, hir[tag].pos))
+                        .collect();
+                    // `</name>` that repeats the opening name is not kept in the lowered tree.
+                    if jsx.close_tag.is_none() && jsx.close_pos != u32::MAX && is_intrinsic(jsx.tag)
+                    {
+                        let slash = self.skip_trivia(jsx.close_pos + 1);
+                        if hir.text.get(slash as usize) == Some(&b'/') {
+                            names.push((jsx.tag, self.skip_trivia(slash + 1)));
+                        }
+                    }
+                    for (tag, start) in names {
+                        let end = super::errors_jsx::jsx_name_end(&hir.text, start);
+                        if !self.jsx_namespaced_name(start, end) {
+                            self.node(start, end, VisitedKind::JsxIntrinsicTagName(e, tag));
+                        }
                     }
                 }
                 _ => {}
@@ -339,7 +430,7 @@ impl Visitor<'_, '_> {
             StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e)
                 if e.is_some()
                     && hir.kind != FileKind::Json
-                    && hir.parens.binary_search_by_key(&e.0, |p| p.0.0).is_err()
+                    && !is_parenthesized(hir, e)
                     && is_literal(e) =>
             {
                 Some(e)
@@ -400,9 +491,83 @@ impl Visitor<'_, '_> {
         is_not_visited
     }
 
-    /// The names in patterns, parameter lists and `import x = a.b`, and the literals in computed names.
+    /// The names of the declarations that are in the table of symbols of the file.
+    fn declarations(&mut self) {
+        let (hir, file) = (self.hir, self.file);
+        let bound = self.c.bound(file);
+        // `declareSymbolEx`: `Symbol::decls` also lists the declarations the symbol refused. Each has a symbol of its own, made later.
+        let mut symbols: FxHashMap<Decl, SymbolId> = FxHashMap::default();
+        for (index, symbol) in bound.symbols.iter().enumerate() {
+            let id = SymbolId(index as u32);
+            symbols.extend(symbol.decls.iter().map(|&decl| (decl, id)));
+        }
+        for (index, symbol) in bound.symbols.iter().enumerate() {
+            let id = SymbolId(index as u32);
+            for &decl in symbol.decls.iter().filter(|decl| symbols[*decl] == id) {
+                let (name, start) = match decl {
+                    // A method is visited with the other members.
+                    Decl::Fn(f) if matches!(hir[f].kind, FnKind::Decl | FnKind::Expr) => {
+                        (hir[f].name, hir[f].name_pos)
+                    }
+                    Decl::Class(c) => (hir[c].name, hir[c].name_pos),
+                    Decl::Interface(i) => (hir[i].name, hir[i].name_pos),
+                    Decl::Alias(a) => (hir[a].name, hir[a].name_pos),
+                    Decl::Enum(e) => (hir[e].name, hir[e].name_pos),
+                    Decl::EnumMember(m) => (hir[m].name, hir[m].pos),
+                    Decl::TypeParam(p) => (hir[p].name, hir[p].pos),
+                    Decl::Module(m) => (symbol.name, hir[m].name_pos),
+                    Decl::ImportDefault(i) => (hir[i].default, hir[i].default_pos),
+                    Decl::ImportNamespace(i) => (hir[i].namespace, hir[i].namespace_pos),
+                    Decl::ImportEquals(i) => (hir[i].name, hir[i].name_pos),
+                    Decl::ImportSpec(s) => (hir[s].local, hir[s].pos),
+                    Decl::ExportSpec(s) => (hir[s].exported, hir[s].pos),
+                    Decl::ExportStarAs(_) | Decl::UmdGlobal(_) => {
+                        match self.c.declaration_name_start(file, decl) {
+                            Some(start) => (symbol.name, start),
+                            None => continue,
+                        }
+                    }
+                    // Variables and parameters are patterns.
+                    _ => continue,
+                };
+                if let Decl::EnumMember(m) = decl {
+                    let kind = VisitedKind::LiteralInEnumMemberName(m);
+                    self.literal_in_computed_name(PropKey::Name(name), start, kind);
+                }
+                if name.is_some() {
+                    let is_missing = self.is_missing(name, start);
+                    self.name_of(is_missing, start, VisitedKind::DeclarationName(decl, id));
+                }
+                // The `PropertyName` of a specifier is visited only if it is an identifier.
+                let property_name = match decl {
+                    Decl::ImportSpec(s) => hir[s].imported_pos,
+                    Decl::ExportSpec(s) => hir[s].local_pos,
+                    _ => start,
+                };
+                if property_name != start
+                    && !matches!(hir.text.get(property_name as usize), Some(b'"' | b'\''))
+                {
+                    self.name(property_name, VisitedKind::SpecifierPropertyName(decl, id));
+                }
+            }
+        }
+        // `bindNamespaceExportDeclaration` gives `export as namespace N` a symbol only at the top of a module.
+        for (index, stmt) in hir.stmts.iter().enumerate() {
+            let decl = Decl::UmdGlobal(StmtId(index as u32));
+            if matches!(stmt.kind, StmtKind::ExportAsNamespace(_))
+                && !symbols.contains_key(&decl)
+                && let Some(start) = self.c.declaration_name_start(file, decl)
+            {
+                self.name(start, VisitedKind::DeclarationName(decl, SymbolId::NONE));
+            }
+        }
+    }
+
+    /// The names of members and properties, those in patterns, parameter lists and `import x = a.b`, and the literals in computed
+    /// names.
     fn names(&mut self) {
         let (hir, file) = (self.hir, self.file);
+        let bound = self.c.bound(file);
         for (index, pat) in hir.pats.iter().enumerate() {
             let kind = VisitedKind::BindingName(PatId(index as u32));
             match pat.kind {
@@ -428,14 +593,58 @@ impl Visitor<'_, '_> {
                 self.token(prop.pos, VisitedKind::BindingPropertyName(p));
             }
         }
+        // A name that names nothing (`getDeclarationName`) is kept as no name, as is one the parser missed: `#x` with no class
+        // around it, `1n`.
+        let is_missing = |key: PropKey, start: u32| match (key, hir.text.get(start as usize)) {
+            (PropKey::None, first) => !matches!(first, Some(b'#' | b'0'..=b'9')),
+            (PropKey::Name(known::empty), first) => !matches!(first, Some(b'"' | b'\'' | b'[')),
+            _ => false,
+        };
+        let mut import_attributes: Vec<ExprId> =
+            hir.import_attributes.iter().map(|of| of.1).collect();
+        import_attributes.sort_unstable();
         for (index, prop) in hir.props.iter().enumerate() {
-            let kind = VisitedKind::LiteralInPropertyName(PropId(index as u32));
-            self.literal_in_computed_name(prop.key, prop.pos, kind);
+            let p = PropId(index as u32);
+            self.literal_in_computed_name(
+                prop.key,
+                prop.pos,
+                VisitedKind::LiteralInPropertyName(p),
+            );
+            if matches!(prop.kind, PropKind::Spread) {
+                continue;
+            }
+            let end = self.c.end_of_prop_name(file, p);
+            if is_missing(prop.key, prop.pos) {
+                self.missing_identifier(prop.pos, VisitedKind::PropertyName(p));
+            } else if import_attributes
+                .binary_search(&bound.prop_owner[index])
+                .is_err()
+            {
+                self.node(prop.pos, end, VisitedKind::PropertyName(p));
+                let owner = bound.prop_owner[index];
+                if owner.is_some() && matches!(hir[owner].kind, ExprKind::Jsx(_)) {
+                    self.jsx_namespaced_name(prop.pos, end);
+                }
+            // The name of an `ImportAttribute` is no declaration name: a string literal there is not visited.
+            } else if !matches!(hir.text.get(prop.pos as usize), Some(b'"' | b'\'')) {
+                self.node(prop.pos, end, VisitedKind::ImportAttributeName(p));
+            }
         }
         for (index, member) in hir.members.iter().enumerate() {
             let m = MemberId(index as u32);
             let start = super::errors_x_properties_jsx::start_of_member_name(hir, m);
             self.literal_in_computed_name(member.key, start, VisitedKind::LiteralInMemberName(m));
+            if matches!(
+                member.kind,
+                MemberKind::Property | MemberKind::Method | MemberKind::Getter | MemberKind::Setter
+            ) && bound.member_owner[index] != MemberOwner::None
+            {
+                self.name_of(
+                    is_missing(member.key, start),
+                    start,
+                    VisitedKind::MemberName(m),
+                );
+            }
         }
         for index in 0..hir.fns.len() {
             let f = FnId(index as u32);
@@ -511,9 +720,20 @@ impl Visitor<'_, '_> {
                         }
                     }
                 }
+                TypeNodeKind::Ref { name, .. } if hir.ids(name).eq([known::empty]) => {
+                    self.missing_identifier(start, VisitedKind::TypeReferenceName(node, 0));
+                }
                 // A `QualifiedName` is neither an expression node nor an identifier.
                 TypeNodeKind::Ref { name, .. } => {
                     self.entity_name(start, name, |at| VisitedKind::TypeReferenceName(node, at));
+                }
+                TypeNodeKind::Predicate { param, asserts, .. } if param != known::this => {
+                    let start = if asserts && self.is_written_at(start, b"asserts") {
+                        self.token_after(start)
+                    } else {
+                        start
+                    };
+                    self.name(start, VisitedKind::TypePredicateParameter(node));
                 }
                 TypeNodeKind::Import { name, .. } if !name.is_empty() => {
                     if let Some(start) = self.c.start_of_import_type_qualifier(file, node) {

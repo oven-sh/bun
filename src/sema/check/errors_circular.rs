@@ -90,11 +90,21 @@ impl Checker<'_> {
                 continue;
             }
             let own = self.class_sym(file, ClassId(c as u32));
-            if self.extends_itself_as_written(own) {
-                out.push(Diagnostic {
-                    start: hir.classes[c].name_pos,
-                    code: 2506,
-                });
+            if self.is_in_own_base_expression(own) {
+                let class = &hir.classes[c];
+                if class.name.is_some() {
+                    out.push(Diagnostic {
+                        start: class.name_pos,
+                        code: 2506,
+                    });
+                } else {
+                    // `GetErrorRangeForNode`: the first token of a class expression without a name.
+                    out.push(Diagnostic {
+                        start: class.pos,
+                        code: 2506,
+                    });
+                    self.explain(class.pos, 2506, |c| vec![c.symbol_to_string(own)]);
+                }
             } else if matches!(bound.class_owner[c], ClassOwner::Stmt(_)) && self.is_own_base(own) {
                 out.push(Diagnostic {
                     start: hir.classes[c].name_pos,
@@ -290,6 +300,15 @@ impl Checker<'_> {
                 if self.p.circular_members.get(&(file, member)).is_none() {
                     continue;
                 }
+                // `getTypeOfAccessors`, of an auto-accessor: 2502 goes to the set accessor, which is nil.
+                if hir[member].flags.contains(Flags::ACCESSOR) {
+                    if hir[member].ty.is_some() {
+                        let end = self.end_of_member_name(file, member);
+                        let name = self.source_text(file, hir[member].pos, end);
+                        self.report_global_error(2502, vec![name]);
+                    }
+                    continue;
+                }
                 if hir[member].ty.is_some() {
                     out.push(Diagnostic {
                         start: hir[member].pos,
@@ -436,10 +455,8 @@ impl Checker<'_> {
                 self.report_implicit_any_return(file, func, out);
             }
         }
-        if no_implicit_any {
-            self.check_circular_exports(file, out);
-            self.check_circular_assignment_declarations(file, out);
-        }
+        self.check_circular_exports(file, out);
+        self.check_circular_assignment_declarations(file, out);
     }
 
     /// What is noted of the error `code` on the name of `member`: `symbolToString` of its symbol, which `first` declares first.
@@ -466,7 +483,7 @@ impl Checker<'_> {
             Decl::ModuleExports(assignment) => Some(assignment),
             // `addDeclarationToSymbol` calls it only for a declaration with a value flag, which an alias declaration lacks.
             Decl::ExportsProperty(assignment) => match hir[assignment].kind {
-                ExprKind::Assign { value, .. } if !self.expression_is_alias(file, value) => {
+                ExprKind::Assign { value, .. } if !expression_is_alias(self.hir(file), value) => {
                     Some(assignment)
                 }
                 _ => None,
@@ -475,7 +492,7 @@ impl Checker<'_> {
         })
     }
 
-    /// `reportCircularityError` for `export default e`, `export = e`, `module.exports = e` and `exports.a = e`: 7022 at
+    /// `reportCircularityError` for `export default e`, `export = e`, `module.exports = e` and `exports.a = e`: 2502 or 7022 at
     /// `symbol.ValueDeclaration`. None of these declarations has a name, so the error starts where the declaration starts.
     fn check_circular_exports(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
@@ -498,9 +515,13 @@ impl Checker<'_> {
                 _ => continue,
             };
             let sym = self.files().sym(file, SymbolId(i as u32));
-            self.type_of_symbol(sym);
-            if self.p.circular_symbols.get(&sym).is_some() {
-                out.push(Diagnostic { start, code: 7022 });
+            let ty = self.type_of_symbol(sym);
+            // It returns the error type where it reports 2502.
+            let code = if ty == TypeId::ERROR { 2502 } else { 7022 };
+            if self.p.circular_symbols.get(&sym).is_some()
+                && (code == 2502 || self.p.files.options.no_implicit_any)
+            {
+                out.push(Diagnostic { start, code });
                 let end = match symbol.decls.first() {
                     Some(&Decl::ExportExpr(stmt)) => self.end_of_stmt(file, stmt),
                     _ => match self.commonjs_value_declaration(file, symbol) {
@@ -508,13 +529,13 @@ impl Checker<'_> {
                         None => 0,
                     },
                 };
-                self.explain_to(start, end, 7022, |c| vec![c.symbol_to_string(sym)]);
+                self.explain_to(start, end, code, |c| vec![c.symbol_to_string(sym)]);
             }
         }
     }
 
     /// `reportCircularityError` for a property declared by `f.a = e`, `this.a = e` or `Object.defineProperty(f, "a", descriptor)`:
-    /// 7022 at `symbol.ValueDeclaration`, the first declaration. `circular_assignments` is keyed by that declaration.
+    /// 2502 or 7022 at `symbol.ValueDeclaration`, the first declaration. `circular_assignments` is keyed by that declaration.
     fn check_circular_assignment_declarations(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         for &declaration in bound
@@ -535,8 +556,18 @@ impl Checker<'_> {
                 .get(&(file, declaration))
                 .is_some()
             {
+                // It returns the error type where it reports 2502.
+                let kept = self.p.assigned_prop_types.get(&(file, declaration));
+                let code = if kept == Some(TypeId::ERROR) {
+                    2502
+                } else {
+                    7022
+                };
+                if code == 7022 && !self.p.files.options.no_implicit_any {
+                    continue;
+                }
                 let start = self.start_inside_parentheses(file, declaration);
-                out.push(Diagnostic { start, code: 7022 });
+                out.push(Diagnostic { start, code });
                 // `GetNameOfDeclaration`
                 let name = match hir[checked].kind {
                     ExprKind::Dot { name, .. } => self.atom_text(name),
@@ -548,7 +579,7 @@ impl Checker<'_> {
                     _ => continue,
                 };
                 let end = self.end_inside_parentheses(file, declaration);
-                self.note(start, end, 7022, vec![name]);
+                self.note(start, end, code, vec![name]);
             }
         }
     }
@@ -619,8 +650,6 @@ impl Checker<'_> {
             FnOwner::Expr(e) => e,
             _ => return None,
         };
-        let is_in_parentheses =
-            |x: ExprId| hir.parens.binary_search_by_key(&x.0, |p| p.0.0).is_ok();
         match bound.expr_parent[e.idx()] {
             // A method or an accessor of an object literal, under a name that is worked out.
             Parent::Prop(p)
@@ -632,7 +661,7 @@ impl Checker<'_> {
                 Some(hir[p].pos)
             }
             // What is in parentheses is given to nothing.
-            _ if is_in_parentheses(e) => None,
+            _ if is_parenthesized(hir, e) => None,
             Parent::VarInit(d) if matches!(hir[hir[d].pat].kind, PatKind::Ident(_)) => {
                 Some(hir[hir[d].pat].pos)
             }
@@ -656,7 +685,7 @@ impl Checker<'_> {
                 else {
                     return None;
                 };
-                if right != e || is_in_parentheses(left) {
+                if right != e || is_parenthesized(hir, left) {
                     return None;
                 }
                 match hir[left].kind {
@@ -698,27 +727,17 @@ impl Checker<'_> {
         }
     }
 
-    /// `getBaseConstructorTypeOfClass`: whether the class `own` comes back to itself by way of what is written after `extends`. One
-    /// base each: round and back, or never.
-    pub(super) fn extends_itself_as_written(&self, own: Sym) -> bool {
-        let mut at = own;
-        for _ in 0..64 {
-            let Some(next) = self.base_class_written(at) else {
-                return false;
-            };
-            if next == own {
-                return true;
-            }
-            at = next;
-        }
-        false
+    /// `getBaseConstructorTypeOfClass`: whether the expression that class `own` extends depends on the class.
+    fn is_in_own_base_expression(&mut self, own: Sym) -> bool {
+        self.base_constructor_type_of_class(own);
+        self.p.circular_base_constructors.get(&own).is_some()
     }
 
     /// `getBaseTypes`: whether the base types of the class or interface `own` were asked for again while they were worked out.
     /// Every class declaration and every interface of that name is told, whichever of them extends what.
     fn is_own_base(&mut self, own: Sym) -> bool {
         // A base constructor that comes back to itself is the error type, and there it ends.
-        if self.extends_itself_as_written(own) {
+        if self.is_in_own_base_expression(own) {
             return false;
         }
         self.base_types(own);
@@ -780,7 +799,7 @@ impl Checker<'_> {
     }
 
     /// The classes and interfaces that the declarations of `sym` say they extend.
-    fn base_types_written(&self, sym: Sym) -> SmallVec<[Sym; 4]> {
+    fn base_types_written(&mut self, sym: Sym) -> SmallVec<[Sym; 4]> {
         let files = self.files();
         let mut bases: SmallVec<[Sym; 4]> = SmallVec::new();
         for (of, decl) in files.decls_of(sym) {
@@ -808,7 +827,7 @@ impl Checker<'_> {
                         }
                     }
                 }
-                Decl::Class(_) if !self.extends_itself_as_written(sym) => {
+                Decl::Class(_) if !self.is_in_own_base_expression(sym) => {
                     bases.extend(self.base_class_written(sym))
                 }
                 _ => {}

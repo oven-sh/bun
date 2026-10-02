@@ -23,7 +23,7 @@ use crate::util::FxHashSet;
 /// `hasParseDiagnostics`: the parser or the scanner objected to something in the file, and `grammarErrorOnNode` and its like say nothing.
 /// Of type syntax that was given up on it is not known whether they did. `parse_for_sema` sets the flag by the origin of each error,
 /// so a code the parser shares with `grammarErrorOnNode` (1005 ..) does not count. Declaration files have no flag: there the codes tell.
-fn has_parse_diagnostics(hir: &hir::File) -> bool {
+pub(super) fn has_parse_diagnostics(hir: &hir::File) -> bool {
     hir.has_parse_diagnostics
         || hir.has_errors
         || hir.syntax_errors > 0
@@ -50,34 +50,10 @@ fn end_of_string(text: &[u8], pos: usize) -> Option<usize> {
             b'\\' => at += 2,
             c if c == quote => return Some(at + 1),
             b'$' if quote == b'`' && text.get(at + 1) == Some(&b'{') => {
-                at = closing_bracket(text, at + 1)? + 1
+                at = end_of_brackets(text, at + 1)?
             }
             _ => at += 1,
         }
-    }
-}
-
-/// Where the bracket that is opened at `open` is closed.
-fn closing_bracket(text: &[u8], open: usize) -> Option<usize> {
-    let mut depth = 0usize;
-    let mut at = open;
-    loop {
-        at = skip_trivia(text, at);
-        match *text.get(at)? {
-            b'(' | b'[' | b'{' => depth += 1,
-            b')' | b']' | b'}' => {
-                depth = depth.checked_sub(1)?;
-                if depth == 0 {
-                    return Some(at);
-                }
-            }
-            b'"' | b'\'' | b'`' => {
-                at = end_of_string(text, at)?;
-                continue;
-            }
-            _ => {}
-        }
-        at += 1;
     }
 }
 
@@ -1768,7 +1744,7 @@ impl Checker<'_> {
             // Outside every class the front end gives a private name no key (`getDeclarationName`), so the text decides.
             let is_private = match member.key {
                 PropKey::Private(_) => true,
-                PropKey::None => hir.text.get(member.pos as usize) == Some(&b'#'),
+                PropKey::None => is_private_name_at(hir, member.pos),
                 _ => false,
             };
             if !is_private
@@ -2057,7 +2033,7 @@ impl Checker<'_> {
             if text.get(open) != Some(&b'(') {
                 continue;
             }
-            let Some(close) = closing_bracket(text, open) else {
+            let Some(close) = end_of_brackets(text, open).map(|end| end - 1) else {
                 continue;
             };
             let last = skip_trivia_back(text, close);
@@ -2145,7 +2121,7 @@ impl Checker<'_> {
                 continue;
             }
             // `a instanceof B < c` compares. In parentheses of its own, the name would not be all there is in them.
-            let is_in_parentheses = hir.parens.binary_search_by_key(&right.0, |p| p.0.0).is_ok();
+            let is_in_parentheses = is_parenthesized(hir, right);
             let is_compared = matches!(bound.expr_parent[i], Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Binary { op: BinOp::Lt, left, .. } if left.idx() == i));
             if is_in_parentheses || !is_compared {
                 let start = self.start_inside_parentheses(file, right);
@@ -2612,12 +2588,7 @@ impl Checker<'_> {
                 continue;
             }
             // `getAssignmentTargetKind(node) != AssignmentKindNone`
-            let is_written = self.is_assignment_target(file, e)
-                || matches!(bound.expr_parent[i], Parent::Expr(p) if match hir[p].kind {
-                    ExprKind::Assign { op: Some(_), target, .. } => target == e,
-                    ExprKind::Unary { op, .. } => matches!(op, UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec),
-                    _ => false,
-                });
+            let is_written = self.is_written(file, e);
             if !self.has_type_variables(object) && !self.has_type_variables(keys)
                 || !self.is_in_generic_context(file, e)
             {

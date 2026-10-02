@@ -434,53 +434,55 @@ impl Checker<'_> {
     fn start_of_function_node(&self, file: FileId, func: FnId) -> u32 {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let f = &hir[func];
-        let is_parenthesized = |e: ExprId| hir.parens.binary_search_by_key(&e.0, |p| p.0.0).is_ok();
         match (f.kind, bound.fns[func.idx()].owner) {
             (_, FnOwner::Member(m)) => hir[m].pos,
             (FnKind::Method | FnKind::Getter | FnKind::Setter, _) => f.name_pos,
             _ if f.name.is_some() => f.name_pos,
             // `GetAssignedName`
-            (FnKind::Expr, FnOwner::Expr(e)) if !is_parenthesized(e) => match bound.expr_parent
-                [e.idx()]
-            {
-                Parent::VarInit(d) if matches!(hir[hir[d].pat].kind, PatKind::Ident(_)) => {
-                    hir[hir[d].pat].pos
-                }
-                Parent::Prop(p)
-                    if hir[p].kind == PropKind::Init
-                        && matches!(hir[bound.prop_owner[p.idx()]].kind, ExprKind::Object(_)) =>
-                {
-                    hir[p].pos
-                }
-                Parent::PatPropDefault(p) => hir[hir[p].value].pos,
-                Parent::PatElemDefault(p) => hir[hir[p].pat].pos,
-                Parent::Expr(x) => match hir[x].kind {
-                    ExprKind::Assign {
-                        target: left,
-                        value: right,
-                        ..
+            (FnKind::Expr, FnOwner::Expr(e)) if !is_parenthesized(hir, e) => {
+                match bound.expr_parent[e.idx()] {
+                    Parent::VarInit(d) if matches!(hir[hir[d].pat].kind, PatKind::Ident(_)) => {
+                        hir[hir[d].pat].pos
                     }
-                    | ExprKind::Binary { left, right, .. }
-                        if right == e && !is_parenthesized(left) =>
+                    Parent::Prop(p)
+                        if hir[p].kind == PropKind::Init
+                            && matches!(
+                                hir[bound.prop_owner[p.idx()]].kind,
+                                ExprKind::Object(_)
+                            ) =>
                     {
-                        match hir[left].kind {
-                            ExprKind::Ident(_) => hir[left].pos,
-                            ExprKind::Dot { name_pos, .. } => name_pos,
-                            ExprKind::Index { index, .. }
-                                if matches!(
-                                    hir[index].kind,
-                                    ExprKind::String(_) | ExprKind::Number(_)
-                                ) =>
-                            {
-                                hir[index].pos
-                            }
-                            _ => f.pos,
-                        }
+                        hir[p].pos
                     }
+                    Parent::PatPropDefault(p) => hir[hir[p].value].pos,
+                    Parent::PatElemDefault(p) => hir[hir[p].pat].pos,
+                    Parent::Expr(x) => match hir[x].kind {
+                        ExprKind::Assign {
+                            target: left,
+                            value: right,
+                            ..
+                        }
+                        | ExprKind::Binary { left, right, .. }
+                            if right == e && !is_parenthesized(hir, left) =>
+                        {
+                            match hir[left].kind {
+                                ExprKind::Ident(_) => hir[left].pos,
+                                ExprKind::Dot { name_pos, .. } => name_pos,
+                                ExprKind::Index { index, .. }
+                                    if matches!(
+                                        hir[index].kind,
+                                        ExprKind::String(_) | ExprKind::Number(_)
+                                    ) =>
+                                {
+                                    hir[index].pos
+                                }
+                                _ => f.pos,
+                            }
+                        }
+                        _ => f.pos,
+                    },
                     _ => f.pos,
-                },
-                _ => f.pos,
-            },
+                }
+            }
             _ => f.pos,
         }
     }
@@ -913,12 +915,7 @@ impl Checker<'_> {
     /// in the function, namespace or file around.
     pub(super) fn is_this_query_within_member(&self, file: FileId, e: ExprId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let starts_with_it = |mut at: ExprId| {
-            while let ExprKind::Dot { obj, .. } = hir[at].kind {
-                at = obj;
-            }
-            at == e
-        };
+        let starts_with_it = |at: ExprId| first_identifier(hir, at) == e;
         let query = hir.types.iter().position(|t| matches!(t.kind, TypeNodeKind::Typeof { expr, .. } if expr.is_some() && starts_with_it(expr)));
         let Some(query) = query else { return true };
         let mut scope = bound.type_scope[query];

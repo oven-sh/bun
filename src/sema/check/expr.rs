@@ -249,7 +249,7 @@ impl<'p> Checker<'p> {
             ExprKind::False => TypeId::FRESH_FALSE,
             ExprKind::Number(n) => self.number_literal(hir.numbers[n as usize], true),
             // Not a private name.
-            ExprKind::String(s) if hir.text.get(hir[e].pos as usize) != Some(&b'#') => {
+            ExprKind::String(s) if !is_private_name_at(hir, hir[e].pos) => {
                 self.string_literal(s, true)
             }
             _ => return None,
@@ -717,7 +717,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `isValidConstAssertionArgument`
-    fn is_valid_const_assertion_argument(&self, file: FileId, e: ExprId) -> bool {
+    pub(super) fn is_valid_const_assertion_argument(&self, file: FileId, e: ExprId) -> bool {
         let hir = self.hir(file);
         match hir[e].kind {
             ExprKind::String(_)
@@ -729,9 +729,7 @@ impl<'p> Checker<'p> {
             | ExprKind::Array(_)
             | ExprKind::Object(_) => true,
             ExprKind::Unary { op, operand } => {
-                hir.parens
-                    .binary_search_by_key(&operand.0, |p| p.0.0)
-                    .is_err()
+                !is_parenthesized(hir, operand)
                     && matches!(
                         (op, hir[operand].kind),
                         (UnOp::Minus, ExprKind::Number(_) | ExprKind::BigInt(_))
@@ -740,23 +738,10 @@ impl<'p> Checker<'p> {
             }
             // A member of an enum.
             ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => self
-                .value_named_by(file, obj)
+                .resolve_entity_name_expression(file, obj, SymFlags::VALUE)
                 .is_some_and(|sym| self.files().flags(sym).contains(SymFlags::ENUM)),
             _ => false,
         }
-    }
-
-    /// `resolveEntityName`: the value that `e`, which is `a` or `a.b.c`, is the name of.
-    fn value_named_by(&self, file: FileId, e: ExprId) -> Option<Sym> {
-        let found = match self.hir(file)[e].kind {
-            ExprKind::Ident(name) => self.symbol_of_identifier(file, e, name)?,
-            ExprKind::Dot { obj, name, .. } => {
-                let container = self.value_named_by(file, obj)?;
-                self.files().namespace_member(container, name)?
-            }
-            _ => return None,
-        };
-        self.files().resolve_alias_if_needed(found)
     }
 
     /// Whether the part of the argument `arg` of `call` that `path` leads to is declared as a `const` type parameter,
@@ -1215,7 +1200,7 @@ impl<'p> Checker<'p> {
     /// An export of the module `ty` is the type of that is a value in the end, though exported or imported as a type only.
     pub(super) fn type_only_member_of_module(&mut self, ty: TypeId, name: Atom) -> Option<TypeId> {
         let TypeData::Anon {
-            origin: Origin::Module(module),
+            origin: Origin::Module(module) | Origin::Namespace { module, .. },
             ..
         } = *self.data(ty)
         else {
@@ -1347,16 +1332,7 @@ impl<'p> Checker<'p> {
             return (receiver, stops);
         }
         // A `const` enum is only looked into by a name that is written out (2476).
-        let is_string_literal_like = hir
-            .parens
-            .binary_search_by_key(&index.0, |p| p.0.0)
-            .is_err()
-            && match hir[index].kind {
-                ExprKind::String(_) => true,
-                ExprKind::Template { exprs, .. } => exprs.is_empty(),
-                _ => false,
-            };
-        if !is_string_literal_like && self.is_const_enum_object(receiver) {
+        if !is_string_literal_like(hir, index) && self.is_const_enum_object(receiver) {
             return (TypeId::ERROR, stops);
         }
         // `isForInVariableForNumericPropertyNames`: the variable of a `for..in` over what has numbers for names is a number here.
@@ -1457,6 +1433,8 @@ impl<'p> Checker<'p> {
                             Some(written) if self.force(written) != self.force(ty) => {
                                 Some(self.force(written))
                             }
+                            // 2862 and nil
+                            None if no_index_signatures => None,
                             _ => read,
                         }
                     }
@@ -1573,8 +1551,8 @@ impl<'p> Checker<'p> {
             ExprKind::Number(n) => self.number_literal(hir.numbers[n as usize], true),
             ExprKind::String(s) => {
                 // `checkPrivateIdentifierExpression`: `#a` is `any`. Directly left of `in` it keeps its name, which narrowing uses.
-                if hir.text.get(hir[e].pos as usize) == Some(&b'#') {
-                    let is_left_of_in = hir.parens.binary_search_by_key(&e.0, |p| p.0.0).is_err()
+                if is_private_name_at(hir, hir[e].pos) {
+                    let is_left_of_in = !is_parenthesized(hir, e)
                         && matches!(self.bound(file).expr_parent[e.idx()], Parent::Expr(parent)
                             if matches!(hir[parent].kind, ExprKind::Binary { op: BinOp::In, left, .. } if left == e));
                     if !is_left_of_in {
@@ -1597,7 +1575,7 @@ impl<'p> Checker<'p> {
                 // What it comes to, if that can be told from the text alone. The tag of a tagged template is not evaluated.
                 let is_tag = matches!(self.bound(file).expr_parent[e.idx()], Parent::Expr(p)
                     if matches!(hir[p].kind, ExprKind::TaggedTemplate(c) if hir[c].callee == e))
-                    && hir.parens.binary_search_by_key(&e.0, |p| p.0.0).is_err();
+                    && !is_parenthesized(hir, e);
                 if !is_tag && let Some(EnumValue::String(text)) = self.constant_value(file, e) {
                     return self.string_literal(text, true);
                 }
@@ -2025,82 +2003,38 @@ impl<'p> Checker<'p> {
     /// Whether `e` is written to and not read: the left of `=`, or part of a pattern there.
     #[inline]
     pub fn is_assignment_target(&self, file: FileId, e: ExprId) -> bool {
-        let hir = self.hir(file);
-        let bound = self.bound(file);
-        let mut at = e;
-        loop {
-            match bound.expr_parent[at.idx()] {
-                Parent::Expr(parent) => match hir[parent].kind {
-                    // `[a = 1] = x`: the inner assignment is a default. In a pattern or not, it gives `a` a value.
-                    ExprKind::Assign {
-                        op: None, target, ..
-                    } => return target == at,
-                    ExprKind::Array(_) | ExprKind::Spread(_) | ExprKind::NonNull(_) => at = parent,
-                    _ => return false,
-                },
-                Parent::Prop(p) => {
-                    let owner = bound.prop_owner[p.idx()];
-                    if !matches!(hir[owner].kind, ExprKind::Object(_)) {
-                        return false;
-                    }
-                    at = owner;
-                }
-                Parent::Stmt(s) => {
-                    // `for (x of xs)`
-                    return matches!(bound.stmt_parent[s.idx()], Parent::Stmt(l)
-                        if matches!(hir[l].kind, StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } if left == s));
-                }
-                _ => return false,
-            }
-        }
+        matches!(
+            self.bound(file).get_assignment_target(self.hir(file), e),
+            Some(AssignmentTarget::Assign(None) | AssignmentTarget::ForInOrOf)
+        )
     }
 
     /// `getAssignmentTargetKind`
     fn target_kind(&self, file: FileId, e: ExprId) -> TargetKind {
-        if self.is_assignment_target(file, e) {
-            return TargetKind {
-                assigned: true,
-                definite: true,
-                written: true,
-            };
-        }
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let (mut definite, mut written) = (false, false);
-        let mut at = e;
-        while let Parent::Expr(parent) = bound.expr_parent[at.idx()] {
-            match hir[parent].kind {
-                ExprKind::Assign {
-                    op: Some(op),
-                    target,
-                    ..
-                } => {
-                    written = target == at;
-                    definite = written && matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish);
-                    break;
-                }
-                ExprKind::Unary {
-                    op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
-                    ..
-                } => {
-                    written = true;
-                    break;
-                }
-                // `x!` is seen through.
-                ExprKind::NonNull(_) => at = parent,
-                _ => break,
-            }
-        }
+        let target = self.bound(file).get_assignment_target(self.hir(file), e);
+        let assigned = matches!(
+            target,
+            Some(AssignmentTarget::Assign(None) | AssignmentTarget::ForInOrOf)
+        );
         TargetKind {
-            assigned: false,
-            definite,
-            written,
+            assigned,
+            definite: assigned
+                || matches!(
+                    target,
+                    Some(AssignmentTarget::Assign(Some(
+                        BinOp::And | BinOp::Or | BinOp::Nullish
+                    )))
+                ),
+            written: target.is_some(),
         }
     }
 
     /// `getAssignmentTargetKind(e) != AssignmentKindNone`: `e` is given a value, by `=` or in a pattern there, by an operator that
     /// reads it first, or by `++` and `--`.
     pub(super) fn is_written(&self, file: FileId, e: ExprId) -> bool {
-        self.target_kind(file, e).written
+        self.bound(file)
+            .get_assignment_target(self.hir(file), e)
+            .is_some()
     }
 
     /// `isMethodAccessForCall`. A call does not see through `x!`.
@@ -2473,14 +2407,12 @@ impl<'p> Checker<'p> {
             return None;
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let is_in_parentheses =
-            |e: ExprId| hir.parens.binary_search_by_key(&e.0, |p| p.0.0).is_ok();
         if let Parent::Prop(p) = bound.expr_parent[owner.idx()] {
             let containing = bound.prop_owner[p.idx()];
             // `getContainingObjectLiteral`: of a method, an accessor, or a function that is all there is to the value of a property.
             let is_member = match hir[p].kind {
                 PropKind::Method | PropKind::Getter | PropKind::Setter => true,
-                PropKind::Init => !is_in_parentheses(owner),
+                PropKind::Init => !is_parenthesized(hir, owner),
                 PropKind::Shorthand | PropKind::Spread => false,
             };
             if is_member
@@ -2514,7 +2446,7 @@ impl<'p> Checker<'p> {
                     let Parent::Prop(outer) = bound.expr_parent[literal.idx()] else {
                         break;
                     };
-                    if hir[outer].kind != PropKind::Init || is_in_parentheses(literal) {
+                    if hir[outer].kind != PropKind::Init || is_parenthesized(hir, literal) {
                         break;
                     }
                     literal = bound.prop_owner[outer.idx()];
@@ -3138,39 +3070,12 @@ impl<'p> Checker<'p> {
 
     // ───────────────────────────── literals ─────────────────────────────
 
-    /// `ast.IsAssignmentTarget`: `GetAssignmentTarget(e) != nil`. Unlike `is_assignment_target` it counts what is read as well: the
-    /// left of a compound assignment and the operand of `++` and `--`.
-    fn is_assignment_target_of_any_kind(&self, file: FileId, e: ExprId) -> bool {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let mut at = e;
-        loop {
-            match bound.expr_parent[at.idx()] {
-                Parent::Expr(parent) => match hir[parent].kind {
-                    ExprKind::Assign { target, .. } => return target == at,
-                    ExprKind::Unary {
-                        op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
-                        ..
-                    } => return true,
-                    ExprKind::Array(_) | ExprKind::Spread(_) | ExprKind::NonNull(_) => at = parent,
-                    _ => return false,
-                },
-                Parent::Prop(p) => {
-                    let owner = bound.prop_owner[p.idx()];
-                    if !matches!(hir[owner].kind, ExprKind::Object(_)) {
-                        return false;
-                    }
-                    at = owner;
-                }
-                _ => return self.is_assignment_target(file, at),
-            }
-        }
-    }
-
     /// `checkArrayLiteral`
     fn type_of_array_literal(&mut self, file: FileId, e: ExprId, items: IdList<ExprId>) -> TypeId {
         let hir = self.hir(file);
         let is_const = self.in_const_context(file, e);
-        let in_pattern = self.is_assignment_target_of_any_kind(file, e);
+        // `IsAssignmentTarget`
+        let in_pattern = self.is_written(file, e);
         let context = self.contextual_type(file, e);
         let wants_tuple = is_const || in_pattern || self.is_in_tuple_context(file, e, context);
         let exact = self.p.files.options.exact_optional_property_types;
@@ -3822,10 +3727,7 @@ impl<'p> Checker<'p> {
                     let has_default = in_pattern
                         && prop.value.is_some()
                         && matches!(hir[prop.value].kind, ExprKind::Assign { op: None, .. })
-                        && hir
-                            .parens
-                            .binary_search_by_key(&prop.value.0, |p| p.0.0)
-                            .is_err();
+                        && !is_parenthesized(hir, prop.value);
                     if has_default
                         || implied.is_some_and(|implied| {
                             self.prop_of(implied, name)
@@ -3994,7 +3896,7 @@ impl<'p> Checker<'p> {
                 // `getTypeOfAccessors`: `getReturnTypeFromBody` of whatever body there is. A block whose `{` is missing returns nothing.
                 if hir[f].flags.contains(Flags::MISSING_BODY)
                     && hir[f].ret.is_none()
-                    && self.setter_annotation_next_to(file, f).is_none()
+                    && self.annotated_setter_type(file, f).is_none()
                 {
                     return TypeId::VOID;
                 }
@@ -4087,10 +3989,7 @@ impl<'p> Checker<'p> {
                 let ty = self.type_of_expr(file, operand);
                 let hir = self.hir(file);
                 // `checkPrefixUnaryExpression`: it takes a literal written right after the sign to make a literal type.
-                let is_bare = hir
-                    .parens
-                    .binary_search_by_key(&operand.0, |p| p.0.0)
-                    .is_err();
+                let is_bare = !is_parenthesized(hir, operand);
                 match hir[operand].kind {
                     ExprKind::Number(n) if is_bare && op == UnOp::Minus => {
                         self.number_literal(-hir.numbers[n as usize], true)
@@ -4681,11 +4580,7 @@ impl<'p> Checker<'p> {
             self.cycles,
             std::mem::replace(&mut self.relation_gave_up, false),
         );
-        let fits = if by_subtype {
-            self.is_subtype(given, props)
-        } else {
-            self.is_assignable(given, props)
-        };
+        let fits = self.is_related_in_pass(given, props, by_subtype);
         let is_sure = self.cycles == cycles_before && !self.relation_gave_up;
         self.relation_gave_up |= gave_up_before;
         fits || !is_sure
@@ -4780,60 +4675,15 @@ impl<'p> Checker<'p> {
             .iter()
             .any(|&sig| !self.sig_type_params(sig).is_empty())
         {
-            // `getLongestCandidateIndex`: the attributes and the children are one argument, if there are any.
+            // The attributes and the children are one argument, if there are any.
             let count = usize::from(!hir[j].attrs.is_empty() || !hir[j].children.is_empty());
-            let (mut best, mut most): (usize, Option<usize>) = (0, None);
-            for (i, &sig) in candidates.iter().enumerate() {
-                let params = self.sig_params(sig);
-                let length = self.parameter_count(&params);
-                if self.has_effective_rest_parameter(&params) || length >= count {
-                    best = i;
-                    break;
-                }
-                if most.is_none_or(|most| length > most) {
-                    (best, most) = (i, Some(length));
-                }
-            }
+            let best = self.longest_candidate_index(&candidates, count);
             return match wanted[best] {
                 Some(props) => Some(props),
                 None => self.jsx_props_of_sig(file, e, candidates[best], construct),
             };
         }
-        // `createUnionOfSignaturesForOverloadFailure`: it takes what any of them takes, and makes what all of them make.
-        let (mut taken, mut made) = (
-            Vec::with_capacity(candidates.len()),
-            Vec::with_capacity(candidates.len()),
-        );
-        // `createCombinedSymbolForOverloadFailure`: `createSymbolWithType` of the first source.
-        let mut source: Option<SigParam> = None;
-        for &sig in &candidates {
-            let params = self.sig_params(sig);
-            source = source.or(params.first().copied());
-            // `tryGetTypeAtPosition`
-            taken.extend(self.param_type_at(&params, 0));
-            made.push(self.sig_return(sig));
-        }
-        let mut params = Vec::new();
-        if let Some(source) = source.filter(|_| !taken.is_empty()) {
-            params.push(SigParam {
-                ty: self.union_reduced(&taken),
-                optional: false,
-                rest: false,
-                ..source
-            });
-        }
-        let ret = if made.iter().all(|&ty| self.is_known(ty)) {
-            self.intersection(&made)
-        } else {
-            TypeId::UNRESOLVED
-        };
-        let combined = self.p.types.intern_sig(SigData::Synth {
-            type_params: Box::new([]),
-            params: params.into(),
-            ret,
-            this: None,
-            of: Box::new([]),
-        });
+        let combined = self.union_of_signatures_for_overload_failure(&candidates);
         Some(self.jsx_effective_first_argument(file, e, combined, construct))
     }
 
@@ -4870,11 +4720,7 @@ impl<'p> Checker<'p> {
             self.jsx_fits_without_sensitive(file, e, props, by_subtype)
         } else {
             let given = self.jsx_attributes_type(file, e);
-            if by_subtype {
-                self.is_subtype(given, props)
-            } else {
-                self.is_assignable(given, props)
-            }
+            self.is_related_in_pass(given, props, by_subtype)
         };
         self.jsx_resolving.pop();
         fits

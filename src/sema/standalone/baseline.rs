@@ -1176,14 +1176,16 @@ fn run_one(
         for found in checker.types_at_locations(file) {
             let (start, end) = (found.start as usize, (found.end as usize).min(text.len()));
             // A missing identifier has no text.
-            if start > end || start == end && found.kind != "missing" {
+            if start > end {
                 continue;
             }
             let line = starts.partition_point(|&s| s as usize <= start) - 1;
             let source = String::from_utf8_lossy(&text[start..end]).replace(['\r', '\n'], "");
+            let kind = format!("{:?}", found.kind);
+            let kind = kind.split('(').next().unwrap_or_default();
             lines.push_str(&format!(
-                "{unit}\t{line}\t{start}\t{source}\t{}\t{}\n",
-                found.type_text, found.kind
+                "{unit}\t{line}\t{start}\t{source}\t{}\t{kind}\n",
+                found.type_text
             ));
         }
         types.lock().unwrap().push_str(&lines);
@@ -1344,10 +1346,6 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
                             let mut lines = types.into_inner().unwrap();
                             // `typeWriterWalker.hadErrorBaseline`: the error type goes by its intrinsic name only in a test without errors.
                             let had_error_baseline = !report.diagnostics.is_empty();
-                            if had_error_baseline {
-                                lines =
-                                    lines.replace("\terror\terror-type\n", "\tany\terror-type\n");
-                            }
                             let marked =
                                 format!("\t{}\t", bun_sema::check::type_writer::ERROR_TYPE_TEXT);
                             let name = if had_error_baseline {

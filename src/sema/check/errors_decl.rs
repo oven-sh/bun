@@ -8,32 +8,11 @@
 use super::errors::Diagnostic;
 use super::errors_order::Named;
 use super::*;
-use crate::bind::{Decl, FnOwner, Parent, PatParent, SymbolId};
+use crate::bind::{
+    Decl, FnOwner, MemberDeclaration, MemberOwner, Parent, PatParent, SymbolId, flags_of_member,
+    member_flags,
+};
 use smallvec::SmallVec;
-
-const PROPERTY: u8 = 1 << 0;
-const METHOD: u8 = 1 << 1;
-const GET_ACCESSOR: u8 = 1 << 2;
-const SET_ACCESSOR: u8 = 1 << 3;
-const ACCESSOR: u8 = GET_ACCESSOR | SET_ACCESSOR;
-
-/// A member of a class, an interface or a type literal, or a parameter property (`member` is `NONE`), as the binder declares it.
-#[derive(Copy, Clone)]
-struct DeclaredMember {
-    name: Atom,
-    is_static: bool,
-    /// Its name has to be worked out.
-    is_late: bool,
-    /// The how manieth it is.
-    order: u32,
-    includes: u8,
-    excludes: u8,
-    file: FileId,
-    member: MemberId,
-    param: ParamId,
-    /// From the type parameters of the declaration it is written in to those the whole goes by.
-    mapper: MapperId,
-}
 
 impl Checker<'_> {
     pub(super) fn check_declarations(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
@@ -141,43 +120,28 @@ impl Checker<'_> {
     /// the element binds.
     fn check_element_initializers(&self, file: FileId, pat: PatId, out: &mut Vec<Diagnostic>) {
         let hir = self.hir(file);
-        match hir[pat].kind {
-            PatKind::Object(props) => {
-                for p in props.iter() {
-                    let prop = &hir[p];
-                    // `{ a: b }` there looks like a type that is none: that is said, and nothing else.
-                    if !prop.is_rest
-                        && prop.pos != hir[prop.value].pos
-                        && matches!(hir[prop.value].kind, PatKind::Ident(_))
-                    {
-                        continue;
-                    }
-                    self.check_element_initializers(file, prop.value, out);
-                    if prop.default.is_some() {
-                        out.push(Diagnostic {
-                            start: hir[prop.value].pos,
-                            code: 2371,
-                        });
-                        let end = self.end_of_pat(file, prop.value);
-                        self.note(hir[prop.value].pos, end, 2371, vec![]);
-                    }
-                }
+        let elements: SmallVec<[(PatId, ExprId); 8]> = match hir[pat].kind {
+            PatKind::Object(props) => props
+                .iter()
+                .map(|p| &hir[p])
+                // `{ a: b }` there looks like a type that is none: that is said, and nothing else.
+                .filter(|prop| {
+                    prop.is_rest
+                        || prop.pos == hir[prop.value].pos
+                        || !matches!(hir[prop.value].kind, PatKind::Ident(_))
+                })
+                .map(|prop| (prop.value, prop.default))
+                .collect(),
+            PatKind::Array(elems) => elems.iter().map(|e| (hir[e].pat, hir[e].default)).collect(),
+            _ => return,
+        };
+        for (binding, initializer) in elements {
+            self.check_element_initializers(file, binding, out);
+            if initializer.is_some() {
+                let start = hir[binding].pos;
+                out.push(Diagnostic { start, code: 2371 });
+                self.note(start, self.end_of_pat(file, binding), 2371, vec![]);
             }
-            PatKind::Array(elems) => {
-                for e in elems.iter() {
-                    let elem = &hir[e];
-                    self.check_element_initializers(file, elem.pat, out);
-                    if elem.default.is_some() {
-                        out.push(Diagnostic {
-                            start: hir[elem.pat].pos,
-                            code: 2371,
-                        });
-                        let end = self.end_of_pat(file, elem.pat);
-                        self.note(hir[elem.pat].pos, end, 2371, vec![]);
-                    }
-                }
-            }
-            _ => {}
         }
     }
 
@@ -501,61 +465,21 @@ impl Checker<'_> {
     /// property. In every class, interface and type literal of the file.
     fn check_subsequent_property_declarations(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let mut symbols: SmallVec<[Sym; 8]> = bound
-            .class_symbol
-            .iter()
-            .chain(&bound.interface_symbol)
-            .filter(|s| s.is_some())
-            .map(|&s| self.files().sym(file, s))
-            .collect();
-        symbols.sort_unstable();
-        symbols.dedup();
-        let mut declared: Vec<DeclaredMember> = Vec::new();
-        for sym in symbols {
-            declared.clear();
-            let decls = self.files().decls_of(sym);
-            if let [(of, decl)] = *decls {
-                let alone = match decl {
-                    Decl::Class(c) => Some((self.hir(of)[c].members, self.hir(of)[c].type_params)),
-                    Decl::Interface(i) => {
-                        Some((self.hir(of)[i].members, self.hir(of)[i].type_params))
-                    }
-                    _ => None,
-                };
-                if alone.is_none_or(|(members, params)| {
-                    params.is_empty() && declares_each_name_once(self.hir(of), members)
-                }) {
-                    continue;
-                }
-            }
-            // The members of what is not put together with the rest are its own.
-            let together = Self::declarations_put_together(&decls);
-            for (of, decl) in decls {
-                let (members, params) = match decl {
-                    Decl::Class(c) => (self.hir(of)[c].members, self.hir(of)[c].type_params),
-                    Decl::Interface(i) => (self.hir(of)[i].members, self.hir(of)[i].type_params),
-                    _ => continue,
-                };
-                if together.contains(&(of, decl)) {
-                    let mapper = self.type_params_by_name(sym, of, params);
-                    self.collect_declared_members(of, members, mapper, &mut declared);
-                } else if of == file {
-                    let mut alone = Vec::new();
-                    self.collect_declared_members(of, members, MapperId::IDENTITY, &mut alone);
-                    self.compare_declared_members(file, &mut alone, out);
-                }
-            }
-            self.compare_declared_members(file, &mut declared, out);
-        }
-        for t in 0..hir.types.len() {
-            if let TypeNodeKind::Object(members) = hir.types[t].kind
-                && members.len() > 1
-                && bound.type_scope[t].is_some()
-                && !declares_each_name_once(hir, members)
-            {
-                declared.clear();
-                self.collect_declared_members(file, members, MapperId::IDENTITY, &mut declared);
-                self.compare_declared_members(file, &mut declared, out);
+        let properties = (0..hir.members.len() as u32)
+            .map(MemberId)
+            .filter(|&m| {
+                hir[m].kind == MemberKind::Property
+                    && bound.member_owner[m.idx()] != MemberOwner::None
+            })
+            .map(MemberDeclaration::Member);
+        let parameter_properties = (0..hir.params.len() as u32)
+            .map(ParamId)
+            .filter(|&p| hir[p].flags.contains(Flags::PARAMETER_PROPERTY))
+            .map(MemberDeclaration::Parameter);
+        for declaration in properties.chain(parameter_properties) {
+            let declarations = self.declarations_of_member(file, declaration);
+            if declarations.len() > 1 {
+                self.compare_with_value_declaration(file, declaration, &declarations, out);
             }
         }
     }
@@ -592,211 +516,154 @@ impl Checker<'_> {
         }
     }
 
-    /// What the members `members` declare, in the order the binder gets to them.
-    fn collect_declared_members(
+    /// From the type parameters of the declaration that `declaration` is written in to those its symbol goes by.
+    fn mapper_of_member_declaration(
         &mut self,
         file: FileId,
-        members: Span<MemberId>,
-        mapper: MapperId,
-        into: &mut Vec<DeclaredMember>,
-    ) {
-        let hir = self.hir(file);
-        for m in members.iter() {
-            let member = &hir[m];
-            let (includes, excludes) = match member.kind {
-                MemberKind::Property if member.flags.contains(Flags::ACCESSOR) => {
-                    (ACCESSOR, METHOD | ACCESSOR)
-                }
-                MemberKind::Property => (PROPERTY, METHOD),
-                MemberKind::Method => (METHOD, PROPERTY | ACCESSOR),
-                MemberKind::Getter => (GET_ACCESSOR, METHOD | GET_ACCESSOR),
-                MemberKind::Setter => (SET_ACCESSOR, METHOD | SET_ACCESSOR),
-                // `bindParameter`: a parameter property is a property as well.
-                MemberKind::Constructor if member.func.is_some() => {
-                    for p in hir[member.func].params.iter() {
-                        if hir[p].flags.contains(Flags::PARAMETER_PROPERTY)
-                            && let PatKind::Ident(name) = hir[hir[p].pat].kind
-                        {
-                            into.push(DeclaredMember {
-                                name,
-                                is_static: false,
-                                is_late: false,
-                                order: into.len() as u32,
-                                includes: PROPERTY,
-                                excludes: METHOD,
-                                file,
-                                member: MemberId::NONE,
-                                param: p,
-                                mapper,
-                            });
-                        }
-                    }
-                    continue;
-                }
-                _ => continue,
-            };
-            let Some(name) = self.member_name(file, member.key) else {
-                continue;
-            };
-            into.push(DeclaredMember {
-                name,
-                is_static: member.flags.contains(Flags::STATIC),
-                is_late: matches!(member.key, PropKey::Computed(_)),
-                order: into.len() as u32,
-                includes,
-                excludes,
-                file,
-                member: m,
-                param: ParamId::NONE,
-                mapper,
-            });
-        }
+        declaration: MemberDeclaration,
+    ) -> MapperId {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let member = match declaration {
+            MemberDeclaration::Member(m) => m,
+            MemberDeclaration::Parameter(p) => match bound.fns[bound.param_fn[p.idx()].idx()].owner
+            {
+                FnOwner::Member(constructor) => constructor,
+                _ => return MapperId::IDENTITY,
+            },
+            _ => return MapperId::IDENTITY,
+        };
+        let (symbol, params) = match bound.member_owner[member.idx()] {
+            MemberOwner::Class(c) => (bound.class_symbol[c.idx()], hir[c].type_params),
+            MemberOwner::Interface(i) => (bound.interface_symbol[i.idx()], hir[i].type_params),
+            _ => return MapperId::IDENTITY,
+        };
+        self.type_params_by_name(self.files().sym(file, symbol), file, params)
     }
 
     /// `getWidenedTypeForVariableLikeDeclaration`, of one declaration of a property.
-    fn type_of_declared_member(&mut self, d: &DeclaredMember) -> TypeId {
-        let ty = if d.member.is_none() {
-            self.type_of_param(d.file, d.param)
-        } else {
-            let ty = self.type_of_member_declaration(d.file, d.member);
-            let flags = self.hir(d.file)[d.member].flags;
-            if !flags.contains(Flags::OPTIONAL) || !self.is_known(ty) {
-                ty
-            } else if flags.contains(Flags::ACCESSOR) {
-                self.optional(ty)
-            } else {
-                self.optional_property(ty)
+    fn type_of_declared_member(
+        &mut self,
+        (file, declaration): (FileId, MemberDeclaration),
+    ) -> TypeId {
+        let ty = match declaration {
+            MemberDeclaration::Parameter(p) => self.type_of_param(file, p),
+            MemberDeclaration::Member(m) => {
+                let ty = self.type_of_member_declaration(file, m);
+                let flags = self.hir(file)[m].flags;
+                if !flags.contains(Flags::OPTIONAL) || !self.is_known(ty) {
+                    ty
+                } else if flags.contains(Flags::ACCESSOR) {
+                    self.optional(ty)
+                } else {
+                    self.optional_property(ty)
+                }
             }
+            _ => return TypeId::UNRESOLVED,
         };
-        self.instantiate(ty, d.mapper)
+        let mapper = self.mapper_of_member_declaration(file, declaration);
+        self.instantiate(ty, mapper)
     }
 
-    /// 2717 2403, of the members of one class, interface or type literal. What is said about `file` is kept.
-    fn compare_declared_members(
+    /// 2717 2403, of the property or parameter property `declaration` of `file`, one of the `declarations` of its symbol.
+    fn compare_with_value_declaration(
         &mut self,
         file: FileId,
-        declared: &mut [DeclaredMember],
+        declaration: MemberDeclaration,
+        declarations: &[(FileId, MemberDeclaration)],
         out: &mut Vec<Diagnostic>,
     ) {
         let hir = self.hir(file);
-        // `combineSymbolTables`: the names that have to be worked out come after the others.
-        declared.sort_unstable_by_key(|d| (d.name, d.is_static, d.is_late, d.order));
-        // A property or a parameter property of `file`.
-        let is_checked = |d: &DeclaredMember| {
-            d.file == file && (d.member.is_none() || hir[d.member].kind == MemberKind::Property)
+        let is_value = |d: &&(FileId, MemberDeclaration)| {
+            matches!(
+                d.1,
+                MemberDeclaration::Member(_) | MemberDeclaration::Parameter(_)
+            )
         };
-        let mut merged: Vec<DeclaredMember> = Vec::new();
-        let mut start = 0;
-        while start < declared.len() {
-            let first = declared[start];
-            let len = declared[start..]
-                .iter()
-                .take_while(|d| d.name == first.name && d.is_static == first.is_static)
-                .count();
-            let run = &declared[start..start + len];
-            start += len;
-            if len < 2 {
-                continue;
-            }
-            // `declareSymbolEx`: what does not go with what is in the table gets a symbol of its own.
-            let mut flags = 0;
-            merged.clear();
-            for d in run {
-                if flags & d.excludes == 0 {
-                    flags |= d.includes;
-                    merged.push(*d);
-                } else if flags & ACCESSOR != 0 && flags & ACCESSOR != d.includes & ACCESSOR {
-                    flags |= ACCESSOR;
+        // The first is `symbol.ValueDeclaration`.
+        let Some(&first) = declarations.iter().find(is_value) else {
+            return;
+        };
+        if first == (file, declaration) {
+            return;
+        }
+        // `getTypeOfSymbol`: what the accessors say if there are any, whatever came first; otherwise what the first says.
+        let accessors: Vec<(FileId, MemberId)> = declarations
+            .iter()
+            .filter_map(|&(of, d)| match d {
+                MemberDeclaration::Member(m)
+                    if flags_of_member(&self.hir(of)[m])
+                        .is_some_and(|flags| flags.0 & member_flags::ACCESSOR != 0) =>
+                {
+                    Some((of, m))
                 }
-            }
-            // The first is `symbol.ValueDeclaration`.
-            if merged.len() < 2 || !merged[1..].iter().any(is_checked) {
-                continue;
-            }
-            // `getTypeOfSymbol`: what the accessors say if there are any, whatever came first; otherwise what the first says.
-            let of_symbol = if flags & ACCESSOR != 0 {
-                let accessors: Vec<(FileId, MemberId)> = merged
-                    .iter()
-                    .filter(|d| d.includes & ACCESSOR != 0)
-                    .map(|d| (d.file, d.member))
-                    .collect();
-                let mapper = merged
-                    .iter()
-                    .find(|d| d.includes & ACCESSOR != 0)
-                    .map_or(MapperId::IDENTITY, |d| d.mapper);
+                _ => None,
+            })
+            .collect();
+        let of_symbol = match accessors.first() {
+            Some(&(of, m)) => {
+                let mapper = self.mapper_of_member_declaration(of, MemberDeclaration::Member(m));
                 let ty = self.type_of_member_declarations(&accessors);
                 self.instantiate(ty, mapper)
-            } else {
-                self.type_of_declared_member(&merged[0])
-            };
-            if !self.is_known(of_symbol) || self.is_error_type(of_symbol) {
-                continue;
             }
-            for d in &merged[1..] {
-                if !is_checked(d) {
-                    continue;
-                }
-                let again = self.type_of_declared_member(d);
-                if !self.is_known(again)
-                    || self.is_error_type(again)
-                    || self.is_identical(of_symbol, again)
-                {
-                    continue;
-                }
-                // As sure as with variables: see 2403.
-                let differs = if self.is_any(of_symbol) || self.is_any(again) {
-                    self.is_any(of_symbol) != self.is_any(again)
-                } else {
-                    !self.is_assignable(of_symbol, again) || !self.is_assignable(again, of_symbol)
-                };
-                if differs {
-                    let (start, end, code) = if d.member.is_some() {
-                        (
-                            hir[d.member].pos,
-                            self.end_of_member_name(file, d.member),
-                            2717,
-                        )
-                    } else {
-                        let name = hir[d.param].pat;
-                        (hir[name].pos, self.end_of_pat(file, name), 2403)
-                    };
-                    out.push(Diagnostic { start, code });
-                    self.explain_to(start, end, code, |c| {
-                        vec![
-                            c.source_text(file, start, end),
-                            c.type_to_string(of_symbol),
-                            c.type_to_string(again),
-                        ]
-                    });
-                    // `symbol.ValueDeclaration`
-                    let first = merged[0];
-                    self.relate(start, code, |c| {
-                        // `GetErrorRangeForNode`: all of a parameter, the name of a member.
-                        let at = if first.member.is_none() {
-                            (
-                                first.file,
-                                c.hir(first.file)[first.param].pos,
-                                c.end_of_param(first.file, first.param),
-                            )
-                        } else {
-                            let from = c.hir(first.file)[first.member].pos;
-                            // The text of the default library is not kept.
-                            let to = if c.hir(first.file).text.is_empty() {
-                                from
-                            } else {
-                                c.end_of_member_name(first.file, first.member)
-                            };
-                            (first.file, from, to)
-                        };
-                        vec![super::explain::Related {
-                            at: Some(at),
-                            code: 6203,
-                            args: vec![c.source_text(file, start, end)],
-                        }]
-                    });
-                }
-            }
+            None => self.type_of_declared_member(first),
+        };
+        if !self.is_known(of_symbol) || self.is_error_type(of_symbol) {
+            return;
         }
+        let again = self.type_of_declared_member((file, declaration));
+        if !self.is_known(again) || self.is_error_type(again) || self.is_identical(of_symbol, again)
+        {
+            return;
+        }
+        // As sure as with variables: see 2403.
+        let differs = if self.is_any(of_symbol) || self.is_any(again) {
+            self.is_any(of_symbol) != self.is_any(again)
+        } else {
+            !self.is_assignable(of_symbol, again) || !self.is_assignable(again, of_symbol)
+        };
+        if !differs {
+            return;
+        }
+        let (start, end, code) = match declaration {
+            MemberDeclaration::Parameter(p) => {
+                let name = hir[p].pat;
+                (hir[name].pos, self.end_of_pat(file, name), 2403)
+            }
+            MemberDeclaration::Member(m) => (hir[m].pos, self.end_of_member_name(file, m), 2717),
+            _ => return,
+        };
+        out.push(Diagnostic { start, code });
+        self.explain_to(start, end, code, |c| {
+            vec![
+                c.source_text(file, start, end),
+                c.type_to_string(of_symbol),
+                c.type_to_string(again),
+            ]
+        });
+        self.relate(start, code, |c| {
+            // `GetErrorRangeForNode`: all of a parameter, the name of a member.
+            let at = match first {
+                (of, MemberDeclaration::Parameter(p)) => {
+                    (of, c.hir(of)[p].pos, c.end_of_param(of, p))
+                }
+                (of, MemberDeclaration::Member(m)) => {
+                    let from = c.hir(of)[m].pos;
+                    // The text of the default library is not kept.
+                    let to = if c.hir(of).text.is_empty() {
+                        from
+                    } else {
+                        c.end_of_member_name(of, m)
+                    };
+                    (of, from, to)
+                }
+                (of, _) => (of, 0, 0),
+            };
+            vec![super::explain::Related {
+                at: Some(at),
+                code: 6203,
+                args: vec![c.source_text(file, start, end)],
+            }]
+        });
     }
 
     /// `checkAliasSymbol`: what is imported means something that is declared here as well.
@@ -938,32 +805,18 @@ impl Checker<'_> {
     /// `export = value`, the properties of the value can be had by their names.
     fn flags_of_imported_value(&mut self, sym: Sym) -> Option<SymFlags> {
         let files = self.files();
-        let hir = self.hir(sym.file);
-        let (spec, mode, name) =
-            files
-                .symbol(sym)
-                .decls
-                .iter()
-                .rev()
-                .find_map(|&decl| match decl {
-                    Decl::ImportSpec(s) => hir
-                        .imports
-                        .iter()
-                        .find(|i| i.named.range().contains(&s.idx()))
-                        .map(|i| (i.spec, i.mode, hir[s].imported)),
-                    Decl::ExportSpec(s) => hir
-                        .exports
-                        .iter()
-                        .find(|x| x.spec.is_some() && x.items.range().contains(&s.idx()))
-                        .map(|x| (x.spec, x.mode, hir[s].local)),
-                    _ => None,
-                })?;
+        let (spec, mode, name) = files
+            .symbol(sym)
+            .decls
+            .iter()
+            .rev()
+            .filter(|decl| !matches!(decl, Decl::Require(_)))
+            .find_map(|&decl| files.external_module_member_of(sym.file, decl))?;
         // `getTargetOfImportSpecifier`: `{ default as d }` is the default import by another spelling.
         if name == known::default {
             return None;
         }
-        let module =
-            files.module_of_specifier_as(sym.file, spec, files.mode_of_import(sym.file, mode))?;
+        let module = files.module_of_specifier_as(sym.file, spec, mode)?;
         // `isShorthandAmbientModuleSymbol`
         if files
             .decls(module)
@@ -1139,35 +992,6 @@ impl Checker<'_> {
     }
 }
 
-/// Whether the names that `members` declare, parameter properties included, are all written out and all different.
-fn declares_each_name_once(hir: &hir::File, members: Span<MemberId>) -> bool {
-    let mut names: SmallVec<[Atom; 16]> = SmallVec::new();
-    for m in members.iter() {
-        let member = &hir[m];
-        match member.kind {
-            MemberKind::Property | MemberKind::Method | MemberKind::Getter | MemberKind::Setter => {
-                match member.key {
-                    PropKey::Name(name) | PropKey::Private(name) => names.push(name),
-                    PropKey::Computed(_) => return false,
-                    PropKey::None => {}
-                }
-            }
-            MemberKind::Constructor if member.func.is_some() => {
-                for p in hir[member.func].params.iter() {
-                    if hir[p].flags.contains(Flags::PARAMETER_PROPERTY)
-                        && let PatKind::Ident(name) = hir[hir[p].pat].kind
-                    {
-                        names.push(name);
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    names.sort_unstable();
-    names.windows(2).all(|pair| pair[0] != pair[1])
-}
-
 /// `node.End()` of the import clause of `import`, which has a default import: that, and the `{ .. }` or `* as ns` after it.
 fn end_of_import_clause(c: &Checker<'_>, file: FileId, import: ImportId) -> u32 {
     let hir = c.hir(file);
@@ -1184,24 +1008,5 @@ fn end_of_import_clause(c: &Checker<'_>, file: FileId, import: ImportId) -> u32 
         c.end_of_bracket_at(file, (hir.text.len() - braces.len()) as u32)
     } else {
         name_end
-    }
-}
-
-/// Where an import clause or an import specifier starts, whose name is at `name_pos`: at the `type` before the name if it has one.
-fn start_with_type(text: &[u8], name_pos: u32, type_only: bool) -> u32 {
-    if !type_only {
-        return name_pos;
-    }
-    let mut before = text[..(name_pos as usize).min(text.len())].trim_ascii_end();
-    while before.ends_with(b"*/") {
-        let Some(open) = before.windows(2).rposition(|w| w == b"/*") else {
-            break;
-        };
-        before = before[..open].trim_ascii_end();
-    }
-    if before.ends_with(b"type") {
-        before.len() as u32 - 4
-    } else {
-        name_pos
     }
 }

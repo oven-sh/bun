@@ -320,7 +320,7 @@ impl<'p> Checker<'p> {
             return None;
         }
         if let Some(rest) = text.strip_prefix(crate::atom::SYMBOL_NAME_PREFIX) {
-            // `name@file.id` for a unique symbol, `name` for `Symbol.name`.
+            // As `property_name_of_type` writes it.
             let mut parts = rest.splitn(2, |&c| c == b'@');
             let symbol = self.files().atoms.intern(parts.next().unwrap());
             let number = |b: &[u8]| {
@@ -328,16 +328,26 @@ impl<'p> Checker<'p> {
                     .ok()
                     .and_then(|s| s.parse::<u32>().ok())
             };
-            let (file, id) = match parts
+            let declaration = match parts
                 .next()
                 .map(|w| w.splitn(2, |&c| c == b'.').collect::<Vec<_>>())
             {
-                Some(w) if w.len() == 2 => (FileId(number(w[0])?), number(w[1])?),
-                _ => (FileId(u32::MAX), 0),
+                Some(w) if w.len() == 2 => {
+                    let file = FileId(number(w[0])?);
+                    match w[1].strip_prefix(b"m") {
+                        Some(member) => {
+                            UniqueSymbolDeclaration::Member(file, MemberId(number(member)?))
+                        }
+                        None => UniqueSymbolDeclaration::Variable(Sym {
+                            file,
+                            id: crate::bind::SymbolId(number(w[1])?),
+                        }),
+                    }
+                }
+                _ => UniqueSymbolDeclaration::SymbolConstructor,
             };
             return Some(self.intern(TypeData::UniqueSymbol {
-                file,
-                id,
+                symbol: declaration,
                 name: symbol,
             }));
         }
@@ -963,91 +973,33 @@ impl<'p> Checker<'p> {
 
     // ───────────────────────────── conditional types ─────────────────────────────
 
+    /// `getInferTypeParameters`, of the conditional type whose `extends` type is written at `extends`: the type parameters among its
+    /// locals, each by the declaration that `getDeclaredTypeOfSymbol` goes by.
     pub(super) fn collect_infer_params(
         &self,
         file: FileId,
-        node: TypeNodeId,
+        extends: TypeNodeId,
         out: &mut Vec<TypeParamId>,
     ) {
-        let hir = self.hir(file);
-        let list = |c: &Self, l: IdList<TypeNodeId>, out: &mut Vec<TypeParamId>| {
-            for n in hir.ids(l) {
-                c.collect_infer_params(file, n, out);
-            }
-        };
-        match hir[node].kind {
-            TypeNodeKind::Infer(p) => {
-                // `infer T` twice in one `extends` is one parameter.
-                if !out.iter().any(|&o| hir[o].name == hir[p].name) {
-                    out.push(p);
-                }
-            }
-            TypeNodeKind::Ref { args, .. }
-            | TypeNodeKind::Typeof { args, .. }
-            | TypeNodeKind::Import { args, .. } => list(self, args, out),
-            TypeNodeKind::Template { types, .. }
-            | TypeNodeKind::Union(types)
-            | TypeNodeKind::Intersection(types) => list(self, types, out),
-            TypeNodeKind::Array(t) | TypeNodeKind::Keyof(t) | TypeNodeKind::Readonly(t) => {
-                self.collect_infer_params(file, t, out)
-            }
-            TypeNodeKind::Tuple(elems) => {
-                for e in elems.iter() {
-                    self.collect_infer_params(file, hir[e].ty, out);
-                }
-            }
-            TypeNodeKind::Fn(f) => {
-                for p in hir[f].params.iter() {
-                    if hir[p].ty.is_some() {
-                        self.collect_infer_params(file, hir[p].ty, out);
-                    }
-                }
-                if hir[f].this_ty.is_some() {
-                    self.collect_infer_params(file, hir[f].this_ty, out);
-                }
-                if hir[f].ret.is_some() {
-                    self.collect_infer_params(file, hir[f].ret, out);
-                }
-            }
-            TypeNodeKind::Object(members) => {
-                for m in members.iter() {
-                    if hir[m].ty.is_some() {
-                        self.collect_infer_params(file, hir[m].ty, out);
-                    }
-                    if hir[m].func.is_some() {
-                        let f = hir[m].func;
-                        for p in hir[f].params.iter() {
-                            if hir[p].ty.is_some() {
-                                self.collect_infer_params(file, hir[p].ty, out);
-                            }
-                        }
-                        if hir[f].ret.is_some() {
-                            self.collect_infer_params(file, hir[f].ret, out);
-                        }
-                    }
-                }
-            }
-            TypeNodeKind::Cond { check, yes, no, .. } => {
-                self.collect_infer_params(file, check, out);
-                self.collect_infer_params(file, yes, out);
-                self.collect_infer_params(file, no, out);
-            }
-            TypeNodeKind::Mapped(m) => {
-                if hir[m].ty.is_some() {
-                    self.collect_infer_params(file, hir[m].ty, out);
-                }
-            }
-            TypeNodeKind::IndexedAccess { obj, index } => {
-                self.collect_infer_params(file, obj, out);
-                self.collect_infer_params(file, index, out);
-            }
-            TypeNodeKind::Predicate { ty, .. } => {
-                if ty.is_some() {
-                    self.collect_infer_params(file, ty, out);
-                }
-            }
-            _ => {}
+        let bound = self.bound(file);
+        let own = bound.type_scope[extends.idx()];
+        if own.is_none() {
+            return;
         }
+        // The scope of `extends` alone (`ScopeKind::Extends`) lies in the scope that has the locals.
+        let scope = bound.scopes[own.idx()].parent;
+        for &(_, symbol) in bound.table(bound.scopes[scope.idx()].locals) {
+            out.extend(
+                bound.symbols[symbol.idx()]
+                    .decls
+                    .iter()
+                    .find_map(|decl| match *decl {
+                        crate::bind::Decl::TypeParam(declared) => Some(declared),
+                        _ => None,
+                    }),
+            );
+        }
+        out.sort_unstable();
     }
 
     /// `getConditionalTypeInstantiation`: the conditional type at `node`, with `mapper` for the type parameters around it.

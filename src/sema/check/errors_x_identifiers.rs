@@ -93,13 +93,6 @@ enum Node {
     Lost,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq)]
-enum AssignmentKind {
-    None,
-    Definite,
-    Compound,
-}
-
 // ───────────────────────────── the way out ─────────────────────────────
 
 impl Pass<'_, '_> {
@@ -112,14 +105,6 @@ impl Pass<'_, '_> {
 
     fn is_bound(&self, e: ExprId) -> bool {
         !matches!(self.bound.expr_parent[e.idx()], Parent::None)
-    }
-
-    /// Whether `e` is written in parentheses of its own.
-    fn is_parenthesized(&self, e: ExprId) -> bool {
-        self.hir
-            .parens
-            .binary_search_by_key(&e.0, |p| p.0.0)
-            .is_ok()
     }
 
     /// Whether `node` is the expression of a decorator.
@@ -272,53 +257,6 @@ impl Pass<'_, '_> {
                 }
                 Node::Module(_) | Node::File | Node::Property(_) | Node::Lost => return node,
                 _ => {}
-            }
-        }
-    }
-
-    /// `getAssignmentTargetKind`
-    fn assignment_kind(&self, e: ExprId) -> AssignmentKind {
-        let (hir, bound) = (self.hir, self.bound);
-        let mut node = e;
-        loop {
-            match bound.expr_parent[node.idx()] {
-                Parent::Expr(parent) => match hir[parent].kind {
-                    ExprKind::Assign { op, target, .. } => {
-                        return match op {
-                            _ if target != node => AssignmentKind::None,
-                            None | Some(BinOp::And | BinOp::Or | BinOp::Nullish) => {
-                                AssignmentKind::Definite
-                            }
-                            Some(_) => AssignmentKind::Compound,
-                        };
-                    }
-                    ExprKind::Unary {
-                        op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
-                        ..
-                    } => return AssignmentKind::Compound,
-                    ExprKind::Array(_) | ExprKind::Spread(_) | ExprKind::NonNull(_) => {
-                        node = parent
-                    }
-                    _ => return AssignmentKind::None,
-                },
-                Parent::Prop(p) => {
-                    let owner = bound.prop_owner[p.idx()];
-                    if !matches!(hir[owner].kind, ExprKind::Object(_)) {
-                        return AssignmentKind::None;
-                    }
-                    node = owner;
-                }
-                // `for (x of xs)`
-                Parent::Stmt(s) if s.is_some() => {
-                    let is_loop_variable = matches!(bound.stmt_parent[s.idx()], Parent::Stmt(l) if l.is_some()
-                        && matches!(hir[l].kind, StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } if left == s));
-                    return if is_loop_variable {
-                        AssignmentKind::Definite
-                    } else {
-                        AssignmentKind::None
-                    };
-                }
-                _ => return AssignmentKind::None,
             }
         }
     }
@@ -742,7 +680,7 @@ impl Pass<'_, '_> {
     /// `isEmptyArrayLiteral`
     fn is_empty_array_literal(&self, e: ExprId) -> bool {
         matches!(self.hir[e].kind, ExprKind::Array(items) if items.is_empty())
-            && !self.is_parenthesized(e)
+            && !is_parenthesized(self.hir, e)
     }
 
     /// The name bound by `symbol.ValueDeclaration`, if that is a variable declaration in this file. `addDeclarationToSymbol` only
@@ -825,16 +763,6 @@ impl Pass<'_, '_> {
             && !decl.flags.contains(Flags::EXPORT)
             && !(matches!(self.bound.stmt_parent[stmt.idx()], Parent::File)
                 && !self.c.files().module(self.file).is_module())
-    }
-
-    /// `isSymbolAssignedDefinitely`
-    fn is_assigned_definitely(&self, symbol: SymbolId) -> bool {
-        let assignments = &self.bound.assignments;
-        let from = assignments.partition_point(|a| a.0.0 < symbol.0);
-        assignments[from..]
-            .iter()
-            .take_while(|a| a.0 == symbol)
-            .any(|a| self.assignment_kind(a.1) == AssignmentKind::Definite)
     }
 
     /// Whether the flow of control goes on outside of `node`, where it is written, if the flow container is further out: a function
@@ -939,15 +867,18 @@ impl Pass<'_, '_> {
             ExprKind::Dot { name, .. } => {
                 name == known::length
                     || (name == known::push || name == known::unshift)
-                        && !self.is_parenthesized(parent)
+                        && !is_parenthesized(self.hir, parent)
                         && matches!(bound.expr_parent[parent.idx()], Parent::Expr(call) if matches!(hir[call].kind, ExprKind::Call(_)))
             }
-            ExprKind::Index { obj, index, .. } if obj == root && !self.is_parenthesized(parent) => {
+            ExprKind::Index { obj, index, .. }
+                if obj == root && !is_parenthesized(self.hir, parent) =>
+            {
                 let Parent::Expr(assignment) = bound.expr_parent[parent.idx()] else {
                     return false;
                 };
                 if !matches!(hir[assignment].kind, ExprKind::Assign { op: None, target, .. } if target == parent)
-                    || self.assignment_kind(assignment) != AssignmentKind::None
+                    || self.bound.get_assignment_target_kind(self.hir, assignment)
+                        != AssignmentKind::None
                 {
                     return false;
                 }
@@ -970,7 +901,7 @@ impl Pass<'_, '_> {
         let Some((kind, pat, d)) = self.auto_variable(symbol) else {
             return;
         };
-        let assignment = self.assignment_kind(e);
+        let assignment = self.bound.get_assignment_target_kind(self.hir, e);
         // A constant that is assigned to is an error, and that is all that is said.
         if assignment == AssignmentKind::Definite
             || assignment != AssignmentKind::None
@@ -1006,8 +937,8 @@ impl Pass<'_, '_> {
         let is_never_initialized = hir[d].init.is_none()
             && !hir[d].flags.contains(Flags::DEFINITE)
             && is_mutable_local
-            && !self.is_assigned_definitely(symbol);
-        let is_in_non_null = !self.is_parenthesized(e)
+            && !self.bound.is_symbol_assigned_definitely(self.hir, symbol);
+        let is_in_non_null = !is_parenthesized(self.hir, e)
             && matches!(bound.expr_parent[e.idx()], Parent::Expr(p) if matches!(hir[p].kind, ExprKind::NonNull(_)));
         let assume_initialized = is_outer_variable && !is_never_initialized
             || is_in_non_null
@@ -1216,7 +1147,8 @@ impl Pass<'_, '_> {
                         }
                         // `getBaseTypeOfLiteralType` of what it was before, which makes no difference here.
                         if let FlowTarget::Expr(x) = target
-                            && self.assignment_kind(x) == AssignmentKind::Compound
+                            && self.bound.get_assignment_target_kind(self.hir, x)
+                                == AssignmentKind::Compound
                         {
                             flow = before;
                             continue;
@@ -1350,9 +1282,11 @@ impl Pass<'_, '_> {
             FlowTarget::Expr(x) => match bound.expr_parent[x.idx()] {
                 Parent::Expr(parent) => match hir[parent].kind {
                     // `[x = d] = v`: `d` is only for want of anything better.
-                    ExprKind::Assign { target, value, .. } if target == x => {
-                        (value, self.assignment_kind(parent) != AssignmentKind::None)
-                    }
+                    ExprKind::Assign { target, value, .. } if target == x => (
+                        value,
+                        self.bound.get_assignment_target_kind(self.hir, parent)
+                            != AssignmentKind::None,
+                    ),
                     _ => (ExprId::NONE, false),
                 },
                 _ => (ExprId::NONE, false),
@@ -1403,7 +1337,7 @@ impl Pass<'_, '_> {
             },
             _ => return None,
         };
-        (!self.is_parenthesized(access)).then_some(array)
+        (!is_parenthesized(self.hir, access)).then_some(array)
     }
 
     /// `getTypeAtFlowArrayMutation`, of a mutation of the variable.
@@ -1695,65 +1629,6 @@ impl Pass<'_, '_> {
 
     // ───────────────────────────── calls that assert or never return ─────────────────────────────
 
-    /// `getExplicitTypeOfSymbol`
-    fn explicit_type_of_symbol(&mut self, sym: Sym) -> Option<TypeId> {
-        let sym = self.c.files().resolve_alias_if_needed(sym)?;
-        let flags = self.c.files().flags(sym);
-        if flags.intersects(SymFlags::FUNCTION | SymFlags::CLASS | SymFlags::VALUE_MODULE) {
-            return Some(self.c.type_of_symbol(sym));
-        }
-        if !flags.intersects(SymFlags::VARIABLE) {
-            return None;
-        }
-        let (file, decl) = *self.c.files().decls(sym).first()?;
-        let (Decl::Var(pat) | Decl::Param(pat)) = decl else {
-            return None;
-        };
-        let annotation = match self.c.bound(file).pat_parent[pat.idx()] {
-            PatParent::Var(d) => self.c.hir(file)[d].ty,
-            PatParent::Param(p) => self.c.hir(file)[p].ty,
-            _ => TypeNodeId::NONE,
-        };
-        if annotation.is_some() {
-            Some(self.c.type_of_symbol(sym))
-        } else {
-            None
-        }
-    }
-
-    /// `getTypeOfDottedName`: the type of `e` as far as annotations say.
-    fn type_of_dotted_name(&mut self, e: ExprId) -> Option<TypeId> {
-        match self.hir[e].kind {
-            ExprKind::Ident(name) => {
-                let sym = self.c.symbol_of_identifier(self.file, e, name)?;
-                self.explicit_type_of_symbol(sym)
-            }
-            ExprKind::This => Some(self.c.type_of_expr(self.file, e)),
-            ExprKind::Dot { obj, name, .. } => {
-                let obj = self.type_of_dotted_name(obj)?;
-                let apparent = self.c.apparent_type(obj);
-                let (prop, mapper) = self.c.prop_of(apparent, name)?;
-                let is_explicit = match prop.source {
-                    PropSource::Members(ref members) => {
-                        let (file, m) = *members.first()?;
-                        let member = &self.c.hir(file)[m];
-                        member.kind == MemberKind::Method
-                            || member.kind == MemberKind::Property && member.ty.is_some()
-                    }
-                    PropSource::Parameter(file, p) => self.c.hir(file)[p].ty.is_some(),
-                    PropSource::Symbol(sym) => self.explicit_type_of_symbol(sym).is_some(),
-                    _ => false,
-                };
-                if is_explicit {
-                    Some(self.c.type_of_prop(&prop, mapper))
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        }
-    }
-
     /// `hasTypePredicateOrNeverReturnType`
     fn has_type_predicate_or_never_return_type(&mut self, sig: SigId) -> bool {
         if self.c.sig_predicate(sig).is_some() {
@@ -1777,7 +1652,7 @@ impl Pass<'_, '_> {
             return None;
         }
         let callee = if is_statement {
-            self.type_of_dotted_name(callee)?
+            self.c.explicit_type(self.file, callee)?
         } else {
             let ty = self.c.type_of_expr(self.file, callee);
             self.c.non_nullable(ty)
@@ -2745,25 +2620,6 @@ impl Pass<'_, '_> {
 
 // ───────────────────────────── property accesses ─────────────────────────────
 
-/// `hasParseDiagnostics`. What the parser objected to and went on from is kept with what tsgo's binder and checker say of syntax. They
-/// are told apart by the code: these are the ones only parser.go and scanner.go give, and 1003 and 1005, which are only ever
-/// noted for what the parser expected and did not find. Not 18016: the parser's own sets `hir.has_parse_diagnostics`, one that is left
-/// in `early_errors` without it is `checkGrammarObjectLiteralExpression`'s.
-fn has_parse_diagnostics(hir: &hir::File) -> bool {
-    hir.has_parse_diagnostics
-        || hir.has_errors
-        || hir.syntax_errors > 0
-        || hir.early_errors.iter().any(|&(_, code)| {
-            matches!(
-                code,
-                1002 | 1003 | 1005 | 1007 | 1010..=1012 | 1034 | 1068 | 1069 | 1084 | 1109 | 1121 | 1124..=1132 | 1134 | 1135
-                    | 1137..=1140 | 1144..=1146 | 1160 | 1161 | 1177..=1181 | 1185 | 1198 | 1199 | 1209 | 1223 | 1260 | 1327 | 1328
-                    | 1351..=1353 | 1357 | 1381 | 1382 | 1385..=1390 | 1434..=1443 | 1472 | 1477 | 1478 | 1487..=1490 | 2754 | 2809
-                    | 2819 | 6188 | 6189 | 17002 | 17006..=17008 | 17014 | 17015 | 17021 | 18009 | 18026 | 18029 | 18030
-            )
-        })
-}
-
 /// The private name `text` as it is written: without what is put after it to tell the `#x` of one class from that of another.
 fn written_private_name(text: &[u8]) -> &[u8] {
     &text[..text
@@ -2929,7 +2785,7 @@ impl Pass<'_, '_> {
         if self.bound.is_in_type_query(e) {
             return;
         }
-        let assignment = self.assignment_kind(e);
+        let assignment = self.bound.get_assignment_target_kind(self.hir, e);
         let Some(classes) = self.containing_classes(e) else {
             return;
         };
@@ -3195,7 +3051,7 @@ impl Pass<'_, '_> {
             return;
         }
         // What is yet to be known cannot be written to on the strength of a signature of what it extends.
-        if self.assignment_kind(e) != AssignmentKind::None
+        if self.bound.get_assignment_target_kind(self.hir, e) != AssignmentKind::None
             && self.c.is_generic_object_type(left)
             && !matches!(self.c.data(left), TypeData::ThisParam(_))
         {
@@ -3222,7 +3078,7 @@ impl Pass<'_, '_> {
         if !self.strict
             || !may_be_a_field && !self.has_assignment_declarations()
             || self.bound.expr_flow[e.idx()] == UNREACHABLE
-            || self.assignment_kind(e) == AssignmentKind::Definite
+            || self.bound.get_assignment_target_kind(self.hir, e) == AssignmentKind::Definite
         {
             return;
         }
@@ -3245,7 +3101,7 @@ impl Pass<'_, '_> {
                 let object = c.type_of_expr(file, obj);
                 let apparent = c.apparent_type(object);
                 vec![match c.prop_of(apparent, name) {
-                    Some((prop, _)) => c.property_to_string(&prop),
+                    Some((prop, _)) => c.prop_to_string(&prop),
                     None => c.atom_text(name),
                 }]
             });
@@ -3258,7 +3114,7 @@ impl Pass<'_, '_> {
         let (hir, bound) = (self.hir, self.bound);
         if !self.c.p.files.options.strict_property_initialization
             || !matches!(hir[obj].kind, ExprKind::This)
-            || self.is_parenthesized(obj)
+            || is_parenthesized(self.hir, obj)
             // `typeof this.x` in a type is a qualified name, not an access expression.
             || bound.is_in_type_query(e)
         {
@@ -3337,7 +3193,9 @@ impl Pass<'_, '_> {
                 let decls = &self.c.files().symbol(*sym).decls;
                 let first = decls.iter().find_map(|&decl| match decl {
                     Decl::ExportsProperty(x) => match self.c.hir(of)[x].kind {
-                        ExprKind::Assign { value, .. } if self.c.expression_is_alias(of, value) => {
+                        ExprKind::Assign { value, .. }
+                            if expression_is_alias(self.c.hir(of), value) =>
+                        {
                             None
                         }
                         _ => Some(x),
@@ -3374,30 +3232,6 @@ impl Pass<'_, '_> {
         }
     }
 
-    /// `IsEntityNameExpression`
-    fn is_entity_name_expression(&self, e: ExprId) -> bool {
-        match self.hir[e].kind {
-            ExprKind::Ident(_) => true,
-            ExprKind::Dot { obj, .. } => {
-                !self.is_parenthesized(obj) && self.is_entity_name_expression(obj)
-            }
-            _ => false,
-        }
-    }
-
-    /// `resolveEntityName`, of a value.
-    fn entity_symbol(&self, e: ExprId) -> Option<Sym> {
-        let files = self.c.files();
-        let sym = match self.hir[e].kind {
-            ExprKind::Ident(name) => self.c.symbol_of_identifier(self.file, e, name)?,
-            ExprKind::Dot { obj, name, .. } => {
-                files.namespace_member(self.entity_symbol(obj)?, name)?
-            }
-            _ => return None,
-        };
-        files.resolve_alias_if_needed(sym)
-    }
-
     /// What the evaluator looks at of the initializer `e` of `member`: a member that is worked out from itself is used before it is
     /// assigned.
     fn evaluate(&mut self, e: ExprId, member: EnumMemberId) {
@@ -3432,15 +3266,18 @@ impl Pass<'_, '_> {
                 }
                 return;
             }
-            ExprKind::Ident(_) | ExprKind::Dot { .. } if self.is_entity_name_expression(e) => {
-                self.entity_symbol(e)
+            // It is `None` of what is no `IsEntityNameExpression`.
+            ExprKind::Ident(_) | ExprKind::Dot { .. } => {
+                self.c
+                    .resolve_entity_name_expression(self.file, e, SymFlags::VALUE)
             }
             ExprKind::Index { obj, index, .. }
-                if !self.is_parenthesized(obj)
-                    && !self.is_parenthesized(index)
-                    && self.is_entity_name_expression(obj) =>
+                if !is_parenthesized(hir, index) && is_entity_name_expression(hir, obj) =>
             {
-                match (self.entity_symbol(obj), self.string_literal_like(index)) {
+                let root = self
+                    .c
+                    .resolve_entity_name_expression(self.file, obj, SymFlags::VALUE);
+                match (root, self.string_literal_like(index)) {
                     (Some(root), Some(name))
                         if self.c.files().flags(root).contains(SymFlags::ENUM) =>
                     {
@@ -3634,7 +3471,7 @@ impl Pass<'_, '_> {
     /// `GetAssignedName`: where what the function expression `e` is given to is named.
     fn start_of_assigned_name(&self, e: ExprId) -> Option<u32> {
         let (hir, bound) = (self.hir, self.bound);
-        if self.is_parenthesized(e) {
+        if is_parenthesized(self.hir, e) {
             return None;
         }
         match bound.expr_parent[e.idx()] {
@@ -3659,7 +3496,7 @@ impl Pass<'_, '_> {
                 else {
                     return None;
                 };
-                if right != e || self.is_parenthesized(left) {
+                if right != e || is_parenthesized(self.hir, left) {
                     return None;
                 }
                 match hir[left].kind {
@@ -3735,7 +3572,7 @@ impl Pass<'_, '_> {
         let callee = hir[c].callee;
         let symbol = bound.expr_symbol[callee.idx()];
         if !matches!(hir[callee].kind, ExprKind::Ident(_))
-            || self.is_parenthesized(callee)
+            || is_parenthesized(self.hir, callee)
             || symbol.is_none()
         {
             return false;

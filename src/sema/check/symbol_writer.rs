@@ -2,10 +2,11 @@
 //! (`typeWriterWalker.getSymbols`, `GetSymbolAtLocation`, `SymbolToStringEx`).
 //!
 //! Members of classes, interfaces, type literals and object literals have no `SymbolId`: such a symbol is a [`Prop`], and its
-//! declarations are found again from the first of them, as `declareSymbolEx` would have put them together.
+//! declarations are those the binder and `lateBindMember` have put together with the first of them.
 
+use super::visit_node::{VisitedKind, VisitedNode};
 use super::*;
-use crate::bind::{Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind, SymbolId};
+use crate::bind::{Decl, FnOwner, MemberDeclaration, MemberOwner, Parent, PatParent, ScopeId};
 use crate::util::FxHashSet;
 
 /// `typeWriterResult`
@@ -63,15 +64,6 @@ enum PropertyParent {
     Named(String),
 }
 
-const PROPERTY: u8 = 1;
-const METHOD: u8 = 2;
-const GET_ACCESSOR: u8 = 4;
-const SET_ACCESSOR: u8 = 8;
-const ACCESSOR: u8 = GET_ACCESSOR | SET_ACCESSOR;
-
-/// A declaration of a member, with the `includes` and `excludes` it is declared with.
-type MemberDeclaration = (FileId, Declaration, u8, u8);
-
 const FUNCTION_MODIFIERS: &[&[u8]] = &[b"function", b"async", b"export", b"default", b"declare"];
 const CLASS_MODIFIERS: &[&[u8]] = &[b"class", b"abstract", b"export", b"default", b"declare"];
 const INTERFACE_MODIFIERS: &[&[u8]] = &[b"interface", b"export", b"default", b"declare"];
@@ -119,16 +111,13 @@ const DOT_OR_BRACKET: &[u8] = b".[";
 impl Checker<'_> {
     /// `typeWriterWalker.getSymbols`, in no particular order. The file must have been checked, as in the harness.
     pub fn symbols_at_locations(&mut self, file: FileId) -> Vec<SymbolAtLocation> {
+        let mut nodes = self.visited_nodes(file);
+        // A range is written once: a name comes before the expression that is kept at the same place.
+        nodes.sort_by_key(|node| matches!(node.kind, VisitedKind::Expression(_)));
         let mut writer = SymbolWriter::new(self, file);
-        // A range is written once: a declaration name comes before the expression or the type that is kept at the same place.
-        writer.write_declaration_names();
-        writer.write_member_names();
-        writer.write_property_names();
-        writer.write_binding_names();
-        writer.write_expressions();
-        writer.write_jsx_intrinsic_tag_names();
-        writer.write_type_nodes();
-        writer.write_import_equals_references();
+        for node in nodes {
+            writer.write_symbol_of_visited_node(node);
+        }
         writer.results
     }
 }
@@ -156,25 +145,14 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
 
     // ───────────────────────────── the walk ─────────────────────────────
 
-    /// `writeTypeOrSymbol`, of the node from `start` to `end`. `scope`: `enclosingDeclaration`, which is `node.Parent`.
-    fn write(&mut self, start: u32, end: u32, scope: ScopeId, found: Found) {
-        if start < end && self.written.insert((start, end)) {
-            self.write_node(start, end, scope, found);
+    /// `writeTypeOrSymbol`, in the walk for symbols.
+    fn write_symbol_of_visited_node(&mut self, node: VisitedNode) {
+        if let Some(found) = self.get_symbol_at_visited_node(node.kind)
+            && (node.start == node.end || self.written.insert((node.start, node.end)))
+        {
+            let scope = self.c.enclosing_scope_of_visited_node(self.file, node.kind);
+            self.write_node(node.start, node.end, scope, found);
         }
-    }
-
-    /// `createMissingNode`: an identifier the parser missed before what is written at `pos` is a node without text. The harness
-    /// puts it on the line of the token after it (`SkipTrivia`).
-    fn write_missing_identifier(&mut self, pos: u32, scope: ScopeId, found: Found) {
-        let before = self.c.end_of_token_before(self.file, pos);
-        let start = self.c.skip_trivia_from(self.file, before);
-        self.write_node(start, start, scope, found);
-    }
-
-    /// Whether `name`, which is written at `start`, is an identifier the parser missed. `""` and `[""]` are names.
-    fn is_missing_identifier(&self, name: Atom, start: u32) -> bool {
-        let text = &self.c.hir(self.file).text;
-        name == known::empty && !matches!(text.get(start as usize), Some(b'"' | b'\'' | b'['))
     }
 
     fn write_node(&mut self, start: u32, end: u32, scope: ScopeId, found: Found) {
@@ -237,117 +215,330 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
         });
     }
 
-    /// `IsDeclarationNameOrImportPropertyName`, of the declarations that have a `SymbolId`. Variables and parameters are patterns.
-    fn write_declaration_names(&mut self) {
+    /// `getSymbolAtLocation`
+    fn get_symbol_at_visited_node(&mut self, kind: VisitedKind) -> Option<Found> {
         let file = self.file;
         let (hir, bound, files) = (self.c.hir(file), self.c.bound(file), self.c.files());
-        for index in 0..bound.symbols.len() {
-            let symbol = files.sym(file, SymbolId(index as u32));
-            for &decl in bound.symbols[index].decls.as_slice() {
+        match kind {
+            VisitedKind::DeclarationName(decl, id)
+            | VisitedKind::SpecifierPropertyName(decl, id) => {
+                if id.is_none() {
+                    return None;
+                }
+                let symbol = files.sym(file, id);
                 if !self.is_declaration_of_symbol(symbol, file, decl) {
-                    continue;
+                    return None;
                 }
-                let Some((start, is_missing)) = self.name_start_of_declaration(decl) else {
-                    continue;
-                };
-                let scope = self.enclosing_scope_of_declaration_name(decl);
-                if is_missing {
-                    self.write_missing_identifier(start, scope, Found::Symbol(symbol));
-                    continue;
+                if matches!(kind, VisitedKind::DeclarationName(..)) {
+                    return Some(Found::Symbol(symbol));
                 }
-                let end = self.c.end_of_name_at(file, start);
-                if matches!(decl, Decl::EnumMember(_)) {
-                    self.write_literal_in_computed_name(start, scope, Found::Symbol(symbol));
-                }
-                self.write(start, end, scope, Found::Symbol(symbol));
                 // `getImmediateAliasedSymbol`: the `a` of `import { a as b }` and of `export { a as b }`.
-                let property_name = match decl {
-                    Decl::ImportSpec(spec) if hir[spec].imported_pos != hir[spec].pos => {
-                        Some(hir[spec].imported_pos)
+                let target = files.alias_target(symbol)?;
+                Some(Found::Symbol(files.canonical(target)))
+            }
+            // `IsLiteralComputedPropertyDeclarationName`: the literal in `["name"]`, `` [`name`] `` and `[0]` has the symbol of the
+            // declaration.
+            VisitedKind::LiteralInEnumMemberName(m) => Some(Found::Symbol(
+                files.sym(file, bound.enum_member_symbol[m.idx()]),
+            )),
+            VisitedKind::MemberName(m) | VisitedKind::LiteralInMemberName(m) => {
+                (!matches!(hir[m].key, PropKey::None)).then(|| self.property_of_member(m))
+            }
+            VisitedKind::PropertyName(p) | VisitedKind::LiteralInPropertyName(p) => {
+                let name = hir[p].key.name().unwrap_or(Atom::NONE);
+                (!matches!(hir[p].key, PropKey::None)).then(|| {
+                    Found::Property(Prop {
+                        name,
+                        flags: PropFlags::empty(),
+                        source: PropSource::Literal(file, p),
+                        mapper: MapperId::IDENTITY,
+                    })
+                })
+            }
+            VisitedKind::BindingName(pat) => {
+                let PatKind::Ident(name) = hir[pat].kind else {
+                    return None;
+                };
+                // `bindParameter` declares the property last, so that is the symbol of the node. `IsParameterPropertyDeclaration`
+                if let PatParent::Param(parameter) = bound.pat_parent[pat.idx()]
+                    && hir[parameter].flags.contains(Flags::PARAMETER_PROPERTY)
+                    && hir[bound.param_fn[parameter.idx()]].kind == FnKind::Constructor
+                {
+                    return Some(Found::Property(Prop {
+                        name,
+                        flags: PropFlags::empty(),
+                        source: PropSource::Parameter(file, parameter),
+                        mapper: MapperId::IDENTITY,
+                    }));
+                }
+                let symbol = bound.pat_symbol[pat.idx()];
+                symbol
+                    .is_some()
+                    .then(|| Found::Symbol(files.sym(file, symbol)))
+            }
+            // `{ ["name"]: local }`: the binding element is the declaration.
+            VisitedKind::LiteralInBindingPropertyName(p) => {
+                let value = hir[p].value;
+                if value.is_none() || !matches!(hir[value].kind, PatKind::Ident(_)) {
+                    return None;
+                }
+                let symbol = bound.pat_symbol[value.idx()];
+                symbol
+                    .is_some()
+                    .then(|| Found::Symbol(files.sym(file, symbol)))
+            }
+            // `{ name: local }`: the property of the type of the pattern.
+            VisitedKind::BindingPropertyName(p) => {
+                let parent = bound.pat_parent[hir[p].value.idx()];
+                let (PropKey::Name(name), PatParent::Prop(pattern, _)) = (hir[p].key, parent)
+                else {
+                    return None;
+                };
+                let ty = self.c.type_of_pat(file, pattern);
+                self.get_property_of_type(ty, name)
+            }
+            VisitedKind::ThisParameter(f) => Some(this_parameter(file, f)),
+            VisitedKind::Expression(e) | VisitedKind::AccessName(e) => {
+                let is_name = matches!(kind, VisitedKind::AccessName(_));
+                self.get_symbol_of_expression(e, is_name)
+            }
+            // A type reference that resolves to nothing.
+            VisitedKind::ConstOfAsConst(_) => Some(Found::Undeclared("const".to_owned())),
+            // `getIntrinsicTagSymbol`
+            VisitedKind::JsxIntrinsicTagName(_, tag) => {
+                let ExprKind::String(name) = hir[tag].kind else {
+                    return None;
+                };
+                let elements = self.c.jsx_type(file, known::IntrinsicElements)?;
+                match self.c.prop_of(elements, name) {
+                    Some((prop, _)) => Some(Found::Property(prop)),
+                    None => self.get_applicable_index_symbol(elements, name),
+                }
+            }
+            VisitedKind::TypeReferenceName(node, index)
+            | VisitedKind::HeritageClauseName(node, index)
+            | VisitedKind::HeritageClausePropertyAccess(node, index) => {
+                let scope = bound.type_scope[node.idx()];
+                let TypeNodeKind::Ref { name, .. } = hir[node].kind else {
+                    return None;
+                };
+                if scope.is_none() {
+                    return None;
+                }
+                let names: Vec<Atom> = hir.ids(name).take(index as usize + 1).collect();
+                let meaning = if names.len() == name.len() {
+                    SymFlags::TYPE
+                } else {
+                    SymFlags::NAMESPACE
+                };
+                match files.resolve_entity(file, scope, &names, meaning) {
+                    Some(symbol) => Some(Found::Symbol(symbol)),
+                    None if !matches!(kind, VisitedKind::TypeReferenceName(..)) => None,
+                    // `getUnresolvedSymbolForEntityName`, which is `unknownSymbol` for a name the parser missed.
+                    None if names[..] == [known::empty] => {
+                        Some(Found::Undeclared("unknown".to_owned()))
                     }
-                    Decl::ExportSpec(spec) if hir[spec].local_pos != hir[spec].pos => {
-                        Some(hir[spec].local_pos)
+                    None => {
+                        let path: Vec<_> =
+                            names.iter().map(|&part| files.atoms.text(part)).collect();
+                        Some(Found::Undeclared(path.join(".")))
                     }
+                }
+            }
+            // `getTypeFromImportTypeNode`: the identifiers of the qualifier.
+            VisitedKind::ImportTypeQualifierName(node, index) => {
+                let TypeNodeKind::Import {
+                    spec,
+                    name,
+                    is_typeof,
+                    mode,
+                    ..
+                } = hir[node].kind
+                else {
+                    return None;
+                };
+                if bound.type_scope[node.idx()].is_none() {
+                    return None;
+                }
+                let module =
+                    files.module_of_specifier_as(file, spec, files.mode_of_import(file, mode))?;
+                let mut found = files.module_value(module);
+                for (at, part) in hir.ids(name).enumerate().take(index as usize + 1) {
+                    let meaning = if at + 1 < name.len() {
+                        SymFlags::NAMESPACE
+                    } else if is_typeof {
+                        SymFlags::VALUE
+                    } else {
+                        SymFlags::TYPE
+                    };
+                    let container = files.resolve_alias_if_needed(found)?;
+                    found = files.namespace_member(container, part)?;
+                    if !files.means(found, meaning) {
+                        return None;
+                    }
+                }
+                Some(Found::Symbol(found))
+            }
+            VisitedKind::TypePredicateParameter(node) => {
+                let TypeNodeKind::Predicate { param, .. } = hir[node].kind else {
+                    return None;
+                };
+                let scope = bound.type_scope[node.idx()];
+                if scope.is_none() {
+                    return None;
+                }
+                files
+                    .resolve_name(file, scope, param, SymFlags::FUNCTION_SCOPED_VARIABLE)
+                    .map(Found::Symbol)
+            }
+            // `getSymbolOfPartOfRightHandSideOfImportEquals`
+            VisitedKind::ImportEqualsName(import, index) => {
+                let ImportEqualsTarget::Entity(list) = hir[import].target else {
+                    return None;
+                };
+                let names: Vec<Atom> = hir.ids(list).take(index as usize + 1).collect();
+                let meaning = if index > 0 && names.len() == list.len() {
+                    SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE
+                } else {
+                    SymFlags::NAMESPACE
+                };
+                let scope = bound.import_equals_scope[import.idx()];
+                files
+                    .resolve_entity(file, scope, &names, meaning)
+                    .map(Found::Symbol)
+            }
+            VisitedKind::Parenthesized(..)
+            | VisitedKind::ImportDeferName(_)
+            | VisitedKind::TaggedTemplateLiteral(_)
+            | VisitedKind::JsxNamespacedNamePart
+            | VisitedKind::ImportAttributeName(_)
+            | VisitedKind::LiteralType(_)
+            | VisitedKind::LiteralTypeOperand(_)
+            | VisitedKind::Directive(_)
+            | VisitedKind::Label(_) => None,
+        }
+    }
+
+    /// `getSymbolAtLocation`, of the expression `e`, or of the name it ends with.
+    fn get_symbol_of_expression(&mut self, e: ExprId, is_name: bool) -> Option<Found> {
+        let file = self.file;
+        let (hir, bound) = (self.c.hir(file), self.c.bound(file));
+        match hir[e].kind {
+            // Not bound.
+            _ if matches!(bound.expr_parent[e.idx()], Parent::None) => None,
+            ExprKind::Ident(name) => self.get_symbol_of_identifier(e, name),
+            // `isRightSideOfQualifiedNameOrPropertyAccess`: the name has the symbol of the whole access.
+            ExprKind::Dot {
+                obj, name, chain, ..
+            } => {
+                if self.is_commonjs_module_exports(e, obj) {
+                    return Some(Found::Anonymous {
+                        name: "exports".to_owned(),
+                        file,
+                        declaration: Declaration::Bound(Decl::File),
+                    });
+                }
+                let ty = self
+                    .c
+                    .left_type_of_property_access(file, obj, chain)
+                    .0
+                    .ok()?;
+                if self.c.is_apparently_unknown(ty) {
+                    return None;
+                }
+                match self.get_property_of_type(ty, name) {
+                    Some(found) => Some(found),
+                    None if self.c.is_private_name(name) => None,
+                    None => {
+                        let ty = self.c.apparent_type(ty);
+                        self.get_applicable_index_symbol(ty, name)
+                    }
+                }
+            }
+            ExprKind::String(_) | ExprKind::Number(_) | ExprKind::Template { .. } => {
+                self.get_symbol_of_literal(e)
+            }
+            ExprKind::This => {
+                let this_parameter = match self.c.this_container(file, e) {
+                    Some(Ok(function)) => self.this_parameter_of_function(function),
                     _ => None,
                 };
-                // A string there is neither an identifier nor the name of a declaration.
-                if let Some(start) = property_name
-                    && !matches!(hir.text.get(start as usize), Some(b'"' | b'\''))
-                    && let Some(target) = files.alias_target(symbol)
-                {
-                    let end = self.c.end_of_name_at(file, start);
-                    self.write(start, end, scope, Found::Symbol(files.canonical(target)));
+                match this_parameter {
+                    Some(found) => Some(found),
+                    None => {
+                        let ty = self.c.type_of_expr(file, e);
+                        self.symbol_of_type(ty)
+                    }
                 }
             }
+            // The `meta` of `import.meta` is the member of `getGlobalImportMetaExpressionType`.
+            ExprKind::ImportMeta if is_name => {
+                Some(Found::Undeclared("ImportMetaExpression.meta".to_owned()))
+            }
+            // `checkExpression(node).symbol`. The `target` of `new.target` has the same symbol.
+            ExprKind::Super | ExprKind::ImportMeta | ExprKind::NewTarget => {
+                let ty = self.c.type_of_expr(file, e);
+                self.symbol_of_type(ty)
+            }
+            _ => None,
         }
     }
 
-    /// `enclosing_scope_of_declaration`, and the same of the declarations that have no value meaning.
-    fn enclosing_scope_of_declaration_name(&self, decl: Decl) -> ScopeId {
-        let bound = self.c.bound(self.file);
-        match decl {
-            Decl::Interface(interface) => bound
-                .scopes
-                .iter()
-                .position(|scope| scope.kind == ScopeKind::Interface(interface))
-                .map_or(ScopeId::NONE, |index| ScopeId(index as u32)),
-            Decl::TypeParam(parameter) => bound.type_param_scope[parameter.idx()],
-            _ => self.c.enclosing_scope_of_declaration(self.file, decl),
-        }
-    }
-
-    /// Where the name of `decl`, which is in the file that is written, starts, and whether the parser missed it.
-    fn name_start_of_declaration(&self, decl: Decl) -> Option<(u32, bool)> {
-        let hir = self.c.hir(self.file);
-        let (name, start) = match decl {
-            Decl::Fn(function) if matches!(hir[function].kind, FnKind::Decl | FnKind::Expr) => {
-                (hir[function].name, hir[function].name_pos)
-            }
-            Decl::Class(class) => (hir[class].name, hir[class].name_pos),
-            Decl::Interface(interface) => (hir[interface].name, hir[interface].name_pos),
-            Decl::Alias(alias) => (hir[alias].name, hir[alias].name_pos),
-            Decl::Enum(enumeration) => (hir[enumeration].name, hir[enumeration].name_pos),
-            Decl::EnumMember(member) => (hir[member].name, hir[member].pos),
-            Decl::Module(module) => return Some((hir[module].name_pos, false)),
-            Decl::TypeParam(parameter) => (hir[parameter].name, hir[parameter].pos),
-            Decl::ImportDefault(import) => (hir[import].default, hir[import].default_pos),
-            Decl::ImportNamespace(import) => (hir[import].namespace, hir[import].namespace_pos),
-            Decl::ImportSpec(spec) => (hir[spec].local, hir[spec].pos),
-            Decl::ImportEquals(import) => (hir[import].name, hir[import].name_pos),
-            Decl::ExportSpec(spec) => (hir[spec].exported, hir[spec].pos),
-            Decl::ExportStarAs(_) | Decl::UmdGlobal(_) => {
-                let start = self.c.declaration_name_start(self.file, decl)?;
-                return Some((start, false));
-            }
-            _ => return None,
-        };
-        name.is_some()
-            .then(|| (start, self.is_missing_identifier(name, start)))
-    }
-
-    /// The names of the members of classes, interfaces and type literals.
-    fn write_member_names(&mut self) {
+    /// `getSymbolAtLocation`, of a string, a number or a template without substitutions.
+    fn get_symbol_of_literal(&mut self, e: ExprId) -> Option<Found> {
         let file = self.file;
-        let hir = self.c.hir(file);
-        for index in 0..hir.members.len() {
-            let member = MemberId(index as u32);
-            if !is_named_member(hir[member].kind) || matches!(hir[member].key, PropKey::None) {
-                continue;
+        let (hir, bound, files) = (self.c.hir(file), self.c.bound(file), self.c.files());
+        // `getSymbolForPrivateIdentifierExpression`: the `#x` of `#x in a`.
+        if let (ExprKind::String(name), Some(&class)) = (hir[e].kind, bound.private_class.get(&e)) {
+            // `lookupSymbolForPrivateIdentifierDeclaration`: the members of the class before its statics.
+            let declaration = |is_static: bool| {
+                hir[class].members.iter().find(|&member| {
+                    hir[member].key == PropKey::Private(name)
+                        && hir[member].flags.contains(Flags::STATIC) == is_static
+                })
+            };
+            let member = declaration(false).or_else(|| declaration(true))?;
+            return Some(self.property_of_member(member));
+        }
+        let Parent::Expr(parent) = bound.expr_parent[e.idx()] else {
+            return None;
+        };
+        if parent.is_none() {
+            return None;
+        }
+        let specifier = |mode: ResolutionMode| match hir[e].kind {
+            ExprKind::String(text) => files
+                .module_of_specifier_as(file, text, mode)
+                .map(Found::Symbol),
+            _ => None,
+        };
+        match hir[parent].kind {
+            // `a["name"]`, `a[0]`
+            ExprKind::Index { obj, index, .. } if index == e && !is_parenthesized(hir, e) => {
+                let name = match hir[e].kind {
+                    ExprKind::String(text) => text,
+                    ExprKind::Number(number) => self.c.number_name(hir.numbers[number as usize]),
+                    ExprKind::Template { exprs, texts } if exprs.is_empty() => {
+                        hir.ids(texts).next()?
+                    }
+                    _ => return None,
+                };
+                let ty = self.c.type_of_expr(file, obj);
+                self.get_property_of_type(ty, name)
             }
-            let start = super::errors_x_properties_jsx::start_of_member_name(hir, member);
-            let end = self.c.end_of_name_at(file, start);
-            let scope = self.c.enclosing_scope_of_member(file, member);
-            let found = self.property_of_member(member);
-            if hir[member].key == PropKey::Name(known::empty)
-                && self.is_missing_identifier(known::empty, start)
+            // `resolveExternalModuleName`
+            ExprKind::ImportCall(written) if written == e => {
+                specifier(files.mode_of_import_call(file))
+            }
+            // `IsVariableDeclarationInitializedToRequire`
+            ExprKind::Call(_)
+                if hir.is_js
+                    && matches!(bound.expr_parent[parent.idx()], Parent::VarInit(_))
+                    && crate::bind::require_argument(hir, parent) == Some(e) =>
             {
-                self.write_missing_identifier(start, scope, found);
-                continue;
+                specifier(ResolutionMode::Require)
             }
-            if matches!(hir[member].key, PropKey::Name(_)) {
-                self.write_literal_in_computed_name(start, scope, found.clone());
-            }
-            self.write(start, end, scope, found);
+            _ => None,
         }
     }
 
@@ -363,332 +554,6 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
             source: PropSource::Members(vec![(file, member)].into()),
             mapper: MapperId::IDENTITY,
         })
-    }
-
-    /// The names of the properties of object literals and of JSX attributes.
-    fn write_property_names(&mut self) {
-        let file = self.file;
-        let (hir, bound) = (self.c.hir(file), self.c.bound(file));
-        // An `ImportAttribute` is no declaration.
-        let import_attributes: Vec<ExprId> = hir
-            .import_attributes
-            .iter()
-            .map(|attributes| attributes.1)
-            .collect();
-        for index in 0..hir.props.len() {
-            let property = PropId(index as u32);
-            let written = hir[property];
-            if matches!(written.kind, PropKind::Spread)
-                || matches!(written.key, PropKey::None)
-                || import_attributes.contains(&bound.prop_owner[index])
-            {
-                continue;
-            }
-            let end = self.c.end_of_prop_name(file, property);
-            let scope = self.c.enclosing_scope_of_property(file, property);
-            let found = Found::Property(Prop {
-                name: written.key.name().unwrap_or(Atom::NONE),
-                flags: PropFlags::empty(),
-                source: PropSource::Literal(file, property),
-                mapper: MapperId::IDENTITY,
-            });
-            if written.key == PropKey::Name(known::empty)
-                && self.is_missing_identifier(known::empty, written.pos)
-            {
-                self.write_missing_identifier(written.pos, scope, found);
-                continue;
-            }
-            if matches!(written.key, PropKey::Name(_)) {
-                self.write_literal_in_computed_name(written.pos, scope, found.clone());
-            }
-            self.write(written.pos, end, scope, found);
-        }
-    }
-
-    /// `IsLiteralComputedPropertyDeclarationName`: the literal in `["name"]`, `` [`name`] `` and `[0]`, which starts at `start`, has
-    /// the symbol of the declaration.
-    fn write_literal_in_computed_name(&mut self, start: u32, scope: ScopeId, found: Found) {
-        let file = self.file;
-        let text = &self.c.hir(file).text;
-        if text.get(start as usize) != Some(&b'[') {
-            return;
-        }
-        let literal = self.c.skip_trivia_from(file, start + 1);
-        if text
-            .get(literal as usize)
-            .is_some_and(|&first| matches!(first, b'"' | b'\'' | b'`') || first.is_ascii_digit())
-        {
-            let end = self.c.end_of_name_at(file, literal);
-            self.write(literal, end, scope, found);
-        }
-    }
-
-    /// The names that variables, parameters and binding elements declare, the property names in object binding patterns, and `this`
-    /// parameters.
-    fn write_binding_names(&mut self) {
-        let file = self.file;
-        let (hir, bound, files) = (self.c.hir(file), self.c.bound(file), self.c.files());
-        for index in 0..hir.pats.len() {
-            let PatKind::Ident(name) = hir.pats[index].kind else {
-                continue;
-            };
-            let start = hir.pats[index].pos;
-            let end = self.c.end_of_name_at(file, start);
-            let scope = self.c.enclosing_scope_of_pat(file, PatId(index as u32));
-            // `bindParameter` declares the property last, so that is the symbol of the node. `IsParameterPropertyDeclaration`
-            if let PatParent::Param(parameter) = bound.pat_parent[index]
-                && hir[parameter].flags.contains(Flags::PARAMETER_PROPERTY)
-                && hir[bound.param_fn[parameter.idx()]].kind == FnKind::Constructor
-            {
-                self.write(
-                    start,
-                    end,
-                    scope,
-                    Found::Property(Prop {
-                        name,
-                        flags: PropFlags::empty(),
-                        source: PropSource::Parameter(file, parameter),
-                        mapper: MapperId::IDENTITY,
-                    }),
-                );
-                continue;
-            }
-            let symbol = bound.pat_symbol[index];
-            if symbol.is_none() {
-                continue;
-            }
-            let found = Found::Symbol(files.sym(file, symbol));
-            if name == known::empty {
-                self.write_missing_identifier(start, scope, found);
-            } else {
-                self.write(start, end, scope, found);
-            }
-        }
-        // `{ name: local }`: the property of the type of the pattern.
-        for index in 0..hir.pat_props.len() {
-            let element = hir.pat_props[index];
-            let PropKey::Name(name) = element.key else {
-                continue;
-            };
-            // `{ ["name"]: local }`: the binding element is the declaration.
-            if element.value.is_some()
-                && matches!(hir[element.value].kind, PatKind::Ident(_))
-                && bound.pat_symbol[element.value.idx()].is_some()
-            {
-                let local = files.sym(file, bound.pat_symbol[element.value.idx()]);
-                let scope = self.c.enclosing_scope_of_pat(file, element.value);
-                self.write_literal_in_computed_name(element.pos, scope, Found::Symbol(local));
-            }
-            if element.is_rest
-                || element.value.is_none()
-                || element.pos == hir[element.value].pos
-                || !hir
-                    .text
-                    .get(element.pos as usize)
-                    .is_some_and(|&first| is_identifier_part(first) && !first.is_ascii_digit())
-            {
-                continue;
-            }
-            let PatParent::Prop(pattern, _) = bound.pat_parent[element.value.idx()] else {
-                continue;
-            };
-            let ty = self.c.type_of_pat(file, pattern);
-            if let Some(found) = self.get_property_of_type(ty, name) {
-                let end = self.c.end_of_name_at(file, element.pos);
-                let scope = self.c.enclosing_scope_of_pat(file, element.value);
-                self.write(element.pos, end, scope, found);
-            }
-        }
-        for index in 0..hir.fns.len() {
-            let function = FnId(index as u32);
-            if let Some(start) = self.c.start_of_this_parameter(file, function) {
-                let scope = bound.fns[index].scope;
-                self.write(start, start + 4, scope, this_parameter(file, function));
-            }
-        }
-    }
-
-    fn write_expressions(&mut self) {
-        let file = self.file;
-        let (hir, bound, files) = (self.c.hir(file), self.c.bound(file), self.c.files());
-        for index in 0..hir.exprs.len() {
-            let e = ExprId(index as u32);
-            // Not bound.
-            if matches!(bound.expr_parent[index], Parent::None) {
-                continue;
-            }
-            match hir[e].kind {
-                ExprKind::Ident(name) => {
-                    if let Some(found) = self.get_symbol_of_identifier(e, name) {
-                        self.write_expression(e, e, found);
-                    }
-                }
-                ExprKind::Dot {
-                    obj,
-                    name,
-                    name_pos,
-                    chain,
-                } => {
-                    let found = if self.is_commonjs_module_exports(e, obj) {
-                        Some(Found::Anonymous {
-                            name: "exports".to_owned(),
-                            file,
-                            declaration: Declaration::Bound(Decl::File),
-                        })
-                    } else if let Ok(ty) = self.c.left_type_of_property_access(file, obj, chain).0
-                        && !self.c.is_apparently_unknown(ty)
-                    {
-                        match self.get_property_of_type(ty, name) {
-                            Some(found) => Some(found),
-                            None if self.c.is_private_name(name) => None,
-                            None => {
-                                let ty = self.c.apparent_type(ty);
-                                self.get_applicable_index_symbol(ty, name)
-                            }
-                        }
-                    } else {
-                        None
-                    };
-                    let Some(found) = found else {
-                        continue;
-                    };
-                    // `isRightSideOfQualifiedNameOrPropertyAccess`: the name has the symbol of the whole access. A
-                    // `PrivateIdentifier` there is neither an identifier nor an expression.
-                    if !self.c.is_private_name(name) {
-                        let end = self.c.end_of_name_at(file, name_pos);
-                        let scope = self.c.enclosing_scope_of_expr(file, e);
-                        self.write(name_pos, end, scope, found.clone());
-                    }
-                    self.write_expression(e, e, found);
-                }
-                // `getSymbolForPrivateIdentifierExpression`: the `#x` of `#x in a`.
-                ExprKind::String(name) => {
-                    let Some(&class) = bound.private_class.get(&e) else {
-                        continue;
-                    };
-                    // `lookupSymbolForPrivateIdentifierDeclaration`: the members of the class before its statics.
-                    let declaration = |is_static: bool| {
-                        hir[class].members.iter().find(|&member| {
-                            hir[member].key == PropKey::Private(name)
-                                && hir[member].flags.contains(Flags::STATIC) == is_static
-                        })
-                    };
-                    if let Some(member) = declaration(false).or_else(|| declaration(true)) {
-                        let found = self.property_of_member(member);
-                        self.write_expression(e, e, found);
-                    }
-                }
-                // `a["name"]`, `a[0]`
-                ExprKind::Index { obj, index, .. } => {
-                    let name = match hir[index].kind {
-                        _ if self.c.is_written_in_parentheses(file, index) => continue,
-                        ExprKind::String(text) => text,
-                        ExprKind::Number(number) => {
-                            self.c.number_name(hir.numbers[number as usize])
-                        }
-                        ExprKind::Template { exprs, texts } if exprs.is_empty() => {
-                            match hir.ids(texts).next() {
-                                Some(text) => text,
-                                None => continue,
-                            }
-                        }
-                        _ => continue,
-                    };
-                    let ty = self.c.type_of_expr(file, obj);
-                    if let Some(found) = self.get_property_of_type(ty, name) {
-                        self.write_expression(index, e, found);
-                    }
-                }
-                ExprKind::This => {
-                    let this_parameter = match self.c.this_container(file, e) {
-                        Some(Ok(function)) => self.this_parameter_of_function(function),
-                        _ => None,
-                    };
-                    let found = match this_parameter {
-                        Some(found) => Some(found),
-                        None => {
-                            let ty = self.c.type_of_expr(file, e);
-                            self.symbol_of_type(ty)
-                        }
-                    };
-                    if let Some(found) = found {
-                        self.write_expression(e, e, found);
-                    }
-                }
-                ExprKind::Super => {
-                    let ty = self.c.type_of_expr(file, e);
-                    if let Some(found) = self.symbol_of_type(ty) {
-                        self.write_expression(e, e, found);
-                    }
-                }
-                // `checkExpression(node).symbol`. The `target` of `new.target` has the same symbol, the `meta` of `import.meta` is the
-                // member of `getGlobalImportMetaExpressionType`.
-                ExprKind::ImportMeta | ExprKind::NewTarget => {
-                    let ty = self.c.type_of_expr(file, e);
-                    let of_type = self.symbol_of_type(ty);
-                    let (name_length, of_name) = if matches!(hir[e].kind, ExprKind::ImportMeta) {
-                        let member = "ImportMetaExpression.meta".to_owned();
-                        (4, Some(Found::Undeclared(member)))
-                    } else {
-                        (6, of_type.clone())
-                    };
-                    let end = self.c.end_inside_parentheses(file, e);
-                    if end > name_length
-                        && let Some(found) = of_name
-                    {
-                        let scope = self.c.enclosing_scope_of_expr(file, e);
-                        self.write(end - name_length, end, scope, found);
-                    }
-                    if let Some(found) = of_type {
-                        self.write_expression(e, e, found);
-                    }
-                }
-                // `resolveExternalModuleName`
-                ExprKind::ImportCall(specifier) if specifier.is_some() => {
-                    if let ExprKind::String(text) = hir[specifier].kind
-                        && let Some(module) = files.module_of_specifier_as(
-                            file,
-                            text,
-                            files.mode_of_import_call(file),
-                        )
-                    {
-                        self.write_expression(specifier, e, Found::Symbol(module));
-                    }
-                }
-                // `IsVariableDeclarationInitializedToRequire`
-                ExprKind::Call(_)
-                    if hir.is_js && matches!(bound.expr_parent[index], Parent::VarInit(_)) =>
-                {
-                    if let Some(argument) = crate::bind::require_argument(hir, e)
-                        && let ExprKind::String(text) = hir[argument].kind
-                        && let Some(module) =
-                            files.module_of_specifier_as(file, text, ResolutionMode::Require)
-                    {
-                        self.write_expression(argument, e, Found::Symbol(module));
-                    }
-                }
-                // The `const` of `x as const` and `<const>x` is a type reference that resolves to nothing.
-                ExprKind::AsConst(operand) => {
-                    let start = if hir[e].pos < hir[operand].pos {
-                        self.c.skip_trivia_from(file, hir[e].pos + 1)
-                    } else {
-                        let keyword = self
-                            .c
-                            .skip_trivia_from(file, self.c.end_of_expr(file, operand));
-                        self.c.skip_trivia_from(file, keyword + 2)
-                    };
-                    if hir
-                        .text
-                        .get(start as usize..start as usize + 5)
-                        .is_some_and(|word| word == b"const")
-                    {
-                        let unresolved = Found::Undeclared("const".to_owned());
-                        self.write(start, start + 5, ScopeId::NONE, unresolved);
-                    }
-                }
-                _ => {}
-            }
-        }
     }
 
     /// `getSignatureFromDeclaration(function).thisParameter`
@@ -714,14 +579,6 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
             .map(|_| this_parameter(file, function))
     }
 
-    /// Writes `found` for the expression `e`. `within`: `e`, or the expression it is an operand of, which is in the same scope.
-    fn write_expression(&mut self, e: ExprId, within: ExprId, found: Found) {
-        let start = self.c.start_inside_parentheses(self.file, e);
-        let end = self.c.end_inside_parentheses(self.file, e);
-        let scope = self.c.enclosing_scope_of_expr(self.file, within);
-        self.write(start, end, scope, found);
-    }
-
     /// `module.exports`, where `module` is the variable of a CommonJS module.
     fn is_commonjs_module_exports(&self, e: ExprId, module: ExprId) -> bool {
         let (hir, bound) = (self.c.hir(self.file), self.c.bound(self.file));
@@ -731,206 +588,6 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
             && bound.symbols[symbol.idx()]
                 .flags
                 .contains(SymFlags::MODULE_EXPORTS)
-    }
-
-    /// `getIntrinsicTagSymbol`, of the names in the opening and closing tags.
-    fn write_jsx_intrinsic_tag_names(&mut self) {
-        let file = self.file;
-        let hir = self.c.hir(file);
-        for index in 0..hir.jsx.len() {
-            let element = hir.jsx[index];
-            let mut tags: Vec<(Atom, u32)> = Vec::new();
-            for tag in [element.tag, element.close_tag] {
-                if tag.is_some()
-                    && let ExprKind::String(name) = hir[tag].kind
-                {
-                    tags.push((name, hir[tag].pos));
-                }
-            }
-            // `</name>` that repeats the opening name is not kept in the tree.
-            if element.close_tag.is_none()
-                && element.close_pos != u32::MAX
-                && let Some(&(name, _)) = tags.first()
-            {
-                let slash = self.c.skip_trivia_from(file, element.close_pos + 1);
-                if hir.text.get(slash as usize) == Some(&b'/') {
-                    tags.push((name, self.c.skip_trivia_from(file, slash + 1)));
-                }
-            }
-            if tags.is_empty() {
-                continue;
-            }
-            let Some(elements) = self.c.jsx_type(file, known::IntrinsicElements) else {
-                continue;
-            };
-            let within = if element.tag.is_some() {
-                element.tag
-            } else {
-                element.close_tag
-            };
-            let scope = self.c.enclosing_scope_of_expr(file, within);
-            for (name, start) in tags {
-                let written = self.c.files().atoms.bytes(name);
-                let end = start as usize + written.len();
-                // A `JsxNamespacedName` is no identifier.
-                if written.contains(&b':') || hir.text.get(start as usize..end) != Some(written) {
-                    continue;
-                }
-                let found = match self.c.prop_of(elements, name) {
-                    Some((prop, _)) => Some(Found::Property(prop)),
-                    None => self.get_applicable_index_symbol(elements, name),
-                };
-                if let Some(found) = found {
-                    self.write(start, end as u32, scope, found);
-                }
-            }
-        }
-    }
-
-    /// The identifiers in type references and type predicates. The operand of `typeof` is an expression.
-    fn write_type_nodes(&mut self) {
-        let file = self.file;
-        let (hir, bound, files) = (self.c.hir(file), self.c.bound(file), self.c.files());
-        // `parseHeritageClause`: an `ExpressionWithTypeArguments` over property accesses, each of which is an expression node.
-        let mut heritage: FxHashSet<TypeNodeId> = FxHashSet::default();
-        for class in &hir.classes {
-            heritage.extend(hir.ids(class.implements));
-        }
-        for interface in &hir.interfaces {
-            heritage.extend(hir.ids(interface.extends));
-        }
-        for index in 0..hir.types.len() {
-            let scope = bound.type_scope[index];
-            if scope.is_none() {
-                continue;
-            }
-            let start = hir.types[index].pos;
-            match hir.types[index].kind {
-                TypeNodeKind::Ref { name, .. } => {
-                    let names: Vec<Atom> = hir.ids(name).collect();
-                    let is_heritage = heritage.contains(&TypeNodeId(index as u32));
-                    // `getUnresolvedSymbolForEntityName`: `unknownSymbol`
-                    if names[..] == [known::empty] && !is_heritage {
-                        let unknown = Found::Undeclared("unknown".to_owned());
-                        self.write_missing_identifier(start, scope, unknown);
-                        continue;
-                    }
-                    let ranges = self.c.entity_name_ranges(file, start, name);
-                    for (last, &(from, to)) in ranges.iter().enumerate() {
-                        let meaning = if last + 1 == names.len() {
-                            SymFlags::TYPE
-                        } else {
-                            SymFlags::NAMESPACE
-                        };
-                        let resolved = files.resolve_entity(file, scope, &names[..=last], meaning);
-                        if resolved.is_none() && is_heritage {
-                            continue;
-                        }
-                        // `getUnresolvedSymbolForEntityName`
-                        let unresolved = || {
-                            let path: Vec<String> = names[..=last]
-                                .iter()
-                                .map(|&part| files.atoms.text(part).into_owned())
-                                .collect();
-                            Found::Undeclared(path.join("."))
-                        };
-                        let found = resolved.map_or_else(unresolved, Found::Symbol);
-                        self.write(from, to, scope, found.clone());
-                        // The property access that ends here.
-                        if is_heritage && last > 0 {
-                            self.write(ranges[0].0, to, scope, found);
-                        }
-                    }
-                }
-                // `getTypeFromImportTypeNode`: the identifiers of the qualifier.
-                TypeNodeKind::Import {
-                    spec,
-                    name,
-                    is_typeof,
-                    mode,
-                    ..
-                } if !name.is_empty() => {
-                    let names: Vec<Atom> = hir.ids(name).collect();
-                    let node = TypeNodeId(index as u32);
-                    let Some(qualifier) = self.c.start_of_import_type_qualifier(file, node) else {
-                        continue;
-                    };
-                    let mode = files.mode_of_import(file, mode);
-                    let Some(module) = files.module_of_specifier_as(file, spec, mode) else {
-                        continue;
-                    };
-                    let mut namespace = files.module_value(module);
-                    let ranges = self.c.entity_name_ranges(file, qualifier, name);
-                    for (index, &(from, to)) in ranges.iter().enumerate() {
-                        let meaning = if index + 1 < names.len() {
-                            SymFlags::NAMESPACE
-                        } else if is_typeof {
-                            SymFlags::VALUE
-                        } else {
-                            SymFlags::TYPE
-                        };
-                        let Some(next) = files
-                            .resolve_alias_if_needed(namespace)
-                            .and_then(|container| files.namespace_member(container, names[index]))
-                            .filter(|&next| files.means(next, meaning))
-                        else {
-                            break;
-                        };
-                        self.write(from, to, scope, Found::Symbol(next));
-                        namespace = next;
-                    }
-                }
-                TypeNodeKind::Predicate { param, asserts, .. } if param != known::this => {
-                    let mut from = start;
-                    if asserts
-                        && hir
-                            .text
-                            .get(from as usize..from as usize + 7)
-                            .is_some_and(|word| word == b"asserts")
-                    {
-                        from = self.c.skip_trivia_from(file, from + 7);
-                    }
-                    if let Some(parameter) =
-                        files.resolve_name(file, scope, param, SymFlags::FUNCTION_SCOPED_VARIABLE)
-                    {
-                        let to = self.c.end_of_name_at(file, from);
-                        self.write(from, to, scope, Found::Symbol(parameter));
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-
-    /// `getSymbolOfPartOfRightHandSideOfImportEquals`, of each identifier in `import a = b.c.d`.
-    fn write_import_equals_references(&mut self) {
-        let file = self.file;
-        let (hir, bound, files) = (self.c.hir(file), self.c.bound(file), self.c.files());
-        for index in 0..hir.import_equals.len() {
-            let import = hir.import_equals[index];
-            let ImportEqualsTarget::Entity(list) = import.target else {
-                continue;
-            };
-            let names: Vec<Atom> = hir.ids(list).collect();
-            let Some(start) = self
-                .c
-                .start_of_import_equals_reference(file, ImportEqualsId(index as u32))
-            else {
-                continue;
-            };
-            let ranges = self.c.entity_name_ranges(file, start, list);
-            for (last, &(from, to)) in ranges.iter().enumerate() {
-                let meaning = if last > 0 && last + 1 == names.len() {
-                    SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE
-                } else {
-                    SymFlags::NAMESPACE
-                };
-                let scope = bound.import_equals_scope[index];
-                if let Some(symbol) = files.resolve_entity(file, scope, &names[..=last], meaning) {
-                    self.write(from, to, scope, Found::Symbol(symbol));
-                }
-            }
-        }
     }
 
     // ───────────────────────────── `getSymbolAtLocation` ─────────────────────────────
@@ -946,7 +603,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                 hir[statement].kind,
                 StmtKind::ExportDefault(_) | StmtKind::ExportAssign(_)
             )
-            && !self.c.is_written_in_parentheses(file, e)
+            && !is_parenthesized(self.c.hir(file), e)
             && let Some(&scope) = bound.expr_scope.get(&e)
             && let Some(symbol) = files.resolve_name(
                 file,
@@ -1088,21 +745,6 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
         })
     }
 
-    /// The members of each declaration of the class or interface `container`.
-    fn member_lists_of(&self, container: Sym) -> Vec<(FileId, Span<MemberId>)> {
-        self.c
-            .files()
-            .decls(container)
-            .into_iter()
-            .filter(|&(file, decl)| self.is_declaration_of_symbol(container, file, decl))
-            .filter_map(|(file, decl)| match decl {
-                Decl::Class(class) => Some((file, self.c.hir(file)[class].members)),
-                Decl::Interface(interface) => Some((file, self.c.hir(file)[interface].members)),
-                _ => None,
-            })
-            .collect()
-    }
-
     /// `t.symbol`
     fn symbol_of_type(&self, ty: TypeId) -> Option<Found> {
         let files = self.c.files();
@@ -1145,7 +787,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
     fn name_of_object_literal(&self, file: FileId, e: ExprId) -> String {
         let (hir, bound) = (self.c.hir(file), self.c.bound(file));
         if let Parent::VarInit(declaration) = bound.expr_parent[e.idx()]
-            && !self.c.is_written_in_parentheses(file, e)
+            && !is_parenthesized(self.c.hir(file), e)
         {
             let pat = hir[declaration].pat;
             return self
@@ -1175,12 +817,11 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
         own.is_none() || self.c.files().sym(file, own) == symbol
     }
 
-    fn declarations_of_symbol(&self, symbol: Sym) -> Vec<(FileId, Declaration)> {
+    fn declarations_of_symbol(&mut self, symbol: Sym) -> Vec<(FileId, Declaration)> {
         let decls = self.c.files().decls(symbol);
-        if let [(file, Decl::TypeParam(parameter))] = decls[..]
-            && let Some(merged) = self.declarations_of_type_parameter(file, parameter)
-        {
-            return merged;
+        // Those of a class or an interface are declared among its members.
+        if let [(file, Decl::TypeParam(parameter))] = decls[..] {
+            return self.declarations_of_member(file, MemberDeclaration::TypeParameter(parameter));
         }
         decls
             .into_iter()
@@ -1189,87 +830,59 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
             .collect()
     }
 
-    /// The type parameters of a class or an interface are declared among its members, so those of one name are one symbol over all
-    /// its declarations. The binder has a symbol for each. `None`: `parameter` is declared by something else.
-    fn declarations_of_type_parameter(
-        &self,
+    /// `symbol.Declarations`, of the symbol of a member.
+    fn declarations_of_member(
+        &mut self,
         file: FileId,
-        parameter: TypeParamId,
-    ) -> Option<Vec<(FileId, Declaration)>> {
-        let files = self.c.files();
-        let bound = self.c.bound(file);
-        let scope = bound.type_param_scope[parameter.idx()];
-        if scope.is_none() {
-            return None;
-        }
-        let container = match bound.scopes[scope.idx()].kind {
-            ScopeKind::Class(class) => bound.class_symbol[class.idx()],
-            ScopeKind::Interface(interface) => bound.interface_symbol[interface.idx()],
-            _ => return None,
-        };
-        if container.is_none() {
-            return None;
-        }
-        let container = files.sym(file, container);
-        let name = self.c.hir(file)[parameter].name;
-        let mut declarations = Vec::new();
-        for (file, decl) in files.decls(container) {
-            if !self.is_declaration_of_symbol(container, file, decl) {
-                continue;
-            }
-            let hir = self.c.hir(file);
-            let parameters = match decl {
-                Decl::Class(class) => hir[class].type_params,
-                Decl::Interface(interface) => hir[interface].type_params,
-                _ => continue,
+        declaration: MemberDeclaration,
+    ) -> Vec<(FileId, Declaration)> {
+        let declarations = self.c.declarations_of_member(file, declaration);
+        let of_member = |&(file, declaration): &(FileId, MemberDeclaration)| {
+            let declaration = match declaration {
+                MemberDeclaration::TypeParameter(it) => Declaration::Bound(Decl::TypeParam(it)),
+                MemberDeclaration::Member(member) => Declaration::Member(member),
+                MemberDeclaration::Parameter(parameter) => Declaration::Parameter(parameter),
+                MemberDeclaration::Assignment(assignment) => Declaration::Expression(assignment),
+                MemberDeclaration::Property(property) => Declaration::Property(property),
             };
-            for candidate in parameters.iter() {
-                if hir[candidate].name == name {
-                    declarations.push((file, Declaration::Bound(Decl::TypeParam(candidate))));
-                }
-            }
-        }
-        Some(declarations)
+            (file, declaration)
+        };
+        declarations.iter().map(of_member).collect()
     }
 
     fn declarations_of_property(&mut self, prop: &Prop, depth: u32) -> Vec<(FileId, Declaration)> {
         match &prop.source {
             PropSource::Members(list) => match list.first() {
-                Some(&(file, member)) => self.declarations_in_container(
-                    file,
-                    member,
-                    prop.name,
-                    Declaration::Member(member),
-                ),
+                Some(&(file, member)) => {
+                    self.declarations_of_member(file, MemberDeclaration::Member(member))
+                }
                 None => Vec::new(),
             },
             PropSource::Parameter(file, parameter) => {
-                let bound = self.c.bound(*file);
-                let declaration = Declaration::Parameter(*parameter);
-                let function = bound.param_fn[parameter.idx()];
-                match bound.fns.get(function.idx()).map(|function| function.owner) {
-                    Some(FnOwner::Member(constructor)) => {
-                        self.declarations_in_container(*file, constructor, prop.name, declaration)
-                    }
-                    _ => vec![(*file, declaration)],
-                }
+                self.declarations_of_member(*file, MemberDeclaration::Parameter(*parameter))
             }
             PropSource::Literal(file, property) => {
-                self.declarations_of_literal_property(*file, *property)
+                self.declarations_of_member(*file, MemberDeclaration::Property(*property))
             }
             PropSource::Symbol(symbol) => self.declarations_of_symbol(*symbol),
-            PropSource::Assigned(file, assignments) => assignments
-                .iter()
-                .map(|&assignment| (*file, Declaration::Expression(assignment)))
-                .collect(),
+            PropSource::Assigned(file, assignments) => {
+                // `this.name = value` is one symbol with a member `name` that comes after it.
+                let of_this = assignments.first().map(|&first| {
+                    self.declarations_of_member(*file, MemberDeclaration::Assignment(first))
+                });
+                match of_this {
+                    Some(declarations) if declarations.len() > 1 => declarations,
+                    _ => assignments
+                        .iter()
+                        .map(|&assignment| (*file, Declaration::Expression(assignment)))
+                        .collect(),
+                }
+            }
             // Overloads of which only the signatures are kept.
             PropSource::Type(_) => match self.c.first_declaration_of_overloads(prop) {
-                Some((file, member)) => self.declarations_in_container(
-                    file,
-                    member,
-                    prop.name,
-                    Declaration::Member(member),
-                ),
+                Some((file, member)) => {
+                    self.declarations_of_member(file, MemberDeclaration::Member(member))
+                }
                 None => Vec::new(),
             },
             PropSource::Intersected(_, parts) if depth < 8 => {
@@ -1307,113 +920,6 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
         let modifiers = self.c.instantiate(declared, mapper);
         let modifiers = self.c.apparent_type(modifiers);
         self.c.prop_of(modifiers, name).map(|found| found.0)
-    }
-
-    /// The declarations of the symbol that `target` is a declaration of. `target` is `member`, or a parameter property of the
-    /// constructor `member`. `declareSymbolEx` puts the members of one name together, over all the declarations of the class or
-    /// interface, unless what has the name excludes them.
-    fn declarations_in_container(
-        &mut self,
-        file: FileId,
-        member: MemberId,
-        name: Atom,
-        target: Declaration,
-    ) -> Vec<(FileId, Declaration)> {
-        let alone = vec![(file, target)];
-        // `InternalSymbolNameComputed`
-        if name.is_none() {
-            return alone;
-        }
-        let hir = self.c.hir(file);
-        let wants_static =
-            matches!(target, Declaration::Member(_)) && self.is_static_member(file, member);
-        let lists: Vec<(FileId, Span<MemberId>)> =
-            match self.c.bound(file).member_owner[member.idx()] {
-                MemberOwner::TypeLiteral(node) => match hir[node].kind {
-                    TypeNodeKind::Object(members) => vec![(file, members)],
-                    _ => return alone,
-                },
-                MemberOwner::None => return alone,
-                MemberOwner::Class(_) | MemberOwner::Interface(_) => {
-                    let Some(container) = self.container_of_member(file, member) else {
-                        return alone;
-                    };
-                    self.member_lists_of(container)
-                }
-            };
-        let mut candidates: Vec<MemberDeclaration> = Vec::new();
-        for (file, members) in lists {
-            let hir = self.c.hir(file);
-            for candidate in members.iter() {
-                let written = hir[candidate];
-                if written.kind == MemberKind::Constructor && !wants_static {
-                    if written.func.is_none() {
-                        continue;
-                    }
-                    for parameter in hir[written.func].params.iter() {
-                        if hir[parameter].flags.contains(Flags::PARAMETER_PROPERTY)
-                            && hir[parameter].pat.is_some()
-                            && matches!(hir[hir[parameter].pat].kind, PatKind::Ident(own) if own == name)
-                        {
-                            let declaration = Declaration::Parameter(parameter);
-                            candidates.push((file, declaration, PROPERTY, METHOD));
-                        }
-                    }
-                    continue;
-                }
-                if !is_named_member(written.kind)
-                    || self.is_static_member(file, candidate) != wants_static
-                {
-                    continue;
-                }
-                let is_same_name = match written.key {
-                    PropKey::Name(own) | PropKey::Private(own) => own == name,
-                    PropKey::Computed(_) => {
-                        self.c.declared_member_name(file, written.key) == Some(name)
-                    }
-                    PropKey::None => false,
-                };
-                if is_same_name {
-                    // `SymbolFlagsMethodExcludes`, `SymbolFlagsGetAccessorExcludes`, `SymbolFlagsSetAccessorExcludes`,
-                    // `SymbolFlagsAccessorExcludes` (`bindPropertyWorker`), `SymbolFlagsPropertyExcludes`
-                    let (includes, excludes) = match written.kind {
-                        MemberKind::Method => (METHOD, PROPERTY | ACCESSOR),
-                        MemberKind::Getter => (GET_ACCESSOR, GET_ACCESSOR | METHOD),
-                        MemberKind::Setter => (SET_ACCESSOR, SET_ACCESSOR | METHOD),
-                        _ if written.flags.contains(Flags::ACCESSOR) => {
-                            (ACCESSOR, ACCESSOR | METHOD)
-                        }
-                        _ => (PROPERTY, METHOD),
-                    };
-                    let declaration = Declaration::Member(candidate);
-                    candidates.push((file, declaration, includes, excludes));
-                }
-            }
-        }
-        declarations_of_same_symbol(&candidates, (file, target))
-    }
-
-    /// `declareClassMember`: only a class has a static side.
-    fn is_static_member(&self, file: FileId, member: MemberId) -> bool {
-        self.c.hir(file)[member].flags.contains(Flags::STATIC)
-            && matches!(
-                self.c.bound(file).member_owner[member.idx()],
-                MemberOwner::Class(_)
-            )
-    }
-
-    /// The same for a property of an object literal or a JSX attribute.
-    fn declarations_of_literal_property(
-        &self,
-        file: FileId,
-        property: PropId,
-    ) -> Vec<(FileId, Declaration)> {
-        self.c
-            .bound(file)
-            .declarations_of_literal_member(property)
-            .into_iter()
-            .map(|declaration| (file, Declaration::Property(declaration)))
-            .collect()
     }
 
     /// The class or interface `member` is declared in.
@@ -1794,7 +1300,14 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
             source,
             ..prop.clone()
         });
-        let parent = self.parent_of_property(prop);
+        // `lookupSymbolChainWorker`: `class C<T> { T: number }` is one symbol, and a type parameter is not qualified.
+        let is_type_parameter = |declaration: &(FileId, Declaration)| {
+            matches!(declaration.1, Declaration::Bound(Decl::TypeParam(_)))
+        };
+        let parent = match declarations.iter().any(is_type_parameter) {
+            true => None,
+            false => self.parent_of_property(prop),
+        };
         (self.qualified_by_parent(parent, name, at), declarations)
     }
 
@@ -1887,18 +1400,23 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
         at: ScopeId,
     ) -> String {
         let files = self.c.files();
-        let parent = files.symbol(symbol).parent;
-        let is_default_export = parent.is_some()
-            && files.export(files.sym(symbol.file, parent), known::default) == Some(symbol);
+        let declared = files.symbol(symbol);
+        // The binder keeps `export default class C {}` under the name `C`.
+        let is_default_export = declared.name == known::default
+            || declared.parent.is_some()
+                && files.export(files.sym(symbol.file, declared.parent), known::default)
+                    == Some(symbol);
         // `isDefaultBindingContext`, as far as files go.
         if is_default_export && (!is_initial || symbol.file != self.file) {
             return "default".to_owned();
         }
-        if self.is_external_module(symbol) {
+        let name = self.c.symbol_to_string(symbol);
+        // `startsWithSingleOrDoubleQuote`: a function that `declare module "m" {}` adds to goes by its own name.
+        if name.starts_with(['"', '\'']) && self.is_external_module(symbol) {
             let specifier = self.c.specifier_for_module_symbol_at(symbol, self.file, at);
             return super::print::quoted(&specifier, '"', true);
         }
-        self.c.symbol_to_string(symbol)
+        name
     }
 
     /// `core.Some(symbol.Declarations, hasNonGlobalAugmentationExternalModuleSymbol)`
@@ -1927,44 +1445,6 @@ fn this_parameter(file: FileId, function: FnId) -> Found {
         declaration: Declaration::ThisParameter(function),
     }
 }
-
-/// A member that `declareSymbolEx` enters in a table under its name.
-fn is_named_member(kind: MemberKind) -> bool {
-    matches!(
-        kind,
-        MemberKind::Property | MemberKind::Method | MemberKind::Getter | MemberKind::Setter
-    )
-}
-
-/// `declareSymbolEx`, over the declarations of one name in one table, in the order they are bound: those of the symbol that `target`
-/// is a declaration of. A declaration that what is in the table excludes gets a symbol of its own, which is in no table.
-fn declarations_of_same_symbol(
-    candidates: &[MemberDeclaration],
-    target: (FileId, Declaration),
-) -> Vec<(FileId, Declaration)> {
-    let mut in_table = Vec::new();
-    let mut flags = 0u8;
-    for &(file, declaration, includes, excludes) in candidates {
-        if flags & excludes != 0 {
-            // An accessor that conflicts with anything but an accessor of its kind makes the symbol a full accessor.
-            if flags & ACCESSOR != 0 && flags & ACCESSOR != includes & ACCESSOR {
-                flags |= ACCESSOR;
-            }
-            if (file, declaration) == target {
-                return vec![target];
-            }
-            continue;
-        }
-        flags |= includes;
-        in_table.push((file, declaration));
-    }
-    if in_table.contains(&target) {
-        in_table
-    } else {
-        vec![target]
-    }
-}
-
 /// `createExpressionFromSymbolChain`, past the first symbol: `.name`, or `[name]` for what is no identifier. The brackets of a
 /// computed name are not doubled.
 fn push_access(text: &mut String, name: &str, is_enum_member: bool) {

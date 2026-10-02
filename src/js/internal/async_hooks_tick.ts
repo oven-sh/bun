@@ -9,7 +9,7 @@
 // Currently only TickObject `init` events are delivered (enough for
 // console.log/stream.write tick-coalescing tests); promise, timer and native
 // resource events are still unimplemented.
-const tickInitHooks = [];
+const tickInitHooks: Array<(asyncId: number, type: string, triggerAsyncId: number, resource: object) => void> = [];
 let nextAsyncId = 1;
 
 export default {

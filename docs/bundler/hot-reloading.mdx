@@ -131,12 +131,12 @@ Indicates that a dependency's module can be accepted. When the dependency is upd
 
 ```ts title="index.ts" icon="/icons/typescript.svg"
 import.meta.hot.accept(["./foo", "./bar"], newModules => {
-  // newModules is an array where each item corresponds to the updated module
-  // or undefined if that module had a syntax error
+  // newModules holds the updated module at its index and
+  // undefined for the other dependencies
 });
 ```
 
-This variant accepts an array of dependencies. The callback receives the updated modules, and `undefined` for any that had errors.
+This variant accepts an array of dependencies. The callback receives an array with the updated module at its index and `undefined` for the other dependencies.
 
 ## import.meta.hot.data
 

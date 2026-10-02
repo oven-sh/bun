@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { once } from "node:events";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { connect } from "node:net";
@@ -65,6 +66,43 @@ test("aborting a connection settles every queued pipelined response callback onc
         expect(events.indexOf(`${prefix}:close`)).toBeGreaterThan(events.indexOf(`${prefix}:${operation}`));
       }
     }
+  } finally {
+    client.destroy();
+    server.closeAllConnections();
+    if (server.listening) {
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  }
+});
+
+// rawPacket is the read as it arrived. The server used to lowercase the method
+// of a request in that buffer when it dispatched the request.
+test("'clientError' rawPacket has an earlier request of the same read as the client sent it", async () => {
+  const payload = "GET /a HTTP/1.1\r\nHost: x\r\n\r\nGET /b HTTP/1.1\r\nHost: x\r\nno colon here\r\n\r\n";
+  const errored = Promise.withResolvers<{ code: string; rawPacket: string }>();
+  const requests: string[] = [];
+  const server = createServer((req, res) => {
+    requests.push(`${req.method} ${req.url}`);
+    res.end("ok");
+  });
+  server.on("clientError", (err: any, socket) => {
+    errored.resolve({ code: err.code, rawPacket: err.rawPacket.toString("latin1") });
+    socket.destroy();
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const client = connect((server.address() as AddressInfo).port, "127.0.0.1");
+  // A connection that ends with no 'clientError' fails the test at once.
+  client.on("error", errored.reject);
+  client.on("close", () => errored.reject(new Error("the connection closed with no 'clientError'")));
+
+  try {
+    client.write(payload);
+
+    expect({ ...(await errored.promise), requests }).toEqual({
+      code: "HPE_INVALID_HEADER_TOKEN",
+      rawPacket: payload,
+      requests: ["GET /a"],
+    });
   } finally {
     client.destroy();
     server.closeAllConnections();

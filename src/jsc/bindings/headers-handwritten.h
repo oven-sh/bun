@@ -57,6 +57,7 @@ enum class BunErrorKind : uint8_t {
     TypeError = 1,
     SyntaxError = 2,
     RangeError = 3,
+    ReferenceError = 4,
 };
 
 /// Mirrors `ResponseKind` in src/uws/lib.rs.

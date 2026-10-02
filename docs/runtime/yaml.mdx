@@ -134,20 +134,34 @@ const data = Bun.YAML.parse(text, {
 
 | Option          | Limits                                                                                                                                                                                                                                                                                            | Default                                             |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
-| `maxAliasCount` | The nodes aliases may reach in one call, over every document of the stream. Each alias counts the node it refers to and everything inside it, again for each alias that leads there. `0` rejects every alias; an anchor that nothing refers to is still allowed.                                  | A built-in limit that stops exponential expansion   |
+| `maxAliasCount` | How much aliases may multiply the data of a document. `0` rejects every alias; an anchor that nothing refers to is still allowed. A negative number turns the check off.                                                                                                                          | A built-in limit that stops exponential expansion   |
 | `maxDepth`      | How deep sequences and mappings may nest in a document: a scalar is `0`, `[]` is `1`, `a: [1]` is `2`. What an alias refers to counts as if it were written in the alias's place, and an alias to a collection that contains it is rejected. The array of a multi-document stream is not counted. | The stack alone; exceeding it throws a `RangeError` |
-
-Both take a non-negative integer, and a document that exceeds one throws a `SyntaxError` whose message names the option:
 
 ```ts
 Bun.YAML.parse("a: &x [1, 2]\nb: *x", { maxAliasCount: 0 });
-// SyntaxError: YAML Parse error: Excessive aliasing (maxAliasCount: 0)
+// ReferenceError: Alias resolution is disabled
 
 Bun.YAML.parse("a: [[1]]", { maxDepth: 2 });
 // SyntaxError: YAML Parse error: YAML document is too deeply nested (maxDepth: 2)
 ```
 
-Merge keys (`<<`) need no option of their own: with aliases rejected, a merge can only copy a mapping written in place. The value of a merge key counts towards `maxDepth` as written, before it is merged. The `yaml` package on npm also has a `maxAliasCount` option, where `0` rejects every alias too, but it counts other values differently.
+`maxAliasCount` behaves as the option of the same name of the [`yaml`](https://www.npmjs.com/package/yaml) package for every number and, unlike it, a value that is not a number throws instead of being ignored. An anchor counts `1` and each of its aliases `1` more. That count is multiplied by the largest such product among the aliases written inside the anchored node (`1` if it holds only scalars), and the result may not exceed the limit:
+
+```ts
+const text = `
+a: &a [x, x]    # two aliases: 3
+b: &b [*a, *a]  # one alias: 2, times the 3 of a
+c: *b
+`;
+
+Bun.YAML.parse(text, { maxAliasCount: 6 }); // ok
+Bun.YAML.parse(text, { maxAliasCount: 5 });
+// ReferenceError: Excessive alias count indicates a resource exhaustion attack
+```
+
+Each document of a stream is counted on its own, and the source of a merge key (`<<: *a`) counts as an alias. That package's default is `100`; Bun's built-in limit is far higher, so pass a limit for input you do not trust.
+
+Merge keys need no option of their own: with aliases rejected, a merge can only copy a mapping written in place. The value of a merge key counts towards `maxDepth` as written, before it is merged.
 
 ---
 

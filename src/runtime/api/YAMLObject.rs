@@ -1062,17 +1062,46 @@ fn is_inf_suffix(str: &BunString, i: usize) -> bool {
         || (a == 0x49 /* 'I' */ && b == 0x4e /* 'N' */ && c == 0x46/* 'F' */)
 }
 
+/// `None` is the parser's own budget. The `yaml` package's default is `Some(100.0)`.
+const DEFAULT_MAX_ALIAS_COUNT: Option<f64> = None;
+
 /// The `maxAliasCount` and `maxDepth` options of `parse`.
 fn parse_limits_from_options(global: &JSGlobalObject, options: JSValue) -> JsResult<ParseLimits> {
     if options.is_undefined_or_null() {
-        return Ok(ParseLimits::default());
+        return Ok(ParseLimits {
+            max_alias_count: DEFAULT_MAX_ALIAS_COUNT,
+            max_depth: None,
+        });
     }
     // A function here is reserved for a reviver.
     if !options.is_object() || options.is_callable() {
         return Err(global.throw_invalid_argument_type_value("options", "object", options));
     }
+    // The `yaml` package ignores these, which would leave a mistyped limit unnoticed.
+    const MAX_ALIAS_COUNT: &[u8] = b"maxAliasCount";
+    let max_alias_count = match options.get(global, MAX_ALIAS_COUNT)? {
+        None => DEFAULT_MAX_ALIAS_COUNT,
+        Some(value) if !value.is_number() => {
+            return Err(global.throw_invalid_property_type_value(
+                MAX_ALIAS_COUNT,
+                b"number",
+                value,
+            ));
+        }
+        Some(value) if value.as_number().is_nan() => {
+            return Err(global.throw_range_error(
+                f64::NAN,
+                jsc::RangeErrorOptions {
+                    field_name: MAX_ALIAS_COUNT,
+                    msg: b"a number",
+                    ..Default::default()
+                },
+            ));
+        }
+        Some(value) => Some(value.as_number()),
+    };
     Ok(ParseLimits {
-        max_alias_count: parse_limit(global, options, b"maxAliasCount")?,
+        max_alias_count,
         max_depth: parse_limit(global, options, b"maxDepth")?,
     })
 }
@@ -1128,6 +1157,12 @@ pub(crate) fn parse(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult
                 Ok(root) => root,
                 Err(YamlParseError::OutOfMemory) => return Err(JsError::OutOfMemory),
                 Err(YamlParseError::StackOverflow) => return Err(global.throw_stack_overflow()),
+                Err(
+                    e @ (YamlParseError::ExcessiveAliasCount | YamlParseError::AliasesDisabled),
+                ) => {
+                    return Err(global
+                        .throw_value(global.create_reference_error_instance(format_args!("{e}"))));
+                }
                 Err(YamlParseError::SyntaxError) => {
                     if !log.msgs.is_empty() {
                         let first_msg = &log.msgs[0];

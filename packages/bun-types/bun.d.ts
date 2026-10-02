@@ -1492,22 +1492,27 @@ declare module "bun" {
   namespace YAML {
     interface ParseOptions {
       /**
-       * The most nodes that aliases (`*name`) may reach in one call, over every document of the stream. Each
-       * alias counts the node it refers to and everything inside it, again for each alias that leads there,
-       * which is what code that walks or serializes the result will visit. `0` rejects every alias.
+       * Limits how much the aliases (`*name`) of a document may multiply its data. It behaves as the
+       * option of the same name of the `yaml` package on npm for every number and, unlike it, a value that
+       * is not a number throws instead of being ignored:
        *
-       * Exceeding it throws a `SyntaxError`. Without this option a built-in limit, high enough for
-       * hand-written documents, stops exponential expansion.
+       * - `0` rejects every alias.
+       * - A negative number or `Infinity` turns the check off.
+       * - For any other number, an anchor counts `1` and each of its aliases `1` more. That count is
+       *   multiplied by the largest such product among the aliases written inside the anchored node (`1` if
+       *   it holds only scalars), and the result may not exceed the limit. One alias of a scalar needs `2`.
+       * - Anything else but `undefined` throws a `TypeError`, and `NaN` a `RangeError`.
        *
-       * The `yaml` package on npm has an option of this name, where `0` also rejects every alias, but it
-       * counts other values differently.
+       * Each document of a stream is counted on its own. Exceeding the limit throws a `ReferenceError`.
+       * Without this option a built-in limit, high enough for hand-written documents, stops exponential
+       * expansion with a `SyntaxError`.
        *
        * @example
        * ```ts
        * import { YAML } from "bun";
        *
-       * YAML.parse("a: &x [1, 2]\nb: *x", { maxAliasCount: 3 }); // { a: [1, 2], b: [1, 2] }
-       * YAML.parse("a: &x [1, 2]\nb: *x", { maxAliasCount: 2 }); // SyntaxError
+       * YAML.parse("a: &x [1, 2]\nb: *x", { maxAliasCount: 2 }); // { a: [1, 2], b: [1, 2] }
+       * YAML.parse("a: &x [1, 2]\nb: *x", { maxAliasCount: 1 }); // ReferenceError
        * ```
        */
       maxAliasCount?: number;

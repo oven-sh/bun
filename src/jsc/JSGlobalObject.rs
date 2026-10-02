@@ -781,6 +781,10 @@ impl JSGlobalObject {
         self.error_instance(ErrorKind::RangeError, args)
     }
 
+    pub fn create_reference_error_instance(&self, args: Arguments<'_>) -> JSValue {
+        self.error_instance(ErrorKind::ReferenceError, args)
+    }
+
     pub(crate) fn create_dom_exception_instance(
         &self,
         code: DOMExceptionCode,

@@ -689,9 +689,11 @@ root: &root
           return { error: `${e.name}: ${e.message}` };
         }
       }
-      const tooManyAliases = (limit: number) => ({
-        error: `SyntaxError: YAML Parse error: Excessive aliasing (maxAliasCount: ${limit})`,
-      });
+      // The errors of the `yaml` package.
+      const aliasesDisabled = { error: "ReferenceError: Alias resolution is disabled" };
+      const tooManyAliases = {
+        error: "ReferenceError: Excessive alias count indicates a resource exhaustion attack",
+      };
       const tooDeep = (limit: number) => ({
         error: `SyntaxError: YAML Parse error: YAML document is too deeply nested (maxDepth: ${limit})`,
       });
@@ -711,6 +713,7 @@ root: &root
         },
       );
 
+      // Every number here is what the `yaml` package (v2.9.1) does with the same document and limit.
       describe("maxAliasCount", () => {
         test.each([
           ["a block mapping value", "a: &x 1\nb: *x"],
@@ -724,12 +727,14 @@ root: &root
           ["a flow pair key", "[&x a, *x : 2]"],
           ["a merge source", "a: &x {k: v}\nb:\n  <<: *x"],
           ["a merge source in a list", "a: &x {k: v}\nc: &y {j: w}\nb:\n  <<: [*x, *y]"],
+          ["an alias of an empty collection", "a: &e []\nb: *e"],
           ["a cyclic sequence entry", "&a [*a]"],
           ["a cyclic mapping value", "&a\nk: *a"],
           ["an alias in a later document", "--- &x 1\n---\na: &x 1\nb: *x"],
         ])("0 rejects %s", (_, input) => {
           expect(outcome(input)).toHaveProperty("value");
-          expect(outcome(input, { maxAliasCount: 0 })).toEqual(tooManyAliases(0));
+          expect(outcome(input, { maxAliasCount: 0 })).toEqual(aliasesDisabled);
+          expect(outcome(input, { maxAliasCount: -0 })).toEqual(aliasesDisabled);
         });
 
         test.each([
@@ -743,30 +748,90 @@ root: &root
           expect(outcome(input, { maxAliasCount: 0 })).toEqual({ value });
         });
 
-        // Each alias counts the node it refers to and all that is inside it.
+        // An anchor counts 1 and each of its aliases 1 more, times the largest such product among
+        // the leaves written in the anchored node, where a scalar is 1.
         test.each([
-          ["a scalar", "a: &x 1\nb: *x", 1],
-          ["a scalar, twice", "a: &x 1\nb: *x\nc: *x", 2],
-          ["a sequence of two", "a: &x [1, 2]\nb: *x", 3],
-          ["a sequence of two, twice", "a: &x [1, 2]\nb: *x\nc: *x", 6],
-          ["a mapping of one key and value", "a: &x {k: v}\nb: *x", 3],
-          ["an alias reached through another alias", "a: &x [1]\nb: &y [*x, *x]\nc: *y", 9],
-          ["a merge source", "a: &x {k: v}\nb: {<<: *x}", 3],
-          ["two merge sources", "a: &x {k: v}\nc: &y {j: w}\nb: {<<: [*x, *y]}", 6],
-          ["a collection that contains the alias", "&a [*a]", 1],
-          ["two documents, which share the count", "---\na: &x 1\nb: *x\n---\na: &x 1\nb: *x", 2],
+          ["a scalar", "a: &x 1\nb: *x", 2],
+          ["a scalar, twice", "a: &x 1\nb: *x\nc: *x", 3],
+          ["a sequence of two", "a: &x [1, 2]\nb: *x", 2],
+          ["a sequence of two, twice", "a: &x [1, 2]\nb: *x\nc: *x", 3],
+          ["a mapping", "a: &x {k: v}\nb: *x", 2],
+          ["an alias as a key", "a: &x k\n*x : v", 2],
+          ["an alias inside an aliased collection", "a: &x [1]\nb: &y [*x, *x]\nc: *y", 6],
+          ["the inner count as it is at the first outer alias", "a: &a 1\nb: &b [*a]\nc: *a\nd: *b", 6],
+          ["the inner count no later than that", "a: &a 1\nb: &b [*a]\nd: *b\nc: *a", 4],
+          ["the largest of the leaves, not their sum", "a: &a 1\nb: &b 2\nc: &c [*a, *a, *b]\nd: *c", 6],
+          ["a merge source", "a: &x {k: v}\nb: {<<: *x}", 2],
+          ["two merge sources", "a: &x {k: v}\nc: &y {j: w}\nb: {<<: [*x, *y]}", 2],
+          ["the aliases in a merge source once more", "a: &x 1\nb: &m {k: *x}\nc: {<<: *m}\nd: {<<: *m}", 6],
+          [
+            "each merge source before the next is resolved",
+            "a: &x 1\nm: &m {k: *x, j: *x}\nn: &n {i: *x}\nc: {<<: [*m, *n]}",
+            12,
+          ],
+          ["a mapping that contains the alias", "&a {k: *a}", 2],
+          ["what follows a cyclic alias in its collection", "&a [*a, 1]", 2],
+          ["each document on its own", "---\na: &x 1\nb: *x\n---\na: &x 1\nb: *x\nc: *x", 3],
+          ["an anchor name that is defined again", "a: &x 1\nb: *x\nc: &x 2\nd: *x", 2],
         ])("counts %s", (_, input, count) => {
           expect(outcome(input, { maxAliasCount: count })).toEqual(outcome(input));
-          expect(outcome(input, { maxAliasCount: count - 1 })).toEqual(tooManyAliases(count - 1));
+          expect(outcome(input, { maxAliasCount: count })).toHaveProperty("value");
+          expect(outcome(input, { maxAliasCount: count - 0.5 })).toEqual(tooManyAliases);
+          expect(outcome(input, { maxAliasCount: count - 1 })).toEqual(tooManyAliases);
         });
 
-        test("stops an exponential document early", () => {
-          const lines = [`a: &a [${Array(10).fill("lol").join(",")}]`];
-          for (const [prev, name] of ["ab", "bc", "cd", "de", "ef", "fg", "gh", "hi"]) {
-            lines.push(`${name}: &${name} [${Array(10).fill(`*${prev}`).join(",")}]`);
-          }
-          expect(outcome(lines.join("\n"), { maxAliasCount: 1000 })).toEqual(tooManyAliases(1000));
+        test.each([
+          "a: &e []\nb: *e",
+          "a: &e {}\nb: *e\nc: *e",
+          "&a [*a]",
+          "&a [[*a], *a]",
+          "a: &e []\nb: &f [*e, *e]\nc: *f",
+        ])("any limit above 0 accepts %j, where no scalar is aliased", input => {
+          expect(outcome(input, { maxAliasCount: 0.001 })).toEqual(outcome(input));
+          expect(outcome(input, { maxAliasCount: 0 })).toEqual(aliasesDisabled);
         });
+
+        const exponential = ["a: &a [lol,lol,lol,lol,lol,lol,lol,lol,lol,lol]"];
+        for (const [prev, name] of ["ab", "bc", "cd", "de", "ef", "fg", "gh", "hi"]) {
+          exponential.push(`${name}: &${name} [${Array(10).fill(`*${prev}`).join(",")}]`);
+        }
+
+        test.each([-1, -0.5, -Infinity, Infinity])("%p is no limit", maxAliasCount => {
+          const doc: any = YAML.parse(exponential.join("\n"), { maxAliasCount });
+          expect(Object.keys(doc)).toHaveLength(9);
+          expect(doc.i[9][9][9][9][9][9][9][9]).toBe(doc.a);
+        });
+
+        test("undefined is the default", () => {
+          const input = exponential.slice(0, 3).join("\n");
+          expect(outcome(input, { maxAliasCount: undefined })).toEqual(outcome(input));
+          expect(outcome(input, { maxAliasCount: undefined })).toHaveProperty("value");
+        });
+
+        test("a mapping that merges itself exceeds every limit", () => {
+          const input = "&A { <<: *A, B: b }";
+          expect(outcome(input)).toEqual({
+            error: "SyntaxError: YAML Parse error: Merge key cannot reference an enclosing node",
+          });
+          expect(outcome(input, { maxAliasCount: 0 })).toEqual(aliasesDisabled);
+          for (const maxAliasCount of [1, 2, 100, Number.MAX_VALUE]) {
+            expect(outcome(input, { maxAliasCount })).toEqual(tooManyAliases);
+          }
+        });
+
+        // Unlike that package, a collection key is written out in full, so the parser's own budget stays.
+        test(
+          "a key that expands without end is refused whatever the limit",
+          () => {
+            const lines = ["- &a0 [x, x]"];
+            for (let i = 1; i < 40; i++) lines.push(`- &a${i} [*a${i - 1}, *a${i - 1}]`);
+            lines.push("- ? *a39\n  : v");
+            expect(outcome(lines.join("\n"), { maxAliasCount: -1 })).toEqual({
+              error: "SyntaxError: YAML Parse error: Excessive aliasing",
+            });
+          },
+          isDebug || isASAN ? 60_000 : 5_000,
+        );
 
         // What is an anchor, an alias or a merge key is the parser's call.
         test.each([
@@ -780,7 +845,7 @@ root: &root
           ["a tagged merge key", "a: &x {k: v}\nb: {!!str <<: *x}"],
         ])("0 rejects the alias of %s", (_, input) => {
           expect(outcome(input)).toHaveProperty("value");
-          expect(outcome(input, { maxAliasCount: 0 })).toEqual(tooManyAliases(0));
+          expect(outcome(input, { maxAliasCount: 0 })).toEqual(aliasesDisabled);
         });
 
         test("0 accepts an ampersand that is part of a tag", () => {
@@ -846,6 +911,11 @@ root: &root
           expect(outcome(input, { maxDepth: depth })).toEqual(outcome(input));
           expect(outcome(input, { maxDepth: depth })).toHaveProperty("value");
           if (depth > 0) expect(outcome(input, { maxDepth: depth - 1 })).toEqual(tooDeep(depth - 1));
+          // however aliases are counted
+          for (const maxAliasCount of [-1, 1000]) {
+            expect(outcome(input, { maxDepth: depth, maxAliasCount })).toEqual(outcome(input));
+            if (depth > 0) expect(outcome(input, { maxDepth: depth - 1, maxAliasCount })).toEqual(tooDeep(depth - 1));
+          }
         });
 
         test("0 accepts only scalars", () => {
@@ -867,7 +937,8 @@ root: &root
             expect(outcome(input)).toHaveProperty("value");
             expect(outcome(input, { maxDepth: Number.MAX_SAFE_INTEGER })).toEqual(tooDeep(Number.MAX_SAFE_INTEGER));
             // the more specific limit is the one reported
-            expect(outcome(input, { maxDepth: 64, maxAliasCount: 0 })).toEqual(tooManyAliases(0));
+            expect(outcome(input, { maxDepth: 64, maxAliasCount: 0 })).toEqual(aliasesDisabled);
+            expect(outcome(input, { maxDepth: 64, maxAliasCount: -1 })).toEqual(tooDeep(64));
           },
         );
 
@@ -893,7 +964,8 @@ root: &root
           });
         });
 
-        describe.each(["maxAliasCount", "maxDepth"])("%s", name => {
+        describe("maxDepth", () => {
+          const name = "maxDepth";
           test.each([-1, NaN, Infinity, -Infinity, 2 ** 53])("rejects %p as out of range", value => {
             expect(outcome("[]", { [name]: value })).toEqual({
               error: `RangeError: The value of "${name}" is out of range. It must be >= 0 and <= 9007199254740991. Received ${value}`,
@@ -903,6 +975,7 @@ root: &root
           test.each([
             [1.5, "integer", "number"],
             ["1", "number", "string"],
+            ["64", "number", "string"],
             [null, "number", "object"],
             [true, "number", "boolean"],
             [1n, "number", "bigint"],
@@ -912,7 +985,37 @@ root: &root
               error: `TypeError: The "${name}" property must be of type ${expected}. Received ${received}`,
             });
           });
+        });
 
+        // Unlike the `yaml` package, which ignores what is not a number and takes NaN for no limit.
+        describe("maxAliasCount", () => {
+          const aliased = "a: &x 1\nb: *x";
+          function thrown(maxAliasCount: unknown) {
+            try {
+              (YAML.parse as Function)(aliased, { maxAliasCount });
+            } catch (e: any) {
+              return { name: e.name, code: e.code, namesTheOption: e.message.includes('"maxAliasCount"') };
+            }
+          }
+
+          test.each([["0"], ["2"], [null], [true], [1n], [{}], [[]], [function limit() {}], [Symbol("0")]])(
+            "rejects %p as the wrong type",
+            value => {
+              expect(thrown(value)).toEqual({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE", namesTheOption: true });
+            },
+          );
+
+          test("rejects NaN as out of range", () => {
+            expect(thrown(NaN)).toEqual({ name: "RangeError", code: "ERR_OUT_OF_RANGE", namesTheOption: true });
+          });
+
+          test("a mistyped limit throws instead of parsing without protection", () => {
+            expect(outcome(aliased, { maxAliasCount: 0 })).toEqual(aliasesDisabled);
+            expect(() => (YAML.parse as Function)(aliased, { maxAliasCount: "0" })).toThrow(TypeError);
+          });
+        });
+
+        describe.each(["maxAliasCount", "maxDepth"])("%s", name => {
           test("propagates what its getter throws, before the input is read", () => {
             const seen: string[] = [];
             const input = {

@@ -787,7 +787,7 @@ impl<'a> Checker<'a> {
         self.get_type_of_node(node)
     }
 
-    // A resolver is a value without fields whose methods take the checker, so the checker keeps none and builds none once.
+    // The resolver is the unit value `EmitResolver`, whose methods take the checker: the checker keeps no resolver and has no `sync.Once` for one.
     pub fn get_emit_resolver(&self) -> EmitResolver {
         EmitResolver
     }

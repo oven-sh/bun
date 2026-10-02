@@ -130,14 +130,6 @@ pub fn set_owner(handle: *mut uv_handle_t, owner: *mut c_void, close: Option<Clo
     });
 }
 
-#[cfg(debug_assertions)]
-pub fn count() -> usize {
-    OPEN.with(|o| {
-        let o = o.borrow();
-        o.handles.len() + o.files.len()
-    })
-}
-
 enum Next {
     Handle(*mut uv_handle_t, Entry),
     File(*mut c_void, FileEntry),

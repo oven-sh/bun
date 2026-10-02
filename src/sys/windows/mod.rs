@@ -97,7 +97,6 @@ pub use bun_windows_sys::BOOLEAN;
 pub use bun_windows_sys::CHAR;
 pub use bun_windows_sys::DWORD;
 pub use bun_windows_sys::LPVOID;
-pub use bun_windows_sys::MAX_PATH;
 pub use bun_windows_sys::PATH_MAX_WIDE;
 pub use bun_windows_sys::WORD;
 /// `PVOID` (winnt.h) — alias of `LPVOID`. Keep the alias so existing
@@ -169,8 +168,7 @@ pub use bun_windows_sys::{CTRL_BREAK_EVENT, CTRL_C_EVENT, CTRL_CLOSE_EVENT};
 pub use bun_windows_sys::{DELETE, GENERIC_READ, GENERIC_WRITE, SYNCHRONIZE};
 pub use bun_windows_sys::{
     FILE_FLAG_OVERLAPPED, PIPE_ACCESS_INBOUND, PIPE_ACCESS_OUTBOUND, PIPE_READMODE_BYTE,
-    PIPE_TYPE_BYTE, PIPE_WAIT, SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE,
-    SYMBOLIC_LINK_FLAG_DIRECTORY,
+    PIPE_TYPE_BYTE, PIPE_WAIT,
 };
 pub use bun_windows_sys::{FILE_READ_ATTRIBUTES, FILE_READ_DATA, FILE_READ_EA, FILE_TRAVERSE};
 // Stdio handle helpers (live in `bun_core::windows_sys` so the no-dep core can

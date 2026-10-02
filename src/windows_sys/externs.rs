@@ -264,7 +264,6 @@ pub struct IO_STATUS_BLOCK {
 }
 
 // Path-length constants.
-pub const MAX_PATH: usize = 260;
 pub const PATH_MAX_WIDE: usize = 32767;
 
 // `SetFilePointer` move methods.
@@ -337,10 +336,6 @@ pub const PIPE_ACCESS_OUTBOUND: DWORD = 0x0000_0002;
 pub const PIPE_TYPE_BYTE: DWORD = 0x0000_0000;
 pub const PIPE_READMODE_BYTE: DWORD = 0x0000_0000;
 pub const PIPE_WAIT: DWORD = 0x0000_0000;
-
-/// `CreateSymbolicLinkW` dwFlags (`winbase.h`).
-pub const SYMBOLIC_LINK_FLAG_DIRECTORY: DWORD = 0x1;
-pub const SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE: DWORD = 0x2;
 
 /// `FILE_BASIC_INFORMATION` (`wdm.h`) — output of `NtQueryAttributesFile`.
 #[repr(C)]
@@ -1610,8 +1605,6 @@ pub struct RTL_USER_PROCESS_PARAMETERS {
     pub CommandLine: UNICODE_STRING,
     // (fields beyond CommandLine are not read by Bun)
 }
-/// CamelCase alias (`bun_core` callers).
-pub type ProcessParameters = RTL_USER_PROCESS_PARAMETERS;
 // `RTL_USER_PROCESS_PARAMETERS` places `StandardInput` at 0x20,
 // `CurrentDirectory.Handle` at 0x48, and `ImagePathName` at 0x60 on x64.
 #[cfg(target_pointer_width = "64")]

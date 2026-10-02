@@ -296,8 +296,7 @@ impl Route {
                             bstr::BStr::new(req.url())
                         );
                     }
-                    // TODO: use the code from DevServer.rs to render the error
-                    resp.end_without_body(true);
+                    Self::end_build_failed(resp);
                 }
                 State::Html(html) => {
                     if bun_core::Environment::ENABLE_LOGS {
@@ -683,32 +682,21 @@ impl Route {
                         StaticRoute::on(html.this_ptr(), resp);
                     }
                 }
-                State::Err(_log) => {
-                    if self
-                        .server
-                        .get()
-                        .expect("server set")
-                        .config()
-                        .is_development()
-                    {
-                        // TODO: use the code from DevServer.rs to render the error
-                    } else {
-                        // To protect privacy, do not show errors to end users in production.
-                        // TODO: Show a generic error page.
-                    }
-                    // This runs from a JS event-loop task, not a uWS handler,
-                    // so `end_without_body(true)` alone cannot close the
-                    // socket; write Content-Length so the client has framing.
-                    resp.write_status(b"500 Build Failed");
-                    resp.write_header_int(b"Content-Length", 0);
-                    resp.end_without_body(true);
-                }
+                State::Err(_log) => Self::end_build_failed(resp),
                 _ => {
                     resp.write_header_int(b"Content-Length", 0);
                     resp.end_without_body(true);
+                    resp.close_if_done_and_marked();
                 }
             }
         }
+    }
+
+    fn end_build_failed(resp: AnyResponse) {
+        resp.write_status(b"500 Build Failed");
+        resp.write_header_int(b"Content-Length", 0);
+        resp.end_without_body(true);
+        resp.close_if_done_and_marked();
     }
 }
 
@@ -734,6 +722,7 @@ impl Drop for PendingResponse {
             self.resp.clear_aborted();
             self.resp.clear_on_writable();
             self.resp.end_without_body(true);
+            self.resp.close_if_done_and_marked();
         }
     }
 }

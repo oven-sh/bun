@@ -27,6 +27,8 @@
     "strip-ansi": "^7.1.0",
     "tar": "^7.4.3",
     "tinycolor2": "^1.6.0",
+    "turndown": "^7.2.4",
+    "turndown-plugin-gfm": "^1.0.2",
     "wrap-ansi": "^9.0.0",
     "zx": "^7.2.3"
   },

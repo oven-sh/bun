@@ -97,6 +97,8 @@
     "svelte": "5.20.4",
     "tsyringe": "4.8.0",
     "tunnel": "0.0.6",
+    "turndown": "7.2.4",
+    "turndown-plugin-gfm": "1.0.2",
     "type-graphql": "2.0.0-rc.2",
     "typeorm": "0.3.20",
     "typescript": "6.0.2",

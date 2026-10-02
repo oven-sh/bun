@@ -1467,17 +1467,9 @@ impl Template {
             // SAFETY: NUL-terminated above.
             let dest_zstr = ZStr::from_slice_with_nul(&dest_z[..]);
 
-            // If both Cursor & Claude are installed, write the rule to CLAUDE.md
-            // and make the cursor rule a symlink to ../../CLAUDE.md so it's easier
-            // to keep them in sync if you change it locally. We use a symlink for
-            // the cursor rule in this case so that the github UI for CLAUDE.md
-            // (which may appear prominently in repos) doesn't show a file path.
-            //
-            // The symlink goes first, so the layout is known before CLAUDE.md is
-            // written: with the link, CLAUDE.md keeps the frontmatter the cursor
-            // rule needs. Without it, both are regular files and CLAUDE.md is
-            // written below without the frontmatter. A symlink on Windows needs
-            // Developer Mode or an elevated process, so Windows never tries one.
+            // With both Cursor & Claude, the cursor rule is a symlink to
+            // ../../CLAUDE.md, which then keeps the frontmatter the rule needs.
+            // Windows symlinks need Developer Mode, so there both are files.
             let mut linked = create_claude_md && cfg!(not(windows)) && {
                 let _ = bun_sys::Dir::cwd().make_path(b".cursor/rules");
                 let mut target_z = Self::CURSOR_RULE_PATH_TO_CLAUDE_MD.to_vec();
@@ -1498,7 +1490,6 @@ impl Template {
                     );
                     Output::flush();
                 } else {
-                    // Do not leave a dangling link. Fall back to a regular file.
                     let _ = bun_sys::unlinkat(Fd::cwd(), dest_zstr);
                     linked = false;
                 }

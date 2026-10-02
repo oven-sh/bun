@@ -80,6 +80,8 @@ const { kIncomingMessage } = require("node:_http_common");
 let http1Fallback;
 const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
 const kTrackedConnections = Symbol("http.server.trackedConnections");
+// The http.Server that listens on a native server. Under bun --hot a native server outlives the http.Server of each run of the script.
+const nativeServerOwners = new WeakMap<object, Server>();
 const kPendingDrainClose = Symbol("http.server.pendingDrainClose");
 const kPendingCloseGenerations = Symbol("http.server.pendingCloseGenerations");
 const kListenerGeneration = Symbol("http.server.listenerGeneration");
@@ -517,16 +519,19 @@ Server.prototype.getConnections = function (callback) {
 
 Server.prototype.closeIdleConnections = function () {
   http1Fallback?.closeIdleHttp1Connections(this);
-  const server = this[serverSymbol];
-  if (server) {
-    server.closeIdleConnections();
-    return;
-  }
   const tracked = this[kTrackedConnections];
   if (tracked && tracked.size > 0) {
-    for (const socket of $Array.from(tracked) as NodeHTTPServerSocket[]) {
-      // uWS knows whether a request is arriving on the connection. A missing _httpMessage does not tell.
-      if (!socket[kHandedOff]) socket[kHandle]?.closeIfIdle();
+    // After close() the connection of an ended response goes at once, so that 'close' does not wait for its keepAliveTimeout.
+    const listening = !!this[serverSymbol];
+    const sockets = $Array.from(tracked) as NodeHTTPServerSocket[];
+    // The newest connection first, like the sweep of uWS.
+    for (let i = sockets.length - 1; i >= 0; i--) {
+      const socket = sockets[i];
+      if (socket[kHandedOff]) continue;
+      // Like Node's parser, busy until its message is complete, so also in the listener of a request without a body: https://github.com/nodejs/node/blob/v26.3.0/src/node_http_parser.cc#L1153
+      if (listening && socket.parser?.incoming?.complete === false) continue;
+      // uWS knows the rest: a request head or body that arrives, a response in flight. A missing _httpMessage does not tell.
+      socket[kHandle]?.closeIfIdle();
     }
   }
 };
@@ -1133,6 +1138,17 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
     });
 
     const handle = this[serverSymbol];
+    const previousOwner = nativeServerOwners.get(handle);
+    if (previousOwner !== undefined && previousOwner !== this) {
+      // bun --hot: Bun.serve() gave back the native server of the last run of the script. Its connections are this server's now.
+      const connections = this[kTrackedConnections];
+      for (const socket of previousOwner[kTrackedConnections]) {
+        socket.server = this;
+        connections.add(socket);
+      }
+      previousOwner[kTrackedConnections].clear();
+    }
+    nativeServerOwners.set(handle, this);
     listenerGeneration = {
       isUnix: !!socketPath,
       nativeClosed: false,

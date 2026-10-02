@@ -779,6 +779,8 @@ root: &root
           ["an anchor written there anew", "s: &s [{a: &x 1}]\np: *x\nq: *x\nm: {<<: *s}\ny: *x", 3],
           ["the anchor of an item of that sequence as before", "s: &s [&x {a: 1}]\np: *x\nm: {<<: *s}\ny: *x", 3],
           ["a merge key as a scalar", "a: &x {<<: {}}\nb: *x", 2],
+          ["a merge source written in place once more at its first alias", "a: &x 1\nb: {<<: &m {k: *x}}\nc: *m", 6],
+          ["one written in a list of merge sources likewise", "a: &x 1\nb: {<<: [&m {k: *x}, *m]}", 6],
           ["a mapping that contains the alias", "&a {k: *a}", 2],
           ["what follows a cyclic alias in its collection", "&a [*a, 1]", 2],
           ["each document on its own", "---\na: &x 1\nb: *x\n---\na: &x 1\nb: *x\nc: *x", 3],

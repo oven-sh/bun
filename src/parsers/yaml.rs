@@ -3331,9 +3331,24 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         let AliasCheck::Count(counter) = &mut self.alias_check else {
             return Ok(());
         };
-        counter.events.push(AliasEvent::MergeKey);
         let is_map = |node: &Expr| matches!(node.data, ast::ExprData::EObject(_));
         let aliased = counter.alias_site(value);
+        // A source written in place is converted without its anchor, which is left to its first alias.
+        if aliased.is_none() && collection_id(value).is_some() {
+            for event in &mut counter.events[counter.closed_start..] {
+                if let AliasEvent::Define(id) = *event
+                    && let anchor = &mut counter.anchors[id]
+                    && (collection_id(&anchor.node) == collection_id(value)
+                        || (!is_map(value)
+                            && is_map(&anchor.node)
+                            && anchor.depth == self.depth + 1))
+                {
+                    anchor.visited = false;
+                    *event = AliasEvent::Source;
+                }
+            }
+        }
+        counter.events.push(AliasEvent::MergeKey);
         if let Some(site) = aliased
             && is_map(value)
         {
@@ -3558,6 +3573,8 @@ enum AliasEvent {
     MergeItems(usize, usize, usize),
     /// A `<<`, which is a scalar written in the node but not kept in it.
     MergeKey,
+    /// Where the anchor of a source of a `<<` is written in place.
+    Source,
 }
 
 /// A collection node's identity, for pointer comparison.
@@ -3810,7 +3827,15 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }
             }
             AliasEvent::Alias(id) | AliasEvent::MergeAlias(id) => {
-                counter.anchors[id].visited = true;
+                let anchor = &mut counter.anchors[id];
+                if !core::mem::replace(&mut anchor.visited, true) {
+                    (anchor.count, anchor.alias_count) = (1.0, 0.0);
+                    let (start, end) = (anchor.start, anchor.end);
+                    self.replay_alias_events(start, end, None)?;
+                }
+                let AliasCheck::Count(counter) = &mut self.alias_check else {
+                    return Ok(());
+                };
                 counter.anchors[id].count += 1.0;
                 if counter.anchors[id].alias_count == 0.0 {
                     let alias_count = self.alias_count_of(id)?;
@@ -3834,7 +3859,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             AliasEvent::MergeItems(sequence, start, end) => {
                 self.replay_alias_events(start, end, Some(sequence))?;
             }
-            AliasEvent::MergeKey => {}
+            AliasEvent::MergeKey | AliasEvent::Source => {}
         }
         Ok(())
     }

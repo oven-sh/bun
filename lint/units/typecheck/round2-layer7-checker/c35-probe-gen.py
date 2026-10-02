@@ -65,6 +65,18 @@ def code_of(rel):
     return re.sub(r'//.*', '', '\n'.join(lines_of(rel)))
 
 
+def line_of(rel, first):
+    # The one line of the file that starts with `first`.
+    hits = [l for l in lines_of(rel) if l.startswith(first)]
+    if len(hits) != 1:
+        sys.exit('%s: %s: %d lines' % (rel, first, len(hits)))
+    return hits[0] + '\n'
+
+
+def indented(text):
+    return ''.join('    ' + l + '\n' if l else '\n' for l in text.rstrip('\n').split('\n'))
+
+
 OTHERS = sorted(os.path.relpath(p, ROOT) for p in glob.glob(os.path.join(ROOT, 'checker', '*.rs'))
                 if os.path.relpath(p, ROOT) not in REAL)
 
@@ -96,6 +108,8 @@ defined |= set(re.findall(r'\b((?:as|has)_\w+)\b', real_code['checker/types.rs']
 
 # Methods of the checker that c35 calls: every `self.name(` and `c.name(` of the file is one.
 called = set(re.findall(r'\b(?:self|c)\s*\.(\w+)(?:::<[^>]*>)?\(', real_code[FILE]))
+# A method that the file hands on as a function value: `Checker::name`.
+called |= set(re.findall(r'\bChecker::(\w+)\b', real_code[FILE]))
 # Methods of the checker that types.rs, c01_data.rs and links.rs call: their `self.` is not always the checker.
 called |= {'fail', 'bad_cast', 'map_set', 'stack_limit', 'list_of'}
 # What the call sites of module `callers` name beside the functions of the file.
@@ -246,6 +260,11 @@ w('''    impl CacheHashKey {
         }
     }
 ''')
+w('\n    // checker/relater.rs and checker/mapper.rs: the types that the signatures of the stand-ins name.\n')
+w(indented(line_of('checker/relater.rs', "pub type TypePairComparer<'c, 'a> =")))
+w(indented(block('checker/mapper.rs', "pub enum Targets<'a> {", 1)))
+w(indented(block('checker/mapper.rs', "impl<'a> From<List<'a, TypeId>> for Targets<'a> {", 0)))
+w(indented(block('checker/mapper.rs', "impl<'a> From<LiveList<'a, TypeId>> for Targets<'a> {", 0)))
 w('''
     // checker/c02_program_checker.rs: the bounds of the lists and of the fallbacks.
     pub trait ListItem<'a>: Copy + Default + 'a {}

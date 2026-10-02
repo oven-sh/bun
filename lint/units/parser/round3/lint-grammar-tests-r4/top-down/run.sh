@@ -33,13 +33,15 @@ node "$T/tools/meta-check.mjs" rows.facts.json
 node "$T/tools/cases.mjs" rows.facts2.json "$N/round3/tests-known-differences/top-down/data/rows.table.tsv" > "$T/data/cases.tsv"
 node "$T/tools/groups.mjs" > "$T/data/groups.txt"
 
-# 3. The file. D0: every source as tsc reads it. E: seven cases as a parse without lint reads them (the experiment of INDEX.txt).
-node gen/rust3.mjs --facts=all --records --out=D0.rs
-node gen/rust3.mjs --facts=all --records --as-without-lint=209,212,124,296,297,300,308 --out=E.rs
+# 3. The file. D0: every source as tsc reads it. W: five cases as a parse without lint reads them (the first commit of INDEX.txt). E: seven (the seam variant z).
+node gen/rust4.mjs --out=D0.rs
+node gen/rust4.mjs --as-without-lint=124,296,297,300,308 --out=W.rs
+node gen/rust4.mjs --as-without-lint=209,212,124,296,297,300,308 --out=E.rs
 
 # 3b. The section of API.md for each of the two: "Known differences of a parse without lint", with the list of the lint grammar at its end.
 bun corpus-lists.mjs > runs/corpus-lists.txt
 node gen/lists2.mjs --out=api2.txt
+node gen/lists2.mjs --as-without-lint=124,296,297,300,308 --out=api2.w.txt
 node gen/lists2.mjs --as-without-lint=209,212,124,296,297,300,308 --out=api2.pinned.txt
 
 # 4. A scratch copy of the crate with the four helpers visible and the module line, and one with the fix of the import type.

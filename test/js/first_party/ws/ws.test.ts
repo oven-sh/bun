@@ -8,6 +8,9 @@ import { createServer, request } from "http";
 import { AddressInfo, connect } from "net";
 import path from "node:path";
 import { Server, WebSocket, WebSocketServer } from "ws";
+import NpmWebSocketServerModule from "../../../node_modules/ws/lib/websocket-server.js";
+
+const NpmWebSocketServer: typeof WebSocketServer = NpmWebSocketServerModule;
 
 const strings = [
   {
@@ -436,6 +439,62 @@ describe("WebSocketServer", () => {
       },
     );
 
+    // binaryType selects the shape of a binary frame only. npm ws emits a text frame as a Buffer.
+    it.each(binaryTypes)("$label: text frames arrive as Buffer", async ({ label, type }) => {
+      const received = await receiveOnServer(
+        ws => {
+          ws.binaryType = label as WebSocket["binaryType"];
+        },
+        client => {
+          for (const { message } of strings) client.send(message);
+          client.send(Buffer.from([1, 2, 3]));
+          client.send("");
+        },
+        strings.length + 2,
+      );
+
+      expect(received).toEqual([
+        ...strings.map(({ bytes }) => ({ event: "message", shape: "Buffer", bytes: [...bytes], isBinary: false })),
+        { event: "message", shape: type.name, bytes: [1, 2, 3], isBinary: true },
+        { event: "message", shape: "Buffer", bytes: [], isBinary: false },
+      ]);
+    });
+
+    // The broadcast of the npm ws README. A text frame must reach the peer as a text frame.
+    it.each(binaryTypes)("$label: send(data, { binary: isBinary }) keeps the frame type", async ({ label }) => {
+      const wss = new WebSocketServer({ port: 0 });
+      const { promise, resolve, reject } = Promise.withResolvers<{ isBinary: boolean; bytes: number[] }[]>();
+      const frames = [...strings.map(({ message }) => message), Buffer.from([1, 2, 3]), ""];
+      const received: { isBinary: boolean; bytes: number[] }[] = [];
+      wss.on("connection", ws => {
+        ws.binaryType = label as WebSocket["binaryType"];
+        ws.on("error", reject);
+        ws.on("message", (data, isBinary) => {
+          for (const client of wss.clients) client.send(data, { binary: isBinary });
+        });
+      });
+
+      const client = new WebSocket("ws://localhost:" + (wss.address() as AddressInfo).port);
+      client.on("error", reject);
+      client.on("open", () => {
+        for (const frame of frames) client.send(frame);
+      });
+      client.on("message", (data, isBinary) => {
+        received.push({ isBinary, bytes: [...(data as Buffer)] });
+        if (received.length === frames.length) resolve(received);
+      });
+      try {
+        expect(await promise).toEqual([
+          ...strings.map(({ bytes }) => ({ isBinary: false, bytes: [...bytes] })),
+          { isBinary: true, bytes: [1, 2, 3] },
+          { isBinary: false, bytes: [] },
+        ]);
+      } finally {
+        client.terminate();
+        wss.close();
+      }
+    });
+
     it("defaults to nodebuffer and applies a new value to the next frame", async () => {
       const binaryTypesSeen: string[] = [];
       const received = await receiveOnServer(
@@ -550,17 +609,739 @@ it("isBinary", async () => {
 it("onmessage", done => {
   const wss = new WebSocketServer({ port: 0 });
   wss.on("connection", ws => {
-    ws.onmessage = e => {
-      expect(e.data).toEqual(Buffer.from("hello"));
+    const handler = e => {
+      expect(e.data).toBe("hello");
+      expect(ws.onmessage).toBe(handler);
       done();
       wss.close();
     };
+    ws.onmessage = handler;
   });
 
   const ws = new WebSocket("ws://localhost:" + wss.address().port);
   ws.onopen = () => {
     ws.send("hello");
   };
+});
+
+// The socket that a WebSocketServer hands to 'connection' has the EventTarget interface of npm ws
+// (lib/event-target.js). The block runs on the built-in and on the installed package, so every
+// expectation is what npm ws does. `builtin` selects the value in the four tests where the
+// built-in differs on purpose. The client is the built-in one in both runs.
+describe.each([
+  { implementation: "built-in", ServerClass: WebSocketServer, builtin: true },
+  { implementation: "npm ws", ServerClass: NpmWebSocketServer, builtin: false },
+])("server socket EventTarget interface ($implementation)", ({ ServerClass, builtin }) => {
+  function listeningServer() {
+    const wss = new ServerClass({ port: 0 });
+    return { wss, url: "ws://127.0.0.1:" + (wss.address() as AddressInfo).port };
+  }
+
+  // The server socket of a fresh connection, with an open client.
+  async function connectedServerSocket() {
+    const { wss, url } = listeningServer();
+    const connected = Promise.withResolvers<any>();
+    const opened = Promise.withResolvers<void>();
+    wss.on("connection", connected.resolve);
+    wss.on("error", connected.reject);
+    const client = new WebSocket(url);
+    client.on("error", opened.reject);
+    client.on("open", () => opened.resolve());
+    const [ws] = await Promise.all([connected.promise, opened.promise]);
+    // The tests emit and receive 'error' on purpose.
+    ws.on("error", () => {});
+    return {
+      ws,
+      client,
+      wss,
+      [Symbol.dispose]() {
+        client.terminate();
+        wss.close();
+      },
+    };
+  }
+
+  // The server socket of a connection whose peer is a plain TCP socket, so that the test
+  // chooses the bytes of each frame.
+  async function serverSocketOfRawPeer() {
+    const { wss } = listeningServer();
+    const connected = Promise.withResolvers<any>();
+    wss.on("connection", connected.resolve);
+    wss.on("error", connected.reject);
+    const peer = connect((wss.address() as AddressInfo).port, "127.0.0.1");
+    peer.on("error", () => {});
+    peer.write(
+      [
+        "GET / HTTP/1.1",
+        "Host: localhost",
+        "Connection: Upgrade",
+        "Upgrade: websocket",
+        "Sec-WebSocket-Version: 13",
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+        "",
+        "",
+      ].join("\r\n"),
+    );
+    const ws = await connected.promise;
+    ws.on("error", () => {});
+    return {
+      ws,
+      peer,
+      [Symbol.dispose]() {
+        peer.destroy();
+        wss.close();
+      },
+    };
+  }
+
+  // An event as plain data: the name of its class, every property that `for in` reads, and
+  // whether `target` is the socket.
+  function describeEvent(event: any, ws: unknown) {
+    const described: Record<string, unknown> = { class: event.constructor.name };
+    for (const key in event) {
+      const value = event[key];
+      described[key] = key === "target" ? value === ws : value instanceof Error ? String(value) : value;
+    }
+    return described;
+  }
+
+  // `args` is what the socket emits for the event. The server socket emits no 'open' and no
+  // 'error' by itself, so every test emits.
+  const eventTypes = [
+    { type: "open", adapter: "onOpen", args: [], event: { class: "Event", target: true, type: "open" } },
+    {
+      type: "error",
+      adapter: "onError",
+      args: [new Error("boom")],
+      event: { class: "ErrorEvent", error: "Error: boom", message: "boom", target: true, type: "error" },
+    },
+    {
+      type: "close",
+      adapter: "onClose",
+      args: [4000, Buffer.from("bye")],
+      // The socket is open, so no close frame went either way.
+      event: { class: "CloseEvent", code: 4000, reason: "bye", wasClean: false, target: true, type: "close" },
+    },
+    {
+      type: "message",
+      adapter: "onMessage",
+      args: [Buffer.from("text"), false],
+      event: { class: "MessageEvent", data: "text", target: true, type: "message" },
+    },
+  ];
+
+  describe.each(eventTypes)("$type", ({ type, adapter, args, event }) => {
+    const attribute = `on${type}`;
+
+    it(`${attribute} holds one handler, and only a function sets it`, async () => {
+      using connection = await connectedServerSocket();
+      const { ws } = connection;
+      // The listeners that are not part of the test: the server's own for 'close', the helper's for 'error'.
+      const others = ws.listenerCount(type);
+      const state = () => ({ handler: ws[attribute], listeners: ws.listenerCount(type) - others });
+      const calls: string[] = [];
+      const first = () => calls.push("first");
+      const second = () => calls.push("second");
+
+      expect(state()).toEqual({ handler: null, listeners: 0 });
+      for (const value of [null, undefined, 42, "foo", {}]) {
+        ws[attribute] = first;
+        expect(state()).toEqual({ handler: first, listeners: 1 });
+        ws[attribute] = value;
+        expect(state()).toEqual({ handler: null, listeners: 0 });
+      }
+
+      ws[attribute] = first;
+      ws[attribute] = second;
+      expect(state()).toEqual({ handler: second, listeners: 1 });
+      ws.emit(type, ...args);
+      expect(calls).toEqual(["second"]);
+
+      ws.removeAllListeners(type);
+      expect(ws[attribute]).toBeNull();
+    });
+
+    it("a listener gets one event object", async () => {
+      using connection = await connectedServerSocket();
+      const { ws } = connection;
+      const received: unknown[] = [];
+      const record = (face: string, expectedThis: () => unknown) =>
+        function (this: unknown, ...args: unknown[]) {
+          received.push({
+            face,
+            arguments: args.length,
+            this: this === expectedThis(),
+            event: describeEvent(args[0], ws),
+          });
+        };
+      // `handleEvent` is read when the event is dispatched, and only from an object.
+      const object: { handleEvent?: Function } = {};
+      const functionWithHandleEvent = Object.assign(
+        record("function", () => ws),
+        { handleEvent: record("handleEvent of a function", () => functionWithHandleEvent) },
+      );
+
+      ws[attribute] = record(attribute, () => ws);
+      ws.addEventListener(
+        type,
+        record("addEventListener", () => ws),
+      );
+      ws.addEventListener(type, object);
+      ws.addEventListener(type, functionWithHandleEvent);
+      object.handleEvent = record("handleEvent", () => object);
+      ws.emit(type, ...args);
+
+      expect(received).toEqual(
+        [attribute, "addEventListener", "handleEvent", "function"].map(face => ({
+          face,
+          arguments: 1,
+          this: true,
+          event,
+        })),
+      );
+    });
+
+    it("addEventListener() adds a listener once, and { once: true } removes it before it runs", async () => {
+      using connection = await connectedServerSocket();
+      const { ws } = connection;
+      const others = ws.listenerCount(type);
+      const calls: [string, number][] = [];
+      const listener = () => calls.push(["listener", ws.listenerCount(type) - others]);
+      const onceListener = () => calls.push(["once", ws.listenerCount(type) - others]);
+
+      ws.addEventListener(type, listener);
+      ws.addEventListener(type, listener);
+      ws.addEventListener(type, onceListener, { once: true });
+      ws.addEventListener(type, onceListener, { once: true });
+      expect(ws.listenerCount(type) - others).toBe(2);
+
+      ws.emit(type, ...args);
+      ws.emit(type, ...args);
+      expect(calls).toEqual([
+        ["listener", 2],
+        ["once", 1],
+        ["listener", 1],
+      ]);
+    });
+
+    it("removeEventListener() removes what addEventListener() added, and nothing else", async () => {
+      using connection = await connectedServerSocket();
+      const { ws } = connection;
+      const others = ws.listenerCount(type);
+      const calls: string[] = [];
+      const shared = () => calls.push("shared");
+      const onceListener = () => calls.push("once");
+      const object = { handleEvent: () => calls.push("object") };
+      const viaOn = () => calls.push("on");
+
+      // The same function through both faces is two listeners.
+      ws[attribute] = shared;
+      ws.addEventListener(type, shared);
+      ws.addEventListener(type, onceListener, { once: true });
+      ws.addEventListener(type, object);
+      ws.on(type, viaOn);
+      expect(ws.listenerCount(type) - others).toBe(5);
+
+      ws.removeEventListener(type, shared);
+      ws.removeEventListener(type, onceListener);
+      ws.removeEventListener(type, object);
+      ws.removeEventListener(type, viaOn);
+      ws.removeEventListener(type, () => {});
+      expect({ handler: ws[attribute], listeners: ws.listenerCount(type) - others }).toEqual({
+        handler: shared,
+        listeners: 2,
+      });
+
+      ws.emit(type, ...args);
+      expect(calls).toEqual(["shared", "on"]);
+    });
+
+    it("off() and listeners() see the adapter, not the function", async () => {
+      using connection = await connectedServerSocket();
+      const { ws } = connection;
+      const others = ws.listenerCount(type);
+      let calls = 0;
+      const listener = () => calls++;
+
+      ws.addEventListener(type, listener);
+      ws.off(type, listener);
+      const added = ws.listeners(type).slice(others);
+      expect(added.map((f: Function) => ({ name: f.name, isListener: f === listener }))).toEqual([
+        { name: adapter, isListener: false },
+      ]);
+
+      ws.off(type, added[0]);
+      expect(ws.listenerCount(type) - others).toBe(0);
+      ws.emit(type, ...args);
+      expect(calls).toBe(0);
+    });
+
+    it("a listener keeps its place in the list of the EventEmitter", async () => {
+      using connection = await connectedServerSocket();
+      const { ws } = connection;
+      const calls: string[] = [];
+      const named = (name: string) => () => calls.push(name);
+      const run = (setup: () => void) => {
+        ws.removeAllListeners(type);
+        calls.length = 0;
+        setup();
+        const state = { handler: ws[attribute], listeners: ws.listenerCount(type) };
+        ws.emit(type, ...args);
+        ws.emit(type, ...args);
+        return { ...state, calls: calls.join(",") };
+      };
+      const f = named("f");
+      const a = named("a");
+      const d = named("d");
+
+      expect([
+        // The attribute and addEventListener() hold the same function apart.
+        run(() => {
+          ws.addEventListener(type, f);
+          ws[attribute] = f;
+        }),
+        // A new handler of the attribute goes to the end.
+        run(() => {
+          ws[attribute] = a;
+          ws.on(type, named("b"));
+          ws.addEventListener(type, named("c"));
+          ws[attribute] = d;
+        }),
+        run(() => {
+          ws.on(type, named("on"));
+          ws.prependListener(type, named("prepended"));
+          ws[attribute] = named("attribute");
+          ws.addEventListener(type, named("once"), { once: true });
+        }),
+        // on() and addEventListener() hold the same function apart.
+        run(() => {
+          ws.on(type, f);
+          ws.addEventListener(type, f);
+        }),
+      ]).toEqual([
+        { handler: f, listeners: 2, calls: "f,f,f,f" },
+        { handler: d, listeners: 3, calls: "b,c,d,b,c,d" },
+        {
+          handler: expect.any(Function),
+          listeners: 4,
+          calls: "prepended,on,attribute,once,prepended,on,attribute",
+        },
+        { handler: null, listeners: 2, calls: "f,f,f,f" },
+      ]);
+    });
+  });
+
+  it("has one class per event, shared by every socket and both faces", async () => {
+    using first = await connectedServerSocket();
+    using second = await connectedServerSocket();
+    const classes: Record<string, Function[]> = {};
+    for (const { type, args } of eventTypes) {
+      const seen = (classes[type] = [] as Function[]);
+      const record = (event: any) => seen.push(event.constructor);
+      first.ws.addEventListener(type, record);
+      first.ws[`on${type}`] = record;
+      second.ws.addEventListener(type, record);
+      first.ws.emit(type, ...args);
+      second.ws.emit(type, ...args);
+    }
+
+    const [Event] = classes.open;
+    expect(
+      Object.entries(classes).map(([type, seen]) => ({
+        type,
+        events: seen.length,
+        classes: new Set(seen).size,
+        name: seen[0].name,
+        extendsEvent: seen[0] === Event || Object.getPrototypeOf(seen[0].prototype) === Event.prototype,
+      })),
+    ).toEqual([
+      { type: "open", events: 3, classes: 1, name: "Event", extendsEvent: true },
+      { type: "error", events: 3, classes: 1, name: "ErrorEvent", extendsEvent: true },
+      { type: "close", events: 3, classes: 1, name: "CloseEvent", extendsEvent: true },
+      { type: "message", events: 3, classes: 1, name: "MessageEvent", extendsEvent: true },
+    ]);
+  });
+
+  // The built-in differs on purpose. npm ws ignores a type that is not one of the four. The
+  // built-in has always added a plain listener, so a heartbeat with addEventListener("pong", f)
+  // works on it.
+  it(`addEventListener() of another event type adds ${builtin ? "a plain listener" : "nothing"}`, async () => {
+    using connection = await connectedServerSocket();
+    const { ws, client } = connection;
+    const types = ["ping", "pong", "upgrade", "unexpected-response", "foo"];
+    const calls: unknown[] = [];
+    const listener = (...args: unknown[]) => calls.push(args.map(shapeOf));
+    const onceListener = (...args: unknown[]) => calls.push(["once", ...args.map(shapeOf)]);
+    const pinged = Promise.withResolvers<void>();
+
+    for (const type of types) ws.addEventListener(type, listener);
+    ws.addEventListener("ping", onceListener, { once: true });
+    // What is not a function is ignored, as every listener of these types is in npm ws.
+    for (const notFunction of [undefined, null, { handleEvent: listener }]) {
+      ws.addEventListener("pong", notFunction);
+      ws.removeEventListener("pong", notFunction);
+    }
+    const added = types.filter(type => ws.listenerCount(type) !== 0);
+    const pongListeners = ws.listenerCount("pong");
+    ws.on("ping", () => pinged.resolve());
+    client.ping(Buffer.from([4]));
+    await pinged.promise;
+    ws.removeAllListeners("ping");
+    for (const type of types) ws.removeEventListener(type, listener);
+
+    expect({ added, pongListeners, calls, left: types.filter(type => ws.listenerCount(type) !== 0) }).toEqual(
+      builtin
+        ? { added: types, pongListeners: 1, calls: [["Buffer"], ["once", "Buffer"]], left: [] }
+        : { added: [], pongListeners: 0, calls: [], left: [] },
+    );
+  });
+
+  it("defines its six members as enumerable properties of the prototype", async () => {
+    using connection = await connectedServerSocket();
+    const prototype = Object.getPrototypeOf(connection.ws);
+    const describeProperty = (name: string) => {
+      const { get, set, value, ...flags } = Object.getOwnPropertyDescriptor(prototype, name)!;
+      return value ? { ...flags, length: value.length } : { ...flags, accessor: !!get && !!set };
+    };
+
+    const accessor = { accessor: true, enumerable: true, configurable: true };
+    const method = { length: 2, writable: true, enumerable: true, configurable: true };
+    expect({
+      onopen: describeProperty("onopen"),
+      onerror: describeProperty("onerror"),
+      onclose: describeProperty("onclose"),
+      onmessage: describeProperty("onmessage"),
+      addEventListener: describeProperty("addEventListener"),
+      removeEventListener: describeProperty("removeEventListener"),
+    }).toEqual({
+      onopen: accessor,
+      onerror: accessor,
+      onclose: accessor,
+      onmessage: accessor,
+      addEventListener: method,
+      removeEventListener: method,
+    });
+  });
+
+  // The built-in differs on purpose. In npm ws a listener that on() added has `undefined` for the
+  // function it adapts, so removeEventListener(type, undefined) removes the first one. For 'close'
+  // that is the listener that takes the socket out of `wss.clients`.
+  it(`removeEventListener(type, undefined) removes ${builtin ? "nothing" : "a listener that on() added"}`, async () => {
+    using connection = await connectedServerSocket();
+    const { ws, wss, client } = connection;
+    const closed = Promise.withResolvers<void>();
+    let messages = 0;
+    ws.on("message", () => messages++);
+
+    const before = { message: ws.listenerCount("message"), close: ws.listenerCount("close") };
+    ws.removeEventListener("message", undefined);
+    ws.removeEventListener("close", undefined);
+    const removed = {
+      message: before.message - ws.listenerCount("message"),
+      close: before.close - ws.listenerCount("close"),
+    };
+    ws.on("close", () => closed.resolve());
+
+    client.send("text");
+    client.close();
+    await closed.promise;
+    expect({ removed, messages, clients: wss.clients.size }).toEqual(
+      builtin
+        ? { removed: { message: 0, close: 0 }, messages: 1, clients: 0 }
+        : { removed: { message: 1, close: 1 }, messages: 0, clients: 1 },
+    );
+  });
+
+  // The built-in differs on purpose. npm ws calls `this.addEventListener()` from the setter of
+  // on<event>. A built-in module does not call a method that user code can replace.
+  it(`an on<event> setter ${builtin ? "does not call" : "calls"} an addEventListener() of the socket`, async () => {
+    using connection = await connectedServerSocket();
+    const { ws } = connection;
+    const handler = () => {};
+    const types: string[] = [];
+    ws.addEventListener = (type: string) => types.push(type);
+    ws.onmessage = handler;
+
+    expect({ types, handler: ws.onmessage }).toEqual(
+      builtin ? { types: [], handler } : { types: ["message"], handler: null },
+    );
+  });
+
+  it("assigning a non-function to onmessage clears the handler", async () => {
+    const { wss, url } = listeningServer();
+    let called = 0;
+    const observed: unknown[] = [];
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    wss.on("connection", ws => {
+      observed.push(ws.onmessage);
+      ws.onmessage = () => called++;
+      ws.onmessage = null;
+      observed.push(ws.onmessage);
+      ws.addEventListener("message", () => resolve());
+      ws.on("error", reject);
+    });
+
+    const ws = new WebSocket(url);
+    try {
+      ws.on("error", reject);
+      ws.on("open", () => ws.send("hello"));
+
+      await promise;
+      expect(observed).toEqual([null, null]);
+      expect(called).toBe(0);
+    } finally {
+      wss.close();
+      ws.close();
+    }
+  });
+
+  // https://github.com/oven-sh/bun/issues/36060
+  it("addEventListener('message') converts text frames to strings", async () => {
+    const { wss, url } = listeningServer();
+    const events: any[] = [];
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    wss.on("connection", ws => {
+      ws.addEventListener("message", event => {
+        events.push(event);
+        if (events.length === 2) resolve();
+      });
+      ws.on("error", reject);
+    });
+
+    const ws = new WebSocket(url);
+    try {
+      ws.on("error", reject);
+      ws.on("open", () => {
+        ws.send("hello");
+        ws.send(Buffer.from([1, 2, 3]));
+      });
+
+      await promise;
+      expect(events[0].type).toBe("message");
+      expect(events[0].data).toBe("hello");
+      expect(events[1].type).toBe("message");
+      expect(Buffer.isBuffer(events[1].data)).toBeTrue();
+      expect(events[1].data).toEqual(Buffer.from([1, 2, 3]));
+    } finally {
+      wss.close();
+      ws.close();
+    }
+  });
+
+  it("text frames stay Buffer/string when binaryType is 'blob'", async () => {
+    const { wss, url } = listeningServer();
+    const emitted: [unknown, boolean][] = [];
+    const events: any[] = [];
+    let serverSocket: any;
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    wss.on("connection", ws => {
+      serverSocket = ws;
+      // @types/ws 8.5 does not list "blob", ws 8.18 accepts it
+      ws.binaryType = "blob" as WebSocket["binaryType"];
+      ws.on("message", (data, isBinary) => emitted.push([data, isBinary]));
+      ws.addEventListener("message", event => {
+        events.push(event);
+        if (events.length === 2) resolve();
+      });
+      ws.on("error", reject);
+    });
+
+    const ws = new WebSocket(url);
+    try {
+      ws.on("error", reject);
+      ws.on("open", () => {
+        ws.send("hello");
+        ws.send(Buffer.from([1, 2, 3]));
+      });
+
+      await promise;
+      // binaryType only affects binary frames, like npm ws
+      expect(Buffer.isBuffer(emitted[0][0])).toBeTrue();
+      expect(emitted[0][1]).toBeFalse();
+      expect(events[0].type).toBe("message");
+      expect(events[0].target).toBe(serverSocket);
+      expect(events[0].data).toBe("hello");
+      expect(emitted[1][0]).toBeInstanceOf(Blob);
+      expect(emitted[1][1]).toBeTrue();
+      expect(events[1].type).toBe("message");
+      expect(events[1].target).toBe(serverSocket);
+      expect(events[1].data).toBeInstanceOf(Blob);
+    } finally {
+      wss.close();
+      ws.close();
+    }
+  });
+
+  it("addEventListener supports { once: true } and removeEventListener", async () => {
+    const { wss, url } = listeningServer();
+    let onceCount = 0;
+    let removedCount = 0;
+    let sharedCount = 0;
+    let directCount = 0;
+    const seen: string[] = [];
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    wss.on("connection", ws => {
+      ws.addEventListener("message", () => onceCount++, { once: true });
+      const removed = () => removedCount++;
+      ws.addEventListener("message", removed);
+      ws.removeEventListener("message", removed);
+      // removeEventListener must skip on-event-attribute handlers, even when the
+      // same function was also registered via addEventListener. The onmessage
+      // wrapper sits first in the listener list, so a non-skipping implementation
+      // removes it instead; reassigning onmessage afterwards then leaks the
+      // addEventListener wrapper and shared keeps firing.
+      const shared = () => sharedCount++;
+      ws.onmessage = shared;
+      ws.addEventListener("message", shared);
+      ws.removeEventListener("message", shared);
+      ws.onmessage = () => {};
+      // plain .on() subscriptions are invisible to removeEventListener
+      const direct = () => directCount++;
+      ws.on("message", direct);
+      ws.removeEventListener("message", direct);
+      ws.addEventListener("message", event => {
+        seen.push(event.data as string);
+        if (seen.length === 2) resolve();
+      });
+      ws.on("error", reject);
+    });
+
+    const ws = new WebSocket(url);
+    try {
+      ws.on("error", reject);
+      ws.on("open", () => {
+        ws.send("first");
+        ws.send("second");
+      });
+
+      await promise;
+      expect(seen).toEqual(["first", "second"]);
+      expect(onceCount).toBe(1);
+      expect(removedCount).toBe(0);
+      // removeEventListener took the addEventListener registration and the
+      // onmessage reassignment replaced the rest, so shared never fires
+      expect(sharedCount).toBe(0);
+      expect(directCount).toBe(2);
+    } finally {
+      wss.close();
+      ws.close();
+    }
+  });
+
+  // binaryType selects the shape of a binary frame only. The data of a text frame is a string.
+  describe.each(binaryTypes)("binaryType $label", ({ label, type }) => {
+    it.each(["onmessage", "addEventListener"])("%s gets the data of each frame", async face => {
+      using connection = await connectedServerSocket();
+      const { ws, client } = connection;
+      const received: Promise<unknown>[] = [];
+      const frames = [...strings.map(({ message }) => message), "", Buffer.from([1, 2, 3]), Buffer.alloc(0)];
+      const all = Promise.withResolvers<void>();
+      const listener = ({ data }: { data: unknown }) => {
+        received.push(
+          typeof data === "string"
+            ? Promise.resolve(data)
+            : (async () => ({
+                shape: shapeOf(data),
+                bytes: [...new Uint8Array(data instanceof Blob ? await data.bytes() : (data as Uint8Array))],
+              }))(),
+        );
+        if (received.length === frames.length) all.resolve();
+      };
+
+      ws.binaryType = label;
+      if (face === "onmessage") ws.onmessage = listener;
+      else ws.addEventListener("message", listener);
+      for (const frame of frames) client.send(frame);
+      await all.promise;
+
+      expect(await Promise.all(received)).toEqual([
+        ...strings.map(({ message }) => message),
+        "",
+        { shape: type.name, bytes: [1, 2, 3] },
+        { shape: type.name, bytes: [] },
+      ]);
+    });
+  });
+
+  // wasClean is true when the connection ended with a close frame.
+  it.each([
+    {
+      label: "the client closes with 1000",
+      end: ({ client }: { client: WebSocket }) => client.close(1000, "bye"),
+      event: { code: 1000, reason: "bye", wasClean: true },
+    },
+    {
+      label: "the client drops the connection",
+      end: ({ client }: { client: WebSocket }) => client.terminate(),
+      event: { code: 1006, reason: "", wasClean: false },
+    },
+    {
+      label: "the server closes with 4001",
+      end: ({ ws }: { ws: WebSocket }) => ws.close(4001, "srv"),
+      event: { code: 4001, reason: "srv", wasClean: true },
+    },
+    {
+      label: "the server drops the connection",
+      end: ({ ws }: { ws: WebSocket }) => ws.terminate(),
+      event: { code: 1006, reason: "", wasClean: false },
+    },
+  ])("the close event when $label", async ({ end, event }) => {
+    using connection = await connectedServerSocket();
+    const { ws } = connection;
+    const closed = Promise.withResolvers<unknown>();
+    ws.onclose = closed.resolve;
+    end(connection);
+
+    expect(describeEvent(await closed.promise, ws)).toEqual({
+      class: "CloseEvent",
+      ...event,
+      target: true,
+      type: "close",
+    });
+  });
+
+  // The built-in differs on purpose. An adapter of npm ws returns nothing, so an EventEmitter
+  // that captures rejections does not get the promise of an async listener. The built-in has
+  // always handed it over.
+  it(`a rejection of an async listener is ${builtin ? "" : "not "}sent to 'error'`, async () => {
+    const errors: unknown[] = [];
+    EventEmitter.captureRejections = true;
+    try {
+      using connection = await connectedServerSocket();
+      const { ws } = connection;
+      const error = new Error("from the listener");
+      const rejection = Promise.reject(error);
+      rejection.catch(() => {});
+      ws.on("error", (error: unknown) => errors.push(error));
+      ws.onmessage = () => rejection;
+      ws.addEventListener("message", () => rejection);
+      ws.addEventListener("message", { handleEvent: () => rejection });
+      ws.emit("message", Buffer.from("text"), false);
+      await new Promise(resolve => setImmediate(resolve));
+
+      expect(errors).toEqual(builtin ? [error, error, error] : []);
+    } finally {
+      EventEmitter.captureRejections = false;
+    }
+  });
+
+  it("the close event when the peer sends a close frame with no code", async () => {
+    using connection = await serverSocketOfRawPeer();
+    const { ws, peer } = connection;
+    const closed = Promise.withResolvers<unknown>();
+    ws.onclose = closed.resolve;
+    // FIN + close, masked with a zero key, no payload. Then the peer ends its side.
+    peer.end(Buffer.from([0x88, 0x80, 0, 0, 0, 0]));
+
+    expect(describeEvent(await closed.promise, ws)).toEqual({
+      class: "CloseEvent",
+      code: 1005,
+      reason: "",
+      wasClean: true,
+      target: true,
+      type: "close",
+    });
+  });
 });
 
 // https://github.com/oven-sh/bun/issues/7896
@@ -591,7 +1372,7 @@ it("close event", async () => {
   const wss = new WebSocketServer({ port: 0 });
   wss.on("connection", ws => {
     ws.onmessage = e => {
-      expect(e.data).toEqual(Buffer.from("hello"));
+      expect(e.data).toBe("hello");
       setTimeout(() => ws.close(), 10);
     };
   });
@@ -669,8 +1450,8 @@ function test(label: string, fn: (ws: WebSocket, done: (err?: unknown) => void) 
         .catch(done);
     },
     // Each test spawns its own echo-server subprocess; debug builds take
-    // well over 1s to spawn + connect on slow CI runners.
-    { timeout: timeout ?? (isDebug ? 10000 : 1000) },
+    // well over 1s to spawn + connect on slow CI runners, and so does a release build on a busy host.
+    { timeout: timeout ?? (isDebug ? 10000 : 5000) },
   );
 }
 

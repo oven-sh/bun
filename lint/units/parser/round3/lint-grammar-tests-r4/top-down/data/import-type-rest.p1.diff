@@ -1,0 +1,39 @@
+--- a/src/js_parser/parse/parse_skip_typescript.rs
++++ b/src/js_parser/parse/parse_skip_typescript.rs
+@@ -1227,7 +1227,7 @@
+             T::TImport if S::BUILDS => {
+                 let node = self.build_type_script_import_type()?;
+                 S::b_node(out, node);
+-                Ok(())
++                self.parse_import_type_rest::<S>(out)
+             }
+             T::TImport => self.parse_import_type::<S>(opts, out),
+             T::TTemplateHead => self.parse_template_type::<S>(out),
+@@ -1523,6 +1523,18 @@
+         Ok(())
+     }
+ 
++    /// The qualifier and the type arguments of an import type, after its ")".
++    fn parse_import_type_rest<S: TypeSink>(&mut self, out: &mut S::Out) -> Result<(), Error> {
++        if self.lexer.token == T::TDot {
++            self.lexer.next()?;
++            if self.lexer.token != T::TLessThan {
++                self.parse_right_side_of_dot::<S>(out)?;
++                self.parse_entity_name_rest::<S>(out)?;
++            }
++        }
++        self.parse_type_arguments_of_type_reference::<S>(out)
++    }
++
+     /// Whether "import", "new" or "typeof" was the label of a tuple element, as before.
+     #[inline]
+     fn is_tuple_label(&self, opts: SkipTypeOptionsBitset) -> bool {
+@@ -1685,7 +1697,7 @@
+         if S::BUILDS && self.build_next_token_is(T::TImport) {
+             let node = self.build_type_script_import_type()?;
+             S::b_node(out, node);
+-            return Ok(());
++            return self.parse_import_type_rest::<S>(out);
+         }
+         let mut start: KK<S, u32> = ConstDefault::DEFAULT;
+         if S::BUILDS {

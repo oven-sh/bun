@@ -1,0 +1,1 @@
+99 metadata cases: 84 whose expected value is the text tsc emits, 15 more after the two rewrites, 0 that differ; main gives the expected value for 0

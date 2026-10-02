@@ -1,0 +1,29 @@
+# js-classes-bench.mjs, 5 passes of 284,090 bytes of JavaScript with classes, --vex-guest-chase=no
+== base -> ref0 (the boxed tables: +1 Ir per class element and per arrow with an expression body, +2 per async arrow, no jump)
+program                    Ir     331,455,815 ->     331,473,742 (+17927)  Bc     46,256,788 ->     46,256,928 (+140)  Bi    3,089,487 ->    3,089,509 (+22)
+names that match           Ir     194,722,250 ->     194,743,204 (+20954)  Bc     21,373,689 ->     21,373,689 (+0)  Bi    1,861,565 ->    1,861,565 (+0)
+classes of the parser      Ir     197,293,331 ->     197,314,285 (+20954)  Bc     21,588,652 ->     21,588,652 (+0)  Bi    1,861,565 ->    1,861,565 (+0)
+5 classes of the parser differ
+  Ir       +16500  Bc          +0  Bi        +0  (a Ir 2,784,000)  <bun_js_parser::p::P<false, false>>::parse_class
+  Ir        +3000  Bc          +0  Bi        +0  (a Ir 162,000)  <bun_js_parser::p::P<false, false>>::parse_async_prefix_expr
+  Ir        +1502  Bc          +0  Bi        +0  (a Ir 439,840)  <bun_js_parser::p::P<false, false>>::parse_arrow_body
+  Ir          -66  Bc          -6  Bi        +0  (a Ir 66)  core::ptr::drop_glue::<core::option::Option<bun_js_parser::p::StartsForParseOnly>>
+  Ir          +18  Bc          +6  Bi        +0  (a Ir 0)  core::ptr::drop_glue::<core::option::Option<alloc::boxed::Box<bun_js_parser::p::StartsForParseOnly>>>
+== ref0 -> site2 (six sites in TypeScript-only places)
+program                    Ir     331,473,742 ->     331,471,570 (-2172)  Bc     46,256,928 ->     46,256,241 (-687)  Bi    3,089,509 ->    3,089,484 (-25)
+names that match           Ir     194,743,204 ->     194,743,204 (+0)  Bc     21,373,689 ->     21,373,689 (+0)  Bi    1,861,565 ->    1,861,565 (+0)
+classes of the parser      Ir     197,314,285 ->     197,314,285 (+0)  Bc     21,588,652 ->     21,588,652 (+0)  Bi    1,861,565 ->    1,861,565 (+0)
+0 classes of the parser differ
+
+# deco-bench.mjs, 5 passes over 7,595 decorated inputs with emitDecoratorMetadata, --vex-guest-chase=no
+== base -> ref0 (the sink form of the DecoratorMetadata instantiation, and the boxed tables)
+program                    Ir   5,407,488,553 ->   5,405,677,873 (-1810680)  Bc  2,151,384,285 ->  2,151,161,180 (-223105)  Bi   16,324,813 ->   16,324,115 (-698)
+names that match           Ir     500,071,920 ->     500,023,133 (-48787)  Bc     52,848,709 ->     52,848,609 (-100)  Bi    3,757,978 ->    3,757,978 (+0)
+classes of the parser      Ir     512,729,754 ->     512,680,967 (-48787)  Bc     53,821,876 ->     53,821,776 (-100)  Bi    3,757,978 ->    3,757,978 (+0)
+6 classes of the parser differ
+  Ir      -417736  Bc      -37976  Bi        +0  (a Ir 417,736)  core::ptr::drop_glue::<core::option::Option<bun_js_parser::p::StartsForParseOnly>>
+  Ir      +269555  Bc        -100  Bi        +0  (a Ir 5,111,170)  <bun_js_parser::p::P<true, false>>::skip_type_script_type_with_opts::<SINK metadata>
+  Ir      +113928  Bc      +37976  Bi        +0  (a Ir 0)  core::ptr::drop_glue::<core::option::Option<alloc::boxed::Box<bun_js_parser::p::StartsForParseOnly>>>
+  Ir       -62740  Bc          +0  Bi        +0  (a Ir 442,280)  <bun_js_parser::p::P<true, false>>::skip_type_script_paren_or_fn_type::<SINK metadata>
+  Ir       +48205  Bc          +0  Bi        +0  (a Ir 13,081,910)  <bun_js_parser::p::P<true, false>>::parse_class
+  Ir           +1  Bc          +0  Bi        +0  (a Ir 170)  <bun_js_parser::p::P<false, false>>::parse_arrow_body

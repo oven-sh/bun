@@ -56,8 +56,23 @@ for t in base ref head; do
   [ -f $O/$t.js-control.cg ] || $L/cgbench.sh $(bin $t) $O $t 20 > $O/$t.jsonl
   [ -f $O/raw$t.js-control.cg ] || $P/cgbench-raw.sh $(bin $t) $O raw$t 20 > $O/raw$t.jsonl
 done
+# 3b. what the five groups do not run: JavaScript with classes, accessors, private names, async arrows, generators and
+#     import attributes (js-classes), and the DecoratorMetadata sink (deco: 7,595 decorated inputs with emitDecoratorMetadata)
+J=/workspace/notes/lint/units/parser/round2/zero-cost-measure/top-down/js-classes-bench.mjs
+DB=/workspace/notes/lint/units/parser/measure/deco-bench.mjs
+for x in js-classes deco; do
+  [ $x = deco ] && SCRIPT=$DB || SCRIPT=$J
+  for t in base ref head; do
+    [ -f $O/raw$t.$x.cg ] || ( BUN_JSC_useJIT=0 BUN_DEBUG_QUIET_LOGS=1 /workspace/tools/vg --tool=cachegrind --cache-sim=no --branch-sim=yes --vex-guest-chase=no \
+        --cachegrind-out-file=$O/raw$t.$x.cg $(bin $t) $SCRIPT --iterations=5 > $O/raw$t.$x.log 2>&1 ) &
+  done
+  wait
+  python3 $H/cgclass.py $REF $O/rawref.$x.cg $HEAD $O/rawhead.$x.cg --src "$HEAD_TREE" --site "$SITE" --top 200 > $O/cgclass.raw.$x.ref-head.txt
+  python3 $H/cgclass.py $BASE $O/rawbase.$x.cg $REF $O/rawref.$x.cg --top 200 > $O/cgclass.raw.$x.base-ref.txt
+done
 # the same work on every side: files, bytes, passes and output length of each group
 for g in $G; do for t in base ref head; do grep -A1 '^group' $O/raw$t.$g.log | tail -1 | cut -c1-72; done; done | uniq -c > $O/work.txt
+for x in js-classes deco; do for t in base ref head; do grep -E '^(js-classes source|deco-bench sources)' $O/raw$t.$x.log; done; done | uniq -c >> $O/work.txt
 # 4. the tables, by function body
 python3 $H/r3table2.py $O ref $REF head $HEAD --src "$HEAD_TREE" --site "$SITE" > $O/table.ref-head.txt
 python3 $H/r3table2.py $O base $BASE ref $REF > $O/table.base-ref.txt
@@ -98,6 +113,7 @@ tail -1 $O/lintcalls.strict.head.txt
 echo "== counts"
 cat $O/table.ref-head.txt; cat $O/table.base-ref.txt; cat $O/table.wide.ref-head.txt
 for g in $G; do printf '%-15s %s\n' $g "$(tail -1 $O/cgclass.raw.$g.ref-head.txt)"; done
+for x in js-classes deco; do printf '%-15s ref-head  %s\n' $x "$(sed -n 3p $O/cgclass.raw.$x.ref-head.txt | cut -c1-170)"; printf '%-15s base-ref  %s\n' $x "$(sed -n 3p $O/cgclass.raw.$x.base-ref.txt | cut -c1-170)"; done
 cat $O/vexonly.ref-head.txt
 [ -f $O/sites.count.txt ] && tail -5 $O/sites.count.txt
 echo "== text"; tail -2 $O/siteaudit.txt

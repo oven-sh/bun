@@ -1,0 +1,148 @@
+G01 35 rows [0..34] tg | TypeScript that tsc parses | type forms: %s %j
+     loaders: ts 34, tsx 1; classes: T 35; main rejects 35; want: Reads 35
+     families: reserved-type-name 17, reserved-tuple-label 4, import-type 9, asserts-is-next-line 5
+     roots: type 31, return 4, type-parameters 0, heritage 0
+G02 12 rows [35..46] tg | TypeScript that tsc parses | object types: %s %j
+     loaders: ts 12; classes: O-stmt 6, T 6; main rejects 12; want: Reads 12
+     families: as-names-declaration 6, signature-initializer 3, signature-parameter-modifier 1, interface-extends-expression 2
+     roots: type 7, return 0, type-parameters 0, heritage 2
+G03 34 rows [47..80] tg | TypeScript that tsc parses | signatures, type parameters and type arguments: %s %j
+     loaders: ts 27, tsx 7; classes: T 29, O-param 5; main rejects 34; want: Reads 34
+     families: signature-initializer 5, signature-parameter-modifier 1, signature-pattern 6, function-parameter-modifier 1, rest-parameter-comma 4, out-in-name 17
+     roots: type 17, return 5, type-parameters 17, heritage 1
+G04 31 rows [81..111] tg | TypeScript that tsc parses | expressions: %s %j
+     loaders: ts 24, tsx 7; classes: T 24, O-expr 7; main rejects 31; want: Reads 31
+     families: out-in-name 10, reserved-type-name 9, as-less-equals 5, colon-after-operand 2, conditional-colon 1, conditional-colon-in-arrow-body 4
+     roots: type 21, return 1, type-parameters 6, heritage 0
+G05 12 rows [112..123] tg | TypeScript that tsc parses | class members: %s %j
+     loaders: ts 6, deco 6; classes: O-member 10, O-param 1, O-class 1; main rejects 12; want: Reads 12
+     families: index-signature-comma 4, function-parameter-modifier 1, class-implements-expression 1, accessor-modifier 6
+     roots: type 13, return 0, type-parameters 0, heritage 3
+G06 14 rows [124..137] tg | TypeScript that tsc parses | module syntax: %s %j
+     loaders: ts 14; classes: O-stmt 13, X 1; main rejects 13; want: Reads 14
+     families: import-attributes-next-line 1, namespace-import-expression 2, abstract-declare 2, enum-member-in-brackets 4, as-names-declaration 5
+     roots: type 0, return 0, type-parameters 0, heritage 0
+G07 42 rows [138..179] tg | TypeScript that tsc parses | decorator metadata: %j passes design:%s
+     loaders: deco 42; classes: M 42; main rejects 0; want: Reads 42
+     families: metadata-union-check-type 7, metadata-operator-before-extends 5, metadata-false-type-union 3, metadata-keyword-dot 5, metadata-unique-operand 2, metadata-conditional-branches 4, metadata-operand-serialization 4, metadata-import-and-unique 3, metadata-predicates 9
+     roots: type 32, return 10, type-parameters 0, heritage 0
+G08 6 rows [180..185] tg-expr | a colon after an operand that ends with a parenthesis | a call of async is no arrow function there: %s
+     loaders: ts 6; classes: O-expr 6; main rejects 6; want: Reads 6
+     families: colon-after-operand 6
+     roots: type 1, return 0, type-parameters 0, heritage 0
+G09 6 rows [186..191] tg-expr | a colon after an operand that ends with a parenthesis | a type assertion before parentheses is no arrow function there: %s
+     loaders: ts 6; classes: O-expr 6; main rejects 6; want: Reads 6
+     families: colon-after-operand 6
+     roots: type 6, return 0, type-parameters 0, heritage 0
+G10 2 rows [192..193] tg-expr | a colon after an operand that ends with a parenthesis | the same with the tsx loader: %s
+     loaders: tsx 2; classes: O-expr 2; main rejects 2; want: Reads 2
+     families: colon-after-operand 2
+     roots: type 0, return 0, type-parameters 0, heritage 0
+G11 7 rows [194..200] tg-expr | a colon after parentheses between the question mark and the colon of a conditional | after type parameters it starts a return type only where a colon follows the body: %s
+     loaders: ts 7; classes: O-expr 7; main rejects 7; want: Reads 7
+     families: conditional-colon 7
+     roots: type 7, return 0, type-parameters 0, heritage 0
+G12 13 rows [201..213] tg-expr | a colon after parentheses between the question mark and the colon of a conditional | in the body of an arrow function with one name it does the same: %s
+     loaders: ts 13; classes: O-expr 13; main rejects 13; want: Reads 13
+     families: conditional-colon-in-arrow-body 13
+     roots: type 1, return 0, type-parameters 0, heritage 0
+G13 10 rows [214..223] tg-expr | a colon after parentheses between the question mark and the colon of a conditional | in the body after parameters that an expression could start with as well: %s
+     loaders: ts 10; classes: O-expr 10; main rejects 10; want: Reads 10
+     families: conditional-colon-in-arrow-body 10
+     roots: type 3, return 0, type-parameters 2, heritage 0
+G14 7 rows [224..230] tg-expr | a colon after parentheses between the question mark and the colon of a conditional | in the body after type parameters, whatever the parameters are: %s
+     loaders: ts 7; classes: O-expr 7; main rejects 7; want: Reads 7
+     families: conditional-colon-in-arrow-body 7
+     roots: type 5, return 0, type-parameters 7, heritage 0
+G15 2 rows [231..232] tg-expr | a colon after parentheses between the question mark and the colon of a conditional | the same with the tsx loader: %s
+     loaders: tsx 2; classes: O-expr 2; main rejects 2; want: Reads 2
+     families: conditional-colon-in-arrow-body 2
+     roots: type 0, return 0, type-parameters 0, heritage 0
+G16 5 rows [233..237] tg-expr | a type or type parameters where an expression starts or goes on | out is the name of a type and of a type parameter of an arrow function: %s
+     loaders: ts 5; classes: T 5; main rejects 5; want: Reads 5
+     families: out-in-name 5
+     roots: type 2, return 0, type-parameters 3, heritage 0
+G17 2 rows [238..239] tg-expr | a type or type parameters where an expression starts or goes on | a comparison follows the type after as and satisfies: %s
+     loaders: ts 2; classes: T 2; main rejects 2; want: Reads 2
+     families: as-less-equals 2
+     roots: type 2, return 0, type-parameters 0, heritage 0
+G18 3 rows [240..242] tg-expr | a type or type parameters where an expression starts or goes on | the same with the tsx loader: %s
+     loaders: tsx 3; classes: T 3; main rejects 3; want: Reads 3
+     families: out-in-name 2, as-less-equals 1
+     roots: type 1, return 0, type-parameters 2, heritage 0
+G19 9 rows [243..251] tg-stmt | statements that tsc parses | as and satisfies name a type alias: %s %j
+     loaders: ts 8, tsx 1; classes: O-stmt 9; main rejects 9; want: Reads 9
+     families: as-names-declaration 9
+     roots: type 13, return 0, type-parameters 1, heritage 0
+G20 13 rows [252..264] tg-stmt | statements that tsc parses | as and satisfies name an interface: %s %j
+     loaders: ts 12, tsx 1; classes: X 4, O-stmt 9; main rejects 9; want: Reads 13
+     families: as-names-declaration 13
+     roots: type 4, return 0, type-parameters 1, heritage 2
+G21 11 rows [265..275] tg-stmt | statements that tsc parses | as and satisfies name a namespace: %s %j
+     loaders: ts 10, tsx 1; classes: X 2, O-stmt 9; main rejects 9; want: Reads 11
+     families: as-names-declaration 11
+     roots: type 1, return 1, type-parameters 0, heritage 0
+G22 3 rows [276..278] tg-stmt | statements that tsc parses | abstract stands before declare: %s %j
+     loaders: ts 2, tsx 1; classes: O-stmt 3; main rejects 3; want: Reads 3
+     families: abstract-declare 3
+     roots: type 0, return 1, type-parameters 0, heritage 0
+G23 11 rows [279..289] tg-stmt | statements that tsc parses | a string in brackets names an enum member: %s %j
+     loaders: ts 10, tsx 1; classes: O-stmt 11; main rejects 11; want: Reads 11
+     families: enum-member-in-brackets 11
+     roots: type 0, return 0, type-parameters 0, heritage 0
+G24 6 rows [290..295] tg-stmt | statements that tsc parses | import starts an expression in a namespace: %s %j
+     loaders: ts 5, tsx 1; classes: O-stmt 6; main rejects 6; want: Reads 6
+     families: namespace-import-expression 6
+     roots: type 0, return 0, type-parameters 0, heritage 0
+G25 6 rows [296..301] tg-stmt | statements that tsc parses | the attributes of a module path start on the next line: %s %j
+     loaders: ts 4, js 2; classes: O-stmt 6; main rejects 6; want: Reads 3, Fails 3
+     families: import-attributes-next-line 2, type-import-attributes-next-line 1, export-attributes-next-line 3
+     roots: type 0, return 0, type-parameters 0, heritage 0
+G26 6 rows [302..307] tg-stmt | a cast after a declaration that as names | stays the cast of type, interface or namespace: %s %j
+     loaders: ts 6; classes: O-stmt 2, X 4; main rejects 2; want: Fails 6
+     families: cast-after-as-declaration 6
+     roots: type 4, return 0, type-parameters 1, heritage 0
+G27 1 rows [308..308] tg-stmt | a cast after a declaration that as names | with ( after a module path starts a statement
+     loaders: js 1; classes: O-stmt 1; main rejects 1; want: Fails 1
+     families: import-attributes-next-line 1
+     roots: type 0, return 0, type-parameters 0, heritage 0
+G28 7 rows [309..315] tg-meta | emitDecoratorMetadata of a type that is read with the tree of tsc | the operands of | and & are the check type of a conditional type: %s
+     loaders: deco 7; classes: M 7; main rejects 0; want: Reads 7
+     families: metadata-union-check-type 7
+     roots: type 7, return 0, type-parameters 0, heritage 0
+G29 5 rows [316..320] tg-meta | emitDecoratorMetadata of a type that is read with the tree of tsc | keyof, readonly and unique end before extends: %s
+     loaders: deco 5; classes: M 5; main rejects 0; want: Reads 5
+     families: metadata-operator-before-extends 5
+     roots: type 5, return 0, type-parameters 0, heritage 0
+G30 5 rows [321..325] tg-meta | emitDecoratorMetadata of a type that is read with the tree of tsc | the type after the colon of a conditional type takes | and &: %s
+     loaders: deco 5; classes: M 5; main rejects 0; want: Reads 5
+     families: metadata-false-type-union 5
+     roots: type 5, return 0, type-parameters 0, heritage 0
+G31 5 rows [326..330] tg-meta | emitDecoratorMetadata of a type that is read with the tree of tsc | a keyword before a dot is the first name of a type reference: %s
+     loaders: deco 5; classes: M 5; main rejects 0; want: Reads 5
+     families: metadata-keyword-dot 5
+     roots: type 5, return 0, type-parameters 0, heritage 0
+G32 2 rows [331..332] tg-meta | emitDecoratorMetadata of a type that is read with the tree of tsc | unique takes the whole type after it: %s
+     loaders: deco 2; classes: M 2; main rejects 0; want: Reads 2
+     families: metadata-unique-operand 2
+     roots: type 2, return 0, type-parameters 0, heritage 0
+G33 9 rows [333..341] tg-meta | emitDecoratorMetadata of a type that tsc serializes in another way than Bun did | the branches of a conditional type merge as the operands of | do: %s
+     loaders: deco 9; classes: M 9; main rejects 0; want: Reads 9
+     families: metadata-conditional-branches 6, metadata-false-type-union 3
+     roots: type 9, return 0, type-parameters 0, heritage 0
+G34 6 rows [342..347] tg-meta | emitDecoratorMetadata of a type that tsc serializes in another way than Bun did | an operand of | and & counts as what it serializes to: %s
+     loaders: deco 6; classes: M 6; main rejects 0; want: Reads 6
+     families: metadata-operand-serialization 6
+     roots: type 6, return 0, type-parameters 0, heritage 0
+G35 5 rows [348..352] tg-meta | emitDecoratorMetadata of a type that tsc serializes in another way than Bun did | an import type and unique symbol are Object: %s
+     loaders: deco 5; classes: M 5; main rejects 0; want: Reads 5
+     families: metadata-import-and-unique 5
+     roots: type 5, return 0, type-parameters 0, heritage 0
+G36 2 rows [353..354] tg-meta | emitDecoratorMetadata of a type that tsc serializes in another way than Bun did | a predicate on this is Boolean: %s
+     loaders: deco 2; classes: M 2; main rejects 0; want: Reads 2
+     families: metadata-predicates 2
+     roots: type 2, return 0, type-parameters 0, heritage 0
+G37 11 rows [355..365] tg-meta | emitDecoratorMetadata of a type that tsc serializes in another way than Bun did | a predicate in a return type is Boolean and an assertion is undefined: %s
+     loaders: deco 11; classes: M 11; main rejects 0; want: Reads 11
+     families: metadata-predicates 11
+     roots: type 0, return 11, type-parameters 0, heritage 0

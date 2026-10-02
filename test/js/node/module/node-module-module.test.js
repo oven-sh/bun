@@ -1,7 +1,7 @@
 import "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isWindows, ospath, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, ospath, tempDir } from "harness";
 import Module, { _nodeModulePaths, builtinModules, createRequire, isBuiltin, wrap } from "module";
 import path from "path";
 
@@ -959,6 +959,90 @@ console.log("survived", require("./late.js"));`,
     const stdout = await proc.stdout.text();
     expect(stdout.trim()).toBe("pass");
     expect(await proc.exited).toBe(0);
+  });
+  describe.concurrent("Module.runMain set by a preload", () => {
+    const handlers = `
+      process.on("uncaughtException", error => console.log("uncaughtException: " + error.message));
+      process.on("unhandledRejection", error => console.log("unhandledRejection: " + error.message));
+    `;
+    async function run(preload, inWorker = false, main = `console.log("main ran");`) {
+      using dir = tempDir("module-run-main", {
+        "preload.cjs": preload,
+        "main.cjs": main,
+        "worker.mjs": `new Worker(import.meta.dir + "/main.cjs", { preload: [import.meta.dir + "/preload.cjs"] });`,
+      });
+      await using proc = Bun.spawn({
+        cmd: inWorker ? [bunExe(), "./worker.mjs"] : [bunExe(), "--require", "./preload.cjs", "./main.cjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr: normalizeBunSnapshot(stderr, dir), exitCode };
+    }
+
+    test.each([
+      ["{}", "Object"],
+      ["[]", "Array"],
+      [`"a string"`, `"a string"`],
+      [`Symbol("s")`, "Symbol(s)"],
+      ["10n", "10"],
+    ])("to %s, which is not a function", async (value, described) => {
+      expect(await run(`require("module").runMain = ${value};`)).toEqual({
+        stdout: "",
+        stderr: `TypeError: ${described} is not a function\n\nBun v<bun-version>`,
+        exitCode: 1,
+      });
+    });
+
+    test("to a function that throws", async () => {
+      const { stdout, stderr, exitCode } = await run(
+        `require("module").runMain = () => {\n  throw new RangeError("from the override");\n};`,
+      );
+      expect(stderr).toMatchInlineSnapshot(`
+        "1 | require("module").runMain = () => {
+        2 |   throw new RangeError("from the override");
+                        ^
+        RangeError: from the override
+            at <anonymous> (file:NN:NN)
+
+        Bun v<bun-version>"
+      `);
+      expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+    });
+
+    test("to a function that calls the original and throws", async () => {
+      const preload = `
+        const Module = require("module");
+        const runMain = Module.runMain;
+        Module.runMain = (...args) => {
+          runMain(...args);
+          throw new Error("after the original");
+        };
+      `;
+      expect(await run(preload)).toMatchObject({ stdout: "main ran\n", exitCode: 1 });
+      expect(await run(handlers + preload)).toEqual({
+        stdout: "main ran\nunhandledRejection: after the original\n",
+        stderr: "",
+        exitCode: 0,
+      });
+      // What the main file throws is not lost for it.
+      expect(await run(handlers + preload, false, `throw new Error("from main");`)).toEqual({
+        stdout: "unhandledRejection: after the original\nuncaughtException: from main\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test.each([
+      ["is not a function", "{}", "Object is not a function"],
+      ["throws", `() => { throw new Error("thrown"); }`, "thrown"],
+    ])("one that %s is reported once", async (_, value, message) => {
+      const expected = { stdout: `uncaughtException: ${message}\n`, stderr: "", exitCode: 0 };
+      expect(await run(`${handlers} require("module").runMain = ${value};`)).toEqual(expected);
+      expect(await run(`${handlers} require("module").runMain = ${value};`, true)).toEqual(expected);
+    });
   });
   test.each(["no args", "--access-early"])("children, %s", async arg => {
     await using proc = Bun.spawn({

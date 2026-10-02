@@ -1,7 +1,0 @@
-        t.ts.exp         R>R test/bundler/transpiler/esbuild-decorator-tests.ts
-        t.ts.deco        R>R test/bundler/transpiler/esbuild-decorator-tests.ts
-        t.ts.deco.keep   R>R test/bundler/transpiler/esbuild-decorator-tests.ts
-        t.ts.deco.trim   R>R test/bundler/transpiler/esbuild-decorator-tests.ts
-        s.ts.deco        R>R test/bundler/transpiler/esbuild-decorator-tests.ts
-        i.ts.plain       R>R test/bundler/transpiler/esbuild-decorator-tests.ts
-60331 records compared, 6 differ

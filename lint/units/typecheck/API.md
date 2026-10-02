@@ -2797,3 +2797,121 @@ include_class_computed_property_name: bool) -> NodeId` (12279; `c52_symbol_at_lo
 `check_and_report_error_for_extending_interface(error_location) -> bool` (11756) and
 `is_in_ambient_or_type_node(node) -> bool` (11328, the method that 1937 calls: `utilities.rs` has the free function
 of `utilities.go` 1058, which 5947 calls). The receiver can be `&self` or `&mut self`.
+
+## Checker: contextual properties, the two context stacks and context sensitivity (`checker/c50_contextual_properties_inference_context.rs`)
+
+Commit `e9755c9f92` (written by the job that commits the worktree). The file holds `checker.go` 30674-31095 whole and
+in upstream order (layer E-CTX): the 25 methods of the checker from `getTypeOfPropertyOfContextualType` to
+`getInferenceContext`, and `ObjectLiteralDiscriminator` of 30836 with its three methods. No function is a stand-in.
+PORT_STATUS.md has the row.
+
+NOT compiled by cargo when this was written: it does not reach the file while a module of `checker/mod.rs` has no
+file. "Verified" below says what was checked instead.
+
+### How a caller writes the calls
+
+- `get_type_of_property_of_contextual_type(t, name: &[u8]) -> TypeId` and
+  `get_type_of_property_of_contextual_type_ex(t, name, name_type)`: the nil type for no type, and `TypeId::NIL` for
+  upstream's nil `nameType`. The name need not live as long as the checker.
+- `get_apparent_type_of_contextual_type(node, context_flags)`,
+  `instantiate_contextual_type(contextual_type, node, context_flags)` (the nil type for a nil contextual type) and
+  `instantiate_instantiable_types(t, mapper: TypeMapperId)` answer a `TypeId`.
+- The stack of contextual types: `push_contextual_type(node, t, is_cache)`, `push_cached_contextual_type(node)`,
+  `pop_contextual_type()`, and `find_contextual_node(node, include_caches) -> isize`, -1 for no entry: the entry is
+  `contextual_infos.get(index)`, as `jsx.rs` 357 reads it.
+- The stack of inference contexts: `push_inference_context(node, context: InferenceContextId)` (the nil id is
+  upstream's nil context), `pop_inference_context()`, `get_inference_context(node) -> InferenceContextId`, nil for
+  none and for an entry that was pushed with the nil context.
+- `ObjectLiteralDiscriminator { props: List<'a, NodeId>, members: List<'a, SymbolId> }` is a `Discriminator<'a>` of
+  `relater.rs`: `discriminate_type_by_discriminable_items(t, &mut discriminator)` takes it. `checker/mod.rs` has the
+  glob of the module, and the record is its one `pub` name.
+- `append_contextual_property_type_constituent(types: Vec<TypeId>, t) -> Vec<TypeId>` takes the list and gives it
+  back, as `append_signatures` of `c35` does.
+- These only read and take `&self`: `is_context_sensitive`, `is_context_sensitive_function_like_declaration`,
+  `has_context_sensitive_return_expression`, `has_context_sensitive_yield_expression`,
+  `is_possibly_discriminant_value`, `find_contextual_node`, `get_inference_context` and
+  `append_contextual_property_type_constituent`. Every other method takes `&mut self`.
+
+### Differences from upstream
+
+- `ObjectLiteralDiscriminator` has no field `c`: the checker is a parameter of `name` and `matches`, as the trait of
+  `relater.rs` has them and as `TypeDiscriminator` does.
+- `c.getStringLiteralType(name)` (30733, 30777) needs a text of the checker. The name is looked up in
+  `string_literal_types` first and copied into the arena only when it has no literal type yet, as
+  `get_applicable_index_info_for_name` of `c33` does. The type is the same one either way.
+- Stack tests, each the first statement of its function, at the four entries of
+  `checker-expressions-calls-flow/top-down/data/tested_entries.tsv` that are in this range:
+  `is_excluded_mapped_property_name`, `is_possibly_discriminant_value` and `is_context_sensitive` (false), and
+  `instantiate_instantiable_types` (the error type).
+- `popContextualType` and `popInferenceContext` index `len-1` of an empty stack (`fallbacks.tsv` of that research):
+  a fault and a return. The write of the zero entry before the re-slice (31005, 31084) has no counterpart, because
+  `Vec::pop` removes the entry.
+- Reads that upstream dies of and that read as zero here: `node.Symbol().Members` of an object literal without a
+  symbol (30899) is the nil table, so every optional member counts as absent; a nil result of `mapTypeEx` at 30825
+  reads the zero record of the store, which counts the read.
+- `isExcludedMappedPropertyName`: the three operands of `&&` (30749-30751) are three tests with early returns, in
+  upstream's order of evaluation, because each needs the checker mutably.
+- `getApparentTypeOfContextualType`: the `switch` of 30824 is two `if` after one read of the union flag.
+- `core.Some`, `core.Find` and `core.Map` are `core::some`, `core::find` (the nil node for none) and `core::map` into a
+  vector; `core.Some` over the live list of inferences is `iter().any`; `core.Filter` is `Checker::filter`, whose
+  callback gets the checker. `indexInfoCandidates = nil` is `clear()`. The test of the length at 30708-30714 is a
+  `match` on the slice.
+- `prop.Initializer()` of 30858-30860 and `statement.Expression()` are read as often as upstream reads them, but for
+  the initializer of 30860, which is the local of 30858.
+- Comments: a comment of several lines is one line, and the reference to an issue number (30959) is not carried over.
+
+### Verified
+
+No cargo build has seen the file, and nothing ran a function of it. What was checked, last on the tree of
+`cad7795f23`:
+
+- `rustfmt --check --edition 2024`: exit 0.
+- A probe of the file with `rustc` alone and with `clippy-driver` alone: exit 0 each, no warning and no finding.
+  `round2-layer7-checker/c50-probe-gen.py` writes `c50-probe.rs`, and `c50-probe-clippy.sh` has the clippy table of
+  the workspace and its `clippy.toml`. The probe denies warnings, unused imports, variables, `mut` and assignments and
+  `unreachable_pub`. It holds this file, `checker/types.rs` and `checker/c01_data.rs` by `#[path]`, the leaf files
+  they stand on by `#[path]` (`diagnostics/`, `core/{arena,golang,linkstore,text,tristate}.rs`,
+  `collections/{set,ordered_map,ordered_set}.rs`, `jsnum/jsnum.rs`,
+  `ast/{flags,ids,checkflags,symbolflags,modifierflags,nodeflags,kind_generated,diagnostic}.rs`), and stand-ins for
+  every other name. The script reads the signature of a stand-in from the file of the tree that defines the function,
+  and the body of a stand-in never returns: 81 functions (17 methods of `Ast` and 13 free functions of `ast/`, 3 of
+  `core/core.rs`, `jsnum::from_string`, 40 methods of the checker from 17 files and 7 free functions of `checker/`),
+  with the `Symbol` record, two node records, `FunctionFlags` and the `Discriminator` trait copied from their files.
+  Written by hand in the probe: the two callees of the last section, `core::Map` and `core::LiveList` with the
+  signatures of the contract, `StackCheck`, `CacheHashKey`, `ScriptTarget`, `PseudoBigInt`, `evaluator::Result`,
+  `Fallback`, `ListItem`, and a `Checker` of the 22 fields that the three files read, with the types of
+  `c02_program_checker.rs`. `Ast` and `Checker` are invariant in their lifetime there, as in the tree. So the types,
+  the borrows and the lints of every statement of the file are checked against the data model and the signatures of
+  the tree as they were at the run.
+- The probe finds what it should: a copy of the file with two swapped arguments, an unused variable and a nested
+  `&mut self` call gave E0308, the unused variable and E0499, and a copy that returns a `let` binding gave clippy's
+  `let_and_return`.
+- Three callees had no definition when the file was written and got one since (`substitute_indexed_mapped_type` in
+  `c47`, `get_true_type_from_conditional_type` and `get_false_type_from_conditional_type` in `c40`): their signatures
+  are what the file expected, and the probe now reads them from the tree.
+- `python3 round2-layer7-checker/ranges.py c50_contextual_properties_inference_context`: 28 of 28 functions of the
+  range have a `fn` of their name in the file. `python3 round2-layer7-checker/globs.py --names`: the module is no
+  longer a glob without a `pub` name, no `pub` name of it is a name of another globbed module, and
+  `ObjectLiteralDiscriminator` is no longer among the names that files import and no module exports. No other file
+  of the crate defines a function of one of the 25 names.
+- `python3 round2-layer7-checker/c50-callsites.py`: 90 calls of the 25 methods in 9 files, 44 of them outside the
+  file (`c14` 14, `jsx.rs` 10, `c20` 8, `relater.rs` 5, `c15` 3, `c52` 2, `c39` 1, `c44` 1), give as many arguments as
+  the definitions take, and the one literal of `ObjectLiteralDiscriminator` (`jsx.rs` 457) names its two fields. Each
+  call outside the file was also read against the signature, with the type of what it passes.
+- Read against upstream statement by statement. No two comment lines are adjacent; no `unwrap`, `expect`, `panic`,
+  `todo`, `unimplemented`, `unreachable`, `unsafe` or slice index: every `[...]` indexes a store of records or a link
+  store of the checker.
+- Not checked: the real crate through cargo; the two callees that have no definition; the `Map` and the `LiveList`
+  of the tree (no file defines them: the probe has the contract's, and the lookup of a name that does not live as
+  long as the checker needs a `Map` that is covariant in its key, which a map over `bun_collections::HashMap` is);
+  any result against upstream's baselines.
+
+### What this file expects and the tree does not have
+
+At `cad7795f23`, two callees, each called by its upstream name with upstream's parameter order, as the other callers
+of the tree write them:
+
+- `c48`: `get_contextual_type(node, context_flags) -> TypeId` (29466) and
+  `get_contextual_type_for_object_literal_method(node, context_flags) -> TypeId` (30087), the nil type for none.
+- `crate::core::Map` as the contract has it (`get` and `set` with its `bool`), for `string_literal_types` and
+  `discriminated_contextual_types`, and `crate::core::LiveList` (`iter`), for the inferences of a context.

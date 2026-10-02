@@ -101,7 +101,8 @@ AST_METHODS = [
     ('ast/node_methods.rs', ['name', 'locals', 'text', 'expression', 'members', 'initializer', 'postfix_token']),
     ('ast/reader.rs', [('kind', '(self, node: NodeId)'), ('parent', '(self, node: NodeId)'),
                        ('loc', '(self, node: NodeId)'), ('pos', '(self, node: NodeId)'),
-                       ('end', '(self, node: NodeId)'), ('flags', '(self, node: NodeId)')]),
+                       ('end', '(self, node: NodeId)'), ('flags', '(self, node: NodeId)'),
+                       ('fault', '(self, kind: FaultKind')]),
     ('ast/symbol.rs', ['sym', 'table_get', 'table_entry_at', 'new_symbol']),
     ('ast/ast_generated.rs', ['as_property_declaration', 'as_qualified_name', 'as_heritage_clause',
                               'as_export_assignment', 'as_decorator']),
@@ -319,6 +320,7 @@ pub use nodeflags::*;
 pub use symbolflags::*;
 
 use crate::core::{List, TextRange};
+use crate::internal::FaultKind;
 
 ''')
 w('// ast/symbol.rs\n')

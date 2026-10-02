@@ -227,3 +227,12 @@
 10-02_14:57:13 anon=3276MB pids=80 load=361.15 top=ld.lld:3576MB
 10-02_14:57:44 anon=3098MB pids=79 load=308.15 top=ld.lld:3598MB
 10-02_14:58:15 anon=3230MB pids=81 load=338.30 top=ld.lld:3768MB
+10-02_14:58:49 anon=2200MB pids=60 load=399.98 top=ld.lld:2794MB
+10-02_14:59:22 anon=2506MB pids=76 load=424.80 top=ld.lld:3085MB
+10-02_14:59:53 anon=3057MB pids=80 load=414.48 top=ld.lld:3531MB
+10-02_15:00:23 anon=3170MB pids=79 load=353.70 top=ld.lld:3638MB
+10-02_15:00:54 anon=3232MB pids=76 load=328.73 top=ld.lld:3809MB
+10-02_15:01:26 anon=2062MB pids=62 load=345.72 top=ld.lld:2659MB
+10-02_15:01:58 anon=241MB pids=46 load=388.01 top=python3:113MB
+10-02_15:02:29 anon=57MB pids=42 load=376.59 top=llvm-nm:77MB
+10-02_15:03:01 anon=1080MB pids=70 load=382.01 top=cachegrind-amd6:318MB

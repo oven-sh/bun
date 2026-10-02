@@ -4,7 +4,10 @@
 # Each of the eight is byte-identical to main: the first line of the summary checks it. They pass unchanged, as on main.
 #   /workspace/tools/lk bash older-tests.sh <plain|leak> [out dir, default /tmp/parser-older-tests]
 #   plain   bun bd test <file> --timeout 180000
-#   leak    the same under the leak check of CI (BUN_DESTRUCT_VM_ON_EXIT, ASAN detect_leaks, test/leaksan.supp)
+#   leak    the same under the leak check of CI (BUN_DESTRUCT_VM_ON_EXIT, ASAN detect_leaks, test/leaksan.supp: scripts/runner.node.ts).
+#           CI leaves it off for ts.test.ts, type-export.test.ts and transpiler-cache.test.ts (test/no-validate-leaksan.txt): here all eight run with it.
+# The runner gets BUN_RUNTIME_TRANSPILER_CACHE_PATH=0, as in CI: with EXPECTED_VERSION at 33 a cache entry that another build of
+# this branch wrote for a test file (~/.bun/install/cache/@t@, *.debug.pile) would be read as if it were of this build.
 # A test of type-export.test.ts and of transpiler-cache.test.ts takes longer than 5 s in a debug build: the timeout is given at once.
 # Exit code 0 only when every file ends with rc=0, "0 fail" and the counts of main (recorded with the debug builds of
 # e3566be889 and be1ebe5295; the eight files did not change from e3566be889 to bc7a813b10).
@@ -15,6 +18,7 @@ W=${W:-/workspace/wt/parser}
 cd "$W" || exit 9
 mkdir -p "$out"
 ulimit -c 0
+export BUN_RUNTIME_TRANSPILER_CACHE_PATH=0
 # file | what the summary of bun test has to say
 LIST="test/bundler/transpiler/decorator-metadata.test.ts|5 pass;0 fail
 test/bundler/bundler_decorator_metadata.test.ts|2 pass;0 fail

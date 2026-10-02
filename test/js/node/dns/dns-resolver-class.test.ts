@@ -42,7 +42,10 @@ describe.each([
 // unreachable. The kernel keeps that error on the connected query socket until
 // the next recv() or send(), and epoll reports it as EPOLLERR with no readable
 // or writable bit. c-ares finds the error only when it is handed the socket.
-describe("a nameserver that nothing listens on", () => {
+//
+// Not on Windows: its poll path is a different one, and a port that refuses
+// for the whole test is not verified there.
+describe.skipIf(isWindows)("a nameserver that nothing listens on", () => {
   // A UDP port of 127.0.0.1 that refuses datagrams. The socket that has the
   // port is connected to port 1, so a datagram from any other sender has no
   // socket to go to, and no other socket can get the port while the test runs.
@@ -53,11 +56,6 @@ describe("a nameserver that nothing listens on", () => {
     socket.bind(0, "127.0.0.1");
     await once(socket, "listening");
     const address = `127.0.0.1:${socket.address().port}`;
-    // Whether a port that a socket holds refuses on Windows is not verified.
-    if (isWindows) {
-      await new Promise<void>(resolve => socket.close(() => resolve()));
-      return { address, [Symbol.dispose]() {} };
-    }
     socket.connect(1, "127.0.0.1");
     await once(socket, "connect");
     return { address, [Symbol.dispose]: () => socket.close() };

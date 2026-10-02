@@ -5,6 +5,50 @@ import { release } from "node:os";
 import path from "path";
 import { isatty } from "tty";
 describe.concurrent("process-stdio", () => {
+  test.skipIf(isWindows).each([1, 2])("socket stdio fd %i defers shutdown until after microtasks", async fd => {
+    await using proc = spawn({
+      cmd: [bunExe(), path.join(import.meta.dir, "process-stdio-shutdown-fixture.mjs"), "timing", "socket", String(fd)],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: fd === 1 ? "beforexxx" : "ok\n",
+      stderr: fd === 2 ? "beforexxx" : "ok\n",
+      exitCode: 0,
+    });
+  });
+
+  // POSIX stdio has socket/pipe descriptors; Windows stdio uses libuv handles.
+  test
+    .skipIf(isWindows)
+    .each(
+      ["socket", "pipe"].flatMap(kind =>
+        [1, 2].flatMap(fd => ["end", "pipeline", "destroy"].map(action => [kind, fd, action] as const)),
+      ),
+    )(
+    "%s stdio fd %i %s preserves descriptor ownership",
+    async (kind, fd, action) => {
+      await using proc = spawn({
+        cmd: [
+          bunExe(),
+          path.join(import.meta.dir, "process-stdio-shutdown-fixture.mjs"),
+          "parent",
+          kind,
+          String(fd),
+          action,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+    },
+    10000,
+  );
+
   test("process.stdin", () => {
     expect(process.stdin).toBeDefined();
     expect(process.stdin.isTTY).toBe(isatty(0) ? true : undefined);

@@ -501,4 +501,46 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(fs.existsSync(path.join(temp, "CLAUDE.md"))).toBe(false);
     expect(fs.existsSync(path.join(temp, ".cursor"))).toBe(false);
   });
+
+  // The filesystem probe for Cursor runs only on Windows. It looks for the
+  // per-user install at %LOCALAPPDATA%\Programs\Cursor\Cursor.exe.
+  // https://github.com/oven-sh/bun/issues/44416
+  test.skipIf(!isWindows)("bun init detects a per-user Cursor install through LOCALAPPDATA", async () => {
+    const cursorRule = path.join(".cursor", "rules", "use-bun-instead-of-node-vite-npm-pnpm.mdc");
+    // The inherited block may spell the key `LocalAppData`. Drop every case
+    // variant so the override below is the only one the child sees.
+    const probeEnv: NodeJS.Dict<string> = Object.fromEntries(
+      Object.entries(bunEnv).filter(([key]) => key.toUpperCase() !== "LOCALAPPDATA"),
+    );
+    Object.assign(probeEnv, {
+      BUN_AGENT_RULE_DISABLED: undefined,
+      CURSOR_AGENT_RULE_DISABLED: undefined,
+      CURSOR_TRACE_ID: undefined,
+      // A plain Windows session sets USERNAME, not USER. The probe must not need it.
+      USER: undefined,
+    });
+
+    async function init(cwd: string, localAppData: string) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "init", "-y"],
+        cwd,
+        stdio: ["ignore", "pipe", "pipe"],
+        env: { ...probeEnv, LOCALAPPDATA: localAppData },
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    }
+
+    await using installed = tempDir("bun-init-cursor-localappdata", {
+      "Programs/Cursor/Cursor.exe": "",
+    });
+    await using withCursor = tempDir("bun-init-cursor-found", {});
+    await init(String(withCursor), String(installed));
+    expect(fs.existsSync(path.join(withCursor, cursorRule))).toBe(true);
+
+    await using empty = tempDir("bun-init-cursor-localappdata-empty", {});
+    await using withoutCursor = tempDir("bun-init-cursor-missing", {});
+    await init(String(withoutCursor), String(empty));
+    expect(fs.existsSync(path.join(withoutCursor, ".cursor"))).toBe(false);
+  });
 });

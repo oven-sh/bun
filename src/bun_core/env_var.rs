@@ -163,6 +163,8 @@ platform_specific_new!(pub HOME: string, posix = "HOME", windows = "USERPROFILE"
 new!(pub HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET: string, "HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET", {});
 new!(pub IS_BUN_AUTO_UPDATE: boolean, "IS_BUN_AUTO_UPDATE", { default: false });
 new!(pub JENKINS_URL: string, "JENKINS_URL", {});
+// C:\Users\<name>\AppData\Local, for example. Per-user installers put programs under its `Programs` folder.
+platform_specific_new!(pub LOCALAPPDATA: string, posix = None, windows = "LOCALAPPDATA", {});
 // Dump mimalloc statistics at the end of the process. Note that this is not the same as
 // `MIMALLOC_VERBOSE`, documented here: https://microsoft.github.io/mimalloc/environment.html
 new!(pub MI_VERBOSE: boolean, "MI_VERBOSE", { default: false });

@@ -1571,32 +1571,19 @@ impl Template {
 
         #[cfg(windows)]
         {
-            if let Some(user) = bun_core::getenv_z_any_case(bun_core::zstr!("USER")) {
+            // The per-user installer puts Cursor under %LOCALAPPDATA%\Programs.
+            if let Some(local_app_data) = env_var::LOCALAPPDATA.get_not_empty() {
+                const CURSOR_EXE: &[u8] = b"Programs\\Cursor\\Cursor.exe";
                 let mut pathbuf = path_buffer_pool::get();
-                // Fallible on overflow, do not panic.
-                let path: &ZStr = {
-                    use std::io::Write as _;
-                    let total = pathbuf.len();
-                    let mut cursor: &mut [u8] = &mut pathbuf[..];
-                    if cursor.write_all(b"C:\\Users\\").is_err()
-                        || cursor.write_all(user).is_err()
-                        || cursor
-                            .write_all(b"\\AppData\\Local\\Programs\\Cursor\\Cursor.exe")
-                            .is_err()
-                    {
-                        return false;
-                    }
-                    let remaining = cursor.len();
-                    let written = total - remaining;
-                    if written >= total {
-                        return false;
-                    }
-                    pathbuf[written] = 0;
-                    // SAFETY: NUL written at pathbuf[written].
-                    ZStr::from_buf(&pathbuf[..], written)
-                };
-
-                if bun_sys::exists(path.as_bytes()) {
+                // Joining adds one separator and one NUL. Skip the probe rather than overflow.
+                if local_app_data.len() + 1 + CURSOR_EXE.len() + 1 > pathbuf.len() {
+                    return false;
+                }
+                let parts: [&[u8]; 2] = [local_app_data, CURSOR_EXE];
+                let path = bun_paths::resolve_path::join_string_buf_z::<
+                    bun_paths::resolve_path::platform::Auto,
+                >(&mut pathbuf[..], &parts);
+                if bun_sys::exists_z(path) {
                     return true;
                 }
             }

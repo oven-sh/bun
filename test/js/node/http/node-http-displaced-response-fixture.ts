@@ -480,7 +480,6 @@ async function draining() {
   let writeLength = Infinity;
   let tail = "";
   const bodies = Promise.withResolvers<void>();
-  const wholeWrite = Promise.withResolvers<void>();
   client.on("data", chunk => {
     received += chunk.length;
     if (writeLength === Infinity && head.length < 1024) {
@@ -489,7 +488,6 @@ async function draining() {
       if (headEnd !== -1) writeLength = headEnd + 4 + `${size.toString(16)}\r\n`.length + size + 2;
     }
     tail = (tail + chunk.toString("latin1")).slice(-64);
-    if (received >= writeLength) wholeWrite.resolve();
     if (tail.includes("second-body")) bodies.resolve();
   });
   client.write(request("/first") + request("/second"));
@@ -507,9 +505,9 @@ async function draining() {
   Bun.gc(true);
   const collected = cellsBefore - cells();
   client.resume();
-  // The client has the whole write of response 1, so the socket buffer of the server is empty: uWS has called the drain handler that was armed.
-  await within(wholeWrite.promise, undefined);
-  await turn();
+  // Response 2 has written nothing, so its writableLength is what the socket buffer of the server still holds.
+  // When that is 0, uWS has called the drain handler that was armed.
+  while (res.writableLength > 0) await turn();
   res.end("second-body");
   await bodies.promise;
 

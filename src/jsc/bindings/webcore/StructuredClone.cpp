@@ -56,6 +56,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionStructuredClone, (JSC::JSGlobalObject * globa
     auto serializeOptions = convertDictionary<StructuredSerializeOptions>(*globalObject, options);
     RETURN_IF_EXCEPTION(throwScope, {});
 
+    // Structured clone is the identity function on a non-cell JSValue.
+    if (serializeOptions.transfer.isEmpty() && !value.isCell())
+        return JSValue::encode(value);
+
     Vector<RefPtr<MessagePort>> ports;
     // structuredClone never leaves this agent cluster, so SABs may share their backing store per
     // https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializeinternal —

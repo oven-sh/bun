@@ -15,7 +15,12 @@ if($env:VSINSTALLDIR -eq $null) {
     throw "Command not found: vswhere (did you install Visual Studio?)"
   }
 
-  $vsDir = (& $vswhere -prerelease -latest -property installationPath)
+  # -products * is required to also match Build Tools installs, which vswhere
+  # skips by default (a machine with only Build Tools would fall through to the
+  # hardcoded 2022 paths and miss newer toolsets entirely). Require the C++
+  # toolset for the target arch so an install without it can't be selected.
+  $vcTools = if ($script:IsARM64) { "Microsoft.VisualStudio.Component.VC.Tools.ARM64" } else { "Microsoft.VisualStudio.Component.VC.Tools.x86.x64" }
+  $vsDir = (& $vswhere -products * -requires $vcTools -prerelease -latest -property installationPath)
   if ($vsDir -eq $null) {
     # Check common VS installation paths
     $searchPaths = @(
@@ -24,7 +29,11 @@ if($env:VSINSTALLDIR -eq $null) {
     )
     foreach ($searchPath in $searchPaths) {
       if (Test-Path $searchPath) {
-        $vsDir = (Get-ChildItem -Path $searchPath -Directory | Select-Object -First 1).FullName
+        # Only accept an install that actually ships the C++ toolset (vswhere
+        # isn't usable here, so check for the toolset directory instead).
+        $vsDir = (Get-ChildItem -Path $searchPath -Directory |
+          Where-Object { Test-Path (Join-Path $_.FullName "VC\Tools\MSVC") } |
+          Select-Object -First 1).FullName
         if ($vsDir -ne $null) { break }
       }
     }

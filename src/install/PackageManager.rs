@@ -1655,12 +1655,14 @@ pub fn init(
                 no_project = true;
                 break 'child bun_sys::File::from_fd(bun_sys::Fd::INVALID);
             }
-            // Bootstrap the global package.json (#30658) only for commands that create or read it; update/remove/patch must refuse rather than wipe bun.lock against an empty manifest.
+            // Bootstrap a fresh global dir's package.json (#30658). Never beside an existing lockfile: an empty manifest there would later be reconciled against it and wipe every global package.
             if cli.global
                 && matches!(
                     subcommand,
                     Subcommand::Install | Subcommand::Add | Subcommand::Pm
                 )
+                && !bun_sys::exists_at(bun_sys::Fd::cwd(), bun_core::zstr!("bun.lock"))
+                && !bun_sys::exists_at(bun_sys::Fd::cwd(), bun_core::zstr!("bun.lockb"))
             {
                 this_cwd = original_cwd;
                 created_package_json = true;

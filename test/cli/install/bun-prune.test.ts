@@ -12,7 +12,6 @@ import {
   openSync,
   readdirSync,
   readFileSync,
-  readlinkSync,
   renameSync,
   rmSync,
   symlinkSync,
@@ -96,23 +95,13 @@ function lines(stdout: string) {
 
 // A hoisted install removes, from nested and workspace folders, the copies that bun.lock no longer places
 // and that hide an installed copy above. `bun prune` still has to handle a tree where they were left, so
-// these put them back after the install.
+// this puts one back after the install.
 function keepCopy(path: string) {
   const saved = `${path}.saved`;
   cpSync(path, saved, { recursive: true });
   return () => {
     expect(existsSync(path)).toBeFalse();
     renameSync(saved, path);
-  };
-}
-
-function keepLinks(folder: string, ...names: string[]) {
-  const targets = names.map(name => readlinkSync(join(folder, name)));
-  return () => {
-    for (const [i, name] of names.entries()) {
-      expect(() => lstatSync(join(folder, name))).toThrow();
-      symlinkSync(targets[i], join(folder, name), "junction");
-    }
   };
 }
 
@@ -2661,9 +2650,7 @@ test.concurrent("mixed: a hoisted install over an isolated one is pruned as the 
   });
   const nm = join(dir, "node_modules");
   const aNm = join(dir, "packages", "a", "node_modules");
-  const leftBehind = keepLinks(aNm, "no-deps", "one-dep");
   await install(dir, "--linker", "hoisted");
-  leftBehind();
   expect(isSymlink(join(nm, "no-deps"))).toBeTrue();
   expect(isSymlink(join(nm, "one-dep"))).toBeFalse();
   expect(existsSync(join(nm, "one-dep", "package.json"))).toBeTrue();
@@ -2722,10 +2709,8 @@ test.concurrent("mixed: dangling links into a deleted store do not make the tree
   });
   const nm = join(dir, "node_modules");
   const aNm = join(dir, "packages", "a", "node_modules");
-  const leftBehind = keepLinks(aNm, "no-deps", "one-dep");
   rmSync(nm, { recursive: true });
   await install(dir, "--linker", "hoisted");
-  leftBehind();
   expect(existsSync(join(nm, ".bun"))).toBeFalse();
   expect(existsSync(join(nm, "no-deps", "package.json"))).toBeTrue();
   expect(existsSync(join(nm, "one-dep", "package.json"))).toBeTrue();
@@ -3245,6 +3230,24 @@ test.concurrent("hoisted: a nested copy of a link: dependency is removed when th
   expect(existsSync(nested)).toBeFalse();
   expect(isSymlink(join(nm, "linked"))).toBeTrue();
   expect(await file(join(dir, "linked", "package.json")).json()).toStrictEqual({ name: "linked", version: "1.0.0" });
+});
+
+// Behind a workspace's `node_modules` that is a link to the root's are the root's packages, not the workspace's.
+test.concurrent("hoisted: a workspace node_modules that is a link to the root's is not pruned", async () => {
+  const dir = await setupWorkspaces("hoisted", {
+    root: { dependencies: { "no-deps": "2.0.0" } },
+    packages: { a: { dependencies: { "a-dep": "1.0.1" } } },
+  });
+  const nm = join(dir, "node_modules");
+  const installed = readdirSync(nm).toSorted();
+  expect(installed).toContain("a-dep");
+  symlinkSync(nm, join(dir, "packages", "a", "node_modules"), "junction");
+
+  const { stdout, stderr, exitCode } = await prune(dir, "--linker", "hoisted");
+  expect(stderr).toBe("");
+  expect(lines(stdout).at(-1)).toContain("(nothing to prune)");
+  expect(readdirSync(nm).toSorted()).toEqual(installed);
+  expect(exitCode).toBe(0);
 });
 
 // `c` is self-contained and depends on its sibling `b`. `b` has a tree below `c` for the version that cannot

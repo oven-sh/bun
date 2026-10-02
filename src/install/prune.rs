@@ -1981,7 +1981,7 @@ fn disk_folder(lockfile: &Lockfile, tree_id: tree::Id) -> Box<[u8]> {
     out.into_boxed_slice()
 }
 
-/// `None` for the root listed as its own workspace: its `node_modules` is the root folder.
+/// `None` for a workspace at `.`, a root that depends on itself: its `node_modules` is the root folder.
 fn workspace_path(lockfile: &Lockfile, pkg_id: PackageID) -> Option<&[u8]> {
     let res = lockfile.packages.items_resolution().get(pkg_id as usize)?;
     if res.tag != ResolutionTag::Workspace {

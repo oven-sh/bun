@@ -3,7 +3,7 @@ import { install_test_helpers, npm_manifest_test_helpers } from "bun:internal-fo
 import { afterAll, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { once } from "events";
 import { copyFileSync, mkdirSync } from "fs";
-import { cp, exists, lstat, mkdir, readlink, rename, rm, writeFile } from "fs/promises";
+import { cp, exists, lstat, mkdir, readlink, rename, rm, symlink, writeFile } from "fs/promises";
 import {
   assertManifestsPopulated,
   bunExe,
@@ -5429,6 +5429,22 @@ describe("a nested copy the lockfile no longer places", () => {
     await runBunInstall(env, packageDir, { frozenLockfile: true });
     expect(await versionIn("no-deps")).toBe("1.1.0");
     expect(await exists(nm("one-range-dep", "node_modules", "no-deps"))).toBeFalse();
+  });
+
+  // `bun link` can put a link where the lockfile has a registry package. Its node_modules belongs to the checkout.
+  test("the node_modules of a package that is a link is left alone", async () => {
+    await writeRoot({ dependencies: { "no-deps": "1.1.0", "one-range-dep": "1.0.0" } });
+    await runBunInstall(env, packageDir);
+    const checkout = join(packageDir, "checkout");
+    await rename(nm("one-range-dep"), checkout);
+    await cp(nm("no-deps"), join(checkout, "node_modules", "no-deps"), { recursive: true });
+    await symlink(checkout, nm("one-range-dep"), "junction");
+
+    // The root's no-deps is installed again. one-range-dep depends on it and stayed in place.
+    await rm(nm("no-deps"), { recursive: true, force: true });
+    await runBunInstall(env, packageDir, { savesLockfile: false });
+    expect(await versionIn("no-deps")).toBe("1.1.0");
+    expect(await exists(join(checkout, "node_modules", "no-deps", "package.json"))).toBeTrue();
   });
 
   test("a package with bundled dependencies keeps what it ships", async () => {

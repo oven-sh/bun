@@ -2,7 +2,7 @@ import { file, spawn, write } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "fs";
-import { cp, exists, mkdir, rm } from "fs/promises";
+import { cp, exists, lstat, mkdir, rm, symlink } from "fs/promises";
 import {
   assertManifestsPopulated,
   bunEnv as baseEnv,
@@ -3023,16 +3023,52 @@ describe("hoisted: a copy in a workspace's node_modules that bun.lock no longer 
     expect(await versionOf(copy)).toBe("1.0.0");
   });
 
-  test.concurrent("an entry that no folder above provides stays", async () => {
+  test.concurrent("an entry that no folder above provides stays, and so does a link no lockfile placed", async () => {
     using ctx = await setupTest();
     const { packageDir, env } = ctx;
     const nested = await nestedInWorkspace(ctx);
-    const handPlaced = join(packageDir, "packages", "pkg1", "node_modules", "hand-placed");
+    const pkg1Modules = join(packageDir, "packages", "pkg1", "node_modules");
+    const handPlaced = join(pkg1Modules, "hand-placed");
     await write(join(handPlaced, "package.json"), JSON.stringify({ name: "hand-placed", version: "1.0.0" }));
+    // What `bun link a-dep` without `--save` leaves. The root has a-dep@1.0.1 for pkg2.
+    const checkout = join(packageDir, "a-dep-checkout");
+    await write(join(checkout, "package.json"), JSON.stringify({ name: "a-dep", version: "1.0.1" }));
+    await symlink(checkout, join(pkg1Modules, "a-dep"), "junction");
 
     await writePkg1(ctx, {});
     await runBunInstall(env, packageDir);
     expect(await exists(nested)).toBeFalse();
     expect(await versionOf(handPlaced)).toBe("1.0.0");
+    expect((await lstat(join(pkg1Modules, "a-dep"))).isSymbolicLink()).toBeTrue();
+    expect(await versionOf(join(packageDir, "node_modules", "a-dep"))).toBe("1.0.1");
+  });
+
+  // Behind the link are the root's packages. `bun update` removed every one of them.
+  test.concurrent("a workspace node_modules that is a link to the root's keeps the root's packages", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+    const rootJson = (dependencies: Record<string, string>) =>
+      JSON.stringify({ name: "foo", workspaces: ["packages/*"], dependencies });
+    await Promise.all([
+      write(packageJson, rootJson({ "no-deps": "1.0.0" })),
+      write(
+        join(packageDir, "packages", "pkg1", "package.json"),
+        JSON.stringify({ name: "pkg1", version: "1.0.0", dependencies: { "a-dep": "1.0.1" } }),
+      ),
+    ]);
+    await runBunInstall(env, packageDir);
+    const rootModules = join(packageDir, "node_modules");
+    await symlink(rootModules, join(packageDir, "packages", "pkg1", "node_modules"), "junction");
+    const rootPackages = async () => ({
+      "no-deps": await exists(join(rootModules, "no-deps", "package.json")),
+      "a-dep": await exists(join(rootModules, "a-dep", "package.json")),
+    });
+
+    await write(packageJson, rootJson({ "no-deps": "1.0.0", "@types/is-number": "1.0.0" }));
+    await runBunInstall(env, packageDir);
+    expect(await rootPackages()).toEqual({ "no-deps": true, "a-dep": true });
+
+    await runBunUpdate(env, packageDir);
+    expect(await rootPackages()).toEqual({ "no-deps": true, "a-dep": true });
   });
 });

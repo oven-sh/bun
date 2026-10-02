@@ -1089,7 +1089,7 @@ it.concurrent("--silent ignores a bun.lock that fails to parse and writes a new 
   }
 });
 
-// An error from the environment fails the install at every log level, before the lockfile is touched.
+// An error from the environment is printed and fails the install at every log level, before the lockfile is touched.
 for (const args of [[], ["--silent"], ["--lockfile-only", "--silent"]]) {
   it.concurrent(`bun install ${args.join(" ")} fails on an invalid BUN_CONFIG_MAX_HTTP_REQUESTS`, async () => {
     const { packageDir, packageJson } = await registry.createTestDir();
@@ -1106,11 +1106,7 @@ for (const args of [[], ["--silent"], ["--lockfile-only", "--silent"]]) {
       stderr: "pipe",
     });
     const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    if (args.includes("--silent")) {
-      expect(err).toBe("");
-    } else {
-      expect(err).toContain('BUN_CONFIG_MAX_HTTP_REQUESTS value "abc" is not a valid integer');
-    }
+    expect(err).toContain('BUN_CONFIG_MAX_HTTP_REQUESTS value "abc" is not a valid integer');
     expect(out).not.toContain("Saved");
     expect(await file(join(packageDir, "bun.lock")).text()).toBe("{ this is not json");
     expect(await exists(join(packageDir, "node_modules"))).toBe(false);

@@ -5,6 +5,7 @@
 // usage: <suite> <tcp|tls> [trigger]
 // Prints one JSON line per scenario. The process has to exit by itself. When a response still
 // holds its refs, no exit comes, so the process exits with code 1 then.
+import { heapStats } from "bun:jsc";
 import { once } from "node:events";
 import fs from "node:fs";
 import http from "node:http";
@@ -70,6 +71,16 @@ const uses: Record<string, (req: http.IncomingMessage, res: http.ServerResponse)
   "nothing": () => {},
 };
 
+// For a callback that an unfixed build never makes. The time limit only bounds that failure.
+async function within<T>(promise: Promise<T>, fallback: T) {
+  let timer: Timer | undefined;
+  try {
+    return await Promise.race([promise, new Promise<T>(resolve => (timer = setTimeout(resolve, 10_000, fallback)))]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function attempt(use: () => void) {
   try {
     use();
@@ -79,10 +90,12 @@ function attempt(use: () => void) {
   }
 }
 
-// Flags::IS_REQUEST_PENDING of NodeHTTPResponse.rs: the response holds its refs, which keep the process alive.
+// Flags::IS_REQUEST_PENDING of src/runtime/server/NodeHTTPResponse.rs: the response holds its refs, which keep the process alive.
+const IS_REQUEST_PENDING = 1 << 5;
+const hasPendingBit = (handle: any) => (handle.flags & IS_REQUEST_PENDING) !== 0;
 let held = false;
 function isPending(handle: any) {
-  const pending = (handle.flags & 32) !== 0;
+  const pending = hasPendingBit(handle);
   held ||= pending;
   return pending;
 }
@@ -306,13 +319,15 @@ async function adopted(use: string) {
   const upgradeRequest = await first.promise;
   const { req, res } = await second.promise;
   const queued = res.socket === null;
+  const handle = handleOf(res);
+  // The bit is set for a response that waits, so a later `pending: false` says that it was cleared.
+  const pendingWhileQueued = hasPendingBit(handle);
   const opened = Promise.withResolvers<import("ws").WebSocket>();
   wss.handleUpgrade(upgradeRequest, upgradeRequest.socket, Buffer.alloc(0), ws => opened.resolve(ws));
   const ws = await opened.promise;
   ws.on("error", () => {});
   await switched.promise;
 
-  const handle = handleOf(res);
   const result = attempt(() => uses[use](req, res));
   await turn();
   const pending = isPending(handle);
@@ -329,7 +344,71 @@ async function adopted(use: string) {
   wss.close();
   server.close();
   server.closeAllConnections();
-  return { use, queued, switched: received.startsWith("HTTP/1.1 101 "), open, result, pending };
+  return { use, queued, pendingWhileQueued, switched: received.startsWith("HTTP/1.1 101 "), open, result, pending };
+}
+
+// The same, and request 2 has a body that still arrives: 3 of its 10 bytes are here when the
+// WebSocket adopts the connection. The rest never comes, so nothing but the take-back ends the
+// read of that body. An unfixed build keeps the request pending: server.close() never calls back.
+async function adoptedWithBody(use: string) {
+  const wss = new WebSocketServer({ noServer: true });
+  const first = Promise.withResolvers<http.IncomingMessage>();
+  const second = Promise.withResolvers<{ req: http.IncomingMessage; res: http.ServerResponse }>();
+  const firstChunk = Promise.withResolvers<number>();
+  const server = createServer((req, res) => {
+    req.on("error", () => {});
+    res.on("error", () => {});
+    if (req.url === "/second") {
+      req.on("data", chunk => firstChunk.resolve(chunk.length));
+      second.resolve({ req, res });
+    } else {
+      first.resolve(req);
+    }
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const client = await connect(server);
+  let received = "";
+  const switched = Promise.withResolvers<void>();
+  const greeted = Promise.withResolvers<void>();
+  client.on("data", chunk => {
+    received += chunk.toString("latin1");
+    if (received.includes("\r\n\r\n")) switched.resolve();
+    if (received.includes("hello")) greeted.resolve();
+  });
+  client.write(
+    "GET /first HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n" +
+      "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n" +
+      "POST /second HTTP/1.1\r\nHost: localhost\r\nContent-Length: 10\r\n\r\nabc",
+  );
+  const upgradeRequest = await first.promise;
+  const { req, res } = await second.promise;
+  const queued = res.socket === null;
+  const bodyBytes = await firstChunk.promise;
+  const opened = Promise.withResolvers<import("ws").WebSocket>();
+  wss.handleUpgrade(upgradeRequest, upgradeRequest.socket, Buffer.alloc(0), ws => opened.resolve(ws));
+  const ws = await opened.promise;
+  ws.on("error", () => {});
+  await switched.promise;
+
+  const result = attempt(() => uses[use](req, res));
+  await turn();
+  const open = ws.readyState === ws.OPEN;
+  if (open) {
+    ws.send("hello");
+    await greeted.promise;
+  }
+  const closed = once(client, "close");
+  client.destroy();
+  await closed;
+  ws.terminate();
+  wss.close();
+  const serverClosed = Promise.withResolvers<boolean>();
+  server.close(() => serverClosed.resolve(true));
+  server.closeAllConnections();
+  const didClose = await within(serverClosed.promise, false);
+  // A server that cannot close keeps the process alive.
+  held ||= !didClose;
+  return { use, queued, bodyBytes, switched: received.startsWith("HTTP/1.1 101 "), open, result, serverClosed: didClose };
 }
 
 // Response 2 waits in the queue behind response 1. Its native handle is called directly: the
@@ -372,12 +451,15 @@ async function queued(call: string) {
 }
 
 // Response 1 leaves a large write in the socket buffer, with its tail held by reference, and
-// loses the connection. The tail has to go out before response 2, and the drain handler of the
-// socket must not call a response that is gone.
+// loses the connection. The tail has to go out before response 2. Response 1 armed the drain
+// handler of the socket for that write, and the socket drains after response 1 is collected, so
+// that handler must be gone by then.
 async function draining() {
   const size = 8 * 1024 * 1024;
   const second = Promise.withResolvers<http.ServerResponse>();
   let firstHandle: any;
+  let wroteAll: boolean | undefined;
+  let heldTail: boolean | undefined;
   const server = createServer((req, res) => {
     req.on("error", () => {});
     res.on("error", () => {});
@@ -386,7 +468,8 @@ async function draining() {
       return;
     }
     firstHandle = handleOf(res);
-    res.write(Buffer.alloc(size, "a"));
+    wroteAll = res.write(Buffer.alloc(size, "a"));
+    heldTail = firstHandle.bufferedAmount > 0;
     res.detachSocket(req.socket);
   });
   await once(server.listen(0, "127.0.0.1"), "listening");
@@ -395,9 +478,11 @@ async function draining() {
   let received = 0;
   let tail = "";
   const bodies = Promise.withResolvers<void>();
+  const wholeWrite = Promise.withResolvers<void>();
   client.on("data", chunk => {
     received += chunk.length;
     tail = (tail + chunk.toString("latin1")).slice(-64);
+    if (received >= size) wholeWrite.resolve();
     if (tail.includes("second-body")) bodies.resolve();
   });
   client.write(request("/first") + request("/second"));
@@ -407,10 +492,16 @@ async function draining() {
   const pending = isPending(firstHandle);
   // Nothing in JS holds response 1 from here on.
   firstHandle = undefined;
+  const cells = () => heapStats().objectTypeCounts.NodeHTTPResponse ?? 0;
+  const cellsBefore = cells();
   Bun.gc(true);
   await turn();
   Bun.gc(true);
+  const collected = cellsBefore - cells();
   client.resume();
+  // The client has the whole write, so the socket buffer of the server is empty: uWS has called the drain handler that was armed.
+  await wholeWrite.promise;
+  await turn();
   res.end("second-body");
   await bodies.promise;
 
@@ -419,7 +510,42 @@ async function draining() {
   await closed;
   server.close();
   server.closeAllConnections();
-  return { displaced, pending, receivedAtLeastTheWrite: received >= size };
+  return { displaced, pending, wroteAll, heldTail, collected, receivedAtLeastTheWrite: received >= size };
+}
+
+// Request 2 waits in the queue behind response 1, which has written nothing. req.destroy() on it
+// closes the connection, like in Node.js. It must not end the response in flight: before the
+// connection had an owner, it wrote an empty "200 OK" with "Connection: close" in its place.
+async function queuedDestroyed(secondRequest: "same read" | "later read") {
+  const first = Promise.withResolvers<void>();
+  const second = Promise.withResolvers<{ req: http.IncomingMessage; res: http.ServerResponse }>();
+  const server = createServer((req, res) => {
+    req.on("error", () => {});
+    res.on("error", () => {});
+    if (req.url === "/second") second.resolve({ req, res });
+    else first.resolve();
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const client = await connect(server);
+  let received = "";
+  client.on("data", chunk => (received += chunk.toString("latin1")));
+  const closed = once(client, "close");
+  if (secondRequest === "same read") {
+    client.write(request("/first") + request("/second"));
+  } else {
+    client.write(request("/first"));
+    await first.promise;
+    client.write(request("/second"));
+  }
+  const { req, res } = await second.promise;
+  const isQueued = res.socket === null;
+  // The read that carried the request is parsed by now.
+  await turn();
+  const result = attempt(() => req.destroy());
+  await closed;
+  server.close();
+  server.closeAllConnections();
+  return { secondRequest, queued: isQueued, result, received };
 }
 
 // The scenarios of a suite have a server and a connection each, so they run side by side.
@@ -457,7 +583,8 @@ if (suite === "displaced") {
 } else if (suite === "completed-but-pending") {
   results.push(await completedButPending());
 } else if (suite === "adopted") {
-  results = await all(Object.keys(uses), adopted);
+  // One after the other: side by side, the unfixed build shows no sanitizer report for the read of the old socket.
+  for (const use of Object.keys(uses)) results.push(await adopted(use));
 } else if (suite === "queued") {
   results = await all(
     ["write", "end", "writeHead", "flushHeaders", "writeContinue", "writeInformational", "cork"],
@@ -465,6 +592,10 @@ if (suite === "displaced") {
   );
 } else if (suite === "draining") {
   results.push(await draining());
+} else if (suite === "adopted-with-body") {
+  for (const use of ["req.destroy", "destroy", "nothing"]) results.push(await adoptedWithBody(use));
+} else if (suite === "queued-destroyed") {
+  results = await all(["same read", "later read"] as const, queuedDestroyed);
 }
 for (const result of results) console.log(JSON.stringify(result));
 if (held) process.exit(1);

@@ -2,7 +2,7 @@
 
 use super::decl::declarations_of;
 use super::*;
-use crate::bind::{Decl, FnOwner, Parent, PatParent, ScopeKind, UNREACHABLE};
+use crate::bind::{Decl, FnOwner, Parent, PatParent, ScopeId, ScopeKind, UNREACHABLE};
 use smallvec::SmallVec;
 
 /// What `reportCircularityError` returns for a declaration with the type annotation `annotation`.
@@ -214,16 +214,17 @@ impl<'p> Checker<'p> {
         }
         // `getTypeOfVariableOrParameterOrPropertyWorker`: `exports` is what the module is to those who require it, `module` has it.
         if flags.contains(SymFlags::MODULE_EXPORTS) {
-            let module = self.files().file_symbol(sym.file);
-            let value = self.files().module_value(module);
-            let exports = self.type_of_symbol(value);
             if self.files().symbol(sym).name == known::exports {
-                return exports;
+                let module = self.files().file_symbol(sym.file);
+                let value = self.files().module_value(module);
+                return self.type_of_symbol(value);
             }
+            // `newAnonymousType(symbol, symbol.Members, ..)`
+            let property = self.bound(sym.file).module_exports_property;
             let prop = Prop {
                 name: known::exports,
                 flags: PropFlags::empty(),
-                source: PropSource::Type(exports),
+                source: PropSource::Symbol(self.files().sym(sym.file, property)),
                 mapper: MapperId::IDENTITY,
             };
             return self.synth(Shape {
@@ -524,9 +525,62 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getSymbolFlags`: whether the alias `sym` ends at a property, which is a value and nothing else.
-    pub(super) fn is_alias_of_property(&mut self, sym: Sym) -> bool {
+    /// Whether the alias `sym` ends at a property.
+    fn is_alias_of_property(&mut self, sym: Sym) -> bool {
         self.property_access_of_alias(sym).is_some()
+    }
+
+    /// `getSymbolFlags`. On the tables an alias that ends at a property ends nowhere, which is `SymbolFlagsAll`.
+    pub(super) fn get_symbol_flags(&mut self, sym: Sym) -> SymFlags {
+        let flags = self.files().symbol_flags(sym);
+        if flags == SymFlags::all() && self.is_alias_of_property(sym) {
+            self.files().flags(sym) | SymFlags::PROPERTY
+        } else {
+            flags
+        }
+    }
+
+    /// `getSymbol`
+    fn get_symbol(&mut self, held: Option<Sym>, meaning: SymFlags) -> Option<Sym> {
+        let symbol = held.filter(|&symbol| self.files().means(symbol, meaning))?;
+        (meaning.intersects(SymFlags::VALUE)
+            || self.files().flags(symbol).intersects(meaning)
+            || self.get_symbol_flags(symbol).intersects(meaning))
+        .then_some(symbol)
+    }
+
+    /// `resolveName`
+    pub(super) fn resolve(
+        &mut self,
+        file: FileId,
+        scope: ScopeId,
+        name: Atom,
+        meaning: SymFlags,
+        reports_errors: bool,
+    ) -> Result<Option<Sym>, (u32, MemberId)> {
+        let files = self.files();
+        files.resolve_with(
+            file,
+            scope,
+            name,
+            meaning,
+            reports_errors,
+            &mut |_, held, meaning| self.get_symbol(held, meaning),
+        )
+    }
+
+    /// `resolveEntityName`, `dontResolveAlias`
+    pub(super) fn resolve_entity(
+        &mut self,
+        file: FileId,
+        scope: ScopeId,
+        names: &[Atom],
+        meaning: SymFlags,
+    ) -> Option<Sym> {
+        let files = self.files();
+        files.resolve_entity_with(file, scope, names, meaning, &mut |_, held, meaning| {
+            self.get_symbol(held, meaning)
+        })
     }
 
     /// `resolveAlias` of `sym`, where it ends at a property.

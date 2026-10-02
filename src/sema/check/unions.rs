@@ -127,9 +127,11 @@ impl<'p> Checker<'p> {
         match self.data(ty) {
             TypeData::UnresolvedName { .. } => tf::ANY,
             TypeData::Intrinsic(intrinsic) => match intrinsic {
-                Intrinsic::Unresolved | Intrinsic::Any | Intrinsic::Error | Intrinsic::Auto => {
-                    tf::ANY
-                }
+                Intrinsic::Unresolved
+                | Intrinsic::Any
+                | Intrinsic::Error
+                | Intrinsic::Auto
+                | Intrinsic::IntrinsicMarker => tf::ANY,
                 Intrinsic::Unknown => tf::UNKNOWN,
                 Intrinsic::Undefined | Intrinsic::Missing | Intrinsic::UndefinedDeclared => {
                     tf::UNDEFINED
@@ -186,7 +188,9 @@ impl<'p> Checker<'p> {
                 Intrinsic::Never | Intrinsic::SilentNever | Intrinsic::UnreachableNever,
             ) => {}
             // `TypeFlagsAny`: the union is `anyType`.
-            TypeData::Intrinsic(Intrinsic::Auto) => out.push(TypeId::ANY),
+            TypeData::Intrinsic(Intrinsic::Auto | Intrinsic::IntrinsicMarker) => {
+                out.push(TypeId::ANY)
+            }
             _ => out.push(ty),
         }
     }
@@ -209,7 +213,10 @@ impl<'p> Checker<'p> {
                     && !self.is_error_type(a)
                     && !matches!(
                         a,
-                        TypeId::AUTO | TypeId::SILENT_NEVER | TypeId::UNREACHABLE_NEVER
+                        TypeId::AUTO
+                            | TypeId::INTRINSIC_MARKER
+                            | TypeId::SILENT_NEVER
+                            | TypeId::UNREACHABLE_NEVER
                     ) =>
             {
                 return a;
@@ -829,6 +836,25 @@ impl<'p> Checker<'p> {
         mut f: impl FnMut(&mut Self, TypeId) -> TypeId,
     ) -> TypeId {
         self.map_type_ex(ty, &mut f, false)
+    }
+
+    /// `mapTypeWithAlias`
+    pub(super) fn map_type_with_alias(
+        &mut self,
+        ty: TypeId,
+        mut f: impl FnMut(&mut Self, TypeId) -> TypeId,
+        alias: Option<(Sym, &[TypeId])>,
+    ) -> TypeId {
+        match self.data(ty) {
+            TypeData::Union(members) if alias.is_some() => {
+                let mut mapped: smallvec::SmallVec<[TypeId; 8]> = smallvec::SmallVec::new();
+                for &member in members.iter() {
+                    mapped.push(f(self, member));
+                }
+                self.union_with_alias(&mapped, alias)
+            }
+            _ => self.map_type(ty, f),
+        }
     }
 
     /// `mapTypeEx` with `noReductions`: `any`, `unknown` and literals next to their base type stay members.

@@ -2190,8 +2190,7 @@ impl<'p> Checker<'p> {
                 Keyword::BigInt => TypeId::BIGINT,
                 Keyword::Symbol => TypeId::SYMBOL,
                 Keyword::Object => TypeId::OBJECT,
-                // `intrinsicMarkerType`: where it does not stand for something built in, it can be anything.
-                Keyword::Intrinsic => TypeId::ANY,
+                Keyword::Intrinsic => TypeId::INTRINSIC_MARKER,
                 Keyword::This => self.this_type_at(file, node, scope),
             },
             TypeNodeKind::StringLit(value) => self.string_literal(value, false),
@@ -2631,10 +2630,7 @@ impl<'p> Checker<'p> {
                 }
                 let names: SmallVec<[Atom; 4]> = hir.ids(name).collect();
                 // `resolveTypeReferenceName`: `getUnresolvedSymbolForEntityName`
-                let Some(found) = self
-                    .files()
-                    .resolve_entity(file, scope, &names, SymFlags::TYPE)
-                else {
+                let Some(found) = self.resolve_entity(file, scope, &names, SymFlags::TYPE) else {
                     let args = self.types_from_nodes(file, args);
                     return self.unresolved_name_type(&names, &args);
                 };
@@ -2647,29 +2643,9 @@ impl<'p> Checker<'p> {
                 }
                 // `resolveEntityName`: an alias is followed as far as the first symbol that is a type.
                 let target = self.files().resolve_alias_as(found, SymFlags::TYPE);
-                let sym = match target {
-                    Some(sym) => sym,
-                    // `getSymbol`: an import that resolves to a property of an `export =` value has no type meaning, so `Resolve`
-                    // continues in the enclosing scopes.
-                    None if names.len() == 1
-                        && self.imported_property_of_export_equals(found).is_some() =>
-                    {
-                        let Some(outer) =
-                            self.resolve_type_name_beyond(file, scope, names[0], found)
-                        else {
-                            let args = self.types_from_nodes(file, args);
-                            return self.unresolved_name_type(&names, &args);
-                        };
-                        let Some(sym) = self.files().resolve_alias_as(outer, SymFlags::TYPE) else {
-                            let args = self.types_from_nodes(file, args);
-                            return self.unresolved_name_type(&names, &args);
-                        };
-                        sym
-                    }
-                    None => {
-                        let args = self.types_from_nodes(file, args);
-                        return self.unresolved_name_type(&names, &args);
-                    }
+                let Some(sym) = target else {
+                    let args = self.types_from_nodes(file, args);
+                    return self.unresolved_name_type(&names, &args);
                 };
                 // `getSymbol`: what is no type is not found where one is looked for.
                 let flags = self.type_flags_of_symbol(sym);
@@ -2723,9 +2699,6 @@ impl<'p> Checker<'p> {
                     // `getIntendedTypeFromJSDocTypeReference` instantiates `Record` for `Object<K, V>` under no alias.
                     && !self.is_jsdoc_object_with_arguments(file, node)
                 {
-                    if let Some(host) = self.alias_with_body(file, scope, node) {
-                        ty = self.with_hosting_alias(ty, (sym, flags), file, host);
-                    }
                     if let Some((alias, type_arguments)) =
                         self.alias_for_type_node(file, scope, node)
                         && (self.is_local_type_alias(sym) || !self.is_local_type_alias(alias))
@@ -2766,30 +2739,6 @@ impl<'p> Checker<'p> {
                 ty
             }
         }
-    }
-
-    /// `Resolve`, continued past the scope that declares `skipped`: the symbol found for `name` from `scope` has no type meaning.
-    pub(super) fn resolve_type_name_beyond(
-        &self,
-        file: FileId,
-        mut scope: ScopeId,
-        name: Atom,
-        skipped: Sym,
-    ) -> Option<Sym> {
-        let bound = self.bound(file);
-        while scope.is_some() {
-            let s = &bound.scopes[scope.idx()];
-            scope = s.parent;
-            if bound
-                .lookup(s.locals, name)
-                .is_some_and(|id| self.files().sym(file, id) == skipped)
-            {
-                break;
-            }
-        }
-        self.files()
-            .resolve_name(file, scope, name, SymFlags::TYPE)
-            .filter(|&outer| outer != skipped)
     }
 
     /// `getIntendedTypeFromJSDocTypeReference`, of what the parser has not replaced already. The name is not looked up then.
@@ -2838,67 +2787,6 @@ impl<'p> Checker<'p> {
                 .text
                 .get(pos as usize..)
                 .is_some_and(|text| text.starts_with(b"Object"))
-    }
-
-    /// `getTypeFromTypeAliasReference`: `ty` is what a reference to the generic alias `hosted` comes to, and the reference is the
-    /// whole body of the alias `host` of `file`. tsgo instantiates `hosted` under `host`, which is `Type.alias` of the result and
-    /// part of its identity (`getTypeInstantiationKey`). Types do not store an alias. The type parameters of `host` are added
-    /// to the mapper of `ty` instead: instantiation keeps them up to date, and `hosting_alias_of` reads them back. For a `host`
-    /// without type parameters a reference to it (`LazyAlias`) is added, mapped to itself.
-    /// `hosted`: the symbol and its `type_flags_of_symbol`.
-    /// Limit: only a mapped type gets one. A type literal, a function type and a conditional type go by `alias_of`.
-    fn with_hosting_alias(
-        &mut self,
-        ty: TypeId,
-        hosted: (Sym, SymFlags),
-        file: FileId,
-        host: AliasId,
-    ) -> TypeId {
-        let type_params = self.hir(file)[host].type_params;
-        let host_symbol = self.bound(file).alias_symbol[host.idx()];
-        let Some((of, node, _)) = self.mapped_origin(ty) else {
-            return ty;
-        };
-        if host_symbol.is_none()
-            // `instantiateMappedType`: an instantiation of a homomorphic mapped type keeps the alias of the mapped type.
-            || self.homomorphic_type_variable(of, node, MapperId::IDENTITY).is_some()
-        {
-            return ty;
-        }
-        // `instantiateTypeWithAlias`: the alias goes to an instantiation of the declared type, not to a type argument it comes to.
-        let declared = self.declared_type_by_name(hosted.0, hosted.1);
-        if self
-            .mapped_origin(declared)
-            .is_none_or(|(f, n, _)| (f, n) != (of, node))
-        {
-            return ty;
-        }
-        // An alias declared in a function does not host a reference to a top-level alias.
-        let host_symbol = self.files().sym(file, host_symbol);
-        if !self.is_local_type_alias(hosted.0) && self.is_local_type_alias(host_symbol) {
-            return ty;
-        }
-        // `hosted` may host a reference itself: the outermost alias is the one that counts.
-        let Some((_, _, mapper)) = self.mapped_origin(self.without_hosting_alias(ty)) else {
-            return ty;
-        };
-        let mut pairs = self.p.types.mapping(mapper).to_vec();
-        for tp in type_params.iter() {
-            let param = self.type_param(file, tp);
-            pairs.push((param, param));
-        }
-        if type_params.is_empty() {
-            let reference = self.intern(TypeData::LazyAlias {
-                sym: host_symbol,
-                args: Box::new([]),
-            });
-            pairs.push((reference, reference));
-        }
-        let mapper = self.p.types.mapper(pairs);
-        self.intern(TypeData::Anon {
-            origin: Origin::Mapped(of, node),
-            mapper,
-        })
     }
 
     /// `isLocalTypeAlias`: whether the type alias `sym` is declared inside a function.
@@ -3384,12 +3272,7 @@ impl<'p> Checker<'p> {
             }
             let declared = self.declared_type_by_name(sym, flags);
             let mapper = self.mapper_from(&params, &args);
-            let ty = self.instantiate(declared, mapper);
-            // `instantiateMappedType`: `mapTypeWithAlias`, with the alias of the mapped type under `mapper`.
-            if self.is_union(ty) && self.mapped_origin(declared).is_some() {
-                return self.with_alias(ty, sym, &args);
-            }
-            return ty;
+            return self.instantiate(declared, mapper);
         }
         if flags.intersects(SymFlags::TYPE) {
             return self.declared_type_by_name(sym, flags);

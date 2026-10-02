@@ -500,6 +500,7 @@ impl<'p> Checker<'p> {
                 Intrinsic::Any
                 | Intrinsic::Error
                 | Intrinsic::Auto
+                | Intrinsic::IntrinsicMarker
                 | Intrinsic::Unknown
                 | Intrinsic::Unresolved,
             )
@@ -3921,23 +3922,43 @@ impl<'p> Checker<'p> {
         is_candidate
     }
 
-    pub(super) fn narrow_reference(&mut self, file: FileId, e: ExprId, declared: TypeId) -> TypeId {
+    /// The end of `checkIdentifier`, from `getNarrowableTypeForReference` on: 7034 7005, 2454. `sym`: what `e` names.
+    pub(super) fn narrow_reference(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        sym: Sym,
+        declared: TypeId,
+    ) -> TypeId {
         // Of `string` it can be found out that it is `"a"`, and of `"a"` that it is not even that.
         if declared == TypeId::UNRESOLVED || declared.is_never() {
             return declared;
         }
         let declared = self.narrowable_type(file, e, declared);
-        // `checkIdentifier`: a variable that is not known to hold anything where its flow starts may be `undefined` there.
         let ty = self.flow_type_of(file, e, declared, true);
+        let hir = self.hir(file);
         if self.is_automatic_type(declared) && !self.is_evolving_array_operation_target(file, e) {
+            // Nothing has these types without `noImplicitAny`. `checkWithStatement` does not come to the body.
+            if self.is_automatic_type(ty) && !hir.is_in_with(hir[e].pos) {
+                let args = [Arg::Sym(sym), Arg::Type(ty)];
+                if let Some(name) = self.place_of_symbol(sym) {
+                    self.error(name, 7034, &args);
+                }
+                self.error(self.place_of_token(file, hir[e].pos), 7005, &args);
+            }
             return self.convert_auto_to_any(ty);
         }
-        // 2454 is said of this. The declared type keeps further errors down.
         if ty != declared
             && self.contains_undefined(ty)
             && !self.contains_undefined(declared)
             && !self.assumes_initialized(file, e, declared)
         {
+            self.error(
+                self.place_of_token(file, hir[e].pos),
+                2454,
+                &[Arg::Sym(sym)],
+            );
+            // "Return the declared type to reduce follow-on errors"
             return declared;
         }
         ty

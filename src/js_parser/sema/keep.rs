@@ -125,6 +125,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// The lexer is after `initializer`, of the variable whose binding is at `binding`, in an ambient context. The caller drops the
+    /// statement, but TypeScript checks the initializer (`checkAmbientInitializer`).
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn note_ambient_initializer(&mut self, binding: Loc, initializer: bun_ast::Expr) {
+        let kept = self.with_end(initializer);
+        if let Some(syntax) = &mut self.type_syntax {
+            syntax.ambient_initializers.push((binding.start, kept));
+        }
+    }
+
     /// Records a finished top-level type by its start offset.
     pub(crate) fn record_type(&mut self, start: i32, ty: TypeId) {
         let kept = self.with_end(ty);

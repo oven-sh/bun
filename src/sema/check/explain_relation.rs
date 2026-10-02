@@ -1697,7 +1697,7 @@ impl<'p> Checker<'p> {
         };
         if same_body
             && let (Some((alias, source_args)), Some((target_alias, target_args))) =
-                (self.type_alias_of(source), self.type_alias_of(target))
+                (self.alias_of(source), self.alias_of(target))
             && alias == target_alias
             && !source_args.is_empty()
         {

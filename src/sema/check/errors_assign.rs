@@ -2229,8 +2229,9 @@ impl Checker<'_> {
         if !self.may_have_hosting_alias(ty) {
             return false;
         }
-        if let Some(host) = self.hosting_alias_declaration(ty) {
-            return host == (file, alias);
+        if let Some((host, _)) = self.stored_alias(ty) {
+            let symbol = self.bound(file).alias_symbol[alias.idx()];
+            return *host == self.files().sym(file, symbol);
         }
         // The alias at the end of the references: the one `alias_of` knows.
         let (mut of, mut body) = (file, self.hir(file)[alias].ty);

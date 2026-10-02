@@ -940,6 +940,15 @@ impl<'f> Binder<'f> {
                 if !self.tables[locals.idx()].contains_key(&name) {
                     let flags = SymFlags::FUNCTION_SCOPED_VARIABLE | SymFlags::MODULE_EXPORTS;
                     self.declare_in(locals, name, flags, Decl::CommonJsVariable, SymbolId::NONE);
+                    // Its parent is `module`, which `getSymbolChain` never writes: the declaration of that is the file.
+                    if name == known::module {
+                        self.b.module_exports_property = self.new_symbol(
+                            known::exports,
+                            SymFlags::MODULE_EXPORTS | SymFlags::PROPERTY,
+                            Decl::CommonJsVariable,
+                            SymbolId::NONE,
+                        );
+                    }
                 }
             }
         }

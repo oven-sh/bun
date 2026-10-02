@@ -5,10 +5,10 @@
 //! that are not written. The node builder reads a type off the syntax (`pseudochecker`), holds it against what the checker says
 //! (`pseudoTypeEquivalentToType`) and writes it (`pseudoTypeToNode`), or else writes what the checker says (`typeToTypeNode`). Whatever
 //! takes the checker it reports (`ReportInferenceFallback`), and `createGetIsolatedDeclarationErrors` (`diagnostics.go`) makes the error.
-//! Nothing is written here. The same way is gone, for what is reported on it and for the declarations that turn out to be needed on
-//! it (`lateMarkedStatements`), which are gone over in their turn.
+//! The node builder is the printer (print.rs), which this listens to. What it writes is dropped: the way is gone for what is reported
+//! on it and for the declarations that turn out to be needed on it (`lateMarkedStatements`), which are gone over in their turn.
 //!
-//! Left out: `stripInternal`, what CommonJS exports and `this.x = ..` declare in JavaScript, and the errors about names that cannot
+//! Left out: what CommonJS exports and `this.x = ..` declare in JavaScript, and the errors about names that cannot
 //! be reached (4xxx), which `TrackSymbol` reports.
 
 use super::decl::Predicate;
@@ -16,6 +16,7 @@ use super::enclosing_declaration::Enclosing;
 use super::errors::Diagnostic;
 use super::errors_declaration_emit::{EmitResolver, EmitResolverLinks, Meaning};
 use super::explain::Related;
+use super::print::{DECLARATION_EMIT_NODE_BUILDER_FLAGS, Report, SymbolTracker};
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind};
 use crate::util::FxHashSet;
@@ -122,7 +123,7 @@ struct Said {
     is_merged: bool,
 }
 
-/// `DeclarationTransformer`, `SymbolTrackerSharedState` and `NodeBuilderContext`, for one file.
+/// `DeclarationTransformer` and `SymbolTrackerSharedState`, for one file.
 pub(super) struct Emit {
     file: FileId,
     said: Vec<Said>,
@@ -132,12 +133,8 @@ pub(super) struct Emit {
     /// `expandoHosts`: the variable statements that are written as functions.
     hosts: FxHashSet<StmtId>,
     around: Enclosing,
-    /// `suppressReportInferenceFallback`
-    is_quiet: bool,
-    /// How deep in types what is being written is.
-    depth: u32,
-    /// The types written since the node builder was last asked, and whether that was quietly: they say the same again.
-    written: FxHashSet<(TypeId, bool)>,
+    /// What `pseudoTypeEquivalentToType` has for `ReportInferenceFallback`, in order. Whoever asked it passes them on.
+    pub(super) inference_fallbacks: Vec<Node>,
     /// The statement that declares each interface, enum and namespace of the file.
     interfaces: Vec<StmtId>,
     enums: Vec<StmtId>,
@@ -157,21 +154,12 @@ impl Emit {
             late: Vec::new(),
             hosts: FxHashSet::default(),
             around: Enclosing::at_scope(file, ScopeId(0)),
-            is_quiet: true,
-            depth: 0,
-            written: FxHashSet::default(),
+            inference_fallbacks: Vec::new(),
             interfaces: Vec::new(),
             enums: Vec::new(),
             modules: Vec::new(),
             module_scopes: Vec::new(),
         }
-    }
-
-    /// `NewNodeBuilder`: every question of the transformer is answered from scratch.
-    fn begin(&mut self) {
-        self.is_quiet = false;
-        self.depth = 0;
-        self.written.clear();
     }
 
     /// `handleSymbolAccessibilityError`, of what is accessible: `AliasesToMakeVisible` are gone over later.
@@ -180,6 +168,41 @@ impl Emit {
             if file == self.file && !self.late.contains(&statement) {
                 self.late.push(statement);
             }
+        }
+    }
+}
+
+/// `SymbolTrackerImpl` (tracker.go), as far as `isolatedDeclarations` goes. The rest of it is in errors_declaration_emit.rs.
+impl<'p> SymbolTracker<'p> for Emit {
+    /// `TrackSymbol`, for `AliasesToMakeVisible`.
+    fn track_symbol(
+        &mut self,
+        c: &mut Checker<'p>,
+        symbol: Sym,
+        enclosing_declaration: Option<Enclosing>,
+        meaning: SymFlags,
+    ) -> bool {
+        if let Some(at) = enclosing_declaration
+            && !c.flags_of(symbol).contains(SymFlags::TYPE_PARAMETER)
+        {
+            let access = EmitResolver {
+                c: &mut *c,
+                links: &mut self.links,
+            }
+            .is_symbol_accessible(symbol, at, Meaning::of(meaning, false), true);
+            self.add_late_marked_statements(access.aliases);
+        }
+        false
+    }
+
+    fn report(&mut self, _: &mut Checker<'p>, _: Report) {}
+
+    fn report_truncation_error(&mut self, _: &mut Checker<'p>) {}
+
+    /// `ReportInferenceFallback`. What is in another file is reported for that file.
+    fn report_inference_fallback(&mut self, c: &mut Checker<'p>, file: FileId, node: Node) {
+        if file == self.file {
+            c.iso_report(self, node);
         }
     }
 }
@@ -202,9 +225,7 @@ impl<'p> Checker<'p> {
             late: Vec::new(),
             hosts: FxHashSet::default(),
             around: Enclosing::at_scope(file, ScopeId(0)),
-            is_quiet: false,
-            depth: 0,
-            written: FxHashSet::default(),
+            inference_fallbacks: Vec::new(),
             interfaces: vec![StmtId::NONE; hir.interfaces.len()],
             enums: vec![StmtId::NONE; hir.enums.len()],
             modules: vec![StmtId::NONE; hir.modules.len()],
@@ -1994,10 +2015,10 @@ impl<'p> Checker<'p> {
             Pseudo::Inferred { of, errors, .. } => {
                 if reports {
                     if errors.is_empty() {
-                        self.iso_report(tx, *of);
+                        tx.inference_fallbacks.push(*of);
                     }
                     for &node in errors {
-                        self.iso_report(tx, node);
+                        tx.inference_fallbacks.push(node);
                     }
                 }
                 false
@@ -2032,7 +2053,7 @@ impl<'p> Checker<'p> {
                 let node = self.iso_node_of_fn(file, *func);
                 if self.sig_type_params(sig).len() != self.hir(file)[*func].type_params.len() {
                     if reports {
-                        self.iso_report(tx, node);
+                        tx.inference_fallbacks.push(node);
                     }
                     return false;
                 }
@@ -2043,7 +2064,7 @@ impl<'p> Checker<'p> {
                     Some(predicate) => {
                         let matches = self.iso_matches_predicate(file, returns, sig, predicate);
                         if !matches && reports {
-                            self.iso_report(tx, node);
+                            tx.inference_fallbacks.push(node);
                         }
                         matches
                     }
@@ -2055,7 +2076,7 @@ impl<'p> Checker<'p> {
             }
             Pseudo::NoResult(node) => {
                 if reports {
-                    self.iso_report(tx, *node);
+                    tx.inference_fallbacks.push(*node);
                 }
                 false
             }
@@ -2100,7 +2121,7 @@ impl<'p> Checker<'p> {
             let Some(target) = target.filter(|prop| !prop.flags.contains(PropFlags::OPTIONAL))
             else {
                 if reports {
-                    self.iso_report(tx, node);
+                    tx.inference_fallbacks.push(node);
                 }
                 return false;
             };
@@ -2114,11 +2135,11 @@ impl<'p> Checker<'p> {
                         match pt {
                             Pseudo::Inferred { errors, .. } if !errors.is_empty() => {
                                 for &error in errors {
-                                    self.iso_report(tx, error);
+                                    tx.inference_fallbacks.push(error);
                                 }
                             }
                             _ if Self::iso_is_structural(pt) => {}
-                            _ => self.iso_report(tx, node),
+                            _ => tx.inference_fallbacks.push(node),
                         }
                     }
                     return false;
@@ -2152,7 +2173,7 @@ impl<'p> Checker<'p> {
             };
             if !is_same {
                 if reports {
-                    self.iso_report(tx, node);
+                    tx.inference_fallbacks.push(node);
                 }
                 return false;
             }
@@ -2172,7 +2193,7 @@ impl<'p> Checker<'p> {
         let targets = self.sig_params(sig);
         if targets.len() != params.len() {
             if reports {
-                self.iso_report(tx, elsewhere);
+                tx.inference_fallbacks.push(elsewhere);
             }
             return false;
         }
@@ -2190,7 +2211,7 @@ impl<'p> Checker<'p> {
                 || !self.iso_is_equivalent(tx, &param.ty, target.ty, param.is_optional, false)
             {
                 if reports {
-                    self.iso_report(tx, Node::Param(param.param));
+                    tx.inference_fallbacks.push(Node::Param(param.param));
                 }
                 return false;
             }
@@ -2234,50 +2255,14 @@ impl<'p> Checker<'p> {
         }
     }
 
-    // ───────────────────────────── written ─────────────────────────────
+    // ───────────────────────────── what `pseudoTypeToNode` asks ─────────────────────────────
 
-    /// `pseudoTypeToNodeWithCheckerFallback`
-    fn iso_write_pseudo_or_type(&mut self, tx: &mut Emit, pt: &Pseudo, ty: TypeId) {
-        let Pseudo::Inferred { of, errors, .. } = pt else {
-            return self.iso_write_pseudo(tx, pt);
-        };
-        if !tx.is_quiet {
-            if errors.is_empty() {
-                self.iso_report(tx, *of);
-            }
-            for &node in errors {
-                self.iso_report(tx, node);
-            }
-        }
-        self.iso_write_type_quietly(tx, ty);
-    }
-
-    fn iso_write_type_quietly(&mut self, tx: &mut Emit, ty: TypeId) {
-        let was_quiet = std::mem::replace(&mut tx.is_quiet, true);
-        self.iso_write_type(tx, ty);
-        tx.is_quiet = was_quiet;
-    }
-
-    /// The type parameters, the `this` parameter and the parameters of a signature that is read off the syntax.
-    fn iso_write_pseudo_params(&mut self, tx: &mut Emit, func: FnId, params: &[PseudoParam]) {
-        let hir = self.hir(tx.file);
-        for tp in hir[func].type_params.iter() {
-            self.iso_reuse_type_node(tx, hir[tp].constraint);
-            self.iso_reuse_type_node(tx, hir[tp].default);
-        }
-        self.iso_reuse_type_node(tx, hir[func].this_ty(hir));
-        for param in params {
-            self.iso_write_pseudo(tx, &param.ty);
-        }
-    }
-
-    /// `enterNewScope`: the names of the parameters and type parameters of `func` mean something.
+    /// `tx.enclosingDeclaration = input`, of a function-like.
     fn iso_enter_scope(&self, tx: &mut Emit, func: FnId) -> Enclosing {
         let saved = tx.around;
         let scope = self.bound(tx.file).fns[func.idx()].scope;
         if scope.is_some() {
             tx.around.scope = scope;
-            tx.around.fake_scope = 1;
         }
         saved
     }
@@ -2319,182 +2304,6 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `pseudoTypeToNode`
-    fn iso_write_pseudo(&mut self, tx: &mut Emit, pt: &Pseudo) {
-        let file = tx.file;
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        match pt {
-            Pseudo::Direct(t) => self.iso_reuse_type_node(tx, *t),
-            Pseudo::Inferred {
-                of,
-                errors,
-                is_signature_return,
-            } => {
-                let of = *of;
-                let (parent, declaration) = self.iso_parent_of_inferred(tx, of);
-                for node in self.iso_error_nodes_of_inferred(tx, of, errors) {
-                    self.iso_report(tx, node);
-                }
-                if *is_signature_return {
-                    if let Some(func) = self.iso_fn_of_node(file, of) {
-                        let sig = self.sig_of_fn(file, func);
-                        self.iso_write_return_type(tx, sig, false);
-                    }
-                    return;
-                }
-                let Node::Expr(e) = of else {
-                    return;
-                };
-                match parent {
-                    Some(Node::Stmt(s)) if matches!(hir[s].kind, StmtKind::Return(_)) => {
-                        let Some(func) = self.enclosing_fn_of_expr(file, e) else {
-                            return;
-                        };
-                        if matches!(hir[func].kind, FnKind::Getter | FnKind::Setter) {
-                            let accessor = self.iso_node_of_fn(file, func);
-                            self.iso_write_type_of_declaration(tx, file, accessor, None, false);
-                        } else {
-                            let sig = self.sig_of_fn(file, func);
-                            self.iso_write_return_type(tx, sig, false);
-                        }
-                    }
-                    Some(Node::Expr(_))
-                        if matches!(bound.expr_parent[e.idx()], Parent::FnBody(_)) =>
-                    {
-                        if let Parent::FnBody(func) = bound.expr_parent[e.idx()] {
-                            let sig = self.sig_of_fn(file, func);
-                            self.iso_write_return_type(tx, sig, false);
-                        }
-                    }
-                    _ => match declaration {
-                        Some(declaration) => {
-                            self.iso_write_type_of_declaration(tx, file, declaration, None, false)
-                        }
-                        None => {
-                            let ty = self.type_of_expr(file, e);
-                            self.iso_write_type(tx, ty);
-                        }
-                    },
-                }
-            }
-            Pseudo::NoResult(node) => {
-                let node = *node;
-                self.iso_report(tx, node);
-                match self.iso_fn_of_node(file, node) {
-                    Some(func) if !matches!(hir[func].kind, FnKind::Getter | FnKind::Setter) => {
-                        let sig = self.sig_of_fn(file, func);
-                        self.iso_write_return_type(tx, sig, false);
-                    }
-                    _ => self.iso_write_type_of_declaration(tx, file, node, None, false),
-                }
-            }
-            Pseudo::MaybeConst {
-                at,
-                constant,
-                regular,
-            } => {
-                if self.is_const_by_contextual_type(file, *at, true) {
-                    self.iso_write_pseudo(tx, constant)
-                } else {
-                    self.iso_write_pseudo(tx, regular)
-                }
-            }
-            Pseudo::Union(members) => {
-                let is_strict = self.files().options.strict_null_checks;
-                for member in members {
-                    if is_strict || !matches!(member, Pseudo::Undefined | Pseudo::Null) {
-                        self.iso_write_pseudo(tx, member);
-                    }
-                }
-            }
-            Pseudo::Signature {
-                func,
-                params,
-                returns,
-            } => {
-                let saved = self.iso_enter_scope(tx, *func);
-                self.iso_write_pseudo_params(tx, *func, params);
-                self.iso_write_pseudo(tx, returns);
-                tx.around = saved;
-            }
-            Pseudo::Tuple(elements) => {
-                for element in elements {
-                    self.iso_write_pseudo(tx, element);
-                }
-            }
-            Pseudo::Object(elements) => {
-                for element in elements {
-                    match &element.kind {
-                        PseudoElementKind::Method {
-                            func,
-                            params,
-                            returns,
-                        } => {
-                            let saved = self.iso_enter_scope(tx, *func);
-                            self.iso_write_pseudo_params(tx, *func, params);
-                            self.iso_write_pseudo(tx, returns);
-                            tx.around = saved;
-                        }
-                        PseudoElementKind::Property(pt) => self.iso_write_pseudo(tx, pt),
-                        PseudoElementKind::Setter { func, param } => {
-                            let saved = self.iso_enter_scope(tx, *func);
-                            self.iso_write_pseudo(tx, &param.ty);
-                            tx.around = saved;
-                        }
-                        PseudoElementKind::Getter { func, ty } => {
-                            let saved = self.iso_enter_scope(tx, *func);
-                            self.iso_write_pseudo(tx, ty);
-                            tx.around = saved;
-                        }
-                    }
-                }
-            }
-            Pseudo::Undefined
-            | Pseudo::Null
-            | Pseudo::String
-            | Pseudo::Number
-            | Pseudo::BigInt
-            | Pseudo::Boolean
-            | Pseudo::False
-            | Pseudo::True
-            | Pseudo::Literal(_) => {}
-        }
-    }
-
-    /// `serializeReturnTypeForSignature`
-    fn iso_write_return_type(&mut self, tx: &mut Emit, sig: SigId, tries_reuse: bool) {
-        let returned = self.sig_return(sig);
-        let predicate = self.sig_predicate(sig);
-        if tries_reuse
-            && let Some((file, func, _)) = self.sig_decl(sig)
-            && file == tx.file
-        {
-            let pt = self.iso_pseudo_of_return(tx, func);
-            let reports = !tx.is_quiet;
-            if self.iso_is_equivalent(tx, &pt, returned, false, reports) {
-                // What is read off the syntax knows nothing of a predicate that is inferred.
-                match predicate {
-                    Some(predicate) if !self.iso_matches_predicate(file, &pt, sig, predicate) => {
-                        if !tx.is_quiet {
-                            let node = self.iso_node_of_fn(file, func);
-                            self.iso_report(tx, node);
-                        }
-                    }
-                    _ => return self.iso_write_pseudo_or_type(tx, &pt, returned),
-                }
-            }
-        }
-        // `serializeInferredReturnTypeForSignature`
-        match predicate {
-            Some(predicate) => {
-                if let Some(narrowed) = predicate.ty {
-                    self.iso_write_type_quietly(tx, narrowed);
-                }
-            }
-            None => self.iso_write_type_quietly(tx, returned),
-        }
-    }
-
     /// `HasInferredType`
     pub(super) fn iso_has_inferred_type(&self, file: FileId, node: Node) -> bool {
         let hir = self.hir(file);
@@ -2516,693 +2325,6 @@ impl<'p> Checker<'p> {
             ),
             _ => false,
         }
-    }
-
-    /// `serializeTypeForDeclaration`, of the declaration `node` of `file`. `ty`: what it is here, if that is not what it is declared as.
-    fn iso_write_type_of_declaration(
-        &mut self,
-        tx: &mut Emit,
-        file: FileId,
-        node: Node,
-        ty: Option<TypeId>,
-        tries_reuse: bool,
-    ) {
-        let ty = match ty {
-            Some(ty) => ty,
-            None => {
-                let Some(declared) = self.iso_type_of_declared(file, node) else {
-                    return;
-                };
-                self.widen_literal(declared)
-            }
-        };
-        // What is reported on another file is dropped.
-        if file != tx.file {
-            return self.iso_write_type(tx, ty);
-        }
-        let hir = self.hir(file);
-        let in_function = self.is_function_like_declaration(tx.around);
-        let requires_undefined = match node {
-            Node::Param(p) => self.iso_requires_implicit_undefined(file, p, in_function),
-            _ => false,
-        };
-        let ty = if requires_undefined {
-            self.optional(ty)
-        } else {
-            ty
-        };
-        let accessor = self
-            .iso_fn_of_node(file, node)
-            .filter(|&f| matches!(hir[f].kind, FnKind::Getter | FnKind::Setter));
-        let requires_widening = self.requires_widening(ty);
-        let mut has_reported = false;
-        if tries_reuse
-            && (accessor.is_some() || self.iso_has_inferred_type(file, node) && !requires_widening)
-        {
-            let pt = match accessor {
-                Some(func) => self.iso_pseudo_of_accessor(tx, func),
-                None => self.iso_pseudo_of_declaration(tx, node),
-            };
-            let reports = !tx.is_quiet;
-            // `isOptionalDeclaration`
-            let has_question = match node {
-                Node::Param(p) => hir[p].flags.contains(Flags::OPTIONAL),
-                Node::Member(m) => {
-                    hir[m].kind == MemberKind::Property && hir[m].flags.contains(Flags::OPTIONAL)
-                }
-                _ => false,
-            };
-            if self.iso_is_equivalent(tx, &pt, ty, !requires_undefined && has_question, reports) {
-                return self.iso_write_pseudo_or_type(tx, &pt, ty);
-            }
-            has_reported =
-                reports && matches!(&pt, Pseudo::Inferred { errors, .. } if !errors.is_empty());
-            let adds_undefined = requires_undefined
-                && match self.iso_type_of_pseudo(file, &pt) {
-                    // `containsNonMissingUndefinedType`
-                    Some(from) => !self
-                        .parts(from)
-                        .iter()
-                        .any(|m| m.is_undefined() && *m != TypeId::MISSING),
-                    None => !Self::iso_could_be_undefined(hir, &pt),
-                };
-            if adds_undefined {
-                let pt = Pseudo::Union(vec![pt, Pseudo::Undefined]);
-                if self.iso_is_equivalent(tx, &pt, ty, false, reports) {
-                    return self.iso_write_pseudo_or_type(tx, &pt, ty);
-                }
-            }
-        }
-        if has_reported {
-            self.iso_write_type_quietly(tx, ty);
-        } else {
-            self.iso_write_type(tx, ty);
-        }
-    }
-
-    // ───────────────────────────── types that are written already (`nodecopy.go`) ─────────────────────────────
-
-    /// `trackExistingEntityName`, of a name whose first identifier is `name`, which means `own` where it is written. Whether it cannot
-    /// be written where the declaration goes.
-    fn iso_track_existing_name(
-        &mut self,
-        tx: &mut Emit,
-        node: Node,
-        own: Option<Sym>,
-        name: Atom,
-        meaning: SymFlags,
-    ) -> bool {
-        let files = self.files();
-        let is_local_to_signature = |sym: Sym| {
-            files
-                .flags(sym)
-                .intersects(SymFlags::TYPE_PARAMETER | SymFlags::PARAMETER)
-        };
-        if own.is_some_and(is_local_to_signature) {
-            return false;
-        }
-        // The name has to mean the same in both places.
-        let there = files.resolve_name(tx.file, tx.around.scope, name, meaning);
-        let is_same = match (there, own) {
-            (None, Some(_)) => false,
-            (Some(there), Some(own)) => {
-                there == own
-                    || files.export_symbol_of_value_symbol_if_exported(there)
-                        == files.export_symbol_of_value_symbol_if_exported(own)
-                    || files.resolve_alias(there) == files.resolve_alias(own)
-            }
-            _ => true,
-        };
-        if !is_same {
-            self.iso_report(tx, node);
-            return true;
-        }
-        let Some(sym) = there else {
-            return false;
-        };
-        if is_local_to_signature(sym) {
-            return false;
-        }
-        if !self.iso_is_symbol_accessible(tx, sym, meaning, false) {
-            self.iso_report(tx, node);
-            return true;
-        }
-        self.iso_track_symbol(tx, sym, meaning);
-        false
-    }
-
-    /// `reuseTypeNode`
-    fn iso_reuse_type_node(&mut self, tx: &mut Emit, t: TypeNodeId) {
-        if t.is_none() || self.is_stack_low() {
-            return;
-        }
-        let file = tx.file;
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let each = |c: &mut Self, tx: &mut Emit, list: IdList<TypeNodeId>| {
-            for t in hir.ids(list) {
-                c.iso_reuse_type_node(tx, t);
-            }
-        };
-        match hir[t].kind {
-            TypeNodeKind::Ref { name, args } | TypeNodeKind::Typeof { name, args, .. } => {
-                each(self, tx, args);
-                if name.is_empty() {
-                    return;
-                }
-                let meaning = match hir[t].kind {
-                    TypeNodeKind::Typeof { .. } => SymFlags::VALUE,
-                    _ if name.len() > 1 => SymFlags::NAMESPACE,
-                    _ => SymFlags::TYPE,
-                };
-                let first = hir.id_at(name, 0);
-                let own =
-                    self.files()
-                        .resolve_name(file, bound.type_scope[t.idx()], first, meaning);
-                // What cannot be named is written out.
-                if self.iso_track_existing_name(tx, Node::EntityName(t), own, first, meaning) {
-                    let ty = self.type_from_node(file, t);
-                    self.iso_write_type(tx, ty);
-                }
-            }
-            TypeNodeKind::Import { args, .. } => each(self, tx, args),
-            TypeNodeKind::Template { types, .. }
-            | TypeNodeKind::Union(types)
-            | TypeNodeKind::Intersection(types) => each(self, tx, types),
-            TypeNodeKind::Array(x)
-            | TypeNodeKind::Keyof(x)
-            | TypeNodeKind::Readonly(x)
-            | TypeNodeKind::Predicate { ty: x, .. } => self.iso_reuse_type_node(tx, x),
-            TypeNodeKind::Tuple(elems) => {
-                for e in elems.iter() {
-                    self.iso_reuse_type_node(tx, hir[e].ty);
-                }
-            }
-            TypeNodeKind::Cond {
-                check,
-                extends,
-                yes,
-                no,
-            } => {
-                for x in [check, extends, yes, no] {
-                    self.iso_reuse_type_node(tx, x);
-                }
-            }
-            TypeNodeKind::IndexedAccess { obj, index } => {
-                self.iso_reuse_type_node(tx, obj);
-                self.iso_reuse_type_node(tx, index);
-            }
-            TypeNodeKind::Infer(tp) => self.iso_reuse_type_node(tx, hir[tp].constraint),
-            TypeNodeKind::Mapped(m) => {
-                let mapped = &hir[m];
-                self.iso_reuse_type_node(tx, hir[mapped.param].constraint);
-                self.iso_reuse_type_node(tx, mapped.name_ty);
-                self.iso_reuse_type_node(tx, mapped.ty);
-            }
-            TypeNodeKind::Fn(f) => self.iso_reuse_signature(tx, f),
-            TypeNodeKind::Object(members) => {
-                for m in members.iter() {
-                    self.iso_reuse_type_node(tx, hir[m].ty);
-                    if hir[m].func.is_some() {
-                        self.iso_reuse_signature(tx, hir[m].func);
-                    }
-                }
-            }
-            TypeNodeKind::Error
-            | TypeNodeKind::Heritage(_)
-            | TypeNodeKind::Keyword(_)
-            | TypeNodeKind::StringLit(_)
-            | TypeNodeKind::NumberLit(_)
-            | TypeNodeKind::BigIntLit { .. }
-            | TypeNodeKind::BoolLit(_)
-            | TypeNodeKind::UniqueSymbol => {}
-        }
-    }
-
-    /// The same, of a function type or a signature in a type literal.
-    fn iso_reuse_signature(&mut self, tx: &mut Emit, f: FnId) {
-        let hir = self.hir(tx.file);
-        let saved = self.iso_enter_scope(tx, f);
-        for tp in hir[f].type_params.iter() {
-            self.iso_reuse_type_node(tx, hir[tp].constraint);
-            self.iso_reuse_type_node(tx, hir[tp].default);
-        }
-        self.iso_reuse_type_node(tx, hir[f].this_ty(hir));
-        for p in hir[f].params.iter() {
-            self.iso_reuse_type_node(tx, hir[p].ty);
-        }
-        self.iso_reuse_type_node(tx, hir[f].ret);
-        tx.around = saved;
-    }
-
-    // ───────────────────────────── types the checker worked out (`nodebuilderimpl.go`) ─────────────────────────────
-
-    /// The enum `sym` is, or is a member of, is named.
-    fn iso_track_enum(&mut self, tx: &mut Emit, sym: Sym) {
-        let files = self.files();
-        let of = if files.flags(sym).contains(SymFlags::ENUM_MEMBER) {
-            let parent = files.symbol(sym).parent;
-            if parent.is_none() {
-                return;
-            }
-            files.sym(sym.file, parent)
-        } else {
-            sym
-        };
-        self.iso_track_symbol(tx, of, SymFlags::TYPE);
-    }
-
-    /// `typeof x`, for the `unique symbol` that `x` holds.
-    fn iso_track_unique_symbol(&mut self, tx: &mut Emit, symbol: UniqueSymbolDeclaration) {
-        let named = match symbol {
-            UniqueSymbolDeclaration::Variable(variable) => variable,
-            UniqueSymbolDeclaration::Member(file, m) => {
-                let bound = self.bound(file);
-                let MemberOwner::Class(c) = bound.member_owner[m.idx()] else {
-                    return;
-                };
-                let class = bound.class_symbol[c.idx()];
-                if class.is_none() {
-                    return;
-                }
-                self.files().sym(file, class)
-            }
-            UniqueSymbolDeclaration::SymbolConstructor => return,
-        };
-        self.iso_track_symbol(tx, named, SymFlags::VALUE);
-    }
-
-    /// Whether the statement `s` of `file` is directly in the file or in a namespace.
-    fn iso_is_top_level(&self, file: FileId, s: StmtId) -> bool {
-        s.is_some()
-            && matches!(
-                self.bound(file).stmt_parent[s.idx()],
-                Parent::File | Parent::Module(_)
-            )
-    }
-
-    /// `typeToTypeNode`, for what is reported and what is found to be needed on the way.
-    fn iso_write_type(&mut self, tx: &mut Emit, ty: TypeId) {
-        if tx.depth > 48 || self.is_stack_low() || !tx.written.insert((ty, tx.is_quiet)) {
-            return;
-        }
-        tx.depth += 1;
-        self.iso_write_type_worker(tx, ty);
-        tx.depth -= 1;
-    }
-
-    fn iso_write_type_worker(&mut self, tx: &mut Emit, ty: TypeId) {
-        if let Some((alias, args)) = self.alias_with_arguments_for_declaration_emit(ty)
-            && self.iso_is_symbol_accessible(tx, alias, SymFlags::TYPE, false)
-        {
-            self.iso_track_symbol(tx, alias, SymFlags::TYPE);
-            for arg in args {
-                self.iso_write_type(tx, arg);
-            }
-            return;
-        }
-        match self.data(ty) {
-            TypeData::EnumLit { member, .. } => self.iso_track_enum(tx, *member),
-            TypeData::Enum { symbol, .. } => self.iso_track_enum(tx, *symbol),
-            TypeData::UniqueSymbol { symbol, .. } => self.iso_track_unique_symbol(tx, *symbol),
-            TypeData::Union(parts) | TypeData::Intersection(parts) => {
-                for &part in parts.iter() {
-                    self.iso_write_type(tx, part);
-                }
-            }
-            // `typeReferenceToTypeNode`
-            TypeData::Ref { target, args } => {
-                let target = *target;
-                if self.files().flags(target).contains(SymFlags::CLASS)
-                    && !self.iso_is_symbol_accessible(tx, target, SymFlags::VALUE, false)
-                {
-                    return self.iso_write_members(tx, ty);
-                }
-                for &arg in args.iter() {
-                    self.iso_write_type(tx, arg);
-                }
-                if !self.is_array(ty) {
-                    self.iso_track_symbol(tx, target, SymFlags::TYPE);
-                }
-            }
-            TypeData::Tuple { elems, .. } => {
-                for &elem in elems.iter() {
-                    self.iso_write_type(tx, elem);
-                }
-            }
-            TypeData::LazyAlias { sym, args } => {
-                self.iso_track_symbol(tx, *sym, SymFlags::TYPE);
-                for &arg in args.iter() {
-                    self.iso_write_type(tx, arg);
-                }
-            }
-            // `createAnonymousTypeNodeEx`, `shouldEmitTypeOfSymbol`
-            TypeData::Anon { origin, .. } => match *origin {
-                Origin::TypeLiteral(..)
-                | Origin::Mapped(..)
-                | Origin::ObjectLiteral(..)
-                | Origin::WidenedLiteral(..) => self.iso_write_members(tx, ty),
-                Origin::ClassStatic(sym) => {
-                    let is_declaration =
-                        self.files().decls_of(sym).iter().any(|&(file, decl)| {
-                            matches!(decl, Decl::Class(c) if matches!(self.bound(file).class_owner[c.idx()], ClassOwner::Stmt(_)))
-                        });
-                    if is_declaration
-                        && self.iso_is_symbol_accessible(tx, sym, SymFlags::VALUE, false)
-                    {
-                        self.iso_track_symbol(tx, sym, SymFlags::VALUE);
-                    } else {
-                        self.iso_write_members(tx, ty);
-                    }
-                }
-                // `shouldWriteTypeOfFunctionSymbol`
-                Origin::Function(sym) => {
-                    let is_top_level = self.files().decls_of(sym).iter().any(|&(file, decl)| {
-                        matches!(decl, Decl::Fn(f) if matches!(self.bound(file).fns[f.idx()].owner, FnOwner::Stmt(s) if self.iso_is_top_level(file, s)))
-                    });
-                    if is_top_level
-                        && self.iso_is_symbol_accessible(tx, sym, SymFlags::VALUE, false)
-                    {
-                        self.iso_track_symbol(tx, sym, SymFlags::VALUE);
-                    } else {
-                        self.iso_write_members(tx, ty);
-                    }
-                }
-                Origin::EnumObject(sym)
-                | Origin::Module(sym)
-                | Origin::Namespace { module: sym, .. } => {
-                    self.iso_track_symbol(tx, sym, SymFlags::VALUE)
-                }
-                Origin::GlobalThis => {}
-            },
-            TypeData::Fns { decls, .. } => {
-                if let Some(&(file, func)) = decls.first()
-                    && let Some(named) = self.iso_name_of_function_value(tx, file, func)
-                    && self.iso_is_symbol_accessible(tx, named, SymFlags::VALUE, false)
-                {
-                    return self.iso_track_symbol(tx, named, SymFlags::VALUE);
-                }
-                self.iso_write_members(tx, ty);
-            }
-            TypeData::Synth(_) | TypeData::ReverseMapped { .. } => self.iso_write_members(tx, ty),
-            TypeData::IndexedAccess { obj, index, .. } => {
-                self.iso_write_type(tx, *obj);
-                self.iso_write_type(tx, *index);
-            }
-            TypeData::Keyof(x)
-            | TypeData::Substitution { base: x, .. }
-            | TypeData::EvolvingArray(x)
-            | TypeData::StringMapping { ty: x, .. } => self.iso_write_type(tx, *x),
-            TypeData::Template { types, .. } => {
-                for &part in types.iter() {
-                    self.iso_write_type(tx, part);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    /// `shouldWriteTypeOfFunctionSymbol`: what `typeof` is written of for the function value `func` declares: the class of a static
-    /// method, or the variable at the top level that a function expression initializes, unless it is that variable that is written.
-    fn iso_name_of_function_value(&self, tx: &Emit, file: FileId, func: FnId) -> Option<Sym> {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let symbol = match bound.fns[func.idx()].owner {
-            FnOwner::Member(m) if hir[m].flags.contains(Flags::STATIC) => {
-                let MemberOwner::Class(c) = bound.member_owner[m.idx()] else {
-                    return None;
-                };
-                bound.class_symbol[c.idx()]
-            }
-            FnOwner::Expr(e) if !is_parenthesized(self.hir(file), e) => {
-                let Parent::VarInit(d) = bound.expr_parent[e.idx()] else {
-                    return None;
-                };
-                let statement = bound.var_stmt[d.idx()];
-                if !self.iso_is_top_level(file, statement)
-                    || !matches!(hir[statement].kind, StmtKind::Var(_))
-                    || file == tx.file && d == tx.around.variable
-                {
-                    return None;
-                }
-                bound.pat_symbol[hir[d].pat.idx()]
-            }
-            _ => return None,
-        };
-        symbol.is_some().then(|| self.files().sym(file, symbol))
-    }
-
-    /// `createTypeNodeFromObjectType`, `createTypeNodesFromResolvedType`
-    fn iso_write_members(&mut self, tx: &mut Emit, ty: TypeId) {
-        let Some(members) = self.members(ty) else {
-            return;
-        };
-        let (shape, mapper) = (members.shape(), members.mapper);
-        for is_construct in [false, true] {
-            let signatures = self.signatures(ty, is_construct);
-            for &sig in signatures.iter() {
-                self.iso_write_signature(tx, sig);
-            }
-        }
-        for info in &shape.index {
-            if self.iso_write_computed_names(tx, info) {
-                continue;
-            }
-            self.iso_write_type(tx, info.key);
-            let value = self.instantiate(info.value, mapper);
-            self.iso_write_type(tx, value);
-        }
-        let is_class = matches!(
-            self.data(ty),
-            TypeData::Anon {
-                origin: Origin::ClassStatic(_),
-                ..
-            }
-        );
-        for prop in &shape.props {
-            if !(is_class && prop.name == known::prototype) {
-                self.iso_write_property(tx, prop, mapper);
-            }
-        }
-    }
-
-    /// `trackComputedName`
-    fn iso_track_computed_name(&mut self, tx: &mut Emit, file: FileId, e: ExprId) {
-        let first = first_identifier(self.hir(file), e);
-        let ExprKind::Ident(name) = self.hir(file)[first].kind else {
-            return;
-        };
-        let found = self
-            .files()
-            .resolve_name(tx.file, tx.around.scope, name, SymFlags::VALUE)
-            .or_else(|| self.symbol_of_identifier(file, first, name));
-        if let Some(sym) = found {
-            self.iso_track_symbol(tx, sym, SymFlags::VALUE);
-        }
-    }
-
-    /// `isEntityNameVisible(e, enclosingDeclaration, false)`, of the computed name `[e]`.
-    fn iso_is_computed_name_visible(&mut self, tx: &mut Emit, file: FileId, e: ExprId) -> bool {
-        let first = first_identifier(self.hir(file), e);
-        let ExprKind::Ident(name) = self.hir(file)[first].kind else {
-            return false;
-        };
-        EmitResolver {
-            c: &mut *self,
-            links: &mut tx.links,
-        }
-        .is_entity_name_visible(name, None, Meaning::Value, tx.around, false)
-        .is_accessible()
-    }
-
-    /// `indexInfoToObjectComputedNamesOrSignatureDeclaration`: whether the names of `info.components` are written instead of `info`.
-    fn iso_write_computed_names(&mut self, tx: &mut Emit, info: &IndexInfo) -> bool {
-        let components = self.index_components(info.components);
-        if components.is_empty() {
-            return false;
-        }
-        // `isTriviallySerializableComputedName`
-        for &component in components {
-            let (file, key) = self.name_of_index_component(component);
-            let PropKey::Computed(k) = key else {
-                return false;
-            };
-            if file != tx.file
-                || !is_entity_name_expression(self.hir(file), k)
-                || !self.iso_is_computed_name_visible(tx, file, k)
-            {
-                return false;
-            }
-        }
-        for &component in components {
-            let (file, key) = self.name_of_index_component(component);
-            // `hasLateBindableName`
-            if self.member_name(file, key).is_some() {
-                continue;
-            }
-            if let PropKey::Computed(k) = key {
-                self.iso_track_computed_name(tx, file, k);
-            }
-            let ty = self.type_of_index_component(component);
-            self.iso_write_type(tx, ty);
-        }
-        true
-    }
-
-    /// `addPropertyToElementList`
-    fn iso_write_property(&mut self, tx: &mut Emit, prop: &Prop, mapper: MapperId) {
-        let is_optional = prop.flags.contains(PropFlags::OPTIONAL);
-        let ty = self.type_of_prop(prop, mapper);
-        let ty = self.remove_missing_type(ty, is_optional);
-        // `ValueDeclaration`
-        let declaration: Option<(FileId, Node)> = match Self::value_declaration(prop) {
-            Some(PropSource::Literal(file, p)) => Some((*file, Node::Prop(*p))),
-            Some(PropSource::Members(members)) => {
-                members.first().map(|&(file, m)| (file, Node::Member(m)))
-            }
-            Some(PropSource::Parameter(file, p)) => Some((*file, Node::Param(*p))),
-            Some(PropSource::Assigned(file, assignments)) => {
-                assignments.first().map(|&e| (*file, Node::Expr(e)))
-            }
-            _ => None,
-        };
-        // `isLateBoundName`
-        if self.files().atoms.is_symbol_name(prop.name) {
-            let key = match declaration {
-                Some((file, Node::Prop(p))) => Some((file, self.hir(file)[p].key)),
-                Some((file, Node::Member(m))) => Some((file, self.hir(file)[m].key)),
-                _ => None,
-            };
-            if let Some((file, PropKey::Computed(k))) = key {
-                self.iso_track_computed_name(tx, file, k);
-            }
-        }
-        if prop.flags.contains(PropFlags::ACCESSOR) {
-            let written = self.write_type_of_prop(prop, mapper);
-            let is_error_type = self.is_error_type(ty) || self.is_error_type(written);
-            // The getter and the setter, and whether they are those of a class.
-            let (accessors, is_in_class): (Vec<(FileId, FnId)>, bool) =
-                match (&prop.source, declaration) {
-                    (PropSource::Members(members), _) => {
-                        let of_kind = |kind: MemberKind| {
-                            members
-                                .iter()
-                                .find(|&&(file, m)| self.hir(file)[m].kind == kind)
-                                .map(|&(file, m)| (file, self.hir(file)[m].func))
-                        };
-                        let is_in_class = members.iter().all(|&(file, m)| {
-                            matches!(
-                                self.bound(file).member_owner[m.idx()],
-                                MemberOwner::Class(_)
-                            )
-                        });
-                        (
-                            [of_kind(MemberKind::Getter), of_kind(MemberKind::Setter)]
-                                .into_iter()
-                                .flatten()
-                                .collect(),
-                            is_in_class,
-                        )
-                    }
-                    (_, Some((file, node @ Node::Prop(_)))) => {
-                        match self.iso_fn_of_node(file, node) {
-                            Some(func) => {
-                                let (getter, setter) = self.iso_accessors(file, func);
-                                (
-                                    [getter, setter]
-                                        .into_iter()
-                                        .flatten()
-                                        .map(|f| (file, f))
-                                        .collect(),
-                                    false,
-                                )
-                            }
-                            None => (Vec::new(), false),
-                        }
-                    }
-                    _ => (Vec::new(), false),
-                };
-            if !is_error_type
-                && self.is_known(ty)
-                && self.is_known(written)
-                && !accessors.is_empty()
-                && (ty != written || is_in_class)
-            {
-                for (file, func) in accessors {
-                    let sig = self.sig_of_fn(file, func);
-                    let sig = self.instantiate_sig(sig, prop.mapper);
-                    let sig = self.instantiate_sig(sig, mapper);
-                    self.iso_write_signature(tx, sig);
-                }
-                return;
-            }
-            // An `accessor` field.
-            if !is_error_type && accessors.is_empty() && is_in_class {
-                self.iso_write_type(tx, ty);
-                return self.iso_write_type(tx, written);
-            }
-        }
-        if prop.flags.contains(PropFlags::METHOD)
-            && !prop.flags.contains(PropFlags::READONLY)
-            && self
-                .members(ty)
-                .is_none_or(|members| members.shape().props.is_empty())
-        {
-            let callable = self.filter(ty, |_, m| !m.is_undefined());
-            let signatures = self.signatures(callable, false);
-            for &sig in signatures.iter() {
-                self.iso_write_signature(tx, sig);
-            }
-            if !signatures.is_empty() || !is_optional {
-                return;
-            }
-        }
-        match declaration {
-            Some((file, node)) => {
-                self.iso_write_type_of_declaration(tx, file, node, Some(ty), true)
-            }
-            None => self.iso_write_type(tx, ty),
-        }
-    }
-
-    /// `signatureToSignatureDeclarationHelper`
-    fn iso_write_signature(&mut self, tx: &mut Emit, sig: SigId) {
-        // `typeParameterToDeclaration`
-        let type_params = self.sig_type_params(sig);
-        for &tp in type_params.iter() {
-            if let Some(constraint) = self.constraint_of_type_param(tp) {
-                self.iso_write_type(tx, constraint);
-            }
-            if let Some(default) = self.default_of_type_param(tp) {
-                self.iso_write_type(tx, default);
-            }
-        }
-        let saved = tx.around;
-        match self.sig_decl(sig) {
-            // `symbolToParameterDeclaration`
-            Some((file, func, mapper)) => {
-                if file == tx.file {
-                    self.iso_enter_scope(tx, func);
-                }
-                let f = &self.hir(file)[func];
-                for p in f.params.iter() {
-                    let ty = self.type_of_param(file, p);
-                    let ty = self.instantiate(ty, mapper);
-                    self.iso_write_type_of_declaration(tx, file, Node::Param(p), Some(ty), true);
-                }
-                if file == tx.file {
-                    self.iso_reuse_type_node(tx, f.this_ty(self.hir(file)));
-                } else if let Some(this) = self.sig_this_type(sig) {
-                    self.iso_write_type(tx, this);
-                }
-            }
-            None => {
-                let params = self.sig_params(sig);
-                for param in params.iter() {
-                    self.iso_write_type(tx, param.ty);
-                }
-            }
-        }
-        self.iso_write_return_type(tx, sig, true);
-        tx.around = saved;
     }
 
     // ───────────────────────────── what can be seen: the `EmitResolver` is asked ─────────────────────────────
@@ -3496,8 +2618,7 @@ impl<'p> Checker<'p> {
                 // `transformBinaryExpressionToExportDeclaration`
                 self.iso_check_expression_visibility(tx, value);
             } else {
-                tx.begin();
-                self.iso_write_type_of_declaration(tx, file, Node::Expr(e), None, true);
+                self.iso_create_type_of_declaration(tx, Node::Expr(e));
             }
         }
     }
@@ -3702,8 +2823,7 @@ impl<'p> Checker<'p> {
             ExprKind::Fn(f) => self.iso_transform_function(tx, f),
             _ if self.iso_is_primitive_literal(file, e, true) => {}
             _ => {
-                tx.begin();
-                self.iso_write_type_of_declaration(tx, file, Node::Stmt(s), None, true);
+                self.iso_create_type_of_declaration(tx, Node::Stmt(s));
             }
         }
         tx.around = saved;
@@ -3715,7 +2835,9 @@ impl<'p> Checker<'p> {
         let hir = self.hir(file);
         for d in decls.iter() {
             let decl = &hir[d];
-            if !self.iso_is_binding_name_visible(tx, decl.pat) {
+            if self.should_strip_internal(file, decl.loc.pos)
+                || !self.iso_is_binding_name_visible(tx, decl.pat)
+            {
                 continue;
             }
             if !matches!(hir[decl.pat].kind, PatKind::Ident(_)) {
@@ -3735,8 +2857,7 @@ impl<'p> Checker<'p> {
             } else if decl.ty.is_some() {
                 self.iso_visit_type(tx, decl.ty);
             } else {
-                tx.begin();
-                self.iso_write_type_of_declaration(tx, file, Node::Var(d), None, true);
+                self.iso_create_type_of_declaration(tx, Node::Var(d));
             }
             tx.around.variable = VarDeclId::NONE;
         }
@@ -3782,8 +2903,7 @@ impl<'p> Checker<'p> {
                 continue;
             }
             if matches!(hir[name].kind, PatKind::Ident(_)) {
-                tx.begin();
-                self.iso_write_type_of_declaration(tx, file, element, None, true);
+                self.iso_create_type_of_declaration(tx, element);
             } else {
                 self.iso_recreate_binding_pattern(tx, name);
             }
@@ -3797,6 +2917,7 @@ impl<'p> Checker<'p> {
         for m in hir[e].members.iter() {
             let member = &hir[m];
             if member.init.is_some()
+                && !self.should_strip_internal(file, member.loc.pos)
                 && hir.text.get(member.pos as usize) != Some(&b'[')
                 && self.get_enum_member_value(file, m).has_external_references
             {
@@ -3865,11 +2986,13 @@ impl<'p> Checker<'p> {
                 let extends = self.iso_written(file, class.extends);
                 self.iso_report(tx, extends);
                 // `CreateTypeOfExpression`
-                tx.begin();
-                let ty = self.type_of_expr(file, class.extends);
-                let ty = self.regular(ty);
-                let ty = self.regular_object(ty);
-                self.iso_write_type(tx, ty);
+                self.serialize_type_for_expression(
+                    file,
+                    class.extends,
+                    tx.around,
+                    DECLARATION_EMIT_NODE_BUILDER_FLAGS,
+                    tx,
+                );
             }
             if is_name || is_null || is_declaration {
                 for t in hir.ids(class.extends_args) {
@@ -3902,8 +3025,7 @@ impl<'p> Checker<'p> {
             match hir[name].kind {
                 PatKind::Missing => {}
                 PatKind::Ident(_) => {
-                    tx.begin();
-                    self.iso_write_type_of_declaration(tx, file, element, None, true);
+                    self.iso_create_type_of_declaration(tx, element);
                 }
                 _ => self.iso_walk_binding_pattern(tx, name),
             }
@@ -3984,10 +3106,9 @@ impl<'p> Checker<'p> {
                     .collect();
                 let mut are_all_written = !(has_literal_names && key == TypeId::STRING);
                 for &(_, name, _) in &components {
-                    are_all_written =
-                        are_all_written && self.iso_is_computed_name_visible(tx, file, name);
+                    are_all_written = are_all_written
+                        && self.is_trivially_serializable_computed_name_at(file, name, tx.around);
                 }
-                tx.begin();
                 if are_all_written {
                     for &(m, name, is_named) in &components {
                         if is_named {
@@ -3995,8 +3116,12 @@ impl<'p> Checker<'p> {
                         }
                         self.iso_check_expression_visibility(tx, name);
                         let ty = self.type_of_member_declaration(file, m);
-                        tx.begin();
-                        self.iso_write_type(tx, ty);
+                        self.type_to_type_node(
+                            ty,
+                            tx.around,
+                            DECLARATION_EMIT_NODE_BUILDER_FLAGS,
+                            tx,
+                        );
                     }
                     continue;
                 }
@@ -4007,7 +3132,12 @@ impl<'p> Checker<'p> {
                 });
                 if let Some((value, mapper)) = value {
                     let value = self.instantiate(value, mapper);
-                    self.iso_write_type(tx, value);
+                    self.type_to_type_node(
+                        value,
+                        tx.around,
+                        DECLARATION_EMIT_NODE_BUILDER_FLAGS,
+                        tx,
+                    );
                 }
             }
         }
@@ -4028,7 +3158,6 @@ impl<'p> Checker<'p> {
         let hir = self.hir(file);
         let saved = self.iso_enter_scope(tx, f);
         tx.around.variable = VarDeclId::NONE;
-        tx.around.fake_scope = 0;
         self.iso_visit_type_params(tx, hir[f].type_params);
         self.iso_update_param_list(tx, f);
         if !matches!(hir[f].kind, FnKind::Constructor | FnKind::Setter) {
@@ -4036,9 +3165,13 @@ impl<'p> Checker<'p> {
                 self.iso_visit_type(tx, hir[f].ret);
             } else {
                 // `CreateReturnTypeOfSignatureDeclaration`
-                tx.begin();
-                let sig = self.sig_of_fn(file, f);
-                self.iso_write_return_type(tx, sig, true);
+                self.serialize_return_type_for_signature(
+                    file,
+                    f,
+                    tx.around,
+                    DECLARATION_EMIT_NODE_BUILDER_FLAGS,
+                    tx,
+                );
             }
         }
         tx.around = saved;
@@ -4077,6 +3210,20 @@ impl<'p> Checker<'p> {
         }
     }
 
+    /// `CreateTypeOfDeclaration`, of a declaration of the file.
+    fn iso_create_type_of_declaration(&mut self, tx: &mut Emit, declaration: Node) {
+        if let Some(ty) = self.iso_type_of_declared(tx.file, declaration) {
+            self.serialize_type_for_declaration(
+                tx.file,
+                Some(declaration),
+                ty,
+                tx.around,
+                DECLARATION_EMIT_NODE_BUILDER_FLAGS,
+                tx,
+            );
+        }
+    }
+
     /// `ensureType`, of a parameter
     fn iso_ensure_type_of_parameter(&mut self, tx: &mut Emit, p: ParamId) {
         let file = tx.file;
@@ -4085,8 +3232,7 @@ impl<'p> Checker<'p> {
         if ty.is_some() && !self.iso_requires_implicit_undefined(file, p, in_function) {
             return self.iso_visit_type(tx, ty);
         }
-        tx.begin();
-        self.iso_write_type_of_declaration(tx, file, Node::Param(p), None, true);
+        self.iso_create_type_of_declaration(tx, Node::Param(p));
     }
 
     /// `visitDeclarationSubtree`, of a member of a class, an interface or a type literal
@@ -4160,8 +3306,7 @@ impl<'p> Checker<'p> {
                 } else if member.ty.is_some() {
                     self.iso_visit_type(tx, member.ty);
                 } else {
-                    tx.begin();
-                    self.iso_write_type_of_declaration(tx, file, Node::Member(m), None, true);
+                    self.iso_create_type_of_declaration(tx, Node::Member(m));
                 }
             }
             // `transformIndexSignatureDeclaration`

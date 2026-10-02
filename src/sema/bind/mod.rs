@@ -757,6 +757,8 @@ pub struct Bound {
     pub this_properties: Few<(ClassId, bool, Atom, ExprId)>,
     /// `CommonJSModuleIndicator`: what shows that the file is a CommonJS module.
     pub commonjs_indicator: Option<ExprId>,
+    /// `declareCommonJSVariable`: `module.Members["exports"]`. `NONE`: there is no such `module`.
+    pub module_exports_property: SymbolId,
 
     /// What an identifier means as a value. `NONE`: nothing in this file declares it. Of a `Decl::Expando`: `node.Symbol`.
     pub expr_symbol: Vec<SymbolId>,

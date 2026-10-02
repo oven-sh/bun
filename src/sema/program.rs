@@ -2580,6 +2580,7 @@ impl Files {
     }
 
     fn merge(&mut self) {
+        self.make_global_this_symbol();
         // `initializeChecker`: file by file, what scripts declare and the names modules go by globally; then what modules add to the
         // global scope.
         let passes = self
@@ -2616,32 +2617,13 @@ impl Files {
                     );
                 }
             }
-            let mut i = 0;
-            while i < additions.len() {
-                let (name, sym) = additions[i];
-                i += 1;
-                // The built-in `globalThis` is a module whose exports are the globals, and the name goes on meaning it.
-                if name == known::globalThis {
-                    let flags = self.flags(sym);
-                    // `mergeSymbol`: what cannot be one with a module is left out.
-                    if SymFlags::MODULE.intersects(excluded_flags(flags)) {
-                        continue;
-                    }
-                    // What a namespace of that name exports is global.
-                    if flags.intersects(SymFlags::MODULE) {
-                        let bound = &self.modules[sym.file.idx()].bound;
-                        let exports = bound.symbols[sym.id.idx()].exports;
-                        additions.extend(bound.table(exports).iter().map(|&(n, s)| {
-                            (
-                                n,
-                                Sym {
-                                    file: sym.file,
-                                    id: s,
-                                },
-                            )
-                        }));
-                        continue;
-                    }
+            for (name, sym) in additions {
+                // `mergeSymbol`: "Do not report an error when merging `var globalThis` with the built-in `globalThis`". Nothing else is
+                // done either.
+                if name == known::globalThis
+                    && SymFlags::MODULE.intersects(excluded_flags(self.flags(sym)))
+                {
+                    continue;
                 }
                 // `mergeGlobalSymbol`
                 let merged = match self.globals.get(&name).copied() {
@@ -2750,7 +2732,8 @@ impl Files {
                 .map(|e| &mut e.1)
                 .for_each(stands_in);
         }
-        self.make_global_this_symbol();
+        self.merged_exports
+            .insert(self.global_this_symbol, self.globals.clone());
         // What an alias was found to stand for while symbols were being put together may be a part of something by now.
         let symbols = Bases::new(self.modules.iter().map(|m| m.bound.symbols.len()));
         self.alias_symbol_links = ByNodeKept::new(&symbols);
@@ -2894,9 +2877,16 @@ impl Files {
             export_symbol: SymbolId::NONE,
         });
         self.globals.insert(known::globalThis, global_this);
-        self.merged_exports
-            .insert(global_this, self.globals.clone());
         self.global_this_symbol = global_this;
+    }
+
+    /// `target.Exports`, of a transient symbol, while symbols are put together.
+    fn exports_of_transient_symbol(&mut self, target: Sym) -> &mut FxHashMap<Atom, Sym> {
+        if target == self.global_this_symbol {
+            &mut self.globals
+        } else {
+            self.merged_exports.entry(target).or_default()
+        }
     }
 
     /// `getMergedSymbol`
@@ -3030,19 +3020,18 @@ impl Files {
             .extend(every_part);
         let source_exports = self.exports_in_table(source);
         if !source_exports.is_empty() || self.symbol(target).exports.is_some() {
-            if !self.merged_exports.contains_key(&target) {
+            if target != self.global_this_symbol && !self.merged_exports.contains_key(&target) {
                 let table = self.exports_in_table(target).into_iter().collect();
                 self.merged_exports.insert(target, table);
             }
             // `mergeSymbolTable`
             for (name, source_symbol) in source_exports {
-                let merged = match self.merged_exports[&target].get(&name).copied() {
+                let merged = match self.exports_of_transient_symbol(target).get(&name).copied() {
                     Some(existing) => self.merge_symbol(existing, source_symbol, unidirectional),
                     None => self.get_merged_symbol(source_symbol),
                 };
-                if let Some(table) = self.merged_exports.get_mut(&target) {
-                    table.insert(name, merged);
-                }
+                self.exports_of_transient_symbol(target)
+                    .insert(name, merged);
             }
         }
         if !unidirectional {
@@ -3480,14 +3469,22 @@ impl Files {
         }
     }
 
-    /// Whether `getTargetOfAliasDeclaration` of `sym` goes through `getExternalModuleMember` for a module that has `export =`.
+    /// Whether `getTargetOfAliasDeclaration` of `sym` goes through `getExternalModuleMember` for a module that has `export =`, and
+    /// `symbolFromVariable` may be something the tables do not have.
     fn is_named_import_from_export_equals(&self, sym: Sym) -> bool {
         self.declaration_of_alias_symbol(sym)
             .and_then(|(file, decl)| {
                 let (spec, mode, _) = self.external_module_member_of(file, decl)?;
                 self.module_of_specifier_as(file, spec, mode)
             })
-            .is_some_and(|m| self.export(m, known::export_equals).is_some())
+            .is_some_and(|m| {
+                // What a namespace, a function, a class or an enum has for properties it exports, and the tables have that.
+                let only_the_type_tells = SymFlags::VARIABLE | SymFlags::PROPERTY | SymFlags::ALIAS;
+                self.export(m, known::export_equals).is_some()
+                    && self
+                        .flags(self.module_value(m))
+                        .intersects(only_the_type_tells)
+            })
     }
 
     /// `NameResolver.Resolve` without a `nameNotFoundMessage`: what `name` means in `scope` of `file`.
@@ -4091,37 +4088,66 @@ impl Files {
         names: &[Atom],
         meaning: SymFlags,
     ) -> Option<Sym> {
+        // `getSymbol`
+        let lookup = &mut |_: SymbolTable, held: Option<Sym>, meaning: SymFlags| {
+            held.filter(|&sym| self.means(sym, meaning))
+        };
+        self.resolve_entity_with(file, scope, names, meaning, lookup)
+    }
+
+    /// `lookup`: `getSymbol`, as for `resolve_with`.
+    pub fn resolve_entity_with(
+        &self,
+        file: FileId,
+        scope: ScopeId,
+        names: &[Atom],
+        meaning: SymFlags,
+        lookup: &mut dyn FnMut(SymbolTable, Option<Sym>, SymFlags) -> Option<Sym>,
+    ) -> Option<Sym> {
         let (&last, qualifiers) = names.split_last()?;
         if qualifiers.is_empty() {
-            return self.resolve_name(file, scope, last, meaning);
+            let found = self.resolve_with(file, scope, last, meaning, false, lookup);
+            return found.unwrap_or(None);
         }
         let mut qualifiers = qualifiers;
-        let first = match self.resolve_name(file, scope, qualifiers[0], SymFlags::NAMESPACE) {
+        let namespace = SymFlags::NAMESPACE;
+        let first = self.resolve_with(file, scope, qualifiers[0], namespace, false, lookup);
+        let first = match first.unwrap_or(None) {
             Some(found) => found,
             // `globalThis.A.B`
             None if qualifiers[0] == known::globalThis => match qualifiers {
-                [_] => return self.global(last, meaning),
+                [_] => {
+                    let held = self.globals.get(&last).copied();
+                    return lookup(SymbolTable::Globals, held, meaning);
+                }
                 [_, next, ..] => {
                     qualifiers = &qualifiers[1..];
-                    self.global(*next, SymFlags::NAMESPACE)?
+                    let held = self.globals.get(next).copied();
+                    lookup(SymbolTable::Globals, held, namespace)?
                 }
                 [] => return None,
             },
             None => return None,
         };
-        let mut container = self.resolve_alias_as(first, SymFlags::NAMESPACE)?;
+        let mut container = self.resolve_alias_as(first, namespace)?;
         for &name in &qualifiers[1..] {
-            container = self.member_as(container, name, SymFlags::NAMESPACE)?;
-            container = self.resolve_alias_as(container, SymFlags::NAMESPACE)?;
+            container = self.member_as(container, name, namespace, lookup)?;
+            container = self.resolve_alias_as(container, namespace)?;
         }
-        self.member_as(container, last, meaning)
+        self.member_as(container, last, meaning, lookup)
     }
 
     /// `resolveQualifiedName`: what `namespace` exports under `name`, which counts only if it has the meaning that is wanted.
-    fn member_as(&self, namespace: Sym, name: Atom, meaning: SymFlags) -> Option<Sym> {
-        let find = |namespace: Sym| {
-            self.namespace_member(namespace, name)
-                .filter(|&member| self.means(member, meaning))
+    fn member_as(
+        &self,
+        namespace: Sym,
+        name: Atom,
+        meaning: SymFlags,
+        lookup: &mut dyn FnMut(SymbolTable, Option<Sym>, SymFlags) -> Option<Sym>,
+    ) -> Option<Sym> {
+        let mut find = |namespace: Sym| {
+            let held = self.namespace_member(namespace, name);
+            lookup(SymbolTable::Exports(namespace), held, meaning)
         };
         find(namespace).or_else(|| {
             // A namespace that is one with a re-export can be resolved further (`resolveAlias`).

@@ -2361,7 +2361,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             if p.lexer.token == T::TEquals {
                 p.lexer.next()?;
-                value = Some(p.parse_expr(Level::Comma)?);
+                let initializer = p.parse_expr(Level::Comma)?;
+                if Self::IS_TYPESCRIPT_ENABLED && opts.is_typescript_declare {
+                    p.note_ambient_initializer(local.loc, initializer);
+                }
+                value = Some(initializer);
             }
 
             p.mark_end(local.loc, Mark::VariableLikeEnd);

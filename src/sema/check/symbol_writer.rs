@@ -354,7 +354,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                 } else {
                     SymFlags::NAMESPACE
                 };
-                match files.resolve_entity(file, scope, &names, meaning) {
+                match self.c.resolve_entity(file, scope, &names, meaning) {
                     Some(symbol) => Some(Found::Symbol(symbol)),
                     None if !matches!(kind, VisitedKind::TypeReferenceName(..)) => None,
                     // `getUnresolvedSymbolForEntityName`, which is `unknownSymbol` for a name the parser missed.

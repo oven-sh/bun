@@ -121,18 +121,7 @@ impl Checker<'_> {
         self.check_exported_twice(file, out);
         self.check_redeclared_exports(file, out);
         self.check_redeclared_namespace_exports(file, out);
-        // "Report errors every position with duplicate declaration. Report errors on previous encountered declarations".
-        for refusal in bound.redeclarations.iter() {
-            let (symbol, code) = (refusal.symbol, refusal.code);
-            let earlier = bound.symbols[symbol.idx()].decls[..refusal.count as usize].iter();
-            let earlier =
-                earlier.filter(|&&at| !bound.refused_declarations.contains(&(symbol, at)));
-            for &at in earlier.chain(std::iter::once(&refusal.decl)) {
-                if let Some(start) = self.start_of_binder_diagnostic(file, at) {
-                    out.push(Diagnostic { start, code });
-                }
-            }
-        }
+        self.report_redeclarations(file, out);
         let hir = self.hir(file);
         let lists = hir
             .fns
@@ -353,21 +342,95 @@ impl Checker<'_> {
         }
     }
 
-    /// `GetErrorRangeForNode(GetNameOfDeclaration(decl) ?? decl)`: a function or a class without a name is reported at its first token.
-    fn start_of_binder_diagnostic(&self, file: FileId, decl: Decl) -> Option<u32> {
+    /// `declareSymbolEx`: "Report errors every position with duplicate declaration. Report errors on previous encountered
+    /// declarations".
+    fn report_redeclarations(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+        use super::explain::{NO_LENGTH, Related};
+        let bound = self.bound(file);
+        let related_at = |(start, end, _): (u32, u32, bool), code: u32| Related {
+            at: Some((file, start, if end == NO_LENGTH { start } else { end })),
+            code,
+            args: Vec::new(),
+        };
+        // Each report: where, with which code, and what goes with it.
+        let mut reports: Vec<((u32, u32, bool), u32, Vec<Related>)> = Vec::new();
+        for refusal in bound.redeclarations.iter() {
+            let (symbol, code) = (refusal.symbol, refusal.code);
+            let Some(new) = self.range_of_declaration_name(file, refusal.decl) else {
+                continue;
+            };
+            let earlier = bound.symbols[symbol.idx()].decls[..refusal.count as usize].iter();
+            let earlier =
+                earlier.filter(|&&at| !bound.refused_declarations.contains(&(symbol, at)));
+            // `multipleDefaultExports`
+            let are_defaults = code == 2528;
+            let mut firsts = Vec::new();
+            for (index, &at) in earlier.enumerate() {
+                let Some(range) = self.range_of_declaration_name(file, at) else {
+                    continue;
+                };
+                let mut another = Vec::new();
+                if are_defaults {
+                    another.push(related_at(new, if index == 0 { 2753 } else { 6204 }));
+                    firsts.push(related_at(range, 2752));
+                }
+                reports.push((range, code, another));
+            }
+            reports.push((new, code, firsts));
+        }
+        out.extend(reports.iter().map(|report| Diagnostic {
+            start: report.0.0,
+            code: report.1,
+        }));
+        // `compactAndMergeRelatedInfos`: the reports of one error are one, with what goes with any of them in the order of errors.
+        reports.sort_by_key(|report| (report.0.0, report.1));
+        for same in reports.chunk_by(|a, b| (a.0.0, a.1) == (b.0.0, b.1)) {
+            let ((start, end, is_token), code) = (same[0].0, same[0].1);
+            let mut related: Vec<Related> = same.iter().flat_map(|r| r.2.iter().cloned()).collect();
+            if same.len() > 1 {
+                related.sort_by_key(|r| (r.at, r.code));
+                related.dedup();
+            }
+            if !is_token {
+                self.note(start, end, code, Vec::new());
+            }
+            if !related.is_empty() {
+                self.relate(start, code, |_| related);
+            }
+        }
+    }
+
+    /// `GetErrorRangeForNode(GetNameOfDeclaration(decl) ?? decl)`, and whether that is one token. A function or a class without a
+    /// name is reported at its first token, `export default e` as a whole unless `e` is an identifier.
+    fn range_of_declaration_name(&self, file: FileId, decl: Decl) -> Option<(u32, u32, bool)> {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        match decl {
+        let start = match decl {
             Decl::Fn(it) if hir[it].name.is_none() => match bound.fns[it.idx()].owner {
-                crate::bind::FnOwner::Stmt(statement) => Some(hir[statement].pos),
-                _ => None,
+                crate::bind::FnOwner::Stmt(statement) => hir[statement].pos,
+                _ => return None,
             },
             Decl::Class(it) if hir[it].name.is_none() => match bound.class_owner[it.idx()] {
-                ClassOwner::Stmt(statement) if statement.is_some() => Some(hir[statement].pos),
-                _ => None,
+                ClassOwner::Stmt(statement) if statement.is_some() => hir[statement].pos,
+                _ => return None,
             },
-            Decl::ExportExpr(statement) => Some(self.export_assignment_name_start(file, statement)),
-            _ => self.declaration_name_start(file, decl),
-        }
+            Decl::ExportExpr(statement) => {
+                let start = self.export_assignment_name_start(file, statement);
+                if start == hir[statement].pos {
+                    return Some((start, self.end_of_stmt(file, statement), false));
+                }
+                // A missing identifier has no length.
+                let (StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e)) = hir[statement].kind
+                else {
+                    return None;
+                };
+                if matches!(hir[e].kind, ExprKind::Missing) {
+                    return Some((start, super::explain::NO_LENGTH, false));
+                }
+                start
+            }
+            _ => self.declaration_name_start(file, decl)?,
+        };
+        Some((start, self.end_of_token_at(file, start), true))
     }
 
     /// Reports `code` at the name of every declaration in `decls` that is in `file`.

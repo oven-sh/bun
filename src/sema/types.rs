@@ -56,6 +56,8 @@ pub enum Intrinsic {
     Symbol,
     /// `object`
     Object,
+    /// `intrinsicMarkerType`: what the keyword `intrinsic` is as a type. It has `TypeFlagsAny`.
+    IntrinsicMarker,
 }
 
 bitflags::bitflags! {
@@ -1093,6 +1095,7 @@ well_known! {
     UNREACHABLE_NEVER = TypeData::Intrinsic(Intrinsic::UnreachableNever),
     AUTO = TypeData::Intrinsic(Intrinsic::Auto),
     ERROR = TypeData::Intrinsic(Intrinsic::Error),
+    INTRINSIC_MARKER = TypeData::Intrinsic(Intrinsic::IntrinsicMarker),
 }
 
 impl TypeId {
@@ -1113,10 +1116,13 @@ impl TypeId {
         }
     }
 
-    /// `TypeFlagsAny`: `anyType`, `errorType` or `autoType`.
+    /// `TypeFlagsAny`: `anyType`, `errorType`, `autoType` or `intrinsicMarkerType`.
     #[inline]
     pub fn is_any(self) -> bool {
-        self == TypeId::ANY || self == TypeId::ERROR || self == TypeId::AUTO
+        matches!(
+            self,
+            TypeId::ANY | TypeId::ERROR | TypeId::AUTO | TypeId::INTRINSIC_MARKER
+        )
     }
 
     /// `TypeFlagsNever`: `neverType`, `silentNeverType` or `unreachableNeverType`.

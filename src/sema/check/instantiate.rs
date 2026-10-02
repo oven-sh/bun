@@ -1,5 +1,6 @@
 //! Replacing type parameters by what they stand for.
 
+use super::alias::NewAlias;
 use super::*;
 
 /// The last answers to questions that go by two numbers, not both 0. It belongs to one checker and stands in front of something that
@@ -267,7 +268,15 @@ impl<'p> Checker<'p> {
                     return ty;
                 }
                 if let Origin::Mapped(file, node) = *origin {
-                    return self.instantiate_mapped(file, node, new);
+                    // `newAlias`: `instantiateTypeAlias(t.alias, m)`
+                    let kept = self.stored_alias(ty).map(|(alias, type_arguments)| {
+                        (*alias, self.instantiate_all(type_arguments, mapper))
+                    });
+                    let alias = match &kept {
+                        Some((alias, type_arguments)) => NewAlias::Given(*alias, type_arguments),
+                        None => NewAlias::OfNode,
+                    };
+                    return self.instantiate_mapped_type(file, node, new, alias);
                 }
                 self.intern(TypeData::Anon {
                     origin: *origin,

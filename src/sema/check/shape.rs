@@ -1898,13 +1898,8 @@ impl<'p> Checker<'p> {
             if let Some(base) = valid {
                 if !self.has_base(base, sym, 0) {
                     bases.push(base);
-                } else {
-                    // Through classes it is the base constructor that comes back to itself (`getBaseConstructorTypeOfClass`),
-                    // and nothing is said of base types.
-                    let constructor = self.base_constructor_type_of_class(sym);
-                    if !self.is_constructor_of_class(constructor) {
-                        self.p.circular_bases.insert(sym, ());
-                    }
+                } else if let Some(err) = self.circular_base_type(sym, file, Decl::Class(c)) {
+                    self.add_diagnostic(err);
                 }
             }
         }
@@ -1928,38 +1923,61 @@ impl<'p> Checker<'p> {
                     let at = (file, hir[node].pos, checker.end_of_type_node(file, node));
                     checker.error(at, 2312, &[]);
                 });
-                if let Some(base) = valid
-                    && !bases.contains(&base)
-                    && !self.has_base(base, sym, 0)
-                {
-                    bases.push(base);
+                let Some(base) = valid else { continue };
+                if !self.has_base(base, sym, 0) {
+                    if !bases.contains(&base) {
+                        bases.push(base);
+                    }
+                } else if let Some(err) = self.circular_base_type(sym, file, decl) {
+                    self.add_diagnostic(err);
                 }
             }
         }
         let bases: Arc<[TypeId]> = bases.into();
         let holds = self.leave();
-        // `popTypeResolution`: they were asked for again while they were worked out.
-        if self.left_a_circle {
-            self.p.circular_bases.insert(sym, ());
-        }
-        if holds {
-            return self.p.base_types.insert(sym, bases);
+        let in_a_circle = self.left_a_circle;
+        let bases = if holds {
+            self.p.base_types.insert(sym, bases)
+        } else {
+            bases
+        };
+        // `popTypeResolution`: they were asked for again while they were worked out. Every class declaration and every interface of
+        // the name is told, whichever of them extends what.
+        if in_a_circle {
+            for (file, decl) in self.files().decls(sym) {
+                let is_declaration = match decl {
+                    Decl::Class(c) => matches!(
+                        self.bound(file).class_owner[c.idx()],
+                        crate::bind::ClassOwner::Stmt(_)
+                    ),
+                    _ => true,
+                };
+                if is_declaration && let Some(err) = self.circular_base_type(sym, file, decl) {
+                    self.commit(err);
+                }
+            }
         }
         bases
     }
 
-    /// Whether `constructor` is the static side of a class, or an intersection with one.
-    fn is_constructor_of_class(&self, constructor: TypeId) -> bool {
-        match self.data(constructor) {
-            TypeData::Anon {
-                origin: Origin::ClassStatic(_),
-                ..
-            } => true,
-            TypeData::Intersection(parts) => {
-                parts.iter().any(|&part| self.is_constructor_of_class(part))
-            }
-            _ => false,
-        }
+    /// What `reportCircularBaseType` reports at the class or interface `declaration` of `sym`.
+    fn circular_base_type(
+        &mut self,
+        sym: Sym,
+        file: FileId,
+        declaration: Decl,
+    ) -> Option<Reported> {
+        let hir = self.hir(file);
+        // `GetErrorRangeForNode`
+        let start = match declaration {
+            Decl::Class(c) if hir[c].name.is_some() => hir[c].name_pos,
+            Decl::Class(c) => hir[c].pos,
+            Decl::Interface(i) => hir[i].name_pos,
+            _ => return None,
+        };
+        let at = (file, start, self.end_of_token_at(file, start));
+        let ty = self.declared_type(sym);
+        Some(self.new_diagnostic(at, 2310, &[Arg::Type(ty)]))
     }
 
     /// `getReducedType`, `isErrorType`, `isValidBaseType`: `base` as a base type of the class or interface whose base types are being
@@ -3938,8 +3956,8 @@ impl<'p> Checker<'p> {
     fn resolve_type_of_members(&mut self, members: &[(FileId, MemberId)]) -> TypeId {
         let (file, first) = members[0];
         let member = &self.hir(file)[first];
-        let is_accessor = matches!(member.kind, MemberKind::Getter | MemberKind::Setter)
-            || member.flags.contains(Flags::ACCESSOR);
+        let is_accessor =
+            self.has_get_or_set_accessor(members) || member.flags.contains(Flags::ACCESSOR);
         if !self.enter(Query::Member(file, first)) {
             return if !self.came_full_circle {
                 TypeId::UNRESOLVED
@@ -3975,12 +3993,21 @@ impl<'p> Checker<'p> {
         ty
     }
 
+    /// `symbol.Flags&(SymbolFlagsGetAccessor|SymbolFlagsSetAccessor) != 0`
+    fn has_get_or_set_accessor(&self, members: &[(FileId, MemberId)]) -> bool {
+        members
+            .iter()
+            .any(|&(f, m)| matches!(self.hir(f)[m].kind, MemberKind::Getter | MemberKind::Setter))
+    }
+
     fn type_of_members_uncached(&mut self, members: &[(FileId, MemberId)]) -> TypeId {
         let (file, first) = members[0];
         let hir = self.hir(file);
         let member = &hir[first];
         match member.kind {
-            MemberKind::Property => {
+            // `getTypeOfSymbol` asks for an accessor first, and `PropertyExcludes` lets a property be one symbol with the accessors
+            // of its name.
+            MemberKind::Property if !self.has_get_or_set_accessor(members) => {
                 let owner = self.bound(file).member_owner[first.idx()];
                 // `isValidESSymbolDeclaration`: `readonly` in an interface or a type literal, `static readonly` in a class. To any
                 // other property a `unique symbol` is a `symbol`.
@@ -4147,7 +4174,7 @@ impl<'p> Checker<'p> {
                     mapper,
                 })
             }
-            MemberKind::Getter | MemberKind::Setter => {
+            MemberKind::Property | MemberKind::Getter | MemberKind::Setter => {
                 if let Some(&(f, getter)) = members
                     .iter()
                     .find(|&&(f, m)| self.hir(f)[m].kind == MemberKind::Getter)
@@ -4174,8 +4201,15 @@ impl<'p> Checker<'p> {
                     return self.force(ty);
                 }
                 // What the parameter of a setter starts out as says nothing about the property.
-                match hir[member.func].params.iter().next() {
-                    Some(p) if hir[p].ty.is_some() => self.type_from_node(file, hir[p].ty),
+                let setter = members
+                    .iter()
+                    .find(|&&(f, m)| self.hir(f)[m].kind == MemberKind::Setter);
+                let Some(&(f, setter)) = setter else {
+                    return TypeId::ANY;
+                };
+                let hir = self.hir(f);
+                match hir[hir[setter].func].params.iter().next() {
+                    Some(p) if hir[p].ty.is_some() => self.type_from_node(f, hir[p].ty),
                     _ => TypeId::ANY,
                 }
             }

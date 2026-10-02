@@ -155,6 +155,7 @@ pub type PatternId = Id<Pattern>;
 pub type MappedTypeId = Id<MappedType>;
 pub type ImportTypeId = Id<ImportType>;
 pub type StatementId = Id<Statement>;
+pub type JsxId = Id<Jsx>;
 
 bitflags::bitflags! {
     /// Modifiers and other one-bit facts about a declaration, on whatever they can be written on.
@@ -569,6 +570,20 @@ pub struct TypeAlias {
     pub ty: TypeId,
 }
 
+/// What `E::JSXElement` has no place for.
+#[derive(Copy, Clone)]
+pub struct Jsx {
+    /// The name in `</tag>`, missing or not. `E::JSXElement::tag` is the name in the opening tag. `None` for `<tag />` and for a
+    /// fragment.
+    pub closing_tag: Option<Expr>,
+    /// Where `<tag attributes>`, `<>` or all of `<tag attributes />` ends.
+    pub opening_end: Loc,
+    /// The `<` of `</tag>` or `</>`, or where that is missed. `EMPTY` for `<tag />`.
+    pub closing_start: Loc,
+    /// Where the element ends.
+    pub end: Loc,
+}
+
 macro_rules! define_syntax {
     ($($array:ident: $node:ty, $add_one:ident, $add_many:ident;)*) => {
         /// Every TypeScript syntax node of one file.
@@ -645,6 +660,7 @@ define_syntax! {
     statements: Statement, add_statement, add_statements;
     interfaces: Interface, add_interface, add_interfaces;
     type_aliases: TypeAlias, add_type_alias, add_type_aliases;
+    jsx: Jsx, add_jsx, add_jsx_nodes;
 }
 
 impl Default for Syntax {

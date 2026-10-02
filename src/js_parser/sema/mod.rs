@@ -574,7 +574,7 @@ pub(crate) struct TypeSyntax {
     /// Statements other than declarations that were parsed in an ambient context: (start, start of the next token, statement).
     pub(crate) ambient_statements: Vec<(i32, i32, bun_ast::Stmt)>,
     /// Initializers of variables declared in an ambient context: (start of the binding, initializer).
-    pub(crate) ambient_initializers: Vec<(i32, Expr)>,
+    pub(crate) ambient_initializers: Vec<(i32, keep::KeptNode<Expr>)>,
 }
 
 impl TypeSyntax {
@@ -622,6 +622,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> crate::P<'a, TYPESCRIPT,
         }
     }
 
+    /// `E::JSXElement::syntax`
+    #[inline]
+    pub(crate) fn keep_jsx(
+        &mut self,
+        closing_tag: Option<Expr>,
+        opening_end: bun_ast::Loc,
+        closing_start: bun_ast::Loc,
+        end: bun_ast::Loc,
+    ) -> ts::JsxId {
+        match &mut self.type_syntax {
+            Some(syntax) if TYPESCRIPT => syntax.ast.add_jsx(ts::Jsx {
+                closing_tag,
+                opening_end,
+                closing_start,
+                end,
+            }),
+            _ => ts::JsxId::NONE,
+        }
+    }
+
     /// `finishNode`: what is noted from `from` ends where the token before the current one does.
     #[inline]
     pub(crate) fn mark_end(&mut self, from: bun_ast::Loc, what: Mark) {
@@ -631,7 +651,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> crate::P<'a, TYPESCRIPT,
     }
 
     /// `stmt` starts at `start` and was parsed in an ambient context, and the lexer is at what follows. The caller drops it, but
-    /// TypeScript checks it like any other (`checkGrammarStatementInAmbientContext`, `checkAmbientInitializer`).
+    /// TypeScript checks it like any other (`checkGrammarStatementInAmbientContext`).
     #[cold]
     #[inline(never)]
     pub(crate) fn note_ambient_statement(&mut self, start: bun_ast::Loc, stmt: &bun_ast::Stmt) {
@@ -641,15 +661,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> crate::P<'a, TYPESCRIPT,
             return;
         };
         match &stmt.data {
-            Data::SLocal(local) => {
-                for decl in local.decls.iter() {
-                    if let Some(value) = decl.value {
-                        syntax
-                            .ambient_initializers
-                            .push((decl.binding.loc.start, value));
-                    }
-                }
-            }
             Data::SBlock(_)
             | Data::SBreak(_)
             | Data::SContinue(_)

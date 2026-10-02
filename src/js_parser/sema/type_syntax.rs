@@ -44,7 +44,7 @@ pub(crate) struct Builder<'a> {
     /// `TypeSyntax::ambient_statements`, sorted by start.
     pub(crate) ambient_statements: Vec<(i32, i32, bun_ast::Stmt)>,
     /// `TypeSyntax::ambient_initializers`, sorted by the start of the binding.
-    pub(crate) ambient_initializers: Vec<(i32, bun_ast::Expr)>,
+    pub(crate) ambient_initializers: Vec<(i32, super::keep::KeptNode<bun_ast::Expr>)>,
     /// Empty statements that the lowering still has to turn into what the parser read there.
     pub(crate) pending_statements: Vec<(StmtId, bun_ast::Stmt)>,
     /// Variables whose initializer the lowering still has to fill in.
@@ -3089,18 +3089,17 @@ impl<'a> Builder<'a> {
             } else {
                 TypeNodeId::NONE
             };
-            let init = if self.eat(T::TEquals)? {
-                self.parse_initializer()?
-            } else {
+            let init = if !self.eat(T::TEquals)? {
                 ExprId::NONE
-            };
-            // `parse_initializer` skipped it.
-            if init.is_some()
-                && matches!(self.file[init].kind, ExprKind::Missing)
-                && let Some(parsed) = self.ambient_initializer_of(self.file[pat].pos)
+            } else if let Some(parsed) =
+                self.reuse_kept(self.ambient_initializer_of(self.file[pat].pos))?
             {
+                // The lowering converts it.
                 parsed_initializers.push((decls.len(), parsed));
-            }
+                ExprId::NONE
+            } else {
+                self.parse_initializer()?
+            };
             decls.push(VarDecl {
                 pat,
                 ty,
@@ -3141,7 +3140,7 @@ impl<'a> Builder<'a> {
 
     /// The initializer the parser read in an ambient context for the variable whose binding starts at `binding`. The last of several
     /// attempts.
-    fn ambient_initializer_of(&self, binding: u32) -> Option<bun_ast::Expr> {
+    fn ambient_initializer_of(&self, binding: u32) -> Option<super::keep::KeptNode<bun_ast::Expr>> {
         let after = self
             .ambient_initializers
             .partition_point(|initializer| initializer.0 <= binding as i32);

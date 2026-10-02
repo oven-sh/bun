@@ -2344,12 +2344,18 @@ impl<'p, 'a> Lower<'p, 'a> {
                     Some(at) => self.type_args_at(at),
                     None => IdList::EMPTY,
                 };
-                let close_pos = if e.closing_start == ast::Loc::EMPTY {
+                let ts::Jsx {
+                    closing_tag,
+                    opening_end,
+                    closing_start,
+                    end,
+                } = self.b.ts[e.syntax];
+                let close_pos = if closing_start == ast::Loc::EMPTY {
                     u32::MAX
                 } else {
-                    pos_of(e.closing_start)
+                    pos_of(closing_start)
                 };
-                let close_tag = self.optional_expr(e.closing_tag.as_ref());
+                let close_tag = self.optional_expr(closing_tag.as_ref());
                 self.jsx_this_keyword(close_tag);
                 ExprKind::Jsx(self.b.file.add_jsx(Jsx {
                     tag,
@@ -2357,9 +2363,9 @@ impl<'p, 'a> Lower<'p, 'a> {
                     attrs,
                     children,
                     type_args,
-                    opening_end: pos_of(e.opening_end),
+                    opening_end: pos_of(opening_end),
                     close_pos,
-                    end: pos_of(e.end),
+                    end: pos_of(end),
                 }))
             }
             Data::EObjectJSON(_)

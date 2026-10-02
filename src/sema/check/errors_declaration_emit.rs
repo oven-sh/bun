@@ -2706,7 +2706,9 @@ impl<'p> DeclarationEmit<'_, 'p> {
         let is_commonjs = bound.commonjs_indicator.is_some();
         for d in decls.iter() {
             let pat = hir[d].pat;
-            if !self.is_binding_name_visible(pat) {
+            if self.c.should_strip_internal(self.file(), hir[d].loc.pos)
+                || !self.is_binding_name_visible(pat)
+            {
                 continue;
             }
             // `transformCjsRequireVariableDeclaration`: it is written as an import. What JSDoc says of a type is not gone through.

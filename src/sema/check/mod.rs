@@ -177,10 +177,9 @@ pub struct Program {
     circular_members: NodeSet<(FileId, MemberId)>,
     /// References whose control flow walk reached depth 2000 (2563). `getTypeAtFlowNode`
     flows_too_deep: NodeSet<(FileId, ExprId)>,
-    /// The classes and interfaces whose base types depend on themselves, the aliases that do, and the mapped types whose keys do.
-    circular_bases: NodeSet<Sym>,
     /// `resolvedBaseConstructorType` of each class.
     base_constructor_types: ByNode<Sym, TypeId>,
+    /// The aliases that depend on themselves, and the mapped types whose keys do.
     circular_aliases: NodeSet<Sym>,
     circular_mapped_keys: NodeSet<(FileId, TypeNodeId)>,
     /// Type nodes at which 2615 is reported: the type of a property of a mapped type depends on itself. See
@@ -401,7 +400,6 @@ impl Program {
             circular_returns: NodeSet::new(&fns),
             circular_members: NodeSet::new(&members),
             flows_too_deep: NodeSet::new(&exprs),
-            circular_bases: NodeSet::new(&symbols),
             base_constructor_types: ByNode::new(&symbols),
             sink: sink::Sink::new(files.modules.len()),
             circular_aliases: NodeSet::new(&symbols),

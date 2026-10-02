@@ -1,5 +1,6 @@
 //! Types computed from other types: `keyof`, `T[K]`, conditional, mapped and template literal types.
 
+use super::alias::NewAlias;
 use super::relate::Relation;
 use super::*;
 use smallvec::SmallVec;
@@ -1500,12 +1501,23 @@ impl<'p> Checker<'p> {
         self.instantiate_mapped(file, node, applied)
     }
 
-    /// The mapped type at `node` under `mapper`. One over the keys of an array is an array, and so on.
+    /// The mapped type at `node` under `mapper`, as `getObjectTypeInstantiation` makes it where it is given no alias.
     pub fn instantiate_mapped(
         &mut self,
         file: FileId,
         node: TypeNodeId,
         mapper: MapperId,
+    ) -> TypeId {
+        self.instantiate_mapped_type(file, node, mapper, NewAlias::OfNode)
+    }
+
+    /// `instantiateMappedType`. One over the keys of an array is an array, and so on.
+    pub(super) fn instantiate_mapped_type(
+        &mut self,
+        file: FileId,
+        node: TypeNodeId,
+        mapper: MapperId,
+        alias: NewAlias<'_>,
     ) -> TypeId {
         let anon = |c: &mut Self| {
             // `instantiateMappedType` instantiates the constraint type at once (its wildcard test), so a cycle through the keys starts
@@ -1518,10 +1530,15 @@ impl<'p> Checker<'p> {
             {
                 c.mapped_constraint(file, node, mapper);
             }
-            c.intern(TypeData::Anon {
+            let made = c.intern(TypeData::Anon {
                 origin: Origin::Mapped(file, node),
                 mapper,
-            })
+            });
+            // `instantiateAnonymousType`
+            match alias {
+                NewAlias::Given(alias, type_arguments) => c.with_alias(made, alias, type_arguments),
+                _ => made,
+            }
         };
         let Some(source) = self.homomorphic_type_variable(file, node, MapperId::IDENTITY) else {
             return anon(self);
@@ -1534,9 +1551,22 @@ impl<'p> Checker<'p> {
             return anon(self);
         }
         let value = self.reduced(value);
-        self.map_type(value, |c, t| {
-            c.instantiate_mapped_constituent(file, node, mapper, source, t)
-        })
+        let of_node;
+        let alias = match alias {
+            NewAlias::Given(alias, type_arguments) => Some((alias, type_arguments)),
+            NewAlias::OfNode if self.is_union(value) => {
+                of_node = self.alias_of_node_under(file, node, mapper);
+                of_node
+                    .as_ref()
+                    .map(|(alias, type_arguments)| (*alias, &type_arguments[..]))
+            }
+            _ => None,
+        };
+        self.map_type_with_alias(
+            value,
+            |c, t| c.instantiate_mapped_constituent(file, node, mapper, source, t),
+            alias,
+        )
     }
 
     /// `instantiateConstituent`: the mapped type over the keys of `source`, with `t`, which is no union, for `source`.
@@ -1652,7 +1682,7 @@ impl<'p> Checker<'p> {
                         return self.excessively_deep();
                     }
                     let of_element = with(self, elems[i]);
-                    self.instantiate_mapped(file, node, of_element)
+                    self.instantiate_mapped_type(file, node, of_element, NewAlias::None)
                 } else {
                     let list = self.array_of(elems[i]);
                     let of_list = with(self, list);
@@ -2589,7 +2619,11 @@ impl<'p> Checker<'p> {
             // Twice is once.
             TypeData::StringMapping { kind: same, .. } if *same == kind => ty,
             TypeData::Intrinsic(
-                Intrinsic::Any | Intrinsic::Error | Intrinsic::Auto | Intrinsic::String,
+                Intrinsic::Any
+                | Intrinsic::Error
+                | Intrinsic::Auto
+                | Intrinsic::IntrinsicMarker
+                | Intrinsic::String,
             )
             | TypeData::UnresolvedName { .. }
             | TypeData::StringMapping { .. } => self.intern(TypeData::StringMapping { kind, ty }),

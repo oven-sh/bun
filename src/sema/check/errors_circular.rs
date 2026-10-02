@@ -1,4 +1,4 @@
-//! What comes back to itself: 2310 2313 2615, and 2502 2577 7022 7023 7024.
+//! What comes back to itself: 2313 2615, and 2502 2577 7022 7023 7024.
 //!
 //! In TypeScript 7.0.2's checker.go these fall out of `pushTypeResolution` finding what is asked for already under way, in
 //! `getBaseConstructorTypeOfClass`, `getBaseTypes` and `getResolvedBaseConstraint`: everything from there to the top of the stack
@@ -7,7 +7,7 @@
 
 use super::errors::Diagnostic;
 use super::*;
-use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, Symbol, SymbolId};
+use crate::bind::{Decl, FnOwner, MemberOwner, Parent, PatParent, Symbol, SymbolId};
 use smallvec::SmallVec;
 
 type TypeParams = SmallVec<[TypeParamId; 8]>;
@@ -85,39 +85,17 @@ impl Checker<'_> {
     pub(super) fn check_circularities(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         self.check_circular_resolutions(file);
         let (hir, bound) = (self.hir(file), self.bound(file));
+        // `checkClassLikeDeclaration`, `checkInterfaceDeclaration`
         for c in 0..hir.classes.len() {
-            if bound.class_symbol[c].is_none() {
-                continue;
-            }
-            let own = self.class_sym(file, ClassId(c as u32));
-            // `checkClassLikeDeclaration`
-            self.base_constructor_type_of_class(own);
-            if matches!(bound.class_owner[c], ClassOwner::Stmt(_)) && self.is_own_base(own) {
-                out.push(Diagnostic {
-                    start: hir.classes[c].name_pos,
-                    code: 2310,
-                });
-                self.explain(hir.classes[c].name_pos, 2310, |c| {
-                    let ty = c.declared_type(own);
-                    vec![c.type_to_string(ty)]
-                });
+            if bound.class_symbol[c].is_some() {
+                let own = self.class_sym(file, ClassId(c as u32));
+                self.base_constructor_type_of_class(own);
+                self.base_types(own);
             }
         }
-        for i in 0..hir.interfaces.len() {
-            if bound.interface_symbol[i].is_none() {
-                continue;
-            }
-            let own = self.files().sym(file, bound.interface_symbol[i]);
-            if self.is_own_base(own) {
-                out.push(Diagnostic {
-                    start: hir.interfaces[i].name_pos,
-                    code: 2310,
-                });
-                self.explain(hir.interfaces[i].name_pos, 2310, |c| {
-                    let ty = c.declared_type(own);
-                    vec![c.type_to_string(ty)]
-                });
-            }
+        for &symbol in bound.interface_symbol.iter().filter(|s| s.is_some()) {
+            let own = self.files().sym(file, symbol);
+            self.base_types(own);
         }
         // `getResolvedBaseConstraint`, of the key of a mapped type that had to be known to tell whether the type can be extended.
         let looked_through = if hir.mapped.is_empty() {
@@ -453,11 +431,11 @@ impl Checker<'_> {
                 let made = self.type_from_node(file, TypeNodeId(n as u32));
                 let made = self.force(made);
                 // Under whichever alias: the keys of the mapped type, which lead into the circle, are the same.
-                let made = self.without_hosting_alias(made);
+                let made = self.intern(self.data(made).clone());
                 let variable = if matches!(self.data(made), TypeData::Anon { .. }) {
                     self.first_variable_read_by_emit(file, |c, ty| {
                         let ty = c.force(ty);
-                        c.without_hosting_alias(ty) == made
+                        c.intern(c.data(ty).clone()) == made
                     })
                 } else {
                     None
@@ -556,109 +534,6 @@ impl Checker<'_> {
             let err = self.new_diagnostic((file, start, end), 7024, &[]);
             self.commit(err);
         }
-    }
-
-    /// `getBaseTypes`: whether the base types of the class or interface `own` were asked for again while they were worked out.
-    /// Every class declaration and every interface of that name is told, whichever of them extends what.
-    fn is_own_base(&mut self, own: Sym) -> bool {
-        self.base_types(own);
-        if self.p.circular_bases.get(&own).is_some() {
-            return true;
-        }
-        // `resolveBaseTypesOfClass`: a base constructor type in error gives no base type, whatever is written.
-        if self.base_constructor_type_of_class(own) == TypeId::ERROR {
-            return false;
-        }
-        let mut seen: SmallVec<[Sym; 8]> = SmallVec::new();
-        let mut todo = self.base_types_written(own);
-        while let Some(next) = todo.pop() {
-            if next == own {
-                return true;
-            }
-            if !seen.contains(&next) {
-                seen.push(next);
-                todo.extend(self.base_types_written(next));
-            }
-        }
-        false
-    }
-
-    /// The class `class` says it extends, if it says so by name.
-    fn base_class_written(&self, class: Sym) -> Option<Sym> {
-        let files = self.files();
-        let (of, c) = files.decls_of(class).iter().find_map(|&(of, d)| match d {
-            Decl::Class(c) => Some((of, c)),
-            _ => None,
-        })?;
-        let hir = self.hir(of);
-        let mut names: SmallVec<[Atom; 4]> = SmallVec::new();
-        let mut e = hir[c].extends;
-        if e.is_none() {
-            return None;
-        }
-        loop {
-            match hir[e].kind {
-                ExprKind::Ident(name) => {
-                    names.push(name);
-                    break;
-                }
-                ExprKind::Dot { obj, name, .. } => {
-                    names.push(name);
-                    e = obj;
-                }
-                _ => return None,
-            }
-        }
-        names.reverse();
-        let found = files.resolve_entity(
-            of,
-            self.bound(of).class_scope[c.idx()],
-            &names,
-            SymFlags::VALUE,
-        )?;
-        let found = files.resolve_alias_if_needed(found)?;
-        files
-            .flags(found)
-            .contains(SymFlags::CLASS)
-            .then_some(found)
-    }
-
-    /// The classes and interfaces that the declarations of `sym` say they extend.
-    fn base_types_written(&mut self, sym: Sym) -> SmallVec<[Sym; 4]> {
-        let files = self.files();
-        let mut bases: SmallVec<[Sym; 4]> = SmallVec::new();
-        for (of, decl) in files.decls_of(sym) {
-            match decl {
-                Decl::Interface(i) => {
-                    let (hir, bound) = (self.hir(of), self.bound(of));
-                    for node in hir.ids(hir[i].extends) {
-                        let TypeNodeKind::Ref { name, .. } = hir[node].kind else {
-                            continue;
-                        };
-                        let names: SmallVec<[Atom; 4]> = hir.ids(name).collect();
-                        if let Some(found) = files
-                            .resolve_entity(
-                                of,
-                                bound.type_scope[node.idx()],
-                                &names,
-                                SymFlags::TYPE,
-                            )
-                            .and_then(|s| files.resolve_alias_if_needed(s))
-                            && files
-                                .flags(found)
-                                .intersects(SymFlags::CLASS | SymFlags::INTERFACE)
-                        {
-                            bases.push(found);
-                        }
-                    }
-                }
-                Decl::Class(_) if self.base_constructor_type_of_class(sym) != TypeId::ERROR => {
-                    bases.extend(self.base_class_written(sym))
-                }
-                _ => {}
-            }
-        }
-        bases
     }
 
     /// A file is emitted before it is checked: `markPropertyAliasReferenced` takes the type of the `a` of every `a.b`, then

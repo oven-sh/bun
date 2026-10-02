@@ -128,21 +128,15 @@ impl<'p> Printer<'_, 'p> {
         if !self.reuses_nodes_of(file) {
             return None;
         }
-        let mut tx = Emit::without_reports(file);
+        let tx = Emit::without_reports(file);
         let pt = self.c.iso_pseudo_of_return(&tx, func);
-        // `pseudoTypeToNodeWithCheckerFallback` writes the type then, which the caller does, predicate and all.
-        if matches!(pt, Pseudo::Inferred { .. } | Pseudo::NoResult(_)) {
-            return None;
-        }
         let returned = self.c.sig_return(signature);
         // `getReturnTypeOfSignature`: an annotation that comes back to itself is given up for `anyType`, which is not what it says.
         if self.c.p.circular_returns.get(&(file, func)).is_some() {
             return None;
         }
-        if !self
-            .c
-            .iso_is_equivalent(&mut tx, &pt, returned, false, false)
-        {
+        let report_errors = !self.suppress_report_inference_fallback;
+        if !self.pseudo_type_equivalent_to_type(file, &pt, returned, false, report_errors) {
             return None;
         }
         // The pseudochecker knows nothing of a predicate that is inferred.
@@ -321,15 +315,12 @@ impl<'p> Printer<'_, 'p> {
         if accessor.is_none() && (requires_widening || !self.c.iso_has_inferred_type(file, node)) {
             return self.type_to_node(ty);
         }
-        let mut tx = Emit::without_reports(file);
+        let tx = Emit::without_reports(file);
         let pt = match accessor {
             Some(func) => self.c.iso_pseudo_of_accessor(&tx, func),
             None => self.c.iso_pseudo_of_declaration(&tx, node),
         };
-        // Equivalent or not, the type is written (`pseudoTypeToNodeWithCheckerFallback`).
-        if matches!(pt, Pseudo::Inferred { .. } | Pseudo::NoResult(_))
-            || is_unwidened && matches!(pt, Pseudo::Tuple(_))
-        {
+        if is_unwidened && matches!(pt, Pseudo::Tuple(_)) {
             return self.type_to_node(ty);
         }
         // `isOptionalDeclaration`
@@ -341,9 +332,8 @@ impl<'p> Printer<'_, 'p> {
             _ => false,
         };
         let is_optional_annotated = !requires_undefined && has_question;
-        if self
-            .c
-            .iso_is_equivalent(&mut tx, &pt, ty, is_optional_annotated, false)
+        let report_errors = !self.suppress_report_inference_fallback;
+        if self.pseudo_type_equivalent_to_type(file, &pt, ty, is_optional_annotated, report_errors)
         {
             let adds_undefined = requires_undefined
                 && self.contains_non_missing_undefined_type(ty)
@@ -358,6 +348,9 @@ impl<'p> Printer<'_, 'p> {
             };
             return self.pseudo_type_to_node_with_checker_fallback(file, &pt, ty);
         }
+        // What has been reported of an inferred type is not reported again of what the type is made of.
+        let reported_inference_fallback =
+            report_errors && matches!(&pt, Pseudo::Inferred { errors, .. } if !errors.is_empty());
         let adds_undefined = requires_undefined
             && match self.c.iso_type_of_pseudo(file, &pt) {
                 Some(from) => !self.contains_non_missing_undefined_type(from),
@@ -365,11 +358,34 @@ impl<'p> Printer<'_, 'p> {
             };
         if adds_undefined {
             let pt = Pseudo::Union(vec![pt, Pseudo::Undefined]);
-            if self.c.iso_is_equivalent(&mut tx, &pt, ty, false, false) {
+            if self.pseudo_type_equivalent_to_type(file, &pt, ty, false, report_errors) {
                 return self.pseudo_type_to_node_with_checker_fallback(file, &pt, ty);
             }
         }
-        self.type_to_node(ty)
+        if reported_inference_fallback {
+            self.type_to_node_without_inference_fallback(ty)
+        } else {
+            self.type_to_node(ty)
+        }
+    }
+
+    /// `pseudoTypeEquivalentToType`
+    fn pseudo_type_equivalent_to_type(
+        &mut self,
+        file: FileId,
+        pt: &Pseudo,
+        ty: TypeId,
+        is_optional_annotated: bool,
+        report_errors: bool,
+    ) -> bool {
+        let mut tx = Emit::without_reports(file);
+        let is_equivalent =
+            self.c
+                .iso_is_equivalent(&mut tx, pt, ty, is_optional_annotated, report_errors);
+        for node in tx.inference_fallbacks {
+            self.report_inference_fallback(file, node);
+        }
+        is_equivalent
     }
 }
 

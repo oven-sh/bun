@@ -10,6 +10,16 @@ use smallvec::SmallVec;
 
 static NO_ORIGIN: UnionOrigin = UnionOrigin::None;
 
+/// The alias `instantiateMappedType` is handed.
+#[derive(Clone, Copy)]
+pub(super) enum NewAlias<'a> {
+    None,
+    /// `getObjectTypeInstantiation`, given none: `instantiateTypeAlias(t.alias, m)`, of a type that keeps no alias. It is the alias
+    /// whose body the node is, under the mapper.
+    OfNode,
+    Given(Sym, &'a [TypeId]),
+}
+
 impl<'p> Checker<'p> {
     /// `UnionType.origin`
     #[inline]
@@ -62,9 +72,6 @@ impl<'p> Checker<'p> {
         if let Some((alias, type_arguments)) = self.stored_alias(ty) {
             return Some((*alias, type_arguments.to_vec()));
         }
-        if let Some(hosting) = self.hosting_alias_of(ty) {
-            return Some(hosting);
-        }
         let (file, node, mapper) = match *self.data(ty) {
             TypeData::LazyAlias { sym, ref args } => return Some((sym, args.to_vec())),
             TypeData::Anon {
@@ -84,6 +91,16 @@ impl<'p> Checker<'p> {
             }
             _ => return None,
         };
+        self.alias_of_node_under(file, node, mapper)
+    }
+
+    /// The alias whose body `node` is, with what `mapper` puts for its type parameters.
+    pub(super) fn alias_of_node_under(
+        &self,
+        file: FileId,
+        node: TypeNodeId,
+        mapper: MapperId,
+    ) -> Option<(Sym, Vec<TypeId>)> {
         let scope = self.bound(file).type_scope[node.idx()];
         let (alias, parameters) = self.alias_for_type_node(file, scope, node)?;
         let map = |&parameter: &TypeId| self.p.types.map(mapper, parameter).unwrap_or(parameter);
@@ -335,11 +352,21 @@ impl<'p> Checker<'p> {
                     self.instantiate_union_or_intersection(declared, mapper, alias)
                 };
             }
-            // `with_hosting_alias`
-            TypeData::Anon {
-                origin: Origin::Mapped(..),
-                ..
-            } => false,
+            // `getObjectTypeInstantiation`, `instantiateMappedType`
+            &TypeData::Anon {
+                origin: Origin::Mapped(file, node),
+                mapper: own,
+            } => {
+                let params = self.local_type_params_of_symbol(hosted);
+                let filled = self.fill_type_args(&params, hosted_arguments);
+                let mapper = self.mapper_from(&params, &filled);
+                let new = self.map_mapper(own, mapper);
+                if new == own {
+                    return ty;
+                }
+                let alias = NewAlias::Given(alias, type_arguments);
+                return self.instantiate_mapped_type(file, node, new, alias);
+            }
             // `getConditionalTypeInstantiation`: `mapTypeWithAlias`, where it distributes over a union. What a branch comes to is
             // given no alias.
             TypeData::Cond { file, node, .. } if self.is_union(ty) => {

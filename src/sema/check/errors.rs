@@ -177,7 +177,6 @@ impl Checker<'_> {
         pass!(check_modules);
         pass!(check_names);
         pass!(check_type_argument_counts);
-        pass!(check_assigned_before_use);
         pass!(check_properties_initialized);
         pass!(check_operators);
         pass!(check_writes);
@@ -1645,32 +1644,10 @@ impl Checker<'_> {
     }
 
     /// Whether `stmt` declares the variable of a `for`-`in` or a `for`-`of`.
-    fn declares_loop_variable(&self, file: FileId, stmt: StmtId) -> bool {
+    pub(super) fn declares_loop_variable(&self, file: FileId, stmt: StmtId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         matches!(bound.stmt_parent[stmt.idx()], Parent::Stmt(owner)
             if matches!(hir[owner].kind, StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } if left == stmt))
-    }
-
-    /// Whether `e` is written in the initializer of the declaration `d`, which binds `pat`.
-    fn is_in_initializer_of(&self, file: FileId, e: ExprId, pat: PatId, d: VarDeclId) -> bool {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        // An expression is numbered after all that is written in it.
-        if e.0 > hir[d].init.0 {
-            return false;
-        }
-        let declared_at = hir[pat].pos;
-        let mut parent = bound.expr_parent[e.idx()];
-        loop {
-            parent = match parent {
-                Parent::VarInit(v) if v == d => return true,
-                Parent::None | Parent::File | Parent::Module(_) => return false,
-                // A function that starts further up is around the declaration.
-                Parent::FnBody(f) if hir[f].pos < declared_at => return false,
-                Parent::Expr(x) => bound.expr_parent[x.idx()],
-                Parent::Stmt(s) if s.is_some() => bound.stmt_parent[s.idx()],
-                _ => self.parent_of(file, parent),
-            };
-        }
     }
 
     /// `checkIdentifier`: whether the variable the identifier `e` reads, whose type is `declared`, is taken to hold a value where the
@@ -1749,77 +1726,6 @@ impl Checker<'_> {
             && decl.init.is_none()
             && !self.declares_loop_variable(file, stmt)
             && !bound.is_symbol_assigned_definitely(hir, symbol))
-    }
-
-    /// 2454: a variable is read where it may not have been given a value. `checkIdentifier`
-    fn check_assigned_before_use(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        if !self.p.files.options.strict_null_checks || hir.kind == FileKind::Declaration {
-            return;
-        }
-        // Nothing but an identifier has a symbol.
-        let index = self.exprs_by_kind(file);
-        for &e in index.of(ExprTag::Ident) {
-            let i = e.idx();
-            let Some((pat, d)) = self.value_declaration_of_variable(file, e) else {
-                continue;
-            };
-            let (decl, stmt) = (&hir[d], bound.var_stmt[d.idx()]);
-            if stmt.is_none() {
-                continue;
-            }
-            let around = bound.stmt_parent[stmt.idx()];
-            let is_loop_variable = self.declares_loop_variable(file, stmt);
-            let is_given_a_value = decl.init.is_some() || is_loop_variable;
-            // Whether there is no way to what is written further down but through the declaration.
-            let is_always_passed = match decl.kind {
-                // Hoisted out of whatever it is written in.
-                VarKind::Var => {
-                    !is_loop_variable
-                        && matches!(around, Parent::FnBody(_) | Parent::File | Parent::Module(_))
-                }
-                _ => match around {
-                    Parent::Stmt(owner) if owner.is_some() => match hir[owner].kind {
-                        // The clauses of a `switch` are one scope. As the whole body of an `if`, a loop or a label (1156) it is declared
-                        // in the enclosing scope.
-                        StmtKind::Switch { .. }
-                        | StmtKind::If { .. }
-                        | StmtKind::While { .. }
-                        | StmtKind::DoWhile { .. }
-                        | StmtKind::Labeled { .. } => false,
-                        StmtKind::For { body, .. }
-                        | StmtKind::ForIn { body, .. }
-                        | StmtKind::ForOf { body, .. } => body != stmt,
-                        _ => true,
-                    },
-                    _ => true,
-                },
-            };
-            // Without a type or a value to go by it is `any`, or finds out its type as it goes.
-            if (decl.ty.is_none() && !is_given_a_value)
-                || (is_given_a_value
-                    && is_always_passed
-                    && hir.exprs[i].pos > hir[pat].pos
-                    && !self.is_in_initializer_of(file, e, pat, d))
-                || bound.get_assignment_target_kind(hir, e) == AssignmentKind::Definite
-            {
-                continue;
-            }
-            let declared = self.type_of_symbol(self.files().sym(file, bound.expr_symbol[i]));
-            if !self.assumes_initialized(file, e, declared)
-                && !self.contains_undefined(declared)
-                && self.may_be_unassigned(file, e, declared)
-            {
-                out.push(Diagnostic {
-                    start: hir.exprs[i].pos,
-                    code: 2454,
-                });
-                // `symbolToString`: the name as the declaration writes it.
-                self.explain(hir.exprs[i].pos, 2454, |c| {
-                    vec![c.declaration_name_at(file, hir[pat].pos)]
-                });
-            }
-        }
     }
 
     /// 2564: a property that has to hold something is left without a value by its declaration and by the constructor.
@@ -2164,10 +2070,7 @@ impl Checker<'_> {
                 self.check_entity_name(file, scope, &names, start, SymFlags::TYPE, out);
                 continue;
             }
-            let found = match self
-                .files()
-                .resolve(file, scope, first, SymFlags::TYPE, true)
-            {
+            let found = match self.resolve(file, scope, first, SymFlags::TYPE, true) {
                 Ok(found) => found,
                 // 2302 2467 2562
                 Err((code, property)) if property.is_none() => {
@@ -2180,17 +2083,6 @@ impl Checker<'_> {
                     continue;
                 }
             };
-            // `getSymbol`: an alias that ends at a property has no type meaning, and the search goes on further out.
-            // `checkAndReportErrorForUsingValueAsType`
-            if let Some(found) = found
-                && self.is_alias_of_property(found)
-                && self
-                    .resolve_type_name_beyond(file, scope, first, found)
-                    .is_none()
-            {
-                out.push(Diagnostic { start, code: 2749 });
-                continue;
-            }
             if found.is_none() {
                 let is_primitive = matches!(
                     self.files().atoms.bytes(first),
@@ -2998,8 +2890,11 @@ impl Checker<'_> {
             .files()
             .resolve_name(file, scope, name, SymFlags::VALUE)
         {
-            let flags = self.resolved_flags(sym);
-            if flags.intersects(SymFlags::VALUE) && !flags.intersects(SymFlags::NAMESPACE) {
+            let flags = self.get_symbol_flags(sym);
+            if flags != SymFlags::all()
+                && flags.intersects(SymFlags::VALUE)
+                && !flags.intersects(SymFlags::NAMESPACE)
+            {
                 return 2749;
             }
         }

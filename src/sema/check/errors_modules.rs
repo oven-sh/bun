@@ -8,7 +8,7 @@
 
 use super::errors::{Diagnostic, is_close};
 use super::*;
-use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, SymbolId};
+use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId};
 use smallvec::SmallVec;
 
 impl Checker<'_> {
@@ -470,27 +470,6 @@ impl Checker<'_> {
                 }
             }
         }
-        // `declareSymbolEx` declares `default` in `GetExports(container.Symbol())`: the file has one table, and all blocks of a namespace or
-        // an ambient module share one.
-        let defaults = self.default_exports(file, hir.body);
-        report_default_export_conflicts(self, file, defaults.iter(), out);
-        let mut blocks: Vec<(SymbolId, u32, SmallVec<[DefaultExport; 2]>)> = Vec::new();
-        for (m, module) in hir.modules.iter().enumerate() {
-            let defaults = self.default_exports(file, module.body);
-            if !defaults.is_empty() {
-                blocks.push((bound.module_symbol[m], module.name_pos, defaults));
-            }
-        }
-        // The blocks of a symbol are bound in source order.
-        blocks.sort_by_key(|block| (block.0, block.1));
-        for group in blocks.chunk_by(|a, b| a.0.is_some() && a.0 == b.0) {
-            report_default_export_conflicts(
-                self,
-                file,
-                group.iter().flat_map(|block| &block.2),
-                out,
-            );
-        }
         // And `export =` all by itself.
         if self.files().module(file).is_module() {
             self.check_export_equals_alone(file, self.files().file_symbol(file), out);
@@ -533,114 +512,6 @@ impl Checker<'_> {
                 self.note(start, self.end_of_expr(file, e), 2714, Vec::new());
             }
         }
-    }
-
-    /// The declarations of the name `default` among the statements of `body`, in the order the binder declares them.
-    fn default_exports(&self, file: FileId, body: IdList<StmtId>) -> SmallVec<[DefaultExport; 2]> {
-        const ALIAS: u8 = 1;
-        const PROPERTY: u8 = 2;
-        const FUNCTION: u8 = 4;
-        const CLASS: u8 = 8;
-        const INTERFACE: u8 = 16;
-        const TYPE_ALIAS: u8 = 32;
-        let hir = self.hir(file);
-        // `IsImplicitlyExportedJSDocDeclaration`
-        let is_top_of_module = (body.start, body.len) == (hir.body.start, hir.body.len)
-            && self.files().module(file).is_module();
-        let mut defaults: SmallVec<[DefaultExport; 2]> = SmallVec::new();
-        let mut declare = |start: u32, statement: StmtId, includes: u8, excludes: u8, code: u32| {
-            defaults.push(DefaultExport {
-                start,
-                statement,
-                includes,
-                excludes,
-                code,
-            })
-        };
-        for s in hir.ids(body) {
-            match hir[s].kind {
-                // `bindExportAssignment`: `export default x` excludes every earlier declaration of `default`.
-                StmtKind::ExportDefault(e) => {
-                    let includes = if expression_is_alias(self.hir(file), e) {
-                        ALIAS
-                    } else {
-                        PROPERTY
-                    };
-                    let start = self.export_assignment_name_start(file, s);
-                    let is_missing = matches!(hir[e].kind, ExprKind::Missing);
-                    let statement = if start == hir[s].pos || is_missing {
-                        s
-                    } else {
-                        StmtId::NONE
-                    };
-                    declare(start, statement, includes, u8::MAX, 2528);
-                }
-                StmtKind::Fn(f) if hir[f].flags.contains(Flags::DEFAULT) => {
-                    declare(
-                        if hir[f].name.is_some() {
-                            hir[f].name_pos
-                        } else {
-                            hir[s].pos
-                        },
-                        StmtId::NONE,
-                        FUNCTION,
-                        PROPERTY,
-                        2528,
-                    );
-                }
-                StmtKind::Class(c) if hir[c].flags.contains(Flags::DEFAULT) => {
-                    declare(
-                        if hir[c].name.is_some() {
-                            hir[c].name_pos
-                        } else {
-                            hir[s].pos
-                        },
-                        StmtId::NONE,
-                        CLASS,
-                        PROPERTY | CLASS,
-                        2528,
-                    );
-                }
-                StmtKind::Interface(i) if hir[i].flags.contains(Flags::DEFAULT) => {
-                    declare(hir[i].name_pos, StmtId::NONE, INTERFACE, 0, 2528)
-                }
-                StmtKind::ExportNamed(x) => {
-                    for spec in hir[x].items.iter() {
-                        if hir[spec].exported == known::default {
-                            declare(hir[spec].pos, StmtId::NONE, ALIAS, ALIAS, 2528);
-                        }
-                    }
-                }
-                // A name like any other that happens to be `default`: no default export.
-                StmtKind::ExportStar {
-                    alias, alias_pos, ..
-                } if alias == known::default => {
-                    declare(alias_pos, StmtId::NONE, ALIAS, ALIAS, 2300);
-                }
-                // So is a `@typedef` of that name, which a module exports.
-                StmtKind::TypeAlias(a)
-                    if is_top_of_module
-                        && hir[a].name == known::default
-                        && hir[a].flags.contains(Flags::REPARSED) =>
-                {
-                    declare(
-                        hir[a].name_pos,
-                        StmtId::NONE,
-                        TYPE_ALIAS,
-                        CLASS | INTERFACE | TYPE_ALIAS,
-                        2300,
-                    );
-                }
-                _ => {}
-            }
-        }
-        // `bindEachStatementFunctionsFirst`, which works on one statement list. `bindContainer` binds the `@typedef`s of a file last.
-        defaults.sort_by_key(|d| match d.includes {
-            FUNCTION => 0,
-            TYPE_ALIAS => 2,
-            _ => 1,
-        });
-        defaults
     }
 
     /// Where `declareSymbolEx` reports a conflict of the statement `s`, an `export default e` or `export = e`: the start of
@@ -953,97 +824,6 @@ impl Checker<'_> {
                 }
                 _ => return false,
             };
-        }
-    }
-}
-
-/// A declaration of the name `default` in a table of exports, as `declareSymbolEx` sees it.
-struct DefaultExport {
-    /// The start of its error span.
-    start: u32,
-    /// The statement, if the error span is all of it, or is a missing name, which starts later and has no length. `NONE`: it is one
-    /// token.
-    statement: StmtId,
-    /// The symbol flags it adds.
-    includes: u8,
-    /// The symbol flags it conflicts with.
-    excludes: u8,
-    /// The diagnostic for a conflict.
-    code: u32,
-}
-
-/// `declareSymbolEx`, for the declarations of `default` in one table of exports: 2528, 2300. A conflict is reported at the new
-/// declaration and at every declaration of the symbol in the table. The new declaration does not join that symbol.
-fn report_default_export_conflicts<'a>(
-    c: &mut Checker<'_>,
-    file: FileId,
-    defaults: impl Iterator<Item = &'a DefaultExport>,
-    out: &mut Vec<Diagnostic>,
-) {
-    use super::explain::{NO_LENGTH, Related};
-    // Where the error span of a declaration ends.
-    let end_of = |c: &Checker<'_>, d: &DefaultExport| {
-        if d.statement.is_none() {
-            c.end_of_token_at(file, d.start)
-        } else if d.start == c.hir(file)[d.statement].pos {
-            c.end_of_stmt(file, d.statement)
-        } else {
-            NO_LENGTH
-        }
-    };
-    let related_at = |c: &Checker<'_>, d: &DefaultExport, code: u32| {
-        let end = match end_of(c, d) {
-            NO_LENGTH => d.start,
-            end => end,
-        };
-        Related {
-            at: Some((file, d.start, end)),
-            code,
-            args: Vec::new(),
-        }
-    };
-    let mut flags = 0;
-    let mut accepted: SmallVec<[&DefaultExport; 2]> = SmallVec::new();
-    // Each report: on what, with which code, and what goes with it.
-    let mut reports: Vec<(&DefaultExport, u32, Vec<Related>)> = Vec::new();
-    for d in defaults {
-        if flags & d.excludes == 0 {
-            flags |= d.includes;
-            accepted.push(d);
-            continue;
-        }
-        // `multipleDefaultExports`
-        let are_defaults = d.code == 2528;
-        let mut firsts = Vec::new();
-        for (index, declared) in accepted.iter().copied().enumerate() {
-            let mut another = Vec::new();
-            if are_defaults {
-                another.push(related_at(&*c, d, if index == 0 { 2753 } else { 6204 }));
-                firsts.push(related_at(&*c, declared, 2752));
-            }
-            reports.push((declared, d.code, another));
-        }
-        reports.push((d, d.code, firsts));
-    }
-    out.extend(reports.iter().map(|report| Diagnostic {
-        start: report.0.start,
-        code: report.1,
-    }));
-    // `compactAndMergeRelatedInfos`: the reports of one error are one, with what goes with any of them in the order of errors.
-    reports.sort_by_key(|report| (report.0.start, report.1));
-    for same in reports.chunk_by(|a, b| (a.0.start, a.1) == (b.0.start, b.1)) {
-        let (declared, code) = (same[0].0, same[0].1);
-        let mut related: Vec<Related> = same.iter().flat_map(|r| r.2.iter().cloned()).collect();
-        if same.len() > 1 {
-            related.sort_by_key(|r| (r.at, r.code));
-            related.dedup();
-        }
-        if declared.statement.is_some() {
-            let end = end_of(&*c, declared);
-            c.note(declared.start, end, code, Vec::new());
-        }
-        if !related.is_empty() {
-            c.relate(declared.start, code, |_| related);
         }
     }
 }

@@ -2105,7 +2105,7 @@ impl<'p> Checker<'p> {
         } else {
             declared
         };
-        let narrowed = self.narrow_reference(file, e, declared);
+        let narrowed = self.narrow_reference(file, e, sym, declared);
         // `getBaseTypeOfLiteralType(flowType)`, of what an operator reads first and then gives a value to, `++` and `--` too.
         if target.written {
             self.base_of_literal(narrowed)

@@ -104,7 +104,16 @@ impl Checker<'_> {
                 VisitedKind::Expression(e) => e.0,
                 _ => 0,
             };
-            (node.start, std::cmp::Reverse((node.end, made)))
+            // Where the parser missed a name and an expression at one place, the name comes first: the clause of an import stands
+            // before its specifier.
+            let is_missing_expression =
+                node.start == node.end && matches!(node.kind, VisitedKind::Expression(_));
+            (
+                node.start,
+                std::cmp::Reverse(node.end),
+                is_missing_expression,
+                std::cmp::Reverse(made),
+            )
         });
         visitor.nodes
     }

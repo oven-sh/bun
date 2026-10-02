@@ -632,18 +632,8 @@ pub struct JSXElement {
 
     pub close_tag_loc: crate::Loc,
 
-    /// For the type checker, which looks at both names: the name in `</tag>`, missing or not. `tag` is then the name in the opening
-    /// tag. `None` for `<tag />`, for a fragment, and for everybody else.
-    pub closing_tag: Option<ExprNodeIndex>,
-
-    /// Where `<tag attributes>`, `<>` or all of `<tag attributes />` ends.
-    pub opening_end: crate::Loc,
-
-    /// The `<` of `</tag>` or `</>`, or where that is missed. `EMPTY` for `<tag />`.
-    pub closing_start: crate::Loc,
-
-    /// Where the element ends.
-    pub end: crate::Loc,
+    /// What else was written, if the parser keeps TypeScript syntax. `NONE` otherwise.
+    pub syntax: crate::ts_syntax::JsxId,
 }
 impl Default for JSXElement {
     fn default() -> Self {
@@ -654,10 +644,7 @@ impl Default for JSXElement {
             key_prop_index: -1,
             flags: crate::flags::JSXElementBitset::default(),
             close_tag_loc: crate::Loc::EMPTY,
-            closing_tag: None,
-            opening_end: crate::Loc::EMPTY,
-            closing_start: crate::Loc::EMPTY,
-            end: crate::Loc::EMPTY,
+            syntax: crate::ts_syntax::JsxId::NONE,
         }
     }
 }

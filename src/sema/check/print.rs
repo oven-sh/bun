@@ -255,14 +255,6 @@ impl Checker<'_> {
         self.alias_of_type(ty).map(|alias| alias.0)
     }
 
-    /// `t.alias`, with its type arguments.
-    pub(super) fn alias_with_arguments_for_declaration_emit(
-        &mut self,
-        ty: TypeId,
-    ) -> Option<(Sym, Vec<TypeId>)> {
-        self.alias_of_type(ty)
-    }
-
     /// `c.varianceTypeParameter = parameter`: the type parameter `sub-T` and `super-T` are named after, for as long as the error of
     /// a variance annotation is put into words.
     pub fn set_variance_type_parameter(&mut self, parameter: Option<TypeId>) {
@@ -331,6 +323,24 @@ impl<'p> Checker<'p> {
                 printer.leave_scope(outer_scope);
                 text
             },
+        )
+    }
+
+    /// `NodeBuilder.TypeToTypeNode`
+    pub(super) fn type_to_type_node(
+        &mut self,
+        ty: TypeId,
+        enclosing_declaration: Enclosing,
+        flags: u32,
+        tracker: &mut dyn SymbolTracker<'p>,
+    ) -> String {
+        let enclosing_declaration = Some(enclosing_declaration);
+        with_printer(
+            self,
+            enclosing_declaration,
+            Some(tracker),
+            flags,
+            |printer| printer.type_to_node(ty).text,
         )
     }
 
@@ -1021,6 +1031,7 @@ impl<'p> Printer<'_, 'p> {
                     Intrinsic::Unresolved | Intrinsic::Any | Intrinsic::Error | Intrinsic::Auto => {
                         ("any", 3)
                     }
+                    Intrinsic::IntrinsicMarker => ("intrinsic", 3),
                     Intrinsic::Unknown => ("unknown", 0),
                     Intrinsic::Never | Intrinsic::SilentNever | Intrinsic::UnreachableNever => {
                         ("never", 5)

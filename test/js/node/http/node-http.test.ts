@@ -6077,8 +6077,8 @@ it("connectionListener queues pipelined responses like Node", async () => {
 });
 
 it("connectionListener sends response trailers like Node", async () => {
-  // The trailers follow the last chunk as latin-1 bytes, and they make end(chunk) send a chunked
-  // body. The second response is queued behind the first one when it ends.
+  // The trailers follow the last chunk as latin-1 bytes. The Trailer header makes end(chunk) send a
+  // chunked body. The second response is queued behind the first one when it ends.
   const server = createServer((req, res) => {
     if (req.url === "/done") return void res.end("done");
     res.setHeader("Trailer", "x-t");

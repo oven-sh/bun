@@ -104,6 +104,7 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     let hasDate = false;
     let hasConnection = false;
     let hasKeepAlive = false;
+    let hasTrailer = false;
     const headers = head?.headers;
     if (headers) {
       // ServerResponse drives this handle with renderNativeHeaders(): a flat
@@ -135,6 +136,9 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
           case "keep-alive":
             hasKeepAlive = true;
             break;
+          case "trailer":
+            hasTrailer = true;
+            break;
         }
         out += `${name}: ${value}\r\n`;
       }
@@ -152,7 +156,8 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     let autoContentLength = null;
     let autoChunked = false;
     if (!hasContentLength && !hasTransferEncoding && !noBody && !closeDelimited) {
-      if (chunkedFromAutoBits || contentLength === null) {
+      // Like Node's _storeHeader: a Trailer header means the known length is not used.
+      if (chunkedFromAutoBits || contentLength === null || hasTrailer) {
         chunked = true;
         autoChunked = !chunkedFromAutoBits;
       } else {
@@ -341,8 +346,7 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       this.onwritable = null;
       const buf = toBuffer(chunk, encoding);
       const length = buf ? (buf.byteLength ?? buf.length) : 0;
-      // Only a chunked body has a trailer section: with no length the head picks chunked framing where it can.
-      writeHeadToSocket(trailerSection ? null : length);
+      writeHeadToSocket(length);
       // Like Node's `_hasBody && chunkedEncoding` gate: a bodiless (HEAD)
       // response never writes the terminating chunk, even when the user set
       // Transfer-Encoding: chunked themselves.

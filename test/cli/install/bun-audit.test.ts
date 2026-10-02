@@ -599,49 +599,81 @@ describe("`bun audit`", () => {
     expect(exitCode).toBe(0);
   });
 
-  // A scheme that is not http or https (a typo such as `htps://`) must not fall back to plaintext HTTP with the
-  // token attached. The mock is a plain HTTP listener, so a downgraded request shows up in `requests`.
-  test.each(["default", "scoped"] as const)(
-    "a %s registry whose url scheme is not http or https is rejected before any request",
-    async kind => {
+  // `bun audit` must refuse a request URL that is not http:// or https://. It used to send it as plain HTTP.
+  // Every run has its own plain HTTP listener, so a downgraded request shows up in `requests`.
+  describe("a registry url that is not http:// or https://", () => {
+    const bulk = "/-/npm/v1/security/advisories/bulk";
+    async function auditWith(bunfig: (port: number) => string, args: string[] = []) {
       const requests: string[] = [];
-      using mock = Bun.serve({
+      using server = Bun.serve({
         port: 0,
         fetch(req) {
           requests.push(`${req.method} ${new URL(req.url).pathname} ${req.headers.get("authorization")}`);
           return Response.json({});
         },
       });
-      const bad = `{ url = "htps://localhost:${mock.port}/", token = "secret-token" }`;
-      using dir = tempDir("bun-test-audit-bad-scheme-" + kind, {
-        "package.json": JSON.stringify({ name: "test", version: "1.0.0", dependencies: { "@foo/bar": "1.0.0" } }),
+      const dependencies = { "@foo/bar": "1.0.0", "left": "1.0.0" };
+      using dir = tempDir("bun-test-audit-registry-scheme", {
+        "package.json": JSON.stringify({ name: "test", version: "1.0.0", dependencies }),
         "bun.lock": JSON.stringify({
           lockfileVersion: 1,
-          workspaces: { "": { name: "test", dependencies: { "@foo/bar": "1.0.0" } } },
-          packages: { "@foo/bar": ["@foo/bar@1.0.0", "", {}, fakeIntegrity] },
+          workspaces: { "": { name: "test", dependencies } },
+          packages: {
+            "@foo/bar": ["@foo/bar@1.0.0", "", {}, fakeIntegrity],
+            "left": ["left@1.0.0", "", {}, fakeIntegrity],
+          },
         }),
-        "bunfig.toml":
-          kind === "default"
-            ? `[install]\nregistry = ${bad}\n`
-            : `[install]\nregistry = "${mock.url.href}"\n[install.scopes]\nfoo = ${bad}\n`,
+        "bunfig.toml": bunfig(server.port).replaceAll("PORT", String(server.port)),
       });
-
       await using proc = spawn({
-        cmd: [bunExe(), "audit"],
+        cmd: [bunExe(), "audit", ...args],
         stdout: "pipe",
         stderr: "pipe",
         cwd: String(dir),
         env: bunEnv,
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe(
-        `error: Registry URL must be http:// or https://\nReceived: "htps://localhost:${mock.port}/"\n`,
+      return { port: server.port, stdout, stderr, requests, exitCode };
+    }
+    const registry = (url: string) => `{ url = "${url}", token = "secret-token" }`;
+
+    // The default registry is required, so the command stops.
+    test.each([
+      ["audit", "htps://localhost:PORT/", `htps://localhost:PORT${bulk}`],
+      ["audit --json", "htps://localhost:PORT/", `htps://localhost:PORT${bulk}`],
+      ["audit fix", "localhost:PORT/npm/", `localhost:PORT/npm${bulk}`],
+      ["audit", "htps://localhost:PORT/?token=hunter2", "htps://localhost:PORT/"],
+    ])("bun %s refuses the default registry %s before any request", async (cmd, url, received) => {
+      const { port, stdout, stderr, requests, exitCode } = await auditWith(
+        () => `[install]\nregistry = ${registry(url)}\n`,
+        cmd.split(" ").slice(1),
       );
-      expect(normalizeBunSnapshot(stdout)).toBe("bun audit <version> (<revision>)");
-      expect(requests).toEqual([]);
-      expect(exitCode).toBe(1);
-    },
-  );
+      expect(stdout).not.toContain("hunter2");
+      expect({ stderr, requests, exitCode }).toEqual({
+        stderr: `error: Registry URL must be http:// or https://\nReceived: "${received.replaceAll("PORT", String(port))}"\n`,
+        requests: [],
+        exitCode: 1,
+      });
+    });
+
+    // A scoped registry that cannot be asked is skipped with a warning, as for every other send error.
+    test.each([
+      ["htps://localhost:PORT/", "htps://localhost:PORT"],
+      ["user:hunter2@localhost:PORT/", "localhost:PORT"],
+      ["htps://localhost:PORT/?token=hunter2", "htps://localhost:PORT"],
+    ])("a scoped registry %s is skipped, not asked", async (url, shown) => {
+      const { port, stdout, stderr, requests, exitCode } = await auditWith(
+        () => `[install]\nregistry = "http://localhost:PORT/"\n[install.scopes]\nfoo = ${registry(url)}\n`,
+      );
+      expect(stdout).not.toContain("hunter2");
+      expect(stdout).toContain("(checked 1 package, 1 skipped)");
+      expect({ stderr, requests, exitCode }).toEqual({
+        stderr: `warn: ${shown.replaceAll("PORT", String(port))} did not answer the audit request (registry URL must be http:// or https://); skipped @foo/bar\n`,
+        requests: [`POST ${bulk} null`],
+        exitCode: 0,
+      });
+    });
+  });
 
   doAuditTest("workspaces print the path to the vulnerable package and include workspace:pkg in the name", {
     exitCode: 1,

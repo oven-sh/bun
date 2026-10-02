@@ -77,10 +77,6 @@ pub(crate) fn view(
     });
 
     let scope = manager.scope_for_package_name(name);
-    if let Err(err) = scope.check_url_protocol() {
-        Output::err_generic("{}", (err,));
-        Global::exit(1);
-    }
 
     let mut url_buf = bun_paths::path_buffer_pool::get();
     let encoded_name = buf_print(
@@ -139,6 +135,10 @@ pub(crate) fn view(
     let res = match req.send_sync(&mut response_buf) {
         Ok(r) => r,
         Err(err) => {
+            if let Some(refused) = npm::unsupported_protocol(&req, err) {
+                Output::err_generic("{}", (refused,));
+                Global::exit(1);
+            }
             Output::err(err, "view request failed to send", ());
             Global::crash();
         }

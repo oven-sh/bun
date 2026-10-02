@@ -349,10 +349,6 @@ struct AuditRegistry {
 
 impl AuditRegistry {
     fn from_scope(scope: &bun_install::npm::registry::Scope, is_default: bool) -> AuditRegistry {
-        if let Err(err) = scope.check_url_protocol() {
-            Output::err_generic("{}", (err,));
-            Global::exit(1);
-        }
         AuditRegistry {
             href: Box::<[u8]>::from(strings::without_trailing_slash(scope.url.href())),
             url_hash: scope.url_hash,
@@ -407,6 +403,7 @@ struct PackageVersions {
 enum SkipReason {
     Status(u32),
     Send(&'static str),
+    UnsupportedProtocol(bun_install::npm::registry::UnsupportedProtocol),
     NotJson,
 }
 
@@ -415,6 +412,9 @@ impl core::fmt::Display for SkipReason {
         match self {
             SkipReason::Status(status) => write!(f, "{status}"),
             SkipReason::Send(name) => f.write_str(name),
+            SkipReason::UnsupportedProtocol(_) => {
+                f.write_str("registry URL must be http:// or https://")
+            }
             SkipReason::NotJson => f.write_str("non-JSON response"),
         }
     }
@@ -423,7 +423,7 @@ impl core::fmt::Display for SkipReason {
 fn unaudited(request: &AuditRequest, reason: &SkipReason) -> audit_fix::UnauditedRegistry {
     let mut reason_text: Vec<u8> = Vec::new();
     write!(&mut reason_text, "{reason}").expect("unreachable");
-    let registry = URL::parse(&request.registry.href).href_without_auth();
+    let registry = bun_install::npm::registry::display_url(&request.registry.href);
     audit_fix::UnauditedRegistry {
         registry: Box::from(strings::without_trailing_slash(&registry)),
         packages: request
@@ -768,7 +768,10 @@ fn send_audit_request(
             }
             SkipReason::NotJson
         }
-        Err(err) => SkipReason::Send(err.name()),
+        Err(err) => match bun_install::npm::unsupported_protocol(&req, err) {
+            Some(refused) => SkipReason::UnsupportedProtocol(refused),
+            None => SkipReason::Send(err.name()),
+        },
     };
 
     if !registry.is_default {
@@ -783,10 +786,11 @@ fn send_audit_request(
             }
             report_non_json_response(&registry.href);
         }
+        SkipReason::UnsupportedProtocol(refused) => Output::err_generic("{}", (refused,)),
         reason => {
             bun_core::pretty_errorln!(
                 "<r><red>error<r><d>:<r> <red><b>POST<r><red> {}<d> - {}<r>",
-                bun_core::fmt::redacted_npm_url(&url_str),
+                BStr::new(&bun_install::npm::registry::redacted_url(&url_str)),
                 reason
             );
         }

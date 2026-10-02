@@ -57,10 +57,6 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
         return Err(WhoamiError::NeedAuth);
     }
 
-    registry
-        .check_url_protocol()
-        .map_err(WhoamiError::UnsupportedProtocol)?;
-
     let auth_type: &[u8] = match &manager.options.publish_config.auth_type {
         Some(auth_type) => auth_type.as_str().as_bytes(),
         None => b"web",
@@ -176,6 +172,9 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
             return Err(WhoamiError::OutOfMemory);
         }
         Err(e) => {
+            if let Some(refused) = unsupported_protocol(&req, e) {
+                return Err(WhoamiError::UnsupportedProtocol(refused));
+            }
             Output::err(e, "whoami request failed to send", format_args!(""));
             Global::crash();
         }
@@ -219,6 +218,15 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
         return Err(WhoamiError::ProbablyInvalidAuth);
     };
     Ok(username.to_vec())
+}
+
+/// The message for `err` when `AsyncHTTP::send_sync` refused the scheme of `req`'s URL.
+pub fn unsupported_protocol(
+    req: &AsyncHTTP,
+    err: bun_http::Error,
+) -> Option<registry::UnsupportedProtocol> {
+    (err == bun_http::Error::UnsupportedProtocol)
+        .then(|| registry::UnsupportedProtocol::new(req.url.href))
 }
 
 pub fn response_error<const OTP_RESPONSE: bool>(
@@ -323,21 +331,48 @@ pub mod registry {
         pub user: Box<[u8]>,
     }
 
-    /// `bun_http` negotiates TLS only for `https:` and dials every other
-    /// scheme as plaintext HTTP, so a request to a registry URL with any other
-    /// scheme (a typo such as `htps://`) would carry the credentials in
-    /// cleartext.
+    /// `href` as an error message may print it.
+    pub fn redacted_url(href: &[u8]) -> Box<[u8]> {
+        let mut out = Vec::new();
+        write!(
+            &mut out,
+            "{}",
+            bun_fmt::redacted_npm_url(&URL::parse(href).redacted_href())
+        )
+        .expect("infallible: in-memory write");
+        out.into_boxed_slice()
+    }
+
+    /// A registry URL for output: `href_without_auth` needs `scheme://`, so only http(s) takes it.
+    pub fn display_url(href: &[u8]) -> Box<[u8]> {
+        let url = URL::parse(href);
+        if url.has_http_like_protocol() {
+            url.href_without_auth()
+        } else {
+            redacted_url(href)
+        }
+    }
+
+    /// What `bun install` prints for a request URL that is not http or https.
     #[derive(Debug)]
     pub struct UnsupportedProtocol {
-        href: Box<[u8]>,
+        redacted_url: Box<[u8]>,
+    }
+
+    impl UnsupportedProtocol {
+        pub fn new(request_url: &[u8]) -> Self {
+            Self {
+                redacted_url: redacted_url(request_url),
+            }
+        }
     }
 
     impl core::fmt::Display for UnsupportedProtocol {
         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
             write!(
                 f,
-                "Registry URL must be http:// or https://\nReceived: \"{}\"",
-                bun_fmt::redacted_npm_url(&self.href),
+                "Registry URL must be http:// or https://\nReceived: {}",
+                bun_fmt::quote(&self.redacted_url),
             )
         }
     }
@@ -345,16 +380,6 @@ pub mod registry {
     impl Scope {
         pub fn hash(str: &[u8]) -> u64 {
             bun_semver::semver_string::Builder::string_hash(str)
-        }
-
-        /// Call before building a request that sends `token`/`auth` to `url`.
-        pub fn check_url_protocol(&self) -> Result<(), UnsupportedProtocol> {
-            if self.url.url().has_http_like_protocol() {
-                return Ok(());
-            }
-            Err(UnsupportedProtocol {
-                href: Box::from(self.url.href()),
-            })
         }
 
         /// Stores the WHATWG serialization (the base `bun_url::join` resolves against) so same-origin checks, concatenated tarball URLs and `url_hash` agree with the requests; credentials must already be split off.

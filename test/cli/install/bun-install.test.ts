@@ -9748,6 +9748,65 @@ describe.concurrent("bun-install", () => {
       });
     });
 
+    // These error lines echo the registry URL or the URL built from it. A password inside it must not be printed.
+    // [registry, the line for the manifest request, the line for the tarball request], HOST is the listener.
+    const tarballLine = (url: string) =>
+      `error: Expected tarball URL to start with https:// or http://, got "${url}" while fetching package "left"`;
+    const joinLine = (registry: string) => `error: Failed to join registry "${registry}" and package "left" URLs`;
+    const receivedLine = `error: Registry URL must be http:// or https://\nReceived: "htps://HOST/left"`;
+    it.each([
+      ["user:hunter2@HOST/", joinLine("HOST/"), tarballLine("HOST/left/-/left-1.0.0.tgz")],
+      ["//user:hunter2@HOST/", joinLine("//HOST/"), tarballLine("//HOST/left/-/left-1.0.0.tgz")],
+      ["user:hunter2@htps://HOST/", joinLine("htps://HOST/"), tarballLine("htps://HOST/left/-/left-1.0.0.tgz")],
+      ["htps://HOST/?token=hunter2", receivedLine, tarballLine("htps://HOST/")],
+      ["htps://HOST/#hunter2", receivedLine, tarballLine("htps://HOST/")],
+    ])("does not print the password of the refused registry URL %s", async (registry, manifestLine, tarballLine) => {
+      const requests: string[] = [];
+      using server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          requests.push(`${req.method} ${new URL(req.url).pathname}`);
+          return new Response("{}", { status: 404 });
+        },
+      });
+      const host = (text: string) => text.replaceAll("HOST", `localhost:${server.port}`);
+
+      const results = await Promise.all(
+        [manifestLine, tarballLine].map(async (line, withLockfile) => {
+          using dir = tempDir("install-refused-registry", {
+            "package.json": JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { left: "1.0.0" } }),
+            "bunfig.toml": `[install]\ncache = false\nregistry = { url = "${host(registry)}", token = "secret-token" }\n`,
+            // With a lockfile the first request is the tarball, not the manifest.
+            ...(withLockfile && {
+              "bun.lock": JSON.stringify({
+                lockfileVersion: 1,
+                workspaces: { "": { name: "foo", dependencies: { left: "1.0.0" } } },
+                packages: { left: ["left@1.0.0", "", {}, "sha512-" + Buffer.alloc(86, "b").toString() + "=="] },
+              }),
+            }),
+          });
+          await using proc = spawn({
+            cmd: [bunExe(), "install"],
+            cwd: String(dir),
+            stdout: "pipe",
+            stderr: "pipe",
+            env,
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          return {
+            line: stderr.includes(host(line) + "\n") ? line : stderr,
+            printsPassword: (stdout + stderr).includes("hunter2"),
+            exitCode,
+          };
+        }),
+      );
+      expect(results).toEqual([
+        { line: manifestLine, printsPassword: false, exitCode: 1 },
+        { line: tarballLine, printsPassword: false, exitCode: 1 },
+      ]);
+      expect(requests).toEqual([]);
+    });
+
     // TODO: This test should fail if the param `warn_on_error` is true in
     // `(install.zig).NetworkTask.forManifest()`. Unfortunately, that
     // code never gets run for peer dependencies unless you do some package

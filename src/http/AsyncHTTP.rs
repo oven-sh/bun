@@ -615,6 +615,11 @@ impl<'a> AsyncHTTP<'a> {
         &mut self,
         response_buffer: &mut MutableString,
     ) -> crate::Result<crate::HTTPResponseMetadata> {
+        // No blocking caller sends a URL without a scheme; `fetch("host:port/path")` does, so `HTTPClient::start` stays lenient.
+        if !self.client.url.has_http_like_protocol() {
+            return Err(crate::Error::UnsupportedProtocol);
+        }
+
         crate::http_thread::init(&Default::default());
 
         // Note: `Box::leak` is forbidden (PORTING.md §Forbidden);

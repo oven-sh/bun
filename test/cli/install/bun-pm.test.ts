@@ -920,34 +920,67 @@ test("bun pm whoami still works", async () => {
   expect(exitCode).toBe(1);
 });
 
-// A scheme that is not http or https (a typo such as `htps://`) must not fall back to plaintext HTTP with the
-// token attached. The mock is a plain HTTP listener, so a downgraded request shows up in `requests`.
-test("bun pm whoami rejects a registry url scheme that is not http or https", async () => {
+// `bun pm whoami` must refuse a request URL that is not http:// or https://. It used to send it as plain HTTP.
+// Every run has its own plain HTTP listener, so a downgraded request shows up in `requests`.
+async function whoamiWith(bunfig: (port: number) => string, cmd = ["pm", "whoami"]) {
   const requests: string[] = [];
-  using mock = Bun.serve({
+  using server = Bun.serve({
     port: 0,
     fetch(req) {
       requests.push(`${req.method} ${new URL(req.url).pathname} ${req.headers.get("authorization")}`);
-      return Response.json({ username: "leaked" });
+      return Response.json({ username: "from-registry" });
     },
   });
-  using dir = tempDir("whoami-bad-scheme", {
-    "package.json": JSON.stringify({ name: "whoami-bad-scheme", version: "1.0.0" }),
-    "bunfig.toml": `[install]\nregistry = { url = "htps://localhost:${mock.port}/", token = "secret-token" }\n`,
+  using dir = tempDir("whoami-registry-scheme", {
+    "package.json": JSON.stringify({ name: "whoami-registry-scheme", version: "1.0.0" }),
+    "bunfig.toml": bunfig(server.port),
   });
-
   await using proc = spawn({
-    cmd: [bunExe(), "pm", "whoami"],
+    cmd: [bunExe(), ...cmd],
     cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",
     env: bunEnv,
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe(`error: Registry URL must be http:// or https://\nReceived: "htps://localhost:${mock.port}/"\n`);
-  expect(stdout).toBe("");
-  expect(requests).toEqual([]);
-  expect(exitCode).toBe(1);
+  return { port: server.port, stdout, stderr, requests, exitCode };
+}
+
+test.each([
+  ["pm whoami", "htps://localhost:PORT/", "htps://localhost:PORT/-/whoami"],
+  ["whoami", "htps://localhost:PORT/", "htps://localhost:PORT/-/whoami"],
+  ["pm whoami", "localhost:PORT/npm/", "localhost:PORT/npm/-/whoami"],
+  ["pm whoami", "htps://localhost:PORT/?token=hunter2", "htps://localhost:PORT/"],
+])("bun %s refuses the registry url %s before any request", async (cmd, url, received) => {
+  const { port, stdout, stderr, requests, exitCode } = await whoamiWith(
+    port => `[install]\nregistry = { url = "${url.replace("PORT", String(port))}", token = "secret-token" }\n`,
+    cmd.split(" "),
+  );
+  expect({ stdout, stderr, requests, exitCode }).toEqual({
+    stdout: "",
+    stderr: `error: Registry URL must be http:// or https://\nReceived: "${received.replace("PORT", String(port))}"\n`,
+    requests: [],
+    exitCode: 1,
+  });
+});
+
+test("bun pm whoami still answers when it sends no refused request", async () => {
+  const [typo, upperCase, localUser] = await Promise.all([
+    whoamiWith(port => `[install]\nregistry = { url = "htps://localhost:${port}/", token = "secret-token" }\n`),
+    whoamiWith(port => `[install]\nregistry = { url = "HTTP://localhost:${port}/", token = "secret-token" }\n`),
+    // A username in the URL is the answer. No request is needed, so there is nothing to refuse.
+    whoamiWith(port => `[install]\nregistry = "htps://local-user:hunter2@localhost:${port}/"\n`),
+  ]);
+  expect(typo.stderr).toBe(
+    `error: Registry URL must be http:// or https://\nReceived: "htps://localhost:${typo.port}/-/whoami"\n`,
+  );
+  expect(upperCase).toMatchObject({
+    stdout: "from-registry\n",
+    stderr: "",
+    requests: ["GET /-/whoami Bearer secret-token"],
+    exitCode: 0,
+  });
+  expect(localUser).toMatchObject({ stdout: "local-user\n", stderr: "", requests: [], exitCode: 0 });
 });
 
 test.each([

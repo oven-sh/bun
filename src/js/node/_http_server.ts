@@ -1115,10 +1115,12 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         if (handle.finished || didFinish) {
           handle = undefined;
           http_res[kCloseCallback] = undefined;
+          // 'finish' finds the connection here: detachSocket() below empties
+          // the response's own slot and the stream destroyer nulls req.socket.
           // Set in time only because end() defers the 'finish' emit to a
           // process.nextTick (see ServerResponse.prototype.end) and nothing
           // between the 'request' emit and here drains the tick queue.
-          http_res[kDispatcherDetached] = true;
+          http_res[kDetachedFrom] = socket;
           http_res.detachSocket(socket);
           if (socket[kPipelinedResponses] !== undefined) {
             advanceResponsePipeline(server, socket);
@@ -1490,9 +1492,10 @@ const kPipelinedQueuedState = Symbol("kPipelinedQueuedState");
 const kOutgoingData = Symbol("kOutgoingData");
 const kReplayingPipelinedOps = Symbol("kReplayingPipelinedOps");
 const kStopParsingOnCloseListener = Symbol("kStopParsingOnCloseListener");
-// Set when the dispatcher already detached a synchronously-finished response,
-// so the 'finish' listener does not detach/advance the pipeline a second time.
-const kDispatcherDetached = Symbol("kDispatcherDetached");
+// The socket the dispatcher already detached a synchronously-finished response
+// from. The 'finish' listener runs its connection step on it and does not
+// detach/advance the pipeline a second time.
+const kDetachedFrom = Symbol("kDetachedFrom");
 
 // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js (socketOnError)
 const badRequestResponse = Buffer.from(`HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n`, "latin1");
@@ -2611,19 +2614,31 @@ function emitResponseFinish() {
   if (req && !req._consuming && !req._readableState?.resumeScheduled) {
     req._dump();
   }
-  // req.socket is nulled by the stream destroyer (pipeline/compose cleanup);
-  // the response's own socket (set by assignSocket, cleared only by
-  // detachSocket) still references the connection then.
-  const socket = this.req?.socket ?? this.socket;
-  // Node's clearIncoming: a request that ended before its response did. Any other one is cleared at its EOF.
-  const parser = socket?.parser;
+  // The dispatcher detached a synchronously-finished response itself and left
+  // its connection here; detaching or advancing the pipeline again would skip
+  // a queued response.
+  const detachedFrom = this[kDetachedFrom];
+  if (detachedFrom !== undefined) {
+    // Node's clearIncoming: a request that ended before its response did. Any other one is cleared at its EOF.
+    const parser = detachedFrom.parser;
+    if (parser != null && parser.incoming === req && req.readableEnded) parser.incoming = null;
+    onResponseFinishHandleSocket(detachedFrom.server, detachedFrom, this);
+    return;
+  }
+  // The response still owns its server socket, unless user code emptied or
+  // replaced that slot: then the request's links lead to the connection.
+  let socket = this[kSocket];
+  let server = socket?.server;
+  if (server == null && req) {
+    socket = req.socket ?? req.client;
+    server = socket?.server;
+  }
+  if (socket == null) return;
+  const parser = socket.parser;
   if (parser != null && parser.incoming === req && req.readableEnded) parser.incoming = null;
-  onResponseFinishHandleSocket(socket?.server, socket, this);
-  // The dispatcher detached a synchronously-finished response itself;
-  // advancing the pipeline again here would skip a queued response.
-  if (this[kDispatcherDetached]) return;
-  if (socket != null) this.detachSocket(socket);
-  advanceResponsePipeline(socket?.server, socket);
+  onResponseFinishHandleSocket(server, socket, this);
+  this.detachSocket(socket);
+  advanceResponsePipeline(server, socket);
 }
 
 // Runs when a response has finished, like the transport-related half of
@@ -3572,7 +3587,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   return this;
 };
 
-// 'finish' waits a tick: the dispatcher sets kDispatcherDetached after a sync handler returns, and 'finish' reads it.
+// 'finish' waits a tick: the dispatcher sets kDetachedFrom after a sync handler returns, and 'finish' reads it.
 function queueResponseFinished(res, callback) {
   res._callPendingCallbacks();
   process.nextTick(emitResponseFinished, res, callback);
@@ -3873,7 +3888,7 @@ Object.defineProperty(ServerResponse.prototype, "writableHighWaterMark", {
     // Like Node.js's OutgoingMessage: the socket's high water mark when one
     // is assigned (the stream default differs by platform), otherwise the
     // OutgoingMessage default set by the constructor.
-    return this.socket?.writableHighWaterMark ?? this[kHighWaterMark] ?? 64 * 1024;
+    return this[kSocket]?.writableHighWaterMark ?? this[kHighWaterMark] ?? 64 * 1024;
   },
 });
 

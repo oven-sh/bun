@@ -901,9 +901,7 @@ impl RareData {
     ) -> crate::virtual_machine::SweepResult {
         // A native close path can cascade (closing one socket completes or
         // fails another, whose own close lands in a group already drained), so
-        // loop until every group is observed empty in the same pass — bounded;
-        // the post-close force-drain in close_all handles whatever is left
-        // after the cap.
+        // loop until every group is observed empty in the same pass — bounded.
         // Walk the loop's linked-group list rather than just our 14 embedded
         // fields: Listener/uWS-App groups own their own SocketGroup, and accepted
         // sockets land *there*, not in RareData. Iterating only the embedded

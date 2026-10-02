@@ -4,6 +4,7 @@
 #include <JavaScriptCore/JSDestructibleObject.h>
 #include <JavaScriptCore/JSObject.h>
 #include "BunClientData.h"
+#include "ZigGeneratedClasses.h"
 #include <wtf/Lock.h>
 #include <wtf/Vector.h>
 #include <wtf/text/StringView.h>
@@ -27,16 +28,14 @@ struct us_socket_stream_buffer_t {
 };
 
 struct us_socket_t;
+
+void Bun__NodeHTTPResponse_takeBackConnection(void* zigResponse, JSC::EncodedJSValue jsValue, bool adopted);
 }
 
 namespace uWS {
 template<bool SSL, bool IsNodeHttp>
 struct HttpResponseData;
 struct WebSocketData;
-}
-
-namespace WebCore {
-class JSNodeHTTPResponse;
 }
 
 namespace Bun {
@@ -112,6 +111,16 @@ public:
      * normally resets per parsed request) and, when the queue drained, resume
      * socket reads. Returns false when the connection is already gone. */
     bool startPipelinedResponse(JSC::VM& vm, WebCore::JSNodeHTTPResponse* response, bool isAncient, bool connectionClose);
+    /* The response that answers on this connection now. A close reaches it and the queued ones. */
+    WebCore::JSNodeHTTPResponse* currentResponse() const { return m_currentResponse.get(); }
+    /* A close does not reach the response that leaves the slot, so the connection is taken back from it first. */
+    void setCurrentResponse(JSC::VM& vm, WebCore::JSNodeHTTPResponse* response)
+    {
+        if (auto* replaced = m_currentResponse.get(); replaced != nullptr && replaced != response && replaced->m_ctx != nullptr) {
+            Bun__NodeHTTPResponse_takeBackConnection(replaced->m_ctx, JSC::JSValue::encode(replaced), false);
+        }
+        m_currentResponse.set(vm, this, response);
+    }
     /* Stop parsing further HTTP requests on this connection (Node frees the
      * parser when 'close' is emitted on the socket). */
     void stopHTTPParsing();
@@ -164,7 +173,6 @@ public:
     mutable JSC::WriteBarrier<JSC::JSObject> functionToCallOnClose;
     mutable JSC::WriteBarrier<JSC::JSObject> functionToCallOnDrain;
     mutable JSC::WriteBarrier<JSC::JSObject> functionToCallOnData;
-    mutable JSC::WriteBarrier<WebCore::JSNodeHTTPResponse> currentResponseObject;
     mutable JSC::WriteBarrier<JSC::JSObject> m_remoteAddress;
     mutable JSC::WriteBarrier<JSC::JSObject> m_localAddress;
     mutable JSC::WriteBarrier<JSC::JSObject> m_duplex;
@@ -191,6 +199,8 @@ public:
     void reset();
     void syncPeerCertificateVerification();
     void onClose(int readError, bool peerEnded);
+    /* A WebSocket adopted the connection. `adopted` is its socket: the adoption can move it. */
+    void onUpgraded(us_socket_t* adopted);
     void onDrain();
     void onData(const char* data, int length, bool last);
     void applyTunnelReads();
@@ -198,6 +208,9 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
     void finishCreation(JSC::VM& vm);
+
+private:
+    mutable JSC::WriteBarrier<WebCore::JSNodeHTTPResponse> m_currentResponse;
 };
 
 } // namespace Bun

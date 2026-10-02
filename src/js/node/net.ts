@@ -497,15 +497,7 @@ function onClientHandshake(self, socket, success, verifyError) {
     self.secureConnecting = false;
     return;
   }
-  // The second argument says whether the handshake completed. node:tls
-  // decides what to do with verification results in JS via the
-  // rejectUnauthorized / checkServerIdentity handling below, so a
-  // verification-class result (an X509 code such as
-  // UNABLE_TO_VERIFY_LEAF_SIGNATURE) still
-  // means the TLS session itself was established. Only a fatal TLS protocol
-  // failure tears the socket down here: those arrive as EPROTO carrying the
-  // OpenSSL "error:...:SSL routines:..." reason (or an already decomposed
-  // ERR_SSL_* / ERR_OSSL_* code).
+  // `success` says whether the handshake completed. The chain's verdict and the name check are applied below.
   const isProtocolFailure =
     !success &&
     verifyError?.code != null &&
@@ -1627,7 +1619,11 @@ const SocketHandlers2 = {
       req.errno = error.errno || uv().UV_ECANCELED;
       return;
     }
-    req.oncomplete(error.errno, self._handle, req, true, true);
+    // Closing the handle cancels the request (ECANCELED). libuv completes it on a later loop turn,
+    // after destroy(err)'s 'error'. Not deferred here: it would land on a connect() made right
+    // after destroy() and fail that one.
+    // An attempt that timed out was closed with its `oncomplete` cleared.
+    req.oncomplete?.(error.errno, self._handle, req, true, true);
   },
 } satisfies InternalSocketHandler<ConnectData>;
 
@@ -3548,8 +3544,7 @@ function internalConnectMultipleTimeout(context, req, handle) {
   context.socket.emit("connectionAttemptTimeout", req.address, req.port, req.addressType);
 
   req.oncomplete = undefined;
-  // close() on a still-connecting handle runs no terminal callback and never
-  // rejects doConnect's promise (see socket_body.rs), so end the span here.
+  // `oncomplete` is what would have ended the span.
   traceConnectEnd(req);
   ArrayPrototypePush.$call(context.errors, createConnectionError(req, uv().UV_ETIMEDOUT));
   handle.close();

@@ -95,38 +95,23 @@ void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_list
      * us_internal_socket_group_unlink_socket advances group->iterator past any
      * socket it unlinks, so parking the next pointer there lets a handler free
      * it without leaving us a dangling step (same pattern as the timeout sweep
-     * in loop.c). */
+     * in loop.c). A socket a handler opens links in at the head, behind the
+     * walk: it is not this call's to close, so a handler that always dials
+     * again cannot keep the walk going. */
     group->iterator = group->head_sockets;
     while (group->iterator) {
         struct us_socket_t *s = group->iterator;
         group->iterator = s->next;
-        if (us_internal_poll_type(&s->p) & POLL_TYPE_SEMI_SOCKET) {
-            /* In-flight connect — close_raw skips dispatch for SEMI_SOCKET
-             * (on_close without on_open is wrong), so the Zig wrapper's
-             * `socket = .connected` would never detach and finalize() UAFs
-             * after drainClosedSockets(). Deliver the same on_connect_error
-             * the natural failure path would have, which detaches the
-             * wrapper. The handler then closes; if it doesn't, the
-             * force-drain below catches it. */
-            us_dispatch_connect_error(s, ECONNABORTED);
-            if (!us_socket_is_closed(s)) {
-                us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, 0);
-            }
-        } else {
-            us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
+        us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
+        /* A TLS socket may have *deferred* that: us_internal_ssl_close with
+         * code==0 sends close_notify and, on WANT_READ, waits for the peer's
+         * reply. Callers (e.g. Listener.deinit) free the embedding storage
+         * next, which would leave s->group dangling. */
+        if (!us_socket_is_closed(s)) {
+            us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, 0);
         }
     }
     group->iterator = 0;
-
-    /* TLS sockets may have *deferred* the close above: us_internal_ssl_close
-     * with code==0 sends close_notify and, on WANT_READ, leaves the socket
-     * open in head_sockets waiting for the peer's reply. Callers of close_all
-     * (e.g. Listener.deinit) free the embedding storage immediately after, so
-     * any survivor's s->group becomes a dangling pointer. The graceful walk
-     * already flushed close_notify; force-drain the rest synchronously now. */
-    while (group->head_sockets) {
-        us_internal_socket_close_raw(group->head_sockets, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, 0);
-    }
 
     /* Sockets parked in the loop-wide low-prio queue aren't in head_sockets
      * (the queue reuses prev/next), so they'd survive the walk above and later
@@ -760,7 +745,7 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
     if (result->error) {
         /* Preserve the getaddrinfo failure so the connect-error callback can
          * report the resolver error (ENOTFOUND, ...) instead of the fabricated
-         * ECONNABORTED that us_connecting_socket_close fills in when `error`
+         * ECANCELED that us_connecting_socket_close fills in when `error`
          * is still 0. `error_is_dns` tags the namespace: getaddrinfo return
          * codes and errnos overlap numerically. */
         c->error = result->error;
@@ -820,15 +805,14 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
                 if (opened == 0 && c->connecting_head == NULL) {
                     /* Every resolved address failed to connect. Without this,
                      * us_connecting_socket_close defaults c->error to
-                     * ECONNABORTED (caller abort) and never invalidates the
+                     * ECANCELED (caller abort) and never invalidates the
                      * DNS cache entry for the dead host. */
                     c->error = ECONNREFUSED;
                     us_connecting_socket_close(c);
                 }
             }
         } else {
-            us_dispatch_connect_error(s, error);
-            // It's expected that close is called by the caller
+            us_internal_socket_connect_failed(s, error);
         }
     } else {
         us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE);

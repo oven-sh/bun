@@ -235,6 +235,10 @@ JSC::Identifier toIdentifier(JSC::VM& vm, const BunString& bunString)
     if (bunString.isEmpty()) {
         return vm.propertyNames->emptyIdentifier;
     }
+    if (bunString.tag == BunStringTag::StaticEncodedSlice) {
+        // Interned: no allocation when the atom is already in the table.
+        return JSC::Identifier::fromString(vm, Zig::toStringStatic(bunString.impl.encoded));
+    }
     return JSC::Identifier::fromString(vm, bunString.toWTFString());
 }
 

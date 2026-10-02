@@ -5255,6 +5255,109 @@ describe("hoisting", async () => {
       // Nothing is resolved this time; the preview still reports it.
       expect(peerWarnings((await install(packageDir, "--dry-run")).err)).toEqual(expected);
     });
+
+    test("a copy is reported only when a dependent loads it from disk", async () => {
+      // Both workspaces depend on dedupe-divergent-peers, whose dedupe-divergent-strict wants
+      // no-deps@^2.0.0. Only `provider` has a no-deps of its own, and it is 1.0.0. The isolated
+      // linker resolves the peer once per workspace and then keeps one store entry for both, so
+      // one of the two resolutions is never installed.
+      for (const [bare, provider] of [
+        ["ws-a", "ws-b"],
+        ["ws-b", "ws-a"],
+      ]) {
+        const { packageDir } = await registry.createTestDir({
+          bunfigOpts: { linker },
+          files: {
+            "package.json": JSON.stringify({ name: "mono", workspaces: ["ws-a", "ws-b", "ws-seed"] }),
+            [`${bare}/package.json`]: JSON.stringify({
+              name: bare,
+              version: "1.0.0",
+              dependencies: { "dedupe-divergent-peers": "1.0.0" },
+            }),
+            [`${provider}/package.json`]: JSON.stringify({
+              name: provider,
+              version: "1.0.0",
+              dependencies: { "dedupe-divergent-peers": "1.0.0", "no-deps": "1.0.0" },
+            }),
+            // An alias puts no-deps@2.0.0 in the lockfile without providing the name `no-deps`.
+            "ws-seed/package.json": JSON.stringify({
+              name: "ws-seed",
+              version: "1.0.0",
+              dependencies: { "aliased-no-deps": "npm:no-deps@2.0.0" },
+            }),
+          },
+        });
+
+        const { err } = await install(packageDir);
+
+        // The no-deps that dedupe-divergent-strict loads, as node resolves it from each workspace.
+        const loaded = new Set<string>();
+        for (const workspace of [bare, provider]) {
+          let at = join(packageDir, workspace, "package.json");
+          for (const name of ["dedupe-divergent-peers", "dedupe-divergent-strict", "no-deps"]) {
+            at = realpathSync(createRequire(at).resolve(`${name}/package.json`));
+          }
+          loaded.add((await file(at).json()).version);
+        }
+
+        expect({ bare, warnings: peerWarnings(err) }).toEqual({
+          bare,
+          warnings: [...loaded]
+            .filter(version => !Bun.semver.satisfies(version, "^2.0.0"))
+            .map(
+              version =>
+                `warn: incorrect peer dependency "no-deps@${version}" (dedupe-divergent-strict@1.0.0 requires "^2.0.0")`,
+            ),
+        });
+      }
+    });
+
+    test("a workspace reached twice is reported for what its one node_modules holds", async () => {
+      // `lib` is a workspace named no-deps. It wants a-dep@1.0.1 and its peer-a-dep-1-0-2 wants
+      // a-dep@1.0.2. The root provides one a-dep and `app` the other. peer-deps-fixed's peer
+      // reaches `lib` again from `app`, and the isolated linker resolves both peers there too,
+      // but `lib` has one node_modules, and the root's side fills it.
+      for (const [atRoot, atApp, unmet] of [
+        ["1.0.1", "1.0.2", `"a-dep@1.0.1" (peer-a-dep-1-0-2@1.0.0 requires "1.0.2")`],
+        ["1.0.2", "1.0.1", `"a-dep@1.0.2" (no-deps@workspace:lib requires "1.0.1")`],
+      ]) {
+        const { packageDir } = await registry.createTestDir({
+          bunfigOpts: { linker },
+          files: {
+            "package.json": JSON.stringify({
+              name: "mono",
+              workspaces: ["lib", "app"],
+              dependencies: { "a-dep": atRoot },
+            }),
+            "lib/package.json": JSON.stringify({
+              name: "no-deps",
+              version: "2.0.0",
+              dependencies: { "peer-a-dep-1-0-2": "1.0.0" },
+              peerDependencies: { "a-dep": "1.0.1" },
+            }),
+            "app/package.json": JSON.stringify({
+              name: "app",
+              version: "1.0.0",
+              dependencies: { "no-deps": "workspace:*", "peer-deps-fixed": "1.0.0", "a-dep": atApp },
+            }),
+          },
+        });
+
+        const { err } = await install(packageDir);
+
+        const lib = realpathSync(join(packageDir, "lib", "package.json"));
+        const dependency = realpathSync(createRequire(lib).resolve("peer-a-dep-1-0-2/package.json"));
+        expect({
+          lib: (await file(createRequire(lib).resolve("a-dep/package.json")).json()).version,
+          dependency: (await file(createRequire(dependency).resolve("a-dep/package.json")).json()).version,
+          warnings: peerWarnings(err),
+        }).toEqual({
+          lib: atRoot,
+          dependency: atRoot,
+          warnings: [`warn: incorrect peer dependency ${unmet}`],
+        });
+      }
+    });
   });
 
   describe("devDependencies", () => {

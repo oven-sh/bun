@@ -798,21 +798,18 @@ impl Lockfile {
         }
     }
 
-    /// Called by a linker with the package it wires a required peer edge of `dependent` to.
-    pub(crate) fn warn_if_peer_out_of_range(
+    /// The range a required peer edge is held to, when `served` is outside it.
+    pub(crate) fn unmet_peer_range(
         &self,
-        log: &mut bun_ast::Log,
-        dependent: PackageID,
         peer_dep_id: DependencyID,
         served: PackageID,
-    ) {
+    ) -> Option<EnforcedRange<'_>> {
         let dep = &self.buffers.dependencies[peer_dep_id as usize];
         debug_assert!(dep.behavior.is_peer());
         if dep.behavior.is_optional_peer() {
-            return;
+            return None;
         }
-        let pkg_resolutions = self.packages.items_resolution();
-        let served_res = &pkg_resolutions[served as usize];
+        let served_res = &self.packages.items_resolution()[served as usize];
         let range = self.enforced_range(peer_dep_id);
         // A workspace, folder or tarball copy has no version to reject.
         let comparable = matches!(
@@ -823,9 +820,26 @@ impl Lockfile {
         );
         let buf = self.buffers.string_bytes.as_slice();
         if !comparable || served_res.satisfies_dependency_version(&range.version, buf, buf) {
-            return;
+            return None;
         }
+        Some(range)
+    }
 
+    /// Called by a linker with the package it wires a required peer edge of `dependent` to.
+    pub(crate) fn warn_if_peer_out_of_range(
+        &self,
+        log: &mut bun_ast::Log,
+        dependent: PackageID,
+        peer_dep_id: DependencyID,
+        served: PackageID,
+    ) {
+        let Some(range) = self.unmet_peer_range(peer_dep_id, served) else {
+            return;
+        };
+
+        let buf = self.buffers.string_bytes.as_slice();
+        let pkg_resolutions = self.packages.items_resolution();
+        let served_res = &pkg_resolutions[served as usize];
         let pkg_names = self.packages.items_name();
         let dependent_res = &pkg_resolutions[dependent as usize];
         let dependent_name = pkg_names[dependent as usize].slice(buf);

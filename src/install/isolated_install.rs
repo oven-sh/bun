@@ -68,6 +68,14 @@ struct QueuedNode {
     pkg_id: PackageID,
 }
 
+/// A required peer edge of a node, and the package outside its range that the node resolved it to.
+#[derive(Clone, Copy)]
+struct UnmetPeer {
+    node_id: store::node::Id,
+    dep_id: DependencyID,
+    pkg_id: PackageID,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct EarlyDedupeKey {
     pkg_id: PackageID,
@@ -222,7 +230,7 @@ pub(crate) fn build_store(
     packages_to_install: Option<&[PackageID]>,
     timings: Timings,
     // `Some` only for a store about to be installed: where its out-of-range peers are reported.
-    mut peer_warnings: Option<&mut bun_ast::Log>,
+    peer_warnings: Option<&mut bun_ast::Log>,
 ) -> Result<Store, AllocError> {
     let mut timer = std::time::Instant::now();
     let pkgs = lockfile.packages.slice();
@@ -402,7 +410,8 @@ pub(crate) fn build_store(
     let mut visited_parent_node_ids: Vec<store::node::Id> = Vec::new();
 
     // A package is visited once per peer context; each `(peer edge, resolution)` is checked once.
-    let mut reported_peers: HashMap<(DependencyID, PackageID), ()> = HashMap::default();
+    let mut peer_is_unmet: HashMap<(DependencyID, PackageID), bool> = HashMap::default();
+    let mut unmet_peers: Vec<UnmetPeer> = Vec::new();
 
     // First pass: create full dependency tree with resolved peers
     'next_node: while let Some(entry) = node_queue.pop() {
@@ -814,15 +823,24 @@ pub(crate) fn build_store(
                 continue;
             }
 
-            if let Some(log) = peer_warnings.as_deref_mut()
+            if peer_warnings.is_some()
                 && !dependencies[peer_dep_id as usize]
                     .behavior
                     .is_optional_peer()
-                && reported_peers
-                    .insert((peer_dep_id, resolved_pkg_id), ())
-                    .is_none()
             {
-                lockfile.warn_if_peer_out_of_range(log, entry.pkg_id, peer_dep_id, resolved_pkg_id);
+                let check = peer_is_unmet.get_or_put((peer_dep_id, resolved_pkg_id))?;
+                if !check.found_existing {
+                    *check.value_ptr = lockfile
+                        .unmet_peer_range(peer_dep_id, resolved_pkg_id)
+                        .is_some();
+                }
+                if *check.value_ptr {
+                    unmet_peers.push(UnmetPeer {
+                        node_id,
+                        dep_id: peer_dep_id,
+                        pkg_id: resolved_pkg_id,
+                    });
+                }
             }
 
             for &visited_parent_id in &visited_parent_node_ids {
@@ -1115,6 +1133,12 @@ pub(crate) fn build_store(
         }
     }
 
+    if let Some(log) = peer_warnings
+        && !unmet_peers.is_empty()
+    {
+        report_unmet_peers(log, lockfile, node_pkg_ids, &store_entries, &unmet_peers)?;
+    }
+
     if matches!(timings, Timings::Print) {
         let dedupe_end = timer.elapsed();
         bun_core::pretty_errorln!(
@@ -1127,6 +1151,59 @@ pub(crate) fn build_store(
         entries: store_entries,
         nodes,
     })
+}
+
+/// Reports the unmet peers of the nodes whose resolutions reach the disk, once per `(peer edge, package)`.
+fn report_unmet_peers(
+    log: &mut bun_ast::Log,
+    lockfile: &Lockfile,
+    node_pkg_ids: &[PackageID],
+    entries: &store::entry::List,
+    unmet_peers: &[UnmetPeer],
+) -> Result<(), AllocError> {
+    let pkg_resolutions = lockfile.packages.items_resolution();
+    let entry_node_ids = entries.items_node_id();
+    let entry_dependencies = entries.items_dependencies();
+    let pkg_of = |entry_id: store::entry::Id| {
+        node_pkg_ids[entry_node_ids[entry_id.get() as usize].get() as usize]
+    };
+    let is_workspace = |entry_id: store::entry::Id| {
+        pkg_resolutions[pkg_of(entry_id) as usize].tag == ResolutionTag::Workspace
+    };
+
+    // The installer links the root entry and the first entry of each workspace, then what they depend on.
+    let mut queue: Vec<store::entry::Id> = vec![store::entry::Id::ROOT];
+    let mut workspaces: HashMap<PackageID, ()> = HashMap::default();
+    for index in 1..entry_node_ids.len() {
+        let entry_id = store::entry::Id::from(u32::try_from(index).expect("int cast"));
+        if is_workspace(entry_id) && workspaces.insert(pkg_of(entry_id), ()).is_none() {
+            queue.push(entry_id);
+        }
+    }
+
+    // A node that the second pass folded into the entry of another node is not on disk.
+    let mut linked = DynamicBitSet::init_empty(node_pkg_ids.len())?;
+    while let Some(entry_id) = queue.pop() {
+        let node = entry_node_ids[entry_id.get() as usize].get() as usize;
+        if linked.is_set(node) {
+            continue;
+        }
+        linked.set(node);
+        for dependency in entry_dependencies[entry_id.get() as usize].slice() {
+            if !is_workspace(dependency.entry_id) {
+                queue.push(dependency.entry_id);
+            }
+        }
+    }
+
+    let mut reported: HashMap<(DependencyID, PackageID), ()> = HashMap::default();
+    for unmet in unmet_peers {
+        let node = unmet.node_id.get() as usize;
+        if linked.is_set(node) && reported.insert((unmet.dep_id, unmet.pkg_id), ()).is_none() {
+            lockfile.warn_if_peer_out_of_range(log, node_pkg_ids[node], unmet.dep_id, unmet.pkg_id);
+        }
+    }
+    Ok(())
 }
 
 /// Runs on main thread

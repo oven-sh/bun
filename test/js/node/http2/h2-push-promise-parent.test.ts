@@ -21,6 +21,7 @@ import assert from "node:assert";
 import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
+import stream from "node:stream";
 import { describe, test } from "node:test";
 
 const { NGHTTP2_CANCEL } = http2.constants;
@@ -35,7 +36,6 @@ const FrameType = {
   SETTINGS: 0x4,
   PUSH_PROMISE: 0x5,
   PING: 0x6,
-  GOAWAY: 0x7,
   CONTINUATION: 0x9,
 } as const;
 
@@ -52,37 +52,55 @@ function encodeFrame(type: number, flags: number, streamId: number, payload: Buf
 
 /** A minimal raw HTTP/2 server: accept one connection, collect parsed inbound frames. */
 class RawH2Server {
-  server: net.Server;
-  socket: net.Socket | null = null;
+  server: net.Server | null;
+  socket: stream.Duplex | null = null;
+  /** Set for a JS transport: the stream that the client gets from `createConnection`. */
+  clientSide: stream.Duplex | null = null;
   private buf: Buffer = Buffer.alloc(0);
   private sawPreface = false;
   private closed = false;
   frames: Frame[] = [];
   private waiters: Array<{ pred: (f: Frame) => boolean; resolve: (f: Frame) => void; reject: (e: Error) => void }> = [];
 
-  private constructor(server: net.Server) {
+  private constructor(server: net.Server | null) {
     this.server = server;
+  }
+
+  private attach(socket: stream.Duplex) {
+    this.socket = socket;
+    socket.on("data", d => this.onData(d));
+    socket.on("error", () => {});
+    socket.on("close", () => {
+      this.closed = true;
+      for (const w of this.waiters.splice(0)) w.reject(RawH2Server.closedError());
+    });
   }
 
   static async listen(): Promise<RawH2Server> {
     const server = net.createServer();
     const s = new RawH2Server(server);
-    server.on("connection", socket => {
-      s.socket = socket;
-      socket.on("data", d => s.onData(d));
-      socket.on("error", () => {});
-      socket.on("close", () => {
-        s.closed = true;
-        for (const w of s.waiters.splice(0)) w.reject(RawH2Server.closedError());
-      });
-    });
+    server.on("connection", socket => s.attach(socket));
     server.listen(0, "127.0.0.1");
     await once(server, "listening");
     return s;
   }
 
-  get port(): number {
-    return (this.server.address() as net.AddressInfo).port;
+  /**
+   * No socket: the client reads each chunk that this side writes inside one JS call, so no tick
+   * runs between the frames of a chunk.
+   */
+  static overDuplexPair(): RawH2Server {
+    const s = new RawH2Server(null);
+    const [clientSide, serverSide] = stream.duplexPair();
+    s.clientSide = clientSide;
+    s.attach(serverSide);
+    return s;
+  }
+
+  connectClient(): http2.ClientHttp2Session {
+    const clientSide = this.clientSide;
+    if (clientSide) return http2.connect("http://localhost", { createConnection: () => clientSide });
+    return http2.connect(`http://127.0.0.1:${(this.server!.address() as net.AddressInfo).port}`);
   }
 
   private static closedError() {
@@ -129,7 +147,7 @@ class RawH2Server {
 
   close() {
     this.socket?.destroy();
-    this.server.close();
+    this.server?.close();
   }
 }
 
@@ -145,6 +163,16 @@ const serverSettings = Buffer.concat([
 ]);
 /** Response HEADERS on stream 1: [:status 200]. */
 const responseHeaders = (flags: number) => encodeFrame(FrameType.HEADERS, flags, 1, Buffer.from([0x88]));
+/** Response HEADERS on stream 1 that the client must reset: [:status 200, connection: close]. */
+const malformedResponseHeaders = encodeFrame(
+  FrameType.HEADERS,
+  0x4 /* END_HEADERS */,
+  1,
+  Buffer.concat([Buffer.from([0x88, 0x00]), hpackLiteral("connection"), hpackLiteral("close")]),
+);
+const cancelCode = Buffer.alloc(4);
+cancelCode.writeUInt32BE(NGHTTP2_CANCEL, 0);
+const rstStream1 = encodeFrame(FrameType.RST_STREAM, 0, 1, cancelCode);
 const promisedId = Buffer.alloc(4);
 promisedId.writeUInt32BE(2, 0);
 // The promised request, in two parts: [:method GET, :scheme http, :path /] and [:authority localhost].
@@ -169,9 +197,7 @@ const pushedResponse = Buffer.concat([
 // the request's writable cannot finish.
 const blockedBody = Buffer.alloc(200_000, "a");
 
-// nghttp2 refuses before it counts the promised stream as processed (last_proc_stream_id), so
-// the GOAWAY of a later session.close() does not name it.
-const refused = { pushedStreams: 0, resetsOnStream2: [NGHTTP2_CANCEL], goawayLastStreamId: 0 };
+const refused = { pushedStreams: 0, resetsOnStream2: [NGHTTP2_CANCEL] };
 const surfaced = { pushedStreams: 1, resetsOnStream2: [] as number[] };
 
 type Row = {
@@ -190,7 +216,9 @@ type Row = {
   serverWaitsFor?: (f: Frame) => boolean;
   read1: Buffer[];
   read2?: Buffer[];
-  expected: typeof refused | typeof surfaced;
+  /** The session runs over a JS stream (`createConnection`) and not over a socket. */
+  jsTransport?: boolean;
+  expected: typeof refused;
   /** Why Bun does not give node's result yet. */
   todoOnBun?: string;
 };
@@ -198,8 +226,8 @@ type Row = {
 const nextTurn = () => new Promise<void>(resolve => setImmediate(resolve));
 
 async function pushExchange(row: Row) {
-  const raw = await RawH2Server.listen();
-  const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+  const raw = row.jsTransport ? RawH2Server.overDuplexPair() : await RawH2Server.listen();
+  const client = raw.connectClient();
   client.on("error", () => {});
   let pushedStreams = 0;
   client.on("stream", pushed => {
@@ -215,7 +243,11 @@ async function pushExchange(row: Row) {
     req.on("error", () => {});
     if (row.body === "write") req.write(blockedBody);
     else if (row.body === "end") req.end(blockedBody);
-    const responded = once(req, "response").then(() => row.inResponse?.(req, abort));
+    // once() rejects when the request fails before its 'response'.
+    const responded = once(req, "response").then(
+      () => row.inResponse?.(req, abort),
+      () => {},
+    );
     await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
     // One write is one read for the client.
     raw.write(serverSettings, ...row.read1);
@@ -238,16 +270,12 @@ async function pushExchange(row: Row) {
       await raw.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0 && f.payload.toString() === payload);
       await nextTurn();
     }
-    const result = {
+    return {
       pushedStreams,
       resetsOnStream2: raw.frames
         .filter(f => f.type === FrameType.RST_STREAM && f.streamId === 2)
         .map(f => f.payload.readUInt32BE(0)),
     };
-    if (pushedStreams > 0) return result;
-    client.close();
-    const goaway = await raw.waitFor(f => f.type === FrameType.GOAWAY);
-    return { ...result, goawayLastStreamId: goaway.payload.readUInt32BE(0) & 0x7fffffff };
   } finally {
     client.destroy();
     raw.close();
@@ -301,6 +329,28 @@ const rows: Record<string, Row> = {
   "close(NGHTTP2_CANCEL), then destroy()": {
     inResponse: req => (req.close(NGHTTP2_CANCEL), req.destroy()),
     read1: sameRead,
+    expected: refused,
+  },
+  // The client did nothing: the parent was reset earlier in the same read, by the server or by
+  // the client's own parser (a response with a connection header is malformed, RFC 9113 §8.2.2).
+  "nothing, and the server reset the request before the PUSH_PROMISE": {
+    read1: [responseHeaders(0x4), rstStream1, pushPromise, pushedResponse],
+    expected: refused,
+  },
+  "nothing, and the response before the PUSH_PROMISE is malformed": {
+    read1: [malformedResponseHeaders, pushPromise, pushedResponse],
+    expected: refused,
+  },
+  // Over a JS transport the request's own teardown runs after the whole chunk, so here only the
+  // parser can know that the parent was reset.
+  "nothing, and the server reset the request before the PUSH_PROMISE, over a JS transport": {
+    jsTransport: true,
+    read1: [responseHeaders(0x4), rstStream1, pushPromise, pushedResponse],
+    expected: refused,
+  },
+  "nothing, and the response before the PUSH_PROMISE is malformed, over a JS transport": {
+    jsTransport: true,
+    read1: [malformedResponseHeaders, pushPromise, pushedResponse],
     expected: refused,
   },
   // The answer is fixed when the PUSH_PROMISE frame arrives. Its CONTINUATION comes in a later read.

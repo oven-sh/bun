@@ -221,7 +221,7 @@ pub(crate) trait Sink {
     fn can_open_stream(&self) -> bool {
         true
     }
-    /// `false` when `parent_id` is nghttp2's CLOSING: a push promised on it gets RST_STREAM(CANCEL).
+    /// `false` when `parent_id` was reset: a push promised on it gets RST_STREAM(CANCEL).
     fn can_accept_push(&self, _parent_id: u32) -> bool {
         true
     }

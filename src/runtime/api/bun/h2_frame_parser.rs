@@ -1350,7 +1350,7 @@ pub(crate) struct Stream {
     // The JS readable for this stream is paused (setStreamReading(id, false)): the engine defers
     // replenishing the stream's receive window until reading resumes, backpressuring the peer.
     reading_paused: bool,
-    // nghttp2's NGHTTP2_STREAM_CLOSING: node has submitted this stream's RST_STREAM by now.
+    // A RST_STREAM was sent or received, or node has submitted one by now: no push on this stream.
     closing: bool,
 
     // when we have backpressure we queue the data e round robin the Streams
@@ -4208,6 +4208,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
             unsafe {
                 old_state = (*stream).state as u8;
                 (*stream).state = StreamState::CLOSED;
+                (*stream).closing = true;
                 (*stream).rst_code = code;
             }
         }

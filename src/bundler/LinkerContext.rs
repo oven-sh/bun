@@ -4,7 +4,9 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use crate::Error as BunError;
 use bun_alloc::{AllocError, Arena as Bump};
 use bun_ast::{Data, Loc, Log, Range, Source};
-use bun_collections::{ArrayHashMap, AutoBitSet, HashMap, MultiArrayList, VecExt, index_sort};
+use bun_collections::{
+    ArrayHashMap, AutoBitSet, DynamicBitSetUnmanaged, HashMap, MultiArrayList, VecExt, index_sort,
+};
 use bun_core::{self as bun, FeatureFlags, Output};
 use bun_core::{MutableString, string_joiner::StringJoiner, strings};
 use bun_sourcemap::{
@@ -34,6 +36,7 @@ use bun_ast::SideEffects;
 use bun_resolver::Resolver;
 
 use crate::Graph::Graph;
+use crate::linker_graph::PerEntryPointPartLiveness;
 use crate::options::{CompileMode, Format, Loader, SourceMapOption, Target};
 use crate::{
     AdditionalFile, BundleV2, Chunk, CompileResultForSourceMap, ContentHasher, ImportTracker,
@@ -408,7 +411,38 @@ impl<'a> LinkerContext<'a> {
     /// what the import records of its live parts load
     /// (`file_loaded_by_import`) and the files declaring the bindings those
     /// parts use. A CSS or HTML file has no parts; every record counts.
-    pub(crate) fn for_each_file_loaded_by(&self, source_index: u32, mut each: impl FnMut(u32)) {
+    pub(crate) fn for_each_file_loaded_by(&self, source_index: u32, each: impl FnMut(u32)) {
+        let parts_live = &self.graph.parts_live[source_index as usize];
+        self.for_each_file_loaded_by_parts(
+            source_index,
+            |part_index| parts_live.is_set(part_index),
+            each,
+        );
+    }
+
+    /// `for_each_file_loaded_by`, with the parts live for one entry point when liveness is per entry point.
+    fn for_each_file_loaded_by_entry_point(
+        &self,
+        source_index: u32,
+        entry_point_id: usize,
+        each: impl FnMut(u32),
+    ) {
+        match &self.graph.parts_live_per_entry_point {
+            Some(parts_live) => self.for_each_file_loaded_by_parts(
+                source_index,
+                |part_index| parts_live.is_live(entry_point_id, source_index as usize, part_index),
+                each,
+            ),
+            None => self.for_each_file_loaded_by(source_index, each),
+        }
+    }
+
+    fn for_each_file_loaded_by_parts(
+        &self,
+        source_index: u32,
+        is_part_live: impl Fn(usize) -> bool,
+        mut each: impl FnMut(u32),
+    ) {
         let records = &self.graph.ast.items_import_records()[source_index as usize];
         if self.graph.ast.items_css()[source_index as usize].is_some()
             || self.parse_graph().input_files.items_loader()[source_index as usize] == Loader::Html
@@ -420,13 +454,12 @@ impl<'a> LinkerContext<'a> {
             }
             return;
         }
-        let parts_live = &self.graph.parts_live[source_index as usize];
         for (part_index, part) in self.graph.ast.items_parts()[source_index as usize]
             .as_slice()
             .iter()
             .enumerate()
         {
-            if !parts_live.is_set(part_index) {
+            if !is_part_live(part_index) {
                 continue;
             }
             for &record_index in part.import_record_indices.iter() {
@@ -1044,8 +1077,36 @@ impl<'a> LinkerContext<'a> {
         };
         let entry_points_len = entry_points.len();
 
+        let mut parts_live_per_entry_point = if entry_points_len > 1 && !self.graph.code_splitting {
+            let mut part_offsets = Vec::with_capacity(parts.len());
+            let mut total_parts = 0usize;
+            for file_parts in parts.iter() {
+                part_offsets.push(total_parts);
+                total_parts = total_parts
+                    .checked_add(file_parts.len())
+                    .ok_or(AllocError)?;
+            }
+
+            let mut entry_parts_live = Vec::with_capacity(entry_points_len);
+            for _ in 0..entry_points_len {
+                entry_parts_live.push(DynamicBitSetUnmanaged::init_empty(total_parts)?);
+            }
+
+            Some(PerEntryPointPartLiveness {
+                part_offsets: part_offsets.into_boxed_slice(),
+                parts_live: entry_parts_live,
+            })
+        } else {
+            None
+        };
+
         {
             let _trace2 = bun::perf::trace("Bundler.markFileLiveForTreeShaking");
+            let files_live_for_entry_point = if parts_live_per_entry_point.is_some() {
+                Some(DynamicBitSetUnmanaged::init_empty(self.graph.files.len())?)
+            } else {
+                None
+            };
 
             let mut ctx = TreeShakeCtx {
                 parts,
@@ -1053,6 +1114,10 @@ impl<'a> LinkerContext<'a> {
                 import_records,
                 entry_point_kinds,
                 css_reprs,
+                parts_live_per_entry_point: parts_live_per_entry_point.as_mut(),
+                files_live_for_entry_point,
+                files_marked_for_entry_point: Vec::new(),
+                entry_point_id: 0,
                 worklist: Vec::new(),
             };
 
@@ -1060,20 +1125,42 @@ impl<'a> LinkerContext<'a> {
             // `import()` targets are marked live from the live part that holds
             // the `import()` instead (see `mark_part_live_step`).
             let root_dynamic_imports = !self.options.tree_shaking;
-            for i in 0..entry_points_len {
-                let entry_point = entry_points[i];
-                if !root_dynamic_imports
-                    && entry_point_kinds[entry_point as usize] == EntryPoint::Kind::DynamicImport
-                {
-                    continue;
+            if ctx.parts_live_per_entry_point.is_some() {
+                for (i, &entry_point) in entry_points.iter().enumerate() {
+                    if !root_dynamic_imports
+                        && entry_point_kinds[entry_point as usize]
+                            == EntryPoint::Kind::DynamicImport
+                    {
+                        continue;
+                    }
+                    ctx.entry_point_id = i;
+                    let files_live = ctx
+                        .files_live_for_entry_point
+                        .as_mut()
+                        .expect("per-entry file liveness");
+                    for source_index in ctx.files_marked_for_entry_point.drain(..) {
+                        files_live.unset(source_index as usize);
+                    }
+                    self.mark_file_live_for_tree_shaking::<true>(&mut ctx, entry_point);
                 }
-                self.mark_file_live_for_tree_shaking(&mut ctx, entry_point);
+            } else {
+                for &entry_point in entry_points.iter() {
+                    if !root_dynamic_imports
+                        && entry_point_kinds[entry_point as usize]
+                            == EntryPoint::Kind::DynamicImport
+                    {
+                        continue;
+                    }
+                    self.mark_file_live_for_tree_shaking::<false>(&mut ctx, entry_point);
+                }
             }
 
             if self.module_preload() {
                 self.mark_preload_entries(&mut ctx, entry_points)?;
             }
         }
+
+        self.graph.parts_live_per_entry_point = parts_live_per_entry_point;
 
         {
             let _trace2 = bun::perf::trace("Bundler.markFileReachableForCodeSplitting");
@@ -2845,17 +2932,22 @@ impl<'a> js_printer::RequireOrImportMetaSource for LinkerContext<'a> {
 // accessors.
 // ══════════════════════════════════════════════════════════════════════════
 
-// The liveness pass visits every (file, part) at most once. Processing order is
-// irrelevant to the final bitset state, so the former mutual recursion is
-// driven off an explicit worklist (LIFO, so traversal order matches the old
-// DFS). Packing the slices into a borrowed context struct keeps each step at
-// 3-4 register-sized arguments.
+// The liveness pass visits every (file, part) at most once per tracked entry
+// point. Processing order is irrelevant to the final bitset state, so the
+// former mutual recursion is driven off an explicit worklist (LIFO, so
+// traversal order matches the old DFS). Packing the slices into a borrowed
+// context struct keeps each step at 3-4 register-sized arguments.
 pub(crate) struct TreeShakeCtx<'a, 'r> {
     pub(crate) parts: &'r mut [bun_ast::PartList<'a>],
     pub(crate) parts_live: &'r mut [bun_collections::AutoBitSet],
     pub(crate) import_records: &'r [bun_ast::import_record::List<'a>],
     pub(crate) entry_point_kinds: &'r [EntryPoint::Kind],
     pub(crate) css_reprs: &'r [crate::bundled_ast::CssCol],
+    pub(crate) parts_live_per_entry_point: Option<&'r mut PerEntryPointPartLiveness>,
+    pub(crate) files_live_for_entry_point: Option<DynamicBitSetUnmanaged>,
+    /// The files set in `files_live_for_entry_point`, so the next entry point clears only those.
+    pub(crate) files_marked_for_entry_point: Vec<crate::IndexInt>,
+    pub(crate) entry_point_id: usize,
     pub(crate) worklist: Vec<TreeShakeWork>,
 }
 
@@ -2874,6 +2966,42 @@ pub(crate) struct CodeSplitCtx<'r> {
 }
 
 impl<'a> LinkerContext<'a> {
+    #[inline]
+    fn is_file_live_for_tree_shaking<const PER_ENTRY_POINT: bool>(
+        &self,
+        ctx: &TreeShakeCtx<'a, '_>,
+        source_index: crate::IndexInt,
+    ) -> bool {
+        if PER_ENTRY_POINT {
+            ctx.files_live_for_entry_point
+                .as_ref()
+                .expect("per-entry file liveness")
+                .is_set(source_index as usize)
+        } else {
+            self.graph.files_live.is_set(source_index as usize)
+        }
+    }
+
+    #[inline]
+    fn is_part_live_for_tree_shaking<const PER_ENTRY_POINT: bool>(
+        ctx: &TreeShakeCtx<'a, '_>,
+        source_index: crate::IndexInt,
+        part_index: crate::IndexInt,
+    ) -> bool {
+        if PER_ENTRY_POINT {
+            ctx.parts_live_per_entry_point
+                .as_ref()
+                .expect("per-entry part liveness")
+                .is_live(
+                    ctx.entry_point_id,
+                    source_index as usize,
+                    part_index as usize,
+                )
+        } else {
+            ctx.parts_live[source_index as usize].is_set(part_index as usize)
+        }
+    }
+
     pub(crate) fn mark_file_reachable_for_code_splitting(
         &mut self,
         ctx: &mut CodeSplitCtx<'_>,
@@ -2898,7 +3026,7 @@ impl<'a> LinkerContext<'a> {
             bits.set(entry_points_count);
 
             let (file_entry_bits, queue) = (&ctx.file_entry_bits, &mut ctx.queue);
-            self.for_each_file_loaded_by(source_index, |other| {
+            self.for_each_file_loaded_by_entry_point(source_index, entry_points_count, |other| {
                 if !file_entry_bits[other as usize].is_set(entry_points_count) {
                     queue.push_back(other);
                 }
@@ -3003,35 +3131,38 @@ impl<'a> LinkerContext<'a> {
                     source_index: entry,
                 });
             }
-            self.drain_tree_shake_worklist(ctx);
+            self.drain_tree_shake_worklist::<false>(ctx);
         }
         self.preload_entries = preload_entries;
         Ok(())
     }
 
-    pub(crate) fn mark_file_live_for_tree_shaking(
+    pub(crate) fn mark_file_live_for_tree_shaking<const PER_ENTRY_POINT: bool>(
         &mut self,
         ctx: &mut TreeShakeCtx<'a, '_>,
         source_index: crate::IndexInt,
     ) {
         debug_assert!(ctx.worklist.is_empty());
         ctx.worklist.push(TreeShakeWork::File(source_index));
-        self.drain_tree_shake_worklist(ctx);
+        self.drain_tree_shake_worklist::<PER_ENTRY_POINT>(ctx);
     }
 
-    fn drain_tree_shake_worklist(&mut self, ctx: &mut TreeShakeCtx<'a, '_>) {
+    fn drain_tree_shake_worklist<const PER_ENTRY_POINT: bool>(
+        &mut self,
+        ctx: &mut TreeShakeCtx<'a, '_>,
+    ) {
         while let Some(work) = ctx.worklist.pop() {
             match work {
-                TreeShakeWork::File(src) => self.mark_file_live_step(ctx, src),
+                TreeShakeWork::File(src) => self.mark_file_live_step::<PER_ENTRY_POINT>(ctx, src),
                 TreeShakeWork::Part {
                     part_index,
                     source_index,
-                } => self.mark_part_live_step(ctx, part_index, source_index),
+                } => self.mark_part_live_step::<PER_ENTRY_POINT>(ctx, part_index, source_index),
             }
         }
     }
 
-    fn mark_file_live_step(
+    fn mark_file_live_step<const PER_ENTRY_POINT: bool>(
         &mut self,
         ctx: &mut TreeShakeCtx<'a, '_>,
         source_index: crate::IndexInt,
@@ -3054,7 +3185,7 @@ impl<'a> LinkerContext<'a> {
                 // The debug log only needs a stable label, so print the `Target`
                 // tag directly via its `IntoStaticStr` derive.
                 <&'static str>::from(parse_graph.ast.items_target()[source_index as usize]),
-                if self.graph.files_live.is_set(source_index as usize) {
+                if self.is_file_live_for_tree_shaking::<PER_ENTRY_POINT>(ctx, source_index) {
                     "already seen"
                 } else {
                     "first seen"
@@ -3062,8 +3193,15 @@ impl<'a> LinkerContext<'a> {
             );
         }
 
-        if self.graph.files_live.is_set(source_index as usize) {
+        if self.is_file_live_for_tree_shaking::<PER_ENTRY_POINT>(ctx, source_index) {
             return;
+        }
+        if PER_ENTRY_POINT {
+            ctx.files_live_for_entry_point
+                .as_mut()
+                .expect("per-entry file liveness")
+                .set(source_index as usize);
+            ctx.files_marked_for_entry_point.push(source_index);
         }
         self.graph.files_live.set(source_index as usize);
 
@@ -3076,7 +3214,7 @@ impl<'a> LinkerContext<'a> {
             for record in ctx.import_records[source_index as usize].iter() {
                 if record.source_index.is_valid() {
                     let other = record.source_index.get();
-                    if !self.graph.files_live.is_set(other as usize) {
+                    if !self.is_file_live_for_tree_shaking::<PER_ENTRY_POINT>(ctx, other) {
                         ctx.worklist.push(TreeShakeWork::File(other));
                     }
                 }
@@ -3088,10 +3226,27 @@ impl<'a> LinkerContext<'a> {
         // via .url kind import records. Follow all import records for HTML files
         // so these assets are marked live and included in the manifest.
         if self.parse_graph().input_files.items_loader()[source_index as usize] == Loader::Html {
+            if PER_ENTRY_POINT {
+                for part_index in 0..ctx.parts[source_index as usize].len() {
+                    let part_index = u32::try_from(part_index).expect("int cast");
+                    if ctx.parts_live[source_index as usize].is_set(part_index as usize)
+                        && !Self::is_part_live_for_tree_shaking::<PER_ENTRY_POINT>(
+                            ctx,
+                            source_index,
+                            part_index,
+                        )
+                    {
+                        ctx.worklist.push(TreeShakeWork::Part {
+                            part_index,
+                            source_index,
+                        });
+                    }
+                }
+            }
             for record in ctx.import_records[source_index as usize].iter() {
                 if record.source_index.is_valid() {
                     let other = record.source_index.get();
-                    if !self.graph.files_live.is_set(other as usize) {
+                    if !self.is_file_live_for_tree_shaking::<PER_ENTRY_POINT>(ctx, other) {
                         ctx.worklist.push(TreeShakeWork::File(other));
                     }
                 }
@@ -3134,7 +3289,11 @@ impl<'a> LinkerContext<'a> {
                         && ctx.entry_point_kinds[source_index as usize].is_entry_point())
                 {
                     let part_index = u32::try_from(part_index).expect("int cast");
-                    if !ctx.parts_live[source_index as usize].is_set(part_index as usize) {
+                    if !Self::is_part_live_for_tree_shaking::<PER_ENTRY_POINT>(
+                        ctx,
+                        source_index,
+                        part_index,
+                    ) {
                         ctx.worklist.push(TreeShakeWork::Part {
                             part_index,
                             source_index,
@@ -3165,7 +3324,9 @@ impl<'a> LinkerContext<'a> {
                     }
 
                     // Otherwise, include this module for its side effects
-                    if !self.graph.files_live.is_set(other_source_index as usize) {
+                    if !self
+                        .is_file_live_for_tree_shaking::<PER_ENTRY_POINT>(ctx, other_source_index)
+                    {
                         ctx.worklist.push(TreeShakeWork::File(other_source_index));
                     }
                 } else if is_external_without_side_effects {
@@ -3187,7 +3348,11 @@ impl<'a> LinkerContext<'a> {
                     && ctx.entry_point_kinds[source_index as usize].is_entry_point())
             {
                 let part_index = u32::try_from(part_index).expect("int cast");
-                if !ctx.parts_live[source_index as usize].is_set(part_index as usize) {
+                if !Self::is_part_live_for_tree_shaking::<PER_ENTRY_POINT>(
+                    ctx,
+                    source_index,
+                    part_index,
+                ) {
                     ctx.worklist.push(TreeShakeWork::Part {
                         part_index,
                         source_index,
@@ -3197,21 +3362,25 @@ impl<'a> LinkerContext<'a> {
         }
     }
 
-    fn mark_part_live_step(
+    fn mark_part_live_step<const PER_ENTRY_POINT: bool>(
         &mut self,
         ctx: &mut TreeShakeCtx<'a, '_>,
         part_index: crate::IndexInt,
         source_index: crate::IndexInt,
     ) {
-        // only once — check the sidecar bitset first so the fast-path early
-        // return does not have to load the 272-byte `Part`.
-        {
-            let bits = &mut ctx.parts_live[source_index as usize];
-            if bits.is_set(part_index as usize) {
-                return;
-            }
-            bits.set(part_index as usize);
+        if Self::is_part_live_for_tree_shaking::<PER_ENTRY_POINT>(ctx, source_index, part_index) {
+            return;
         }
+        if PER_ENTRY_POINT {
+            let parts_live = ctx
+                .parts_live_per_entry_point
+                .as_mut()
+                .expect("per-entry part liveness");
+            let flat_part_index =
+                parts_live.part_offsets[source_index as usize] + part_index as usize;
+            parts_live.parts_live[ctx.entry_point_id].set(flat_part_index);
+        }
+        ctx.parts_live[source_index as usize].set(part_index as usize);
 
         #[cfg(debug_assertions)]
         {
@@ -3244,7 +3413,7 @@ impl<'a> LinkerContext<'a> {
         }
 
         // Include the file containing this part
-        if !self.graph.files_live.is_set(source_index as usize) {
+        if !self.is_file_live_for_tree_shaking::<PER_ENTRY_POINT>(ctx, source_index) {
             ctx.worklist.push(TreeShakeWork::File(source_index));
         }
 
@@ -3253,7 +3422,7 @@ impl<'a> LinkerContext<'a> {
         for dependency in part.dependencies.iter() {
             let dep_source = dependency.source_index.get();
             let dep_part = dependency.part_index;
-            if !ctx.parts_live[dep_source as usize].is_set(dep_part as usize) {
+            if !Self::is_part_live_for_tree_shaking::<PER_ENTRY_POINT>(ctx, dep_source, dep_part) {
                 ctx.worklist.push(TreeShakeWork::Part {
                     part_index: dep_part,
                     source_index: dep_source,
@@ -3270,7 +3439,7 @@ impl<'a> LinkerContext<'a> {
                     && self.is_external_dynamic_import(record, source_index)
                 {
                     let other = record.source_index.get();
-                    if !self.graph.files_live.is_set(other as usize) {
+                    if !self.is_file_live_for_tree_shaking::<PER_ENTRY_POINT>(ctx, other) {
                         ctx.worklist.push(TreeShakeWork::File(other));
                     }
                 }

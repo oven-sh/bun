@@ -132,6 +132,7 @@ pub(crate) fn find_imported_parts_in_js_order(
         part_ranges: Vec::new(),
         parts_prefix: Vec::new(),
         chunk_index,
+        entry_id: chunk.entry_point.entry_point_id(),
         // The one column written through a shared `&LinkerContext` (see `place`).
         entry_point_chunk_indices: this.graph.files.slice().split_raw().entry_point_chunk_index,
     };
@@ -329,11 +330,27 @@ enum Edge {
     LoadLater(IndexInt),
 }
 
-/// The files that a file leads to, in evaluation order, with the part that leads there. `runs`: the load evaluates the file.
+/// Whether the part is live for the given entry point. Liveness is per entry point only for independent multi-entry builds.
+fn is_part_live(
+    c: &LinkerContext,
+    entry_id: u32,
+    source_index: IndexInt,
+    part_index: usize,
+) -> bool {
+    match &c.graph.parts_live_per_entry_point {
+        Some(parts_live) => {
+            parts_live.is_live(entry_id as usize, source_index as usize, part_index)
+        }
+        None => c.graph.parts_live[source_index as usize].is_set(part_index),
+    }
+}
+
+/// The files that a file leads to, in evaluation order, with the part that leads there. `runs`: the load of `loader` evaluates the file.
 fn for_each_edge(
     c: &LinkerContext,
     source_index: IndexInt,
     runs: bool,
+    loader: u32,
     mut each: impl FnMut(u32, Edge),
 ) {
     let records = c.graph.ast.items_import_records()[source_index as usize].as_slice();
@@ -350,9 +367,8 @@ fn for_each_edge(
     }
 
     let parts = c.graph.ast.items_parts()[source_index as usize].as_slice();
-    let parts_live = &c.graph.parts_live[source_index as usize];
     for (part_index, part) in parts.iter().enumerate() {
-        let runs_here = runs && parts_live.is_set(part_index);
+        let runs_here = runs && is_part_live(c, loader, source_index, part_index);
         let part_index = part_index as u32;
         for &record_id in part.import_record_indices.slice() {
             let record: &ImportRecord = &records[record_id as usize];
@@ -381,7 +397,12 @@ fn for_each_edge(
     // The namespace export part is ahead of the `import` statements and only holds getters.
     if let Some(namespace_export) = parts.get(bun_ast::NAMESPACE_EXPORT_PART_INDEX as usize)
         && runs
-        && parts_live.is_set(bun_ast::NAMESPACE_EXPORT_PART_INDEX as usize)
+        && is_part_live(
+            c,
+            loader,
+            source_index,
+            bun_ast::NAMESPACE_EXPORT_PART_INDEX as usize,
+        )
     {
         for dependency in namespace_export.dependencies.iter() {
             each(
@@ -479,7 +500,7 @@ fn load_rank(c: &LinkerContext, entry_id_of_file: &[u32]) -> Vec<u32> {
             }
 
             let mark = stack.len();
-            for_each_edge(c, source_index, evaluates, |_, edge| {
+            for_each_edge(c, source_index, evaluates, loader, |_, edge| {
                 stack.push(match edge {
                     Edge::Import(source_index) => LoadFrame::Enter {
                         source_index,
@@ -673,13 +694,19 @@ impl EntryWalk {
                 });
             };
 
-            for_each_edge(c, source_index, runs, |part_index, edge| match edge {
-                Edge::Import(other) => import(part_index, other, loader),
-                Edge::LoadNow(other) => {
-                    import(part_index, other, plan.entry_id_of_file[other as usize])
-                }
-                Edge::LoadLater(_) => {}
-            });
+            for_each_edge(
+                c,
+                source_index,
+                runs,
+                loader,
+                |part_index, edge| match edge {
+                    Edge::Import(other) => import(part_index, other, loader),
+                    Edge::LoadNow(other) => {
+                        import(part_index, other, plan.entry_id_of_file[other as usize])
+                    }
+                    Edge::LoadLater(_) => {}
+                },
+            );
             if let Some(slot) = slot {
                 stack.push(WalkFrame::Place {
                     run: PartRun {
@@ -701,6 +728,8 @@ struct ChunkLayout<'a, 'ctx> {
     part_ranges: Vec<PartRange>,
     parts_prefix: Vec<PartRange>,
     chunk_index: u32,
+    /// The chunk's entry point, for per-entry-point part liveness.
+    entry_id: u32,
     /// Raw `entry_point_chunk_index` column, for the one write in `place`.
     entry_point_chunk_indices: *mut [u32],
 }
@@ -750,11 +779,10 @@ impl ChunkLayout<'_, '_> {
         let can_be_split =
             self.c.graph.meta.items_flags()[source_index as usize].wrap == Wrap::None;
         if can_be_split {
-            let parts_live = &self.c.graph.parts_live[source_index as usize];
             let end = if leaves { parts.len() as u32 } else { run.end };
             for part_index in run.begin..end {
                 let is_namespace_export = part_index == bun_ast::NAMESPACE_EXPORT_PART_INDEX;
-                if parts_live.is_set(part_index as usize)
+                if is_part_live(self.c, self.entry_id, source_index, part_index as usize)
                     && (is_namespace_export
                         || self
                             .c

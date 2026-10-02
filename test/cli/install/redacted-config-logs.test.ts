@@ -468,4 +468,95 @@ describe.concurrent("tarball and git URLs declared in package.json are masked wh
     expectNoSecrets(out, err);
     expect(exitCode).toBe(1);
   });
+
+  // `bun add <url>` has no name for the dependency until the package is read,
+  // so the URL stands in for the name in every message about it.
+  test("bun add <git url> that cannot be cloned", async () => {
+    using server = startClosingServer();
+    using dir = tempDir("redacted-name-git", { "package.json": JSON.stringify({ name: "app" }) });
+    const url = `git+https://carol:${password}@${server.hostname}:${server.port}/org/repo.git`;
+
+    const { out, err, exitCode } = await run(String(dir), server, ["add", url]);
+    expect(err).toContain(
+      `error: Invalid dependency name "git+https://carol:******@${server.hostname}:${server.port}/org/repo.git"\n`,
+    );
+    expectNoSecrets(out, err);
+    expect(exitCode).toBe(1);
+  });
+
+  test("bun add <url> of a file that is not a tarball", async () => {
+    await using server = Bun.serve({ port: 0, fetch: () => new Response("not a gzip stream") });
+    using dir = tempDir("redacted-name-extract", { "package.json": JSON.stringify({ name: "app" }) });
+
+    const { out, err, exitCode } = await run(String(dir), server, ["add", spec(server, "")]);
+    expect(err).toContain(` extracting tarball from ${masked(server, "")}\n`);
+    expect(err).toContain(`error: Invalid dependency name "${masked(server, "")}"\n`);
+    expectNoSecrets(out, err);
+    expect(exitCode).toBe(1);
+  });
+
+  test("bun add <url> of a host that refuses the download", async () => {
+    using server = startClosingServer();
+    using dir = tempDir("redacted-name-download", { "package.json": JSON.stringify({ name: "app" }) });
+    // No `.tgz` and no path: the URL is both the name and the resolution.
+    const url = (pw: string) => `http://carol:${pw}@${server.hostname}:${server.port}`;
+
+    const { out, err, exitCode } = await run(String(dir), server, ["add", url(password)]);
+    expect(err).toContain(` downloading tarball ${url("******")}@${url("******")}`);
+    expectNoSecrets(out, err);
+    expect(exitCode).toBe(1);
+  });
+
+  // The URL does not start the argument in the first two forms.
+  test.each([
+    (pw: string) => `direct@ssh://carol:${pw}@localhost:1/org/repo`,
+    (pw: string) => `@https://carol:${pw}@localhost:1/org/repo`,
+    (pw: string) => `ftp://carol:${pw}@localhost:1/org/repo`,
+  ])("bun add of an argument that is not a dependency: %#", async argument => {
+    using server = startClosingServer();
+    using dir = tempDir("redacted-unrecognised", { "package.json": JSON.stringify({ name: "app" }) });
+
+    const { out, err, exitCode } = await run(String(dir), server, ["add", argument(password)]);
+    expect(err).toContain(`error: unrecognised dependency format: ${argument("******")}\n`);
+    expectNoSecrets(out, err);
+    expect(exitCode).toBe(1);
+  });
+
+  // The registry chooses `dist.tarball`. It can hold credentials of its own.
+  function startRegistry(tarballHost: Host) {
+    const version = (v: string) => ({ name: "direct", version: v, dist: { tarball: spec(tarballHost) } });
+    return Bun.serve({
+      port: 0,
+      fetch(req) {
+        if (new URL(req.url).pathname !== "/direct") return new Response("{}", { status: 404 });
+        return Response.json({
+          name: "direct",
+          "dist-tags": { latest: "1.0.1" },
+          versions: { "1.0.0": version("1.0.0"), "1.0.1": version("1.0.1") },
+        });
+      },
+    });
+  }
+
+  test("bun pm view prints dist.tarball", async () => {
+    using tarballs = startClosingServer();
+    await using registry = startRegistry(tarballs);
+    using dir = tempDir("redacted-pm-view", { "package.json": JSON.stringify({ name: "app" }) });
+
+    const { out, err, exitCode } = await run(String(dir), registry, ["pm", "view", "direct"]);
+    expect(out).toContain(`tarball: ${masked(tarballs)}\n`);
+    expectNoSecrets(out, err);
+    expect(exitCode).toBe(0);
+  });
+
+  test("bun pm diff cannot download dist.tarball", async () => {
+    using tarballs = startClosingServer();
+    await using registry = startRegistry(tarballs);
+    using dir = tempDir("redacted-pm-diff", { "package.json": JSON.stringify({ name: "app" }) });
+
+    const { out, err, exitCode } = await run(String(dir), registry, ["pm", "diff", "direct@1.0.0", "direct@1.0.1"]);
+    expect(err).toContain(`GET ${masked(tarballs)} failed\n`);
+    expectNoSecrets(out, err);
+    expect(exitCode).toBe(1);
+  });
 });

@@ -493,7 +493,10 @@ pub(crate) fn view(
     if let Some(dist) = manifest.get_object(b"dist") {
         prettyln!("\n<d><r><b>dist<r>");
         if let Some(t) = dist.get_string_cloned(&bump, b"tarball").ok().flatten() {
-            prettyln!(" <d>.<r>tarball<d>:<r> {}", BStr::new(t));
+            prettyln!(
+                " <d>.<r>tarball<d>:<r> {}",
+                bun_core::fmt::redacted(BStr::new(t))
+            );
         }
         if let Some(s) = dist.get_string_cloned(&bump, b"shasum").ok().flatten() {
             prettyln!(" <d>.<r>shasum<r><d>:<r> <green>{}<r>", BStr::new(s));

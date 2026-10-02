@@ -779,7 +779,8 @@ impl GitSubprocess {
         if !ok && !not_found {
             this.report_failure(status, stderr);
         }
-        let name = BStr::new(&this.name);
+        // The name of a dependency that was added by its URL is that URL.
+        let name = bun_core::fmt::redacted(BStr::new(&this.name));
         match step {
             Step::Fetch(dir) => {
                 if ok {

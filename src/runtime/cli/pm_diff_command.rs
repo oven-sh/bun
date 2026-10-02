@@ -902,7 +902,11 @@ fn registry_get(
         Ok(r) => r,
         Err(err) => {
             Status::clear();
-            Output::err(err, "GET {} failed", (BStr::new(&display_url),));
+            Output::err(
+                err,
+                "GET {} failed",
+                (bun_core::fmt::redacted(BStr::new(&display_url)),),
+            );
             Global::exit(1);
         }
     };

@@ -226,7 +226,7 @@ impl UpdateRequest {
                 if fatal {
                     Output::err_generic(
                         "unrecognised dependency format: {}",
-                        format_args!("{}", bstr::BStr::new(positional)),
+                        format_args!("{}", bun_core::fmt::redacted(bstr::BStr::new(positional))),
                     );
                 } else {
                     log.add_error_fmt(
@@ -234,7 +234,7 @@ impl UpdateRequest {
                         Loc::EMPTY,
                         format_args!(
                             "unrecognised dependency format: {}",
-                            bstr::BStr::new(positional)
+                            bun_core::fmt::redacted(bstr::BStr::new(positional))
                         ),
                     );
                 }
@@ -265,7 +265,7 @@ impl UpdateRequest {
                 if fatal {
                     Output::err_generic(
                         "unrecognised dependency format: {}",
-                        format_args!("{}", bstr::BStr::new(positional)),
+                        format_args!("{}", bun_core::fmt::redacted(bstr::BStr::new(positional))),
                     );
                 } else {
                     log.add_error_fmt(
@@ -273,7 +273,7 @@ impl UpdateRequest {
                         Loc::EMPTY,
                         format_args!(
                             "unrecognised dependency format: {}",
-                            bstr::BStr::new(positional)
+                            bun_core::fmt::redacted(bstr::BStr::new(positional))
                         ),
                     );
                 }

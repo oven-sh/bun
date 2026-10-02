@@ -752,9 +752,11 @@ impl Tree {
             {
                 builder.maybe_report_error(format_args!(
                     "Invalid dependency name \"{}\"",
-                    dependency
-                        .name
-                        .fmt(lockfile.buffers.string_bytes.as_slice()),
+                    bun_core::fmt::redacted(
+                        dependency
+                            .name
+                            .fmt(lockfile.buffers.string_bytes.as_slice())
+                    ),
                 ));
                 continue 'dep;
             }

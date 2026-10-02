@@ -746,7 +746,7 @@ fn run_tasks_erased(
                                 bun_ast::Loc::EMPTY,
                                 "{} downloading tarball <b>{}@{}<r>. Retrying {}/{}...",
                                 bstr::BStr::new(err.name().as_bytes()),
-                                bstr::BStr::new(extract.name.slice()),
+                                redacted(bstr::BStr::new(extract.name.slice())),
                                 redacted(
                                     extract
                                         .resolution
@@ -819,7 +819,7 @@ fn run_tasks_erased(
                             bun_ast::Loc::EMPTY,
                             "{} downloading tarball <b>{}@{}<r>",
                             DownloadFailure(err.name(), &task.response),
-                            bstr::BStr::new(extract.name.slice()),
+                            redacted(bstr::BStr::new(extract.name.slice())),
                             redacted(
                                 extract
                                     .resolution
@@ -833,7 +833,7 @@ fn run_tasks_erased(
                             bun_ast::Loc::EMPTY,
                             "{} downloading tarball <b>{}@{}<r>",
                             DownloadFailure(err.name(), &task.response),
-                            bstr::BStr::new(extract.name.slice()),
+                            redacted(bstr::BStr::new(extract.name.slice())),
                             redacted(
                                 extract
                                     .resolution
@@ -1192,7 +1192,7 @@ fn run_tasks_erased(
                         bun_ast::Loc::EMPTY,
                         "{} extracting tarball from <b>{}<r>",
                         err.name(),
-                        bstr::BStr::new(alias),
+                        redacted(bstr::BStr::new(alias)),
                     );
 
                     // Void-callback fallback (resolve phase): drain the
@@ -1401,7 +1401,7 @@ fn run_tasks_erased(
                             bun_ast::Loc::EMPTY,
                             "{} cloning repository for <b>{}<r>",
                             err.name(),
-                            bstr::BStr::new(name),
+                            redacted(bstr::BStr::new(name)),
                         );
                     }
                     continue;
@@ -1568,7 +1568,7 @@ fn run_tasks_erased(
                             bun_ast::Loc::EMPTY,
                             "{} checking out repository for <b>{}<r>",
                             err.name(),
-                            bstr::BStr::new(alias.slice()),
+                            redacted(bstr::BStr::new(alias.slice())),
                         );
                     }
 

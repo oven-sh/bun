@@ -4,7 +4,7 @@ use core::fmt;
 
 use bstr::BStr;
 
-use bun_core::fmt::shell_word;
+use bun_core::fmt::{shell_word, shell_word_display};
 use bun_core::output::enable_ansi_colors_stderr;
 use bun_core::pretty_fmt;
 
@@ -382,27 +382,19 @@ impl<'a> RequestCurlFormatter<'a> {
 
 impl fmt::Display for RequestCurlFormatter<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        use std::io::Write as _;
-
         let request = self.request;
         // Not `redacted_npm_url`: a UUID in the URL is kept so that the command stays runnable.
-        let mut url = Vec::new();
-        write!(
-            &mut url,
-            "{}",
-            bun_core::fmt::redacted_url_credentials(request.path)
-        )
-        .map_err(|_| fmt::Error)?;
+        let url = shell_word_display(bun_core::fmt::redacted_url_credentials(request.path));
         if enable_ansi_colors_stderr() {
             f.write_str(pretty_fmt!("<r><d>[fetch] $<r> ", true))?;
 
             write!(
                 f,
                 pretty_fmt!("<b><cyan>curl<r> <d>--http1.1<r> <b>{}<r>", true),
-                shell_word(&[&url]),
+                url,
             )?;
         } else {
-            write!(f, "curl --http1.1 {}", shell_word(&[&url]))?;
+            write!(f, "curl --http1.1 {}", url)?;
         }
 
         if request.method != b"GET" {

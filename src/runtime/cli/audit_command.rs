@@ -1016,10 +1016,18 @@ fn keep_vulnerability(
 }
 
 fn ignore_token(vulnerability: &VulnerabilityInfo) -> Box<[u8]> {
-    match strings::index_of(&vulnerability.url, b"GHSA-") {
-        Some(i) => Box::from(&vulnerability.url[i..]),
-        None => vulnerability.id.clone(),
+    if let Some(i) = strings::index_of(&vulnerability.url, b"GHSA-") {
+        // The id, not the rest of the url after it.
+        let id = &vulnerability.url[i..];
+        let len = id
+            .iter()
+            .position(|byte| !(byte.is_ascii_alphanumeric() || *byte == b'-'))
+            .unwrap_or(id.len());
+        if len > b"GHSA-".len() {
+            return Box::from(&id[..len]);
+        }
     }
+    vulnerability.id.clone()
 }
 
 fn to_advisory(vulnerability: VulnerabilityInfo) -> Advisory {

@@ -1114,44 +1114,37 @@ it.concurrent("build.module() of a module whose import() is still loading its de
   });
 });
 
-// The loader resolves a path that import() has resolved twice more, so onResolve is fed its own results: a → b → c → d.
-// That leaves d.mjs registered under a key other than the one it was asked for by, which is what this is about.
-it.concurrent(
-  "import() after delete require.cache of a module that onResolve redirected a resolved path to",
-  async () => {
-    using dir = tempDir("plugin-onresolve-chain-removed", {
+// The loader asked for a path that these had resolved to be resolved again, so onResolve was fed its own results.
+describe.concurrent("onResolve is asked once about", () => {
+  it.each([
+    ["import()", `console.log((await import("./a.mjs")).from);`],
+    ["import.meta.require()", `console.log(import.meta.require("./a.mjs").from);`],
+  ])("%s", async (_, source) => {
+    using dir = tempDir("plugin-onresolve-once", {
       "a.mjs": `export const from = "a.mjs";`,
       "b.mjs": `export const from = "b.mjs";`,
       "c.mjs": `export const from = "c.mjs";`,
-      "d.mjs": `export const from = "d.mjs, evaluation " + (globalThis.evaluations = (globalThis.evaluations ?? 0) + 1);`,
-      "entry.ts": `
-      import { basename, join } from "node:path";
-      const next = { "a.mjs": "b.mjs", "b.mjs": "c.mjs", "c.mjs": "d.mjs" };
-      Bun.plugin({
-        name: "redirect a path that is already resolved, again and again",
-        setup(build) {
-          build.onResolve({ filter: /[abc]\\.mjs$/ }, ({ path }) => ({ path: join(import.meta.dir, next[basename(path)]) }));
-        },
-      });
-
-      const a = join(import.meta.dir, "a.mjs");
-      console.log("first:", (await import(a)).from);
-      console.log("deleted:", delete require.cache[join(import.meta.dir, "d.mjs")]);
-      console.log("again:", (await import(a)).from);
-    `,
+      "d.mjs": `export const from = "d.mjs";`,
+      "plugin.ts": `
+        import { basename, join } from "node:path";
+        const next = { "a.mjs": "b.mjs", "b.mjs": "c.mjs", "c.mjs": "d.mjs" };
+        Bun.plugin({
+          name: "redirect",
+          setup(build) {
+            build.onResolve({ filter: /[abc]\\.mjs$/ }, ({ path }) => ({ path: join(import.meta.dir, next[basename(path)]) }));
+          },
+        });
+      `,
+      "entry.ts": source,
     });
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "entry.ts"],
+      cmd: [bunExe(), "--preload", "./plugin.ts", "entry.ts"],
       cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: "first: d.mjs, evaluation 1\ndeleted: true\nagain: d.mjs, evaluation 2\n",
-      stderr: "",
-      exitCode: 0,
-    });
-  },
-);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "b.mjs\n", stderr: "", exitCode: 0 });
+  });
+});

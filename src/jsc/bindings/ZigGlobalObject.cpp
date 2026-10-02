@@ -3510,6 +3510,11 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    // Without a referrer the loader asks about a key it was handed: the name of a top-level load, or what import()
+    // or require() resolved. Resolving a key again can give another one: a symlink, a plugin's onResolve.
+    if (!referrer || referrer.isUndefined())
+        RELEASE_AND_RETURN(scope, key.toPropertyKey(globalObject));
+
     WTF::String keyString;
     if (key.isString()) {
         auto moduleName = uncheckedDowncast<JSString>(key)->value(globalObject);
@@ -3556,16 +3561,11 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         ASSERT(!globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup);
     }
 
-    // The new C++ loader calls resolve() on keys that moduleLoaderImportModule
-    // already resolved through plugin onResolve. If the key already carries a
-    // plugin namespace that has an onLoad handler, it is a fully-resolved
-    // virtual key — return it unchanged so we don't fall through to the
-    // filesystem resolver and fail with "Cannot find module".
+    // The transpiler has put a static import through onResolve already (Linker::link) and printed what that gave, so
+    // a key in a namespace that has an onLoad handler is final. The filesystem resolver would not find it.
     //
-    // FIXME(module-loader): this short-circuit ignores the plugin's filter
-    // and bypasses any onResolve handler for static imports written directly
-    // as "ns:..." in source. The proper fix is for moduleLoaderImportModule
-    // to mark keys it already resolved so we can skip only those.
+    // FIXME(module-loader): this ignores the plugin's filter, and bypasses any onResolve handler for an import that
+    // is written as "ns:..." in the source.
     if (!globalObject->onLoadPlugins.namespaces.isEmpty()) {
         if (auto colon = keyString.find(':'); colon != WTF::notFound && !(colon == 1 && isASCIIAlpha(keyString[0]))) {
             // colon == 1 with a leading ASCII letter is a Windows drive

@@ -817,6 +817,43 @@ console.log("survived", require("./late.js"));`,
     expect(exitCode).toBe(0);
   });
 
+  // The ES module loader asked the resolver about the path again, and loaded what it answered under another key.
+  describe.concurrent(
+    "Module._resolveFilename gives an ES module by a path the resolver would spell differently",
+    () => {
+      test.each([
+        ["a . segment", `__dirname + "/./esm.mjs"`],
+        ["a .. segment", `__dirname + "/sub/../esm.mjs"`],
+        ["a doubled separator", `__dirname + "//esm.mjs"`],
+        ["relative to the working directory", `"./esm.mjs"`],
+        ["a symlink to the file", `__dirname + "/link.mjs"`],
+        ["a symlink to its directory", `__dirname + "/linked/esm.mjs"`],
+      ])("%s", async (_, filename) => {
+        using dir = tempDir("resolve-filename-other-spelling", {
+          "esm.mjs": `import { dep } from "./dep.mjs"; export const who = "esm, " + dep;`,
+          "dep.mjs": `export const dep = "dep";`,
+          "sub/empty.txt": "",
+          "main.cjs": `
+          const Module = require("node:module");
+          Module._resolveFilename = () => ${filename};
+          console.log(require("anything").who, require("anything") === require("something else"));
+        `,
+        });
+        fs.symlinkSync("esm.mjs", path.join(String(dir), "link.mjs"), "file");
+        fs.symlinkSync(".", path.join(String(dir), "linked"), "dir");
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "main.cjs"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({ stdout: "esm, dep true\n", stderr: "", exitCode: 0 });
+      });
+    },
+  );
+
   test("Overwriting Module.prototype.require", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "run", path.join(import.meta.dir, "modulePrototypeOverwrite.cjs")],

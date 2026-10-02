@@ -1481,10 +1481,17 @@ const cluster = require("node:cluster");
 cluster.schedulingPolicy = cluster.SCHED_NONE;
 
 if (cluster.isPrimary) {
+  const answers = [];
   const worker = cluster.fork();
   worker.on("message", line => {
-    if (line === "asked") worker.disconnect();
-    else console.log(line);
+    if (line !== "asked") {
+      answers.push(line);
+      console.log(line);
+      return;
+    }
+    // After a wrong answer the worker can have two handles under one key. Then it never leaves on disconnect.
+    if (answers.join() === process.env.ANSWERS) worker.disconnect();
+    else worker.kill();
   });
   worker.on("exit", (code, signal) => console.log("worker left:", code, signal));
 } else {
@@ -1516,7 +1523,7 @@ test.concurrent.skipIf(isWindows).each([
   const { fd } = await socketForPrimary(sockets, socket);
   await using proc = Bun.spawn({
     cmd: [bunExe(), "fixture.cjs"],
-    env: { ...bunEnv, ASKS: asks },
+    env: { ...bunEnv, ASKS: asks, ANSWERS: answers.join() },
     cwd: String(dir),
     // Descriptor 3 of the primary.
     stdio: ["ignore", "pipe", "pipe", fd],

@@ -689,11 +689,412 @@ impl<'a> Checker<'a> {
         result
     }
 
+    pub fn get_conditional_type_instantiation(
+        &mut self,
+        t: TypeId,
+        mapper: TypeMapperId,
+        for_constraint: bool,
+        alias: TypeAliasId,
+    ) -> TypeId {
+        let root = self.as_conditional_type(t).root;
+        let outer_type_parameters = self.conditional_roots[root].outer_type_parameters;
+        if outer_type_parameters.len() != 0 {
+            // We are instantiating a conditional type that has one or more type parameters in scope. Apply the mapper to the type parameters to produce the effective list of type arguments, and compute the instantiation cache key from the type IDs of the type arguments.
+            let type_arguments = self.map_list(outer_type_parameters, |c, tp| c.map(mapper, tp));
+            let key = get_conditional_type_key(self, type_arguments, alias, for_constraint);
+            let mut result = self.conditional_roots[root].instantiations.get(&key);
+            if result.is_nil() {
+                let new_mapper = new_type_mapper(self, outer_type_parameters, type_arguments);
+                let check_type = self.conditional_roots[root].check_type;
+                let mut distribution_type = TypeId::NIL;
+                if self.conditional_roots[root].is_distributive {
+                    let mapped_check_type = self.map(new_mapper, check_type);
+                    distribution_type = self.get_reduced_type(mapped_check_type);
+                }
+                // Distributive conditional types are distributed over union types. For example, when the distributive conditional type T extends U ? X : Y is instantiated with A | B for T, the result is (A extends U ? X : Y) | (B extends U ? X : Y).
+                if !distribution_type.is_nil()
+                    && check_type != distribution_type
+                    && self.types[distribution_type]
+                        .flags
+                        .intersects(TypeFlags::UNION | TypeFlags::NEVER)
+                {
+                    result = self.map_type_with_alias(
+                        distribution_type,
+                        &mut |c, t| {
+                            let mapper = prepend_type_mapping(c, check_type, t, new_mapper);
+                            c.get_conditional_type(root, mapper, for_constraint, TypeAliasId::NIL)
+                        },
+                        alias,
+                    );
+                } else {
+                    result = self.get_conditional_type(root, new_mapper, for_constraint, alias);
+                }
+                let ok = self.conditional_roots[root].instantiations.set(key, result);
+                self.map_set(ok);
+            }
+            return result;
+        }
+        t
+    }
+
     pub fn clone_type_parameter(&mut self, tp: TypeId) -> TypeId {
         let symbol = self.types[tp].symbol;
         let result = self.new_type_parameter(symbol);
         self.as_type_parameter_mut(result).target = tp;
         result
+    }
+
+    pub fn get_homomorphic_type_variable(&mut self, t: TypeId) -> TypeId {
+        let constraint_type = self.get_constraint_type_from_mapped_type(t);
+        if self.types[constraint_type]
+            .flags
+            .intersects(TypeFlags::INDEX)
+        {
+            let target = self.as_index_type(constraint_type).target;
+            let type_variable = self.get_actual_type_variable(target);
+            if self.types[type_variable]
+                .flags
+                .intersects(TypeFlags::TYPE_PARAMETER)
+            {
+                return type_variable;
+            }
+        }
+        TypeId::NIL
+    }
+
+    pub fn instantiate_mapped_type(
+        &mut self,
+        t: TypeId,
+        m: TypeMapperId,
+        alias: TypeAliasId,
+    ) -> TypeId {
+        // For a homomorphic mapped type { [P in keyof T]: X }, where T is some type variable, the mapping operation depends on T as follows: If T is a primitive type no mapping is performed and the result is simply T. If T is a union type we distribute the mapped type over the union. If T is an array we map to an array where the element type has been transformed. If T is a tuple we map to a tuple where the element types have been transformed. If T is an intersection of array or tuple types we map to an intersection of transformed array or tuple types. Otherwise we map to an object type where the type of each property has been transformed. For example, when T is instantiated to a union type A | B, we produce { [P in keyof A]: X } | { [P in keyof B]: X }, and when when T is instantiated to a union type A | undefined, we produce { [P in keyof A]: X } | undefined.
+        fn instantiate_constituent(
+            c: &mut Checker<'_>,
+            t: TypeId,
+            type_variable: TypeId,
+            m: TypeMapperId,
+            s: TypeId,
+        ) -> TypeId {
+            let a = c.ast;
+            if !c.types[s].flags.intersects(
+                TypeFlags::ANY_OR_UNKNOWN
+                    | TypeFlags::INSTANTIABLE_NON_PRIMITIVE
+                    | TypeFlags::OBJECT
+                    | TypeFlags::INTERSECTION,
+            ) || s == c.wildcard_type
+                || c.is_error_type(s)
+            {
+                return s;
+            }
+            let declaration = c.as_mapped_type(t).declaration;
+            if a.as_mapped_type_node(declaration).name_type.is_nil() {
+                if c.is_array_type(s)
+                    || c.types[s].flags.intersects(TypeFlags::ANY)
+                        && c.find_resolution_cycle_start_index(
+                            TypeSystemEntity::Type(type_variable),
+                            TypeSystemPropertyName::ResolvedBaseConstraint,
+                        ) < 0
+                        && c.has_array_or_type_type_constraint(type_variable)
+                {
+                    let mapper = prepend_type_mapping(c, type_variable, s, m);
+                    return c.instantiate_mapped_array_type(s, t, mapper);
+                }
+                if is_tuple_type(c, s) {
+                    return c.instantiate_mapped_tuple_type(s, t, type_variable, m);
+                }
+                if c.is_array_or_tuple_or_intersection(s) {
+                    let types = c.type_types(s);
+                    let new_types = c.map_list(types, |c, u| {
+                        instantiate_constituent(c, t, type_variable, m, u)
+                    });
+                    return c.get_intersection_type(new_types);
+                }
+            }
+            let mapper = prepend_type_mapping(c, type_variable, s, m);
+            c.instantiate_anonymous_type(t, mapper, TypeAliasId::NIL)
+        }
+        let type_variable = self.get_homomorphic_type_variable(t);
+        if !type_variable.is_nil() {
+            let mapped_type_variable = self.instantiate_type(type_variable, m);
+            if type_variable != mapped_type_variable {
+                let reduced = self.get_reduced_type(mapped_type_variable);
+                return self.map_type_with_alias(
+                    reduced,
+                    &mut |c, s| instantiate_constituent(c, t, type_variable, m, s),
+                    alias,
+                );
+            }
+        }
+        // If the constraint type of the instantiation is the wildcard type, return the wildcard type.
+        let constraint_type = self.get_constraint_type_from_mapped_type(t);
+        if self.instantiate_type(constraint_type, m) == self.wildcard_type {
+            return self.wildcard_type;
+        }
+        self.instantiate_anonymous_type(t, m, alias)
+    }
+
+    pub fn has_array_or_type_type_constraint(&mut self, type_variable: TypeId) -> bool {
+        let constraint = self.get_constraint_of_type_parameter(type_variable);
+        !constraint.is_nil()
+            && every_type(self, constraint, &mut |c, t| c.is_array_or_tuple_type(t))
+    }
+
+    pub fn instantiate_mapped_array_type(
+        &mut self,
+        array_type: TypeId,
+        mapped_type: TypeId,
+        m: TypeMapperId,
+    ) -> TypeId {
+        let number_type = self.number_type;
+        let element_type = self.instantiate_mapped_type_template(mapped_type, number_type, true, m);
+        if self.is_error_type(element_type) {
+            return self.error_type;
+        }
+        let readonly = get_modified_readonly_state(
+            self.is_readonly_array_type(array_type),
+            get_mapped_type_modifiers(self, mapped_type),
+        );
+        self.create_array_type_ex(element_type, readonly)
+    }
+
+    pub fn instantiate_mapped_tuple_type(
+        &mut self,
+        tuple_type: TypeId,
+        mapped_type: TypeId,
+        type_variable: TypeId,
+        m: TypeMapperId,
+    ) -> TypeId {
+        // We apply the mapped type's template type to each of the fixed part elements. For variadic elements, we apply the mapped type itself to the variadic element type. For other elements in the variable part of the tuple, we surround the element type with an array type and apply the mapped type to that. This ensures that we get sequential property key types for the fixed part of the tuple, and property key type number for the remaining elements. For example, with `type Keys<T> = { [K in keyof T]: K }`, the type `Keys<[string, string, ...T, string]>` for a `T extends any[]` is `["0", "1", ...Keys<T>, number]`.
+        let element_infos = self.type_target_tuple_type(tuple_type).element_infos;
+        let fixed_length = self.type_target_tuple_type(tuple_type).fixed_length;
+        let mut fixed_mapper = m;
+        if fixed_length != 0 {
+            fixed_mapper = prepend_type_mapping(self, type_variable, tuple_type, m);
+        }
+        let modifiers = get_mapped_type_modifiers(self, mapped_type);
+        let element_types = self.get_element_types(tuple_type);
+        let mut new_element_types: Vec<TypeId> = Vec::with_capacity(element_types.as_slice().len());
+        let mut new_element_infos: Vec<TupleElementInfo> = element_infos.as_slice().to_vec();
+        for (i, &e) in element_types.as_slice().iter().enumerate() {
+            let flags = element_infos.at(i).flags;
+            let mapped = if (i as isize) < fixed_length {
+                let index = self.text(i.to_string().as_bytes());
+                let key = self.get_string_literal_type(index);
+                self.instantiate_mapped_type_template(
+                    mapped_type,
+                    key,
+                    flags.intersects(ElementFlags::OPTIONAL),
+                    fixed_mapper,
+                )
+            } else if flags.intersects(ElementFlags::VARIADIC) {
+                let mapper = prepend_type_mapping(self, type_variable, e, m);
+                self.instantiate_type(mapped_type, mapper)
+            } else {
+                let array_type = self.create_array_type(e);
+                let mapper = prepend_type_mapping(self, type_variable, array_type, m);
+                let instantiated = self.instantiate_type(mapped_type, mapper);
+                let element_type = self.get_element_type_of_array_type(instantiated);
+                if element_type.is_nil() {
+                    self.unknown_type
+                } else {
+                    element_type
+                }
+            };
+            if modifiers.intersects(MappedTypeModifiers::INCLUDE_OPTIONAL) {
+                if flags.intersects(ElementFlags::REQUIRED) {
+                    if let Some(info) = new_element_infos.get_mut(i) {
+                        info.flags = ElementFlags::OPTIONAL;
+                    }
+                }
+            } else if modifiers.intersects(MappedTypeModifiers::EXCLUDE_OPTIONAL) {
+                if flags.intersects(ElementFlags::OPTIONAL) {
+                    if let Some(info) = new_element_infos.get_mut(i) {
+                        info.flags = ElementFlags::REQUIRED;
+                    }
+                }
+            }
+            new_element_types.push(mapped);
+        }
+        let readonly = self.type_target_tuple_type(tuple_type).readonly;
+        let new_readonly =
+            get_modified_readonly_state(readonly, get_mapped_type_modifiers(self, mapped_type));
+        if new_element_types.contains(&self.error_type) {
+            return self.error_type;
+        }
+        let new_element_types = self.list_of(&new_element_types);
+        self.create_tuple_type_ex(
+            new_element_types,
+            List::from_slice(&new_element_infos),
+            new_readonly,
+        )
+    }
+
+    pub fn instantiate_mapped_type_template(
+        &mut self,
+        t: TypeId,
+        key: TypeId,
+        is_optional: bool,
+        m: TypeMapperId,
+    ) -> TypeId {
+        let type_parameter = self.get_type_parameter_from_mapped_type(t);
+        let template_mapper = append_type_mapping(self, m, type_parameter, key);
+        let target = or_else(self.as_mapped_type(t).target, t);
+        let template_type = self.get_template_type_from_mapped_type(target);
+        let prop_type = self.instantiate_type(template_type, template_mapper);
+        let modifiers = get_mapped_type_modifiers(self, t);
+        if self.strict_null_checks
+            && modifiers.intersects(MappedTypeModifiers::INCLUDE_OPTIONAL)
+            && !self.maybe_type_of_kind(prop_type, TypeFlags::UNDEFINED | TypeFlags::VOID)
+        {
+            return self.get_optional_type(prop_type, true);
+        }
+        if self.strict_null_checks
+            && modifiers.intersects(MappedTypeModifiers::EXCLUDE_OPTIONAL)
+            && is_optional
+        {
+            return self.remove_missing_or_undefined_type(prop_type);
+        }
+        prop_type
+    }
+}
+
+pub fn get_modified_readonly_state(state: bool, modifiers: MappedTypeModifiers) -> bool {
+    if modifiers.intersects(MappedTypeModifiers::INCLUDE_READONLY) {
+        return true;
+    }
+    if modifiers.intersects(MappedTypeModifiers::EXCLUDE_READONLY) {
+        return false;
+    }
+    state
+}
+
+impl<'a> Checker<'a> {
+    pub fn get_type_parameter_from_mapped_type(&mut self, t: TypeId) -> TypeId {
+        let a = self.ast;
+        if self.as_mapped_type(t).type_parameter.is_nil() {
+            let declaration = self.as_mapped_type(t).declaration;
+            let symbol =
+                self.get_symbol_of_declaration(a.as_mapped_type_node(declaration).type_parameter);
+            let type_parameter = self.get_declared_type_of_type_parameter(symbol);
+            self.as_mapped_type_mut(t).type_parameter = type_parameter;
+        }
+        self.as_mapped_type(t).type_parameter
+    }
+
+    pub fn get_constraint_type_from_mapped_type(&mut self, t: TypeId) -> TypeId {
+        if self.as_mapped_type(t).constraint_type.is_nil() {
+            let type_parameter = self.get_type_parameter_from_mapped_type(t);
+            let constraint = self.get_constraint_of_type_parameter(type_parameter);
+            let constraint_type = or_else(constraint, self.error_type);
+            self.as_mapped_type_mut(t).constraint_type = constraint_type;
+        }
+        self.as_mapped_type(t).constraint_type
+    }
+
+    pub fn get_name_type_from_mapped_type(&mut self, t: TypeId) -> TypeId {
+        let a = self.ast;
+        let name_type_node = a
+            .as_mapped_type_node(self.as_mapped_type(t).declaration)
+            .name_type;
+        if name_type_node.is_nil() {
+            return TypeId::NIL;
+        }
+        if self.as_mapped_type(t).name_type.is_nil() {
+            let declared_name_type = self.get_type_from_type_node(name_type_node);
+            let mapper = self.as_mapped_type(t).mapper;
+            let name_type = self.instantiate_type(declared_name_type, mapper);
+            self.as_mapped_type_mut(t).name_type = name_type;
+        }
+        self.as_mapped_type(t).name_type
+    }
+
+    pub fn get_template_type_from_mapped_type(&mut self, t: TypeId) -> TypeId {
+        let a = self.ast;
+        if self.as_mapped_type(t).template_type.is_nil() {
+            let type_node = a
+                .as_mapped_type_node(self.as_mapped_type(t).declaration)
+                .type_node;
+            if !type_node.is_nil() {
+                let declared_type = self.get_type_from_type_node(type_node);
+                let is_optional = get_mapped_type_modifiers(self, t)
+                    .intersects(MappedTypeModifiers::INCLUDE_OPTIONAL);
+                let optional_type = self.add_optionality_ex(declared_type, true, is_optional);
+                let mapper = self.as_mapped_type(t).mapper;
+                let template_type = self.instantiate_type(optional_type, mapper);
+                self.as_mapped_type_mut(t).template_type = template_type;
+            } else {
+                let error_type = self.error_type;
+                self.as_mapped_type_mut(t).template_type = error_type;
+            }
+        }
+        self.as_mapped_type(t).template_type
+    }
+
+    pub fn is_mapped_type_with_keyof_constraint_declaration(&self, t: TypeId) -> bool {
+        let a = self.ast;
+        let constraint_declaration = self.get_constraint_declaration_for_mapped_type(t);
+        is_type_operator_node(a, constraint_declaration)
+            && a.as_type_operator_node(constraint_declaration).operator == Kind::KeyOfKeyword
+    }
+
+    pub fn get_constraint_declaration_for_mapped_type(&self, t: TypeId) -> NodeId {
+        let a = self.ast;
+        let declaration = self.as_mapped_type(t).declaration;
+        a.as_type_parameter_declaration(a.as_mapped_type_node(declaration).type_parameter)
+            .constraint
+    }
+
+    pub fn get_apparent_mapped_type_keys(
+        &mut self,
+        name_type: TypeId,
+        target_type: TypeId,
+    ) -> TypeId {
+        let modifiers_type = self.get_modifiers_type_from_mapped_type(target_type);
+        let modifiers_type = self.get_apparent_type(modifiers_type);
+        let mut mapped_keys: Vec<TypeId> = Vec::new();
+        self.for_each_mapped_type_property_key_type_and_index_signature_key_type(
+            modifiers_type,
+            TypeFlags::STRING_OR_NUMBER_LITERAL_OR_UNIQUE,
+            false,
+            &mut |c, t| {
+                let mapper = c.type_mapper(target_type);
+                let type_parameter = c.get_type_parameter_from_mapped_type(target_type);
+                let mapper = append_type_mapping(c, mapper, type_parameter, t);
+                mapped_keys.push(c.instantiate_type(name_type, mapper));
+            },
+        );
+        self.get_union_type(List::from_slice(&mapped_keys))
+    }
+
+    pub fn for_each_mapped_type_property_key_type_and_index_signature_key_type(
+        &mut self,
+        t: TypeId,
+        include: TypeFlags,
+        strings_only: bool,
+        cb: &mut dyn FnMut(&mut Checker<'a>, TypeId),
+    ) {
+        let properties = self.get_properties_of_type(t);
+        for &prop in properties.as_slice() {
+            let key_type = self.get_literal_type_from_property(prop, include, false);
+            cb(self, key_type);
+        }
+        if self.types[t].flags.intersects(TypeFlags::ANY) {
+            let string_type = self.string_type;
+            cb(self, string_type);
+        } else {
+            let index_infos = self.get_index_infos_of_type(t);
+            for &info in index_infos.as_slice() {
+                let key_type = self.index_infos[info].key_type;
+                if !strings_only
+                    || self.types[key_type]
+                        .flags
+                        .intersects(TypeFlags::STRING | TypeFlags::TEMPLATE_LITERAL)
+                {
+                    cb(self, key_type);
+                }
+            }
+        }
     }
 
     pub fn instantiate_reverse_mapped_type(&mut self, t: TypeId, m: TypeMapperId) -> TypeId {

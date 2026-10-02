@@ -21,9 +21,7 @@ use crate::checker::{
     is_numeric_literal_name, is_object_literal_type, is_this_property, is_tuple_type, is_type_any,
     is_type_usable_as_property_name, try_get_property_access_or_identifier_to_string,
 };
-use crate::core::{
-    List, Text, Tristate, get_spelling_suggestion_with_max_candidate_count, or_else,
-};
+use crate::core::{List, Tristate, get_spelling_suggestion_with_max_candidate_count, or_else};
 use crate::diagnostics;
 use crate::evaluator::any_to_string;
 use crate::jsnum;
@@ -1091,39 +1089,33 @@ impl<'a> Checker<'a> {
         if !has_prop(self, suggested_method) {
             return Vec::new();
         }
-        let suggestion = try_get_property_access_or_identifier_to_string(a, a.expression(expr));
+        let mut suggestion = try_get_property_access_or_identifier_to_string(a, a.expression(expr));
         if suggestion.is_empty() {
             return suggested_method.to_vec();
         }
-        let mut result: Vec<u8> = Vec::with_capacity(suggestion.len() + 1 + suggested_method.len());
-        result.extend_from_slice(&suggestion);
-        result.push(b'.');
-        result.extend_from_slice(suggested_method);
-        result
+        suggestion.push(b'.');
+        suggestion.extend_from_slice(suggested_method);
+        suggestion
     }
 
     pub fn get_suggested_type_for_nonexistent_string_literal_type(
-        &mut self,
+        &self,
         source: TypeId,
         target: TypeId,
     ) -> TypeId {
-        // A candidate carries its name: the comparer holds the checker while the names are read.
-        let types = self.type_types(target);
-        let mut candidates: Vec<(TypeId, Text<'a>)> = Vec::new();
-        for &t in types.as_slice() {
-            if self.types[t].flags.intersects(TypeFlags::STRING_LITERAL) {
-                candidates.push((t, get_string_literal_value(self, t)));
-            }
-        }
-        let source_value = get_string_literal_value(self, source);
-        let (suggestion, _) = get_spelling_suggestion_with_max_candidate_count(
-            source_value,
+        let candidates = self
+            .type_types(target)
+            .as_slice()
+            .iter()
+            .copied()
+            .filter(|&t| self.types[t].flags.intersects(TypeFlags::STRING_LITERAL));
+        get_spelling_suggestion_with_max_candidate_count(
+            get_string_literal_value(self, source),
             candidates,
-            |(_, value)| value,
-            |(t1, _), (t2, _)| compare_types(self, t1, t2),
+            |t| get_string_literal_value(self, t),
+            |t1, t2| compare_types(self, t1, t2),
             1000,
-        );
-        suggestion
+        )
     }
 }
 
@@ -1276,17 +1268,10 @@ impl<'a> Checker<'a> {
         NodeId::NIL
     }
 
-    pub fn get_property_name_from_index(
-        &mut self,
-        index_type: TypeId,
-        access_node: NodeId,
-    ) -> Vec<u8> {
+    pub fn get_property_name_from_index(&self, index_type: TypeId, access_node: NodeId) -> Vec<u8> {
         let a = self.ast;
         if is_type_usable_as_property_name(self, index_type) {
-            let name = get_property_name_from_type(self, index_type);
-            let mut result: Vec<u8> = Vec::with_capacity(name.len());
-            result.extend_from_slice(&name);
-            return result;
+            return get_property_name_from_type(self, index_type);
         }
         if !access_node.is_nil() && is_property_name(a, access_node) {
             return get_property_name_for_property_name_node(a, access_node).into_owned();

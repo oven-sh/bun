@@ -2925,20 +2925,26 @@ fn get_or_put_resolved_package(
                     );
                 }
 
+                let path_is_top_level_relative =
+                    this.lockfile.is_trusted_folder_dependency(dependency_id);
+
                 // transitive folder dependencies do not have their dependencies resolved
                 if crate::bin::bin_target_escapes_package_dir(this.lockfile.str(&folder))
-                    && !this.lockfile.is_trusted_folder_dependency(dependency_id)
+                    && !path_is_top_level_relative
                 {
                     break 'res FolderResolutionValue::Err(crate::Error::MissingPackageJSON);
                 }
 
-                // See if another declarer already loaded this folder package in-memory
-                if let Some(existing_id) = this.lockfile.get_package_id(
-                    name_hash,
-                    None,
-                    &Resolution::init(ResolutionTagged::Folder(folder)),
-                ) {
-                    break 'res FolderResolutionValue::PackageId(existing_id);
+                // One path under the top-level dir is one folder, so see if another
+                // declarer already loaded this package in-memory.
+                if path_is_top_level_relative {
+                    if let Some(existing_id) = this.lockfile.get_package_id(
+                        name_hash,
+                        None,
+                        &Resolution::init(ResolutionTagged::Folder(folder)),
+                    ) {
+                        break 'res FolderResolutionValue::PackageId(existing_id);
+                    }
                 }
 
                 let mut package = Package::default();

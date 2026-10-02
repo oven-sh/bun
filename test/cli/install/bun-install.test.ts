@@ -11346,6 +11346,89 @@ it("reloads the lockfile it wrote when a file: dependency and the root declare t
   `);
 });
 
+it("keeps a registry package's own file: folder apart from the root's folder of the same path", async () => {
+  // A registry package's `file:` path is relative to that package, so `file:x`
+  // under it names a different folder than the root's `file:x`. The root's copy
+  // has the trusted `postinstall`; it must not run in the package's copy.
+  const ctx = await createTestContext();
+  try {
+    const tarball = await new Bun.Archive(
+      {
+        "package/package.json": JSON.stringify({ name: "foo", version: "1.0.0", dependencies: { x: "file:x" } }),
+        "package/x/package.json": JSON.stringify({ name: "x", version: "6.6.6" }),
+        "package/x/build.js": `throw new Error("the postinstall of the root's x ran in foo's x");`,
+      },
+      { compress: "gzip" },
+    ).bytes();
+
+    setContextHandler(ctx, async request => {
+      if (request.url.endsWith(".tgz")) return new Response(tarball);
+      return Response.json({
+        name: "foo",
+        "dist-tags": { latest: "1.0.0" },
+        versions: {
+          "1.0.0": {
+            name: "foo",
+            version: "1.0.0",
+            dependencies: { x: "file:x" },
+            dist: {
+              tarball: `${ctx.registry_url}foo-1.0.0.tgz`,
+              integrity: `sha512-${new Bun.CryptoHasher("sha512").update(tarball).digest("base64")}`,
+            },
+          },
+        },
+      });
+    });
+
+    await Promise.all([
+      write(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({
+          name: "my-app",
+          version: "1.0.0",
+          dependencies: { foo: "1.0.0", x: "file:x" },
+          trustedDependencies: ["x"],
+        }),
+      ),
+      write(
+        join(ctx.package_dir, "x", "package.json"),
+        JSON.stringify({ name: "x", version: "1.0.0", scripts: { postinstall: `${bunExe()} build.js` } }),
+      ),
+      write(join(ctx.package_dir, "x", "build.js"), `require("fs").writeFileSync("ran.txt", process.cwd());`),
+    ]);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--save-text-lockfile"],
+      cwd: ctx.package_dir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    const [err, out, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    expect(err).not.toContain("error:");
+    expect(out).toContain("3 packages installed");
+    expect(exitCode).toBe(0);
+
+    // The script ran once, in the root's folder. `foo`'s copy has no marker and
+    // keeps its own version.
+    expect([
+      await file(join(ctx.package_dir, "node_modules", "x", "ran.txt")).text(),
+      await exists(join(ctx.package_dir, "node_modules", "foo", "node_modules", "x", "ran.txt")),
+      await file(join(ctx.package_dir, "node_modules", "foo", "node_modules", "x", "package.json")).json(),
+    ]).toEqual([join(ctx.package_dir, "node_modules", "x"), false, { name: "x", version: "6.6.6" }]);
+
+    // two rows, so two packages
+    const lock = await file(join(ctx.package_dir, "bun.lock")).text();
+    expect(lock.split("\n").filter(line => line.includes(`["x@file:x"`))).toEqual([
+      `    "x": ["x@file:x", {}],`,
+      `    "foo/x": ["x@file:x", {}],`,
+    ]);
+  } finally {
+    destroyTestContext(ctx);
+  }
+});
+
 it("fails when a transitive file: dependency's folder does not exist", async () => {
   using dir = tempDir("transitive-file-dep-missing", {
     "package.json": JSON.stringify({

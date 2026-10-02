@@ -4,7 +4,7 @@ import { isWindows } from "harness";
 import { once } from "node:events";
 import net from "node:net";
 
-// Windows uses the libuv eventing backend; bsd_recv/bsd_send are still the
+// Windows uses the IOCP eventing backend; bsd_recv/bsd_send are still the
 // chokepoints there but errno semantics differ. Land POSIX coverage first.
 const skip = !fault.available() || isWindows;
 

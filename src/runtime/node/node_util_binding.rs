@@ -70,13 +70,9 @@ pub(crate) fn uv_translate_sys_error(
     }
     #[cfg(windows)]
     {
-        // SAFETY: pure translation function.
-        let uv_err = unsafe { bun_libuv_sys::uv_translate_sys_error(n) };
-        return Ok(JSValue::js_number_from_int32(if uv_err != 0 {
-            uv_err
-        } else {
-            -UV_E::INVAL
-        }));
+        return Ok(JSValue::js_number_from_int32(
+            bun_errno::Bun__translateWin32ErrorToUV(n as u32),
+        ));
     }
     #[cfg(not(windows))]
     {

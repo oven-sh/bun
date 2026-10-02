@@ -214,11 +214,8 @@ impl GarbageCollectionController {
         let grew = vm_ref.jsc_vm().block_bytes_allocated() > prev_heap_size + idle_growth_slack;
         let (full, idle_gc_due_in) = this.idle_tick(vm_ref, grew, interval);
         this.perform_gc(full);
-        // Growth is activity; a shrinking heap is a collection (possibly the one requested above) doing its job. Where the
-        // event loop cannot let an idle collection finish while parked (Windows: Bun__JSC_onBeforeWait), it proceeds at
-        // this timer's ticks instead, fast ones for the next 30.
-        let needs_ticks_to_finish = full && cfg!(windows);
-        if !grew && !needs_ticks_to_finish {
+        // Growth is activity; a shrinking heap is a collection (possibly the one requested above) doing its job.
+        if !grew {
             let ticks = this
                 .heap_size_didnt_change_for_repeating_timer_ticks_count
                 .get()

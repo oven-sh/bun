@@ -1,14 +1,6 @@
 //! StatFS and BigIntStatFS classes from node:fs
 
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
-// On POSIX this is `libc::statfs`; on Windows it's `uv_statfs_t` (the value
-// `sys_uv::statfs` returns / `uv_fs_statfs` writes into `req.ptr`). Field
-// names match (`f_type`/`f_bsize`/…); widths differ (u64 vs platform-specific)
-// but `init` widens each field with `as i64` so either shape works.
-#[cfg(unix)]
-pub(crate) type RawStatFS = libc::statfs;
-#[cfg(not(unix))]
-pub(crate) type RawStatFS = bun_sys::StatFS;
 
 macro_rules! define_statfs_type {
     ($name:ident, big = $big:expr) => {
@@ -60,7 +52,7 @@ macro_rules! define_statfs_type {
                 ))
             }
 
-            pub(crate) fn init(statfs_: &RawStatFS) -> Self {
+            pub(crate) fn init(statfs_: &bun_sys::StatFS) -> Self {
                 #[cfg(any(
                     target_os = "linux",
                     target_os = "android",
@@ -140,7 +132,7 @@ pub(crate) enum StatFS {
 
 impl StatFS {
     #[inline]
-    pub(crate) fn init(stat_: &RawStatFS, big: bool) -> StatFS {
+    pub(crate) fn init(stat_: &bun_sys::StatFS, big: bool) -> StatFS {
         if big {
             StatFS::Big(StatFSBig::init(stat_))
         } else {

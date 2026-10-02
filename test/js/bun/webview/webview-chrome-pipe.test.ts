@@ -1,6 +1,6 @@
 // The spawn-mode transport (Chrome's --remote-debugging-pipe: commands on the
-// child's fd 3, replies on fd 4; one socketpair on POSIX, two pipes driven by
-// libuv on Windows) exercised without a browser: fake-chrome-fixture.ts is
+// child's fd 3, replies on fd 4; one socketpair on POSIX, two pipes on
+// Windows) exercised without a browser: fake-chrome-fixture.ts is
 // spawned in Chrome's place, so this runs on every platform, including CI
 // agents that cannot start a real browser. webview-chrome.test.ts covers the
 // real thing where one is installed.

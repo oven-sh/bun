@@ -15,7 +15,7 @@ import { join } from "path";
 // the exact code path is reached.
 
 // The leak is in the posix poll-reader path; Windows pipes go through
-// libuv with different buffering.
+// IOCP with different buffering.
 //
 // On release builds without ASAN, mimalloc recycles the orphaned 32 KiB
 // blocks into later allocations of the same size class, so RSS growth is

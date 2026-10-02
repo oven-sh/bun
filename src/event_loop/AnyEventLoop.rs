@@ -84,13 +84,6 @@ impl AnyEventLoop {
         }
     }
 
-    /// Convert to an owned [`EventLoopHandle`]. Thin alias for
-    /// [`EventLoopHandle::from_any`].
-    #[inline]
-    pub fn as_handle(this: &mut AnyEventLoop) -> EventLoopHandle {
-        EventLoopHandle::from_any(this)
-    }
-
     pub fn init() -> AnyEventLoop {
         AnyEventLoop::Mini(Box::new(MiniEventLoop::init()))
     }
@@ -187,13 +180,6 @@ impl AnyEventLoop {
     #[inline]
     pub fn loop_(&mut self) -> *mut UwsLoop {
         self.r#loop()
-    }
-
-    /// Platform-native loop pointer (`us_loop_t*` on POSIX, `uv_loop_t*` on
-    /// Windows). See [`bun_io::uws_to_native`].
-    #[inline]
-    pub fn native_loop(&mut self) -> *mut bun_io::Loop {
-        bun_io::uws_to_native(self.r#loop())
     }
 
     #[inline]
@@ -460,23 +446,6 @@ impl EventLoopHandle {
     #[inline]
     pub fn loop_(self) -> *mut UwsLoop {
         self.r#loop()
-    }
-
-    /// Platform-native loop pointer (`us_loop_t*` on POSIX, `uv_loop_t*` on
-    /// Windows). See [`bun_io::uws_to_native`] — collapses the per-site
-    /// `#[cfg(windows)]` `.uv_loop` projection that previously appeared at
-    /// every `BufferedReaderParent::loop_` impl.
-    #[inline]
-    pub fn native_loop(self) -> *mut bun_io::Loop {
-        bun_io::uws_to_native(self.r#loop())
-    }
-
-    /// Windows convenience alias for [`native_loop`](Self::native_loop)
-    /// (kept for existing `cfg(windows)` callers that spell `uv_loop`).
-    #[cfg(windows)]
-    #[inline]
-    pub fn uv_loop(self) -> *mut bun_io::Loop {
-        self.native_loop()
     }
 
     pub fn env(self) -> *mut DotEnvLoader {

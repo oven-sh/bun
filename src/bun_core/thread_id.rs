@@ -120,11 +120,7 @@ fn current_uncached() -> ThreadId {
     }
     #[cfg(target_os = "windows")]
     {
-        unsafe extern "system" {
-            // No preconditions; infallible Win32 intrinsic.
-            safe fn GetCurrentThreadId() -> u32; // kernel32 DWORD
-        }
-        return GetCurrentThreadId();
+        return bun_windows_sys::GetCurrentThreadId();
     }
     #[cfg(target_os = "freebsd")]
     {

@@ -1777,8 +1777,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             self.unref();
         }
         // A graceful stop with work in flight keeps the ref (deinit_if_we_can
-        // unrefs when the drain completes): on Windows uv_run skips I/O with
-        // zero ref'd handles, so unrefing here wedged server.close() teardown.
+        // unrefs when the drain completes): a loop with nothing ref'd does not
+        // wait for I/O, so unrefing here would wedge server.close() teardown.
 
         if !SSL {
             // SAFETY: `listener` is a live uws ListenSocket FFI handle just taken

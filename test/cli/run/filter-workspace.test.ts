@@ -1,7 +1,9 @@
 import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir, tempDirWithFiles } from "harness";
-import { existsSync, symlinkSync } from "node:fs";
+import { spawn as nodeSpawn } from "node:child_process";
+import { once } from "node:events";
+import { existsSync, readFileSync, symlinkSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { constants } from "os";
 import { join } from "path";
@@ -1031,9 +1033,9 @@ describe("selectors", () => {
 
 // #20319: on Windows, `bun --filter` / `bun run --parallel` spawn each script
 // as `bun exec "<script>"` with CREATE_NO_WINDOW, so the user's Ctrl+C never
-// reaches the scripts and cleanup is entirely on the parent. libuv's global
+// reaches the scripts and cleanup is entirely on the parent. Bun's global
 // spawn Job is KILL_ON_CLOSE | SILENT_BREAKAWAY_OK, so membership only
-// propagates one hop: as soon as the tree contains a non-libuv spawner
+// propagates one hop: as soon as the tree contains a non-Bun spawner
 // (cmd.exe, a `.cmd` bin shim, node.exe), everything below it escapes and keeps
 // its port bound after the parent exits.
 //
@@ -1189,6 +1191,67 @@ describe("output timing", () => {
     // a closed pipe instead of delaying the run by 30s.
     expect(stdout).not.toContain("late-line");
     expect(exitCode).toBe(0);
+  });
+
+  // Nobody reads this run's stdout until every script is gone, so it stops at the first 64 KiB it
+  // prints: when it goes on, it has the exit of each script waiting behind a read that brought the
+  // script's first write alone.
+  // Windows only: elsewhere a script's parent is the run itself, which waits for its stdout to be read.
+  test.skipIf(!isWindows)("what a script wrote is not lost when it has exited by the time it is read", async () => {
+    const names = ["a", "b", "c", "d"];
+    using dir = tempDir("filter-last-line", {
+      "package.json": JSON.stringify({ name: "ws-last", workspaces: ["packages/*"] }),
+      ...Object.fromEntries(
+        names.flatMap(name => [
+          [
+            `packages/${name}/package.json`,
+            JSON.stringify({ name: "pkg-" + name, scripts: { go: `${bunExe()} out.js ${name}` } }),
+          ],
+          [
+            `packages/${name}/out.js`,
+            `
+        // Under its name only once it is written: whoever waits for it reads it as soon as it is there.
+        require("fs").writeFileSync(process.argv[2] + ".tmp", process.pid + " " + process.ppid);
+        require("fs").renameSync(process.argv[2] + ".tmp", process.argv[2] + ".pids");
+        // The first write is what a read that was waiting for it brings; the rest stays in the pipe.
+        process.stdout.write("first of " + process.argv[2] + "\\n");
+        let out = "";
+        for (let i = 0; i < 500; i++) out += "line " + i + " " + Buffer.alloc(80, "x") + "\\n";
+        process.stdout.write(out + "last of " + process.argv[2] + "\\n");
+      `,
+          ],
+        ]),
+      ),
+    });
+    const proc = nodeSpawn(bunExe(), ["run", "--filter", "*", "go"], {
+      env: { ...bunEnv, NO_COLOR: "1" },
+      cwd: String(dir),
+      stdio: ["ignore", "pipe", "inherit"],
+    });
+    const exited = once(proc, "exit");
+    for (const name of names) {
+      const file = join(String(dir), "packages", name, name + ".pids");
+      while (!existsSync(file)) {
+        if (proc.exitCode !== null || proc.signalCode !== null) {
+          throw new Error(`the run ended (${proc.exitCode ?? proc.signalCode}) and ${file} was not written`);
+        }
+        await sleep(5);
+      }
+      for (const pid of readFileSync(file, "utf8").split(" ").map(Number)) {
+        for (;;) {
+          try {
+            process.kill(pid, 0);
+          } catch {
+            break;
+          }
+          await sleep(5);
+        }
+      }
+    }
+    let stdout = "";
+    for await (const chunk of proc.stdout) stdout += chunk;
+    expect(names.filter(name => !stdout.includes("last of " + name))).toEqual([]);
+    expect((await exited)[0]).toBe(0);
   });
 
   // On abort (here: SIGINT), exit alone finishes a script; waiting for pipe

@@ -156,14 +156,11 @@ test.concurrent(
   60_000,
 );
 
-// us_poll_start_rc wraps uv_poll_init_socket on Windows and EPOLL_CTL_ADD /
-// kevent on posix. On Windows the return value was ignored, so an ioctlsocket
-// FIONBIO failure left a never-initialized uv_poll_t that uv_unref/uv_poll_start
-// then operated on (assertion failure at libuv win/poll.c:508 in debug,
-// undefined behaviour in release). The fd is always fresh from the kernel at
-// that point, so the failure path is unreachable without injection; each case
-// runs in a subprocess so a crash surfaces as a non-zero exit rather than
-// taking the test runner down.
+// us_poll_start_rc is FIONBIO + an AFD poll on Windows and EPOLL_CTL_ADD /
+// kevent on posix; its failure must reach the caller. The fd is always fresh
+// from the kernel at that point, so the failure path is unreachable without
+// injection; each case runs in a subprocess so a crash surfaces as a non-zero
+// exit rather than taking the test runner down.
 describe.skipIf(!fault.available())("poll_start failure is reported, not a crash", () => {
   // WSAENOTSOCK is what ioctlsocket(FIONBIO) on a bad handle yields. ENOMEM is
   // one of the documented EPOLL_CTL_ADD failure modes.
@@ -247,7 +244,7 @@ describe.skipIf(!fault.available())("poll_start failure is reported, not a crash
 // A paused socket whose peer hung up is taken out of epoll by the dispatcher
 // (EPOLLHUP is level-triggered and cannot be masked) and registered again by
 // resume(), which is a fresh EPOLL_CTL_ADD and can fail the way the first one
-// can. epoll only: kqueue and libuv never park the fd, so their resume is a
+// can. epoll only: kqueue and IOCP never park the fd, so their resume is a
 // plain filter/poll change with nothing for the hook to fail. onread mode, because
 // like in node only that mode's pause() stops the handle (a plain pause() keeps
 // reading into the stream's buffer, which would deliver the reply as data here).
@@ -538,3 +535,26 @@ describe.skipIf(skip)("h2 client under injected unclassified send errno (EPROTOT
     H2_TIMEOUT_MS,
   );
 });
+
+// On Windows a socket's poll goes back to the kernel between callbacks, so a refusal has no caller
+// to return to: the socket closes from the loop. That has to happen where every other completion
+// is delivered, after the tick has looked for events, or the answer to something its close handler
+// wrote arrives within the same tick, ahead of the microtasks the handler queued.
+test.skipIf(!fault.available() || !isWindows)(
+  "a socket whose poll the kernel refuses closes after the tick has looked for events",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "socket-refused-poll-tick-fixture.ts")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const result = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+    expect({ result, stderr, exitCode }).toEqual({
+      result: { closed: ["refused"], replyBeforeCheckpoint: false },
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);

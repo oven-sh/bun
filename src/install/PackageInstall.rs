@@ -2008,34 +2008,11 @@ impl<'a> PackageInstall<'a> {
     }
 
     pub(crate) fn is_dangling_symlink(path: &ZStr) -> bool {
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            match sys::open(path, sys::O::PATH, 0) {
-                Err(_) => return true,
-                Ok(fd) => {
-                    fd.close();
-                    return false;
-                }
-            }
-        }
-        #[cfg(windows)]
-        {
-            match sys::sys_uv::open(path, 0, 0) {
-                Err(_) => return true,
-                Ok(fd) => {
-                    fd.close();
-                    return false;
-                }
-            }
-        }
-        #[cfg(not(any(target_os = "linux", target_os = "android", windows)))]
-        {
-            match sys::open(path, sys::O::PATH, 0) {
-                Err(_) => return true,
-                Ok(fd) => {
-                    fd.close();
-                    return false;
-                }
+        match sys::open(path, sys::O::PATH, 0) {
+            Err(_) => true,
+            Ok(fd) => {
+                fd.close();
+                false
             }
         }
     }

@@ -202,7 +202,6 @@ impl Drop for PinnedBytes {
 }
 
 impl readable_stream::SourceContext for ByteStream {
-    const NAME: &'static str = "Bytes";
     // setRefUnrefFn = null
     const SUPPORTS_REF: bool = false;
     crate::source_context_codegen!(js_BytesInternalReadableStreamSource);

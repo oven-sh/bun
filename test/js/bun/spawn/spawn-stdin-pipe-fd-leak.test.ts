@@ -25,7 +25,7 @@ function countOpenFds(): number {
 }
 
 // Windows has no /proc/self/fd equivalent; the observable leak is
-// POSIX-specific anyway (libuv pipe close on Windows is async regardless).
+// POSIX-specific anyway (a Windows pipe with I/O in flight closes later).
 test.skipIf(!isPosix)("stdin: 'pipe' fd is closed on child exit without reading .stdin", async () => {
   const N = 100;
 

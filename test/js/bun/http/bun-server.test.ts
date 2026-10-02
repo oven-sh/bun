@@ -1936,12 +1936,11 @@ test("server wrapper survives GC while a websocket is connected after stop()", a
         }
 
         // objectTypeCounts includes the (lazily created) prototype object(s)
-        // once the first server is constructed — and on libuv platforms both
-        // Debug and non-Debug prototypes may end up materialized. Measure the
-        // floor while a trivial server is the only live instance: whatever the
-        // count is above that one instance is prototype(s). Assertions are
-        // relative to it; the trivial server itself must be collected by the
-        // final drain like any other stopped server.
+        // once the first server is constructed. Measure the floor while a
+        // trivial server is the only live instance: whatever the count is above
+        // that one instance is prototype(s). Assertions are relative to it; the
+        // trivial server itself must be collected by the final drain like any
+        // other stopped server.
         const baseline = (() => {
           const s = Bun.serve({ port: 0, fetch: () => new Response("ok") });
           const floor = serverCount() - 1;
@@ -3146,9 +3145,9 @@ describe.concurrent("handler GC tracing (heapStats wrapper-count)", () => {
         }
 
         // Materialize prototype(s) first so baseline = whatever floor this
-        // build settles at (libuv platforms may surface 2, not 1): while the
-        // trivial server is the only live instance, everything above one is
-        // prototype(s). The final drain must collect it as well.
+        // build settles at: while the trivial server is the only live instance,
+        // everything above one is prototype(s). The final drain must collect
+        // it as well.
         const baseline = (() => {
           const s = Bun.serve({ port: 0, development: true, fetch: () => new Response("ok") });
           const floor = live() - 1;

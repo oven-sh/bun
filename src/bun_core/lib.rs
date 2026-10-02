@@ -465,9 +465,9 @@ pub mod vec {
         unsafe { core::slice::from_raw_parts_mut(spare.as_mut_ptr().cast::<u8>(), spare.len()) }
     }
 
-    /// `reserve(n)` then [`spare_bytes_mut`] — the libuv `uv_alloc_cb` shape
-    /// (and the dominant call pattern at every C-ABI fill site that wants "at
-    /// least `n` bytes of headroom"). Prefer this over `fill_spare` when the
+    /// `reserve(n)` then [`spare_bytes_mut`] — the dominant call pattern at
+    /// every C-ABI fill site that wants "at least `n` bytes of headroom".
+    /// Prefer this over `fill_spare` when the
     /// commit must happen on a separate control-flow arm from the obtain
     /// (e.g. across an `await`, or after an error-early-return).
     ///
@@ -699,7 +699,7 @@ pub const unsafe fn container_of<P, F>(field: *const F, offset: usize) -> *mut P
 /// Recover a typed `&mut T` from a C-callback's opaque user-data pointer.
 ///
 /// This is the canonical spelling for the ubiquitous trampoline pattern where
-/// a C library (libarchive, c-ares, uWS, libuv, lol-html, BoringSSL, …) round-
+/// a C library (libarchive, c-ares, uWS, lol-html, BoringSSL, …) round-
 /// trips a Rust object through a `void *user_data` slot and hands it back to
 /// an `extern "C" fn` thunk. Earlier ports open-coded this as
 /// `unsafe { &mut *ctx.cast::<T>() }` at every site; centralising it here
@@ -1781,6 +1781,40 @@ pub(crate) mod strings_impl {
         copy_utf16_into_utf8_with_utf8_len(buf, utf16, utf8_len)
     }
 
+    /// [`copy_utf16_into_utf8`] for a file name: an unpaired surrogate is
+    /// written as WTF-8 writes it, so the bytes still name the file.
+    pub fn copy_utf16_into_wtf8(buf: &mut [u8], utf16: &[u16]) -> EncodeIntoResult {
+        let mut result = EncodeIntoResult::default();
+        loop {
+            let rest = &utf16[result.read as usize..];
+            let mut paired = 0;
+            while paired < rest.len() {
+                if u16_is_lead(rest[paired])
+                    && rest.get(paired + 1).is_some_and(|&c| u16_is_trail(c))
+                {
+                    paired += 2;
+                } else if u16_is_lead(rest[paired]) || u16_is_trail(rest[paired]) {
+                    break;
+                } else {
+                    paired += 1;
+                }
+            }
+            let out = &mut buf[result.written as usize..];
+            let copied = copy_utf16_into_utf8(out, &rest[..paired]);
+            result.read += copied.read;
+            result.written += copied.written;
+            let out = &mut out[copied.written as usize..];
+            if (copied.read as usize) < paired || paired == rest.len() || out.len() < 3 {
+                return result;
+            }
+            let mut encoded = [0u8; 4];
+            encode_wtf8_rune(&mut encoded, u32::from(rest[paired]));
+            out[..3].copy_from_slice(&encoded[..3]);
+            result.read += 1;
+            result.written += 3;
+        }
+    }
+
     pub fn copy_utf16_into_utf8_with_utf8_len(
         buf: &mut [u8],
         utf16: &[u16],
@@ -2503,7 +2537,7 @@ pub mod ffi {
 
     /// All-bits-zero value of `T` for `#[repr(C)]` FFI structs.
     ///
-    /// Single audited wrapper over `core::mem::zeroed()` so libc/uv/c-ares
+    /// Single audited wrapper over `core::mem::zeroed()` so libc/c-ares
     /// out-param init sites (`let mut x: libc::sigaction = zeroed();`) don't
     /// each open-code an `unsafe` block.
     ///
@@ -2538,7 +2572,7 @@ pub mod ffi {
     pub unsafe trait Zeroable: Sized {}
 
     /// Unchecked all-bits-zero — escape hatch for types not yet proven
-    /// [`Zeroable`] (libuv handles, bindgen structs in `_sys` crates that
+    /// [`Zeroable`] (bindgen structs in `_sys` crates that
     /// don't depend on `bun_core`, generic `T` where the bound can't be
     /// threaded). Prefer [`zeroed`] + an `unsafe impl Zeroable` whenever the
     /// type is reachable.
@@ -2693,7 +2727,13 @@ pub mod ffi {
     #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::FILE_FS_DEVICE_INFORMATION {}
     #[cfg(windows)]
+    unsafe impl Zeroable for bun_windows_sys::externs::FILE_FS_FULL_SIZE_INFORMATION {}
+    #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::FILE_FS_VOLUME_INFORMATION {}
+    #[cfg(windows)]
+    unsafe impl Zeroable for bun_windows_sys::externs::FILE_STAT_BASIC_INFORMATION {}
+    #[cfg(windows)]
+    unsafe impl Zeroable for bun_windows_sys::externs::FILE_ID_FULL_DIR_INFORMATION {}
     #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::BY_HANDLE_FILE_INFORMATION {}
     #[cfg(windows)]
@@ -2726,6 +2766,8 @@ pub mod ffi {
     unsafe impl Zeroable for bun_windows_sys::externs::OVERLAPPED {}
     #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::PROCESS_INFORMATION {}
+    #[cfg(windows)]
+    unsafe impl Zeroable for bun_windows_sys::externs::OSVERSIONINFOW {}
 
     /// Conjure a value of a zero-sized type without `unsafe` at the call site.
     ///

@@ -1,12 +1,7 @@
-// Regression: on Windows, `FD.fromJSValidated(0|1|2)` used to return the
-// stdio HANDLE cached at process startup, forcing `sys_uv` to map that
-// `.system` FD back to libuv fd 0/1/2 via `FD.uv()`. `FD.uv()` compared the
-// handle against the *live* `GetStdHandle()` result, so a user-space
-// `SetStdHandle` (or `AllocConsole`/`AttachConsole`) made the round-trip fail
-// and `fs.writeSync(1, ...)` panicked with:
-//   "Cast bun.FD.uv(N[handle]) makes closing impossible!"
-// Now `fromJS`/`fromJSValidated` return `.fromUV(0|1|2)` directly, and
-// `FD.uv()` checks the cached stdio handles before `GetStdHandle`.
+// fd 0/1/2 from JS are CRT fds: a user-space `SetStdHandle` (or
+// `AllocConsole`/`AttachConsole`) must not change what `fs.writeSync(1, ...)`
+// writes to. `from_js`/`from_js_validated` return `Fd::from_crt(0|1|2)`, and
+// `Fd::crt()` checks the cached stdio handles before `GetStdHandle`.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
@@ -55,12 +50,11 @@ describe.concurrent.skipIf(!isWindows)("fs.writeSync on Windows stdio/handles", 
         throw new Error("GetStdHandle did not change after SetStdHandle");
       }
 
-      // Before the fix this panics: the cached stdout HANDLE no longer equals
-      // the live GetStdHandle(STD_OUTPUT_HANDLE), so FD.uv() falls through to
-      // the "makes closing impossible" panic.
+      // The stdout HANDLE cached at startup no longer equals the live
+      // GetStdHandle(STD_OUTPUT_HANDLE).
       const n = fs.writeSync(1, "after-setstdhandle\\n");
 
-      // fs.writeSync(1, ...) maps to libuv fd 1, which is the C runtime's
+      // fs.writeSync(1, ...) maps to CRT fd 1, which is the C runtime's
       // original stdout — SetStdHandle does not rewire CRT fds — so the write
       // should land on the parent-observed stdout.
       k32.symbols.SetStdHandle(STD_OUTPUT_HANDLE, original);

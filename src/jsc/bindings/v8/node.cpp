@@ -42,14 +42,10 @@ void RemoveEnvironmentCleanupHook(v8::Isolate* isolate,
 
 struct uv_loop_s* GetCurrentEventLoop(v8::Isolate* isolate)
 {
-#if OS(WINDOWS)
-    return reinterpret_cast<struct uv_loop_s*>(isolate->globalObject()->uvLoop());
-#else
-    // Bun does not run a libuv event loop on POSIX; per node.h this may return
+    // Bun does not run a libuv event loop; per node.h this may return
     // nullptr when the context is not associated with a Node instance.
     (void)isolate;
     return nullptr;
-#endif
 }
 
 async_id AsyncHooksGetExecutionAsyncId(v8::Local<v8::Context> context)

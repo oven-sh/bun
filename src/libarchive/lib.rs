@@ -1689,7 +1689,7 @@ impl Archiver {
                             let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
 
                             #[cfg(windows)]
-                            let file_handle_native: Fd =
+                            let file_handle: Fd =
                                 match bun_sys::openat_windows(dir_fd, path_slice, flags, 0) {
                                     Ok(fd) => fd,
                                     Err(e) => match e.get_errno() {
@@ -1709,7 +1709,7 @@ impl Archiver {
                                 };
 
                             #[cfg(not(windows))]
-                            let file_handle_native: Fd = {
+                            let file_handle: Fd = {
                                 // dir.createFileZ(.{truncate, mode}) → bun_sys::openat
                                 // SAFETY: normalized_buf[path_slice.len()] == 0 (written above).
                                 let path_z: &ZStr = unsafe {
@@ -1731,16 +1731,6 @@ impl Archiver {
                                         _ => return Err(err.into()),
                                     },
                                 }
-                            };
-
-                            let file_handle: Fd = {
-                                // errdefer file_handle_native.close()
-                                let guard = scopeguard::guard(file_handle_native, |fd| {
-                                    fd.close();
-                                });
-                                let owned = (*guard).make_lib_uv_owned()?;
-                                scopeguard::ScopeGuard::into_inner(guard);
-                                owned
                             };
 
                             // reshaped for borrowck — `plucked_file` is captured by

@@ -1632,7 +1632,6 @@ pub fn spawn_opts(
     new_folder: &[u8],
     cwd: &ZStr,
     git: &ZStr,
-    loop_: &mut bun_event_loop::AnyEventLoop,
 ) -> (bun_spawn::sync::Options, Vec<*const core::ffi::c_char>) {
     let argv: Vec<Box<[u8]>> = {
         const ARGV: &[&[u8]] = &[
@@ -1685,22 +1684,12 @@ pub fn spawn_opts(
         envp_buf
     };
 
-    #[cfg(not(windows))]
-    let _ = loop_;
-
     let opts = bun_spawn::sync::Options {
         stdout: bun_spawn::sync::Stdio::Buffer,
         stderr: bun_spawn::sync::Stdio::Buffer,
         cwd: cwd.as_bytes().into(),
         envp: Some(envp_buf.as_ptr()),
         argv,
-        #[cfg(windows)]
-        windows: bun_spawn::sync::WindowsOptions {
-            // `as_handle` owns the handle conversion so variant internals
-            // stay encapsulated.
-            loop_: bun_event_loop::AnyEventLoop::as_handle(loop_),
-            ..Default::default()
-        },
         ..Default::default()
     };
 
@@ -1756,14 +1745,13 @@ pub fn git_diff_preprocess_paths(old_folder_: &[u8], new_folder_: &[u8]) -> [Vec
 pub fn git_diff_internal(
     old_folder_: &[u8],
     new_folder_: &[u8],
-    loop_: &mut bun_event_loop::AnyEventLoop,
 ) -> crate::Result<core::result::Result<Vec<u8>, Vec<u8>>> {
     let paths = git_diff_preprocess_paths(old_folder_, new_folder_);
     let old_folder = &paths[0][..];
     let new_folder = &paths[1][..];
 
-    // `bun_spawn::sync` execs argv[0] verbatim (execve, no PATH search), so
-    // resolve `git` here — same as `patchCommit`'s `bun.which` call.
+    // On POSIX `bun_spawn::sync` execs argv[0] verbatim (execve, no PATH search),
+    // so resolve `git` here — same as `patchCommit`'s `bun.which` call.
     let mut gitbuf = bun_paths::path_buffer_pool::get();
     let git = bun_which::which(
         &mut gitbuf,
@@ -1817,23 +1805,11 @@ pub fn git_diff_internal(
     }
     envp_buf.push(core::ptr::null()); // sentinel
 
-    #[cfg(not(windows))]
-    let _ = loop_;
-
     let opts = bun_spawn::sync::Options {
         stdout: bun_spawn::sync::Stdio::Buffer,
         stderr: bun_spawn::sync::Stdio::Buffer,
         envp: Some(envp_buf.as_ptr()),
         argv,
-        // This routes through `bun_spawn::sync::spawn`, whose Windows path
-        // unconditionally derefs `windows.loop_` (process.rs spawn_windows_*).
-        // `WindowsOptions::default()` is `zeroed_unchecked()`, so leaving this
-        // defaulted is a null deref on Windows — supply the caller's loop.
-        #[cfg(windows)]
-        windows: bun_spawn::sync::WindowsOptions {
-            loop_: bun_event_loop::AnyEventLoop::as_handle(loop_),
-            ..Default::default()
-        },
         ..Default::default()
     };
 

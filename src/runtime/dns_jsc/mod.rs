@@ -2,7 +2,7 @@
 //!
 //! The full body — `Resolver` with the
 //! c-ares channel, all `resolve*`/`reverse`/`getServers`/`setServers` host
-//! functions, libinfo/libuv/system getaddrinfo backends, and the process-wide
+//! functions, libinfo/libc/system getaddrinfo backends, and the process-wide
 //! `internal` cache used by the usockets connect path — lives in `dns.rs`
 //! (mounted here as `dns_body`). This module is the public surface: it
 //! re-exports the real types and methods so callers (`dispatch.rs`,
@@ -10,8 +10,6 @@
 
 #[path = "dns.rs"]
 mod dns_body;
-#[cfg(windows)]
-pub(crate) use dns_body::lib_uv_backend::LibuvCompleteHolder;
 pub(crate) use dns_body::netc;
 
 #[path = "cares_jsc.rs"]

@@ -3,7 +3,7 @@
 #include "BunClientData.h"
 #include <string.h>
 #ifdef _WIN32
-#include <uv.h>
+#include "ProcessBindingUV.h"
 #endif
 
 using namespace JSC;
@@ -23,11 +23,11 @@ JSValue createSystemError(JSGlobalObject* global, ASCIILiteral syscall, int err)
 {
     auto errstr = String::fromLatin1(Bun__errnoName(err));
 #ifdef _WIN32
-    auto strerr = uv_strerror(err);
+    auto strerr = Bun::ProcessBindingUV::errorMessage(err);
 #else
-    auto strerr = strerror(err);
+    auto strerr = String::fromLatin1(strerror(err));
 #endif
-    auto* instance = JSC::createError(global, makeString(syscall, "() failed: "_s, errstr, ": "_s, String::fromLatin1(strerr)));
+    auto* instance = JSC::createError(global, makeString(syscall, "() failed: "_s, errstr, ": "_s, strerr));
     auto& vm = global->vm();
     auto& builtinNames = WebCore::builtinNames(vm);
     instance->putDirect(vm, builtinNames.syscallPublicName(), jsString(vm, String(syscall)), 0);

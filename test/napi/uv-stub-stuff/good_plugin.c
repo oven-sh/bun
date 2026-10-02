@@ -1,11 +1,8 @@
 #include <node_api.h>
-#include <sys/types.h>
 
-#include <signal.h>
 #include <stdio.h>
-#include <unistd.h>
 
-typedef pid_t uv_pid_t;
+typedef int uv_pid_t;
 uv_pid_t uv_os_getpid();
 
 napi_value Init(napi_env env, napi_value exports) {

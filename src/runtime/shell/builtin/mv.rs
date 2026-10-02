@@ -507,6 +507,14 @@ impl ShellMvBatchedTask {
     ) -> Result<(), bun_sys::Error> {
         use bun_sys::{Dir, E, File, O, S, Tag};
 
+        // `NUL` opens as a directory, and what is copied below it is gone.
+        #[cfg(windows)]
+        if !matches!(File::borrow(&dst_dir).kind(), Ok(bun_sys::FileKind::File)) {
+            return Err(
+                bun_sys::Error::from_code(E::ENOTDIR, Tag::rename).with_path(dst.as_bytes())
+            );
+        }
+
         let st = bun_sys::lstatat(src_dir, src)?;
         let mode = st.st_mode as bun_core::Mode;
 

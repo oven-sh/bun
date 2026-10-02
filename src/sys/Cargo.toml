@@ -32,6 +32,3 @@ thiserror.workspace = true
 # kernel via inline asm, skipping glibc's PLT + errno-TLS + cancellation check.
 # Android: same kernel ABI; rustix's linux_raw backend supports it directly.
 rustix = { workspace = true }
-
-[target.'cfg(windows)'.dependencies]
-bun_libuv_sys.workspace = true

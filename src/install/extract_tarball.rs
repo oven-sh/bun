@@ -586,10 +586,10 @@ impl ExtractTarball {
                         bun_sys::Result::Err(err) => {
                             if retries < MAX_RETRIES {
                                 match err.get_errno() {
-                                    sys::Errno::NOTEMPTY
-                                    | sys::Errno::PERM
-                                    | sys::Errno::BUSY
-                                    | sys::Errno::EXIST => {
+                                    sys::Errno::ENOTEMPTY
+                                    | sys::Errno::EPERM
+                                    | sys::Errno::EBUSY
+                                    | sys::Errno::EEXIST => {
                                         // before we attempt to delete the destination, let's close the source dir.
                                         let _ = sys::close(dir_to_move);
 
@@ -836,13 +836,7 @@ impl ExtractTarball {
                                 &[name, dest_name],
                             );
 
-                            if sys::sys_uv::symlink_uv(
-                                final_path,
-                                dest_path,
-                                bun_sys::windows::libuv::UV_FS_SYMLINK_JUNCTION,
-                            )
-                            .is_err()
-                            {
+                            if sys::junction(final_path, dest_path).is_err() {
                                 break 'create_index;
                             }
                         }

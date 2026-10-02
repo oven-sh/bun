@@ -31,17 +31,6 @@ fn build_argv(parts: &[&[u8]]) -> Vec<Box<[u8]>> {
     parts.iter().map(|p| Box::<[u8]>::from(*p)).collect()
 }
 
-#[cfg(windows)]
-#[inline]
-fn spawn_windows_options() -> crate::api::bun::process::WindowsOptions {
-    crate::api::bun::process::WindowsOptions {
-        loop_: bun_event_loop::EventLoopHandle::init_mini(
-            bun_event_loop::MiniEventLoop::init_global(None, None),
-        ),
-        ..Default::default()
-    }
-}
-
 // `bun_resolver::fs::FileSystem` (the inline canonical type surface
 // in `resolver/lib.rs`) does not yet expose `tmpdir()`; the full impl lives in
 // the un-exported `fs_full` module. Shim it locally — open
@@ -945,7 +934,6 @@ impl UpgradeCommand {
                         stderr: spawn_sync::SyncStdio::Inherit,
                         stdout: spawn_sync::SyncStdio::Inherit,
                         stdin: spawn_sync::SyncStdio::Inherit,
-                        windows: spawn_windows_options(),
                         ..Default::default()
                     });
                     let spawn_res = match spawn_res {
@@ -989,8 +977,6 @@ impl UpgradeCommand {
                         stdout: spawn_sync::SyncStdio::Buffer,
                         stderr: spawn_sync::SyncStdio::Ignore,
                         stdin: spawn_sync::SyncStdio::Ignore,
-                        #[cfg(windows)]
-                        windows: spawn_windows_options(),
                         ..Default::default()
                     });
                     // Any spawn-time failure (allocator/OOM surfaces as
@@ -1035,7 +1021,7 @@ impl UpgradeCommand {
                 if !result.status.is_ok() {
                     let _ = save_dir_.delete_tree(&version_name);
                     let exit_code: u32 = match &result.status {
-                        Status::Exited(e) => u32::from(e.code),
+                        Status::Exited(e) => e.code,
                         Status::Signaled(sig) => 128 + u32::from(*sig),
                         _ => 1,
                     };
@@ -1325,8 +1311,6 @@ impl UpgradeCommand {
                         stdout: spawn_sync::SyncStdio::Buffer,
                         stderr: spawn_sync::SyncStdio::Buffer,
                         stdin: spawn_sync::SyncStdio::Ignore,
-                        #[cfg(windows)]
-                        windows: spawn_windows_options(),
                         ..Default::default()
                     });
                 }

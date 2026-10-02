@@ -211,15 +211,13 @@ impl OutputTaskVTable for Touch {
                 exec.output_queue.push_back(child);
             }
             let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
-            let buf = output.slice().to_vec();
-            return Some(
-                Builtin::of_mut(interp, cmd)
-                    .stdout
-                    .enqueue(childptr, &buf, safeguard),
-            );
+            return Some(Builtin::of_mut(interp, cmd).stdout.enqueue_owned(
+                childptr,
+                output.take(),
+                safeguard,
+            ));
         }
-        let buf = output.slice().to_vec();
-        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
+        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, output.slice());
         None
     }
     fn on_write_out(interp: &Interpreter, cmd: NodeId) {
@@ -280,8 +278,7 @@ impl ShellTouchTask {
             )
         };
 
-        // Call the bun_sys layer directly (uv_fs_utime on Windows) to avoid
-        // the heavyweight NodeFS state.
+        // Call the bun_sys layer directly to avoid the heavyweight NodeFS state.
         let milliseconds = bun_core::time::milli_timestamp();
         let atime = bun_sys::TimeLike {
             sec: milliseconds.div_euclid(1_000),

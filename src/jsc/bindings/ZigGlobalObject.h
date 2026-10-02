@@ -92,11 +92,6 @@ extern "C" void Bun__reportUnhandledError(JSC::JSGlobalObject*, JSC::EncodedJSVa
 
 extern "C" bool Bun__VirtualMachine__isShuttingDown(void* /* BunVM */);
 
-#if OS(WINDOWS)
-#include <uv.h>
-extern "C" uv_loop_t* Bun__ZigGlobalObject__uvLoop(void* /* BunVM */);
-#endif
-
 namespace Zig {
 
 class JSCStackTrace;
@@ -346,12 +341,6 @@ public:
     void visitGeneratedLazyClasses(GlobalObject*, Visitor&);
 
     ALWAYS_INLINE void* bunVM() const { return m_bunVM; }
-#if OS(WINDOWS)
-    uv_loop_t* uvLoop() const
-    {
-        return Bun__ZigGlobalObject__uvLoop(m_bunVM);
-    }
-#endif
     bool isThreadLocalDefaultGlobalObject = false;
 
     JSObject* subtleCrypto() { return m_subtleCryptoObject.getInitializedOnMainThread(this); }

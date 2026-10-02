@@ -136,7 +136,6 @@ fn unlink(ctx: &mut ContextData) -> crate::Result<()> {
 
         // Step 2. Setup the global directory
         let node_modules: Dir = 'brk: {
-            bin::Linker::ensure_umask();
             let explicit_global_dir: &[u8] = match &ctx.install {
                 Some(install_) => install_.global_dir.as_deref().unwrap_or(b""),
                 None => b"",

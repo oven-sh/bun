@@ -192,6 +192,7 @@ pub enum Tag {
     DNSResolver,
     DnsSdConnection,
     WindowsNamedPipe,
+    WindowsNamedPipeEndOfWrite,
     WTFTimer,
     PostgresSQLConnectionTimeout,
     PostgresSQLConnectionMaxLifetime,

@@ -1,3 +1,4 @@
+import { dlopen, FFIType, ptr } from "bun:ffi";
 import { describe, expect, it, test } from "bun:test";
 import fs, { mkdirSync } from "fs";
 import {
@@ -11,19 +12,24 @@ import {
   tempDir,
   withoutAggressiveGC,
 } from "harness";
+import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import http from "node:http";
+import net from "node:net";
 import { finished } from "node:stream/promises";
+import { Worker } from "node:worker_threads";
 import path, { join } from "path";
 
 let i = 0;
 const IS_UV_FS_COPYFILE_DISABLED =
   process.platform === "win32" && process.env.BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE === "1";
 
+// A test named "path to path: ..." copies one path to another, which is CopyFileW on Windows.
+// "Bun.write() without CopyFileW" runs those again with it disabled.
 (isWindows ? describe : describe.concurrent)("Bun.write", () => {
   process.platform === "win32" && process.env.BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE === "1";
 
-  it("Bun.write blob", async () => {
+  it("path to path: Bun.write blob", async () => {
     using tmpbase = tempDir("bun-write-blob", {});
     await Bun.write(
       Bun.file(join(tmpbase, "response-file.test.txt")),
@@ -106,7 +112,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
     await gcTick();
   });
 
-  it("Bun.write file not found returns ENOENT, issue#6336", async () => {
+  it("path to path: Bun.write file not found returns ENOENT, issue#6336", async () => {
     using tmpbase = tempDir("bun-write-enoent", {});
     const dst = Bun.file(path.join(tmpbase, join("does", "not", "exist.txt")));
     fs.rmSync(join(tmpbase, "does"), { force: true, recursive: true });
@@ -141,7 +147,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
   });
 
   describe.each(["plain-ascii-missing.txt", "surro-\ud800-gate.txt"])(
-    "Bun.write(dest, Bun.file(missing source)) rejects with ENOENT (%s)",
+    "path to path: Bun.write(dest, Bun.file(missing source)) rejects with ENOENT (%s)",
     basename => {
       it("rejects instead of crashing", async () => {
         using dir = tempDir("bun-write-missing-src", {});
@@ -197,7 +203,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
     },
   );
 
-  it("Bun.write(dest, Bun.file(src)) creates missing destination directory", async () => {
+  it("path to path: Bun.write(dest, Bun.file(src)) creates missing destination directory", async () => {
     using dir = tempDir("bun-write-mkdirp-dest", {
       "src.txt": "copy me",
     });
@@ -240,7 +246,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
     }
   });
 
-  it("Bun.file -> Bun.file", async () => {
+  it("path to path: Bun.file -> Bun.file", async () => {
     using tmpbase = tempDir("bun-file-to-file", {});
     try {
       fs.unlinkSync(path.join(tmpbase, "fetch.js.in"));
@@ -279,7 +285,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
   });
 
   // https://github.com/oven-sh/bun/issues/42060
-  it("Bun.write(existing path, Bun.file(src)) resolves to the number of bytes copied", async () => {
+  it("path to path: Bun.write(existing path, Bun.file(src)) resolves to the number of bytes copied", async () => {
     using dir = tempDir("bun-write-existing-dest", {
       "existing.bin": "placeholder",
     });
@@ -792,6 +798,210 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     });
   });
 
+  describe("a rejection names the file and the call that failed", () => {
+    // libuv's numbers on Windows, the OS's elsewhere.
+    const errnoOf = {
+      ENOENT: isWindows ? -4058 : -2,
+      ENOTDIR: isWindows ? -4052 : -20,
+      EISDIR: isWindows ? -4068 : -21,
+      EPERM: isWindows ? -4048 : -1,
+      EBUSY: isWindows ? -4082 : -16,
+      ENOSPC: -28,
+    };
+    const descriptionOf = {
+      ENOENT: "no such file or directory",
+      ENOTDIR: "not a directory",
+      EISDIR: "illegal operation on a directory",
+      EPERM: "operation not permitted",
+      EBUSY: "resource busy or locked",
+      ENOSPC: "no space left on device",
+    };
+    const systemError = (code, syscall, path) => ({
+      name: "Error",
+      code,
+      errno: errnoOf[code],
+      syscall,
+      path,
+      dest: undefined,
+      fd: undefined,
+      message: `${code}: ${descriptionOf[code]}, ${syscall} '${path}'`,
+    });
+    const rejectionOf = promise =>
+      promise.then(
+        value => ({ resolved: value }),
+        e => ({
+          name: e.name,
+          code: e.code,
+          errno: e.errno,
+          syscall: e.syscall,
+          path: e.path,
+          dest: e.dest,
+          fd: e.fd,
+          message: e.message,
+        }),
+      );
+
+    describe.each([
+      ["a short string", () => "x"],
+      // More than POSIX writes before Bun.write() returns.
+      ["300 KiB of bytes", () => new Uint8Array(300 * 1024)],
+    ])("Bun.write(path, %s)", (_, data) => {
+      it("onto a directory", async () => {
+        using dir = tempDir("bun-write-error-shape", {});
+        const dest = String(dir);
+        expect(await rejectionOf(Bun.write(dest, data()))).toEqual(systemError("EISDIR", "open", dest));
+      });
+
+      it("into a missing directory with createPath: false", async () => {
+        using dir = tempDir("bun-write-error-shape", {});
+        const dest = join(String(dir), "missing", "f.txt");
+        expect(await rejectionOf(Bun.write(dest, data(), { createPath: false }))).toEqual(
+          systemError("ENOENT", "open", dest),
+        );
+        expect(fs.existsSync(join(String(dir), "missing"))).toBe(false);
+      });
+
+      it("into a directory that cannot be created because a file is in the way", async () => {
+        using dir = tempDir("bun-write-error-shape", { "file.txt": "file" });
+        const dest = join(String(dir), "file.txt", "sub", "f.txt");
+        // Windows finds out from mkdir: opening a path through a file is ENOENT there.
+        expect(await rejectionOf(Bun.write(dest, data()))).toEqual(
+          systemError("ENOTDIR", isWindows ? "mkdir" : "open", dest),
+        );
+        expect(fs.readFileSync(join(String(dir), "file.txt"), "utf8")).toBe("file");
+      });
+    });
+
+    it("Bun.file(missing).text()", async () => {
+      using dir = tempDir("bun-write-error-shape", {});
+      const missing = join(String(dir), "missing.txt");
+      expect(await rejectionOf(Bun.file(missing).text())).toEqual(systemError("ENOENT", "open", missing));
+    });
+
+    it("path to path: Bun.write(Bun.file(directory), Bun.file(source))", async () => {
+      using dir = tempDir("bun-write-error-shape", { "source.txt": "source", "dest": {} });
+      const dest = join(String(dir), "dest");
+      const copied = rejectionOf(Bun.write(Bun.file(dest), Bun.file(join(String(dir), "source.txt"))));
+      // CopyFileW refuses a directory with ERROR_ACCESS_DENIED.
+      expect(await copied).toEqual(
+        isWindows && !IS_UV_FS_COPYFILE_DISABLED
+          ? systemError("EPERM", "copyfile", dest)
+          : systemError("EISDIR", "open", dest),
+      );
+      expect(fs.readdirSync(dest)).toEqual([]);
+    });
+
+    // Elsewhere the mode does not stop root.
+    it.skipIf(!isWindows)("path to path: Bun.write(Bun.file(readOnly), Bun.file(source))", async () => {
+      using dir = tempDir("bun-write-error-shape", { "source.txt": "source", "dest.txt": "dest" });
+      const dest = join(String(dir), "dest.txt");
+      fs.chmodSync(dest, 0o444);
+      try {
+        const copied = rejectionOf(Bun.write(Bun.file(dest), Bun.file(join(String(dir), "source.txt"))));
+        expect(await copied).toEqual(systemError("EPERM", IS_UV_FS_COPYFILE_DISABLED ? "open" : "copyfile", dest));
+        expect(fs.readFileSync(dest, "utf8")).toBe("dest");
+      } finally {
+        fs.chmodSync(dest, 0o666);
+      }
+    });
+
+    it("path to path: Bun.write(Bun.file(dest), Bun.file(directory))", async () => {
+      using dir = tempDir("bun-write-error-shape", { "source": {} });
+      const source = join(String(dir), "source");
+      const copied = rejectionOf(Bun.write(Bun.file(join(String(dir), "dest.txt")), Bun.file(source)));
+      expect(await copied).toMatchObject(
+        isWindows && !IS_UV_FS_COPYFILE_DISABLED
+          ? systemError("EISDIR", "copyfile", source)
+          : { syscall: "fstat", path: source, message: "That doesn't work on folders" },
+      );
+    });
+
+    // Reading with no sharing allowed makes every other open of the file fail.
+    const openExclusively = file => {
+      const { symbols: kernel32 } = dlopen("kernel32.dll", {
+        CreateFileW: {
+          args: [FFIType.ptr, FFIType.u32, FFIType.u32, FFIType.ptr, FFIType.u32, FFIType.u32, FFIType.ptr],
+          returns: FFIType.i64_fast,
+        },
+        CloseHandle: { args: [FFIType.ptr], returns: FFIType.i32 },
+      });
+      const GENERIC_READ = 0x80000000;
+      const OPEN_EXISTING = 3;
+      const name = Buffer.from(file + "\0", "utf16le");
+      const handle = kernel32.CreateFileW(ptr(name), GENERIC_READ, 0, null, OPEN_EXISTING, 0, null);
+      if (handle === -1) throw new Error("CreateFileW failed: " + file);
+      return { [Symbol.dispose]: () => kernel32.CloseHandle(handle) };
+    };
+
+    // The handle loop opens with backup semantics, which a process holding
+    // SeBackupPrivilege is not held to the sharing mode by.
+    it.skipIf(!isWindows || IS_UV_FS_COPYFILE_DISABLED)(
+      "path to path: the file that is in use is the one the error names",
+      async () => {
+        using dir = tempDir("bun-write-error-shape", { "source.txt": "source", "dest.txt": "dest" });
+        const source = join(String(dir), "source.txt");
+        const dest = join(String(dir), "dest.txt");
+        {
+          using _ = openExclusively(source);
+          expect(await rejectionOf(Bun.write(Bun.file(dest), Bun.file(source)))).toEqual(
+            systemError("EBUSY", "copyfile", source),
+          );
+        }
+        {
+          using _ = openExclusively(dest);
+          expect(await rejectionOf(Bun.write(Bun.file(dest), Bun.file(source)))).toEqual(
+            systemError("EBUSY", "copyfile", dest),
+          );
+        }
+        expect(fs.readFileSync(dest, "utf8")).toBe("dest");
+      },
+    );
+
+    describe.each([
+      ["a string", () => "x"],
+      ["an empty string", () => ""],
+      ["a file", dir => Bun.file(join(dir, "source.txt"))],
+      ["a Response", () => new Response("x")],
+    ])("Bun.write(path, %s) names the path it was given", (_, data) => {
+      it.skipIf(!isWindows)("when a file is where a parent directory has to be", async () => {
+        using dir = tempDir("bun-write-error-shape", { "source.txt": "source", "file.txt": "file" });
+        const dest = join(String(dir), "file.txt", "sub", "f.txt");
+        expect(await rejectionOf(Bun.write(dest, data(String(dir))))).toMatchObject({ path: dest });
+        expect(fs.readFileSync(join(String(dir), "file.txt"), "utf8")).toBe("file");
+      });
+
+      // `|` is in no file name, so the write fails and its parent, the root
+      // of the drive, is what Bun tries to create.
+      it.skipIf(!isWindows)("when the parent directory is the root of a drive", async () => {
+        using dir = tempDir("bun-write-error-shape", { "source.txt": "source" });
+        const dest = join(path.parse(String(dir)).root, "bun-write|error-shape.txt");
+        expect(await rejectionOf(Bun.write(dest, data(String(dir))))).toMatchObject({ path: dest });
+      });
+    });
+
+    it.skipIf(!isWindows)("Bun.write(readOnly, '') with createPath: false", async () => {
+      using dir = tempDir("bun-write-error-shape", { "dest.txt": "dest" });
+      const dest = join(String(dir), "dest.txt");
+      fs.chmodSync(dest, 0o444);
+      try {
+        expect(await rejectionOf(Bun.write(dest, "", { createPath: false }))).toEqual(
+          systemError("EPERM", "open", dest),
+        );
+        expect(fs.readFileSync(dest, "utf8")).toBe("dest");
+      } finally {
+        fs.chmodSync(dest, 0o666);
+      }
+    });
+
+    // Opening /dev/full succeeds; every write to it fails.
+    it.skipIf(!fs.existsSync("/dev/full")).each([
+      ["a short string", () => "x"],
+      ["300 KiB of bytes", () => new Uint8Array(300 * 1024)],
+    ])("Bun.write(path, %s) when the write itself fails", async (_, data) => {
+      expect(await rejectionOf(Bun.write("/dev/full", data()))).toEqual(systemError("ENOSPC", "write", "/dev/full"));
+    });
+  });
+
   test("timed output should work", async () => {
     const producer_file = path.join(import.meta.dir, "timed-stderr-output.js");
 
@@ -810,9 +1020,9 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
   }, 25000);
 
   if (isWindows && !IS_UV_FS_COPYFILE_DISABLED) {
-    it("Bun.write() without uv_fs_copyfile", async () => {
+    it("Bun.write() without CopyFileW", async () => {
       const { exited } = Bun.spawn({
-        cmd: [bunExe(), "test", import.meta.path],
+        cmd: [bunExe(), "test", import.meta.path, "-t", "path to path: "],
         env: {
           ...bunEnv,
           BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE: "1",
@@ -1391,6 +1601,52 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       });
     });
 
+    it.each([
+      // Arrives together with the headers.
+      ["a small", () => "hello"],
+      // Still arriving when the write starts, so it is streamed into the file.
+      ["an 8 MiB", () => Buffer.alloc(8 * 1024 * 1024, "x")],
+    ])("%s Request body written to a read-only file descriptor rejects with EBADF", async (_, body) => {
+      using dir = tempDir("bun-write-request-readonly-fd", { "keep.txt": "keep" });
+      const dest = join(String(dir), "keep.txt");
+      const fd = fs.openSync(dest, "r");
+      try {
+        await using server = Bun.serve({
+          port: 0,
+          async fetch(req) {
+            return Response.json(
+              await Bun.write(Bun.file(fd), req).then(
+                written => ({ written }),
+                e => ({ code: e.code }),
+              ),
+            );
+          },
+        });
+        const res = await fetch(server.url, { method: "PUT", body: body() });
+        expect(await res.json()).toEqual({ code: "EBADF" });
+      } finally {
+        fs.closeSync(fd);
+      }
+      expect(fs.readFileSync(dest, "utf8")).toBe("keep");
+    });
+
+    it.each([
+      ["a string", () => "hello"],
+      ["an 8 MiB buffer", () => Buffer.alloc(8 * 1024 * 1024, "x")],
+      ["a Blob", () => new Blob(["hello"])],
+      ["a Response", () => new Response("hello")],
+    ])("%s written to a read-only file descriptor rejects with EBADF", async (_, data) => {
+      using dir = tempDir("bun-write-readonly-fd", { "keep.txt": "keep" });
+      const dest = join(String(dir), "keep.txt");
+      const fd = fs.openSync(dest, "r");
+      try {
+        await expect(Bun.write(Bun.file(fd), data())).rejects.toThrow(expect.objectContaining({ code: "EBADF" }));
+      } finally {
+        fs.closeSync(fd);
+      }
+      expect(fs.readFileSync(dest, "utf8")).toBe("keep");
+    });
+
     it("rejects with the network error when the body is cut short", async () => {
       using dir = tempDir("bun-write-response-truncated", {});
       using listener = Bun.listen({
@@ -1577,4 +1833,317 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
+});
+
+// Short writes are made on the calling thread, so writes that are not awaited reach the file
+// descriptor in the order they were made. On Windows every write was its own job on the work pool,
+// which has no order: the characters came out scrambled, or reversed.
+describe("Bun.write() calls that are not awaited keep their order", () => {
+  const lines = Array.from(
+    { length: 20 },
+    (_, round) => `round ${String(round).padStart(2, "0")} 0123456789 abcdefghijklmnopqrstuvwxyz`,
+  );
+  const fixture = `
+    for (const line of ${JSON.stringify(lines)}) for (const ch of line + "\\n") Bun.write(Bun.stdout, ch);
+  `;
+
+  it("to a pipe", async () => {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: lines.join("\n") + "\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  // What is not short, or not bytes yet, is written by the work pool: a short write that follows it
+  // is not made ahead of it, and the pool keeps the order they were made in.
+  describe.each([
+    ["a long string", `Buffer.alloc(300_000, "M").toString()`, 300_000],
+    ["long bytes", `Buffer.alloc(300_000, "M")`, 300_000],
+    ["a Blob", `new Blob(["M"])`, 1],
+    ["a Response", `new Response("M")`, 1],
+    ["a file", `Bun.file("m.txt")`, 1],
+  ])("with %s among them", (_name, middle, length) => {
+    const expected = "<" + Buffer.alloc(length, "M").toString() + ">" + Buffer.alloc(length, "M").toString() + "!";
+    const writes = destination => `
+      for (const data of ["<", ${middle}, ">", ${middle}, "!"]) Bun.write(${destination}, data);
+    `;
+
+    it("to a pipe", async () => {
+      using dir = tempDir("bun-write-order-pipe", { "m.txt": "M" });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", writes("Bun.stdout")],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({ stdout: expected, stderr: "" });
+      expect(exitCode).toBe(0);
+    });
+
+    // On Windows a file is copied over the file the descriptor is of, not written at its position.
+    it.skipIf(isWindows && _name === "a file")("to the descriptor of a file", async () => {
+      using dir = tempDir("bun-write-order-fd", { "m.txt": "M" });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", `const fd = require("fs").openSync("out.txt", "w"); ${writes("fd")}`],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, written: fs.readFileSync(join(String(dir), "out.txt"), "utf8") }).toEqual({
+        stdout: "",
+        stderr: "",
+        written: expected,
+      });
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  // The rows a terminal shows after `output`. A Windows pseudoconsole does not pass on what the
+  // program wrote: it sends whatever repaints its own screen, which can paint a row more than once.
+  function screenAfter(output, cols, rows) {
+    const grid = Array.from({ length: rows }, () => Array(cols).fill(" "));
+    let x = 0;
+    let y = 0;
+    const erase = (row, from, to) => grid[row].fill(" ", from, to);
+    const lineFeed = () => {
+      if (++y < rows) return;
+      grid.push(Array(cols).fill(" "));
+      grid.shift();
+      y = rows - 1;
+    };
+    const tokens = /\x1b\[([<-?]?)([\d;]*)[ -/]*([@-~])|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[ -/]*[0-~]|[^]/gu;
+    for (const [token, isPrivate, params, final] of output.matchAll(tokens)) {
+      if (final !== undefined) {
+        if (isPrivate) continue;
+        const [first, second] = params.split(";").map(Number);
+        const count = first || 1;
+        if (final === "H" || final === "f") [y, x] = [count - 1, (second || 1) - 1];
+        else if (final === "A") y -= count;
+        else if (final === "B") y += count;
+        else if (final === "C") x += count;
+        else if (final === "D") x -= count;
+        else if (final === "G") x = count - 1;
+        else if (final === "d") y = count - 1;
+        else if (final === "X") erase(y, x, x + count);
+        else if (final === "K") erase(y, first ? 0 : x, first === 1 ? x + 1 : cols);
+        else if (final === "J") {
+          for (let row = 0; row < rows; row++) if (first >= 2 || (first ? row < y : row > y)) erase(row, 0, cols);
+          if (first < 2) erase(y, first ? 0 : x, first ? x + 1 : cols);
+        }
+        x = Math.min(Math.max(x, 0), cols - 1);
+        y = Math.min(Math.max(y, 0), rows - 1);
+      } else if (token === "\r") x = 0;
+      else if (token === "\n") lineFeed();
+      else if (token === "\b") x = Math.max(x - 1, 0);
+      else if (token.length === 1 && token >= " ") {
+        if (x === cols) {
+          x = 0;
+          lineFeed();
+        }
+        grid[y][x++] = token;
+      }
+    }
+    return grid.map(row => row.join("").trimEnd());
+  }
+
+  it("to a terminal", async () => {
+    let output = "";
+    const ended = Promise.withResolvers();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      terminal: {
+        cols: 200,
+        rows: 50,
+        data(_terminal, chunk) {
+          output += Buffer.from(chunk).toString();
+        },
+        exit() {
+          ended.resolve();
+        },
+      },
+    });
+    expect(await proc.exited).toBe(0);
+    proc.terminal.close();
+    await ended.promise;
+    expect(screenAfter(output, 200, 50).filter(row => row.length > 0)).toEqual(lines);
+  });
+});
+
+// Nothing but the write keeps the process alive, and the await is not the module's own: what it
+// continues is a microtask that somebody has to run once the file is closed.
+describe.concurrent("the code after `await Bun.write(path, stream)` runs", () => {
+  it.each([
+    ["a file's stream", `Bun.file("source.txt").stream()`],
+    ["part of a file's stream", `Bun.file("source.txt").slice(2, 5).stream()`],
+    ["a stream from JavaScript", `new ReadableStream({ pull(c) { c.enqueue(new Uint8Array(1000)); c.close(); } })`],
+    [
+      "a Response of one",
+      `new Response(new ReadableStream({ pull(c) { c.enqueue(new Uint8Array(1000)); c.close(); } }))`,
+    ],
+    ["a child's stdout", `Bun.spawn({ cmd: [process.execPath, "-e", "console.log(1)"], stdout: "pipe" }).stdout`],
+  ])("%s", async (_name, source) => {
+    using dir = tempDir("bun-write-then-continue", { "source.txt": Buffer.alloc(300_000, "s").toString() });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `(async () => { console.log("wrote", typeof (await Bun.write("out.bin", ${source}))); })();`,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "wrote number\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  it("the body of a fetch", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(
+          new ReadableStream({
+            pull(controller) {
+              for (let i = 0; i < 16; i++) controller.enqueue(new Uint8Array(65536));
+              controller.close();
+            },
+          }),
+        ),
+    });
+    using dir = tempDir("bun-write-fetch-then-continue", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `(async () => { console.log("wrote", await Bun.write("out.bin", await fetch(${JSON.stringify(server.url.href)}))); })();`,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "wrote 1048576\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  it("in a Worker", async () => {
+    using dir = tempDir("bun-write-worker-then-continue", { "source.txt": "source" });
+    const worker = new Worker(
+      `(async () => {
+         const { parentPort, workerData } = require("node:worker_threads");
+         parentPort.postMessage(await Bun.write(workerData + "/out.bin", Bun.file(workerData + "/source.txt").stream()));
+       })();`,
+      { eval: true, workerData: String(dir) },
+    );
+    const outcome = await new Promise(resolve => {
+      worker.once("message", resolve);
+      worker.once("exit", () => resolve("exited without a word"));
+    });
+    expect(outcome).toBe(6);
+    await worker.terminate();
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/13477: on Windows this rejected with the error of the
+// truncation an empty write asks for, which a pipe and a console refuse.
+it('Bun.write(Bun.stdout, "") resolves with 0', async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `console.log("wrote", await Bun.write(Bun.stdout, ""));`],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: "wrote 0\n", stderr: "" });
+  expect(exitCode).toBe(0);
+});
+
+it("Bun.write(Bun.stdout, Bun.file(path), { mode }) resolves when stdout is a pipe", async () => {
+  using dir = tempDir("bun-write-mode-to-pipe", { "source.txt": "copied to a pipe\n" });
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `console.error("wrote", await Bun.write(Bun.stdout, Bun.file("source.txt"), { mode: 0o644 }));`,
+    ],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: "copied to a pipe\n", stderr: "wrote 17\n" });
+  expect(exitCode).toBe(0);
+});
+
+it("Bun.write(fd, Bun.file(path), { mode }) leaves the mode of the caller's file alone", async () => {
+  using dir = tempDir("bun-write-mode-to-fd", { "source.txt": "copied to a descriptor\n", "destination.txt": "" });
+  const destination = join(String(dir), "destination.txt");
+  fs.chmodSync(destination, 0o600);
+  const before = fs.statSync(destination).mode;
+  const fd = fs.openSync(destination, "w");
+  try {
+    expect(await Bun.write(Bun.file(fd), Bun.file(join(String(dir), "source.txt")), { mode: 0o444 })).toBe(23);
+  } finally {
+    fs.closeSync(fd);
+  }
+  expect({ mode: fs.statSync(destination).mode, contents: fs.readFileSync(destination, "utf8") }).toEqual({
+    mode: before,
+    contents: "copied to a descriptor\n",
+  });
+});
+
+describe("Bun.write(path in a directory that does not exist yet, Bun.file(source))", () => {
+  it.each([
+    "source.txt",
+    "./source.txt",
+    "a/../source.txt",
+    "a/./../source.txt",
+    "a/b/../../source.txt",
+    ...(isWindows ? ["a\\..\\source.txt", ".\\source.txt"] : []),
+  ])("copies a source spelled %s", async spelled => {
+    using dir = tempDir("bun-write-dotted-source", { "source.txt": "copied", a: { b: {} } });
+    const destination = join(String(dir), "missing", "copy.txt");
+    expect(await Bun.write(destination, Bun.file(String(dir) + "/" + spelled))).toBe(6);
+    expect(fs.readFileSync(destination, "utf8")).toBe("copied");
+  });
+
+  it("names a source that does not exist, and makes no directory for it", async () => {
+    using dir = tempDir("bun-write-missing-source", { a: {} });
+    const source = String(dir) + "/a/../source.txt";
+    expect(await Bun.write(join(String(dir), "missing", "copy.txt"), Bun.file(source)).catch(e => e)).toMatchObject({
+      code: "ENOENT",
+      path: source,
+    });
+    expect(fs.existsSync(join(String(dir), "missing"))).toBe(false);
+  });
+});
+
+it.skipIf(!isWindows)("Bun.write() to a named pipe this process serves does not wait on its own thread", async () => {
+  const name = "\\\\.\\pipe\\bun-write-test-" + randomUUID();
+  let received = 0;
+  const { promise: all, resolve } = Promise.withResolvers();
+  const server = net.createServer(socket => {
+    socket.on("data", chunk => {
+      received += chunk.length;
+      if (received === 200_000) resolve();
+    });
+  });
+  await new Promise(listening => server.listen(name, listening));
+  try {
+    // More than the pipe holds: the write completes only as the server, which runs on this thread, reads.
+    expect(await Bun.write(name, Buffer.alloc(200_000, "a"))).toBe(200_000);
+    await all;
+  } finally {
+    server.close();
+  }
+  expect(received).toBe(200_000);
 });

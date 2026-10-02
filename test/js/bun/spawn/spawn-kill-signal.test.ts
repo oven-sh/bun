@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isLinux, isWindows, shellExe } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, shellExe } from "harness";
 import { constants } from "os";
 
 const inputs = {
@@ -28,6 +28,56 @@ describe("subprocess.kill", () => {
       }
     });
   }
+
+  // Signal 0 checks that the process can be signalled and delivers nothing.
+  describe("signal 0", () => {
+    const idle = () =>
+      Bun.spawn({
+        cmd: [bunExe(), "-e", "setInterval(() => {}, 1e6)"],
+        env: bunEnv,
+        stdio: ["inherit", "inherit", "inherit"],
+      });
+
+    test("leaves a running process running", async () => {
+      await using proc = idle();
+      proc.kill(0);
+      expect({ killed: proc.killed, exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({
+        killed: false,
+        exitCode: null,
+        signalCode: null,
+      });
+      proc.kill("SIGKILL");
+      await proc.exited;
+      expect({ exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({
+        exitCode: null,
+        signalCode: "SIGKILL",
+      });
+    });
+
+    // On Windows the signal a process was ended with is what kill() recorded.
+    // A process that has been told to end still answers a probe for a moment.
+    test("after SIGTERM, the exit is still reported as SIGTERM", async () => {
+      await using proc = idle();
+      proc.kill("SIGTERM");
+      for (let i = 0; i < 100; i++) proc.kill(0);
+      await proc.exited;
+      expect({ exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({
+        exitCode: null,
+        signalCode: "SIGTERM",
+      });
+    });
+
+    test("does not throw for a process that has exited", async () => {
+      await using proc = idle();
+      proc.kill("SIGKILL");
+      await proc.exited;
+      expect(() => proc.kill(0)).not.toThrow();
+      expect({ exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({
+        exitCode: null,
+        signalCode: "SIGKILL",
+      });
+    });
+  });
 
   describe("input validation", () => {
     for (let input of fails) {
@@ -144,6 +194,53 @@ describe.concurrent.skipIf(isWindows)("signal names map to the OS's own numbers"
       });
       expect({ exitCode, signalCode }).toEqual({ exitCode: null, signalCode: name });
     });
+  });
+});
+
+// Windows can end a process and nothing else. As in Node, that is what any signal does to a child, and the child
+// is reported as killed: `killSignal` is all that a timeout or an abort has to end it with.
+describe.concurrent.skipIf(!isWindows)("a signal Windows cannot send ends a child", () => {
+  const idle = [bunExe(), "-e", "setInterval(() => {}, 1e6)"];
+  const killed = { exitCode: null, signalCode: "SIGKILL" };
+
+  describe.each(["SIGHUP", "SIGABRT", "SIGWINCH", constants.signals.SIGHUP] as const)("%s", signal => {
+    test("kill()", async () => {
+      await using proc = Bun.spawn({ cmd: idle, env: bunEnv, ...quiet });
+      proc.kill(signal);
+      await proc.exited;
+      expect({ exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual(killed);
+    });
+
+    test("killSignal, when the timeout is over", async () => {
+      await using proc = Bun.spawn({ cmd: idle, env: bunEnv, ...quiet, timeout: 1, killSignal: signal });
+      await proc.exited;
+      expect({ exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual(killed);
+    });
+
+    test("killSignal, when the AbortSignal fires", async () => {
+      const controller = new AbortController();
+      await using proc = Bun.spawn({ cmd: idle, env: bunEnv, ...quiet, signal: controller.signal, killSignal: signal });
+      controller.abort();
+      await proc.exited;
+      expect({ exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual(killed);
+    });
+
+    test("killSignal of spawnSync", () => {
+      const { exitCode, signalCode, exitedDueToTimeout } = Bun.spawnSync({
+        cmd: idle,
+        env: bunEnv,
+        ...quiet,
+        timeout: 1,
+        killSignal: signal,
+      });
+      expect({ exitCode, signalCode, exitedDueToTimeout }).toEqual({ ...killed, exitedDueToTimeout: true });
+    });
+  });
+
+  test("process.kill() of a process by its id is still refused", async () => {
+    await using proc = Bun.spawn({ cmd: idle, env: bunEnv, ...quiet });
+    expect(() => process.kill(proc.pid, "SIGHUP")).toThrow(expect.objectContaining({ code: "ENOSYS" }));
+    expect(proc.exitCode).toBe(null);
   });
 });
 

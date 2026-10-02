@@ -1,22 +1,20 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, makeTree, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, canBuildNodeAddons, isASAN, makeTree, tempDirWithFiles } from "harness";
 import path from "node:path";
-import { symbols, test_skipped } from "../../src/jsc/bindings/libuv/generate_uv_posix_stubs_constants";
+import { symbols } from "../../src/jsc/bindings/libuv/generate_uv_stubs_constants";
 import goodSource from "./uv-stub-stuff/good_plugin.c";
 import source from "./uv-stub-stuff/plugin.c";
 
-const all_symbols_to_test = symbols.filter(s => !test_skipped.includes(s));
 // Each per-symbol test spawns a fresh bun subprocess that aborts in the stub.
 // Under asan, process startup is ~2.3s and the CI agent exposes 2 vCPUs, so
-// the full ~294-symbol set is ~11 minutes of CPU-bound work regardless of
+// the full ~305-symbol set is ~11 minutes of CPU-bound work regardless of
 // concurrency and overruns the file timeout. All stubs route through the
 // same CrashHandler__unsupportedUVFunction formatter, so a strided sample
 // exercises the mechanism on asan while every non-asan lane still runs the
 // full set.
-const symbols_to_test = isASAN ? all_symbols_to_test.filter((_, i) => i % 6 === 0) : all_symbols_to_test;
+const symbols_to_test = isASAN ? symbols.filter((_, i) => i % 6 === 0) : symbols;
 
-// We use libuv on Windows
-describe.if(!isWindows)("uv stubs", () => {
+describe.skipIf(!canBuildNodeAddons())("uv stubs", () => {
   const cwd = process.cwd();
   let tempdir: string = "";
   let outdir: string = "";
@@ -36,7 +34,9 @@ describe.if(!isWindows)("uv stubs", () => {
           "typescript": "^5.0.0",
         },
         "scripts": {
-          "build:napi": "node-gyp configure && node-gyp build",
+          // Under Bun, as test/napi/napi-app builds: a Node that was itself built with clang has
+          // node-gyp ask MSBuild for the ClangCL toolset, which a machine with only MSVC lacks.
+          "build:napi": "bun --bun node-gyp configure && bun --bun node-gyp build",
         },
         "dependencies": {
           "node-gyp": "10.2.0",
@@ -49,14 +49,14 @@ describe.if(!isWindows)("uv stubs", () => {
     {
       "target_name": "xXx123_foo_counter_321xXx",
       "sources": [ "plugin.c" ],
-      "include_dirs": [ ".", "./libuv" ],
+      "include_dirs": [ "." ],
       "cflags": ["-fPIC"],
       "ldflags": ["-Wl,--export-dynamic"]
     },
     {
       "target_name": "good_plugin",
       "sources": [ "good_plugin.c" ],
-      "include_dirs": [ ".", "./libuv" ],
+      "include_dirs": [ "." ],
       "cflags": ["-fPIC"],
       "ldflags": ["-Wl,--export-dynamic"]
     }
@@ -72,11 +72,12 @@ describe.if(!isWindows)("uv stubs", () => {
 
     process.chdir(tempdir);
 
-    const libuvDir = path.join(__dirname, "../../src/jsc/bindings/libuv");
-    await Bun.$`cp -R ${libuvDir} ${path.join(tempdir, "libuv")}`;
-    await Bun.$`${bunExe()} i && ${bunExe()} build:napi`.env(bunEnv).cwd(tempdir);
+    // --ignore-scripts skips the implicit `node-gyp rebuild` bun install runs for a
+    // root binding.gyp package; build:napi below is the single, explicit gyp build.
+    await Bun.$`${bunExe()} i --ignore-scripts && ${bunExe()} build:napi`.env(bunEnv).cwd(tempdir);
     console.log("tempdir:", tempdir);
-  });
+    // Installs node-gyp and compiles an addon: far past the default 5s hook timeout.
+  }, 300_000);
 
   afterAll(() => {
     process.chdir(cwd);

@@ -961,12 +961,10 @@ test(
 );
 
 // A worker torn down while a Bun.spawn() child with `stdin: "pipe"` is alive and script never read
-// `.stdin`: the Subprocess then holds the only ref on the stdin FileSink. On Windows the stop phase
-// closes that pipe, and the close notifies the Subprocess, which drops its ref: the sink was freed
+// `.stdin`: the Subprocess then holds the only ref on the stdin FileSink. On Windows the teardown used
+// to close that pipe, and the close notified the Subprocess, which drops its ref: the sink was freed
 // while FileSink::on_close still used it (debug build: "misaligned pointer dereference ... 0xdfdfdfdfdfdf").
-// Only a Windows debug build fails here without the fix: a release build reads the freed sink
-// silently, and no other platform closes the pipe in the stop phase. filesink.test.ts has the same
-// close through a testing hook, which ASAN catches on every platform.
+// filesink.test.ts has the same close through a testing hook, which ASAN catches on every platform.
 test(
   "worker terminate with a live spawned child whose stdin pipe was never read from script",
   async () => {
@@ -1224,9 +1222,7 @@ test(
       ["Bun.write(path, new Response(child.stdout))", "terminate()"],
       ["Bun.write(path, new Response(jsStream))", "terminate()"],
       ["Bun.spawn({ stdin: response.body })", "terminate()"],
-      // Windows closes a worker's pipes in the stop phase, before the last sweep, and the sink then
-      // keeps the ref of its pending JS pump: a leak on another path than the one tested here.
-      ...(isWindows ? [] : [["Bun.spawn({ stdin: jsStream })", "terminate()"]]),
+      ["Bun.spawn({ stdin: jsStream })", "terminate()"],
     ];
     using dir = tempDir("worker-ends-mid-pipe", {
       "worker.js": `
@@ -1302,3 +1298,88 @@ test(
   },
   timeout,
 );
+
+// On Windows a writer holds a ref on its owner until the result of a write arrives, and the loop of
+// a worker that has ended does not bring it: the owner stayed, with everything it had still to write.
+describe.skipIf(!isWindows).concurrent("a worker that ends with a write still out gives its bytes back", () => {
+  test.each(["a child's stdin", "a shell pipeline", "a named pipe", "a terminal"])(
+    "to %s",
+    async door => {
+      const workers = 10;
+      const megabytes = 16;
+      using dir = tempDir("worker-ends-mid-write", {
+        "worker.js": `
+          const { parentPort, workerData } = require("node:worker_threads");
+          const bytes = Buffer.alloc(${megabytes} << 20, "w");
+          // Reads nothing, and is gone with this process at the latest.
+          const idle = [process.execPath, "-e", "setTimeout(() => {}, 5000)"];
+          const written = () => parentPort.postMessage("written");
+          const doors = {
+            "a child's stdin"() {
+              const child = Bun.spawn({ cmd: idle, stdin: "pipe", stdout: "ignore", stderr: "ignore" });
+              child.stdin.write(bytes);
+              child.stdin.flush();
+              written();
+            },
+            "a shell pipeline"() {
+              Bun.$\`echo \${bytes.toString()} | \${idle[0]} -e \${idle[2]}\`.quiet().nothrow().then(() => {});
+              // The builtin writes once the pipeline has been set up.
+              setImmediate(() => setImmediate(written));
+            },
+            "a named pipe"() {
+              const client = require("node:net").connect(workerData.pipe, () => (client.write(bytes), written()));
+              client.on("error", () => {});
+            },
+            "a terminal"() {
+              const terminal = new Bun.Terminal({ cols: 80, rows: 24, data() {} });
+              Bun.spawn({ cmd: idle, terminal });
+              terminal.write(bytes);
+              written();
+            },
+          };
+          doors[workerData.door]();
+        `,
+        "main.js": `
+          const { Worker } = require("node:worker_threads");
+          const { join } = require("node:path");
+          const door = process.argv[2];
+          const pipe = "\\\\\\\\.\\\\pipe\\\\bun-test-" + crypto.randomUUID();
+          const accepted = [];
+          const server = require("node:net").createServer(socket => {
+            socket.pause();
+            socket.on("error", () => {});
+            accepted.push(socket);
+          });
+          const round = async () => {
+            const worker = new Worker(join(__dirname, "worker.js"), { workerData: { door, pipe } });
+            await new Promise(resolve => worker.once("message", resolve));
+            await worker.terminate();
+            for (const socket of accepted.splice(0)) socket.destroy();
+          };
+          server.listen(pipe, async () => {
+            await round();
+            Bun.gc(true);
+            const before = process.memoryUsage.rss();
+            for (let i = 0; i < ${workers}; i++) await round();
+            Bun.gc(true);
+            console.log(Math.round((process.memoryUsage.rss() - before) / (1 << 20)));
+            process.exit(0);
+          });
+        `,
+      });
+      await using proc = Bun.spawn({
+        // Not run in `dir`: the idle children would still have it as their directory when it is removed.
+        cmd: [bunExe(), join(String(dir), "main.js"), door],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      // All of it is 160.
+      expect(Number(stdout)).toBeLessThan(slow ? 80 : 48);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+});

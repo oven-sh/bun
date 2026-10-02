@@ -72,10 +72,6 @@ function source(name) {
         : {}),
       ...(name === "File"
         ? {
-            setRawMode: {
-              fn: "setRawModeFromJS",
-              length: 1,
-            },
             setFlowing: {
               fn: "setFlowingFromJS",
               length: 1,

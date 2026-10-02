@@ -1,5 +1,4 @@
 use core::fmt;
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use crate::Error;
 use bun_alloc::AllocError;
@@ -831,24 +830,7 @@ pub struct Linker<'a> {
     pub skipped_due_to_missing_bin: bool,
 }
 
-static UMASK: AtomicU32 = AtomicU32::new(0);
-static HAS_SET_UMASK: AtomicBool = AtomicBool::new(false);
-
 impl<'a> Linker<'a> {
-    pub fn ensure_umask() {
-        // Single-winner gate: only the thread that flips false->true performs
-        // the temporary umask(0)/umask(prev) probe. A bare load+store would let
-        // two threads interleave the probe and leave the process umask wrong.
-        if HAS_SET_UMASK
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_ok()
-        {
-            let prev = sys::umask(0);
-            sys::umask(prev);
-            UMASK.store(prev as u32, Ordering::Release);
-        }
-    }
-
     fn unlink_bin_or_shim(abs_dest: &ZStr) {
         #[cfg(not(windows))]
         {
@@ -1322,7 +1304,7 @@ impl<'a> Linker<'a> {
     fn chmod_on_ok(err: Option<Error>, abs_target: &ZStr) {
         // hoisted from `defer` block in create_symlink
         if err.is_none() {
-            let mode = 0o777 & !(UMASK.load(Ordering::Acquire) as Mode);
+            let mode = 0o777 & !sys::get_umask();
             let _ = sys::lchmod(abs_target, mode);
         }
     }

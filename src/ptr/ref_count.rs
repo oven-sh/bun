@@ -508,7 +508,7 @@ pub unsafe trait CellRefCounted: Sized {
 ///
 /// Holding a `RefPtr` *is* holding one ref: `Drop` releases it (destroying `T`
 /// if it was the last), `Clone` takes another. To hand the ref to a raw-pointer
-/// consumer (C++ `m_ctx`, a uws/libuv userdata slot) use
+/// consumer (C++ `m_ctx`, a uws userdata slot) use
 /// [`into_raw`](Self::into_raw) and reclaim it later with
 /// [`from_raw`](Self::from_raw).
 #[must_use = "dropping a RefPtr releases its ref"]

@@ -304,6 +304,13 @@ pub fn to_w_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
     to_w_path_maybe_dir::<false>(wbuf, utf8)
 }
 
+/// As [`to_w_path`]; `None` for a path that is not WTF-8 or does not fit.
+#[cfg(windows)]
+pub fn try_to_w_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> Option<&'a WStr> {
+    let len = w_path_units::<false, true>(wbuf, utf8)?;
+    Some(wstr_in_buf(wbuf, len))
+}
+
 pub fn to_w_dir_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
     to_w_path_maybe_dir::<true>(wbuf, utf8)
 }
@@ -336,13 +343,25 @@ pub fn fits_in_wide_path_buffer(utf8: &[u8]) -> bool {
 }
 
 pub fn to_kernel32_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
+    let len = kernel32_path_units::<false>(wbuf, utf8).unwrap_or(0);
+    wstr_in_buf(wbuf, len)
+}
+
+/// As [`to_kernel32_path`]; `None` for a path that is not WTF-8 or does not fit.
+#[cfg(windows)]
+pub fn try_to_kernel32_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> Option<&'a WStr> {
+    let len = kernel32_path_units::<true>(wbuf, utf8)?;
+    Some(wstr_in_buf(wbuf, len))
+}
+
+fn kernel32_path_units<const STRICT: bool>(wbuf: &mut [u16], utf8: &[u8]) -> Option<usize> {
     let path = if utf8.starts_with(&windows::NT_OBJECT_PREFIX_U8) {
         &utf8[windows::NT_OBJECT_PREFIX_U8.len()..]
     } else {
         utf8
     };
     if path.starts_with(&windows::LONG_PATH_PREFIX_U8) {
-        return to_w_path(wbuf, path);
+        return w_path_units::<false, STRICT>(wbuf, path);
     }
     if utf8.len() > 2
         && resolve_path::is_drive_letter(utf8[0])
@@ -350,16 +369,26 @@ pub fn to_kernel32_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
         && resolve_path::is_sep_any(utf8[2])
     {
         wbuf[..4].copy_from_slice(&windows::LONG_PATH_PREFIX);
-        let n = to_w_path(&mut wbuf[4..], path).len();
-        return wstr_in_buf(wbuf, n + 4);
+        let n = w_path_units::<false, STRICT>(&mut wbuf[4..], path)?;
+        return Some(n + 4);
     }
-    to_w_path(wbuf, path)
+    w_path_units::<false, STRICT>(wbuf, path)
 }
 
 fn to_w_path_maybe_dir<'a, const ADD_TRAILING_LASH: bool>(
     wbuf: &'a mut [u16],
     utf8: &[u8],
 ) -> &'a WStr {
+    let len = w_path_units::<ADD_TRAILING_LASH, false>(wbuf, utf8).unwrap_or(0);
+    wstr_in_buf(wbuf, len)
+}
+
+/// Writes the NUL-terminated wide form of `utf8` and returns its length.
+/// What cannot be converted is `""`: `None` with `STRICT`, `Some(0)` without.
+fn w_path_units<const ADD_TRAILING_LASH: bool, const STRICT: bool>(
+    wbuf: &mut [u16],
+    utf8: &[u8],
+) -> Option<usize> {
     debug_assert!(!wbuf.is_empty());
 
     let cap = wbuf.len().saturating_sub(1 + (ADD_TRAILING_LASH as usize));
@@ -376,11 +405,14 @@ fn to_w_path_maybe_dir<'a, const ADD_TRAILING_LASH: bool>(
     // `runtime/node/types.rs`, via `fits_in_wide_path_buffer`). Prefixing
     // wrappers (`to_kernel32_path`, `to_nt_path`, …) may then yield just
     // their prefix, which likewise fails at the syscall.
+    // Bytes that are not WTF-8 are no name: replacing them would make two
+    // byte strings one file. Like a path that does not fit they come out as
+    // `""`, which the call the path goes to refuses (libuv: ERROR_INVALID_NAME).
     let Some(converted) =
-        crate::strings::try_convert_utf8_to_utf16_in_buffer(&mut wbuf[..cap], utf8)
+        crate::strings::try_convert_wtf8_to_utf16_in_buffer(&mut wbuf[..cap], utf8)
     else {
         wbuf[0] = 0;
-        return wstr_in_buf(wbuf, 0);
+        return if STRICT { None } else { Some(0) };
     };
     let mut count = converted.len();
 
@@ -399,7 +431,7 @@ fn to_w_path_maybe_dir<'a, const ADD_TRAILING_LASH: bool>(
 
     wbuf[count] = 0;
 
-    wstr_in_buf(wbuf, count)
+    Some(count)
 }
 
 pub fn clone_normalizing_separators(input: &[u8]) -> Vec<u8> {

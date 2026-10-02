@@ -4,6 +4,7 @@ import { memoryUsage as jscMemoryUsage } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
 import { bunEnv, bunExe, isASAN, isDebug, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { basename, join, resolve } from "path";
 import { getHeapStatistics } from "v8";
 
@@ -87,6 +88,50 @@ it("process", () => {
   process.chdir(cwd);
   expect(cwd).toEqual(process.cwd());
 });
+
+// The title is read from the console when none was set. The console's can be longer than the
+// buffer it is read into.
+it.skipIf(!isWindows).each([8190, 8191, 8192, 20000])(
+  "process.title reads a console title of %d UTF-16 units, truncated to 8191",
+  async units => {
+    using dir = tempDir("process-title-console", {});
+    const resultPath = join(String(dir), "result.json");
+    let terminalOutput = "";
+    // The terminal is the child's console, whatever the test runner itself has. Its stdout is that
+    // console, so the result comes back in a file.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { dlopen, ptr } = require("bun:ffi");
+        const k32 = dlopen("kernel32.dll", {
+          SetConsoleTitleW: { args: ["ptr"], returns: "i32" },
+        }).symbols;
+        const title = new Uint16Array(${units} + 1).fill(0x78, 0, ${units});
+        const set = k32.SetConsoleTitleW(ptr(title)) !== 0;
+        const read = process.title;
+        require("fs").writeFileSync(
+          process.argv[1],
+          JSON.stringify({ set, length: read.length, onlyFill: /^x*$/.test(read) }),
+        );
+        `,
+        resultPath,
+      ],
+      env: bunEnv,
+      terminal: {
+        data(_terminal, chunk) {
+          terminalOutput += Buffer.from(chunk).toString();
+        },
+      },
+    });
+    const exitCode = await proc.exited;
+    proc.terminal.close();
+    const result = existsSync(resultPath) ? JSON.parse(readFileSync(resultPath, "utf8")) : { terminalOutput };
+    expect(result).toEqual({ set: true, length: Math.min(units, 8191), onlyFill: true });
+    expect(exitCode).toBe(0);
+  },
+);
 
 it("process.title with UTF-16 characters", () => {
   // Test with various UTF-16 characters
@@ -1343,8 +1388,7 @@ describe.concurrent(() => {
       ).toThrow("The property 'prevValue.system' is invalid. Received -1");
     });
 
-    // Skipped on Windows because it seems UV returns { user: 15000, system: 0 } constantly
-    it.skipIf(process.platform === "win32")("works with diff", () => {
+    it("works with diff", () => {
       const init = process.cpuUsage();
       init.system = 0;
       init.user = 0;
@@ -1353,7 +1397,7 @@ describe.concurrent(() => {
       expect(delta.system).toBeGreaterThanOrEqual(0);
     });
 
-    it.skipIf(process.platform === "win32")("works with diff of different structure", () => {
+    it("works with diff of different structure", () => {
       const init = {
         system: 0,
         user: 0,
@@ -1685,6 +1729,54 @@ describe.concurrent(() => {
     // TODO: write better tests
     JSON.stringify(process.report.getReport(), null, 2);
   });
+
+  it.skipIf(!isWindows)("process.report prints an interface's addresses as os.networkInterfaces() does", () => {
+    const fromOS = Object.values(require("node:os").networkInterfaces())
+      .flat()
+      .map(({ address, netmask, family }) => ({ address, netmask, family }));
+    const fromReport = process.report
+      .getReport()
+      .header.networkInterfaces.map(({ address, netmask, family }) => ({ address, netmask, family }));
+    expect(fromReport.length).toBeGreaterThan(0);
+    expect(fromReport.filter(entry => !fromOS.some(other => Bun.deepEquals(other, entry)))).toEqual([]);
+  });
+
+  // The name of a loaded module can be longer than MAX_PATH (260, terminator included).
+  it.skipIf(!isWindows).each([259, 260, 261, 400])(
+    "process.report.getReport().sharedObjects has all of a %d-unit module path",
+    async length => {
+      using dir = tempDir("report-module-path", {});
+      const name = "report-module.dll";
+      let directory = String(dir);
+      while (length - directory.length - name.length - 1 > 102) {
+        directory = join(directory, Buffer.alloc(100, "d").toString());
+      }
+      directory = join(directory, Buffer.alloc(length - directory.length - name.length - 2, "x").toString());
+      mkdirSync(directory, { recursive: true });
+      const dll = join(directory, name);
+      copyFileSync(join(process.env.SystemRoot, "System32", "psapi.dll"), dll);
+      expect(dll.length).toBe(length);
+
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const { dlopen } = require("bun:ffi");
+          dlopen(process.argv[1], { EnumProcesses: { args: ["ptr", "u32", "ptr"], returns: "i32" } });
+          console.log(JSON.stringify(process.report.getReport().sharedObjects.filter(path => path.includes("report-module"))));
+          `,
+          dll,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(JSON.parse(stdout)).toEqual([dll]);
+      expect(exitCode).toBe(0);
+    },
+  );
 
   // A pending worker.terminate() is delivered at the exception checks inside the
   // report builders, so a worker looping on getReport() is always interrupted in
@@ -2399,7 +2491,7 @@ describe("process.exitCode", () => {
     );
   });
 
-  it.todoIf(isWindows)("zeroExitWithUncaughtHandler", async () => {
+  it("zeroExitWithUncaughtHandler", async () => {
     await runInlineFixture(
       `
       process.on('exit', (code) => {
@@ -2420,7 +2512,7 @@ describe("process.exitCode", () => {
     );
   });
 
-  it.todoIf(isWindows)("changeCodeInUncaughtHandler", async () => {
+  it("changeCodeInUncaughtHandler", async () => {
     await runInlineFixture(
       `
       process.on('exit', (code) => {

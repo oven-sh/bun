@@ -90,7 +90,7 @@ async function spawnTree(noOrphans: string | undefined, childScript = "child.js"
     // POSIX: trailing `wait` defeats sh's implicit-exec-of-last-command so sh
     // stays a distinct pid we can SIGKILL independently of bun.
     // Windows: cmd.exe always forks a child and waits; no trick needed. bun
-    // escapes the test's libuv job via SILENT_BREAKAWAY, so only the Windows
+    // escapes the test's spawn job via SILENT_BREAKAWAY, so only the Windows
     // parent-watch (RegisterWaitForSingleObject) ties it to cmd.exe.
     cmd: isWindows
       ? ["cmd.exe", "/d", "/c", `${fixture}\\supervisor.bat`, childScript]
@@ -992,16 +992,16 @@ test.concurrent.skipIf(!isPosix || !hasPerl)(
 // TerminateProcess'd the kernel closes the Job handle and terminates every
 // descendant.
 //
-// libuv's uv_spawn already maintains its own kill-on-close job, but with
-// JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK so only processes libuv explicitly
+// Bun's spawn already maintains its own kill-on-close job, but with
+// JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK so only processes Bun explicitly
 // assigns are covered — anything spawned *by* those children (cmd.exe →
 // tool, npm script → compiler, etc.) breaks away silently and survives. The
 // --no-orphans job omits SILENT_BREAKAWAY so membership is inherited
 // recursively.
 //
-// Tree under test: test → bun → cmd.exe → leaf bun. cmd.exe is the non-libuv
+// Tree under test: test → bun → cmd.exe → leaf bun. cmd.exe is the non-Bun
 // link: it spawns the leaf via plain CreateProcess, so the leaf escapes
-// libuv's job but not the --no-orphans job. The leaf writes its pid to a file
+// the spawn job but not the --no-orphans job. The leaf writes its pid to a file
 // so the test can observe it after cmd.exe's stdout pipe is torn down.
 async function spawnTreeWindows(argv: string[], extraEnv: Record<string, string>, bunfig = false) {
   // No `cwd` anywhere in the chain: the leaf must not hold an open handle on
@@ -1104,7 +1104,7 @@ describe.concurrent.each([
 // suppressed there) so the flag check is the proof for that half.
 //
 // Spawn via a cmd.exe supervisor so the bun under test is not explicitly
-// assigned to the test runner's libuv global job (libuv's job has
+// assigned to the test runner's global spawn job (that job has
 // SILENT_BREAKAWAY so cmd.exe's child doesn't inherit it); this guarantees
 // the --no-orphans job is the immediate job regardless of parent timing.
 test.concurrent.skipIf(!isWindows)(

@@ -70,6 +70,14 @@
 
 #include <wtf/Platform.h>
 
+// The UCRT has no ssize_t. Same guards as the other headers that supply one.
+#if OS(WINDOWS) && !defined(_SSIZE_T_) && !defined(_SSIZE_T_DEFINED)
+#include <stdint.h>
+typedef intptr_t ssize_t;
+#define _SSIZE_T_
+#define _SSIZE_T_DEFINED
+#endif
+
 #ifdef __cplusplus
 #if OS(LINUX)
 #include <limits>

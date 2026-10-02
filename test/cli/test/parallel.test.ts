@@ -813,6 +813,43 @@ test("--parallel never interleaves console output across files", async () => {
   expect(exitCode).toBe(0);
 });
 
+test.skipIf(!isWindows)("--parallel prints everything a test logged above the test's own line", async () => {
+  // The lines and the result come through different pipes. A test that logs more than once has
+  // written all of it by the time it reports.
+  const body = (file: string) =>
+    `import {test} from "bun:test";
+     for (let i = 0; i < 40; i++) test("${file}-" + i, () => {
+       console.log("${file}-" + i + " out 1"); console.error("${file}-" + i + " err 1");
+       console.log("${file}-" + i + " out 2"); console.error("${file}-" + i + " err 2");
+     });`;
+  const files = ["a", "b", "c", "d"];
+  using dir = tempDir("parallel-log-order", Object.fromEntries(files.map(file => [file + ".test.js", body(file)])));
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2"],
+    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const lines = stderr.split(/\r?\n/);
+  const reportedAt = new Map<string, number>();
+  lines.forEach((line, at) => {
+    const name = /^\(pass\) (\w-\d+)/.exec(line)?.[1];
+    if (name) reportedAt.set(name, at);
+  });
+  const late = lines.filter((line, at) => {
+    const name = /^(\w-\d+) (?:out|err) \d$/.exec(line)?.[1];
+    return name !== undefined && at > reportedAt.get(name)!;
+  });
+  expect({ late, reported: reportedAt.size, stdout: stdout.includes(" out ") }).toEqual({
+    late: [],
+    reported: files.length * 40,
+    stdout: false,
+  });
+  expect(exitCode).toBe(0);
+});
+
 test("--parallel lazily scales workers based on file duration", async () => {
   // Each test file appends its PID so we can count distinct worker processes.
   const body = (sleepMs: number) =>
@@ -1097,9 +1134,9 @@ test("--parallel: a test writing garbage to fd 3 gets its worker killed and the 
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout).toContain("PARALLEL");
-  // fd 3 is the worker's IPC channel. On POSIX the coordinator's own frame
-  // decoder rejects the bytes; on Windows they break libuv's IPC framing
-  // underneath it and surface as a read error. Both must end the same way:
+  // fd 3 is the worker's IPC channel. The bytes on it are the coordinator's
+  // frames themselves (a socketpair on POSIX, a pipe on Windows), so its frame
+  // decoder rejects these. Both platforms must end the same way:
   // the coordinator kills that worker and says so, rather than printing the
   // status the kill produced (SIGKILL) or, when the kill was skipped, the
   // "exit code 0" of a worker that later shut itself down. Writing to the

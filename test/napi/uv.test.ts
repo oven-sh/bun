@@ -1,15 +1,11 @@
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, canBuildNodeAddons, isWindows, tempDirWithFiles } from "harness";
 import { existsSync, readFileSync } from "node:fs";
 import { constants } from "node:os";
 import path from "node:path";
-import { symbols, test_skipped } from "../../src/jsc/bindings/libuv/generate_uv_posix_stubs_constants";
 import source from "./uv-stub-stuff/uv_impl.c";
 
-const symbols_to_test = symbols.filter(s => !test_skipped.includes(s));
-
-// We use libuv on Windows
-describe.if(!isWindows)("uv stubs", () => {
+describe.skipIf(!canBuildNodeAddons())("uv stubs", () => {
   const cwd = process.cwd();
   let tempdir: string = "";
   let outdir: string = "";
@@ -30,7 +26,9 @@ describe.if(!isWindows)("uv stubs", () => {
           "typescript": "^5.0.0",
         },
         "scripts": {
-          "build:napi": "node-gyp configure && node-gyp build",
+          // Under Bun, as test/napi/napi-app builds: a Node that was itself built with clang has
+          // node-gyp ask MSBuild for the ClangCL toolset, which a machine with only MSVC lacks.
+          "build:napi": "bun --bun node-gyp configure && bun --bun node-gyp build",
         },
         "dependencies": {
           "node-gyp": "10.2.0",
@@ -41,7 +39,7 @@ describe.if(!isWindows)("uv stubs", () => {
           {
             "target_name": "uv_test",
             "sources": [ "uv_impl.c" ],
-            "include_dirs": [ ".", "./libuv" ],
+            "include_dirs": [ "." ],
             "cflags": ["-fPIC"],
             "ldflags": ["-Wl,--export-dynamic"]
           },
@@ -54,15 +52,14 @@ describe.if(!isWindows)("uv stubs", () => {
 
     process.chdir(tempdir);
 
-    const libuvDir = path.join(__dirname, "../../src/jsc/bindings/libuv");
-    await Bun.$`cp -R ${libuvDir} ${path.join(tempdir, "libuv")}`;
     // --ignore-scripts skips the implicit `node-gyp rebuild` bun install runs for a
     // root binding.gyp package; build:napi below is the single, explicit gyp build.
     await Bun.$`${bunExe()} i --ignore-scripts && ${bunExe()} build:napi`.env(bunEnv).cwd(tempdir);
 
     addonPath = path.join(tempdir, "./build/Release/uv_test.node");
     nativeModule = require(addonPath);
-  });
+    // Installs node-gyp and compiles an addon: far past the default 5s hook timeout.
+  }, 300_000);
 
   afterEach(() => {
     process.chdir(cwd);
@@ -134,7 +131,8 @@ describe.if(!isWindows)("uv stubs", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("uv_tty_reset_mode after setRawMode", async () => {
+  // The termios snapshot and the pthread hammer are POSIX.
+  test.skipIf(isWindows)("uv_tty_reset_mode after setRawMode", async () => {
     // The child runs in a pty so that setRawMode() takes the termios snapshot
     // uv_tty_reset_mode() restores. Restoring it succeeds (0); two threads
     // restoring it at once see UV_EBUSY (thousands of times per run on a

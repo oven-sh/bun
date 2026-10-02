@@ -1070,10 +1070,7 @@ impl<'a> Repl<'a> {
         #[cfg(windows)]
         {
             if let Some(mode) = self.original_windows_mode {
-                // SAFETY: stdin handle is valid console handle
-                unsafe {
-                    let _ = bun_sys::windows::SetConsoleMode(Fd::stdin().native(), mode);
-                }
+                let _ = bun_sys::windows::SetConsoleMode(Fd::stdin().native(), mode);
                 self.original_windows_mode = None;
             }
         }

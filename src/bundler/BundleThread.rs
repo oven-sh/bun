@@ -8,10 +8,6 @@ use bun_threading::unbounded_queue::{Node, UnboundedQueue};
 use crate::bundle_v2::{FileMap, JSBundlerPlugin, dispatch};
 use crate::{BundleV2, Transpiler};
 
-/// Used to keep the bundle thread from spinning on Windows
-#[cfg(windows)]
-extern "C" fn timer_callback(_: *mut bun_sys::windows::libuv::Timer) {}
-
 /// Port of `std.Thread.ResetEvent` — single-shot manual-reset event used to
 /// block `spawn()` until the bundle thread has initialized its `Waker`.
 // Re-exports `bun_threading::ResetEvent` (futex-backed); the futex impl
@@ -175,8 +171,8 @@ impl<C: CompletionStruct> BundleThread<C> {
         // accesses the same struct concurrently, so we never materialize `&mut Self`.
         // `UnboundedQueue::push` takes `&self` (lock-free MPSC). `Waker::wake` takes
         // `&self` on all platforms and only reads a Copy field (eventfd, mach port,
-        // `WindowsLoop` pointer) to pass to a wake call that is safe from any thread
-        // (eventfd write, mach_msg send, uv_async_send), so the `&Waker` autoref is
+        // event handle) to pass to a wake call that is safe from any thread
+        // (eventfd write, mach_msg send, SetEvent), so the `&Waker` autoref is
         // sound alongside `wait(&self)` in `thread_main` and other `enqueue` callers.
         unsafe {
             (*instance).queue.push(completion);
@@ -197,23 +193,6 @@ impl<C: CompletionStruct> BundleThread<C> {
         // Unblock the calling thread so it can continue.
         // SAFETY: raw-ptr field projection; spawning thread is blocked in `ready_event.wait()`.
         unsafe { (*instance).ready_event.set() };
-
-        // The libuv Timer lives on stack for the lifetime of this never-returning fn.
-        // It MUST be declared at function scope (not inside the `#[cfg(windows)] { ... }`
-        // block below) because `timer.init()`/`timer.start()` register `&timer`'s address
-        // into the uv loop's intrusive handle queue / timer min-heap, and `waker.wait()`
-        // (→ `uv_run`) in the `loop {}` below dereferences that address.
-        #[cfg(windows)]
-        let mut timer: bun_sys::windows::libuv::Timer = bun_core::ffi::zeroed();
-        #[cfg(windows)]
-        {
-            // SAFETY: raw place read of `waker.loop_.uv_loop` (Copy ptr); field is
-            // write-once in `Waker::init()` above and never mutated by `wake()`, so a
-            // concurrent `enqueue()` (possible now that `ready_event.set()` has fired)
-            // does not conflict. No `&Waker`/`&mut Waker` is materialized here.
-            timer.init(unsafe { (*instance).waker.uv_loop() });
-            timer.start(u64::MAX, u64::MAX, Some(timer_callback));
-        }
 
         let mut has_bundled = false;
         loop {

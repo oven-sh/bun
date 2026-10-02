@@ -14,8 +14,8 @@ use bun_io::max_buf::MaxBuf;
 use bun_ptr::RefPtr;
 use bun_ptr::cow_slice::CowSlice;
 
+use super::Subprocess;
 use super::subprocess_pipe_reader::PipeReader;
-use super::{StdioResult, Subprocess};
 
 // `bun.ptr.CowString` — owned/borrowed byte slice (has
 // `init_owned` / `length` / `take_slice`).
@@ -91,51 +91,24 @@ impl Readable {
         stdio: Stdio,
         event_loop: NonNull<EventLoop>,
         process: NonNull<Subprocess<'static>>,
-        result: StdioResult,
+        result: Option<Fd>,
         max_size: Option<NonNull<MaxBuf>>,
         _is_sync: bool,
     ) -> Readable {
-        super::assert_stdio_result!(result);
+        super::assert_stdio_result(result);
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
         let mut stdio = stdio;
-        #[cfg(unix)]
-        {
-            if matches!(stdio, Stdio::Pipe) {
-                let _ = bun_sys::set_nonblocking(result.unwrap());
-            }
-        }
-
         match &stdio {
             Stdio::Inherit => Readable::Inherit,
             Stdio::Ignore | Stdio::Ipc | Stdio::Path(..) => Readable::Ignore,
-            Stdio::Fd(fd) => {
-                #[cfg(unix)]
-                {
-                    let _ = fd;
-                    Readable::Fd(result.unwrap())
-                }
-                #[cfg(not(unix))]
-                {
-                    Readable::Fd(*fd)
-                }
-            }
+            Stdio::Fd(fd) => Readable::Fd(*fd),
             #[cfg(any(target_os = "linux", target_os = "android"))]
             Stdio::Memfd(_) => {
                 // Ownership of the fd moves into the Readable; `Stdio`'s Drop would close it.
                 Readable::Memfd(stdio.take_memfd().unwrap())
             }
-            Stdio::Dup2(dup2) => {
-                #[cfg(unix)]
-                {
-                    let _ = dup2;
-                    panic!("TODO: implement dup2 support in Stdio readable");
-                }
-                #[cfg(not(unix))]
-                {
-                    Readable::Fd(dup2.out.to_fd())
-                }
-            }
+            Stdio::Dup2(_) => panic!("TODO: implement dup2 support in Stdio readable"),
             Stdio::Pipe => {
                 Readable::Pipe(PipeReader::create(event_loop, process, result, max_size))
             }
@@ -181,24 +154,21 @@ impl Readable {
                 let Readable::Pipe(pipe) = mem::replace(self, Readable::Closed) else {
                     unreachable!()
                 };
-                #[cfg(unix)]
-                {
-                    let release_start_ref = {
-                        let reader = Self::pipe_reader_mut(&pipe);
-                        if reader.process.is_some()
-                            && matches!(reader.state, super::subprocess_pipe_reader::State::Pending)
-                            && reader.ref_count.get() > 1
-                        {
-                            reader.reader.deinit();
-                            true
-                        } else {
-                            false
-                        }
-                    };
-                    if release_start_ref {
-                        // SAFETY: guard above proved a second ref exists; this deref cannot reach zero.
-                        unsafe { PipeReader::deref(pipe.as_ptr()) };
+                let release_start_ref = {
+                    let reader = Self::pipe_reader_mut(&pipe);
+                    if reader.process.is_some()
+                        && matches!(reader.state, super::subprocess_pipe_reader::State::Pending)
+                        && reader.ref_count.get() > 1
+                    {
+                        reader.reader.deinit();
+                        true
+                    } else {
+                        false
                     }
+                };
+                if release_start_ref {
+                    // SAFETY: guard above proved a second ref exists; this deref cannot reach zero.
+                    unsafe { PipeReader::deref(pipe.as_ptr()) };
                 }
                 Self::pipe_reader_mut(&pipe).process = None;
             }

@@ -2,7 +2,7 @@
 
 // Rust only compiles a `.rs` file if it is reachable via a `mod` declaration —
 // `#[no_mangle]` alone does NOT make an orphaned file link. Every Windows-only
-// sibling (`uv_signal_handle_windows`, `win_watcher`) must have a
+// sibling (`windows_signal`) must have a
 // `#[cfg(windows)] pub mod` entry here or its C-ABI exports will be missing at
 // link time.
 
@@ -82,15 +82,6 @@ pub(crate) mod fs;
 // fs.watch() / fs.watchFile() backends — declared here so `fs::watch` /
 // `fs::watch_file` can reach the real `Arguments` / `FSWatcher` /
 // `StatWatcher` types instead of opaque local stand-ins.
-#[cfg(not(windows))]
-#[path = "node/path_watcher.rs"]
-pub(crate) mod path_watcher;
-#[cfg(windows)]
-#[path = "node/win_watcher.rs"]
-pub(crate) mod win_watcher;
-// Force-references `Bun__UVSignalHandle__init` / `Bun__UVSignalHandle__close`
-// for C++ (`src/jsc/bindings/BunProcess.cpp`). Must be `mod`-declared or the
-// `#[no_mangle]` exports are never compiled into the binary.
 #[path = "node/memory_pressure.rs"]
 pub(crate) mod memory_pressure;
 #[path = "node/node_fs_binding.rs"]
@@ -99,9 +90,11 @@ pub(crate) mod node_fs_binding;
 pub(crate) mod node_fs_stat_watcher;
 #[path = "node/node_fs_watcher.rs"]
 pub(crate) mod node_fs_watcher;
+#[path = "node/path_watcher.rs"]
+pub(crate) mod path_watcher;
 #[cfg(windows)]
-#[path = "node/uv_signal_handle_windows.rs"]
-pub(crate) mod uv_signal_handle_windows;
+#[path = "node/windows_signal.rs"]
+pub(crate) mod windows_signal;
 
 // Type defs + non-JSC FFI bodies are live; every `#[bun_jsc::host_fn]` /
 // `#[bun_jsc::JsClass]` item is wrapped in ` mod _impl` inside
@@ -156,12 +149,5 @@ pub(crate) mod zlib {
 
 // ─── submodule re-exports ─────────────────────────────────────────────────
 
-#[cfg(unix)]
-pub(crate) type uid_t = libc::uid_t;
-#[cfg(not(unix))]
-pub(crate) type uid_t = bun_sys::windows::libuv::uv_uid_t;
-
-#[cfg(unix)]
-pub(crate) type gid_t = libc::gid_t;
-#[cfg(not(unix))]
-pub(crate) type gid_t = bun_sys::windows::libuv::uv_gid_t;
+pub(crate) type uid_t = u32;
+pub(crate) type gid_t = u32;

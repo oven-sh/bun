@@ -96,7 +96,8 @@ declare module "bun" {
   // stdio entries, and `onDisconnect` told whether the channel closed cleanly.
   namespace Spawn {
     // `globalThis.`: inside this module the bare name is Bun's narrower `ArrayBufferView` alias.
-    type NodeStdio = (Bun.SpawnOptions.Writable | globalThis.ArrayBufferView | "ipc" | "socket-fd")[];
+    // `"overlapped"`: a pipe whose child end is opened for overlapped I/O (Windows).
+    type NodeStdio = (Bun.SpawnOptions.Writable | globalThis.ArrayBufferView | "ipc" | "socket-fd" | "overlapped")[];
     interface NodeSpawnOptions
       extends Omit<
         Bun.Spawn.SpawnOptions<Bun.SpawnOptions.Writable, Bun.SpawnOptions.Readable, Bun.SpawnOptions.Readable>,

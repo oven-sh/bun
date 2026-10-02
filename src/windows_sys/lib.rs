@@ -9,10 +9,6 @@ pub mod externs;
 // `bun_sys::windows`'s `pub use bun_windows_sys::Foo;` re-exports resolve.
 pub use externs::*;
 
-// `bun.windows.libuv` is NOT re-exported here — this is the bottom-tier Win32
-// externs crate and must stay leaf. The `bun.windows.libuv` alias lives in the
-// higher-tier `bun_sys::windows` module (`pub use bun_libuv_sys as libuv`).
-
 /// `NTSTATUS` value namespace (`ntstatus.h`). The `NTSTATUS` newtype carries
 /// these as associated consts, but `bun_sys::windows` glob-imports them as
 /// bare match patterns (`use bun_windows_sys::ntstatus::*`); associated consts
@@ -21,7 +17,6 @@ pub mod ntstatus {
     use super::externs::NTSTATUS;
     pub const SUCCESS: NTSTATUS = NTSTATUS::SUCCESS;
     pub const ACCESS_DENIED: NTSTATUS = NTSTATUS::ACCESS_DENIED;
-    pub const INVALID_PARAMETER: NTSTATUS = NTSTATUS::INVALID_PARAMETER;
     pub const OBJECT_NAME_INVALID: NTSTATUS = NTSTATUS::OBJECT_NAME_INVALID;
     pub const FILE_DELETED: NTSTATUS = NTSTATUS::FILE_DELETED;
     pub const DELETE_PENDING: NTSTATUS = NTSTATUS::DELETE_PENDING;

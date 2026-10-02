@@ -58,7 +58,7 @@ test.skipIf(!isWindows)("translateNtStatusToE maps delete-related NTSTATUS codes
   expect(translateNtStatusToE(0xc00000af)).toBe("ENOTSUP"); // STATUS_ILLEGAL_FUNCTION
 
   // A status that RtlNtStatusToDosError does not recognise maps to
-  // ERROR_MR_MID_NOT_FOUND, which has no errno, so we still get E::UNKNOWN
+  // ERROR_MR_MID_NOT_FOUND, which has no errno, so we still get E::EUNKNOWN
   // (not a panic). It prints with SystemErrno's spelling, like every variant.
   expect(translateNtStatusToE(0xcfffffff)).toBe("EUNKNOWN");
 });

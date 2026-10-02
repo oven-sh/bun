@@ -421,7 +421,7 @@ impl Rm {
                 let child = ChildPtr::new(cmd, WriterTag::Builtin);
                 Builtin::of_mut(interp, cmd)
                     .stderr
-                    .enqueue(child, &s, safeguard)
+                    .enqueue_owned(child, s, safeguard)
                     .run(interp);
                 return;
             }
@@ -477,7 +477,7 @@ impl Rm {
             let child = ChildPtr::new(cmd, WriterTag::Builtin);
             return Builtin::of_mut(interp, cmd)
                 .stdout
-                .enqueue(child, &buf, safeguard);
+                .enqueue_owned(child, buf, safeguard);
         }
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
         let done = match &mut Self::state_mut(interp, cmd).state {

@@ -497,33 +497,8 @@ pub mod ast {
 
         pub fn to_flags(self) -> i32 {
             // `bun_shell_parser` is sys-tier-free so it cannot depend on
-            // `bun_sys::O`; mirror those constants here. On POSIX `bun.O.*` is
-            // `libc::O_*`. On Windows `bun.O.*` is the *Linux-shaped octal*
-            // values — NOT MSVCRT `_O_*` — because
-            // `bun_sys::open` → `sys_uv::open` → `uv::O::from_bun_o` bit-tests
-            // against those exact values. Using `libc::O_CREAT` (0x100) /
-            // `libc::O_APPEND` (0x8) on Windows silently dropped CREAT/APPEND
-            // through `from_bun_o`, so `> file` failed to create the target.
-            #[cfg(not(windows))]
-            const O_RDONLY: i32 = libc::O_RDONLY;
-            #[cfg(not(windows))]
-            const O_WRONLY: i32 = libc::O_WRONLY;
-            #[cfg(not(windows))]
-            const O_CREAT: i32 = libc::O_CREAT;
-            #[cfg(not(windows))]
-            const O_TRUNC: i32 = libc::O_TRUNC;
-            #[cfg(not(windows))]
-            const O_APPEND: i32 = libc::O_APPEND;
-            #[cfg(windows)]
-            const O_RDONLY: i32 = 0o0;
-            #[cfg(windows)]
-            const O_WRONLY: i32 = 0o1;
-            #[cfg(windows)]
-            const O_CREAT: i32 = 0o100;
-            #[cfg(windows)]
-            const O_TRUNC: i32 = 0o1000;
-            #[cfg(windows)]
-            const O_APPEND: i32 = 0o2000;
+            // `bun_sys::O`, whose values these are.
+            use libc::{O_APPEND, O_CREAT, O_RDONLY, O_TRUNC, O_WRONLY};
 
             let read_write_flags: i32 = if self.stdin() {
                 O_RDONLY

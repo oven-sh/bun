@@ -1101,4 +1101,49 @@ console.log("survived", require("./late.js"));`,
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
+
+  // To the native calls on Windows "." and ".." are names like any other, and no name at all is the directory asked in.
+  test("Module._stat() of a relative path with . or .. in it, and of an empty one", async () => {
+    using dir = tempDir("module-stat-dotted", { "d/f.js": "" });
+    const paths = [
+      "d",
+      "./d",
+      "d/.",
+      "d/../d",
+      ".",
+      "d/f.js",
+      "d/../d/f.js",
+      "d/./f.js",
+      "missing",
+      "d/../missing",
+      "",
+    ];
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `console.log(JSON.stringify(${JSON.stringify(paths)}.map(path => Math.max(require("node:module")._stat(path), -1))));`,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(Object.fromEntries(paths.map((path, i) => [path, JSON.parse(stdout)[i]]))).toEqual({
+      "d": 1,
+      "./d": 1,
+      "d/.": 1,
+      "d/../d": 1,
+      ".": 1,
+      "d/f.js": 0,
+      "d/../d/f.js": 0,
+      "d/./f.js": 0,
+      "missing": -1,
+      "d/../missing": -1,
+      "": -1,
+    });
+    expect(exitCode).toBe(0);
+  });
 });

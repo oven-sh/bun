@@ -10,7 +10,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 // user JavaScript during spawnSync.
 //
 // On POSIX the trigger is the waiter thread's shared completion queue;
-// on Windows it's libuv's uv_run() firing uv_process exit callbacks inline
+// on Windows it's the process-exit packet's callback running inline
 // during the isolated loop tick.
 
 test("microtasks do not drain inside spawnSync", async () => {

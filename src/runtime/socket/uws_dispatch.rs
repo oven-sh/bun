@@ -68,7 +68,10 @@ static TABLES: std::sync::LazyLock<[Option<&'static VTable>; SOCKET_KIND_COUNT]>
         t[SocketKind::ValkeyTls as usize] = Some(vtable::make::<handlers::Valkey<true>>());
 
         // IPC
-        t[SocketKind::SpawnIpc as usize] = Some(vtable::make::<handlers::SpawnIPC>());
+        #[cfg(not(windows))]
+        {
+            t[SocketKind::SpawnIpc as usize] = Some(vtable::make::<handlers::SpawnIPC>());
+        }
 
         t
     });

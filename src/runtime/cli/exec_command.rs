@@ -89,6 +89,6 @@ impl ExecCommand {
             }
         };
 
-        Global::exit(u32::from(code));
+        Global::exit(code);
     }
 }

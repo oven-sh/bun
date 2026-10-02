@@ -3,7 +3,6 @@ use std::io::Write as _;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
-#[cfg(unix)]
 use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::{self as spawn, Rusage, SpawnOptions, Status};
 use crate::cli::Command;
@@ -15,7 +14,7 @@ use bun_core::{ZStr, strings};
 use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::{self as MiniEventLoopMod, MiniEventLoop};
 use bun_io::{BufferedReader, ReadState};
-use bun_sys as sys;
+use bun_sys::{self as sys, FdExt as _};
 
 // The string fields below are owned boxes, except `combined` which is interned
 // in the process-lifetime CLI arena.
@@ -100,7 +99,7 @@ impl<'a> ProcessHandle<'a> {
             core::ptr::null(),
         ];
         let start_time = Instant::now();
-        let spawned: spawn::SpawnProcessResult = 'brk: {
+        let spawned: spawn::SpawnResult = 'brk: {
             // Get the envp with the PATH configured
             // There's probably a more optimal way to do this where you have a Vec shared
             // instead of creating a new one for each process
@@ -131,53 +130,24 @@ impl<'a> ProcessHandle<'a> {
             }??;
             // `_guard` drops here (or on `?` above), restoring PATH.
         };
-        #[cfg(unix)]
         let (stdout_fd, stderr_fd) = (spawned.stdout, spawned.stderr);
-        // Windows: `spawn_process_windows` has already moved the heap pipe out of
-        // `options.stdout/stderr` (via `heap::take`) into `spawned.stdout/stderr`
-        // as `WindowsStdioResult::Buffer(Box<Pipe>)`. The raw `*mut Pipe` left in
-        // `options` is dangling-by-design — re-`heap::take`ing it here would be a
-        // double `Box::from_raw` (UAF + double-free). Take the Box from the
-        // *result* instead, before `to_process` consumes `spawned`.
-        #[cfg(windows)]
-        let mut spawned = spawned;
-        #[cfg(windows)]
-        let (stdout_pipe, stderr_pipe) = (spawned.stdout.take(), spawned.stderr.take());
         let process = spawned.to_process_handle(EventLoopHandle::init_mini(state.event_loop));
 
         let handle_ptr = std::ptr::from_mut::<ProcessHandle<'a>>(handle).cast::<c_void>();
         handle.stdout.set_parent(handle_ptr);
         handle.stderr.set_parent(handle_ptr);
 
-        #[cfg(windows)]
-        {
-            if let spawn::WindowsStdioResult::Buffer(pipe) = stdout_pipe {
-                handle.stdout.set_source(bun_io::Source::Pipe(pipe));
-            }
-            if let spawn::WindowsStdioResult::Buffer(pipe) = stderr_pipe {
-                handle.stderr.set_source(bun_io::Source::Pipe(pipe));
-            }
-        }
-
-        #[cfg(unix)]
-        {
-            if let Some(stdout) = stdout_fd {
-                let _ = sys::set_nonblocking(stdout);
-                handle.remaining_fds += 1;
-                handle.stdout.start(stdout, true)?;
-            }
-            if let Some(stderr) = stderr_fd {
-                let _ = sys::set_nonblocking(stderr);
-                handle.remaining_fds += 1;
-                handle.stderr.start(stderr, true)?;
-            }
-        }
-        #[cfg(not(unix))]
-        {
+        for (fd, reader) in [
+            (stdout_fd, &mut handle.stdout),
+            (stderr_fd, &mut handle.stderr),
+        ] {
+            let Some(fd) = fd else { continue };
             handle.remaining_fds += 1;
-            handle.stdout.start_with_current_pipe()?;
-            handle.remaining_fds += 1;
-            handle.stderr.start_with_current_pipe()?;
+            if let Err(err) = reader.start(fd, true) {
+                // A reader that fails to start (Windows only) has not taken the fd.
+                fd.close();
+                return Err(err.into());
+            }
         }
 
         handle.process = Some(ProcessInfo {
@@ -212,8 +182,7 @@ impl<'a> ProcessHandle<'a> {
 
     /// On process exit, read what the pipes already hold, then force-end any
     /// pipe a leftover child still keeps open: its EOF may never come and
-    /// must not stall the finish. Windows has no synchronous drain, so only
-    /// the force-end applies there.
+    /// must not stall the finish.
     ///
     /// # Safety
     /// `this` is the live handle; the reader callbacks re-enter
@@ -227,6 +196,10 @@ impl<'a> ProcessHandle<'a> {
                 #[cfg(unix)]
                 if !(*reader).is_done() && (*reader).get_fd() != sys::Fd::INVALID {
                     BufferedReader::read(reader);
+                }
+                #[cfg(windows)]
+                if !(*reader).is_done() {
+                    BufferedReader::drain(reader);
                 }
                 if !(*reader).is_done() {
                     (*reader).deinit();
@@ -287,7 +260,7 @@ bun_spawn::link_impl_ProcessExit! {
 impl<'a> ProcessHandle<'a> {
     fn loop_(&self) -> *mut bun_io::Loop {
         // SAFETY: state backref valid; event_loop is the live MiniEventLoop singleton.
-        bun_io::uws_to_native(unsafe { (*self.state.event_loop).loop_ })
+        unsafe { (*self.state.event_loop).loop_ptr() }
     }
 }
 
@@ -677,7 +650,7 @@ impl<'a> State<'a> {
         }
     }
 
-    fn finalize(&mut self) -> u8 {
+    fn finalize(&mut self) -> u32 {
         if self.aborted {
             let _ = self.redraw(true);
         }
@@ -690,7 +663,7 @@ impl<'a> State<'a> {
                         }
                     }
                     Status::Signaled(signal) => {
-                        return bun_sys::SignalCode(*signal).to_exit_code();
+                        return bun_sys::SignalCode(*signal).to_exit_code().into();
                     }
                     _ => return 1,
                 }
@@ -924,7 +897,8 @@ pub(crate) fn run_scripts_with_filter(
         None,
     );
     // Windows: recursive kill-on-close Job so cmd.exe/.cmd-shim grandchildren
-    // (which escape libuv's SILENT_BREAKAWAY job) die with us. POSIX: no-op.
+    // (which silently break away from the job every spawned child is put in)
+    // die with us. POSIX: no-op.
     bun_io::ParentDeathWatchdog::ensure_kill_on_close_job();
     // --no-orphans: register the macOS kqueue parent watch on this MiniEventLoop
     // (the VirtualMachine.init path is never reached for --filter). Linux is
@@ -999,27 +973,12 @@ pub(crate) fn run_scripts_with_filter(
             process: None,
             options: SpawnOptions {
                 stdin: spawn::Stdio::Ignore,
-                #[cfg(unix)]
                 stdout: spawn::Stdio::Buffer,
-                #[cfg(not(unix))]
-                stdout: spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
-                    bun_core::ffi::zeroed::<bun_sys::windows::libuv::Pipe>(),
-                ))),
-                #[cfg(unix)]
                 stderr: spawn::Stdio::Buffer,
-                #[cfg(not(unix))]
-                stderr: spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
-                    bun_core::ffi::zeroed::<bun_sys::windows::libuv::Pipe>(),
-                ))),
                 cwd: bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
                     &script.package_json_path,
                 )
                 .into(),
-                #[cfg(windows)]
-                windows: spawn::WindowsOptions {
-                    loop_: EventLoopHandle::init_mini(event_loop),
-                    ..Default::default()
-                },
                 stream: true,
                 ..Default::default()
             },
@@ -1119,7 +1078,7 @@ pub(crate) fn run_scripts_with_filter(
 
     let status = state.finalize();
 
-    Global::exit(status as u32);
+    Global::exit(status);
 }
 
 fn has_cycle(current: &mut ProcessHandle) -> bool {

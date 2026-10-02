@@ -87,6 +87,7 @@ const raiseCtrlC = `
 async function runInTerminal(cmd: string[], cwd: string) {
   let output = "";
   const decoder = new TextDecoder();
+  const endOfOutput = Promise.withResolvers<void>();
   await using proc = Bun.spawn({
     cmd,
     cwd,
@@ -98,10 +99,17 @@ async function runInTerminal(cmd: string[], cwd: string) {
       data(_t, chunk: Uint8Array) {
         output += decoder.decode(chunk, { stream: true });
       },
+      exit() {
+        endOfOutput.resolve();
+      },
     },
   });
   const exitCode = await proc.exited;
+  // A pseudoconsole's host forwards what the process wrote on its own schedule, and
+  // its last frame only once the pseudoconsole is closed: the output is complete at
+  // the terminal's `exit`, not at the process's.
   proc.terminal?.close();
+  await endOfOutput.promise;
   output += decoder.decode();
   return { text: Bun.stripANSI(output), exitCode, signalCode: proc.signalCode };
 }
@@ -172,8 +180,8 @@ for (const mode of ctrlCModes) {
     expect(text).not.toContain("NOPE");
     // ...and ended like the child did.
     if (isWindows) {
-      // STATUS_CONTROL_C_EXIT (0xC000013A); Bun.spawn reports the low byte on Windows.
-      expect(exitCode).toBe(0x3a);
+      // STATUS_CONTROL_C_EXIT
+      expect(exitCode).toBe(0xc000013a);
     } else {
       expect(signalCode).toBe("SIGINT");
     }

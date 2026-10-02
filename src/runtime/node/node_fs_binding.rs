@@ -7,18 +7,17 @@ use bun_sys_jsc::SystemErrorJsc as _;
 
 use crate::node::ThreadIsolated;
 use crate::node::fs::{
-    self, AsyncCpTask, AsyncReaddirRecursiveTask, Flavor, FsArgument, FsReturn, NodeFS,
-    NodeFSDispatch, NodeFSFunctionEnum, Op, args, async_, ret,
+    self, AsyncCpTask, AsyncFSTask, AsyncReaddirRecursiveTask, Flavor, FsArgument, FsReturn,
+    NodeFS, NodeFSDispatch, NodeFSFunctionEnum, Op, args, async_, ret,
 };
 
 /// Signature of every generated NodeFS host function.
 pub(crate) type NodeFSFunction =
     fn(this: &Binding, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>;
 
-// The (`args::*`, `ret::*`, `NodeFS::<method>`, `async_::*`) quadruples are
-// spelled out once in `node_fs.rs` (the `NodeFS::dispatch` table +
-// `async_::*` aliases) and reused here via the `node_fs_bindings!` macro at
-// the bottom of this file.
+// The (`args::*`, `ret::*`, `NodeFS::<method>`) triples are spelled out once in
+// `node_fs.rs` (the `NodeFS::dispatch` table) and reused here via the
+// `node_fs_bindings!` macro at the bottom of this file.
 
 /// Returns bindings to call jsc.Node.fs.NodeFS.<function>.
 /// Async calls use a thread pool.
@@ -37,6 +36,9 @@ where
     let vm: &VirtualMachine = global.bun_vm();
     let mut slice = ArgumentsSlice::init(vm, frame.arguments());
     let args = <A as FsArgument>::from_js(global, &mut slice)?;
+    if let Some(fd_use) = args.fd_use() {
+        fd_use.on_js_thread(vm);
+    }
 
     // R-2: `JsCell::with_mut` scopes the `&mut NodeFS` to the blocking
     // syscall; `dispatch` never re-enters JS, and `Maybe<R>` is fully owned
@@ -77,33 +79,22 @@ fn split_callback<'a>(
 
 /// `Bindings(FunctionEnum).runAsync` for every operation except `.cp` /
 /// `.readdir` (those have bespoke entry points below).
-///
-/// `create_task` is `async_::<FunctionName>::create` — passed in because the
-/// Windows path picks `UVFSRequest` for a handful of fds-only ops while
-/// everything else uses `AsyncFSTask`, and that choice is encoded in the
-/// `async_::*` type aliases rather than derivable from `F` alone.
-fn run_async<A: FsArgument>(
-    this: &Binding,
+fn run_async<R: FsReturn + 'static, A: FsArgument + 'static, const F: NodeFSFunctionEnum>(
     global: &JSGlobalObject,
     frame: &CallFrame,
     arm: AsyncArm,
-    create_task: fn(
-        &bun_jsc::JsThread<'_>,
-        &Binding,
-        ThreadIsolated<A>,
-        &mut VirtualMachine,
-        Option<JSValue>,
-    ) -> JSValue,
-) -> JsResult<JSValue> {
+) -> JsResult<JSValue>
+where
+    Op<{ F }>: NodeFSDispatch<R, A>,
+{
     let (callback, arguments) = split_callback(global, frame, arm)?;
     let args = match parse_async_args::<A>(global, arguments)? {
         ParsedAsyncArgs::Args(args) => args,
         ParsedAsyncArgs::Rejected(error) => return reject_before_schedule(global, callback, error),
     };
     let vm: &mut VirtualMachine = global.bun_vm().as_mut();
-    Ok(create_task(
+    Ok(AsyncFSTask::<R, A, F>::create(
         &global.js_thread_of_caller(frame),
-        this,
         args,
         vm,
         callback,
@@ -212,7 +203,11 @@ impl Binding {
     // ── Hand-written bindings for ops outside `NodeFSFunctionEnum` ────────
 
     /// `callAsync(.cp)`.
-    pub(crate) fn cp(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn cp(
+        _this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         let cp_args = match parse_async_args::<args::Cp<'static>>(global, frame.arguments())? {
             ParsedAsyncArgs::Args(args) => args,
             ParsedAsyncArgs::Rejected(error) => return reject_before_schedule(global, None, error),
@@ -220,7 +215,6 @@ impl Binding {
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
         Ok(AsyncCpTask::create(
             &global.js_thread_of_caller(frame),
-            this,
             cp_args,
             vm,
         ))
@@ -249,27 +243,22 @@ impl Binding {
     /// `callAsync(.readdir)` — `args.recursive` selects
     /// `AsyncReaddirRecursiveTask` instead of the generic `AsyncFSTask`.
     pub(crate) fn readdir(
-        this: &Self,
+        _this: &Self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        Self::run_readdir(this, global, frame, AsyncArm::Promise)
+        Self::run_readdir(global, frame, AsyncArm::Promise)
     }
 
     pub(crate) fn readdir_cb(
-        this: &Self,
+        _this: &Self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        Self::run_readdir(this, global, frame, AsyncArm::Callback)
+        Self::run_readdir(global, frame, AsyncArm::Callback)
     }
 
-    fn run_readdir(
-        this: &Self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-        arm: AsyncArm,
-    ) -> JsResult<JSValue> {
+    fn run_readdir(global: &JSGlobalObject, frame: &CallFrame, arm: AsyncArm) -> JsResult<JSValue> {
         let (callback, arguments) = split_callback(global, frame, arm)?;
         let rd_args = match parse_async_args::<args::Readdir<'static>>(global, arguments)? {
             ParsedAsyncArgs::Args(args) => args,
@@ -291,7 +280,6 @@ impl Binding {
         }
         Ok(async_::Readdir::create(
             &global.js_thread_of_caller(frame),
-            this,
             rd_args,
             vm,
             callback,
@@ -359,18 +347,26 @@ macro_rules! node_fs_bindings {
                 pub(crate) const $sync: NodeFSFunction =
                     call_sync::<$Ret, $Args, { NodeFSFunctionEnum::$F }>();
                 pub(crate) fn $async_(
-                    this: &Self,
+                    _this: &Self,
                     global: &JSGlobalObject,
                     frame: &CallFrame,
                 ) -> JsResult<JSValue> {
-                    run_async::<$Args>(this, global, frame, AsyncArm::Promise, async_::$F::create)
+                    run_async::<$Ret, $Args, { NodeFSFunctionEnum::$F }>(
+                        global,
+                        frame,
+                        AsyncArm::Promise,
+                    )
                 }
                 pub(crate) fn $callback(
-                    this: &Self,
+                    _this: &Self,
                     global: &JSGlobalObject,
                     frame: &CallFrame,
                 ) -> JsResult<JSValue> {
-                    run_async::<$Args>(this, global, frame, AsyncArm::Callback, async_::$F::create)
+                    run_async::<$Ret, $Args, { NodeFSFunctionEnum::$F }>(
+                        global,
+                        frame,
+                        AsyncArm::Callback,
+                    )
                 }
             )*
         }
@@ -484,14 +480,7 @@ pub(crate) fn string_to_flags_for_testing(
     use crate::node::types::FileSystemFlags;
     let [val] = frame.arguments_as_array::<1>();
     let flags = FileSystemFlags::from_js(global, val)?.unwrap_or(FileSystemFlags::R);
-    // On Windows the internal bun.O bits are POSIX-shaped and translated to the
-    // MSVCRT `_O_*` values at the open boundary; node's stringToFlags and
-    // fs.constants both speak MSVCRT, so translate here too.
-    #[cfg(windows)]
-    let bits = bun_sys::windows::libuv::O::from_bun_o(flags.as_int());
-    #[cfg(not(windows))]
-    let bits = flags.as_int();
-    Ok(JSValue::js_number_from_int32(bits))
+    Ok(JSValue::js_number_from_int32(flags.as_int()))
 }
 
 #[bun_jsc::host_fn]

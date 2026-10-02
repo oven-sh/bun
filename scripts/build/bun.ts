@@ -109,6 +109,8 @@ function systemLibs(cfg: Config): string[] {
       "crypt32.lib",
       "wsock32.lib", // ws2_32 + wsock32 — wsock32 has TransmitFile (sendfile equiv)
       "ws2_32.lib",
+      "iphlpapi.lib",
+      "advapi32.lib",
       "delayimp.lib", // required for /delayload: in release
     );
   }
@@ -325,7 +327,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // effect of the edge whose declared outputs are only lib*.a. Depfiles record
   // those headers, but ninja stats them BEFORE the sub-build runs — so with
   // order-only, any compile that #includes a dep header lags one build behind
-  // a dep rebuild (observed: uv-posix-*.c → wtf/Compiler.h).
+  // a dep rebuild (observed: uv-*.c → wtf/Compiler.h).
   // Implicit deps on the libs make "dep rebuilt" itself the invalidation
   // signal. Cost is negligible: if the libs changed you're relinking anyway.
   //

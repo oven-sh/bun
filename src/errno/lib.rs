@@ -44,7 +44,7 @@ macro_rules! __decl_uv_e {
     ( $( $ident:ident = $value:expr => $display:literal ),+ $(,)? ) => {
         $( pub const $ident: i32 = $value; )+
 
-        /// Full (negated code, name) table: libuv-synthetic codes (vendor/libuv/include/uv/errno.h)
+        /// Full (negated code, name) table: libuv-synthetic codes (libuv's include/uv/errno.h)
         /// first, then per-OS rows. Consumed by `name()` and node:util `getSystemErrorMap()`.
         pub static ENTRIES: &[(i32, &'static str)] = &[
             (-4095, "EOF"),
@@ -86,21 +86,24 @@ macro_rules! __decl_uv_e {
 // The (IDENT, "E…") column pair is byte-for-byte identical across
 // linux/darwin/freebsd/windows; only the middle `i32` value differs by design
 // (native `SystemErrno::$e as i32` on POSIX vs libuv-synthetic
-// `-bun_libuv_sys::UV_E*` on Windows / for codes the host OS lacks). Rather
+// `-uv_codes::UV_E*` on Windows / for codes the host OS lacks). Rather
 // than re-list the rows 4×, the caller supplies a tiny *value-producer* macro
 // `$cb!($id, $e, $uv) -> i32-expr` and this forwards each row to the existing
-// `__decl_uv_e!` expander (consts + reverse `name()` fn).
+// `__decl_uv_e!` expander (consts + reverse `name()` fn), or to the `$sink` named.
 //
 // `$id`/`$e`/`$uv` are passed as **literal** tokens (never captured as
 // `:ident`), so the per-OS `$cb` can override individual rows by literal-token
-// match — e.g. `(CHARSET, $e:tt, $uv:tt) => { -::bun_libuv_sys::$uv }` — while
+// match — e.g. `(CHARSET, $e:tt, $uv:tt) => { -$crate::uv_codes::$uv }` — while
 // a final `($i:tt, $e:tt, $uv:tt)` arm handles the native default.
 // ──────────────────────────────────────────────────────────────────────────
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __uv_e_rows {
     ($cb:ident) => {
-        $crate::__decl_uv_e! {
+        $crate::__uv_e_rows!($cb => __decl_uv_e);
+    };
+    ($cb:ident => $sink:ident) => {
+        $crate::$sink! {
             // Rust idents can't start with a digit → `_2BIG`.
             _2BIG          = $cb!(_2BIG,          E2BIG,           UV_E2BIG)           => "E2BIG",
             ACCES          = $cb!(ACCES,          EACCES,          UV_EACCES)          => "EACCES",
@@ -175,6 +178,8 @@ macro_rules! __uv_e_rows {
     };
 }
 
+pub mod uv_codes;
+
 #[cfg(target_os = "macos")]
 pub mod darwin_errno;
 #[cfg(target_os = "macos")]
@@ -200,8 +205,8 @@ pub use windows_errno::{posix, *};
 //
 // Landed here so the errno
 // crate stays leaf (T0) and bun_sys (T≥1) imports forward. Windows keeps its
-// own divergent `mod posix` in windows_errno.rs (no `errno()` fn, unprefixed
-// `E`); this block is the shared POSIX-target definition.
+// own divergent `mod posix` in windows_errno.rs (no `errno()` fn); this block
+// is the shared POSIX-target definition.
 // ──────────────────────────────────────────────────────────────────────────
 #[cfg(not(windows))]
 #[allow(non_camel_case_types)]
@@ -257,15 +262,15 @@ pub fn last_error() -> E {
 /// Decode a Node-style **negated** errno (`c_int`, as written by
 /// `Error::to_system_error`) back into an `E`. The input crosses FFI
 /// (BunObject.cpp `SystemError__*`) and is NOT trusted to be a declared
-/// discriminant. `0` is `SUCCESS`; an unmapped value is `EUNKNOWN`.
+/// discriminant. `0` is `SUCCESS`; an unmapped value is `EUNKNOWN`. On Windows
+/// what was written is a `UV_E*` number where libuv has one for the errno.
 #[inline]
 pub fn e_from_negated(errno: core::ffi::c_int) -> E {
     let n = errno.wrapping_neg();
     #[cfg(windows)]
     {
-        u16::try_from(n)
-            .ok()
-            .and_then(E::try_from_raw)
+        uv_to_e(errno)
+            .or_else(|| u16::try_from(n).ok().and_then(E::from_repr))
             .unwrap_or(E::EUNKNOWN)
     }
     #[cfg(not(windows))]
@@ -344,9 +349,6 @@ fn system_errno_name(errno: i32) -> Option<&'static str> {
     }
     #[cfg(windows)]
     {
-        // Windows libuv errnos arrive negated; abs-normalise before the
-        // lookup. `from_repr` (strum::FromRepr)
-        // covers BOTH the dense 0..=137 range and the sparse UV_* tags.
         let n = errno.unsigned_abs();
         if n == 0 {
             return None;
@@ -358,8 +360,7 @@ fn system_errno_name(errno: i32) -> Option<&'static str> {
     }
 }
 
-/// Length of the dense `0..MAX` prefix of `SystemErrno` (on Windows, the
-/// dense head before the sparse UV_* range). Exposed so bun_core can pre-seed its
+/// Length of the dense `0..MAX` range of `SystemErrno`. Exposed so bun_core can pre-seed its
 /// interned `ERRNO_MAP` without a second hand-written per-OS length table.
 #[inline]
 const fn system_errno_max_dense() -> u32 {
@@ -443,7 +444,6 @@ mod errno_name_tests {
             );
         }
         // One past the dense end → None.
-        #[cfg(not(windows))]
         assert_eq!(system_errno_name(max as i32), None);
 
         // Spot-check the last entry on each platform.
@@ -455,12 +455,6 @@ mod errno_name_tests {
         #[cfg(windows)]
         {
             assert_eq!(system_errno_name(137), Some("EFTYPE"));
-            // Sparse UV_* range round-trips.
-            assert_eq!(system_errno_name(-4058), Some("UV_ENOENT"));
-            assert_eq!(system_errno_name(-4092), Some("UV_EACCES"));
-            assert_eq!(system_errno_name(-4095), Some("UV_EOF"));
-            assert_eq!(system_errno_name(-3008), Some("UV_EAI_NONAME"));
-            assert_eq!(system_errno_name(-5000), None);
         }
         #[cfg(target_os = "macos")]
         {
@@ -531,16 +525,6 @@ mod errno_name_tests {
             assert_eq!(win32_errno_name(2), None);
             assert_eq!(win32_errno_name(u32::MAX), None);
         }
-    }
-
-    /// Matters on Windows, where `E` is a separate enum with unprefixed variant names.
-    #[test]
-    fn e_spells_like_system_errno() {
-        assert_eq!(<&'static str>::from(E::ENOENT), "ENOENT");
-        assert_eq!(<&'static str>::from(E::E2BIG), "E2BIG");
-        assert_eq!(<&'static str>::from(E::SUCCESS), "SUCCESS");
-        #[cfg(windows)]
-        assert_eq!(<&'static str>::from(E::UV_ENOENT), "UV_ENOENT");
     }
 
     #[test]

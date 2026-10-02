@@ -1,6 +1,6 @@
 import { pathToFileURL } from "bun";
 import { describe, expect, it, test } from "bun:test";
-import { chmodSync, chownSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "fs";
+import { chmodSync, chownSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, bunRun, isLinux, isMacOS, isWindows, joinP, tempDir, tempDirWithFiles } from "harness";
 import { join, resolve, sep } from "path";
 
@@ -897,6 +897,29 @@ describe.if(isWindows)("#30839 - imports entry pointing at a scoped package", ()
     expect(stdout).toBe("esm (from exports)\n");
     expect(exitCode).toBe(0);
   });
+});
+
+// The name comes from a directory listing, so it is the entry's as it stands. Win32 drops a trailing
+// dot or space from a name that is not spelled \\?\, and then names something else.
+it.skipIf(!isWindows).each(["dot.", "space "])("a package that is a junction called %j is found", async name => {
+  using dir = tempDir("resolve-junction-odd-name", {
+    "real/index.js": `module.exports = "found";`,
+    "node_modules/.keep": "",
+    "main.js": `console.log(require(${JSON.stringify(name)}));`,
+  });
+  symlinkSync(join(String(dir), "real"), "\\\\?\\" + join(String(dir), "node_modules", name), "junction");
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // A name Win32 rewrites is not removed by the name either.
+  rmSync("\\\\?\\" + join(String(dir), "node_modules", name));
+  expect({ stdout, stderr }).toEqual({ stdout: "found\n", stderr: "" });
+  expect(exitCode).toBe(0);
 });
 
 // dirInfoCachedMaybeLog reads the rfs.entries cache without checking the union

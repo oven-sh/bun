@@ -9,7 +9,7 @@ import {
 import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
-import { closeSync, createReadStream, openSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, createReadStream, openSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Duplex, PassThrough, Readable, Writable, finished, pipeline } from "node:stream";
 import {
@@ -2555,10 +2555,43 @@ it("Bun.file().stream() read text from large file", async () => {
   }
 });
 
+// Windows does not let a directory be renamed while a file in it is open.
+describe.skipIf(!isWindows)("Bun.file().stream() has closed the file", () => {
+  const files = { "d/big": Buffer.alloc(300_000, "x").toString(), "d/small": "hello", "d/empty": "" };
+  for (const name of ["big", "small", "empty"]) {
+    it(`when ${name} has been read to its end`, async () => {
+      using dir = tempDir("file-stream-closed", files);
+      let length = 0;
+      for await (const chunk of Bun.file(join(String(dir), "d", name)).stream()) length += chunk.length;
+      renameSync(join(String(dir), "d"), join(String(dir), "renamed"));
+      expect(length).toBe(files["d/" + name].length);
+    });
+  }
+
+  it("when the loop over it stops at the first chunk", async () => {
+    using dir = tempDir("file-stream-closed", files);
+    for await (const chunk of Bun.file(join(String(dir), "d", "big")).stream()) {
+      expect(chunk.length).toBeLessThan(files["d/big"].length);
+      break;
+    }
+    renameSync(join(String(dir), "d"), join(String(dir), "renamed"));
+  });
+
+  it("when it has been cancelled after the first chunk", async () => {
+    using dir = tempDir("file-stream-closed", files);
+    const reader = Bun.file(join(String(dir), "d", "big"))
+      .stream()
+      .getReader();
+    expect((await reader.read()).done).toBe(false);
+    await reader.cancel();
+    renameSync(join(String(dir), "d"), join(String(dir), "renamed"));
+  });
+});
+
 // A POSIX file is read synchronously inside the stream's pull, so a failing
-// read(2) arrives with no pending read to reject. Windows reads files through
-// libuv, where the error always lands on a pending read.
-describe.skipIf(isWindows)("Bun.file().stream() surfaces read() errors", () => {
+// read(2) arrives with no pending read to reject. Windows file reads finish on
+// the loop, where the error lands on a pending read.
+describe("Bun.file().stream() surfaces read() errors", () => {
   // read(2) on /proc/self/mem fails with EIO: nothing is mapped at address 0.
   const eioPath = "/proc/self/mem";
   const itEIO = isLinux ? it : it.skip;
@@ -2616,7 +2649,7 @@ describe.skipIf(isWindows)("Bun.file().stream() surfaces read() errors", () => {
   // read when its poll fires. A read error must release that poll, or the
   // process never exits. The slave hangup fails the master read with EIO on
   // Linux and ends it on macOS.
-  it("a read error on a pollable fd releases the poll so the process can exit", async () => {
+  it.skipIf(isWindows)("a read error on a pollable fd releases the poll so the process can exit", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),

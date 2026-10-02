@@ -69,3 +69,43 @@ test("spawn can read from stdout multiple chunks", async () => {
   await expectMaxObjectTypeCount(expect, "Subprocess", 5);
   dumpStats();
 }, 60_0000);
+
+// The pipe is read from the moment the child starts. What arrived before the first look at
+// `proc.stdout` has to be the stream's first chunk, not wait behind the child's next write.
+test.each(["stdout", "stderr"] as const)(
+  "what a child wrote to %s before the stream was first read is its first chunk",
+  async which => {
+    const other = which === "stdout" ? "stderr" : "stdout";
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.${which}.write("early\\n", () => process.${other}.write("ready\\n"));
+         process.stdin.on("data", () => process.exit(0));`,
+      ],
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const decoder = new TextDecoder();
+    async function readLine(stream: ReadableStream<Uint8Array>) {
+      const reader = stream.getReader();
+      let text = "";
+      while (!text.includes("\n")) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        text += decoder.decode(value, { stream: true });
+      }
+      reader.releaseLock();
+      return text;
+    }
+    // "ready" was written after "early" had been: by now "early" is in the pipe or already in the parent.
+    expect(await readLine(proc[other])).toBe("ready\n");
+    for (let i = 0; i < 10; i++) await new Promise<void>(resolve => setImmediate(resolve));
+    expect(await readLine(proc[which])).toBe("early\n");
+    proc.stdin.write("done\n");
+    await proc.stdin.end();
+    expect(await proc.exited).toBe(0);
+  },
+);

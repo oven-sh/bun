@@ -1,6 +1,6 @@
 import { $ } from "bun";
-import { describe, expect, test } from "bun:test";
-import { isPosix } from "harness";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { canCreateVolumes, isPosix, isWindows, tempDir, tempVolume } from "harness";
 import {
   accessSync,
   chmodSync,
@@ -8,6 +8,7 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   readlinkSync,
   rmSync,
@@ -66,6 +67,47 @@ describe("mv", async () => {
     .exitCode(20 /* ENOTDIR */)
     .stderr("mv: a: Not a directory\n")
     .runAsTest("move dir -> file fails");
+
+  // A rename does not write to the file.
+  test.each(["new", "existing"])("move read-only file -> %s file", async target => {
+    const dir = join(tmpdir(), `bun-mv-read-only-${process.pid}-${target}`);
+    rmSync(dir, { recursive: true, force: true });
+    mkdirSync(dir, { recursive: true });
+    try {
+      writeFileSync(join(dir, "a"), "read-only\n");
+      chmodSync(join(dir, "a"), 0o444);
+      if (target === "existing") writeFileSync(join(dir, "b"), "replaced\n");
+      const { stderr, exitCode } = await $`mv a b`.cwd(dir).nothrow().quiet();
+      expect({ stderr: stderr.toString(), left: readdirSync(dir), b: readFileSync(join(dir, "b"), "utf8") }).toEqual({
+        stderr: "",
+        left: ["b"],
+        b: "read-only\n",
+      });
+      expect(exitCode).toBe(0);
+    } finally {
+      for (const name of readdirSync(dir)) chmodSync(join(dir, name), 0o666);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // The device opens as a directory, is not on the source's volume, and takes whatever is copied to it.
+  test.skipIf(!isWindows).each([
+    ["file.txt", (dir: string) => join(dir, "nul")],
+    ["file", (dir: string) => join(dir, "nul")],
+    ["file.txt", (dir: string) => join(dir, "NUL")],
+    ["file.txt", () => "\\\\.\\nul"],
+    ["tree", (dir: string) => join(dir, "nul")],
+  ])("move %s -> the null device fails and keeps it", async (source, target) => {
+    using dir = tempDir("mv-to-nul", { "file.txt": "kept", "file": "kept", "tree/deep/file.txt": "kept" });
+    const { exitCode } = await $`mv ${source} ${target(String(dir))}`.cwd(String(dir)).nothrow().quiet();
+    expect({
+      failed: exitCode !== 0,
+      left: (readdirSync(String(dir), { recursive: true }) as string[]).sort(),
+    }).toEqual({
+      failed: true,
+      left: ["file", "file.txt", "tree", join("tree", "deep"), join("tree", "deep", "file.txt")],
+    });
+  });
 
   // POSIX `mv` must fall back to copy+unlink when `rename()` returns EXDEV
   // (source and destination on different filesystems). Requires a writable
@@ -234,4 +276,43 @@ describe("mv", async () => {
       }
     });
   });
+
+  describe.skipIf(!canCreateVolumes()).each(["FAT32", "exFAT"] as const)(
+    "on %s, which has no POSIX rename",
+    fileSystem => {
+      let volume: ReturnType<typeof tempVolume>;
+      // Formatting a disk is seconds on an idle machine and many on a busy one.
+      beforeAll(() => {
+        volume = tempVolume(fileSystem);
+      }, 60_000);
+      afterAll(() => volume?.[Symbol.dispose](), 60_000);
+
+      test("moves a file, over another one too, and a directory", async () => {
+        const cwd = join(volume.path, "moves");
+        mkdirSync(join(cwd, "dir"), { recursive: true });
+        writeFileSync(join(cwd, "a"), "a");
+        writeFileSync(join(cwd, "existing"), "old");
+        writeFileSync(join(cwd, "dir", "inside"), "inside");
+
+        const r = await $`mv a b && mv b existing && mv dir moved`.cwd(cwd).quiet();
+        expect(r.stderr.toString()).toBe("");
+        expect(readdirSync(cwd).sort()).toEqual(["existing", "moved"]);
+        expect(readFileSync(join(cwd, "existing"), "utf8")).toBe("a");
+        expect(readFileSync(join(cwd, "moved", "inside"), "utf8")).toBe("inside");
+        expect(r.exitCode).toBe(0);
+      });
+
+      test("a directory does not take the place of a file", async () => {
+        const cwd = join(volume.path, "dir-over-file");
+        mkdirSync(join(cwd, "dir"), { recursive: true });
+        writeFileSync(join(cwd, "file"), "kept");
+
+        const r = await $`mv dir file`.cwd(cwd).quiet();
+        expect(r.stderr.toString()).toStartWith("mv: ");
+        expect(readFileSync(join(cwd, "file"), "utf8")).toBe("kept");
+        expect(statSync(join(cwd, "dir")).isDirectory()).toBe(true);
+        expect(r.exitCode).not.toBe(0);
+      });
+    },
+  );
 });

@@ -598,7 +598,7 @@ mod platform {
                     if rc == w::NTSTATUS::INVALID_PARAMETER {
                         sys::syslog!("NtQueryDirectoryFile({}) = INVALID_PARAMETER", self.dir);
                         return Err(sys::Error::from_code(
-                            SystemErrno::ENOTDIR.to_e(),
+                            SystemErrno::ENOTDIR,
                             Tag::NtQueryDirectoryFile,
                         ));
                     }

@@ -2,6 +2,7 @@ import { createSocketPair, fileSinkInternals } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, fileDescriptorLeakChecker, isLinux, isPosix, isWindows, tempDir, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 describe("FileSink", () => {
@@ -461,6 +462,184 @@ if (isWindows) {
       }),
     );
   });
+
+  // A Windows write to a file completes through the event loop; a flush() that returned while it
+  // was in flight let a read of the file miss what had been written.
+  it("flush() settles once the bytes written before it are in the file", async () => {
+    using dir = tempDir("filesink-flush-readable", {});
+    const missed: number[] = [];
+    for (let i = 0; i < 100; i++) {
+      const file = join(String(dir), `f${i}.txt`);
+      const writer = Bun.file(file).writer();
+      await writer.write(`line ${i}\n`);
+      await writer.flush();
+      if (readFileSync(file, "utf8") !== `line ${i}\n`) missed.push(i);
+      await writer.end();
+    }
+    expect(missed).toEqual([]);
+  });
+
+  // The continuation of the rejected promise runs while the writer is still reporting the failure.
+  it("what is called once a write has failed settles, and the process exits", async () => {
+    using dir = tempDir("filesink-after-failed-write", { "file.txt": "contents" });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const fs = require("fs");
+          const outcomes = {};
+          for (const [name, next] of Object.entries({
+            end: writer => writer.end(),
+            flush: writer => writer.flush(),
+            write: writer => writer.write("more"),
+          })) {
+            const fd = fs.openSync("file.txt", "r");
+            const writer = Bun.file(fd).writer();
+            writer.write("refused");
+            const settled = promise => promise.then(() => "resolved", err => err.code);
+            outcomes[name] = [await settled(writer.flush()), await settled((async () => next(writer))())];
+            fs.closeSync(fd);
+          }
+          console.log(JSON.stringify(outcomes));
+        `,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({
+        end: ["EBADF", "resolved"],
+        flush: ["EBADF", "resolved"],
+        write: ["EBADF", "resolved"],
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // fs.openSync gives a synchronous pipe end, which is written from a helper thread. In PIPE_NOWAIT
+  // mode a write that does not fit the pipe's buffer gives a read that is waiting what that asked for,
+  // or nothing to nobody, and says so by succeeding short: the writer sends the rest again. Bun puts
+  // an end it takes over in blocking mode, but whoever shares the end can change that at any time:
+  // here the child does, once its first write has been through.
+  it("a writer to a synchronous pipe sends the rest of a write that came back short", async () => {
+    const pipe = `\\\\.\\pipe\\bun-test-${crypto.randomUUID()}`;
+    await using server = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        import { dlopen, ptr } from "bun:ffi";
+        import fs from "node:fs";
+        const { CreateNamedPipeW, ConnectNamedPipe, ReadFile } = dlopen("kernel32.dll", {
+          CreateNamedPipeW: { args: ["ptr", "u32", "u32", "u32", "u32", "u32", "u32", "ptr"], returns: "i64" },
+          ConnectNamedPipe: { args: ["i64", "ptr"], returns: "i32" },
+          ReadFile: { args: ["i64", "ptr", "u32", "ptr", "ptr"], returns: "i32" },
+        }).symbols;
+        const name = Buffer.from(process.argv[1] + "\\0", "utf16le");
+        const handle = CreateNamedPipeW(ptr(name), 1 /* PIPE_ACCESS_INBOUND */, 0, 1, 65536, 65536, 0, null);
+        console.log("listening");
+        ConnectNamedPipe(handle, null);
+        const buffer = Buffer.alloc(65536);
+        const count = new Uint32Array(1);
+        let total = 0;
+        const read = () => ReadFile(handle, ptr(buffer), buffer.length, ptr(count), null) !== 0 && ((total += count[0]), true);
+        read();
+        // Reads on only once the child has written into the stall.
+        fs.readSync(0, Buffer.alloc(1));
+        while (read());
+        console.log(total);
+        `,
+        pipe,
+      ],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const serverOutput = server.stdout.getReader();
+    expect(new TextDecoder().decode((await serverOutput.read()).value)).toBe("listening\n");
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        import { dlopen, ptr } from "bun:ffi";
+        import fs from "node:fs";
+        const k32 = dlopen("kernel32.dll", {
+          GetFileType: { args: ["ptr"], returns: "u32" },
+          GetFileInformationByHandleEx: { args: ["ptr", "i32", "ptr", "u32"], returns: "i32" },
+          SetNamedPipeHandleState: { args: ["ptr", "ptr", "ptr", "ptr"], returns: "i32" },
+        });
+        const fd = fs.openSync(process.argv[1], "w");
+        // The open handle whose file name is this pipe's.
+        const name = process.argv[1].slice(process.argv[1].lastIndexOf("\\\\") + 1);
+        const info = new Uint8Array(4 + 1024);
+        let end = 0;
+        for (let h = 4; h < 0x4000 && !end; h += 4) {
+          if (k32.symbols.GetFileType(h) !== 3 /* FILE_TYPE_PIPE */) continue;
+          if (!k32.symbols.GetFileInformationByHandleEx(h, 2 /* FileNameInfo */, ptr(info), info.length)) continue;
+          const length = new DataView(info.buffer).getUint32(0, true);
+          if (new TextDecoder("utf-16le").decode(info.subarray(4, 4 + length)).endsWith(name)) end = h;
+        }
+        if (!end) throw new Error("the pipe's handle was not found");
+
+        const writer = Bun.file(fd).writer();
+        writer.write("first");
+        await writer.flush();
+        const nowait = new Uint32Array([1]);
+        // Refused for as long as something this end wrote is in the pipe unread.
+        while (!k32.symbols.SetNamedPipeHandleState(end, ptr(nowait), null, null)) await new Promise(setImmediate);
+
+        const chunk = Buffer.alloc(64 * 1024, 120);
+        for (let i = 0; i < 32; i++) writer.write(chunk);
+        const flushed = writer.flush();
+        console.log(flushed instanceof Promise ? "pending" : "flushed at once");
+        // More is written while the rest of a short write is out.
+        for (let i = 0; i < 20; i++) {
+          await new Promise(resolve => setImmediate(resolve));
+          writer.write("y");
+        }
+        console.log("wrote more");
+        await flushed;
+        await writer.end();
+        console.log("done");
+        `,
+        pipe,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const reader = proc.stdout.getReader();
+    let stdout = "";
+    while (!stdout.includes("wrote more")) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      stdout += new TextDecoder().decode(value);
+    }
+    server.stdin.write("x");
+    server.stdin.end();
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      stdout += new TextDecoder().decode(value);
+    }
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim().split("\n"), stderr: stderr.trim() }).toEqual({
+      stdout: ["pending", "wrote more", "done"],
+      stderr: "",
+    });
+    expect(new TextDecoder().decode((await serverOutput.read()).value)).toBe(
+      "first".length + 32 * 64 * 1024 + 20 + "\n",
+    );
+    expect(exitCode).toBe(0);
+  });
 }
 
 // When a write to a pollable fd returns `.pending`, FileSink takes a
@@ -628,7 +807,7 @@ it.skipIf(!isPosix)("writing after end() fails during flush does not crash", asy
   await 1;
 });
 
-// On Windows the libuv write completion path re-enters JS (promise resolution)
+// On Windows the write completion path re-enters JS (promise resolution)
 // while a `&mut WindowsStreamingWriter` is live, so without raw-ptr laundering
 // LLVM `noalias` lets release builds cache stale `is_done`/`parent` and
 // over-deref the FileSink. Spawn a subprocess so a crash there is observable
@@ -757,8 +936,8 @@ it.skipIf(!isLinux)("Bun.file(fd).writer() whose registration fails closes the d
   });
 });
 
-// Skipped on Windows: the Windows FileSink writer hands bytes to uv_fs_write on
-// the libuv threadpool and never registers an AutoFlusher synchronously, so the
+// Skipped on Windows: the Windows FileSink writer hands bytes to a write on
+// the work pool and never registers an AutoFlusher synchronously, so the
 // on_exit drain this suite exercises is a no-op there and every process.exit()
 // variant is a threadpool-vs-ExitProcess race rather than the POSIX buffered
 // flush being tested here.
@@ -983,7 +1162,7 @@ describe("FileSink on a pipe stays alive until end() has drained the buffer", ()
     return { stdoutLength: stdout.length, stderr, exitCode };
   }
 
-  // On Windows uv_write takes the whole chunk at once and end() can return a
+  // On Windows a write takes the whole chunk at once and end() can return a
   // plain number, hence Promise.resolve().
   it.concurrent("end() without await", async () => {
     expect(
@@ -1023,7 +1202,9 @@ describe("FileSink on a pipe stays alive until end() has drained the buffer", ()
   // The unref'd child does not hold the loop. The bytes still owed to its
   // stdin must. The child starts to read only once end() has been called, so
   // the first write has filled the pipe by then. It inherits stdout, so its
-  // count arrives on the parent's stdout after it has read everything.
+  // count arrives on the parent's stdout after it has read everything. On
+  // Windows it is detached so that it outlives the parent: a child that is not
+  // is killed when the parent exits, which can be before it has printed.
   it.concurrent("Bun.spawn stdin pipe with an unref'd child", async () => {
     const flag = join(tmpdirSync(), "ended");
     // Polls for the flag with a deadline so that it cannot outlive a parent
@@ -1047,7 +1228,7 @@ describe("FileSink on a pipe stays alive until end() has drained the buffer", ()
         `
           const child = Bun.spawn(
             [process.execPath, "-e", ${JSON.stringify(reader)}, ${JSON.stringify(flag)}],
-            { stdin: "pipe", stdout: "inherit", stderr: "inherit" },
+            { stdin: "pipe", stdout: "inherit", stderr: "inherit", detached: ${isWindows} },
           );
           try {
             child.stdin.write(Buffer.alloc(${size}, 65));
@@ -1334,9 +1515,8 @@ describe("a stream piped into a FileSink on a pipe is pumped to its end", () => 
 
 // FileSink::on_close tells the owner of the sink that it closed, and a Subprocess then drops its ref
 // on its stdin sink. That is the only ref when script never read `proc.stdin`, and on_close used the
-// sink after it (ASAN: heap-use-after-free in settle_stream_done). Outside tests only the stop phase
-// of a Windows worker closes the writer in this state (see worker-terminate-lifetime.test.ts), so the
-// hook does that close here, on every platform.
+// sink after it (ASAN: heap-use-after-free in settle_stream_done). Nothing outside tests closes the
+// writer in this state (see worker-terminate-lifetime.test.ts), so the hook does that close here.
 it("a Bun.spawn stdin pipe that closes before script reads proc.stdin does not use the freed sink", async () => {
   await using proc = Bun.spawn({
     cmd: [

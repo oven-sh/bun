@@ -254,9 +254,9 @@ describe("idle release", () => {
   // program parked in the event loop has none: a heap that does not finish marking in the first increment used to sit in
   // its concurrent phase until the program did something (the timer's eden requests are subsumed by it and provide no
   // safepoint). The JS thread now parks without heap access while an idle collection is unfinished, so the collector
-  // thread finishes it. Not on Windows (libuv), where the ticks still drive it; debug/ASAN builds take too long to build
-  // the heap. The child exits by itself so that JSC's buffered GC log is complete when it is read.
-  (isWindows || isASAN || isDebug ? test.skip : test.concurrent)(
+  // thread finishes it. Debug/ASAN builds take too long to build the heap. The child exits by itself so that JSC's
+  // buffered GC log is complete when it is read.
+  (isASAN || isDebug ? test.skip : test.concurrent)(
     "an idle collection finishes while the program is parked",
     async () => {
       await using proc = Bun.spawn({

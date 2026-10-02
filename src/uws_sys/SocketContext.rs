@@ -37,12 +37,12 @@ fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
 fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
     use bun_windows_sys as fs;
     use bun_windows_sys::FILETIME;
-    // Spec parity: `bun.sys.stat` on Windows is libuv `uv_fs_stat`, which opens
-    // via `CreateFileW` *without* `FILE_FLAG_OPEN_REPARSE_POINT` and therefore
+    // Parity with `bun_sys::stat`, which on Windows opens via
+    // `CreateFileW` *without* `FILE_FLAG_OPEN_REPARSE_POINT` and therefore
     // follows symlinks to the target. `GetFileAttributesExW` does NOT follow
     // reparse points — it would return the link's own mtime/size and miss an
-    // in-place cert rotation behind a symlink (stale SSL_CTX served). Match
-    // libuv: open query-only, `GetFileInformationByHandle`, close.
+    // in-place cert rotation behind a symlink (stale SSL_CTX served). So:
+    // open query-only, `GetFileInformationByHandle`, close.
     //
     // `bun_core::to_w_path_normalized` lives above this crate, so widen
     // inline: UTF-8→UTF-16LE (≤ input.len() code units), normalize `/`→`\`,
@@ -81,11 +81,10 @@ fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
     let ft: FILETIME = data.ftLastWriteTime;
     // FILETIME = 100ns ticks since 1601-01-01. Feed raw ticks split as
     // `[sec_field, nsec_field, size]` — the digest only needs *some*
-    // deterministic encoding of mtime, not the libuv POSIX-epoch split the
-    // deleted `__bun_uws_stat_file` produced. The SSL-context cache keyed on
-    // this digest is in-memory process-lifetime only (no on-disk
-    // persistence), so cross-version byte-compat of the key is
-    // irrelevant; only stability *within* a process matters.
+    // deterministic encoding of mtime, not a POSIX-epoch split. The
+    // SSL-context cache keyed on this digest is in-memory process-lifetime
+    // only (no on-disk persistence), so cross-version byte-compat of the key
+    // is irrelevant; only stability *within* a process matters.
     let ticks = (u64::from(ft.dwHighDateTime) << 32) | u64::from(ft.dwLowDateTime);
     let size = (u64::from(data.nFileSizeHigh) << 32) | u64::from(data.nFileSizeLow);
     Some([

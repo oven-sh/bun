@@ -386,12 +386,14 @@ function writeErrnoException(negErrno) {
   }
   return er;
 }
-function endNT(socket, callback, err) {
+function endNT(socket, callback, allowHalfOpen) {
   // Node's _final half-closes the writable side (sends FIN) and leaves the
   // readable side open; the Duplex's allowHalfOpen drives the eventual destroy.
   // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/net.js#L500
-  socket.shutdown();
-  callback(err);
+  // A Windows named pipe cannot be half-closed: unless it is to stay half-open,
+  // it is closed once the other end has been silent for a moment, as in Node.
+  socket.shutdown(false, allowHalfOpen);
+  callback();
 }
 function emitCloseNT(self, hasError) {
   self.emit("close", hasError);
@@ -2113,6 +2115,7 @@ Socket.prototype.connect = function connect(...args) {
         data: this,
         fd: fd,
         ...(options.fdIsRawSocket === true ? { fdIsRawSocket: true } : {}),
+        ...(options.fdIsSpawnedPipe === true ? { fdIsSpawnedPipe: true } : {}),
         socket: SocketHandlers,
         // Always half-open natively; see kConnect.
         allowHalfOpen: true,
@@ -2474,7 +2477,7 @@ Socket.prototype._final = function _final(callback) {
   if (!socket) return callback();
 
   // emit FIN allowHalfOpen only allow the readable side to close first
-  process.nextTick(endNT, socket, callback);
+  process.nextTick(endNT, socket, callback, this.allowHalfOpen);
 };
 
 Object.defineProperty(Socket.prototype, "localAddress", {

@@ -222,8 +222,8 @@ impl<'a> Coordinator<'a> {
                 terminate_process_group(p.pid);
                 #[cfg(not(unix))]
                 {
-                    // SIGKILL → TerminateProcess; libuv-win ENOSYSes signals
-                    // other than SIGQUIT/SIGTERM/SIGKILL/SIGINT.
+                    // SIGKILL → TerminateProcess; Windows has no signals other
+                    // than SIGQUIT/SIGTERM/SIGKILL/SIGINT to send (ENOSYS).
                     let _ = p.kill(9);
                 }
             }
@@ -438,6 +438,7 @@ impl<'a> Coordinator<'a> {
                 if let Some(file) = self.test_records.get_mut(idx as usize) {
                     file.tests.push(Box::from(rd.p));
                 }
+                w.drain_output();
                 self.flush_captured(w);
                 if formatted.is_empty() {
                     return; // e.g. pass under --only-failures
@@ -587,6 +588,7 @@ impl<'a> Coordinator<'a> {
         // Decrement here (not in onProcessExit) so drive() keeps pumping until
         // the IPC pipe has been drained and this reap actually runs.
         self.live_workers -= 1;
+        w.drain_output();
         self.flush_captured(w);
         // Exited before the IPC handshake. `inflight` is None for these, so
         // the mid-file handling below never fires; the per-slot cap is what
@@ -834,8 +836,8 @@ impl<'a> Coordinator<'a> {
                 terminate_process_group(p.pid);
                 #[cfg(not(unix))]
                 {
-                    // SIGKILL → TerminateProcess (libuv-win ENOSYSes most
-                    // signals, so e.g. kill(1) would leave the sibling running
+                    // SIGKILL → TerminateProcess (most signals are ENOSYS on
+                    // Windows, so e.g. kill(1) would leave the sibling running
                     // past the banner); it reaps as Signaled(9) →
                     // "aborted: sibling worker panicked".
                     let _ = p.kill(9);
@@ -899,7 +901,7 @@ impl<'a> Coordinator<'a> {
         use bun_sys::windows;
         // SAFETY: Win32 FFI calls.
         unsafe {
-            let job = windows::CreateJobObjectA(core::ptr::null_mut(), core::ptr::null_mut());
+            let job = windows::CreateJobObjectW(core::ptr::null_mut(), core::ptr::null_mut());
             if job.is_null() {
                 return None;
             }
@@ -939,8 +941,7 @@ fn terminate_process_group(pid: libc::pid_t) {
 ///
 /// Windows delivers no signals: an unhandled exception or `__fastfail`
 /// exits with the NTSTATUS as the exit code, so recognized fatal values of
-/// `Exited.raw` (the untruncated code; `Exited.code` is `u8`) classify as
-/// panics too. A fault Bun's crash handler catches still exits with code
+/// `Exited.code` classify as panics too. A fault Bun's crash handler catches still exits with code
 /// 3, indistinguishable from process.exit(3), and stays a per-file
 /// failure, recognizable only by its banner in stderr.
 fn is_panic_status(status: &SpawnStatus) -> bool {
@@ -960,7 +961,7 @@ fn is_panic_status(status: &SpawnStatus) -> bool {
     }
     #[cfg(windows)]
     if let SpawnStatus::Exited(e) = status {
-        return is_fatal_windows_exit_code(e.raw);
+        return is_fatal_windows_exit_code(e.code);
     }
     false
 }
@@ -1001,12 +1002,9 @@ fn is_fatal_windows_exit_code(code: u32) -> bool {
 fn describe_status<'b>(buf: &'b mut [u8; 32], status: &SpawnStatus) -> &'b [u8] {
     match status {
         SpawnStatus::Exited(e) => {
-            // Windows: report the untruncated code; NTSTATUS values print in
-            // hex ("exit code 0xC0000409"), the form Windows tooling uses.
-            #[cfg(windows)]
-            let code: u32 = e.raw;
-            #[cfg(not(windows))]
-            let code: u32 = u32::from(e.code);
+            // NTSTATUS values print in hex ("exit code 0xC0000409"), the form
+            // Windows tooling uses.
+            let code = e.code;
             let mut cursor: &mut [u8] = &mut buf[..];
             if code >= 0x8000_0000 {
                 write!(cursor, "exit code 0x{code:08X}").expect("unreachable");

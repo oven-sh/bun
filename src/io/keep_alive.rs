@@ -1,9 +1,4 @@
-//! Single cross-platform `KeepAlive`.
-//!
-//! The few methods that diverge per platform keep their behaviour via
-//! `#[cfg]` arms inline below — no caller-visible contract changes (all
-//! external users go through `bun_io::KeepAlive` and only touch the
-//! identical-signature methods).
+//! `KeepAlive`: a ref on the event loop that is either held or not.
 
 use crate::EventLoopCtx;
 use crate::posix_event_loop::js_vm_ctx;
@@ -45,10 +40,7 @@ impl KeepAlive {
             return;
         }
         self.status = Status::Inactive;
-        #[cfg(not(windows))]
         event_loop_ctx.loop_unref();
-        #[cfg(windows)]
-        event_loop_ctx.loop_sub_active(1);
     }
 
     /// Prevent a poll from keeping the process alive on the next tick.
@@ -57,11 +49,7 @@ impl KeepAlive {
             return;
         }
         self.status = Status::Inactive;
-        // vm.pending_unref_counter +|= 1;
-        #[cfg(not(windows))]
         event_loop_ctx.increment_pending_unref_counter();
-        #[cfg(windows)]
-        event_loop_ctx.loop_dec();
     }
 
     /// Allow a poll to keep the process alive.

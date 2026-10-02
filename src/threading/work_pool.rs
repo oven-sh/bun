@@ -1,3 +1,4 @@
+use core::sync::atomic::{AtomicU32, Ordering};
 use std::sync::OnceLock;
 
 use crate::ThreadPool;
@@ -131,11 +132,30 @@ macro_rules! owned_task {
 }
 
 static POOL: OnceLock<ThreadPool> = OnceLock::new();
+static WAITING_POOL: OnceLock<ThreadPool> = OnceLock::new();
+/// [`WorkPool::owe_write`].
+static WRITES_OWED: AtomicU32 = AtomicU32::new(0);
+/// [`WorkPool::write_held_up`].
+static WRITES_HELD_UP: AtomicU32 = AtomicU32::new(0);
+/// How long an exit goes on waiting for writes that are held up while none of
+/// them ends. It covers the time until a thread, which may have to be created,
+/// first runs: hundreds of milliseconds where other processes want the CPUs.
+const HELD_UP_GRACE_NS: u64 = 1_000 * 1_000_000;
 
 #[cold]
 fn create() -> ThreadPool {
     ThreadPool::init(crate::thread_pool::Config {
         max_threads: u32::from(bun_core::get_thread_count()),
+        stack_size: crate::thread_pool::DEFAULT_THREAD_STACK_SIZE,
+    })
+}
+
+#[cold]
+fn create_waiting() -> ThreadPool {
+    ThreadPool::init(crate::thread_pool::Config {
+        // Its threads mostly sleep, so a machine with few cores gets as many
+        // as libuv's pool has.
+        max_threads: u32::from(bun_core::get_thread_count()).max(4),
         stack_size: crate::thread_pool::DEFAULT_THREAD_STACK_SIZE,
     })
 }
@@ -148,6 +168,70 @@ impl WorkPool {
 
     pub fn schedule(task: *mut Task) {
         Self::get().schedule(Batch::from(task));
+    }
+
+    /// [`schedule`](Self::schedule) for a task that may wait, for as long as
+    /// that takes, on something outside the process: a name server, the other
+    /// end of a pipe. Those have threads of their own, so that they cannot
+    /// take every thread from the tasks that compute or read a disk.
+    pub fn schedule_wait(task: *mut Task) {
+        WAITING_POOL
+            .get_or_init(create_waiting)
+            .schedule(Batch::from(task));
+    }
+
+    /// A task that is about to be scheduled writes to a disk what its caller
+    /// takes for written. A process that exits at once would end before a
+    /// thread has got to it (the first task of a pool waits for its thread to
+    /// be created), so the exit waits: [`wait_for_writes`](Self::wait_for_writes).
+    pub fn owe_write() {
+        WRITES_OWED.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// The task has written, or will not.
+    pub fn write_settled() {
+        if WRITES_OWED.fetch_sub(1, Ordering::Release) == 1 {
+            crate::Futex::wake(&WRITES_OWED, u32::MAX);
+        }
+    }
+
+    /// A write that is owed goes to something other than a disk (a pipe), whose
+    /// other end takes it when it likes, or never. One that is being read is
+    /// over in no time, so the exit waits for it too, but not for long.
+    pub fn write_held_up() {
+        // Counted by one of the two at any time.
+        WRITES_HELD_UP.fetch_add(1, Ordering::AcqRel);
+        Self::write_settled();
+    }
+
+    /// As [`write_settled`](Self::write_settled), after
+    /// [`write_held_up`](Self::write_held_up).
+    pub fn held_up_write_settled() {
+        WRITES_HELD_UP.fetch_sub(1, Ordering::AcqRel);
+        crate::Futex::wake(&WRITES_HELD_UP, u32::MAX);
+    }
+
+    pub fn wait_for_writes() {
+        loop {
+            match WRITES_OWED.load(Ordering::Acquire) {
+                0 => {}
+                owed => {
+                    crate::Futex::wait_forever(&WRITES_OWED, owed);
+                    continue;
+                }
+            }
+            match WRITES_HELD_UP.load(Ordering::Acquire) {
+                // One that ends owes what was written behind it first.
+                0 if WRITES_OWED.load(Ordering::Acquire) == 0 => return,
+                0 => {}
+                held_up => {
+                    if crate::Futex::wait(&WRITES_HELD_UP, held_up, Some(HELD_UP_GRACE_NS)).is_err()
+                    {
+                        return;
+                    }
+                }
+            }
+        }
     }
 
     /// Schedule a heap-allocated task by value. The pool takes ownership of
@@ -175,7 +259,11 @@ impl WorkPool {
         Self::schedule_owned(Box::new(task));
     }
 
-    pub fn go<C: Send + 'static>(context: C, function: fn(C)) -> Result<(), bun_alloc::AllocError> {
+    /// `function(context)` on [`schedule_wait`](Self::schedule_wait)'s threads.
+    pub fn go_wait<C: Send + 'static>(
+        context: C,
+        function: fn(C),
+    ) -> Result<(), bun_alloc::AllocError> {
         // PERF: `function` is stored as a runtime field rather than
         // monomorphized into the callback — profile if it shows up on a hot path.
         #[repr(C)]
@@ -204,7 +292,7 @@ impl WorkPool {
             function,
         }));
         // SAFETY: task_ is a valid Box-allocated TaskType<C>; .task is its first field.
-        Self::schedule(unsafe { &raw mut (*task_).task });
+        Self::schedule_wait(unsafe { &raw mut (*task_).task });
         Ok(())
     }
 }

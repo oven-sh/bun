@@ -1306,14 +1306,7 @@ mod _event_loop_draft {
     impl HttpThread {
         fn process_events(&mut self) -> ! {
             let uws_loop = self.uws_loop_mut();
-            #[cfg(unix)]
-            {
-                uws_loop.num_polls = uws_loop.num_polls.max(2);
-            }
-            #[cfg(windows)]
-            {
-                uws_loop.inc();
-            }
+            uws_loop.num_polls = uws_loop.num_polls.max(2);
 
             loop {
                 if SHUTDOWN_REQUESTED.load(Ordering::Acquire) {

@@ -13,8 +13,23 @@
 static_assert(WTF::maxECMAScriptTime == 8.64e15, "bun_jsc::wtf::MAX_ECMASCRIPT_TIME in WTF.rs must match");
 
 #include "wtf/SIMDUTF.h"
+
 #if OS(WINDOWS)
-#include <uv.h>
+#include <io.h>
+
+// The console is owned by bun_io (src/io/windows/tty.rs). `mode` is a libuv
+// uv_tty_mode_t; the result is 0 or a negative UV_E* number.
+extern "C" int Bun__Windows__setConsoleMode(void* inputHandle, int mode);
+extern "C" void Bun__Windows__resetConsoleMode();
+// `_get_osfhandle`; INVALID_HANDLE_VALUE for an fd that has no HANDLE.
+extern "C" void* Bun__crtGetOsfhandle(int fd);
+
+// Exported through src/symbols.def.
+extern "C" int uv_tty_reset_mode(void)
+{
+    Bun__Windows__resetConsoleMode();
+    return 0;
+}
 #endif
 
 #if !OS(WINDOWS)
@@ -216,11 +231,11 @@ extern "C" int Bun__ttySetMode(int fd, int mode, void* rawState, int drain)
     memcpy(rawState, &state, sizeof(state));
     return rc;
 #else
-    UNUSED_PARAM(fd);
-    UNUSED_PARAM(mode);
-    UNUSED_PARAM(rawState);
     UNUSED_PARAM(drain);
-    return 0;
+    // Nothing to remember per stream: the mode belongs to the console, which
+    // another stream or uv_tty_reset_mode can have changed since.
+    UNUSED_PARAM(rawState);
+    return Bun__Windows__setConsoleMode(Bun__crtGetOsfhandle(fd), mode);
 #endif
 }
 

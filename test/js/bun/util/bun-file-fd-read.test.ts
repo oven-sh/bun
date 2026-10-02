@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { closeSync, openSync } from "fs";
+import { closeSync, openSync, readSync } from "fs";
 import { isWindows, tempDir } from "harness";
 import { join } from "path";
 
@@ -10,7 +10,7 @@ import { join } from "path";
 // so an abnormal fstat size could trip integerOutOfBounds. Triggering that
 // directly requires fstat to report > 4.5 PB which is not achievable here,
 // but these tests lock in the fd-backed ReadFile path that the fuzzer hit.
-describe.skipIf(isWindows)("Bun.file(fd) read", () => {
+describe("Bun.file(fd) read", () => {
   async function withFd<T>(path: string, fn: (fd: number) => Promise<T>): Promise<T> {
     const fd = openSync(path, "r");
     try {
@@ -49,4 +49,43 @@ describe.skipIf(isWindows)("Bun.file(fd) read", () => {
     expect(await withFd(path, fd => Bun.file(fd).text())).toBe("");
     expect((await withFd(path, fd => Bun.file(fd).arrayBuffer())).byteLength).toBe(0);
   });
+});
+
+// A read moves the descriptor's position everywhere but on Windows, where a regular file is read at a
+// position of the read's own and the descriptor's stays where it was.
+test("Bun.file(fd) reads from the descriptor's position, which a read moves except on Windows", async () => {
+  using dir = tempDir("bun-file-fd-position", { "file.txt": "0123456789" });
+  const fd = openSync(join(String(dir), "file.txt"), "r");
+  try {
+    const first = await Bun.file(fd).text();
+    const second = await Bun.file(fd).text();
+    const buffer = Buffer.alloc(4);
+    const left = readSync(fd, buffer, 0, 4, null);
+    expect({ first, second, left: buffer.subarray(0, left).toString() }).toEqual(
+      isWindows
+        ? { first: "0123456789", second: "0123456789", left: "0123" }
+        : { first: "0123456789", second: "", left: "" },
+    );
+  } finally {
+    closeSync(fd);
+  }
+});
+
+test.skipIf(!isWindows)("Bun.file(fd).slice() reads its range whatever the descriptor's position is", async () => {
+  using dir = tempDir("bun-file-fd-slice-position", { "file.txt": "0123456789" });
+  const fd = openSync(join(String(dir), "file.txt"), "r");
+  try {
+    const buffer = Buffer.alloc(3);
+    readSync(fd, buffer, 0, 3, null);
+    const sliced = await Bun.file(fd).slice(2, 5).text();
+    const again = await Bun.file(fd).slice(2, 5).text();
+    const left = readSync(fd, buffer, 0, 3, null);
+    expect({ sliced, again, next: buffer.subarray(0, left).toString() }).toEqual({
+      sliced: "234",
+      again: "234",
+      next: "345",
+    });
+  } finally {
+    closeSync(fd);
+  }
 });

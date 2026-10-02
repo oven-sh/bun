@@ -1399,7 +1399,14 @@ pub mod fs {
             {
                 use bun_sys::windows as w;
                 let _ = (existing_fd, store_fd);
-                let file = bun_sys::get_file_attributes(absolute_path_c)
+                // The name comes from a directory listing: it is the entry's
+                // as it stands, trailing dot or space included.
+                let mut wbuf = bun_paths::w_path_buffer_pool::get();
+                let wpath = bun_paths::strings::paths::to_kernel32_path(
+                    &mut wbuf.0[..],
+                    absolute_path_c.as_bytes(),
+                );
+                let file = bun_sys::get_file_attributes_w(wpath)
                     .ok_or(crate::Error::Sys(bun_errno::SystemErrno::ENOENT))?;
                 // A Windows reparse point carries FILE_ATTRIBUTE_DIRECTORY iff
                 // the link is a directory link (junctions always do; symlinks
@@ -1430,11 +1437,6 @@ pub mod fs {
                 // error was swallowed at `Entry.kind`, and a directory symlink
                 // was permanently misclassified as `.file` — surfacing as
                 // EISDIR at module load time.
-                let mut wbuf = bun_paths::w_path_buffer_pool::get();
-                let wpath = bun_paths::strings::paths::to_kernel32_path(
-                    &mut wbuf.0[..],
-                    absolute_path_c.as_bytes(),
-                );
                 // SAFETY: `wpath` is NUL-terminated UTF-16; null security/template handles.
                 let handle = unsafe {
                     w::CreateFileW(

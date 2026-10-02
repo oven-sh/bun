@@ -701,8 +701,6 @@ impl PmVersionCommand {
             stdin: Stdio::Ignore,
             cwd: Box::<[u8]>::from(cwd),
             envp: None,
-            #[cfg(windows)]
-            windows: spawn_windows_options(),
             ..Default::default()
         }) {
             Ok(p) => p,
@@ -740,8 +738,6 @@ impl PmVersionCommand {
             stdin: Stdio::Ignore,
             cwd: Box::<[u8]>::from(cwd),
             envp: None,
-            #[cfg(windows)]
-            windows: spawn_windows_options(),
             ..Default::default()
         }) {
             Ok(p) => p,
@@ -805,8 +801,6 @@ impl PmVersionCommand {
             stderr: Stdio::Buffer,
             stdin: Stdio::Ignore,
             envp: None,
-            #[cfg(windows)]
-            windows: spawn_windows_options(),
             ..Default::default()
         }) {
             Ok(p) => p,
@@ -823,8 +817,8 @@ impl PmVersionCommand {
             }
             Ok(result) => {
                 if !result.is_ok() {
-                    let exit_code: i32 = match &result.status {
-                        ProcStatus::Exited(e) => i32::from(e.code),
+                    let exit_code: i64 = match &result.status {
+                        ProcStatus::Exited(e) => i64::from(e.code),
                         _ => -1,
                     };
                     Output::err_generic("Git add failed with exit code {}", (exit_code,));
@@ -847,8 +841,6 @@ impl PmVersionCommand {
             stderr: Stdio::Buffer,
             stdin: Stdio::Ignore,
             envp: None,
-            #[cfg(windows)]
-            windows: spawn_windows_options(),
             ..Default::default()
         }) {
             Ok(p) => p,
@@ -888,8 +880,6 @@ impl PmVersionCommand {
             stderr: Stdio::Buffer,
             stdin: Stdio::Ignore,
             envp: None,
-            #[cfg(windows)]
-            windows: spawn_windows_options(),
             ..Default::default()
         }) {
             Ok(p) => p,
@@ -928,15 +918,4 @@ fn fmt_bytes(args: core::fmt::Arguments<'_>) -> Vec<u8> {
 #[inline]
 fn build_argv(parts: &[&[u8]]) -> Vec<Box<[u8]>> {
     parts.iter().map(|p| Box::<[u8]>::from(*p)).collect()
-}
-
-#[cfg(windows)]
-#[inline]
-fn spawn_windows_options() -> crate::api::bun::process::WindowsOptions {
-    crate::api::bun::process::WindowsOptions {
-        loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
-            None, None,
-        )),
-        ..Default::default()
-    }
 }

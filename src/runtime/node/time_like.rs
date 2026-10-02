@@ -1,14 +1,9 @@
 use bun_jsc::{JSGlobalObject, JSType as JsType, JSValue, JsResult};
 
-/// On windows, this is what libuv expects
-/// On unix it is what the utimens api expects
-#[cfg(windows)]
-pub(crate) type TimeLike = f64;
-#[cfg(not(windows))]
-pub(crate) type TimeLike = libc::timespec;
+pub(crate) type TimeLike = bun_sys::TimeLike;
 
-const NS_PER_S: f64 = bun_core::time::NS_PER_S as f64;
 #[cfg(not(windows))]
+const NS_PER_S: f64 = bun_core::time::NS_PER_S as f64;
 const MS_PER_S: f64 = bun_core::time::MS_PER_S as f64;
 #[cfg(not(windows))]
 const NS_PER_MS: f64 = bun_core::time::NS_PER_MS as f64;
@@ -18,6 +13,10 @@ const NS_PER_MS: f64 = bun_core::time::NS_PER_MS as f64;
 // Node.js docs:
 // > Values can be either numbers representing Unix epoch time in seconds, Dates, or a numeric string like '123456789.0'.
 // > If the value can not be converted to a number, or is NaN, Infinity, or -Infinity, an Error will be thrown.
+//
+// A `Date` or a string goes to libuv as the number it converts to, and there a
+// NaN is `UV_FS_UTIME_OMIT` and an infinity is `UV_FS_UTIME_NOW`:
+// https://github.com/libuv/libuv/blob/v1.52.1/include/uv.h#L1601-L1602
 pub(crate) fn from_js(
     global_object: &JSGlobalObject,
     value: JSValue,
@@ -36,14 +35,18 @@ pub(crate) fn from_js(
         match value.js_type() {
             JsType::JSDate => {
                 let milliseconds = value.get_unix_timestamp();
-                if milliseconds.is_finite() {
-                    return Ok(Some(from_milliseconds(milliseconds)));
+                if milliseconds.is_nan() {
+                    return Ok(Some(omit()));
                 }
+                return Ok(Some(from_milliseconds(milliseconds)));
             }
             JsType::String => {
                 let seconds = value.to_number(global_object)?;
                 if seconds.is_finite() {
                     return Ok(Some(from_seconds(seconds)));
+                }
+                if seconds.is_infinite() {
+                    return Ok(Some(from_now()));
                 }
             }
             _ => {}
@@ -52,9 +55,28 @@ pub(crate) fn from_js(
     Ok(None)
 }
 
+/// The time Node on Windows stores: libuv's `TIME_T_TO_FILETIME` evaluates the
+/// FILETIME, `seconds * 1e7 + <ticks from 1601 to 1970>`, as a double:
+/// https://github.com/libuv/libuv/blob/v1.52.1/src/win/fs.c#L138-L143
 #[cfg(windows)]
 fn from_seconds(seconds: f64) -> TimeLike {
-    seconds
+    const TICKS_PER_S: i64 = 10_000_000;
+    const UNIX_EPOCH_TICKS: i64 = 116_444_736_000_000_000;
+    const I64_LIMIT: f64 = 9_223_372_036_854_775_808.0;
+    let filetime = seconds * TICKS_PER_S as f64 + UNIX_EPOCH_TICKS as f64;
+    if !(0.0..I64_LIMIT).contains(&filetime) {
+        // Not a FILETIME. Saturated, so that `bun_sys` fails the conversion
+        // with `EINVAL`, which is what `SetFileTime` gives Node.
+        return TimeLike {
+            sec: if filetime < 0.0 { i64::MIN } else { i64::MAX },
+            nsec: 0,
+        };
+    }
+    let ticks = filetime as i64 - UNIX_EPOCH_TICKS;
+    TimeLike {
+        sec: ticks.div_euclid(TICKS_PER_S),
+        nsec: ticks.rem_euclid(TICKS_PER_S) * 100,
+    }
 }
 
 #[cfg(not(windows))]
@@ -68,33 +90,33 @@ fn from_seconds(seconds: f64) -> TimeLike {
         nsec -= NS_PER_S;
         sec += 1.0;
     }
-    libc::timespec {
+    TimeLike {
         // `as` saturates on overflow/NaN.
-        tv_sec: sec as _,
-        tv_nsec: nsec as _,
+        sec: sec as i64,
+        nsec: nsec as i64,
     }
 }
 
 #[cfg(windows)]
 fn from_milliseconds(milliseconds: f64) -> TimeLike {
-    milliseconds / 1000.0
+    from_seconds(milliseconds / MS_PER_S)
 }
 
 #[cfg(not(windows))]
 fn from_milliseconds(milliseconds: f64) -> TimeLike {
-    libc::timespec {
-        tv_sec: milliseconds.div_euclid(MS_PER_S) as _,
-        tv_nsec: (milliseconds.rem_euclid(MS_PER_S) * NS_PER_MS) as _,
+    TimeLike {
+        sec: milliseconds.div_euclid(MS_PER_S) as i64,
+        nsec: (milliseconds.rem_euclid(MS_PER_S) * NS_PER_MS) as i64,
     }
 }
 
-#[cfg(windows)]
-fn from_now() -> TimeLike {
-    let nanos = bun_core::time::nano_timestamp();
-    (nanos as f64) / NS_PER_S
+fn omit() -> TimeLike {
+    TimeLike {
+        sec: 0,
+        nsec: bun_sys::UTIME_OMIT,
+    }
 }
 
-#[cfg(not(windows))]
 fn from_now() -> TimeLike {
     // Permissions requirements
     //        To set both file timestamps to the current time (i.e., times is
@@ -115,11 +137,8 @@ fn from_now() -> TimeLike {
     //        If both tv_nsec fields are specified as UTIME_OMIT, then no file
     //        ownership or permission checks are performed, and the file
     //        timestamps are not modified, but other error conditions may still
-    libc::timespec {
-        tv_sec: 0,
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        tv_nsec: libc::UTIME_NOW as _,
-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
-        tv_nsec: bun_sys::c::UTIME_NOW as _,
+    TimeLike {
+        sec: 0,
+        nsec: bun_sys::UTIME_NOW,
     }
 }

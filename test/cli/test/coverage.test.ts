@@ -1008,9 +1008,11 @@ test("b", () => {
 
 // JSC runs a text that bun does not print as it is: a file whose first line starts with
 // `// @bun`, and CommonJS under a changed `Module.wrapper`. Such a text can end without a line
-// terminator. It reports what the same text reports with a newline after it.
-describe("a text that is not printed by bun and has no final newline", () => {
+// terminator. Under `bun test --coverage` it reports what the same text reports with a newline
+// after it.
+describe("a text that is not printed by bun", () => {
   // [the text, FNF and FNH, whether lines at the end of the text ran]
+  // The report does not count the first byte of a line, so each last line here has more bytes.
   const texts: Record<string, [string, string, Record<number, boolean>]> = {
     "never-ran-alone-on-the-last-line.js": [
       "// @bun\nexport function first() {\n  return 1;\n}\nexport const second = () => 2;",
@@ -1042,27 +1044,30 @@ describe("a text that is not printed by bun and has no final newline", () => {
       "FNF:3\nFNH:2",
       { 2: true },
     ],
-    // plugin.ts gives this text to bun.
+    // plugin.ts puts the `// @bun` line before this text, so the text that runs has five lines.
     "from-a-plugin.js": [
-      "// @bun\nexport function first() {\n  return 1;\n}\nexport const second = () => 2;",
+      "export function first() {\n  return 1;\n}\nexport const second = () => 2;",
       "FNF:2\nFNH:1",
       { 5: true },
     ],
   };
   const terminated = (name: string) => `terminated-${name}`;
+  // The row of each of these names a line that did not run, so it shows that the last line is in the report.
+  const withRowFromBunJsc = ["branch-not-taken-on-the-last-line.js", "last-byte-closes-a-function-that-never-ran.js"];
 
   let result: Awaited<ReturnType<typeof run>>;
   beforeAll(async () => {
     const files: Record<string, string> = {
-      "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\npreload = ["./plugin.ts"]\n`,
+      // coverageIgnoreSourcemaps: the report of wrapped.cjs is then of the text that ran.
+      "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\ncoverageIgnoreSourcemaps = true\npreload = ["./plugin.ts"]\n`,
       "plugin.ts": `
 import { plugin } from "bun";
 
 plugin({
-  name: "passthrough",
+  name: "pragma",
   setup(build) {
     build.onLoad({ filter: /from-a-plugin\\.js$/ }, async ({ path }) => {
-      return { contents: await Bun.file(path).text(), loader: "js" };
+      return { contents: "// @bun\\n" + (await Bun.file(path).text()), loader: "js" };
     });
   },
 });
@@ -1092,17 +1097,14 @@ import * as carriageReturn from "./ends-with-a-carriage-return.js";
 import * as newline from "./ends-with-a-newline.js";
 import * as onNoLine from "./never-ran-on-no-line.js";
 require("./empty.cjs");
-const modules = { ${names.map((name, i) => `"${name}": m${i}`).join(", ")} };
-
-// The table row of a file, from the text that ran and not through a source map.
-const row = name => console.log(JSON.stringify({ name, row: codeCoverageForFile(join(import.meta.dir, name), true) }));
 
 test("calls first() and not second()", () => {
-  for (const [name, module] of Object.entries(modules)) {
+  for (const module of [${names.map((_, i) => `m${i}`).join(", ")}, carriageReturn, newline, onNoLine]) {
     expect(module.first()).toBe(1);
-    row(name);
   }
-  expect(carriageReturn.first() + newline.first() + onNoLine.first()).toBe(3);
+  for (const name of ${JSON.stringify(withRowFromBunJsc.flatMap(name => [name, terminated(name)]))}) {
+    console.log(JSON.stringify({ name, row: codeCoverageForFile(join(import.meta.dir, name), true) }));
+  }
 });
 
 test("calls first() and not second() under a changed Module.wrapper", () => {
@@ -1116,8 +1118,6 @@ test("calls first() and not second() under a changed Module.wrapper", () => {
   } finally {
     Module.wrapper[1] = defaultEnd;
   }
-  row("wrapped.cjs");
-  row("${terminated("wrapped.cjs")}");
 });
 `;
     result = await run(files, []);
@@ -1135,32 +1135,29 @@ test("calls first() and not second() under a changed Module.wrapper", () => {
       .filter(({ name }) => name === file)
       .map(({ row }) => row.slice(row.indexOf("|")))[0];
 
-  describe.each(Object.entries(texts))("%s", (file, [, functions, lines]) => {
-    test("bun test --coverage", () => {
-      expect({
-        functions: record(file).match(/^FNF:\d+\nFNH:\d+$/m)?.[0],
-        ran: Object.fromEntries(
-          Array.from(record(file).matchAll(/^DA:(\d+),(\d+)$/gm), ([, line, hits]) => [line, hits !== "0"]),
-        ),
-        row: result.rows[file],
-      }).toEqual({
-        functions,
-        ran: expect.objectContaining(lines),
-        row: { functions: expect.any(String), lines: expect.any(String), uncovered: expect.any(String) },
-      });
-      expect(report(file)).toEqual(report(terminated(file)));
+  test.each(Object.entries(texts))("%s", (file, [, functions, lines]) => {
+    expect({
+      functions: record(file).match(/^FNF:\d+\nFNH:\d+$/m)?.[0],
+      ran: Object.fromEntries(
+        Array.from(record(file).matchAll(/^DA:(\d+),(\d+)$/gm), ([, line, hits]) => [line, hits !== "0"]),
+      ),
+      row: result.rows[file],
+    }).toEqual({
+      functions,
+      ran: expect.objectContaining(lines),
+      row: { functions: expect.any(String), lines: expect.any(String), uncovered: expect.any(String) },
     });
+    expect(report(file)).toEqual(report(terminated(file)));
+  });
 
-    test("bun:jsc codeCoverageForFile()", () => {
-      expect(rowFromBunJsc(file)).toMatch(/^\| +\d+\.\d+ \| +\d+\.\d+ \| /);
-      expect(rowFromBunJsc(file)).toBe(rowFromBunJsc(terminated(file)));
-    });
+  test.each(withRowFromBunJsc)("bun:jsc codeCoverageForFile() of %s", file => {
+    expect(rowFromBunJsc(file)).toMatch(/^\| +\d+\.\d+ \| +\d+\.\d+ \| \d/);
+    expect(rowFromBunJsc(file)).toBe(rowFromBunJsc(terminated(file)));
   });
 
   test("CommonJS under a changed Module.wrapper", () => {
     // first(), second(), the wrapper, and the function in the end of the wrapper.
-    expect(rowFromBunJsc("wrapped.cjs")).toMatch(/^\| +50\.00 \| +100\.00 \| $/);
-    expect(rowFromBunJsc("wrapped.cjs")).toBe(rowFromBunJsc(terminated("wrapped.cjs")));
+    expect(result.rows["wrapped.cjs"]).toEqual({ functions: "50.00", lines: "100.00", uncovered: "" });
     expect(report("wrapped.cjs")).toEqual(report(terminated("wrapped.cjs")));
   });
 
@@ -1187,11 +1184,12 @@ test("calls first() and not second() under a changed Module.wrapper", () => {
     expect(record("never-ran-on-no-line.js")).toContain("FNF:2\nFNH:1\n");
   });
 
-  // node:inspector registers a text for coverage too.
-  test("bun:jsc codeCoverageForFile() after Profiler.startPreciseCoverage", async () => {
+  // Only `bun test --coverage` reads a text by line. A process that turns the profiler on with
+  // node:inspector runs the text as it is, as node does.
+  test("the text is as it is after Profiler.startPreciseCoverage", async () => {
+    const text = texts["never-ran-alone-on-the-last-line.js"][0];
     using dir = tempDir("cov", {
-      "subject.js": texts["branch-not-taken-on-the-last-line.js"][0],
-      [terminated("subject.js")]: texts["branch-not-taken-on-the-last-line.js"][0] + "\n",
+      "subject.js": text,
       "main.mjs": `
 import { codeCoverageForFile } from "bun:jsc";
 import inspector from "node:inspector/promises";
@@ -1201,13 +1199,12 @@ const session = new inspector.Session();
 session.connect();
 await session.post("Profiler.enable");
 await session.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
-const rows = [];
-for (const name of ["subject.js", "${terminated("subject.js")}"]) {
-  (await import("./" + name)).first();
-  const row = codeCoverageForFile(join(import.meta.dir, name), true);
-  rows.push(row.slice(row.indexOf("|")));
-}
-console.log(JSON.stringify(rows));
+(await import("./subject.js")).first();
+const row = codeCoverageForFile(join(import.meta.dir, "subject.js"), true);
+const { result } = await session.post("Profiler.takePreciseCoverage");
+const { functions } = result.find(({ url }) => url.endsWith("subject.js"));
+const end = Math.max(...functions.flatMap(({ ranges }) => ranges.map(range => range.endOffset)));
+console.log(JSON.stringify({ row: row.slice(row.indexOf("|")), end }));
 `,
     });
     await using proc = Bun.spawn({
@@ -1219,9 +1216,10 @@ console.log(JSON.stringify(rows));
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    const [subject, twin] = JSON.parse(stdout);
-    expect(subject).toMatch(/^\| +100\.00 \| +66\.67 \| 4$/);
-    expect(subject).toBe(twin);
+    expect(JSON.parse(stdout)).toEqual({
+      row: expect.stringMatching(/^\| +50\.00 \| +100\.00 \| $/),
+      end: text.length,
+    });
     expect(exitCode).toBe(0);
   });
 });

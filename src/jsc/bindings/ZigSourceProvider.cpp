@@ -268,7 +268,6 @@ extern "C" void JSC__Heap__setInitialAllocationBudget(JSC::VM* vm, size_t bytes)
 extern "C" void Bun__DecoderStringTable__install(JSC::VM* vm, const uint8_t* bytes, size_t len)
 {
     ASSERT(vm->clientData);
-    JSC::StaticHeap::install(*vm); // Only has an effect for the first VM.
     static_cast<WebCore::JSVMClientData*>(vm->clientData)->setDecoderStringTable(*vm, std::span<const uint8_t>(bytes, len));
 }
 

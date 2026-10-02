@@ -1090,11 +1090,7 @@ pub enum TaskCallbackContext {
     IsolatedPackageInstallContext(isolated_install::EntryId),
     RootDependency(DependencyID),
     RootRequestId(PackageID),
-    /// Waits on a git clone in the install phase: the package to check out
-    /// once the repository is there. `dependency_id` is the dependency the
-    /// linker placed the package under. It gives the alias and whether the
-    /// package is required, and can resolve to a different package (a peer
-    /// dependency in the isolated store).
+    /// Install phase, parked on a git clone. `dependency_id` may resolve to another package.
     GitCheckout {
         dependency_id: DependencyID,
         package_id: PackageID,

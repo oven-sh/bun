@@ -1331,9 +1331,9 @@ fn run_tasks_erased(
                     } else if cb.has_on_package_download_error && cb.is_store_installer {
                         // The isolated installer queued its entry contexts
                         // under `checkout_id`, not `clone_id`. A failed clone
-                        // never reaches checkout, so fail the checkout of
-                        // every waiter or the install loop blocks forever on
-                        // the entry's pending-task slot.
+                        // never reaches checkout, so drain every waiting
+                        // checkout for this repo or the install loop blocks
+                        // forever on the entry's pending-task slot.
                         if let Some(waiters) = manager.task_queue.remove(&task.id) {
                             for waiter in waiters.iter() {
                                 let &bun_install::TaskCallbackContext::GitCheckout {
@@ -1376,10 +1376,8 @@ fn run_tasks_erased(
                 manager.git_repositories.insert(task.id, repo_fd);
 
                 if cb.has_on_extract {
-                    // Installing! The clone task is shared by every package of
-                    // this repo URL; enqueue the checkout of each waiter. The
-                    // waiter names its package: the dependency it was placed
-                    // under can resolve to another one.
+                    // Installing! The clone task is shared by every dependency on
+                    // this repo URL; enqueue a checkout per waiter, not just one.
                     let Some(waiters) = manager.task_queue.remove(&task.id) else {
                         continue;
                     };

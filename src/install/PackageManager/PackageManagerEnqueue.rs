@@ -261,10 +261,7 @@ pub enum GitEnqueueResult {
     OfflineMiss,
 }
 
-/// Install phase: fetches the git package `package_id` into the cache, then
-/// runs `task_context`. `dependency_id` is the dependency the linker placed the
-/// package under; it need not resolve to `package_id` (see
-/// `TaskCallbackContext::GitCheckout`).
+/// `dependency_id` need not resolve to `package_id`: see `TaskCallbackContext::GitCheckout`.
 pub fn enqueue_git_for_checkout(
     this: &mut PackageManager,
     dependency_id: DependencyID,
@@ -273,8 +270,6 @@ pub fn enqueue_git_for_checkout(
     task_context: TaskCallbackContext,
     patch_name_and_version_hash: Option<u64>,
 ) -> GitEnqueueResult {
-    // The caller passes a package whose `resolution.tag == Git`. Copy out so
-    // the value does not borrow `*this` while it is mutably reborrowed below.
     let resolution: Resolution = this.lockfile.packages.items_resolution()[package_id as usize];
     let repository: Repository = *resolution.git();
     // reshaped for borrowck — `url`/`resolved` borrow
@@ -2024,8 +2019,7 @@ pub fn enqueue_git_checkout(
     name: &[u8],
     resolution: &Resolution,
     resolved: &[u8],
-    // if patched then we need to do apply step after network task is done:
-    // the package to patch and its name-and-version hash
+    // the package to patch and its name-and-version hash, if an apply step follows the checkout
     patch: Option<(PackageID, u64)>,
 ) -> NonNull<Task::Task<'static>> {
     // The patched-dependency entry can be missing (or its hash not yet

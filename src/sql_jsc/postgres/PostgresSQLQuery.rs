@@ -53,6 +53,8 @@ pub struct PostgresSQLQuery {
     ref_count: Cell<u32>,
 
     pub(crate) flags: Cell<Flags>,
+    /// The 26000/0A000 behind a re-prepare, surfaced if the session leaves idle first.
+    pub(crate) retry_error: JsCell<Option<protocol::ErrorResponse>>,
 }
 
 impl Default for PostgresSQLQuery {
@@ -64,6 +66,7 @@ impl Default for PostgresSQLQuery {
             status: Cell::new(Status::Pending),
             ref_count: Cell::new(1),
             flags: Cell::new(Flags::default()),
+            retry_error: JsCell::new(None),
         }
     }
 }
@@ -84,6 +87,8 @@ pub struct Flags {
     /// `None` when `finish_request` consumes that contribution, so the
     /// decrement is idempotent across its call sites.
     pub(crate) counter: RequestCounter,
+    /// Set after one transparent re-prepare on 26000/0A000; caps retries at 1.
+    pub(crate) reprepared: bool,
     pub(crate) result_mode: PostgresSQLQueryResultMode,
 }
 
@@ -105,6 +110,7 @@ impl Default for Flags {
             simple: false,
             discard_response: false,
             counter: RequestCounter::None,
+            reprepared: false,
             result_mode: PostgresSQLQueryResultMode::Objects,
         }
     }

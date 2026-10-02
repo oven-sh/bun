@@ -129,6 +129,10 @@ pub struct PostgresSQLConnection {
     // so `vm_mut()`'s `&mut *as_ptr()` is sound.
     pub(crate) vm: BackRef<VirtualMachine>,
     pub(crate) statements: JsCell<PreparedStatementsMap>,
+    /// Transaction status byte from the last ReadyForQuery; gates the
+    /// re-prepare retry (a retry inside a transaction block masks 0A000/26000
+    /// with 25P02).
+    pub(crate) tx_status: Cell<protocol::TransactionStatusIndicator>,
     pub(crate) prepared_statement_id: Cell<u64>,
     pub(crate) pending_activity_count: AtomicU32,
     // Self-wrapper back-ref (the JS object that owns this payload). Stored as a
@@ -1195,6 +1199,7 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
                 core::ptr::NonNull::new(VirtualMachine::get_mut_ptr()).expect("vm singleton"),
             ),
             statements: JsCell::new(PreparedStatementsMap::default()),
+            tx_status: Cell::new(protocol::TransactionStatusIndicator::I),
             prepared_statement_id: Cell::new(0),
             pending_activity_count: AtomicU32::new(0),
             js_value: JsCell::new(crate::jsc::JsRef::empty()),
@@ -1553,6 +1558,91 @@ impl PostgresSQLConnection {
         }
     }
 
+    /// Move the head request behind every request already on the wire and
+    /// behind earlier re-queued retries. Replies are attributed to the head.
+    fn requeue_for_retry(&self, request: &PostgresSQLQuery) {
+        self.requests.with_mut(|q| {
+            if !q
+                .front()
+                .is_some_and(|f| core::ptr::eq(f.as_ptr(), request))
+            {
+                return;
+            }
+            let Some(head) = q.pop_front() else { return };
+            let at = q
+                .iter()
+                .position(|r| r.status.get() == QueryStatus::Pending && !r.flags.get().reprepared)
+                .unwrap_or(q.len());
+            debug_assert!(
+                q.iter().skip(at).all(|r| !matches!(
+                    r.status.get(),
+                    QueryStatus::Binding | QueryStatus::Running | QueryStatus::PartialResponse
+                )) && !self
+                    .flags
+                    .get()
+                    .contains(ConnectionFlags::WAITING_TO_PREPARE),
+                "retry inserted ahead of a request that is on the wire"
+            );
+            q.insert(at, head);
+        });
+    }
+
+    /// Remove the cache entry for `stmt` unless re-entrant JS already replaced it.
+    fn evict_statement(&self, stmt: &PostgresSQLStatement) {
+        let stmt_ptr: *const PostgresSQLStatement = core::ptr::from_ref(stmt);
+        self.statements.with_mut(|m| {
+            let name = &stmt.signature.name[..];
+            if m.get(name).is_some_and(|p| {
+                core::ptr::eq(
+                    p.as_ref().map_or(core::ptr::null(), |p| p.as_ptr()),
+                    stmt_ptr,
+                )
+            }) {
+                m.remove(name);
+            }
+        });
+    }
+
+    /// Point `request`, and every queued request that holds the same evicted
+    /// statement, at the cached replacement, or at a new one under a new name.
+    fn replace_statement(&self, request: &PostgresSQLQuery) {
+        let Some(invalidated) = request.statement.get().clone() else {
+            return;
+        };
+        let name = &invalidated.signature.name[..];
+        let cached = self
+            .statements
+            .get()
+            .get(name)
+            .and_then(|slot| slot.clone());
+        let replacement = cached.unwrap_or_else(|| {
+            let id = self.prepared_statement_id.get();
+            self.prepared_statement_id.set(id + 1);
+            let statement = {
+                let mut s = PostgresSQLStatement::default();
+                s.signature = invalidated.signature.renamed(id);
+                RefPtr::new(s)
+            };
+            let _ = self
+                .statements
+                .with_mut(|m| m.put(name, Some(statement.clone())));
+            statement
+        });
+        debug_assert!(!core::ptr::eq(replacement.as_ptr(), invalidated.as_ptr()));
+        for queued in self.requests.get().iter() {
+            if queued.status.get() == QueryStatus::Pending
+                && queued
+                    .statement
+                    .get()
+                    .as_ref()
+                    .is_some_and(|held| core::ptr::eq(held.as_ptr(), invalidated.as_ptr()))
+            {
+                queued.statement.set(Some(replacement.clone()));
+            }
+        }
+        request.statement.set(Some(replacement));
+    }
+
     pub(crate) fn has_query_running(&self) -> bool {
         !self
             .flags
@@ -1898,6 +1988,24 @@ impl PostgresSQLConnection {
                     // Parse written but not Bind / statement still Parsing) undo
                     // this via note_request_pending() before returning/continuing.
                     self.note_request_written();
+                    if req.flags.get().reprepared
+                        && self.tx_status.get() != protocol::TransactionStatusIndicator::I
+                        && let Some(err) = req.retry_error.take()
+                    {
+                        // A request ahead of the retry opened a transaction block.
+                        let ev = crate::postgres::protocol::error_response_jsc::to_js(
+                            &err,
+                            self.global(),
+                        );
+                        req.on_js_error(ev, self.global());
+                        if offset == 0 {
+                            self.discard_request(&req);
+                        } else {
+                            req.status.set(QueryStatus::Fail);
+                            offset += 1;
+                        }
+                        continue;
+                    }
                     if req.flags.get().simple {
                         if self.pipelined_requests.get() > 0
                             || !self
@@ -2488,7 +2596,8 @@ impl PostgresSQLConnection {
                 // parameter_status dropped at scope end
             }
             MessageType::ReadyForQuery => {
-                let _ready_for_query = protocol::ReadyForQuery::decode_internal(reader.reborrow())?;
+                let ready_for_query = protocol::ReadyForQuery::decode_internal(reader.reborrow())?;
+                self.tx_status.set(ready_for_query.status);
 
                 if self.status.get() != Status::Connected
                     && !matches!(self.authentication_state.get(), AuthenticationState::Ok)
@@ -2968,6 +3077,9 @@ impl PostgresSQLConnection {
                     debug!("ErrorResponse: {}", err);
                     return Err(AnyPostgresError::ExpectedRequest);
                 };
+                // The ReadyForQuery that ends this batch is still to come.
+                self.update_flags(|f| f.remove(ConnectionFlags::IS_READY_FOR_QUERY));
+                let invalidates = err.invalidates_prepared_statement();
                 // Convert to JS while we still own `err` — materialize the JS value once and route through
                 // `on_js_error` to avoid double-ownership of the non-Clone ErrorResponse.
                 let js_err =
@@ -2979,18 +3091,35 @@ impl PostgresSQLConnection {
                             crate::postgres::postgres_sql_statement::Error::Protocol(err),
                         );
                         // The request still holds another ref; this cannot drop to 0.
-                        let stmt_ptr: *const PostgresSQLStatement = core::ptr::from_ref(&*stmt);
-                        self.statements.with_mut(|m| {
-                            let name = &stmt.signature.name[..];
-                            if m.get(name).is_some_and(|p| {
-                                core::ptr::eq(
-                                    p.as_ref().map_or(core::ptr::null(), |p| p.as_ptr()),
-                                    stmt_ptr,
-                                )
-                            }) {
-                                m.remove(name);
-                            }
-                        });
+                        self.evict_statement(stmt);
+                    } else if invalidates
+                        // After BindComplete the same SQLSTATE comes from the query.
+                        && request.status.get() == QueryStatus::Binding
+                        && stmt.status == StatementStatus::Prepared
+                        && !stmt.signature.prepared_statement_name.is_empty()
+                    {
+                        // Evict so later queries with this signature re-prepare.
+                        self.evict_statement(stmt);
+                        // Inside a transaction block the re-Parse would get 25P02.
+                        if !request.flags.get().reprepared
+                            && self.tx_status.get() == protocol::TransactionStatusIndicator::I
+                            && self.nonpipelinable_requests.get() == 0
+                        {
+                            debug!("re-preparing invalidated statement (SQLSTATE {})", err);
+                            self.finish_request(&request);
+                            self.replace_statement(&request);
+                            request.status.set(QueryStatus::Pending);
+                            request.update_flags(|f| {
+                                f.reprepared = true;
+                                f.binary = false;
+                            });
+                            self.note_request_pending();
+                            request.retry_error.set(Some(err));
+                            // The re-Parse waits for the siblings still on the wire.
+                            self.requeue_for_retry(&request);
+                            self.update_ref();
+                            return Ok(());
+                        }
                     }
                 }
                 // If `err` was not moved into stmt above, it drops here automatically.

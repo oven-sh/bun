@@ -1227,6 +1227,124 @@ describe("fs.promises.watch", () => {
     expect(() => String(event)).toThrow(TypeError);
     expect(Object.keys(event!).sort()).toEqual(["eventType", "filename"]);
   });
+
+  describe("maxQueue / overflow", () => {
+    // With maxQueue: 0 the very first event is already an overflow, so these
+    // tests do not depend on the platform's batching or coalescing behaviour.
+    test("overflow: 'error' rejects with ERR_FS_WATCH_QUEUE_OVERFLOW and closes the watcher", async () => {
+      using dir = tempDir("watch-maxqueue-error", {});
+      // No process.exit() on the success path: natural exit after the rejection
+      // proves the native watcher was closed (a leaked watcher would keep the
+      // event loop ref'd forever).
+      const fixture = /* js */ `
+        const fs = require("node:fs");
+        const fsp = require("node:fs/promises");
+        const path = require("node:path");
+        const dir = process.cwd();
+        let n = 0;
+        const iv = setInterval(() => {
+          fs.writeFileSync(path.join(dir, "f" + n++), "");
+        }, 20);
+        (async () => {
+          let code = null, message = null, delivered = 0;
+          try {
+            for await (const e of fsp.watch(dir, { maxQueue: 0, overflow: "error" })) {
+              if (++delivered > 3) break;
+            }
+          } catch (e) {
+            code = e.code;
+            message = e.message;
+          }
+          clearInterval(iv);
+          console.log(JSON.stringify({ code, message, delivered }));
+        })();
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr }).toEqual({
+        stdout: JSON.stringify({
+          code: "ERR_FS_WATCH_QUEUE_OVERFLOW",
+          message: "fs.watch() queued more than 0 events",
+          delivered: 0,
+        }),
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    test("overflow: 'ignore' (default) drops events and emits a warning", async () => {
+      using dir = tempDir("watch-maxqueue-ignore", {});
+      const fixture = /* js */ `
+        const fs = require("node:fs");
+        const fsp = require("node:fs/promises");
+        const path = require("node:path");
+        const dir = process.cwd();
+        let warnings = 0;
+        process.on("warning", w => {
+          if (String(w.message ?? w).includes("fs.watch maxQueue exceeded")) warnings++;
+        });
+        const it = fsp.watch(dir, { maxQueue: 0 })[Symbol.asyncIterator]();
+        const armed = it.next();
+        let settled = null;
+        armed.then(() => { settled = "resolved"; }, () => { settled = "rejected"; });
+        let n = 0;
+        const iv = setInterval(() => {
+          fs.writeFileSync(path.join(dir, "f" + n++), "");
+          if (warnings > 0 || settled !== null || n > 100) {
+            clearInterval(iv);
+            setImmediate(() => {
+              console.log(JSON.stringify({ warnings, settled, writes: n }));
+              process.exit(0);
+            });
+          }
+        }, 20);
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const out = JSON.parse(stdout.trim() || "{}");
+      // maxQueue: 0 means every event is dropped, so armed never settles.
+      expect(out.settled).toBe(null);
+      expect(out.warnings).toBeGreaterThan(0);
+      expect(exitCode).toBe(0);
+    });
+
+    test("validates option values", async () => {
+      const root = path.join(testDir, "maxqueue-validate-dir");
+      fs.mkdirSync(root, { recursive: true });
+      async function firstError(opts: any) {
+        // Pre-aborted signal bounds next() so a build that skips validation
+        // fails fast (AbortError) instead of hanging.
+        const signal = AbortSignal.abort();
+        try {
+          const it = (fs.promises.watch as any)(root, { ...opts, signal })[Symbol.asyncIterator]();
+          try {
+            await it.next();
+          } catch (e) {
+            return e;
+          }
+          await it.return?.();
+        } catch (e) {
+          return e;
+        }
+      }
+      expect((await firstError({ maxQueue: "x" }))?.code).toBe("ERR_INVALID_ARG_TYPE");
+      expect((await firstError({ maxQueue: 1.5 }))?.code).toBe("ERR_OUT_OF_RANGE");
+      expect((await firstError({ overflow: "throw" }))?.code).toBe("ERR_INVALID_ARG_VALUE");
+      expect((await firstError({ overflow: 3 }))?.code).toBe("ERR_INVALID_ARG_VALUE");
+    });
+  });
 });
 
 describe("immediately closing", () => {

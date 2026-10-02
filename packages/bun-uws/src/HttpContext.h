@@ -661,9 +661,7 @@ private:
 
                 /* Todo: can this handle timeout for non-post as well? */
                 if (fin) {
-                    /* Last body chunk received. Re-arm (not clear) the idle timeout so a
-                     * stalled handler is still reaped; clearing it here lost any timeout the
-                     * request handler set before the body bytes in the same segment were parsed. */
+                    /* The body is complete: the idle timeout now runs against the pending response */
                     ((HttpResponse<SSL> *) user)->resetTimeout();
                 } else {
                     /* We still have some more data coming in later, so reset timeout */

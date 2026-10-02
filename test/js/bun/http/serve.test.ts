@@ -3459,50 +3459,148 @@ it.concurrent(
 );
 
 it.concurrent(
-  "idleTimeout reaps a hung handler after the request body is received",
+  "idleTimeout closes a request with a body whose handler has not responded",
   async () => {
     const aborted: string[] = [];
+    const entered: Record<string, PromiseWithResolvers<void>> = {};
+    const enter = (path: string) => (entered[path] ??= Promise.withResolvers<void>());
+    const held = {
+      "/timeout-0": Promise.withResolvers<Response>(),
+      "/timeout-60": Promise.withResolvers<Response>(),
+    };
+    const never = new Promise<Response>(() => {});
+    const tlsAborted = Promise.withResolvers<void>();
+
+    function handler(req: Request, server: Server) {
+      const path = new URL(req.url).pathname;
+      req.signal.addEventListener("abort", () => {
+        aborted.push(path);
+        if (path === "/tls-late") tlsAborted.resolve();
+      });
+      enter(path).resolve();
+      switch (path) {
+        case "/text":
+          return req.text().then(() => never);
+        case "/stream":
+          return new Response(new ReadableStream({ start: controller => controller.enqueue("first") }));
+        case "/timeout-2":
+          server.timeout(req, 2);
+          return never;
+        case "/timeout-0":
+          server.timeout(req, 0);
+          return held[path].promise;
+        case "/timeout-60":
+          server.timeout(req, 60);
+          return held[path].promise;
+      }
+      return never;
+    }
+
     using server = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
-      development: false,
       idleTimeout: 2,
-      fetch(req, srv) {
-        const p = new URL(req.url).pathname;
-        req.signal.addEventListener("abort", () => aborted.push(p));
-        if (p === "/t6") srv.timeout(req, 6);
-        return new Promise<Response>(() => {});
-      },
+      routes: { "/route": { POST: handler } },
+      fetch: handler,
     });
+    // Only server.timeout(req, 2) can close a request on this one.
+    using patient = Bun.serve({ port: 0, hostname: "127.0.0.1", idleTimeout: 255, fetch: handler });
+    using secure = Bun.serve({ port: 0, hostname: "127.0.0.1", idleTimeout: 2, tls, fetch: handler });
 
-    const raw = (name: string, wire: string) =>
-      new Promise<{ name: string; closed: boolean }>((resolve, reject) => {
-        const s = net.connect(server.port as number, "127.0.0.1");
-        s.on("connect", () => s.write(wire));
-        s.on("error", reject);
-        s.on("close", () => resolve({ name, closed: true }));
+    const sockets: net.Socket[] = [];
+    using _ = { [Symbol.dispose]: () => sockets.forEach(socket => socket.destroy()) };
+
+    function open(socket: net.Socket) {
+      sockets.push(socket);
+      let response = "";
+      let check = () => {};
+      const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+      socket.on("error", () => {});
+      socket.on("data", chunk => {
+        response += chunk;
+        check();
       });
+      return {
+        closed,
+        // Settles when the kernel has the bytes, or when the timer closed the socket first.
+        write: (bytes: string) =>
+          Promise.race([new Promise<void>(resolve => socket.write(bytes, () => resolve())), closed]),
+        received: async (text: string) => {
+          const arrived = new Promise<void>(resolve => {
+            check = () => response.includes(text) && resolve();
+            check();
+          });
+          await Promise.race([arrived, closed]);
+          return response;
+        },
+      };
+    }
+    type Client = ReturnType<typeof open>;
 
-    const results = await Promise.all([
-      raw("get", "GET /get HTTP/1.1\r\nHost: a\r\n\r\n"),
-      raw("post-cl", "POST /post-cl HTTP/1.1\r\nHost: a\r\nContent-Length: 1\r\n\r\nx"),
-      raw(
-        "post-chunked",
-        "POST /post-chunked HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nx\r\n0\r\n\r\n",
+    // A string step is written to the socket. A function step is a condition to wait for.
+    async function request(to: number | net.Socket, ...steps: (string | ((client: Client) => Promise<unknown>))[]) {
+      const client = open(typeof to === "number" ? net.connect(to, "127.0.0.1") : to);
+      for (const step of steps) await (typeof step === "string" ? client.write(step) : step(client));
+      return client;
+    }
+    const head = (path: string, framing: string) => `POST ${path} HTTP/1.1\r\nHost: localhost\r\n${framing}\r\n\r\n`;
+    const contentLength = (path: string) => head(path, "Content-Length: 1");
+    const chunked = (path: string) => head(path, "Transfer-Encoding: chunked");
+
+    const closedByTimer = await Promise.all([
+      // The last body byte arrives with the head.
+      request(server.port!, contentLength("/content-length") + "x"),
+      request(server.port!, chunked("/chunked") + "1\r\nx\r\n0\r\n\r\n"),
+      request(server.port!, contentLength("/route") + "x"),
+      request(server.port!, contentLength("/text") + "x"),
+      request(patient.port!, contentLength("/timeout-2") + "x"),
+      // The last body byte arrives in a later read.
+      request(server.port!, contentLength("/content-length-late"), () => enter("/content-length-late").promise, "x"),
+      request(server.port!, chunked("/chunked-late") + "1\r\nx\r\n", () => enter("/chunked-late").promise, "0\r\n\r\n"),
+      request(
+        nodeTls.connect({ port: secure.port!, host: "127.0.0.1", rejectUnauthorized: false }),
+        contentLength("/tls-late"),
+        () => enter("/tls-late").promise,
+        "x",
       ),
-      raw("post-t6", "POST /t6 HTTP/1.1\r\nHost: a\r\nContent-Length: 1\r\n\r\nx"),
+      // The last body byte arrives after the last write of a response that then goes quiet.
+      request(server.port!, contentLength("/stream"), client => client.received("first"), "x"),
+    ]);
+    const stillOpen = await Promise.all([
+      request(server.port!, contentLength("/timeout-0") + "x"),
+      request(server.port!, contentLength("/timeout-60") + "x"),
     ]);
 
-    expect(results).toEqual([
-      { name: "get", closed: true },
-      { name: "post-cl", closed: true },
-      { name: "post-chunked", closed: true },
-      { name: "post-t6", closed: true },
+    // The timer wheel closes a request without a body on its next sweep, at most 4 s away.
+    // The kernel had every byte of the requests above before this one connected, so no
+    // timer above was armed later than this one: when this socket closes, every request
+    // that idleTimeout covers is closed too.
+    const control = await request(server.port!, "GET /no-body HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    await control.closed;
+
+    expect(aborted.filter(path => path !== "/tls-late").sort()).toEqual([
+      "/chunked",
+      "/chunked-late",
+      "/content-length",
+      "/content-length-late",
+      "/no-body",
+      "/route",
+      "/stream",
+      "/text",
+      "/timeout-2",
     ]);
-    expect(aborted.sort()).toEqual(["/get", "/post-chunked", "/post-cl", "/t6"]);
-    expect(server.pendingRequests).toBe(0);
+    // A TLS close waits for the client's close_notify, so this abort comes a few reads later.
+    await tlsAborted.promise;
+    await Promise.all(closedByTimer.map(client => client.closed));
+    expect(server.pendingRequests).toBe(2);
+
+    held["/timeout-0"].resolve(new Response("zero"));
+    held["/timeout-60"].resolve(new Response("sixty"));
+    const responses = await Promise.all([stillOpen[0].received("zero"), stillOpen[1].received("sixty")]);
+    expect(responses.map(response => response.split("\r\n")[0])).toEqual(["HTTP/1.1 200 OK", "HTTP/1.1 200 OK"]);
   },
-  20_000,
+  // One sweep of the 4 s timer wheel does not fit the 5 s default.
+  15_000,
 );
 
 it.concurrent("#6462", async () => {

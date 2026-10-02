@@ -2873,6 +2873,8 @@ pub mod use_directive;
 pub mod lexer_log;
 pub use lexer_log::LexerLog;
 pub mod lexer_tables;
+#[cfg(test)]
+mod native_test_shims;
 pub mod nodes;
 pub mod runtime;
 

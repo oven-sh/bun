@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, tempDir, tls } from "harness";
 import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { truncateSync } from "node:fs";
@@ -384,7 +384,10 @@ describe("fetch() re-sends a Bun.file() body when following a redirect", () => {
       res => ({ rejected: false as const, status: res.status }),
       e => ({ rejected: true as const, code: e.code }),
     );
-    expect(outcome).toEqual({ rejected: true, code: "RequestBodyLengthMismatch" });
+    // Windows reads the file into memory before the request starts, so it uploads what it read.
+    expect(outcome).toEqual(
+      isWindows ? { rejected: false, status: 200 } : { rejected: true, code: "RequestBodyLengthMismatch" },
+    );
   });
 
   // A server may redirect as soon as it has seen the request head, while the

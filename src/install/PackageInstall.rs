@@ -15,10 +15,11 @@ use bun_threading::work_pool::Task as WorkPoolTask;
 #[cfg(windows)]
 use bun_threading::{ThreadPool, WaitGroup};
 
+use crate::lockfile::package::PackageColumns as _;
 use crate::package_installer::NodeModulesFolder;
 use crate::{
-    BuntagHashBuf, Lockfile, Npm, PackageID, PackageManager, Repository, Resolution,
-    TruncatedPackageNameHash, bun_fs, bun_json, buntaghashbuf_make, initialize_store, resolution,
+    BuntagHashBuf, Lockfile, Npm, PackageID, PackageManager, Resolution, TruncatedPackageNameHash,
+    bun_fs, bun_json, buntaghashbuf_make, initialize_store, resolution,
 };
 
 bun_output::declare_scope!(install, hidden);
@@ -36,6 +37,7 @@ pub struct PackageInstall<'a> {
 
     pub(crate) progress: Option<&'a mut Progress>,
 
+    pub(crate) package_id: PackageID,
     pub(crate) package_name: SemverString,
     pub(crate) package_version: &'a [u8],
     pub(crate) patch: Option<Patch>,
@@ -775,9 +777,7 @@ impl<'a> PackageInstall<'a> {
         true
     }
 
-    // 1. verify that .bun-tag exists (was it installed from bun?)
-    // 2. check .bun-tag against the resolved version
-    fn verify_git_resolution(&mut self, repo: &Repository, root_node_modules_dir: &Dir) -> bool {
+    fn verify_bun_tag(&mut self, expected: &[u8], root_node_modules_dir: &Dir) -> bool {
         let dest_len = self.destination_dir_subpath.len();
         let suffix: &[u8] = &[SEP, b'.', b'b', b'u', b'n', b'-', b't', b'a', b'g'];
         // Reshaped for borrowck — write into buf via raw indices.
@@ -803,20 +803,47 @@ impl<'a> PackageInstall<'a> {
         else {
             return false;
         };
-        strings::eql_long(
-            repo.resolved.slice(&self.lockfile.buffers.string_bytes),
-            &bun_tag_file.bytes,
-            true,
-        )
+        strings::eql_long(expected, &bun_tag_file.bytes, true)
+    }
+
+    fn read_cached_bun_tag(&self, buf: &mut [u8]) -> Option<usize> {
+        let tag_path = path::resolve_path::join_z::<path::platform::Auto>(&[
+            self.cache_dir_subpath.as_bytes(),
+            b".bun-tag",
+        ]);
+        let len = sys::File::openat(self.cache_dir, tag_path.as_bytes(), sys::O::RDONLY, 0)
+            .ok()?
+            .read_all(buf)
+            .ok()?;
+        (len < buf.len()).then_some(len)
     }
 
     pub(crate) fn verify(&mut self, resolution: &Resolution, root_node_modules_dir: &Dir) -> bool {
         let verified = match resolution.tag {
-            resolution::Tag::Git => {
-                self.verify_git_resolution(resolution.git(), root_node_modules_dir)
+            resolution::Tag::Git | resolution::Tag::Github => {
+                let lockfile = self.lockfile;
+                self.verify_bun_tag(
+                    resolution
+                        .repository()
+                        .resolved
+                        .slice(&lockfile.buffers.string_bytes),
+                    root_node_modules_dir,
+                )
             }
-            resolution::Tag::Github => {
-                self.verify_git_resolution(resolution.github(), root_node_modules_dir)
+            resolution::Tag::LocalTarball | resolution::Tag::RemoteTarball => 'tarball: {
+                let integrity =
+                    self.lockfile.packages.items_meta()[self.package_id as usize].integrity;
+                let mut buf = [0u8; 128];
+                let expected: &[u8] = if integrity.tag.is_supported() {
+                    bun_core::fmt::buf_print_infallible(&mut buf, format_args!("{}", integrity))
+                } else {
+                    // Lockfile predates tarball integrity: installing would copy the cache entry.
+                    let Some(len) = self.read_cached_bun_tag(&mut buf) else {
+                        break 'tarball false;
+                    };
+                    &buf[..len]
+                };
+                self.verify_bun_tag(expected, root_node_modules_dir)
             }
             resolution::Tag::Root => self.verify_transitive_symlinked_folder(root_node_modules_dir),
             resolution::Tag::Folder => {

@@ -1,4 +1,5 @@
 import { bunEnv, bunExe, isASAN, isWindows } from "harness";
+import { isDeepStrictEqual } from "node:util";
 import vm from "node:vm";
 
 describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
@@ -145,6 +146,193 @@ describe("Bun.deepEquals strict mode", () => {
   // against Object.prototype.
   it.failing("distinguishes a null-prototype object from an object literal", () => {
     expect(Bun.deepEquals(Object.create(null), {}, true)).toBe(false);
+  });
+});
+
+// `a = []; a.length = 2 ** 32 - 1` must compare without one probe per claimed index.
+describe("sparse arrays that only claim a length", () => {
+  const cases = [
+    ["all holes strict", "equal(holes(), holes())", "true"],
+    ["all holes loose", "loose(holes(), holes())", "true"],
+    ["last index equal", "equal(at(last, 1), at(last, 1))", "true"],
+    ["last index differs", "equal(at(last, 1), at(last, 2))", "false"],
+    ["last index against a hole", "equal(at(last, 1), holes())", "false"],
+    ["first index against a hole", "equal(at(0, 1), holes())", "false"],
+    ["undefined against a hole loose", "loose(at(last, undefined), holes())", "true"],
+    ["undefined against a hole strict", "strict(at(last, undefined), holes())", "false"],
+    ["nested strict", "equal([holes()], [holes()])", "true"],
+    ["toEqual all holes", "passes(() => expect(holes()).toEqual(holes()))", "true"],
+    ["toStrictEqual last index equal", "passes(() => expect(at(last, 1)).toStrictEqual(at(last, 1)))", "true"],
+    ["toEqual last index matcher", "passes(() => expect(at(last, 1)).toEqual(at(last, expect.any(Number))))", "true"],
+  ] as const;
+
+  it("compare without walking every index", async () => {
+    const fixture = `
+      const util = require('node:util');
+      const assert = require('node:assert');
+      const { expect } = require('bun:test');
+
+      const last = 2 ** 32 - 2;
+      const holes = () => { const a = []; a.length = 2 ** 32 - 1; return a; };
+      const at = (index, value) => { const a = holes(); a[index] = value; return a; };
+      const equal = util.isDeepStrictEqual;
+      const loose = (a, b) => Bun.deepEquals(a, b);
+      const strict = (a, b) => Bun.deepEquals(a, b, true);
+      const passes = assertion => { try { assertion(); return true; } catch { return false; } };
+
+      ${cases.map(([name, expression]) => `console.log(${JSON.stringify(name)}, ${expression});`).join("\n      ")}
+
+      assert.deepStrictEqual(holes(), holes());
+      console.log('assert.deepStrictEqual', true);
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      // Kill switch: one probe per claimed index takes about a minute per comparison.
+      timeout: 20_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(proc.signalCode).toBeNull();
+    expect(stdout).toBe(
+      [...cases.map(([name, , answer]) => `${name} ${answer}`), "assert.deepStrictEqual true", ""].join("\n"),
+    );
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // In loose mode the longer array's tail may hold only holes and undefined.
+  it("compare sparse arrays of different lengths in loose mode", () => {
+    const sized = (length: number, ...entries: [index: number, value: unknown][]) => {
+      const a: unknown[] = [];
+      a.length = length;
+      for (const [index, value] of entries) a[index] = value;
+      return a;
+    };
+
+    expect(Bun.deepEquals(sized(200_000), sized(400_000))).toBe(true);
+    expect(Bun.deepEquals(sized(200_000), sized(400_000, [399_999, 1]))).toBe(false);
+    expect(Bun.deepEquals(sized(400_000, [399_999, 1]), sized(200_000))).toBe(false);
+    expect(Bun.deepEquals(sized(200_000), sized(400_000, [399_999, undefined]))).toBe(true);
+    expect(Bun.deepEquals(sized(400_000, [399_999, undefined]), sized(200_000))).toBe(true);
+    expect(Bun.deepEquals(sized(200_000, [150_000, 1]), sized(400_000, [150_000, 1]))).toBe(true);
+    expect(Bun.deepEquals(sized(200_000, [150_000, 1]), sized(400_000, [150_000, 2]))).toBe(false);
+    expect(Bun.deepEquals(sized(200_000), sized(400_000), true)).toBe(false);
+  });
+
+  describe.each([
+    ["a sparse map", 110_000],
+    ["the vector", 1_000],
+  ] as const)("see an index that a getter adds to %s during the comparison", (_storage, added) => {
+    it.each([
+      ["Bun.deepEquals", (a: unknown, b: unknown) => Bun.deepEquals(a, b)],
+      ["Bun.deepEquals strict", (a: unknown, b: unknown) => Bun.deepEquals(a, b, true)],
+      ["util.isDeepStrictEqual", isDeepStrictEqual],
+    ] as const)("%s", (_name, compare) => {
+      const a: unknown[] = [];
+      const b: unknown[] = [];
+      a.length = b.length = 200_000;
+      a[0] = {
+        get x() {
+          a[added] = 1;
+          return 1;
+        },
+      };
+      b[0] = { x: 1 };
+
+      expect(compare(a, b)).toBe(false);
+      expect(a[added]).toBe(1);
+    });
+  });
+
+  // toEqual and toStrictEqual are their own instantiations of the comparison, and a matcher is user code that runs inside it.
+  it("compare through expect().toEqual and toStrictEqual", () => {
+    const sparse = (...indices: number[]) => {
+      const a: unknown[] = [];
+      a.length = 200_000;
+      for (const index of indices) a[index] = index;
+      return a;
+    };
+
+    expect(sparse(0, 199_999)).toEqual(sparse(0, 199_999));
+    expect(sparse(0, 199_999)).toStrictEqual(sparse(0, 199_999));
+    expect(sparse(0, 199_999)).not.toEqual(sparse(0, 199_998));
+    expect(sparse(0, 199_999)).not.toStrictEqual(sparse(0, 199_998));
+
+    const withMatcher = sparse(0);
+    withMatcher[199_999] = expect.any(Number);
+    expect(sparse(0, 199_999)).toEqual(withMatcher);
+
+    expect.extend({
+      toStoreInto(_received: unknown, target: unknown[], index: number) {
+        target[index] = 1;
+        return { pass: true, message: () => "" };
+      },
+    });
+    const storeInto = (expect as unknown as { toStoreInto(target: unknown[], index: number): unknown }).toStoreInto;
+    const a = sparse(0);
+    const b = sparse();
+    b[0] = storeInto(a, 110_000);
+    expect(a).not.toEqual(b);
+    expect(a[110_000]).toBe(1);
+  });
+
+  // Known gap: the swap keeps the sparse map's size, so the comparison does not notice that its keys changed.
+  it.failing("see an index that a getter swaps for another during the comparison", () => {
+    const a: unknown[] = [];
+    const b: unknown[] = [];
+    a.length = b.length = 200_000;
+    a[150_000] = 1;
+    a[0] = {
+      get x() {
+        delete a[150_000];
+        a[170_000] = 1;
+        return 1;
+      },
+    };
+    b[0] = { x: 1 };
+
+    expect(Bun.deepEquals(a, b)).toBe(false);
+  });
+
+  const dense = new Array(100_000).fill(0);
+  const denseCopy = dense.slice();
+  const denseWithOtherTail = dense.slice();
+  denseWithOtherTail[99_999] = 1;
+
+  describe.each([true, false])("strict: %p", strict => {
+    it("still see the indices a sparse map holds", () => {
+      const sparse = (...indices: number[]) => {
+        const a: unknown[] = [];
+        a.length = 200_000;
+        for (const index of indices) a[index] = index;
+        return a;
+      };
+      const deepEquals = (a: unknown, b: unknown) => Bun.deepEquals(a, b, strict);
+
+      expect(deepEquals(sparse(199_999), sparse(199_999))).toBe(true);
+      expect(deepEquals(sparse(199_999), sparse(199_998))).toBe(false);
+      expect(deepEquals(sparse(199_999), sparse())).toBe(false);
+      expect(deepEquals(sparse(), sparse(199_999))).toBe(false);
+      expect(deepEquals(sparse(0, 100, 199_999), sparse(0, 100, 199_999))).toBe(true);
+      expect(deepEquals(sparse(0, 100, 199_999), sparse(0, 100, 199_998))).toBe(false);
+      expect(deepEquals(sparse(0, 199_999), sparse(0))).toBe(false);
+      expect(deepEquals(Object.freeze(sparse(199_999)), Object.freeze(sparse(199_999)))).toBe(true);
+      expect(deepEquals(Object.freeze(sparse(199_999)), Object.freeze(sparse(199_998)))).toBe(false);
+    });
+
+    // 100,000 is JSC's MIN_SPARSE_ARRAY_INDEX, the smallest length that can leave the index-by-index walk.
+    it("compare dense arrays above the sparse threshold", () => {
+      const deepEquals = (a: unknown, b: unknown) => Bun.deepEquals(a, b, strict);
+
+      expect(deepEquals(dense, denseCopy)).toBe(true);
+      expect(deepEquals(dense, denseWithOtherTail)).toBe(false);
+      expect(deepEquals(denseWithOtherTail, dense)).toBe(false);
+    });
   });
 });
 

@@ -1,0 +1,113 @@
+run     2026-10-02T14:52:35Z  tag neg-1.4.2  expect differ  steps seams seams-bu testrows comments runtime bundle pmdiff
+base    /workspace/base/bun.f4d755a9c  sha256 833143090519ea1d1c0b089ca582dc76667825a4c1aa472199a356f775c0e98c  1.4.3-canary.1+bc7a813b1
+next    /usr/local/bun/bin/bun  sha256 a83d263767d839e4d2649ca8e35d07159c7afc99afdc96d731ced29e056dda0c  1.4.2+744846f84  built 2026-09-05T01:47:41Z  workers 4
+tree    /workspace/wt/parser  2102fb058f9c6ac2f09d43501cf821b200e8bd87  0 modified files under src and test  EXPECTED_VERSION 34
+tools   parity.sh f523c5c6225e  harness.all.mjs 1c94e1dad47a (34 configurations)  diff.mjs 7594403b9718  seams-seen.mjs b67da585609f  causes none
+seen  seams     sources 1089   x 34 records 37026    differ 1840    crashes 0/0  corpus 140755828465  sha256 of the records 255aa6be3c2c722d != 2349e4fc609df914
+        UNSEEN fn.param-modifier                      0 of  70 sources differ,     0 records    | 
+        UNSEEN fn.rest-comma                          0 of  83 sources differ,     0 records    | 
+        UNSEEN class.implements                       0 of 102 sources differ,     0 records    | 
+        seen   class.accessor                        56 of  89 sources differ,   892 records  A>A=892  | t.js=176 t.jsx=44 t.ts=560 t.tsx=112
+        seen   class.index-signature                  2 of 128 sources differ,    24 records  A>A=24  | t.ts=20 t.tsx=4
+        UNSEEN enum.bracket-name                      0 of  42 sources differ,     0 records    | 
+        UNSEEN paren.colon-after-operand              0 of  75 sources differ,     0 records    | 
+        UNSEEN paren.type-list-before-colon           0 of  48 sources differ,     0 records    | 
+        UNSEEN arrow.body-before-colon                0 of  78 sources differ,     0 records    | 
+        UNSEEN stmt.named-like-cast                   0 of 105 sources differ,     0 records    | 
+        UNSEEN stmt.abstract-declare                  0 of  24 sources differ,     0 records    | 
+        UNSEEN stmt.namespace-import-expr             0 of  38 sources differ,     0 records    | 
+        UNSEEN module.with-on-next-line               0 of  49 sources differ,     0 records    | 
+        seen   metadata.dotted-merge                 72 of  72 sources differ,   864 records  A>A=864  | t.ts=720 t.tsx=144
+        seen   site.unchanged                         5 of  86 sources differ,    60 records  A>A=60  | t.ts=50 t.tsx=10
+seen  seams-bu  sources 744    x 34 records 25296    differ 1082    crashes 0/0  corpus 77db46ce5942  sha256 of the records 549e63ad6fd95188 != 4e7c05dd7b58a73e
+        UNSEEN fn.rest-comma                          0 of  46 sources differ,     0 records    | 
+        seen   fn.param-modifier                      1 of  67 sources differ,    12 records  A>A=12  | t.ts=10 t.tsx=2
+        seen   class.index-signature                  1 of  88 sources differ,    12 records  A>A=12  | t.ts=10 t.tsx=2
+        UNSEEN enum.bracket-name                      0 of  29 sources differ,     0 records    | 
+        seen   class.accessor                        41 of  61 sources differ,   657 records  A>A=657  | t.js=132 t.jsx=33 t.ts=410 t.tsx=82
+        UNSEEN expr.colon-after-parens                0 of  83 sources differ,     0 records    | 
+        seen   meta.dotted-names                     20 of  20 sources differ,   240 records  A>A=240  | t.ts=200 t.tsx=40
+        UNSEEN expr.arrow-body-before-colon           0 of  60 sources differ,     0 records    | 
+        UNSEEN class.implements-entry                 0 of  66 sources differ,     0 records    | 
+        UNSEEN stmt.named-like-cast                   0 of  60 sources differ,     0 records    | 
+        UNSEEN stmt.abstract-declare-class            0 of  16 sources differ,     0 records    | 
+        UNSEEN stmt.import-in-namespace               0 of  22 sources differ,     0 records    | 
+        UNSEEN path.with-on-next-line                 0 of  31 sources differ,     0 records    | 
+        seen   guard.type-parameters-and-arguments   13 of  95 sources differ,   161 records  A>A=161  | t.js=4 t.jsx=1 t.ts=130 t.tsx=26
+seen  testrows  sources 301    x 34 records 10234    differ 864     crashes 0/0  corpus 7188b5c7588d  sha256 of the records 672f1e03d5b5f014 != 1a75bc5b1b0d037f
+        i.ts.plain           R>R         2
+        i.tsx.plain          R>R         2
+        s.ts.deco            R>R         2
+        s.ts.plain           R>R         2
+        s.tsx.plain          R>R         2
+        t.js.deco            A>A         2
+        t.js.exp             A>A         2
+        t.js.min.all         A>A         2
+        t.js.plain           A>A         2
+        t.jsx.plain          A>A         2
+        t.ts.bun             A>A         67
+        t.ts.bun             R>R         2
+        t.ts.deco            R>R         2
+        t.ts.deco.keep       R>R         2
+        t.ts.deco.trim       R>R         2
+        t.ts.exp             R>R         2
+        t.ts.fields.assign   R>R         2
+        t.ts.imports.keep    A>A         67
+        t.ts.imports.keep    R>R         2
+        t.ts.meta            R>R         2
+        t.ts.min.all         A>A         67
+        t.ts.min.all         R>R         2
+        t.ts.min.ids         A>A         67
+        t.ts.min.ids         R>R         2
+        t.ts.nodce           A>A         67
+        t.ts.nodce           R>R         2
+        t.ts.plain           A>A         67
+        t.ts.plain           R>R         2
+        t.ts.plain.min       A>A         67
+        t.ts.plain.min       R>R         2
+        t.ts.plain.node      A>A         67
+        t.ts.plain.node      R>R         2
+        t.ts.repl            A>A         67
+        t.ts.repl            R>R         2
+        t.ts.tree            A>A         67
+        t.ts.tree            R>R         2
+        t.tsx.deco           R>R         2
+        t.tsx.exp            R>R         2
+        t.tsx.min.ids        A>A         67
+        t.tsx.min.ids        R>R         2
+        t.tsx.plain          A>A         67
+        t.tsx.plain          R>R         2
+seen  comments  sources 122    x 34 records 4148     differ 34      crashes 0/0  corpus 71d0420c2a27  sha256 of the records 13f998485d2a2c56 != f99757de8ce3dce2
+        t.js.deco            A>A         2
+        t.js.exp             A>A         2
+        t.js.min.all         A>A         2
+        t.js.plain           A>A         2
+        t.jsx.plain          A>A         2
+        t.ts.bun             A>A         2
+        t.ts.imports.keep    A>A         2
+        t.ts.min.all         A>A         2
+        t.ts.min.ids         A>A         2
+        t.ts.nodce           A>A         2
+        t.ts.plain           A>A         2
+        t.ts.plain.min       A>A         2
+        t.ts.plain.node      A>A         2
+        t.ts.repl            A>A         2
+        t.ts.tree            A>A         2
+        t.tsx.min.ids        A>A         2
+        t.tsx.plain          A>A         2
+seen  runtime comments  122 modules, 0 evaluated | 122 modules, 0 evaluated  base: versions 33 entries 101  next: versions 28 entries 101  sha256 fd0b1276f239d73a != 6c93805f630cb21d
+        entries only of the base 0, only of the binary under test 0, of both with other bytes 2
+seen  bundle  comments  122 sources, 366 bundles | 122 sources, 366 bundles  sha256 982c9368b7e6795f != f933f7c8864cd481
+        ts   A>A output              "class Ac { accessor x /* zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz */ = 1; } export function g(){ let longName
+        tsx  A>A output              "class Ac { accessor x /* zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz */ = 1; } export function g(){ let longName
+        js   A>A output              "class Ac { accessor x /* zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz */ = 1; } export function g(){ let longName
+        ts   A>A output              "class Ac { accessor x // zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\n = 1; } export function g(){ let longName 
+        tsx  A>A output              "class Ac { accessor x // zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\n = 1; } export function g(){ let longName 
+        js   A>A output              "class Ac { accessor x // zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\n = 1; } export function g(){ let longName 
+        js   A>A output                              2
+        ts   A>A output                              2
+        tsx  A>A output                              2
+366 bundles compared, 6 differ
+same  pmdiff  comments  122 sources, 366 files a side  exit 0 | exit 0  bytes 123406 | 123406  sha256 b51ce1a80bf07da5 =
+same    pmdiff.comments
+RESULT  FAIL: 2 pairs did not run or groups of seams are not seen; pairs that have to differ and do not: none

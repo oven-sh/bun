@@ -14,7 +14,9 @@
 # usage: /workspace/tools/lk r3report.sh [<out dir>]      a step whose output exists is not run again: remove the file to repeat it
 # Environment (defaults in brackets): S [/tmp/costproof]  BASE  BASE_BUN  REF  HEAD  HEAD_BUN  REF_TREE [$S/root/ref]
 #   HEAD_TREE [/workspace/wt/parser]  AST_BASE [bc7a813b10]  ELSE=1 (accept sites with an else arm)  ALLOW=<file of exceptions>
-#   COUNT=<bun-profile of a counting build> SITES=<its sites.tsv> (../tools/sitecount.py)  LINTONLY  SITE (see cgclass.py)
+#   COUNT=<bun-profile of a counting build> SITES=<its sites.tsv> (sitecount2.py, then r3cycle.sh count <its root>)
+#   LINTONLY (names that only a lint parse reaches)  SITE (the line of a site, see cgclass.py)
+# The counts of step 3 need the lock; steps 4 to 6 only read files.
 S=${S:-/tmp/costproof}
 O=${1:-$S/report}
 BASE=${BASE:-/workspace/base/bun-profile.f4d755a9c}; BASE_BUN=${BASE_BUN:-/workspace/base/bun.f4d755a9c}

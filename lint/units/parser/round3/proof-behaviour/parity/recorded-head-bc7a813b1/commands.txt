@@ -1,0 +1,26 @@
+2026-10-02, after the restart: /workspace/head/bun.head is gone, so the head side is the recorded run of round 2
+(round2/a1-differential/bottom-up/runs/head.*.jsonl.gz: harness.mjs, 15 configurations, release build of be1ebe5295).
+The base side is a fresh run of the base of today, /workspace/base/bun.bc7a813b1, with the same harness.mjs:
+
+  B=/workspace/base/bun.bc7a813b1; G=/workspace/notes/lint/units/parser/grammar-diff
+  R=/workspace/notes/lint/units/parser/round2/a1-differential/bottom-up/runs
+  export BUN_DEBUG_QUIET_LOGS=1 BUN_NO_CORE_DUMP=1 BUN_RUNTIME_TRANSPILER_CACHE_PATH=0 NO_COLOR=1
+  $B $G/harness.mjs $G/corpus.testrows.json    base.testrows.jsonl.gz    --jobs=4
+  $B $G/harness.mjs $G/corpus.targeted-09.json base.targeted-09.jsonl.gz --jobs=4
+  $B $G/harness.mjs $G/corpus.small.json       base.small.jsonl.gz       --jobs=4
+  $B $G/diff.mjs base.testrows.jsonl.gz    $R/head.testrows.jsonl.gz     --show=2   > diff.testrows.txt   exit 1
+  $B $G/diff.mjs base.targeted-09.jsonl.gz $R/head.targeted-ext.jsonl.gz --show=2   > diff.targeted.txt   exit 1
+  $B $G/diff.mjs base.small.jsonl.gz       $R/head.small.jsonl.gz        --show=1   > diff.small.txt      exit 1
+
+sha256 of the records of the fresh base runs (the run without its first line):
+  testrows  77468c48cc326d5a5329afe92ad108182a10d179d7f6b41f925169d0f100a3e2
+  targeted  ba2aed306128816e0ddeaf35fee67ea768f4bb6c3139fdef12aa78d819249b5e
+  small     2d9f0eb39865624b3ef690a598ca4497cd937c41dbcb871c3982cd23baa73c0b
+They are the values that the release builds of main at e3566be889 (round 2) and at f4d755a9cf (before the restart) gave.
+
+differing records, with no cause list (every one is "unexplained", exit code 1):
+  testrows    3,556 of     4,515   (352 A>A, 3,204 R>A)
+  targeted    2,423 of    59,280   (55 A>A, 1,715 R>A, 653 R>R)
+  small     111,240 of 3,144,420   (1,180 A>A, 23,760 R>A, 86,300 R>R)
+The same three counts as the run of the binary /workspace/head/bun.head before the restart
+(../round1/summary.20261002T100903Z.txt: main testrows 3556, main targeted 2423, main small 111240).

@@ -1,0 +1,9 @@
+run     2026-10-02T14:54:00Z  tag dbg-367d939d9  expect zero  steps comments runtime pmdiff
+base    /workspace/base/bun.f4d755a9c  sha256 833143090519ea1d1c0b089ca582dc76667825a4c1aa472199a356f775c0e98c  1.4.3-canary.1+bc7a813b1
+next    /workspace/bun/build/debug/bun-debug  sha256 8ecae477e42a7c46a3dac804214286f0db5d6bcc2afe570b9181456eea8a5293  1.4.3-debug+367d939d9  built 2026-09-18T13:35:45Z  workers 4
+tree    /workspace/wt/parser  2102fb058f9c6ac2f09d43501cf821b200e8bd87  0 modified files under src and test  EXPECTED_VERSION 34
+tools   parity.sh f523c5c6225e  harness.all.mjs 1c94e1dad47a (34 configurations)  diff.mjs 7594403b9718  seams-seen.mjs b67da585609f  causes none
+ok    comments  sources 122    x 34 records 4148     differ 0       crashes 0/0  corpus 71d0420c2a27  sha256 of the records 13f998485d2a2c56 =
+skip  runtime: a binary with debug assertions names its cache entries *.debug.pile
+skip  pmdiff: left to the release build
+RESULT  ZERO differing records in 1 pairs of runs

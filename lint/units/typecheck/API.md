@@ -334,7 +334,9 @@ This section says what the crate got so that cargo compiles them; the rows are i
   `tscore/golang.rs` and `ast_diagnostic.rs` hold all but `deep_clone_node`. Layer 4 brought `Text`, `DiagnosticId` and
   `DiagnosticStore`; the others wait ("Binder: the wiring of `binder`" below). Layer 6 brought `deep_clone_node`
   ("Emit printer: the wiring of `printer`" at the end of this file). Layer 7 brought `Map`, `LiveList` and `Memo`
-  (`0d31a6eb0f`, the last point of "Differences from the contract" above).
+  (`0d31a6eb0f`, the last point of "Differences from the contract" above), and `Diagnostics`, `DiagnosticsCollection`,
+  `RepopulateDiagnosticInfo` and `RepopulateDiagnosticKind` (`644e7f1b94`, "Node table: the collection of a checker and
+  the comparison of diagnostics" below).
 - `lowering::ParseDiagnostic` and `importer::javascript::ParseDiagnostic` stay two types until `ast/diagnostic.rs` has
   the diagnostic itself. It has since `d0230a94c6`; the two types are still there.
 
@@ -431,9 +433,94 @@ the functions, and the four places of `binder.go` that call what was added, read
 - `Bound::heap_bytes` does not count the diagnostics.
 - `crate::core::{Map, LiveList, Memo}` and `crate::ast::{Diagnostics, DiagnosticsCollection, RepopulateDiagnosticInfo,
   RepopulateDiagnosticKind, deep_clone_node}`: files of later layers name them and no file defines them
-  (`deep_clone_node` is in `ast/deepclone.rs` since layer 6).
+  (`deep_clone_node` is in `ast/deepclone.rs` since layer 6; the four others of `crate::ast` are in `ast/diagnostic.rs`
+  since `644e7f1b94`, the next heading).
 - No test reads what was added. The tests of the contract's diagnostics block (`diagnostics_tests.rs`) need the
-  comparisons and the writer, which are not in the tree.
+  comparisons and the writer, which are not in the tree. The comparisons are since `644e7f1b94`; the writer is not.
+
+## Node table: the collection of a checker and the comparison of diagnostics (`ast/diagnostic.rs`)
+
+Commit `644e7f1b94`, written by the job that commits the worktree. `ast/diagnostic.rs` (1,311 lines, 361 before) now
+also holds `internal/ast/diagnostic.go` 15-30, 55, 74 and 80 (the repopulate info), 234-364 (`DiagnosticsCollection`)
+and 366-503 (the comparisons), and Go's `slices` sorting that they call. The four files of `checker/` that import the
+names (`c02_program_checker.rs`, `c21_resolved_symbols_diagnostics.rs`, `c22_symbols_merge.rs`,
+`c24_external_modules.rs`) are unchanged.
+
+### How a caller writes the calls
+
+- `SourceFiles` is what the comparison and a writer read of a file: `file_name(file)`, `path(file)`, `text(file)` and
+  `ecma_line_map(file) -> &[i32]`, each for the root of a source file. `ProgramFiles` of `c21` implements it.
+- `Diagnostics { store: &DiagnosticStore, files: &F }` is a `Copy` view over the diagnostics of one store:
+  `compare_diagnostics(d1, d2) -> isize` (`ast.CompareDiagnostics`), `equal_diagnostics(d1, d2)` and
+  `equal_diagnostics_no_related_info(d1, d2)`.
+- `DiagnosticsCollection` (`Default`): `add(view, d) -> DiagnosticId` (the id that the collection keeps: `d`, or an
+  equal one that it had), `lookup(view, d)` (nil when none), `get_global_diagnostics(view)`,
+  `get_diagnostics_for_file(view, file)` and `get_diagnostics(view)`. Each takes the view first, the three getters
+  return `Vec<DiagnosticId>`, and all but `get_diagnostics` take `&mut self` (the lists are sorted at the first read).
+- `store[d].set_repopulate_info(RepopulateDiagnosticInfo { kind, module_reference, mode, package_name })` and
+  `store[d].repopulate_info() -> Option<&RepopulateDiagnosticInfo>`. `RepopulateDiagnosticKind::{MODE_MISMATCH,
+  MODULE_NOT_FOUND}` are 1 and 2; the `Default` of the info has kind 0, which upstream has no name for.
+
+### Differences from the contract and from upstream
+
+- The text is lines 10 to 16 and 337 to 739 of `checker-data-model-contract/bottom-up/crate/src/ast_diagnostic.rs` with
+  four differences: the paths of the tree (`crate::ast::ids`, `crate::core`); `strings::compare` of `stringutil/util.rs`
+  in place of the contract's private `compare_strings` (the same body); the sorting functions are called as
+  `slices::...` of a private `mod slices` at the end of the file, which is the contract's `tscore/slices.rs` with
+  `pub(super)` on its three entries; and `get_diagnostic_message_identity` has upstream's second branch
+  (diagnostic.go 399: a message of code -1 is compared by its text), so an ad hoc diagnostic with an empty text has the
+  empty identity, where the contract's text answered its key `-1`. Seven one-line comments are new.
+  `round2-layer7-checker/diagnostic-assemble.py` makes the file from the one of `d0230a94c6` and the contract's texts.
+- As in the contract: the key of the index and of the lists is the root of the file, where upstream's is its path; a
+  nil diagnostic is not added, where upstream dereferences nil; there is no mutex (a collection belongs to one checker);
+  `get_diagnostics` walks the files in the order of their first diagnostic, where upstream ranges over a map; the
+  recursion over chains and related information stops past depth 200 (there `equal` answers false and a comparison
+  descends no further), where upstream has no bound; `slices.Compare` of two argument lists answers the difference of the lengths, where upstream answers -1 or +1
+  (every caller reads the sign).
+- The repopulate info is not in the contract. It is `Option<Box<RepopulateDiagnosticInfo>>` in the diagnostic (upstream's
+  pointer); `clone_diagnostic` copies it, where upstream's `Clone` shares the pointer; `set_repopulate_info` takes the
+  info by value, so it cannot set nil again (no caller does).
+- Not in the tree, as before: `SetExternalData` (82), `String` (125), `displayMessageArgs` (134),
+  `NewDiagnosticFromSerialized` (166), `NewExternalDiagnostic` (223).
+
+### Verified
+
+Cargo compiled nothing with this commit: the survey after it is the first compile of these lines in the real crate.
+What was checked instead is `sh round2-layer7-checker/diagnostic-probe.sh` (single processes, no cargo), which reads
+the file of the tree beside the real `ast/ids.rs`, `core/text.rs`, `diagnostics/` and `stringutil/` (stand-in:
+`core::ResolutionMode` with the derive list of `core/compileroptions.rs` 364):
+
+- `rustc --edition 2024 --crate-type lib --emit=metadata` with the rust lints of the workspace denied, and
+  `clippy-driver` with the clippy table of the workspace and the repository's `clippy.toml`: exit 0, no warning. The
+  root also holds the calls of `c02`, `c21`, `c22` and `c24` as those files write them.
+- Five tests over the file in that root (they are not in the tree): one of two equal diagnostics is kept and both of
+  a collision; the getters sort by path, position, end, code and arguments, and `lookup` finds an equal diagnostic; the
+  longer chain and the more related information come first; an ad hoc message is compared by its text, the empty one
+  first; the repopulate info is kept, copied by `clone_diagnostic`, and a write through nil is dropped.
+- `mod slices` as a crate of its own (`diagnostic-slices-test.py`), with overflow checks on: `sort_func` leaves the
+  order of Go on the 210 vectors of `importer/javascript/testdata/go_sort_func.txt`; `sort_stable_func` gives the order
+  of the standard library's stable sort and `binary_search_func` the first position that is not less, for 0 to 299
+  elements over six key counts; with a comparer that answers at random (4,000 rounds) the two sorts end, keep every
+  element and do not panic.
+- `rustfmt --check --edition 2024` on the file: exit 0. No `unsafe`, `unwrap`, `expect`, `panic!`, `allow(`, and no run
+  of two comment lines.
+- Once, not in the script: `round2-layer7-checker/c21-sink-probe.rs` without its stand-ins for `SourceFiles`,
+  `Diagnostics` and `DiagnosticsCollection`, with this file in their place and with `core/golang.rs` of `a9b14ab2d6`
+  (the one of the tree names `bun_collections`): the real `c21_resolved_symbols_diagnostics.rs` compiles with `rustc`, as
+  a library and with `--test`. Its test was not run: it asserts what the stand-in collection did.
+- Not done: `cargo check`, `cargo clippy`, `cargo test`; the contract's `diagnostics_tests.rs` over this file; a read of
+  `c02`, `c22` and `c24` by a compiler (their calls were read and copied into the probe).
+
+### What waits
+
+- Go's `slices` sorting is in the tree four times, each private to its file or its package: here (`binary_search_func`,
+  `sort_stable_func` and `sort_func`, with a comparer that answers an `isize`), `checker/c43_unions_intersections.rs`
+  (the first two, the same text), `checker/utilities.rs` and `importer/javascript/tree.rs` (`slices::sort_func`, with a
+  comparer that answers a `bool`). `core/golang.rs` is where one copy belongs ("What callers in the tree expect and
+  these packages do not have" under "Leaf packages"); `sort_and_deduplicate_diagnostics` of the contract's
+  `compiler_program.rs` will need `sort_func` from a module that is not `ast`.
+- No test of the tree reads the collection or the comparisons. The contract's `diagnostics_tests.rs` also needs its
+  writer (`diagnosticwriter.rs`) and `compiler_program.rs`, which are not in the tree.
 
 ## Checker: signatures, instantiation, types of symbols, widening (K3 steps 18 to 21)
 

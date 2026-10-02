@@ -682,8 +682,7 @@ pub mod lib {
     //
     // Thin streaming reader over a tar.gz blob: `init` opens the archive in
     // memory, `next` yields one header at a time, `read_entry_data` slurps the
-    // current entry's payload, `close` tears down. Errors carry a static
-    // message plus a copy of libarchive's own message.
+    // current entry's payload, `close` tears down.
 
     /// Generic result type used by [`ArchiveIterator`].
     pub enum IteratorResult<T> {
@@ -831,8 +830,7 @@ pub mod lib {
     }
 
     impl NextEntry {
-        /// Reads this entry's full data into a heap buffer. `reader` is the
-        /// one this `NextEntry` was yielded from.
+        /// Reads the full data of this entry. `reader` is the one that yielded it.
         fn read_entry_data(
             &self,
             reader: &MemoryReader<'_>,

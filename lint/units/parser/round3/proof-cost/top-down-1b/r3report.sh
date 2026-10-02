@@ -60,6 +60,8 @@ for g in $G; do for t in base ref head; do grep -A1 '^group' $O/raw$t.$g.log | t
 # 4. the tables, by function body
 python3 $H/r3table2.py $O ref $REF head $HEAD --src "$HEAD_TREE" --site "$SITE" > $O/table.ref-head.txt
 python3 $H/r3table2.py $O base $BASE ref $REF > $O/table.base-ref.txt
+python3 $H/r3table2.py $O ref $REF head $HEAD --match 'bun_js_parser|bun_ast|bun_js_printer|bun_sourcemap' --no-default > $O/table.wide.ref-head.txt
+python3 $H/r3table2.py $O base $BASE ref $REF --match 'bun_js_parser|bun_ast|bun_js_printer|bun_sourcemap' --no-default > $O/table.wide.base-ref.txt
 python3 $H/r3table2.py $O base $BASE head $HEAD --src "$HEAD_TREE" --site "$SITE" > $O/table.base-head.txt
 python3 $H/vexonly.py $O ref $REF head $HEAD > $O/vexonly.ref-head.txt
 for g in $G; do
@@ -94,7 +96,7 @@ printf 'ts      base-ref  %s\n' "$(head -1 $O/fncmp.ts.base-ref.txt)"
 for t in base ref head; do printf 'strict  %-4s %s\n' $t "$(tail -1 $O/optsites.strict.$t.txt)"; done
 tail -1 $O/lintcalls.strict.head.txt
 echo "== counts"
-cat $O/table.ref-head.txt; cat $O/table.base-ref.txt
+cat $O/table.ref-head.txt; cat $O/table.base-ref.txt; cat $O/table.wide.ref-head.txt
 for g in $G; do printf '%-15s %s\n' $g "$(tail -1 $O/cgclass.raw.$g.ref-head.txt)"; done
 cat $O/vexonly.ref-head.txt
 [ -f $O/sites.count.txt ] && tail -5 $O/sites.count.txt

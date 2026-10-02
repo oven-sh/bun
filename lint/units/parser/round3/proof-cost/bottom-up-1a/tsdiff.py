@@ -58,6 +58,7 @@ def calls(lines):
     return out
 rows = []; bad = 0; new_lint = 0
 for n in sorted(set(A) | set(B)):
+    if 'shared_generics_of_the_head_build' in n: continue  # the shim of mkref.sh, only in the reference
     may = bool(MAY.search(n) or LINT.search(n))
     if n not in A:
         if LINT.search(n): new_lint += 1; continue

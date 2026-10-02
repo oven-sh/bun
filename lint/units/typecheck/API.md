@@ -3016,3 +3016,116 @@ At `f0097bcc09`, two callees, each called by its upstream name with upstream's p
 
 What waits in another file: `c46_mark_references.rs` 31 says that `check_class_expression_external_helpers` is kept
 there until the file of its upstream range exists. That file exists now, and the function is still in `c46`.
+
+## Checker: assertions and binary operators (`checker/c19_assertions_binary_operators.rs`)
+
+Commit `48da5c6a89` (written by the job that commits the worktree). 32 of the 34 functions of `checker.go`
+12378-13233 (layers E-CORE for the two assertion functions, E-OPER for the rest), in upstream order, and
+`PredicateSemantics` of 12968. `getExactOptionalUnassignableProperties` and `isExactOptionalPropertyMismatch`
+(13208-13219) are in `relater.rs`, as before. PORT_STATUS.md has the row.
+
+NOT compiled by cargo when it was written: the crate did not compile (modules of `checker/mod.rs` without a file).
+"Verified" below says what was checked instead.
+
+### How a caller writes the calls
+
+- `check_assertion(node, check_mode)`, `check_binary_expression(node, check_mode)` and
+  `check_binary_like_expression(left, operator_token, right, check_mode, error_node)` answer a `TypeId`; a nil error
+  node is `NodeId::NIL`. `check_assertion_deferred(node)` answers nothing.
+- `check_destructuring_assignment(node, source_type, check_mode, right_is_this) -> TypeId`,
+  `check_object_literal_assignment(node, source_type, right_is_this)`,
+  `check_object_literal_destructuring_property_assignment(node, object_literal_type, property_index: isize, all_properties: NodeListId, right_is_this)`,
+  `check_array_literal_assignment(node, source_type, check_mode)`,
+  `check_array_literal_destructuring_element_assignment(node, source_type, element_index: isize, element_type, check_mode)`
+  and `check_reference_assignment(target, source_type, check_mode)`: `TypeId::NIL` is upstream's nil result, and the
+  nil list is `NodeListId::NIL`.
+- `report_operator_error(left_type, operator: Kind, right_type, error_node, is_related)`: the callback is
+  `Option<&mut dyn FnMut(&mut Checker<'a>, TypeId, TypeId) -> bool>`, `None` for upstream's nil. A caller writes
+  `Some(&mut |c: &mut Checker<'a>, left: TypeId, right: TypeId| ..)`. `report_operator_error_unless(.., types_are_compatible)`
+  and `get_base_types_if_unrelated(left_type, right_type, is_related) -> (TypeId, TypeId)` take the callback as
+  `&mut dyn FnMut(&mut Checker<'a>, TypeId, TypeId) -> bool`. The callback gets the checker, as the one of `some_type`.
+- `check_assignment_operator(left, operator: Kind, right, left_type, right_type)`,
+  `check_arithmetic_operand_type(operand, t, diagnostic: MessageId, is_await_valid) -> bool`,
+  `check_for_disallowed_es_symbol_operand(left, right, left_type, right_type, operator: Kind) -> bool`,
+  `check_nan_equality(error_node, operator: Kind, left, right)`, `check_truthiness_of_type(t, node) -> TypeId`,
+  `check_instance_of_expression(left, right, left_type, right_type, check_mode) -> TypeId`,
+  `check_in_expression(left, right, left_type, right_type) -> TypeId`,
+  `check_reference_expression(expr, invalid_reference_message, invalid_optional_chain_message) -> bool`.
+- `PredicateSemantics` is a flag set of `checker_flags!`: `NONE`, `ALWAYS`, `NEVER`, `SOMETIMES`.
+  `get_syntactic_truthy_semantics(node)` and `get_syntactic_nullishness_semantics(node)` answer it. `checker/mod.rs`
+  has no glob for the file, so the name is `checker::c19_assertions_binary_operators::PredicateSemantics`; only this
+  file names it, as upstream.
+- These only read and take `&self`: `get_suggested_boolean_operator`, `is_side_effect_free`, `is_indirect_call`. Every
+  other method takes `&mut self`.
+
+### Differences from upstream
+
+- Stack tests, each the first statement of its function, at the four entries of
+  `checker-expressions-calls-flow/top-down/data/tested_entries.tsv` that are in this range:
+  `check_destructuring_assignment` (the error type), `get_syntactic_truthy_semantics` and
+  `get_syntactic_nullishness_semantics` (`SOMETIMES`: the zero value would report TS2872, TS2873, TS2869 or TS2871)
+  and `is_side_effect_free` (false, no TS2695).
+- The panic that closes the switch of `checkBinaryLikeExpression` (12640) is `fail_detail` with the operator kind, and
+  the error type, as `fallbacks.tsv` has it.
+- `rhsEval.Value.(jsnum.Number)` (12498) is a match on `LiteralValue::Number`, and the number that the message of
+  TS6807 prints is `Number::string`, which is what `%v` prints of a `jsnum.Number`.
+- The comma operator (12625-12637): the parse diagnostics of the file are ids of the store of its parser
+  (`SourceFile::diagnostics` and `SourceFile::diagnostic_store`); a file without a store has no diagnostic.
+- `ast.NewDiagnostic` of 12385 is `diagnostic_store.new_diagnostic`, as `grammarchecks.rs` writes it.
+- `checkDestructuringAssignment`: `target` is the value of the `if`, where upstream assigns it in both branches, and
+  `c.strictNullChecks && !c.hasTypeFacts(c.checkExpression(initializer), ..)` is two nested tests, so that the
+  initializer is checked only under `strictNullChecks`, as upstream's `&&` has it.
+- `properties[propertyIndex]` (12690) and `elements.Nodes[elementIndex]` (12756) are `List::at`: the nil node outside
+  the list, where upstream panics. The callers pass an index of the list.
+- `checkArithmeticOperandType`, `checkForDisallowedESSymbolOperand` and the result type of the arithmetic operators:
+  a nested call of the checker in an argument is a `let` before the call, in upstream's order of evaluation. The
+  `switch` over conditions of 12905 is an `if` with an `else if`.
+- `reportOperatorError`: the two tests of `isRelated != nil` are `as_deref_mut` and a move of the option.
+- `checkNaNEquality`: the suggestion is built with `concat`, and `err.AddRelatedInfo` is
+  `diagnostic_store.add_related_info`.
+- `hasEmptyObjectIntersection`: the second operand of `&&` is a block, so that `getBaseConstraintOrType` is asked only
+  for an intersection.
+- The reference to an issue number in the comment of 12567-12569 is not carried over.
+
+### Verified
+
+Cargo has not compiled the file, and nothing ran a function of it. What was checked:
+
+- `rustfmt --check --edition 2024`: exit 0. rustfmt leaves a statement alone when a token of it is longer than the
+  line (the calls with the long message names).
+- `sh round2-layer7-checker/c19-probe.sh` (rustc alone) and `sh round2-layer7-checker/c19-probe-clippy.sh`
+  (clippy-driver with the clippy table of the workspace and its `clippy.toml`): exit 0 each, no warning and no finding.
+  `c19-probe-gen.py` writes the probe: this file, `checker/types.rs` and `checker/c01_data.rs` by `#[path]`, the real
+  packages `diagnostics`, `core`, `collections`, `jsnum`, `stringutil` and `tspath` by `#[path]`,
+  `ast/{flags,ids,checkflags,symbolflags,modifierflags,nodeflags,kind_generated,diagnostic}.rs` by `#[path]`, and
+  stand-ins for every other name. The probe denies warnings, unused imports, variables, `mut` and assignments and
+  `unreachable_pub`. The script reads the signature of a stand-in from the file of the tree that defines the function
+  at the time of the run, and the body of a stand-in never returns: 21 methods of `Ast` and 31 free functions of
+  `ast/`, 3 of `scanner/`, 78 methods of the checker from 27 files and 10 free functions of `checker/`, with the
+  `Symbol` record, five node records and `evaluator::Result` copied from their files. Written by hand in the probe:
+  the four callees of the last section, `StackCheck`, `CacheHashKey`, `OuterExpressionKinds` and `JSDeclarationKind`
+  with the three and one constants that the file names, the view `SourceFile` with its four readers,
+  `Ast::as_source_file`, `ListItem`, `Fallback`, a `Checker` of the fields that the three files read, and a crate
+  `bun_collections` that names the map of std. `Ast` and `Checker` are invariant in their lifetime there, as in the
+  tree. A copy of the file with two swapped arguments, an unused variable and a nested `&mut self` call gave the three
+  errors (E0308, unused variable, E0499), and a copy with `clone` of a `Copy` value gave the clippy finding.
+- Scripts over the file: the 32 functions have upstream's names in upstream's order; each of the 77 imported names is
+  used and no free function is called without an import; no two comment lines are adjacent; no `unwrap`, `expect`,
+  `panic`, `todo`, `unimplemented`, `unreachable` or `unsafe`; every `[...]` indexes a store of records, a link store
+  of the checker or the diagnostic store of a parser; the 35 diagnostic messages of the range exist by name in
+  `diagnostics/diagnostics_generated.rs`.
+- The calls that the file makes were compared by name and number of arguments with the definitions of the tree, and
+  the seven calls that other files make into it (`c05` 327, `c08` 381, 456, 464 and 680, `c14` 731 and 743) fit the
+  signatures by name, number and order of arguments.
+- Not checked: the four callees that have no definition, the real `Ast`, `SourceFile` and `Checker` (the probe has
+  stand-ins for them), rustc and clippy on the real crate, and any result against upstream's baselines.
+
+### What this file expects and the tree does not have
+
+At `48da5c6a89`, four callees, each called by its upstream name with upstream's parameter order, as the other
+callers of the tree write them:
+
+- `c18` (no file): `check_property_access_expression(node, check_mode, write_only) -> TypeId` (11334),
+  `report_nonexistent_property(prop_node, containing_type, is_unchecked_js)` (11620),
+  `check_property_accessibility(node, is_super, writing, t, prop) -> bool` (11844).
+- `c45`: `mark_property_as_referenced(prop, node_for_check_write_only, is_self_type_access)` (27829).

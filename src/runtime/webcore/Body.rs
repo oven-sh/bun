@@ -15,7 +15,7 @@ use bun_core::Output;
 use bun_http_types::MimeType::MimeType;
 // Re-export so callers can write `body::InternalBlob`.
 use crate::jsc::HTTPHeaderName;
-pub use crate::webcore::InternalBlob;
+pub(crate) use crate::webcore::InternalBlob;
 use crate::webcore::form_data::AsyncFormDataExt as _;
 use bun_core::String as BunString;
 use bun_core::{Utf8Bytes, WTFStringImpl, WTFStringImplExt as _, WTFStringImplStruct};
@@ -94,7 +94,7 @@ bun_core::declare_scope!(BodyMixin, visible);
 // `UnsafeCell` inside suppresses LLVM `noalias` on `&Body` so a re-entrant
 // host call cannot stack two `&mut` to the same field.
 #[repr(C)]
-pub struct Body {
+pub(crate) struct Body {
     pub value: JsCell<Value>, // = Value::Empty,
 }
 
@@ -202,7 +202,7 @@ impl Body {
 // at specific protocol points (e.g. resolve()). PORTING.md forbids `pub fn deinit(&mut self)`;
 // renamed to `reset()` since it cannot take `self` by value (in-place state transition).
 impl Body {
-    pub fn reset(&self) {
+    pub(crate) fn reset(&self) {
         self.value_mut().reset();
     }
 }
@@ -291,6 +291,11 @@ impl PendingValue {
         self.producer = streams::SourceHandle::None;
     }
 
+    /// `.text()` and friends, `Bun.write`, or a server's render-wait already reads this body.
+    pub(crate) fn has_consumer(&self) -> bool {
+        self.promise.is_some() || !self.action.is_none() || self.on_receive_value.is_some()
+    }
+
     /// Safe `&JSGlobalObject` accessor for the JSC_BORROW `global` back-pointer.
     #[inline]
     pub(crate) fn global(&self) -> &JSGlobalObject {
@@ -328,7 +333,7 @@ impl PendingValue {
         global_object: &JSGlobalObject,
         this_value: JSValue,
     ) -> bool {
-        if self.promise.is_some() {
+        if self.has_consumer() {
             return true;
         }
 
@@ -347,7 +352,7 @@ impl PendingValue {
     }
 
     pub(crate) fn is_disturbed2(&self, global_object: &JSGlobalObject) -> bool {
-        if self.promise.is_some() {
+        if self.has_consumer() {
             return true;
         }
 
@@ -463,7 +468,7 @@ impl PendingValue {
     }
 }
 
-pub enum Action {
+pub(crate) enum Action {
     None,
     GetText,
     GetJSON,
@@ -592,9 +597,6 @@ pub enum Tag {
     Null,
 }
 
-// Constructed/matched across several modules; boxing `SystemError` would
-// ripple through those callers.
-#[allow(clippy::large_enum_variant)]
 pub enum ValueError {
     AbortReason(CommonAbortReason),
     SystemError(SystemError),
@@ -887,8 +889,7 @@ impl Value {
         // the server's render-wait) owns this body and has retargeted `task`
         // to its own context; materializing a stream here would dispatch the
         // producer's remaining callbacks with that foreign context.
-        if locked.promise.is_some() || !locked.action.is_none() || locked.on_receive_value.is_some()
-        {
+        if locked.has_consumer() {
             return ReadableStream::in_use(cx.global());
         }
         let mut drain_result = DrainResult::EstimatedSize(0);
@@ -1476,13 +1477,7 @@ impl Value {
             }));
         }
 
-        // `on_receive_value`: same consumer-owned-task guard as
-        // `locked_to_native_stream`.
-        if locked.promise.is_some()
-            || !locked.action.is_none()
-            || locked.readable.has()
-            || locked.on_receive_value.is_some()
-        {
+        if locked.has_consumer() || locked.readable.has() {
             return Ok(Value::Used);
         }
 
@@ -1928,7 +1923,6 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                     return Ok(handle_body_already_used(global_object));
                 }
                 // reshaped for borrowck
-                let _ = locked;
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
                 if let Value::Locked(locked) = value {
@@ -1984,7 +1978,6 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 {
                     return Ok(handle_body_already_used(global_object));
                 }
-                let _ = locked;
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
                 if let Value::Locked(locked) = value {
@@ -2036,7 +2029,6 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 {
                     return Ok(handle_body_already_used(global_object));
                 }
-                let _ = locked;
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
                 if let Value::Locked(locked) = value {
@@ -2076,7 +2068,6 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 }
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
-                let _ = readable; // not consumed in this branch
             }
             let value = self.get_body_value();
             if let Value::Locked(locked) = value {
@@ -2085,7 +2076,6 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 {
                     return Ok(handle_body_already_used(global_object));
                 }
-                let _ = locked;
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
             }
@@ -2191,7 +2181,6 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 {
                     return Ok(handle_body_already_used(global_object));
                 }
-                let _ = locked;
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
                 if let Value::Locked(locked) = value {

@@ -3510,8 +3510,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // How the loader says that this is resolved already: it asks again about the key of every top-level load.
-    // A browser parses the URL once more. Here the answer could be another key: a symlink, a plugin's onResolve.
+    // JSC asks this way about the key of a top-level load (JSModuleLoader::loadModule), which is resolved already.
     if (!useImportMap)
         RELEASE_AND_RETURN(scope, key.toPropertyKey(globalObject));
 
@@ -3580,7 +3579,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     return Identifier::fromString(vm, resolved);
 }
 
-JSC::Identifier StandaloneGlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject, JSModuleLoader* loader, JSValue key, JSValue referrer, RefPtr<JSC::ScriptFetcher> fetcher, bool b)
+JSC::Identifier StandaloneGlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject, JSModuleLoader* loader, JSValue key, JSValue referrer, RefPtr<JSC::ScriptFetcher> fetcher, bool useImportMap)
 {
     // Embedded modules import each other by their final `/$bunfs/` key; hand it straight back (unless a plugin could claim it).
     auto* zigGlobalObject = static_cast<Zig::GlobalObject*>(globalObject);
@@ -3600,7 +3599,7 @@ JSC::Identifier StandaloneGlobalObject::moduleLoaderResolve(JSGlobalObject* glob
             }
         }
     }
-    return GlobalObject::moduleLoaderResolve(globalObject, loader, key, referrer, WTF::move(fetcher), b);
+    return GlobalObject::moduleLoaderResolve(globalObject, loader, key, referrer, WTF::move(fetcher), useImportMap);
 }
 
 JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalObject,
@@ -3636,8 +3635,6 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
     if (scope.exception()) [[unlikely]]
         return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
 
-    JSC::Identifier resolvedIdentifier;
-
     // Not `auto` (GCOwnedDataScope): importModule below can drive moduleLoaderFetch synchronously; see that function for why no scope may be live.
     WTF::String moduleName = moduleNameValue->value(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
@@ -3661,21 +3658,6 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         sourceOriginStringHolder = sourceURL.path().toString();
     }
 
-    if (globalObject->onLoadPlugins.hasVirtualModules()) {
-        if (auto resolution = globalObject->onLoadPlugins.resolveVirtualModule(moduleName, sourceURL.protocolIsFile() ? sourceOriginStringHolder : String())) {
-            resolvedIdentifier = JSC::Identifier::fromString(vm, resolution.value());
-
-            auto result = loader->requestImportModule(globalObject, resolvedIdentifier, JSC::Identifier(), parameters, nullptr, /* deferred */ false, referrerAsyncOrder);
-            if (scope.exception()) [[unlikely]] {
-                return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
-            }
-            return result;
-        }
-    }
-
-    // The C++ module loader now extracts `with.type` into a
-    // ScriptFetchParameters before calling this hook, so `parameters` is
-    // already the parsed RefPtr (or null). Just forward it.
     auto result = loader->requestImportModule(globalObject, JSC::Identifier::fromString(vm, moduleName),
         JSC::Identifier::fromString(vm, sourceOriginStringHolder), WTF::move(parameters), nullptr, /* deferred */ false, referrerAsyncOrder);
     if (scope.exception()) [[unlikely]] {

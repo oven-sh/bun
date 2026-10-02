@@ -62,7 +62,6 @@
 #include "JavaScriptCore/JSMap.h"
 #include "JavaScriptCore/JSMapIterator.h"
 #include "JavaScriptCore/JSModuleLoader.h"
-#include "ModuleLoader.h"
 #include "JavaScriptCore/JSModuleRecord.h"
 #include "JavaScriptCore/JSNativeStdFunction.h"
 #include "JavaScriptCore/JSONObject.h"
@@ -3803,16 +3802,6 @@ JSC::EncodedJSValue EncodedSlice__toDOMExceptionInstance(const EncodedSlice* str
     return JSValue::encode(createDOMException(globalObject, code, toStringCopy(*str)));
 }
 
-JSC::JSPromise*
-JSC__JSModuleLoader__loadAndEvaluateModule(JSC::JSGlobalObject* globalObject,
-    const BunString* arg1)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    auto* promise = Bun::resolveAndEvaluateModule(globalObject, arg1->toWTFString());
-    EXCEPTION_ASSERT(!!promise == !scope.exception());
-    return promise;
-}
 #pragma mark - JSC::JSPromise
 
 void JSC__AnyPromise__wrap(JSC::JSGlobalObject* globalObject, EncodedJSValue encodedPromise, void* ctx, JSC::EncodedJSValue (*func)(void*, JSC::JSGlobalObject*))

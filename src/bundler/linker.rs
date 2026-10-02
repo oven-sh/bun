@@ -302,8 +302,8 @@ impl Linker {
         Ok(dupe(modkey.hash_name(file_path.text, &mut hash_name_buf)?))
     }
 
-    /// This modifies the Ast in-place! It resolves import records and
-    /// generates paths.
+    /// This modifies the Ast in-place! It rewrites the import records of builtins
+    /// and of the runtime.
     ///
     /// `import_path_format` is a runtime arg rather than a const generic —
     /// `options::ImportPathFormat` doesn't derive `ConstParamTy`, and the
@@ -331,7 +331,6 @@ impl Linker {
 
         let is_deferred = !result.pending_imports.is_empty();
 
-        // Step 1. Resolve imports & requires
         match result.loader {
             options::Loader::Jsx
             | options::Loader::Js

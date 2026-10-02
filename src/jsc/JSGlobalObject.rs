@@ -740,6 +740,25 @@ impl JSGlobalObject {
         Ok(Some(result))
     }
 
+    /// The key of the `build.module()` or `mock.module()` module that `specifier` names.
+    pub(crate) fn resolve_virtual_module(
+        &self,
+        specifier: &BunString,
+        importer: &BunString,
+    ) -> Option<BunString> {
+        let key = Bun__resolveVirtualModule(self, specifier, importer);
+        (!key.is_dead()).then_some(key)
+    }
+
+    /// Whether an `onLoad` would be called for `path`.
+    pub(crate) fn has_on_load(&self, namespace_: &[u8], path: &[u8]) -> JsResult<bool> {
+        let namespace_ = BunString::from_bytes(namespace_);
+        let ns = (namespace_.length() > 0).then_some(&namespace_);
+        crate::from_js_host_call_generic(self, || {
+            Bun__hasOnLoad(self, ns, &BunString::from_bytes(path))
+        })
+    }
+
     /// `args` formatted as UTF-8. If a `Display` impl fails mid-way (e.g. a
     /// JS `Symbol.toPrimitive` threw), the pending exception is cleared and
     /// the partial message is used rather than an error about an error.
@@ -1372,10 +1391,20 @@ impl JSGlobalObject {
 // see one nominal type (the previous local duplicate diverged from lib.rs).
 pub use crate::GregorianDateTime;
 
-/// The enum is defined once in `bun_bundler::transpiler` and re-exported
-/// here so the C++ FFI signature and all `bun_jsc` callers share one nominal
-/// type — no mirror enum, no transmute.
-pub use bun_bundler::transpiler::BunPluginTarget;
+#[repr(u8)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum BunPluginTarget {
+    Bun = 0,
+    Node = 1,
+    Browser = 2,
+}
+
+// Crosses FFI by-value to `JSBundlerPlugin__create` / `Bun__runOn*Plugins`
+// (C++: `typedef uint8_t BunPluginTarget`, `headers-handwritten.h`). NB: the
+// C++ header's *named* constants (`BunPluginTargetBrowser = 1`, `Node = 2`)
+// disagree with the Rust enum (`Node = 1`, `Browser = 2`). The width (`u8`)
+// is what matters at the ABI.
+bun_core::assert_ffi_discr!(BunPluginTarget, u8; Bun = 0, Node = 1, Browser = 2);
 
 // No `Default` derive — `code` has no default (only `errno`/`name` are
 // optional). Callers must always supply `code`.
@@ -1506,11 +1535,16 @@ unsafe extern "C" {
         source: &BunString,
         target: BunPluginTarget,
     ) -> JSValue;
-    pub(crate) safe fn Bun__pluginKey(
+    safe fn Bun__resolveVirtualModule(
         global: &JSGlobalObject,
         specifier: &BunString,
         importer: &BunString,
     ) -> BunString;
+    safe fn Bun__hasOnLoad(
+        global: &JSGlobalObject,
+        namespace_: Option<&BunString>,
+        path: &BunString,
+    ) -> bool;
 
     // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
     // ABI-identical to non-null `*const`); `ctx` is an opaque round-trip pointer

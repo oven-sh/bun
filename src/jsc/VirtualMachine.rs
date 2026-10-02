@@ -216,7 +216,7 @@ pub struct VirtualMachine {
     /// (`exit_tears_down_napi_envs`). The list is never walked again, so a hook
     /// pushed after this (a finalizer deferred from the final collection) would only leak.
     pub(crate) has_run_cleanup_hooks: bool,
-    /// `Bun.plugin()` was called in the current global.
+    /// An `onResolve` or `onLoad` was registered in the current global.
     pub has_plugins: bool,
     pub is_main_thread: bool,
     pub exit_handler: ExitHandler,
@@ -5227,6 +5227,45 @@ impl VirtualMachine {
         query_string: Option<&mut bun_core::String>,
         mode: ResolveMode,
     ) -> JsResult<Result<bun_core::String, JSValue>> {
+        if global.bun_vm().has_plugins {
+            match run_on_resolve(global, specifier, source)? {
+                None => {}
+                Some(Err(error)) => return Ok(Err(error)),
+                Some(Ok(answer)) => {
+                    if let Some(name) = global.resolve_virtual_module(&answer, source) {
+                        return Ok(Ok(name));
+                    }
+                    let resolved = Self::resolve_without_on_resolve::<IS_A_FILE_PATH>(
+                        global,
+                        &answer,
+                        source,
+                        query_string,
+                        mode,
+                    )?;
+                    // Not on disk, for an `onLoad` to serve.
+                    if resolved.is_err() && global.has_on_load(b"", &answer.to_utf8())? {
+                        return Ok(Ok(answer));
+                    }
+                    return Ok(resolved);
+                }
+            }
+        }
+        Self::resolve_without_on_resolve::<IS_A_FILE_PATH>(
+            global,
+            specifier,
+            source,
+            query_string,
+            mode,
+        )
+    }
+
+    fn resolve_without_on_resolve<const IS_A_FILE_PATH: bool>(
+        global: &JSGlobalObject,
+        specifier: &bun_core::String,
+        source: &bun_core::String,
+        query_string: Option<&mut bun_core::String>,
+        mode: ResolveMode,
+    ) -> JsResult<Result<bun_core::String, JSValue>> {
         const MAX_LEN: usize = (bun_paths::MAX_PATH_BYTES as f64 * 1.5) as usize;
         // `data:` URLs carry the module source inline and never touch the
         // filesystem, so the path-length cap does not apply to them.
@@ -5275,48 +5314,8 @@ impl VirtualMachine {
             }
         }
 
-        let mut specifier = specifier;
-        let mut specifier_utf8 = specifier.to_utf8();
+        let specifier_utf8 = specifier.to_utf8();
         let source_utf8 = source.to_utf8();
-
-        let answer: bun_core::String;
-        if jsc_vm.has_plugins {
-            use bun_bundler::transpiler::PluginRunner;
-            let spec = specifier_utf8.slice();
-            if PluginRunner::could_be_plugin(spec) {
-                let namespace = PluginRunner::extract_namespace(spec);
-                let after_namespace = if namespace.is_empty() {
-                    spec
-                } else {
-                    &spec[namespace.len() + 1..]
-                };
-                match plugin_runner_on_resolve_jsc(
-                    global,
-                    &bun_core::String::from_bytes(namespace),
-                    &bun_core::String::borrow_utf8(after_namespace),
-                    source,
-                    crate::BunPluginTarget::Bun,
-                )? {
-                    None => {}
-                    Some(OnResolveAnswer::Specifier(path)) => {
-                        let from_url = if path.starts_with_ascii(b"file://") {
-                            bun_url::path_from_file_url(&path)
-                        } else {
-                            bun_core::String::DEAD
-                        };
-                        answer = if from_url.is_dead() { path } else { from_url };
-                        specifier = &answer;
-                        specifier_utf8 = specifier.to_utf8();
-                    }
-                    Some(OnResolveAnswer::Key(key)) => return Ok(Ok(key)),
-                    Some(OnResolveAnswer::Invalid(error)) => return Ok(Err(error)),
-                }
-            }
-            let key = crate::js_global_object::Bun__pluginKey(global, specifier, source);
-            if !key.is_dead() {
-                return Ok(Ok(key));
-            }
-        }
 
         if let Some(hardcoded) = ModuleLoader::HardcodedModule::Alias::get(
             specifier_utf8.slice(),
@@ -5335,6 +5334,16 @@ impl VirtualMachine {
         // Node's `--expose-internals`.
         if ModuleLoader::exposed_internal_tag(specifier_utf8.slice()).is_some() {
             return Ok(Ok(specifier.clone()));
+        }
+
+        if jsc_vm.has_plugins {
+            let namespace = ModuleLoader::extract_namespace(&specifier_utf8);
+            // (One letter is a Windows drive.)
+            if namespace.len() > 1
+                && global.has_on_load(namespace, &specifier_utf8[namespace.len() + 1..])?
+            {
+                return Ok(Ok(specifier.clone()));
+            }
         }
 
         // Swap in a fresh log so resolver errors don't pollute the VM's main log.
@@ -5589,9 +5598,20 @@ impl VirtualMachine {
         // Note: reshaped for borrowck.
         let global = self.global;
         let main_str = bun_core::String::from_bytes(self.main());
-        let promise = jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, Some(&main_str))
-            .map(NonNull::as_ptr)
-            .ok_or(crate::CrateError::JSError)?;
+        let promise =
+            match jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, Some(&main_str)) {
+                Some(promise) => promise.as_ptr(),
+                // Not resolving is this file's failure, like not loading.
+                None => {
+                    let rejected = crate::JSPromise::rejected_promise_with_caught_exception(
+                        self.global(),
+                        jsc::JsError::Thrown,
+                    )?;
+                    // Like the loader's: whoever loads the file reports it, not the rejection tracker.
+                    rejected.set_handled();
+                    std::ptr::from_mut(rejected)
+                }
+            };
         self.set_pending_internal_promise(Some(promise));
         Ok(promise)
     }
@@ -7620,32 +7640,33 @@ fn wrap_unhandled_rejection_error_for_uncaught_exception(
         .to_js())
 }
 
-pub(crate) enum OnResolveAnswer {
-    /// In the `file` namespace: what is resolved instead, from the same importer, by all but `onResolve`.
-    Specifier(bun_core::String),
-    /// `namespace:path`.
-    Key(bun_core::String),
-    Invalid(JSValue),
-}
-
 /// `None` when no `Bun.plugin()` `onResolve` callback claimed the specifier.
-pub(crate) fn plugin_runner_on_resolve_jsc(
+fn run_on_resolve(
     global: &JSGlobalObject,
-    namespace: &bun_core::String,
     specifier: &bun_core::String,
     importer: &bun_core::String,
-    target: crate::BunPluginTarget,
-) -> JsResult<Option<OnResolveAnswer>> {
-    let empty = bun_core::String::EMPTY;
+) -> JsResult<Option<Result<bun_core::String, JSValue>>> {
+    let specifier = specifier.to_utf8();
+    if !ModuleLoader::could_be_plugin(&specifier) {
+        return Ok(None);
+    }
+    let namespace = ModuleLoader::extract_namespace(&specifier);
+    let path = if namespace.is_empty() {
+        &specifier[..]
+    } else {
+        &specifier[namespace.len() + 1..]
+    };
+    // The importer's key ends in the query it was imported with.
+    let importer = importer.to_utf8();
+    let importer = match bun_core::strings::index_of_char_usize(&importer, b'?') {
+        Some(query) => &importer[..query],
+        None => &importer[..],
+    };
     let Some(on_resolve_plugin) = global.run_on_resolve_plugins(
-        if namespace.length() > 0 && !namespace.eq_ascii(b"file") {
-            namespace
-        } else {
-            &empty
-        },
-        specifier,
-        importer,
-        target,
+        &bun_core::String::from_bytes(if namespace == b"file" { b"" } else { namespace }),
+        &bun_core::String::borrow_utf8(path),
+        &bun_core::String::borrow_utf8(importer),
+        crate::BunPluginTarget::Bun,
     )?
     else {
         return Ok(None);
@@ -7660,38 +7681,32 @@ pub(crate) fn plugin_runner_on_resolve_jsc(
         return Ok(None);
     }
     if !path_value.is_string() {
-        return Ok(Some(OnResolveAnswer::Invalid(
-            global.create_error_instance(format_args!(
-                "Expected \"path\" to be a string in onResolve plugin"
-            )),
-        )));
+        return Ok(Some(Err(global.create_error_instance(format_args!(
+            "Expected \"path\" to be a string in onResolve plugin"
+        )))));
     }
 
     let file_path = path_value.to_bun_string(global)?;
 
     if file_path.length() == 0 {
-        return Ok(Some(OnResolveAnswer::Invalid(
-            global.create_error_instance(format_args!(
-                "Expected \"path\" to be a non-empty string in onResolve plugin"
-            )),
-        )));
+        return Ok(Some(Err(global.create_error_instance(format_args!(
+            "Expected \"path\" to be a non-empty string in onResolve plugin"
+        )))));
     } else if file_path.eq_ascii(b".")
         || file_path.eq_ascii(b"..")
         || file_path.eq_ascii(b"...")
         || file_path.eq_ascii(b" ")
     {
-        return Ok(Some(OnResolveAnswer::Invalid(
-            global.create_error_instance(format_args!("\"path\" is invalid in onResolve plugin")),
-        )));
+        return Ok(Some(Err(global.create_error_instance(format_args!(
+            "\"path\" is invalid in onResolve plugin"
+        )))));
     }
     let user_namespace: bun_core::String = 'brk: {
         if let Some(namespace_value) = on_resolve_plugin.get(global, b"namespace")? {
             if !namespace_value.is_string() {
-                return Ok(Some(OnResolveAnswer::Invalid(
-                    global.create_error_instance(format_args!(
-                        "Expected \"namespace\" to be a string"
-                    )),
-                )));
+                return Ok(Some(Err(global.create_error_instance(format_args!(
+                    "Expected \"namespace\" to be a string"
+                )))));
             }
 
             let namespace_str = namespace_value.to_bun_string(global)?;
@@ -7713,12 +7728,19 @@ pub(crate) fn plugin_runner_on_resolve_jsc(
     };
 
     if user_namespace.eq_ascii(b"file") {
-        return Ok(Some(OnResolveAnswer::Specifier(file_path)));
+        if file_path.starts_with_ascii(b"file://") {
+            let path = bun_url::path_from_file_url(&file_path);
+            if !path.is_dead() {
+                return Ok(Some(Ok(path)));
+            }
+        }
+        return Ok(Some(Ok(file_path)));
     }
 
-    Ok(Some(OnResolveAnswer::Key(bun_core::String::create_format(
-        format_args!("{}:{}", user_namespace, file_path),
-    ))))
+    Ok(Some(Ok(bun_core::String::create_format(format_args!(
+        "{}:{}",
+        user_namespace, file_path
+    )))))
 }
 
 /// See [`VirtualMachine::enter_context`].

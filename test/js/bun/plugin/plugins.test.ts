@@ -1114,60 +1114,89 @@ it.concurrent("build.module() of a module whose import() is still loading its de
   });
 });
 
-// As in the example of onResolve in the documentation, which answers "./public/images/...".
-describe.concurrent("what onResolve answers without a namespace is resolved from the importer", () => {
-  const specifiers = ["relative", "extension", "directory", "package", "url", "module", "namespace"].map(
-    name => `answer/${name}.img`,
-  );
-  it.each([
-    [
-      "an import statement",
-      "entry.mjs",
-      specifiers.map((s, i) => `import v${i} from "${s}";`).join("\n") +
-        "\nconsole.log([v0, v1, v2, v3, v4, v5, v6].join());",
-    ],
-    ["import()", "entry.mjs", `console.log((await Promise.all(S.map(s => import(s)))).map(m => m.default).join());`],
-    ["require()", "entry.cjs", `console.log(S.map(s => require(s).default).join());`],
-    ["import.meta.require()", "entry.mjs", `console.log(S.map(s => import.meta.require(s).default).join());`],
-    [
-      "Bun.resolveSync()",
-      "entry.mjs",
-      `console.log(S.map(s => require("node:path").basename(Bun.resolveSync(s, import.meta.dir))).join());`,
-      "a.mjs,a.mjs,index.mjs,main.mjs,a.mjs,a-module,served:thing",
-    ],
-  ])("%s", async (_, name, source, expected = "a.mjs,a.mjs,index.mjs,dep,a.mjs,a module,thing") => {
-    using dir = tempDir("plugin-onresolve-answer", {
-      // Not these: they are where the answers lead from the working directory.
-      "public/a.mjs": `export default "from the working directory";`,
-      "public/index.mjs": `export default "from the working directory";`,
-      "src/public/a.mjs": `export default "a.mjs";`,
-      "src/public/index.mjs": `export default "index.mjs";`,
-      "src/node_modules/dep/package.json": `{ "name": "dep", "main": "main.mjs" }`,
-      "src/node_modules/dep/main.mjs": `export default "dep";`,
-      "plugin.ts": `
-        const answers = {
-          relative: "./public/a.mjs",
-          extension: "./public/a",
-          directory: "./public",
-          package: "dep",
-          url: Bun.pathToFileURL(import.meta.dir + "/src/public/a.mjs").href,
-          module: "a-module",
-          namespace: "served:thing",
-        };
-        Bun.plugin({
-          name: "answers",
-          setup(build) {
-            build.onResolve({ filter: /^answer\\/.*\\.img$/ }, ({ path }) => ({ path: answers[path.slice(7, -4)] }));
-            build.module("a-module", () => ({ exports: { default: "a module" }, loader: "object" }));
-            build.onLoad({ filter: /.*/, namespace: "served" }, ({ path }) => ({
-              contents: "export default " + JSON.stringify(path),
-              loader: "js",
-            }));
-          },
-        });
-      `,
-      ["src/" + name]: `const S = ${JSON.stringify(specifiers)};\n${source}`,
+it.concurrent(
+  "import() after delete require.cache of a module that onResolve redirected a resolved path to",
+  async () => {
+    using dir = tempDir("plugin-onresolve-removed", {
+      "a.mjs": `export const from = "a.mjs";`,
+      "b.mjs": `export const from = "b.mjs, evaluation " + (globalThis.evaluations = (globalThis.evaluations ?? 0) + 1);`,
+      "entry.ts": `
+      import { join } from "node:path";
+      Bun.plugin({
+        name: "redirect a path that is already resolved",
+        setup(build) {
+          build.onResolve({ filter: /a\\.mjs$/ }, () => ({ path: join(import.meta.dir, "b.mjs") }));
+        },
+      });
+
+      const a = join(import.meta.dir, "a.mjs");
+      console.log("first:", (await import(a)).from);
+      console.log("deleted:", delete require.cache[join(import.meta.dir, "b.mjs")]);
+      console.log("again:", (await import(a)).from);
+    `,
     });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "first: b.mjs, evaluation 1\ndeleted: true\nagain: b.mjs, evaluation 2\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
+
+// As in the example of onResolve in the documentation, which answers "./public/images/...".
+describe.concurrent("what onResolve answers without a namespace", () => {
+  const files = {
+    // Not these: they are where the answers lead from the working directory.
+    "public/a.mjs": `export default "from the working directory";`,
+    "public/index.mjs": `export default "from the working directory";`,
+    "src/public/a.mjs": `export default "a.mjs";`,
+    "src/public/index.mjs": `export default "index.mjs";`,
+    "src/node_modules/dep/package.json": `{ "name": "dep", "main": "main.mjs" }`,
+    "src/node_modules/dep/main.mjs": `export default "dep";`,
+    "src/importer.mjs": `export { default } from "who.importer";`,
+    "src/importer.cjs": `module.exports = require("who.importer");`,
+    "plugin.ts": `
+      import { basename } from "node:path";
+      const answers = {
+        "relative.img": "./public/a.mjs",
+        "extension.img": "./public/a",
+        "directory.img": "./public",
+        "package.img": "dep",
+        "url.img": Bun.pathToFileURL(import.meta.dir + "/src/public/a.mjs").href,
+        "module.img": "a-module",
+        "namespace.img": "served:thing",
+        "absent.img": import.meta.dir + "/src/absent.served",
+        "itself.img": "itself.img",
+        "long.img": "/" + Buffer.alloc(9000, "a") + ".js",
+      };
+      Bun.plugin({
+        name: "answers",
+        setup(build) {
+          build.onResolve({ filter: /\\.img$/ }, ({ path }) => ({ path: answers[path] }));
+          build.onResolve({ filter: /\\.importer$/ }, ({ importer }) => ({ path: basename(importer), namespace: "served" }));
+          build.module("a-module", () => ({ exports: { default: "a module" }, loader: "object" }));
+          build.onLoad({ filter: /.*/, namespace: "served" }, ({ path }) => ({
+            contents: "export default " + JSON.stringify(path),
+            loader: "js",
+          }));
+          build.onLoad({ filter: /(absent\\.served|itself\\.img)$/ }, ({ path }) => ({
+            contents: "export default " + JSON.stringify(basename(path)),
+            loader: "js",
+          }));
+        },
+      });
+    `,
+  };
+  async function run(name: string, source: string) {
+    using dir = tempDir("plugin-onresolve-answer", { ...files, ["src/" + name]: source });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "--preload", "./plugin.ts", "src/" + name],
       cwd: String(dir),
@@ -1176,12 +1205,97 @@ describe.concurrent("what onResolve answers without a namespace is resolved from
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected + "\n", stderr: "", exitCode: 0 });
+    return { stdout, stderr, exitCode };
+  }
+
+  const specifiers = [
+    "relative",
+    "extension",
+    "directory",
+    "package",
+    "url",
+    "module",
+    "namespace",
+    "absent",
+    "itself",
+  ];
+  const S = `const S = ${JSON.stringify(specifiers.map(name => name + ".img"))};\n`;
+  const loaded = "a.mjs,a.mjs,index.mjs,dep,a.mjs,a module,thing,absent.served,itself.img\n";
+  const resolved = "a.mjs,a.mjs,index.mjs,main.mjs,a.mjs,a-module,served:thing,absent.served,itself.img\n";
+  it.each([
+    [
+      "an import statement",
+      "entry.mjs",
+      specifiers.map(name => `import $${name} from "${name}.img";\n`).join("") +
+        `console.log([${specifiers.map(name => "$" + name)}].join());`,
+      loaded,
+    ],
+    [
+      "import()",
+      "entry.mjs",
+      S + `console.log((await Promise.all(S.map(s => import(s)))).map(m => m.default).join());`,
+      loaded,
+    ],
+    ["require()", "entry.cjs", S + `console.log(S.map(s => require(s).default).join());`, loaded],
+    [
+      "import.meta.require()",
+      "entry.mjs",
+      S + `console.log(S.map(s => import.meta.require(s).default).join());`,
+      loaded,
+    ],
+    [
+      "Bun.resolveSync()",
+      "entry.mjs",
+      S + `console.log(S.map(s => require("node:path").basename(Bun.resolveSync(s, import.meta.dir))).join());`,
+      resolved,
+    ],
+  ])("is resolved from the importer for %s", async (_, name, source, stdout) => {
+    expect(await run(name, source)).toEqual({ stdout, stderr: "", exitCode: 0 });
+  });
+
+  it("is an error to catch when it is too long for a path", async () => {
+    const source = `
+      try { require("long.img"); } catch (error) { console.log("require()", error.message.slice(0, 12)); }
+      import("long.img").catch(error => console.log("import()", error.message.slice(0, 12)));
+    `;
+    expect(await run("entry.cjs", source)).toEqual({
+      stdout: "require() ENAMETOOLONG\nimport() ENAMETOOLONG\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("is asked for with the path of the importer, without its query", async () => {
+    const source = `
+      import esm from "./importer.mjs?x=1";
+      console.log(esm, (await import("./importer.cjs?y=2")).default.default);
+    `;
+    expect(await run("entry.mjs", source)).toEqual({ stdout: "importer.mjs importer.cjs\n", stderr: "", exitCode: 0 });
+  });
+
+  it("is not asked for about a specifier that is empty or not a URL", async () => {
+    const source = `
+      for (const load of [() => import(""), async () => require("file://%zz"), async () => Bun.resolveSync("", import.meta.dir)])
+        console.log(await load().catch(error => error.name));
+    `;
+    expect(await run("entry.mjs", source)).toEqual({
+      stdout: "ResolveMessage\nResolveMessage\nResolveMessage\n",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });
 
-// The loader asked for a path that import() or require() had resolved to be resolved again, and the transpiler put every
-// specifier it could read through onResolve before the code ran. Either way onResolve was fed its own results.
+it.concurrent("an onLoad in the namespace of builtins leaves their aliases alone", async () => {
+  const source = `
+    Bun.plugin({ name: "node", setup(build) { build.onLoad({ filter: /^never$/, namespace: "node" }, () => {}); } });
+    console.log(typeof (await import("node:sys")).inspect, typeof require("node:sys").inspect);
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", source], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "function function\n", stderr: "", exitCode: 0 });
+});
+
 describe.concurrent("onResolve", () => {
   const files = {
     "a.mjs": `export const from = "a.mjs";`,
@@ -1197,6 +1311,9 @@ describe.concurrent("onResolve", () => {
     "a.test.js": `console.log("a.test.js"); require("bun:test").test("passes", () => {});`,
     "b.test.js": `console.log("b.test.js"); require("bun:test").test("passes", () => {});`,
     "c.test.js": `console.log("c.test.js"); require("bun:test").test("passes", () => {});`,
+    "absent.test.js": `require("bun:test").test("is not loaded", () => {});`,
+    "throws.test.js": `require("bun:test").test("is not loaded", () => {});`,
+    "other.test.js": `require("bun:test").test("passes", () => {});`,
     "plugin.ts": `
       import { basename, join } from "node:path";
       const next = { a: "b", b: "c", c: "d" };
@@ -1212,9 +1329,10 @@ describe.concurrent("onResolve", () => {
             console.log("onResolve", basename(path));
             return { path: "from " + basename(path), namespace: "virtual" };
           });
-          build.onResolve({ filter: /\\.throws$/ }, () => {
+          build.onResolve({ filter: /\\.throws$|throws\\.test\\.js$/ }, () => {
             throw new Error("from onResolve");
           });
+          build.onResolve({ filter: /absent\\.test\\.js$/ }, () => ({ path: "/absent/from-onResolve.js" }));
           build.onLoad({ filter: /.*/, namespace: "virtual" }, ({ path }) => ({
             contents: "export const from = " + JSON.stringify(path) + ";",
             loader: "js",
@@ -1263,14 +1381,44 @@ describe.concurrent("onResolve", () => {
 
   // What Bun loads itself has no importer.
   it.each([
-    ["a later preload", "", ["--preload", "./plugin.ts", "--preload", "./a.js", "entry.cjs"], "a.js", "b.js"],
-    ["Module.runMain()", `require("node:module").runMain("./a.js");`, undefined, "a.js", "b.js"],
-    ["a test file", "", ["test", "--preload", "./plugin.ts", "./a.test.js"], "a.test.js", "b.test.js"],
-  ])("is asked once about %s", async (_, source, args, asked, loaded) => {
-    const { stdout, stderr, exitCode } = await run("entry.cjs", source, args);
-    // (bun test prints its version first, and reports on stderr.)
-    if (args?.[0] !== "test") expect(stderr).toBe("");
-    expect({ stdout: stdout.slice(-2), exitCode }).toEqual({ stdout: ["onResolve " + asked, loaded], exitCode: 0 });
+    ["a later preload", "", ["--preload", "./plugin.ts", "--preload", "./a.js", "entry.cjs"]],
+    ["Module.runMain()", `require("node:module").runMain("./a.js");`, ["--preload", "./plugin.ts", "entry.cjs"]],
+    [
+      "Bun.ModuleGraph's import()",
+      `new Bun.ModuleGraph().import("./a.js");`,
+      ["--preload", "./plugin.ts", "entry.cjs"],
+    ],
+  ])("is asked once about %s", async (_, source, args) => {
+    expect(await run("entry.cjs", source, args)).toEqual({
+      stdout: ["onResolve a.js", "b.js"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("is asked once about a test file", async () => {
+    const { stdout, exitCode } = await run("entry.cjs", "", ["test", "--preload", "./plugin.ts", "./a.test.js"]);
+    // (After the version.)
+    expect({ stdout: stdout.slice(1), exitCode }).toEqual({
+      stdout: ["onResolve a.test.js", "b.test.js"],
+      exitCode: 0,
+    });
+  });
+
+  it.each([
+    ["answers what is not there", "./absent.test.js", "Cannot find module '/absent/from-onResolve.js'"],
+    ["throws", "./throws.test.js", "error: from onResolve"],
+  ])("that %s about a test file fails that file, and the next one runs", async (_, file, error) => {
+    const { stderr, exitCode } = await run("entry.cjs", "", [
+      "test",
+      "--preload",
+      "./plugin.ts",
+      file,
+      "./other.test.js",
+    ]);
+    expect(stderr).toContain(error);
+    expect(stderr).toContain(" 1 pass\n 1 fail\n 1 error\n");
+    expect(exitCode).toBe(1);
   });
 
   it.each([
@@ -1287,7 +1435,7 @@ describe.concurrent("onResolve", () => {
     ["an import statement", "entry.mjs", `import { from } from "virtual:thing"; console.log(from);`],
     ["import()", "entry.mjs", `console.log((await import("virtual:thing")).from);`],
     ["require()", "entry.cjs", `console.log(require("virtual:thing").from);`],
-  ])("is not needed by %s of a path in a namespace that has an onLoad", async (_, name, source) => {
+  ])("is not needed when the namespace has an onLoad: %s", async (_, name, source) => {
     expect(await run(name, source)).toEqual({ stdout: ["thing"], stderr: "", exitCode: 0 });
   });
 

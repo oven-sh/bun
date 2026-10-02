@@ -6,7 +6,6 @@
 //! `extern "Rust"` decls.
 
 use bun_alloc::Arena as ArenaAllocator;
-use bun_bundler::transpiler::PluginRunner;
 use bun_options_types::LoaderExt as _;
 
 use crate::virtual_machine::VirtualMachine;
@@ -244,7 +243,42 @@ extern "C" fn Bun__getDefaultLoader(
     loader
 }
 
-/// C++ entry point: runs the plugin for a virtual-module specifier, returning its exports (or zero when no plugin runner is set).
+/// The `namespace:` prefix of `specifier`, or `b""` if it has none
+/// (Windows drive-letter prefixes are not namespaces).
+pub(crate) fn extract_namespace(specifier: &[u8]) -> &[u8] {
+    let Some(colon) = bun_core::strings::index_of_char_usize(specifier, b':') else {
+        return b"";
+    };
+    if cfg!(windows)
+        && colon == 1
+        && specifier.len() > 3
+        && bun_paths::resolve_path::is_sep_any(specifier[2])
+        && ((specifier[0] > b'a' && specifier[0] < b'z')
+            || (specifier[0] > b'A' && specifier[0] < b'Z'))
+    {
+        return b"";
+    }
+    &specifier[..colon]
+}
+
+/// Cheap pre-filter before calling into a plugin: has a file extension or a `namespace:`.
+pub(crate) fn could_be_plugin(specifier: &[u8]) -> bool {
+    if let Some(last_dot) = bun_core::strings::last_index_of_char(specifier, b'.') {
+        let ext = &specifier[last_dot + 1..];
+        // '.' followed by either a letter or a non-ascii character
+        // maybe there are non-ascii file extensions?
+        // we mostly want to cheaply rule out "../" and ".." and "./"
+        if !ext.is_empty()
+            && (ext[0].is_ascii_lowercase() || ext[0].is_ascii_uppercase() || ext[0] > 127)
+        {
+            return true;
+        }
+    }
+    !bun_paths::is_absolute(specifier)
+        && bun_core::strings::index_of_char_usize(specifier, b':').is_some()
+}
+
+/// C++ entry point: runs the plugin for a virtual-module specifier, returning its exports (or zero when no plugin serves it).
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__runVirtualModule(
     global: &JSGlobalObject,
@@ -259,11 +293,11 @@ unsafe extern "C" fn Bun__runVirtualModule(
     let specifier_slice = unsafe { &*specifier_ptr }.to_utf8();
     let specifier = specifier_slice.slice();
 
-    if !PluginRunner::could_be_plugin(specifier) {
+    if !could_be_plugin(specifier) {
         return JSValue::ZERO;
     }
 
-    let namespace = PluginRunner::extract_namespace(specifier);
+    let namespace = extract_namespace(specifier);
     let after_namespace = if namespace.is_empty() {
         specifier
     } else {

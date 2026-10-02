@@ -817,7 +817,6 @@ console.log("survived", require("./late.js"));`,
     expect(exitCode).toBe(0);
   });
 
-  // The ES module loader asked the resolver about the path again, and loaded what it answered under another key.
   describe.concurrent(
     "Module._resolveFilename gives an ES module by a path the resolver would spell differently",
     () => {

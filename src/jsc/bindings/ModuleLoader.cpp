@@ -930,10 +930,18 @@ JSC::JSPromise* resolveAndEvaluateModule(JSC::JSGlobalObject* globalObject, cons
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* loader = globalObject->moduleLoader();
-    // JSC::loadAndEvaluateModule() asks without the import map, which is to say that it takes a key.
+    // JSC::loadAndEvaluateModule() takes a key.
     auto key = loader->resolve(globalObject, JSC::Identifier::fromString(vm, specifier), JSC::Identifier(), nullptr, /* useImportMap */ true);
     RETURN_IF_EXCEPTION(scope, nullptr);
     RELEASE_AND_RETURN(scope, loader->loadModule(globalObject, key, nullptr, nullptr, { JSC::ModuleLoadFlag::Evaluate }));
+}
+
+extern "C" JSC::JSPromise* JSC__JSModuleLoader__loadAndEvaluateModule(JSC::JSGlobalObject* globalObject, const BunString* specifier)
+{
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
+    auto* promise = resolveAndEvaluateModule(globalObject, specifier->toWTFString());
+    EXCEPTION_ASSERT(!!promise == !scope.exception());
+    return promise;
 }
 
 // Explicit instantiations of fetchCommonJSModuleNonBuiltin

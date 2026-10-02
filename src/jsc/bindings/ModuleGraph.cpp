@@ -603,17 +603,15 @@ JSPromise* JSModuleGraph::import(Zig::GlobalObject* globalObject, JSValue specif
     bool becomesMain = !m_mainPath && !Bun::isBuiltinModule(key.string());
     if (becomesMain)
         m_mainPath.set(vm, this, jsString(vm, key.string()));
-    JSPromise* loaded = loader->requestImportModule(globalObject, key, Identifier(), nullptr, nullptr);
+    // JSModuleLoader::requestImportModule() after its resolve, which would ask about the key.
+    JSPromise* loaded = loader->loadModule(globalObject, key, nullptr, nullptr, { ModuleLoadFlag::Evaluate, ModuleLoadFlag::Dynamic });
     if (scope.exception()) [[unlikely]] {
         if (becomesMain)
             m_mainPath.clear();
         return nullptr;
     }
-    // The loader marks its promise handled (import() in script derives one from it): so is what is
-    // returned here derived, by a reaction of JSC's own with no handler, so that a failure nobody
-    // handles is reported.
     JSPromise* result = JSPromise::create(vm, globalObject->promiseStructure());
-    result->pipeFrom(vm, loaded);
+    loaded->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ImportModuleNamespace, result, jsUndefined());
     return result;
 }
 

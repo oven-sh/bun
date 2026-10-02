@@ -1057,10 +1057,6 @@ pub struct ValidateObjectOpts {
     pub(crate) nullable: bool,
 }
 
-/// `BunPluginTarget` is defined once
-/// in `bun_bundler::transpiler` (lowest tier) and re-exported via
-/// `js_global_object` so `crate::BunPluginTarget` and every consumer share one
-/// nominal type.
 pub use self::js_global_object::BunPluginTarget;
 
 // ──────────────────────────────────────────────────────────────────────────

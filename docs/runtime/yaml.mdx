@@ -134,7 +134,7 @@ const data = Bun.YAML.parse(text, {
 
 | Option          | Limits                                                                                                                                                                                                                                                                                            | Default                                             |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
-| `maxAliasCount` | How much aliases may multiply the data of a document. `0` rejects every alias; an anchor that nothing refers to is still allowed. A negative number turns the check off.                                                                                                                          | A built-in limit that stops exponential expansion   |
+| `maxAliasCount` | How much aliases may multiply the data of a document. `0` rejects every alias; an anchor that nothing refers to is still allowed. A negative number or `Infinity` turns the check off.                                                                                                            | A built-in limit that stops exponential expansion   |
 | `maxDepth`      | How deep sequences and mappings may nest in a document: a scalar is `0`, `[]` is `1`, `a: [1]` is `2`. What an alias refers to counts as if it were written in the alias's place, and an alias to a collection that contains it is rejected. The array of a multi-document stream is not counted. | The stack alone; exceeding it throws a `RangeError` |
 
 ```ts
@@ -149,8 +149,8 @@ Bun.YAML.parse("a: [[1]]", { maxDepth: 2 });
 
 ```ts
 const text = `
-a: &a [x, x]    # two aliases: 3
-b: &b [*a, *a]  # one alias: 2, times the 3 of a
+a: &a [x, x]    # *a stands twice below: 1 + 2 = 3
+b: &b [*a, *a]  # *b stands once below: 1 + 1 = 2, times the 3 of a = 6
 c: *b
 `;
 

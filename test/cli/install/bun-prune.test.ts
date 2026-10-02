@@ -364,6 +364,30 @@ test.concurrent.each([["--production"], ["--prod"], ["--omit=dev"]])(
   },
 );
 
+// The optional peer row cannot keep a devDependency of the same name once dev is omitted, the same
+// as `bun install --production`. A required peer stays: bun installs peerDependencies by default.
+test.concurrent.each(linkers)(
+  "%s: --production removes a devDependency that is also an optional peerDependency",
+  async linker => {
+    const dir = await setupWithLinker(linker, {
+      name: "foo",
+      devDependencies: { "no-deps": "1.0.0", "a-dep": "1.0.1" },
+      peerDependencies: { "no-deps": "^1.0.0", "a-dep": "^1.0.1" },
+      peerDependenciesMeta: { "no-deps": { optional: true } },
+    });
+    const nm = join(dir, "node_modules");
+    expect(existsSync(join(nm, "no-deps"))).toBeTrue();
+
+    // isolated counts the store entry and the node_modules link of each package
+    const checked = linker === "hoisted" ? 2 : 4;
+    const { stdout, exitCode } = await prune(dir, "--production", "--linker", linker);
+    expect(out(stdout)).toEndWith(`- no-deps@1.0.0\n${REMOVED(1, checked)}`);
+    expect(exitCode).toBe(0);
+    expect(existsSync(join(nm, "no-deps"))).toBeFalse();
+    expect(existsSync(join(nm, "a-dep"))).toBeTrue();
+  },
+);
+
 test.concurrent("--production keeps a package that prod and dev both need", async () => {
   const pkg = {
     name: "foo",
@@ -1760,6 +1784,28 @@ test.concurrent(
       expect(existsSync(join(dir, "packages", ws, "node_modules", "no-deps", "package.json"))).toBeTrue();
     }
     await expectProductionInstallIsNoop(dir);
+  },
+);
+
+// The unselected root reaches the workspace through its optional peer, a second row with the workspace's name.
+test.concurrent(
+  "isolated: --production --filter keeps the store entry when the unselected root names the workspace as an optional peer",
+  async () => {
+    const dir = await setupWorkspaces("isolated", {
+      root: { peerDependencies: { selected: "*" }, peerDependenciesMeta: { selected: { optional: true } } },
+      packages: { selected: { dependencies: { "no-deps": "1.0.0" }, devDependencies: { "a-dep": "1.0.1" } } },
+    });
+    const storeEntry = join(dir, "node_modules", ".bun", "a-dep@1.0.1");
+
+    const { stdout, exitCode } = await prune(dir, "--production", "--filter", "selected", "--linker", "isolated");
+    expect(out(stdout)).toMatchInlineSnapshot(`
+      "bun prune <version> (<revision>)
+
+      - a-dep@1.0.1 (packages/selected/node_modules)
+      1 package removed (checked 4 installed packages)"
+    `);
+    expect(exitCode).toBe(0);
+    expect(existsSync(storeEntry)).toBeTrue();
   },
 );
 

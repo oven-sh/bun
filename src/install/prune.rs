@@ -13,7 +13,7 @@ use bun_sys::{self as sys, Dir, E, EntryKind, O};
 use crate::isolated_install::store::{EntryColumns as _, NodeColumns as _, entry as store_entry};
 use crate::isolated_install::{Store, Timings, build_store};
 use crate::lockfile::package::PackageColumns as _;
-use crate::lockfile::tree::is_filtered_dependency_or_workspace;
+use crate::lockfile::tree::{ReachedPackages, is_filtered_dependency_or_workspace};
 use crate::lockfile::{LoadResult, Lockfile, reachable, tree};
 use crate::lockfile_real::package::{Diff, DiffSummary, Package};
 use crate::package_manager::Options::{Enable, LogLevel};
@@ -1764,7 +1764,11 @@ fn store_entry_names(manager: &mut PackageManager, wanted: &DynamicBitSet) -> Ve
     names
 }
 
-fn direct_aliases(manager: &PackageManager, pkg_id: PackageID) -> Vec<Box<[u8]>> {
+fn direct_aliases(
+    manager: &PackageManager,
+    pkg_id: PackageID,
+    reached: &mut ReachedPackages,
+) -> Vec<Box<[u8]>> {
     let lockfile: &Lockfile = &manager.lockfile;
     let buf = lockfile.buffers.string_bytes.as_slice();
     let deps = lockfile.buffers.dependencies.as_slice();
@@ -1780,6 +1784,7 @@ fn direct_aliases(manager: &PackageManager, pkg_id: PackageID) -> Vec<Box<[u8]>>
             manager,
             lockfile,
             resolutions,
+            reached,
         ) {
             continue;
         }
@@ -1834,6 +1839,7 @@ fn plan_isolated(
     let lockfile: &Lockfile = &manager.lockfile;
     let buf = lockfile.buffers.string_bytes.as_slice();
     let pkg_res = lockfile.packages.items_resolution();
+    let mut reached = ReachedPackages::default();
     for pkg_id in 0..lockfile.packages.len() {
         let res = &pkg_res[pkg_id];
         let folder_path: Box<[u8]> = match res.tag {
@@ -1856,7 +1862,7 @@ fn plan_isolated(
         let Ok(dir) = Dir::open(&folder_path) else {
             continue;
         };
-        let direct = direct_aliases(manager, pkg_id as PackageID);
+        let direct = direct_aliases(manager, pkg_id as PackageID, &mut reached);
         let folder_idx = scan_folder(
             dir,
             &folder_path,

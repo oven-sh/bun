@@ -12,7 +12,7 @@
 
 use core::mem::{MaybeUninit, size_of};
 use core::ptr::{NonNull, addr_of_mut};
-use core::sync::atomic::{AtomicU16, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, Ordering};
 use std::collections::HashMap;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2170,6 +2170,10 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
 
 pub struct BSSMapInner<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool> {
     pub(crate) index: IndexMap,
+    /// Key hash to the first slot that `invalidate` or `mark_not_found` unmapped for it.
+    parked: IndexMap,
+    /// `parked` is not empty. `parked_index` reads it without `mutex`.
+    has_parked: AtomicBool,
     pub overflow_list: OverflowList<ValueType, BSS_OVERFLOW_BLOCK_SIZE>,
     pub(crate) mutex: Mutex,
     // Only `[0..backing_buf_used]` is initialized.
@@ -2196,6 +2200,8 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         unsafe {
             addr_of_mut!((*slot).mutex).write(Mutex::new());
             addr_of_mut!((*slot).index).write(IndexMap::default());
+            addr_of_mut!((*slot).parked).write(IndexMap::default());
+            addr_of_mut!((*slot).has_parked).write(AtomicBool::new(false));
             addr_of_mut!((*slot).backing_buf_used).write(0);
             OverflowList::init_counters_at(addr_of_mut!((*slot).overflow_list));
         }
@@ -2267,7 +2273,33 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
 
     pub fn mark_not_found(&mut self, result: Result) {
         let _guard = self.mutex.lock();
-        self.index.insert(result.hash, NOT_FOUND);
+        if let Some(replaced) = self.index.insert(result.hash, NOT_FOUND) {
+            self.park(result.hash, replaced);
+        }
+    }
+
+    /// Caller holds `mutex`.
+    fn park(&mut self, hash: HashKeyType, index: IndexType) {
+        if index.index() == NOT_FOUND.index() || index.index() == UNASSIGNED.index() {
+            return;
+        }
+        self.parked.entry(hash).or_insert(index);
+        self.has_parked.store(true, Ordering::SeqCst);
+    }
+
+    /// The slot, with its value, that `invalidate` or `mark_not_found` unmapped for this key.
+    #[inline]
+    pub fn parked_index(&mut self, result: &Result) -> Option<IndexType> {
+        if !self.has_parked.load(Ordering::SeqCst) {
+            return None;
+        }
+        self.find_parked(result.hash)
+    }
+
+    #[cold]
+    fn find_parked(&mut self, hash: HashKeyType) -> Option<IndexType> {
+        let _guard = self.mutex.lock();
+        self.parked.get(&hash).copied()
     }
 
     pub fn at_index(&mut self, index: IndexType) -> Option<&mut ValueType> {
@@ -2330,6 +2362,19 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         let _key = Self::key_hash(denormalized_key);
         self.index.remove(&_key).is_some()
     }
+
+    /// `remove`, but the slot the key had stays reachable through `parked_index`.
+    pub fn invalidate(&mut self, denormalized_key: &[u8]) -> bool {
+        let _guard = self.mutex.lock();
+        let key = Self::key_hash(denormalized_key);
+        match self.index.remove(&key) {
+            Some(index) => {
+                self.park(key, index);
+                true
+            }
+            None => false,
+        }
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2369,3 +2414,95 @@ impl Allocator for DefaultAlloc {}
 // The real impl is `impl GlobalAlloc for Mimalloc` above.
 #[path = "basic.rs"]
 pub mod basic;
+
+#[cfg(test)]
+mod bss_map_tests {
+    use super::*;
+
+    type Map = BSSMapInner<u32, 4, true>;
+
+    /// Freed with the test. Miri reports the storage of `BSSMapInner::init` as a leak.
+    fn new_map() -> Box<Map> {
+        let mut storage = Box::<Map>::new_zeroed();
+        // SAFETY: `init_at` takes zeroed storage and leaves a valid `Map`.
+        unsafe {
+            Map::init_at(storage.as_mut_ptr());
+            storage.assume_init()
+        }
+    }
+
+    fn slots(map: &Map) -> usize {
+        map.backing_buf_used as usize + map.overflow_list.count as usize
+    }
+
+    #[test]
+    fn invalidate_keeps_the_slot_for_the_next_put() {
+        let mut map = new_map();
+        assert!(!map.invalidate(b"/a"));
+
+        let mut first = map.get_or_put(b"/a").unwrap();
+        assert!(map.parked_index(&first).is_none());
+        map.put(&mut first, 1).unwrap();
+        assert_eq!(slots(&map), 1);
+
+        for round in 1..=100u32 {
+            assert!(map.invalidate(b"/a/"));
+            assert!(!map.invalidate(b"/a"));
+            assert!(map.get(b"/a").is_none());
+
+            let mut again = map.get_or_put(b"/a").unwrap();
+            assert!(again.status == ItemStatus::Unknown);
+            assert!(map.at_index(again.index).is_none());
+            again.index = map.parked_index(&again).unwrap();
+            assert!(again.index == first.index);
+            assert_eq!(*map.at_index(again.index).unwrap(), round);
+            map.put(&mut again, round + 1).unwrap();
+        }
+        assert_eq!(*map.get(b"/a").unwrap(), 101);
+        assert_eq!(slots(&map), 1);
+
+        // Past `COUNT` keys, a slot is in the overflow list.
+        for key in [&b"/b"[..], b"/c", b"/d", b"/e", b"/f", b"/g"] {
+            let mut result = map.get_or_put(key).unwrap();
+            map.put(&mut result, 0).unwrap();
+        }
+        let used = slots(&map);
+        assert!(map.invalidate(b"/g"));
+        let mut overflow = map.get_or_put(b"/g").unwrap();
+        overflow.index = map.parked_index(&overflow).unwrap();
+        assert!(overflow.index.is_overflow());
+        map.put(&mut overflow, 7).unwrap();
+        assert_eq!(*map.get(b"/g").unwrap(), 7);
+        assert_eq!(slots(&map), used);
+    }
+
+    #[test]
+    fn mark_not_found_keeps_the_slot() {
+        let mut map = new_map();
+
+        // A key that never had a slot has none to keep.
+        let missing = map.get_or_put(b"/missing").unwrap();
+        map.mark_not_found(missing);
+        assert!(map.invalidate(b"/missing"));
+        let missing = map.get_or_put(b"/missing").unwrap();
+        assert!(map.parked_index(&missing).is_none());
+
+        let mut a = map.get_or_put(b"/a").unwrap();
+        map.put(&mut a, 1).unwrap();
+        let mapped = map.get_or_put(b"/a").unwrap();
+        assert!(mapped.status == ItemStatus::Exists);
+        map.mark_not_found(mapped);
+        let unmapped = map.get_or_put(b"/a").unwrap();
+        assert!(unmapped.status == ItemStatus::NotFound);
+        assert!(map.parked_index(&unmapped) == Some(a.index));
+
+        // A `put` past the parked slot takes a second slot. The key goes back to the first.
+        assert!(map.invalidate(b"/a"));
+        let mut second = map.get_or_put(b"/a").unwrap();
+        map.put(&mut second, 2).unwrap();
+        assert!(second.index != a.index);
+        assert!(map.invalidate(b"/a"));
+        let again = map.get_or_put(b"/a").unwrap();
+        assert!(map.parked_index(&again) == Some(a.index));
+    }
+}

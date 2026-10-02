@@ -1107,8 +1107,8 @@ impl<'a> Checker<'a> {
             .type_types(target)
             .as_slice()
             .iter()
-            .copied()
-            .filter(|&t| self.types[t].flags.intersects(TypeFlags::STRING_LITERAL));
+            .filter(|&&t| self.types[t].flags.intersects(TypeFlags::STRING_LITERAL))
+            .copied();
         get_spelling_suggestion_with_max_candidate_count(
             get_string_literal_value(self, source),
             candidates,

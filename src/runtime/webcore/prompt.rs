@@ -6,13 +6,13 @@ use bun_core::EncodedSlice;
 use bun_core::Output;
 use bun_jsc::EncodedSliceJsc as _;
 
-/// Waits until stdin is readable, running JS signal listeners as signals arrive (a blocking `read(2)` cannot: handlers are SA_RESTART).
+/// Waits until stdin is readable or `has_input()` is true, running JS signal listeners as signals arrive (a blocking `read(2)` cannot: handlers are SA_RESTART).
 #[cfg(unix)]
-fn wait_for_stdin(global: &JSGlobalObject) {
+fn wait_for_stdin(global: &JSGlobalObject, has_input: impl Fn() -> bool) {
     use bun_jsc::posix_signal_handle::PosixSignalHandle;
     use bun_sys::posix::{POLL_IN, PollFd, poll};
 
-    let Some(signals) = PosixSignalHandle::blocking_wait_fd(global) else {
+    let Some(signals) = PosixSignalHandle::blocking_wait(global) else {
         return;
     };
     let mut fds = [
@@ -22,30 +22,35 @@ fn wait_for_stdin(global: &JSGlobalObject) {
             revents: 0,
         },
         PollFd {
-            fd: signals.native(),
+            fd: signals.fd().native(),
             events: POLL_IN,
             revents: 0,
         },
     ];
     loop {
         PosixSignalHandle::run_queued_from_js_thread(global);
+        // A listener can call `prompt()`, whose read leaves this call's answer in the stdin buffer.
+        if has_input() {
+            return;
+        }
         fds[0].revents = 0;
         fds[1].revents = 0;
         if poll(&mut fds, -1).is_err() || fds[1].revents == 0 {
             return;
         }
+        signals.drain();
     }
 }
 
 #[cfg(not(unix))]
-fn wait_for_stdin(_global: &JSGlobalObject) {}
+fn wait_for_stdin(_global: &JSGlobalObject, _has_input: impl Fn() -> bool) {}
 
 /// `alert()` and `confirm()` read unbuffered, so every byte waits on the fd.
 fn take_byte(
     global: &JSGlobalObject,
     reader: &mut bun_core::output::StdinReader,
 ) -> bun_core::CrateResult<u8> {
-    wait_for_stdin(global);
+    wait_for_stdin(global, || false);
     reader.take_byte()
 }
 
@@ -233,8 +238,9 @@ pub(crate) mod prompt {
         #[inline]
         fn read_byte(&mut self) -> Result<u8, Self::Error> {
             // SAFETY: process-global static, JS thread only; no `&mut` is live across `wait_for_stdin` (a listener may re-enter `prompt()`).
-            if !unsafe { &*Output::buffered_stdin_reader() }.has_buffered() {
-                wait_for_stdin(self.global);
+            let has_buffered = || unsafe { &*Output::buffered_stdin_reader() }.has_buffered();
+            if !has_buffered() {
+                wait_for_stdin(self.global, has_buffered);
             }
             unsafe { &mut *Output::buffered_stdin_reader() }.read_byte()
         }

@@ -485,6 +485,77 @@ describe.skipIf(isWindows)("dialogs run JS signal listeners while they wait for 
       exitCode: 130,
     });
   });
+
+  // Each step waits for `after` on stdout, then writes to stdin or sends a signal.
+  // Stdin stays open to the end, so a dialog that waits for more input times out.
+  async function drive(script, steps) {
+    await using proc = spawn({ cmd: [bunExe(), "-e", script], stdio: ["pipe", "pipe", "pipe"], env: bunEnv });
+    const reader = proc.stdout.getReader();
+    let shown = "";
+    for (const { after, write, kill } of steps) {
+      while (!shown.includes(after)) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        shown += Buffer.from(value).toString();
+      }
+      if (kill) proc.kill(kill);
+      if (write) {
+        proc.stdin.write(write);
+        await proc.stdin.flush();
+      }
+    }
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return { stderr, exitCode };
+  }
+
+  test.concurrent("prompt() with a listener installed still returns typed lines, also from its buffer", async () => {
+    const script = `
+      process.on("SIGINT", () => {});
+      console.error(JSON.stringify([prompt("a?"), prompt("b?")]));
+      process.exit(0);
+    `;
+    expect(await drive(script, [{ after: "a? ", write: "one\ntwo\n" }])).toEqual({
+      stderr: '["one","two"]\n',
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("confirm() with a listener installed still reads its answer", async () => {
+    const script = `
+      process.on("SIGTERM", () => {});
+      console.error(confirm("sure?") ? "yes" : "no");
+      process.exit(0);
+    `;
+    expect(await drive(script, [{ after: "[y/N] ", write: "y\n" }])).toEqual({ stderr: "yes\n", exitCode: 0 });
+  });
+
+  // The inner prompt() reads both lines into the shared stdin buffer. The
+  // outer one must take its answer from there and not wait on the empty fd.
+  test.concurrent("a listener that calls prompt() does not strand the outer prompt()", async () => {
+    const script = `
+      let inner;
+      process.on("SIGINT", () => { inner = prompt("inner?"); });
+      const outer = prompt("outer?");
+      console.error(JSON.stringify({ inner, outer }));
+      process.exit(0);
+    `;
+    const steps = [
+      { after: "outer? ", kill: "SIGINT" },
+      { after: "inner? ", write: "in\nout\n" },
+    ];
+    expect(await drive(script, steps)).toEqual({ stderr: '{"inner":"in","outer":"out"}\n', exitCode: 0 });
+  });
+
+  // With fd 0 closed the signal pipe must not take its number: prompt() still fails at once.
+  test.concurrent("prompt() on a closed stdin returns null with a listener installed", async () => {
+    const script = `
+      require("fs").closeSync(0);
+      process.on("SIGINT", () => {});
+      console.error(JSON.stringify(prompt("x?")));
+      process.exit(0);
+    `;
+    expect(await drive(script, [])).toEqual({ stderr: "null\n", exitCode: 0 });
+  });
 });
 
 test("globalThis.self = 123 works", () => {

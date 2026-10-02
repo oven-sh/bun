@@ -1,4 +1,6 @@
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
+#[cfg(unix)]
+use core::sync::atomic::{AtomicI32, fence};
 
 use crate::JSGlobalObject;
 #[cfg(unix)]
@@ -54,24 +56,17 @@ impl PosixSignalHandle {
         unsafe { (*(*vm).event_loop()).signal_handler }
     }
 
-    /// Read end of a pipe the signal handler writes a byte to per queued signal, so `prompt()` can poll it next to stdin. `None` off the main thread or when no JS signal listener exists.
-    pub fn blocking_wait_fd(global_object: &JSGlobalObject) -> Option<bun_sys::Fd> {
+    /// While the guard lives, the signal handler also writes a byte to a pipe per queued signal, so a host function that blocks the JS thread (`prompt()`) can poll [`BlockingWait::fd`] next to its input. `None` off the main thread or when no JS signal listener exists.
+    pub fn blocking_wait(global_object: &JSGlobalObject) -> Option<BlockingWait> {
         Self::for_main_thread(global_object)?;
-        let existing = BLOCKING_WAIT_PIPE[0].load(Ordering::Acquire);
-        if existing >= 0 {
-            return Some(bun_sys::Fd::from_native(existing));
-        }
-        let [read, write] = bun_sys::pipe().ok()?;
-        for fd in [read, write] {
-            if bun_sys::set_close_on_exec(fd).is_err() || bun_sys::set_nonblocking(fd).is_err() {
-                read.close();
-                write.close();
-                return None;
-            }
-        }
-        BLOCKING_WAIT_PIPE[0].store(read.native(), Ordering::Release);
-        BLOCKING_WAIT_PIPE[1].store(write.native(), Ordering::Release);
-        Some(read)
+        let read = match BLOCKING_WAIT_PIPE[0].load(Ordering::Acquire) {
+            -1 => create_blocking_wait_pipe()?,
+            fd => bun_sys::Fd::from_native(fd),
+        };
+        BLOCKING_WAITERS.fetch_add(1, Ordering::SeqCst);
+        // With the fence in `Bun__onPosixSignal`: the caller's next ring drain sees a signal, or that signal's handler sees this waiter.
+        fence(Ordering::SeqCst);
+        Some(BlockingWait { read })
     }
 
     /// Runs the JS listeners for every queued signal now. Main thread only (a no-op elsewhere).
@@ -79,14 +74,6 @@ impl PosixSignalHandle {
         let Some(handler) = Self::for_main_thread(global_object) else {
             return;
         };
-        // Pipe before ring, so a signal that lands in between leaves a spare byte, never a signal without one.
-        let read = BLOCKING_WAIT_PIPE[0].load(Ordering::Acquire);
-        if read >= 0 {
-            let mut buf = [0u8; 64];
-            while matches!(bun_sys::read(bun_sys::Fd::from_native(read), &mut buf), Ok(n) if n == buf.len())
-            {
-            }
-        }
         let mut ran = false;
         while let Some(signal) = handler.ring.dequeue() {
             PosixSignalTask::run_from_js_thread(signal, global_object);
@@ -99,12 +86,66 @@ impl PosixSignalHandle {
     }
 }
 
-/// `[read, write]` ends of the pipe behind [`PosixSignalHandle::blocking_wait_fd`]; -1 until created.
+/// See [`PosixSignalHandle::blocking_wait`].
 #[cfg(unix)]
-static BLOCKING_WAIT_PIPE: [core::sync::atomic::AtomicI32; 2] = [
-    core::sync::atomic::AtomicI32::new(-1),
-    core::sync::atomic::AtomicI32::new(-1),
-];
+pub struct BlockingWait {
+    read: bun_sys::Fd,
+}
+
+#[cfg(unix)]
+impl BlockingWait {
+    /// Readable while a queued signal has not been taken with [`BlockingWait::drain`].
+    pub fn fd(&self) -> bun_sys::Fd {
+        self.read
+    }
+
+    /// Empties the pipe. Call it before the ring drain, so a signal that lands in between leaves a spare byte, never a signal without one.
+    pub fn drain(&self) {
+        let mut buf = [0u8; 64];
+        while matches!(bun_sys::read(self.read, &mut buf), Ok(n) if n == buf.len()) {}
+    }
+}
+
+#[cfg(unix)]
+impl Drop for BlockingWait {
+    fn drop(&mut self) {
+        BLOCKING_WAITERS.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// `[read, write]` ends of the pipe behind [`PosixSignalHandle::blocking_wait`]; -1 until created.
+#[cfg(unix)]
+static BLOCKING_WAIT_PIPE: [AtomicI32; 2] = [AtomicI32::new(-1), AtomicI32::new(-1)];
+
+/// Live [`BlockingWait`] guards. The signal handler writes to the pipe only while this is not zero.
+#[cfg(unix)]
+static BLOCKING_WAITERS: AtomicU32 = AtomicU32::new(0);
+
+/// Both ends are CLOEXEC, non-blocking and above fd 2: with fd 0 closed, a plain `pipe()` would hand out the number the dialog polls as stdin.
+#[cfg(unix)]
+fn create_blocking_wait_pipe() -> Option<bun_sys::Fd> {
+    let ends = bun_sys::pipe().ok()?;
+    let moved = ends.map(|fd| bun_sys::dup_at_least(fd, 3).ok());
+    for fd in ends {
+        let _ = fd.close_allowing_standard_io(None);
+    }
+    match moved {
+        [Some(read), Some(write)]
+            if bun_sys::set_nonblocking(read).is_ok()
+                && bun_sys::set_nonblocking(write).is_ok() =>
+        {
+            BLOCKING_WAIT_PIPE[0].store(read.native(), Ordering::Release);
+            BLOCKING_WAIT_PIPE[1].store(write.native(), Ordering::Release);
+            Some(read)
+        }
+        _ => {
+            for fd in moved.into_iter().flatten() {
+                fd.close();
+            }
+            None
+        }
+    }
+}
 
 /// This is the signal handler entry point. Calls enqueue on the ring buffer.
 /// Note: Must be minimal logic here. Only do atomics & signal-safe calls.
@@ -125,6 +166,8 @@ extern "C" fn Bun__onPosixSignal(number: i32) {
         let Some(vm) = VirtualMachine::get_main_thread_vm() else {
             return;
         };
+        // The writes below can fail; the interrupted code must still see its own errno.
+        let _restore_errno = RestoreErrno(bun_core::ffi::errno());
         // SAFETY: `vm` and its event loop are process-lifetime; raw place
         // projection reads only the `signal_handler` slot (no `&EventLoop`
         // formed — the main thread may hold `&mut EventLoop` concurrently).
@@ -138,8 +181,10 @@ extern "C" fn Bun__onPosixSignal(number: i32) {
                 return;
             };
             if handler.enqueue(signal) {
-                let wait_fd = BLOCKING_WAIT_PIPE[1].load(Ordering::Acquire);
-                if wait_fd >= 0 {
+                // See `PosixSignalHandle::blocking_wait`.
+                fence(Ordering::SeqCst);
+                if BLOCKING_WAITERS.load(Ordering::SeqCst) != 0 {
+                    let wait_fd = BLOCKING_WAIT_PIPE[1].load(Ordering::Acquire);
                     // SAFETY: write(2) is async-signal-safe; O_NONBLOCK, and a full pipe is readable anyway.
                     let _ = unsafe { libc::write(wait_fd, (&raw const signal).cast(), 1) };
                 }
@@ -151,6 +196,17 @@ extern "C" fn Bun__onPosixSignal(number: i32) {
     }
     #[cfg(not(unix))]
     let _ = number;
+}
+
+#[cfg(unix)]
+struct RestoreErrno(core::ffi::c_int);
+
+#[cfg(unix)]
+impl Drop for RestoreErrno {
+    fn drop(&mut self) {
+        // SAFETY: `errno_ptr()` is this thread's errno slot.
+        unsafe { *bun_core::ffi::errno_ptr() = self.0 };
+    }
 }
 
 pub struct PosixSignalTask;

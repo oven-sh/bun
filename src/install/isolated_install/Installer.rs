@@ -1822,6 +1822,7 @@ impl Task {
                         abs_target_buf: &mut *abs_target_buf,
                         abs_dest_buf: &mut *abs_dest_buf,
                         rel_buf: &mut *rel_buf,
+                        installed_from: None,
                         err: None,
                         skipped_due_to_missing_bin: false,
                     };
@@ -2396,6 +2397,7 @@ impl<'a> Installer<'a> {
                 abs_target_buf: &mut *link_target_buf,
                 abs_dest_buf: &mut *link_dest_buf,
                 rel_buf: &mut *link_rel_buf,
+                installed_from: None,
                 err: None,
                 skipped_due_to_missing_bin: false,
             };

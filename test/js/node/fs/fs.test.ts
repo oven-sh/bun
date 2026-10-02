@@ -6594,19 +6594,46 @@ describe("synchronous I/O string flags", () => {
 describe.skipIf(isWindows)("readFileSync on a FIFO larger than the stat size", () => {
   it("does not balloon the read buffer", async () => {
     using dir = tempDir("fs-readfile-fifo", {});
+    const fifo = join(String(dir), "thefifo");
+    mkfifo(fifo);
+
+    // readFileSync reads 256 KB before it calls fstat; only the bytes after that
+    // go through the grow path under test, and one read() from a pipe returns at
+    // most one pipe buffer (64 KB on Linux, no larger on macOS), so the 768 KB
+    // after it are at least 13 grow steps however the kernel chunks the data.
+    // Before the fix every step doubled the buffer: 13 steps is a 2 GB buffer,
+    // and copying into it raises the fixture's peak RSS by 1.5 GB or more,
+    // against a few MB now. Hosts with smaller pipe buffers get more steps; a
+    // regression there keeps doubling until the kernel kills the fixture or the
+    // test times out.
+    const SIZE = 1024 * 1024;
+
     await using proc = Bun.spawn({
-      cmd: [bunExe(), join(import.meta.dir, "fs-readfile-fifo-fixture.js"), String(dir)],
+      cmd: [bunExe(), join(import.meta.dir, "fs-readfile-fifo-fixture.js"), fifo],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
-    // Pre-fix this never returns (RawVec doubling balloons RSS to multiple GB);
-    // the per-test timeout would fire. Fixed: completes promptly with the full
-    // 400 KB of content intact.
+
+    // The FIFO is fed by a throwaway cat: a second bun process costs most of a
+    // second of startup on a debug build, and writing from this process would
+    // leave an uncancellable open() on the fs thread pool if the fixture died
+    // before opening its end. sh blocks in the open() until the fixture opens
+    // the read end, cat exiting is the fixture's EOF, and `await using` kills
+    // whatever is still around if an assertion below fails.
+    await using writer = Bun.spawn({
+      cmd: ["sh", "-c", 'exec cat > "$1"', "sh", fifo],
+      stdin: Buffer.alloc(SIZE, "a"),
+      stdout: "ignore",
+    });
+
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(stdout).toBe("len=409600 allA=true");
     expect(exitCode).toBe(0);
+    const { peakGrowth, ...read } = JSON.parse(stdout);
+    expect(read).toEqual({ len: SIZE, allA: true });
+    expect(peakGrowth).toBeLessThan(64 * 1024 * 1024);
+    expect(await writer.exited).toBe(0);
   });
 });
 

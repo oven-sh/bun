@@ -294,6 +294,11 @@ impl ShellMkdirTask {
         bun_core::heap::into_raw(task)
     }
 
+    /// The operand as written; `run_from_thread_pool` NUL-terminates an absolute one in place.
+    fn operand(&self) -> &[u8] {
+        self.filepath.strip_suffix(b"\0").unwrap_or(&self.filepath)
+    }
+
     fn run_from_thread_pool(this: &mut ShellMkdirTask) {
         use bun_paths::{Platform, platform, resolve_path};
         // We have to give an absolute path to our mkdir implementation for it
@@ -336,7 +341,7 @@ impl ShellMkdirTask {
                 active: this.opts.verbose,
             };
             if let Err(e) = node_fs.mkdir_recursive_impl(&args, &vtable) {
-                this.err = Some(e.with_path(filepath.as_bytes()));
+                this.err = Some(e.with_path(this.operand()));
                 core::hint::black_box(&node_fs);
             }
         } else {
@@ -349,7 +354,7 @@ impl ShellMkdirTask {
                     }
                 }
                 Err(e) => {
-                    this.err = Some(e.with_path(filepath.as_bytes()));
+                    this.err = Some(e.with_path(this.operand()));
                     core::hint::black_box(&node_fs);
                 }
             }

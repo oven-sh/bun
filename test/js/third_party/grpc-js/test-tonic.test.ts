@@ -41,13 +41,32 @@ const cargoBin = Bun.which("cargo") as string;
 // re-compile the entire tonic/tokio dependency tree (~50s) on every run.
 const cacheDir = join(tmpdir(), "bun-test-tonic-cache");
 
+// A local-header PK signature at offset 0 is present in every protoc release
+// archive and is cheap to check; unzipper otherwise fails with an opaque
+// `FILE_ENDED` that doesn't say what it was actually handed.
+function isZip(bytes: Uint8Array): boolean {
+  return bytes.length > 4 && bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 0x03 && bytes[3] === 0x04;
+}
+
 async function getProtocZipBytes(): Promise<Uint8Array> {
   const cachedPath = join(cacheDir, `protoc-${protoVersion}-${release}.zip`);
   const cached = Bun.file(cachedPath);
   if (await cached.exists()) {
-    return await cached.bytes();
+    const bytes = await cached.bytes();
+    if (isZip(bytes)) return bytes;
+    // Drop a corrupted cache instead of feeding it to unzipper; fall through to a fresh fetch.
+    rmSync(cachedPath, { force: true });
   }
-  const bytes = await fetch(releases[release]).then(res => res.bytes());
+  const res = await fetch(releases[release]);
+  const bytes = await res.bytes();
+  if (!res.ok || !isZip(bytes)) {
+    const snippet = Buffer.from(bytes.slice(0, 200)).toString("utf8").replace(/\s+/g, " ").trim();
+    throw new Error(
+      `protoc download did not return a zip (HTTP ${res.status} ${res.statusText}, ${bytes.length} bytes` +
+        (snippet ? `, body starts: ${JSON.stringify(snippet)}` : "") +
+        `). url: ${releases[release]}`,
+    );
+  }
   await mkdir(cacheDir, { recursive: true });
   // Write-then-rename so a concurrent/crashed run never leaves a truncated zip behind.
   const partial = `${cachedPath}.${process.pid}.tmp`;

@@ -714,6 +714,16 @@ root: &root
         },
       );
 
+      // As it was before there were options.
+      test.each([0, 1, "maxDepth", true, 1n, Symbol("maxDepth")])("options %p are ignored", options => {
+        expect(outcome("a: &x [[1]]\nb: *x", options)).toEqual({ value: { a: [[1]], b: [[1]] } });
+      });
+
+      test("is a callback for Array.prototype.map, which passes an index", () => {
+        const parse = YAML.parse as (input: string) => unknown;
+        expect(["a: 1", "- &x 2\n- *x", "[[3]]"].map(parse)).toEqual([{ a: 1 }, [2, 2], [[3]]]);
+      });
+
       // Every number here is what the `yaml` package (v2.9.1) does with the same document and limit.
       describe("maxAliasCount", () => {
         test.each([
@@ -974,16 +984,6 @@ root: &root
           expect(outcome("[]", function reviver() {})).toEqual({
             error: `TypeError: The "options" argument must be of type object. Received function reviver`,
           });
-        });
-
-        // As it was before there were options.
-        test.each([0, 1, "maxDepth", true, 1n, Symbol("maxDepth")])("ignores %p as options", options => {
-          expect(outcome("a: &x [[1]]\nb: *x", options)).toEqual({ value: { a: [[1]], b: [[1]] } });
-        });
-
-        test("is a callback for Array.prototype.map, which passes an index", () => {
-          const parse = YAML.parse as (input: string) => unknown;
-          expect(["a: 1", "- &x 2\n- *x", "[[3]]"].map(parse)).toEqual([{ a: 1 }, [2, 2], [[3]]]);
         });
 
         describe("maxDepth", () => {

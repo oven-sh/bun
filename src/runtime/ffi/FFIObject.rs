@@ -484,9 +484,7 @@ fn ptr_(global_this: &JSGlobalObject, value: JSValue, byte_offset: Option<JSValu
         ));
     }
 
-    // The address outlives this call. A small view's vector moves when JSC
-    // materializes its ArrayBuffer (DFG tier-up does that), so materialize it
-    // now and read the address again. https://github.com/oven-sh/bun/issues/32054
+    // A fast view's vector moves at DFG tier-up: https://github.com/oven-sh/bun/issues/32054
     if !value.materialize_array_buffer_view_buffer() {
         return global_this.throw_out_of_memory_value();
     }

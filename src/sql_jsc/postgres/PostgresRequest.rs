@@ -454,8 +454,7 @@ pub(crate) enum EncodeRequest<'a> {
 }
 
 impl PostgresSQLConnection {
-    /// The only caller of the batch writers above. The code of a parameter runs while its Bind is
-    /// encoded. If that code got `request` rejected, nothing of the batch stays in the buffer.
+    /// The only caller of the batch writers above. Nothing stays in the buffer for a `request` that its own parameter got rejected.
     pub(crate) fn encode_request(
         &self,
         global: &JSGlobalObject,

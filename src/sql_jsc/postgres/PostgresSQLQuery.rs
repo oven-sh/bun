@@ -80,9 +80,9 @@ pub struct Flags {
     pub(crate) simple: bool,
     /// Rejected while in flight: its response is skipped until `ReadyForQuery`.
     pub(crate) discard_response: bool,
-    /// Which connection counter this request is in; reset to `None` when
-    /// `finish_request` takes it out, so the decrement is idempotent across
-    /// its call sites.
+    /// Which connection counter this request's dispatch incremented; reset to
+    /// `None` when `finish_request` consumes that contribution, so the
+    /// decrement is idempotent across its call sites.
     pub(crate) counter: RequestCounter,
     pub(crate) result_mode: PostgresSQLQueryResultMode,
 }

@@ -28,6 +28,10 @@ pub struct InternalLoopData {
     pub sweep_timer: *mut Timer,
     #[cfg(not(windows))]
     pub sweep_next_tick_ns: i64,
+    #[cfg(not(windows))]
+    pub accept_rearm_next_tick_ns: i64,
+    #[cfg(not(windows))]
+    pub accept_reserve_fd: c_int,
     pub sweep_timer_count: i32,
     pub wakeup_async: *mut us_internal_async,
     pub head: *mut SocketGroup,

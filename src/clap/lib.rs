@@ -432,6 +432,11 @@ impl<Id: 'static> Args<Id> {
     pub fn remaining(&self) -> &[&'static [u8]] {
         self.clap.remaining()
     }
+
+    /// Whether the parser dropped a `--` that directly followed the last positional.
+    pub fn remaining_follows_separator(&self) -> bool {
+        self.clap.remaining_follows_separator()
+    }
 }
 
 /// Same as `parse_ex` but uses the `args::OsIterator` by default.

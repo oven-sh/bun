@@ -709,8 +709,21 @@ struct GroupInfo {
     count: usize,
 }
 
+/// Appends each argument as one shell word, quoted like the single-script run path.
+fn append_passthrough(cmd_buf: &mut Vec<u8>, passthrough: &[Box<[u8]>]) {
+    for part in passthrough {
+        cmd_buf.push(b' ');
+        if crate::shell::needs_escape_utf8_ascii_latin1(part) {
+            crate::shell::escape_8bit::<true, false>(part, cmd_buf).unwrap_or_oom();
+        } else {
+            cmd_buf.extend_from_slice(part);
+        }
+    }
+}
+
 /// Add configs for a single script name (with pre/post handling).
 /// When `label_prefix` is non-null, labels become "{prefix}:{name}" (for workspace runs).
+/// `passthrough` goes to the main script or the raw command, never to pre/post scripts.
 ///
 /// Generic over the scripts map value type so both the single-package path
 /// (values borrow the process-lifetime DirInfo-cached package.json) and the
@@ -724,6 +737,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
     cwd: &[u8],
     path: &[u8],
     label_prefix: Option<&[u8]>,
+    passthrough: &[Box<[u8]>],
 ) -> Result<(), Error> {
     let group_start = configs.len();
 
@@ -773,6 +787,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
         {
             let mut cmd_buf: Vec<u8> = Vec::with_capacity(content.len() + 1);
             RunCommand::replace_package_manager_run(&mut cmd_buf, content)?;
+            append_passthrough(&mut cmd_buf, passthrough);
             cmd_buf.push(0);
             configs.push(ScriptConfig {
                 label: label.clone(),
@@ -801,7 +816,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
                 || raw_name[0] == b'/'
                 || (cfg!(windows) && raw_name[0] == b'\\')
                 || has_runnable_extension(raw_name));
-        let command_z: Box<[u8]> = if is_file {
+        let mut v: Vec<u8> = if is_file {
             let bun_path: &[u8] = bun::self_exe_path().map(|z| z.as_bytes()).unwrap_or(b"bun");
             // Quote the bun path so that backslashes on Windows are not
             // interpreted as escape characters by `bun exec` (Bun's shell).
@@ -810,15 +825,15 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
             v.extend_from_slice(bun_path);
             v.extend_from_slice(b"\" ");
             v.extend_from_slice(raw_name);
-            v.push(0);
-            v.into_boxed_slice()
+            v
         } else {
-            // allocator.dupeZ
             let mut v = Vec::with_capacity(raw_name.len() + 1);
             v.extend_from_slice(raw_name);
-            v.push(0);
-            v.into_boxed_slice()
+            v
         };
+        append_passthrough(&mut v, passthrough);
+        v.push(0);
+        let command_z: Box<[u8]> = v.into_boxed_slice();
         configs.push(ScriptConfig {
             label,
             command: command_z,
@@ -845,7 +860,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         Global::exit(1);
     }
 
-    // Collect script names from positionals + passthrough
+    // Collect script names from positionals
     // For RunCommand: positionals[0] is "run", skip it. For AutoCommand: no "run" prefix.
     // Cloned to owned so the &mut ctx borrow below doesn't conflict.
     let mut script_names: Vec<Box<[u8]>> = Vec::new();
@@ -859,11 +874,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
             script_names.push(pos.clone());
         }
     }
-    for pt in &ctx.passthrough {
-        if !pt.is_empty() {
-            script_names.push(pt.clone());
-        }
-    }
+    let passthrough: Vec<Box<[u8]>> = ctx.passthrough.clone();
 
     if script_names.is_empty() {
         bun_core::pretty_errorln!(
@@ -1003,6 +1014,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                             &pkg.dirpath,
                             &pkg.path,
                             Some(&pkg.name),
+                            &passthrough,
                         )?;
                     }
                 } else {
@@ -1015,6 +1027,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                             &pkg.dirpath,
                             &pkg.path,
                             Some(&pkg.name),
+                            &passthrough,
                         )?;
                     } else if ctx.workspaces && !ctx.if_present {
                         bun_core::pretty_errorln!(
@@ -1091,6 +1104,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                             cwd,
                             &path_env,
                             None,
+                            &passthrough,
                         )?;
                     }
                 } else {
@@ -1109,6 +1123,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                     cwd,
                     &path_env,
                     None,
+                    &passthrough,
                 )?;
             }
         }

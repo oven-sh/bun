@@ -1,16 +1,14 @@
-//! What a name, `this` or a property access comes to where it is written, and what a declaration is left with for a type:
-//! 2815, 7005, 2565, 7041,
+//! What a name or `this` comes to where it is written, and what a declaration is left with for a type:
+//! 2815, 7005, 7041,
 //! 7018 7025 7055 (and 7006 7008 7010 7011 7019 where `null` and `undefined` widen), 2700, 2842.
 //!
-//! Follows `checkIdentifier`, `getFlowTypeOfAccessExpression`, `checkThisExpression`, `getBindingElementTypeFromParentType`,
+//! Follows `checkIdentifier`, `checkThisExpression`, `getBindingElementTypeFromParentType`,
 //! `checkUnusedRenamedBindingElements`, `widenTypeForVariableLikeDeclaration`, `reportErrorsFromWidening`,
 //! `reportWideningErrorsInType` and `reportImplicitAny` of TypeScript 7.0.2's checker.go.
 
-use super::errors::{Container, Diagnostic};
+use super::errors::Diagnostic;
 use super::*;
-use crate::bind::{
-    ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeKind, UNREACHABLE,
-};
+use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeKind};
 
 impl Checker<'_> {
     pub(super) fn check_x_identifiers(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
@@ -34,7 +32,6 @@ impl Checker<'_> {
         }
         pass.check_identifiers();
         pass.check_this_expressions();
-        pass.check_accesses();
         pass.check_variables_without_a_type();
         pass.check_widening();
         pass.check_rest_elements();
@@ -362,216 +359,6 @@ impl Pass<'_, '_> {
                 self.report(self.hir[e].pos, 7041);
             }
         }
-    }
-}
-
-// ───────────────────────────── property accesses ─────────────────────────────
-
-impl Pass<'_, '_> {
-    /// `getFlowTypeOfAccessExpression`
-    fn check_accesses(&mut self) {
-        let by_kind = self.c.exprs_by_kind(self.file);
-        let (dots, indexes) = (by_kind.of(ExprTag::Dot), by_kind.of(ExprTag::Index));
-        let (mut next_dot, mut next_index) = (0, 0);
-        loop {
-            // Both kinds in the order they have in the file.
-            let e = match (dots.get(next_dot), indexes.get(next_index)) {
-                (Some(&dot), Some(&index)) if dot < index => {
-                    next_dot += 1;
-                    dot
-                }
-                (Some(&dot), None) => {
-                    next_dot += 1;
-                    dot
-                }
-                (_, Some(&index)) => {
-                    next_index += 1;
-                    index
-                }
-                (None, None) => break,
-            };
-            if !self.is_bound(e) {
-                continue;
-            }
-            match self.hir[e].kind {
-                ExprKind::Dot {
-                    obj,
-                    name,
-                    name_pos,
-                    ..
-                } => self.check_used_before_assigned(e, obj, name, name_pos, ExprId::NONE),
-                ExprKind::Index { obj, index, .. }
-                    if matches!(self.hir[obj].kind, ExprKind::This)
-                        || self.has_assignment_declarations() =>
-                {
-                    let key = self.c.type_of_expr(self.file, index);
-                    if let Some(name) = self.c.property_name_of_type(key) {
-                        let at = self.c.start_of(self.file, index);
-                        self.check_used_before_assigned(e, obj, name, at, index);
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-
-    /// `getFlowTypeOfAccessExpression`: reports 2565 at `at` if `e`, an access to the property `name` of `obj`, can read the property
-    /// before it is assigned (`assumeUninitialized`). `index`: what is at `at`, if that is not just the name.
-    fn check_used_before_assigned(
-        &mut self,
-        e: ExprId,
-        obj: ExprId,
-        name: Atom,
-        at: u32,
-        index: ExprId,
-    ) {
-        let may_be_a_field = self.c.p.files.options.strict_property_initialization
-            && matches!(self.hir[obj].kind, ExprKind::This);
-        // `getFlowTypeOfReferenceEx` returns the declared type of a reference without a flow node.
-        if !self.strict
-            || !may_be_a_field && !self.has_assignment_declarations()
-            || self.bound.expr_flow[e.idx()] == UNREACHABLE
-            || self.bound.get_assignment_target_kind(self.hir, e) == AssignmentKind::Definite
-        {
-            return;
-        }
-        let declared = self
-            .uninitialized_field_type(e, obj, name)
-            .or_else(|| self.uninitialized_expando_type(e, obj, name));
-        if let Some(declared) = declared
-            && self.c.is_known(declared)
-            && !self.c.contains_undefined(declared)
-            && self.c.may_be_unassigned(self.file, e, declared)
-        {
-            self.report(at, 2565);
-            let file = self.file;
-            let end = if index.is_some() {
-                self.c.end_of_expr(file, index)
-            } else {
-                0
-            };
-            self.c.explain_to(at, end, 2565, |c| {
-                let object = c.type_of_expr(file, obj);
-                let apparent = c.apparent_type(object);
-                vec![match c.prop_of(apparent, name) {
-                    Some((prop, _)) => c.prop_to_string(&prop),
-                    None => c.atom_text(name),
-                }]
-            });
-        }
-    }
-
-    /// The first case of `assumeUninitialized`: `e` is `this.name` or `this[..]` in a constructor, and the class of the constructor
-    /// declares `name` as an instance property without an initializer. Returns the declared type of the property.
-    fn uninitialized_field_type(&mut self, e: ExprId, obj: ExprId, name: Atom) -> Option<TypeId> {
-        let (hir, bound) = (self.hir, self.bound);
-        if !self.c.p.files.options.strict_property_initialization
-            || !matches!(hir[obj].kind, ExprKind::This)
-            || is_parenthesized(self.hir, obj)
-            // `typeof this.x` in a type is a qualified name, not an access expression.
-            || bound.is_in_type_query(e)
-        {
-            return None;
-        }
-        let parent = bound.expr_parent[e.idx()];
-        let Container::Fn(f) = self.c.get_control_flow_container(self.file, parent) else {
-            return None;
-        };
-        let FnOwner::Member(constructor) = bound.fns[f.idx()].owner else {
-            return None;
-        };
-        let MemberOwner::Class(c) = bound.member_owner[constructor.idx()] else {
-            return None;
-        };
-        if hir[f].kind != FnKind::Constructor {
-            return None;
-        }
-        let mut declaration = None;
-        for m in hir[c].members.iter() {
-            if !hir[m].flags.contains(Flags::STATIC)
-                && matches!(
-                    hir[m].kind,
-                    MemberKind::Property
-                        | MemberKind::Method
-                        | MemberKind::Getter
-                        | MemberKind::Setter
-                )
-                && self.c.member_name(self.file, hir[m].key) == Some(name)
-            {
-                declaration = Some(m);
-                break;
-            }
-        }
-        let m = declaration?;
-        // `isPropertyWithoutInitializer`
-        if hir[m].kind != MemberKind::Property
-            || hir[m].init.is_some()
-            || hir[m]
-                .flags
-                .intersects(Flags::ABSTRACT | Flags::DEFINITE | Flags::AMBIENT | Flags::OPTIONAL)
-            || hir[c].flags.contains(Flags::AMBIENT)
-        {
-            return None;
-        }
-        Some(self.c.type_of_member_declaration(self.file, m))
-    }
-
-    /// Whether an assignment in this file declares a property: `f.x = v`, or `this.x = v`, `o.x = v` and `exports.x = v` in JavaScript.
-    fn has_assignment_declarations(&self) -> bool {
-        let bound = self.bound;
-        !bound.expando_declarations.is_empty()
-            || !bound.this_properties.is_empty()
-            || bound.commonjs_indicator.is_some()
-    }
-
-    /// The second case of `assumeUninitialized`: `prop.ValueDeclaration` is an assignment `a.name = value` in the control flow
-    /// container of `e`. The receiver `obj` can be any expression. Returns the declared type of the property.
-    fn uninitialized_expando_type(&mut self, e: ExprId, obj: ExprId, name: Atom) -> Option<TypeId> {
-        let hir = self.hir;
-        if !self.has_assignment_declarations() {
-            return None;
-        }
-        let object = self.c.type_of_expr(self.file, obj);
-        let apparent = self.c.apparent_type(object);
-        let (prop, mapper) = self.c.prop_of(apparent, name)?;
-        let (file, first) = match &prop.source {
-            PropSource::Assigned(file, assignments) => (*file, *assignments.first()?),
-            // What `exports.name = value` declares is a variable. An alias declaration is no value declaration;
-            // `Object.defineProperty(exports, "name", descriptor)` is one.
-            PropSource::Symbol(sym)
-                if self.c.files().flags(*sym).intersects(SymFlags::VARIABLE) =>
-            {
-                let of = sym.file;
-                let decls = &self.c.files().symbol(*sym).decls;
-                let first = decls.iter().find_map(|&decl| match decl {
-                    Decl::ExportsProperty(x) => match self.c.hir(of)[x].kind {
-                        ExprKind::Assign { value, .. }
-                            if expression_is_alias(self.c.hir(of), value) =>
-                        {
-                            None
-                        }
-                        _ => Some(x),
-                    },
-                    _ => None,
-                })?;
-                (of, first)
-            }
-            _ => return None,
-        };
-        let container_of = |e: ExprId| {
-            self.c
-                .get_control_flow_container(file, self.bound.expr_parent[e.idx()])
-        };
-        if file != self.file
-            // The left side of `f[key] = value` is not a property access.
-            || !matches!(hir[first].kind, ExprKind::Assign { target, .. } if matches!(hir[target].kind, ExprKind::Dot { .. }))
-            || container_of(e) != container_of(first)
-            // `isThisPropertyAccessInConstructor`: the property type is `autoType`, which `getFlowTypeOfProperty` resolves.
-            || self.c.auto_this_property(self.file, e, object, name).is_some()
-        {
-            return None;
-        }
-        Some(self.c.type_of_prop(&prop, mapper))
     }
 }
 

@@ -116,11 +116,13 @@ pub enum Origin {
     TypeLiteral(FileId, TypeNodeId),
     /// `{ [K in T]: U }`
     Mapped(FileId, TypeNodeId),
-    /// `{ a: 1 }`, as the type of the expression: known to have nothing but what is written (`ObjectFlagsObjectLiteral`). The last
-    /// two: `ObjectFlagsJSLiteral`, `ObjectFlagsFreshLiteral`.
-    ObjectLiteral(FileId, ExprId, bool, bool),
+    /// `{ a: 1 }`, as the type of the expression: known to have nothing but what is written (`ObjectFlagsObjectLiteral`). The
+    /// third: `ObjectFlagsJSLiteral`. The last: `ObjectFlagsFreshLiteral`. `checkObjectLiteral` makes a type each time it is called.
+    /// The fourth: not the one `checkExpressionCached` keeps, but the one `getAssignmentDeclarationInitializerType` gets from
+    /// `checkExpressionForMutableLocation`.
+    ObjectLiteral(FileId, ExprId, bool, bool, bool),
     /// The same once it is the type of a variable, a result, a type argument: an ordinary object type.
-    WidenedLiteral(FileId, ExprId, bool),
+    WidenedLiteral(FileId, ExprId, bool, bool),
     /// The constructor function of a class, with its static members.
     ClassStatic(Sym),
     /// A function declaration with all its overloads, and the namespace merged with it.

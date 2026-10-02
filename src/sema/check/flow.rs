@@ -1,8 +1,13 @@
 //! Narrowing: what a variable or a property is known to be at a place, going by the tests and assignments on the way there.
 
 use super::decl::Predicate;
+use super::errors::Container;
+use super::expr::TargetKind;
+use super::related::Place;
 use super::*;
-use crate::bind::{Decl, Flow, FlowId, FlowTarget, Parent, PatParent, SymbolId, UNREACHABLE};
+use crate::bind::{
+    Decl, Flow, FlowId, FlowTarget, FnOwner, MemberOwner, Parent, PatParent, SymbolId, UNREACHABLE,
+};
 use smallvec::{SmallVec, smallvec};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -3934,7 +3939,7 @@ impl<'p> Checker<'p> {
             return declared;
         }
         let declared = self.narrowable_type(file, e, declared);
-        let ty = self.flow_type_of(file, e, declared, true);
+        let ty = self.flow_type_of(file, e, declared, Start::Unsettled);
         let hir = self.hir(file);
         if self.is_automatic_type(declared) && !self.is_evolving_array_operation_target(file, e) {
             // Nothing has these types without `noImplicitAny`. `checkWithStatement` does not come to the body.
@@ -3968,16 +3973,145 @@ impl<'p> Checker<'p> {
         if declared == TypeId::UNRESOLVED || declared.is_never() {
             return declared;
         }
-        self.flow_type_of(file, e, declared, false)
+        self.flow_type_of(file, e, declared, Start::Known)
     }
 
-    /// The type of the property or element access `e`, which is no assignment target and whose property is declared as `declared`.
-    pub(super) fn narrow_access(&mut self, file: FileId, e: ExprId, declared: TypeId) -> TypeId {
-        if declared == TypeId::UNRESOLVED || declared.is_never() {
-            return declared;
+    /// `getFlowTypeOfAccessExpression`, but for a property whose type is `autoType`. `prop`: none for what an index signature gives.
+    /// `error_node`: the name or the index. `target`: the `target_kind` of `e`.
+    pub(super) fn get_flow_type_of_access_expression(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        prop: Option<&Prop>,
+        prop_type: TypeId,
+        error_node: Place,
+        target: TargetKind,
+    ) -> TypeId {
+        // `removeMissingType`. Nor is `missingType` added to what an index signature gives.
+        if target.definite {
+            return self.filter(prop_type, |_, m| m != TypeId::MISSING);
         }
-        let declared = self.narrowable_type(file, e, declared);
-        self.flow_type_of(file, e, declared, false)
+        if let Some(prop) = prop
+            && !self.is_variable_property_or_accessor(prop)
+            && !(prop.flags.contains(PropFlags::METHOD) && self.is_union(prop_type))
+        {
+            return prop_type;
+        }
+        if prop_type == TypeId::UNRESOLVED {
+            return prop_type;
+        }
+        let prop_type = self.narrowable_type(file, e, prop_type);
+        let uninitialized = prop.filter(|prop| self.assumes_uninitialized(file, e, prop));
+        let start = match uninitialized {
+            Some(_) => Start::Unassigned,
+            None => Start::Known,
+        };
+        let flow_type = self.flow_type_of(file, e, prop_type, start);
+        if let Some(prop) = uninitialized
+            && !self.contains_undefined(prop_type)
+            && self.contains_undefined(flow_type)
+        {
+            let name = self.prop_to_string(prop);
+            self.error(error_node, 2565, &[Arg::Text(&name)]);
+            // "Return the declared type to reduce follow-on errors"
+            return prop_type;
+        }
+        if target.written {
+            self.base_of_literal(flow_type)
+        } else {
+            flow_type
+        }
+    }
+
+    /// `prop.Flags&(SymbolFlagsVariable|SymbolFlagsProperty|SymbolFlagsAccessor) != 0`
+    fn is_variable_property_or_accessor(&self, prop: &Prop) -> bool {
+        match prop.source {
+            // An export of a module or a namespace, a member of an enum.
+            PropSource::Symbol(sym) => {
+                let flags = self.files().flags(sym);
+                flags.intersects(SymFlags::VARIABLE | SymFlags::PROPERTY)
+            }
+            _ => !prop.flags.contains(PropFlags::METHOD),
+        }
+    }
+
+    /// `assumeUninitialized` of `getFlowTypeOfAccessExpression`, for the access `e` to `prop`.
+    fn assumes_uninitialized(&self, file: FileId, e: ExprId, prop: &Prop) -> bool {
+        let options = &self.p.files.options;
+        if !options.strict_null_checks {
+            return false;
+        }
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let container_of =
+            |x: ExprId| self.get_control_flow_container(file, bound.expr_parent[x.idx()]);
+        // `prop.ValueDeclaration`, if it is an assignment.
+        let (of, assignment) = match Self::value_declaration(prop) {
+            Some(PropSource::Members(members)) => {
+                let Some(&(of, m)) = members.first() else {
+                    return false;
+                };
+                let (ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }) = hir[e].kind else {
+                    return false;
+                };
+                let MemberOwner::Class(class) = self.bound(of).member_owner[m.idx()] else {
+                    return false;
+                };
+                let member = &self.hir(of)[m];
+                return options.strict_property_initialization
+                    && of == file
+                    // `IsAccessExpression`: `typeof this.x` in a type is a qualified name.
+                    && !bound.is_in_type_query(e)
+                    && matches!(hir[obj].kind, ExprKind::This)
+                    && !is_parenthesized(hir, obj)
+                    // `isPropertyWithoutInitializer`
+                    && member.kind == MemberKind::Property
+                    && member.init.is_none()
+                    && !member.flags.intersects(
+                        Flags::ABSTRACT | Flags::DEFINITE | Flags::STATIC | Flags::AMBIENT,
+                    )
+                    && !hir[class].flags.contains(Flags::AMBIENT)
+                    && matches!(container_of(e), Container::Fn(f)
+                        if hir[f].kind == FnKind::Constructor
+                            && matches!(bound.fns[f.idx()].owner, FnOwner::Member(constructor)
+                                if bound.member_owner[constructor.idx()] == MemberOwner::Class(class)));
+            }
+            Some(PropSource::Assigned(of, assignments)) => match assignments.first() {
+                Some(&first) => (*of, first),
+                None => return false,
+            },
+            // What `exports.name = value` declares is a variable. An alias declaration is no value declaration;
+            // `Object.defineProperty(exports, "name", descriptor)` is one.
+            Some(&PropSource::Symbol(sym))
+                if self.files().flags(sym).intersects(SymFlags::VARIABLE) =>
+            {
+                let first = self
+                    .files()
+                    .symbol(sym)
+                    .decls
+                    .iter()
+                    .find_map(|&decl| match decl {
+                        Decl::ExportsProperty(x) => match self.hir(sym.file)[x].kind {
+                            ExprKind::Assign { value, .. }
+                                if expression_is_alias(self.hir(sym.file), value) =>
+                            {
+                                None
+                            }
+                            _ => Some(x),
+                        },
+                        _ => None,
+                    });
+                match first {
+                    Some(first) => (sym.file, first),
+                    None => return false,
+                }
+            }
+            _ => return false,
+        };
+        of == file
+            // The left side of `f[key] = value` is not a property access.
+            && matches!(hir[assignment].kind, ExprKind::Assign { target, .. }
+                if matches!(hir[target].kind, ExprKind::Dot { .. }))
+            && container_of(e) == container_of(assignment)
     }
 
     /// The type of `e`, the initializer of a variable that is declared by a pattern and without a type, for the `...rest` of the
@@ -4128,16 +4262,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `is_variable`: `e` reads a variable, which starts out the way `assumes_initialized` has it.
-    fn flow_type_of(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        declared: TypeId,
-        is_variable: bool,
-    ) -> TypeId {
-        // It is said of this reference alone, not of what has to be asked about on the way.
-        let starts_unassigned = std::mem::take(&mut self.starts_unassigned);
+    /// `start`: `initialType`. `Known`: `declared`.
+    fn flow_type_of(&mut self, file: FileId, e: ExprId, declared: TypeId, start: Start) -> TypeId {
         if self.is_flow_analysis_disabled(file) {
             return TypeId::ERROR;
         }
@@ -4212,11 +4338,11 @@ impl<'p> Checker<'p> {
         }
         let mut walk = Walk::new(reference, declared, initial, false);
         walk.crossing = crossing;
-        if starts_unassigned || is_automatic && self.is_operand_of_non_null(file, e) {
-            // `isAutomaticTypeInNonNull`
+        // `isAutomaticTypeInNonNull`
+        if start == Start::Unassigned || is_automatic && self.is_operand_of_non_null(file, e) {
             self.start_unassigned(&mut walk);
-        } else if is_variable {
-            walk.start = Start::Unsettled;
+        } else {
+            walk.start = start;
         }
         let ty = self.get_flow_type_of_reference(walk, flow);
         // `checkIdentifier`, `isAutomaticTypeInNonNull`
@@ -4500,12 +4626,6 @@ impl<'p> Checker<'p> {
         };
         let walk = Walk::new(reference, TypeId::AUTO, initial, false);
         self.get_flow_type_of_reference(walk, flow)
-    }
-
-    pub(super) fn may_be_unassigned(&mut self, file: FileId, e: ExprId, declared: TypeId) -> bool {
-        self.starts_unassigned = true;
-        let ty = self.flow_type_of(file, e, declared, false);
-        self.contains_undefined(ty)
     }
 
     /// `t == c.autoType || t == c.autoArrayType`

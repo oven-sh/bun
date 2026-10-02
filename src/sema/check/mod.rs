@@ -603,7 +603,6 @@ impl Program {
             awaiting: Vec::new(),
             last_flow_node: (FileId(u32::MAX), crate::bind::FlowId::NONE, false),
             iife_resolving: Vec::new(),
-            starts_unassigned: false,
             inferential: None,
             flow_loops: Vec::new(),
             reverse_mapped_source_stack: Vec::new(),
@@ -940,8 +939,6 @@ pub struct Checker<'p> {
     last_flow_node: (FileId, crate::bind::FlowId, bool),
     /// The calls of functions written on the spot whose arguments are being looked at to type the parameters.
     iife_resolving: Vec<(FileId, ExprId)>,
-    /// The reference whose flow is being walked holds `undefined` until something is assigned to it.
-    starts_unassigned: bool,
     /// The argument whose type is asked for in order to infer from it: its type variables stay (`CheckModeInferential`).
     pub(super) inferential: Option<(FileId, ExprId)>,
     /// The loops being worked out, by whichever walk (`flowLoopStack`): the loop, what is narrowed, its declared and its initial

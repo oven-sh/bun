@@ -15,9 +15,7 @@ use super::print::{
     WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL,
 };
 use super::*;
-use crate::bind::{
-    ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind, SymbolId,
-};
+use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind};
 use crate::json::Json;
 use crate::resolve::{
     JsxEmit, is_declaration_file_name, is_relative, join, known_extension, node_module_path_parts,
@@ -25,18 +23,6 @@ use crate::resolve::{
 };
 use crate::util::FxHashSet;
 use std::rc::Rc;
-
-/// Set in the id of the alias an `import * as ns` declares: the symbol `cloneTypeAsModuleType` makes for that import, which no file
-/// declares either.
-const MODULE_CLONE: u32 = 1 << 31;
-
-/// What `resolveESModuleSymbol` gives for `originating_import`, the alias of an `import * as ns` that is not the module as it stands.
-pub(super) fn module_clone(originating_import: Sym) -> Sym {
-    Sym {
-        file: originating_import.file,
-        id: SymbolId(originating_import.id.0 | MODULE_CLONE),
-    }
-}
 
 /// What a name is wanted as.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
@@ -466,7 +452,7 @@ impl<'p> Checker<'p> {
         yields_module: bool,
         at: Enclosing,
     ) -> (bool, Vec<Sym>) {
-        let symbol = module_clone(originating_import);
+        let symbol = self.module_clone(originating_import);
         self.lookup_symbol_chain_at(symbol, true, yields_module, at)
     }
 
@@ -603,14 +589,15 @@ impl<'p> Checker<'p> {
     /// `exportTypeLinks.Get(symbol).target` of a symbol `cloneTypeAsModuleType` made, which has the flags, the name, the declarations,
     /// the parent and the exports of that. Any other symbol is given back.
     fn target_of_module_clone(&self, symbol: Sym) -> Sym {
-        if symbol.id.0 & MODULE_CLONE == 0 {
-            return symbol;
-        }
-        let originating_import = Sym {
-            file: symbol.file,
-            id: SymbolId(symbol.id.0 & !MODULE_CLONE),
-        };
-        self.target_of_alias(originating_import)
+        self.files()
+            .target_of_module_clone(symbol)
+            .unwrap_or(symbol)
+    }
+
+    /// What `resolveESModuleSymbol` gives for `originating_import`, the alias of an `import * as ns` that is not the module as it stands.
+    pub(super) fn module_clone(&self, originating_import: Sym) -> Sym {
+        self.files()
+            .module_clone(originating_import)
             .unwrap_or(originating_import)
     }
 
@@ -663,17 +650,11 @@ impl<'p> Checker<'p> {
 
     /// `getMergedSymbol`
     fn merged_symbol(&self, symbol: Sym) -> Sym {
-        if symbol.id.0 & MODULE_CLONE != 0 {
-            return symbol;
-        }
         self.files().canonical(symbol)
     }
 
     /// `getMergedSymbol(symbol.ExportSymbol)`
     fn export_symbol_of(&self, symbol: Sym) -> Option<Sym> {
-        if symbol.id.0 & MODULE_CLONE != 0 {
-            return None;
-        }
         let id = self.files().symbol(symbol).export_symbol;
         id.is_some().then(|| self.files().sym(symbol.file, id))
     }
@@ -757,9 +738,6 @@ impl<'p> Checker<'p> {
 
     /// `resolveSymbol`
     fn resolve_symbol(&mut self, symbol: Sym) -> Sym {
-        if symbol.id.0 & MODULE_CLONE != 0 {
-            return symbol;
-        }
         let files = self.files();
         let flags = files.flags(symbol);
         // `IsNonLocalAlias`
@@ -767,7 +745,7 @@ impl<'p> Checker<'p> {
             && !flags.intersects(SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE)
         {
             return match self.originating_import_of_alias(symbol) {
-                Some(originating_import) => module_clone(originating_import),
+                Some(originating_import) => self.module_clone(originating_import),
                 None => files.resolve_alias(symbol).unwrap_or(symbol),
             };
         }
@@ -1545,7 +1523,7 @@ impl<'p> EmitResolver<'_, 'p> {
     /// (`resolveSymbol`, `isNonLocalAlias`).
     fn resolve_alias(&mut self, alias: Sym) -> Option<Sym> {
         match self.c.originating_import_of_alias(alias) {
-            Some(originating_import) => Some(module_clone(originating_import)),
+            Some(originating_import) => Some(self.c.module_clone(originating_import)),
             None => {
                 let Some(target) = self.c.target_of_alias(alias) else {
                     return Some(self.c.files().unknown_symbol);

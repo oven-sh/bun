@@ -1262,11 +1262,11 @@ impl<'p> Checker<'p> {
         if others.is_empty() {
             match self.data(ty) {
                 TypeData::Anon {
-                    origin: Origin::ObjectLiteral(file, e, is_js_literal, _),
+                    origin: Origin::ObjectLiteral(file, e, is_js_literal, of_declaration, _),
                     mapper,
                 } => {
                     return self.intern(TypeData::Anon {
-                        origin: Origin::WidenedLiteral(*file, *e, *is_js_literal),
+                        origin: Origin::WidenedLiteral(*file, *e, *is_js_literal, *of_declaration),
                         mapper: *mapper,
                     });
                 }

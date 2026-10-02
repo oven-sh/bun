@@ -5,7 +5,7 @@
 //! precedence the printer parenthesizes it by.
 
 use super::enclosing_declaration::Enclosing;
-use super::errors_declaration_emit::module_clone;
+
 use super::errors_isolated_declarations::Node as SyntaxNode;
 use super::*;
 use crate::bind::{
@@ -1974,7 +1974,8 @@ impl<'p> Printer<'_, 'p> {
         let Some(at) = self.enclosing_declaration else {
             return self.symbol_to_type_node(module, true, Vec::new());
         };
-        self.track_symbol(module_clone(originating_import), SymFlags::VALUE);
+        let clone = self.c.module_clone(originating_import);
+        self.track_symbol(clone, SymFlags::VALUE);
         let yields_module = self.flags & USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE == 0;
         let (starts_with_global_this, chain) =
             self.c

@@ -195,7 +195,10 @@ impl<'p> Printer<'_, 'p> {
                 let owner = self.c.bound(*file).prop_owner[written.idx()];
                 let is_in_object_literal =
                     owner.is_some() && matches!(self.c.hir(*file)[owner].kind, ExprKind::Object(_));
-                is_in_object_literal.then_some((*file, SyntaxNode::Prop(*written)))
+                // `prop.ValueDeclaration = member.ValueDeclaration`: the first declaration of the name.
+                let declarations = self.c.bound(*file).declarations_of_literal_member(*written);
+                let first = declarations.first().copied().unwrap_or(*written);
+                is_in_object_literal.then_some((*file, SyntaxNode::Prop(first)))
             }
             // Of assignments the first that is annotated says what the type is.
             PropSource::Assigned(file, list) => {

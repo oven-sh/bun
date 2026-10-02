@@ -22,14 +22,14 @@ impl Slots {
 
 /// `getAssignmentTargetKind`
 #[derive(Copy, Clone)]
-struct TargetKind {
+pub(super) struct TargetKind {
     /// `is_assignment_target`
     assigned: bool,
     /// `AssignmentKindDefinite`: given a value by `=` or in a pattern there, or by `&&=`, `||=` or `??=`. It is what it is declared
     /// as, whatever has been found out about it on the way.
-    definite: bool,
+    pub(super) definite: bool,
     /// `is_written`
-    written: bool,
+    pub(super) written: bool,
 }
 
 impl<'p> Checker<'p> {
@@ -1211,28 +1211,15 @@ impl<'p> Checker<'p> {
         if target.written && self.is_assignment_to_readonly_property(file, e, obj, name) {
             return (TypeId::ERROR, stops);
         }
-        (self.flow_type_of_access(file, e, declared, target), stops)
-    }
-    /// `getFlowTypeOfAccessExpression`: what `=`, `&&=`, `||=` or `??=` gives a value to is what it is declared as, and that it may
-    /// not be there so far does not count (`removeMissingType`; nor is `missingType` added to what an index signature gives).
-    /// `target`: the `target_kind` of `e`.
-    fn flow_type_of_access(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        declared: TypeId,
-        target: TargetKind,
-    ) -> TypeId {
-        if !target.definite {
-            let narrowed = self.narrow_access(file, e, declared);
-            // `getBaseTypeOfLiteralType(flowType)` for the target of a compound assignment, `++` or `--`.
-            return if target.written {
-                self.base_of_literal(narrowed)
-            } else {
-                narrowed
-            };
-        }
-        self.filter(declared, |_, m| m != TypeId::MISSING)
+        let prop = match how {
+            Found::ByIndex => None,
+            _ => self.prop_ref(apparent, name).map(|found| found.0),
+        };
+        let right = self.place_of_token(file, name_pos);
+        (
+            self.get_flow_type_of_access_expression(file, e, prop, declared, right, target),
+            stops,
+        )
     }
 
     /// `getFlowTypeOfAccessExpression` for a property whose type is `autoType`. `initial` is the result of `auto_this_property`,
@@ -1603,7 +1590,30 @@ impl<'p> Checker<'p> {
             }
             None => TypeId::UNRESOLVED,
         };
-        (self.flow_type_of_access(file, e, declared, target), stops)
+        // `getResolvedSymbolOrNil(node)`: what `getPropertyTypeForIndexType` found for a key that is a name.
+        let prop = match self.property_name_of_type(key) {
+            Some(name) => {
+                let apparent = self.apparent_type(receiver);
+                self.prop_ref(apparent, name).map(|found| found.0)
+            }
+            None => None,
+        };
+        let index_expression = (
+            file,
+            self.start_of(file, index),
+            self.end_of_expr(file, index),
+        );
+        (
+            self.get_flow_type_of_access_expression(
+                file,
+                e,
+                prop,
+                declared,
+                index_expression,
+                target,
+            ),
+            stops,
+        )
     }
 
     /// `checkIndexedAccessIndexType`: `T[K]` where `K` cannot be used to look into `T` is an error (2536, 4105), and `errorType`.
@@ -2649,9 +2659,11 @@ impl<'p> Checker<'p> {
             {
                 // `getThisTypeOfObjectLiteralFromContextualType`: `ThisType<T>` in what the literal, or a literal it is directly the
                 // value of a property of, is expected to be says so.
+                // `checkThisExpression` is not cached: asked again, once the call is resolved, it goes by what the literal is expected to
+                // be by then.
                 let context = match self.context_of_accessor_in_argument(file, p, containing) {
-                    Some(context) => context,
-                    None => self.settled_context_of_literal(file, containing),
+                    Some(context) if !self.pulls_contextual_types() => context,
+                    _ => self.settled_context_of_literal(file, containing),
                 };
                 let (mut literal, mut expected) = (containing, context);
                 while let Some(ty) = expected {
@@ -3401,8 +3413,8 @@ impl<'p> Checker<'p> {
         match *self.data(ty) {
             TypeData::Anon {
                 origin:
-                    Origin::ObjectLiteral(_, _, is_js_literal, _)
-                    | Origin::WidenedLiteral(_, _, is_js_literal),
+                    Origin::ObjectLiteral(_, _, is_js_literal, ..)
+                    | Origin::WidenedLiteral(_, _, is_js_literal, _),
                 ..
             } => is_js_literal,
             TypeData::Synth(ref shape) => shape.is_js_literal,
@@ -3474,7 +3486,7 @@ impl<'p> Checker<'p> {
             let mapper = self.identity_mapper(file, scope);
             let is_js_literal = self.is_js_literal(file, e);
             let kept = self.intern(TypeData::Anon {
-                origin: Origin::ObjectLiteral(file, e, is_js_literal, true),
+                origin: Origin::ObjectLiteral(file, e, is_js_literal, false, true),
                 mapper,
             });
             return if self.is_rechecking() {

@@ -2107,10 +2107,10 @@ impl<'p> Checker<'p> {
     pub(super) fn regular_type_of_object_literal(&mut self, ty: TypeId) -> TypeId {
         match self.data(ty) {
             &TypeData::Anon {
-                origin: Origin::ObjectLiteral(file, e, is_js_literal, true),
+                origin: Origin::ObjectLiteral(file, e, is_js_literal, of_declaration, true),
                 mapper,
             } => self.intern(TypeData::Anon {
-                origin: Origin::ObjectLiteral(file, e, is_js_literal, false),
+                origin: Origin::ObjectLiteral(file, e, is_js_literal, of_declaration, false),
                 mapper,
             }),
             TypeData::Synth(shape) if shape.literal.is_of_expression() && !shape.is_regular => {
@@ -2136,7 +2136,7 @@ impl<'p> Checker<'p> {
                     self.add_members(&mut b, file, members, false, MapperId::IDENTITY, false);
                 }
             }
-            Origin::ObjectLiteral(file, expr, _, is_fresh) => {
+            Origin::ObjectLiteral(file, expr, .., is_fresh) => {
                 let mut shape = self.build_object_literal_shape(file, expr);
                 if !is_fresh {
                     for prop in &mut shape.props {
@@ -3771,6 +3771,17 @@ impl<'p> Checker<'p> {
     ) -> TypeId {
         let hir = self.hir(file);
         let ty = self.type_of_expr(file, value);
+        // `checkExpressionForMutableLocation` does not go through `checkExpressionCached`: an object literal is a type of its own.
+        let ty = match *self.data(ty) {
+            TypeData::Anon {
+                origin: Origin::ObjectLiteral(of, literal, is_js_literal, false, is_fresh),
+                mapper,
+            } if (of, literal) == (file, value) => self.intern(TypeData::Anon {
+                origin: Origin::ObjectLiteral(of, literal, is_js_literal, true, is_fresh),
+                mapper,
+            }),
+            _ => ty,
+        };
         // `isEmptyArrayLiteralType` tests the type of `value`. The type of `a = []` is the type of `[]`.
         let mut rightmost = value;
         while let ExprKind::Assign {

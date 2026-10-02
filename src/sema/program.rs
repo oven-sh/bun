@@ -353,6 +353,11 @@ pub struct Files {
     /// The aliases `resolveAlias` found to be circular (2303) while `mergeSymbol` resolved the target of a merge. Their `aliasTarget`
     /// stays `unknownSymbol`, even if the merge breaks the cycle.
     pub circular_at_merge: Vec<Sym>,
+    /// `cloneTypeAsModuleType`: the symbol made for an `import * as ns`, by the alias that declares (`originatingImport`). Whether the
+    /// alias stands for it or for what it is a copy of, only types tell.
+    module_clones: FxHashMap<Sym, Sym>,
+    /// `exportTypeLinks.target`: what each of them is a copy of.
+    module_clone_targets: FxHashMap<Sym, Sym>,
     /// Some file says `export type * from`.
     has_type_only_stars: bool,
 
@@ -1914,6 +1919,8 @@ impl Files {
             merged_member: FxHashMap::default(),
             refused_merges: Vec::new(),
             circular_at_merge: Vec::new(),
+            module_clones: FxHashMap::default(),
+            module_clone_targets: FxHashMap::default(),
             has_type_only_stars,
             alias_symbol_links: ByNodeKept::new(&symbols),
             is_merged: false,
@@ -2695,6 +2702,7 @@ impl Files {
         }
         self.merged_exports
             .insert(self.global_this_symbol, self.globals.clone());
+        self.make_module_clones();
         // What an alias was found to stand for while symbols were being put together may be a part of something by now.
         let symbols = Bases::new(self.modules.iter().map(|m| m.bound.symbols.len()));
         self.alias_symbol_links = ByNodeKept::new(&symbols);
@@ -2869,6 +2877,80 @@ impl Files {
     fn record_merged_symbol(&mut self, target: Sym, source: Sym) {
         self.symbol_mut(source).flags |= SymFlags::MERGED;
         self.merged_symbols.insert(source, target);
+    }
+
+    /// The symbol `cloneTypeAsModuleType` makes of `symbol` for `originating_import`: `newSymbol(symbol.Flags, symbol.Name)`, with a
+    /// copy of all that `symbol` has. Unlike `clone_symbol` it leaves `symbol` as it is, and no merge is recorded.
+    fn clone_type_as_module_type(&mut self, symbol: Sym, originating_import: Sym) -> Sym {
+        let parts = self.merged_parts.get(&symbol).cloned();
+        let every_part = self.every_part.get(&symbol).cloned();
+        let exports = self.merged_exports.get(&symbol).cloned();
+        let symbols = &mut self.modules[symbol.file.idx()].bound.symbols;
+        let cloned = &symbols[symbol.id.idx()];
+        let clone = Symbol {
+            name: cloned.name,
+            flags: cloned.flags | SymFlags::TRANSIENT,
+            decls: bind::Decls::Many(cloned.decls.as_slice().into()),
+            parent: cloned.parent,
+            exports: cloned.exports,
+            export_symbol: SymbolId::NONE,
+        };
+        let result = Sym {
+            file: symbol.file,
+            id: SymbolId(symbols.len() as u32),
+        };
+        symbols.push(clone);
+        if let Some(parts) = parts {
+            self.merged_parts.insert(result, parts);
+        }
+        if let Some(every_part) = every_part {
+            self.every_part.insert(result, every_part);
+        }
+        if let Some(exports) = exports {
+            self.merged_exports.insert(result, exports);
+        }
+        self.module_clones.insert(originating_import, result);
+        self.module_clone_targets.insert(result, symbol);
+        result
+    }
+
+    /// One for each `import * as ns`. No symbol can be made once symbols are put together.
+    fn make_module_clones(&mut self) {
+        let mut wanted: Vec<(Sym, Sym)> = Vec::new();
+        for &file in &self.order {
+            let (hir, bound) = (self.hir(file), self.bound(file));
+            if !hir.imports.iter().any(|import| import.namespace.is_some()) {
+                continue;
+            }
+            for (id, symbol) in bound.symbols.iter().enumerate() {
+                let import = symbol.decls.iter().find_map(|&decl| match decl {
+                    Decl::ImportNamespace(import) => Some(&hir[import]),
+                    _ => None,
+                });
+                let Some(import) = import else { continue };
+                let mode = self.mode_of_import(file, import.mode);
+                let Some(module) = self.module_of_specifier_as(file, import.spec, mode) else {
+                    continue;
+                };
+                let target = self.module_value(module);
+                if !self.is_non_local_alias(target) {
+                    let id = SymbolId(id as u32);
+                    wanted.push((target, self.canonical(Sym { file, id })));
+                }
+            }
+        }
+        let mut room: FxHashMap<FileId, usize> = FxHashMap::default();
+        for (target, _) in &wanted {
+            *room.entry(target.file).or_default() += 1;
+        }
+        for (file, room) in room {
+            self.modules[file.idx()].bound.symbols.reserve_exact(room);
+        }
+        for (target, originating_import) in wanted {
+            if !self.module_clones.contains_key(&originating_import) {
+                self.clone_type_as_module_type(target, originating_import);
+            }
+        }
     }
 
     /// `cloneSymbol`. The clone is a symbol of the file of `symbol`, where `decls`, `parent` and `exports` mean what they mean for
@@ -4188,6 +4270,19 @@ impl Files {
             symbol = links.alias_target?;
         }
         None
+    }
+
+    /// What `resolveESModuleSymbol` gives for the alias of an `import * as ns`, where that is not the module as it stands.
+    pub fn module_clone(&self, originating_import: Sym) -> Option<Sym> {
+        self.module_clones.get(&originating_import).copied()
+    }
+
+    /// `exportTypeLinks.target`, of a symbol `cloneTypeAsModuleType` made.
+    pub fn target_of_module_clone(&self, symbol: Sym) -> Option<Sym> {
+        if !self.flags(symbol).contains(SymFlags::TRANSIENT) {
+            return None;
+        }
+        self.module_clone_targets.get(&symbol).copied()
     }
 
     /// `IsNonLocalAlias`: an alias and nothing else.

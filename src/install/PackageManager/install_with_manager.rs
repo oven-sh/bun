@@ -977,11 +977,7 @@ pub fn install_with_manager(
         write_yarn_lock_with_progress(manager, log_level)?;
     }
 
-    if manager.options.do_.run_scripts()
-        && install_root_dependencies
-        && !manager.options.global
-        && !manager.options.dry_run
-    {
+    if manager.options.do_.run_scripts() && install_root_dependencies && !manager.options.global {
         run_root_lifecycle_scripts(manager, ctx, log_level)?;
     }
 
@@ -2289,6 +2285,10 @@ fn run_root_lifecycle_scripts(
 ) -> crate::Result<()> {
     if let Some(scripts) = manager.root_lifecycle_scripts.take() {
         debug_assert!(scripts.total > 0);
+
+        if manager.options.dry_run {
+            return Ok(());
+        }
 
         if log_level != Options::LogLevel::Silent {
             Output::print_error(format_args!("\n"));

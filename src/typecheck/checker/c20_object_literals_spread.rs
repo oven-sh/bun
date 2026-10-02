@@ -9,8 +9,8 @@ use crate::ast::{
     is_node_descendant_of, is_object_binding_pattern, is_object_literal_expression,
     is_object_literal_method, is_parameter_declaration, is_parenthesized_expression,
     is_private_identifier_class_element_declaration, is_property_assignment,
-    is_shorthand_property_assignment, is_spread_element, is_template_span,
-    is_variable_declaration, skip_parentheses,
+    is_shorthand_property_assignment, is_spread_element, is_template_span, is_variable_declaration,
+    skip_parentheses,
 };
 use crate::checker::{
     CheckMode, Checker, ContextFlags, ElementFlags, IndexInfoId, NodeCheckFlags, ObjectFlags,
@@ -59,8 +59,7 @@ impl<'a> Checker<'a> {
             }
             if st.has_computed_symbol_property {
                 let es_symbol_type = c.es_symbol_type;
-                let info =
-                    c.get_object_literal_index_info(is_readonly, properties, es_symbol_type);
+                let info = c.get_object_literal_index_info(is_readonly, properties, es_symbol_type);
                 index_infos.push(info);
             }
             let index_infos = c.list(&index_infos);
@@ -607,19 +606,18 @@ impl<'a> Checker<'a> {
             let _: () = self.stack_limit();
             return true;
         }
-        let mapped = self.map_type(t, &mut |c, t| c.get_base_constraint_or_type(t));
+        let mapped = self.map_type(t, &mut |c, u| c.get_base_constraint_or_type(u));
         let s = self.remove_definitely_falsy_types(mapped);
-        self.types[s].flags.intersects(
+        let flags = self.types[s].flags;
+        flags.intersects(
             TypeFlags::ANY
                 | TypeFlags::NON_PRIMITIVE
                 | TypeFlags::OBJECT
                 | TypeFlags::INSTANTIABLE_NON_PRIMITIVE,
-        ) || self.types[s]
-            .flags
-            .intersects(TypeFlags::UNION_OR_INTERSECTION)
-            && every(self.type_types(s).as_slice(), |t| {
-                self.is_valid_spread_type(t)
-            })
+        ) || flags.intersects(TypeFlags::UNION_OR_INTERSECTION) && {
+            let types = self.type_types(s);
+            every(types.as_slice(), |u| self.is_valid_spread_type(u))
+        }
     }
 
     pub fn get_union_index_infos(&mut self, types: List<'_, TypeId>) -> List<'a, IndexInfoId> {
@@ -725,14 +723,10 @@ impl<'a> Checker<'a> {
                 a.table_set(members, a.sym(prop).name, result);
             }
         }
+        let first_symbol = self.types[first_type].symbol;
         let index_infos = self.get_index_infos_of_type(first_type);
-        let spread = self.new_anonymous_type(
-            self.types[first_type].symbol,
-            members,
-            List::NIL,
-            List::NIL,
-            index_infos,
-        );
+        let spread =
+            self.new_anonymous_type(first_symbol, members, List::NIL, List::NIL, index_infos);
         self.types[spread].object_flags |=
             ObjectFlags::OBJECT_LITERAL | ObjectFlags::CONTAINS_OBJECT_OR_ARRAY_LITERAL;
         spread
@@ -744,11 +738,12 @@ impl<'a> Checker<'a> {
         let symbol = a.sym(prop);
         !some(symbol.declarations.as_slice(), |d| {
             is_private_identifier_class_element_declaration(a, d)
-        }) && !symbol.flags.intersects(
-            SymbolFlags::METHOD | SymbolFlags::GET_ACCESSOR | SymbolFlags::SET_ACCESSOR,
-        ) || !some(symbol.declarations.as_slice(), |d| {
-            !a.parent(d).is_nil() && is_class_like(a, a.parent(d))
-        })
+        }) && !symbol
+            .flags
+            .intersects(SymbolFlags::METHOD | SymbolFlags::GET_ACCESSOR | SymbolFlags::SET_ACCESSOR)
+            || !some(symbol.declarations.as_slice(), |d| {
+                !a.parent(d).is_nil() && is_class_like(a, a.parent(d))
+            })
     }
 
     pub fn get_spread_symbol(&mut self, prop: SymbolId, readonly: bool) -> SymbolId {
@@ -865,8 +860,13 @@ impl<'a> Checker<'a> {
                 let expr = skip_parentheses(a, a.expression(node));
                 let mut symbol = SymbolId::NIL;
                 if is_entity_name_expression(a, expr) {
-                    symbol =
-                        self.resolve_entity_name(expr, SymbolFlags::VALUE, true, false, NodeId::NIL);
+                    symbol = self.resolve_entity_name(
+                        expr,
+                        SymbolFlags::VALUE,
+                        true,
+                        false,
+                        NodeId::NIL,
+                    );
                 }
                 !symbol.is_nil() && a.sym(symbol).flags.intersects(SymbolFlags::ENUM)
             }
@@ -891,9 +891,8 @@ impl<'a> Checker<'a> {
                 });
         }
         if flags.intersects(TypeFlags::UNION_OR_INTERSECTION) {
-            return some(self.type_types(t).as_slice(), |s| {
-                self.is_const_type_variable(s, depth)
-            });
+            let types = self.type_types(t);
+            return some(types.as_slice(), |s| self.is_const_type_variable(s, depth));
         }
         if flags.intersects(TypeFlags::INDEXED_ACCESS) {
             let object_type = self.as_indexed_access_type(t).object_type;

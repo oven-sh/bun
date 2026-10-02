@@ -186,9 +186,7 @@ impl<'a> Installer<'a> {
 
             let node_pkg_ids = store.nodes.items_pkg_id();
 
-            let entries = &store.entries;
-            let entry_steps = entries.items_step();
-            let entry_node_ids = entries.items_node_id();
+            let entry_node_ids = store.entries.items_node_id();
 
             let pkgs = self.lockfile().packages.slice();
             let pkg_names = pkgs.items_name();
@@ -223,9 +221,6 @@ impl<'a> Installer<'a> {
                     });
 
                 if let Err(err) = patched {
-                    // .monotonic is okay because the task isn't running on another thread.
-                    entry_steps[entry_id.get() as usize]
-                        .store(Step::Done as u32, Ordering::Relaxed);
                     self.on_task_fail(entry_id, &err);
                     continue;
                 }
@@ -250,14 +245,12 @@ impl<'a> Installer<'a> {
         if let Some(removed) = self.manager_mut().task_queue.remove(&task_id) {
             let callbacks = removed;
 
-            let entry_steps = self.store.entries.items_step();
             for install_ctx in callbacks.as_slice() {
                 // `TaskCallbackContext` is an enum, so destructure.
                 let &TaskCallbackContext::IsolatedPackageInstallContext(entry_id) = install_ctx
                 else {
                     continue;
                 };
-                entry_steps[entry_id.get() as usize].store(Step::Done as u32, Ordering::Relaxed);
                 self.on_task_fail(
                     entry_id,
                     &TaskError::Download(DownloadError {
@@ -321,6 +314,8 @@ impl<'a> Installer<'a> {
 
     /// Called from main thread
     pub(crate) fn on_task_fail(&mut self, entry_id: StoreEntryId, err: &TaskError) {
+        self.mark_failed(entry_id);
+
         let string_buf = self.lockfile().buffers.string_bytes.as_slice();
 
         let entries = &self.store.entries;
@@ -404,43 +399,77 @@ impl<'a> Installer<'a> {
             let _ = Fd::cwd().delete_tree(staging.slice());
         }
 
-        // attempt deleting the package so the next install will install it again
-        match pkg_res.tag {
-            ResolutionTag::Uninitialized
-            | ResolutionTag::SingleFileModule
-            | ResolutionTag::Root
-            | ResolutionTag::Workspace
-            | ResolutionTag::Symlink => {}
-
-            // to be safe make sure we only delete packages in the store
+        // The files of the package are what marks the entry as installed: remove them, so that
+        // the next install builds the entry again. A folder dependency is linked on every install.
+        if matches!(
+            pkg_res.tag,
             ResolutionTag::Npm
-            | ResolutionTag::Git
-            | ResolutionTag::Github
-            | ResolutionTag::LocalTarball
-            | ResolutionTag::RemoteTarball
-            | ResolutionTag::Folder => {
-                let mut store_path = AutoRelPath::init();
+                | ResolutionTag::Git
+                | ResolutionTag::Github
+                | ResolutionTag::LocalTarball
+                | ResolutionTag::RemoteTarball
+        ) && !self.entry_uses_global_store(entry_id)
+        {
+            self.retract_local_store_entry(entry_id);
+        }
 
-                // OOM/capacity: fire-and-forget
-                let _ = store_path.append_fmt(format_args!(
-                    "node_modules/{}",
-                    store::entry::fmt_store_path(entry_id, self.store, self.lockfile()),
-                ));
-
-                let _ = sys::unlink(store_path.slice_z());
+        // The dependency that failed is the error of this install. Its dependents only follow it.
+        if !matches!(err, TaskError::DependencyFailed) {
+            if self.manager().options.enable.fail_early() {
+                Global::exit(1);
             }
 
-            _ => {}
+            self.summary.fail += 1;
         }
-
-        if self.manager().options.enable.fail_early() {
-            Global::exit(1);
-        }
-
-        self.summary.fail += 1;
 
         self.decrement_pending_tasks();
         self.resume_unblocked_tasks(entry_id);
+    }
+
+    /// Main thread only: the task of a failed entry is not running.
+    fn mark_failed(&self, entry_id: StoreEntryId) {
+        let step = &self.store.entries.items_step()[entry_id.get() as usize];
+        debug_assert!(step.load(Ordering::Relaxed) != Step::Done as u32);
+        step.store(Step::Failed as u32, Ordering::Release);
+    }
+
+    /// True when a dependency of the entry ended without its files, links or scripts complete.
+    fn has_failed_dependency(&self, entry_id: StoreEntryId) -> bool {
+        let entries = &self.store.entries;
+        let entry_steps = entries.items_step();
+        entries.items_dependencies()[entry_id.get() as usize]
+            .slice()
+            .iter()
+            .any(|dep| {
+                entry_steps[dep.entry_id.get() as usize].load(Ordering::Acquire)
+                    == Step::Failed as u32
+            })
+    }
+
+    /// Removes the package files of a project-local store entry.
+    fn retract_local_store_entry(&self, entry_id: StoreEntryId) {
+        let mut local = AutoPath::init_top_level_dir();
+        self.append_local_store_entry_path(&mut local, entry_id);
+        // The entry can still be a link to the global virtual store, from an install before the
+        // entry lost its place there. Remove the link, not the shared directory behind it.
+        #[cfg(windows)]
+        let is_link = sys::get_file_attributes(local.slice_z()).is_some_and(|a| a.is_reparse_point);
+        #[cfg(not(windows))]
+        let is_link =
+            sys::lstat(local.slice_z()).is_ok_and(|st| sys::posix::s_islnk(st.st_mode as u32));
+        if is_link {
+            #[cfg(windows)]
+            if sys::rmdir(local.slice_z()).is_err() {
+                let _ = sys::unlink(local.slice_z());
+            }
+            #[cfg(not(windows))]
+            let _ = sys::unlink(local.slice_z());
+            return;
+        }
+
+        let mut package = AutoPath::init_top_level_dir();
+        self.append_store_path(&mut package, entry_id);
+        let _ = Fd::cwd().delete_tree(package.slice());
     }
 
     pub(crate) fn decrement_pending_tasks(&mut self) {
@@ -494,7 +523,7 @@ impl<'a> Installer<'a> {
 
         let deps = &entry_deps[entry_id.get() as usize];
         for dep in deps.slice() {
-            if entry_steps[dep.entry_id.get() as usize].load(Ordering::Acquire) != Step::Done as u32
+            if !Step::is_finished(entry_steps[dep.entry_id.get() as usize].load(Ordering::Acquire))
             {
                 parent_dedupe.clear_retaining_capacity();
                 if self.store.is_cycle(entry_id, dep.entry_id, parent_dedupe) {
@@ -508,6 +537,9 @@ impl<'a> Installer<'a> {
 
     /// Called from main thread
     pub(crate) fn on_task_complete(&mut self, entry_id: StoreEntryId, state: CompleteState) {
+        if state == CompleteState::Fail {
+            self.mark_failed(entry_id);
+        }
         let state = match self.tasks[entry_id.get() as usize].relink {
             Relink::Unchanged => CompleteState::Skipped,
             Relink::Off | Relink::Pending | Relink::Changed => state,
@@ -515,10 +547,9 @@ impl<'a> Installer<'a> {
         if Environment::CI_ASSERT {
             // .monotonic is okay because we should have already synchronized with the completed
             // task thread by virtue of popping from the `UnboundedQueue`.
-            assert!(
+            assert!(Step::is_finished(
                 self.store.entries.items_step()[entry_id.get() as usize].load(Ordering::Relaxed)
-                    == Step::Done as u32,
-            );
+            ));
         }
 
         self.decrement_pending_tasks();
@@ -572,13 +603,13 @@ impl<'a> Installer<'a> {
         self.installed.set(pkg_id as usize);
     }
 
-    /// Main thread only: `completed` just reached `Step::Done`; re-check every entry waiting on it.
+    /// Main thread only: `completed` just reached `Step::Done` or `Step::Failed`; re-check every entry waiting on it.
     pub(crate) fn resume_unblocked_tasks(&mut self, completed: StoreEntryId) {
         let entry_steps = self.store.entries.items_step();
         if Environment::CI_ASSERT {
-            assert!(
-                entry_steps[completed.get() as usize].load(Ordering::Relaxed) == Step::Done as u32
-            );
+            assert!(Step::is_finished(
+                entry_steps[completed.get() as usize].load(Ordering::Relaxed)
+            ));
         }
 
         let mut parent_dedupe: ArrayHashMap<StoreEntryId, ()> = ArrayHashMap::default();
@@ -696,6 +727,8 @@ pub enum TaskError {
     Binaries(crate::Error),
     Patching(Log),
     Download(DownloadError),
+    /// A dependency of the entry failed and reported it.
+    DependencyFailed,
 }
 
 #[repr(u8)]
@@ -720,6 +753,9 @@ pub enum Step {
     // only the main thread sets blocked, and only the main thread
     // sets a blocked task to symlink_dependency_binaries
     Blocked,
+
+    // The entry ended without its files, links or scripts complete. Only the main thread sets it.
+    Failed,
 }
 
 impl From<Step> for &'static str {
@@ -734,6 +770,7 @@ impl From<Step> for &'static str {
             Step::RunPostInstallAndPrePostPrepare => "run (post)install and (pre/post)prepare",
             Step::Done => "done",
             Step::Blocked => "blocked",
+            Step::Failed => "failed",
         }
     }
 }
@@ -754,9 +791,16 @@ impl Step {
             6 => Step::RunPostInstallAndPrePostPrepare,
             7 => Step::Done,
             8 => Step::Blocked,
+            9 => Step::Failed,
             // Was @enumFromInt; cold atomic-load decode so the panic branch is fine.
             _ => unreachable!(),
         }
+    }
+
+    /// True for the raw step of an entry that no task works on any more.
+    #[inline]
+    pub(crate) const fn is_finished(raw: u32) -> bool {
+        raw == Step::Done as u32 || raw == Step::Failed as u32
     }
 }
 
@@ -794,7 +838,7 @@ impl Task {
             Step::Binaries => Step::RunPostInstallAndPrePostPrepare,
             Step::RunPostInstallAndPrePostPrepare => Step::Done,
 
-            Step::Done | Step::Blocked => unreachable!("unexpected step"),
+            Step::Done | Step::Blocked | Step::Failed => unreachable!("unexpected step"),
         };
 
         // SAFETY: `installer` is a BACKREF — the `Installer` owns `tasks[]` and
@@ -1535,6 +1579,19 @@ impl Task {
 
                 Step::SymlinkDependencyBinaries => {
                     let current_step = Step::SymlinkDependencyBinaries;
+                    // The bins and scripts of a failed dependency are not there. The entry stops
+                    // before it records itself as installed without them.
+                    if matches!(
+                        pkg_res.tag,
+                        ResolutionTag::Npm
+                            | ResolutionTag::Git
+                            | ResolutionTag::Github
+                            | ResolutionTag::LocalTarball
+                            | ResolutionTag::RemoteTarball
+                    ) && installer.has_failed_dependency(self.entry_id)
+                    {
+                        return Ok(Yield::failure(TaskError::DependencyFailed));
+                    }
                     if let Err(err) = installer.link_dependency_bins(self.entry_id) {
                         return Ok(Yield::failure(TaskError::Binaries(err)));
                     }
@@ -1910,7 +1967,7 @@ impl Task {
                     return Ok(Yield::Done);
                 }
 
-                Step::Blocked => {
+                Step::Blocked | Step::Failed => {
                     debug_assert!(false);
                     return Ok(Yield::Yield);
                 }
@@ -1997,8 +2054,6 @@ impl Task {
                             != Step::Done as u32,
                     );
                 }
-                installer.store.entries.items_step()[this.entry_id.get() as usize]
-                    .store(Step::Done as u32, Ordering::Release);
                 this.result = Result::Err(err);
                 // SAFETY: `this` is a live `&mut Task`; ownership moves to the queue.
                 installer.task_queue.push(core::ptr::NonNull::from(this));

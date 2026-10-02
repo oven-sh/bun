@@ -405,10 +405,6 @@ fn run_tasks_erased(
                         }),
                     );
                     if let Err(err) = spawn_res {
-                        // .monotonic is okay for the same reason as `.done`: we popped this
-                        // task from the `UnboundedQueue`, and the task is no longer running.
-                        installer.store.entries.items_step()[entry_id.get() as usize]
-                            .store(store_installer::Step::Done as u32, Ordering::Relaxed);
                         installer
                             .on_task_fail(entry_id, &store_installer::TaskError::RunScripts(err));
                     }

@@ -2208,9 +2208,6 @@ pub(crate) fn install_isolated_packages(
                         match installer.package_patch_info(pkg_name, pkg_name_hash, &pkg_res) {
                             Ok(patch_info) => patch_info,
                             Err(err) => {
-                                // .monotonic is okay because the task isn't running on another thread.
-                                entry_steps[entry_id.get() as usize]
-                                    .store(installer::Step::Done as u32, Ordering::Relaxed);
                                 installer.on_task_fail(entry_id, &err);
                                 continue;
                             }
@@ -2306,8 +2303,6 @@ pub(crate) fn install_isolated_packages(
                             match installer.link_project_to_global_store(entry_id) {
                                 bun_sys::Result::Ok(()) => {}
                                 bun_sys::Result::Err(err) => {
-                                    entry_steps[entry_id.get() as usize]
-                                        .store(installer::Step::Done as u32, Ordering::Relaxed);
                                     installer.on_task_fail(
                                         entry_id,
                                         &installer::TaskError::SymlinkDependencies(err),
@@ -2392,10 +2387,6 @@ pub(crate) fn install_isolated_packages(
                             let mut patch_log = bun_ast::Log::init();
                             installer.apply_package_patch(entry_id, patch, &mut patch_log);
                             if patch_log.has_errors() {
-                                // monotonic is okay because we haven't started the task yet (it isn't running
-                                // on another thread)
-                                entry_steps[entry_id.get() as usize]
-                                    .store(installer::Step::Done as u32, Ordering::Relaxed);
                                 installer.on_task_fail(
                                     entry_id,
                                     &installer::TaskError::Patching(patch_log),
@@ -2430,10 +2421,6 @@ pub(crate) fn install_isolated_packages(
                                     crate::network_task::ForTarballError::AlreadyFailed
                                     | crate::network_task::ForTarballError::Offline,
                                 ) => {
-                                    // .monotonic is okay because an error means the task isn't
-                                    // running on another thread.
-                                    entry_steps[entry_id.get() as usize]
-                                        .store(installer::Step::Done as u32, Ordering::Relaxed);
                                     installer
                                         .on_task_complete(entry_id, installer::CompleteState::Fail);
                                     continue;
@@ -2452,10 +2439,6 @@ pub(crate) fn install_isolated_packages(
                                     if installer.manager().options.enable.fail_early() {
                                         Global::exit(1);
                                     }
-                                    // .monotonic is okay because an error means the task isn't
-                                    // running on another thread.
-                                    entry_steps[entry_id.get() as usize]
-                                        .store(installer::Step::Done as u32, Ordering::Relaxed);
                                     installer
                                         .on_task_complete(entry_id, installer::CompleteState::Fail);
                                     continue;
@@ -2472,8 +2455,6 @@ pub(crate) fn install_isolated_packages(
                             ) == crate::package_manager::GitEnqueueResult::OfflineMiss
                             {
                                 // --offline and not cached: nothing was queued
-                                entry_steps[entry_id.get() as usize]
-                                    .store(installer::Step::Done as u32, Ordering::Relaxed);
                                 installer
                                     .on_task_complete(entry_id, installer::CompleteState::Fail);
                                 continue;
@@ -2500,10 +2481,6 @@ pub(crate) fn install_isolated_packages(
                                     crate::network_task::ForTarballError::AlreadyFailed
                                     | crate::network_task::ForTarballError::Offline,
                                 ) => {
-                                    // .monotonic is okay because an error means the task isn't
-                                    // running on another thread.
-                                    entry_steps[entry_id.get() as usize]
-                                        .store(installer::Step::Done as u32, Ordering::Relaxed);
                                     installer
                                         .on_task_complete(entry_id, installer::CompleteState::Fail);
                                     continue;
@@ -2521,10 +2498,6 @@ pub(crate) fn install_isolated_packages(
                                     if installer.manager().options.enable.fail_early() {
                                         Global::exit(1);
                                     }
-                                    // .monotonic is okay because an error means the task isn't
-                                    // running on another thread.
-                                    entry_steps[entry_id.get() as usize]
-                                        .store(installer::Step::Done as u32, Ordering::Relaxed);
                                     installer
                                         .on_task_complete(entry_id, installer::CompleteState::Fail);
                                     continue;
@@ -2556,10 +2529,6 @@ pub(crate) fn install_isolated_packages(
                                     crate::network_task::ForTarballError::AlreadyFailed
                                     | crate::network_task::ForTarballError::Offline,
                                 ) => {
-                                    // .monotonic is okay because an error means the task isn't
-                                    // running on another thread.
-                                    entry_steps[entry_id.get() as usize]
-                                        .store(installer::Step::Done as u32, Ordering::Relaxed);
                                     installer
                                         .on_task_complete(entry_id, installer::CompleteState::Fail);
                                     continue;
@@ -2577,10 +2546,6 @@ pub(crate) fn install_isolated_packages(
                                     if installer.manager().options.enable.fail_early() {
                                         Global::exit(1);
                                     }
-                                    // .monotonic is okay because an error means the task isn't
-                                    // running on another thread.
-                                    entry_steps[entry_id.get() as usize]
-                                        .store(installer::Step::Done as u32, Ordering::Relaxed);
                                     installer
                                         .on_task_complete(entry_id, installer::CompleteState::Fail);
                                     continue;
@@ -2640,7 +2605,7 @@ pub(crate) fn install_isolated_packages(
                 // and the .acquire load `pendingTaskCount`.
                 let step = entry_step.load(Ordering::Relaxed);
 
-                if step == installer::Step::Done as u32 {
+                if installer::Step::is_finished(step) {
                     continue;
                 }
 
@@ -2656,7 +2621,7 @@ pub(crate) fn install_isolated_packages(
                 for dep in deps.slice() {
                     // .monotonic is okay because `Wait.isDone` already synchronized with the tasks.
                     let dep_step = entry_steps[dep.entry_id.get() as usize].load(Ordering::Relaxed);
-                    if dep_step != installer::Step::Done as u32 {
+                    if !installer::Step::is_finished(dep_step) {
                         log!(", parents:\n - ");
                         let parent_ids =
                             store::entry::debug_gather_all_parents(entry_id, installer.store);

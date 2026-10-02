@@ -3241,8 +3241,8 @@ and `Checker::get_constant_value` of `services.go` 859, which `GetConstantValue`
 (`services.go` has none). Eight callees are stand-ins: the entries of the node builder of a request (below).
 PORT_STATUS.md has the row.
 
-NOT compiled by cargo when this was written: `checker/mod.rs` still names `c18`, which has no file. "Verified" below
-says what was checked instead.
+NOT compiled by cargo when this was written: the fixer of a file does not build in this step, and `checker/mod.rs`
+named `c18` without a file until `1c525192d2`. "Verified" below says what was checked instead.
 
 ### How a caller writes the calls
 
@@ -3277,7 +3277,7 @@ says what was checked instead.
   `create_type_parameters_of_signature_declaration` and `create_late_bound_index_signatures` (both `-> Vec<NodeId>`),
   and `create_literal_const_value(c, emit_context, node, tracker) -> NodeId`.
 - `get_type_reference_serialization_kind(c, type_name, location) -> TypeReferenceSerializationKind`: the enum of
-  `printer/emitresolver.go` 28-68 is declared in this file (`Unknown` is its default) and is `crate::checker::
+  `printer/emitresolver.go` 33-75 is declared in this file (`Unknown` is its default) and is `crate::checker::
   TypeReferenceSerializationKind`.
 - `get_reference_resolver(compiler_options) -> impl ReferenceResolver<'a, Checker<'a>>`: the caller gives
   `c.compiler_options`, and the checker is the host of each call of the resolver.
@@ -3289,7 +3289,7 @@ says what was checked instead.
 
 ### Differences from upstream
 
-- No lock: `checkerMu` has no field (`c02_program_checker.rs` 730). The exported function of a pair calls the other,
+- No lock: `checkerMu` has no field (`c02_program_checker.rs` 731). The exported function of a pair calls the other,
   and `RequiresAddingImplicitUndefinedUnsafe`, `IsExpandoFunctionDeclarationUnsafe` and
   `GetReferencedValueDeclarationUnsafe` keep their names and do what the locking ones do.
 - `newEmitResolver` answers the value and nothing calls it: `Checker::get_emit_resolver` of `c52` answers the value
@@ -3304,7 +3304,7 @@ says what was checked instead.
   `tryGetElementAccessExpressionName` answers a `Cow`, so its hook (the private function at the end of the file)
   copies a name that the checker built into the texts of the checker.
 - The node builder of a request, `NewNodeBuilder(r.checker, emitContext)`: the node builder of the tree is the one
-  state `node_builder` of the checker over its own emit context (`nodebuilder.rs` 1), and `nodebuilder.rs` has four of
+  state `node_builder` of the checker over its own emit context (`nodebuilder.rs` 1), and `nodebuilder.rs` has five of
   upstream's entries. So `RequestNodeBuilder` (private to the file) has the eight entries that the resolver calls as
   stand-ins with upstream's parameters: each records `NodeBuilder.<Entry>` and answers nil (an empty list for
   `SerializeTypeParametersForSignature`). What the callers make themselves is ported: the `any` keyword for a node
@@ -3333,8 +3333,7 @@ says what was checked instead.
 - The statement `r.checker.mappedSymbolLinks.Has(symbol)` of 596, whose result upstream drops, is kept.
 - `CreateLiteralConstValue`: the identifier `Infinity` is made before the test of the sign, and the text of a number
   is made once.
-- Comments that ask a question of the future (72, 243, 686, 946, 958, 994, 1094) are dropped or say what upstream
-  asks.
+- A comment of upstream that asks a question of the future is dropped or says what upstream asks.
 
 ### Verified
 
@@ -3372,20 +3371,19 @@ Cargo has not compiled the file, and nothing ran a function of it. What was chec
   `python3 round2-layer7-checker/globs.py --names`: nothing under A, C and F, and no name of the 351 that files import
   through `crate::checker` is without a globbed module.
 - The four places where other files use the resolver (`symbolaccessibility.rs` 89, `nodebuilderimpl.rs` 3151 and 3361,
-  `c52_symbol_at_location.rs` 791) and the import of `c46_mark_references.rs` 24 with its three calls were read
+  `c52_symbol_at_location.rs` 791) and the import of `c46_mark_references.rs` 24 with its four calls were read
   against the signatures.
 - No two comment lines are adjacent; no `unwrap`, `expect`, `panic`, `todo`, `unimplemented`, `unreachable` or
   `unsafe`; every `[...]` indexes a link store or a store of records of the checker.
-- Not checked: the real crate through cargo, the one callee of the next section, the real `Ast`, `SourceFile`,
-  `EmitContext`, factory and `Checker` (the probe has stand-ins for them), and any result against upstream's baselines.
+- Not checked: the real crate through cargo, the real `Ast`, `SourceFile`, `EmitContext`, factory and `Checker` (the
+  probe has stand-ins for them), and any result against upstream's baselines.
 
 ### What this file expects and the tree does not have
 
-At `cff856f6be`:
+At `cff856f6be` the one callee without a definition was `get_this_container(node, include_arrow_functions,
+include_class_computed_property_name) -> NodeId` of `c18` (12279). `1c525192d2` has it, with `&self`: the probe reads
+its signature from `c18_identifiers_property_access_this.rs` since then ("0 callees written by hand"). What is left:
 
-- `c18` (no file): `get_this_container(node, include_arrow_functions, include_class_computed_property_name) ->
-  NodeId` (12279; the method of the checker, as `c04_name_resolution_hooks.rs` 98 and `c52_symbol_at_location.rs` 125
-  and 478 call it).
 - `nodebuilder.rs`: a node builder over the emit context of a caller (`NewNodeBuilder`, 279) and seven entries of
   `nodebuilder.go` that it does not have (`IndexInfoToIndexSignatureDeclaration` 111,
   `SerializeReturnTypeForSignature` 117, `SerializeTypeParametersForSignature` 126, `SerializeTypeForDeclaration` 134,

@@ -177,7 +177,7 @@ pub mod callers {
         }
 
         // inference.rs 916-922
-        pub fn caller_inference(c: &mut Checker<'a>, a: Ast<'a>, right: TypeId, str: Text<'a>) -> bool {
+        pub fn caller_inference(c: &mut Checker<'a>, right: TypeId, str: Text<'a>) -> bool {
             *str == *apply_string_mapping(c.ast, c.types[right].symbol, str)
         }
     }
@@ -220,15 +220,15 @@ w('''pub use golang::*;
 pub use tristate::*;
 
 // checker-data-model-contract/bottom-up/crate/src/tscore/golang.rs 223-268: `map[K]V` that nothing ranges over.
-pub struct Map<K, V>(Option<std::collections::HashMap<K, V>>);
+pub struct Map<K, V>(Option<std::collections::BTreeMap<K, V>>);
 impl<K, V> Default for Map<K, V> {
     fn default() -> Self {
         Self(None)
     }
 }
-impl<K: std::hash::Hash + Eq + Copy, V: Copy + Default> Map<K, V> {
+impl<K: Ord + Copy, V: Copy + Default> Map<K, V> {
     pub fn make() -> Self {
-        Self(Some(std::collections::HashMap::new()))
+        Self(Some(std::collections::BTreeMap::new()))
     }
     pub fn get(&self, key: &K) -> V {
         self.0.as_ref().and_then(|m| m.get(key)).copied().unwrap_or_default()

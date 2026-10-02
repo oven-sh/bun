@@ -2381,3 +2381,98 @@ NOT compiled by cargo when this was written: it does not reach the file while a 
 - Nothing of its own: every name that the file uses has a definition in the tree of `fdf519158d`.
 - The maps that its callers key with a `CacheHashKey` are `crate::core::Map` (section C of the look-ahead).
 - For the contract's digest: `bun_wyhash.workspace = true` in `src/typecheck/Cargo.toml`, as above.
+
+## Checker: the symbol and the type at a location (`checker/c52_symbol_at_location.rs`)
+
+Commit `2de76025ed`, written by the job that commits the worktree. The file holds checker.go 31704-32296 whole and in
+upstream order (layer Z-SERVICES), 16 functions, and after them `is_arguments_symbol` of `services.go` 229, which
+`containsArgumentsReference` calls and which no module holds (`services.go` has none). No function is a stand-in.
+PORT_STATUS.md has the row.
+
+NOT compiled by cargo when this was written: it does not reach the file while a module of `checker/mod.rs` has no file
+(`c16`, `c18`, `c19` and `emitresolver` at `a582ea9efb`). "Verified" below says what was checked instead.
+
+### How a caller writes the calls
+
+- Every function is a method of `Checker<'a>`. `get_emit_resolver` and `is_arguments_symbol` take `&self`, the others
+  `&mut self`. The module exports no name, so `checker/mod.rs` has no glob for it.
+- `GetSymbolAtLocation` is `get_symbol_at_location_exported(node)` (the contract,
+  `node-table-id-contract/bottom-up/data/snake-collisions.txt` 71), and `getSymbolAtLocation` is
+  `get_symbol_at_location(node, ignore_errors)`. Both answer a `SymbolId`, nil for none, as
+  `get_symbol_of_name_or_property_access_expression(name)` and `get_applicable_index_symbol(t, key_type)` do.
+- `get_type_of_node(node)`, `get_type_at_location(node)` and `get_regular_type_of_expression(expr)` answer a `TypeId`
+  that is never nil. `get_this_type_of_object_literal_from_contextual_type(containing_literal, contextual_type)`,
+  `get_this_type_from_contextual_type(t)` and `get_this_type_argument(t)` answer `TypeId::NIL` for upstream's nil.
+- `get_applicable_index_infos(t, key_type) -> List<'a, IndexInfoId>`: `core.Filter` of the index infos of the type,
+  so the list of the type itself when every info applies. `get_index_signatures_at_location(node) -> Vec<NodeId>`.
+- `contains_arguments_reference(node) -> bool`, `is_this_property_and_this_typed(node) -> bool`,
+  `get_aliased_symbol(symbol) -> SymbolId`, `is_arguments_symbol(symbol) -> bool`.
+- `get_emit_resolver() -> EmitResolver`: the unit value that `symbolaccessibility.rs` 89 and `nodebuilderimpl.rs` 3151
+  and 3361 name where upstream writes `c.GetEmitResolver()`.
+
+### Differences from upstream
+
+- `GetEmitResolver`: the `Checker` record has no `emitResolver` and no `emitResolverOnce` (the comment of
+  `c02_program_checker.rs` 715), and the two files that use a resolver name `EmitResolver` as a value and give the
+  checker to its methods. So the function answers that value and does not call `newEmitResolver`. If
+  `emitresolver.rs` gives the resolver fields of its own, this function and those two files change together.
+- The switch of `getSymbolAtLocation` has four `fallthrough`. The cases that fall into each other are one arm each,
+  and a test of the kind says where a kind enters: `Identifier`, `PrivateIdentifier`, `PropertyAccessExpression` and
+  `QualifiedName` with `ThisKeyword` and `ThisType`; the two string literal kinds with `NumericLiteral`;
+  `ImportKeyword` with `NewKeyword`. A `JsxNamespacedName` that is no intrinsic tag name answers nil, as the default.
+- Panics are faults with the nil symbol: 31846 (`Symbol should be defined`) and 31921 (`ImportEqualsDeclaration should
+  be defined`). `c.getTypeArguments(t)[0]` of 32200 and `parent.Arguments()[1]` of 31817 are guarded reads (`at`) that
+  give nil without a fault: the first is safe while the global `ThisType` has its arity, the second follows the test
+  for three arguments. A read through a nil parent (31725, where upstream dereferences `parent`) reads the nil node.
+- The closure `visit` of `containsArgumentsReference` is a nested function with a stack test as its first statement:
+  it records `StackLimit` and answers false, and the result is cached as upstream caches it. No other function of the
+  file has a stack test: each cycle through `get_symbol_at_location` and `get_type_of_node` passes an entry that has
+  one (`check_expression_ex`, `get_type_from_type_node`, `get_type_for_variable_like_declaration`,
+  `resolve_entity_name`), and the two loops of the file climb the syntax tree.
+- `getApplicableIndexSymbol`: `declarations` is a `Vec` that becomes the list of the symbol (`list_of`), and the four
+  writes to the new symbol are one `update_symbol`. The inner loop variable hides `info`, as upstream's does.
+- `getIndexSignaturesAtLocation`: `objectType.Distributed()` is `type_distributed`.
+- `core.IfElse` is an `if` expression (five places), and the arguments of a call are computed in upstream's order
+  before the call where they take the checker.
+- The comment of 31757-31760 is carried over without its last sentence, which names two pull requests.
+
+### Verified
+
+- `sh round2-layer7-checker/c52-probe.sh` on the tree of `a582ea9efb`: exit 0, "probe ok". It runs `rustc` and
+  `clippy-driver` alone, no cargo. (1) One crate holds the real `c52_symbol_at_location.rs`, `checker/types.rs` and
+  `checker/c01_data.rs`, the leaf files they stand on, and a stand-in for every other name. `c52-probe-gen.py` reads
+  the signature of a stand-in from the file of the tree that defines it: 23 methods of `Ast`, 54 free functions of
+  `ast/`, 50 methods of the checker, the 8 free functions of `utilities.rs`, `append_if_unique` and `first_or_nil` of
+  `core/core.rs`, and the types of the 10 fields of the checker that the file names beside `ast`, `types` and
+  `stack_check`. It compiles under `#![deny(warnings)]` with `unused_imports`, `unused_variables`, `unused_mut`,
+  `unused_assignments` and `unreachable_pub` denied. (2) `clippy-driver` with the clippy table of the workspace,
+  `clippy::all` and the repository's `clippy.toml` prints nothing. (3) `rustfmt --check --edition 2024`. A type error
+  and an `assign_op_pattern` put into a copy of the file were both reported, so the probe sees the file.
+- Assumptions of the probe, written by hand because the tree did not have them: `pub struct EmitResolver;`, `Map` of
+  `crate::core` as the contract has it, and the four callees of the last section.
+- Per function, the calls of methods of the checker are upstream's, by name and number (28 in
+  `get_symbol_at_location`, 24 in `get_symbol_of_name_or_property_access_expression`, 23 in `get_type_of_node`), and
+  so are the calls of free functions of `ast`, `core` and the package, but for `core.IfElse`, `core.Filter` (the
+  method `filter`) and `newEmitResolver`. Read against upstream statement by statement.
+- `python3 round2-layer7-checker/ranges.py c52_symbol_at_location`: 16 of 16 functions of the range have a `fn` of
+  their name in the file. `python3 round2-layer7-checker/globs.py`: the module is under E (a file, no `pub` name, no
+  glob).
+- The 17 calls that 6 files of the tree make into the file (`c08` 7, `c49` 4, `c09` 2, `jsx.rs` 2, `jsdoc.rs` 1,
+  `utilities.rs` 1) were read against the signatures: arguments, and what they do with the result (`c09` reads
+  `len()` and `as_slice()` of the list of index infos).
+- No two comment lines are adjacent; no `unwrap`, `expect`, `panic`, `todo`, `unimplemented`, `unreachable`, `unsafe`
+  or slice index.
+- Not checked: the real crate through cargo, and any result against upstream's baselines. Nothing ran a function of
+  the file.
+
+### What this file expects and the tree does not have
+
+At `a582ea9efb`:
+
+- `c18`: `get_this_container(node, include_arrow_functions, include_class_computed_property_name) -> NodeId` (12279;
+  the method of the checker, not `ast::get_this_container`) and
+  `check_property_access_expression(node, check_mode, write_only) -> TypeId` (11334).
+- `c17`: `check_new_target_meta_property(node) -> TypeId` (10858) and `check_meta_property_keyword(node) -> TypeId`
+  (10889).
+- `emitresolver.rs`: `EmitResolver`, a value without fields.
+- `crate::core::Map` with `get_ok(&key) -> Option<V>` and `set(key, value) -> bool` (section C of the look-ahead).

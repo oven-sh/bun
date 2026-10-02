@@ -1434,15 +1434,9 @@ impl Template {
         b".cursor/rules/use-bun-instead-of-node-vite-npm-pnpm.mdc",
         Self::AGENT_RULE,
     );
-    #[cfg(not(windows))]
     const CURSOR_RULE_PATH_TO_CLAUDE_MD: &'static [u8] = b"../../CLAUDE.md";
 
     fn is_claude_code_installed() -> bool {
-        if cfg!(windows) {
-            // Claude code is not available on Windows, at the time of writing.
-            return false;
-        }
-
         // Give some way to opt out.
         if env_var::BUN_AGENT_RULE_DISABLED.get().unwrap_or(false)
             || env_var::CLAUDE_CODE_AGENT_RULE_DISABLED
@@ -1468,9 +1462,16 @@ impl Template {
             && !exists(b"CLAUDE.md");
 
         if let Some(template_file) = Self::get_cursor_rule() {
-            // If both Cursor & Claude is installed, make the cursor rule a
-            // symlink to ../../CLAUDE.md
-            let asset_path: &[u8] = if create_claude_md {
+            // If both Cursor & Claude are installed, write the rule to CLAUDE.md
+            // and make the cursor rule a symlink to ../../CLAUDE.md so it's easier
+            // to keep them in sync if you change it locally. We use a symlink for
+            // the cursor rule in this case so that the github UI for CLAUDE.md
+            // (which may appear prominently in repos) doesn't show a file path.
+            //
+            // A symlink on Windows needs Developer Mode or an elevated process, so
+            // there both rules are regular files.
+            let link_cursor_rule = create_claude_md && cfg!(not(windows));
+            let asset_path: &[u8] = if link_cursor_rule {
                 b"CLAUDE.md"
             } else {
                 template_file.path
@@ -1485,55 +1486,40 @@ impl Template {
                 // SAFETY: asset_path_z[len-1] == 0 written above
                 template_file.contents,
             );
-            if result.is_err() {
-                if create_claude_md {
-                    create_claude_md = false;
-                    // If installing the CLAUDE.md fails for some reason, fall back to installing the cursor rule.
-                    let mut tp = template_file.path.to_vec();
-                    tp.push(0);
-                    let _ = Assets::create_new(
-                        ZStr::from_slice_with_nul(&tp[..]),
-                        // SAFETY: tp[len-1] == 0 written above
-                        template_file.contents,
-                    );
-                }
-            }
 
-            #[cfg(not(windows))]
-            {
-                // if we did create the CLAUDE.md, then symlinks the
-                // .cursor/rules/*.mdc -> CLAUDE.md so it's easier to keep them in
-                // sync if you change it locally. we use a symlink for the cursor
-                // rule in this case so that the github UI for CLAUDE.md (which may
-                // appear prominently in repos) doesn't show a file path.
-                if result.is_ok() && create_claude_md {
-                    'symlink_cursor_rule: {
-                        create_claude_md = false;
-                        let _ = bun_sys::Dir::cwd().make_path(b".cursor/rules");
-                        // bun_sys::symlinkat takes &ZStr; build NUL-terminated copies.
-                        let mut target_z = Self::CURSOR_RULE_PATH_TO_CLAUDE_MD.to_vec();
-                        target_z.push(0);
-                        let mut dest_z = template_file.path.to_vec();
-                        dest_z.push(0);
-                        // SAFETY: NUL-terminated above.
-                        let target_zstr = ZStr::from_slice_with_nul(&target_z[..]);
-                        // SAFETY: NUL-terminated above.
-                        let dest_zstr = ZStr::from_slice_with_nul(&dest_z[..]);
-                        if bun_sys::symlinkat(target_zstr, Fd::cwd(), dest_zstr).is_err() {
-                            break 'symlink_cursor_rule;
-                        }
-                        bun_core::prettyln!(
-                            " + <r><d>{} -\\> {}<r>",
-                            bstr::BStr::new(template_file.path),
-                            bstr::BStr::new(asset_path),
-                        );
-                        Output::flush();
-                    }
+            if link_cursor_rule {
+                create_claude_md = false;
+                let mut dest_z = template_file.path.to_vec();
+                dest_z.push(0);
+                // SAFETY: NUL-terminated above.
+                let dest_zstr = ZStr::from_slice_with_nul(&dest_z[..]);
+
+                let linked = result.is_ok() && {
+                    let _ = bun_sys::Dir::cwd().make_path(b".cursor/rules");
+                    let mut target_z = Self::CURSOR_RULE_PATH_TO_CLAUDE_MD.to_vec();
+                    target_z.push(0);
+                    // SAFETY: NUL-terminated above.
+                    let target_zstr = ZStr::from_slice_with_nul(&target_z[..]);
+                    bun_sys::symlinkat(target_zstr, Fd::cwd(), dest_zstr).is_ok()
+                };
+
+                if linked {
+                    bun_core::prettyln!(
+                        " + <r><d>{} -\\> {}<r>",
+                        bstr::BStr::new(template_file.path),
+                        bstr::BStr::new(asset_path),
+                    );
+                    Output::flush();
+                } else {
+                    // If installing the CLAUDE.md or the symlink fails for some
+                    // reason, fall back to installing the cursor rule as a file.
+                    let _ = Assets::create_new(dest_zstr, template_file.contents);
                 }
             }
         }
 
-        // If cursor is not installed but claude code is installed, then create the CLAUDE.md.
+        // If claude code is installed and the cursor rule is not a symlink to
+        // CLAUDE.md, then create the CLAUDE.md.
         if create_claude_md {
             // In this case, the frontmatter from the cursor rule is not helpful so let's trim it out.
             let end_of_frontmatter = match strings::last_index_of(Self::AGENT_RULE, b"---\n") {

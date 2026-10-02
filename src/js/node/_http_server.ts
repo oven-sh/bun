@@ -964,7 +964,10 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           // socket's high water mark, so pipelined requests cannot flood it.
           // Not only while socket._paused is false: the FIN of a socket.end() that waited for buffered bytes gives the reads back.
           if ((socket[kOutgoingData] ?? 0) >= socket.writableHighWaterMark) {
-            pausePipelineReads(socket);
+            // Behind the FIN of socket.end() no response leaves, so nothing would end that pause: uWS drops the rest,
+            // and the peer's FIN closes the connection.
+            if (socketHandle.finSent) socketHandle.stopParsing();
+            else pausePipelineReads(socket);
           }
         } else if (!is_upgrade) {
           // Node.js's connectionListener registers socketOnClose, which frees

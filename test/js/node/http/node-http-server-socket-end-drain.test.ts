@@ -1003,6 +1003,50 @@ describe.each(["http", "https"] as const)("%s: the connection reads behind the F
     }
   });
 
+  // The responses to such requests stay in the queue. Node.js stops reading when they hold the high water mark, and
+  // the connection stays open for ever. Bun drops the rest there, so that the client's FIN closes the connection.
+  test.each([
+    ["at once", false],
+    ["after response bytes that the transport held", true],
+  ])("requests pipelined behind a FIN that leaves %s do not keep the connection open", async (_when, waits) => {
+    const count = 3000;
+    let dispatched = 0;
+    let held = -1;
+    const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();
+    await using server = createServer((req, res) => {
+      res.on("error", () => {});
+      if (++dispatched > 1) return void res.end(Buffer.alloc(64 * 1024, "r"));
+      req.socket.on("error", () => {});
+      req.socket.on("close", () => onClose());
+      if (waits) {
+        res.writeHead(200, { "Content-Type": "text/plain" });
+        const chunk = Buffer.alloc(1024 * 1024, "a");
+        for (let i = 0; i < 8; i++) res.write(chunk);
+      } else {
+        res.end("first");
+      }
+      req.socket.end();
+      // In the tick of a write, writableLength also counts the bytes that the transport took.
+      process.nextTick(() => (held = res.writableLength));
+    });
+
+    const client = await connectTo(server);
+    try {
+      const serverEnded = once(client, "end");
+      client.write("GET /first HTTP/1.1\r\nHost: a\r\n\r\n");
+      await serverEnded;
+      client.end(Buffer.alloc(count * 32, "GET /later HTTP/1.1\r\nHost: a\r\n\r\n"));
+      await closed;
+      expect({ fin: held > 0 ? "waits" : "left", dispatchedAll: dispatched === count + 1 }).toEqual({
+        fin: waits ? "waits" : "left",
+        dispatchedAll: false,
+      });
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+    }
+  });
+
   // Node.js leaves such a connection open and exits, because a socket that neither reads nor writes is not active.
   // Bun closes it: after server.close() no requestTimeout is left to end the wait.
   test.each([

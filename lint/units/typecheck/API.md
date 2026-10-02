@@ -1520,3 +1520,124 @@ beside `grammarchecks.go` and beside the tree:
 
 - `is_in_parameter_initializer_before_containing_function(node) -> bool` (checker.go 12326, the range of `c18`),
   called as a method at 1750 and 1765.
+
+## Checker: expressions (`checker/c14_expressions.rs`)
+
+Commits `29243aaf5a`, `639fb21984` and `f65d481d68` (written by the job that commits the worktree). The 45 functions
+of `checker.go` 7419-8405 (layers E-CORE, E-ACCESS and E-LITERAL, and `checkImportCallExpression` of E-CALL), in
+upstream order. PORT_STATUS.md has the row.
+
+NOT compiled by cargo: `checker/mod.rs` still names modules without a file. "Verified" below says what was checked
+instead.
+
+### How a caller writes the calls
+
+- `check_expression(node)`, `check_expression_ex(node, check_mode)`, `check_expression_cached(node)`,
+  `check_expression_cached_ex(node, check_mode)`, `get_type_of_expression(node)`,
+  `get_context_free_type_of_expression(node)` and `check_expression_worker(node, check_mode)` answer a `TypeId`.
+  `get_quick_type_of_expression(node)`, `get_return_type_of_single_non_generic_signature(func_type, kind)` and
+  `get_return_type_of_single_non_generic_signature_of_call_chain(expr)` answer `TypeId::NIL` for upstream's nil.
+- `check_expression_with_contextual_type(node, contextual_type, inference_context: InferenceContextId, check_mode)`:
+  `InferenceContextId::NIL` is upstream's nil context.
+- `check_non_null_type_with_reporter(t, node, report_error)`: the reporter is
+  `impl FnOnce(&mut Checker<'a>, NodeId, TypeFacts)`. A method is passed where upstream passes a method expression:
+  `Self::report_object_possibly_null_or_undefined_error` here, and checker.go 8601 (the range of `c15`) passes
+  `(*Checker).reportCannotInvokePossiblyNullOrUndefinedError`.
+- `get_unique_type_parameters(context: InferenceContextId, type_parameters: List<'_, TypeId>) -> List<'a, TypeId>`
+  (never nil) and `get_outer_inference_type_parameters() -> List<'a, TypeId>` (nil when nothing was appended).
+- Free functions, `pub` at column 0 (`mod.rs` has the glob): `has_type_parameter_by_name(c, &[TypeId], name: &[u8])`,
+  `get_unique_type_parameter_name(c, &[TypeId], base_name: &[u8]) -> Vec<u8>`, `is_spread_into_call_or_new(a, node)`.
+- These only read and take `&self`: `get_context_node`, `get_outer_inference_type_parameters`,
+  `is_in_constructor_argument_initializer`, `is_template_literal_context`. Every other method takes `&mut self`.
+- `get_constituent_property(object_type, property_name: &[u8])`, `get_symbol_for_private_identifier_expression(node)`
+  and `get_for_in_variable_symbol(node)` answer a `SymbolId`, nil for none.
+
+### Differences from upstream
+
+- Stack tests, each the first statement of its function, at the five entries of
+  `checker-expressions-calls-flow/top-down/data/tested_entries.tsv` that are in this range: `get_type_of_expression`
+  (the error type, `flow_type_cache` is not written), `check_expression_cached_ex` (the error type, the link is not
+  written), `check_expression_ex` (the error type, `current_node` is not touched), `get_quick_type_of_expression` (the
+  error type) and `is_template_literal_context` (false).
+- The tracer call of `checkExpressionEx` (7648-7650) is not ported.
+- Panics, asserts and nil dereferences are faults with a fallback: 7922 (`JsxOpeningElement`: the error type); the
+  assert of 7680 records and goes on; a const enum symbol without a value declaration (7681-7683, where upstream reads
+  the file and the flags of nil) is a fault and the function returns, as `c13` does for the same read; a project
+  reference without `Resolved` (7683) is a fault and counts as not preserving const enums, so TS2748 is reported as
+  for no redirect; `evaluated.(string)` of 8085 for another kind of value is a bad cast and the empty text; the panic
+  of `jsnum.ParsePseudoBigInt` (7843) is a fault and the error type. A nil inference context (`context.signature`
+  of 7719) reads the zero record through the store, which counts the nil read.
+- `checkExpressionCachedEx` saves `flowLoopStack` and `flowTypeCache` with `std::mem::take`, which leaves the nil
+  value in the field, and puts both back in upstream's order.
+- `intraExpressionInferenceSites` is a `Vec`: nil and empty are one value, and `= nil` is a new empty `Vec`.
+- `checkArrayLiteral`: `elementTypes` and `elementInfos` are filled by `push` in the arms where upstream writes
+  `[i]`; each arm writes both exactly once. The closure of `someType` for the tuple context is written with early
+  returns in the order of upstream's `||` and `&&`.
+- `checkSuperExpression`: `isLegalUsageOfSuperExpression` is a closure over `a`, the flag and the container, as
+  upstream. The local `is_call_expression` hides the function of `ast` of the same name after its own line, as
+  upstream's local does.
+- `instantiateTypeWithSingleGenericCallSignature`: `core.Map(context.inferences, ...)` is the nil list for nil, else
+  a live list of new inference infos; `core.Every` and `core.Some` over a live list are `iter().all` and
+  `iter().any`.
+- `hasTypeParameterByName` and `getUniqueTypeParameterName` take the checker, since a type is an id. The loop of
+  `getUniqueTypeParameterName` has no budget: it ends after at most one more step than there are type parameters.
+- `getOuterInferenceTypeParameters` has no caller upstream either. It is `pub`.
+- The comment of 7754 is carried over without its first word.
+
+### Verified
+
+No compiler has seen the file, and nothing ran a function of it. What was checked:
+
+- `rustfmt --check --edition 2024`: exit 0 (the file parses and is formatted).
+- Scripts over the file: the 45 functions have upstream's names in upstream's order; each of the 120 imported names
+  is used and no free name is used without an import; no two comment lines are adjacent; no `unwrap`, `expect`,
+  `panic`, `unsafe` or index into a slice; the 25 diagnostic messages exist by name in
+  `diagnostics/diagnostics_generated.rs`.
+- Read against the definitions of the tree at `f1f0123b19`, name, parameter order and result: the callees that the
+  tree defines (`c12`, `c21`, `c22`, `c24`, `c28`, `c31`, `c33`, `c34`, `c38`, `c40`, `c41`, `c42`, `c43`, `c44`,
+  `c45`, `c47`, `c51`, `jsx.rs`, `mapper.rs`, `printer.rs`, `relater.rs`, `utilities.rs`, `grammarchecks.rs`, the
+  accessors of `ast/`, `core/core.rs`, `jsnum/`), and the fields, records, casts, flags and helpers of the data model
+  (`c01_data.rs`, `c02_program_checker.rs`, `types.rs`, `links.rs`, `core/linkstore.rs`). `Map`, `LiveList` and
+  `Text` are used as the contract has them (`checker-data-model-contract/bottom-up/crate/src/tscore/golang.rs`).
+- The calls that other files of the tree make into these functions (88 sites of 21 files by the look-ahead, and
+  `grammarchecks.rs` 218, 3091 and 3103) match the signatures by name and number of arguments.
+- Not checked: types and borrows (no compiler), clippy, and any result against upstream's baselines.
+
+### What this file expects and the tree does not have
+
+At `f1f0123b19`, 61 callees, called by their upstream names with upstream's parameter order:
+
+- `c03`: `resolve_name(location, name, meaning, message, is_use, exclude_globals)`, `evaluate(expr, location)` with
+  `.value` a `LiteralValue`, `get_global_import_call_options_type_checked()`.
+- `c15`: `check_call_expression(node, check_mode)`, `check_tagged_template_expression(node)`,
+  `is_symbol_or_symbol_for_call(node)`, `skipped_generic_function(node, check_mode)`.
+- `c16`: `check_parenthesized_expression(node, check_mode)`, `check_class_expression(node)`,
+  `check_function_expression_or_object_literal_method(node, check_mode)`.
+- `c17`: `check_type_of_expression`, `check_non_null_assertion`, `check_expression_with_type_arguments`,
+  `check_satisfies_expression`, `check_meta_property`, `check_delete_expression`, `check_void_expression`,
+  `check_prefix_unary_expression`, `check_postfix_unary_expression`, `check_yield_expression` and
+  `check_synthetic_expression`, each `(node)`; `check_conditional_expression(node, check_mode)`,
+  `check_spread_expression(node, check_mode)`.
+- `c18`: `check_identifier(node, check_mode)`, `check_this_expression(node)`,
+  `check_property_access_expression(node, check_mode, write_only)`,
+  `check_property_access_expression_or_qualified_name(node, left, left_type, right, check_mode, write_only)`,
+  `get_flow_type_of_access_expression(node, prop, prop_type, error_node, check_mode)`,
+  `is_method_access_for_call(node)`, `lookup_symbol_for_private_identifier_declaration(name, location)`,
+  `check_this_before_super(node, container, message)`, `class_declaration_extends_null(class_decl)`.
+- `c19`: `check_assertion(node, check_mode)`, `check_binary_expression(node, check_mode)`.
+- `c20`: `check_object_literal(node, check_mode)`, `is_const_context(node)`,
+  `check_expression_for_mutable_location(node, check_mode)`.
+- `c34`: `create_promise_return_type(node, promised_type)`. `c45`: `mark_property_as_referenced(prop, node, false)`.
+- `c47`: `get_mapped_type_modifiers(c, t)` (a free function), `get_optional_expression_type(expr_type, expression)`.
+- `c48`: `get_contextual_type(node, context_flags)`.
+- `c50`: `get_apparent_type_of_contextual_type(node, context_flags)`,
+  `instantiate_contextual_type(contextual_type, node, context_flags)`, `push_contextual_type(node, t, is_cache)`,
+  `pop_contextual_type()`, `push_cached_contextual_type(node)`, `push_inference_context(node, context)`,
+  `pop_inference_context()`, `get_inference_context(node) -> InferenceContextId`, `is_context_sensitive(node)`.
+- `c51`: `get_type_facts(t, mask) -> TypeFacts`.
+- `inference.rs`, as the contract has them: `infer_types(inferences: LiveList, source, target, priority,
+  contravariant)`, `apply_to_parameter_types(source, target, &mut dyn FnMut(&mut Checker, TypeId, TypeId))`,
+  `apply_to_return_types` (the same shape), `merge_inferences(target, source)`,
+  `add_intra_expression_inference_site(context, node, t)`, `is_skip_direct_inference_node(node)`, and the free
+  functions `new_inference_info(c, type_parameter)`, `has_inference_candidates(c, info)`,
+  `has_overlapping_inferences(c, a, b)`.

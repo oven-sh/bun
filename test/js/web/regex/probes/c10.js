@@ -1,0 +1,10 @@
+const out = typeof print === "function" ? print : console.log; const s = v => JSON.stringify(v);
+const t = (label, src, str) => { try { const m = new RegExp(src).exec(str); out(label.padEnd(30) + s(m && [...m])); } catch (e) { out(label.padEnd(30) + "THREW"); } };
+t("(?<=$(.?)+?)", "\\w(?<=$(.?)+?)", "0");
+t("(?<=$(.?)+)", "\\w(?<=$(.?)+)", "0");
+t("(?<=$(.??)+?)", "\\w(?<=$(.??)+?)", "0");
+t("(?<=$([ab]?)+?)", "\\w(?<=$([ab]?)+?)", "0");
+t("(?<=$(a?)+?)", "\\w(?<=$(a?)+?)", "0");
+t("(?<=$(.?)+?) x0", "\\w(?<=$(.?)+?)", "x0");
+t("(?<=(.?)+?)", "\\w(?<=(.?)+?)", "0");
+t("fwd ((.?)+?)$", "^\\w(.?)+?$", "0");

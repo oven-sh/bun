@@ -1,0 +1,15 @@
+const out = typeof print === "function" ? print : console.log; const s = v => JSON.stringify(v);
+const G = "😀"; const S = "prefix  " + G + " suffix";
+const t = (label, src, fl) => { try { const m = new RegExp(src, fl).exec(S); out(label.padEnd(46) + s(m && [m.index, m[0]])); } catch (e) { out(label.padEnd(46) + "THREW"); } };
+t("3alts", "\\s" + G + "|\\s{0,2}(?!ß{0}(?=[\\w\\sc\\d]\\t)|.{0}(?:..{1,3})^|[[xz0]&&[b-d]])\\n", "iv");
+t("2alts a|b", "\\s" + G + "|\\s{0,2}(?!(?=q\\t)|(?:..{1,3})^)\\n", "iv");
+t("2alts b|c", "\\s" + G + "|\\s{0,2}(?!(?:..{1,3})^|[xz])\\n", "iv");
+t("2alts a|c", "\\s" + G + "|\\s{0,2}(?!(?=q\\t)|[xz])\\n", "iv");
+t("only b .{1,3}^", "\\s" + G + "|\\s{0,2}(?!(?:..{1,3})^)\\n", "iv");
+t("only b noquant", "\\s" + G + "|\\s{0,2}(?!(?:..)^)\\n", "iv");
+t("b: ..{2}^", "\\s" + G + "|\\s{0,2}(?!(?:..{2})^)\\n", "iv");
+t("b: .{1,3}^", "\\s" + G + "|\\s{0,2}(?!.{1,3}^)\\n", "iv");
+t("b: q{1,3}^", "\\s" + G + "|\\s{0,2}(?!q{1,3}^)\\n", "iv");
+t("b flags iu", "\\s" + G + "|\\s{0,2}(?!(?:..{1,3})^)\\n", "iu");
+t("b flags i", "\\s" + G + "|\\s{0,2}(?!(?:..{1,3})^)\\n", "i");
+t("b flags v", "\\s" + G + "|\\s{0,2}(?!(?:..{1,3})^)\\n", "v");

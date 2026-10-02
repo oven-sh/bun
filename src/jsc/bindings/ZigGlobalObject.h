@@ -57,6 +57,11 @@ struct node_module;
 #include "headers-handwritten.h"
 #include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/JSGlobalObject.h>
+#include <JavaScriptCore/Identifier.h>
+#include <JavaScriptCore/JSPromise.h>
+#include <JavaScriptCore/ScriptFetchParameters.h>
+#include <JavaScriptCore/Weak.h>
+#include <wtf/HashMap.h>
 #include <JavaScriptCore/JSTypeInfo.h>
 #include <JavaScriptCore/Structure.h>
 #include "DOMConstructors.h"
@@ -102,6 +107,18 @@ namespace Zig {
 class JSCStackTrace;
 
 using DOMGuardedObjectSet = UncheckedKeyHashSet<WebCore::DOMGuardedObject*>;
+
+// JSC::ModuleMapKey with an owning key, for a map whose values are weak.
+using PendingModuleLoadKey = std::pair<RefPtr<UniquedStringImpl>, JSC::ScriptFetchParameters::Type>;
+
+struct PendingModuleLoadKeyHash {
+    static unsigned hash(const PendingModuleLoadKey& key)
+    {
+        return WTF::pairIntHash(key.first ? key.first->existingSymbolAwareHash() : 0, static_cast<unsigned>(key.second));
+    }
+    static bool equal(const PendingModuleLoadKey& a, const PendingModuleLoadKey& b) { return a.first == b.first && a.second == b.second; }
+    static constexpr bool safeToCompareToEmptyOrDeleted = false;
+};
 
 class GlobalObject : public Bun::GlobalScope {
     using Base = Bun::GlobalScope;
@@ -423,6 +440,7 @@ public:
         Bun__S3UploadStream__onRejectStream,
         Bun__HTMLRewriter__onResolveInputStream,
         Bun__HTMLRewriter__onRejectInputStream,
+        Bun__moduleNamespaceForKey,
         Count_,
     };
     static constexpr size_t promiseFunctionsSize = static_cast<size_t>(PromiseFunctions::Count_);
@@ -741,6 +759,25 @@ public:
 
     BunPlugin::OnLoad onLoadPlugins {};
     BunPlugin::OnResolve onResolvePlugins {};
+
+    // The last top-level load (import(), Module.runMain) of each (resolved key,
+    // module type) in moduleLoader(), keyed like its registry. Each promise
+    // fulfills with the module namespace. While one is pending, a second
+    // import() of the pair joins it and moduleLoaderResolve keeps the key's
+    // failed registry entries. The loader settles the promise after it has
+    // recorded a failure, so a settled one guards nothing.
+    // Not a WeakGCMap: the GC prunes those with no atom table set, and a key
+    // here can hold the last ref of its atom. trackPendingModuleLoad prunes.
+    WTF::HashMap<PendingModuleLoadKey, JSC::Weak<JSC::JSPromise>, PendingModuleLoadKeyHash> pendingModuleLoads;
+    JSC::JSPromise* pendingModuleLoad(const JSC::Identifier& key, JSC::ScriptFetchParameters::Type type) const
+    {
+        auto it = pendingModuleLoads.find({ key.impl(), type });
+        auto* promise = it == pendingModuleLoads.end() ? nullptr : it->value.get();
+        return promise && promise->status() == JSC::JSPromise::Status::Pending ? promise : nullptr;
+    }
+    bool hasPendingModuleLoad(const JSC::Identifier& key) const;
+    void trackPendingModuleLoad(const JSC::Identifier& key, JSC::ScriptFetchParameters::Type type, JSC::JSPromise* promise);
+    size_t m_pendingModuleLoadsPruneAt { 16 };
 
     // This increases the cache hit rate for JSC::VM's SourceProvider cache
     // It also avoids an extra allocation for the SourceProvider

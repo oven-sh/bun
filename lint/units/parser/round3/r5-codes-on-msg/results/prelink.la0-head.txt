@@ -1,0 +1,15 @@
+   @a237..238 b237..237 delete
+     - addq	$520, %rsi
+   @a239..240 b238..240 replace
+     - callq	_RNvMs1_NtCsaISE7XrFnM6_13bun_js_parser5lexerNtB5_5Lexer10unexpected
+     + movl	$.L, %esi
+     + callq	_RNvMs2_NtNtCsaISE7XrFnM6_13bun_js_parser5parse13syntax_errorsINtNtB9_1p1PKb0_KB1a_E13unexpected_asB9_
+identical 3314 differ 4 only 4
+DIFF    insns   290   290  jcc   21   21  <bun_js_parser::p::P<false, false>>::parse_prefix   [3 instructions in changed runs]
+DIFF    insns   290   290  jcc   21   21  <bun_js_parser::p::P<false, true>>::parse_prefix   [3 instructions in changed runs]
+DIFF    insns   292   292  jcc   21   21  <bun_js_parser::p::P<true, true>>::parse_prefix   [3 instructions in changed runs]
+DIFF    insns   292   292  jcc   21   21  <bun_js_parser::p::P<true, false>>::parse_prefix   [3 instructions in changed runs]
+ONLY-B  insns     0    41  jcc    0    1  <bun_js_parser::p::P<false, false>>::unexpected_as
+ONLY-B  insns     0    66  jcc    0    2  <bun_js_parser::p::P<false, false>>::code_syntax_error
+ONLY-B  insns     0    41  jcc    0    1  <bun_js_parser::p::P<false, true>>::unexpected_as
+ONLY-B  insns     0    66  jcc    0    2  <bun_js_parser::p::P<false, true>>::code_syntax_error

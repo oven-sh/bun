@@ -1,0 +1,41 @@
+functions a 1999 b 2003: identical 1991, different 8, only a 0, only b 4; text bytes a 1916725 b 1917525 (+800)
+        bytesA  bytesB  insnA  insnB  jccA  jccB  function
+DIFF     14677   14675   2911   2911   351   351  <p::P<false, false>>::parse_prefix
+DIFF     14699   14704   2916   2917   349   349  <p::P<false, true>>::parse_prefix
+DIFF      7397    7402   1418   1419   117   117  <p::P<true, false>>::build_type_member_list
+DIFF     15801   15804   3155   3156   383   383  <p::P<true, false>>::parse_prefix
+DIFF       137     139     33     36     1     1  <p::P<true, false>>::unexpected_as
+DIFF      7397    7402   1418   1419   117   117  <p::P<true, true>>::build_type_member_list
+DIFF     15695   15705   3148   3150   386   386  <p::P<true, true>>::parse_prefix
+DIFF       137     139     33     36     1     1  <p::P<true, true>>::unexpected_as
+ONLY-B             254            48           2  <p::P<false, false>>::code_syntax_error
+ONLY-B             131            32           1  <p::P<false, false>>::unexpected_as
+ONLY-B             254            48           2  <p::P<false, true>>::code_syntax_error
+ONLY-B             131            32           1  <p::P<false, true>>::unexpected_as
+--- <p::P<false, false>>::parse_prefix
+    --- 
+    +++ 
+    @@ -1914,6 +1914,7 @@
+     L30:
+     movq %r15, %rdi
+    +L251:
+    +callq <data>
+     L236:
+    -callq <data>
+     movw $0xff, (%r13)
+     jmp L1
+    @@ -2914,6 +2915,6 @@
+     callq core::option::expect_failed
+     L0:
+    -addq $0x208, %r14 # imm = 0x208
+     movq %r14, %rdi
+    +callq <data>
+     jmp L236
+     L38:
+    @@ -3156,5 +3157,5 @@
+     L151:
+     movq %r12, %rdi
+    -jmp L236
+    +jmp L251
+     L227:
+     movl $0x8, %edi

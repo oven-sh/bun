@@ -1,0 +1,14 @@
+identical 3309 differ 8 only 5
+DIFF    insns   223   244  jcc   33   32  <bun_js_parser::p::P<false, false>>::parse_stmt_fallthrough   [100 instructions in changed runs]
+DIFF    insns   223   244  jcc   33   32  <bun_js_parser::p::P<false, true>>::parse_stmt_fallthrough   [100 instructions in changed runs]
+DIFF    insns   420   437  jcc   49   49  <bun_js_parser::p::P<true, true>>::parse_stmt_fallthrough   [505 instructions in changed runs]
+DIFF    insns  1128  1125  jcc   92   92  <bun_js_parser::p::P<true, true>>::parse_stmt_fallthrough_ts_keyword   [356 instructions in changed runs]
+DIFF    insns  1307  1279  jcc  140  142  <bun_js_parser::p::P<true, true>>::t_export   [745 instructions in changed runs]
+DIFF    insns   431   440  jcc   49   49  <bun_js_parser::p::P<true, false>>::parse_stmt_fallthrough   [523 instructions in changed runs]
+DIFF    insns  1128  1125  jcc   92   92  <bun_js_parser::p::P<true, false>>::parse_stmt_fallthrough_ts_keyword   [356 instructions in changed runs]
+DIFF    insns  1276  1255  jcc  136  139  <bun_js_parser::p::P<true, false>>::t_export   [725 instructions in changed runs]
+ONLY-B  insns     0    87  jcc    0    8  <bun_js_parser::parse::syntax_errors::SyntaxErrors>::refine
+ONLY-B  insns     0    60  jcc    0    5  <bun_js_parser::p::P<false, false>>::statement_expected
+ONLY-B  insns     0    60  jcc    0    5  <bun_js_parser::p::P<false, true>>::statement_expected
+ONLY-B  insns     0    60  jcc    0    5  <bun_js_parser::p::P<true, true>>::statement_expected
+ONLY-B  insns     0    60  jcc    0    5  <bun_js_parser::p::P<true, false>>::statement_expected

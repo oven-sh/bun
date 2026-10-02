@@ -619,6 +619,51 @@ describe("literal fast path", async () => {
   });
 });
 
+// On Windows `\` is a path separator, not an escape character.
+describe.skipIf(isWindows)("backslash escapes non-special characters", () => {
+  let cwd = "";
+  beforeAll(() => {
+    cwd = tempDirWithFiles("glob-scan-backslash-escape", {
+      "sp ace.txt": "x",
+      "d r": { "f.txt": "x" },
+      "foo.t s": "x",
+    });
+  });
+  afterAll(() => {
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
+
+  // `\x` quotes `x` whether or not `x` is special, so scan must agree with match.
+  test.each([
+    ["literal component", "sp\\ ace.txt", ["sp ace.txt"]],
+    ["*.ext component", "*.t\\ s", ["foo.t s"]],
+    ["directory component", "d\\ r/*.txt", ["d r/f.txt"]],
+    ["under **", "**/sp\\ ace.txt", ["sp ace.txt"]],
+    ["escaped backslash is literal", "sp\\\\ ace.txt", []],
+  ])("%s", async (_, pattern, expected) => {
+    const glob = new Glob(pattern);
+    const sync = Array.from(glob.scanSync({ cwd })).sort();
+    const async = (await Array.fromAsync(glob.scan({ cwd }))).sort();
+    expect({ sync, async }).toEqual({ sync: expected, async: expected });
+    for (const name of expected) {
+      expect(glob.match(name)).toBe(true);
+    }
+  });
+
+  // `\\` is one literal `\`, so the on-disk name without a backslash must not match.
+  test("escaped backslash requires a literal backslash in the name", () => {
+    const glob = new Glob("sp\\\\ ace.txt");
+    expect(glob.match("sp ace.txt")).toBe(false);
+    expect(glob.match("sp\\ ace.txt")).toBe(true);
+  });
+
+  test("absolute path", async () => {
+    const glob = new Glob(path.posix.join(cwd, "sp\\ ace.txt"));
+    const entries = await Array.fromAsync(glob.scan());
+    expect(entries).toEqual([path.join(cwd, "sp ace.txt")]);
+  });
+});
+
 describe("trailing directory separator", async () => {
   test("matches directories absolute", async () => {
     const tmpdir = tmpdirSync();
